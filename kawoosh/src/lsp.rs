@@ -23,7 +23,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{Buffer, BufferId, Diagnostic, Update, Version};
@@ -481,9 +481,13 @@ impl Kawoosh {
                     language,
                     command,
                     why,
+                    root,
                 } => {
-                    let why = why.map(|w| format!("did not start: {w}"));
-                    self.lsp_off(language, command, why);
+                    let why = why.map(|w| match &root {
+                        Some(r) => format!("did not start in {}: {w}", home_short(r)),
+                        None => format!("did not start: {w}"),
+                    });
+                    self.lsp_off(language, command, why, root.as_deref());
                 }
                 Event::Exited {
                     language,
@@ -491,6 +495,7 @@ impl Kawoosh {
                     buffers,
                     why,
                     again,
+                    root,
                 } => {
                     for id in buffers {
                         if self.ed.buffers.get(id).is_some() {
@@ -498,17 +503,17 @@ impl Kawoosh {
                         }
                     }
                     if again {
-                        self.notify_with(
-                            Note::new(Level::Warn, format!("`{command}` {why}; started again"))
-                                .source(language),
-                        );
+                        let text =
+                            format!("`{command}` {why} in {}; started again", home_short(&root));
+                        self.notify_with(Note::new(Level::Warn, text).source(language));
                     } else {
                         let why = format!(
-                            "stopped: {why}, {} exits in {} minutes",
+                            "stopped in {}: {why}, {} exits in {} minutes",
+                            home_short(&root),
                             kawoosh_systems::lsp::CRASHES,
                             kawoosh_systems::lsp::CRASH_WINDOW.as_secs() / 60
                         );
-                        self.lsp_off(language, command, Some(why));
+                        self.lsp_off(language, command, Some(why), Some(&root));
                     }
                 }
                 Event::Restarted { commands } => {
@@ -960,14 +965,31 @@ impl Kawoosh {
     }
 
     /// `command` off until `:lsp restart`, said once: not found (`why`
-    /// None), or what befell it.
-    fn lsp_off(&mut self, language: String, command: String, why: Option<String>) {
+    /// None), or what befell it in the project at `root` — with how to
+    /// keep it off there, when that project is no place for it.
+    fn lsp_off(
+        &mut self,
+        language: String,
+        command: String,
+        why: Option<String>,
+        root: Option<&Path>,
+    ) {
         if self.lsp.said_unavailable.contains_key(&command) {
             return;
         }
-        let text = match &why {
-            None => format!("`{command}` not found; lsp off. Installed since? :lsp restart"),
-            Some(why) => format!("`{command}` {why} (:lsp restart once fixed)"),
+        let text = match (&why, root) {
+            (None, _) => format!("`{command}` not found; lsp off. Installed since? :lsp restart"),
+            (Some(why), None) => format!("`{command}` {why} (:lsp restart once fixed)"),
+            (Some(why), Some(root)) => {
+                let file = root
+                    .join(crate::settings::PROJECT_DIR)
+                    .join(crate::settings::SETTINGS_FILE);
+                format!(
+                    "`{command}` {why}. :lsp restart once fixed; to leave it off in that \
+                     project, `lsp = {{ {language} = {{ enabled = false }} }}` in {}",
+                    home_short(&file)
+                )
+            }
         };
         self.notify_with(Note::new(Level::Warn, text).source(language));
         self.lsp.said_unavailable.insert(command, why);
@@ -2224,6 +2246,11 @@ fn line_ops<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(char, &'a str)> {
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+/// A path for a line, the home as `~`.
+fn home_short(path: &Path) -> String {
+    kawoosh_systems::fs::abbreviate_home(path)
 }
 
 #[cfg(test)]

@@ -42,10 +42,12 @@ of its marker files.
 typescript-language-server needs TypeScript 5 installed beside it
 (`typescript@5`), in the project or globally; it does not work with
 TypeScript 7. A server that refuses to start, as it does without one,
-is off until `:lsp restart`, and the corner says what it said. One
-that exits on its own is started again for its files, the corner
-saying how it ended; after three exits in three minutes it is off
-until `:lsp restart`.
+is off until `:lsp restart`, and the corner says what it said and in
+which project. One that exits on its own is started again for its
+files, the corner saying how it ended; after three exits in three
+minutes it is off until `:lsp restart`. Either way the corner names
+the project's `.kawoosh/settings.lua`, where `lsp = { NAME = {
+enabled = false } }` keeps it off in a project that is no place for it.
 
 ### Settings per server
 

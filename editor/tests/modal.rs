@@ -267,6 +267,29 @@ fn tab_stops_count_the_cells_drawn() {
     assert_eq!(t.text(), "e\u{301}   ", "the accent takes no cell");
 }
 
+/// Several carets on a line under `expandtab`: each tab reaches a stop
+/// from where the carets before it leave it, not from where it stood
+/// before they typed.
+#[test]
+fn tab_stops_of_carets_on_one_line_count_the_ones_before() {
+    let carets = |t: &mut T| {
+        t.ed.views[t.v].sels = kawoosh_editor::Selections {
+            items: vec![Selection::point(1), Selection::point(3)],
+            primary: 0,
+        };
+    };
+    let mut t = T::new("abcd");
+    t.keys(":set shiftwidth=4<CR>i");
+    carets(&mut t);
+    t.keys("<Tab>");
+    assert_eq!(t.text(), "a   bc  d", "the second from cell 6 to 8");
+    let mut t = T::new("abcd");
+    t.keys(":set shiftwidth=4<CR>");
+    carets(&mut t);
+    t.keys("r<Tab>");
+    assert_eq!(t.text(), "a   c   ", "the second from cell 5 to 8");
+}
+
 /// `r` stops where the line's text does, however the line ends: a
 /// `\r\n` line's `\r` is not a character to replace (neovim's `3rx` on
 /// `ab` fails there too).
@@ -2032,4 +2055,22 @@ fn a_text_put_in_by_its_diff_keeps_the_carets() {
     t.keys("ix<Esc>");
     assert!(t.ed.replace_diffed(id, "y\n", Some(stale)).is_err());
     assert_eq!(t.ed.replace_diffed(id, &t.text(), None), Ok(0));
+}
+
+/// An edit per line over a long file is one pass: `>G` over 100,000
+/// lines took 20 s — placing each caret walked every caret placed
+/// before it, and each edit read its line's graphemes to find a
+/// boundary between two ASCII bytes — 1.7 s now. 60,000 lines here,
+/// bounded far above that and well under the quadratic's 7 s.
+#[test]
+fn an_edit_per_line_over_a_long_file_is_one_pass() {
+    let n = 60_000;
+    let text = "x\n".repeat(n);
+    let mut t = T::new(&text);
+    let start = std::time::Instant::now();
+    t.keys(">G");
+    let took = start.elapsed();
+    assert_eq!(t.text().lines().next(), Some("    x"));
+    assert_eq!(t.text().len(), text.len() + 4 * n);
+    assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
 }

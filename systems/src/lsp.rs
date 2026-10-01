@@ -682,12 +682,13 @@ pub enum Event {
         message: String,
     },
     /// A server could not start — its command not found (`why` None),
-    /// or its `initialize` refused with `why` — and is not tried again
-    /// until a restart; the app says so once.
+    /// or its `initialize` refused with `why` in the project at `root`
+    /// — and is not tried again until a restart; the app says so once.
     Unavailable {
         language: String,
         command: String,
         why: Option<String>,
+        root: Option<PathBuf>,
     },
     /// A server exited on its own — crashed, or quit — with `why` (its
     /// exit status and last line of stderr). `buffers` were the ones it
@@ -700,6 +701,8 @@ pub enum Event {
         buffers: Vec<BufferId>,
         why: String,
         again: bool,
+        /// The project it served.
+        root: PathBuf,
     },
     /// A [`Cmd::Restart`] done: the PATH asked for again, the commands'
     /// failures forgotten.
@@ -1576,6 +1579,7 @@ impl Pool {
                 language: def.language.clone(),
                 command: def.command.clone(),
                 why: None,
+                root: None,
             });
             return None;
         };
@@ -2124,6 +2128,7 @@ impl Pool {
             buffers,
             why,
             again,
+            root: server.root.clone(),
         });
         self.status();
     }
@@ -2172,6 +2177,7 @@ impl Pool {
                     .unwrap_or("error")
                     .to_string();
                 let (language, command) = (server.language.clone(), server.name.clone());
+                let root = Some(server.root.clone());
                 self.failed.insert((server.domain.clone(), command.clone()));
                 self.servers[key] = None;
                 self.homes.retain(|_, k| *k != key);
@@ -2179,6 +2185,7 @@ impl Pool {
                     language,
                     command,
                     why: Some(why),
+                    root,
                 });
                 self.status();
                 return;

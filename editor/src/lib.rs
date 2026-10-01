@@ -2242,18 +2242,26 @@ impl Editor {
         // `.` is the engine's own edits: what the shell runs is not one,
         // and `.` and `@` are made of steps rather than being one.
         let own = matches!(resolved, Some("repeat" | "macro record" | "macro play"));
-        if own || resolved.is_some_and(|n| self.commands.body(n).is_none()) {
+        let shell = resolved.is_some_and(|n| self.commands.body(n).is_none());
+        let open = |ed: &Self| {
+            ed.pending_op.is_some()
+                || ed.pending_register.is_some()
+                || ed.awaiting_char.is_some()
+                || ed.surround.ranges.is_some()
+                || ed.surround.from.is_some()
+                || ed.prompt.is_some()
+                || matches!(ed.mode(view), Mode::Insert | Mode::Visual)
+        };
+        if own || shell {
+            // A shell's command ends what `"` or an operator began
+            // (`"_<C-o>`): those steps are no change's.
+            if shell && !own && !open(self) {
+                self.repeat.current.clear();
+            }
             return;
         }
         repeat::push(&mut self.repeat.current, step);
-        let open = self.pending_op.is_some()
-            || self.pending_register.is_some()
-            || self.awaiting_char.is_some()
-            || self.surround.ranges.is_some()
-            || self.surround.from.is_some()
-            || self.prompt.is_some()
-            || matches!(self.mode(view), Mode::Insert | Mode::Visual);
-        if open {
+        if open(self) {
             return;
         }
         if self.edited {
@@ -3512,31 +3520,57 @@ impl Editor {
             .collect();
         buf.replace_many(&ascending);
         let mut items = self.views[view].sels.items.clone();
-        let mut placed: Vec<(usize, Selection)> = Vec::with_capacity(edits.len());
+        // Selections without an edit of their own move with the text;
+        // one with an edit is where `after` puts it.
+        let mut edited = vec![false; items.len()];
+        for (i, _, _) in &edits {
+            if let Some(e) = edited.get_mut(*i) {
+                *e = true;
+            }
+        }
+        // Apart, each edit is before every caret placed so far and moves
+        // it by its length's change: that sum, kept per caret as it is
+        // placed, places it at the end — an `=G` of 100,000 lines was
+        // quadratic walking every caret placed at every edit. Edits
+        // that overlap are walked so.
+        let apart = edits.windows(2).all(|w| w[1].1.end <= w[0].1.start);
+        let mut placed: Vec<(usize, Selection, isize)> = Vec::with_capacity(edits.len());
+        let mut moved: isize = 0;
         for (i, range, text) in edits {
             let (start, end) = (range.start, range.end);
             let edit = kawoosh_doc::Edit {
                 range: start..end,
                 new_len: text.len(),
             };
-            // Carets already placed sit after this edit; shift them.
-            for (_, s) in &mut placed {
-                *s = Selection::new(
-                    edit.transform_offset(s.anchor, kawoosh_doc::Bias::Right),
-                    edit.transform_offset(s.head, kawoosh_doc::Bias::Right),
-                );
+            if !apart {
+                // Carets already placed sit after this edit; shift them.
+                for (_, s, _) in &mut placed {
+                    *s = Selection::new(
+                        edit.transform_offset(s.anchor, kawoosh_doc::Bias::Right),
+                        edit.transform_offset(s.head, kawoosh_doc::Bias::Right),
+                    );
+                }
             }
-            // Selections without an edit of their own move with the text.
             for (j, s) in items.iter_mut().enumerate() {
-                if j != i && !placed.iter().any(|(k, _)| *k == j) {
+                if !edited[j] {
                     *s = Selection::new(
                         edit.transform_offset(s.anchor, kawoosh_doc::Bias::Left),
                         edit.transform_offset(s.head, kawoosh_doc::Bias::Left),
                     );
                 }
             }
-            placed.push((i, after(start, text.len())));
+            moved += text.len() as isize - (end - start) as isize;
+            placed.push((i, after(start, text.len()), moved));
         }
+        // What the edits after a caret's own (the ones before it in the
+        // text) moved it by: all of them less those up to its own.
+        let placed = placed.into_iter().map(|(i, s, upto)| match apart {
+            true => {
+                let by = |o: usize| o.saturating_add_signed(moved - upto);
+                (i, Selection::new(by(s.anchor), by(s.head)))
+            }
+            false => (i, s),
+        });
         for (i, s) in placed {
             if i < items.len() {
                 items[i] = s;
@@ -3567,16 +3601,21 @@ impl Editor {
         if self.is_field(view) {
             text = text.replace('\n', " ");
         }
-        // A tab is `<Tab>`'s: each caret's own run to the next stop.
+        // A tab is `<Tab>`'s: each caret's own run to the next stop,
+        // from where the carets before it on its line leave it.
         let id = self.views[view].buffer;
         let (buf, ts) = (&self.buffers[id], self.tabstop_in(id));
+        let mut cols = motions::EditCols::default();
         let edits = self.views[view]
             .sels
             .iter()
             .enumerate()
             .map(|(i, s)| {
                 let text = if text == "\t" {
-                    self.tab_from(id, motions::display_col(buf, s.head, ts))
+                    let col = cols.at(buf, s.head, ts);
+                    let tab = self.tab_from(id, col);
+                    cols.put(buf, s.head..s.head, col, &tab, ts);
+                    tab
                 } else {
                     text.clone()
                 };

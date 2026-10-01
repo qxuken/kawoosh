@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use kawoosh_doc::Buffer;
 use kawoosh_editor::keymap::{LEADER, parse_notation};
-use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec, motions};
+use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec};
 use kawoosh_term::{TermSize, Terminal, encode_key};
 use kui_native::KeyPress;
 
@@ -1051,15 +1051,11 @@ impl Kawoosh {
         }
         self.open_file(path);
         if let (Some(v), Some(ln)) = (self.focused_view(), line) {
-            let buf = self.ed.buffer_of(v);
-            let ln = ln.max(1).min(buf.line_count()) - 1;
-            let off = match col {
-                Some(c) => motions::offset_at(buf, ln, c.saturating_sub(1)),
-                None => motions::first_nonblank(buf, ln),
-            };
-            self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(off));
-            // A place landed: a jump however near (jumps.md Decision 2).
+            // A place landed: a jump however near (jumps.md Decision 2);
+            // in a file still arriving, once its text has.
             self.ed.jumping = true;
+            let col = col.map(|c| c.saturating_sub(1));
+            self.place_at_line(v, ln.max(1) - 1, col);
         }
     }
 }

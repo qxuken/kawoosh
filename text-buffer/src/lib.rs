@@ -1490,21 +1490,10 @@ impl Buffer {
     }
 
     fn piece_find_nth_newline(piece: &Piece, newline_index: usize) -> Option<usize> {
-        let mut seen = 0;
-
-        for (index, &byte) in piece.bytes().iter().enumerate() {
-            if byte != b'\n' {
-                continue;
-            }
-
-            if seen == newline_index {
-                return Some(index);
-            }
-
-            seen += 1;
-        }
-
-        None
+        // `memchr`'s, as `Piece::newlines` counts them: a line looked up
+        // in a piece of 64 KiB was a byte-by-byte walk, and an edit per
+        // line over a long file looks up every line.
+        memchr::memchr_iter(b'\n', piece.bytes()).nth(newline_index)
     }
 
     fn find_nth_newline_offset(
