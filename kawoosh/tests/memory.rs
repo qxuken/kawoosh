@@ -758,7 +758,7 @@ kawoosh.forget("dir.rename", "{b}")
 /// history is the path's whatever root it was attended under: a
 /// launch never twins a workspace's row with an empty one under none,
 /// the pane's views, the pins, `oldfiles` and the boosts are the
-/// workspace's with `:memory all` everything, and a path's history
+/// workspace's with `:memory global` everything, and a path's history
 /// lives as long as any of its rows.
 #[test]
 fn a_workspace_scopes_the_memory_and_a_history_is_the_paths() {
@@ -830,7 +830,7 @@ fn a_workspace_scopes_the_memory_and_a_history_is_the_paths() {
         .unwrap();
     store.set_pinned(&z, 1).unwrap();
     // The pane: files, commands, recent and pins are the workspace's;
-    // all is everything.
+    // every kind under the global scope is everything.
     ex(&mut d, &mut app, "memory files");
     let subjects = |app: &Kawoosh| -> Vec<String> {
         app.memory_pane
@@ -856,11 +856,13 @@ fn a_workspace_scopes_the_memory_and_a_history_is_the_paths() {
     ex(&mut d, &mut app, "memory pins");
     assert!(subjects(&app).is_empty());
     ex(&mut d, &mut app, "memory all");
+    ex(&mut d, &mut app, "memory global");
     let s = subjects(&app);
     assert!(
         s.contains(&z.subject) && s.contains(&"other".to_string()),
         "{s:?}"
     );
+    ex(&mut d, &mut app, "memory workspace");
     d.keys(&mut app, "q");
     d.frame(&mut app);
     // `<leader>ea` pins a here; `<leader>e1` is a, not the other root's
@@ -1381,4 +1383,171 @@ fn a_clipboard_looked_at_is_not_written() {
         moments(&app).first().unwrap(),
         &(Took::Seen, "hunter2".into())
     );
+}
+
+/// The pane is this workspace's memory or the global one, a toggle
+/// apart: `<C-a>` in the pane flips `memory.scope` for the session,
+/// every view but the texts (a yank is a yank anywhere) and the jumps
+/// (the tab's) follows it, the head says which, `:memory global` and
+/// `:memory workspace` open the pane on one, and `memory.scope` is the
+/// default. `all` is every kind under the scope. Lua's ring reads under
+/// a workspace as its rows do.
+#[test]
+fn the_pane_toggles_between_the_workspaces_memory_and_the_global_one() {
+    use kawoosh::memory::View;
+    use kawoosh_editor::{Layer, Setting};
+    let dir = tmp("scope");
+    std::fs::create_dir_all(dir.join(".kawoosh")).unwrap();
+    let db = tmp("scope-db").join("state.db");
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "aaa\n").unwrap();
+    let (mut d, mut app) = launch(&db, &a);
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    // A yank here, a file here; another root's file, pinned, a command
+    // and a transition there.
+    d.keys(&mut app, "yy");
+    d.frame(&mut app);
+    app.flush_moments();
+    let store = app.store.clone().unwrap();
+    let now = kawoosh_systems::store::now();
+    let z = MomentKey::new("file", "/other/z.txt", "/other");
+    let delta = |visits| kawoosh_systems::store::MomentDelta {
+        visits,
+        first_at: now,
+        last_at: now,
+        ..Default::default()
+    };
+    store
+        .flush_moments(
+            &[
+                (z.clone(), delta(9)),
+                (MomentKey::new("command", "other", "/other"), delta(1)),
+            ],
+            &[kawoosh_systems::store::RingRow {
+                at: now,
+                key: z.clone(),
+            }],
+            1000,
+        )
+        .unwrap();
+    store.set_pinned(&z, 1).unwrap();
+    let subjects = |app: &Kawoosh| -> Vec<String> {
+        app.memory_pane
+            .rows()
+            .iter()
+            .filter_map(|r| r.key().map(|k| k.subject.clone()))
+            .collect()
+    };
+    let head = |d: &Drive, what: &str| texts(d).iter().any(|t| t.contains(what));
+    let a_path = a.display().to_string();
+
+    // The workspace's, by default.
+    assert_eq!(app.ed.settings.str("memory.scope"), Some("workspace"));
+    ex(&mut d, &mut app, "memory files");
+    assert_eq!(subjects(&app), std::slice::from_ref(&a_path));
+    assert!(head(&d, "1 files · in "), "{:?}", texts(&d));
+    // `<C-a>`: the global one, for the session, in every view.
+    d.press(&mut app, "<C-a>");
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.str("memory.scope"), Some("global"));
+    assert_eq!(
+        app.ed.settings.layer_value(Layer::Session, "memory.scope"),
+        Some(&Setting::Str("global".into()))
+    );
+    let s = subjects(&app);
+    assert!(s.contains(&z.subject) && s.contains(&a_path), "{s:?}");
+    assert!(head(&d, "2 files · every workspace"), "{:?}", texts(&d));
+    for (view, there) in [
+        ("recent", z.subject.as_str()),
+        ("commands", "other"),
+        ("pins", z.subject.as_str()),
+    ] {
+        ex(&mut d, &mut app, &format!("memory {view}"));
+        assert!(
+            subjects(&app).iter().any(|s| s == there),
+            "{view}: {:?}",
+            subjects(&app)
+        );
+    }
+    // `all` is every kind under the scope: here, the texts with the
+    // workspace's rows and none of the other root's.
+    ex(&mut d, &mut app, "memory all");
+    assert!(subjects(&app).contains(&z.subject));
+    d.press(&mut app, "<C-a>");
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.str("memory.scope"), Some("workspace"));
+    let s = subjects(&app);
+    assert!(s.contains(&a_path), "{s:?}");
+    assert!(
+        !s.contains(&z.subject) && !s.contains(&"other".to_string()),
+        "{s:?}"
+    );
+    assert!(
+        app.memory_pane
+            .rows()
+            .iter()
+            .any(|r| r.key().is_some_and(|k| k.kind == "text")),
+        "a text is under no workspace, and in every one"
+    );
+    // The texts are the same rows either way.
+    ex(&mut d, &mut app, "memory texts");
+    let n = app.memory_pane.rows().len();
+    d.press(&mut app, "<C-a>");
+    d.frame(&mut app);
+    assert_eq!(app.memory_pane.rows().len(), n);
+    assert!(n > 0);
+    // From the command line: the pane opened on a scope, and a pane
+    // focused already stays open with the scope changed.
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    assert_ne!(app.layout.focused_content(), Some(Content::Memory));
+    ex(&mut d, &mut app, "memory workspace");
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    assert_eq!(app.ed.settings.str("memory.scope"), Some("workspace"));
+    ex(&mut d, &mut app, "memory files");
+    ex(&mut d, &mut app, "memory global");
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    assert_eq!(app.memory_pane.view, View::Files);
+    assert!(subjects(&app).contains(&z.subject));
+    // `memory.scope` from the user's settings is where the pane starts.
+    app.ed.settings.unset(Layer::Session, "memory.scope");
+    app.ed
+        .settings
+        .set(Layer::User, "memory.scope", Setting::Str("global".into()));
+    d.frame(&mut app);
+    assert!(subjects(&app).contains(&z.subject));
+    app.ed.settings.set(
+        Layer::User,
+        "memory.scope",
+        Setting::Str("workspace".into()),
+    );
+    d.frame(&mut app);
+    assert!(!subjects(&app).contains(&z.subject));
+    // Lua: the ring under the workspace, as the rows are.
+    lua(
+        &mut app,
+        &format!(
+            r#"
+local here, every = {{}}, {{}}
+for _, r in ipairs(kawoosh.memory {{ recent = true, workspace = true }}) do here[r.subject] = true end
+for _, r in ipairs(kawoosh.memory {{ recent = true }}) do every[r.subject] = true end
+assert(here["{a}"] and not here["/other/z.txt"], "the workspace's ring")
+assert(every["{a}"] and every["/other/z.txt"], "the whole ring")
+assert(kawoosh.opt("memory.scope") == "workspace")
+"#,
+            a = lua_path(&a),
+        ),
+    );
+    // The workspace moving (a tab in another project) is another list,
+    // with nothing else changed.
+    let elsewhere = tmp("scope-else");
+    std::fs::create_dir_all(elsewhere.join(".kawoosh")).unwrap();
+    app.set_cwd(&elsewhere);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(subjects(&app).is_empty(), "{:?}", subjects(&app));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&elsewhere).ok();
 }

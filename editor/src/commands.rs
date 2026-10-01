@@ -4809,6 +4809,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("o", "memory origin"),
         ("x", "memory forget"),
         ("m", "memory pin"),
+        // This workspace's rows or every one's, as `<C-a>` flips the
+        // buffers picker's.
+        ("<C-a>", "memory scope"),
     ] {
         km.bind_local("memory", Pane, k, c, &[]);
     }

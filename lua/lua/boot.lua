@@ -523,9 +523,11 @@ end
 -- or a plugin's own "<plugin>.<kind>"), `workspace` (a path, or `true`
 -- for the current one; nothing for every workspace), `subject` (one
 -- row, or nil), `since` (seconds back), `pinned = true` (the pins in
--- pin order) and `limit` (200); `{ recent = true, limit = }` is the
--- ring instead — the transitions newest first, `{ at =, age =, kind =,
--- subject =, workspace = }` each. A row: `kind`, `subject`, `workspace`,
+-- pin order) and `limit` (200) — `workspace = true` or none is the
+-- memory pane's `memory.scope`, `workspace` or `global`; `{ recent =
+-- true, limit = }` is the ring instead — the transitions newest first,
+-- `{ at =, age =, kind =, subject =, workspace = }` each, under a
+-- `workspace` the ones made there and the texts. A row: `kind`, `subject`, `workspace`,
 -- `first`, `last` (unix seconds), `age`, `visits`, `dwell` (seconds),
 -- `edits`, `yanks`, `pinned` (0, or the pin's ordinal), `meta` (a
 -- table: a file's `line`, a text's `took`), and a text's `text`.

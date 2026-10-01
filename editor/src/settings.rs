@@ -657,6 +657,10 @@ const DOCS: &[(&str, &str)] = &[
         "memory.idle_secs",
         "seconds without a key or a click before time in a file stops counting",
     ),
+    (
+        "memory.scope",
+        "whose memory the pane shows: `workspace` this one's, `global` every one's",
+    ),
     ("picker.preview", "a preview beside the picker's list"),
     (
         "picker.wrap",
@@ -1072,6 +1076,10 @@ impl Settings {
         // Seconds without a key or a click after which dwell stops
         // counting.
         defaults.set("memory.idle_secs", Setting::Int(60));
+        // Whose rows the memory pane lists: `workspace`, the focused
+        // tab's project's, or `global`, every one's; `<C-a>` in the
+        // pane flips it for the session.
+        defaults.set("memory.scope", Setting::Str("workspace".into()));
         // The picker (`picker.lua`): a preview of the cursor's row
         // beside the list, and whether a row's text wraps to show the
         // whole of a long path; `<A-p>` and `<A-w>` in the picker flip
@@ -1149,6 +1157,7 @@ impl Settings {
             ("layout.dock", words(&["tree", "scroll"])),
             ("launcher.start", words(&["normal", "insert"])),
             ("buffers.scope", words(&["tab", "all"])),
+            ("memory.scope", words(&["workspace", "global"])),
             ("tabs.directory", words(&["auto", "always", "never"])),
             ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
@@ -1763,6 +1772,7 @@ mod tests {
                 "memory.idle_secs",
                 "memory.keep_days",
                 "memory.max_mb",
+                "memory.scope",
                 "memory.text.keep_days",
                 "memory.text.max_mb",
                 "pairs.enabled",

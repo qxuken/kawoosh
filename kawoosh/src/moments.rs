@@ -1190,12 +1190,18 @@ impl Kawoosh {
     /// The workspace's pins, in pin order (Decision 5: harpoon is
     /// per project).
     pub(crate) fn pins(&self) -> Vec<MomentRow> {
+        self.pins_in(Some(self.moments.workspace()))
+    }
+
+    /// The pins made under `workspace`, every workspace's for none, in
+    /// pin order.
+    pub(crate) fn pins_in(&self, workspace: Option<&str>) -> Vec<MomentRow> {
         self.store
             .as_ref()
             .map(|s| {
                 s.moments(&MomentQuery {
                     pinned: true,
-                    workspace: Some(self.moments.workspace()),
+                    workspace,
                     ..Default::default()
                 })
             })
