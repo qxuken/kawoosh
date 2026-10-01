@@ -13,10 +13,16 @@ servers and their documents (a click is `:lsp info`), `compiling…`
 while a compile runs. The tab strip gives each tab an even share of its
 row, and a tab dragged along it goes to the place under the pointer
 while it is held (2026-10-01; `]T` `[T` by hand — the even share is
-what makes the place a division of the row's content); a plugin can
-rewrite each tab's label (`kawoosh.tab_title(fn)`, step 50) and nothing
-else — the strip's own room and the title bar's are kawoosh's alone. wezterm's answer is `update-status`, a callback
-that sets a left and a right status on its tab bar, on a timer.
+what makes the place a division of the row's content). Tabs whose
+order changed glide to their places, by the drag or the keys alike;
+nothing else in the row glides, so the gliding is declared from the
+reorder until it has run and no longer (`chrome::TabsGlide` says why:
+kui's `slide` eases a place in the window whatever moved it — the
+wheel, a tab made, a resize). A plugin can rewrite each tab's label
+(`kawoosh.tab_title(fn)`, step 50) and nothing else — the strip's own
+room and the title bar's are kawoosh's alone. wezterm's answer is
+`update-status`, a callback that sets a left and a right status on its
+tab bar, on a timer.
 
 ## Decisions
 
