@@ -9,7 +9,7 @@ mod drive;
 
 use std::path::{Path, PathBuf};
 
-use drive::Drive;
+use drive::{Drive, overflows};
 use kawoosh::Kawoosh;
 use kawoosh::notify::Level;
 use kawoosh_editor::{Layer, Setting};
@@ -588,5 +588,128 @@ fn auto_installs_at_the_first_file_and_update_and_remove_follow() {
     let mut d = Drive::new(900.0, 500.0);
     let app = app_with(&mut d, &data, &[]);
     assert!(!app.languages.has_grammar(NAME) && app.grammars.listed.contains_key(NAME));
+    std::fs::remove_dir_all(t).ok();
+}
+
+/// `:grammars`, the pane: what is installed, what there is to install
+/// and what is built in, read off `kawoosh.grammars.list()`; `j` `k`
+/// walk it, `<CR>` installs the cursor's, `d` removes it, and one that
+/// failed says why on its row — in a narrow window too, inside its
+/// boxes.
+#[test]
+fn the_pane_lists_walks_installs_and_removes() {
+    let t = temp("pane");
+    let (remote, data) = (t.join("remote"), t.join("grammars"));
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let Some(lib) = library(&t) else { return };
+    let at = base(&remote, &lib);
+    std::fs::copy(remote.join("manifest.json"), data.join("manifest.json")).unwrap();
+
+    let mut d = Drive::new(760.0, 700.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&data);
+    let urls = Setting::List(vec![Setting::Str(at)]);
+    app.ed.settings.set(Layer::User, "grammars.url", urls);
+    d.frame(&mut app);
+
+    // The rows the cursor walks, as drawn, and one row's texts.
+    let rows = |d: &Drive| -> Vec<String> {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.label.clone())
+            .filter_map(|l| l.strip_prefix("grammar ").map(str::to_string))
+            .collect()
+    };
+    let row = |d: &Drive, name: &str| d.texts_under(&format!("grammar {name}")).join(" ");
+    let all = |d: &Drive| d.texts_under("body").join(" ");
+
+    ex(&mut d, &mut app, "grammars");
+    d.frame(&mut app);
+    let listed = rows(&d);
+    assert_eq!(
+        listed[..4],
+        ["dockerfile", "html", "java", "jsonish"],
+        "by name: {listed:?}"
+    );
+    assert!(
+        all(&d).contains("0 installed · 9 to install"),
+        "{}",
+        all(&d)
+    );
+    assert!(
+        all(&d).contains("rust · ") && all(&d).contains("built in"),
+        "{}",
+        all(&d)
+    );
+    let jsonish = row(&d, NAME);
+    assert!(
+        jsonish.contains(".jsonish") && jsonish.contains("KiB") && jsonish.contains("install"),
+        "{jsonish:?}"
+    );
+    assert_eq!(overflows(&d), Vec::<String>::new());
+
+    // Three rows down is jsonish; `<CR>` installs it, and it moves up
+    // to the installed, at its revision, with no button.
+    d.press(&mut app, "jjj");
+    d.press(&mut app, "<CR>");
+    assert!(app.grammars.installing.contains(NAME), "{}", app.ed.message);
+    until(&mut d, &mut app, "installed", |a| {
+        a.grammars.installed.contains_key(NAME)
+    });
+    d.frame(&mut app);
+    assert_eq!(rows(&d)[0], NAME, "the installed first");
+    assert!(
+        all(&d).contains("1 installed · 8 to install"),
+        "{}",
+        all(&d)
+    );
+    let jsonish = row(&d, NAME);
+    assert!(
+        jsonish.contains("0123456789ab") && !jsonish.contains("install"),
+        "{jsonish:?}"
+    );
+    assert_eq!(overflows(&d), Vec::<String>::new());
+
+    // `d` takes it out again; `d` on one that is not in says so.
+    d.press(&mut app, "d");
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, "grammar: jsonish removed");
+    assert!(row(&d, NAME).contains("install") && rows(&d)[3] == NAME);
+    d.press(&mut app, "d");
+    assert_eq!(
+        app.ed.message,
+        "grammars: nothing installed under the cursor"
+    );
+
+    // An install that fails says why on its row, with the way to try
+    // it again.
+    std::fs::write(remote.join(format!("{NAME}.sqlar")), b"something else").unwrap();
+    d.press(&mut app, "i");
+    until(&mut d, &mut app, "the install ended", |a| {
+        a.grammars.installing.is_empty()
+    });
+    d.frame(&mut app);
+    // The reason is the base's URL first; the harness reads a long
+    // text's start.
+    let body = all(&d);
+    assert!(
+        body.contains("jsonish .jsonish failed again file://"),
+        "{body:?}"
+    );
+    let errors = notes(&app, Level::Error);
+    assert!(
+        errors.last().unwrap().contains("its manifest says"),
+        "{errors:?}"
+    );
+    assert_eq!(overflows(&d), Vec::<String>::new());
+
+    d.press(&mut app, "q");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), Vec::<String>::new(), "closed");
+    assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(t).ok();
 }

@@ -35,8 +35,16 @@ so and names the command. `grammars.install` chooses: `"ask"` (that
 line, once per language in a session), `"auto"` (the grammar is
 installed without asking) or `"never"`.
 
+`:grammars` opens them all in a pane: the ones installed, each at
+its revision; the ones there are to install, with their files and
+size; the ones built in. `j` `k` walk it, `⏎` (or `i`, or a row's
+button) installs the grammar under the cursor, `u` updates every one,
+`d` removes the cursor's, `q` closes. One that is on its way shows how
+far it is, and one that failed says why.
+
 | command | |
 |---|---|
+| `:grammars` | the pane |
 | `:grammar` | which grammars are installed, and how many more there are |
 | `:grammar install NAME` | fetch and load NAME's grammar |
 | `:grammar update` | fetch the list, and install again every grammar whose release moved |

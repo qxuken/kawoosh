@@ -1,9 +1,9 @@
 # Grammars: built ahead, installed on demand
 
-Status: decided 2026-10-01 (roadmap step 77); rounds 1 to 3 — the
-repository, `:grammar install`, and the first file, `update` and
-`remove` — built the same day ("Built" at the end says where they
-departed from the text), rounds 4 to 6 not.
+Status: decided 2026-10-01 (roadmap step 77); rounds 1 to 4 — the
+repository, `:grammar install`, the first file with `update` and
+`remove`, and the pane — built the same day ("Built" at the end says
+where they departed from the text), rounds 5 and 6 not.
 Asked: "How
 can we implement Tree-Sitter grammar auto installation? Like neovim
 does, or at least `nvim-treesitter/nvim-treesitter` plugins do. We
@@ -535,3 +535,41 @@ when it did, a removal that clears the colours and is not undone by
 `auto`, and the next launch without the grammar. And in a window, a
 build of its own state opened on a zig file: the corner says `zig has
 a grammar: :grammar install zig` and nothing else.
+
+**Round 4, 2026-10-01**: `:grammars`, the pane, and its door.
+
+- **`kawoosh.grammars.list()`**: every grammar there is, each `{ name,
+  state, installed, rev, latest, repo, license, extensions, filenames,
+  size, step, percent, why }`, `state` one of `built in`, `installed`,
+  `available`, `installing`, `failed` — the linked-in ones first, the
+  rest by name. The shell publishes it whenever anything of it moves
+  (`Kawoosh::publish_grammars`), so the door reads a list already
+  made. `latest` is the revision an update would bring, when the
+  list's archive is another than the one in; `why` is the last
+  install's failure, kept until the name is tried again.
+- **`lua/grammars.lua`**, a bundled plugin as the themes' and fonts'
+  are: a column of its own with three parts — installed, at their
+  revisions; to install, with their files and their archives' sizes;
+  built in, as names. `j` `k` and the arrows walk the first two, a
+  click moves the cursor; `<CR>`, `i` or a row's button installs the
+  cursor's (again, when it is in: nothing is fetched unless its release
+  moved); `u` runs `:grammar update`; `d` removes the cursor's; `q`
+  and `<Esc>` close. A grammar on its way shows its step and a bar, a
+  failed one `failed`, why under it, and `again`. Its keys are
+  commands (`grammars take`, `update`, `remove`, `up`, `down`,
+  `close`) local to the view, and it changes nothing but through
+  `:grammar …`.
+
+Where it departed from the text: the door is `kawoosh.grammars.list()`
+— a table with a function, as `kawoosh.fonts` and `kawoosh.themes`
+are, the pane's own `take` and `state` beside it — not a bare
+`kawoosh.grammars()`. No key opens the pane: `<leader>o` is the look,
+and this is not it.
+
+Verified: `nu scripts/verify.nu`; `the_pane_lists_walks_installs_and_
+removes` (the rows as drawn and in order, `jjj⏎` installing the fourth,
+the row moved to the installed with its revision and no button, `d`
+taking it out, a failed install's row saying so, its texts inside their
+boxes at 760 px); the overflow sweep with `grammars` in it; and in a
+window, with zig in: the three parts, zig's revision, seven rows with
+their sizes and buttons.
