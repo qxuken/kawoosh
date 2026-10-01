@@ -1,21 +1,25 @@
-//! The sizes the app's devtools tabs — Perf, Settings — and its own
-//! panes — the undo history, the histories — are drawn from, read off
-//! kui's metrics (`ui.metrics()`, kui's T2) rather than kept as numbers
-//! of their own: one inset for a toolbar, a caption and a row, so their
-//! text is on one line; one row height, one text size, one gap — and a
-//! density the app sets (`Metrics::compact`) reaches the tabs the way it
-//! reaches the stock widgets. A tab or a pane that wants a size asks
-//! here. The one size that is the editor's and not kui's is a line of
-//! buffer text ([`Tab::line_h`]): a pane that shows what a buffer holds
-//! — a change's text, a diff's lines — shows it as the buffer does.
+//! The sizes the app's devtools tabs — Perf, Frames, Syntax — and its
+//! own panes — the undo history, the memory — are drawn from: the text
+//! sizes the chrome's scale (`look::Chrome`, which the Lua panes read
+//! as `ctx.metrics` too, so every pane's text is one of three sizes and
+//! `font.chrome_size` moves them all), the insets and gaps kui's
+//! metrics (`ui.metrics()`, kui's T2) rather than numbers of their own:
+//! one inset for a toolbar, a caption and a row, so their text is on
+//! one line; one row height, one gap — and a density the app sets
+//! (`Metrics::compact`) reaches the tabs the way it reaches the stock
+//! widgets. A tab or a pane that wants a size asks here. The one size
+//! that is the editor's and not the scale's is a line of buffer text
+//! ([`Tab::line_h`]): a pane that shows what a buffer holds — a
+//! change's text, a diff's lines — shows it as the buffer does.
 
 use kui_native::{Align, Color, Metrics, NodeSpec, Sizing, TextStyle};
 
+use crate::look::Chrome;
 use crate::palette::Pal;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tab {
-    /// A row's text: the hint size, the panel's own density.
+    /// A row's text: the chrome's small step, a pane title's size.
     pub text: f32,
     /// A row's height: the text with a hint's vertical air around it.
     pub row_h: f32,
@@ -32,8 +36,8 @@ pub(crate) struct Tab {
     /// Between the pieces of a caption or a toolbar — a fold's triangle
     /// and its title, a note and a button.
     pub gap: f32,
-    /// A small button's text, and a toolbar's note: a step under the
-    /// row's, as the panel's are.
+    /// A small button's text, and a toolbar's note: the chrome's note
+    /// step, a step under the row's.
     pub small_text: f32,
     /// A line of buffer text, in a pane that shows some: the editor's
     /// line height, so it reads as it does in the buffer.
@@ -41,16 +45,17 @@ pub(crate) struct Tab {
 }
 
 impl Tab {
-    pub(crate) fn of(m: &Metrics, line_h: f32) -> Self {
+    pub(crate) fn of(m: &Metrics, chrome: &Chrome, line_h: f32) -> Self {
+        let text = chrome.small;
         Self {
-            text: m.hint_text,
-            row_h: m.hint_text + m.hint_pad_y,
-            caption_h: m.hint_text + 2.0 * m.hint_pad_y,
+            text,
+            row_h: text + m.hint_pad_y,
+            caption_h: text + 2.0 * m.hint_pad_y,
             pad_x: m.menu_pad_x,
             cell_gap: m.hint_pad_x,
             section_gap: m.menu_pad_x,
             gap: m.menu_pad_y,
-            small_text: m.hint_text - 1.0,
+            small_text: chrome.note,
             line_h,
         }
     }

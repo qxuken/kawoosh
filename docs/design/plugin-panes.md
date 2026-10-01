@@ -66,6 +66,60 @@ row height it draws at, and slides its window itself (`picker.lua`'s
 `ensure_visible`). A divider drag changes `ctx.share` the next frame,
 which is how the picker keeps `picker.share` as the setting.
 
+## Sizes: one scale, the chrome's
+
+Asked 2026-10-02: "make it the same font size as the rest. ensure all
+panels uses the same token for metrics. if no, use existing or add one
+and expose to the settings". Every pane — Rust or Lua — draws its text
+at one of three sizes, the chrome's (`look::Chrome`): the size the tab
+strip and the title bars are set in, `font.chrome_size`, or the
+editor's font up to 16 px when that is `0` — the setting there was.
+
+| step | default | what |
+|---|---|---|
+| `text` (`$chrome`) | 13 | a pane's text: its rows, its fields, its headings (bold) |
+| `small` (`$chrome_small`) | 12 | a step under: secondary text, a chip, a status, a pane's title |
+| `note` (`$chrome_note`) | 11 | two under: a note, a count, a tag, a key legend |
+| `row` (`$chrome_row`) | 20 | a line of `text` with the chrome's air |
+
+A Lua view reads them as `ctx.metrics` (`kawoosh.metrics(env)` from
+anywhere with kui's env), and `ctx.field`, `ctx.icon`, `ctx.keys` and
+`ctx.legend` draw at them unless given a size; a Rust pane through
+`devtab::Tab`, whose text sizes are the scale's and whose insets and
+gaps kui's `Metrics`. A line of buffer text in a pane stays the
+editor's (`font.size`, `Tab::line_h`), and a specimen — the fonts
+pane's family names in their own face, the font lab — is drawn at the
+size it shows.
+
+What the panes read, before and after:
+
+| pane | before | after |
+|---|---|---|
+| tabs, title bars, strips, message line, confirm, toasts, breadcrumbs | `Chrome` | `Chrome` |
+| which-key | `Chrome`, its hints `small - 1` | `Chrome`, its hints `note` |
+| memory, undo history | `devtab::Tab` off kui's `Metrics::hint_text` (12, 11): deaf to `font.chrome_size` | `Tab` off the scale (`small`, `note`) |
+| Perf, Frames (devtools) | `Tab` off kui's hint size | `Tab` off the scale |
+| Syntax (devtools) | the buffer's `font.size - 1`, rows 18 px | `Tab` |
+| search's bar | `SIZE = 13` of its own, never the token; labels 12, keys 10 | `ctx.metrics` |
+| picker | `$chrome`, `$chrome_small` | `kawoosh.metrics` |
+| grammars, fonts, themes, theme lab, launcher | `$chrome` and sums: `- 1`, `- 2`, `- 3` (themes' badge) | `text`, `small`, `note` |
+| settings | `$chrome` and sums; headings `+ 3` and `+ 1`, filter caps `- 3` | the scale; headings bold at `text`, as every pane's |
+| du | `$chrome` and sums; rows 22 px of their own | the scale; rows `row + 2` |
+| dir | `$chrome_small`, read raw | `ctx.metrics.small` |
+| boot.lua's field, caps, legend | 13, 12, 12 | `text`, `note`, `note` |
+| lists, the memory's Lua half, vcs, status | no text of their own (multibuffers, Rust panes) | — |
+
+`kawoosh/tests/metrics.rs` opens the panes with the scale set to 22 px
+and finds no text under its `note`: a size kept as a number stays
+behind and is found smaller.
+
+Not yet: a row's height is still each pane's sum over `text` (a field
+`+ 6`, a chip or the launcher's row `+ 8`, a grammar's `+ 16`), and the
+Lua panes' paddings are numbers of their own (8, 14) where the Rust
+ones' are kui's `Metrics` — they follow nothing a user sets, and
+nothing asked for it yet. `kawoosh.icon` outside a view draws 13 px
+unless given a size.
+
 ## Events: `on_event(ev)`
 
 Every `on_click = { … }` payload in the tree comes back as `ev` with

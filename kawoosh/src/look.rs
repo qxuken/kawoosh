@@ -108,12 +108,22 @@ impl Default for Face {
 /// height is its text's line height plus the padding it had at the
 /// default size (13 px: tabs 22, strips 24, pane titles 22).
 /// `font.chrome_size` pins the size instead.
+///
+/// It is every pane's scale too (2026-10-02, plugin-panes.md "Sizes"):
+/// three text sizes — the size, [`Chrome::small`] a step under it,
+/// [`Chrome::note`] two — which the Rust panes read here
+/// (`devtab::Tab`) and the Lua ones as length tokens (`$chrome`,
+/// `$chrome_small`, `$chrome_note`; `ctx.metrics`), so no pane keeps a
+/// size of its own and one setting moves them all.
 #[derive(Clone, Copy, Debug)]
 pub struct Chrome {
     /// The mono face the chrome's text is set in.
     pub face: Face,
-    /// The smaller text: a pane's title, the message line.
+    /// The smaller text: a pane's title, the message line, a pane's
+    /// secondary text.
     pub small: f32,
+    /// The smallest: a note, a count, a tag, a key legend.
+    pub note: f32,
     pub tab_h: f32,
     pub strip_h: f32,
     pub pane_title_h: f32,
@@ -126,6 +136,7 @@ impl Chrome {
     pub fn of(face: Face, size: f32) -> Chrome {
         let line_height = (size * LINE_HEIGHT as f32).round().max(size + 2.0);
         let small = (size - 1.0).max(8.0);
+        let note = (size - 2.0).max(7.0);
         let small_lh = (small * LINE_HEIGHT as f32).round();
         Chrome {
             face: Face {
@@ -134,6 +145,7 @@ impl Chrome {
                 ..face
             },
             small,
+            note,
             tab_h: line_height + 2.0,
             strip_h: line_height + 4.0,
             pane_title_h: small_lh + 4.0,
@@ -678,13 +690,15 @@ impl Kawoosh {
         // The sizes as length tokens, so a Lua view's text follows the
         // font as the editor's own chrome does — `size = "$chrome"` —
         // and its arithmetic can read them (`env.tokens.lengths`): the
-        // editor's text and row, the chrome's text, smaller text and row.
+        // editor's text and row, the chrome's text, smaller text, note
+        // and row — the panes' one scale (boot.lua's `ctx.metrics`).
         let c = self.chrome;
         tokens = tokens
             .length("font", self.face.size)
             .length("font_row", self.face.line_height)
             .length("chrome", c.face.size)
             .length("chrome_small", c.small)
+            .length("chrome_note", c.note)
             .length("chrome_row", c.face.line_height);
         ui.set_tokens(tokens);
         self.look.syntax = syntax;

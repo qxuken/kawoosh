@@ -686,7 +686,7 @@ const DOCS: &[(&str, &str)] = &[
     ("font.features", "OpenType features, such as `-liga tnum`"),
     (
         "font.chrome_size",
-        "the size of the tabs', title bars' and strips' text; `0` follows `font.size`",
+        "the size of the tabs', title bars', strips' and every pane's text, a pane's secondary text a step under it and its notes two; `0` follows `font.size` up to 16",
     ),
     (
         "grammars.install",

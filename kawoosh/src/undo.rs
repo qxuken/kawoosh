@@ -268,9 +268,9 @@ impl Kawoosh {
 
     pub(crate) fn render_undo(&mut self, ui: &mut Ui<'_>, pane: PaneId, focused: bool) {
         self.sync_undo_rows();
-        // Every size from kui's metrics (`devtab::Tab`), as the tabs
-        // and the history pane take theirs.
-        let tm = Tab::of(&ui.metrics(), self.face.line_height);
+        // Every size from the panes' one scale (`devtab::Tab`), as the
+        // tabs and the memory pane take theirs.
+        let tm = Tab::of(&ui.metrics(), &self.chrome, self.face.line_height);
         let graph_geometry = Geometry {
             lane_w: LANE_W,
             row_h: tm.line_h,

@@ -640,6 +640,25 @@ end
 -- open yet is asked for and drawn empty this frame. The field has the
 -- keys when its view's keys are on it and `pane_focused` — the pane the
 -- view is drawn in has the keyboard — so one caret is on the screen.
+-- kawoosh.metrics(env): the panes' one scale (plugin-panes.md,
+-- "Sizes"), read off the length tokens the editor declares
+-- (`look::Chrome`) — the chrome's text size, `font.chrome_size` or
+-- the editor's font up to a cap, and the steps under it. Every pane,
+-- Rust or Lua, draws its text at one of `text`, `small` and `note`, so
+-- one setting moves them all:
+--   text   a pane's text: its rows, its fields
+--   small  a step under: secondary text, a chip, a pane's title
+--   note   two under: a note, a count, a tag, a key legend
+--   row    a line of `text` with the chrome's air: a row's height
+--   font   the editor's font size, for a line of buffer text
+-- `ctx.metrics` is this for the view's frame.
+function kawoosh.metrics(env)
+  local l = env and env.tokens and env.tokens.lengths or {}
+  local text = l.chrome or 13
+  return { text = text, small = l.chrome_small or text - 1, note = l.chrome_note or text - 2,
+           row = l.chrome_row or 20, font = l.font or 13 }
+end
+
 local function field_node(view_name, env, opts, pane_focused)
   local full = "lua:" .. view_name .. "/" .. opts.name
   local st = kawoosh._field(full)
@@ -648,7 +667,7 @@ local function field_node(view_name, env, opts, pane_focused)
     st = { text = "", mode = "normal", caret = 0, anchor = 0, focused = false }
   end
   local t = env.theme
-  local size = opts.size or 13
+  local size = opts.size or kawoosh.metrics(env).text
   -- One line, whatever its length: never wrapped, so no second row is
   -- drawn over what is under the field.
   local style = { family = "mono", size = size, wrap = "none" }
@@ -808,7 +827,7 @@ local function keys_node(env, notation, opts)
   opts = opts or {}
   local t = env.theme
   local C = kawoosh._cap
-  local size = opts.size or 12
+  local size = opts.size or kawoosh.metrics(env).note
   local style = { family = "mono", size = size, color = opts.color or t.muted, wrap = "none" }
   local line_h = env.measure_text("Mg", style).height
   local out = row { gap = C.gap, cross_align = "center" }
@@ -832,7 +851,7 @@ local function legend_node(env, items, opts)
   opts = opts or {}
   local t = env.theme
   local C = kawoosh._cap
-  local size = opts.size or 12
+  local size = opts.size or kawoosh.metrics(env).note
   local out = row { width = opts.width or "grow", gap = C.item_gap, cross_gap = 2,
     wrap_children = true, cross_align = "center" }
   for _, it in ipairs(items) do
@@ -868,7 +887,7 @@ function view(env, slot)
   -- node to put in the tree; `ctx.field_text("q")` is its line.
   local ctx = { pane = pane, focused = params.focused, width = params.width,
                 height = params.height, share = params.share, origin = params.origin, env = env,
-                name = name }
+                name = name, metrics = kawoosh.metrics(env) }
   -- A field draws its caret while its pane has the keys — not while
   -- the command line over it does: one caret on the screen.
   ctx.field = function(opts)
@@ -876,11 +895,13 @@ function view(env, slot)
   end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
   -- `ctx.icon(name, { size =, color = })`: `kawoosh.icon` in the view's
-  -- foreground. `ctx.keys("<C-w>j", { size =, color =, border = })`:
-  -- caps. `ctx.legend(items, { size =, word = })`: a key legend.
+  -- foreground, the scale's text size unless given. `ctx.keys("<C-w>j",
+  -- { size =, color =, border = })`: caps. `ctx.legend(items, { size =,
+  -- word = })`: a key legend. Both at the scale's note size unless given.
   ctx.icon = function(icon, opts)
     opts = opts or {}
     if opts.color == nil then opts.color = t.fg end
+    if opts.size == nil then opts.size = ctx.metrics.text end
     return kawoosh.icon(icon, opts)
   end
   ctx.keys = function(notation, opts) return keys_node(env, notation, opts) end
@@ -889,7 +910,7 @@ function view(env, slot)
   if not ok then
     return column { pad = 12, gap = 6,
       text("view `" .. name .. "` failed", { color = t.danger }),
-      text(tostring(tree), { size = 12, color = t.muted, wrap = "word" }) }
+      text(tostring(tree), { size = ctx.metrics.small, color = t.muted, wrap = "word" }) }
   end
   if type(tree) ~= "table" then
     return column { pad = 12, text("view `" .. name .. "` returned " .. type(tree), { color = t.danger }) }

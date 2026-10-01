@@ -62,12 +62,13 @@ local PANE_FACT = "lua:" .. VIEW
 local BLANK = "launcher:blank"
 -- Letters no entry takes: the list's walk, the query's way in, close.
 local RESERVED = { j = true, k = true, i = true, a = true, q = true }
--- The rows follow the chrome's size, as the picker's do.
-local SIZE = 13
+-- The rows follow the panes' one scale (`kawoosh.metrics`), as the
+-- picker's do.
+local SIZE, SMALL, NOTE = 13, 12, 11
 local ROW_H = SIZE + 8
 local function sizes(env)
-  local l = env and env.tokens and env.tokens.lengths or {}
-  SIZE = l.chrome or 13
+  local m = kawoosh.metrics(env)
+  SIZE, SMALL, NOTE = m.text, m.small, m.note
   ROW_H = SIZE + 8
 end
 -- The most rows a module keeps for a query.
@@ -592,7 +593,7 @@ end
 local function header(r, t)
   return row {
     key = "h " .. r.section.name, width = "grow", height = ROW_H, pad = { x = 10 }, cross_align = "end",
-    text({ { r.header .. (r.loading and "  …" or ""), bold = true } }, { size = SIZE - 2, color = t.faint }),
+    text({ { r.header .. (r.loading and "  …" or ""), bold = true } }, { size = NOTE, color = t.faint }),
   }
 end
 
@@ -621,7 +622,7 @@ local function list_row(i, r, R)
     column { width = "grow", text(spans, { family = "mono", size = SIZE, wrap = "word" }) },
   }
   local hint = hint_of(it)
-  if hint then line[#line + 1] = R.ctx.keys(hint, { size = SIZE - 1, color = t.faint }) end
+  if hint then line[#line + 1] = R.ctx.keys(hint, { size = SMALL, color = t.faint }) end
   return line
 end
 
@@ -641,7 +642,7 @@ local function tile(i, r, R)
     text(spans_of(r, t), { family = "mono", size = SIZE, wrap = "word" }),
   }
   local hint = hint_of(r.hit.item)
-  if hint then chip[#chip + 1] = R.ctx.keys(hint, { size = SIZE - 1, color = t.faint }) end
+  if hint then chip[#chip + 1] = R.ctx.keys(hint, { size = SMALL, color = t.faint }) end
   return chip
 end
 
@@ -649,7 +650,7 @@ end
 -- error, "no matches".
 local function note(s, color, R)
   return row { width = "grow", pad = { x = 10, y = 4 },
-    text(s, { size = SIZE - 1, color = color or R.t.muted, wrap = "word" }) }
+    text(s, { size = SMALL, color = color or R.t.muted, wrap = "word" }) }
 end
 
 -- The prompt: its label and the query's field.

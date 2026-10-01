@@ -255,6 +255,11 @@ fn the_chrome_follows_the_font_to_a_cap() {
     };
     assert_eq!(length("chrome"), Some(16.0));
     assert_eq!(length("chrome_small"), Some(15.0));
+    assert_eq!(
+        length("chrome_note"),
+        Some(14.0),
+        "the panes' smallest step"
+    );
     assert_eq!(length("font"), Some(29.0));
     assert_eq!(app.chrome.strip_h, 28.0);
     ex(&mut d, &mut app, "set font.chrome_size=20");

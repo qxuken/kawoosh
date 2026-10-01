@@ -88,7 +88,7 @@ The fonts pane lists every family as a card drawn in that font, with two lines o
 | `font.size` | `13` | size in logical pixels (6 to 96) |
 | `font.line_height` | `1.5` | the row's height as a ratio of the size |
 | `font.features` | `""` | OpenType features, such as `-liga` or `tnum` |
-| `font.chrome_size` | `0` | the tabs' and strips' text size; 0 follows `font.size` |
+| `font.chrome_size` | `0` | the text size of the tabs, the strips and every pane (the panes' secondary text a step smaller, their notes and key legends two); 0 follows `font.size` up to 16 |
 
 ## Soft wrap
 

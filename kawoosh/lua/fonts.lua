@@ -38,10 +38,11 @@ local PANE_FACT = "lua:" .. VIEW
 local SHARE = 0.4
 local PAD = 14
 local GAP = 8
-local SIZE = 13
+-- The panes' one scale (`kawoosh.metrics`), read each frame.
+local SIZE, SMALL, NOTE = 13, 12, 11
 local function sizes(env)
-  local l = env and env.tokens and env.tokens.lengths or {}
-  SIZE = l.chrome or 13
+  local m = kawoosh.metrics(env)
+  SIZE, SMALL, NOTE = m.text, m.small, m.note
 end
 
 fonts.sample = {
@@ -209,7 +210,7 @@ local function card(f, cur, ctx, is_cursor, height, query)
   local head = row { width = "grow", gap = 8, cross_align = "center", main_align = "spaceBetween",
     row { width = "grow", clip = true,
       text(name, face { size = SIZE + 2, line_height = SIZE + 8, color = r.fg, wrap = "none" }) },
-    text(table.concat(notes, " · "), { size = SIZE - 2, color = shown and t.accent or r.muted, wrap = "none" }) }
+    text(table.concat(notes, " · "), { size = NOTE, color = shown and t.accent or r.muted, wrap = "none" }) }
 
   local code = column { width = "grow", gap = 0, clip = true }
   for _, line in ipairs(fonts.sample) do
@@ -244,7 +245,7 @@ local function chip(label, on, ev, t)
   return row {
     key = "chip " .. label, pad = { x = 8 }, height = SIZE + 8, radius = 4, cross_align = "center",
     bg = on and t.accent or t.sunken, hover_bg = not on and t.surface or nil, on_click = ev,
-    text(label, { size = SIZE - 1, color = on and t.on_accent or t.muted, wrap = "none" }),
+    text(label, { size = SMALL, color = on and t.on_accent or t.muted, wrap = "none" }),
   }
 end
 
@@ -299,10 +300,10 @@ kawoosh.view(VIEW, function(ctx)
       chip("all", S.all, { kind = "mode", all = true }, t),
       row { width = "grow" },
       chip("−", false, { kind = "size", by = -1 }, t),
-      text(string.format("%g px", cur.size), { size = SIZE - 1, color = t.muted, wrap = "none" }),
+      text(string.format("%g px", cur.size), { size = SMALL, color = t.muted, wrap = "none" }),
       chip("+", false, { kind = "size", by = 1 }, t) },
     text("selected: " .. (shown or "kui's mono") .. (cur.family == "" and " (kawoosh's)" or ""),
-      { size = SIZE - 1, color = t.muted, wrap = "word" }),
+      { size = SMALL, color = t.muted, wrap = "word" }),
     row { width = "grow", gap = 8, cross_align = "center",
       text("/", { family = "mono", size = SIZE, color = t.accent }),
       (function()
@@ -317,10 +318,10 @@ kawoosh.view(VIEW, function(ctx)
           count = n == 0 and "no match" or ((k and (k .. " of ") or "") .. n .. (n == 1 and " match" or " matches"))
           color = n == 0 and t.danger or t.muted
         end
-        return text(count, { size = SIZE - 2, color = color, wrap = "none" })
+        return text(count, { size = NOTE, color = color, wrap = "none" })
       end)() },
     ctx.legend({ { { "j", "k" }, "walk" }, { "<CR>", "takes" }, { "/", "searches" }, { { "n", "N" }, "next, back" },
-      { "m", "mono or all" }, { { "+", "-" }, "size" }, { "y", "copies" }, { "q", "closes" } }, { size = SIZE - 2 }) }
+      { "m", "mono or all" }, { { "+", "-" }, "size" }, { "y", "copies" }, { "q", "closes" } }, { size = NOTE }) }
 
   local list = uniform_list(ctx.env, { key = "list", rows = #S.list, row_h = stride, width = "grow",
                                        height = "grow", pad = { x = PAD } }, function(i)
@@ -330,13 +331,13 @@ kawoosh.view(VIEW, function(ctx)
 
   local foot = column { width = "grow", gap = 6, pad = { x = PAD, bottom = PAD },
     text("a pick is the session's; to keep it, in settings.lua:",
-      { size = SIZE - 1, color = t.muted, wrap = "word" }),
+      { size = SMALL, color = t.muted, wrap = "word" }),
     row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow", pad = { x = 8, y = 4 }, radius = 4, bg = t.sunken,
-        text(keep_line(cur), { family = "mono", size = SIZE - 1, color = t.fg, wrap = "word" }) },
+        text(keep_line(cur), { family = "mono", size = SMALL, color = t.fg, wrap = "word" }) },
       row { key = "copy", pad = { x = 8, y = 4 }, radius = 4, bg = t.raised, hover_bg = t.surface,
         border = { w = 1, color = t.border }, on_click = { kind = "copy" },
-        text("copy", { size = SIZE - 1, color = t.fg, wrap = "none" }) } } }
+        text("copy", { size = SMALL, color = t.fg, wrap = "none" }) } } }
 
   return column { width = "grow", height = "grow", bg = t.bg, gap = 10, head, list, foot }
 end, function(ev)

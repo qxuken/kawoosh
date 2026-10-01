@@ -72,19 +72,19 @@ local PANE_FACT = "lua:" .. VIEW
 -- without it fall through to the pane's own, the column's width.
 local PREVIEW_FACT = "picker:preview"
 -- The rows' text: the field's size, so the query and its answers line
--- up; a row is the field's height too. The editor's chrome sizes, read
--- off its length tokens each frame (`sizes`), so the picker follows the
--- font as the tabs and the strips do; these are the 13 px defaults.
-local SIZE = 13
+-- up; a row is the field's height too. The panes' one scale
+-- (`kawoosh.metrics`), read each frame (`sizes`), so the picker follows
+-- the font as the tabs and the strips do; these are the 13 px defaults.
+local SIZE, SMALL = 13, 12
 local ROW_H = SIZE + 6
 local PREVIEW_SIZE = 12
 local PREVIEW_ROW = PREVIEW_SIZE + 4
 
 local function sizes(env)
-  local l = env and env.tokens and env.tokens.lengths or {}
-  SIZE = l.chrome or 13
+  local m = kawoosh.metrics(env)
+  SIZE, SMALL = m.text, m.small
   ROW_H = SIZE + 6
-  PREVIEW_SIZE = l.chrome_small or 12
+  PREVIEW_SIZE = m.small
   PREVIEW_ROW = PREVIEW_SIZE + 4
 end
 -- The most rows a query keeps: a screenful and a few pages after it.
@@ -1177,7 +1177,7 @@ kawoosh.view(VIEW, function(ctx)
   local field = ctx.field { name = FIELD, placeholder = P.src.placeholder or "type to filter", size = SIZE }
   field.width = "grow"
   head[#head + 1] = field
-  head[#head + 1] = text(count, { size = SIZE - 1, color = t.faint, wrap = "none" })
+  head[#head + 1] = text(count, { size = SMALL, color = t.faint, wrap = "none" })
   local indent = P.src.tree and (P.query or "") == "" and function(it) return it.depth or 0 end or nil
   -- A row the pointer left is forgotten by the next frame: a row
   -- entered after it is the pointer come back to the list.

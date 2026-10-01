@@ -288,7 +288,7 @@ impl Kawoosh {
         let what_style = TextStyle::new(small).color(pal.fg).nowrap();
         let group_style = TextStyle::new(small).color(pal.dim).nowrap();
         let title_style = TextStyle::new(small).color(pal.dim).nowrap();
-        let hint_style = TextStyle::new(small - 1.0).color(pal.dim).nowrap();
+        let hint_style = TextStyle::new(self.chrome.note).color(pal.dim).nowrap();
         let hint = keys.is_empty().then_some("also :keys n · i · v · o");
 
         // The card fits the window: as many rows to a column as its
