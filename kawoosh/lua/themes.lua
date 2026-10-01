@@ -106,6 +106,10 @@ end
 
 -- ------------------------------------------------------------ the card
 
+-- A card's corners and the width of its ring.
+local RADIUS = 6
+local RING = 2
+
 -- A card: the variant drawn in its own colours.
 local function card(v, cur, ctx, is_cursor, width)
   local r, t = v.roles, ctx.env.theme
@@ -120,9 +124,11 @@ local function card(v, cur, ctx, is_cursor, width)
     return s
   end
 
+  -- The title strip rounds its top as the ring's inner edge does, or
+  -- its square corners cover the ring's curve there.
   local head = row {
     width = "grow", pad = { x = 10, y = 6 }, gap = 8, cross_align = "center", bg = r.surface,
-    main_align = "spaceBetween",
+    main_align = "spaceBetween", radius_tl = RADIUS - RING, radius_tr = RADIUS - RING,
     text({ { v.title, bold = true } }, { size = SIZE, color = r.fg, wrap = "none" }),
     text(shown and "selected" or held and ("selected for " .. half) or "",
       { size = SIZE - 2, color = r.muted, wrap = "none" }),
@@ -157,17 +163,16 @@ local function card(v, cur, ctx, is_cursor, width)
       border = i == 1 and { w = 1, color = r.border } or nil }
   end
 
-  local ring
-  if is_cursor then
-    ring = { w = 2, color = t.accent }
-  elseif shown then
-    ring = { w = 2, color = r.border_strong }
-  else
-    ring = { w = 1, color = r.border }
-  end
+  -- The ring: the window's accent on the cursor's card, the variant's
+  -- strong border on the one on the screen, its plain border on the
+  -- rest. kui's `border` insets nothing, so the sections sit inside it
+  -- by its width, or those that paint (the title strip, the selected
+  -- line, the status strip) cover it where they run. One width for
+  -- every card, so nothing moves as the cursor walks.
+  local ring = is_cursor and t.accent or shown and r.border_strong or r.border
   return column {
-    key = "card " .. v.name, width = width, bg = r.bg, radius = 6, clip = true, gap = 0,
-    border = ring, on_click = { kind = "take", name = v.name },
+    key = "card " .. v.name, width = width, bg = r.bg, radius = RADIUS, clip = true, gap = 0,
+    pad = RING, border = { w = RING, color = ring }, on_click = { kind = "take", name = v.name },
     head, code, status, swatches,
   }
 end

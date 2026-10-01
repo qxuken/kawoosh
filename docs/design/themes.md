@@ -193,7 +193,14 @@ status strip with the accent's mode chip, and the sixteen as swatches.
 The card each slot holds is marked — "selected" on the one the window
 shows, outlined, "selected for light" (or dark) on the other base's —
 and the pane's head says which is selected and on which base (the
-wording since 2026-09-26; it said "on show" and "in use"). A click,
+wording since 2026-09-26; it said "on show" and "in use"). Every card
+is ringed whole, one width for all so nothing moves as the cursor
+walks: the window's accent on the cursor's, the variant's strong
+border on the one shown, its plain border on the rest. kui's `border`
+insets nothing, so the card is padded by the ring and its title strip
+rounds its top to the ring's inner edge (until 2026-10-02 the title
+and status strips and the selected line painted over the ring, the
+accent showing only beside the code and the swatches). A click,
 or `⏎` on the cursor's card, puts it in its slot (`:theme dark NAME`);
 `t` toggles the base, `s` follows the system, `h` `j` `k` `l` and the
 arrows walk the cards, the cursor's scrolled into view as it moves
