@@ -814,6 +814,58 @@ fn a_waiting_command_reads_the_typed_character_or_the_key() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// On a layout the platform says is not Latin every key is the US one at
+/// its position, its ASCII too (kui F115). macOS's Russian puts `]` on
+/// the key printed `` ` ``, `%` on ⇧4 and `:` on ⇧5, and judged by itself
+/// each won: `` di` `` was `di]`, `$` was `%` and `%` opened the command
+/// line. Now `` di` `` empties the backticks, ⇧4 goes to the line's end
+/// and ⇧5 to the matching bracket; insert mode still types the layout's
+/// `]`.
+#[test]
+fn a_non_latin_layout_s_punctuation_is_the_us_key() {
+    use kui_native::{InputEvent, KeyCode, KeyPress, LayoutScript};
+    let mut app = Kawoosh::new("t", "x `one` (two)");
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    let ru = |d: &mut Drive, app: &mut Kawoosh, letter: char, at: char, mods: KeyMods| {
+        let press = KeyPress::from_layout_in(
+            KeyCode::Char(letter),
+            KeyCode::Char(at),
+            mods,
+            LayoutScript::NonLatin,
+        )
+        .with_text(letter.to_string());
+        d.input(app, InputEvent::KeyDown(press.clone()));
+        if let Some(ev) = press.edit_event() {
+            d.input(app, ev);
+        }
+        d.input(app, InputEvent::KeyUp(press.released()));
+        d.frame(app);
+    };
+    let head = |app: &Kawoosh| {
+        app.ed.views[app.focused_view().unwrap()]
+            .sels
+            .primary()
+            .head
+    };
+    let none = KeyMods::default();
+    let shift = KeyMods::NONE.with_shift();
+    ru(&mut d, &mut app, 'в', 'd', none);
+    ru(&mut d, &mut app, 'ш', 'i', none);
+    ru(&mut d, &mut app, ']', '`', none);
+    assert_eq!(text(&app), "x `` (two)", "the key printed ` is the quote");
+    ru(&mut d, &mut app, '%', '4', shift);
+    assert_eq!(head(&app), 9, "⇧4 is `$`");
+    ru(&mut d, &mut app, ':', '5', shift);
+    assert!(app.ed.prompt_view().is_none(), "⇧5 is not the layout's `:`");
+    assert_eq!(head(&app), 5, "⇧5 is `%`, to the matching bracket");
+    ru(&mut d, &mut app, 'ш', 'i', none);
+    ru(&mut d, &mut app, ']', '`', none);
+    assert_eq!(text(&app), "x `` ](two)", "typing is the layout's");
+    d.key(&mut app, "escape", none);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `J` on the line before the last joins the two and nothing above: the
 /// range an operator takes on the last line reaches back for the newline
 /// before it (`dd`'s rule), which is not the join's business — it began
