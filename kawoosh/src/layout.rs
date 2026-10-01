@@ -949,6 +949,14 @@ impl Layout {
         }
     }
 
+    /// Pane `pane` made as if split from `from`: where its keys go
+    /// back to, and what asks for it next (`came_from`).
+    pub fn tie(&mut self, pane: PaneId, from: PaneId) {
+        if pane != from && self.panes.contains_key(&from) {
+            self.came_from.insert(pane, from);
+        }
+    }
+
     /// The pane `pane` was split from, if it is still there.
     pub fn came_from(&self, pane: PaneId) -> Option<PaneId> {
         self.came_from

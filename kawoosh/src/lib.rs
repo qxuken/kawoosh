@@ -31,6 +31,7 @@ pub mod frames;
 pub mod grammars;
 pub mod graph;
 pub mod harness;
+pub mod headers;
 pub mod help;
 pub mod history;
 pub mod indent;

@@ -323,9 +323,18 @@ impl Kawoosh {
     /// its field's mode if it has one.
     fn mode_module(&self) -> Module {
         let pal = self.pal;
-        let Some(view) = self.focused_view() else {
+        // A header with the keys (`headers.rs`) is told as a Lua pane is.
+        let header = self
+            .header_field()
+            .and_then(|_| self.pane_header(self.layout.focused()))
+            .map(|h| h.view.clone());
+        let Some(view) = self.focused_view().filter(|_| header.is_none()) else {
             let lua_name;
             let what = match self.layout.focused_content() {
+                _ if header.is_some() => {
+                    lua_name = header.unwrap_or_default().to_uppercase();
+                    lua_name.as_str()
+                }
                 Some(Content::Undo) => "UNDO",
                 Some(Content::Memory) => "MEMORY",
                 Some(Content::Lua(n)) => {
