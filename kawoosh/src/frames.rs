@@ -18,8 +18,12 @@
 //! drew anything new: one that drew what the frame before it drew is
 //! `same`, a frame nobody needed. A frame with no cause at all is
 //! `unexplained`: the platform asked (an expose, a live resize).
+//!
+//! Only while the Frames tab is on show, or `KAWOOSH_FRAME_LOG` asks for
+//! the burns: otherwise no frame is ledgered, no input noted, and kui's
+//! trace is off.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -55,12 +59,16 @@ const OWN_WAKE: &str = "frames";
 thread_local! {
     /// The frames asked for by name since the ledger last read them.
     static REQUESTED: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    /// Whether the ledger is keeping frames, for [`request`].
+    static KEEPING: Cell<bool> = const { Cell::new(true) };
 }
 
 /// Asks kui for the next frame, as `ui.request_frame` does, and says
 /// why: the name is the cause the next frame is ledgered under.
 pub fn request(ui: &mut Ui<'_>, why: &'static str) {
-    REQUESTED.with(|r| r.borrow_mut().push(why));
+    if KEEPING.get() {
+        REQUESTED.with(|r| r.borrow_mut().push(why));
+    }
     ui.request_frame();
 }
 
@@ -332,6 +340,9 @@ impl Burn {
 }
 
 pub struct Frames {
+    /// Keeping frames: the tab was on show the frame before, or there
+    /// is a log to keep the burns in.
+    on: bool,
     /// The last [`KEEP`] frames, oldest first.
     pub ring: VecDeque<Frame>,
     /// The inputs since the last frame.
@@ -360,6 +371,7 @@ pub struct Frames {
 impl Default for Frames {
     fn default() -> Self {
         Self {
+            on: true,
             ring: VecDeque::with_capacity(KEEP),
             inputs: Vec::new(),
             last_input: None,
@@ -378,14 +390,46 @@ impl Default for Frames {
 impl Frames {
     /// The ledger's own wake, from the app's.
     pub fn with_wake(wake: &WakeHandle) -> Self {
+        let f = Self::default();
         Self {
+            on: f.log.is_some(),
             alarm: Some(Alarm::spawn(wake.named(OWN_WAKE))),
-            ..Self::default()
+            ..f
         }
+    }
+
+    /// Whether frames are kept, and that they are from now on, or not:
+    /// stopped, a run under way is summed up as it stands and the
+    /// frame under way left untimed. What was kept stays for the tab.
+    pub fn set_on(&mut self, on: bool) {
+        KEEPING.set(on);
+        if self.on == on {
+            return;
+        }
+        self.on = on;
+        if !on {
+            self.close_run();
+            self.inputs.clear();
+            self.started = None;
+            REQUESTED.with(|r| r.borrow_mut().clear());
+        }
+    }
+
+    /// Whether frames are being kept.
+    pub fn on(&self) -> bool {
+        self.on
+    }
+
+    /// Whether a log asks for the burns whether or not the tab shows.
+    pub fn logging(&self) -> bool {
+        self.log.is_some()
     }
 
     /// An input the app was handed, by its kind.
     pub fn input(&mut self, kind: &str) {
+        if !self.on {
+            return;
+        }
         let now = Instant::now();
         self.inputs.push(kind.to_string());
         self.last_input = Some((kind.to_string(), now));
@@ -393,6 +437,9 @@ impl Frames {
 
     /// Something the frame under way drained from a system, by kind.
     pub fn drained(&mut self, kind: &'static str) {
+        if !self.on {
+            return;
+        }
         let add = |f: &mut Frame| match f.drained.iter_mut().find(|(n, _)| *n == kind) {
             Some((_, k)) => *k += 1,
             None => f.drained.push((kind, 1)),
@@ -416,6 +463,9 @@ impl Frames {
     /// A frame begins: its causes are read, from `wake`'s tally, the
     /// frames asked for by name, and kui's trace.
     pub fn begin_with(&mut self, wakes: Vec<(&'static str, u32)>, kui: KuiReading) {
+        if !self.on {
+            return;
+        }
         let now = Instant::now();
         // The frame before, now that kui has compared it.
         if let Some(same) = kui.prev_unchanged {
@@ -625,11 +675,14 @@ fn chrono_now() -> String {
 impl Kawoosh {
     /// The frame's causes read, before anything else in `view`.
     pub(crate) fn frames_begin(&mut self, ui: &mut Ui<'_>) {
+        let on = self.tab_shown == Some(TAB) || self.frames.logging();
+        self.frames.set_on(on);
         let core = ui.core();
-        if !core.frame_trace() {
-            core.set_frame_trace(true);
+        if core.frame_trace() != on {
+            core.set_frame_trace(on);
         }
-        let kui = KuiReading::of(core);
+        // The wakes' tally is taken either way, so the first frame kept
+        // does not count the ones from before.
         let mut wakes = self.wake.take_counts();
         for w in &self.shared_wakes {
             for (n, k) in w.take_counts() {
@@ -639,7 +692,10 @@ impl Kawoosh {
                 }
             }
         }
-        self.frames.begin_with(wakes, kui);
+        if on {
+            let kui = KuiReading::of(ui.core());
+            self.frames.begin_with(wakes, kui);
+        }
     }
 
     /// Declares the tab every frame and draws it while it is on show.
@@ -652,6 +708,10 @@ impl Kawoosh {
 
     fn frames_body(&mut self, ui: &mut Ui<'_>) {
         self.tab_shown = Some(TAB);
+        // Just opened: the ledger starts with the next frame.
+        if !self.frames.on {
+            ui.request_frame();
+        }
         let pal = self.pal;
         let font = self.face;
         let tm = Tab::of(&ui.metrics(), self.face.line_height);
