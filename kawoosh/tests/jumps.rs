@@ -216,6 +216,35 @@ fn a_closed_file_opens_again_at_its_place() {
     assert_eq!(caret(&app), ("a.txt".into(), 7));
 }
 
+/// A file past `ASYNC_OPEN_BYTES` opens on the io thread (here forced
+/// on a small one): the caret goes to the place once the text lands,
+/// and the landing is no jump that cuts `<C-i>` off.
+#[test]
+fn a_file_still_arriving_is_gone_to_once_it_lands() {
+    let (mut d, mut app, dir) = launch("arriving");
+    d.press(&mut app, "7j");
+    let a = app.ed.views[app.focused_view().unwrap()].buffer;
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("b.txt").display()),
+    );
+    app.ed.remove_buffer(a);
+    d.frame(&mut app);
+    let file = dir.join("a.txt");
+    let len = std::fs::metadata(&file).unwrap().len() as usize;
+    app.open_on_io_thread(&file, len);
+    d.press(&mut app, "<C-o>");
+    d.frame(&mut app);
+    app.wait_for_open();
+    d.frame(&mut app);
+    assert_eq!(caret(&app), ("a.txt".into(), 7));
+    assert_eq!(list(&app), vec!["a.txt:7", "b.txt:0"]);
+    d.press(&mut app, "<C-i>");
+    d.frame(&mut app);
+    assert_eq!(caret(&app), ("b.txt".into(), 0));
+}
+
 #[test]
 fn a_file_deleted_since_is_stepped_over() {
     let (mut d, mut app, dir) = launch("deleted");

@@ -81,6 +81,10 @@ pub struct Look {
     seen: HashMap<ViewId, Seen>,
     /// The list as last handed to Lua.
     published: Option<Jumps>,
+    /// A place gone to in a buffer still arriving from the io thread,
+    /// and the pane it was gone to in: the caret is put there when the
+    /// text lands.
+    landing: Option<(ViewId, Jump)>,
 }
 
 /// The column (characters) of byte `at` on its line.
@@ -180,6 +184,7 @@ impl Kawoosh {
     /// A step that edited the text carried the caret, and while the
     /// prompt is open its preview does: neither is a move.
     pub(crate) fn sync_jumps(&mut self) {
+        self.land_jump();
         let declared = std::mem::take(&mut self.ed.jumping);
         let views = &self.ed.views;
         self.jump_look.seen.retain(|v, _| views.contains_key(*v));
@@ -355,8 +360,27 @@ impl Kawoosh {
             }
         };
         self.show_buffer(v, id);
-        let b = &self.ed.buffers[id];
-        let at = if open.is_some() && j.version == Some(b.version()) {
+        self.ed.jumping = false;
+        let mut j = j.clone();
+        if open.is_none() {
+            j.version = None;
+        }
+        j.buffer = Some(id);
+        if self.ed.buffers[id].loading.is_some() {
+            self.jump_look.landing = Some((v, j));
+        } else {
+            self.jump_look.landing = None;
+            self.place_jump(v, &j);
+        }
+        true
+    }
+
+    /// The caret of `v` at `j` in its buffer, and the look told so.
+    fn place_jump(&mut self, v: ViewId, j: &Jump) {
+        let Some(b) = j.buffer.and_then(|id| self.ed.buffers.get(id)) else {
+            return;
+        };
+        let at = if j.version == Some(b.version()) {
             j.offset.min(b.len())
         } else {
             let ln = j.line.min(b.line_count().saturating_sub(1));
@@ -365,11 +389,33 @@ impl Kawoosh {
         let view = &mut self.ed.views[v];
         view.sels = Selections::single(Selection::point(at));
         view.goal_col = None;
-        self.ed.jumping = false;
         if let Some(s) = self.seen_now(v) {
             self.jump_look.seen.insert(v, s);
         }
-        true
+    }
+
+    /// The place gone to while its buffer was arriving, once it has:
+    /// the caret put there while the pane still shows it — and the look
+    /// told, so the text landing is no move of its own.
+    fn land_jump(&mut self) {
+        let Some((v, j)) = &self.jump_look.landing else {
+            return;
+        };
+        let b = self
+            .ed
+            .views
+            .get(*v)
+            .filter(|view| Some(view.buffer) == j.buffer)
+            .and_then(|view| self.ed.buffers.get(view.buffer));
+        match b {
+            Some(b) if b.loading.is_some() => {}
+            Some(_) => {
+                if let Some((v, j)) = self.jump_look.landing.take() {
+                    self.place_jump(v, &j);
+                }
+            }
+            None => self.jump_look.landing = None,
+        }
     }
 }
 
