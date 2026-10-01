@@ -37,8 +37,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use kawoosh_editor::{ArgKind, Args, Layer, Spec};
-use kawoosh_languages::{FALLBACK, LANGUAGES, LanguageDef, Library, Locate, Source};
-use kawoosh_systems::grammars::{self, Installed, Manifest, Row, Step};
+use kawoosh_languages::{FALLBACK, LANGUAGES, LanguageDef, Library, Source};
+use kawoosh_systems::grammars::{self, Installed, Loaded, Manifest, Row, Step};
 use kawoosh_systems::io::IoMsg;
 use kawoosh_systems::ts::SYNTAX_LAYER;
 
@@ -270,6 +270,13 @@ fn source_row(name: &str, def: &kawoosh_editor::Setting) -> Option<Row> {
     })
 }
 
+/// An install's end, on its thread: what is on disk, and its grammar
+/// loaded there ([`Loaded`]), so the frame it lands in only takes it in.
+fn done(installed: Installed, home: Option<&Path>) -> Step {
+    let loaded = Loaded::of(&installed, home);
+    Step::Done(Box::new(installed), Box::new(loaded))
+}
+
 /// A revision as it is said: its first twelve.
 fn short(rev: &str) -> String {
     rev.chars().take(12).collect()
@@ -411,15 +418,17 @@ impl Kawoosh {
 
     /// An install as a language: its library and queries where the
     /// install put them, a query under the config directory's
-    /// `queries/NAME/` in place of the install's. A library that is not
-    /// there is a warning, and the language is one of files alone.
+    /// `queries/NAME/` in place of the install's
+    /// ([`Installed::library`]).
     fn installed_def(&mut self, i: &Installed) -> LanguageDef {
-        let said = Locate {
-            path: Some(i.dir.clone()),
-            symbol: Some(i.row.symbol.clone()),
-            ..Locate::default()
-        };
-        let grammar = match Library::find(&i.row.name, &said, self.config.dir.as_deref()) {
+        let found = i.library(self.config.dir.as_deref());
+        self.found_def(i, found)
+    }
+
+    /// An install as a language, its library as found: one that is not
+    /// there is a warning, and the language is one of files alone.
+    fn found_def(&mut self, i: &Installed, found: Result<Option<Library>, String>) -> LanguageDef {
+        let grammar = match found {
             Ok(lib) => lib.map(Source::Library),
             Err(e) => {
                 self.notify_with(Note::new(Level::Warn, e).source(SOURCE));
@@ -593,6 +602,7 @@ impl Kawoosh {
         let bases = self.grammar_bases();
         self.grammar_progress(&name, "fetching", None);
         self.publish_grammars();
+        let home = self.config.dir.clone();
         self.pending_jobs += 1;
         self.io.stream("grammar", move |send| {
             let say = |step: Step| {
@@ -602,7 +612,7 @@ impl Kawoosh {
                 });
             };
             let end = match grammars::install(&name, &bases, &dir, &say) {
-                Ok(installed) => Step::Done(Box::new(installed)),
+                Ok(installed) => done(installed, home.as_deref()),
                 Err(e) => Step::Failed(e),
             };
             say(end);
@@ -610,9 +620,10 @@ impl Kawoosh {
     }
 
     /// A step of an install: the progress line moved; at its end the
-    /// grammar loaded here, so one that does not load is a warning now,
-    /// and its buffers painted without a restart. An install that found
-    /// what is here already changes nothing.
+    /// grammar, loaded on the install's thread, taken in — one that does
+    /// not load is a warning now — and its buffers painted without a
+    /// restart. An install that found what is here already changes
+    /// nothing.
     pub(crate) fn on_grammar(&mut self, name: String, step: Step) {
         match step {
             Step::Fetching { done, total } => {
@@ -623,8 +634,8 @@ impl Kawoosh {
             Step::Extracting => self.grammar_progress(&name, "extracting", Some(100)),
             Step::Source => self.grammar_progress(&name, "fetching its source", None),
             Step::Compiling => self.grammar_progress(&name, "compiling", None),
-            Step::Done(installed) => {
-                let installed = *installed;
+            Step::Done(installed, loaded) => {
+                let (installed, loaded) = (*installed, *loaded);
                 self.grammar_ended(&name);
                 let rev = short(&installed.row.rev);
                 let built = installed.row.built;
@@ -635,8 +646,8 @@ impl Kawoosh {
                     self.grammar_unprogress(&name);
                     self.ed.message = format!("grammar: {name} is up to date ({rev})");
                 } else {
-                    let def = self.installed_def(&installed);
-                    self.put_language(def, false);
+                    let def = self.found_def(&installed, loaded.library);
+                    self.put_loaded(def, loaded.grammar, false);
                     self.grammars
                         .installed
                         .insert(name.clone(), installed.clone());
@@ -801,6 +812,7 @@ impl Kawoosh {
         self.grammars.failed.remove(&name);
         self.grammar_progress(&name, "fetching its source", None);
         self.publish_grammars();
+        let home = self.config.dir.clone();
         self.pending_jobs += 1;
         self.io.stream("grammar", move |send| {
             let say = |step: Step| {
@@ -810,7 +822,7 @@ impl Kawoosh {
                 });
             };
             let end = match grammars::build(&row, &dir, &say) {
-                Ok(installed) => Step::Done(Box::new(installed)),
+                Ok(installed) => done(installed, home.as_deref()),
                 Err(e) => Step::Failed(e),
             };
             say(end);

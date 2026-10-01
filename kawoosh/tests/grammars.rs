@@ -361,6 +361,119 @@ fn an_install_that_fails_says_why() {
     std::fs::remove_dir_all(t).ok();
 }
 
+/// The CPU time this thread has had, which other processes do not
+/// stretch.
+#[cfg(unix)]
+fn thread_cpu() -> std::time::Duration {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid timespec for the call to fill.
+    let ok = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    assert_eq!(ok, 0);
+    std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
+
+#[cfg(windows)]
+fn thread_cpu() -> std::time::Duration {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+    let zero = || FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero(), zero(), zero(), zero());
+    // SAFETY: the current thread's pseudo-handle, four FILETIMEs to fill.
+    let ok = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(ok, 0);
+    let ticks = |f: FILETIME| (f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64;
+    // FILETIME counts 100 ns.
+    std::time::Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+}
+
+/// An install's grammar is loaded on the install's thread — the library
+/// opened, its queries compiled — and the frame its end lands in only
+/// takes it in: done there, a big grammar's queries and a new library's
+/// first open (which macOS checks, a quarter of a second for a small
+/// one) froze the window for as long. Counted in the frame's CPU time
+/// against what loading the same grammar takes here, so a busy machine
+/// stretches neither: a release whose highlights are a heavy query, and
+/// the frame the install ends in spends under a quarter of its load.
+#[test]
+fn an_install_s_grammar_is_loaded_off_the_frame() {
+    let t = temp("off-frame");
+    let (remote, data) = (t.join("remote"), t.join("grammars"));
+    std::fs::create_dir_all(&remote).unwrap();
+    let Some(lib) = library(&t) else { return };
+    // A thousand nested patterns, each with a string of its own:
+    // tree-sitter's analysis of them takes a fifth of a second here (the
+    // frame without it, a millisecond or two).
+    let heavy: String = (0..1000)
+        .map(|i| {
+            format!(
+                "(object (pair key: (string (string_content) @property) value: (array (object (pair key: (string) @string value: (number) @number)))) (#eq? @property \"k{i}\"))\n"
+            )
+        })
+        .collect();
+    let at = release(&remote, &lib, REV, &heavy);
+
+    // What the load costs on this thread: the same library and query.
+    let here = t.join("here");
+    std::fs::create_dir_all(here.join("queries")).unwrap();
+    let file = format!("{NAME}.{}", std::env::consts::DLL_EXTENSION);
+    std::fs::write(here.join(&file), &lib).unwrap();
+    std::fs::write(here.join("queries/highlights.scm"), &heavy).unwrap();
+    let said = kawoosh_languages::Locate {
+        path: Some(here.clone()),
+        symbol: Some("tree_sitter_json".into()),
+        ..Default::default()
+    };
+    let found = kawoosh_languages::Library::find(NAME, &said, None)
+        .unwrap()
+        .unwrap();
+    let before = thread_cpu();
+    found.load().unwrap();
+    let load = thread_cpu() - before;
+    assert!(
+        load > std::time::Duration::from_millis(40),
+        "the query is to cost its load something: {load:?}"
+    );
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with(&mut d, &data, &[at]);
+    ex(&mut d, &mut app, "grammar install jsonish");
+    let mut last = std::time::Duration::ZERO;
+    for _ in 0..1000 {
+        let before = thread_cpu();
+        d.frame(&mut app);
+        last = thread_cpu() - before;
+        if app.grammars.installed.contains_key(NAME) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        app.grammars.installed.contains_key(NAME),
+        "never installed: {:?}",
+        app.ed.message
+    );
+    assert!(app.languages.has_grammar(NAME), "{:?}", app.ed.message);
+    assert!(
+        last < load / 4,
+        "the frame the install ended in took {last:?} of the thread, the grammar's load {load:?}"
+    );
+    std::fs::remove_dir_all(t).ok();
+}
+
 /// The releases themselves, over the network: `zig` from the bases the
 /// settings ship with, loaded and painting. Only when asked for
 /// (`KAWOOSH_GRAMMARS_LIVE=1`): it needs the two hosts up.
