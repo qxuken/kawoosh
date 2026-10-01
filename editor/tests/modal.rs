@@ -1254,6 +1254,93 @@ fn plain_deletes_leave_the_register_alone() {
     );
 }
 
+/// The text keys a Mac types with (Ctrl's word keys where there is no
+/// ⌘, as Windows and Linux spell them; keys.md): `<A-BS>` the word
+/// before the caret, where `<C-w>` ends it, and `<A-Del>` the word
+/// after, its mirror; `<D-BS>` to the line's start as `<C-u>`, `<D-Del>`
+/// to its end — erases, the register and the clipboard left alone,
+/// none past its line. `<A-Left>` `<A-Right>` by a word, `<D-Left>`
+/// `<D-Right>` to the line's ends. In the prompt too; an insert session
+/// with them is one undo, and `.` does it again.
+#[test]
+fn the_word_and_line_keys_erase_and_move_in_insert_mode() {
+    let w = if cfg!(target_os = "macos") { "A" } else { "C" };
+    let k = |s: &str| s.replace("W-", &format!("{w}-"));
+    // Back, a word at a time, where `<C-w>` stops.
+    for back in [k("<W-BS>"), "<C-w>".to_string()] {
+        let mut t = T::new("one two.three four");
+        let mut texts = vec![];
+        t.keys("A");
+        for _ in 0..3 {
+            t.keys(&back);
+            texts.push(t.text());
+        }
+        assert_eq!(texts, ["one two.three ", "one two.", "one two"], "{back}");
+    }
+    // Forward, the mirror.
+    let mut t = T::new("one two.three four");
+    let mut texts = vec![];
+    t.keys("0i");
+    for _ in 0..3 {
+        t.keys(&k("<W-Del>"));
+        texts.push(t.text());
+    }
+    assert_eq!(texts, [" two.three four", ".three four", "three four"]);
+    // The line's ends.
+    let mut t = T::new("one two three");
+    t.keys("0fti<D-BS>");
+    assert_eq!(t.text(), "two three");
+    t.keys("<Esc>wi<D-Del>");
+    assert_eq!(t.text(), "two ");
+    // None past its line, as `<C-w>`.
+    let mut t = T::new("ab\ncd");
+    t.keys(&k("A<W-Del><D-Del><Esc>jI<W-BS><D-BS><Esc>"));
+    assert_eq!(t.text(), "ab\ncd");
+    // Nothing remembered.
+    assert!(t.ed.memory.head().is_none());
+    assert!(
+        !t.ed
+            .take_effects()
+            .iter()
+            .any(|e| matches!(e, Effect::SetClipboard(_)))
+    );
+    // The moves.
+    let mut t = T::new("one two.three four");
+    t.keys("A");
+    let mut heads = vec![];
+    for _ in 0..3 {
+        t.keys(&k("<W-Left>"));
+        heads.push(t.head());
+    }
+    t.keys("<D-Right>");
+    heads.push(t.head());
+    t.keys("<D-Left>");
+    heads.push(t.head());
+    for _ in 0..3 {
+        t.keys(&k("<W-Right>"));
+        heads.push(t.head());
+    }
+    assert_eq!(heads, [14, 8, 7, 18, 0, 3, 7, 8]);
+    t.keys("X<Esc>");
+    assert_eq!(t.text(), "one two.Xthree four");
+    // One undo; `.` again.
+    let mut t = T::new("aa bb\ncc dd");
+    t.keys(&k("A<W-BS><W-BS>x<Esc>"));
+    assert_eq!(t.text(), "x\ncc dd");
+    t.keys("u");
+    assert_eq!(t.text(), "aa bb\ncc dd");
+    t.keys(&k("A<W-BS><Esc>j."));
+    assert_eq!(t.text(), "aa \ncc ");
+    // The prompt's line.
+    let mut t = T::new("");
+    t.keys(&k(":echo one two<W-BS>"));
+    assert_eq!(t.cmdline(), "echo one ");
+    t.keys(&k("<W-Left><W-Left><W-Del>"));
+    assert_eq!(t.cmdline(), " one ");
+    t.keys("<D-Del>");
+    assert_eq!(t.cmdline(), "");
+}
+
 /// `"_` names the black hole for the next command: what it takes goes
 /// into neither the register nor the clipboard, through an operator's
 /// motion, a count on either side of it, visual mode and `.`; the

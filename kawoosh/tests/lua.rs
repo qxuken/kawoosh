@@ -3302,3 +3302,46 @@ fn a_write_deletes_and_copies_off_the_frame() {
     assert!(d.line_rows().iter().all(|r| !r.contains("~gone")));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A Lua view's field takes the text keys a Mac types with (Ctrl's
+/// word keys elsewhere) as every line does: `<A-BS>` `<A-Del>` a word
+/// before, after the caret, `<D-BS>` `<D-Del>` to the start, the end,
+/// `<A-Left>` `<A-Right>` `<D-Left>` `<D-Right>` the caret.
+#[test]
+fn a_lua_field_takes_the_word_and_line_keys() {
+    let w = if cfg!(target_os = "macos") { "A" } else { "C" };
+    let k = |s: &str| s.replace("W-", &format!("{w}-"));
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        kawoosh.view("finder", function(ctx)
+          return column { ctx.field { name = "q", placeholder = "find" } }
+        end, function(ev)
+          if ev.kind == "key" and ev.key == "i" then kawoosh.field_focus("finder", "q") end
+        end)
+        "#,
+    );
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "view finder");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    d.keys(&mut app, "i");
+    d.frame(&mut app);
+    let field = app.ed.find_field("lua:finder/q").expect("the field opened");
+    assert_eq!(app.focused_mode(), kawoosh_editor::Mode::Insert);
+    d.keys(&mut app, "src/app.rs main");
+    let text = |app: &Kawoosh| app.ed.field_text(field).unwrap_or_default();
+    d.press(&mut app, &k("<W-BS>"));
+    assert_eq!(text(&app), "src/app.rs ");
+    d.press(&mut app, &k("<W-Left><W-Left><W-BS>"));
+    assert_eq!(text(&app), "src/.rs ");
+    d.press(&mut app, &k("<W-Right><D-Del>"));
+    assert_eq!(text(&app), "src/.");
+    d.press(&mut app, &k("<D-Left><W-Del>"));
+    assert_eq!(text(&app), "/.");
+    d.press(&mut app, "<D-Right><D-BS>");
+    assert_eq!(text(&app), "");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

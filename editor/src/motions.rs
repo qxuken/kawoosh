@@ -283,6 +283,31 @@ fn next_end(buf: &Buffer, mut o: usize, big: bool) -> usize {
     o
 }
 
+/// One past the last char of the word the caret is in, or of the next
+/// one when it is on whitespace: `prev_word_start`'s mirror, so `<A-Del>`
+/// takes what `<C-w>` would on the caret's other side, and `<A-Right>`
+/// stops where a Mac's ⌥→ does. Whitespace and line breaks are skipped
+/// first, as `prev_word_start` skips them.
+pub fn word_end_after(buf: &Buffer, mut o: usize) -> usize {
+    while let Some(c) = char_at(buf, o) {
+        if !c.is_whitespace() {
+            break;
+        }
+        o = buf.next_char(o);
+    }
+    let Some(c) = char_at(buf, o) else {
+        return buf.len();
+    };
+    let cls = class(c);
+    while let Some(c) = char_at(buf, o) {
+        if class(c) != cls {
+            break;
+        }
+        o = buf.next_char(o);
+    }
+    o
+}
+
 /// vim's `cw` and `cW`: from inside a word, the end of the word the
 /// caret is in rather than the start of the next, so the change keeps
 /// the space after it — then the ends of `n - 1` words more. One past

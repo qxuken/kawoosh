@@ -1797,3 +1797,46 @@ fn a_terminal_here_starts_where_the_pane_in_front_is() {
     );
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// ⌘'s text keys reach a shell as the readline keys they mean, as
+/// iTerm's natural text editing and Ghostty send them: ⌘⌫ `^U`, ⌘⌦
+/// `^K`, ⌘← `^A`, ⌘→ `^E` — the legacy encoding has no ⌘, so they
+/// reached nothing. ⌥'s are Alt's own bytes: `ESC DEL`, xterm's
+/// modified Delete and arrows. Another ⌘ chord still reaches nothing,
+/// and a program that pushed kitty's protocol hears ⌘ whole.
+#[test]
+fn cmds_text_keys_reach_a_shell_as_readlines() {
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    let sent = |app: &mut Kawoosh| {
+        String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap()
+    };
+    sent(&mut app);
+    for (keys, bytes) in [
+        ("<D-BS>", "\x15"),
+        ("<D-Del>", "\x0b"),
+        ("<D-Left>", "\x01"),
+        ("<D-Right>", "\x05"),
+        ("<A-BS>", "\x1b\x7f"),
+        ("<A-Del>", "\x1b[3;3~"),
+        ("<A-Left>", "\x1b[1;3D"),
+        ("<A-Right>", "\x1b[1;3C"),
+        ("<D-Up>", ""),
+        ("<D-j>", ""),
+    ] {
+        d.press(&mut app, keys);
+        assert_eq!(sent(&mut app), bytes, "{keys}");
+    }
+    app.feed_terminal(t, b"\x1b[>1u");
+    sent(&mut app);
+    d.press(&mut app, "<D-BS>");
+    let kitty = sent(&mut app);
+    assert!(
+        kitty.starts_with("\x1b[") && kitty.ends_with('u'),
+        "{kitty:?}"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

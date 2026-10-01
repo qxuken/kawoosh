@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use kawoosh_doc::Buffer;
 use kawoosh_editor::keymap::{LEADER, parse_notation};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec};
-use kawoosh_term::{TermSize, Terminal, encode_key};
+use kawoosh_term::{TermSize, Terminal, encode_key, encode_super_key};
 use kui_native::KeyPress;
 
 use crate::app::Kawoosh;
@@ -741,14 +741,22 @@ impl Kawoosh {
             self.term_kitty(id, press, false);
             return;
         }
-        // A ⌘ chord bound to nothing is nothing to the shell, not its
-        // letter: a pty has no use for ⌘ (`Kawoosh::pane_chord`).
-        if stroke.sup {
-            return;
-        }
         let Some(t) = self.terms.map.get_mut(&id) else {
             return;
         };
+        // A ⌘ chord bound to nothing is nothing to the shell, not its
+        // letter: a pty has no use for ⌘ (`Kawoosh::pane_chord`) — but
+        // for a Mac's line-editing keys, which a shell hears as
+        // readline's (`^U` for ⌘⌫).
+        if stroke.sup {
+            if let Some(bytes) =
+                encode_super_key(&stroke.code, stroke.ctrl, stroke.alt, stroke.shift)
+            {
+                t.scroll_to_bottom();
+                t.input(bytes);
+            }
+            return;
+        }
         if let Some(bytes) = encode_key(
             &stroke.code,
             stroke.text.as_deref(),

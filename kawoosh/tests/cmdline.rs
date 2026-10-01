@@ -509,3 +509,51 @@ fn a_long_command_line_scrolls_sideways_under_the_caret() {
         "back at the start, after the sigil: {x}"
     );
 }
+
+/// The text keys a Mac types with (Ctrl's word keys elsewhere) reach
+/// every place text is typed, as the keyboard sends them: insert mode
+/// in a buffer, the prompt's line and a pane's field (the memory's
+/// filter) — `<A-BS>` `<A-Del>` a word before, after the caret,
+/// `<D-BS>` `<D-Del>` to the line's start, end, `<A-Left>` `<A-Right>`
+/// `<D-Left>` `<D-Right>` the caret by a word, to an end.
+#[test]
+fn the_word_and_line_keys_reach_insert_mode_the_prompt_and_a_field() {
+    let w = if cfg!(target_os = "macos") { "A" } else { "C" };
+    let k = |s: &str| s.replace("W-", &format!("{w}-"));
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "one two three\n");
+    d.frame(&mut app);
+    d.keys(&mut app, "A");
+    d.press(&mut app, &k("<W-BS><W-Left><D-BS>"));
+    d.press(&mut app, &k("<D-Right><W-Left><W-Left><W-Del>"));
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), " \n");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(app.ed.memory.head().is_none(), "nothing remembered");
+
+    d.keys(&mut app, ":echo one two");
+    d.press(&mut app, &k("<W-BS>"));
+    assert_eq!(app.ed.prompt_text().as_deref(), Some("echo one "));
+    d.press(&mut app, &k("<D-Left><W-Right><W-Del>"));
+    assert_eq!(app.ed.prompt_text().as_deref(), Some("echo "));
+    d.press(&mut app, "<D-Right><D-BS>");
+    assert_eq!(app.ed.prompt_text().as_deref(), Some(""));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(app.ed.prompt_view().is_none());
+
+    d.keys(&mut app, "yy mm");
+    d.frame(&mut app);
+    d.keys(&mut app, "/");
+    d.frame(&mut app);
+    let field = app
+        .memory_pane
+        .filter_focused()
+        .expect("the filter's field");
+    d.keys(&mut app, "row two");
+    d.press(&mut app, &k("<W-Left><D-Del>"));
+    assert_eq!(app.ed.field_text(field).as_deref(), Some("row "));
+    d.press(&mut app, &k("<D-Left><W-Del>"));
+    assert_eq!(app.ed.field_text(field).as_deref(), Some(" "));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
