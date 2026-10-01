@@ -80,7 +80,11 @@ One list per tab, as the ask says: the tab is the unit of work
 (workspaces.md Decision 1 — its directory, its buffers), and its panes
 are one piece of attention. An entry is a place — buffer (and its path,
 so a closed file opens again), offset carried through the buffer's
-journal, the pane it was left in. Going back to it:
+journal, the pane it was left in. A place whose buffer closed and whose
+file is gone from disk since is dead, stepped over as the caret's own
+place is, and dropped at the next jump — not opened as an empty new
+file (*found 2026-10-01*; a file on a host is not asked after, a stat
+there being a round trip). Going back to it:
 
 1. the pane it was left in, when it is still in the tab — focused, and
    switched back to the buffer if it shows another now (a pane that

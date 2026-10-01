@@ -122,9 +122,16 @@ fn settle(ed: &Editor, j: &mut Jump) {
     j.col = col_of(b, at);
 }
 
-/// Whether `j` can still be gone to: its buffer open, or a file.
+/// Whether `j` can still be gone to: its buffer open, or a file — open
+/// in another buffer, or still on disk. A file on a host is not asked
+/// after: a stat there is a round trip, and `<C-o>` must not wait.
 fn alive(ed: &Editor, j: &Jump) -> bool {
-    j.buffer.is_some_and(|id| ed.buffers.contains_key(id)) || j.path.is_some()
+    if j.buffer.is_some_and(|id| ed.buffers.contains_key(id)) {
+        return true;
+    }
+    j.path.as_deref().is_some_and(|p| {
+        ed.buffer_at(p).is_some() || kawoosh_systems::fs::domain_of(p).is_some() || p.exists()
+    })
 }
 
 /// Whether two places are one: one line and column of one text — the

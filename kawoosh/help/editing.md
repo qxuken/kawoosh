@@ -90,7 +90,8 @@ a paste), and moving the keys to another pane are not.
 The list is the tab's: a jump made in one pane and a jump in another
 are one trail, and going back to a place goes into the pane it was left
 in — switched back to its file if it shows another now — while that
-pane is still in the tab. Going back and then jumping somewhere new
+pane is still in the tab; a file closed and deleted since is stepped
+over. Going back and then jumping somewhere new
 drops the places that were ahead, as a browser does. `<leader>mj`
 (`:jumps`) lists them in the [memory](memory.md) pane, how many
 `<C-o>` away each is; a session keeps each tab's list.
