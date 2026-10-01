@@ -383,7 +383,9 @@ fn a_server_that_exits_is_started_again_then_given_up() {
     d.keys(&mut app, "O");
     d.commit(&mut app, "@crash");
     d.key(&mut app, "escape", KeyMods::default());
-    let again = format!("`{server}` exited with 3: fake server crashing; started again");
+    // The project it served is named, and how to leave it off there.
+    let root = kawoosh_systems::fs::abbreviate_home(&dir);
+    let again = format!("`{server}` exited with 3: fake server crashing in {root}; started again");
     assert!(until(&mut d, &mut app, |a| noted(a, &again)), "{again}");
     assert!(
         until(&mut d, &mut app, |a| msgs(a, buf_id) == ["boom"]),
@@ -395,8 +397,13 @@ fn a_server_that_exits_is_started_again_then_given_up() {
     d.keys(&mut app, "A");
     d.commit(&mut app, "-open");
     d.key(&mut app, "escape", KeyMods::default());
-    let why = "stopped: exited with 3: fake server crashing, 3 exits in 3 minutes";
-    let said = format!("`{server}` {why} (:lsp restart once fixed)");
+    let why =
+        format!("stopped in {root}: exited with 3: fake server crashing, 3 exits in 3 minutes");
+    let settings = kawoosh_systems::fs::abbreviate_home(&dir.join(".kawoosh/settings.lua"));
+    let said = format!(
+        "`{server}` {why}. :lsp restart once fixed; to leave it off in that project, \
+         `lsp = {{ rust = {{ enabled = false }} }}` in {settings}"
+    );
     assert!(until(&mut d, &mut app, |a| noted(a, &said)), "{said}");
     assert!(
         msgs(&app, buf_id).is_empty(),
