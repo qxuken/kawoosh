@@ -503,12 +503,13 @@ fn kawoosh_edit_is_edit_wait_as_one_program() {
     app.socket = Some(sock.clone());
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_kawoosh-edit"))
-        .args(["+2", "COMMIT_EDITMSG"])
-        .current_dir(&dir)
-        .env("KAWOOSH_SOCKET", &sock)
-        .spawn()
-        .unwrap();
+    let mut child = kawoosh_systems::spawn::spawn(
+        std::process::Command::new(env!("CARGO_BIN_EXE_kawoosh-edit"))
+            .args(["+2", "COMMIT_EDITMSG"])
+            .current_dir(&dir)
+            .env("KAWOOSH_SOCKET", &sock),
+    )
+    .unwrap();
     let mut tries = 0;
     while app.io.rx.is_empty() && tries < 500 {
         std::thread::sleep(std::time::Duration::from_millis(10));

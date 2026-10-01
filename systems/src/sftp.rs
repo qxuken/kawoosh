@@ -268,11 +268,11 @@ impl Sftp {
     /// Starts `command` with its stdio piped and says hello: version 3,
     /// and whether the server renames over a file.
     pub fn spawn(mut command: Command) -> io::Result<Sftp> {
-        let mut child = command
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
+            .stderr(Stdio::null());
+        let mut child = crate::spawn::spawn(&mut command)?;
         let stdin = child.stdin.take().ok_or_else(short)?;
         let stdout = BufReader::new(child.stdout.take().ok_or_else(short)?);
         let mut conn = Conn {

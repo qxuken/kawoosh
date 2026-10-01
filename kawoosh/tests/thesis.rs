@@ -11,9 +11,7 @@ use kui_native::KeyMods;
 
 #[test]
 fn two_panes_one_rust_analyzer() {
-    if std::process::Command::new("rust-analyzer")
-        .arg("--version")
-        .output()
+    if kawoosh_systems::spawn::output(std::process::Command::new("rust-analyzer").arg("--version"))
         .is_err()
     {
         eprintln!("rust-analyzer not installed; skipping");

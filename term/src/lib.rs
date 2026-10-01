@@ -409,6 +409,15 @@ impl Terminal {
         Self::spawn_with(builder, cwd, size, envs)
     }
 
+    /// The pty opened, the child started on it. Neither of the pty's
+    /// sides is close-on-exec as it is made (`portable-pty` marks them
+    /// after) and the start is a `fork` read on a status pipe, so a
+    /// process another thread started meanwhile would take them with
+    /// it: where other threads spawn, the caller holds the lock they
+    /// spawn under for this whole call (`kawoosh_systems::spawn::lock`
+    /// — this crate is beneath it). The child itself closes whatever it
+    /// was not meant to have, so two of these at once do each other no
+    /// harm.
     fn spawn_with(
         mut builder: CommandBuilder,
         cwd: Option<&std::path::Path>,

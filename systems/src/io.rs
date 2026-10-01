@@ -263,22 +263,23 @@ impl Transport {
 
     /// Whether the master answers on its control socket.
     pub fn is_up(&self) -> bool {
-        self.command(&["-O", "check"])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        crate::spawn::status(
+            self.command(&["-O", "check"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null()),
+        )
+        .is_ok_and(|s| s.success())
     }
 
     /// The master told to go, the control socket with it.
     pub fn exit(&self) {
-        let _ = self
-            .command(&["-O", "exit"])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        let _ = crate::spawn::status(
+            self.command(&["-O", "exit"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null()),
+        );
     }
 }
 
@@ -825,7 +826,7 @@ impl Io {
                 });
             }
         }
-        let mut child = command.spawn()?;
+        let mut child = crate::spawn::spawn(&mut command)?;
         if let (Some(mut text), Some(mut pipe)) = (stdin, child.stdin.take()) {
             thread::spawn(move || {
                 let _ = pipe.write_all(text.as_bytes());
@@ -1226,12 +1227,13 @@ mod tests {
             let home = std::env::temp_dir().join(format!("kawoosh-script-{}", std::process::id()));
             std::fs::create_dir_all(home.join("a b")).unwrap();
             let home = std::fs::canonicalize(&home).unwrap();
-            let out = std::process::Command::new("/bin/sh")
-                .arg("-c")
-                .arg(&argv[6])
-                .env("HOME", &home)
-                .output()
-                .unwrap();
+            let out = crate::spawn::output(
+                std::process::Command::new("/bin/sh")
+                    .arg("-c")
+                    .arg(&argv[6])
+                    .env("HOME", &home),
+            )
+            .unwrap();
             assert_eq!(
                 String::from_utf8_lossy(&out.stdout).trim(),
                 format!("it's|{}/.cache/x|{}/a b", home.display(), home.display())
@@ -1248,11 +1250,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn the_host_shim_speaks_the_socket() {
-        if std::process::Command::new("bash")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
+        if crate::spawn::output(std::process::Command::new("bash").arg("--version")).is_err() {
             return;
         }
         let dir = std::env::temp_dir().join(format!("kawoosh-shim-{}", std::process::id()));
@@ -1274,14 +1272,15 @@ mod tests {
             got
         });
         let run = |args: &[&str]| {
-            std::process::Command::new("bash")
-                .arg(&shim)
-                .args(args)
-                .current_dir(&dir)
-                .env("KAWOOSH_PORT", port.to_string())
-                .env("KAWOOSH_DOMAIN", "box")
-                .output()
-                .unwrap()
+            crate::spawn::output(
+                std::process::Command::new("bash")
+                    .arg(&shim)
+                    .args(args)
+                    .current_dir(&dir)
+                    .env("KAWOOSH_PORT", port.to_string())
+                    .env("KAWOOSH_DOMAIN", "box"),
+            )
+            .unwrap()
         };
         let edit = run(&["edit", "--wait", "+3", "we \"ird\".txt"]);
         assert!(

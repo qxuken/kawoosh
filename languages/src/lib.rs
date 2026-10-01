@@ -1270,6 +1270,10 @@ mod tests {
     /// document parsed with it. Passes with a note when the source or
     /// the compiler is not at hand.
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "beneath `kawoosh_systems::spawn`, and the one spawn of this crate"
+    )]
     fn a_grammar_loads_from_a_shared_library() {
         let registry = std::env::var_os("CARGO_HOME")
             .map(PathBuf::from)

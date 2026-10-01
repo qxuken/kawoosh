@@ -301,8 +301,7 @@ impl Kawoosh {
             (Some(Waiting::Beside(_)), Some(app)) => {
                 start_updater(app).map_err(|e| format!("the updater did not start: {e}"))
             }
-            _ => again(&exe)
-                .spawn()
+            _ => kawoosh_systems::spawn::spawn(&mut again(&exe))
                 .map(|_| ())
                 .map_err(|e| format!("{} did not start: {e}", exe.display())),
         };
@@ -357,14 +356,15 @@ fn start_updater(app: &Path) -> std::io::Result<()> {
     let to = temp.join(format!("{UPDATER}-{pid}{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(&from, &to)?;
     let cwd = std::env::current_dir().unwrap_or_else(|_| temp.clone());
-    std::process::Command::new(&to)
-        .arg(app)
-        .arg(pid.to_string())
-        .arg(&cwd)
-        // Not the folders it moves.
-        .current_dir(&temp)
-        .spawn()
-        .map(|_| ())
+    kawoosh_systems::spawn::spawn(
+        std::process::Command::new(&to)
+            .arg(app)
+            .arg(pid.to_string())
+            .arg(&cwd)
+            // Not the folders it moves.
+            .current_dir(&temp),
+    )
+    .map(|_| ())
 }
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
@@ -559,7 +559,8 @@ mod tests {
         assert!(!gone_within(std::process::id(), Duration::ZERO));
         #[cfg(unix)]
         {
-            let mut child = std::process::Command::new("true").spawn().unwrap();
+            let mut child =
+                kawoosh_systems::spawn::spawn(&mut std::process::Command::new("true")).unwrap();
             let pid = child.id();
             child.wait().unwrap();
             assert!(gone_within(pid, Duration::ZERO));

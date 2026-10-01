@@ -517,11 +517,7 @@ fn the_preview_is_highlighted() {
 #[test]
 fn grep_runs_rg_as_the_query_is_typed() {
     let _serial = serial();
-    if std::process::Command::new("rg")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
+    if kawoosh_systems::spawn::output(std::process::Command::new("rg").arg("--version")).is_err() {
         eprintln!("rg is not installed: the grep test is skipped");
         return;
     }
@@ -573,11 +569,7 @@ fn grep_runs_rg_as_the_query_is_typed() {
 #[test]
 fn a_search_asked_for_by_a_draw_is_waited_for() {
     let _serial = serial();
-    if std::process::Command::new("rg")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
+    if kawoosh_systems::spawn::output(std::process::Command::new("rg").arg("--version")).is_err() {
         eprintln!("rg is not installed: the grep test is skipped");
         return;
     }

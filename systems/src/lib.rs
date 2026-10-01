@@ -11,6 +11,7 @@ pub mod lsp;
 pub mod search;
 pub mod sftp;
 pub mod shell_env;
+pub mod spawn;
 pub mod store;
 pub mod ts;
 pub mod watch;

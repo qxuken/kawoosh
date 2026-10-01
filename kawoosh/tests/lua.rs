@@ -404,11 +404,7 @@ fn a_bare_compile_runs_what_the_project_offers() {
 #[cfg(unix)]
 #[test]
 fn a_build_nu_command_wanting_arguments_goes_to_the_prompt() {
-    if std::process::Command::new("nu")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
+    if kawoosh_systems::spawn::output(std::process::Command::new("nu").arg("--version")).is_err() {
         eprintln!("no nu on PATH: skipped");
         return;
     }

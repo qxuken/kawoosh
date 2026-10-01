@@ -16,15 +16,16 @@ use kawoosh_editor::Sign;
 use kui_native::KeyMods;
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Ann Author")
-        .env("GIT_AUTHOR_EMAIL", "t@t")
-        .env("GIT_COMMITTER_NAME", "Ann Author")
-        .env("GIT_COMMITTER_EMAIL", "t@t")
-        .output()
-        .expect("git");
+    let out = kawoosh_systems::spawn::output(
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "Ann Author")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "Ann Author")
+            .env("GIT_COMMITTER_EMAIL", "t@t"),
+    )
+    .expect("git");
     assert!(
         out.status.success(),
         "git {args:?}: {}",
@@ -34,10 +35,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn has_git() -> bool {
-    std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .is_ok()
+    kawoosh_systems::spawn::output(std::process::Command::new("git").arg("--version")).is_ok()
 }
 
 fn tmp(tag: &str) -> PathBuf {
