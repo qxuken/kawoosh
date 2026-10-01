@@ -1115,6 +1115,16 @@ mod tests {
     /// macro, a string or a comment (which the tree cannot read), stay
     /// a sliver — rustfmt's Rust 0.14% and the hand-kept Lua 1% when
     /// written.
+    /// A `switch`'s `default` sits where its `case`s do: helix's query
+    /// outdents the one and not the other, and `default:` was a level
+    /// in from its siblings.
+    #[test]
+    fn a_default_lines_up_with_its_cases() {
+        let src = "void f(int n) {\n    switch (n) {\n    case 1:\n        g();\n        break;\n    default:\n        h();\n    }\n}\n";
+        assert_eq!(reindent("c", src), src);
+        assert_eq!(reindent("cpp", src), src);
+    }
+
     #[test]
     fn this_repository_reindents_as_it_is() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
