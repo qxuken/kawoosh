@@ -534,7 +534,9 @@ impl<'a> Reader<'a> {
     /// a line's): from the nearest line above it under the same node —
     /// a sibling, at the indent it has, so a file's own width stands —
     /// else a level in from the node's line; `at` is the line break's
-    /// when `target` is the line after it.
+    /// when `target` is the line after it. A line out from its sibling
+    /// (a closer, an `elseif`) is read from the node's line: a sibling
+    /// less a unit is the unit's width, not the file's.
     fn write(
         &self,
         level: Level,
@@ -563,6 +565,9 @@ impl<'a> Reader<'a> {
             if let Some(Level::From(l, m)) = self.line_level(b, first)
                 && l == from
             {
+                if n < m {
+                    break;
+                }
                 return unit.shift(&indent(b), n - m);
             }
         }
@@ -892,6 +897,46 @@ mod tests {
             new_line_in("go", "func f() {\n\tif a {\n\t\tb|\n\t}\n}\n", &tabs),
             "\t\t"
         );
+    }
+
+    /// A closer lines up with the line its block opened on, not a
+    /// sibling's indent less a unit the file does not use.
+    #[test]
+    fn a_closer_lines_up_with_its_opener() {
+        let two = Unit {
+            text: "  ".into(),
+            width: 2,
+            tabstop: 4,
+        };
+        let line = |lang: &str, src: &str, ln: usize, unit: &Unit| {
+            let (g, tree, text) = parse(lang, src);
+            for_lines(g.indents.as_ref().unwrap(), &tree, &text, ln..ln + 1, unit)
+                .remove(0)
+                .expect("an answer")
+        };
+        let src = "function f() {\n    if (a) {\n        b();\n    }\n}\n";
+        assert_eq!(
+            line("javascript", src, 3, &two),
+            "    ",
+            "`==` in a four-space file under a unit of two"
+        );
+        assert_eq!(
+            new_line_in(
+                "javascript",
+                "function f() {\n    if (a) {\n        b();|}\n}\n",
+                &two
+            ),
+            "    ",
+            "`<CR>` before the closer"
+        );
+        let src = "fn f() {\n  if a {\n    b;\n  }\n}\n";
+        assert_eq!(
+            line("rust", src, 3, &spaces()),
+            "  ",
+            "a two-space file under a unit of four"
+        );
+        let src = "if a then\n  b\nelseif c then\n  d\nend\n";
+        assert_eq!(line("lua", src, 2, &spaces()), "", "Lua's `elseif`");
     }
 
     #[test]

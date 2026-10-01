@@ -57,8 +57,13 @@ at the indent that line has; a line starting with an `@outdent` (a
 `}`, Lua's `elseif`) a level less; an `@indent` scoped `all` on the
 node starting the line a level more. When a line above it, under the
 same node, reads the same way — a sibling statement — the line follows
-that sibling's indent instead, by the difference in levels. With no
-indenting node around it, the levels count from the margin.
+that sibling's indent instead, by the difference in levels. A line out
+from its sibling — a `}`, an `elseif` — lines up with the node's line
+instead (as nvim-treesitter's `@indent.end` / `@indent.branch` do): a
+sibling less a level is less `shiftwidth`, which is not the file's
+width (corrected 2026-10-01: a four-space JavaScript file under the
+default two put an `if`'s `}` at 6). With no indenting node around it,
+the levels count from the margin.
 
 So a file's own width stands (a two-space file with `shiftwidth` four
 keeps two, from the sibling), a construct the query misses costs its
