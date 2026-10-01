@@ -41,11 +41,14 @@
 -- cut or yanked in one listing and pasted in another is that entry too
 -- — the register says which tracked line its text was
 -- (`kawoosh.buf.register`), and the pasted line is given the entry's
--- identity. The plan is one rule over where each entry's lines are: an
--- entry still on a line of its own listing stays (renamed when the line
--- reads otherwise), and every other line of it is a copy of it; an
--- entry whose own line is gone is moved to the first other line of it,
--- and copied to the rest; one with no line left anywhere is deleted. A
+-- identity — the listing it was yanked in gone on to another directory
+-- meanwhile too, the entries kept as they were before its buffer was
+-- filled anew (`keep_register`). The plan is one rule over where each
+-- entry's lines are: an entry still on a line of its own listing stays
+-- (renamed when the line reads otherwise), and every other line of it
+-- is a copy of it; an entry whose own line is gone is moved to the
+-- first other line of it, and copied to the rest; one with no line
+-- left anywhere is deleted. A
 -- line no entry is behind is a new file — a name typed by hand pairs
 -- with nothing. Two files of one name swapped between two listings are
 -- two moves; a name on two lines of one listing, or two entries on one
@@ -261,6 +264,39 @@ local function offset_of(lines, ln)
   return off
 end
 
+-- The entries the register `reg` holds, read through the listing it
+-- was taken from as that listing is now: for each of its lines a
+-- tracked line of the listing stands behind, `{ text, who }`; nil when
+-- none does.
+local function entries_of(reg)
+  if not reg.linewise or not reg.buffer then return nil end
+  local src = lists(reg.buffer)
+  local sst = src and dir.state[PREFIX .. src]
+  if not sst then return nil end
+  local held, k = {}, 0
+  for t in (reg.text .. "\n"):gmatch("(.-)\n") do
+    k = k + 1
+    local who = reg.entries[k] and sst.ids[reg.entries[k]]
+    if who and not who.up and not who.new then held[#held + 1] = { text = t, who = who } end
+  end
+  return #held > 0 and held or nil
+end
+
+-- A listing about to be filled anew — the next directory in its
+-- buffer, or its own read again — tracks new lines, and the register's
+-- word on which of its lines a yank was no longer reaches them: the
+-- register's entries, if they are this listing's, are kept as they
+-- read now (`dir.kept`), each `{ dir, name, meta }` and so wherever
+-- the listing goes. A line yanked in `a/`, the listing gone on to `b/`
+-- in the same pane, pastes as `a/`'s entry.
+local function keep_register(h)
+  if not h then return end
+  local reg = kawoosh.buf.register()
+  if not reg or reg.buffer ~= h then return end
+  local held = entries_of(reg)
+  if held then dir.kept = { buffer = h, text = reg.text, held = held } end
+end
+
 -- The drives, on Windows, as a listing above the roots: `C:\`, `D:\`,
 -- each entered with `<CR>`; not for writing.
 local function open_drives(fresh)
@@ -268,6 +304,7 @@ local function open_drives(fresh)
   local name = PREFIX .. DRIVES
   dir.state[name] = { dir = DRIVES, width = 3, ids = {} }
   local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
+  keep_register(buffer_of(DRIVES) or reuse)
   kawoosh.buf.open_scratch {
     name = name, text = table.concat(drives, "\n"), language = "dir",
     read_only = true, reuse = reuse,
@@ -311,6 +348,9 @@ function dir.open(path, from, fresh, reread)
     if not lines then return kawoosh.echo(tostring(meta)) end
     -- The listing to reuse is still one, and not edited meanwhile.
     if reuse and (not lists(reuse) or kawoosh.buf.modified(reuse)) then reuse = nil end
+    -- The buffer filled: the listing's own, if it is open, else the
+    -- one reused.
+    keep_register(buffer_of(path) or reuse)
     dir.state[name] = state_of(path, lines, meta, width)
     kawoosh.buf.open_scratch {
       name = name,
@@ -338,6 +378,7 @@ local function relist(d, h)
   listing(d, function(lines, meta, width)
     if not lines or lists(h) ~= d then return end
     local name = PREFIX .. d
+    keep_register(h)
     dir.state[name] = state_of(d, lines, meta, width)
     kawoosh.buf.open_scratch {
       name = name, text = table.concat(lines, "\n"), language = "dir",
@@ -355,24 +396,24 @@ local function at(base, entry) return fs.join(base, (entry:gsub("/$", ""))) end
 -- ----------------------------------------------------------- the plan
 
 -- The entries the `"` register holds, when one yank or delete in a
--- listing filled it: `take(text)` gives the entry of the first of its
--- lines reading `text` not given out yet — what a line pasted in is.
+-- listing filled it — read through that listing, or, filled anew
+-- since, as kept before it was: `take(text)` gives the entry of the
+-- first of its lines reading `text` not given out yet — what a line
+-- pasted in is.
 local function register_entries()
   local reg = kawoosh.buf.register()
-  if not reg or not reg.linewise or not reg.buffer then return nil end
-  local src = lists(reg.buffer)
-  local sst = src and dir.state[PREFIX .. src]
-  if not sst then return nil end
-  local held, k = {}, 0
-  for t in (reg.text .. "\n"):gmatch("(.-)\n") do
-    k = k + 1
-    local who = reg.entries[k] and sst.ids[reg.entries[k]]
-    if who and not who.up and not who.new then held[#held + 1] = { text = t, who = who } end
+  if not reg then return nil end
+  local held = entries_of(reg)
+  local kept = dir.kept
+  if not held and kept and reg.linewise and kept.buffer == reg.buffer and kept.text == reg.text then
+    held = kept.held
   end
+  if not held then return nil end
+  local taken = {}
   return function(text)
-    for _, l in ipairs(held) do
-      if not l.taken and l.text == text then
-        l.taken = true
+    for i, l in ipairs(held) do
+      if not taken[i] and l.text == text then
+        taken[i] = true
         return l.who
       end
     end
@@ -1217,7 +1258,7 @@ kawoosh.view(PREVIEW, function(ctx)
   local t = ctx.env.theme
   -- The editor's smaller chrome text (its length token), 12 px at the
   -- default font.
-  local size = ctx.env.tokens and ctx.env.tokens.lengths.chrome_small or 12
+  local size = ctx.metrics.small
   local mono = { family = "mono", size = size }
   local root = column { pad = 8, gap = 2, clip = true }
   local function say(s, color)

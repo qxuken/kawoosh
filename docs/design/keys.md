@@ -77,6 +77,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, in the colours it was printed in, full modal editing, the status saying `COPY`, the caret where the terminal's cursor was (scrolled back past it, on the top row the pane showed); `q`, `<C-S-x>` again, or `<Esc>` once nothing is left to clear gives the pane back |
 | `<S-PageUp>` `<S-PageDown>`, `<S-Home>` `<S-End>` | a terminal's view a page through its history, to the top, back to the prompt — kept from the pty unless a program has the whole screen; scrolled away, the pane shows a scrollbar (dragged, it moves the view) and what lies below, a click on which goes back |
 | `⌘v`, `<C-S-v>` | the clipboard pasted into a terminal (`paste clipboard`), bracketed when the program asked for it — insert mode's two spellings; a ⌘ chord bound to nothing reaches the shell as nothing, never as its letter |
+| `⌘⌫` `⌘⌦` `⌘←` `⌘→` | in a terminal, the readline keys they mean on a Mac — `^U` `^K` `^A` `^E`, as iTerm and Ghostty send them (`encode_super_key`); ⌥'s are Alt's own bytes, `ESC DEL` for ⌥⌫. A program that pushed kitty's protocol hears them as ⌘ (terminal-keys.md Decision 6) |
 | `⌘↑` `⌘↓`, `<C-S-Up>` `<C-S-Down>` | the prompt above the view at its top, the next one down (a shell that marks its prompts, OSC 133 — `:terminal integration` says how) |
 | `<C-S-o>` | the last command's output to the clipboard (the same marks) |
 | `<C-S-z>` | the directory jumps (`picker dirs`, zoxide's directories): a pick types `cd 'PATH'⏎` while the shell sits at an empty prompt (the same marks, nothing typed since), and says why not otherwise; from an editor pane, `<leader>sd` |
@@ -173,6 +174,7 @@ and `:e` reachable when the memory pane is the only pane there is.
 | `<CR>` | `list open`: put the text, open the file at its line, seek the state |
 | `<Tab>` `<S-Tab>` | `list view` / `list view prev`: the pane's next / previous view (the memory pane's) |
 | `q` | `close` — the pane, not the last one |
+| `<A-/>` | `legend`: the pane's key legend whole, or its one `⌥/ keys` again ([icons.md](icons.md) Decision 6); the search bar's fields map it too |
 | `<Esc>` | `pane back`: the keyboard to the editor pane it came from |
 | `:` | the command line |
 | `]t` `[t` `gt` `gT` `]q` `[q` | the next-and-previous cluster is shared too (`]b` needs an editor pane and says so; `<C-Tab>` `<C-S-Tab>` are bound in pane mode too) |
@@ -319,6 +321,7 @@ the panes table.
 | `~` | turn the case of COUNT characters and step past them; on a selection, `u` `U` `~` lower, upper and turn its case (`u` is no undo there) |
 | `p` `P` (visual mode) | the selection replaced with the register, COUNT times: `p` puts what it replaced in the register, as vim's (so a second `p` swaps it back); `P` keeps the register, for one text over many. Lines over characters go on lines of their own |
 | `x` `s` (`V` mode) | the lines, as `d` and `c` take them there |
+| `x` `s` (on a newline) | the caret may stand on a line's newline (markdown.md), and the newline is the character there: `x` deletes it, the next line joined on as it is (vim's `gJ`, helix's `d` on it), into the register as any `x`; `s` changes it. A count stops at the line's end, as vim's — `9x` on the text never joins, on the newline joins once; the last line has none. A visual selection whose end stands on a newline takes it (`sel_range`, vim's `v$`), an inclusive motion never (`d$` on an empty line). 2026-10-02: "`x` on a new line character should merge the lines?" |
 | `<C-a>` `<C-x>` | add, subtract COUNT to the number under or after the caret, per selection — a column of numbers under a multicursor is the point; a `-` before it is its sign, leading zeros keep their width |
 | `<Esc>` (normal mode) | a ladder, the top rung that has something to do: a pending operator, the extra cursors (what `,` does), the search highlight (the pattern stays for `n`), nothing — so one key backs out of whatever is open |
 | `ip` `ap` | a paragraph: its lines, or with the blank lines after it — linewise in visual mode |
@@ -331,6 +334,8 @@ the panes table.
 | `ga` + motion + `<CR>` | line them up on a pattern's first match instead, asked for at an `align on ` prompt (`gaip<CR>or_else<CR>`); `:align PATTERN` over the selection's lines |
 | `<BS>` (insert mode) | the character before the caret; at a line's start the line joins the one above (vim's `backspace=eol`) — `X` stops there |
 | `<C-S-u>` (insert mode) | the whole line, into the register — `dd` without leaving insert mode; `<C-u>` still kills to the line's start |
+| `<A-BS>` `<A-Del>`, `<D-BS>` `<D-Del>` (insert mode) | a Mac's text keys, wherever text is typed — a buffer, the prompt, a field: the word before the caret as `<C-w>` takes it and the word after (to its end, `<C-w>`'s mirror), to the line's start as `<C-u>` and to its end — erases like `<BS>`, the register left alone, none past the line. Where there is no ⌘ the word ones are Ctrl's, `<C-BS>` `<C-Del>`, as Windows and Linux spell them, and the ⌘ ones have no key |
+| `<A-Left>` `<A-Right>`, `<D-Left>` `<D-Right>` (insert mode) | the caret a word back (`b`'s stop), past the word's end (`word end insert`), to the line's start, past its end — `<Home>` `<End>`'s. Ctrl's word moves where there is no ⌘, `<C-Left>` `<C-Right>` |
 | `zv` | show the mask under the caret for a few seconds ([secrets.md](secrets.md)) — vim's "open the folds to view the cursor", a mask being drawn as one |
 | `.` | the last change again, on the selections as they are; a count replaces the change's count and is its count from then on |
 | `q` + char … `q` | record into the register; an upper-case letter appends to its lower-case one; the status line says `REC @a` meanwhile |
@@ -399,7 +404,7 @@ objects, or any other character on both sides.
 
 | keys | what |
 |---|---|
-| `<leader><leader>` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; `<C-x>` closes the row's |
+| `<leader><leader>` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; the query matched on the name, then on the path as the row writes it; `<C-x>` closes the row's |
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
 | `<leader>F` `<leader>G` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
@@ -410,7 +415,7 @@ objects, or any other character on both sides.
 | `<leader>t` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.default` and `run.command` |
 | `<leader>bd` `<leader>bo` | delete the buffer, every other buffer |
 | `<leader>bD` | delete the buffer, discarding its unsaved changes (`:bd!`) |
-| `<leader>ss` `<D-S-f>` `<leader>sS` | the project search ([search.md](search.md)), from visual mode the selection as its pattern: a panel, a column of its own — a bar of find, include and exclude as comma lists (`src/*.[ts,tsx], tests/`), `<A-r>` `<A-c>` `<A-w>` `<A-g>` regex, case, whole word, ignored files — whose `<CR>` fills the results under it, `*search*`, a live multibuffer of the matches; `<A-a>` adds a stage searching what the one before found (`<A-k>`: `in`, `keep`, `drop`), `<A-x>` (or its `×`) takes one out, `<A-h>` `<A-l>` move between them, `<Up>` `<Down>` the searches made here before, `<C-S-j>` (or `<C-j>`, `<Esc>`) to the results and `<C-S-k>` back up, where `<CR>` or `g<Space>` (Zed's) opens the file at the caret in the pane the search was asked for from — with carets on several files, the rest opened too — and `<C-v>` in a column of its own; `<C-c>` closes the panel, `<A-/>` shows its keys' legend; `<leader>ss` from the workspace's root every time, `<leader>sS` from the file's directory (`:search project`, `:grep`, `:search here`) |
+| `<leader>ss` `<D-S-f>` `<leader>sS` | the project search ([search.md](search.md)), from visual mode the selection as its pattern: a panel, a column of its own — a bar of find, include and exclude as comma lists (`src/*.[ts,tsx], tests/`), `<A-r>` `<A-c>` `<A-w>` `<A-g>` regex, case, whole word, ignored files — whose `<CR>` fills the results under it, `*search*`, a live multibuffer of the matches; `<A-a>` adds a stage searching what the one before found (`<A-k>`: `in`, `keep`, `drop`), `<A-x>` (or its `×`) takes one out, `<A-h>` `<A-l>` move between them, `<Up>` `<Down>` the searches made here before, `<C-S-j>` (or `<C-j>`, `<Esc>`) to the results and `<C-S-k>` back up, where `<CR>` or `g<Space>` (Zed's) opens the file at the caret in the pane the search was asked for from — with carets on several files, the rest opened too — and `<C-v>` in a column of its own; `<C-c>` closes the panel, `<A-/>` shows its keys' legend (every pane's `legend`); `<leader>ss` from the workspace's root every time, `<leader>sS` from the file's directory (`:search project`, `:grep`, `:search here`) |
 | `<leader>so` | the workspace's files attended before, ranked by the memory (the picker's `recent`) |
 | `<leader>sr` | the last picker again, its query and cursor as they were |
 | `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory (from a `dir` listing, lists it there — `gz` opens it in a listing), `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
@@ -423,7 +428,7 @@ objects, or any other character on both sides.
 | `<leader>ww` | the workspaces worked in before (`picker workspaces`, a launcher section too): a pick moves the tab there and opens the file last attended (workspaces.md Decision 11) |
 | `<leader>ws` `<leader>wr` | save, restore the session |
 | `<leader>wu` | the disk usage of the working directory (`:du [PATH]`), a column of its own: every directory under it sized on the io thread, hidden and ignored files too, each total filling in as it is known, one directory at a time the largest first — a bar and a share each; `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `l` `<CR>` in (a file opens), `h` `-` out, `s` sorts by size, name, files, `m` marks (kept as it goes elsewhere, counted in its head), `d` deletes the directory's marked (or the cursor's) and `D` every marked wherever it is, through the file manager's confirm, `o` lists the directory, `r` walks again, `q` `<Esc>` close; the arrows walk too, `<Right>` in and `<Left>` out |
-| `<leader>cc` | compile: `compile.default` (a name of `compile.commands`, or a command; `%` the file), else the command last compiled here (the memory's, across launches), else the first the project's files offer — `Cargo.toml`, `package.json`, a justfile, a `build.nu`, a Makefile, ranked by the file's language server ([compile.md](compile.md)); in `*compile*` while it runs, `<C-c>` stops it, and what it started (`:compile kill`) — done, the key is `normal`'s again |
+| `<leader>cc` | compile: `compile.default` (a name of `compile.commands`, or a command; `%` the file), else the command last compiled here (the memory's, across launches), else the first the project's files offer — `Cargo.toml`, `package.json`, a justfile, a `build.nu`, a Makefile, ranked by the file's language server ([compile.md](compile.md)); the keys go to `*compile*`; there while it runs, `<C-c>` stops it, and what it started (`:compile kill`) — done, the key is `normal`'s again |
 | `<leader>cC` | what the project can compile in a picker: `compile.default`, the named `compile.commands`, the lines run here, every script, recipe and target its files offer, what said so beside each; `<CR>` runs it (`:compile pick`), or — when it wants arguments, as a `build.nu` def or a recipe with a parameter without a default — puts it in the prompt with the caret where they go; `<C-e>` does that for any row (`:compile edit N`) |
 | `<leader>ih` | the help (`:help [TOPIC]`: a page, a command, a key), read-only, `gx` following its links; `:tutor` a tutorial to try the keys on |
 | `<leader>im` | the messages |
@@ -479,6 +484,10 @@ takes `picker.split` of the width beside the preview: the pane keys
 leave is kept as the setting), `<A-S-h>` `<A-S-l>` move the divider
 between list and preview, and both dividers drag — each change is the
 setting for the session, so the picker opens next where it was left.
+With the preview hidden there is no divider: the list is the whole
+pane, and `<A-S-h>` `<A-S-l>` are the pane's again, the width of the
+column the picker stands in (2026-10-01: "if preview in a pickers is
+disabled it should control entire column size").
 A source may put keys of its own on the row: `<C-x>` in the
 buffers picker closes the row's buffer as `:bd` does, asking first
 when it has unsaved changes, and the list is read again; `<C-a>` there

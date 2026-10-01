@@ -48,10 +48,12 @@ local PAD = 14
 local INDEX_MIN = 680
 -- The most of a value a row's note spells before an ellipsis.
 local NOTE_MAX = 48
-local SIZE = 13
+-- The panes' one scale (`kawoosh.metrics`), read each frame; the
+-- headings at its text size, bold, as every pane's are.
+local SIZE, SMALL, NOTE = 13, 12, 11
 local function sizes(env)
-  local l = env and env.tokens and env.tokens.lengths or {}
-  SIZE = l.chrome or 13
+  local m = kawoosh.metrics(env)
+  SIZE, SMALL, NOTE = m.text, m.small, m.note
 end
 
 door.sections = {
@@ -438,7 +440,7 @@ local function chip(key, label, on, ev, t)
   return row {
     key = key, pad = { x = 8 }, height = SIZE + 8, radius = 4, cross_align = "center",
     bg = on and t.accent or t.sunken, hover_bg = not on and t.surface or nil, on_click = ev,
-    text(label, { size = SIZE - 1, color = on and t.on_accent or t.muted, wrap = "none" }),
+    text(label, { size = SMALL, color = on and t.on_accent or t.muted, wrap = "none" }),
   }
 end
 
@@ -446,7 +448,7 @@ local function button(key, label, ev, t, color)
   return row {
     key = key, pad = { x = 7, y = 1 }, radius = 4, bg = t.raised, hover_bg = t.surface,
     border = { w = 1, color = t.border }, on_click = ev,
-    text(label, { size = SIZE - 2, color = color or t.muted, wrap = "none" }),
+    text(label, { size = NOTE, color = color or t.muted, wrap = "none" }),
   }
 end
 
@@ -508,14 +510,15 @@ end
 -- A row's control, under its doc, by its kind.
 local function control(r, ctx, t)
   local v = scoped(r)
-  local mono = { family = "mono", size = SIZE - 1, color = t.fg, wrap = "none" }
+  local mono = { family = "mono", size = SMALL, color = t.fg, wrap = "none" }
   if S.editing == r.path then
-    local f = ctx.field { name = EDIT, size = SIZE - 1 }
+    local f = ctx.field { name = EDIT, size = SMALL }
     f.width = "grow"
     return row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow", pad = { x = 6, y = 2 }, radius = 4, bg = t.sunken,
             border = { w = 1, color = t.accent }, f },
-      text("⏎ keeps · esc drops", { size = SIZE - 2, color = t.faint, wrap = "none" }) }
+      -- The edit's own two keys: whole, never one more `⌥/ keys`.
+      ctx.legend({ { "<CR>", "keeps" }, { "<Esc>", "drops" } }, { size = NOTE, width = "fit", full = true }) }
   end
   if r.kind == "choice" then
     local line = row { width = "grow", gap = 4, cross_gap = 4, wrap_children = true }
@@ -538,7 +541,7 @@ local function control(r, ctx, t)
       -- Text a space begins or ends — the leader — in quotes, so it shows.
       text(empty and "empty" or (type(v) == "string" and (v:find("^%s") or v:find("%s$")) and spell(v)
              or type(v) == "string" and v or spell(v, r.kind)),
-        { family = "mono", size = SIZE - 1, color = empty and t.faint or t.fg, wrap = "none" }) }
+        { family = "mono", size = SMALL, color = empty and t.faint or t.fg, wrap = "none" }) }
   elseif r.kind == "list" or r.kind == "table" then
     local summary
     if r.kind == "table" then
@@ -556,7 +559,7 @@ local function control(r, ctx, t)
     end
     return row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow", clip = true,
-        text(summary, { family = "mono", size = SIZE - 1, color = t.muted, wrap = "none" }) },
+        text(summary, { family = "mono", size = SMALL, color = t.muted, wrap = "none" }) },
       button("file " .. r.path, "edit in file", { kind = "open", path = r.path, add = true }, t, t.fg) }
   end
   return nil
@@ -580,10 +583,10 @@ local function layers_node(r, t)
       width = "grow", gap = 10, pad = { x = 6, y = 1 }, radius = 3,
       hover_bg = l.file and t.surface or nil,
       on_click = l.file and { kind = "file", file = l.file, line = l.line } or nil,
-      row { width = 64, text(LAYER_WORD[l.layer] or l.layer, { size = SIZE - 2, color = t.muted, wrap = "none" }) },
-      text(spell(l.value, r.kind), { family = "mono", size = SIZE - 2, color = t.fg, wrap = "none" }),
+      row { width = 64, text(LAYER_WORD[l.layer] or l.layer, { size = NOTE, color = t.muted, wrap = "none" }) },
+      text(spell(l.value, r.kind), { family = "mono", size = NOTE, color = t.fg, wrap = "none" }),
       row { width = "grow", clip = true,
-        text(where, { size = SIZE - 2, color = t.faint, wrap = "none" }) },
+        text(where, { size = NOTE, color = t.faint, wrap = "none" }) },
     }
   end
   return col
@@ -601,7 +604,7 @@ local function row_node(r, ctx, is_cursor, t)
   for _, layer in ipairs { "user", "project", "session" } do
     if r.set[layer] ~= nil then
       elsewhere = elsewhere or layer ~= S.scope
-      head[#head + 1] = text(layer, { size = SIZE - 2, color = layer == S.scope and t.accent or t.muted,
+      head[#head + 1] = text(layer, { size = NOTE, color = layer == S.scope and t.accent or t.muted,
                                       wrap = "none" })
     end
   end
@@ -612,7 +615,7 @@ local function row_node(r, ctx, is_cursor, t)
 
   local body = column { width = "grow", gap = 4, head }
   if r.doc ~= "" then
-    body[#body + 1] = text(doc_spans(r.doc, t), { size = SIZE - 1, color = t.muted, wrap = "word" })
+    body[#body + 1] = text(doc_spans(r.doc, t), { size = SMALL, color = t.muted, wrap = "word" })
   end
   local c = control(r, ctx, t)
   if c then body[#body + 1] = c end
@@ -627,7 +630,7 @@ local function row_node(r, ctx, is_cursor, t)
       or (":set made it " .. shown .. " for this session")
     local line = row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow",
-        text(words, { size = SIZE - 2, color = t.warning or t.accent, wrap = "word" }) } }
+        text(words, { size = NOTE, color = t.warning or t.accent, wrap = "word" }) } }
     if layer == "session" then
       line[#line + 1] = button("clear " .. r.path, "clear", { kind = "clear", path = r.path }, t)
     else
@@ -651,8 +654,8 @@ end
 local function section_head(name, n, t)
   return row { key = "section " .. name, width = "grow", gap = 8, pad = { x = 8, top = 12, bottom = 4 },
     cross_align = "end",
-    text({ { name, bold = true } }, { size = SIZE + 1, color = t.fg, wrap = "none" }),
-    text(tostring(n), { size = SIZE - 2, color = t.faint, wrap = "none" }) }
+    text({ { name, bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
+    text(tostring(n), { size = NOTE, color = t.faint, wrap = "none" }) }
 end
 
 -- The sections as the search leaves them: `{ name, rows }`, in order.
@@ -684,7 +687,7 @@ end
 -- rows alike.
 local FILTER_KEYS = { { "@modified", "m" }, { "@user", "u" }, { "@project", "p" }, { "@session", "s" } }
 
-local function filter_chips(t)
+local function filter_chips(ctx, t)
   local line = row { width = "grow", gap = 4, cross_gap = 4, wrap_children = true }
   local q = " " .. (S.query or ""):lower() .. " "
   for _, f in ipairs(FILTER_KEYS) do
@@ -693,13 +696,14 @@ local function filter_chips(t)
       key = "filter " .. f[1], pad = { x = 8 }, height = SIZE + 8, radius = 4, gap = 6, cross_align = "center",
       bg = on and t.accent or t.sunken, hover_bg = not on and t.surface or nil,
       on_click = { kind = "filter", word = f[1] },
-      text(f[1], { size = SIZE - 1, color = on and t.on_accent or t.muted, wrap = "none" }),
-      text("⌥" .. f[2], { size = SIZE - 3, color = on and t.on_accent or t.faint, wrap = "none" }) }
+      text(f[1], { size = SMALL, color = on and t.on_accent or t.muted, wrap = "none" }),
+      ctx.keys("<A-" .. f[2] .. ">", { size = NOTE, color = on and t.on_accent or t.faint,
+                                       border = on and t.on_accent or nil }) }
   end
   return line
 end
 
-local function foot(t, files)
+local function foot(ctx, t, files)
   local col = column { width = "grow", gap = 4, pad = { x = PAD, y = 8 }, bg = t.sunken }
   local line = row { width = "grow", gap = 10, cross_gap = 4, wrap_children = true, cross_align = "center" }
   local function file(label, f, which)
@@ -707,7 +711,7 @@ local function foot(t, files)
     line[#line + 1] = row { key = "open " .. f.path, pad = { x = 4, y = 1 }, radius = 3, hover_bg = t.surface,
       on_click = { kind = "file", file = f.path, new = (not f.exists) and which or nil },
       text(label .. " " .. f.short .. (f.exists and "" or " · new"),
-        { size = SIZE - 2, color = f.exists and t.fg or t.faint, wrap = "none" }) }
+        { size = NOTE, color = f.exists and t.fg or t.faint, wrap = "none" }) }
   end
   file("user", files.user, "user")
   file("init", files.init)
@@ -716,9 +720,12 @@ local function foot(t, files)
   line[#line + 1] = row { width = "grow" }
   line[#line + 1] = button("reload", "reload", { kind = "reload" }, t)
   col[#col + 1] = line
-  local keys = "jk walk · ⏎ change · hl step · r reset · x clear :set · tab layers · gf file · u p s scope · ⌥m ⌥u ⌥p ⌥s filters · / search · q close"
-  if files.reloaded then keys = files.reloaded .. " · " .. keys end
-  col[#col + 1] = text(keys, { size = SIZE - 2, color = t.faint, wrap = "word" })
+  if files.reloaded then
+    col[#col + 1] = text(files.reloaded, { size = NOTE, color = t.faint, wrap = "word" })
+  end
+  col[#col + 1] = ctx.legend({ { { "j", "k" }, "walk" }, { "<CR>", "change" }, { { "h", "l" }, "step" },
+    { "r", "reset" }, { "x", "clear :set" }, { "<Tab>", "layers" }, { "gf", "file" }, { { "u", "p", "s" }, "scope" },
+    { { "<A-m>", "<A-u>", "<A-p>", "<A-s>" }, "filters" }, { "/", "search" }, { "q", "close" } }, { size = NOTE })
   return col
 end
 
@@ -752,19 +759,19 @@ kawoosh.view(VIEW, function(ctx)
     -- The scope's chips to a line of their own in a narrow pane:
     -- squeezed beside the title, they were a few pixels each.
     row { width = "grow", gap = 10, cross_gap = 6, wrap_children = true, cross_align = "center",
-      text({ { "Settings", bold = true } }, { size = SIZE + 3, color = t.fg, wrap = "none" }),
+      text({ { "Settings", bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
       row { width = "grow" },
-      text("changes go to", { size = SIZE - 2, color = t.faint, wrap = "none" }),
+      text("changes go to", { size = NOTE, color = t.faint, wrap = "none" }),
       scope_chips(t, files) },
     text(S.scope == "session" and "this session only, as :set: gone at the next launch"
          or target and (target.short .. (target.exists and "" or " · made on the first change")) or "",
-      { size = SIZE - 2, color = t.muted, wrap = "word" }),
+      { size = NOTE, color = t.muted, wrap = "word" }),
     row { width = "grow", height = SIZE + 14, pad = { x = 8 }, gap = 8, radius = 5, cross_align = "center",
           bg = t.sunken, border = { w = 1, color = t.border },
       text("/", { family = "mono", size = SIZE, color = t.accent, wrap = "none" }),
       search,
-      text(count, { size = SIZE - 2, color = #S.shown == 0 and t.danger or t.faint, wrap = "none" }) },
-    filter_chips(t),
+      text(count, { size = NOTE, color = #S.shown == 0 and t.danger or t.faint, wrap = "none" }) },
+    filter_chips(ctx, t),
     row { width = "grow", height = 1, bg = t.border } }
 
   local groups = grouped()
@@ -781,7 +788,7 @@ kawoosh.view(VIEW, function(ctx)
   end
   if #groups == 0 then
     list[#list + 1] = row { width = "grow", pad = 12,
-      text("no setting matches “" .. S.query .. "”", { size = SIZE - 1, color = t.muted, wrap = "word" }) }
+      text("no setting matches “" .. S.query .. "”", { size = SMALL, color = t.muted, wrap = "word" }) }
   end
 
   local body = list
@@ -794,8 +801,8 @@ kawoosh.view(VIEW, function(ctx)
         gap = 6, bg = on and t.surface or nil, hover_bg = t.sunken,
         on_click = { kind = "section", name = g.name },
         row { width = "grow", clip = true,
-          text(g.name, { size = SIZE - 1, color = on and t.fg or t.muted, wrap = "none" }) },
-        text(tostring(#g.rows), { size = SIZE - 2, color = t.faint, wrap = "none" }) }
+          text(g.name, { size = SMALL, color = on and t.fg or t.muted, wrap = "none" }) },
+        text(tostring(#g.rows), { size = NOTE, color = t.faint, wrap = "none" }) }
     end
     body = row { width = "grow", height = "grow", gap = 4, index, list }
   end
@@ -810,7 +817,7 @@ kawoosh.view(VIEW, function(ctx)
     end
   end
 
-  return column { width = "grow", height = "grow", bg = t.bg, gap = 0, head, body, foot(t, files) }
+  return column { width = "grow", height = "grow", bg = t.bg, gap = 0, head, body, foot(ctx, t, files) }
 end, function(ev)
   if not S then return end
   local function row_of(path)

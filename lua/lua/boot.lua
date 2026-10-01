@@ -351,7 +351,9 @@ end
 -- dim corner line, a debug the log's alone), `timeout` in ms (0 keeps
 -- it until acted on), and `actions`, a list of `{ label = "Retry", run
 -- = fn }` (or `run = "command line"`) — a toast with actions stays
--- until one is clicked. Every notification is in `:messages`.
+-- until one is clicked, unless it has a `timeout` too: then it is an
+-- offer, gone when its time is up and put away by a click or `x` as a
+-- plain toast is. Every notification is in `:messages`.
 function kawoosh.notify(text, opts)
   if type(opts) == "string" then opts = { level = opts } end
   opts = opts or {}
@@ -523,9 +525,11 @@ end
 -- or a plugin's own "<plugin>.<kind>"), `workspace` (a path, or `true`
 -- for the current one; nothing for every workspace), `subject` (one
 -- row, or nil), `since` (seconds back), `pinned = true` (the pins in
--- pin order) and `limit` (200); `{ recent = true, limit = }` is the
--- ring instead — the transitions newest first, `{ at =, age =, kind =,
--- subject =, workspace = }` each. A row: `kind`, `subject`, `workspace`,
+-- pin order) and `limit` (200) — `workspace = true` or none is the
+-- memory pane's `memory.scope`, `workspace` or `global`; `{ recent =
+-- true, limit = }` is the ring instead — the transitions newest first,
+-- `{ at =, age =, kind =, subject =, workspace = }` each, under a
+-- `workspace` the ones made there and the texts. A row: `kind`, `subject`, `workspace`,
 -- `first`, `last` (unix seconds), `age`, `visits`, `dwell` (seconds),
 -- `edits`, `yanks`, `pinned` (0, or the pin's ordinal), `meta` (a
 -- table: a file's `line`, a text's `took`), and a text's `text`.
@@ -548,7 +552,10 @@ end
 -- when one yank or delete filled it, `buffer` (the handle it came
 -- from) and `entries`, for each line of the text the tracked line of
 -- that buffer it was (an index of `tracked()`, or false): how a line
--- pasted into one listing is known to be an entry of another.
+-- pasted into one listing is known to be an entry of another. Filled
+-- anew since (`open_scratch`), the buffer is tracked anew and none of
+-- its lines is the register's: every entry false — a plugin keeps
+-- what they were before it fills the buffer again.
 --
 -- kawoosh.view_open(name[, { focus = false, below = true, share = 0.5 }])
 -- puts a Lua view in a split — beside, or below with `below`, taking
@@ -633,6 +640,25 @@ end
 -- open yet is asked for and drawn empty this frame. The field has the
 -- keys when its view's keys are on it and `pane_focused` — the pane the
 -- view is drawn in has the keyboard — so one caret is on the screen.
+-- kawoosh.metrics(env): the panes' one scale (plugin-panes.md,
+-- "Sizes"), read off the length tokens the editor declares
+-- (`look::Chrome`) — the chrome's text size, `font.chrome_size` or
+-- the editor's font up to a cap, and the steps under it. Every pane,
+-- Rust or Lua, draws its text at one of `text`, `small` and `note`, so
+-- one setting moves them all:
+--   text   a pane's text: its rows, its fields
+--   small  a step under: secondary text, a chip, a pane's title
+--   note   two under: a note, a count, a tag, a key legend
+--   row    a line of `text` with the chrome's air: a row's height
+--   font   the editor's font size, for a line of buffer text
+-- `ctx.metrics` is this for the view's frame.
+function kawoosh.metrics(env)
+  local l = env and env.tokens and env.tokens.lengths or {}
+  local text = l.chrome or 13
+  return { text = text, small = l.chrome_small or text - 1, note = l.chrome_note or text - 2,
+           row = l.chrome_row or 20, font = l.font or 13 }
+end
+
 local function field_node(view_name, env, opts, pane_focused)
   local full = "lua:" .. view_name .. "/" .. opts.name
   local st = kawoosh._field(full)
@@ -641,7 +667,7 @@ local function field_node(view_name, env, opts, pane_focused)
     st = { text = "", mode = "normal", caret = 0, anchor = 0, focused = false }
   end
   local t = env.theme
-  local size = opts.size or 13
+  local size = opts.size or kawoosh.metrics(env).text
   -- One line, whatever its length: never wrapped, so no second row is
   -- drawn over what is under the field.
   local style = { family = "mono", size = size, wrap = "none" }
@@ -791,6 +817,84 @@ function kawoosh.field_focus(view_name, name)
   kawoosh._field_focus(view_name, name and ("lua:" .. view_name .. "/" .. name) or nil)
 end
 
+-- ---------------------------------------------------------------- keys
+
+-- A notation as caps (docs/design/icons.md Decision 4): one outlined
+-- cap a key, a chord's modifiers in it before its key as icons, as
+-- tall as the text's line so a row is no taller for it. The reading is
+-- the Rust half's (`kawoosh._key_caps`), the measures too (`kawoosh._cap`).
+local function keys_node(env, notation, opts)
+  opts = opts or {}
+  local t = env.theme
+  local C = kawoosh._cap
+  local size = opts.size or kawoosh.metrics(env).note
+  local style = { family = "mono", size = size, color = opts.color or t.muted, wrap = "none" }
+  local line_h = env.measure_text("Mg", style).height
+  local out = row { gap = C.gap, cross_align = "center" }
+  for _, cap in ipairs(kawoosh._key_caps(notation)) do
+    local box = row { min_height = line_h, pad = { x = C.pad }, gap = C.part_gap, radius = C.radius,
+      border = { w = C.border, color = opts.border or t.border }, cross_align = "center" }
+    for _, p in ipairs(cap) do
+      box[#box + 1] = p.icon and kawoosh.icon(p.icon, { size = size, color = style.color })
+        or text(p.text, style)
+    end
+    out[#out + 1] = box
+  end
+  return out
+end
+
+-- Whether pane `pane`'s legends are whole (docs/design/icons.md
+-- Decision 6): its flip (`<A-/>`, `legend`), else `keys.legend`.
+local function legend_full(pane)
+  local full = kawoosh._legend(pane)
+  if full == nil then full = kawoosh.opt("keys.legend") == "full" end
+  return full
+end
+
+-- The way to a legend and back: `⌥/ keys`, `⌥/ hide keys` while it is
+-- whole; a click flips the pane's (`on_event` below).
+local function legend_toggle(env, pane, opts)
+  opts = opts or {}
+  local t = env.theme
+  local C = kawoosh._cap
+  local size = opts.size or kawoosh.metrics(env).note
+  return row { key = "legend toggle", label = "legend", pad = { x = 4 }, radius = 4, gap = C.word_gap,
+    cross_align = "center", hover_bg = t.sunken, on_click = { kind = "legend" },
+    keys_node(env, "<A-/>", opts),
+    text(legend_full(pane) and "hide keys" or "keys", { size = size, color = opts.word or t.faint, wrap = "none" }) }
+end
+
+-- A legend: `{ { "<CR>", "installs" }, { { "j", "k" }, "walk" } }`, each
+-- item its keys — a notation, or a list of them for keys that do one
+-- thing — as caps and its words after, wrapped between items and never
+-- inside one. Compact, as a pane's starts, it is the way to it alone,
+-- `⌥/ keys`; whole, its items and the way back. `full = true` for one
+-- always whole (a confirm's two keys); `toggle = false` for one whose
+-- way to it the view draws elsewhere (`ctx.legend_toggle`): nil while
+-- compact, its items alone while whole.
+local function legend_node(env, pane, items, opts)
+  opts = opts or {}
+  local t = env.theme
+  local C = kawoosh._cap
+  local size = opts.size or kawoosh.metrics(env).note
+  local full = opts.full or legend_full(pane)
+  local toggle = not opts.full and opts.toggle ~= false
+  if not full and not toggle then return nil end
+  local out = row { width = opts.width or "grow", gap = C.item_gap, cross_gap = 2,
+    wrap_children = true, cross_align = "center" }
+  if full then
+    for _, it in ipairs(items) do
+      local alts = type(it[1]) == "table" and it[1] or { it[1] }
+      local ks = row { gap = C.alt_gap, cross_align = "center" }
+      for _, k in ipairs(alts) do ks[#ks + 1] = keys_node(env, k, opts) end
+      out[#out + 1] = row { gap = C.word_gap, cross_align = "center", ks,
+        text(it[2], { size = size, color = opts.word or t.faint, wrap = "none" }) }
+    end
+  end
+  if toggle then out[#out + 1] = legend_toggle(env, pane, opts) end
+  return out
+end
+
 -- ---------------------------------------------------------------- kui's doors
 
 -- "lua/counter@2" (an event's full name) or "counter@2" (a view's own):
@@ -814,18 +918,34 @@ function view(env, slot)
   -- node to put in the tree; `ctx.field_text("q")` is its line.
   local ctx = { pane = pane, focused = params.focused, width = params.width,
                 height = params.height, share = params.share, origin = params.origin, env = env,
-                name = name }
+                name = name, metrics = kawoosh.metrics(env) }
   -- A field draws its caret while its pane has the keys — not while
   -- the command line over it does: one caret on the screen.
   ctx.field = function(opts)
     return field_node(name, env, opts, params.focused ~= false and not params.prompt)
   end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
+  -- `ctx.icon(name, { size =, color = })`: `kawoosh.icon` in the view's
+  -- foreground, the scale's text size unless given. `ctx.keys("<C-w>j", { size =, color =, border = })`:
+  -- caps. `ctx.legend(items, { size =, word =, full =, toggle = })`: a
+  -- key legend, compact or whole as the pane's is; `ctx.legend_toggle`
+  -- its `⌥/ keys` alone, `ctx.legend_full()` whether it is whole. Keys
+  -- and legends at the scale's note size unless given.
+  ctx.icon = function(icon, opts)
+    opts = opts or {}
+    if opts.color == nil then opts.color = t.fg end
+    if opts.size == nil then opts.size = ctx.metrics.text end
+    return kawoosh.icon(icon, opts)
+  end
+  ctx.keys = function(notation, opts) return keys_node(env, notation, opts) end
+  ctx.legend = function(items, opts) return legend_node(env, pane, items, opts) end
+  ctx.legend_toggle = function(opts) return legend_toggle(env, pane, opts) end
+  ctx.legend_full = function() return legend_full(pane) end
   local ok, tree = timed(fn, ctx)
   if not ok then
     return column { pad = 12, gap = 6,
       text("view `" .. name .. "` failed", { color = t.danger }),
-      text(tostring(tree), { size = 12, color = t.muted, wrap = "word" }) }
+      text(tostring(tree), { size = ctx.metrics.small, color = t.muted, wrap = "word" }) }
   end
   if type(tree) ~= "table" then
     return column { pad = 12, text("view `" .. name .. "` returned " .. type(tree), { color = t.danger }) }
@@ -835,7 +955,12 @@ end
 
 function on_event(ev)
   if not ev.slot then return end
-  local name = split_slot(ev.slot)
+  local name, pane = split_slot(ev.slot)
+  -- A legend's `⌥/ keys`: the pane's whole, or compact again.
+  if ev.kind == "legend" then
+    kawoosh._legend(pane, not legend_full(pane))
+    return
+  end
   -- A click on a field: the keys go to it.
   if ev.kind == "field" and type(ev.field) == "string" then
     kawoosh._field_focus(name, ev.field)

@@ -11,8 +11,9 @@
 -- it takes the stage before's answer — `in` searches the files it
 -- found, `keep` keeps its matched lines that also match, `drop` those
 -- that do not — and its include and exclude narrow the files it passes
--- on. The trail under the fields is the stages, the cursor's the one
--- the fields edit; editing one and `<CR>` runs it and every one after.
+-- on. The trail under the fields is the stages, once there are two —
+-- the cursor's the one the fields edit; editing one and `<CR>` runs it
+-- and every one after.
 -- A kind of stage is data: `kawoosh.search_ui.kind(name, { title =,
 -- run = fn(prev, stage, done, ctx) })`, the bundled three written so.
 --
@@ -31,15 +32,20 @@
 local fs = kawoosh.fs
 
 kawoosh.setting("search.context", { type = "integer", doc = "lines shown above and below each match in the search's results" })
-kawoosh.setting("search.legend", { type = "boolean", doc = "the search bar's key legend shown; ⌥/ in the bar flips it" })
 
 local VIEW = "search"
 local RESULTS = "*search*"
 local FIELDS = { "find", "include", "exclude" }
 local PANE_FACT = "lua:" .. VIEW
-local SIZE = 13
+-- The panes' one scale (`kawoosh.metrics`), read each frame: the
+-- fields, their labels and the stages at its text size, the toggles
+-- and the count a step under, the keys two — as the other panes'.
+local SIZE, SMALL, NOTE = 13, 12, 11
 local ROW_H = SIZE + 6
-local HINT_SIZE = SIZE - 3
+local function sizes(m)
+  SIZE, SMALL, NOTE = m.text, m.small, m.note
+  ROW_H = SIZE + 6
+end
 
 local search = { stages = {}, cur = 1, kinds = {}, order = {}, gen = 0, root = nil, token = nil }
 -- The module, for a config or a plugin (`kawoosh.search_ui.kind`).
@@ -448,29 +454,32 @@ local function chip(t, label, on, kind)
   return row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, cross_align = "center",
     bg = on and t.accent or t.sunken, hover_bg = not on and t.surface or nil,
     on_click = { kind = kind },
-    text(label, { family = "mono", size = SIZE - 1, color = on and t.bg or t.muted, wrap = "none" }) }
+    text(label, { family = "mono", size = SMALL, color = on and t.bg or t.muted, wrap = "none" }) }
 end
 
 local function status(t)
   local st = search.stages[search.cur]
   local last = search.stages[#search.stages]
-  if search.running then return text("searching…", { size = SIZE - 1, color = t.muted, wrap = "none" }) end
+  if search.running then return text("searching…", { size = SMALL, color = t.muted, wrap = "none" }) end
   for _, s in ipairs(search.stages) do
-    if s.err then return text(s.err, { size = SIZE - 1, color = t.danger, wrap = "none" }) end
+    if s.err then return text(s.err, { size = SMALL, color = t.danger, wrap = "none" }) end
   end
   local a = last.answer or st.answer
-  if not a then return text("⏎ to search", { size = SIZE - 1, color = t.faint, wrap = "none" }) end
+  if not a then return text("⏎ to search", { size = SMALL, color = t.faint, wrap = "none" }) end
   local files = #a.files
   local s = a.matches .. (a.matches == 1 and " match" or " matches") .. " in " .. files ..
             (files == 1 and " file" or " files")
   if a.limited then s = s .. " (stopped: more)" end
-  return text(s, { size = SIZE - 1, color = t.muted, wrap = "none" })
+  return text(s, { size = SMALL, color = t.muted, wrap = "none" })
 end
 
-local function trail(t)
+-- The stages, a row of their own once there is more than one to walk:
+-- with one, its chip said again what the find field and the count say.
+local function trail(ctx)
+  local t = ctx.env.theme
   local r = row { width = "grow", height = ROW_H, gap = 4, cross_align = "center", clip = true }
   for i, st in ipairs(search.stages) do
-    if i > 1 then r[#r + 1] = text("›", { size = SIZE, color = t.faint }) end
+    if i > 1 then r[#r + 1] = ctx.icon("chevron-right", { size = SIZE, color = t.faint }) end
     -- The cursor's stage as its field reads now, the others as kept.
     local find = i == search.cur and kawoosh.field_text(VIEW, "find") or st.find
     local label = (i > 1 and (search.kinds[st.kind].title or st.kind) .. " " or "") ..
@@ -481,56 +490,50 @@ local function trail(t)
       bg = cur and t.selection or nil, hover_bg = not cur and t.sunken or nil,
       on_click = { kind = "stage", i = i },
       text({ { label, color = st.err and t.danger or (cur and t.fg or t.muted) }, { n, color = t.faint } },
-           { family = "mono", size = SIZE - 1, wrap = "none" }) }
-    -- Its own way out, when there is more than one.
-    if #search.stages > 1 then
-      chip[#chip + 1] = row { pad = { x = 3 }, radius = 3, hover_bg = t.surface,
-        on_click = { kind = "unstage", i = i },
-        text("×", { size = SIZE - 1, color = t.faint, wrap = "none" }) }
-    end
+           { family = "mono", size = SIZE, wrap = "none" }) }
+    -- Its own way out.
+    chip[#chip + 1] = row { pad = 1, radius = 3, hover_bg = t.surface,
+      on_click = { kind = "unstage", i = i },
+      ctx.icon("close", { size = SMALL, color = t.faint }) }
     r[#r + 1] = chip
   end
-  local root = search.root and search.root ~= fs.cwd() and ("in " .. fs.form(search.root, "relative") .. "/") or nil
-  if root then r[#r + 1] = text(root, { size = SIZE - 1, color = t.faint, wrap = "none" }) end
-  -- At the row's end, the way to the legend: a click flips it too.
-  r[#r + 1] = row { width = "grow" }
-  r[#r + 1] = row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, cross_align = "center",
-    hover_bg = t.sunken, on_click = { kind = "legend" },
-    text({ { "⌥/ ", color = t.muted }, { search.legend() and "hide keys" or "keys", color = t.faint } },
-         { size = HINT_SIZE, wrap = "none" }) }
   return r
 end
 
--- search.legend(): whether the legend is shown — `search.legend`, off
--- unless set, flipped for the session by `⌥/` (`search legend`).
-function search.legend() return kawoosh.opt("search.legend") == true end
+-- At the globs' end: where the search starts when not the workspace's
+-- root, and the way to the legend.
+local function tail(ctx)
+  local t = ctx.env.theme
+  local out = {}
+  local root = search.root and search.root ~= fs.cwd() and ("in " .. fs.form(search.root, "relative") .. "/") or nil
+  if root then
+    out[#out + 1] = row { min_width = 0, text(root, { size = SMALL, color = t.faint, ellipsis = true }) }
+  end
+  -- The way to the legend (every pane's, `<A-/>`): a click flips it too.
+  out[#out + 1] = ctx.legend_toggle({ size = NOTE })
+  return out
+end
 
 -- The keys, small and dim, under the rest: one key a hint — a run of
 -- keys under one label (`⌥R ⌥C ⌥W ⌥G regex case word ignored`) read
--- ambiguously.
+-- ambiguously. Drawn as caps, wrapped at the pane's width between
+-- hints, never inside one (`ctx.legend`); under the bar only while
+-- the pane's legend is whole, its way there at the trail's end.
 local HINTS = {
-  { "⏎", "search" }, { "⇥", "next field" }, { "⇧⇥", "previous field" },
-  { "↑", "earlier search" }, { "↓", "later search" },
-  { "⌥R", "regex" }, { "⌥C", "case" }, { "⌥W", "whole word" }, { "⌥G", "ignored files" },
-  { "⌥A", "add stage" }, { "⌥K", "stage kind" }, { "⌥X", "remove stage" },
-  { "⌥H", "previous stage" }, { "⌥L", "next stage" },
-  { "⎋", "to results" }, { "⌃⇧J", "to results" }, { "⌃⇧K", "back up" }, { "⌃C", "close" },
+  { "<CR>", "search" }, { "<Tab>", "next field" }, { "<S-Tab>", "previous field" },
+  { "<Up>", "earlier search" }, { "<Down>", "later search" },
+  { "<A-r>", "regex" }, { "<A-c>", "case" }, { "<A-w>", "whole word" }, { "<A-g>", "ignored files" },
+  { "<A-a>", "add stage" }, { "<A-k>", "stage kind" }, { "<A-x>", "remove stage" },
+  { "<A-h>", "previous stage" }, { "<A-l>", "next stage" },
+  { "<Esc>", "to results" }, { "<C-S-j>", "to results" }, { "<C-S-k>", "back up" }, { "<C-c>", "close" },
 }
--- Wrapped at the pane's width between hints, never inside one: a
--- hint's spaces are no-break ones.
-local NBSP = "\u{A0}"
-local function whole(s) return (s:gsub(" ", NBSP)) end
-local function hints(t)
-  local spans = {}
-  for i, h in ipairs(HINTS) do
-    spans[#spans + 1] = { (i > 1 and "   " or "") .. whole(h[1]) .. NBSP, color = t.muted }
-    spans[#spans + 1] = { whole(h[2]), color = t.faint }
-  end
-  return column { width = "grow", text(spans, { size = HINT_SIZE, wrap = "word" }) }
+local function hints(ctx)
+  return ctx.legend(HINTS, { size = NOTE, toggle = false })
 end
 
 kawoosh.view(VIEW, function(ctx)
   local t = ctx.env.theme
+  sizes(ctx.metrics)
   local st = search.stages[search.cur]
   search.live = true
   local kind = search.kinds[st.kind]
@@ -540,8 +543,11 @@ kawoosh.view(VIEW, function(ctx)
   include.width = "grow"
   local exclude = ctx.field { name = "exclude", placeholder = "e.g. *__test__*, vendor", size = SIZE }
   exclude.width = "grow"
+  -- Two rows, the fewest that hold the fields: the pattern with its
+  -- toggles and count, the globs with the way to the keys; the stages'
+  -- row under them once there are stages to walk.
   local head = row { width = "grow", height = ROW_H + 2, gap = 6, cross_align = "center",
-    text(search.cur > 1 and (kind.title or st.kind) or "find", { size = SIZE - 1, color = t.accent, wrap = "none" }),
+    text(search.cur > 1 and (kind.title or st.kind) or "find", { size = SIZE, color = t.accent, wrap = "none" }),
     find,
     chip(t, ".*", st.regex, "regex"),
     chip(t, "Aa", st.case == "sensitive", "case"),
@@ -550,19 +556,23 @@ kawoosh.view(VIEW, function(ctx)
     status(t),
   }
   local globs = row { width = "grow", height = ROW_H + 2, gap = 6, cross_align = "center",
-    text("include", { size = SIZE - 1, color = t.muted, wrap = "none" }), include,
-    text("exclude", { size = SIZE - 1, color = t.muted, wrap = "none" }), exclude }
-  -- The legend only when asked for: the bar as tall as it draws, so the
-  -- results take back the rows it took.
-  return column { width = "grow", pad = { x = 8, y = 4 }, gap = 2, clip = true, bg = t.surface,
-    head, globs, trail(t), search.legend() and hints(t) or nil }
+    text("include", { size = SIZE, color = t.muted, wrap = "none" }), include,
+    text("exclude", { size = SIZE, color = t.muted, wrap = "none" }), exclude }
+  for _, n in ipairs(tail(ctx)) do globs[#globs + 1] = n end
+  -- The stages and the legend only when there is something to show:
+  -- the bar as tall as it draws, so the results take back the rows.
+  local bar = column { width = "grow", pad = { x = 8, y = 4 }, gap = 2, clip = true, bg = t.surface,
+    head, globs }
+  if #search.stages > 1 then bar[#bar + 1] = trail(ctx) end
+  -- `hints` is nothing while the pane's legend is compact.
+  local legend = hints(ctx)
+  if legend then bar[#bar + 1] = legend end
+  return bar
 end, function(ev)
   if ev.kind == "unstage" and ev.i then
     search.remove(ev.i)
   elseif ev.kind == "stage" and ev.i then
     search.go(ev.i)
-  elseif ev.kind == "legend" then
-    kawoosh.opt("search.legend", not search.legend())
   elseif ev.kind == "regex" or ev.kind == "case" or ev.kind == "word" or ev.kind == "ignored" then
     search.flip(ev.kind)
   end
@@ -655,8 +665,6 @@ on("stage remove", function() search.remove() end, "the cursor's stage taken out
 on("stage kind", function() search.cycle() end, "the cursor's stage's kind: in, keep, drop")
 on("stage next", function() search.go(search.cur + 1) end, "the next stage to the fields")
 on("stage prev", function() search.go(search.cur - 1) end, "the previous stage to the fields")
-on("legend", function() kawoosh.opt("search.legend", not search.legend()) end,
-   "the bar's key legend shown, or hidden")
 on("close", function() search.close() end, "close the search's panel, its results kept for the next")
 on("earlier", function() search.earlier(1) end, "the search made before this one here, in the bar")
 on("later", function() search.earlier(-1) end, "the search made after this one here, in the bar")
@@ -726,8 +734,8 @@ for _, m in ipairs { "i", "n" } do
     kawoosh.map(m, "<A-k>", "search stage kind", w)
     kawoosh.map(m, "<A-h>", "search stage prev", w)
     kawoosh.map(m, "<A-l>", "search stage next", w)
-    -- `?` without its shift: the keys.
-    kawoosh.map(m, "<A-/>", "search legend", w)
+    -- Every pane's legend key (`legend`), from the bar's fields too.
+    kawoosh.map(m, "<A-/>", "legend", w)
   end
 end
 

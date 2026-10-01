@@ -502,6 +502,10 @@ const DOCS: &[(&str, &str)] = &[
     ("leader", "the `<leader>` key"),
     ("whichkey", "show the keys that can follow a prefix"),
     (
+        "keys.legend",
+        "how a pane's key legend starts: `compact`, one `⌥/ keys` that `<A-/>` opens, or `full`",
+    ),
+    (
         "keys.option_as_alt",
         "macOS: which ⌥ is Alt for key chords (`<A-u>`) rather than typing accents (`ü`): `left`, `right`, `both`, `none`",
     ),
@@ -657,6 +661,10 @@ const DOCS: &[(&str, &str)] = &[
         "memory.idle_secs",
         "seconds without a key or a click before time in a file stops counting",
     ),
+    (
+        "memory.scope",
+        "whose memory the pane shows: `workspace` this one's, `global` every one's",
+    ),
     ("picker.preview", "a preview beside the picker's list"),
     (
         "picker.wrap",
@@ -682,15 +690,15 @@ const DOCS: &[(&str, &str)] = &[
     ("font.features", "OpenType features, such as `-liga tnum`"),
     (
         "font.chrome_size",
-        "the size of the tabs', title bars' and strips' text; `0` follows `font.size`",
+        "the size of the tabs', title bars', strips' and every pane's text, a pane's secondary text a step under it and its notes two; `0` follows `font.size` up to 16",
     ),
     (
         "grammars.install",
         "what the first file of a language with a grammar to install does: `ask` says the command, `auto` installs it, `never` nothing; a project may only say `never`",
     ),
     (
-        "grammars.url",
-        "where grammars are fetched from, tried in order: each a folder of `manifest.json` and an archive a grammar; a project's is passed over",
+        "grammars.urls",
+        "where grammars are fetched from, each a folder of `manifest.json` and an archive a grammar: a grammar several list is the first's, and fetched from the next that has it when that one fails; a URL said twice counts once; a project's is passed over",
     ),
     (
         "theme.appearance",
@@ -853,6 +861,9 @@ impl Settings {
         // ⌥u a chord, not the start of `ü` — so the left by default,
         // and the right left for accents.
         defaults.set("keys.option_as_alt", Setting::Str("left".into()));
+        // A pane's key legend: one `⌥/ keys` until `<A-/>` opens it
+        // (docs/design/icons.md Decision 6), or every key at once.
+        defaults.set("keys.legend", Setting::Str("compact".into()));
         // The scrolling tab (docs/design/scrolling-tab.md): what a new
         // tab is (`tree` | `scroll`; the strip since 2026-09-22), a
         // new column's width (`third`,
@@ -1072,6 +1083,10 @@ impl Settings {
         // Seconds without a key or a click after which dwell stops
         // counting.
         defaults.set("memory.idle_secs", Setting::Int(60));
+        // Whose rows the memory pane lists: `workspace`, the focused
+        // tab's project's, or `global`, every one's; `<C-a>` in the
+        // pane flips it for the session.
+        defaults.set("memory.scope", Setting::Str("workspace".into()));
         // The picker (`picker.lua`): a preview of the cursor's row
         // beside the list, and whether a row's text wraps to show the
         // whole of a long path; `<A-p>` and `<A-w>` in the picker flip
@@ -1102,13 +1117,14 @@ impl Settings {
         // Where `:grammar install` fetches from (docs/design/grammars.md
         // Decision 2): the releases of `kawoosh-grammars` on its two
         // hosts, each a folder of `manifest.json` and one archive a
-        // grammar, tried in order. Read from the user's layers alone.
+        // grammar; a grammar both list is the first's. Read from the
+        // user's layers alone.
         // What the first file of such a language on show does (Decision
         // 7): `ask`, a corner line naming `:grammar install`, once a
         // language a session; `auto`; `never`.
         defaults.set("grammars.install", Setting::Str("ask".into()));
         defaults.set(
-            "grammars.url",
+            "grammars.urls",
             Setting::List(
                 [
                     "https://github.com/qxuken/kawoosh-grammars/releases/latest/download",
@@ -1149,12 +1165,14 @@ impl Settings {
             ("layout.dock", words(&["tree", "scroll"])),
             ("launcher.start", words(&["normal", "insert"])),
             ("buffers.scope", words(&["tab", "all"])),
+            ("memory.scope", words(&["workspace", "global"])),
             ("tabs.directory", words(&["auto", "always", "never"])),
             ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
             ("grammars.install", words(&["ask", "auto", "never"])),
             ("markdown.reveal", words(&["line", "span", "none"])),
             ("markdown.navigation", words(&["line", "row"])),
+            ("keys.legend", words(&["compact", "full"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
             ("end_of_line", words(&["", "lf", "crlf", "cr"])),
             (
@@ -1725,8 +1743,9 @@ mod tests {
                 "format_on_save",
                 "formatter",
                 "grammars.install",
-                "grammars.url",
+                "grammars.urls",
                 "insert_final_newline",
+                "keys.legend",
                 "keys.option_as_alt",
                 "language.css.tabstop",
                 "language.diff.trim_trailing_whitespace",
@@ -1763,6 +1782,7 @@ mod tests {
                 "memory.idle_secs",
                 "memory.keep_days",
                 "memory.max_mb",
+                "memory.scope",
                 "memory.text.keep_days",
                 "memory.text.max_mb",
                 "pairs.enabled",

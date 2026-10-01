@@ -19,6 +19,19 @@ An operator doubled works on lines, as in vim: `dd`, `yy`, `cc`, `>>`,
 normal mode backs out of whatever is open, one step a press: a pending
 operator, then the extra cursors, then the search highlight.
 
+Wherever text is typed — insert mode, the command line, a pane's field
+— the keys a Mac edits a line with work as well as vim's:
+
+| keys | what |
+|---|---|
+| `<A-BS>` `<A-Del>` (⌥⌫ ⌥⌦) | delete the word before the caret (where `<C-w>` stops), the word after it |
+| `<D-BS>` `<D-Del>` (⌘⌫ ⌘⌦) | delete to the line's start (as `<C-u>`), to its end |
+| `<A-Left>` `<A-Right>` | the caret a word back, past the end of the word |
+| `<D-Left>` `<D-Right>` | the caret to the line's start, its end (as `<Home>` `<End>`) |
+
+On Windows and Linux the word keys are Ctrl's: `<C-BS>` `<C-Del>`
+`<C-Left>` `<C-Right>`. None of them reaches past its line.
+
 ## Indentation
 
 `<CR>`, `o` and `O` open a line at the indent the language's syntax
@@ -41,6 +54,7 @@ Most of vim's letters mean what they always did. The exceptions:
 | `,` | keeps the primary selection and drops the rest (there is no reverse `;`) |
 | `S` | changes the line, keeping its indent |
 | `s` `x` in `V` mode | change, delete the selected lines |
+| `x` on a line's end | the caret can stand past the last character, on the line break (`$` then `l`, `j` onto a shorter line, an empty line), and `x` there deletes it: the next line joins on as it is, no space put in (vim's `gJ`). A count stops at the line's end, so `9x` on the text never joins. A visual selection over the break takes it too |
 | `zz` `zs` `ze` | place the focused column of a [strip](panes.md#the-scrolling-strip), not the cursor line |
 | `-` `_` | open the file's directory, the working directory, as a listing ([files](files.md)) |
 | `<CR>` | on a `path:line` in the text, opens it |
@@ -223,7 +237,8 @@ and text copied in another program becomes the register when you come
 back to the window — so `p` pastes it. In insert mode `⌘v` (`<C-S-v>`)
 pastes the clipboard; `<C-S-u>` deletes the whole line into the register
 without leaving insert mode. As in vim, insert's `<BS>`, `<Del>`, `<C-w>`
-and `<C-u>` leave the register and the clipboard alone; `x` and `X` are
+and `<C-u>` — and the ⌥ and ⌘ deletes above — leave the register and
+the clipboard alone; `x` and `X` are
 deletes like `dl` and `dh` and fill them.
 
 Every yank and delete is also kept in the **memory**, newest first:

@@ -187,3 +187,17 @@ program had heard until raw sent them; they are xterm's `CSI 5 ; 2 ~`,
 `CSI 1 ; 2 P` now. Tests: `raw_gives_the_program_every_key_but_the_escape_and_cmd`,
 `terminal_raw_names_the_programs_that_make_a_pane_raw` (a real `sleep`
 in front), and the legacy modifiers in `term`'s encoding test.
+
+**Decision 6, amended** 2026-10-01, from the todo: "D/A-Backspace/Delete
+moves not implemented". Under the legacy encoding an unbound ⌘ chord
+still reaches nothing, but for the four a Mac edits a line with, which
+have a meaning there: ⌘⌫ `^U`, ⌘⌦ `^K`, ⌘← `^A`, ⌘→ `^E` — readline's
+kill to the start and the end, the line's start and end, as iTerm's
+natural text editing and Ghostty send them (`encode_super_key`). They
+stay unbound in kawoosh's map, so a program that pushed the protocol
+still hears them whole as ⌘ (nvim's `<D-BS>`), and raw changes nothing
+about them. The ⌥ ones were already there: Alt's chords are the
+program's, ⌥⌫ `ESC DEL` (every shell's kill-word back), ⌥← ⌥→ ⌥⌦
+xterm's `CSI 1 ; 3 D`, `CSI 1 ; 3 C`, `CSI 3 ; 3 ~` — not rewritten to
+`ESC b` `ESC f` `ESC d`, which would take `<A-Left>` from a vim in the
+pane. Test: `cmds_text_keys_reach_a_shell_as_readlines`.

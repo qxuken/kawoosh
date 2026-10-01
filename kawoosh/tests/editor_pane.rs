@@ -463,6 +463,137 @@ fn the_wheel_reaches_the_view_over_the_lines_column() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// The caret past the end of a `jjj…` line — the block's cell, or the
+/// bar after the text — and the lines column it is drawn in: the one
+/// caret on the screen, the focused pane's.
+fn newline_caret(d: &Drive) -> Option<(kui_native::Rect, kui_native::Rect)> {
+    let nodes = d.core.nodes();
+    let by_key: std::collections::HashMap<_, _> = nodes.iter().map(|n| (n.key, n)).collect();
+    nodes
+        .iter()
+        .filter(|t| t.text.as_deref().is_some_and(|s| s.starts_with("jjj")))
+        .find_map(|t| {
+            let end = t.rect.x + t.rect.w;
+            let caret = nodes.iter().find(|n| {
+                n.parent == t.parent
+                    && n.bg.a > 0.0
+                    && n.rect.x >= end - 1.5
+                    && (n.float && n.rect.w == 2.0 || !n.float && n.rect.w < 20.0)
+            })?;
+            let mut up = caret.parent;
+            while let Some(n) = up.and_then(|k| by_key.get(&k)) {
+                if n.label.as_deref() == Some("lines") {
+                    return Some((caret.rect, n.rect));
+                }
+                up = n.parent;
+            }
+            None
+        })
+}
+
+/// Whether `caret` is drawn inside `column`, whole.
+fn in_view(caret: kui_native::Rect, column: kui_native::Rect) -> bool {
+    caret.x >= column.x - 0.5 && caret.x + caret.w <= column.x + column.w + 0.5
+}
+
+#[test]
+fn l_onto_a_long_lines_newline_scrolls_its_cell_into_view_with_the_key() {
+    // Reported 2026-10-01: "when newline past the end of a overflown
+    // line `l` to it lags". The reveal was clamped to the content as of
+    // the frame before, which had no cell past the end: the cell stood
+    // past the pane's edge until a frame more.
+    let doc = format!("{}\njj\n", "j".repeat(60));
+    let mut app = Kawoosh::new("t", &doc);
+    let mut d = Drive::new(300.0, 200.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "$l");
+    let view = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[view].sels.primary().head, 60, "on the newline");
+    let (cell, column) = newline_caret(&d).expect("the block on the newline");
+    assert!(in_view(cell, column), "cell {cell:?}, column {column:?}");
+    // Insert mode's bar after the line's last character, from its start
+    // in one key: whole, not cut by the pane's edge.
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "0A");
+    assert_eq!(app.focused_mode(), Mode::Insert);
+    d.core.set_caret_visible(true);
+    d.frame(&mut app);
+    let (bar, column) = newline_caret(&d).expect("the bar past the end");
+    assert!(in_view(bar, column), "bar {bar:?}, column {column:?}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn a_caret_on_a_long_lines_newline_is_in_view_when_its_pane_is_focused_again() {
+    // Reported 2026-10-01: "when carret on a newline that on an
+    // overflown line, move in and out of a panel doesn't scroll to
+    // carret. carret is basicaly invisible". The pane drew no caret
+    // while the other one had the keys, so its content lost the cell,
+    // and the scroll was clamped to that.
+    let doc = format!("{}\njj\n", "j".repeat(60));
+    let mut app = Kawoosh::new("t", &doc);
+    let mut d = Drive::new(600.0, 200.0);
+    // The clock run past the split's glide.
+    let settle = |d: &mut Drive, app: &mut Kawoosh| {
+        for _ in 0..8 {
+            d.advance(0.05);
+            d.frame(app);
+        }
+    };
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>v");
+    settle(&mut d, &mut app);
+    d.keys(&mut app, "$l");
+    let (cell, column) = newline_caret(&d).expect("the block on the newline");
+    assert!(in_view(cell, column), "cell {cell:?}, column {column:?}");
+    assert!(
+        column.x + column.w <= 600.0,
+        "the pane on the screen: {column:?}"
+    );
+    let pane = app.layout.focused();
+    d.press(&mut app, "<C-w>w");
+    settle(&mut d, &mut app);
+    assert_ne!(app.layout.focused(), pane);
+    assert!(
+        newline_caret(&d).is_none(),
+        "no caret in a pane without the keys"
+    );
+    d.press(&mut app, "<C-w>w");
+    assert_eq!(app.layout.focused(), pane);
+    let (cell, column) = newline_caret(&d).expect("the block on the newline");
+    assert!(in_view(cell, column), "cell {cell:?}, column {column:?}");
+    settle(&mut d, &mut app);
+    let (cell, column) = newline_caret(&d).expect("the block on the newline");
+    assert!(in_view(cell, column), "cell {cell:?}, column {column:?}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn a_jump_onto_a_long_line_not_drawn_scrolls_to_its_caret_with_the_key() {
+    // The frame before drew only short lines, so its content had
+    // nowhere to scroll to: the reveal is the caret's, measured this
+    // frame, not clamped to that.
+    let mut lines: Vec<String> = (0..40).map(|i| format!("x {i}")).collect();
+    lines[30] = "j".repeat(60);
+    let mut app = Kawoosh::new("t", &lines.join("\n"));
+    let mut d = Drive::new(300.0, 200.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "31G$l");
+    d.keys(&mut app, "gg");
+    assert!(
+        newline_caret(&d).is_none(),
+        "the long line is off the screen"
+    );
+    // `<C-o>`: back where `gg` jumped from, the long line's newline.
+    d.press(&mut app, "<C-o>");
+    let view = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(view);
+    assert_eq!(buf.line_of(app.ed.views[view].sels.primary().head), 30);
+    let (cell, column) = newline_caret(&d).expect("the block on the newline");
+    assert!(in_view(cell, column), "cell {cell:?}, column {column:?}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn a_flag_is_one_step_and_one_caret() {
     // Two regional indicators are one grapheme cluster: `l` crosses the

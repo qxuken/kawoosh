@@ -222,6 +222,12 @@ pub struct Kawoosh {
     /// `kawoosh.settings`, the settings pane's door
     /// (`settings_pane.rs`).
     pub(crate) settings_door: crate::settings_pane::SharedDoor,
+    /// The icon set, the user's shapes over the shipped ones, shared
+    /// with Lua (`icons.rs`).
+    pub(crate) icons: crate::icons::Shared,
+    /// The panes whose key legend was flipped, whole or compact, shared
+    /// with Lua (`legends.rs`).
+    pub(crate) legends: crate::legends::Shared,
     /// kui's latency HUD — frame times as a graph in the corner —
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
@@ -428,6 +434,8 @@ impl Kawoosh {
             show_tab: None,
             tab_shown: None,
             settings_door: Default::default(),
+            icons: Default::default(),
+            legends: Default::default(),
             line_cells: Default::default(),
             perf: Default::default(),
             frames: crate::frames::Frames::with_wake(&wake),
@@ -2511,6 +2519,7 @@ impl kui_native::App for Kawoosh {
         t = self.perf.lap(Io, "update", t);
         self.sync_marks();
         self.sync_jumps();
+        self.layout.note_focus();
         t = self.perf.lap(Io, "marks, jumps", t);
         self.sync_moments(false);
         t = self.perf.lap(Io, "moments", t);
@@ -2560,6 +2569,7 @@ impl kui_native::App for Kawoosh {
         if let Some(hit) = self.look.hit {
             self.pal.hit = hit;
         }
+        self.icons.borrow_mut().fg = self.pal.fg;
         // The views' fields round their selection as the panes do.
         if let Some(rt) = self.scripting.rt.clone() {
             let r = self.selection_radius();
@@ -2721,6 +2731,9 @@ impl kui_native::App for Kawoosh {
         // Each event its own step for the jumps' look: two keys in one
         // frame are two moves, `<C-f>` twice no jump.
         self.sync_jumps();
+        // And for where the keys go back when a pane closes: the pane
+        // the event left them in.
+        self.layout.note_focus();
         // The prompt is the pane's it was opened in: an event that took
         // the keyboard elsewhere — a picker opened from its normal
         // mode's `<leader>t`, `<C-w>l` — leaves it, or it kept every
@@ -2888,6 +2901,12 @@ impl Kawoosh {
             Some("syntax") => self.on_syntax_click(p),
             Some("undo") => self.on_undo_click(p),
             Some("memory") => self.on_memory_click(p),
+            // A legend's `⌥/ keys`: its pane's whole, or compact again.
+            Some("legend") => {
+                if let Some(pane) = p.get_int("pane") {
+                    self.flip_legend(pane as PaneId);
+                }
+            }
             // A click's payload is the `on_click` value itself, with the
             // pointer's `cell` beside it on a grid.
             // The badge on a terminal scrolled away: back to the prompt.

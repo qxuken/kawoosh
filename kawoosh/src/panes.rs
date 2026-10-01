@@ -786,10 +786,8 @@ impl Kawoosh {
                     });
                     ui.text(&name, style);
                     if modified {
-                        ui.text(
-                            "●",
-                            TextStyle::new(self.chrome.small - 2.0).color(pal.command),
-                        );
+                        let set = self.icons.borrow();
+                        crate::icons::icon(ui, &set, "dot", self.chrome.small, pal.command);
                     }
                     if !crumbs.is_empty() {
                         let room = width - 16.0 - ui.measure_text(&name, &style, None).width - dot;
@@ -1075,7 +1073,8 @@ impl Kawoosh {
                         },
                     );
                     let below = offset;
-                    ui.text_in_keyed(
+                    let small = TextStyle::new(self.chrome.small).color(pal.dim).nowrap();
+                    ui.with_keyed(
                         "lines below",
                         NodeSpec::row()
                             .float(
@@ -1093,12 +1092,22 @@ impl Kawoosh {
                                 ("pane", Value::Int(pane as i64)),
                             ]))
                             .keep_focus()
-                            .label("lines below"),
-                        &format!(
-                            "↓ {below} line{} below · ⇧End",
-                            if below == 1 { "" } else { "s" }
-                        ),
-                        TextStyle::new(self.chrome.small).color(pal.dim).nowrap(),
+                            .label("lines below")
+                            .gap(4.0)
+                            .cross_align(Align::Center),
+                        |ui| {
+                            let set = self.icons.borrow();
+                            crate::icons::icon(ui, &set, "arrow-down", self.chrome.small, pal.dim);
+                            ui.text(
+                                &format!(
+                                    "{below} line{} below ·",
+                                    if below == 1 { "" } else { "s" }
+                                ),
+                                small,
+                            );
+                            let caps = crate::icons::KeyStyle::new(small, pal.border);
+                            crate::icons::keys(ui, &set, "<S-End>", &caps);
+                        },
                     );
                 }
             },
@@ -1598,6 +1607,7 @@ impl Kawoosh {
         // the way `top` follows it down — before the rows, which are
         // sliced to the window this lands on. A long line's caret is
         // placed by column, as its slice is.
+        let mut revealed = false;
         if follow && !tall {
             let range = buf.line_range(cur_line);
             let head_rel = primary.head.clamp(range.start, range.end) - range.start;
@@ -1635,16 +1645,20 @@ impl Kawoosh {
                 };
                 (x0, x1)
             };
+            // Past the end, the newline's cell: every unwrapped row keeps
+            // one (`rows::emit_line`), the bar standing in it too.
             let x1 = if head_rel >= range.len() {
-                x0 + 8.0
+                x0 + ui.measure_text(" ", &style, None).width
             } else {
                 x1
             };
             let margin = (cell_w * 3.0).min(width / 4.0);
             if x0 - margin < left {
                 left = (x0 - margin).max(0.0);
+                revealed = true;
             } else if width > 0.0 && x1 + margin > left + width {
                 left = x1 + margin - width;
+                revealed = true;
             }
         }
 
@@ -2333,8 +2347,14 @@ impl Kawoosh {
                 // The offset lands in this frame's positions; the clamp
                 // is against last frame's content (a resize is one frame
                 // late), and what the wheel pushed past it comes back.
+                // Not a reveal's: that is the caret's, measured this
+                // frame, on a line or at a cell the frame before may not
+                // have drawn — clamped to that, the caret stood past the
+                // edge until a frame more (2026-10-01). kui's layout
+                // clamps it to this frame's content, and the next frame's
+                // clamp brings the view's number to that.
                 if !tall {
-                    if let Some(geo) = ui.scroll_geometry(lines) {
+                    if let Some(geo) = ui.scroll_geometry(lines).filter(|_| !revealed) {
                         left = left.min(geo.max_offset.x);
                     }
                     ui.set_scroll(lines, Vec2::new(left, 0.0));

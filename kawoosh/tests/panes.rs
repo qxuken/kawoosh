@@ -1157,8 +1157,8 @@ fn buffer_delete_goes_back_where_it_was() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Closing the pane that has the keys hands them to the pane it was
-/// split from, not to the tab's first — `<C-w>v` twice and `:q` is
+/// Closing the pane that has the keys hands them back to the pane they
+/// were in before, not to the tab's first — `<C-w>v` twice and `:q` is
 /// back in the middle one.
 #[test]
 fn closing_a_pane_gives_the_keys_back_where_they_came_from() {
@@ -1172,18 +1172,104 @@ fn closing_a_pane_gives_the_keys_back_where_they_came_from() {
     assert_ne!(middle, last);
     ctrl_w(&mut d, &mut app, "q");
     assert_eq!(app.layout.focused(), middle);
-    // A pane whose opener is gone hands them to the opener's opener.
+    // Made from the middle one, then back in it: closing that is back
+    // in the pane the keys were in, not the one it was split from.
     ctrl_w(&mut d, &mut app, "v");
     let third = app.layout.focused();
     ctrl_w(&mut d, &mut app, "h");
     assert_eq!(app.layout.focused(), middle);
     ctrl_w(&mut d, &mut app, "q");
     d.frame(&mut app);
-    ctrl_w(&mut d, &mut app, "l");
     assert_eq!(app.layout.focused(), third);
+    // And closing that, the pane the keys were in before it.
     ctrl_w(&mut d, &mut app, "q");
     assert_eq!(app.layout.focused(), 1);
     assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// Reported 2026-10-01: "3 panels: editor, terminal, tool git. closed
+/// git returned to editor and not to the terminal." A closed pane hands
+/// the keys to the pane they were in last, not to the one it was opened
+/// from: `:tool git` from the editor, over to the terminal and back,
+/// and git closed — by `<C-w>c`, `:q` or its program quitting — is back
+/// in the terminal, in a tree and in a strip.
+#[test]
+fn a_closed_pane_hands_the_keys_to_the_pane_they_were_in_last() {
+    for scroll in [false, true] {
+        for how in ["<C-w>c", ":q", "exit"] {
+            let kind = if scroll { "strip" } else { "tree" };
+            let mut d = Drive::new(1200.0, 500.0);
+            let mut app = Kawoosh::new("t", "alpha");
+            app.jobs_inline = true;
+            let ext = app.attach_lua().unwrap();
+            d.extension("lua", ext).unwrap();
+            d.frame(&mut app);
+            ex(
+                &mut d,
+                &mut app,
+                if scroll {
+                    "layout scroll"
+                } else {
+                    "layout tree"
+                },
+            );
+            app.run_lua_source("t", r#"kawoosh.tool("git", { cmd = "sh" })"#);
+            d.frame(&mut app);
+            let editor = app.layout.focused();
+            ex(&mut d, &mut app, "terminal");
+            d.frame(&mut app);
+            let term = app.layout.focused();
+            assert!(matches!(
+                app.layout.content(term),
+                Some(Content::Terminal(_))
+            ));
+            // Back in the editor, and git from there: editor | git | term.
+            d.press(&mut app, "<C-S-h>");
+            d.frame(&mut app);
+            assert_eq!(app.layout.focused(), editor);
+            ex(&mut d, &mut app, "tool git");
+            d.frame(&mut app);
+            let git = app.layout.focused();
+            assert!(![editor, term].contains(&git), "git has the keys");
+            assert_eq!(app.layout.visible_panes(), [editor, git, term]);
+            // Over to the terminal, and back to git.
+            d.press(&mut app, "<C-S-l>");
+            d.frame(&mut app);
+            assert_eq!(app.layout.focused(), term, "{kind}");
+            d.press(&mut app, "<C-S-h>");
+            d.frame(&mut app);
+            assert_eq!(app.layout.focused(), git, "{kind}");
+            match how {
+                "<C-w>c" => ctrl_w(&mut d, &mut app, "c"),
+                ":q" => {
+                    d.press(&mut app, "<C-\\>");
+                    ex(&mut d, &mut app, "q");
+                }
+                _ => {
+                    d.keys(&mut app, "exit");
+                    d.key(&mut app, "enter", KeyMods::default());
+                    for _ in 0..500 {
+                        d.frame(&mut app);
+                        if !app.layout.visible_panes().contains(&git) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+            }
+            d.frame(&mut app);
+            assert_eq!(
+                app.layout.visible_panes(),
+                [editor, term],
+                "{how} closed git in a {kind}"
+            );
+            assert_eq!(
+                app.layout.focused(),
+                term,
+                "{how} in a {kind}: the keys back in the terminal"
+            );
+        }
+    }
 }
 
 /// A pane the engine opens to be read — `*lsp*` from the title bar,

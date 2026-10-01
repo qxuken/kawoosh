@@ -20,14 +20,14 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{Mode, Selection, Selections};
 use kawoosh_systems::WakeHandle;
-use kui_native::{Align, Color, NodeSpec, TextStyle, Ui, Value};
+use kui_native::{Align, Color, NodeSpec, Ui, Value};
 use tree_sitter::{Point, Tree};
 
 use crate::app::Kawoosh;
+use crate::devtab::Tab;
 
 /// The tab's name in the devtools strip.
 pub const TAB: &str = "syntax";
-const ROW_H: f32 = 18.0;
 const INDENT: f32 = 12.0;
 /// A tree up to this many nodes is flattened in the frame — a
 /// millisecond or so — and a larger one on the worker.
@@ -320,18 +320,13 @@ impl Kawoosh {
         self.tab_shown = Some(TAB);
         let pal = self.pal;
         let font = self.face;
-        let style = || {
-            // A step under the buffer's size, as the tab always was.
-            let s = TextStyle::new(font.size - 1.0)
-                .mono()
-                .nowrap()
-                .features(font.features)
-                .color(pal.fg);
-            match font.id {
-                Some(id) => s.font(id),
-                None => s,
-            }
-        };
+        let icon_set = self.icons.clone();
+        let icon_set = icon_set.borrow();
+        // Every size from the panes' one scale (`devtab::Tab`), as the
+        // other tabs take theirs: the rows' mono at its row size.
+        let tm = Tab::of(&ui.metrics(), &self.chrome, self.face.line_height);
+        let style = || tm.style(&pal, font);
+        let row_h = tm.row_h;
         let Some(view) = self.focused_view() else {
             ui.text_in(
                 NodeSpec::column().fill().bg(pal.bg).pad(8.0),
@@ -368,7 +363,7 @@ impl Kawoosh {
             ui.with(
                 NodeSpec::row()
                     .grow_width()
-                    .height(ROW_H + 6.0)
+                    .height(tm.caption_h)
                     .pad_xy(8.0, 0.0)
                     .gap(8.0)
                     .cross_align(Align::Center)
@@ -403,7 +398,7 @@ impl Kawoosh {
                 },
             );
             if let Some(i) = reveal {
-                kui_native::widgets::reveal_row(ui, "rows", i, ROW_H);
+                kui_native::widgets::reveal_row(ui, "rows", i, row_h);
             }
             if rows_n == 0 {
                 ui.text_in(
@@ -434,7 +429,7 @@ impl Kawoosh {
                 "rows",
                 NodeSpec::column().fill(),
                 rows.len(),
-                ROW_H,
+                row_h,
                 |i| {
                     let r = &rows[i];
                     NodeSpec::row()
@@ -454,14 +449,12 @@ impl Kawoosh {
                 },
                 |ui, i| {
                     let r = &rows[i];
-                    ui.leaf(NodeSpec::row().size(4.0 + r.depth as f32 * INDENT, ROW_H));
+                    ui.leaf(NodeSpec::row().size(4.0 + r.depth as f32 * INDENT, row_h));
                     // The fold: a click of its own, over the row's.
-                    let glyph = match (r.branch, r.folded) {
-                        (false, _) => " ",
-                        (true, true) => "▸",
-                        (true, false) => "▾",
-                    };
-                    let mut fold = NodeSpec::row().size(14.0, ROW_H).cross_align(Align::Center);
+                    let mut fold = NodeSpec::row()
+                        .size(14.0, row_h)
+                        .main_align(Align::Center)
+                        .cross_align(Align::Center);
                     if r.branch {
                         fold = fold
                             .on_click(Value::map([
@@ -471,7 +464,12 @@ impl Kawoosh {
                             ]))
                             .label(if r.folded { "unfold" } else { "fold" });
                     }
-                    ui.with_keyed("fold", fold, |ui| ui.text(glyph, style().color(pal.dim)));
+                    ui.with_keyed("fold", fold, |ui| {
+                        if r.branch {
+                            let name = if r.folded { "folded" } else { "unfolded" };
+                            crate::icons::icon(ui, &icon_set, name, tm.text, pal.dim);
+                        }
+                    });
                     if let Some(f) = field(r.field_id) {
                         ui.text(&format!("{f}: "), style().color(pal.dim));
                     }

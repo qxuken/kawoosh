@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use kawoosh_languages::{FALLBACK, LanguageDef, Library, Locate, Source};
+use kawoosh_languages::{FALLBACK, Grammar, LanguageDef, Library, Locate, Source};
 
 use kawoosh_editor::{ArgKind, Args, Spec};
 
@@ -70,8 +70,20 @@ impl Kawoosh {
     /// [`Kawoosh::add_language`], said in the log or not: a language
     /// the user registered is worth a line, the dozens a manifest lists
     /// at launch are not, and an install has its own word.
-    pub(crate) fn put_language(&mut self, mut def: LanguageDef, say: bool) {
-        let grammar = match def.load() {
+    pub(crate) fn put_language(&mut self, def: LanguageDef, say: bool) {
+        let grammar = def.load();
+        self.put_loaded(def, grammar, say);
+    }
+
+    /// [`Kawoosh::put_language`] with its grammar's load done already —
+    /// an install's, on its thread — whose failure is the warning.
+    pub(crate) fn put_loaded(
+        &mut self,
+        mut def: LanguageDef,
+        grammar: Result<Option<Grammar>, String>,
+        say: bool,
+    ) {
+        let grammar = match grammar {
             Ok(g) => g,
             Err(e) => {
                 self.notify_with(

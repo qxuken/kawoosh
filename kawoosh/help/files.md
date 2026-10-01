@@ -16,7 +16,9 @@ editing the lines, then writing with `:w`.
 - **Delete** an entry by deleting its line.
 - **Move** an entry by cutting its line (`dd`) and pasting it in
   another listing. **Copy** it by yanking and pasting instead. A pasted
-  line keeps track of the entry it came from.
+  line keeps track of the entry it came from — also when the listing
+  you yanked it in has gone on to another directory since, in the same
+  pane.
 
 Every editing feature works here, so several selections, `:s`, macros
 and `.` all become bulk file operations. As you edit, each changed line
@@ -81,7 +83,7 @@ recently rank higher.
 | `<leader>F` | files under the current file's directory, or the listing's (`:picker files here`) |
 | `<leader>g` | grep the project as you type (needs `rg`) |
 | `<leader>G` | grep from the current file's directory (`:picker grep here`) |
-| `<leader><leader>` | open buffers, the current one last, so `<CR>` at once goes to the previous one |
+| `<leader><leader>` | open buffers, the current one last, so `<CR>` at once goes to the previous one; the query matches a buffer's path too, so a directory finds the buffers under it, a name's match first |
 | `<leader>/` | lines of the current buffer |
 | `<leader>.` | buffers, then files opened before, then all files |
 | `<leader>so` | files opened before in this workspace |
@@ -113,7 +115,7 @@ cursor; `<Esc>` again closes the picker.
 | `<C-c>` | close, from either mode |
 | `<A-p>` | hide or show the preview |
 | `<A-w>` | wrap long rows instead of cutting them |
-| `<A-S-h>` `<A-S-l>` | move the divider between the list and the preview |
+| `<A-S-h>` `<A-S-l>` | move the divider between the list and the preview; with the preview hidden, the list is the whole picker and these size its column, as in any pane |
 | `<A-S-k>` `<A-S-j>` | make the picker taller, shorter |
 
 A click puts the cursor on a row and a second click takes it. The size

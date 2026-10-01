@@ -2,7 +2,9 @@
 //! it shows. An error or a warning is a **toast** — a bordered card at
 //! the top-right, under the tab strip, gone after [`TOAST_TTL`] — not
 //! while the pointer is over it, and afresh once it leaves — or, when
-//! it carries actions, only when one is taken. An info is a
+//! it carries actions, only when one is taken, unless it was given a
+//! time of its own: then it is an offer, which goes when its time is up
+//! and is put away as a plain toast is ([`Shown::waits`]). An info is a
 //! **corner line** — a dim line at the bottom-right above the strips,
 //! fidget-style, gone after [`CORNER_TTL`]. A debug goes to the **log**
 //! only. Every one lands in the log, which `:messages` opens as the
@@ -196,6 +198,16 @@ pub struct Shown {
     /// When it goes — `ttl` from when it was said, or from when the
     /// pointer last left it.
     pub until: Option<Instant>,
+}
+
+impl Shown {
+    /// A question: actions, and no time of its own, so it stays until
+    /// one is taken and is not put away unanswered. A toast with
+    /// actions and a time is an offer — it goes when its time is up,
+    /// and a click or `x` puts it away as a plain toast's does.
+    pub fn waits(&self) -> bool {
+        !self.actions.is_empty() && self.ttl.is_none()
+    }
 }
 
 /// A server's work-done token, as last reported.
@@ -732,8 +744,8 @@ impl Kawoosh {
         }
     }
 
-    /// A toast clicked: its body (without actions) takes it down; an
-    /// action runs its command and takes it down.
+    /// A toast clicked: its body (unless it waits for an action) takes
+    /// it down; an action runs its command and takes it down.
     pub(crate) fn on_toast(&mut self, p: &Value) {
         let Some(id) = p.get_int("id") else {
             return;
@@ -765,7 +777,8 @@ impl Kawoosh {
     /// `:toast` / `<C-w>n`: the keyboard onto the newest toast. Then
     /// `j` `k` move between toasts, `h` `l` between actions, `<CR>`
     /// takes the action (or the toast down, when it has none), a digit
-    /// takes that action, `x` takes a toast without actions down,
+    /// takes that action, `x` takes a toast down unless it waits for an
+    /// action ([`Shown::waits`]),
     /// `<Esc>` / `q` leave.
     pub(crate) fn toast_focus(&mut self) {
         if !self.notes.focus_toast() {
@@ -798,7 +811,7 @@ impl Kawoosh {
             "h" | "<Left>" => self.notes.focus_action(-1),
             "<CR>" | "<Space>" => act(self, f.action),
             "x" | "d" | "<BS>" => {
-                if self.notes.focused().is_some_and(|s| s.actions.is_empty()) {
+                if self.notes.focused().is_some_and(|s| !s.waits()) {
                     self.notes.dismiss(f.id);
                     if self.notes.focus.is_none() {
                         self.notes.focus_leave();
@@ -857,7 +870,13 @@ impl Kawoosh {
                 )
                 .max_width(max_w)
                 .gap(6.0)
-                .cross_align(Align::End),
+                .cross_align(Align::End)
+                // A click on a toast acts and leaves the keyboard with
+                // the pane: a button that took it would hold it after
+                // the toast went, a key focus on a node no longer
+                // drawn, and the pane's keys dead until a click in it.
+                // The toasts' own keyboard is `<C-w>n` (`toast_key`).
+                .keep_focus(),
             |ui| {
                 let focus = self.notes.focus;
                 for s in self.notes.shown.iter().filter(|s| s.toast) {
@@ -883,7 +902,7 @@ impl Kawoosh {
                     let hover =
                         Value::map([("kind", "toast".into()), ("id", Value::Int(s.id as i64))]);
                     spec = spec.on_hover(hover.clone());
-                    if s.actions.is_empty() {
+                    if !s.waits() {
                         spec = spec.on_click(Value::map([
                             ("kind", "toast".into()),
                             ("id", Value::Int(s.id as i64)),
@@ -1057,13 +1076,26 @@ impl Kawoosh {
                                     ui.text(src, TextStyle::new(small).color(pal.accent).nowrap());
                                     let has_progress =
                                         self.notes.progress.iter().any(|p| p.source == *src);
-                                    if has_progress {
-                                        let (mark, color) = if running {
-                                            ("…", pal.dim)
-                                        } else {
-                                            ("✓", pal.insert)
-                                        };
-                                        ui.text(mark, TextStyle::new(small).color(color).nowrap());
+                                    if has_progress && running {
+                                        ui.text("…", TextStyle::new(small).color(pal.dim).nowrap());
+                                    } else if has_progress {
+                                        // As tall as the name's line, the
+                                        // mark in its middle.
+                                        let line_h = ui
+                                            .measure_text("Mg", &TextStyle::new(small), None)
+                                            .height;
+                                        ui.with_keyed(
+                                            "done",
+                                            NodeSpec::row()
+                                                .height(line_h)
+                                                .cross_align(kui_native::Align::Center),
+                                            |ui| {
+                                                let set = self.icons.borrow();
+                                                crate::icons::icon(
+                                                    ui, &set, "check", small, pal.insert,
+                                                )
+                                            },
+                                        );
                                     }
                                 });
                             }

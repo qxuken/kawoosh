@@ -62,12 +62,13 @@ local PANE_FACT = "lua:" .. VIEW
 local BLANK = "launcher:blank"
 -- Letters no entry takes: the list's walk, the query's way in, close.
 local RESERVED = { j = true, k = true, i = true, a = true, q = true }
--- The rows follow the chrome's size, as the picker's do.
-local SIZE = 13
+-- The rows follow the panes' one scale (`kawoosh.metrics`), as the
+-- picker's do.
+local SIZE, SMALL, NOTE = 13, 12, 11
 local ROW_H = SIZE + 8
 local function sizes(env)
-  local l = env and env.tokens and env.tokens.lengths or {}
-  SIZE = l.chrome or 13
+  local m = kawoosh.metrics(env)
+  SIZE, SMALL, NOTE = m.text, m.small, m.note
   ROW_H = SIZE + 8
 end
 -- The most rows a module keeps for a query.
@@ -149,7 +150,7 @@ launcher.module("here", {
     if o then
       -- No `path`: the path is marked *here*'s already, so the buffers
       -- and the recent files leave it out.
-      items[#items + 1] = { text = o.name, sub = "the same buffer", run = "launcher same", hint = "⏎" }
+      items[#items + 1] = { text = o.name, sub = "the same buffer", run = "launcher same", hint = "<CR>" }
     end
     items[#items + 1] = { text = "scratch", sub = "a fresh buffer", run = "launcher scratch", key = "s" }
     items[#items + 1] = { text = "terminal", sub = "a shell in " .. short_path(fs.cwd()), run = "launcher terminal",
@@ -592,7 +593,7 @@ end
 local function header(r, t)
   return row {
     key = "h " .. r.section.name, width = "grow", height = ROW_H, pad = { x = 10 }, cross_align = "end",
-    text({ { r.header .. (r.loading and "  …" or ""), bold = true } }, { size = SIZE - 2, color = t.faint }),
+    text({ { r.header .. (r.loading and "  …" or ""), bold = true } }, { size = NOTE, color = t.faint }),
   }
 end
 
@@ -603,7 +604,10 @@ local function spans_of(r, t)
   return spans
 end
 
--- A row of a list: its text, its `sub`, its letter or hint.
+-- A row of a list: its text, its `sub`, its letter or hint. A row too
+-- long for the launcher — a path deep in a worktree — wraps, at its
+-- spaces and slashes and anywhere in a name with neither, and the row
+-- grows a line for it: one line is `ROW_H`, as before.
 local function list_row(i, r, R)
   local t = R.t
   local it = r.hit.item
@@ -611,32 +615,34 @@ local function list_row(i, r, R)
   local spans = spans_of(r, t)
   if it.sub and it.sub ~= "" then spans[#spans + 1] = { "  " .. it.sub, color = t.muted } end
   local line = row {
-    key = "r" .. i, width = "grow", height = ROW_H, pad = { x = 10 }, gap = 8, cross_align = "center",
+    key = "r" .. i, width = "grow", min_height = ROW_H, pad = { x = 10, y = 1 }, gap = 8, cross_align = "center",
     bg = selected and (R.focused and t.selection or t.sunken) or nil,
     hover_bg = not selected and t.sunken or nil,
     on_click = { kind = "row", i = i },
-    row { width = "grow", clip = true, text(spans, { family = "mono", size = SIZE, wrap = "none" }) },
+    column { width = "grow", text(spans, { family = "mono", size = SIZE, wrap = "word" }) },
   }
   local hint = hint_of(it)
-  if hint then line[#line + 1] = text(hint, { size = SIZE - 1, color = t.faint, wrap = "none" }) end
+  if hint then line[#line + 1] = R.ctx.keys(hint, { size = SMALL, color = t.faint }) end
   return line
 end
 
 -- A row as a tile: its text and its letter, in a line of them that
--- wraps.
+-- wraps. A tile wider than the line — a path — is the line's width and
+-- wraps inside, as a row of a list does.
 local function tile(i, r, R)
   local t = R.t
   local selected = i == L.cursor
   local chip = row {
-    key = "r" .. i, height = ROW_H, pad = { x = 8 }, gap = 6, radius = 4, cross_align = "center",
+    key = "r" .. i, min_height = ROW_H, max_width = "100%", pad = { x = 8, y = 1 }, gap = 6, radius = 4,
+    cross_align = "center",
     bg = selected and (R.focused and t.selection or t.sunken) or t.raised,
     hover_bg = not selected and t.sunken or nil,
     border = { w = 1, color = t.border },
     on_click = { kind = "row", i = i },
-    text(spans_of(r, t), { family = "mono", size = SIZE, wrap = "none" }),
+    text(spans_of(r, t), { family = "mono", size = SIZE, wrap = "word" }),
   }
   local hint = hint_of(r.hit.item)
-  if hint then chip[#chip + 1] = text(hint, { size = SIZE - 1, color = t.faint, wrap = "none" }) end
+  if hint then chip[#chip + 1] = R.ctx.keys(hint, { size = SMALL, color = t.faint }) end
   return chip
 end
 
@@ -644,7 +650,7 @@ end
 -- error, "no matches".
 local function note(s, color, R)
   return row { width = "grow", pad = { x = 10, y = 4 },
-    text(s, { size = SIZE - 1, color = color or R.t.muted, wrap = "word" }) }
+    text(s, { size = SMALL, color = color or R.t.muted, wrap = "word" }) }
 end
 
 -- The prompt: its label and the query's field.

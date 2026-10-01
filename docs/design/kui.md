@@ -476,7 +476,11 @@ either took the line or was lost. Now a notification has a **level**
 - **error, warn → a toast.** A bordered card at the top-right under the
   tab strip, gone after eight seconds — or, when it carries **actions**,
   only when one is taken (a toast with actions is a question, and a
-  question does not time out). A plain toast goes on a click too. The
+  question does not time out) — unless it is given a time of its own,
+  which makes it an offer: it goes when the time is up, and a click or
+  `x` puts it away as a plain toast's does (*amended 2026-10-01*, for
+  `grammars.install = "ask"`'s Install button). A plain toast goes on a
+  click too. The
   keyboard reaches them: `<C-w>n` (`:toast`) puts it on the newest —
   `TOAST` in the status strip — `j` `k` walk the toasts, `h` `l` the
   actions, `<CR>` takes one, a digit takes that one, `x` takes a plain
@@ -484,6 +488,10 @@ either took the line or was lost. Now a notification has a **level**
   the user. Nor does one under the pointer — over the card or one of
   its buttons — and once the pointer leaves, its eight seconds start
   over, so a toast being read is not read out from under the reader.
+  A click on a toast acts and leaves the keyboard with the pane
+  (`keep_focus`, as the chrome's clicks do): a button that took it held
+  it after its toast went, and the pane heard no keys until a click in
+  it (*amended 2026-10-02*).
 - **info → a corner line.** A dim line at the bottom-right above the
   strips, gone after four seconds, grouped under its **source** with
   the source's name below the group — fidget's shape. A language
@@ -875,7 +883,11 @@ the runtime says which tracked lines those were (`kawoosh.buf.register`,
 each register line carried back through the journal —
 `Buffer::line_carried`, a replay stopped at a version), and a listing
 adopts a pasted line whose text is one of them, tracked from then on
-(`kawoosh.buf.track`) as the entry of the listing it came from — so
+(`kawoosh.buf.track`) as the entry of the listing it came from — and
+a listing filled anew, gone on to the next directory in its buffer or
+read again, first keeps the register's entries as they read then
+(`keep_register`: each `{ dir, name, meta }`), since the runtime's
+word reaches only the lines the buffer is tracked with now — so
 the plan makes it a move (deleted there) or a copy (still there),
 under its new name when its line was renamed after, two files of one
 name each way between two listings included, and pasted back into

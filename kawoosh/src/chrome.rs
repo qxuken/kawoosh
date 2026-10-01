@@ -23,11 +23,10 @@
 //! tabs whose order changed — by that or by `]T` — glide to their places
 //! ([`TabsGlide`]).
 
-use kui_native::{
-    Align, CursorShape, Enter, NodeSpec, Role, Span, Stroke, Ui, Value, Vec2, widgets,
-};
+use kui_native::{Align, CursorShape, Enter, NodeSpec, Role, Span, Ui, Value, widgets};
 
 use crate::app::Kawoosh;
+use crate::icons;
 use crate::layout::Content;
 use crate::rows;
 
@@ -179,6 +178,8 @@ impl Kawoosh {
     /// the row scrolling past that with the active one revealed.
     pub(crate) fn tab_strip(&mut self, ui: &mut Ui<'_>) {
         let pal = self.pal;
+        let icon_set = self.icons.clone();
+        let icon_set = icon_set.borrow();
         let font = self.chrome.face;
         let theme = ui.theme();
         let n = self.layout.tabs.len();
@@ -206,7 +207,7 @@ impl Kawoosh {
             .rt
             .clone()
             .filter(|rt| rt.has_tab_title_hook());
-        let labels: Vec<(String, bool, u64)> = self
+        let labels: Vec<(String, bool, bool, u64)> = self
             .layout
             .tabs
             .iter()
@@ -252,27 +253,35 @@ impl Kawoosh {
                 } else {
                     name.clone()
                 };
-                let title = format!("{}: {shown}{}", i + 1, if modified { " ●" } else { "" });
+                let plain = format!("{}: {shown}", i + 1);
+                // The hook is handed the label as text, the mark in it;
+                // kawoosh's own draws the mark as the `dot` icon.
+                let title = if modified {
+                    format!("{plain} ●")
+                } else {
+                    plain.clone()
+                };
                 // A plugin's label over it (`kawoosh.tab_title`).
-                let label = hook
-                    .as_ref()
-                    .and_then(|rt| {
-                        rt.tab_title_hook(&kawoosh_lua::TabTitle {
-                            index: i + 1,
-                            active: i == active,
-                            title: &title,
-                            dir: &dir,
-                            cwd: &cwd.display().to_string(),
-                            kind,
-                            name: &name,
-                            path: path.as_deref(),
-                            modified,
-                            bell: tab.bell,
-                            panes: ps.len(),
-                        })
+                let label = hook.as_ref().and_then(|rt| {
+                    rt.tab_title_hook(&kawoosh_lua::TabTitle {
+                        index: i + 1,
+                        active: i == active,
+                        title: &title,
+                        dir: &dir,
+                        cwd: &cwd.display().to_string(),
+                        kind,
+                        name: &name,
+                        path: path.as_deref(),
+                        modified,
+                        bell: tab.bell,
+                        panes: ps.len(),
                     })
-                    .unwrap_or(title);
-                (label, tab.bell, tab.id)
+                });
+                let (label, dot) = match label {
+                    Some(l) => (l, false),
+                    None => (plain, modified),
+                };
+                (label, dot, tab.bell, tab.id)
             })
             .collect();
         let mut active_key = None;
@@ -348,7 +357,7 @@ impl Kawoosh {
                         .keep_focus()
                         .role(Role::TabList),
                     |ui| {
-                        for (i, (label, bell, id)) in labels.iter().enumerate() {
+                        for (i, (label, dot, bell, id)) in labels.iter().enumerate() {
                             let is_active = i == active;
                             // The block, its item and its close button are one
                             // hover group: the pointer is on the item or the
@@ -426,11 +435,14 @@ impl Kawoosh {
                                         if dragging {
                                             item = item.cursor(CursorShape::Grabbing);
                                         }
-                                        ui.with_keyed("item", item, |ui| {
+                                        ui.with_keyed("item", item.gap(4.0), |ui| {
                                             ui.text(
                                                 label,
                                                 rows::mono(font, &pal).color(fg).ellipsis(),
-                                            )
+                                            );
+                                            if *dot {
+                                                icons::icon(ui, &icon_set, "dot", font.size, fg);
+                                            }
                                         });
                                         if n > 1 && (is_active || (hovered && !dragging)) {
                                             // Its own colour under the pointer
@@ -438,12 +450,12 @@ impl Kawoosh {
                                             // every member.
                                             let on = ui.is_hovered(ui.child_key("close"));
                                             // A square shorter than the row,
-                                            // centred in it, its × two strokes
-                                            // about the middle: a glyph sits on
-                                            // the font's math axis, below it.
+                                            // centred in it, its × the `close`
+                                            // icon about the middle: a glyph
+                                            // sits on the font's math axis,
+                                            // below it.
                                             let side = (font.line_height * 0.75).round();
-                                            let mut close = NodeSpec::row()
-                                                .size(side, side)
+                                            let mut close = icons::icon_box(side)
                                                 .radius(3.0)
                                                 .hover_group(&group);
                                             if on {
@@ -462,19 +474,12 @@ impl Kawoosh {
                                                     ]))
                                                     .label("close tab"),
                                                 |ui| {
-                                                    let (m, a) = (side / 2.0, side * 0.15);
-                                                    let stroke = Stroke::new(1.25, fg);
-                                                    ui.line(
-                                                        Vec2::new(m - a, m - a),
-                                                        Vec2::new(m + a, m + a),
-                                                        stroke,
-                                                        NodeSpec::row(),
-                                                    );
-                                                    ui.line(
-                                                        Vec2::new(m - a, m + a),
-                                                        Vec2::new(m + a, m - a),
-                                                        stroke,
-                                                        NodeSpec::row(),
+                                                    icons::icon(
+                                                        ui,
+                                                        &icon_set,
+                                                        "close",
+                                                        font.size.round(),
+                                                        fg,
                                                     );
                                                 },
                                             );

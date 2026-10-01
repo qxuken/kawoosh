@@ -268,9 +268,9 @@ impl Kawoosh {
 
     pub(crate) fn render_undo(&mut self, ui: &mut Ui<'_>, pane: PaneId, focused: bool) {
         self.sync_undo_rows();
-        // Every size from kui's metrics (`devtab::Tab`), as the tabs
-        // and the history pane take theirs.
-        let tm = Tab::of(&ui.metrics(), self.face.line_height);
+        // Every size from the panes' one scale (`devtab::Tab`), as the
+        // tabs and the memory pane take theirs.
+        let tm = Tab::of(&ui.metrics(), &self.chrome, self.face.line_height);
         let graph_geometry = Geometry {
             lane_w: LANE_W,
             row_h: tm.line_h,
@@ -283,6 +283,7 @@ impl Kawoosh {
         let style = move || rows::mono(font, &pal);
         let dim = move || style().color(pal.dim);
         let small = move |c: Color| tm.small(c);
+        let legend = self.legend_full(pane);
         let rows = std::mem::take(&mut self.undo.rows);
         let graph = std::mem::take(&mut self.undo.graph);
         let n = rows.len();
@@ -333,7 +334,22 @@ impl Kawoosh {
                             head = "no buffer".into();
                         }
                         ui.text(&head, small(pal.dim));
-                        ui.text("⏎ restore · u ⌃r g- g+ step · q close", small(pal.faint));
+                        crate::legends::legend(
+                            ui,
+                            &self.icons.borrow(),
+                            pane,
+                            legend,
+                            &[
+                                (&["<CR>"], "restore"),
+                                (&["u", "<C-r>", "g-", "g+"], "step"),
+                                (&["q"], "close"),
+                            ],
+                            &crate::legends::LegendStyle {
+                                keys: crate::icons::KeyStyle::new(small(pal.dim), pal.border),
+                                words: small(pal.faint),
+                                hover: pal.hover,
+                            },
+                        );
                     },
                 );
                 // The columns named, over the numbers they hold.

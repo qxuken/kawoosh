@@ -1046,9 +1046,10 @@ struct Look {
 /// needs a span, split only where the completion ghost sits, since that
 /// is not the document's text and the access tree and a click's byte
 /// must not count it. The bar caret is a float measured to its byte;
-/// what follows the text (a block caret past the end or a selection over
-/// the newline, one cell of its own; a trailing message) is a sibling
-/// node. A long line's
+/// what follows the text (the newline's cell — a block caret past the
+/// end, a selection over the newline, or in an unwrapped row nothing,
+/// kept so the row is as wide either way; a trailing message) is a
+/// sibling node. A long line's
 /// text is its window's slice (`Drawn::for_line`) between two spacers
 /// sized by column — a monospace grid's placement (a fallback glyph can
 /// drift it a pixel or two), the tolerance kui's own chunked long line
@@ -1601,6 +1602,17 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 cell_w = w;
             }
             ui.leaf(cell);
+        } else if !wraps {
+            // Nothing there, and the cell is kept all the same: the
+            // column's content — what its sideways scroll reaches — is
+            // then as wide whether a caret stands on the newline or not,
+            // in a pane with the keys or without, and insert mode's bar
+            // after the last character is inside it. Without it the
+            // scroll was clamped to the line's text alone, the newline's
+            // block past the pane's edge, while the pane drew no caret or
+            // the caret had only just come there (2026-10-01).
+            cell_w = ui.measure_text(" ", &base, None).width;
+            spacer(ui, cell_w);
         }
         // A wrapped row's trailing text hangs after its last visual
         // line, as the cell past the end does: in the row's flow it took

@@ -70,7 +70,11 @@ over, and a count steps further. The put is undone and made again, so
 one `u` takes all of it back (the texts tried stay as branches of the
 undo tree); an edit since ends the walk. A recall by the engine is an
 effect (`Effect::Recalled`) the shell counts as the pane's recall is —
-attended, not a yank. Left: co-occurrence.
+attended, not a yank. Left: co-occurrence. *The pane's scope,
+2026-10-01* (Decision 11): `memory.scope`, `<C-a>` in the pane,
+`:memory workspace` / `:memory global` — this workspace's rows or
+every one's, in every view; `all` is every kind under it. Drawn as
+`@workspace` `@global` chips at the strip's left (2026-10-02).
 options and taken: the unit is a subject row *plus a bounded ring of
 recent transitions* (Decision 1); the histories lose their bookkeeping
 and keep their blob (Decision 6); eviction is a fixed score in Rust
@@ -214,7 +218,8 @@ root carries it, one made outside carries none. *Since 2026-09-24*
 repository's root (`.git`, `.jj`, `.hg`) is the workspace, and it
 follows the focused tab's directory. The picker asks for
 the workspace's rows; `:memory` shows the workspace's by default and
-`:memory all` everything. A path is one subject across workspaces
+`:memory all` everything (*since 2026-10-01*, Decision 11: `all` is
+every kind, and whose rows is the pane's scope). A path is one subject across workspaces
 only if it is the same path, which is the right answer for a file
 shared by two roots.
 
@@ -456,6 +461,7 @@ kawoosh.memory { kind = "file", workspace = true, limit = 50 }
 kawoosh.memory { kind = "command", since = 3600 }
 kawoosh.memory { kind = "file", subject = path }        -- one row or nil
 kawoosh.memory { recent = true, limit = 100 }           -- the ring, newest first: at, kind, subject, workspace
+kawoosh.memory { recent = true, workspace = true }      -- the workspace's transitions and the texts (Decision 11)
 -- a row: kind, subject, workspace, first, last, age, visits, dwell,
 -- edits, yanks, pinned, meta (a table), text (text kind), buffer
 -- (while open)
@@ -495,6 +501,73 @@ cursor's row's detail is a text's lines, a file's draft diff against
 the disk (the `:history` pane's), a command's line. `<leader>sr`
 (resume) is `:memory recent` with the cursor on the first row: the
 last thing attended, then the one before it.
+
+### 11. The pane's scope: this workspace's memory or the global one
+
+*Added 2026-10-01, asked as "I want a toggle to be able to see a
+global or workspace memory".* What the pane did: every view but `all`
+listed the workspace's rows (Decision 2's column, the focused tab's
+project root — workspaces.md Decision 4), and `all` listed every row
+of every kind from every workspace, so the global memory was one view
+and the two axes, *which kind* and *whose*, were folded into the
+view's name. No data was missing: every moment carries the workspace
+it was made under, the ring's rows too, and a text is under none ("a
+yank is a yank anywhere").
+
+The scope is an axis of its own, `memory.scope = "workspace"` (the
+default) or `"global"`: every view lists under it, `all` included,
+which is now every *kind* under the scope. `<C-a>` in the pane flips
+it for the session, as the buffers picker's `<C-a>` flips
+`buffers.scope` (both write the session layer); `:memory scope
+[workspace|global]` is the command, bare flipping it; `:memory
+workspace` and `:memory global` open the pane on one, focused, and
+never close it as a bare `:memory` on a focused pane does. The pane's
+strip shows the scope at its left, ahead of the head and apart from
+the views at its right: `@workspace` `@global`, spelt as the settings
+pane spells its layers (`@user`, `@project`), each a chip, the one on
+filled with the accent, and a click on either sets it (`:memory scope`
+takes the `@` word too); the head says whose the rows are (`in
+~/projects/foo`, `outside any workspace`, `every workspace`). Two views do not move with it: `texts`, which are under
+no workspace and so the same in either, and `jumps`, which are the
+tab's (jumps.md Decision 5). Under the workspace `all` and `recent`
+take the texts in with the workspace's rows, as the ring always did.
+A row listed from another workspace is that workspace's: `x`, `m` and
+`⏎` act on its key, workspace and all; `<A-1>`…`<A-9>` stay the
+workspace's pins whatever the pane shows. The rows are built again
+when the workspace asked for changes, so a tab switched to another
+project lists that project's (before, the pane kept the last
+project's rows until the store moved).
+
+Lua had the axis already — `workspace = true` (or a path) against
+none — except on the ring, where `{ recent = true }` was every
+workspace's whatever was asked; `{ recent = true, workspace = true }`
+now reads the workspace's transitions and the texts, as the pane's
+`recent` does.
+
+*Beat:* **a view, `global`, beside `all`** — the smallest change, and
+it would have kept the two axes folded: no way to see every
+workspace's *files* or *commands*, which is what the toggle is for.
+**A pane-local flag reset at each open** — the buffers picker's flip
+is a session setting, and a scope the user chose should outlast
+closing the pane. **Scoping the texts by the buffer they came from**
+— a text's row is keyed by its bytes under no workspace, so a text
+yanked in two projects is one row; splitting it would undo Decision
+1's rule that a subject attended again extends its row.
+
+*Revised 2026-10-02, asked as "memory scope needs to stand out from
+the strip of tabs".* The scope was first drawn as two more words after
+the views and a `·`, `workspace` `global`, the one on in the accent as
+the view on is, and read as two more views. It is now the chips above.
+*Beat:* **one chip naming the scope on**, a click flipping it — the
+smaller strip, but the other scope unnamed until clicked, where the
+settings pane shows every layer it can write to. **The chips after the
+views, at the strip's right end** — apart by their ground, but the
+views no longer at the edge, and the scope says whose the head's count
+is, so it stands beside it. **`@global` as a word of the `/` filter**,
+as `@user` is one of the settings search's — the scope is a session
+setting that outlasts the pane, the filter the pane's own and gone at
+`<Esc>`; folding one into the other would make clearing the filter
+change whose rows are listed.
 
 ### Deliberately not
 

@@ -137,7 +137,7 @@ fn app_with(d: &mut Drive, data: &Path, bases: &[String]) -> Kawoosh {
     let urls = bases.iter().map(|b| Setting::Str(b.clone())).collect();
     app.ed
         .settings
-        .set(Layer::User, "grammars.url", Setting::List(urls));
+        .set(Layer::User, "grammars.urls", Setting::List(urls));
     d.frame(&mut app);
     app
 }
@@ -247,7 +247,9 @@ fn an_install_colours_an_open_file_and_is_there_at_the_next_launch() {
     // A project's word on where grammars come from is passed over.
     let mut app = app_with(&mut d, &data, &[at]);
     let nowhere = Setting::List(vec![Setting::Str(url(&t.join("nowhere")))]);
-    app.ed.settings.set(Layer::Project, "grammars.url", nowhere);
+    app.ed
+        .settings
+        .set(Layer::Project, "grammars.urls", nowhere);
     app.open(&file);
     d.frame(&mut app);
     let v = app.focused_view().unwrap();
@@ -281,7 +283,7 @@ fn an_install_colours_an_open_file_and_is_there_at_the_next_launch() {
     );
     let warned = notes(&app, Level::Warn);
     assert!(
-        warned.len() == 1 && warned[0].contains("grammars.url in a project's settings"),
+        warned.len() == 1 && warned[0].contains("grammars.urls in a project's settings"),
         "{warned:?}"
     );
     assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
@@ -361,6 +363,245 @@ fn an_install_that_fails_says_why() {
     std::fs::remove_dir_all(t).ok();
 }
 
+/// The CPU time this thread has had, which other processes do not
+/// stretch.
+#[cfg(unix)]
+fn thread_cpu() -> std::time::Duration {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid timespec for the call to fill.
+    let ok = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    assert_eq!(ok, 0);
+    std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
+
+#[cfg(windows)]
+fn thread_cpu() -> std::time::Duration {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+    let zero = || FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero(), zero(), zero(), zero());
+    // SAFETY: the current thread's pseudo-handle, four FILETIMEs to fill.
+    let ok = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(ok, 0);
+    let ticks = |f: FILETIME| (f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64;
+    // FILETIME counts 100 ns.
+    std::time::Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+}
+
+/// An install's grammar is loaded on the install's thread — the library
+/// opened, its queries compiled — and the frame its end lands in only
+/// takes it in: done there, a big grammar's queries and a new library's
+/// first open (which macOS checks, a quarter of a second for a small
+/// one) froze the window for as long. Counted in the frame's CPU time
+/// against what loading the same grammar takes here, so a busy machine
+/// stretches neither: a release whose highlights are a heavy query, and
+/// the frame the install ends in spends under a quarter of its load.
+#[test]
+fn an_install_s_grammar_is_loaded_off_the_frame() {
+    let t = temp("off-frame");
+    let (remote, data) = (t.join("remote"), t.join("grammars"));
+    std::fs::create_dir_all(&remote).unwrap();
+    let Some(lib) = library(&t) else { return };
+    // A thousand nested patterns, each with a string of its own:
+    // tree-sitter's analysis of them takes a fifth of a second here (the
+    // frame without it, a millisecond or two).
+    let heavy: String = (0..1000)
+        .map(|i| {
+            format!(
+                "(object (pair key: (string (string_content) @property) value: (array (object (pair key: (string) @string value: (number) @number)))) (#eq? @property \"k{i}\"))\n"
+            )
+        })
+        .collect();
+    let at = release(&remote, &lib, REV, &heavy);
+
+    // What the load costs on this thread: the same library and query.
+    let here = t.join("here");
+    std::fs::create_dir_all(here.join("queries")).unwrap();
+    let file = format!("{NAME}.{}", std::env::consts::DLL_EXTENSION);
+    std::fs::write(here.join(&file), &lib).unwrap();
+    std::fs::write(here.join("queries/highlights.scm"), &heavy).unwrap();
+    let said = kawoosh_languages::Locate {
+        path: Some(here.clone()),
+        symbol: Some("tree_sitter_json".into()),
+        ..Default::default()
+    };
+    let found = kawoosh_languages::Library::find(NAME, &said, None)
+        .unwrap()
+        .unwrap();
+    let before = thread_cpu();
+    found.load().unwrap();
+    let load = thread_cpu() - before;
+    assert!(
+        load > std::time::Duration::from_millis(40),
+        "the query is to cost its load something: {load:?}"
+    );
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with(&mut d, &data, &[at]);
+    ex(&mut d, &mut app, "grammar install jsonish");
+    let mut last = std::time::Duration::ZERO;
+    for _ in 0..1000 {
+        let before = thread_cpu();
+        d.frame(&mut app);
+        last = thread_cpu() - before;
+        if app.grammars.installed.contains_key(NAME) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        app.grammars.installed.contains_key(NAME),
+        "never installed: {:?}",
+        app.ed.message
+    );
+    assert!(app.languages.has_grammar(NAME), "{:?}", app.ed.message);
+    assert!(
+        last < load / 4,
+        "the frame the install ended in took {last:?} of the thread, the grammar's load {load:?}"
+    );
+}
+
+/// `grammars.urls` is one list of the bases, in order, a URL said twice
+/// counted once: a grammar several list is the first's, one only a
+/// later base lists is there to install too, and an install falls
+/// through to the next base that has it when the first does not
+/// answer — the grammar saying where it came from, in
+/// `kawoosh.grammars.list()` as on disk. With the first back, an update
+/// takes it from there again.
+#[test]
+fn the_bases_are_one_list_and_a_grammar_comes_from_the_first_that_has_it() {
+    let t = temp("urls");
+    let (a, b, data) = (t.join("a"), t.join("b"), t.join("grammars"));
+    for dir in [&a, &b, &data] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let Some(lib) = library(&t) else { return };
+    let at_a = base(&a, &lib);
+    // b's release is another build: another revision, another archive.
+    const B_REV: &str = "fedcba9876543210fedcba9876543210fedcba98";
+    let at_b = release(&b, &lib, B_REV, "(pair key: (string) @property)\n");
+    // And b lists one a does not, out of the same archive.
+    let path = b.join("manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let mut other = m["grammars"][NAME].clone();
+    other["extensions"] = serde_json::json!(["jsonier"]);
+    other["aliases"] = serde_json::json!([]);
+    m["grammars"]["jsonier"] = other;
+    std::fs::write(&path, m.to_string()).unwrap();
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&data);
+    let urls = [at_a.clone(), at_b.clone(), format!("{at_a}/")]
+        .into_iter()
+        .map(Setting::Str)
+        .collect();
+    app.ed
+        .settings
+        .set(Layer::User, "grammars.urls", Setting::List(urls));
+    d.frame(&mut app);
+    let base_of = |app: &mut Kawoosh, name: &str| {
+        lua(
+            app,
+            &format!(
+                "for _, g in ipairs(kawoosh.grammars.list()) do \
+                 if g.name == '{name}' then kawoosh.echo(g.state .. ' ' .. g.rev .. ' ' .. g.base) end end"
+            ),
+        )
+    };
+    // Each with how many times it was said: the same words twice are
+    // one note, counted.
+    let warned = |app: &Kawoosh| -> Vec<(String, u32)> {
+        app.notes
+            .shown
+            .iter()
+            .filter(|s| s.level == Level::Warn && s.text.starts_with("a base did not answer"))
+            .map(|s| (s.text.clone(), s.count))
+            .collect()
+    };
+
+    ex(&mut d, &mut app, "grammar update");
+    until(&mut d, &mut app, "the list landed", |a| !a.grammars.listing);
+    assert_eq!(
+        base_of(&mut app, NAME),
+        format!("available 0123456789ab {at_a}"),
+        "the first's"
+    );
+    assert_eq!(
+        base_of(&mut app, "jsonier"),
+        format!("available fedcba987654 {at_b}"),
+        "a later base's own is listed too"
+    );
+    assert_eq!(app.languages.detect(Path::new("x.jsonier"), ""), "jsonier");
+
+    // a down: the install is b's, and says so.
+    let gone = t.join("a-gone");
+    std::fs::rename(&a, &gone).unwrap();
+    ex(&mut d, &mut app, "grammar install jsonish");
+    until(&mut d, &mut app, "the install ended", |a| {
+        a.grammars.installing.is_empty()
+    });
+    assert_eq!(app.ed.message, "grammar: jsonish installed (fedcba987654)");
+    assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
+    assert_eq!(
+        base_of(&mut app, NAME),
+        format!("installed fedcba987654 {at_b}")
+    );
+    let on_disk = kawoosh_systems::grammars::installed_one(&data, NAME).unwrap();
+    assert_eq!(on_disk.row.base, at_b, "grammar.json says it");
+
+    // The list fetched with a down: said once, the URL being one base,
+    // and a's grammars listed as they were.
+    ex(&mut d, &mut app, "grammar update");
+    until(&mut d, &mut app, "the list landed", |a| {
+        !a.grammars.listing && a.grammars.installing.is_empty()
+    });
+    let said = warned(&app);
+    assert!(
+        said.len() == 1 && said[0].0.contains("a/manifest.json") && said[0].1 == 1,
+        "{said:?}"
+    );
+    assert_eq!(app.grammars.listed[NAME].base, at_a);
+    assert_eq!(
+        app.ed.message,
+        "grammar: jsonish is up to date (fedcba987654)"
+    );
+
+    // a back: an update takes jsonish from it.
+    std::fs::rename(&gone, &a).unwrap();
+    ex(&mut d, &mut app, "grammar update");
+    until(&mut d, &mut app, "updated from a", |a| {
+        a.ed.message.starts_with("grammar: jsonish updated")
+    });
+    assert_eq!(
+        app.ed.message,
+        "grammar: jsonish updated (fedcba987654 → 0123456789ab)"
+    );
+    assert_eq!(
+        base_of(&mut app, NAME),
+        format!("installed 0123456789ab {at_a}")
+    );
+    assert_eq!(warned(&app).len(), 1, "nothing more said");
+    std::fs::remove_dir_all(t).ok();
+}
+
 /// The releases themselves, over the network: `zig` from the bases the
 /// settings ship with, loaded and painting. Only when asked for
 /// (`KAWOOSH_GRAMMARS_LIVE=1`): it needs the two hosts up.
@@ -385,14 +626,14 @@ fn the_released_grammars_install_from_the_shipped_bases() {
         let shipped = app
             .ed
             .settings
-            .get("grammars.url")
+            .get("grammars.urls")
             .unwrap()
             .as_list()
             .unwrap()
             .to_vec();
         assert_eq!(shipped.len(), 2);
         let one = Setting::List(vec![shipped[skip].clone()]);
-        app.ed.settings.set(Layer::User, "grammars.url", one);
+        app.ed.settings.set(Layer::User, "grammars.urls", one);
         app.open(&file);
         d.frame(&mut app);
         let v = app.focused_view().unwrap();
@@ -545,6 +786,72 @@ fn the_first_file_of_a_listed_language_is_asked_about_once() {
     std::fs::remove_dir_all(t).ok();
 }
 
+/// `ask` is a toast with an Install button, up for fifteen seconds —
+/// long enough to reach, not so long it is in the way: the button, or
+/// the keyboard on the toast (`<C-w>n`, `<CR>`), installs the grammar,
+/// and the file it was asked for is painted.
+#[test]
+fn the_ask_is_a_toast_whose_button_installs() {
+    let t = temp("ask-toast");
+    let (remote, data) = (t.join("remote"), t.join("grammars"));
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let Some(lib) = library(&t) else { return };
+    let at = base(&remote, &lib);
+    // The base's list kept, as an update leaves it: jsonish is listed.
+    std::fs::copy(remote.join("manifest.json"), data.join("manifest.json")).unwrap();
+    let file = t.join("a.jsonish");
+    std::fs::write(&file, "{\"a\": 1}\n").unwrap();
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with(&mut d, &data, &[at]);
+    app.open(&file);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let asked = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.text.starts_with("jsonish has a grammar"))
+        .expect("asked")
+        .clone();
+    assert!(asked.toast, "a toast, not a corner line");
+    assert_eq!(asked.level, Level::Info);
+    assert_eq!(asked.ttl, Some(std::time::Duration::from_secs(15)));
+    assert_eq!(asked.actions.len(), 1);
+    assert_eq!(asked.actions[0].label, "Install");
+    assert_eq!(asked.actions[0].command, "grammar install jsonish");
+    assert!(
+        d.corner_texts().iter().any(|l| l == "Install"),
+        "{:?}",
+        d.corner_texts()
+    );
+
+    // The button.
+    let button = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some("Install"))
+        .expect("the button");
+    d.click(
+        &mut app,
+        button.rect.x + button.rect.w / 2.0,
+        button.rect.y + button.rect.h / 2.0,
+    );
+    assert!(app.grammars.installing.contains(NAME), "{}", app.ed.message);
+    assert!(app.notes.shown.iter().all(|s| !s.toast), "the toast went");
+    until(&mut d, &mut app, "installed", |a| {
+        a.grammars.installed.contains_key(NAME)
+    });
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    assert!(tokens(&app).contains(&Token::Property));
+    assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(t).ok();
+}
+
 /// `auto` installs at the first file; `:grammar update` installs again
 /// what its release moved and nothing else; `:grammar remove` takes
 /// the grammar and its colours out, and the next launch has none.
@@ -688,7 +995,7 @@ fn the_pane_lists_walks_installs_and_removes() {
     d.extension("lua", ext).unwrap();
     app.load_grammars(&data);
     let urls = Setting::List(vec![Setting::Str(at)]);
-    app.ed.settings.set(Layer::User, "grammars.url", urls);
+    app.ed.settings.set(Layer::User, "grammars.urls", urls);
     d.frame(&mut app);
 
     // The rows the cursor walks, as drawn, and one row's texts.
@@ -705,12 +1012,12 @@ fn the_pane_lists_walks_installs_and_removes() {
 
     ex(&mut d, &mut app, "grammars");
     d.frame(&mut app);
-    let listed = rows(&d);
     let to_install = app.grammars.listed.len();
+    let listed: Vec<String> = rows(&d).into_iter().take(to_install).collect();
     let mut sorted = listed.clone();
     sorted.sort();
     assert_eq!(listed, sorted, "by name");
-    assert_eq!(listed.len(), to_install);
+    assert!(rows(&d).len() > to_install, "the built-in ones after");
     let at = listed.iter().position(|n| n == NAME).unwrap();
     let counts = |installed: usize| {
         format!(
@@ -720,7 +1027,7 @@ fn the_pane_lists_walks_installs_and_removes() {
     };
     assert!(all(&d).contains(&counts(0)), "{}", all(&d));
     assert!(
-        all(&d).contains("rust · ") && all(&d).contains("built in"),
+        all(&d).contains("built in") && row(&d, "rust").ends_with("built in"),
         "{}",
         all(&d)
     );
@@ -1226,6 +1533,265 @@ fn a_grammar_that_can_only_be_built_says_so_in_the_pane() {
     let zig = row(&d, "zig");
     assert!(zig.ends_with("install"), "{zig:?}");
     assert_eq!(overflows(&d), Vec::<String>::new());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(t).ok();
+}
+
+fn lua(app: &mut Kawoosh, src: &str) -> String {
+    app.run_lua_source("t", src);
+    app.ed.message.clone()
+}
+
+/// The built-in grammars are rows of the pane, each tagged `built in`
+/// with its files — c, which the releases list too, saying the linked
+/// one is what is used — and `/` filters every part: what is typed
+/// narrows the rows by a grammar's name or its files, the cursor on the
+/// best match; `<Esc>` hands the keys back to the rows, which walk what
+/// is shown, and `<Esc>` there empties the filter before it closes.
+#[test]
+fn the_pane_filters_by_name_and_file_and_tags_the_built_in() {
+    let t = temp("pane-filter");
+    // Tall enough for every row to be on screen.
+    let mut d = Drive::new(760.0, 4000.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&t.join("grammars"));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammars");
+    d.frame(&mut app);
+    let rows = |d: &Drive| -> Vec<String> {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.label.clone())
+            .filter_map(|l| l.strip_prefix("grammar ").map(str::to_string))
+            .collect()
+    };
+    let row = |d: &Drive, name: &str| d.texts_under(&format!("grammar {name}")).join(" ");
+    let all = |d: &Drive| d.texts_under("body").join(" ");
+    let state = |app: &mut Kawoosh| {
+        lua(
+            app,
+            "local s = kawoosh.grammars.state() \
+             kawoosh.echo(s.query .. ' | ' .. s.cursor .. ' | ' .. table.concat(s.rows, ' '))",
+        )
+    };
+
+    // Every grammar a row, the built-in ones last, each saying so.
+    let whole = rows(&d);
+    let built_in = app
+        .grammars
+        .shown
+        .borrow()
+        .iter()
+        .filter(|g| g.state == "built in")
+        .count();
+    assert_eq!(whole.len(), app.grammars.listed.len() + built_in);
+    let (zig, rust) = (
+        whole.iter().position(|n| n == "zig").unwrap(),
+        whole.iter().position(|n| n == "rust").unwrap(),
+    );
+    assert!(zig < rust, "{whole:?}");
+    let rust_row = row(&d, "rust");
+    assert!(
+        rust_row.contains(".rs") && rust_row.ends_with("built in"),
+        "{rust_row:?}"
+    );
+    let c = row(&d, "c");
+    assert!(
+        c.contains(".c .h built in") && c.ends_with("used over the release's c"),
+        "{c:?}"
+    );
+    assert!(
+        !row(&d, "lua").contains("release"),
+        "only where a release lists it"
+    );
+    assert_eq!(overflows(&d), Vec::<String>::new());
+
+    // `/`, then a name: the rows narrow as it is typed, the cursor on
+    // the best, the count says how many of how many.
+    d.press(&mut app, "/");
+    d.press(&mut app, "zig");
+    d.frame(&mut app);
+    let shown = rows(&d);
+    assert!(
+        shown.contains(&"zig".to_string()) && shown.len() < whole.len(),
+        "{shown:?}"
+    );
+    assert!(
+        state(&mut app).starts_with("zig | zig | "),
+        "{}",
+        state(&mut app)
+    );
+    assert!(
+        all(&d).contains(&format!("{} of {}", shown.len(), whole.len())),
+        "{}",
+        all(&d)
+    );
+
+    // A file: the built-in part is filtered too, and its row is the
+    // best; `<Esc>` gives the keys to the rows, `k` walks what is shown.
+    d.press(&mut app, "<C-u>.rs<Esc>");
+    d.frame(&mut app);
+    let shown = rows(&d);
+    let s = state(&mut app);
+    assert!(s.starts_with(".rs | rust | "), "{s}");
+    let walk: Vec<String> = s
+        .rsplit(" | ")
+        .next()
+        .unwrap()
+        .split(' ')
+        .map(str::to_string)
+        .collect();
+    assert_eq!(walk, shown, "the cursor walks what is shown");
+    let at = walk.iter().position(|n| n == "rust").unwrap();
+    if at > 0 {
+        d.press(&mut app, "k");
+        let s = state(&mut app);
+        assert!(s.starts_with(&format!(".rs | {} | ", walk[at - 1])), "{s}");
+        d.press(&mut app, "j");
+    }
+    // `⏎` on a built-in one says so, and fetches nothing.
+    d.press(&mut app, "<CR>");
+    assert_eq!(app.ed.message, "grammars: rust is built in");
+    assert!(app.grammars.installing.is_empty());
+
+    // Nothing matches: the pane says so.
+    d.press(&mut app, "/");
+    d.press(&mut app, "<C-u>qqqq<Esc>");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), Vec::<String>::new());
+    assert!(all(&d).contains("no grammar matches"), "{}", all(&d));
+    assert_eq!(overflows(&d), Vec::<String>::new());
+
+    // `<Esc>` on the rows empties the filter — every row again — and
+    // then closes.
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), whole);
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), Vec::<String>::new(), "closed");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(t).ok();
+}
+
+/// The pane's head is its counts and its filter, under the title bar
+/// that names it: no `grammars` of its own over them. The filter is the
+/// list panes' line — `/`, the field, how many — drawn on the pane as
+/// the fonts pane's is, not in a box of its own.
+#[test]
+fn the_head_is_the_counts_and_a_plain_filter_line_with_no_title_of_its_own() {
+    let t = temp("pane-head");
+    let mut d = Drive::new(760.0, 700.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&t.join("grammars"));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammars");
+    d.frame(&mut app);
+
+    let body = d.texts_under("body");
+    assert!(
+        !body.iter().any(|s| s == "grammars"),
+        "the title bar names the pane: {body:?}"
+    );
+    let built_in = app
+        .grammars
+        .shown
+        .borrow()
+        .iter()
+        .filter(|g| g.state == "built in")
+        .count();
+    let counts = format!(
+        "0 installed · {} to install · {built_in} built in",
+        app.grammars.listed.len()
+    );
+    assert!(body.contains(&counts), "{body:?}");
+
+    // From the field up to the pane's body, nothing paints a box.
+    let nodes = d.core.nodes();
+    let by_key: std::collections::HashMap<_, _> = nodes.iter().map(|n| (n.key, n)).collect();
+    let field = nodes
+        .iter()
+        .find(|n| n.label.as_deref() == Some("field:lua:grammars/q"))
+        .expect("the filter's field");
+    let line = by_key[&field.parent.unwrap()];
+    let mut at = Some(line);
+    while let Some(n) = at {
+        if n.label.as_deref() == Some("body") {
+            break;
+        }
+        assert_eq!(n.bg.a, 0.0, "{:?} paints {:?}", n.label, n.bg);
+        at = n.parent.and_then(|k| by_key.get(&k)).copied();
+    }
+    assert!(at.is_some(), "the field is in the body");
+    let texts: Vec<String> = nodes
+        .iter()
+        .filter(|n| n.parent == Some(line.key))
+        .filter_map(|n| n.text.clone())
+        .collect();
+    let all = app.grammars.listed.len() + built_in;
+    assert_eq!(texts, ["/".to_string(), format!("{all} grammars")]);
+    assert_eq!(overflows(&d), Vec::<String>::new());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(t).ok();
+}
+
+/// `gg` and `G` take the cursor to the first row and the last, each
+/// scrolled into view, and `<C-d>` `<C-u>` ten rows down and up, as in
+/// the other list panes.
+#[test]
+fn gg_and_g_go_to_the_first_and_last_row_and_ctrl_d_ctrl_u_page() {
+    let t = temp("pane-ends");
+    let mut d = Drive::new(760.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&t.join("grammars"));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammars");
+    d.frame(&mut app);
+    let cursor = |app: &mut Kawoosh| lua(app, "kawoosh.echo(kawoosh.grammars.state().cursor)");
+    let rows: Vec<String> = lua(
+        &mut app,
+        "kawoosh.echo(table.concat(kawoosh.grammars.state().rows, ' '))",
+    )
+    .split(' ')
+    .map(str::to_string)
+    .collect();
+    assert!(rows.len() > 20, "{rows:?}");
+    // Whether the row of `name` is inside the list's box.
+    let shown = |d: &mut Drive, name: &str| {
+        let r = d.rect(&format!("grammar {name}")).unwrap();
+        let list = d.rect("list").unwrap();
+        r.y >= list.y - 0.5 && r.y + r.h <= list.y + list.h + 0.5
+    };
+    let (first, last) = (rows[0].clone(), rows[rows.len() - 1].clone());
+    assert_eq!(cursor(&mut app), first);
+    assert!(!shown(&mut d, &last), "a list longer than the pane");
+
+    d.press(&mut app, "G");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(cursor(&mut app), last);
+    assert!(shown(&mut d, &last), "scrolled to the last");
+    d.press(&mut app, "gg");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(cursor(&mut app), first);
+    assert!(shown(&mut d, &first), "scrolled back to the first");
+
+    d.press(&mut app, "<C-d>");
+    assert_eq!(cursor(&mut app), rows[10]);
+    d.press(&mut app, "<C-d>");
+    assert_eq!(cursor(&mut app), rows[20]);
+    d.press(&mut app, "<C-u>");
+    assert_eq!(cursor(&mut app), rows[10]);
+    d.press(&mut app, "<C-u><C-u>");
+    assert_eq!(cursor(&mut app), first, "stopping at the end");
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(t).ok();
 }

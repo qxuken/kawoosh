@@ -18,11 +18,14 @@
 //! location's line — best first; `<CR>` there takes the cursor's row
 //! (`list open`), `<Esc>` twice hands the keys back with the filter
 //! kept, `<Esc>` in the pane clears it, and so does closing the pane
-//! (`memory filter [QUERY]`, `memory filter clear`). Every view but **all** is the
-//! workspace's (memory.md Decision 2): the rows made under the
-//! outermost `.kawoosh` root above the cwd, or outside any when there
-//! is none; **all** is every row there is, whatever root it was made
-//! under.
+//! (`memory filter [QUERY]`, `memory filter clear`). The views list
+//! under a scope, `memory.scope` (memory.md Decision 11): the
+//! workspace's — the rows made under the focused tab's project root
+//! (Decision 2), or outside any when there is none — or every
+//! workspace's; `<C-a>` flips it for the session, `:memory global` and
+//! `:memory workspace` open the pane on one. **all** is every kind
+//! under the scope. The texts are under no workspace and the jumps are
+//! the tab's, so those two views are the same under either.
 //!
 //! The `"` register is the texts' head, so that view is the register's
 //! past: anything that passed through the hands can be put again, and
@@ -66,6 +69,52 @@ const ROWS_MAX: usize = 2000;
 /// The filter field's name: the fact `field:memory/q` while it has
 /// the keys.
 pub const FILTER_FIELD: &str = "memory/q";
+
+/// Whose rows the pane lists (`memory.scope`): the workspace's — the
+/// rows made under the focused tab's project (Decision 2) — or every
+/// workspace's. The texts are under none and the jumps are the tab's,
+/// so neither view moves with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    Workspace,
+    Global,
+}
+
+impl Scope {
+    pub const SETTING: &str = "memory.scope";
+    pub const ALL: [Scope; 2] = [Scope::Workspace, Scope::Global];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Scope::Workspace => "workspace",
+            Scope::Global => "global",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Scope> {
+        Scope::ALL.into_iter().find(|v| v.name() == s)
+    }
+
+    fn flip(self) -> Scope {
+        match self {
+            Scope::Workspace => Scope::Global,
+            Scope::Global => Scope::Workspace,
+        }
+    }
+}
+
+/// What the rows were built at: the memory's version, the store's
+/// changes, the histories', the view, the workspace the scope asked
+/// for (none for every one's — a tab in another project is another
+/// list) and the filter's line.
+type Built = (
+    u64,
+    u64,
+    u64,
+    View,
+    Option<String>,
+    Option<kawoosh_doc::Version>,
+);
 
 /// The pane's views (Decision 10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,9 +314,7 @@ pub struct MemoryPanel {
     /// Rows on show, as the last frame drew them.
     page: usize,
     rows: Vec<Row>,
-    /// What the rows were built at: the memory's version, the store's
-    /// changes, the histories', the view and the filter's line.
-    built: Option<(u64, u64, u64, View, Option<kawoosh_doc::Version>)>,
+    built: Option<Built>,
     /// The cursor's file row inspected: its subject, the stamp it was
     /// read at, and the reading.
     inspect: Option<(String, u64, Option<Inspect>)>,
@@ -425,6 +472,53 @@ impl Kawoosh {
         self.sync_memory_rows();
     }
 
+    /// The scope the pane lists under, as `memory.scope` says.
+    pub fn memory_scope(&self) -> Scope {
+        self.ed
+            .settings
+            .str(Scope::SETTING)
+            .and_then(Scope::parse)
+            .unwrap_or(Scope::Workspace)
+    }
+
+    /// The workspace a scoped view asks the store for: this one's, or
+    /// none for every one's.
+    fn scope_workspace(&self) -> Option<String> {
+        match self.memory_scope() {
+            Scope::Workspace => Some(self.moments.workspace().to_string()),
+            Scope::Global => None,
+        }
+    }
+
+    /// `memory scope [workspace|global]` (`<C-a>` in the pane): the
+    /// scope set for the session — flipped when none is named — as the
+    /// buffers picker's `<C-a>` flips `buffers.scope`. The cursor stays
+    /// on its row where the row stays.
+    pub(crate) fn set_memory_scope(&mut self, scope: Option<Scope>) {
+        let scope = scope.unwrap_or_else(|| self.memory_scope().flip());
+        self.ed.settings.set(
+            kawoosh_editor::Layer::Session,
+            Scope::SETTING,
+            kawoosh_editor::Setting::Str(scope.name().into()),
+        );
+        self.memory_pane.reveal = true;
+        self.sync_memory_rows();
+        self.ed.message = match scope {
+            Scope::Workspace => "memory: this workspace's".into(),
+            Scope::Global => "memory: every workspace's".into(),
+        };
+    }
+
+    /// `:memory global`, `:memory workspace`: the pane on show and
+    /// focused, under the scope — never closed, as a bare `:memory` on
+    /// a focused pane is.
+    fn show_memory_scope(&mut self, scope: Scope) {
+        if self.layout.focused_content() != Some(Content::Memory) {
+            self.toggle_memory_panel(None);
+        }
+        self.set_memory_scope(Some(scope));
+    }
+
     fn close_memory_panel(&mut self, pane: PaneId) {
         if !self.close_pane_at(pane) {
             self.ed.message = "cannot close the last pane".into();
@@ -569,14 +663,16 @@ impl Kawoosh {
             self.moments.changed,
             self.histories.changed,
             self.memory_pane.view,
+            self.scope_workspace(),
             filter,
         );
         // The jumps are the tab's, moving with no stamp: read each time.
-        if self.memory_pane.built != Some(stamp) || self.memory_pane.view == View::Jumps {
+        if self.memory_pane.built.as_ref() != Some(&stamp) || self.memory_pane.view == View::Jumps {
             let filter_moved = self
                 .memory_pane
                 .built
-                .is_some_and(|(_, _, _, _, f)| f != filter);
+                .as_ref()
+                .is_some_and(|(_, _, _, _, _, f)| *f != filter);
             let cursor_key = self
                 .memory_pane
                 .rows
@@ -640,78 +736,70 @@ impl Kawoosh {
     }
 
     fn build_rows(&mut self, view: View) -> Vec<Row> {
+        // Under `memory.scope`: this workspace's rows, or every one's.
+        let ws = self.scope_workspace();
+        let ws = ws.as_deref();
+        let of = |k: &Self, kind: &str| {
+            k.moment_rows(&MomentQuery {
+                kind: Some(kind),
+                workspace: ws,
+                limit: ROWS_MAX,
+                ..Default::default()
+            })
+        };
         match view {
             View::Texts => (0..self.ed.memory.len()).rev().map(Row::Text).collect(),
             View::Recent => self
-                .recent_rows(ROWS_MAX, Some(self.moments.workspace()))
+                .recent_rows(ROWS_MAX, ws)
                 .into_iter()
                 .map(Row::Recent)
                 .collect(),
             View::Jumps => self.jump_rows(),
             View::Files => {
-                let ws = self.moments.workspace();
-                let mut rows = self.moment_rows(&MomentQuery {
-                    kind: Some("file"),
-                    workspace: Some(ws),
-                    limit: ROWS_MAX,
-                    ..Default::default()
-                });
-                rows.extend(self.moment_rows(&MomentQuery {
-                    kind: Some("scratch"),
-                    workspace: Some(ws),
-                    limit: ROWS_MAX,
-                    ..Default::default()
-                }));
+                let mut rows = of(self, "file");
+                rows.extend(of(self, "scratch"));
                 rows.sort_by_key(|r| std::cmp::Reverse(r.last_at));
                 self.moment_rows_of(rows)
             }
             View::Commands => {
-                let rows = self.moment_rows(&MomentQuery {
-                    kind: Some("command"),
-                    workspace: Some(self.moments.workspace()),
-                    limit: ROWS_MAX,
-                    ..Default::default()
-                });
+                let rows = of(self, "command");
                 self.moment_rows_of(rows)
             }
             // `/`'s searches and the project's (search.md), newest first.
             View::Searches => {
-                let ws = self.moments.workspace();
-                let mut rows = self.moment_rows(&MomentQuery {
-                    kind: Some("search"),
-                    workspace: Some(ws),
-                    limit: ROWS_MAX,
-                    ..Default::default()
-                });
-                rows.extend(self.moment_rows(&MomentQuery {
-                    kind: Some("search.project"),
-                    workspace: Some(ws),
-                    limit: ROWS_MAX,
-                    ..Default::default()
-                }));
+                let mut rows = of(self, "search");
+                rows.extend(of(self, "search.project"));
                 rows.sort_by_key(|r| std::cmp::Reverse(r.last_at));
                 self.moment_rows_of(rows)
             }
             View::Pins => {
-                let rows = self.pins();
+                let rows = self.pins_in(ws);
                 self.moment_rows_of(rows)
             }
-            // The workspace's marks (docs/design/marks.md), by letter.
+            // The marks (docs/design/marks.md), by letter.
             View::Marks => {
-                let mut rows = self.moment_rows(&MomentQuery {
-                    kind: Some(crate::marks::KIND),
-                    workspace: Some(self.moments.workspace()),
-                    limit: ROWS_MAX,
-                    ..Default::default()
-                });
+                let mut rows = of(self, crate::marks::KIND);
                 rows.sort_by(|a, b| a.key.subject.cmp(&b.key.subject));
                 self.moment_rows_of(rows)
             }
+            // Every kind under the scope; the texts, made under no
+            // workspace, are every workspace's (as the ring keeps them).
             View::All => {
-                let rows = self.moment_rows(&MomentQuery {
+                let mut rows = self.moment_rows(&MomentQuery {
+                    workspace: ws,
                     limit: ROWS_MAX,
                     ..Default::default()
                 });
+                if ws.is_some_and(|w| !w.is_empty()) {
+                    rows.extend(self.moment_rows(&MomentQuery {
+                        kind: Some("text"),
+                        workspace: Some(""),
+                        limit: ROWS_MAX,
+                        ..Default::default()
+                    }));
+                    rows.sort_by_key(|r| std::cmp::Reverse(r.last_at));
+                    rows.truncate(ROWS_MAX);
+                }
                 self.moment_rows_of(rows)
             }
         }
@@ -1264,6 +1352,10 @@ impl Kawoosh {
             self.set_view(view);
             return;
         }
+        if let Some(scope) = p.get_str("scope").and_then(Scope::parse) {
+            self.set_memory_scope(Some(scope));
+            return;
+        }
         if p.get_bool("filter") == Some(true) {
             self.memory_filter(None);
             return;
@@ -1281,7 +1373,7 @@ impl Kawoosh {
 
     pub(crate) fn render_memory(&mut self, ui: &mut Ui<'_>, pane: PaneId, focused: bool) {
         self.sync_memory_rows();
-        let tm = Tab::of(&ui.metrics(), self.face.line_height);
+        let tm = Tab::of(&ui.metrics(), &self.chrome, self.face.line_height);
         let pal = self.pal;
         let font = self.face;
         let (cell_w, _) = self.cell;
@@ -1290,6 +1382,7 @@ impl Kawoosh {
         let small = move |c: Color| tm.small(c);
         let col = move |cells: f32| tm.cell(cells, cell_w);
         let view = self.memory_pane.view;
+        let legend = self.legend_full(pane);
         let rows = std::mem::take(&mut self.memory_pane.rows);
         let n = rows.len();
         let cursor = self.memory_pane.cursor.min(n.saturating_sub(1));
@@ -1340,15 +1433,26 @@ impl Kawoosh {
                 format!("{n} {what}")
             }
         };
+        // Whose rows a scoped view lists (`memory.scope`).
+        let scope = self.memory_scope();
+        let scope_note = match scope {
+            Scope::Global => " · every workspace".to_string(),
+            Scope::Workspace => match self.moments.workspace() {
+                "" => " · outside any workspace".to_string(),
+                ws => format!(" · in {}", kawoosh_systems::fs::display(Path::new(ws))),
+            },
+        };
         let head = match view {
             View::Texts => count(format!(
                 "text{}",
                 if n == 1 && filter.is_none() { "" } else { "s" }
             )),
-            View::Recent => count(format!(
-                "transition{}",
-                if n == 1 && filter.is_none() { "" } else { "s" }
-            )),
+            View::Recent => {
+                count(format!(
+                    "transition{}",
+                    if n == 1 && filter.is_none() { "" } else { "s" }
+                )) + &scope_note
+            }
             View::Jumps => {
                 let mut s = count(format!(
                     "jump{}",
@@ -1375,17 +1479,7 @@ impl Kawoosh {
                     })
                     .count();
                 let mut s = count(v.name().to_string());
-                if v != View::All {
-                    let ws = self.moments.workspace();
-                    s.push_str(&format!(
-                        " · {}",
-                        if ws.is_empty() {
-                            "outside any workspace".to_string()
-                        } else {
-                            format!("in {}", kawoosh_systems::fs::display(Path::new(ws)))
-                        }
-                    ));
-                }
+                s.push_str(&scope_note);
                 if drafts > 0 {
                     s.push_str(&format!(
                         " · {drafts} draft{}",
@@ -1412,7 +1506,42 @@ impl Kawoosh {
                 .on_click(tag.clone())
                 .label("memory"),
             |ui| {
+                let theme = ui.theme();
                 ui.with(tm.strip(&pal).on_click(tag.clone()), |ui| {
+                    // The scope first, apart from the views: whose rows,
+                    // spelt as the settings pane spells its layers
+                    // (`@workspace` `@global`), on chips, the one on
+                    // filled with the accent and a click on either its
+                    // `<C-a>`. Two more words after the views read as
+                    // two more views.
+                    ui.with(
+                        NodeSpec::row()
+                            .gap(tm.gap)
+                            .cross_align(kui_native::Align::Center),
+                        |ui| {
+                            for s in Scope::ALL {
+                                let on = s == scope;
+                                let key = format!("scope {}", s.name());
+                                ui.text_in_keyed(
+                                    &key,
+                                    NodeSpec::row()
+                                        .pad_xy(tm.cell_gap, 1.0)
+                                        .radius(4.0)
+                                        .bg(if on { theme.accent } else { pal.panel })
+                                        .hover_bg(if on { theme.accent_hover } else { pal.hover })
+                                        .on_click(Value::map([
+                                            ("kind", "memory".into()),
+                                            ("pane", Value::Int(pane as i64)),
+                                            ("scope", s.name().into()),
+                                        ]))
+                                        .cursor(kui_native::CursorShape::Pointer)
+                                        .label(key.as_str()),
+                                    &format!("@{}", s.name()),
+                                    small(if on { theme.on_accent } else { pal.dim }),
+                                );
+                            }
+                        },
+                    );
                     ui.text(&head, small(pal.dim));
                     ui.leaf(NodeSpec::row().grow_width());
                     for v in View::ALL {
@@ -1753,9 +1882,24 @@ impl Kawoosh {
                         },
                     };
                     ui.text(&head, small(pal.dim));
-                    ui.text(
-                        "⏎ open · y recall · o origin · x forget · ⇥ view · q close",
-                        small(pal.faint),
+                    crate::legends::legend(
+                        ui,
+                        &self.icons.borrow(),
+                        pane,
+                        legend,
+                        &[
+                            (&["<CR>"], "open"),
+                            (&["y"], "recall"),
+                            (&["o"], "origin"),
+                            (&["x"], "forget"),
+                            (&["<Tab>"], "view"),
+                            (&["q"], "close"),
+                        ],
+                        &crate::legends::LegendStyle {
+                            keys: crate::icons::KeyStyle::new(small(pal.dim), pal.border),
+                            words: small(pal.faint),
+                            hover: pal.hover,
+                        },
                     );
                 });
                 let diff_style = tm.diff(&pal, style());
@@ -1938,7 +2082,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("memory")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("the memory pane: texts, files, recent, jumps (the tab's), commands, searches, pins, marks (the workspace's), all (every workspace's)"),
+                .doc("the memory pane: texts, files, recent, jumps (the tab's), commands, searches, pins, marks, all (every kind), under `memory.scope`"),
             |k, ctx| match ctx.args.first().map(String::as_str) {
                 Some(name) => match View::parse(name) {
                     Some(v) => k.toggle_memory_panel(Some(v)),
@@ -2005,6 +2149,19 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
+            Spec::new("memory scope")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("the pane's rows this workspace's or every one's (`workspace`, `global`, or as the pane spells them, `@global`; bare flips) for the session"),
+            |k, ctx| match ctx.args.first().map(String::as_str) {
+                None => k.set_memory_scope(None),
+                // The word as the pane's strip draws it, `@global`, too.
+                Some(name) => match Scope::parse(name.strip_prefix('@').unwrap_or(name)) {
+                    Some(s) => k.set_memory_scope(Some(s)),
+                    None => k.ed.message = format!("no memory scope {name} (workspace, global)"),
+                },
+            },
+        ),
+        cmd(
             Spec::new("memory recall")
                 .when(&["memory"])
                 .doc("the pane's cursor text made the register, without putting it"),
@@ -2062,6 +2219,15 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         v.push(cmd(
             Spec::new(&format!("memory {}", view.name())).doc("the memory pane on this view"),
             move |k, _| k.toggle_memory_panel(Some(view)),
+        ));
+    }
+    for scope in Scope::ALL {
+        v.push(cmd(
+            Spec::new(&format!("memory {}", scope.name())).doc(match scope {
+                Scope::Workspace => "the memory pane on this workspace's rows",
+                Scope::Global => "the memory pane on every workspace's rows",
+            }),
+            move |k, _| k.show_memory_scope(scope),
         ));
     }
     v

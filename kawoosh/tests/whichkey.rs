@@ -27,6 +27,22 @@ fn has(t: &[String], s: &str) -> bool {
     t.iter().any(|x| x == s)
 }
 
+/// Whether the card draws `notation` as caps (`icons::keys`, keyed by
+/// the notation): `<C-w>` is a ⌃ and a `w`, no text that says so.
+fn caps(d: &Drive, notation: &str) -> bool {
+    let nodes = d.core.nodes();
+    let Some(at) = nodes
+        .iter()
+        .position(|n| n.label.as_deref() == Some("whichkey"))
+    else {
+        return false;
+    };
+    nodes[at + 1..]
+        .iter()
+        .take_while(|n| n.depth > nodes[at].depth)
+        .any(|n| n.label.as_deref() == Some(notation))
+}
+
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
     d.keys(app, line);
@@ -104,7 +120,7 @@ fn a_which_key_lists_what_can_follow_and_a_setting_hides_it() {
         has(&t, "normal mode") && has(&t, "j") && has(&t, "move down") && has(&t, "+leader"),
         "{t:?}"
     );
-    assert!(has(&t, "SPC") && has(&t, "C-w"), "{t:?}");
+    assert!(has(&t, "spc") && caps(&d, "<C-w>"), "{t:?}");
     assert!(
         !has(&t, "commands next"),
         "the commands pane's keys cannot run here: {t:?}"
@@ -116,10 +132,13 @@ fn a_which_key_lists_what_can_follow_and_a_setting_hides_it() {
     ex(&mut d, &mut app, "keys i");
     let t = texts(&d);
     assert!(
-        has(&t, "insert mode") && has(&t, "C-s") && has(&t, "write") && has(&t, "insert newline"),
+        has(&t, "insert mode")
+            && caps(&d, "<C-s>")
+            && has(&t, "write")
+            && has(&t, "insert newline"),
         "{t:?}"
     );
-    assert!(!has(&t, "j") && !has(&t, "+leader"), "{t:?}");
+    assert!(!caps(&d, "j") && !has(&t, "+leader"), "{t:?}");
     d.keys(&mut app, "j");
     ex(&mut d, &mut app, "keys v");
     let t = texts(&d);
@@ -239,16 +258,19 @@ fn a_which_key_fits_the_window_and_folds_numbered_runs() {
     d.keys(&mut app, " ?");
     let t = texts(&d);
     assert!(has(&t, "normal mode"), "nothing past the card: {t:?}");
-    assert!(has(&t, "A-1…9") && has(&t, "memory pin 1…9"), "{t:?}");
-    assert!(!has(&t, "A-5") && !has(&t, "memory pin 5"), "{t:?}");
+    assert!(
+        caps(&d, "<A-1>") && has(&t, "…9") && has(&t, "memory pin 1…9"),
+        "{t:?}"
+    );
+    assert!(!caps(&d, "<A-5>") && !has(&t, "memory pin 5"), "{t:?}");
     // The font's keys are ⌘ ones on macOS, Ctrl ones elsewhere.
     let reset = if cfg!(target_os = "macos") {
-        "D-0"
+        "<D-0>"
     } else {
-        "C-0"
+        "<C-0>"
     };
     assert!(
-        has(&t, reset) && has(&t, "font reset"),
+        caps(&d, reset) && has(&t, "font reset"),
         "not part of the run: {t:?}"
     );
 }

@@ -59,8 +59,9 @@ fn a_listing_in_a_repository_paints_what_git_says() {
     d.frame(&mut app);
     d.keys(&mut app, &format!(":dir {}", dir.display()));
     d.key(&mut app, "enter", KeyMods::default());
-    // Dot files too: git's own folder is as good as ignored.
-    d.keys(&mut app, "g.");
+    // Dot files are listed (`dir.hidden` unset), and git's own folder is
+    // as good as ignored. No `g.`: it hides them, and only ever passed
+    // when typed before the listing was read, into `*scratch*`.
     // The states, by the painted line's text.
     let states = |app: &Kawoosh| -> Vec<(String, String)> {
         let Some(v) = app.focused_view() else {

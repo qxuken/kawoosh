@@ -41,9 +41,9 @@ Text that a password manager marks as concealed or transient is not picked up th
 | `commands`, `searches` | command lines and searches |
 | `pins` | pinned files (`<leader>mp`) |
 | `marks` | marks |
-| `all` | every row, from every workspace |
+| `all` | every kind of row |
 
-Every view but `all` and `jumps` shows the current workspace only; `jumps` shows the tab's.
+The views show this workspace's memory (the focused tab's project) or the global one, every workspace's: `<C-a>` in the pane switches between them for the session, as does a click on **@workspace** or **@global** at the left of the pane's strip (the one on is filled), the head says which (`in ~/projects/foo` or `every workspace`), `:memory scope @global` sets one, and `:memory workspace` or `:memory global` opens the pane on one. `memory.scope` (`"workspace"`) is where it starts. `texts` are the same either way, since a yank is a yank anywhere, and `jumps` are always the tab's.
 
 | keys in the pane | what |
 |---|---|
@@ -52,6 +52,7 @@ Every view but `all` and `jumps` shows the current workspace only; `jumps` shows
 | `o` | go to where the row came from (a text's origin follows the edits since) |
 | `x` | forget the row (a file's draft with it) |
 | `m` | pin or unpin |
+| `<C-a>` | this workspace's memory or every workspace's |
 | `/` | filter the rows as you type; `<CR>` takes the row, `<Esc>` twice returns to the list with the filter kept, `<Esc>` in the list clears it |
 | `j` `k` `gg` `G` `<C-d>` `<C-u>` | move |
 | `q` | close; `<Esc>` hands the keys back to the editor pane |

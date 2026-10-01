@@ -102,9 +102,9 @@ fn a_terminal_is_a_column_of_its_own_unless_told_otherwise() {
 }
 
 /// `*compile*` is a build's, a subject of its own: a column, the
-/// keyboard staying in the file.
+/// keyboard on it.
 #[test]
-fn compile_output_is_a_column_and_the_keys_stay() {
+fn compile_output_is_a_column_with_the_keys() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_with_lua(&mut d);
     let editor = app.layout.focused();
@@ -118,13 +118,13 @@ fn compile_output_is_a_column_and_the_keys_stay() {
     }
     let b = app.compile.buffer.expect("the compile ran");
     assert!(app.ed.buffers[b].text().contains("hi"));
-    assert_eq!(app.layout.focused(), editor, "the keys stay");
     let pane = app
         .layout
         .visible_panes()
         .into_iter()
         .find(|p| matches!(app.layout.content(*p), Some(Content::Editor(v)) if app.ed.views[v].buffer == b))
         .expect("`*compile*` on show");
+    assert_eq!(app.layout.focused(), pane, "the keys on it");
     assert_eq!(columns(&app), 2);
     assert!(!same_column(&app, editor, pane), "a column of its own");
 }

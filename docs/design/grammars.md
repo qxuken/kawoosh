@@ -112,7 +112,7 @@ a manifest and the archives it names from the same base**:
 
 ```lua
 grammars = {
-  url = {   -- tried in order; a base is a folder of `manifest.json` and `NAME.sqlar`
+  urls = {  -- one list, the first base's grammar wins; a base is a folder of `manifest.json` and `NAME.sqlar`
     "https://github.com/qxuken/kawoosh-grammars/releases/latest/download",
     "https://drydock9.qxuken.dev/qxuken/kawoosh-grammars/releases/download/latest",
   },
@@ -274,8 +274,10 @@ An install is one progress line under `grammar`, off the frame:
    manifest again and tries once more, then fails with both hashes;
 3. **extract**: this target's library and the queries, written beside
    and renamed in;
-4. **load**: `add_language`, as `kawoosh.language` does — the
-   language's open buffers colour without a restart.
+4. **load**: the library opened and its queries compiled on the
+   install's thread, then `add_language` with the grammar ready, as
+   `kawoosh.language` adds one — the language's open buffers colour
+   without a restart.
 
 A failure is a line under `grammar` and the language stays a language
 of files. No `curl` on the `PATH` says so, once.
@@ -292,7 +294,7 @@ say yes is cheap, and `"auto"` is there.
 
 ### 8. Who may say where grammars come from
 
-A grammar is native code in the editor's process. `grammars.url`, and
+A grammar is native code in the editor's process. `grammars.urls`, and
 any source of a grammar, is the user's layer's alone: a project's
 `.kawoosh/settings.lua` that names one is refused with a line, as code
 from a repository is until trusted ([formatters.md](formatters.md)
@@ -455,7 +457,7 @@ Where it departed from the text:
 - **At launch an installed grammar is registered, not loaded**: the ts
   thread loads it at its first buffer, as it does a linked one. A
   fresh install loads on the spot, so one that does not load is a
-  warning then.
+  warning then — on the install's thread since 2026-10-02 (below).
 - **A listed language does not take a file from one with colours**: it
   is the newest in the table, and would win the file to show it plain.
 - **Decision 8 came forward**: `grammars.url` is read from the session,
@@ -783,3 +785,145 @@ is not there); `a_source_is_a_repository_or_a_directory`.
 Not done: `kawoosh.language`'s own libraries are not in the `:grammars`
 pane; a grammar there is one the list, an install or
 `grammars.sources` names.
+
+**The todo's three, 2026-10-01.** Asked: "search in grammars",
+"indicate builtins in grammars", "add install button to a notification
+and make it stay for something like 15 sec".
+
+- **`ask` is a toast with an Install button**, up fifteen seconds
+  (`ASK_TTL`) — an info shown as a toast, the text as before, the
+  button `:grammar install NAME` (`Build` and `:grammar build NAME` for
+  a listed grammar no release has an archive of). Decision 7's "one
+  corner line" is that toast now. Notifications had actions and a time
+  of their own already (kui.md Decision 9); what they lacked was the
+  two together: a toast with actions was a question, not put away by
+  `x` or a click until answered, which an offer that goes by itself in
+  fifteen seconds is not. `Shown::waits` says which a toast is —
+  actions and no time — and only a question refuses `x` and a click on
+  its card. The keyboard's way to the button is the toasts' own,
+  `<C-w>n` then `⏎`.
+- **The built-in grammars are rows**, in their own part after the rest,
+  each with its files and a `built in` tag where the others have their
+  button; the cursor walks them, and `⏎` `d` `b` on one say it is built
+  in. `kawoosh.grammars.list()` has `released`: a release lists the
+  name. The names a manifest lists that this build links (only `c`
+  today, there for glsl's and objc's queries) are kept as they are
+  passed over (`Grammars::passed`), so under c's row a line says
+  "used over the release's c" — under it, where a failure's reason
+  goes: beside the tag it squeezed the row's files to nothing at the
+  pane's width.
+- **`/` filters the pane**: a field over the rows (`ctx.field`, as the
+  settings pane's search is), each grammar matched by its name or one
+  of its files, word by word, with `kawoosh.fuzzy` — the picker's fzy
+  scoring — at its best word, so `zig`, `.rb` and `Dockerfile` each find
+  theirs. Matched as one line, a query's letters were gathered from
+  across a long list of extensions: `qqqq` found sql. Every part is
+  filtered and keeps its place, its rows best first and the matched
+  letters lit; the cursor goes to the best match of all whenever the
+  filter moves, stays on its grammar when the filter is emptied, and
+  acts on nothing while its row is hidden. `⏎` or `<Esc>` in the field
+  gives the keys back to the rows (the arrows, `<C-n>` `<C-p>` `<C-j>`
+  `<C-k>` walk them from the field); `<Esc>` on the rows empties the
+  filter, and with none closes the pane. The head and the field stay
+  put over the scrolling rows.
+
+Calls taken: the toast keeps the corner line's text, command and all,
+since the log keeps it after the toast has gone; the filter keeps the
+parts rather than one ranked list, the cursor on the best match
+showing where it is; `i`, which installs, is not the filter's key.
+
+Verified: `an_offer_goes_in_its_time_and_can_be_put_away`
+(`kawoosh/tests/notify.rs`); `the_ask_is_a_toast_whose_button_installs`
+and `the_pane_filters_by_name_and_file_and_tags_the_built_in`
+(`kawoosh/tests/grammars.rs`), and the pane test's rows with the
+built-in ones after the rest.
+
+**An install's end froze the window, 2026-10-02.** Reported: "grammar
+panel lags at the moment of finishing installation. if i install
+something and scroll it freezes for a 1-2s". Measured: the frame an
+install ended in opened the new library and compiled its queries.
+macOS checks a library at its first open — a fresh 1 MB grammar took
+220 ms and a 3.5 MB one 250 ms on a busy machine, a later open of the
+same file half a millisecond — and php's queries compile in 35–50 ms;
+the rest of the end (the stored manifest read again, the list
+published, the pane's rows) is under a millisecond. Now the install's
+thread does the load (`grammars::Loaded`: `Installed::library`, then
+`Library::load`) and sends the grammar ready with `Step::Done`; the
+frame takes it in with `put_loaded`, a failure still the warning it
+was. Verified: `an_install_s_grammar_is_loaded_off_the_frame`, the
+frame's CPU time against the load's of a heavy query (1–2 ms against
+200).
+
+**The pane's polish, 2026-10-02.** Asked, after trying it: "grammar
+title dublicated by panel name. remove title.", "use standard field in
+grammar pan", "grammar list does not implement `gg`/`G` moves."
+
+- **No title of its own**: the pane's title bar says `grammars`; the
+  head starts with the counts (`0 installed · 68 to install · 25 built
+  in`) on a line of their own, read as what is under the name.
+- **The filter is the list panes' line**: `/`, the field
+  (`ctx.field`), how many — on the pane as the fonts pane's and the
+  memory pane's are, no longer in a box of its own (the settings
+  pane's search still is).
+- **`gg` `G` `<C-d>` `<C-u>`** take the cursor to the first row, the
+  last, and ten down and up, each scrolled into view — the commands
+  `grammars first` `last` `page down` `page up`, as the fonts, settings
+  and `:du` panes have theirs.
+
+Verified: `the_head_is_the_counts_and_a_plain_filter_line_with_no_title_of_its_own`
+and `gg_and_g_go_to_the_first_and_last_row_and_ctrl_d_ctrl_u_page`
+(`kawoosh/tests/grammars.rs`).
+
+**`grammars.urls`, one list of the bases, 2026-10-02.** Asked: "let
+`grammars.url` setting be a list of `urls`, deduped by first saw
+wins". The setting was a list already, tried in order — but only for
+an install: the list `:grammar update` fetched was the first base's
+that answered, so a grammar a later base alone released was never
+listed, and every install kept its own base's manifest over the last,
+so the list was whichever base answered last.
+
+- **The name is `grammars.urls`.** `grammars.url` is not read any more:
+  a settings file that says it is told "`grammars.url` is now
+  `grammars.urls`", as `compile.command` was when it moved — settings
+  have that and no aliases. The default is as it was, GitHub then
+  drydock9 (Decision 2's order).
+- **The bases are one list, the first that lists a grammar its
+  owner.** `:grammar update` fetches every base's manifest at once
+  (`grammars::refresh`, a host that is down costing its timeout once)
+  and keeps them as one, each grammar the first base's that lists it
+  (`Manifest::merge`), each row saying its `base`. A URL said twice is
+  one base, its first place; a trailing `/` is no other URL.
+- **A base that does not answer is as it was**: its rows in the list
+  kept stay listed under it, and it is said — a warning, "a base did
+  not answer, its grammars listed as they were: …" — so a host that is
+  down hides nothing. None answering is the error it was.
+- **An install falls through**: from the first base that has the
+  grammar, the next when that one does not answer, does not list it,
+  has no library for the machine or serves an archive that is not its
+  manifest's — each archive checked against its own base's manifest
+  still (Decision 2). The manifests fetched on the way are kept into
+  the list by the same rule, not over it.
+- **A grammar says where it came from**: `base` in `grammar.json` and
+  in `kawoosh.grammars.list()` — the base it was fetched from when in,
+  else the one that lists it; empty for one built here. The same
+  archive from another host is the install in, not fetched again.
+  Installed from the second base while the first was down, the first's
+  is what the list has, so the next `:grammar update` with the first
+  back takes it from there — first wins, after the fact too.
+
+Calls taken: the old name replaced rather than read as well — it was a
+day old, and two names for one list would need a rule for both set;
+the bases fetched at once for the list but one after another for an
+install, which stops at the first that has the grammar; the pane does
+not show the base yet (`base` is in the door for it).
+
+Verified: `the_bases_list_together_and_the_first_that_has_a_grammar_wins`
+(`systems/src/grammars.rs`: two `file://` bases, the merge, a base
+down and back, the fall-through, the same archive from a mirror, a
+base dropped from the setting) and
+`the_bases_are_one_list_and_a_grammar_comes_from_the_first_that_has_it`
+(`kawoosh/tests/grammars.rs`: a later base's own grammar listed and
+detected, the install from the second base with the first down, said
+once though its URL is given twice, and taken from the first again
+when it is back); the moved key in
+`an_undeclared_key_is_named_once_and_the_types_know_the_rest`.

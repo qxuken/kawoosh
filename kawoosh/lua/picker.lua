@@ -23,7 +23,8 @@
 -- attended before are boosted by the memory's rank (memory.md D8,
 -- `kawoosh.memory_rank`) and a binary (`picker.binary`, by
 -- extension) held back. A row with columns is matched on its name
--- first and on the rest of its text after.
+-- first and on the rest of its text after, and so is a plain row of a
+-- `wide` source on its `sub` (the buffers' paths).
 --
 -- The query is a field (kui.md D12): typing filters, `<Esc>` is normal
 -- mode over the line, `<Esc>` again closes; `<C-n>` `<C-p>` `<Down>`
@@ -42,7 +43,8 @@
 -- `<A-J>` make the pane taller and shorter (the editor's own pane
 -- keys, the height they leave kept as the setting), `<A-H>` `<A-L>`
 -- move the divider between list and preview, which drags too — the
--- session's, as the two above. A source's own keys ride on the row: `<C-x>` in `buffers`
+-- session's, as the two above; with the preview hidden the list is the
+-- whole pane and `<A-H>` `<A-L>` the pane's own, its column's width. A source's own keys ride on the row: `<C-x>` in `buffers`
 -- closes the row's buffer, asking first when it has unsaved changes.
 -- A source with `columns` draws its rows as a grid, the cells lined up
 -- (the commands: name, key, what it does). A `tree` source's rows are
@@ -65,20 +67,24 @@ local FIELD = "q"
 -- what the commands are gated by, so a pane-mode map (the list
 -- blurred, `<Esc>` twice) runs them too.
 local PANE_FACT = "lua:" .. VIEW
+-- Whether the open picker draws a preview beside its list: the width
+-- keys move the divider between them only while there is one, and
+-- without it fall through to the pane's own, the column's width.
+local PREVIEW_FACT = "picker:preview"
 -- The rows' text: the field's size, so the query and its answers line
--- up; a row is the field's height too. The editor's chrome sizes, read
--- off its length tokens each frame (`sizes`), so the picker follows the
--- font as the tabs and the strips do; these are the 13 px defaults.
-local SIZE = 13
+-- up; a row is the field's height too. The panes' one scale
+-- (`kawoosh.metrics`), read each frame (`sizes`), so the picker follows
+-- the font as the tabs and the strips do; these are the 13 px defaults.
+local SIZE, SMALL = 13, 12
 local ROW_H = SIZE + 6
 local PREVIEW_SIZE = 12
 local PREVIEW_ROW = PREVIEW_SIZE + 4
 
 local function sizes(env)
-  local l = env and env.tokens and env.tokens.lengths or {}
-  SIZE = l.chrome or 13
+  local m = kawoosh.metrics(env)
+  SIZE, SMALL = m.text, m.small
   ROW_H = SIZE + 6
-  PREVIEW_SIZE = l.chrome_small or 12
+  PREVIEW_SIZE = m.small
   PREVIEW_ROW = PREVIEW_SIZE + 4
 end
 -- The most rows a query keeps: a screenful and a few pages after it.
@@ -328,8 +334,15 @@ end
 -- and its `dim` field after it, with where each starts (a byte, from
 -- 1) in the row's search text — the pieces joined by two spaces — so
 -- a match's positions, found in that text, land on the piece they
--- are in.
-local function pieces_of(it, columns)
+-- are in. A plain row's pieces are its text (`main`, else `item.text`)
+-- and its `sub`, dim after it.
+local function pieces_of(it, columns, main)
+  if not columns then
+    main = main or it.text
+    local out = { { text = main, from = 1 } }
+    if it.sub and it.sub ~= "" then out[2] = { text = it.sub, from = #main + 3, dim = true } end
+    return out
+  end
   local out, at = {}, 1
   for j, c in ipairs(columns) do
     local main = tostring(it[c[1]] or "")
@@ -349,7 +362,8 @@ end
 -- picker.search(item, columns): the text a row with columns is matched
 -- on — its columns' fields and their `dim` ones, joined by two spaces
 -- — what a source with `columns` has its items matched by (`search`,
--- set when the items load unless the item brought its own).
+-- set when the items load unless the item brought its own). Without
+-- columns, the row's text and its `sub`: a `wide` source's.
 function picker.search(it, columns)
   local parts = {}
   for _, p in ipairs(pieces_of(it, columns)) do parts[#parts + 1] = p.text end
@@ -408,7 +422,8 @@ end
 -- lit; a row's click posts `{ kind = opts.kind or "row", i = }` and
 -- the wheel over the column `{ kind = "scroll", tag = { kind =
 -- opts.scroll or "list" } }`. A row is one text: `opts.text(item)`
--- (default `item.text`) with the match lit, `item.sub` dim after it,
+-- (default `item.text`) with the match lit, `item.sub` dim after it
+-- (lit too where a match on `picker.search`'s text fell in it),
 -- `item.can` in the danger colour when it is not true. With
 -- `opts.columns` — `{ { FIELD, dim = FIELD, family =, muted =, min =,
 -- width =, grow = }, … }` — the rows are a grid, a cell per column
@@ -510,11 +525,16 @@ function picker.rows(ctx, hits, opts)
         r[#r + 1] = cell
       end
     else
-      local spans = picker.spans(text_of, h.positions, t)
+      local ps = pieces_of(it, nil, text_of)
+      local spans = picker.spans(text_of, lit_in(h.positions, ps[1]), t)
       for _, sp in ipairs(spans) do if not sp.color then sp.color = color end end
       if lead then table.insert(spans, 1, { lead }) end
-      if it.sub and it.sub ~= "" then
-        spans[#spans + 1] = { "  " .. it.sub, color = t.muted }
+      if ps[2] then
+        spans[#spans + 1] = { "  ", color = t.muted }
+        for _, sp in ipairs(picker.spans(ps[2].text, lit_in(h.positions, ps[2]), t)) do
+          if not sp.color then sp.color = t.muted end
+          spans[#spans + 1] = sp
+        end
       end
       if off then
         spans[#spans + 1] = { "  " .. it.can, color = t.danger }
@@ -715,7 +735,9 @@ end
 -- ranked by `picker.rank`. With columns, the rows whose name matched
 -- come first, ranked among themselves, then the ones the query found
 -- elsewhere in (a key, the doc) — so `dir` lists the `dir` commands
--- before every command whose doc mentions a directory.
+-- before every command whose doc mentions a directory. A `wide`
+-- source's the same over its `sub`: `main` lists the buffer `main.rs`
+-- before `util.rs` in `main/`.
 local function ranked(hits, q)
   local out = {}
   for i, h in ipairs(hits) do
@@ -805,15 +827,16 @@ local function loaded(items, err)
   items = boosted(items)
   P.items = items
   local texts, wide = {}, {}
+  local widened = P.src.columns or P.src.wide
   for i, it in ipairs(items) do
-    if P.src.columns and not it.search then it.search = picker.search(it, P.src.columns) end
+    if widened and not it.search then it.search = picker.search(it, P.src.columns) end
     texts[i] = it.text
     wide[i] = it.search or it.text
   end
   P.matcher = kawoosh.matcher(texts)
   -- The name is what a match on a row lights and ranks by; the rest
   -- of the row (`search`) is looked in after it.
-  P.wide = P.src.columns and kawoosh.matcher(wide) or nil
+  P.wide = widened and kawoosh.matcher(wide) or nil
   P.widths = P.src.columns and picker.widths(items, P.src.columns) or nil
   -- Where the cursor starts, while nothing is typed: the source's say,
   -- through the refilter the load sets off (`P.keep`).
@@ -977,8 +1000,10 @@ end
 -- name, or on a definition given whole — `{ title =, items = {…} |
 -- load = fn(ctx, done) | search = fn(query, job), pick = fn(item,
 -- how), answer = fn(item), preview = fn(item), keys = { ["<C-x>"] =
--- fn(item) }, columns = {…} (as `picker.rows` takes them), query =
--- fn(query, ctx) (the text matched for what was typed) }`. An item
+-- fn(item) }, columns = {…} (as `picker.rows` takes them), wide =
+-- true (a row's `sub` matched too, after its text, as a row with
+-- columns is on its cells after its name), query = fn(query, ctx)
+-- (the text matched for what was typed) }`. An item
 -- is `{ text =, sub =, path =, line =, col =, buffer =, offset =, run
 -- =, boost = }`, and a column's field. `opts`: `query`, `cursor`,
 -- `root` (the directory a source that walks or searches starts from,
@@ -1064,7 +1089,8 @@ picker._keys = {}
 
 -- picker.state(): what the open picker shows — `source`, `query`,
 -- `cursor` (a row's index from 1), `top`, `count` (the rows), `text`
--- (the cursor's row), `item` (its item), `loading`, `preview` (the
+-- (the cursor's row), `item` (its item), `positions` (the bytes its
+-- match lit, in its `picker.search` text), `loading`, `preview` (the
 -- cursor's, as drawn: `title`, `lines`, `runs` once highlighted),
 -- `rows` (every hit's text, in order) and `root` (where a walk starts)
 -- — or nil when none is open; for a status line, a test, a plugin's
@@ -1075,7 +1101,8 @@ function picker.state()
   local rows = {}
   for i, h in ipairs(P.hits) do rows[i] = h.item.text end
   return { source = P.name, query = P.query or "", cursor = P.cursor, top = P.top, count = #P.hits,
-           text = hit and hit.item.text or nil, item = hit and hit.item or nil, loading = P.loading,
+           text = hit and hit.item.text or nil, item = hit and hit.item or nil,
+           positions = hit and hit.positions or nil, loading = P.loading,
            preview = P.preview, rows = rows, root = P.ctx.root }
 end
 
@@ -1116,6 +1143,10 @@ kawoosh.view(VIEW, function(ctx)
   local h = (ctx.height or 0) > 0 and ctx.height or 400
   local w = (ctx.width or 0) > 0 and ctx.width or 800
   local preview_on = previewing() and not P.src.follow
+  if P.previewed ~= preview_on then
+    P.previewed = preview_on
+    kawoosh.fact(PREVIEW_FACT, preview_on)
+  end
   P.wrap = wrapping()
   P.split = split()
   -- The list's width: its share of the pane beside a preview, the
@@ -1146,7 +1177,7 @@ kawoosh.view(VIEW, function(ctx)
   local field = ctx.field { name = FIELD, placeholder = P.src.placeholder or "type to filter", size = SIZE }
   field.width = "grow"
   head[#head + 1] = field
-  head[#head + 1] = text(count, { size = SIZE - 1, color = t.faint, wrap = "none" })
+  head[#head + 1] = text(count, { size = SMALL, color = t.faint, wrap = "none" })
   local indent = P.src.tree and (P.query or "") == "" and function(it) return it.depth or 0 end or nil
   -- A row the pointer left is forgotten by the next frame: a row
   -- entered after it is the pointer come back to the list.
@@ -1251,16 +1282,28 @@ kawoosh.command("picker preview down", function(ctx) preview_by(half() * math.ma
   { when = { PANE_FACT }, doc = "the preview half a screen down, COUNT times" })
 kawoosh.command("picker preview up", function(ctx) preview_by(-half() * math.max(ctx.count or 1, 1)) end,
   { when = { PANE_FACT }, doc = "the preview half a screen up, COUNT times" })
-on("preview", function() kawoosh.opt("picker.preview", not previewing()) end,
-  "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
+on("preview", function()
+  kawoosh.opt("picker.preview", not previewing())
+  -- The fact at once, for a width key before the next frame.
+  if P then
+    P.previewed = previewing() and not P.src.follow
+    kawoosh.fact(PREVIEW_FACT, P.previewed)
+  end
+end, "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
 on("wrap", function() kawoosh.opt("picker.wrap", not wrapping()) end,
   "fold a row's text to the list's width, or cut it (the `picker.wrap` setting, for the session)")
 -- The list's width beside the preview, stepped: the setting for the
 -- session. (The pane's height is the editor's `pane taller` and
 -- `pane shorter`, the height they leave kept as `picker.share`.)
-on("list wider", function() kawoosh.opt("picker.split", math.min(0.9, split() + 0.05)) end,
+-- Only while a preview is drawn: without one the list is the whole
+-- pane, and `<A-H>` `<A-L>`, refused here, are `pane narrower` and
+-- `pane wider` — the column the picker stands in.
+local function beside(name, fn, doc)
+  kawoosh.command("picker " .. name, fn, { when = { PANE_FACT, PREVIEW_FACT }, doc = doc })
+end
+beside("list wider", function() kawoosh.opt("picker.split", math.min(0.9, split() + 0.05)) end,
   "the list wider beside the preview (the `picker.split` setting, for the session)")
-on("list narrower", function() kawoosh.opt("picker.split", math.max(0.1, split() - 0.05)) end,
+beside("list narrower", function() kawoosh.opt("picker.split", math.max(0.1, split() - 0.05)) end,
   "the list narrower beside the preview (the `picker.split` setting, for the session)")
 kawoosh.command("picker key", function(ctx)
   if not P then return end
@@ -1484,7 +1527,9 @@ picker.source("files", {
 
 -- The listed buffers, the current one last: `<leader><leader><CR>` is the
 -- one before it. The focused tab's (`buffers.scope = "tab"`, roadmap
--- step 30) or every one; `<C-a>` in the picker flips it.
+-- step 30) or every one; `<C-a>` in the picker flips it. A row is the
+-- name and the path as `short_path` writes it, both matched (`wide`):
+-- a directory typed finds the buffers under it, a name's hit first.
 local function buffer_items(ctx)
   local items, current = {}, nil
   local tab = kawoosh.opt("buffers.scope") ~= "all"
@@ -1532,7 +1577,7 @@ end
 
 picker.source("buffers", {
   title = "buffers", placeholder = "find a buffer · <C-x> closes one · <C-a> this tab's or all",
-  items = buffer_items,
+  items = buffer_items, wide = true,
   keys = { ["<C-x>"] = close_row, ["<C-a>"] = flip_scope },
   empty = "no buffers in this tab · <C-a> for every tab's",
 })

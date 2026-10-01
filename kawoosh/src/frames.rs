@@ -714,7 +714,7 @@ impl Kawoosh {
         }
         let pal = self.pal;
         let font = self.face;
-        let tm = Tab::of(&ui.metrics(), self.face.line_height);
+        let tm = Tab::of(&ui.metrics(), &self.chrome, self.face.line_height);
         let style = tm.style(&pal, font);
         // A column's width is its widest cell in the tab's mono face, so
         // one digit's advance measures them all.

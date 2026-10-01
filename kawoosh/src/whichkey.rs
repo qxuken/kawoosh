@@ -17,6 +17,7 @@ use kui_native::{Align, FloatConfig, NodeSpec, TextStyle, Ui};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
+use crate::icons::{self, KeyStyle};
 
 /// Rows per column before the list folds into another column, fewer
 /// when the window holds fewer.
@@ -240,12 +241,13 @@ impl Kawoosh {
         if rows.is_empty() {
             return;
         }
-        // `<leader><leader>` lists as the leader's key, not the word.
+        // Each key as caps (icons.md Decision 4), the notation as the
+        // keymap has it: `<leader><leader>` lists as the leader's key.
         let show = |k: &str| {
             if k == kawoosh_editor::keymap::LEADER {
-                pretty(km.leader())
+                km.leader().to_string()
             } else {
-                pretty(k)
+                k.to_string()
             }
         };
         let rows: Vec<Row> = rows
@@ -255,6 +257,7 @@ impl Kawoosh {
                     key: show(k),
                     what: b.line(),
                     group: false,
+                    to: None,
                 },
                 None => {
                     let mut deeper = keys.to_vec();
@@ -266,6 +269,7 @@ impl Kawoosh {
                             None => format!("+{under}"),
                         },
                         group: true,
+                        to: None,
                     }
                 }
             })
@@ -279,10 +283,12 @@ impl Kawoosh {
             title = format!("{title} · {name}");
         }
         let key_style = TextStyle::new(small).color(pal.accent).nowrap();
+        let caps = KeyStyle::new(key_style, pal.border);
+        let icon_set = self.icons.borrow();
         let what_style = TextStyle::new(small).color(pal.fg).nowrap();
         let group_style = TextStyle::new(small).color(pal.dim).nowrap();
         let title_style = TextStyle::new(small).color(pal.dim).nowrap();
-        let hint_style = TextStyle::new(small - 1.0).color(pal.dim).nowrap();
+        let hint_style = TextStyle::new(self.chrome.note).color(pal.dim).nowrap();
         let hint = keys.is_empty().then_some("also :keys n · i · v · o");
 
         // The card fits the window: as many rows to a column as its
@@ -314,7 +320,11 @@ impl Kawoosh {
             let (mut kw, mut ww) = (0.0f32, 0.0f32);
             for r in chunk {
                 let what = if r.group { &group_style } else { &what_style };
-                kw = kw.max(ui.measure_text(&r.key, &key_style, None).width.ceil());
+                let mut w = icons::keys_width(ui, &r.key, &caps);
+                if let Some(to) = r.to {
+                    w += ui.measure_text(&format!("…{to}"), &key_style, None).width;
+                }
+                kw = kw.max(w.ceil());
                 ww = ww.max(ui.measure_text(&r.what, what, None).width);
             }
             let w = kw + KEY_GAP + ww;
@@ -348,9 +358,15 @@ impl Kawoosh {
                         ui.with_indexed(ci as u64, NodeSpec::column().gap(ROW_GAP), |ui| {
                             for (ri, r) in chunk.iter().enumerate() {
                                 ui.with_indexed(ri as u64, NodeSpec::row().gap(KEY_GAP), |ui| {
-                                    ui.with(NodeSpec::row().width(key_w[ci]), |ui| {
-                                        ui.text(&r.key, key_style);
-                                    });
+                                    ui.with(
+                                        NodeSpec::row().width(key_w[ci]).cross_align(Align::Center),
+                                        |ui| {
+                                            icons::keys(ui, &icon_set, &r.key, &caps);
+                                            if let Some(to) = r.to {
+                                                ui.text(&format!("…{to}"), key_style);
+                                            }
+                                        },
+                                    );
                                     let what = if r.group { group_style } else { what_style };
                                     ui.text(&r.what, what);
                                 });
@@ -363,24 +379,31 @@ impl Kawoosh {
     }
 }
 
-/// A row of the card as it reads: the key, and its command's line or
-/// its group's `+name`.
+/// A row of the card as it reads: the key's notation, and its
+/// command's line or its group's `+name`; a folded run's last digit.
 struct Row {
     key: String,
     what: String,
     group: bool,
+    to: Option<char>,
 }
 
 /// A run of keys that differ by a digit counting up, each running a
 /// command that differs by the same digit — `A-1 memory pin 1` to
 /// `A-9 memory pin 9` — is one row, `A-1…9 memory pin 1…9`: the
 /// pinned memories and the panes by number are three runs of nine at
-/// the root.
+/// the root. A key's digit is its last character, or the last inside a
+/// chord's brackets (`<A-1>`).
 fn fold_numbered(rows: Vec<Row>) -> Vec<Row> {
-    // The stem before a last digit, and the digit.
-    fn split(s: &str) -> Option<(&str, u32)> {
-        let d = s.chars().last()?.to_digit(10)?;
-        Some((&s[..s.len() - 1], d))
+    // The text around a last digit, and the digit.
+    fn split(s: &str) -> Option<((&str, &str), u32)> {
+        let end = if s.len() > 1 && s.ends_with('>') {
+            s.len() - 1
+        } else {
+            s.len()
+        };
+        let d = s[..end].chars().last()?.to_digit(10)?;
+        Some(((&s[..end - 1], &s[end..]), d))
     }
     // Row `r` continues a run from `first` at `d0`, `n` rows along.
     let follows = |first: &Row, r: &Row, n: u32| -> bool {
@@ -404,11 +427,12 @@ fn fold_numbered(rows: Vec<Row>) -> Vec<Row> {
         }
         match last {
             Some(last) if n >= 3 => {
-                let d = last.key.chars().last().unwrap_or_default();
+                let d = last.what.chars().last().unwrap_or_default();
                 out.push(Row {
-                    key: format!("{}…{d}", first.key),
+                    key: first.key,
                     what: format!("{}…{d}", first.what),
                     group: false,
+                    to: Some(d),
                 });
             }
             Some(last) => {

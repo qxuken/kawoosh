@@ -8,8 +8,9 @@
 //! network.
 //!
 //! The first file of a listed language on show does what
-//! `grammars.install` says: `ask`, a corner line naming the command,
-//! once a language a session; `auto`, the install; `never`, nothing.
+//! `grammars.install` says: `ask`, a toast naming the command with a
+//! button that runs it, up for [`ASK_TTL`], once a language a session;
+//! `auto`, the install; `never`, nothing.
 //! `:grammar update` fetches the list and installs what moved;
 //! `:grammar remove NAME` takes one out.
 //!
@@ -24,26 +25,28 @@
 //! `:grammars` pane (`lua/grammars.lua`) draws and a plugin may read
 //! the same.
 //!
-//! Where grammars come from is the user's word alone: `grammars.url` in
-//! a project's settings is passed over, since a grammar is native code
-//! in this process, and of `grammars.install` a project may say `never`
-//! and nothing else (Decision 8).
+//! Where grammars come from is the user's word alone: `grammars.urls`,
+//! the bases in order — a grammar several list is the first's, fetched
+//! from the next that has it when that one fails — and in a project's
+//! settings passed over, since a grammar is native code in this
+//! process; of `grammars.install` a project may say `never` and nothing
+//! else (Decision 8).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use kawoosh_editor::{ArgKind, Args, Layer, Spec};
-use kawoosh_languages::{FALLBACK, LANGUAGES, LanguageDef, Library, Locate, Source};
-use kawoosh_systems::grammars::{self, Installed, Manifest, Row, Step};
+use kawoosh_languages::{FALLBACK, LANGUAGES, LanguageDef, Library, Source};
+use kawoosh_systems::grammars::{self, Installed, Listing, Loaded, Manifest, Row, Step};
 use kawoosh_systems::io::IoMsg;
 use kawoosh_systems::ts::SYNTAX_LAYER;
 
 use crate::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::notify::{Level, Note};
+use crate::notify::{Level, Note, Show, Ttl};
 
 /// The manifest this build was made with: the release's own file. It
 /// says which languages there are and what their files are called; an
@@ -52,6 +55,10 @@ const BUILT_IN: &str = include_str!("../grammars/manifest.json");
 
 /// Who the notes and the progress line are from.
 const SOURCE: &str = "grammar";
+
+/// How long `ask`'s toast stays: long enough to reach its button, not
+/// so long it is in the way.
+const ASK_TTL: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 pub struct Grammars {
@@ -62,6 +69,9 @@ pub struct Grammars {
     pub listed: BTreeMap<String, Row>,
     /// What is installed, by name.
     pub installed: BTreeMap<String, Installed>,
+    /// The names a manifest lists that this build links: passed over,
+    /// the linked grammar being the one used.
+    pub passed: BTreeSet<String>,
     /// Installs on their way.
     pub installing: HashSet<String>,
     /// The languages whose first file was met this session — asked
@@ -84,7 +94,7 @@ pub struct Grammars {
     /// What `kawoosh.grammars.list()` answers: every grammar there is,
     /// as of the last change ([`Kawoosh::publish_grammars`]).
     pub shown: SharedGrammars,
-    /// A project's `grammars.url` was passed over, and said so.
+    /// A project's `grammars.urls` was passed over, and said so.
     warned: bool,
     /// And its `grammars.sources`.
     warned_sources: bool,
@@ -102,12 +112,18 @@ pub struct Shown {
     pub built: bool,
     /// A release has an archive of it; without one it is built here.
     pub prebuilt: bool,
+    /// A release lists it — of a built-in one, that the linked grammar
+    /// is used over the release's.
+    pub released: bool,
     /// The revision in, else the one there is to install; twelve of it.
     pub rev: String,
     /// The revision an update would bring, when it is another.
     pub latest: Option<String>,
     pub repo: String,
     pub license: String,
+    /// The base it came from, when in; else the one that lists it. Empty
+    /// for one built here, or listed by the build's own copy alone.
+    pub base: String,
     pub extensions: Vec<String>,
     pub filenames: Vec<String>,
     /// The archive's bytes.
@@ -122,8 +138,9 @@ pub struct Shown {
 pub type SharedGrammars = Rc<RefCell<Vec<Shown>>>;
 
 /// `kawoosh.grammars`: `list()`, every grammar there is — each `{ name,
-/// state, installed, built, prebuilt, rev, latest, repo, license,
-/// extensions, filenames, size, step, percent, why }`, `state` one of `"built in"`,
+/// state, installed, built, prebuilt, released, rev, latest, repo,
+/// license, base, extensions, filenames, size, step, percent, why }`, `state`
+/// one of `"built in"`,
 /// `"installed"`, `"available"`, `"installing"` and `"failed"` — the
 /// linked-in ones first, then the rest by name. What changes one is a
 /// command: `:grammar install`, `update`, `remove`.
@@ -140,10 +157,12 @@ pub(crate) fn lua_door(lua: &mlua::Lua, shown: SharedGrammars) -> mlua::Result<(
                 t.set("installed", g.installed)?;
                 t.set("built", g.built)?;
                 t.set("prebuilt", g.prebuilt)?;
+                t.set("released", g.released)?;
                 t.set("rev", g.rev.as_str())?;
                 t.set("latest", g.latest.as_deref())?;
                 t.set("repo", g.repo.as_str())?;
                 t.set("license", g.license.as_str())?;
+                t.set("base", g.base.as_str())?;
                 t.set(
                     "extensions",
                     lua.create_sequence_from(g.extensions.iter().map(String::as_str))?,
@@ -254,7 +273,15 @@ fn source_row(name: &str, def: &kawoosh_editor::Setting) -> Option<Row> {
         size: 0,
         blake3: String::new(),
         built: false,
+        base: String::new(),
     })
+}
+
+/// An install's end, on its thread: what is on disk, and its grammar
+/// loaded there ([`Loaded`]), so the frame it lands in only takes it in.
+fn done(installed: Installed, home: Option<&Path>) -> Step {
+    let loaded = Loaded::of(&installed, home);
+    Step::Done(Box::new(installed), Box::new(loaded))
 }
 
 /// A revision as it is said: its first twelve.
@@ -277,10 +304,12 @@ impl Kawoosh {
                 installed: true,
                 built: false,
                 prebuilt: false,
+                released: g.passed.contains(l.name),
                 rev: String::new(),
                 latest: None,
                 repo: String::new(),
                 license: String::new(),
+                base: String::new(),
                 extensions: own(l.extensions),
                 filenames: own(l.filenames),
                 size: 0,
@@ -314,6 +343,7 @@ impl Kawoosh {
                 installed: installed.is_some(),
                 built: installed.is_some_and(|i| i.built),
                 prebuilt: listed.is_some_and(|l| !l.archive.is_empty()),
+                released: listed.is_some(),
                 rev: row.map_or(String::new(), |r| short(&r.rev)),
                 // A grammar built here is behind when its source's
                 // revision is another; a fetched one, its archive.
@@ -324,6 +354,7 @@ impl Kawoosh {
                 },
                 repo: row.map_or(String::new(), |r| r.repo.clone()),
                 license: row.map_or(String::new(), |r| r.license.clone()),
+                base: row.map_or(String::new(), |r| r.base.clone()),
                 extensions: row.map_or(Vec::new(), |r| r.extensions.clone()),
                 filenames: row.map_or(Vec::new(), |r| r.filenames.clone()),
                 size: listed.or(installed).map_or(0, |r| r.size),
@@ -370,6 +401,7 @@ impl Kawoosh {
     fn list_grammars(&mut self, manifest: Manifest) {
         for (name, row) in manifest.grammars {
             if linked_in(&name) {
+                self.grammars.passed.insert(name);
                 continue;
             }
             if self.languages.get(&name).is_none() {
@@ -395,15 +427,17 @@ impl Kawoosh {
 
     /// An install as a language: its library and queries where the
     /// install put them, a query under the config directory's
-    /// `queries/NAME/` in place of the install's. A library that is not
-    /// there is a warning, and the language is one of files alone.
+    /// `queries/NAME/` in place of the install's
+    /// ([`Installed::library`]).
     fn installed_def(&mut self, i: &Installed) -> LanguageDef {
-        let said = Locate {
-            path: Some(i.dir.clone()),
-            symbol: Some(i.row.symbol.clone()),
-            ..Locate::default()
-        };
-        let grammar = match Library::find(&i.row.name, &said, self.config.dir.as_deref()) {
+        let found = i.library(self.config.dir.as_deref());
+        self.found_def(i, found)
+    }
+
+    /// An install as a language, its library as found: one that is not
+    /// there is a warning, and the language is one of files alone.
+    fn found_def(&mut self, i: &Installed, found: Result<Option<Library>, String>) -> LanguageDef {
+        let grammar = match found {
             Ok(lib) => lib.map(Source::Library),
             Err(e) => {
                 self.notify_with(Note::new(Level::Warn, e).source(SOURCE));
@@ -421,36 +455,39 @@ impl Kawoosh {
             .find_map(|layer| self.ed.settings.layer_value(layer, path))
     }
 
-    /// The bases to fetch from: `grammars.url`, a project's passed
-    /// over, and said once.
+    /// The bases to fetch from: `grammars.urls` in its order, each less
+    /// a trailing `/`, a URL said twice counted once — and a project's
+    /// passed over, and said once.
     fn grammar_bases(&mut self) -> Vec<String> {
         let settings = &self.ed.settings;
         if settings
-            .layer_value(Layer::Project, "grammars.url")
+            .layer_value(Layer::Project, "grammars.urls")
             .is_some()
             && !self.grammars.warned
         {
             self.grammars.warned = true;
             let from = settings
-                .source_of("grammars.url")
+                .source_of("grammars.urls")
                 .filter(|(layer, _)| *layer == Layer::Project)
                 .map_or(String::new(), |(_, source)| format!(" ({source})"));
             self.notify_with(
                 Note::new(
                     Level::Warn,
                     format!(
-                        "grammars.url in a project's settings{from} is passed over: where grammars come from is yours to say, in your own settings"
+                        "grammars.urls in a project's settings{from} is passed over: where grammars come from is yours to say, in your own settings"
                     ),
                 )
                 .source(SOURCE),
             );
         }
-        self.own_setting("grammars.url")
+        let mut seen = HashSet::new();
+        self.own_setting("grammars.urls")
             .and_then(|v| v.as_list())
             .map(|urls| {
                 urls.iter()
                     .filter_map(|u| u.as_str())
-                    .filter(|u| !u.is_empty())
+                    .map(|u| u.trim_end_matches('/'))
+                    .filter(|u| !u.is_empty() && seen.insert(*u))
                     .map(str::to_string)
                     .collect()
             })
@@ -500,12 +537,27 @@ impl Kawoosh {
             Policy::Never => {}
             Policy::Auto => self.grammar_install(language),
             Policy::Ask => {
+                // A toast, an offer: its button is the command it names,
+                // or the build where no release has a library of it.
+                let built = self
+                    .grammars
+                    .listed
+                    .get(language)
+                    .is_some_and(|r| r.archive.is_empty());
+                let (label, verb) = if built {
+                    ("Build", "build")
+                } else {
+                    ("Install", "install")
+                };
                 self.notify_with(
                     Note::new(
                         Level::Info,
-                        format!("{language} has a grammar: `:grammar install {language}`"),
+                        format!("{language} has a grammar: `:grammar {verb} {language}`"),
                     )
-                    .source(SOURCE),
+                    .source(SOURCE)
+                    .show(Show::Toast)
+                    .action(label, format!("grammar {verb} {language}"))
+                    .ttl(Ttl::After(ASK_TTL)),
                 );
             }
         }
@@ -562,6 +614,7 @@ impl Kawoosh {
         let bases = self.grammar_bases();
         self.grammar_progress(&name, "fetching", None);
         self.publish_grammars();
+        let home = self.config.dir.clone();
         self.pending_jobs += 1;
         self.io.stream("grammar", move |send| {
             let say = |step: Step| {
@@ -571,7 +624,7 @@ impl Kawoosh {
                 });
             };
             let end = match grammars::install(&name, &bases, &dir, &say) {
-                Ok(installed) => Step::Done(Box::new(installed)),
+                Ok(installed) => done(installed, home.as_deref()),
                 Err(e) => Step::Failed(e),
             };
             say(end);
@@ -579,9 +632,10 @@ impl Kawoosh {
     }
 
     /// A step of an install: the progress line moved; at its end the
-    /// grammar loaded here, so one that does not load is a warning now,
-    /// and its buffers painted without a restart. An install that found
-    /// what is here already changes nothing.
+    /// grammar, loaded on the install's thread, taken in — one that does
+    /// not load is a warning now — and its buffers painted without a
+    /// restart. An install that found what is here already changes
+    /// nothing.
     pub(crate) fn on_grammar(&mut self, name: String, step: Step) {
         match step {
             Step::Fetching { done, total } => {
@@ -592,8 +646,8 @@ impl Kawoosh {
             Step::Extracting => self.grammar_progress(&name, "extracting", Some(100)),
             Step::Source => self.grammar_progress(&name, "fetching its source", None),
             Step::Compiling => self.grammar_progress(&name, "compiling", None),
-            Step::Done(installed) => {
-                let installed = *installed;
+            Step::Done(installed, loaded) => {
+                let (installed, loaded) = (*installed, *loaded);
                 self.grammar_ended(&name);
                 let rev = short(&installed.row.rev);
                 let built = installed.row.built;
@@ -604,8 +658,8 @@ impl Kawoosh {
                     self.grammar_unprogress(&name);
                     self.ed.message = format!("grammar: {name} is up to date ({rev})");
                 } else {
-                    let def = self.installed_def(&installed);
-                    self.put_language(def, false);
+                    let def = self.found_def(&installed, loaded.library);
+                    self.put_loaded(def, loaded.grammar, false);
                     self.grammars
                         .installed
                         .insert(name.clone(), installed.clone());
@@ -770,6 +824,7 @@ impl Kawoosh {
         self.grammars.failed.remove(&name);
         self.grammar_progress(&name, "fetching its source", None);
         self.publish_grammars();
+        let home = self.config.dir.clone();
         self.pending_jobs += 1;
         self.io.stream("grammar", move |send| {
             let say = |step: Step| {
@@ -779,7 +834,7 @@ impl Kawoosh {
                 });
             };
             let end = match grammars::build(&row, &dir, &say) {
-                Ok(installed) => Step::Done(Box::new(installed)),
+                Ok(installed) => done(installed, home.as_deref()),
                 Err(e) => Step::Failed(e),
             };
             say(end);
@@ -823,12 +878,29 @@ impl Kawoosh {
 
     /// The list `:grammar update` asked for: what it adds is there to
     /// install, and what is installed from another archive than the
-    /// list's is installed again.
-    pub(crate) fn on_grammars(&mut self, result: Result<Manifest, String>) {
+    /// list's is installed again. A base that did not answer is a
+    /// warning, its grammars listed as they were.
+    pub(crate) fn on_grammars(&mut self, result: Result<Listing, String>) {
         self.grammars.listing = false;
         self.pending_jobs = self.pending_jobs.saturating_sub(1);
         let manifest = match result {
-            Ok(m) => m,
+            Ok(Listing {
+                manifest,
+                unanswered,
+            }) => {
+                for why in unanswered {
+                    self.notify_with(
+                        Note::new(
+                            Level::Warn,
+                            format!(
+                                "a base did not answer, its grammars listed as they were: {why}"
+                            ),
+                        )
+                        .source(SOURCE),
+                    );
+                }
+                manifest
+            }
             Err(why) => {
                 self.notify_with(
                     Note::new(Level::Error, format!("the list was not fetched: {why}"))

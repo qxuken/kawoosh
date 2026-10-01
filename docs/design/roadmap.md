@@ -664,7 +664,13 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   bundled (git, top, shell, compile, run, a `settings.lua`'s `tools`
   table through `kawoosh.on_settings`). `<C-n>` `<C-p>` go round from the last row to
   the first and back (2026-09-23), in the picker and in every listing
-  pane (`list next` / `prev`); `j` `k` still stop at the ends.
+  pane (`list next` / `prev`); `j` `k` still stop at the ends. The
+  buffers picker matches a row's path as well as its name (2026-10-01,
+  asked: "in a buffer picker it should match by path as well"): a
+  source declared `wide` is matched as one with columns is, the name
+  first and the row's `sub` (the path, relative as drawn) after, so a
+  hit in the name ranks above one only in a directory and a match in
+  the path is lit there.
 - **Pane resizing from the keyboard** — done 2026-09-21 [keys.md].
   `<A-S-hjkl>` the focused pane narrower, wider, shorter, taller by
   a twentieth of its split, COUNT steps, from every pane and mode

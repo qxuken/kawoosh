@@ -419,6 +419,7 @@ impl Kawoosh {
                 bell: false,
                 seen: Default::default(),
                 jumps: Default::default(),
+                recent: Vec::new(),
             };
             let mut ps = Vec::new();
             tab.panes(&mut ps);

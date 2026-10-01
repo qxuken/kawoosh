@@ -161,8 +161,10 @@ pub(crate) fn op_range(
         MotionKind::Exclusive => (s.range(), false),
         MotionKind::Inclusive => {
             let r = s.range();
-            // Inclusive of the char under the head, never of a newline.
-            let end = if buf.char_at(r.end) == Some('\n') || r.end >= buf.len() {
+            // Inclusive of the char under the head, never of a newline
+            // (`d$` on an empty line): a motion's, where a selection's
+            // takes it (`sel_range`).
+            let end = if r.end == buf.line_range(buf.line_of(r.end)).end {
                 r.end
             } else {
                 buf.next_char(r.end)
@@ -171,6 +173,49 @@ pub(crate) fn op_range(
         }
         MotionKind::Linewise => (line_range_of_sel(buf, s, count.saturating_sub(1)), true),
     }
+}
+
+/// What a selection covers in visual mode: its characters, the one
+/// under its far end in — a line's newline too, when that end stands on
+/// it, since the selection is drawn over it there (vim's `v$`, and `v`
+/// on an empty line), as `x` on it takes it.
+pub(crate) fn sel_range(buf: &Buffer, s: &Selection) -> Range<usize> {
+    let r = s.range();
+    r.start..buf.next_char(r.end)
+}
+
+/// What `x` and `s` take from each selection: under `V` its lines, a
+/// visual selection its `sel_range`, else COUNT characters from the
+/// caret, a count stopping at the line's end — or, the caret on the
+/// line's newline, that newline, the next line joined on as it is
+/// (vim's `gJ`), once whatever the count; the last line has none.
+fn chars_under(ed: &Editor, ctx: &Ctx) -> Vec<(Range<usize>, bool)> {
+    let buf = &ed.buffers[view(ed, ctx).buffer];
+    let visual = ed.mode(ctx.view) == Mode::Visual;
+    ed.views[ctx.view]
+        .sels
+        .iter()
+        .map(|s| {
+            // `Vx` `Vs` take the lines, as `d` and `c` do there.
+            if visual && ed.views[ctx.view].visual_linewise {
+                return (line_range_of_sel(buf, s, 0), true);
+            }
+            if visual && !s.is_empty() {
+                return (sel_range(buf, s), false);
+            }
+            let le = buf.line_range(buf.line_of(s.head)).end;
+            if s.head == le {
+                return (s.head..buf.next_char(le), false);
+            }
+            let mut e = s.head;
+            for _ in 0..ctx.count.max(1) {
+                if e < le {
+                    e = buf.next_char(e);
+                }
+            }
+            (s.head..e, false)
+        })
+        .collect()
 }
 
 /// The text an operator took, remembered: the `"` register and the
@@ -481,7 +526,7 @@ fn operator(ed: &mut Editor, ctx: &Ctx, op: &'static str) {
                 if linewise {
                     (line_range_of_sel(buf, s, 0), true)
                 } else {
-                    op_range(buf, s, MotionKind::Inclusive, 1)
+                    (sel_range(buf, s), false)
                 }
             })
             .collect();
@@ -1331,7 +1376,7 @@ fn paste_over(ed: &mut Editor, ctx: &Ctx, keep: bool) {
             if lines {
                 (line_range_of_sel(buf, s, 0), true)
             } else {
-                op_range(buf, s, MotionKind::Inclusive, 1)
+                (sel_range(buf, s), false)
             }
         })
         .collect();
@@ -1687,6 +1732,11 @@ pub fn install(ed: &mut Editor) {
     ed.motion("word end back", Inclusive, |b, o, n| {
         (0..n).fold(o, |o, _| m::prev_word_end(b, o))
     });
+    // Insert's ⌥→: one past the word's end, the caret after it as a
+    // Mac puts it — `word end` stands on its last char, as vim's `e`.
+    ed.motion("word end insert", Exclusive, |b, o, n| {
+        (0..n).fold(o, |o, _| m::word_end_after(b, o))
+    });
     // vim's WORDs: what whitespace alone ends — a path, `a.b(c)`.
     ed.register_kind("bigword next", Kind::Motion(Exclusive), |ed, ctx| {
         let op = ed.pending_op.is_some();
@@ -1989,31 +2039,13 @@ pub fn install(ed: &mut Editor) {
         apply_operator(ed, ctx.view, "join", ranges);
     });
     ed.register("delete char", |ed, ctx| {
-        let id = view(ed, ctx).buffer;
-        let buf = &ed.buffers[id];
-        let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
-            .sels
-            .iter()
-            .map(|s| {
-                // `Vx` `Vs` take the lines, as `d` and `c` do there.
-                if ed.mode(ctx.view) == Mode::Visual && ed.views[ctx.view].visual_linewise {
-                    return (line_range_of_sel(buf, s, 0), true);
-                }
-                if ed.mode(ctx.view) == Mode::Visual && !s.is_empty() {
-                    return op_range(buf, s, MotionKind::Inclusive, 1);
-                }
-                let le = buf.line_range(buf.line_of(s.head)).end;
-                let mut e = s.head;
-                for _ in 0..ctx.count.max(1) {
-                    if e < le {
-                        e = buf.next_char(e);
-                    }
-                }
-                (s.head..e, false)
-            })
-            .collect();
+        let ranges = chars_under(ed, ctx);
         if ed.mode(ctx.view) == Mode::Visual {
             ed.set_mode(ctx.view, Mode::Normal);
+        }
+        // Nothing under any caret — the text's end — keeps the register.
+        if ranges.iter().all(|(r, _)| r.is_empty()) {
+            return;
         }
         apply_operator(ed, ctx.view, "delete", ranges);
     });
@@ -2046,32 +2078,11 @@ pub fn install(ed: &mut Editor) {
         apply_operator(ed, ctx.view, op, ranges);
     });
     ed.register("change char", |ed, ctx| {
-        let id = view(ed, ctx).buffer;
-        let buf = &ed.buffers[id];
-        let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
-            .sels
-            .iter()
-            .map(|s| {
-                // `Vx` `Vs` take the lines, as `d` and `c` do there.
-                if ed.mode(ctx.view) == Mode::Visual && ed.views[ctx.view].visual_linewise {
-                    return (line_range_of_sel(buf, s, 0), true);
-                }
-                if ed.mode(ctx.view) == Mode::Visual && !s.is_empty() {
-                    return op_range(buf, s, MotionKind::Inclusive, 1);
-                }
-                let le = buf.line_range(buf.line_of(s.head)).end;
-                let mut e = s.head;
-                for _ in 0..ctx.count.max(1) {
-                    if e < le {
-                        e = buf.next_char(e);
-                    }
-                }
-                (s.head..e, false)
-            })
-            .collect();
+        let ranges = chars_under(ed, ctx);
         ed.set_mode(ctx.view, Mode::Normal);
         apply_operator(ed, ctx.view, "change", ranges);
     });
+    // `D`, into the register; insert's ⌘⌦ is an erase, as its ⌘⌫ is.
     ed.register("delete to end", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
@@ -2080,7 +2091,12 @@ pub fn install(ed: &mut Editor) {
             .iter()
             .map(|s| (s.head..buf.line_range(buf.line_of(s.head)).end, false))
             .collect();
-        apply_operator(ed, ctx.view, "delete", ranges);
+        let op = if ed.mode(ctx.view) == Mode::Insert {
+            "erase"
+        } else {
+            "delete"
+        };
+        apply_operator(ed, ctx.view, op, ranges);
     });
     ed.register("change to end", |ed, ctx| {
         let id = view(ed, ctx).buffer;
@@ -2283,6 +2299,21 @@ pub fn install(ed: &mut Editor) {
                         ..s.head,
                     false,
                 )
+            })
+            .collect();
+        apply_operator(ed, ctx.view, "erase", ranges);
+    });
+    // `<C-w>`'s mirror, insert's ⌥⌦: to the end of the word after the
+    // caret, never past its line.
+    ed.register("delete word forward", |ed, ctx| {
+        let id = view(ed, ctx).buffer;
+        let buf = &ed.buffers[id];
+        let ranges = ed.views[ctx.view]
+            .sels
+            .iter()
+            .map(|s| {
+                let le = buf.line_range(buf.line_of(s.head)).end;
+                (s.head..m::word_end_after(buf, s.head).min(le), false)
             })
             .collect();
         apply_operator(ed, ctx.view, "erase", ranges);
@@ -2846,6 +2877,10 @@ const DOCS: &[(&str, &str)] = &[
     ("word end", "the end of the word"),
     ("word end back", "the end of the previous word (`ge`)"),
     (
+        "word end insert",
+        "past the end of the word, or of the next on whitespace (insert mode's ⌥→)",
+    ),
+    (
         "bigword next",
         "the start of the next WORD — only whitespace ends one (`W`)",
     ),
@@ -2978,19 +3013,29 @@ const DOCS: &[(&str, &str)] = &[
         "cursor rotate back",
         "make the previous selection the primary (`(`)",
     ),
-    ("delete char", "delete the character under the caret (`x`)"),
+    (
+        "delete char",
+        "delete the character under the caret (`x`); on a line's newline, the newline, the next line joined on",
+    ),
     (
         "delete char back",
         "delete the character before the caret (`X`; insert's Backspace, which joins the line above at a line's start and, as vim's, leaves the register alone)",
     ),
-    ("delete to end", "delete to the end of the line (`D`)"),
+    (
+        "delete to end",
+        "delete to the end of the line (`D`; insert's ⌘⌦, which leaves the register alone)",
+    ),
     (
         "delete forward",
         "delete the character after the caret, the register left alone (insert's Delete)",
     ),
     (
         "delete word back",
-        "delete the word before the caret, the register left alone (insert's <C-w>)",
+        "delete the word before the caret, the register left alone (insert's <C-w>, ⌥⌫)",
+    ),
+    (
+        "delete word forward",
+        "delete to the end of the word after the caret, the register left alone (insert's ⌥⌦)",
     ),
     (
         "delete line",
@@ -2998,7 +3043,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "delete to start",
-        "delete to the start of the line (insert's <C-u>)",
+        "delete to the start of the line (insert's <C-u>, ⌘⌫)",
     ),
     (
         "change char",
@@ -4044,8 +4089,8 @@ fn select_all_matches(ed: &mut Editor, ctx: &Ctx) {
 
 /// What each selection of `view` covers: its lines under `V` (the last
 /// one's newline off, so a piece does not end on it), else its
-/// characters, the head's included — as an operator in visual mode
-/// takes them.
+/// characters, the head's included, a newline under its end with them
+/// (`sel_range`) — as an operator in visual mode takes them.
 pub(crate) fn sel_ranges(ed: &Editor, view_id: ViewId) -> Vec<Range<usize>> {
     let v = &ed.views[view_id];
     let buf = &ed.buffers[v.buffer];
@@ -4058,7 +4103,7 @@ pub(crate) fn sel_ranges(ed: &Editor, view_id: ViewId) -> Vec<Range<usize>> {
                 let nl = r.end > r.start && buf.slice(r.end - 1..r.end) == "\n";
                 r.start..r.end - usize::from(nl)
             } else {
-                op_range(buf, s, MotionKind::Inclusive, 1).0
+                sel_range(buf, s)
             }
         })
         .collect()
@@ -4759,6 +4804,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("zs", "strip left"),
         ("ze", "strip right"),
         ("zz", "strip center"),
+        // A pane's key legend whole, or one `⌥/ keys` again: `?`
+        // without its shift (docs/design/icons.md Decision 6).
+        ("<A-/>", "legend"),
     ];
     for (k, c) in p {
         km.bind(Pane, k, c);
@@ -4772,6 +4820,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("o", "memory origin"),
         ("x", "memory forget"),
         ("m", "memory pin"),
+        // This workspace's rows or every one's, as `<C-a>` flips the
+        // buffers picker's.
+        ("<C-a>", "memory scope"),
     ] {
         km.bind_local("memory", Pane, k, c, &[]);
     }
@@ -4824,6 +4875,28 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-S-l>", "pane right"),
     ];
     for (k, c) in i {
+        km.bind(Insert, k, c);
+    }
+    // The text keys every other line on a Mac answers — a buffer's,
+    // the prompt's, a field's, all insert mode — erases as `<C-w>` and
+    // `<C-u>` are: by a word on ⌥, the word keys on Ctrl where there is
+    // no ⌘, as Windows and Linux spell them; to the line's ends on ⌘,
+    // where elsewhere Home and End are the moves and no key the deletes.
+    let word = if cfg!(target_os = "macos") { "A" } else { "C" };
+    for (k, c) in [
+        ("BS", "delete word back"),
+        ("Del", "delete word forward"),
+        ("Left", "word prev"),
+        ("Right", "word end insert"),
+    ] {
+        km.bind(Insert, &format!("<{word}-{k}>"), c);
+    }
+    for (k, c) in [
+        ("<D-BS>", "delete to start"),
+        ("<D-Del>", "delete to end"),
+        ("<D-Left>", "line start"),
+        ("<D-Right>", "line end insert"),
+    ] {
         km.bind(Insert, k, c);
     }
 

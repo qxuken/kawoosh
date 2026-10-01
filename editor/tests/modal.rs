@@ -1224,6 +1224,90 @@ fn insert_backspace_at_a_line_start_joins_the_line_above() {
     assert_eq!(t.text(), "ab\ncd");
 }
 
+/// The normal-mode caret may stand on a line's newline (`$` then `l`, `j`
+/// onto a shorter line), and `x` there deletes it: the next line joined
+/// on as it is, no space put in and no indent taken off (vim's `gJ`), the
+/// newline in the register as any `x`. A count stops at the line's end,
+/// as vim's, so one begun on the text never joins and one begun on the
+/// newline joins once. The last line has no newline to take.
+#[test]
+fn x_on_a_lines_newline_joins_the_next_line_on() {
+    let reg = |t: &T| t.ed.memory.head().map(|m| m.text.clone());
+    let mut t = T::new("abc\n  def\nghi\n");
+    t.keys("$lx");
+    assert_eq!(t.text(), "abc  def\nghi\n");
+    assert_eq!(t.head(), 3, "where the newline was");
+    assert_eq!(reg(&t).as_deref(), Some("\n"));
+    t.keys("u");
+    assert_eq!(t.text(), "abc\n  def\nghi\n");
+    t.keys("j$l.");
+    assert_eq!(t.text(), "abc\n  defghi\n", "`.` joins again");
+    let mut t = T::new("abc\r\ndef");
+    t.keys("$lx");
+    assert_eq!(t.text(), "abcdef", "a CRLF break whole");
+    assert_eq!(reg(&t).as_deref(), Some("\r\n"));
+    t.keys("<Del>");
+    assert_eq!(t.text(), "abcef", "normal `<Del>` is `x`");
+    // `j` onto a shorter line, and an empty line, whose only cell is its
+    // newline.
+    let mut t = T::new("abcd\nab\ncd\n\nef");
+    t.keys("3lj");
+    assert_eq!(t.head(), 7, "on `ab`'s newline");
+    t.keys("x");
+    assert_eq!(t.text(), "abcd\nabcd\n\nef");
+    t.keys("jx");
+    assert_eq!(t.text(), "abcd\nabcd\nef");
+    // A count: from the text it takes the line's characters and stops,
+    // from the newline it joins once.
+    let mut t = T::new("abc\ndef\nghi");
+    t.keys("l9x");
+    assert_eq!(t.text(), "a\ndef\nghi");
+    t.keys("l3x");
+    assert_eq!(t.text(), "adef\nghi");
+    // The last line's end: nothing taken, the register kept.
+    let mut t = T::new("abc\ndef");
+    t.keys("yiwj$lx");
+    assert_eq!(t.text(), "abc\ndef");
+    assert_eq!(reg(&t).as_deref(), Some("abc"));
+    // `X` takes the character before the newline, and stops at a line's
+    // start; `s` changes the newline as `x` deletes it.
+    let mut t = T::new("abc\ndef");
+    t.keys("$lX");
+    assert_eq!(t.text(), "ab\ndef");
+    let mut t = T::new("abc\ndef");
+    t.keys("$ls-<Esc>");
+    assert_eq!(t.text(), "abc-def");
+}
+
+/// A visual selection is drawn over a newline its end stands on, and an
+/// operator takes that newline with the rest, as `x` takes it under a
+/// bare caret — vim's `v$`, and `v` on an empty line. An inclusive
+/// motion never does: `d$` on an empty line, CRLF or not, is nothing.
+#[test]
+fn a_selection_over_a_newline_takes_it() {
+    for keys in ["$lvx", "$lvd", "$hvlld"] {
+        let mut t = T::new("abc\ndef");
+        t.keys(keys);
+        let joined = if keys.starts_with("$h") {
+            "adef"
+        } else {
+            "abcdef"
+        };
+        assert_eq!(t.text(), joined, "{keys}");
+    }
+    let mut t = T::new("ab\n\ncd");
+    t.keys("vjd");
+    assert_eq!(t.text(), "cd", "onto an empty line");
+    let mut t = T::new("ab\ncd");
+    t.keys("$lvy");
+    assert_eq!(t.ed.memory.head().unwrap().text, "\n");
+    for text in ["a\n\nb", "a\r\n\r\nb"] {
+        let mut t = T::new(text);
+        t.keys("jd$");
+        assert_eq!(t.text(), text);
+    }
+}
+
 /// Only what an operator took is remembered and put on the clipboard,
 /// as vim's: insert's `<BS>`, `<C-h>`, `<Del>` and `<C-w>`, and the
 /// prompt's `<BS>`, leave the register and the clipboard alone; `x`,
@@ -1252,6 +1336,93 @@ fn plain_deletes_leave_the_register_alone() {
         t.ed.take_effects()
             .contains(&Effect::SetClipboard(" ".into()))
     );
+}
+
+/// The text keys a Mac types with (Ctrl's word keys where there is no
+/// ⌘, as Windows and Linux spell them; keys.md): `<A-BS>` the word
+/// before the caret, where `<C-w>` ends it, and `<A-Del>` the word
+/// after, its mirror; `<D-BS>` to the line's start as `<C-u>`, `<D-Del>`
+/// to its end — erases, the register and the clipboard left alone,
+/// none past its line. `<A-Left>` `<A-Right>` by a word, `<D-Left>`
+/// `<D-Right>` to the line's ends. In the prompt too; an insert session
+/// with them is one undo, and `.` does it again.
+#[test]
+fn the_word_and_line_keys_erase_and_move_in_insert_mode() {
+    let w = if cfg!(target_os = "macos") { "A" } else { "C" };
+    let k = |s: &str| s.replace("W-", &format!("{w}-"));
+    // Back, a word at a time, where `<C-w>` stops.
+    for back in [k("<W-BS>"), "<C-w>".to_string()] {
+        let mut t = T::new("one two.three four");
+        let mut texts = vec![];
+        t.keys("A");
+        for _ in 0..3 {
+            t.keys(&back);
+            texts.push(t.text());
+        }
+        assert_eq!(texts, ["one two.three ", "one two.", "one two"], "{back}");
+    }
+    // Forward, the mirror.
+    let mut t = T::new("one two.three four");
+    let mut texts = vec![];
+    t.keys("0i");
+    for _ in 0..3 {
+        t.keys(&k("<W-Del>"));
+        texts.push(t.text());
+    }
+    assert_eq!(texts, [" two.three four", ".three four", "three four"]);
+    // The line's ends.
+    let mut t = T::new("one two three");
+    t.keys("0fti<D-BS>");
+    assert_eq!(t.text(), "two three");
+    t.keys("<Esc>wi<D-Del>");
+    assert_eq!(t.text(), "two ");
+    // None past its line, as `<C-w>`.
+    let mut t = T::new("ab\ncd");
+    t.keys(&k("A<W-Del><D-Del><Esc>jI<W-BS><D-BS><Esc>"));
+    assert_eq!(t.text(), "ab\ncd");
+    // Nothing remembered.
+    assert!(t.ed.memory.head().is_none());
+    assert!(
+        !t.ed
+            .take_effects()
+            .iter()
+            .any(|e| matches!(e, Effect::SetClipboard(_)))
+    );
+    // The moves.
+    let mut t = T::new("one two.three four");
+    t.keys("A");
+    let mut heads = vec![];
+    for _ in 0..3 {
+        t.keys(&k("<W-Left>"));
+        heads.push(t.head());
+    }
+    t.keys("<D-Right>");
+    heads.push(t.head());
+    t.keys("<D-Left>");
+    heads.push(t.head());
+    for _ in 0..3 {
+        t.keys(&k("<W-Right>"));
+        heads.push(t.head());
+    }
+    assert_eq!(heads, [14, 8, 7, 18, 0, 3, 7, 8]);
+    t.keys("X<Esc>");
+    assert_eq!(t.text(), "one two.Xthree four");
+    // One undo; `.` again.
+    let mut t = T::new("aa bb\ncc dd");
+    t.keys(&k("A<W-BS><W-BS>x<Esc>"));
+    assert_eq!(t.text(), "x\ncc dd");
+    t.keys("u");
+    assert_eq!(t.text(), "aa bb\ncc dd");
+    t.keys(&k("A<W-BS><Esc>j."));
+    assert_eq!(t.text(), "aa \ncc ");
+    // The prompt's line.
+    let mut t = T::new("");
+    t.keys(&k(":echo one two<W-BS>"));
+    assert_eq!(t.cmdline(), "echo one ");
+    t.keys(&k("<W-Left><W-Left><W-Del>"));
+    assert_eq!(t.cmdline(), " one ");
+    t.keys("<D-Del>");
+    assert_eq!(t.cmdline(), "");
 }
 
 /// `"_` names the black hole for the next command: what it takes goes
@@ -2061,16 +2232,57 @@ fn a_text_put_in_by_its_diff_keeps_the_carets() {
 /// lines took 20 s — placing each caret walked every caret placed
 /// before it, and each edit read its line's graphemes to find a
 /// boundary between two ASCII bytes — 1.7 s now. 60,000 lines here,
-/// bounded far above that and well under the quadratic's 7 s.
+/// bounded far above that and well under the quadratic's 7 s. The
+/// thread's CPU time, not the clock's: under a loaded machine (eight
+/// builds at a load of 90) the clock read 6 to 15 s for the same pass.
 #[test]
 fn an_edit_per_line_over_a_long_file_is_one_pass() {
     let n = 60_000;
     let text = "x\n".repeat(n);
     let mut t = T::new(&text);
-    let start = std::time::Instant::now();
+    let start = thread_cpu();
     t.keys(">G");
-    let took = start.elapsed();
+    let took = thread_cpu() - start;
     assert_eq!(t.text().lines().next(), Some("    x"));
     assert_eq!(t.text().len(), text.len() + 4 * n);
     assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+}
+
+/// The CPU time this thread has had, which other processes do not
+/// stretch.
+#[cfg(unix)]
+fn thread_cpu() -> std::time::Duration {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid timespec for the call to fill.
+    let ok = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    assert_eq!(ok, 0);
+    std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
+
+#[cfg(windows)]
+fn thread_cpu() -> std::time::Duration {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+    let zero = || FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero(), zero(), zero(), zero());
+    // SAFETY: the current thread's pseudo-handle, four FILETIMEs to fill.
+    let ok = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(ok, 0);
+    let ticks = |f: FILETIME| (f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64;
+    // FILETIME counts 100 ns.
+    std::time::Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
 }

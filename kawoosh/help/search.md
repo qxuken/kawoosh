@@ -52,8 +52,10 @@ the bar on top and the results under it. `<leader>sS` (`:search here`) searches 
 current file's directory instead of the workspace's root. From visual
 mode, the selection is put in the pattern field.
 
-The bar has three fields: **find**, **include** and **exclude**.
-Include and exclude take comma-separated globs:
+The bar has three fields on two rows: **find**, with the toggles and
+the count beside it, and **include** and **exclude** under it, with
+`⌥/ keys` at the end for the legend. Include and exclude take
+comma-separated globs:
 
 | glob | matches |
 |---|---|
@@ -79,7 +81,7 @@ you turn them on.
 | `<Up>` `<Down>` | earlier searches made in this workspace |
 | `<C-S-j>`, `<C-j>`, `<Esc>` in normal mode | move down to the results |
 | `<C-c>` | close the panel; the results are kept for next time |
-| `<A-/>` | show or hide the legend of these keys (`search.legend` to start with it shown) |
+| `<A-/>` | show or hide the legend of these keys, as in every pane (`keys.legend = "full"` to start with them shown) |
 
 `:search project PATTERN` runs PATTERN at once. Running
 `:search project` again, from anywhere, puts the keys back in the bar
@@ -94,8 +96,9 @@ stacked would be. A click on a field moves the keys there too.
 A search can have several stages, each working on what the one before
 found. `<A-a>` adds a stage after the current one, `<A-k>` changes its
 kind, `<A-x>` removes it, and `<A-h>` `<A-l>` move between stages.
-The trail under the fields shows them, like
-`useState › in useEffect › drop test`.
+Once there is more than one, a row under the fields shows them, like
+`useState › in useEffect › drop test`; a click on one goes to it, its
+`×` takes it out.
 
 | kind | keeps |
 |---|---|

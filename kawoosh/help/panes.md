@@ -24,6 +24,7 @@ hides what it showed: buffers and terminals live on and come back with
 | `<A-S-j>` `<A-S-k>` | the pane shorter, taller (also `<C-w>-` `<C-w>+`) |
 | `⌘1` … `⌘9`, `<C-S-1>` … `<C-S-9>` | the Nth pane, or the Nth column of a strip (`:pane goto N`) |
 | `<C-w>:` | the command line, from a pane without one (a view of a plugin's); from a terminal, `<C-\>:` |
+| `<A-/>` | a tool pane's key legend whole, or back to its one `⌥/ keys` ([look](look.md#icons-and-keys)) |
 
 Sizes take a count: `3<A-S-l>` is three steps wider. The dividers between
 panes drag with the mouse.
@@ -43,6 +44,15 @@ pane, `<C-w>v` then `t` one beside, whatever the settings say.
 
 `:split PATH` and `:vsplit PATH` open PATH straight away; `:new` and
 `:vnew` a fresh scratch buffer below, beside.
+
+### Where the keys go when a pane closes
+
+When the pane you are in closes — `<C-w>c`, `:q`, a tool or a terminal
+whose program exits, `q` in a list — the keys go back to the pane of
+the tab you were in before it, wherever that stands and whatever the
+closed pane was opened from: open git from a file, look at the
+terminal, go back to git and quit it, and you are in the terminal. In
+the dock it is the dock's pane you were in last.
 
 ### Dragging panes
 
@@ -194,6 +204,11 @@ and each tool its own letter, shown at the end of its row. `i`, `a` or
 `/` start a query; `j` `k` move the cursor; `<Esc>` settles on a
 scratch; `q` or `<C-c>` closes the pane again. `:` opens the command
 line, and `:e PATH` from there fills the new pane.
+
+A row too long for the launcher — a path deep in a worktree, in a
+narrow pane — wraps onto more lines inside its row rather than being
+cut: at its spaces and slashes, and inside a name that has neither.
+A tile does the same inside its tile.
 
 | setting | what |
 |---|---|

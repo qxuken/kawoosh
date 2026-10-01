@@ -28,10 +28,11 @@ local fonts = kawoosh.fonts
 local VIEW = "theme lab"
 local PANE_FACT = "lua:" .. VIEW
 local SHARE = 0.5
-local SIZE = 13
+-- The panes' one scale (`kawoosh.metrics`), read each frame.
+local SIZE, SMALL, NOTE = 13, 12, 11
 local function sizes(env)
-  local l = env and env.tokens and env.tokens.lengths or {}
-  SIZE = l.chrome or 13
+  local m = kawoosh.metrics(env)
+  SIZE, SMALL, NOTE = m.text, m.small, m.note
 end
 
 -- The lab's state: whether only the pairs short of their floor show,
@@ -65,12 +66,12 @@ end
 -- `4.21 ✓` in the ok colour, or `1.40 ✗ 2` in the danger's with the
 -- floor it missed.
 local function verdict(c, t)
-  if not c then return text("", { size = SIZE - 2 }) end
+  if not c then return text("", { size = NOTE }) end
   local s = string.format("%.2f", c.ratio)
   local label, color = s .. " ✓", t.muted
   if not c.ok then label, color = string.format("%s ✗ %g", s, c.need), t.danger end
   return row { width = SIZE * 6,
-    text(label, { family = "mono", size = SIZE - 2, color = color, wrap = "none" }) }
+    text(label, { family = "mono", size = NOTE, color = color, wrap = "none" }) }
 end
 
 -- A sample in `fg` on `bg`, a chip the pair's colours exactly.
@@ -78,13 +79,13 @@ local function swatch(label, fg, bg, style, w)
   local span = { label, color = fg }
   for k, v in pairs(style or {}) do span[k] = v end
   return row { width = w, pad = { x = 6, y = 2 }, radius = 3, bg = bg, clip = true,
-    text({ span }, face { size = SIZE - 1 }) }
+    text({ span }, face { size = SMALL }) }
 end
 
 local function heading(title, note, t)
   return row { width = "grow", gap = 8, cross_align = "end", pad = { top = 6 },
     text({ { title, bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
-    row { width = "grow", text(note or "", { size = SIZE - 2, color = t.faint, wrap = "word" }) } }
+    row { width = "grow", text(note or "", { size = NOTE, color = t.faint, wrap = "word" }) } }
 end
 
 -- ------------------------------------------------------------- scenes
@@ -142,7 +143,7 @@ local function token_scene(s, t)
     -- A narrow pane takes the three a line each: squeezed abreast, each
     -- was narrower than its verdict.
     local line = row { width = "grow", gap = 8, cross_gap = 2, wrap_children = true, cross_align = "center",
-      row { width = SIZE * 6, clip = true, text(name, { size = SIZE - 1, color = t.muted, wrap = "none" }) } }
+      row { width = SIZE * 6, clip = true, text(name, { size = SMALL, color = t.muted, wrap = "none" }) } }
     for _, where in ipairs { "on page", "under selection", "under a hit" } do
       local c = L.by[name .. " " .. where]
       if c then
@@ -170,11 +171,11 @@ local function surface_scene(s, t)
     local name, bg = sf[1], sf[2]
     local box = column { width = "grow", min_width = "fit", bg = bg, radius = 4, pad = 8, gap = 4,
       border = { w = 1, color = r.border },
-      text({ { name, bold = true } }, { size = SIZE - 1, color = r.fg, wrap = "none" }) }
+      text({ { name, bold = true } }, { size = SMALL, color = r.fg, wrap = "none" }) }
     for _, g in ipairs { { "body", r.fg }, { "muted", r.muted }, { "faint", r.faint } } do
       local c = L.by[g[1] .. " on " .. name]
       box[#box + 1] = row { gap = 6, cross_align = "center",
-        text(g[1], { size = SIZE - 1, color = g[2], wrap = "none" }), c and verdict(c, t) or nil }
+        text(g[1], { size = SMALL, color = g[2], wrap = "none" }), c and verdict(c, t) or nil }
     end
     out[#out + 1] = box
   end
@@ -186,7 +187,7 @@ local function chrome_scene(s, t)
   local r = s.roles
   local tab = function(label, on)
     return row { pad = { x = 10, y = 3 }, radius = 3, bg = on and r.accent or r.sunken,
-      text(label, { size = SIZE - 1, color = on and r.on_accent or r.muted, wrap = "none" }) }
+      text(label, { size = SMALL, color = on and r.on_accent or r.muted, wrap = "none" }) }
   end
   -- The verdicts go to a line of their own in a narrow pane: squeezed
   -- beside them, the tabs were a pixel wide, their labels past them.
@@ -198,14 +199,14 @@ local function chrome_scene(s, t)
     bg = r.sunken, cross_align = "center" }
   for _, m in ipairs { { "NORMAL", r.focus_ring }, { "INSERT", r.success }, { "VISUAL", r.warning } } do
     strip[#strip + 1] = row { gap = 4, cross_align = "center",
-      text({ { m[1], bold = true } }, face { size = SIZE - 1, color = m[2] }),
+      text({ { m[1], bold = true } }, face { size = SMALL, color = m[2] }),
       verdict(L.by[m[1] .. " on the strip"], t) }
   end
   local toast = column { width = "grow", bg = r.raised, radius = 6, pad = 8, gap = 4,
     border = { w = 1, color = r.border_strong } }
   for _, st in ipairs { { "error", r.danger }, { "warning", r.warning }, { "success", r.success } } do
     toast[#toast + 1] = row { gap = 8, cross_align = "center",
-      text(st[1] .. ": the build said so", { size = SIZE - 1, color = st[2], wrap = "none" }),
+      text(st[1] .. ": the build said so", { size = SMALL, color = st[2], wrap = "none" }),
       verdict(L.by[st[1] .. " on a float"], t) }
   end
   return column { width = "grow", gap = 6, tabs, strip, toast }
@@ -236,7 +237,7 @@ local function font_scene(s, t)
   local col = column { width = "grow", bg = r.bg, radius = 4, pad = 8, gap = 6,
     border = { w = 1, color = r.border } }
   local function note(words)
-    return text(words, { size = SIZE - 2, color = r.muted, wrap = "word" })
+    return text(words, { size = NOTE, color = r.muted, wrap = "word" })
   end
   local weights = F.weights or {}
   local bold = false
@@ -249,7 +250,7 @@ local function font_scene(s, t)
   local function line(label, spans, extra)
     local st = face(extra)
     return row { width = "grow", gap = 10, cross_align = "center",
-      row { width = SIZE * 7, clip = true, text(label, { size = SIZE - 2, color = r.faint, wrap = "none" }) },
+      row { width = SIZE * 7, clip = true, text(label, { size = NOTE, color = r.faint, wrap = "none" }) },
       row { width = "grow", clip = true, text(spans, st) } }
   end
   local fg = r.fg
@@ -274,9 +275,9 @@ local function all_pairs(s, t)
     for _, c in ipairs(s.checks) do
       if c.ok == pass and (not L.short or not c.ok) then
         col[#col + 1] = row { width = "grow", gap = 8, cross_align = "center",
-          row { width = SIZE * 5, text(c.group, { size = SIZE - 2, color = t.faint, wrap = "none" }) },
+          row { width = SIZE * 5, text(c.group, { size = NOTE, color = t.faint, wrap = "none" }) },
           swatch("Aa", c.fg, c.bg, nil, SIZE * 3),
-          row { width = "grow", clip = true, text(c.what, { size = SIZE - 1, color = t.fg, wrap = "none" }) },
+          row { width = "grow", clip = true, text(c.what, { size = SMALL, color = t.fg, wrap = "none" }) },
           verdict(c, t) }
       end
     end
@@ -306,9 +307,9 @@ kawoosh.view(VIEW, function(ctx)
              bold = true } }, { size = SIZE, color = t.fg, wrap = "word" }),
     text(string.format("%d pairs · %d below their floor%s", #s.checks, short,
       L.short and " · only those shown" or ""),
-      { size = SIZE - 1, color = short > 0 and t.danger or t.muted, wrap = "word" }),
+      { size = SMALL, color = short > 0 and t.danger or t.muted, wrap = "word" }),
     text("f what falls short · r the report · j k scroll · q closes",
-      { size = SIZE - 2, color = t.faint, wrap = "word" }) }
+      { size = NOTE, color = t.faint, wrap = "word" }) }
   local body = column { key = "lab", width = "grow", height = "grow", bg = t.bg, pad = 14, gap = 10,
     scroll_y = true, head }
   local function add(title, note, scene)

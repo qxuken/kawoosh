@@ -191,7 +191,8 @@ a column of its own, whose text is the results and whose header is
 with the fields `find`,
 `include` and `exclude`, the flags drawn as toggles, the count, the
 stages' trail (each with a `×` that takes it out) and, small and dim,
-the keys. `:search project` starts at the workspace's root every time; from
+the keys (Decision 11: two rows, the stages' only past one stage).
+`:search project` starts at the workspace's root every time; from
 visual mode the selection's first line is put in `find`, not run yet;
 `:search here` (`<leader>sS`) at the file's directory, for that search
 only. `<CR>` in a field runs
@@ -312,7 +313,23 @@ with a linked panels".
   think we can make it toggle-able" — `<A-/>` (`?` without its shift;
   `<A-l>` is the next stage, and ⌥E ⌥U ⌥N ⌥I are macOS's dead keys)
   flips it for the session, `search.legend` says how it starts, and a
-  dim `⌥/ keys` at the end of the stages' row says it is there.
+  dim `⌥/ keys` at the end of the globs' row says it is there. Since
+  2026-10-02 every pane's legend does so (icons.md Decision 6): the
+  flip is the panel's pane's, `keys.legend` how it starts, and
+  `search.legend` named as moved there.
+- **The bar is the fewest rows that hold it.** Asked 2026-10-02:
+  "compress navigation inside a search panel again, and make it the
+  same font size as the rest". The bar had grown back to three rows
+  and drew at sizes of its own — 13 px hard-coded, so `font.chrome_size`
+  never reached it, its labels and stages a step under, its keys three
+  (10 px, the smallest anywhere). It is two rows: `find` with the
+  toggles and the count, then `include` and `exclude` with the root
+  when it is not the workspace's and `⌥/ keys` at the end; the stages'
+  row comes only once there is a second stage — with one, its lone chip
+  said again what the field and the count say. Its sizes are the panes'
+  one scale (plugin-panes.md, "Sizes"): the fields, their labels and
+  the stages at the text size, the toggles and the count a step under,
+  the keys two, as every other pane's legend.
 - `<C-c>` closes the panel's pane, the running search stopped, the
   results kept: `:search project` brings them back.
 - **A session brings the panel back as the search.** Asked the same

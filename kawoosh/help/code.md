@@ -39,17 +39,26 @@ OCaml, Nix, fish, Julia, Zig, Java, Kotlin, Scala, Dart, PHP and more —
 also bring an indent query, so `<CR>`, `o` and `=` follow the syntax
 tree ([editing](editing.md)); the others indent by their brackets.
 
-The first time a file of such a language is on show, the corner says
-so and names the command. `grammars.install` chooses: `"ask"` (that
-line, once per language in a session), `"auto"` (the grammar is
-installed without asking) or `"never"`.
+The first time a file of such a language is on show, a notification
+says so, with an Install button, and stays up fifteen seconds — longer
+while the pointer is over it. The button installs the grammar; so does
+`<C-w>n` (the keyboard on the notification) then `⏎`, and `x` puts it
+away. `grammars.install` chooses: `"ask"` (that notification, once per
+language in a session), `"auto"` (the grammar is installed without
+asking) or `"never"`.
 
 `:grammars` opens them all in a pane: the ones installed, each at
 its revision; the ones there are to install, with their files and
-size; the ones built in. `j` `k` walk it, `⏎` (or `i`, or a row's
-button) installs the grammar under the cursor, `u` updates every one,
-`d` removes the cursor's, `q` closes. One that is on its way shows how
-far it is, and one that failed says why.
+size; the ones built into kawoosh, each tagged `built in` — and where
+the releases have a grammar of the same name (C), saying the built-in
+one is what is used. `/` filters it: what you type narrows the rows to
+the grammars whose name or files match (`zig`, `.rb`, `Dockerfile`),
+the best match under the cursor; `⏎` or `<Esc>` goes back to the rows,
+and `<Esc>` there clears the filter. `j` `k` walk it, `gg` `G` go to
+the first and the last, `<C-d>` `<C-u>` ten rows down and up, `⏎` (or `i`, or
+a row's button) installs the grammar under the cursor, `u` updates
+every one, `d` removes the cursor's, `q` closes. One that is on its way
+shows how far it is, and one that failed says why.
 
 | command | |
 |---|---|
@@ -104,11 +113,30 @@ mylang`. With nothing changed it says the grammar is up to date. In the pane a g
 `build`, and `b` builds the one under the cursor.
 
 The grammars are built by the `kawoosh-grammars` repository, which
-releases them on two hosts. `grammars.url` lists where to fetch from,
-tried in order; each is a folder holding `manifest.json` and one
-archive per grammar, so a mirror of your own is a URL in your
-settings. Only your own settings are read for it: a project's
-`grammars.url` and `grammars.sources` are passed over, since a grammar
+releases them on two hosts. `grammars.urls` lists where to fetch from,
+in order; each is a folder holding `manifest.json` and one archive per
+grammar, so a mirror of your own, or a folder of your own archives, is
+a URL in your settings:
+
+```lua
+grammars = { urls = {
+  "file:///Users/me/grammars",   -- mine first
+  "https://github.com/qxuken/kawoosh-grammars/releases/latest/download",
+  "https://drydock9.qxuken.dev/qxuken/kawoosh-grammars/releases/download/latest",
+} }
+```
+
+The lists are one: a grammar several of them list comes from the first
+that does, and one only a later URL lists is there to install all the
+same. When that first one does not answer, or fails, the grammar is
+fetched from the next that has it, and `:grammar update` lists what an
+unanswering URL listed as it was. `kawoosh.grammars.list()` says which
+URL each grammar came from, or would, as its `base`.
+A URL said twice counts once. The setting was `grammars.url` until
+2026-10-02; a settings file that still says it is told so.
+
+Only your own settings are read for it: a project's
+`grammars.urls` and `grammars.sources` are passed over, since a grammar
 is code that runs inside kawoosh, and of `grammars.install` a project's
 settings may say `"never"` and nothing else.
 
@@ -317,12 +345,17 @@ A formatter written in Lua is in [lua](lua.md#formatters).
 
 ## Compile commands
 
-`:compile CMD` (also `:make`) runs a command into the `*compile*`
-buffer. The paths with line numbers in its output are locations:
-`<CR>` on one opens it, and `]q` `[q` (`:cnext`, `:cprev`) walk them
-from anywhere. `<C-c>` in `*compile*` stops the command and what it
-started (`:compile kill`), `r` runs it again where it ran (`:compile
-again`), and `q` closes it.
+`:compile CMD` (also `:c` and `:make`) runs a command into the
+`*compile*` buffer, and the keys go there — to the pane it opens, or
+to the one showing it already. The caret follows the output while it
+is at the end; move it up to read a line and it stays there. The paths
+with line numbers in the output are locations: `<CR>` on one opens it
+in an editor pane beside, and `]q` `[q` (`:cnext`, `:cprev`) walk
+them from anywhere. `<C-c>` in `*compile*` stops the command and what
+it started (`:compile kill`), `r` runs it again where it ran
+(`:compile again`), and `q` closes it, the keys going back to the pane
+you were in. A `%` in a line run from `*compile*` is the file the run
+there was started from.
 
 `<leader>cc` is a bare `:compile`. It runs, in order of preference:
 
