@@ -898,6 +898,8 @@ function git.status(root, done, opts)
           files[#files + 1] = { path = fs.join(root, path), state = git_state(xy) }
         end
       end
+      -- Git never lists its own folder, ignored or not; it is as good as.
+      files[#files + 1] = { path = fs.join(root, ".git"), state = "ignored" }
       done(files)
     end)
 end
@@ -1098,6 +1100,11 @@ function fossil.status(root, done)
       if word and FOSSIL_STATES[word] then
         files[#files + 1] = { path = fs.join(root, path), state = FOSSIL_STATES[word] }
       end
+    end
+    -- Fossil's own files, the checkout's database (`_FOSSIL_` on
+    -- Windows), are as good as ignored; a name not there paints nothing.
+    for _, own in ipairs { ".fslckout", "_FOSSIL_" } do
+      files[#files + 1] = { path = fs.join(root, own), state = "ignored" }
     end
     done(files)
   end)

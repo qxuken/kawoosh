@@ -1356,8 +1356,6 @@ function dir.decorate(name, d)
     r.backend.status(r.root, function(files)
       if not files then return end
       local states = dir.states_of(d, files)
-      -- Git never lists its own folder, ignored or not; it is as good as.
-      if r.name == "git" then states[".git"] = "ignored" end
       local h
       for _, x in ipairs(kawoosh.buf.list()) do
         if kawoosh.buf.name(x) == name then h = x end
