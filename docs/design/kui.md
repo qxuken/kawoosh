@@ -476,7 +476,11 @@ either took the line or was lost. Now a notification has a **level**
 - **error, warn → a toast.** A bordered card at the top-right under the
   tab strip, gone after eight seconds — or, when it carries **actions**,
   only when one is taken (a toast with actions is a question, and a
-  question does not time out). A plain toast goes on a click too. The
+  question does not time out) — unless it is given a time of its own,
+  which makes it an offer: it goes when the time is up, and a click or
+  `x` puts it away as a plain toast's does (*amended 2026-10-01*, for
+  `grammars.install = "ask"`'s Install button). A plain toast goes on a
+  click too. The
   keyboard reaches them: `<C-w>n` (`:toast`) puts it on the newest —
   `TOAST` in the status strip — `j` `k` walk the toasts, `h` `l` the
   actions, `<CR>` takes one, a digit takes that one, `x` takes a plain
