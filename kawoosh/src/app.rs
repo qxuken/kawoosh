@@ -730,11 +730,17 @@ impl Kawoosh {
         shown.extend(self.multis.visible.iter().copied());
         shown.sort();
         shown.dedup();
+        // The languages on show with a grammar to install and none in,
+        // met for the first time (`grammars.install`).
+        let mut unmet: Vec<String> = Vec::new();
         for id in shown {
             let Some(b) = self.ed.buffers.get(id) else {
                 continue;
             };
             if !self.languages.has_grammar(&b.language) {
+                if self.grammar_unmet(&b.language) && !unmet.iter().any(|l| **l == *b.language) {
+                    unmet.push(b.language.to_string());
+                }
                 continue;
             }
             if self.ts_sent.get(&id) == Some(&b.version()) {
@@ -754,6 +760,9 @@ impl Kawoosh {
                 snapshot: b.snapshot(),
                 edits,
             });
+        }
+        for language in unmet {
+            self.grammar_met(&language);
         }
         self.ask_crumbs();
         self.ask_diffs();
@@ -800,6 +809,7 @@ impl Kawoosh {
                 IoMsg::PtyClosed { id } => self.term_closed(id),
                 IoMsg::Request(incoming) => self.on_request(incoming),
                 IoMsg::Grammar { name, step } => self.on_grammar(name, step),
+                IoMsg::Grammars(result) => self.on_grammars(result),
                 // A status segment's time came: the wake drew the frame.
                 IoMsg::Tick => self.status_due = None,
                 IoMsg::FsDone { token, result } => {

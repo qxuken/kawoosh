@@ -30,13 +30,27 @@ and paints the language's open buffers; the corner shows how far it
 is. It needs `curl` and nothing else — no compiler. An installed
 grammar is kept and is there at the next launch, with no network.
 
+The first time a file of such a language is on show, the corner says
+so and names the command. `grammars.install` chooses: `"ask"` (that
+line, once per language in a session), `"auto"` (the grammar is
+installed without asking) or `"never"`.
+
+| command | |
+|---|---|
+| `:grammar` | which grammars are installed, and how many more there are |
+| `:grammar install NAME` | fetch and load NAME's grammar |
+| `:grammar update` | fetch the list, and install again every grammar whose release moved |
+| `:grammar update NAME` | the same for one |
+| `:grammar remove NAME` | take NAME's grammar out; its files are still recognised |
+
 The grammars are built by the `kawoosh-grammars` repository, which
 releases them on two hosts. `grammars.url` lists where to fetch from,
 tried in order; each is a folder holding `manifest.json` and one
 archive per grammar, so a mirror of your own is a URL in your
 settings. Only your own settings are read for it: a project's
 `grammars.url` is passed over, since a grammar is code that runs
-inside kawoosh.
+inside kawoosh, and of `grammars.install` a project's settings may
+say `"never"` and nothing else.
 
 A query file of your own under the config directory,
 `queries/NAME/highlights.scm` (or `injections.scm`, `outline.scm`,

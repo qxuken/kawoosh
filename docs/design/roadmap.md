@@ -2870,12 +2870,13 @@ In order — the bugs first, then what needs deciding:
     licence. Kawoosh knows the listed languages from a manifest built
     in, and `:grammar install NAME`, or the first file of one, fetches
     its archive with `curl`, checks its blake3 and loads it as
-    `kawoosh.language` does. Rounds 1 and 2 built 2026-10-01: the
-    repository with eight grammars released on both hosts, and
+    `kawoosh.language` does. Rounds 1 to 3 built 2026-10-01: the
+    repository with eight grammars released on both hosts,
     `:grammar install` (`systems/src/grammars.rs`,
-    `kawoosh/src/grammars.rs`, `kawoosh/tests/grammars.rs`); the
-    first-file prompt, `update` and `remove`, the pane and the wider
-    list are to come.
+    `kawoosh/src/grammars.rs`, `kawoosh/tests/grammars.rs`), and
+    `grammars.install` at a language's first file with `:grammar
+    update` and `remove`; the pane, the wider list and building on
+    the machine are to come.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

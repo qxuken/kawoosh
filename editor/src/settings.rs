@@ -685,6 +685,10 @@ const DOCS: &[(&str, &str)] = &[
         "the size of the tabs', title bars' and strips' text; `0` follows `font.size`",
     ),
     (
+        "grammars.install",
+        "what the first file of a language with a grammar to install does: `ask` says the command, `auto` installs it, `never` nothing; a project may only say `never`",
+    ),
+    (
         "grammars.url",
         "where grammars are fetched from, tried in order: each a folder of `manifest.json` and an archive a grammar; a project's is passed over",
     ),
@@ -1099,6 +1103,10 @@ impl Settings {
         // Decision 2): the releases of `kawoosh-grammars` on its two
         // hosts, each a folder of `manifest.json` and one archive a
         // grammar, tried in order. Read from the user's layers alone.
+        // What the first file of such a language on show does (Decision
+        // 7): `ask`, a corner line naming `:grammar install`, once a
+        // language a session; `auto`; `never`.
+        defaults.set("grammars.install", Setting::Str("ask".into()));
         defaults.set(
             "grammars.url",
             Setting::List(
@@ -1144,6 +1152,7 @@ impl Settings {
             ("tabs.directory", words(&["auto", "always", "never"])),
             ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
+            ("grammars.install", words(&["ask", "auto", "never"])),
             ("markdown.reveal", words(&["line", "span", "none"])),
             ("markdown.navigation", words(&["line", "row"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
@@ -1710,6 +1719,7 @@ mod tests {
                 "font.size",
                 "format_on_save",
                 "formatter",
+                "grammars.install",
                 "grammars.url",
                 "insert_final_newline",
                 "keys.option_as_alt",

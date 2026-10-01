@@ -1,8 +1,9 @@
 # Grammars: built ahead, installed on demand
 
-Status: decided 2026-10-01 (roadmap step 77); rounds 1 and 2 — the
-repository, and `:grammar install` — built the same day ("Built" at
-the end says where they departed from the text), rounds 3 to 6 not.
+Status: decided 2026-10-01 (roadmap step 77); rounds 1 to 3 — the
+repository, `:grammar install`, and the first file, `update` and
+`remove` — built the same day ("Built" at the end says where they
+departed from the text), rounds 4 to 6 not.
 Asked: "How
 can we implement Tree-Sitter grammar auto installation? Like neovim
 does, or at least `nvim-treesitter/nvim-treesitter` plugins do. We
@@ -483,3 +484,54 @@ the file plain with `Installing zig fetching 0%` in the corner, then
 painted, the message `grammar: zig installed (6479aa13f32f)`.
 
 Not verified: Windows.
+
+**Round 3, 2026-10-01**: the first file, `update`, `remove`.
+
+- **`grammars.install`** (`ask`, `auto`, `never`): the frame's syntax
+  sync, which already passes over a pane whose language has no
+  grammar, notes the ones that are listed and not installed; each is
+  met once a session. `ask` is an info line under `grammar` — `zig has
+  a grammar: :grammar install zig` — in the corner and the log, not a
+  toast. A project's value counts only when it is `never`.
+- **`:grammar update NAME`** is the install again: the base's manifest
+  fetched, and the archive only if it is another than the one in —
+  else `NAME is up to date (REV)` and nothing reloaded. **Bare**, the
+  list is fetched alone (`grammars::refresh`, `IoMsg::Grammars`), what
+  it adds is listed, and each installed grammar whose archive's hash
+  is not the list's is installed again, each under its own progress
+  line: `updated (OLD → NEW)`.
+- **`:grammar remove NAME`** takes `current` out first, so the grammar
+  is not installed whatever a Windows with the library loaded lets go
+  of; the language is one of files again, its buffers' syntax layer
+  cleared, and it is not asked about again that session. The
+  directory left behind goes at the next launch's prune.
+- **`:grammar`**, bare, says what is installed and how many more there
+  are — the line until round 4's pane.
+- **An install's manifest is listed as it lands**: a language released
+  since this kawoosh was built is there to install, and its files are
+  its, after any install or update, without a restart.
+
+Where it departed from the text: nothing of Decision 7's but the
+wording of the line. Decision 8's "refused with a line" is "passed
+over, and said once" for `grammars.url`, and silent for
+`grammars.install`, where a project's word is only ever weaker than
+the user's.
+
+- **Found in the window, not by the tests**: listing the languages
+  through `add_language` put `language NAME: no grammar` in the corner
+  for every one of them at launch — its info line, which the tests'
+  app has no logger to hear. A grammar's languages go in through
+  `put_language(def, false)`, the line at debug; an install and a
+  removal have their own word on the message line. The test that
+  holds it hooks the `log` macros as the app does.
+
+Verified: `nu scripts/verify.nu`, 847 of 847, the tests in
+`kawoosh/tests/grammars.rs` and `systems/src/grammars.rs` — a listed
+language asked about once and not twice, a project's `never` heeded
+and its `auto` not (the test fails with the layers read as one),
+`auto` installing at the first file, an update that fetches nothing
+when nothing moved, one that repaints with the new release's query
+when it did, a removal that clears the colours and is not undone by
+`auto`, and the next launch without the grammar. And in a window, a
+build of its own state opened on a zig file: the corner says `zig has
+a grammar: :grammar install zig` and nothing else.

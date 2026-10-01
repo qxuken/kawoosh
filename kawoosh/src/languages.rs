@@ -63,7 +63,14 @@ impl Kawoosh {
     /// told, the ts thread told with the grammar, and the buffers
     /// looked at again: one of the language is sent whole at the next
     /// frame, and a file nothing had claimed may be the language's.
-    pub fn add_language(&mut self, mut def: LanguageDef) {
+    pub fn add_language(&mut self, def: LanguageDef) {
+        self.put_language(def, true);
+    }
+
+    /// [`Kawoosh::add_language`], said in the log or not: a language
+    /// the user registered is worth a line, the dozens a manifest lists
+    /// at launch are not, and an install has its own word.
+    pub(crate) fn put_language(&mut self, mut def: LanguageDef, say: bool) {
         let grammar = match def.load() {
             Ok(g) => g,
             Err(e) => {
@@ -75,7 +82,7 @@ impl Kawoosh {
             }
         };
         let replaced = self.languages.add(def.clone()).is_some();
-        log::info!(
+        let said = format!(
             "language {}: {}{}",
             def.name,
             match &def.grammar {
@@ -89,6 +96,11 @@ impl Kawoosh {
                 ""
             }
         );
+        if say {
+            log::info!("{said}");
+        } else {
+            log::debug!("{said}");
+        }
         let name = def.name.clone();
         self.ts.add_language(def, grammar);
         // Its files are what `load_all` sends its server.
