@@ -36,13 +36,16 @@ local function results()
   end
 end
 
--- `:search project PATTERN`: the bar, and the search at once.
+-- `:search project PATTERN`: the panel, and the search at once.
 kawoosh.cmd("search project needle")
 settled("the first search")
 local st = state()
 kawoosh.test.eq(st.stages[1].find, "needle")
 kawoosh.test.eq(st.stages[1].files, 5, "every file git sees: " .. tostring(st.stages[1].err))
 local h = assert(results(), "the results are a buffer")
+-- One pane: the results its text, the bar its header with the keys.
+kawoosh.test.eq(kawoosh.buf.current(), h, "the panel's text is the results")
+kawoosh.test.eq((kawoosh._field("lua:search/find") or {}).focused, true, "the find field has the keys")
 kawoosh.test.eq(kawoosh.buf.language(h), "multibuffer")
 local text = kawoosh.buf.text(h)
 contains(text, native("src/b.tsx") .. "  1", "a file's header with its count")

@@ -47,7 +47,8 @@ substitution.
 ## Project search
 
 `<leader>ss` (or ⌘⇧F, `:search project`, `:grep`) opens the search
-bar below the pane. `<leader>sS` (`:search here`) searches from the
+panel: one pane, a column of its own beside the one you were in, with
+the bar on top and the results under it. `<leader>sS` (`:search here`) searches from the
 current file's directory instead of the workspace's root. From visual
 mode, the selection is put in the pattern field.
 
@@ -76,11 +77,17 @@ you turn them on.
 | `<A-w>` | whole word on or off |
 | `<A-g>` | include ignored and hidden files |
 | `<Up>` `<Down>` | earlier searches made in this workspace |
-| `<C-j>` | move to the results |
-| `<C-c>`, `<Esc>` in normal mode | close the bar; the results stay |
+| `<C-S-j>`, `<C-j>`, `<Esc>` in normal mode | move down to the results |
+| `<C-c>` | close the panel; the results are kept for next time |
+| `<A-/>` | show or hide the legend of these keys (`search.legend` to start with it shown) |
 
 `:search project PATTERN` runs PATTERN at once. Running
-`:search project` again brings the bar back as you left it.
+`:search project` again, from anywhere, puts the keys back in the bar
+as you left it, and makes the pane you ran it from the one the
+results open files in. From the results, `<C-S-k>` (or `<C-w>k`) goes
+back up to the field you were in, and `<C-S-j>` (`<C-w>j`) down again:
+inside the panel, the bar and the results are two stops, as two panes
+stacked would be. A click on a field moves the keys there too.
 
 ### Stages: search in search
 
@@ -102,7 +109,7 @@ stage's include means "not in tests". Editing a stage and pressing
 
 ## Multibuffers
 
-The results open in `*search*`, a **multibuffer**: each file's matches
+The results are `*search*`, a **multibuffer**: each file's matches
 with a few lines around them, under a header naming the file. It is
 live. What you type in it is in the file at once, and a change to the
 file elsewhere shows up in it. The gutter shows each file's own line
@@ -116,10 +123,14 @@ numbers, with its colours and diagnostics.
 
 | keys | what |
 |---|---|
-| `<CR>` `g<Space>` | open the file at the caret; with carets in several files, open them all |
-| `<C-v>` | open the file in a split beside |
+| `<CR>` `g<Space>` | open the file at the caret in the pane the search was opened from (the panel stays); with carets in several files, open them all |
+| `<C-v>` | open the file in a column of its own, beside the panel |
 
 `search.context` sets how many lines are shown around each match.
+
+A session brings the search panel back where it was, with the last
+search made in the workspace in the bar, run again: the results are
+the files as they are now.
 
 ## Lists
 

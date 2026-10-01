@@ -1,9 +1,10 @@
--- The project search (docs/design/search.md Decisions 7–9): a bar below
--- the results — the pattern, the files to include and exclude as comma
--- lists (`src/*.[ts,tsx], tests/`, `*__test__*, *__jest__*`), the
--- flags — and the results as a multibuffer: each file's matches with a
--- few lines around them, live, so an edit there is in the file at once
--- and `:w` writes the files it shows.
+-- The project search (docs/design/search.md Decisions 7–9, 11): one
+-- pane, a column of its own — the bar on top (the pattern, the files to
+-- include and exclude as comma lists, `src/*.[ts,tsx], tests/`,
+-- `*__test__*, *__jest__*`, the flags) and the results under it, a
+-- multibuffer: each file's matches with a few lines around them, live,
+-- so an edit there is in the file at once and `:w` writes the files it
+-- shows. The bar is the results buffer's header (`kawoosh.buf.header`).
 --
 -- A search is a pipeline of stages. The first searches the project
 -- (the tab's working directory; `:search here` the file's); each after
@@ -21,13 +22,16 @@
 -- `<A-c>` `<A-w>` `<A-g>` flip regex, case, whole word and ignored
 -- files, `<A-a>` adds a stage after the cursor's (not ⌥N nor ⌥I:
 -- macOS's dead keys eat the key after them), `<A-k>` cycles its kind, `<A-x>` takes it out, `<A-h>` `<A-l>` move between stages,
--- `<C-j>` puts the keyboard in the results and `<C-c>` closes the bar.
--- In the results `<CR>` opens the file at the caret (`<C-v>` beside),
+-- `<C-j>` (or `<Esc>` in normal mode) puts the keyboard in the results
+-- and `<C-c>` closes the panel. In the results `<CR>` (`g<Space>`, every
+-- caret's) opens the file at the caret in the pane the search was asked
+-- for from, the panel staying; `<C-v>` in a column of its own beside;
 -- `n` walks the matches (the editor's search is set to the pattern).
 
 local fs = kawoosh.fs
 
 kawoosh.setting("search.context", { type = "integer", doc = "lines shown above and below each match in the search's results" })
+kawoosh.setting("search.legend", { type = "boolean", doc = "the search bar's key legend shown; ⌥/ in the bar flips it" })
 
 local VIEW = "search"
 local RESULTS = "*search*"
@@ -36,9 +40,6 @@ local PANE_FACT = "lua:" .. VIEW
 local SIZE = 13
 local ROW_H = SIZE + 6
 local HINT_SIZE = SIZE - 3
--- The bar's rows — the pattern's, the globs', the stages', the hints' —
--- their gaps and padding: the pane it opens in, below its title.
-local BAR_H = 2 * (ROW_H + 2) + ROW_H + (HINT_SIZE + 5) + 3 * 2 + 8 + 6
 
 local search = { stages = {}, cur = 1, kinds = {}, order = {}, gen = 0, root = nil, token = nil }
 -- The module, for a config or a plugin (`kawoosh.search_ui.kind`).
@@ -193,6 +194,24 @@ local function painter(upto)
   end
 end
 
+-- The buffer named `name`, if one is open.
+local function named(name)
+  for _, h in ipairs(kawoosh.buf.list()) do
+    if kawoosh.buf.name(h) == name then return h end
+  end
+end
+
+-- The results into the panel (Decision 11): `*search*` where a pane
+-- shows it, else in a column of its own, the bar over it.
+local function panel(parts, opts)
+  opts.place = "column"
+  -- A session brings the panel back (`on_restore` below).
+  opts.restore = true
+  kawoosh.multibuffer(RESULTS, parts, opts)
+  -- As tall as it draws: the keys' legend wraps in a narrow pane.
+  kawoosh.buf.header({ view = VIEW, field = "find" }, RESULTS)
+end
+
 -- The answer into the results: each file under a header with its
 -- count, its matched lines with `search.context` around them, runs of
 -- lines that meet made one, a `⋯` between those that do not.
@@ -222,7 +241,7 @@ local function show(answer, upto)
       end
     end
   end
-  kawoosh.multibuffer(RESULTS, parts, { focus = false, line = 2 })
+  panel(parts, { focus = false, line = 2 })
   local p = painter(upto)
   if p then kawoosh.search_paint { pattern = p.find, regex = p.regex, word = p.word, case = p.case } end
 end
@@ -358,17 +377,35 @@ end
 
 kawoosh.on_memory_open(KIND, function(row) search.restore((row.meta or {}).stages) end)
 
+-- The panel a session brought back — `*search*`, empty — filled again:
+-- the last search made in this workspace back in the bar, and run, so
+-- the results are as they are now; the bar alone when there was none.
+kawoosh.on_restore(function(name)
+  if name ~= RESULTS then return end
+  search.root = fs.cwd()
+  local ok, rows = pcall(kawoosh.memory, { kind = KIND, workspace = true, limit = 50 })
+  rows = ok and rows or {}
+  table.sort(rows, function(a, b) return (a.last or 0) > (b.last or 0) end)
+  local last = rows[1] and (rows[1].meta or {}).stages
+  search.stages, search.cur = stages_of(last or {}), 1
+  panel({ "nothing searched yet\n" }, { focus = false })
+  load_fields()
+  if search.stages[1].find ~= "" then search.run(1) end
+end)
+
 -- ------------------------------------------------------------ opening
 
--- search.open([pattern[, root]]): the bar below the pane the keys are
--- on, the find field with them; a pattern given is the first stage's
--- and runs at once.
+-- search.open([pattern[, root]]): the panel — where it is on show, else
+-- a column of its own beside the pane the keys are on, the pane its
+-- `<CR>` opens files in — the find field with the keys; a pattern given
+-- is the first stage's and runs at once.
 function search.open(pattern, root)
   -- Where it starts is asked each time: the workspace's root, or what
   -- `here` said — never what the last search was left at.
   search.root = root or fs.cwd()
   search.back = nil
-  kawoosh.view_open(VIEW, { below = true, height = BAR_H })
+  -- The results as they were, or the empty panel.
+  panel(not named(RESULTS) and { "nothing searched yet\n" } or nil, {})
   if pattern and pattern ~= "" then
     search.cur = 1
     search.stages[1].find = pattern
@@ -378,10 +415,16 @@ function search.open(pattern, root)
   if pattern and pattern ~= "" then search.run(1) end
 end
 
+-- search.close(): the panel's pane closed — the results kept, the
+-- search running stopped — and the keys back where it was asked from.
 function search.close()
   save_fields()
   search.live = false
-  kawoosh.view_close(VIEW)
+  search.gen = search.gen + 1
+  if search.token then kawoosh.search_cancel(search.token) end
+  search.running, search.token = nil, nil
+  kawoosh.field_focus(VIEW, nil)
+  kawoosh.cmd("close")
 end
 
 -- search.state(): the bar as it stands — `stages` (each `kind`,
@@ -449,23 +492,41 @@ local function trail(t)
   end
   local root = search.root and search.root ~= fs.cwd() and ("in " .. fs.form(search.root, "relative") .. "/") or nil
   if root then r[#r + 1] = text(root, { size = SIZE - 1, color = t.faint, wrap = "none" }) end
+  -- At the row's end, the way to the legend: a click flips it too.
+  r[#r + 1] = row { width = "grow" }
+  r[#r + 1] = row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, cross_align = "center",
+    hover_bg = t.sunken, on_click = { kind = "legend" },
+    text({ { "⌥/ ", color = t.muted }, { search.legend() and "hide keys" or "keys", color = t.faint } },
+         { size = HINT_SIZE, wrap = "none" }) }
   return r
 end
 
--- The keys, small and dim, under the rest.
+-- search.legend(): whether the legend is shown — `search.legend`, off
+-- unless set, flipped for the session by `⌥/` (`search legend`).
+function search.legend() return kawoosh.opt("search.legend") == true end
+
+-- The keys, small and dim, under the rest: one key a hint — a run of
+-- keys under one label (`⌥R ⌥C ⌥W ⌥G regex case word ignored`) read
+-- ambiguously.
 local HINTS = {
-  { "⏎", "search" }, { "⇥", "field" }, { "↑↓", "earlier" }, { "⌥R ⌥C ⌥W ⌥G", "regex case word ignored" },
-  { "⌥A", "add stage" }, { "⌥K", "its kind" }, { "⌥X", "remove stage" }, { "⌥H ⌥L", "stages" },
-  { "⌃J", "results" }, { "⌃C", "close" },
+  { "⏎", "search" }, { "⇥", "next field" }, { "⇧⇥", "previous field" },
+  { "↑", "earlier search" }, { "↓", "later search" },
+  { "⌥R", "regex" }, { "⌥C", "case" }, { "⌥W", "whole word" }, { "⌥G", "ignored files" },
+  { "⌥A", "add stage" }, { "⌥K", "stage kind" }, { "⌥X", "remove stage" },
+  { "⌥H", "previous stage" }, { "⌥L", "next stage" },
+  { "⎋", "to results" }, { "⌃⇧J", "to results" }, { "⌃⇧K", "back up" }, { "⌃C", "close" },
 }
+-- Wrapped at the pane's width between hints, never inside one: a
+-- hint's spaces are no-break ones.
+local NBSP = "\u{A0}"
+local function whole(s) return (s:gsub(" ", NBSP)) end
 local function hints(t)
   local spans = {}
   for i, h in ipairs(HINTS) do
-    spans[#spans + 1] = { (i > 1 and "   " or "") .. h[1] .. " ", color = t.muted }
-    spans[#spans + 1] = { h[2], color = t.faint }
+    spans[#spans + 1] = { (i > 1 and "   " or "") .. whole(h[1]) .. NBSP, color = t.muted }
+    spans[#spans + 1] = { whole(h[2]), color = t.faint }
   end
-  return row { width = "grow", height = HINT_SIZE + 5, clip = true, cross_align = "center",
-    text(spans, { size = HINT_SIZE, wrap = "none" }) }
+  return column { width = "grow", text(spans, { size = HINT_SIZE, wrap = "word" }) }
 end
 
 kawoosh.view(VIEW, function(ctx)
@@ -491,13 +552,17 @@ kawoosh.view(VIEW, function(ctx)
   local globs = row { width = "grow", height = ROW_H + 2, gap = 6, cross_align = "center",
     text("include", { size = SIZE - 1, color = t.muted, wrap = "none" }), include,
     text("exclude", { size = SIZE - 1, color = t.muted, wrap = "none" }), exclude }
-  return column { width = "grow", height = "grow", pad = { x = 8, y = 4 }, gap = 2, clip = true, bg = t.surface,
-    head, globs, trail(t), hints(t) }
+  -- The legend only when asked for: the bar as tall as it draws, so the
+  -- results take back the rows it took.
+  return column { width = "grow", pad = { x = 8, y = 4 }, gap = 2, clip = true, bg = t.surface,
+    head, globs, trail(t), search.legend() and hints(t) or nil }
 end, function(ev)
   if ev.kind == "unstage" and ev.i then
     search.remove(ev.i)
   elseif ev.kind == "stage" and ev.i then
     search.go(ev.i)
+  elseif ev.kind == "legend" then
+    kawoosh.opt("search.legend", not search.legend())
   elseif ev.kind == "regex" or ev.kind == "case" or ev.kind == "word" or ev.kind == "ignored" then
     search.flip(ev.kind)
   end
@@ -571,10 +636,9 @@ end
 -- ------------------------------------------------------------ commands
 
 local at = {}
--- The bar's keys are its own (docs/design/local-maps.md): each field's,
--- and the pane's with no field under the keys.
+-- The bar's keys are its own (docs/design/local-maps.md): each field's.
+-- With no field under them the keys are the results'.
 for _, f in ipairs(FIELDS) do at[#at + 1] = { view = VIEW, field = f } end
-local on_pane = { view = VIEW }
 local function on(name, fn, doc)
   kawoosh.command("search " .. name, fn, { when = { PANE_FACT }, doc = doc })
 end
@@ -591,13 +655,15 @@ on("stage remove", function() search.remove() end, "the cursor's stage taken out
 on("stage kind", function() search.cycle() end, "the cursor's stage's kind: in, keep, drop")
 on("stage next", function() search.go(search.cur + 1) end, "the next stage to the fields")
 on("stage prev", function() search.go(search.cur - 1) end, "the previous stage to the fields")
-on("close", function() search.close() end, "close the search's bar, the results staying")
+on("legend", function() kawoosh.opt("search.legend", not search.legend()) end,
+   "the bar's key legend shown, or hidden")
+on("close", function() search.close() end, "close the search's panel, its results kept for the next")
 on("earlier", function() search.earlier(1) end, "the search made before this one here, in the bar")
 on("later", function() search.earlier(-1) end, "the search made after this one here, in the bar")
 on("results", function()
   save_fields()
-  kawoosh.multibuffer(RESULTS, nil, { focus = true })
-end, "the keyboard to the search's results")
+  kawoosh.field_focus(VIEW, nil)
+end, "the keyboard down to the search's results")
 
 -- The visual selection's first line — a match is on one line — and
 -- visual mode left; nil outside it.
@@ -647,11 +713,10 @@ for _, w in ipairs(at) do
     kawoosh.map(mode, "<Up>", "search earlier", w)
     kawoosh.map(mode, "<Down>", "search later", w)
   end
-  kawoosh.map("n", "<Esc>", "search close", w)
+  kawoosh.map("n", "<Esc>", "search results", w)
 end
-for _, m in ipairs { "i", "n", "p" } do
-  local list = m == "p" and { on_pane } or at
-  for _, w in ipairs(list) do
+for _, m in ipairs { "i", "n" } do
+  for _, w in ipairs(at) do
     kawoosh.map(m, "<A-r>", "search regex", w)
     kawoosh.map(m, "<A-c>", "search case", w)
     kawoosh.map(m, "<A-w>", "search whole word", w)
@@ -661,23 +726,21 @@ for _, m in ipairs { "i", "n", "p" } do
     kawoosh.map(m, "<A-k>", "search stage kind", w)
     kawoosh.map(m, "<A-h>", "search stage prev", w)
     kawoosh.map(m, "<A-l>", "search stage next", w)
+    -- `?` without its shift: the keys.
+    kawoosh.map(m, "<A-/>", "search legend", w)
   end
 end
-kawoosh.map("p", "<CR>", "search run", on_pane)
-kawoosh.map("p", "i", "search query", on_pane)
-kawoosh.map("p", "/", "search query", on_pane)
-kawoosh.map("p", "q", "search close", on_pane)
-kawoosh.map("p", "<C-c>", "search close", on_pane)
-kawoosh.map("p", "<C-j>", "search results", on_pane)
 
 for _, mode in ipairs { "n", "v" } do
   kawoosh.map(mode, "<leader>ss", "search project")
   kawoosh.map(mode, "<leader>sS", "search here")
   kawoosh.map(mode, "<D-S-f>", "search project")
 end
--- In the results: the file at the caret.
+-- In the results: the file at the caret, in the pane the search was
+-- asked for from — the panel wears its bar, so `multi open` leaves it.
 local results = { language = "multibuffer" }
 kawoosh.map("n", "<CR>", "multi open", results)
 -- Zed's: the file under each caret — the primary's shown, the rest opened.
 kawoosh.map("n", "g<Space>", "multi open", results)
+-- In a column of its own, beside the panel.
 kawoosh.map("n", "<C-v>", "multi open beside", results)
