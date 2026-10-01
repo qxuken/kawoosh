@@ -214,7 +214,9 @@ names those files.
 ### Diagnostics
 
 A server's errors and warnings are underlined, with the first line of
-the message at the end of the row.
+the message at the end of the row. A message wider than its pane is cut
+with `…` on a wrapped line and scrolls sideways with the text on one
+that is not; it never reaches the pane beside.
 
 | keys | what |
 |---|---|
@@ -224,6 +226,12 @@ the message at the end of the row.
 
 A server may report on files you have not opened. rust-analyzer does
 for its whole crate; for TypeScript, turn on `load_all`.
+
+TypeScript shortens a long type in a message to `... 4 more ...`.
+Kawoosh shows what the server sends, and the server has no
+setting for this: it is the compiler option `noErrorTruncation`, so put
+`"noErrorTruncation": true` in the project's `tsconfig.json`
+`compilerOptions` for the whole type, in the row and in `<C-e>`.
 
 ### Completion
 

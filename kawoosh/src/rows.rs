@@ -1590,29 +1590,48 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         // A wrapped row's trailing text hangs after its last visual
         // line, as the cell past the end does: in the row's flow it took
         // its width from the text, which wrapped in what was left
-        // (2026-09-30). Past the pane's edge it is clipped, as an
-        // unwrapped row's is.
+        // (2026-09-30). It is a float the row's width across, padded in
+        // to where the text ends, and the text takes what is left of it,
+        // cut with an ellipsis: a float escapes its ancestors' clips, and
+        // a message as wide as itself was painted over the pane beside
+        // this one (2026-10-01). An unwrapped row's is in its flow, and
+        // the column scrolls sideways to it.
         if let Some((t, color)) = line.trailing {
-            let (spec, style) = match wraps {
-                true => {
-                    let (x, y) = wrapped_at(ui, len);
-                    let spec = NodeSpec::row()
+            if wraps {
+                let (x, y) = wrapped_at(ui, len);
+                let style = base
+                    .color(color)
+                    .wrap(kui_native::TextWrap::None)
+                    .max_lines(1)
+                    .ellipsis();
+                ui.with(
+                    NodeSpec::row()
+                        .grow_width()
                         .height(lh)
-                        .pad_xy(TRAILING_GAP, 0.0)
-                        .float(FloatConfig::parent().offset(x, y));
-                    (spec, base.color(color).wrap(kui_native::TextWrap::None))
-                }
-                false => {
-                    let spec = NodeSpec::row().padding(kui_native::Edges {
-                        l: (TRAILING_GAP - cell_w).max(0.0),
-                        r: TRAILING_GAP,
-                        t: 0.0,
-                        b: 0.0,
-                    });
-                    (spec, base.color(color))
-                }
-            };
-            ui.text_in(spec.cross_align(Align::Center).role(Role::None), t, style);
+                        .padding(kui_native::Edges {
+                            l: x + TRAILING_GAP,
+                            r: 0.0,
+                            t: 0.0,
+                            b: 0.0,
+                        })
+                        .cross_align(Align::Center)
+                        .role(Role::None)
+                        .float(FloatConfig::parent().offset(0.0, y).clipped()),
+                    |ui| ui.text(t, style),
+                );
+            } else {
+                let spec = NodeSpec::row().padding(kui_native::Edges {
+                    l: (TRAILING_GAP - cell_w).max(0.0),
+                    r: TRAILING_GAP,
+                    t: 0.0,
+                    b: 0.0,
+                });
+                ui.text_in(
+                    spec.cross_align(Align::Center).role(Role::None),
+                    t,
+                    base.color(color),
+                );
+            }
         }
         spacer(ui, after);
         if let Some(out) = line.text_key {
