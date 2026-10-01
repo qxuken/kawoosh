@@ -7,7 +7,15 @@ Asked in the todo as "editor wraps settings?".
 
 An editor pane never wraps: a line wider than the pane runs past its
 edge, and the text column scrolls sideways under it (`View::left`,
-kept by the app, the wheel's `dx` through `on_scroll`). Only the
+kept by the app, the wheel's `dx` through `on_scroll`). Every row
+keeps the cell past its end, the newline's, with nothing on it or the
+block caret or a selection, so the column is as wide whether a caret
+stands there or not, in the pane with the keys or another; the wheel's
+offset is clamped to the content as of the frame before, a reveal of
+the caret is not — it is measured this frame, on a line the frame
+before may not have drawn (2026-10-01: "when newline past the end of a
+overflown line `l` to it lags", and its block out of sight once the
+pane had the keys again). Only the
 markdown buffer's rendered rows wrap (markdown.md), and they brought
 everything a wrapped row needs:
 
