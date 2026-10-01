@@ -173,7 +173,7 @@ impl Kawoosh {
             .rt
             .clone()
             .filter(|rt| rt.has_tab_title_hook());
-        let labels: Vec<(String, bool)> = self
+        let labels: Vec<(String, bool, u64)> = self
             .layout
             .tabs
             .iter()
@@ -239,7 +239,7 @@ impl Kawoosh {
                         })
                     })
                     .unwrap_or(title);
-                (label, tab.bell)
+                (label, tab.bell, tab.id)
             })
             .collect();
         let mut active_key = None;
@@ -267,13 +267,17 @@ impl Kawoosh {
                         .keep_focus()
                         .role(Role::TabList),
                     |ui| {
-                        for (i, (label, bell)) in labels.iter().enumerate() {
+                        for (i, (label, bell, id)) in labels.iter().enumerate() {
                             let is_active = i == active;
                             // The block, its item and its close button are one
                             // hover group: the pointer is on the item or the
                             // button, never on the block itself, and the button
-                            // must stay while the pointer goes to it.
-                            let group = format!("tab-hover{i}");
+                            // must stay while the pointer goes to it. Named by
+                            // the tab's own number, as its key is: kui keeps
+                            // the pressed node lit while a drag holds it, and
+                            // named by its place the light stayed where the
+                            // press was as the tab went along the row.
+                            let group = format!("tab-hover{id}");
                             let hovered = ui.is_group_hovered(NodeSpec::hover_group_id(&group));
                             // A terminal in it rang unseen (`terminal.bell`): i3's
                             // urgent workspace, the edge and the label in the
@@ -290,7 +294,7 @@ impl Kawoosh {
                             // inside one roving Tab stop, where the ring never
                             // reaches it.
                             let key = ui.with_keyed(
-                                &format!("tab{i}"),
+                                &format!("tab{id}"),
                                 NodeSpec::column()
                                     .grow_width()
                                     .min_width(TAB_MIN_W)

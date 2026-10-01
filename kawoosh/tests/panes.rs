@@ -856,6 +856,27 @@ fn a_tab_is_dragged_along_the_strip() {
     d.frame(&mut app);
     assert_eq!(ids(&app), [before[2], before[1], before[0]]);
     assert_eq!(app.layout.tab, 2);
+    // The press is the tab's, not the place's: the place it was pressed
+    // on is drawn as the other tab at rest is, and the held tab is the
+    // one lit.
+    let bgs = |d: &Drive| -> Vec<kui_native::Color> {
+        let nodes = d.core.nodes();
+        let mut blocks: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.role == Some(kui_native::Role::Tab))
+            .filter_map(|item| {
+                let row = nodes.iter().find(|n| Some(n.key) == item.parent)?;
+                nodes.iter().find(|n| Some(n.key) == row.parent)
+            })
+            .map(|b| (b.rect.x, b.bg))
+            .collect();
+        blocks.sort_by(|a, b| a.0.total_cmp(&b.0));
+        blocks.into_iter().map(|(_, bg)| bg).collect()
+    };
+    let lit = bgs(&d);
+    assert_eq!(lit.len(), 3);
+    assert_eq!(lit[1], lit[0], "the place pressed on is at rest");
+    assert_ne!(lit[2], lit[0], "the held tab is lit");
     // Back over its first place, and past the row's left end: the first.
     d.input(&mut app, kui_native::InputEvent::CursorMoved(at[1]));
     assert_eq!(ids(&app), [before[2], before[0], before[1]]);
