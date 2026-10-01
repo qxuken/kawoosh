@@ -731,6 +731,18 @@ impl Buffer {
     /// mark, an emoji sequence are one unit for a caret.
     pub fn floor_char(&self, offset: usize) -> usize {
         let offset = self.floor_byte(offset);
+        // Between two ASCII bytes is a boundary but inside `\r\n`: no
+        // line read for it (an edit per line over a long file asked each).
+        if offset == 0 || offset >= self.len() {
+            return offset;
+        }
+        if let (Some(a), Some(b)) = (self.byte_at(offset - 1), self.byte_at(offset))
+            && a.is_ascii()
+            && b.is_ascii()
+            && (a, b) != (b'\r', b'\n')
+        {
+            return offset;
+        }
         if let Some((end, _)) = self.in_terminator(offset) {
             return end;
         }
