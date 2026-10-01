@@ -254,18 +254,21 @@ fn a_list_goes_past_what_cannot_format() {
     };
     list(&mut app, &["missing", "lsp"]);
     let a = open(&mut d, &mut app, &dir, "a.ts");
+    // The project it refused in is named (asked 2026-10-01: one
+    // project's refusal said nothing of which).
+    let refused = format!(
+        "the typescript server did not start in {}: \
+         Could not find a valid TypeScript installation.",
+        kawoosh_systems::fs::abbreviate_home(&dir)
+    );
     assert_eq!(
         format_says(&mut d, &mut app, "did not start"),
-        "no formatter for typescript: missing is not found; \
-         the typescript server did not start: Could not find a valid TypeScript installation."
+        format!("no formatter for typescript: missing is not found; {refused}")
     );
     ex(&mut d, &mut app, "format");
     assert_eq!(text(&app, a), "x\n");
     ex(&mut d, &mut app, "lsp format");
-    assert_eq!(
-        app.ed.message,
-        "the typescript server did not start: Could not find a valid TypeScript installation."
-    );
+    assert_eq!(app.ed.message, refused);
 
     // Something after them formats.
     list(&mut app, &["missing", "lsp", "shout"]);
