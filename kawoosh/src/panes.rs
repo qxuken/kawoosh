@@ -786,10 +786,8 @@ impl Kawoosh {
                     });
                     ui.text(&name, style);
                     if modified {
-                        ui.text(
-                            "●",
-                            TextStyle::new(self.chrome.small - 2.0).color(pal.command),
-                        );
+                        let set = self.icons.borrow();
+                        crate::icons::icon(ui, &set, "dot", self.chrome.small, pal.command);
                     }
                     if !crumbs.is_empty() {
                         let room = width - 16.0 - ui.measure_text(&name, &style, None).width - dot;
@@ -1075,7 +1073,8 @@ impl Kawoosh {
                         },
                     );
                     let below = offset;
-                    ui.text_in_keyed(
+                    let small = TextStyle::new(self.chrome.small).color(pal.dim).nowrap();
+                    ui.with_keyed(
                         "lines below",
                         NodeSpec::row()
                             .float(
@@ -1093,12 +1092,22 @@ impl Kawoosh {
                                 ("pane", Value::Int(pane as i64)),
                             ]))
                             .keep_focus()
-                            .label("lines below"),
-                        &format!(
-                            "↓ {below} line{} below · ⇧End",
-                            if below == 1 { "" } else { "s" }
-                        ),
-                        TextStyle::new(self.chrome.small).color(pal.dim).nowrap(),
+                            .label("lines below")
+                            .gap(4.0)
+                            .cross_align(Align::Center),
+                        |ui| {
+                            let set = self.icons.borrow();
+                            crate::icons::icon(ui, &set, "arrow-down", self.chrome.small, pal.dim);
+                            ui.text(
+                                &format!(
+                                    "{below} line{} below ·",
+                                    if below == 1 { "" } else { "s" }
+                                ),
+                                small,
+                            );
+                            let caps = crate::icons::KeyStyle::new(small, pal.border);
+                            crate::icons::keys(ui, &set, "<S-End>", &caps);
+                        },
                     );
                 }
             },

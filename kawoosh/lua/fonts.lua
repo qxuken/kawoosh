@@ -319,8 +319,8 @@ kawoosh.view(VIEW, function(ctx)
         end
         return text(count, { size = SIZE - 2, color = color, wrap = "none" })
       end)() },
-    text("jk walk · ⏎ takes · / searches, n N · m mono or all · + − size · y copies · q closes",
-      { size = SIZE - 2, color = t.faint, wrap = "word" }) }
+    ctx.legend({ { { "j", "k" }, "walk" }, { "<CR>", "takes" }, { "/", "searches" }, { { "n", "N" }, "next, back" },
+      { "m", "mono or all" }, { { "+", "-" }, "size" }, { "y", "copies" }, { "q", "closes" } }, { size = SIZE - 2 }) }
 
   local list = uniform_list(ctx.env, { key = "list", rows = #S.list, row_h = stride, width = "grow",
                                        height = "grow", pad = { x = PAD } }, function(i)

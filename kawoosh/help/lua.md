@@ -216,6 +216,8 @@ A plugin pane is a function from your state to a tree of UI nodes, drawn every f
 - `kawoosh.view_open(name, { below = true, share = 0.3, focus = false })` shows the view in a column of its own, or under the focused pane with `below` ([panes](panes.md#where-a-pane-opens)), `kawoosh.view_close(name)` closes it, and `kawoosh.view_toggle(name, opts)` does one or the other. `:view NAME` opens one from the command line.
 - Pane-mode maps (`"p"`) with `view = "NAME"` apply only while your view has the keys, and a field's with `view` and `field`. Prefer them to handling keys in `on_event`: they show up in `:map list` (with `in lua:NAME`), take counts, and can be remapped.
 - `ctx.field { name = "q", placeholder = "find" }` puts a one-line input in the tree. It is a line of the editor, with its modes and motions. `kawoosh.field_focus(view, name)` gives it the keys, and `kawoosh.field_text` / `field_set` read and write it.
+- `ctx.icon("close", { size = 13, color = t.muted })` puts an icon in the tree, drawn with strokes in a box as wide as the text beside it is large, so it sits in the line's middle where a glyph like `×` would sit low. `kawoosh.icon(name, opts)` is the same outside a view; any other key of `opts` (`key`, `on_click`, `hover_bg`) is the box's. The set: `close` `check` `dot` `chevron-right` `chevron-left` `chevron-up` `chevron-down` `folded` `unfolded` `arrow-up` `arrow-down` `arrow-left` `arrow-right` `return` `tab` `backspace` `delete` `ctrl` `alt` `shift` `cmd` (`kawoosh.icon_names()` lists them).
+- `ctx.keys("<C-w>j", { size = 12 })` draws keys as caps, one outlined cap a key, written in map notation: `<CR>` is the return arrow, `<A-/>` the option sign and a `/`. `ctx.legend({ { "<CR>", "opens" }, { { "j", "k" }, "walk" } }, { size = 12 })` is a key legend: each item its keys and its words, wrapped between items at the pane's width.
 
 ## Example: a tiny pane
 
@@ -242,6 +244,20 @@ end, { doc = "show or hide the counter" })
 ```
 
 `:counter` opens it below; click `bump` or press `+`; `q` closes it.
+
+## Icons of your own
+
+`kawoosh.icons.NAME` is an icon's shape, a list of parts in a box of side 1 (`y` down), and setting it changes that icon everywhere — the tab's close button too. `= nil` puts kawoosh's back.
+
+```lua
+kawoosh.icons.close = {                       -- a heavier ×
+  { stroke = { { 0.25, 0.25 }, { 0.75, 0.75 } }, width = 0.14 },
+  { stroke = { { 0.25, 0.75 }, { 0.75, 0.25 } }, width = 0.14 },
+}
+kawoosh.icons.check = { { glyph = "\u{F012C}" } }   -- a Nerd Font's
+```
+
+A part is `{ stroke = points, width = 0.1, curve = false }` (a line through the points, `width` a share of the box), `{ fill = points }` (a filled outline of three to eight points), `{ dot = r }` (a disc in the middle) or `{ glyph = "…", scale = 1 }` (a character, where its font puts it).
 
 ## Testing a plugin
 

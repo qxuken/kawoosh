@@ -319,7 +319,13 @@ fn progress_and_messages_land_in_the_corner() {
         texts.iter().any(|t| t == "Completed Loading workspace"),
         "{texts:?}"
     );
-    assert!(texts.iter().any(|t| t == "✓"), "done: {texts:?}");
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.label.as_deref() == Some("done")),
+        "done, the `check` icon: {texts:?}"
+    );
     // A toast is one paragraph, its source first.
     assert!(
         texts.iter().any(|t| *t == format!("{server} the warning")),

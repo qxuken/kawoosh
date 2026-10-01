@@ -333,7 +333,17 @@ impl Kawoosh {
                             head = "no buffer".into();
                         }
                         ui.text(&head, small(pal.dim));
-                        ui.text("⏎ restore · u ⌃r g- g+ step · q close", small(pal.faint));
+                        crate::icons::legend_items(
+                            ui,
+                            &self.icons.borrow(),
+                            &[
+                                (&["<CR>"], "restore"),
+                                (&["u", "<C-r>", "g-", "g+"], "step"),
+                                (&["q"], "close"),
+                            ],
+                            &crate::icons::KeyStyle::new(small(pal.dim), pal.border),
+                            small(pal.faint),
+                        );
                     },
                 );
                 // The columns named, over the numbers they hold.

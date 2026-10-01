@@ -795,6 +795,53 @@ function kawoosh.field_focus(view_name, name)
   kawoosh._field_focus(view_name, name and ("lua:" .. view_name .. "/" .. name) or nil)
 end
 
+-- ---------------------------------------------------------------- keys
+
+-- A notation as caps (docs/design/icons.md Decision 4): one outlined
+-- cap a key, a chord's modifiers in it before its key as icons, as
+-- tall as the text's line so a row is no taller for it. The reading is
+-- the Rust half's (`kawoosh._key_caps`), the measures too (`kawoosh._cap`).
+local function keys_node(env, notation, opts)
+  opts = opts or {}
+  local t = env.theme
+  local C = kawoosh._cap
+  local size = opts.size or 12
+  local style = { family = "mono", size = size, color = opts.color or t.muted, wrap = "none" }
+  local line_h = env.measure_text("Mg", style).height
+  local out = row { gap = C.gap, cross_align = "center" }
+  for _, cap in ipairs(kawoosh._key_caps(notation)) do
+    local box = row { min_height = line_h, pad = { x = C.pad }, gap = C.part_gap, radius = C.radius,
+      border = { w = C.border, color = opts.border or t.border }, cross_align = "center" }
+    for _, p in ipairs(cap) do
+      box[#box + 1] = p.icon and kawoosh.icon(p.icon, { size = size, color = style.color })
+        or text(p.text, style)
+    end
+    out[#out + 1] = box
+  end
+  return out
+end
+
+-- A legend: `{ { "<CR>", "installs" }, { { "j", "k" }, "walk" } }`, each
+-- item its keys — a notation, or a list of them for keys that do one
+-- thing — as caps and its words after, wrapped between items and never
+-- inside one.
+local function legend_node(env, items, opts)
+  opts = opts or {}
+  local t = env.theme
+  local C = kawoosh._cap
+  local size = opts.size or 12
+  local out = row { width = opts.width or "grow", gap = C.item_gap, cross_gap = 2,
+    wrap_children = true, cross_align = "center" }
+  for _, it in ipairs(items) do
+    local alts = type(it[1]) == "table" and it[1] or { it[1] }
+    local ks = row { gap = C.alt_gap, cross_align = "center" }
+    for _, k in ipairs(alts) do ks[#ks + 1] = keys_node(env, k, opts) end
+    out[#out + 1] = row { gap = C.word_gap, cross_align = "center", ks,
+      text(it[2], { size = size, color = opts.word or t.faint, wrap = "none" }) }
+  end
+  return out
+end
+
 -- ---------------------------------------------------------------- kui's doors
 
 -- "lua/counter@2" (an event's full name) or "counter@2" (a view's own):
@@ -825,6 +872,16 @@ function view(env, slot)
     return field_node(name, env, opts, params.focused ~= false and not params.prompt)
   end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
+  -- `ctx.icon(name, { size =, color = })`: `kawoosh.icon` in the view's
+  -- foreground. `ctx.keys("<C-w>j", { size =, color =, border = })`:
+  -- caps. `ctx.legend(items, { size =, word = })`: a key legend.
+  ctx.icon = function(icon, opts)
+    opts = opts or {}
+    if opts.color == nil then opts.color = t.fg end
+    return kawoosh.icon(icon, opts)
+  end
+  ctx.keys = function(notation, opts) return keys_node(env, notation, opts) end
+  ctx.legend = function(items, opts) return legend_node(env, items, opts) end
   local ok, tree = timed(fn, ctx)
   if not ok then
     return column { pad = 12, gap = 6,

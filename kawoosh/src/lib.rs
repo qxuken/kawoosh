@@ -34,6 +34,7 @@ pub mod harness;
 pub mod headers;
 pub mod help;
 pub mod history;
+pub mod icons;
 pub mod indent;
 pub mod inspector;
 pub mod jumps;

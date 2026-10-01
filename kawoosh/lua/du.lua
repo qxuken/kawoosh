@@ -351,7 +351,7 @@ kawoosh.view(VIEW, function(ctx)
       cross_align = "center", radius = 4,
       bg = on and (ctx.focused and t.selection or t.sunken) or nil,
       on_click = { kind = "row", i = i + 1 },
-      text(S.marked[e.path] and "●" or " ", { size = SIZE, color = t.danger, wrap = "none" }),
+      S.marked[e.path] and kawoosh.icon("dot", { size = SIZE, color = t.danger }) or row { width = SIZE, height = SIZE },
       row { width = 72, main_align = "end",
         text(human(e.bytes), { family = "mono", size = SIZE, color = e.bytes and t.fg or t.faint, wrap = "none" }) } }
     if wide then

@@ -207,12 +207,19 @@ preference one toggles.
 ## What moves now
 
 The first round: the tab's close (`close`), the search stages'
-close and `›`, the inspector's folds, the breadcrumbs' `›`, the
-corner's done mark (`check`), the modified dots of tab and pane
-titles and `:du`'s marks (`dot`), the terminal's "lines below"
-(`arrow-down` and a cap), the which-key's keys, and the legends and
-inline key hints — search, grammars, fonts, themes, settings,
-launcher, memory, undo.
+close and `›` (`chevron-right`), the inspector's folds (`folded`
+`unfolded`), the breadcrumbs' `›`, the corner's done mark (`check`),
+the modified dot of the pane title, of the tab label kawoosh writes
+(a `kawoosh.tab_title` hook still gets it as text in `title`, since
+its label is a string) and `:du`'s marks (`dot`), the terminal's
+"lines below" (`arrow-down` and a `<S-End>` cap), the which-key's
+keys, and the legends and inline key hints — search, grammars,
+fonts, themes, settings (its filter chips' `<A-m>` too), the
+launcher's letters (a launcher item's `hint` is a key notation now:
+`"<CR>"`), memory, undo.
+
+Not icons: the VCS log's graph (`graph.rs`) draws data — lanes and
+commits — with the same vectors, at a geometry of its own.
 
 ## Not yet
 
@@ -229,3 +236,26 @@ launcher, memory, undo.
   message line (`⏎ opens this one`) — strings, not drawings.
 - **Words on Linux and Windows** for the modifiers (`Ctrl`, `Alt`).
 - **A spinner** for "running" (the corner's `…`, `searching…`).
+
+## Built
+
+2026-10-02, as decided. `kawoosh/src/icons.rs`: the shapes
+(`default_shape`, `NAMES`), the set the user's shapes go over
+(`Icons`, shared as `Kawoosh::icons`, its `fg` the frame's), `resolve`
+into what is drawn, `icon` / `draw` / `icon_box` for the chrome;
+`caps` reading a notation through the keymap's `parse_notation`,
+`keys`, `keys_width` and `legend_items`, `CAP` the measures; and
+`lua_door`: `kawoosh.icon`, the `kawoosh.icons` table (a metatable
+over the set), `kawoosh.icon_names`, `kawoosh._key_caps`,
+`kawoosh._cap`. boot.lua's `ctx.icon`, `ctx.keys`, `ctx.legend`.
+The which-key keeps its words in the title and folds a numbered run
+as the first key's caps and `…9`. Tests: `icons.rs`'s unit tests
+(every shape centred in its box, notations as caps, an override and
+its clearing); `kawoosh/tests/icons.rs` — the tab's ×
+centred in its button and the button in its tab (red with the ×
+moved down a tenth: 1.3 px off), a user's shape in the chrome until
+cleared and a bad one refused, a Lua icon stroke for stroke the
+chrome's, caps no taller than their line with their icons in their
+middle and a legend wrapping between items, the panes' legends as
+caps, the which-key's and the undo panel's keys as caps.
+

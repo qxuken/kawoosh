@@ -1070,13 +1070,26 @@ impl Kawoosh {
                                     ui.text(src, TextStyle::new(small).color(pal.accent).nowrap());
                                     let has_progress =
                                         self.notes.progress.iter().any(|p| p.source == *src);
-                                    if has_progress {
-                                        let (mark, color) = if running {
-                                            ("…", pal.dim)
-                                        } else {
-                                            ("✓", pal.insert)
-                                        };
-                                        ui.text(mark, TextStyle::new(small).color(color).nowrap());
+                                    if has_progress && running {
+                                        ui.text("…", TextStyle::new(small).color(pal.dim).nowrap());
+                                    } else if has_progress {
+                                        // As tall as the name's line, the
+                                        // mark in its middle.
+                                        let line_h = ui
+                                            .measure_text("Mg", &TextStyle::new(small), None)
+                                            .height;
+                                        ui.with_keyed(
+                                            "done",
+                                            NodeSpec::row()
+                                                .height(line_h)
+                                                .cross_align(kui_native::Align::Center),
+                                            |ui| {
+                                                let set = self.icons.borrow();
+                                                crate::icons::icon(
+                                                    ui, &set, "check", small, pal.insert,
+                                                )
+                                            },
+                                        );
                                     }
                                 });
                             }

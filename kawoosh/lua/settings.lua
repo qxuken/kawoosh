@@ -515,7 +515,7 @@ local function control(r, ctx, t)
     return row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow", pad = { x = 6, y = 2 }, radius = 4, bg = t.sunken,
             border = { w = 1, color = t.accent }, f },
-      text("⏎ keeps · esc drops", { size = SIZE - 2, color = t.faint, wrap = "none" }) }
+      ctx.legend({ { "<CR>", "keeps" }, { "<Esc>", "drops" } }, { size = SIZE - 2, width = "fit" }) }
   end
   if r.kind == "choice" then
     local line = row { width = "grow", gap = 4, cross_gap = 4, wrap_children = true }
@@ -684,7 +684,7 @@ end
 -- rows alike.
 local FILTER_KEYS = { { "@modified", "m" }, { "@user", "u" }, { "@project", "p" }, { "@session", "s" } }
 
-local function filter_chips(t)
+local function filter_chips(ctx, t)
   local line = row { width = "grow", gap = 4, cross_gap = 4, wrap_children = true }
   local q = " " .. (S.query or ""):lower() .. " "
   for _, f in ipairs(FILTER_KEYS) do
@@ -694,12 +694,13 @@ local function filter_chips(t)
       bg = on and t.accent or t.sunken, hover_bg = not on and t.surface or nil,
       on_click = { kind = "filter", word = f[1] },
       text(f[1], { size = SIZE - 1, color = on and t.on_accent or t.muted, wrap = "none" }),
-      text("⌥" .. f[2], { size = SIZE - 3, color = on and t.on_accent or t.faint, wrap = "none" }) }
+      ctx.keys("<A-" .. f[2] .. ">", { size = SIZE - 3, color = on and t.on_accent or t.faint,
+                                       border = on and t.on_accent or nil }) }
   end
   return line
 end
 
-local function foot(t, files)
+local function foot(ctx, t, files)
   local col = column { width = "grow", gap = 4, pad = { x = PAD, y = 8 }, bg = t.sunken }
   local line = row { width = "grow", gap = 10, cross_gap = 4, wrap_children = true, cross_align = "center" }
   local function file(label, f, which)
@@ -716,9 +717,12 @@ local function foot(t, files)
   line[#line + 1] = row { width = "grow" }
   line[#line + 1] = button("reload", "reload", { kind = "reload" }, t)
   col[#col + 1] = line
-  local keys = "jk walk · ⏎ change · hl step · r reset · x clear :set · tab layers · gf file · u p s scope · ⌥m ⌥u ⌥p ⌥s filters · / search · q close"
-  if files.reloaded then keys = files.reloaded .. " · " .. keys end
-  col[#col + 1] = text(keys, { size = SIZE - 2, color = t.faint, wrap = "word" })
+  if files.reloaded then
+    col[#col + 1] = text(files.reloaded, { size = SIZE - 2, color = t.faint, wrap = "word" })
+  end
+  col[#col + 1] = ctx.legend({ { { "j", "k" }, "walk" }, { "<CR>", "change" }, { { "h", "l" }, "step" },
+    { "r", "reset" }, { "x", "clear :set" }, { "<Tab>", "layers" }, { "gf", "file" }, { { "u", "p", "s" }, "scope" },
+    { { "<A-m>", "<A-u>", "<A-p>", "<A-s>" }, "filters" }, { "/", "search" }, { "q", "close" } }, { size = SIZE - 2 })
   return col
 end
 
@@ -764,7 +768,7 @@ kawoosh.view(VIEW, function(ctx)
       text("/", { family = "mono", size = SIZE, color = t.accent, wrap = "none" }),
       search,
       text(count, { size = SIZE - 2, color = #S.shown == 0 and t.danger or t.faint, wrap = "none" }) },
-    filter_chips(t),
+    filter_chips(ctx, t),
     row { width = "grow", height = 1, bg = t.border } }
 
   local groups = grouped()
@@ -810,7 +814,7 @@ kawoosh.view(VIEW, function(ctx)
     end
   end
 
-  return column { width = "grow", height = "grow", bg = t.bg, gap = 0, head, body, foot(t, files) }
+  return column { width = "grow", height = "grow", bg = t.bg, gap = 0, head, body, foot(ctx, t, files) }
 end, function(ev)
   if not S then return end
   local function row_of(path)
