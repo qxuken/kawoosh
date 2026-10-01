@@ -1010,12 +1010,6 @@ impl Kawoosh {
         self.show_in_pane_as(name, text, None, true, Place::Column);
     }
 
-    /// `show_in_pane` with the keys left where they are: a pane watched
-    /// while typing goes on — the compile's output.
-    pub fn glance_in_pane(&mut self, name: &str, text: &str) {
-        self.show_in_pane_as(name, text, None, false, Place::Column);
-    }
-
     /// `show_in_pane`, with the buffer read as `language` and, with
     /// `focus`, the keyboard in the pane; at `place` when it is not on
     /// show — a column of its own for a text that is a subject of its

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_doc::BufferId;
-use kawoosh_editor::{ArgKind, Args, Selection, Setting, Spec, ViewId};
+use kawoosh_editor::{ArgKind, Args, Editor, Selection, Setting, Spec, ViewId};
 use kawoosh_lua::CompileOfferSnap;
 use kawoosh_systems::io::{IoMsg, ProcHandle};
 use kawoosh_systems::store::MomentKey;
@@ -36,6 +36,10 @@ pub struct Compile {
     /// What `*compile*` shows the run of, for `compile again`.
     pub cmd: Option<String>,
     pub cwd: Option<PathBuf>,
+    /// The file the run `*compile*` shows was asked from: what `%`
+    /// names in a line asked from `*compile*`, where the keys are once
+    /// it runs.
+    pub file: Option<PathBuf>,
     pub running: bool,
     /// The running command's, for `compile kill` (`<C-c>` in
     /// `*compile*`) and for the next `:compile`, which replaces it.
@@ -301,12 +305,22 @@ impl Kawoosh {
             None => line.to_string(),
         };
         let cwd = self.compile_dir_of(line);
-        let cmd = match self.focused_view() {
-            Some(v) if cmd.contains('%') => self.ed.expand_percent_from(v, &cmd, Some(&cwd))?,
-            _ if cmd.contains('%') => return Err("no file for %".into()),
-            _ => cmd,
+        let cmd = if cmd.contains('%') {
+            Editor::expand_percent_from(self.compile_file().as_deref(), &cmd, Some(&cwd))?
+        } else {
+            cmd
         };
         Ok(Line::Run(cmd, cwd))
+    }
+
+    /// The file `%` names in a line asked from here: the caret's; in
+    /// `*compile*`, the one its run was asked from.
+    fn compile_file(&self) -> Option<PathBuf> {
+        let v = self.focused_view()?;
+        if Some(self.ed.views[v].buffer) == self.compile.buffer {
+            return self.compile.file.clone();
+        }
+        self.ed.percent_path(v).ok()
     }
 
     /// Where a `:compile` line runs: a name's `cwd`, else where the
@@ -385,8 +399,8 @@ impl Kawoosh {
 
     /// `:compile LINE` / `kawoosh.compile(line)`: the line resolved
     /// ([`Self::compile_line`]) and run into `*compile*`, shown beside
-    /// the code with focus staying put; a named command wanting
-    /// arguments put in the prompt instead.
+    /// the code with the keys in it; a named command wanting arguments
+    /// put in the prompt instead.
     pub fn compile(&mut self, line: &str) {
         match self.compile_line(line) {
             Ok(Line::Run(cmd, cwd)) => self.compile_in(&cmd, cwd),
@@ -430,7 +444,10 @@ impl Kawoosh {
     }
 
     /// `cmd` run in `cwd` into `*compile*`, exactly, and remembered at
-    /// the head of the memory's list for this workspace.
+    /// the head of the memory's list for this workspace. The keys go to
+    /// `*compile*` — its pane made, or the one showing it already — and
+    /// `q` there gives them back to the pane they were in
+    /// (`Layout::close`).
     pub fn compile_in(&mut self, cmd: &str, cwd: PathBuf) {
         let mut recent: Vec<serde_json::Value> = self
             .recent_compiles()
@@ -455,14 +472,26 @@ impl Kawoosh {
         }
         self.compile.proc_id += 1;
         let id = self.compile.proc_id;
+        // Before the keys move: `r` in `*compile*` keeps the file.
+        self.compile.file = self.compile_file();
         let header = format!("$ {cmd}\n");
-        self.glance_in_pane(COMPILE_BUFFER, &header);
+        self.show_in_pane(COMPILE_BUFFER, &header);
         let buffer = self
             .ed
             .buffers
             .iter()
             .find(|(_, b)| b.name == COMPILE_BUFFER)
             .map(|(id, _)| id);
+        // Its views start at the end, and follow the output from there
+        // (`compile_append`).
+        if let Some(b) = buffer {
+            let end = self.ed.buffers[b].len();
+            for v in self.ed.views.values_mut() {
+                if v.buffer == b {
+                    v.sels = kawoosh_editor::Selections::single(Selection::point(end));
+                }
+            }
+        }
         self.compile.buffer = buffer;
         self.compile.cmd = Some(cmd.to_string());
         self.compile.cwd = cwd.clone();
@@ -622,10 +651,11 @@ impl Kawoosh {
         let len = b.len();
         b.replace(len..len, text);
         b.mark_saved();
-        // Views on the buffer follow the output.
+        // Views on the buffer follow the output while their caret is at
+        // its end; one moved up to read a line stays there.
         let last = b.len();
         for v in self.ed.views.values_mut() {
-            if v.buffer == id {
+            if v.buffer == id && v.sels.primary().head == len {
                 v.sels = kawoosh_editor::Selections::single(Selection::point(last));
             }
         }
@@ -821,10 +851,10 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         // compiled here, else what its files offer first (Decision 2).
         cmd(
             Spec::new("compile")
-                .alias(&["make"])
+                .alias(&["c", "make"])
                 .args(Args::rest(&[ArgKind::Text]))
                 .query("say what a bare :compile would run")
-                .doc("run NAME [ARGS] (compile.commands) or CMD, `%` the file — bare, compile.default, the last run here, what the project's files offer — into the *compile* buffer"),
+                .doc("run NAME [ARGS] (compile.commands) or CMD, `%` the file — bare, compile.default, the last run here, what the project's files offer — into the *compile* buffer, the keys there"),
             |k, ctx| {
                 if !ctx.args.is_empty() {
                     k.compile(&ctx.args.join(" "));

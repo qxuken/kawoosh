@@ -345,12 +345,17 @@ A formatter written in Lua is in [lua](lua.md#formatters).
 
 ## Compile commands
 
-`:compile CMD` (also `:make`) runs a command into the `*compile*`
-buffer. The paths with line numbers in its output are locations:
-`<CR>` on one opens it, and `]q` `[q` (`:cnext`, `:cprev`) walk them
-from anywhere. `<C-c>` in `*compile*` stops the command and what it
-started (`:compile kill`), `r` runs it again where it ran (`:compile
-again`), and `q` closes it.
+`:compile CMD` (also `:c` and `:make`) runs a command into the
+`*compile*` buffer, and the keys go there — to the pane it opens, or
+to the one showing it already. The caret follows the output while it
+is at the end; move it up to read a line and it stays there. The paths
+with line numbers in the output are locations: `<CR>` on one opens it
+in an editor pane beside, and `]q` `[q` (`:cnext`, `:cprev`) walk
+them from anywhere. `<C-c>` in `*compile*` stops the command and what
+it started (`:compile kill`), `r` runs it again where it ran
+(`:compile again`), and `q` closes it, the keys going back to the pane
+you were in. A `%` in a line run from `*compile*` is the file the run
+there was started from.
 
 `<leader>cc` is a bare `:compile`. It runs, in order of preference:
 

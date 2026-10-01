@@ -7,7 +7,8 @@ the same day, "let's read the memory" and "i also sometimes make
 build.nu files with arguments" (Decisions 2 and 6); round three,
 from "propose a way to pass arguments. i often use `yarn pw
 ...some-project-path`" and "we probably need custom compile commands
-that i can call", shaped over three exchanges (Decision 7). The calls
+that i can call", shaped over three exchanges (Decision 7); the keys
+in `*compile*` and `:c` 2026-10-02 (Decision 8). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -240,6 +241,43 @@ one (names first reads better; a hidden program is the user's own
 doing); a row per argument set in the settings (the recent lines are
 that, unwritten); a second picker for the path (completion and `%`
 are fewer keys).
+
+### 8. The keys go to `*compile*`, and `:c` is `:compile`
+
+*Added 2026-10-02, asked:* "compile should focus the panel it's
+created" and "compile should have fast alias maybe something like
+`:c`". Every compile ends in `compile_in`, so every door — `:compile`,
+`<leader>cc`, the picker's `<CR>`, `r`, `kawoosh.compile` — gives the
+keys to `*compile*`: to the pane it opens (a column of its own, as
+pane-placement.md Decision 2 has it), and, when one shows it already,
+to that one, the run there. The second is the call taken: a rerun
+from the file with the output beside it is the same act as the first
+run, and keys that went to the pane one time and stayed the next
+would make the user look before each `<C-c>`. `q` there closes it, the
+keys going back to the pane they were in last (pane-placement.md
+Decision 5).
+
+Two things follow from the keys being there. **The caret follows the
+output only while it is at the end** — the views start there, and one
+moved up to read an error, or put on a location by `]q`, stays as more
+lines come, where before every line pulled every view down. **`%` in a
+line asked from `*compile*` is the file its run was asked from**
+(`Compile::file`), not "no file for %": with `compile.default = "pw"`
+and `pw = "yarn pw %"`, `<leader>cc` from the spec and `<leader>cc`
+again from its output test the same spec. `r` keeps it too. The
+project is read from where the run ran, as before (Decision 1).
+
+**`:c`** is the alias, beside `:make`. Nothing had it: kawoosh resolves
+a name, an alias or nothing — no prefix matching — and vim's `:c`
+(`:change`) has no kawoosh counterpart. vim's quickfix family is here
+already as `:cn` `:cp`, so `:c` reads as one of them. `:c pick`, `:c?`
+and `<Tab>` after `:c ` work as for `:compile`, the alias resolved
+before anything reads the line.
+
+Beaten: focusing only a pane just made (what `show_in_pane` alone
+would say for a text pane), for the inconsistency above; and `:cc`,
+which is vim's "go to error N" and would be the natural spelling of a
+`]q` with a count.
 
 ## Not built
 
