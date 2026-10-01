@@ -3567,16 +3567,21 @@ impl Editor {
         if self.is_field(view) {
             text = text.replace('\n', " ");
         }
-        // A tab is `<Tab>`'s: each caret's own run to the next stop.
+        // A tab is `<Tab>`'s: each caret's own run to the next stop,
+        // from where the carets before it on its line leave it.
         let id = self.views[view].buffer;
         let (buf, ts) = (&self.buffers[id], self.tabstop_in(id));
+        let mut cols = motions::EditCols::default();
         let edits = self.views[view]
             .sels
             .iter()
             .enumerate()
             .map(|(i, s)| {
                 let text = if text == "\t" {
-                    self.tab_from(id, motions::display_col(buf, s.head, ts))
+                    let col = cols.at(buf, s.head, ts);
+                    let tab = self.tab_from(id, col);
+                    cols.put(buf, s.head..s.head, col, &tab, ts);
+                    tab
                 } else {
                     text.clone()
                 };

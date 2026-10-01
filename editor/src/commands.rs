@@ -2121,20 +2121,25 @@ pub fn install(ed: &mut Editor) {
             }
         }
         if c != '\n' {
-            // A tab is `<Tab>`'s, each from the column the last left.
+            // A tab is `<Tab>`'s, each from the column the last left —
+            // the carets' before it on its line too.
             let ts = ed.tabstop_in(id);
+            let mut cols = m::EditCols::default();
             let edits = edits
                 .into_iter()
                 .map(|(i, r)| {
                     let text = if c == '\t' {
-                        let mut col = m::display_col(buf, r.start, ts);
-                        (0..ctx.count)
+                        let start = cols.at(buf, r.start, ts);
+                        let mut col = start;
+                        let text: String = (0..ctx.count)
                             .map(|_| {
                                 let t = ed.tab_from(id, col);
                                 col = t.chars().fold(col, |col, c| m::advance(col, c, ts));
                                 t
                             })
-                            .collect()
+                            .collect();
+                        cols.put(buf, r.clone(), start, &text, ts);
+                        text
                     } else {
                         c.to_string().repeat(ctx.count)
                     };

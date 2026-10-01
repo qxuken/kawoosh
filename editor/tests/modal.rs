@@ -267,6 +267,29 @@ fn tab_stops_count_the_cells_drawn() {
     assert_eq!(t.text(), "e\u{301}   ", "the accent takes no cell");
 }
 
+/// Several carets on a line under `expandtab`: each tab reaches a stop
+/// from where the carets before it leave it, not from where it stood
+/// before they typed.
+#[test]
+fn tab_stops_of_carets_on_one_line_count_the_ones_before() {
+    let carets = |t: &mut T| {
+        t.ed.views[t.v].sels = kawoosh_editor::Selections {
+            items: vec![Selection::point(1), Selection::point(3)],
+            primary: 0,
+        };
+    };
+    let mut t = T::new("abcd");
+    t.keys(":set shiftwidth=4<CR>i");
+    carets(&mut t);
+    t.keys("<Tab>");
+    assert_eq!(t.text(), "a   bc  d", "the second from cell 6 to 8");
+    let mut t = T::new("abcd");
+    t.keys(":set shiftwidth=4<CR>");
+    carets(&mut t);
+    t.keys("r<Tab>");
+    assert_eq!(t.text(), "a   c   ", "the second from cell 5 to 8");
+}
+
 /// `r` stops where the line's text does, however the line ends: a
 /// `\r\n` line's `\r` is not a character to replace (neovim's `3rx` on
 /// `ab` fails there too).

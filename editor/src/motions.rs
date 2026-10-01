@@ -21,6 +21,45 @@ pub fn display_col(buf: &Buffer, offset: usize, tabstop: usize) -> usize {
         .fold(0, |col, c| advance(col, c, tabstop))
 }
 
+/// The screen columns of edits made in order at once — several
+/// carets' — each read as it will be once those before it on its line
+/// are in: an earlier caret's tab moves where a later one's stop is.
+#[derive(Default)]
+pub struct EditCols {
+    /// The last edit's line, its end in the text before the edits, and
+    /// the column its new text ends at.
+    last: Option<(usize, usize, usize)>,
+}
+
+impl EditCols {
+    /// The column an edit starting at `at` (in the text before the
+    /// edits) starts at.
+    pub fn at(&self, buf: &Buffer, at: usize, tabstop: usize) -> usize {
+        match self.last {
+            Some((ln, end, col)) if ln == buf.line_of(at) && end <= at => buf
+                .slice(end..at)
+                .chars()
+                .fold(col, |col, c| advance(col, c, tabstop)),
+            _ => display_col(buf, at, tabstop),
+        }
+    }
+
+    /// The edit of `range` to `text`, from column `col`, made.
+    pub fn put(
+        &mut self,
+        buf: &Buffer,
+        range: std::ops::Range<usize>,
+        col: usize,
+        text: &str,
+        tabstop: usize,
+    ) {
+        self.last = (!text.contains('\n')).then(|| {
+            let end = text.chars().fold(col, |col, c| advance(col, c, tabstop));
+            (buf.line_of(range.start), range.end, end)
+        });
+    }
+}
+
 /// The screen column after `c` at `col`.
 pub fn advance(col: usize, c: char, tabstop: usize) -> usize {
     col + cells_of(c, col, tabstop)
