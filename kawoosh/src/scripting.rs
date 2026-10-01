@@ -865,8 +865,18 @@ impl Kawoosh {
                 focus,
                 line,
                 places,
-                beside,
-            } => self.multi_from_lua(&name, parts, show, focus, line, places, beside),
+                place,
+                restore,
+            } => self.multi_from_lua(
+                &name,
+                parts,
+                show,
+                focus,
+                line,
+                places,
+                place.as_deref().and_then(Place::parse),
+                restore,
+            ),
             Msg::Walk { token, root } => {
                 // A host's walk is capped and kept: said once.
                 if let Some((d, _)) = kawoosh_systems::fs::domain_of(&root)
@@ -1049,6 +1059,14 @@ impl Kawoosh {
                 },
                 None => self.ed.message = "blame: no such buffer".into(),
             },
+            Msg::Header {
+                buffer,
+                name,
+                header,
+            } => match self.lua_buffer(buffer, name) {
+                Some(id) => self.set_header(id, header),
+                None => self.ed.message = "header: no such buffer".into(),
+            },
             Msg::Mask {
                 buffer,
                 name,
@@ -1223,7 +1241,16 @@ impl Kawoosh {
                 {
                     self.ed.open_field(f, "");
                 }
+                let follow = field.is_some();
+                // Where `<C-S-k>` goes back to in a header.
+                if let Some(f) = &field {
+                    self.header_last.insert(view.clone(), f.clone());
+                }
                 rt.set_field_focus(&view, field);
+                // A header's field: the keys to the pane that draws it.
+                if follow {
+                    self.header_follow_field(&view);
+                }
             }
             Msg::FieldSet { name, text } => {
                 let v = match self.ed.find_field(&name) {
@@ -1287,6 +1314,10 @@ impl Kawoosh {
         if scratch.is_empty() {
             return;
         }
+        // Before the first frame publishes it: a plugin filling its
+        // buffer asks the memory for this workspace's (the search's last).
+        self.note_workspace();
+        rt.set_workspace(self.moments.workspace());
         rt.publish(&self.ed, self.focused_view());
         for (name, h) in scratch {
             rt.restore_hook(&name, h);
@@ -1765,6 +1796,9 @@ impl Kawoosh {
         let params = Value::map([
             ("pane", Value::Int(pane as i64)),
             ("focused", Value::Bool(focused)),
+            // The keys on the command line over it: its fields draw no
+            // caret, one caret on the screen.
+            ("prompt", Value::Bool(self.ed.prompt_view().is_some())),
             (
                 "width",
                 Value::Float(rect.map(|r| r.w as f64).unwrap_or(0.0)),

@@ -456,6 +456,15 @@ end
 -- A colour is a role — `fg` `dim` `faint` `accent` `danger`, `added`
 -- `modified` `ignored` `conflict` — or a syntax token's name
 -- (`comment`, `keyword`, …). `dir.lua`'s version control marks paint.
+-- kawoosh.buf.header({ view =, height =, field = }[, buffer]): the
+-- Lua view `view` drawn over the buffer's text, `height` logical px
+-- tall (as tall as the view draws without one), in every pane that
+-- shows it — one pane, the view's fields on top and the text under
+-- them (the project search's bar over its results). The keys are on
+-- the view's field while it has one focused (`kawoosh.field_focus`),
+-- on the text otherwise: `<Esc>` in a field's normal mode and `pane
+-- down` (`<C-S-j>`) hand them down, `pane up` (`<C-S-k>`) takes them up
+-- to the field focused last, else `field`. nil takes the header off.
 -- kawoosh.secrets.private(path): whether a rule names the file;
 -- kawoosh.secrets.mask_text(text, path[, language]): the text with
 -- what the rules for that file mask drawn as `•` — a list's line.
@@ -806,7 +815,11 @@ function view(env, slot)
   local ctx = { pane = pane, focused = params.focused, width = params.width,
                 height = params.height, share = params.share, origin = params.origin, env = env,
                 name = name }
-  ctx.field = function(opts) return field_node(name, env, opts, params.focused ~= false) end
+  -- A field draws its caret while its pane has the keys — not while
+  -- the command line over it does: one caret on the screen.
+  ctx.field = function(opts)
+    return field_node(name, env, opts, params.focused ~= false and not params.prompt)
+  end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
   local ok, tree = timed(fn, ctx)
   if not ok then

@@ -117,6 +117,17 @@ pub enum FsOp {
     Copy(PathBuf, PathBuf),
 }
 
+/// A buffer's header as `kawoosh.buf.header` gives it: the Lua view
+/// over its text, its height in logical px (none: as tall as it
+/// draws), and the field the keys go up to when none of the view's was
+/// focused yet (`lua:VIEW/NAME`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeaderSpec {
+    pub view: String,
+    pub height: Option<f32>,
+    pub field: Option<String>,
+}
+
 /// What Lua asked for. Editor-level messages are applied inside the
 /// command that ran the script; the rest reach the shell.
 #[derive(Clone, Debug, PartialEq)]
@@ -236,8 +247,13 @@ pub enum Msg {
         line: Option<usize>,
         /// A list: what it lists, which `]q` walks.
         places: Option<MultiPlaces>,
-        /// Shown in a pane of its own beside, as a list is.
-        beside: bool,
+        /// Where a pane of its own opens when none shows it: `under`
+        /// (`beside = true`, as a list is) or `column`; none, the
+        /// focused editor pane.
+        place: Option<String>,
+        /// A session brings its pane back, empty under its name, for
+        /// the plugin that made it to fill (`kawoosh.on_restore`).
+        restore: bool,
     },
     /// `kawoosh.search_paint{ pattern =, regex =, word =, case = }`: the
     /// editor's search set to what a project search looked for — what
@@ -411,6 +427,14 @@ pub enum Msg {
         name: Option<String>,
         set: String,
         spans: Vec<(usize, usize, String)>,
+    },
+    /// `kawoosh.buf.header({ view =, height =, field = }[, buffer])`:
+    /// the Lua view drawn over the buffer's text in every pane that
+    /// shows it; nil takes it off.
+    Header {
+        buffer: Option<u64>,
+        name: Option<String>,
+        header: Option<HeaderSpec>,
     },
     /// `kawoosh.buf.mask(ranges[, buffer])`: byte ranges (0-based,
     /// end exclusive) drawn as `•`, replacing the plugin's earlier ones
@@ -4770,6 +4794,33 @@ fn seed(
             Ok(())
         })?,
     )?;
+    let (qq, pp) = (q(queue), published.clone());
+    buf.set(
+        "header",
+        lua.create_function(move |_, (spec, which): (Option<Table>, Option<LV>)| {
+            let (buffer, name) = which_buffer(&pp, which)?;
+            let header = match spec {
+                Some(t) => {
+                    let view: String = t.get("view")?;
+                    let field = t
+                        .get::<Option<String>>("field")?
+                        .map(|f| format!("lua:{view}/{f}"));
+                    Some(HeaderSpec {
+                        view,
+                        height: t.get("height")?,
+                        field,
+                    })
+                }
+                None => None,
+            };
+            qq.borrow_mut().push(Msg::Header {
+                buffer,
+                name,
+                header,
+            });
+            Ok(())
+        })?,
+    )?;
     k.set("buf", buf)?;
     nodes::install(lua, &k, published, queue)?;
     // `kawoosh.secrets`: what the mask rules say of a path and a text,
@@ -5289,9 +5340,13 @@ fn seed(
     // newline) or a file's lines, `{ path =, from =, to = }` from 1,
     // `to` the last. The multibuffer named `name` is refilled when
     // open, else made; shown unless `show = false` — where it is on
-    // show, else in the focused editor pane, else the first on screen —
-    // the keyboard going to it unless `focus = false`. `parts` nil shows
-    // the one open as it is.
+    // show, else in the focused editor pane, else the first on screen;
+    // or, with `place` (`under`, `column`; `beside = true` is `under`),
+    // in a pane of its own opened there — the keyboard going to it
+    // unless `focus = false`. `parts` nil shows the one open as it is.
+    // `restore = true`: a session brings its pane back, empty under its
+    // name, for `kawoosh.on_restore` to fill — a multibuffer made then
+    // by that name takes the empty one's panes.
     let qq = q(queue);
     k.set(
         "multibuffer",
@@ -5366,7 +5421,12 @@ fn seed(
                         .as_ref()
                         .and_then(|t| t.get::<Option<usize>>("line").ok().flatten()),
                     places,
-                    beside: matches!(get("beside"), Some(LV::Boolean(true))),
+                    place: match get("place") {
+                        Some(LV::String(s)) => Some(s.to_str()?.to_string()),
+                        _ if matches!(get("beside"), Some(LV::Boolean(true))) => Some("under".into()),
+                        _ => None,
+                    },
+                    restore: matches!(get("restore"), Some(LV::Boolean(true))),
                 });
                 Ok(())
             },

@@ -154,6 +154,13 @@ pub struct Kawoosh {
     /// The `lua:NAME` fact published for the focused Lua view, to be
     /// taken back when the keys leave it (`sync_facts`).
     pub(crate) lua_fact: Option<String>,
+    /// The Lua views drawn over buffers' text (`headers.rs`).
+    pub(crate) headers: HashMap<kawoosh_doc::BufferId, crate::headers::Header>,
+    /// The headers as tall as they draw, as laid out last, by pane.
+    pub(crate) header_heights: HashMap<PaneId, f32>,
+    /// The field each Lua view had focused last, by the view's name:
+    /// where the keys go up into its header.
+    pub(crate) header_last: HashMap<String, String>,
     /// The pane being made, while a launcher asks what it is for
     /// (`launcher.rs`).
     pub launcher: Option<crate::launcher::Launcher>,
@@ -407,6 +414,9 @@ impl Kawoosh {
             nodes: Default::default(),
             keys_help: None,
             lua_fact: None,
+            headers: HashMap::new(),
+            header_heights: HashMap::new(),
+            header_last: HashMap::new(),
             launcher: None,
             md_images: Default::default(),
             md_pending: Vec::new(),
@@ -1767,6 +1777,14 @@ impl Kawoosh {
         // the engine sends a key on any view to its field — so one
         // opened from a terminal or Lua pane (`<C-w>:`) works too.
         if chord {
+        } else if let Some(f) = self
+            .header_field()
+            .filter(|_| self.ed.prompt_view().is_none())
+        {
+            // A header's field (`headers.rs`): the editor's own line, as
+            // a Lua pane's field is, until `<Esc>` hands the keys down.
+            self.ed.key(f, stroke.clone());
+            self.cmdline_refresh();
         } else if let Some(v) = self.focused_view().or_else(|| self.ed.prompt_view()) {
             if self.ed.prompt_view().is_none() && self.completion_key(&stroke) {
                 self.follow_caret = true;
@@ -1970,6 +1988,8 @@ impl Kawoosh {
     fn on_drag(&mut self, pane: PaneId, d: Drag) {
         if d.phase == DragPhase::Start {
             self.layout.focus(pane);
+            // A press in the text under a header: the keys down to it.
+            self.header_blur(pane);
         }
         let Some(view) = self.view_of(pane) else {
             return;
@@ -2801,6 +2821,12 @@ impl Kawoosh {
         if let Some(l) = ev.layout()
             && ev.slot.is_none()
         {
+            if tag_kind == Some("headerlayout") {
+                if let Some(pane) = pane {
+                    self.header_laid(pane, l.rect.h);
+                }
+                return;
+            }
             if let Some(pane) = pane {
                 let r = l.rect;
                 self.layout.rects.insert(
@@ -2838,7 +2864,11 @@ impl Kawoosh {
             // open, every frame asked again and a terminal pasted
             // each answer, for good.
             let pasted = std::mem::take(&mut self.awaiting_paste);
-            if let Some(v) = self.focused_view() {
+            if let Some(v) = self
+                .header_field()
+                .filter(|_| self.ed.prompt_view().is_none())
+                .or_else(|| self.focused_view())
+            {
                 if pasted {
                     self.ed.paste_text_marked(v, &text, secret);
                 } else {

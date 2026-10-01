@@ -430,13 +430,19 @@ impl Kawoosh {
         }
     }
 
+    /// The workspace the memory files moments under, as the working
+    /// directory says now.
+    pub(crate) fn note_workspace(&mut self) {
+        if self.moments.workspace.0 != self.cwd {
+            self.moments.workspace = (self.cwd.clone(), workspace_of(&self.cwd));
+        }
+    }
+
     /// Once a frame, after the histories: the signals of the frame,
     /// and a flush when the memory has been still for [`QUIET`].
     pub fn sync_moments(&mut self, force: bool) {
         let now = Instant::now();
-        if self.moments.workspace.0 != self.cwd {
-            self.moments.workspace = (self.cwd.clone(), workspace_of(&self.cwd));
-        }
+        self.note_workspace();
         // The focused pane's buffer: a visit when its subject is not
         // the one the keyboard last attended — a pane onto another
         // file, not the keyboard back from a picker, the dock or the

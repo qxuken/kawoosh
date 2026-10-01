@@ -174,7 +174,19 @@ impl Kawoosh {
                 // again at every launch); a private file is its path,
                 // opened again like any other (docs/design/secrets.md).
                 // Nor does a multibuffer: its text is its files', and the
-                // search that made it is asked for again.
+                // search that made it is asked for again — but one made
+                // to be restored comes back by its name, empty, for its
+                // plugin to fill (`kawoosh.on_restore`).
+                if self.ed.is_multi(view.buffer) && self.multis.restored.contains(&view.buffer) {
+                    return PaneData::Editor {
+                        path: None,
+                        scratch: None,
+                        hook: Some(buf.name.clone()),
+                        line: 0,
+                        col: 0,
+                        top: 0,
+                    };
+                }
                 if (buf.private && buf.path.is_none()) || self.ed.is_multi(view.buffer) {
                     return PaneData::Editor {
                         path: None,

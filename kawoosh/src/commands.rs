@@ -247,6 +247,7 @@ impl Kawoosh {
     pub fn keyed_view(&self) -> Option<ViewId> {
         self.ed
             .prompt_view()
+            .or_else(|| self.header_field())
             .or_else(|| self.focused_view())
             .or_else(|| match self.layout.focused_content() {
                 Some(Content::Lua(name)) => self.lua_field_focused(&name),
@@ -332,6 +333,8 @@ impl Kawoosh {
         // are gated by.
         let lua = match content {
             Some(Content::Lua(name)) => Some(format!("lua:{name}")),
+            // A buffer's header is the view's place too (`headers.rs`).
+            Some(Content::Editor(v)) => self.header_of(v).map(|h| format!("lua:{}", h.view)),
             _ => None,
         };
         if self.lua_fact != lua {
@@ -384,8 +387,18 @@ impl Kawoosh {
     }
 
     fn focus_neighbour(&mut self, dir: SplitDir, fwd: bool) {
+        // A pane wearing a header is two stops up and down (`headers.rs`):
+        // the bar over the text, `<C-S-k>` up into it, `<C-S-j>` down.
+        let at = self.layout.focused();
+        if dir == SplitDir::V && self.header_step(at, fwd) {
+            return;
+        }
         if let Some(p) = self.layout.neighbour(dir, fwd) {
             self.layout.focus(p);
+            // Into one from above, its header; from below, its text.
+            if dir == SplitDir::V {
+                self.header_arrive(p, fwd);
+            }
         }
     }
 

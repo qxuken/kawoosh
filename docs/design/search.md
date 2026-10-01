@@ -185,24 +185,25 @@ files with a diagnostic" — and the bundled three are written that way.
 ### 9. The bar and the results
 
 `:search project [PATTERN]` (`:grep`, `<leader>ss`, and ⌘⇧F as Zed's;
-`:search` alone is `/`'s) opens **the bar** below the pane the keys are
-on — opened as tall as its rows from the first frame (`view_open`'s
-`height`), not resized after — a Lua view with the fields `find`,
+`:search` alone is `/`'s) opens **the panel** (Decision 11): one pane,
+a column of its own, whose text is the results and whose header is
+**the bar** — as tall as its rows from the first frame — a Lua view
+with the fields `find`,
 `include` and `exclude`, the flags drawn as toggles, the count, the
 stages' trail (each with a `×` that takes it out) and, small and dim,
 the keys. `:search project` starts at the workspace's root every time; from
 visual mode the selection's first line is put in `find`, not run yet;
 `:search here` (`<leader>sS`) at the file's directory, for that search
 only. `<CR>` in a field runs
-the search into `*search*`, the results multibuffer, in the editor pane
-above — not as it is typed: each run opens its files, and the picker's
+the search into `*search*`, the results multibuffer, under the bar —
+not as it is typed: each run opens its files, and the picker's
 `grep` is the as-you-type search; the keyboard stays in the bar.
 `<Tab>` `<S-Tab>` go between the fields; `<A-r>` `<A-c>` `<A-w>`
 `<A-g>` flip regex, case, whole word and ignored files; `<A-a>` adds a
 stage after the cursor's (`in` first, `<A-k>` cycles its kind), `<A-x>`
 takes the cursor's out, `<A-h>` `<A-l>` move between stages; `<C-c>`
-(or `<Esc>` in normal mode) closes the bar, the results staying;
-`<C-j>` puts the keyboard in the results; `<Up>` `<Down>` in a field
+closes the panel, the results kept for the next;
+`<C-j>` (or `<Esc>` in normal mode) puts the keyboard in the results; `<Up>` `<Down>` in a field
 walk the searches made in this workspace before. ⌥N and ⌥I, the obvious
 spellings, are macOS's dead keys: they swallow the key after them, so
 the bar does not use them.
@@ -211,9 +212,10 @@ In the results, the matches are the editor's search (`n` walks them,
 the paint is `/`'s), the header over each file says its path and
 count on a band across the pane — the engine says which gap lines open
 a file (`MultiLine::Header`), the renderer bands them, a `⋯` is faint — the gutter numbers each excerpt's lines as the file's, and
-`<CR>` in normal mode opens the file at the caret's line and column
-(`<C-v>` beside). `:search project` again, from anywhere, brings the bar
-back with its stages.
+`<CR>` in normal mode opens the file at the caret's line and column in
+the pane the search was asked for from (`<C-v>` in a column of its
+own). `:search project` again, from anywhere, brings the bar back with
+its stages.
 
 Every run is remembered (memory.md Decision 9): a `search.project`
 moment in the workspace, its subject the stages spelled
@@ -255,6 +257,81 @@ The matches themselves are not searched again: after a rename the
 excerpts show the new name and the paint no longer finds it. `⏎` in the
 bar searches again; results that follow their query are a later round.
 
+### 11. The panel: one pane, the bar its results' header
+
+Asked 2026-10-01: "i think it should become standalone one. it has bug
+right now, that i close in on second panel, it opens result in a first
+one. i think correct behaviour would be open panel results shown in
+itself but g-space opens in a prev panel or as new panel with some
+kind of different bind". The bar was a Lua pane opened under the pane
+the keys were on, and the results went to "the editor pane the keys
+are on, else the first on screen" — from the bar, always the first.
+Two panes that belong together and are found apart by a rule are the
+bug's shape; the user chose one pane over the two-pane column (the
+recommendation) for that reason: "it will eliminate the number of bugs
+with a linked panels".
+
+- **A buffer may wear a header** (`kawoosh.buf.header({ view =,
+  height = }[, buffer])`, `kawoosh/src/headers.rs`): a Lua view drawn
+  over its text, at a fixed height, in every pane that shows it. The
+  keys are the header's while its view has a field focused
+  (`kawoosh.field_focus`), the text's otherwise: `field blur` (`<Esc>`
+  in a field's normal mode) and a press in the text hand them down; a
+  field focused from Lua brings them — and the pane — up. While the
+  pane shows it the view's `lua:NAME` fact holds, so its commands run
+  from either half. Nothing ties two panes, so nothing can come apart;
+  any plugin's buffer can wear one.
+- **The panel is a column of its own** (pane-placement.md's rule: a
+  subject of its own): `kawoosh.multibuffer`'s `place = "column"` opens
+  `*search*` beside the pane the keys are on when no pane shows it; one
+  that does is brought forward instead, never a second.
+- **The panel stays; files open where it was asked from.** The pane
+  `:search project` was run from is the panel's `came_from`
+  (`Layout::tie`), asked again from another editor pane, that one. A
+  multibuffer wearing a header is a panel: `multi open` (`<CR>`,
+  `g<Space>`) shows the file in that pane — else another editor pane on
+  screen, else a column of its own — and the keys go with it, as
+  vim's quickfix `<CR>` goes to the previous window. `<C-v>` opens it in
+  a column of its own beside the panel. A pane under the previous one
+  (`<C-s>`, offered) was left out: `<C-s>` writes, and in the results
+  writes every file they changed.
+- **The bar and the results are two stops up and down.** Asked the
+  same day — "navigation between panel and editor could be done
+  better", then "C-S-j/k would be nice": `pane up` and `pane down`
+  (`<C-S-k>` `<C-S-j>`, `<C-w>k` `<C-w>j`) step between a header and its
+  text inside the pane — up into the field the view had last — before
+  they leave it, and a pane wearing a header is entered at the side
+  the move came from: its header from above, its text from below.
+  `<C-k>` stays the caret above.
+- **A header is as tall as its view draws** unless it gives a
+  `height`: the shell reads the height back from the layout and sizes
+  the text under it by it, a frame late. The bar's key legend wraps,
+  between hints and never inside one, in a narrow panel (asked: "legend
+  doesn't wrap"); one key a hint, then ("reading is ambiguous"). Then
+  hidden unless asked for — "it takes way too much space, however I
+  think we can make it toggle-able" — `<A-/>` (`?` without its shift;
+  `<A-l>` is the next stage, and ⌥E ⌥U ⌥N ⌥I are macOS's dead keys)
+  flips it for the session, `search.legend` says how it starts, and a
+  dim `⌥/ keys` at the end of the stages' row says it is there.
+- `<C-c>` closes the panel's pane, the running search stopped, the
+  results kept: `:search project` brings them back.
+- **A session brings the panel back as the search.** Asked the same
+  day: "the panel restores as scratch. let's restore it as search. can
+  be clear but search. better if we restore it's filters and even
+  better if we restore results". A multibuffer made with `restore =
+  true` is saved by its name (the session's `hook`, which a plugin's
+  scratch already came back by), comes back as an empty stand-in under
+  it, and `kawoosh.on_restore` fills it: a multibuffer made then by that
+  name takes the stand-in's panes. The search's fills it with the last
+  search the workspace's memory has (Decision 9's `search.project`
+  moments, the session keeping no stages of its own) and runs it, so
+  the results are the files as they are now, not as they were; with
+  none, the bar over "nothing searched yet". The flag is the shell's,
+  not `Buffer::hook`: a hooked buffer's `:w` is its plugin's, and the
+  results' `:w` writes their files. The workspace is published to Lua
+  before the restores fire, not on the first frame, so a plugin's
+  restore can ask the memory.
+
 ## Built
 
 2026-09-25, in four commits: the engine (`editor/src/multi.rs`,
@@ -275,5 +352,3 @@ three rows.
   The engine takes excerpts as given; growing one is a re-make.
 - **A multibuffer for other answers**: a diff's hunks. References and
   diagnostics are lists now ([lists.md](lists.md), 2026-09-26).
-- **A session's search**: a session keeps neither the results nor the
-  stages; the bar is asked for again, as the picker is.

@@ -818,7 +818,16 @@ impl Kawoosh {
                     );
                 }
                 match &content {
-                    Some(Content::Editor(v)) => self.render_editor(ui, pane, *v, focused),
+                    // A buffer wearing a header (`headers.rs`): the view
+                    // over the text, the keys the field's while it has one.
+                    Some(Content::Editor(v)) => match self.header_of(*v).cloned() {
+                        Some(h) => {
+                            let up = focused && self.header_keyed(pane);
+                            self.render_header(ui, pane, &h, up);
+                            self.render_editor(ui, pane, *v, focused && !up);
+                        }
+                        None => self.render_editor(ui, pane, *v, focused),
+                    },
                     Some(Content::Terminal(t)) => self.render_terminal(ui, pane, *t, focused),
                     Some(Content::Lua(n)) => self.render_lua_pane(ui, pane, n, focused),
                     Some(Content::Undo) => self.render_undo(ui, pane, focused),
@@ -1116,7 +1125,8 @@ impl Kawoosh {
             .rects
             .get(&pane)
             .map(|r| r.h - self.chrome.pane_title_h - 2.0)
-            .unwrap_or(self.body_h - self.chrome.pane_title_h);
+            .unwrap_or(self.body_h - self.chrome.pane_title_h)
+            - self.header_height(pane, view);
         let rows_n = ((height / self.face.line_height).floor().max(1.0)) as usize;
         let scrolloff = self
             .ed
