@@ -1,8 +1,8 @@
 //! The Lua test harness (roadmap step 8): every script under
 //! `kawoosh/lua/tests` runs on `kawoosh::harness::run_file`, the same
 //! way `kawoosh test PATH` runs one — the bundled plugins' tests in
-//! Lua are the harness's acceptance test. One test, the scripts in
-//! sequence.
+//! Lua are the harness's acceptance test. One test, each script on a
+//! thread of its own, as each is an app of its own.
 
 use std::path::Path;
 
@@ -16,12 +16,19 @@ fn the_bundled_plugins_lua_tests_pass() {
         .collect();
     files.sort();
     assert!(!files.is_empty(), "no scripts under {}", dir.display());
-    let mut failures = Vec::new();
-    for f in &files {
-        if let Err(e) = kawoosh::harness::run_file(f) {
-            failures.push(format!("{}: {e}", f.display()));
-        }
-    }
+    let failures: Vec<String> = std::thread::scope(|s| {
+        let runs: Vec<_> = files
+            .iter()
+            .map(|f| (f, s.spawn(|| kawoosh::harness::run_file(f))))
+            .collect();
+        runs.into_iter()
+            .filter_map(|(f, run)| match run.join() {
+                Ok(Ok(())) => None,
+                Ok(Err(e)) => Some(format!("{}: {e}", f.display())),
+                Err(_) => Some(format!("{}: panicked", f.display())),
+            })
+            .collect()
+    });
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 

@@ -883,9 +883,14 @@ pub struct Editor {
     pub count: Option<usize>,
     /// An operator waiting for its motion, with the count typed before it.
     pub pending_op: Option<(&'static str, usize)>,
-    /// The register `"` named for the next command: only `_`, the
-    /// black hole, whose text is dropped — no register, no clipboard.
+    /// The register `"` named for the next command: `_`, the black
+    /// hole, whose text is dropped — no register, no clipboard — or
+    /// `"`, the one there always is.
     pub pending_register: Option<char>,
+    /// The count typed before `"`, while its register is named: the
+    /// next command's count is it times the one typed after (`2"_3x`
+    /// takes six).
+    pub register_count: Option<usize>,
     /// A command waiting for its character argument.
     pub(crate) awaiting_char: Option<(Binding, Option<usize>)>,
     /// The last `f` / `t`: the character, whether forward, whether
@@ -1029,6 +1034,7 @@ impl Editor {
             count: None,
             pending_op: None,
             pending_register: None,
+            register_count: None,
             awaiting_char: None,
             last_find: None,
             last_put: None,
@@ -2323,10 +2329,12 @@ impl Editor {
         }
         if let Some(n) = count {
             let counted = |s: &Step| matches!(s, Step::Command { count: Some(_), .. });
+            // Not the naming of a register, which takes no count.
+            let command = |s: &Step| matches!(s, Step::Command { name, .. } if name != "register");
             let at = steps
                 .iter()
                 .position(counted)
-                .or_else(|| steps.iter().position(|s| matches!(s, Step::Command { .. })));
+                .or_else(|| steps.iter().position(command));
             for (i, s) in steps.iter_mut().enumerate() {
                 if let Step::Command { count, .. } = s {
                     *count = (Some(i) == at).then_some(n);
@@ -2887,6 +2895,7 @@ impl Editor {
                 self.count = None;
                 self.pending_op = None;
                 self.pending_register = None;
+                self.register_count = None;
                 self.surround = Default::default();
                 return true;
             }
@@ -3048,9 +3057,7 @@ impl Editor {
             Lookup::Prefix => true,
             Lookup::None => {
                 self.pending.clear();
-                self.count = None;
-                self.pending_op = None;
-                self.pending_register = None;
+                self.drop_pending(view);
                 false
             }
             Lookup::Exact(mut bs) => {
@@ -3091,9 +3098,7 @@ impl Editor {
                         }
                         None => {
                             self.pending.clear();
-                            self.count = None;
-                            self.pending_op = None;
-                            self.pending_register = None;
+                            self.drop_pending(view);
                             return false;
                         }
                     }
@@ -3102,19 +3107,24 @@ impl Editor {
                 let b = match picked {
                     Ok(b) => b,
                     Err(reason) => {
-                        self.count = None;
-                        self.pending_op = None;
-                        self.pending_register = None;
+                        self.drop_pending(view);
                         self.message = reason;
                         return true;
                     }
                 };
                 let name = self.commands.resolve(&b.command, &b.args).name;
                 // A count before `"` is the command's after it: `3"_dd`
-                // is `"_3dd`.
+                // is `"_3dd`, and `2"_3x` is `"_6x`.
+                let before = self
+                    .register_count
+                    .take()
+                    .filter(|_| self.pending_register.is_some());
                 let count = match name.as_str() {
-                    "register" => None,
-                    _ => self.count.take(),
+                    "register" => {
+                        self.register_count = times(before, self.count.take());
+                        None
+                    }
+                    _ => times(before, self.count.take()),
                 };
                 if self.commands.spec(&name).is_some_and(|c| c.takes_char) {
                     self.awaiting_char = Some((b, count));
@@ -3125,6 +3135,18 @@ impl Editor {
                 self.run_bindings(view, &bs[at..], count);
                 true
             }
+        }
+    }
+
+    /// A sequence given up on: its count, operator and register go,
+    /// and in normal mode the steps recorded for them with them, so the
+    /// next change is not `.`'s with a register it never named.
+    fn drop_pending(&mut self, view: ViewId) {
+        let named = self.pending_op.take().is_some() | self.pending_register.take().is_some();
+        self.count = None;
+        self.register_count = None;
+        if named && self.mode(view) == Mode::Normal {
+            self.repeat.current.clear();
         }
     }
 
@@ -3566,6 +3588,15 @@ impl Editor {
 
     pub fn take_effects(&mut self) -> Vec<Effect> {
         std::mem::take(&mut self.effects)
+    }
+}
+
+/// Two counts as one, vim's way: multiplied, either alone when the
+/// other was not typed.
+fn times(a: Option<usize>, b: Option<usize>) -> Option<usize> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.saturating_mul(b).min(1_000_000)),
+        (a, b) => a.or(b),
     }
 }
 

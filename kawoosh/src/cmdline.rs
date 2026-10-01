@@ -19,8 +19,10 @@
 //! bound `when field:cmdline` over the engine's history walk on the
 //! same keys, which a search prompt keeps.
 
-use std::collections::HashSet;
-use std::path::{MAIN_SEPARATOR, Path};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
+use std::rc::Rc;
 
 use kawoosh_editor::commands::set_value;
 use kawoosh_editor::{ArgKind, Mode, Prompt, Spec};
@@ -28,6 +30,10 @@ use kawoosh_editor::{ArgKind, Mode, Prompt, Spec};
 use crate::commands::{ShellCommand, cmd};
 
 use crate::app::Kawoosh;
+
+/// Each directory a `:` path was completed from and what it held, or
+/// None when it could not be read; kept while the prompt is open.
+pub(crate) type Listed = RefCell<HashMap<PathBuf, Option<Rc<Vec<kawoosh_doc::fs::Entry>>>>>;
 
 /// What the command line is completing: the token from `start` and the
 /// candidates for it, `index` the current one.
@@ -365,11 +371,20 @@ impl Kawoosh {
         } else {
             kawoosh_doc::paths::expand(Path::new(dir_text), base)
         };
-        let Ok(entries) = kawoosh_systems::fs::list(&dir) else {
+        // Listed once while the prompt is open, not at every key: a
+        // path typed through `$TMPDIR` or `node_modules` stats each of
+        // thousands of entries, on a host over the wire.
+        let entries = self
+            .cmd_dirs
+            .borrow_mut()
+            .entry(dir.clone())
+            .or_insert_with(|| kawoosh_systems::fs::list(&dir).ok().map(Rc::new))
+            .clone();
+        let Some(entries) = entries else {
             return Vec::new();
         };
         entries
-            .into_iter()
+            .iter()
             .filter(|e| e.name.starts_with(prefix))
             .filter(|e| prefix.starts_with('.') || !e.name.starts_with('.'))
             .map(|e| {
@@ -442,6 +457,7 @@ impl Kawoosh {
     pub(crate) fn cmdline_refresh(&mut self) {
         if !self.at_command_prompt() {
             self.cmd_completion = None;
+            self.cmd_dirs.get_mut().clear();
             return;
         }
         let line = self.ed.prompt_text().unwrap_or_default();

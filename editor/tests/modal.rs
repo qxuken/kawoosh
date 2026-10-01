@@ -248,6 +248,48 @@ fn replace_char_takes_a_count_and_a_line_break() {
     assert_eq!(t.text(), "a\nb\nc d", "`.` again");
 }
 
+/// Insert's `<Tab>` and `r<Tab>` count columns as the pane draws them:
+/// a wide character two cells, a combining one none, a control its
+/// escape's (`^A` two).
+#[test]
+fn tab_stops_count_the_cells_drawn() {
+    let mut t = T::new("日本");
+    t.keys("A<Tab>");
+    assert_eq!(t.text(), "日本    ", "from cell 4 to 8");
+    let mut t = T::new("日x");
+    t.keys("lr<Tab>");
+    assert_eq!(t.text(), "日  ", "from cell 2 to 4");
+    let mut t = T::new("\u{1}x");
+    t.keys("lr<Tab>");
+    assert_eq!(t.text(), "\u{1}  ", "after `^A`, from cell 2");
+    let mut t = T::new("e\u{301}x");
+    t.keys("lr<Tab>");
+    assert_eq!(t.text(), "e\u{301}   ", "the accent takes no cell");
+}
+
+/// `r` stops where the line's text does, however the line ends: a
+/// `\r\n` line's `\r` is not a character to replace (neovim's `3rx` on
+/// `ab` fails there too).
+#[test]
+fn replace_char_stops_short_of_a_crlf_break() {
+    let mut t = T::new("ab\r\ncd");
+    t.keys("3rx");
+    assert_eq!(t.text(), "ab\r\ncd", "short of the count: nothing");
+    t.keys("2rx");
+    assert_eq!(t.text(), "xx\r\ncd");
+}
+
+/// A field is one line: `r<CR>` there changes nothing.
+#[test]
+fn replace_char_line_break_in_a_field_changes_nothing() {
+    let mut t = T::new("");
+    t.keys(":foo bar<Esc>0f<Space>r<CR>");
+    assert!(t.ed.prompt_view().is_some());
+    assert_eq!(t.cmdline(), "foo bar");
+    t.keys("rx");
+    assert_eq!(t.cmdline(), "fooxbar", "`r` itself still works there");
+}
+
 /// `r<Tab>` as neovim's: what insert's `<Tab>` puts, per character — a
 /// tab, or under `expandtab` the spaces to the next `shiftwidth` stop,
 /// each from where the last left; the caret on the last.
@@ -1031,6 +1073,21 @@ fn indent_and_change_line() {
     assert_eq!(t.text(), "a\nb\nx");
 }
 
+/// Insert's `<CR>` with two carets in one run of blanks: each breaks
+/// the line where it is, the blanks between them its own, and the
+/// text after them stays.
+#[test]
+fn line_breaks_from_carets_in_one_run_of_blanks() {
+    let mut t = T::new("a  b");
+    t.keys("i");
+    t.ed.views[t.v].sels = kawoosh_editor::Selections {
+        items: vec![Selection::point(1), Selection::point(2)],
+        primary: 0,
+    };
+    t.keys("<CR>");
+    assert_eq!(t.text(), "a\n\nb");
+}
+
 /// `o` below a line ending in an opening bracket, `O` above one
 /// starting with a closer, and `<CR>` after an opener land a level
 /// inside the block; `<CR>` between a bracket and its closer opens it.
@@ -1229,6 +1286,38 @@ fn the_black_hole_register_takes_nothing() {
     assert_eq!(kept(&t).as_deref(), Some("one  "));
     t.keys("\"a");
     assert_eq!(t.ed.message, "no register a: only _, the black hole");
+}
+
+/// Counts on both sides of `"_` multiply, as vim's: `2"_3x` takes six.
+/// `.` with a count gives it to the command, not to the naming; and a
+/// key bound to nothing after `"_` lets the register go from `.` too.
+#[test]
+fn black_hole_counts_multiply_and_let_go() {
+    let kept = |t: &T| t.ed.memory.head().map(|m| m.text.clone());
+    let mut t = T::new("abcdefghij");
+    t.keys("2\"_3x");
+    assert_eq!(t.text(), "ghij", "two times three");
+    assert_eq!(kept(&t), None);
+    t.keys("\"_2x");
+    assert_eq!(t.text(), "ij", "a count after it alone");
+    let mut t = T::new("abcdefghij");
+    t.keys("2\"\"x");
+    assert_eq!(t.text(), "cdefghij", "`\"\"` keeps the count before it");
+    assert_eq!(kept(&t).as_deref(), Some("ab"));
+    assert_eq!(t.ed.pending_register, None);
+
+    let mut t = T::new("one two three four five six");
+    t.keys("\"_dw3.");
+    assert_eq!(t.text(), "five six", "`3.` deletes three words");
+    assert_eq!(kept(&t), None);
+
+    let mut t = T::new("abc");
+    t.keys("\"_<F12>x");
+    assert_eq!(t.text(), "bc");
+    assert_eq!(kept(&t).as_deref(), Some("a"), "the register is let go");
+    t.keys(".");
+    assert_eq!(t.text(), "c");
+    assert_eq!(kept(&t).as_deref(), Some("b"), "and `.` lets it go too");
 }
 
 /// A command's `Path` argument reaches it absolute — `~`, `..` and a

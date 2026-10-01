@@ -320,7 +320,13 @@ impl Kawoosh {
         );
         // The caret's hunk: under the buffer, in its column
         // (pane-placement.md Decision 2).
-        self.show_in_pane_as("*hunk*", &text, Some("diff"), false, crate::layout::Place::Under);
+        self.show_in_pane_as(
+            "*hunk*",
+            &text,
+            Some("diff"),
+            false,
+            crate::layout::Place::Under,
+        );
     }
 
     // ------------------------------------------------------------ conflicts

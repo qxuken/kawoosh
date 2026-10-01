@@ -223,7 +223,8 @@ local function marks()
 end
 
 -- Deletes `gone` (rows) through the plan: once applied, each out of the
--- walk's totals, its directory's listing read again and its mark gone.
+-- walk's totals, its directory's listing read again, its own and those
+-- under it dropped, its marks gone, and the pane out of it when in it.
 -- An entry under another of them goes with it, not twice.
 local function remove(gone)
   local set = {}
@@ -253,9 +254,18 @@ local function remove(gone)
     if st.walk ~= walk_id then return end
     for _, e in ipairs(gone) do
       if not fs.exists(e.path) then
-        st.listed[fs.parent(e.path)] = nil
+        local function within(p) return p == e.path or fs.relative(p, e.path) ~= nil end
+        local up = fs.parent(e.path)
+        st.listed[up] = nil
+        for p in pairs(st.listed) do
+          if within(p) then st.listed[p] = nil end
+        end
         for p in pairs(st.marked) do
-          if p == e.path or fs.relative(p, e.path) then st.marked[p] = nil end
+          if within(p) then st.marked[p] = nil end
+        end
+        -- `D` can take a directory the pane is in, or is going into.
+        if within(st.dir) or (st.going and within(st.going.dir)) then
+          st.dir, st.cursor, st.reveal, st.going = up or st.root, nil, true, nil
         end
       end
     end

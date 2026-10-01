@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use kawoosh_doc::{BufferId, Version};
+use kawoosh_editor::motions::cells_of;
 use kui_native::{Align, Color, FloatConfig, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
@@ -102,6 +103,9 @@ pub struct Drawn {
 /// C0 and C1 controls and DEL, and the format characters that would be
 /// invisible — a zero-width space, a BOM, the bidi controls, the line
 /// and paragraph separators. Not the ZWJ, which joins an emoji sequence.
+/// Its escapes' lengths are the editor's `motions::escape_len`, which
+/// its columns count by (`motions::cells_of`, the cells here too): the
+/// two must agree.
 fn escape_of(c: char) -> Option<String> {
     let u = c as u32;
     match u {
@@ -117,37 +121,6 @@ fn escape_of(c: char) -> Option<String> {
         | 0x2066..=0x2069
         | 0xfeff => Some(format!("<{u:04x}>")),
         _ => None,
-    }
-}
-
-/// How many chars [`escape_of`] spells `c` as, without spelling it.
-fn escape_len(c: char) -> Option<usize> {
-    let u = c as u32;
-    match u {
-        0..0x20 | 0x7f => Some(2),
-        0x80..0xa0 => Some(4),
-        0x200b
-        | 0x200e
-        | 0x200f
-        | 0x2028
-        | 0x2029
-        | 0x202a..=0x202e
-        | 0x2060..=0x2064
-        | 0x2066..=0x2069
-        | 0xfeff => Some(6),
-        _ => None,
-    }
-}
-
-/// The cells a char takes at cell `col`: a tab to the next stop, an
-/// escape its chars, else `unicode-width`'s answer.
-fn cells_of(c: char, col: usize, tabstop: usize) -> usize {
-    if c == '\t' {
-        tabstop - (col % tabstop)
-    } else if let Some(n) = escape_len(c) {
-        n
-    } else {
-        c.width().unwrap_or(0)
     }
 }
 

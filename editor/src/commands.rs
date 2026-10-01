@@ -111,6 +111,45 @@ fn whole_lines_of_sel(buf: &Buffer, s: &Selection, extra_lines: usize) -> Range<
     buf.line_start(a)..buf.line_range(b).end
 }
 
+/// The lines an operator's range covers, first and last. A linewise
+/// range on the last line of a text with no break after it starts at
+/// the break before it (`line_range_of_sel`), which is the line
+/// above's: its first line is the one after that break. The range is
+/// then a break and a line with none after it — an empty last line
+/// the break alone.
+fn op_lines(buf: &Buffer, r: &Range<usize>, linewise: bool) -> (usize, usize) {
+    let brk = match (buf.byte_at(r.start), buf.byte_at(r.start + 1)) {
+        (Some(b'\n'), _) => 1,
+        (Some(b'\r'), Some(b'\n')) => 2,
+        _ => 0,
+    };
+    let last_line = linewise
+        && brk > 0
+        && r.end == buf.len()
+        && (r.end == r.start + brk || buf.byte_at(r.end - 1) != Some(b'\n'));
+    let first = if last_line { r.start + brk } else { r.start };
+    (
+        buf.line_of(first),
+        buf.line_of(r.end.saturating_sub(1).max(first)),
+    )
+}
+
+/// Each selection on the first line its range covered, at its first
+/// non-blank: after `=` `>` `<`, which change no line's count.
+fn to_first_lines(ed: &mut Editor, view: ViewId, firsts: &[usize]) {
+    if firsts.is_empty() {
+        return;
+    }
+    let buf = &ed.buffers[ed.views[view].buffer];
+    let v = &mut ed.views[view];
+    let mut i = 0;
+    v.sels.map(|_| {
+        let ln = firsts[i.min(firsts.len() - 1)];
+        i += 1;
+        Selection::point(m::first_nonblank(buf, ln.min(buf.line_count() - 1)))
+    });
+}
+
 /// The range an operator applies to, per the motion's kind.
 pub(crate) fn op_range(
     buf: &Buffer,
@@ -250,24 +289,14 @@ pub(crate) fn apply_operator(
                 .iter()
                 .enumerate()
                 .map(|(i, (r, lw))| {
-                    // `cc` keeps the line's indent and its newline. A
-                    // linewise range on the last line starts with the
-                    // newline before it (`line_range_of_sel`), which is
-                    // the line above's: the first line changed is the
-                    // one after that byte.
+                    // `cc` keeps the line's indent and its newline, the
+                    // lines' (`op_lines`) from the first's start to the
+                    // last's end.
                     if op == "change" && *lw {
                         let buf = &ed.buffers[id];
-                        let first = if r.end == buf.len() && buf.char_at(r.start) == Some('\n') {
-                            r.start + 1
-                        } else {
-                            r.start
-                        };
-                        let ln = buf.line_of(first);
-                        let indent = m::indent_of(buf, ln);
-                        let inner = buf.line_range(ln).start
-                            ..buf
-                                .line_range(buf.line_of(r.end.saturating_sub(1).max(r.start)))
-                                .end;
+                        let (a, b) = op_lines(buf, r, true);
+                        let indent = m::indent_of(buf, a);
+                        let inner = buf.line_start(a)..buf.line_range(b).end;
                         (i, inner, indent)
                     } else {
                         (i, r.clone(), String::new())
@@ -336,15 +365,10 @@ pub(crate) fn apply_operator(
             let unit = ed.indent_unit(id);
             let mut indenter = ed.indenter.take();
             let buf = &ed.buffers[id];
-            let mut spans: Vec<(usize, usize)> = ranges
-                .iter()
-                .map(|(r, _)| {
-                    (
-                        buf.line_of(r.start),
-                        buf.line_of(r.end.saturating_sub(1).max(r.start)),
-                    )
-                })
-                .collect();
+            let lines: Vec<(usize, usize)> =
+                ranges.iter().map(|(r, lw)| op_lines(buf, r, *lw)).collect();
+            let firsts: Vec<usize> = lines.iter().map(|(a, _)| *a).collect();
+            let mut spans = lines;
             spans.sort_unstable();
             let mut edits = Vec::new();
             let mut answered = true;
@@ -377,16 +401,8 @@ pub(crate) fn apply_operator(
                 ed.message = format!("no indent rules for {lang}");
                 return;
             }
-            let heads: Vec<usize> = ranges.iter().map(|(r, _)| r.start).collect();
             ed.edit_each(view, edits, |start, _| Selection::point(start));
-            let buf = &ed.buffers[id];
-            let v = &mut ed.views[view];
-            let mut i = 0;
-            v.sels.map(|_| {
-                let h = heads[i.min(heads.len() - 1)];
-                i += 1;
-                Selection::point(m::first_nonblank(buf, buf.line_of(h.min(buf.len()))))
-            });
+            to_first_lines(ed, view, &firsts);
         }
         "indent" | "dedent" => {
             let ts = ed.shiftwidth_in(id);
@@ -394,9 +410,10 @@ pub(crate) fn apply_operator(
             let buf = &ed.buffers[id];
             let mut edits = Vec::new();
             let mut seen = std::collections::HashSet::new();
-            for (i, (r, _)) in ranges.iter().enumerate() {
-                let a = buf.line_of(r.start);
-                let b = buf.line_of(r.end.saturating_sub(1).max(r.start));
+            let mut firsts = Vec::new();
+            for (i, (r, lw)) in ranges.iter().enumerate() {
+                let (a, b) = op_lines(buf, r, *lw);
+                firsts.push(a);
                 for ln in a..=b {
                     if !seen.insert(ln) {
                         continue;
@@ -420,16 +437,8 @@ pub(crate) fn apply_operator(
                 }
                 let _ = i;
             }
-            let heads: Vec<usize> = ranges.iter().map(|(r, _)| r.start).collect();
             ed.edit_each(view, edits, |start, _| Selection::point(start));
-            let buf = &ed.buffers[id];
-            let v = &mut ed.views[view];
-            let mut i = 0;
-            v.sels.map(|_| {
-                let h = heads[i.min(heads.len() - 1)];
-                i += 1;
-                Selection::point(m::first_nonblank(buf, buf.line_of(h.min(buf.len()))))
-            });
+            to_first_lines(ed, view, &firsts);
         }
         "join" => {
             let buf = &ed.buffers[id];
@@ -2086,17 +2095,23 @@ pub fn install(ed: &mut Editor) {
     // alone. `<Tab>` puts what insert's `<Tab>` would, a tab or the
     // spaces to the next stop, for each. `<CR>` makes the lot one line
     // break, as insert's `<CR>` does (its indent, the blanks after it
-    // gone), the caret stepped back as `<Esc>` steps it.
+    // gone), the caret stepped back as `<Esc>` steps it — but not in
+    // a field, which is one line. A `\r\n` line's `\r` is its break's,
+    // not a character to replace.
     ed.register_with_char("replace char", |ed, ctx| {
         let Some(c) = ctx.arg_char else { return };
+        if c == '\n' && ed.is_field(ctx.view) {
+            return;
+        }
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let mut edits = Vec::new();
         let mut last = 0;
         for (i, s) in ed.views[ctx.view].sels.iter().enumerate() {
+            let le = buf.line_range(buf.line_of(s.head)).end;
             let mut e = s.head;
             let mut n = 0;
-            while n < ctx.count && buf.char_at(e).is_some_and(|c| c != '\n') {
+            while n < ctx.count && e < le {
                 e = buf.next_char(e);
                 n += 1;
             }
@@ -2428,12 +2443,13 @@ pub fn install(ed: &mut Editor) {
     ed.register_with_char("surround replace with", surround_replace_with);
 
     // `"` names the register the next command takes into or puts from.
-    // Only `_` so far, the black hole; `""` is the one there always is.
+    // Only `_` so far, the black hole; `""` is the one there always is,
+    // named all the same, so a count before it is the command's.
     ed.register_with_char("register", |ed, ctx| match ctx.arg_char {
-        Some('_') => ed.pending_register = Some('_'),
-        Some('"') => ed.pending_register = None,
+        Some(c @ ('_' | '"')) => ed.pending_register = Some(c),
         Some(c) => {
             ed.count = None;
+            ed.register_count = None;
             ed.message = format!("no register {c}: only _, the black hole");
         }
         None => {}
@@ -3176,7 +3192,7 @@ fn break_lines(ed: &mut Editor, view: ViewId, only: Option<&[usize]>) {
     // Where each opened block's caret sits: the edit's start, and how
     // far before its end.
     let mut back: Vec<(usize, usize)> = Vec::new();
-    let edits = ed.views[view]
+    let mut edits: Vec<_> = ed.views[view]
         .sels
         .iter()
         .enumerate()
@@ -3211,6 +3227,13 @@ fn break_lines(ed: &mut Editor, view: ViewId, only: Option<&[usize]>) {
             (i, at..at + blank, format!("\n{indent}"))
         })
         .collect();
+    // Two carets in one run of blanks: each takes the blanks up to the
+    // next, not the next's too (the carets are in order).
+    for k in 1..edits.len() {
+        let next = edits[k].1.start;
+        let r = &mut edits[k - 1].1;
+        r.end = r.end.min(next).max(r.start);
+    }
     ed.indenter = indenter;
     let step = only.is_some();
     ed.edit_each(view, edits, move |start, len| {

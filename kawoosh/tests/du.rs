@@ -141,7 +141,12 @@ fn marks_across_directories_and_d_upper_deletes_them_all() {
     d.frame(&mut app);
     assert_eq!(marked(&mut app), "x z top");
     d.frame(&mut app);
-    let texts: Vec<String> = d.core.nodes().iter().filter_map(|n| n.text.clone()).collect();
+    let texts: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
     assert!(
         texts.iter().any(|t| t.contains("3 marked, 450 B")),
         "the head counts them: {texts:?}"
@@ -177,6 +182,48 @@ fn marks_across_directories_and_d_upper_deletes_them_all() {
     d.press(&mut app, "D");
     assert!(app.confirm.is_none());
     assert_eq!(app.ed.message, "nothing marked");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    d.press(&mut app, "q");
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// `D` taking a directory the pane is in: the pane goes out to where
+/// the directory was, its listing read again — not the gone one's kept.
+#[test]
+fn d_upper_on_the_directory_the_pane_is_in_goes_out() {
+    let root = std::env::temp_dir().join(format!("kawoosh-du-gone-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("build/sub")).unwrap();
+    std::fs::write(root.join("build/sub/f"), vec![0u8; 500]).unwrap();
+    std::fs::write(root.join("keep"), vec![0u8; 50]).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("du {}", root.display()));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let name = root.file_name().unwrap().to_str().unwrap().to_string();
+    // Mark `build`, then into it and into `sub`.
+    d.press(&mut app, "ggmggl");
+    d.frame(&mut app);
+    d.press(&mut app, "l");
+    d.frame(&mut app);
+    assert_eq!(shown(&mut app), "sub > f size | f 500");
+    d.press(&mut app, "D");
+    assert!(
+        d.confirm_texts().iter().any(|t| t == "delete build/"),
+        "{:?}",
+        d.confirm_texts()
+    );
+    d.press(&mut app, "<CR>");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(!root.join("build").exists());
+    assert_eq!(shown(&mut app), format!("{name} > keep size | keep 50"));
     assert_eq!(d.warnings(), Vec::<String>::new());
     d.press(&mut app, "q");
     std::fs::remove_dir_all(&root).ok();
