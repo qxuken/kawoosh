@@ -482,6 +482,10 @@ takes `picker.split` of the width beside the preview: the pane keys
 leave is kept as the setting), `<A-S-h>` `<A-S-l>` move the divider
 between list and preview, and both dividers drag — each change is the
 setting for the session, so the picker opens next where it was left.
+With the preview hidden there is no divider: the list is the whole
+pane, and `<A-S-h>` `<A-S-l>` are the pane's again, the width of the
+column the picker stands in (2026-10-01: "if preview in a pickers is
+disabled it should control entire column size").
 A source may put keys of its own on the row: `<C-x>` in the
 buffers picker closes the row's buffer as `:bd` does, asking first
 when it has unsaved changes, and the list is read again; `<C-a>` there

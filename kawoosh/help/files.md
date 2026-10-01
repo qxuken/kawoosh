@@ -113,7 +113,7 @@ cursor; `<Esc>` again closes the picker.
 | `<C-c>` | close, from either mode |
 | `<A-p>` | hide or show the preview |
 | `<A-w>` | wrap long rows instead of cutting them |
-| `<A-S-h>` `<A-S-l>` | move the divider between the list and the preview |
+| `<A-S-h>` `<A-S-l>` | move the divider between the list and the preview; with the preview hidden, the list is the whole picker and these size its column, as in any pane |
 | `<A-S-k>` `<A-S-j>` | make the picker taller, shorter |
 
 A click puts the cursor on a row and a second click takes it. The size
