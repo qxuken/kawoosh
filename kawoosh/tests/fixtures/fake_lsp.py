@@ -138,6 +138,13 @@ while True:
             diags.append({"range": {"start": {"line": ln, "character": 0}, "end": {"line": ln, "character": 2}},
                           "severity": 1, "source": "ts", "code": 2322,
                           "message": "Type 'A' is not assignable to type 'B'.\n  Property 'b' is missing in type 'A'."})
+        if "@wide" in text:
+            # A TypeScript error spelled out in full (`noErrorTruncation`):
+            # a first line far wider than a pane.
+            ln = text.split("\n").index(next(l for l in text.split("\n") if "@wide" in l))
+            diags.append({"range": {"start": {"line": ln, "character": 4}, "end": {"line": ln, "character": 7}},
+                          "severity": 1, "source": "ts", "code": 2322,
+                          "message": "Type '{ " + "; ".join(f"field{i}: string" for i in range(30)) + " }' is not assignable to type 'B'."})
         send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
             "uri": uri, "diagnostics": diags}})
         if "@workspace" in text:

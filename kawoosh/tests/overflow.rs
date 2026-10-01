@@ -251,3 +251,71 @@ fn every_pane_keeps_its_texts_in_their_boxes_4() {
 fn every_pane_keeps_its_texts_in_their_boxes_5() {
     sweep(5);
 }
+
+/// A diagnostic's message wider than its pane — TypeScript's, spelled
+/// out in full — stays inside the pane it is said in, beside another.
+/// On a wrapped line it hangs after the text in a float, which escapes
+/// the clips of everything above it: the message was painted over the
+/// pane next to it (asked 2026-10-01: "diagnostics goes past the pane.
+/// make this impossible").
+#[test]
+fn a_long_diagnostic_stays_in_its_pane() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-overflow-diag-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    // The line with the error is short, and so is the one under it that
+    // wraps, where the message hangs after the last row.
+    let long = "word ".repeat(30);
+    std::fs::write(
+        &file,
+        format!("fn main() {{\n    let a = 1; // @wide\n    {long}\n}}\n"),
+    )
+    .unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(kawoosh_systems::lsp::ServerDef {
+        roots: vec!["Cargo.toml".into()],
+        ..drive::fake_lsp("rust")
+    });
+    let mut d = Drive::new(700.0, 400.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "set editor.wrap=word");
+    let message = |d: &Drive| {
+        d.core
+            .nodes()
+            .into_iter()
+            .filter(|n| {
+                n.text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("Type '{ field0"))
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut said = false;
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if !message(&d).is_empty() {
+            said = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(said, "the diagnostic arrived");
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    let nodes = d.core.nodes();
+    let lines = nodes
+        .iter()
+        .find(|n| n.label.as_deref() == Some("lines"))
+        .expect("the lines column");
+    for m in message(&d) {
+        assert!(
+            m.rect.x + m.rect.w <= lines.rect.x + lines.rect.w + 0.5,
+            "the message inside the pane: {:?} in {:?}",
+            m.rect,
+            lines.rect
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
