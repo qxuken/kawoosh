@@ -239,8 +239,8 @@ kawoosh.view(VIEW, function(ctx)
   local head = column { width = "grow", gap = 6, chips,
     text("selected: " .. (shown and shown.title or "the system's") .. " (" .. cur.base .. ")",
       { size = SIZE - 1, color = t.muted, wrap = "word" }),
-    text("hjkl walk · ⏎ takes · t toggles · s system · y copies · q closes",
-      { size = SIZE - 2, color = t.faint, wrap = "word" }) }
+    ctx.legend({ { { "h", "j", "k", "l" }, "walk" }, { "<CR>", "takes" }, { "t", "toggles" }, { "s", "system" },
+      { "y", "copies" }, { "q", "closes" } }, { size = SIZE - 2 }) }
 
   local family = cur.family ~= "system" and ("family " .. cur.family .. " · ") or ""
   local dark = section("dark", family .. "theme.dark = " .. cur.dark, of_base(true), cur, ctx, cols, width)

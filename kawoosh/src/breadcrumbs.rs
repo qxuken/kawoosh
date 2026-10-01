@@ -214,7 +214,10 @@ impl Kawoosh {
             .color(if focused { pal.fg } else { pal.dim })
             .max_lines(1)
             .ellipsis();
-        let sep = ui.measure_text("›", &dim, None).width + 2.0 * gap;
+        // A chevron as wide as the text is large.
+        let chevron = self.chrome.small;
+        let icon_set = self.icons.borrow();
+        let sep = chevron + 2.0 * gap;
         let ellipsis = ui.measure_text("…", &dim, None).width + sep;
         let mut used = 0.0;
         let mut first = crumbs.len() - 1;
@@ -229,11 +232,11 @@ impl Kawoosh {
         let last = crumbs.len() - 1;
         let mut left = room - if first > 0 { ellipsis } else { 0.0 };
         if first > 0 {
-            ui.text("›", dim);
+            crate::icons::icon(ui, &icon_set, "chevron-right", chevron, pal.dim);
             ui.text("…", dim);
         }
         for (i, c) in crumbs.iter().enumerate().skip(first) {
-            ui.text("›", dim);
+            crate::icons::icon(ui, &icon_set, "chevron-right", chevron, pal.dim);
             left -= sep;
             let w = ui.measure_text(&c.name, &dim, None).width;
             let mut node = NodeSpec::row()

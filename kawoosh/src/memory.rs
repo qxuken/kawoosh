@@ -1881,8 +1881,18 @@ impl Kawoosh {
                         },
                     };
                     ui.text(&head, small(pal.dim));
-                    ui.text(
-                        "⏎ open · y recall · o origin · x forget · ⇥ view · q close",
+                    crate::icons::legend_items(
+                        ui,
+                        &self.icons.borrow(),
+                        &[
+                            (&["<CR>"], "open"),
+                            (&["y"], "recall"),
+                            (&["o"], "origin"),
+                            (&["x"], "forget"),
+                            (&["<Tab>"], "view"),
+                            (&["q"], "close"),
+                        ],
+                        &crate::icons::KeyStyle::new(small(pal.dim), pal.border),
                         small(pal.faint),
                     );
                 });

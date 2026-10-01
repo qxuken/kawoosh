@@ -222,6 +222,9 @@ pub struct Kawoosh {
     /// `kawoosh.settings`, the settings pane's door
     /// (`settings_pane.rs`).
     pub(crate) settings_door: crate::settings_pane::SharedDoor,
+    /// The icon set, the user's shapes over the shipped ones, shared
+    /// with Lua (`icons.rs`).
+    pub(crate) icons: crate::icons::Shared,
     /// kui's latency HUD — frame times as a graph in the corner —
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
@@ -428,6 +431,7 @@ impl Kawoosh {
             show_tab: None,
             tab_shown: None,
             settings_door: Default::default(),
+            icons: Default::default(),
             line_cells: Default::default(),
             perf: Default::default(),
             frames: crate::frames::Frames::with_wake(&wake),
@@ -2561,6 +2565,7 @@ impl kui_native::App for Kawoosh {
         if let Some(hit) = self.look.hit {
             self.pal.hit = hit;
         }
+        self.icons.borrow_mut().fg = self.pal.fg;
         // The views' fields round their selection as the panes do.
         if let Some(rt) = self.scripting.rt.clone() {
             let r = self.selection_radius();

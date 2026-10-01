@@ -320,6 +320,8 @@ impl Kawoosh {
         self.tab_shown = Some(TAB);
         let pal = self.pal;
         let font = self.face;
+        let icon_set = self.icons.clone();
+        let icon_set = icon_set.borrow();
         let style = || {
             // A step under the buffer's size, as the tab always was.
             let s = TextStyle::new(font.size - 1.0)
@@ -456,12 +458,10 @@ impl Kawoosh {
                     let r = &rows[i];
                     ui.leaf(NodeSpec::row().size(4.0 + r.depth as f32 * INDENT, ROW_H));
                     // The fold: a click of its own, over the row's.
-                    let glyph = match (r.branch, r.folded) {
-                        (false, _) => " ",
-                        (true, true) => "▸",
-                        (true, false) => "▾",
-                    };
-                    let mut fold = NodeSpec::row().size(14.0, ROW_H).cross_align(Align::Center);
+                    let mut fold = NodeSpec::row()
+                        .size(14.0, ROW_H)
+                        .main_align(Align::Center)
+                        .cross_align(Align::Center);
                     if r.branch {
                         fold = fold
                             .on_click(Value::map([
@@ -471,7 +471,12 @@ impl Kawoosh {
                             ]))
                             .label(if r.folded { "unfold" } else { "fold" });
                     }
-                    ui.with_keyed("fold", fold, |ui| ui.text(glyph, style().color(pal.dim)));
+                    ui.with_keyed("fold", fold, |ui| {
+                        if r.branch {
+                            let name = if r.folded { "folded" } else { "unfolded" };
+                            crate::icons::icon(ui, &icon_set, name, font.size - 1.0, pal.dim);
+                        }
+                    });
                     if let Some(f) = field(r.field_id) {
                         ui.text(&format!("{f}: "), style().color(pal.dim));
                     }

@@ -117,3 +117,7 @@ A markdown buffer is drawn rendered: the marks hidden, headings larger, prose wr
 ## The selection
 
 `editor.selection_radius` rounds the corners of the selection, in logical pixels. At `0` (the default) it is square; above that, a selection across lines is drawn as one rounded shape.
+
+## Icons and keys
+
+The pictures in the chrome — a tab's close button, a fold, the done mark of a server's progress, the dot of an unsaved buffer — are drawn with strokes in a box as large as the text beside them, in the theme's colours, rather than set as characters, which sit wherever their font puts them. Keys are drawn the same way, as small outlined caps: the which-key's, and the legends at the foot of the panes (`⏎ opens`, `j k walk`). An icon's shape can be your own from `init.lua`: see [Icons of your own](lua.md#icons-of-your-own).

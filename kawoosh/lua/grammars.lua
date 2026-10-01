@@ -301,8 +301,8 @@ kawoosh.view(VIEW, function(ctx)
       field,
       text(q == "" and (counts.all .. " grammars") or (shown .. " of " .. counts.all),
         { size = SIZE - 2, color = shown == 0 and t.danger or t.faint, wrap = "none" }) },
-    text("jk gg G walk · / filters · ⏎ installs · b builds here · u updates all · d removes · q closes",
-      { size = SIZE - 2, color = t.faint, wrap = "word" }) }
+    ctx.legend({ { { "j", "k", "gg", "G" }, "walk" }, { "/", "filters" }, { "<CR>", "installs" },
+      { "b", "builds here" }, { "u", "updates all" }, { "d", "removes" }, { "q", "closes" } }, { size = SIZE - 2 }) }
 
   local list = column { key = "list", width = "grow", height = "grow", pad = { x = PAD, bottom = PAD },
     gap = 14, scroll_y = true }

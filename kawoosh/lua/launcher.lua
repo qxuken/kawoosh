@@ -149,7 +149,7 @@ launcher.module("here", {
     if o then
       -- No `path`: the path is marked *here*'s already, so the buffers
       -- and the recent files leave it out.
-      items[#items + 1] = { text = o.name, sub = "the same buffer", run = "launcher same", hint = "⏎" }
+      items[#items + 1] = { text = o.name, sub = "the same buffer", run = "launcher same", hint = "<CR>" }
     end
     items[#items + 1] = { text = "scratch", sub = "a fresh buffer", run = "launcher scratch", key = "s" }
     items[#items + 1] = { text = "terminal", sub = "a shell in " .. short_path(fs.cwd()), run = "launcher terminal",
@@ -621,7 +621,7 @@ local function list_row(i, r, R)
     column { width = "grow", text(spans, { family = "mono", size = SIZE, wrap = "word" }) },
   }
   local hint = hint_of(it)
-  if hint then line[#line + 1] = text(hint, { size = SIZE - 1, color = t.faint, wrap = "none" }) end
+  if hint then line[#line + 1] = R.ctx.keys(hint, { size = SIZE - 1, color = t.faint }) end
   return line
 end
 
@@ -641,7 +641,7 @@ local function tile(i, r, R)
     text(spans_of(r, t), { family = "mono", size = SIZE, wrap = "word" }),
   }
   local hint = hint_of(r.hit.item)
-  if hint then chip[#chip + 1] = text(hint, { size = SIZE - 1, color = t.faint, wrap = "none" }) end
+  if hint then chip[#chip + 1] = R.ctx.keys(hint, { size = SIZE - 1, color = t.faint }) end
   return chip
 end
 

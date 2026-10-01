@@ -42,6 +42,13 @@ fn drawn_rows(d: &Drive) -> Vec<(String, Rect)> {
                 if let Some(t) = &nodes[j].text {
                     s.push_str(t);
                 }
+                // A fold is the `folded` or `unfolded` icon, a triangle
+                // taller than wide pointing right, or wider pointing
+                // down: read back as the glyphs it replaced.
+                if nodes[j].kind == kui_native::NodeKind::Polygon {
+                    let r = nodes[j].rect;
+                    s.push(if r.h > r.w { '▸' } else { '▾' });
+                }
                 j += 1;
             }
             out.push((s, nodes[i].rect));
