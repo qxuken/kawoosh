@@ -431,9 +431,9 @@ impl Kawoosh {
         }
         let pal = self.pal;
         let font = self.face;
-        // Every size from kui's metrics (`devtab::Tab`), as the Settings
-        // tab's are, so the two agree with the panel and each other.
-        let tm = Tab::of(&ui.metrics(), self.face.line_height);
+        // Every size from the panes' one scale (`devtab::Tab`), so the
+        // tabs agree with the panes and each other.
+        let tm = Tab::of(&ui.metrics(), &self.chrome, self.face.line_height);
         let style = move || tm.style(&pal, font);
         let dim = move || style().color(pal.dim);
         // The readings, gathered at most every `REFRESH`: built every

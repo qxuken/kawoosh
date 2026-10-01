@@ -1373,7 +1373,7 @@ impl Kawoosh {
 
     pub(crate) fn render_memory(&mut self, ui: &mut Ui<'_>, pane: PaneId, focused: bool) {
         self.sync_memory_rows();
-        let tm = Tab::of(&ui.metrics(), self.face.line_height);
+        let tm = Tab::of(&ui.metrics(), &self.chrome, self.face.line_height);
         let pal = self.pal;
         let font = self.face;
         let (cell_w, _) = self.cell;

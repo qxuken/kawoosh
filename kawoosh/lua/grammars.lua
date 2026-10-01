@@ -36,12 +36,12 @@ local picker = kawoosh.picker
 local VIEW = "grammars"
 local FIELD = "q"
 local PANE_FACT = "lua:" .. VIEW
--- The chrome's text size, read off the length tokens each frame as the
--- other panes' is.
-local SIZE = 13
+-- The panes' one scale (`kawoosh.metrics`: the text, a step under it,
+-- two), read each frame as the other panes' is.
+local SIZE, SMALL, NOTE = 13, 12, 11
 local function sizes(env)
-  local l = env and env.tokens and env.tokens.lengths or {}
-  SIZE = l.chrome or 13
+  local m = kawoosh.metrics(env)
+  SIZE, SMALL, NOTE = m.text, m.small, m.note
 end
 -- The column's share of the window's width.
 local SHARE = 0.4
@@ -159,7 +159,7 @@ local function button(label, ev, t)
   return row {
     key = "do " .. ev.name, pad = { x = 8 }, height = SIZE + 8, radius = 4, cross_align = "center",
     bg = t.raised, hover_bg = t.surface, border = { w = 1, color = t.border }, on_click = ev,
-    text(label, { size = SIZE - 1, color = t.fg, wrap = "none" }),
+    text(label, { size = SMALL, color = t.fg, wrap = "none" }),
   }
 end
 
@@ -167,7 +167,7 @@ end
 local function tag(label, t)
   return row { pad = { x = 8 }, height = SIZE + 8, radius = 4, cross_align = "center",
     border = { w = 1, color = t.border },
-    text(label, { size = SIZE - 1, color = t.muted, wrap = "none" }) }
+    text(label, { size = SMALL, color = t.muted, wrap = "none" }) }
 end
 
 -- `s` as spans, the filter's matched letters in it lit: `positions` are
@@ -199,27 +199,27 @@ local function line(e, ctx, on)
   if g.installed and g.state ~= "built in" then
     local rev = g.rev
     if g.latest then rev = rev .. " → " .. g.latest end
-    r[#r + 1] = text(rev, { family = "mono", size = SIZE - 1,
+    r[#r + 1] = text(rev, { family = "mono", size = SMALL,
       color = g.latest and t.accent or t.muted, wrap = "none" })
     if g.built then
-      r[#r + 1] = text("built here", { size = SIZE - 2, color = t.faint, wrap = "none" })
+      r[#r + 1] = text("built here", { size = NOTE, color = t.faint, wrap = "none" })
     end
   end
   r[#r + 1] = row { width = "grow", min_width = 0,
     text(lit(files(g), pos, #g.name + 2, t),
-      { family = "mono", size = SIZE - 1, color = t.faint, ellipsis = true }) }
+      { family = "mono", size = SMALL, color = t.faint, ellipsis = true }) }
   if g.state == "built in" then
     r[#r + 1] = tag("built in", t)
   elseif g.state == "installing" then
     local pct = g.percent or 0
-    r[#r + 1] = text(g.step or "…", { size = SIZE - 1, color = t.muted, wrap = "none" })
+    r[#r + 1] = text(g.step or "…", { size = SMALL, color = t.muted, wrap = "none" })
     r[#r + 1] = row { width = 60, height = 6, radius = 3, bg = t.sunken,
       row { width = math.max(1, math.floor(60 * pct / 100)), height = 6, radius = 3, bg = t.accent } }
   else
     if g.state == "failed" then
-      r[#r + 1] = text("failed", { size = SIZE - 1, color = t.danger, wrap = "none" })
+      r[#r + 1] = text("failed", { size = SMALL, color = t.danger, wrap = "none" })
     elseif not g.installed and g.size > 0 then
-      r[#r + 1] = text(human(g.size), { size = SIZE - 1, color = t.muted, wrap = "none" })
+      r[#r + 1] = text(human(g.size), { size = SMALL, color = t.muted, wrap = "none" })
     end
     local label = verb(g)
     if label then r[#r + 1] = button(label, { kind = "take", name = g.name }, t) end
@@ -238,14 +238,14 @@ local function line(e, ctx, on)
   end
   return column { key = key, width = "grow", gap = 2, r,
     row { width = "grow", pad = { x = 8 },
-      text(note, { size = SIZE - 2, color = color, wrap = "word" }) } }
+      text(note, { size = NOTE, color = color, wrap = "word" }) } }
 end
 
 local function section(title, note, t)
   return row { width = "grow", gap = 8, cross_align = "end",
     text({ { title, bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
     row { width = "grow", min_width = 0,
-      text(note, { size = SIZE - 1, color = t.muted, ellipsis = true }) } }
+      text(note, { size = SMALL, color = t.muted, ellipsis = true }) } }
 end
 
 kawoosh.view(VIEW, function(ctx)
@@ -295,14 +295,14 @@ kawoosh.view(VIEW, function(ctx)
     row { width = "grow", min_width = 0,
       text(string.format("%d installed · %d to install · %d built in",
           counts.installed, counts.out, counts.built),
-        { size = SIZE - 1, color = t.muted, ellipsis = true }) },
+        { size = SMALL, color = t.muted, ellipsis = true }) },
     row { width = "grow", gap = 8, cross_align = "center",
       text("/", { family = "mono", size = SIZE, color = t.accent, wrap = "none" }),
       field,
       text(q == "" and (counts.all .. " grammars") or (shown .. " of " .. counts.all),
-        { size = SIZE - 2, color = shown == 0 and t.danger or t.faint, wrap = "none" }) },
+        { size = NOTE, color = shown == 0 and t.danger or t.faint, wrap = "none" }) },
     ctx.legend({ { { "j", "k", "gg", "G" }, "walk" }, { "/", "filters" }, { "<CR>", "installs" },
-      { "b", "builds here" }, { "u", "updates all" }, { "d", "removes" }, { "q", "closes" } }, { size = SIZE - 2 }) }
+      { "b", "builds here" }, { "u", "updates all" }, { "d", "removes" }, { "q", "closes" } }, { size = NOTE }) }
 
   local list = column { key = "list", width = "grow", height = "grow", pad = { x = PAD, bottom = PAD },
     gap = 14, scroll_y = true }
@@ -317,7 +317,7 @@ kawoosh.view(VIEW, function(ctx)
     for _, e in ipairs(out) do col[#col + 1] = line(e, ctx, e.g.name == S.cursor) end
     if #out == 0 then
       col[#col + 1] = row { pad = { x = 8, y = 4 },
-        text("none: every grammar there is, is in", { size = SIZE - 1, color = t.muted, wrap = "word" }) }
+        text("none: every grammar there is, is in", { size = SMALL, color = t.muted, wrap = "word" }) }
     end
     list[#list + 1] = col
   end
@@ -328,7 +328,7 @@ kawoosh.view(VIEW, function(ctx)
   end
   if shown == 0 and q ~= "" then
     list[#list + 1] = row { width = "grow", pad = { x = 8 },
-      text("no grammar matches “" .. q .. "”", { size = SIZE - 1, color = t.muted, wrap = "word" }) }
+      text("no grammar matches “" .. q .. "”", { size = SMALL, color = t.muted, wrap = "word" }) }
   end
   return column { key = "body", width = "grow", height = "grow", bg = t.bg, head, list }
 end, function(ev)

@@ -276,6 +276,52 @@ fn the_panel_is_one_pane_and_opens_files_where_it_was_asked_from() {
     );
 }
 
+/// The bar is the fewest rows that hold it (asked 2026-10-02: "compress
+/// navigation inside a search panel again"): the pattern with its
+/// toggles and count, the globs with the way to the keys — two rows of
+/// its fields' height; the stages' row only once there is a second
+/// stage to walk to. It was three, the third a lone chip saying the
+/// pattern again.
+#[test]
+fn the_bar_is_two_rows_until_there_are_stages_to_walk() {
+    let (mut d, mut app, _dir) = launch("rows");
+    ex(&mut d, &mut app, "search project needle");
+    searched(&mut d, &mut app);
+    d.frame(&mut app);
+    let panel = app.layout.focused();
+    let view = match app.layout.content(panel) {
+        Some(Content::Editor(v)) => v,
+        other => panic!("{other:?}"),
+    };
+    let nodes = d.core.nodes();
+    // The find field's line: a row as tall as the bar's every row.
+    let field = nodes
+        .iter()
+        .find(|n| n.label.as_deref() == Some("field:lua:search/find"))
+        .expect("the find field")
+        .rect
+        .h;
+    let one = app.header_height(panel, view);
+    assert!(
+        one < 3.0 * field,
+        "two rows and their padding: {one} px for fields of {field}"
+    );
+    assert!(
+        !nodes.iter().any(|n| n.text.as_deref() == Some("needle  1")),
+        "no lone stage chip"
+    );
+    // A second stage: its row under the globs, the stages on it.
+    d.press(&mut app, "<A-a>");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let two = app.header_height(panel, view);
+    assert!(two >= one + field, "the stages' row: {two} after {one}");
+    let nodes = d.core.nodes();
+    let texts: Vec<&str> = nodes.iter().filter_map(|n| n.text.as_deref()).collect();
+    assert!(texts.contains(&"needle  1"), "the first stage: {texts:?}");
+    assert!(texts.contains(&"in …"), "the new one: {texts:?}");
+}
+
 /// A session brings the panel back as the search, not a scratch: the
 /// bar over `*search*` where it was, the workspace's last search back
 /// in its fields and run again, so the results are as the files are

@@ -31,7 +31,9 @@ local door = kawoosh.du
 local VIEW = "du"
 local PANE_FACT = "lua:" .. VIEW
 local SHARE = 0.45
-local SIZE = 13
+-- The panes' one scale (`kawoosh.metrics`), read each frame; a row a
+-- line of its text with the chrome's air and two px more.
+local SIZE, SMALL, NOTE = 13, 12, 11
 local ROW_H = 22
 local BAR_W = 90
 -- The pane's width from which a row has room for its bar and count.
@@ -302,8 +304,9 @@ end
 
 kawoosh.view(VIEW, function(ctx)
   local t = ctx.env.theme
-  local l = ctx.env.tokens and ctx.env.tokens.lengths or {}
-  SIZE = l.chrome or 13
+  local m = ctx.metrics
+  SIZE, SMALL, NOTE = m.text, m.small, m.note
+  ROW_H = m.row + 2
   if pending and ctx.focused then
     start(ctx.pane, pending.root, pending.walk)
     pending = nil
@@ -335,9 +338,9 @@ kawoosh.view(VIEW, function(ctx)
       text({ { "disk usage", bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
       row { width = "grow", min_width = 0,
         text(where, { family = "mono", size = SIZE, color = t.accent, ellipsis = true }) } },
-    text(said, { size = SIZE - 1, color = st.done and t.muted or t.fg, ellipsis = true }),
+    text(said, { size = SMALL, color = st.done and t.muted or t.fg, ellipsis = true }),
     text("jk walk · l in · h up · s sort (" .. S.sort .. ") · m marks · d deletes · D deletes marked · o lists · r again · q closes",
-      { size = SIZE - 2, color = t.faint, wrap = "word" }) }
+      { size = NOTE, color = t.faint, wrap = "word" }) }
 
   -- A narrow pane drops the bar and the file counts, for the names.
   local wide = (ctx.width or 0) == 0 or ctx.width >= WIDE
@@ -359,13 +362,13 @@ kawoosh.view(VIEW, function(ctx)
         row { width = math.max(1, math.floor(BAR_W * frac)), height = 8, radius = 2,
               bg = e.dir and t.accent or t.muted } }
     end
-    r[#r + 1] = text(share, { family = "mono", size = SIZE - 1, color = t.muted, wrap = "none" })
+    r[#r + 1] = text(share, { family = "mono", size = SMALL, color = t.muted, wrap = "none" })
     -- The name takes what is left, cut with an ellipsis: squeezed to
     -- nothing, it was pushed past the row's end.
     r[#r + 1] = row { width = "grow", min_width = 0,
       text(e.name .. (e.dir and "/" or ""), { size = SIZE, color = e.dir and t.accent or t.fg, ellipsis = true }) }
     if wide then
-      r[#r + 1] = text(e.dir and e.files and (count(e.files) .. " files") or "", { size = SIZE - 2, color = t.faint, wrap = "none" })
+      r[#r + 1] = text(e.dir and e.files and (count(e.files) .. " files") or "", { size = NOTE, color = t.faint, wrap = "none" })
     end
     return row(r)
   end)
