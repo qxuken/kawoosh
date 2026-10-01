@@ -43,7 +43,7 @@ Text that a password manager marks as concealed or transient is not picked up th
 | `marks` | marks |
 | `all` | every kind of row |
 
-The views show this workspace's memory (the focused tab's project) or the global one, every workspace's: `<C-a>` in the pane switches between them for the session, the head says which (`in ~/projects/foo` or `every workspace`), and `:memory workspace` or `:memory global` opens the pane on one. `memory.scope` (`"workspace"`) is where it starts. `texts` are the same either way, since a yank is a yank anywhere, and `jumps` are always the tab's.
+The views show this workspace's memory (the focused tab's project) or the global one, every workspace's: `<C-a>` in the pane switches between them for the session, as does a click on **@workspace** or **@global** at the left of the pane's strip (the one on is filled), the head says which (`in ~/projects/foo` or `every workspace`), `:memory scope @global` sets one, and `:memory workspace` or `:memory global` opens the pane on one. `memory.scope` (`"workspace"`) is where it starts. `texts` are the same either way, since a yank is a yank anywhere, and `jumps` are always the tab's.
 
 | keys in the pane | what |
 |---|---|
