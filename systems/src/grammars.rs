@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use kawoosh_languages::{Grammar, Library, Locate};
 use serde::{Deserialize, Serialize};
 
 /// The manifest's shape this build reads.
@@ -136,6 +137,46 @@ pub struct Installed {
     pub row: Row,
 }
 
+impl Installed {
+    /// Its library and queries where the install put them, a query
+    /// under `home`'s `queries/NAME/` (the config directory) in place
+    /// of the install's; the error names what was looked for.
+    pub fn library(&self, home: Option<&Path>) -> Result<Option<Library>, String> {
+        let said = Locate {
+            path: Some(self.dir.clone()),
+            symbol: Some(self.row.symbol.clone()),
+            ..Locate::default()
+        };
+        Library::find(&self.row.name, &said, home)
+    }
+}
+
+/// An install's grammar made ready where the install ran, off the
+/// frame: its library found and opened, its ABI checked, its queries
+/// compiled. On the frame, a big grammar's queries and a new library's
+/// first open — which macOS checks before it maps one, a quarter of a
+/// second for a small one — froze the window as long.
+#[derive(Debug)]
+pub struct Loaded {
+    /// [`Installed::library`]: the error is a warning, and the language
+    /// one of files alone.
+    pub library: Result<Option<Library>, String>,
+    /// The library's grammar, `Ok(None)` without one; the error is why
+    /// it does not load.
+    pub grammar: Result<Option<Grammar>, String>,
+}
+
+impl Loaded {
+    pub fn of(installed: &Installed, home: Option<&Path>) -> Loaded {
+        let library = installed.library(home);
+        let grammar = match &library {
+            Ok(Some(lib)) => lib.load().map(Some),
+            _ => Ok(None),
+        };
+        Loaded { library, grammar }
+    }
+}
+
 /// News of an install, in order; the last is `Done` or `Failed`.
 #[derive(Debug)]
 pub enum Step {
@@ -149,7 +190,8 @@ pub enum Step {
     /// A build's two: the source fetched with git, and compiled.
     Source,
     Compiling,
-    Done(Box<Installed>),
+    /// What is on disk now, and its grammar loaded ([`Loaded`]).
+    Done(Box<Installed>, Box<Loaded>),
     Failed(String),
 }
 
@@ -894,7 +936,7 @@ mod tests {
                 Step::Verifying => "verifying",
                 Step::Extracting => "extracting",
                 Step::Source | Step::Compiling => "build",
-                Step::Done(_) | Step::Failed(_) => "end",
+                Step::Done(..) | Step::Failed(_) => "end",
             })
         };
         // A base that is not there is passed over for the one that is.

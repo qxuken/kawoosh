@@ -274,8 +274,10 @@ An install is one progress line under `grammar`, off the frame:
    manifest again and tries once more, then fails with both hashes;
 3. **extract**: this target's library and the queries, written beside
    and renamed in;
-4. **load**: `add_language`, as `kawoosh.language` does — the
-   language's open buffers colour without a restart.
+4. **load**: the library opened and its queries compiled on the
+   install's thread, then `add_language` with the grammar ready, as
+   `kawoosh.language` adds one — the language's open buffers colour
+   without a restart.
 
 A failure is a line under `grammar` and the language stays a language
 of files. No `curl` on the `PATH` says so, once.
@@ -455,7 +457,7 @@ Where it departed from the text:
 - **At launch an installed grammar is registered, not loaded**: the ts
   thread loads it at its first buffer, as it does a linked one. A
   fresh install loads on the spot, so one that does not load is a
-  warning then.
+  warning then — on the install's thread since 2026-10-02 (below).
 - **A listed language does not take a file from one with colours**: it
   is the newest in the table, and would win the file to show it plain.
 - **Decision 8 came forward**: `grammars.url` is read from the session,
@@ -835,3 +837,19 @@ Verified: `an_offer_goes_in_its_time_and_can_be_put_away`
 and `the_pane_filters_by_name_and_file_and_tags_the_built_in`
 (`kawoosh/tests/grammars.rs`), and the pane test's rows with the
 built-in ones after the rest.
+
+**An install's end froze the window, 2026-10-02.** Reported: "grammar
+panel lags at the moment of finishing installation. if i install
+something and scroll it freezes for a 1-2s". Measured: the frame an
+install ended in opened the new library and compiled its queries.
+macOS checks a library at its first open — a fresh 1 MB grammar took
+220 ms and a 3.5 MB one 250 ms on a busy machine, a later open of the
+same file half a millisecond — and php's queries compile in 35–50 ms;
+the rest of the end (the stored manifest read again, the list
+published, the pane's rows) is under a millisecond. Now the install's
+thread does the load (`grammars::Loaded`: `Installed::library`, then
+`Library::load`) and sends the grammar ready with `Step::Done`; the
+frame takes it in with `put_loaded`, a failure still the warning it
+was. Verified: `an_install_s_grammar_is_loaded_off_the_frame`, the
+frame's CPU time against the load's of a heavy query (1–2 ms against
+200).
