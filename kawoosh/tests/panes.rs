@@ -372,6 +372,15 @@ fn buffers_are_listed_and_switched() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The clock run past any glide (the tabs', a ribbon's), a frame every
+/// twentieth of a second.
+fn settle(d: &mut Drive, app: &mut Kawoosh) {
+    for _ in 0..8 {
+        d.advance(0.05);
+        d.frame(app);
+    }
+}
+
 fn centre(r: &Rect) -> Vec2 {
     Vec2::new(r.x + r.w / 2.0, r.y + r.h / 2.0)
 }
@@ -843,7 +852,9 @@ fn a_tab_is_dragged_along_the_strip() {
     d.drag(&mut app, at[2], at[0]);
     assert_eq!(ids(&app), [before[2], before[0], before[1]]);
     assert_eq!(app.layout.tab, 0);
-    d.frame(&mut app);
+    // The tabs glide to their places (the test after this one): a press
+    // is on the tab drawn under it, so let them arrive.
+    settle(&mut d, &mut app);
     // A tab that is not in front, held: it is in front at the press, and
     // in the place under the pointer while still held — a hand's width
     // below the row as well.
@@ -853,7 +864,7 @@ fn a_tab_is_dragged_along_the_strip() {
     assert_eq!(ids(&app), [before[2], before[0], before[1]]);
     let below = Vec2::new(at[2].x, at[2].y + 200.0);
     d.input(&mut app, kui_native::InputEvent::CursorMoved(below));
-    d.frame(&mut app);
+    settle(&mut d, &mut app);
     assert_eq!(ids(&app), [before[2], before[1], before[0]]);
     assert_eq!(app.layout.tab, 2);
     // The press is the tab's, not the place's: the place it was pressed
@@ -887,7 +898,7 @@ fn a_tab_is_dragged_along_the_strip() {
     assert_eq!(ids(&app), [before[0], before[2], before[1]]);
     assert_eq!(app.layout.tab, 0);
     d.input(&mut app, kui_native::InputEvent::mouse_up());
-    d.frame(&mut app);
+    settle(&mut d, &mut app);
     assert_eq!(ids(&app), [before[0], before[2], before[1]]);
     assert_eq!(
         app.layout.tab, 0,
@@ -922,6 +933,61 @@ fn a_tab_is_dragged_along_the_strip() {
     d.drag(&mut app, from, at[first_shown]);
     assert_eq!(app.layout.tab, first_shown);
     assert_eq!(app.layout.tabs[first_shown].focused, before[8]);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// Tabs glide to their places when their order changes — by the keys as
+/// by a drag — each from where it was drawn: begun from rest, and
+/// turned mid-glide by a second move. Nothing else glides: a tab made
+/// puts the others in their new places at once.
+#[test]
+fn tabs_glide_to_their_places_when_reordered() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, "tabnew");
+    d.frame(&mut app);
+    // Each tab's block by its own number, as made: 0 1 2, on 2.
+    let x = |d: &mut Drive, id: u64| d.rect(&format!("tab{id}")).expect("the tab").x;
+    let (a, b, c) = (x(&mut d, 0), x(&mut d, 1), x(&mut d, 2));
+    assert!(a < 1.0 && b > 290.0 && c > 590.0, "{a} {b} {c}");
+    // 2 a place left: on that frame both are still where they were, …
+    d.keys(&mut app, "[T");
+    assert_eq!(app.layout.tab, 1);
+    assert!((x(&mut d, 2) - c).abs() < 1.0 && (x(&mut d, 1) - b).abs() < 1.0);
+    // … half the glide on they are between their places, …
+    d.advance(0.06);
+    d.frame(&mut app);
+    let (x1, x2) = (x(&mut d, 1), x(&mut d, 2));
+    assert!(x2 > b + 5.0 && x2 < c - 5.0, "2 on its way left: {x2}");
+    assert!(x1 > b + 5.0 && x1 < c - 5.0, "1 on its way right: {x1}");
+    assert!(x(&mut d, 0).abs() < 1.0, "0 has nowhere to go");
+    // … and turned there by a second move: 2 goes on to the first place
+    // from where it is, 0 sets off, and 1 carries on to the last.
+    d.keys(&mut app, "[T");
+    assert_eq!(app.layout.tab, 0);
+    assert!((x(&mut d, 2) - x2).abs() < 1.0, "from where it was drawn");
+    d.advance(0.06);
+    d.frame(&mut app);
+    let (y0, y1, y2) = (x(&mut d, 0), x(&mut d, 1), x(&mut d, 2));
+    assert!(
+        y2 < x2 - 5.0 && y2 > a + 5.0,
+        "2 on its way to the first: {y2}"
+    );
+    assert!(y0 > a + 5.0 && y0 < b - 5.0, "0 on its way right: {y0}");
+    assert!(y1 > x1, "1 further on: {y1}");
+    settle(&mut d, &mut app);
+    assert!((x(&mut d, 2) - a).abs() < 1.0);
+    assert!((x(&mut d, 0) - b).abs() < 1.0);
+    assert!((x(&mut d, 1) - c).abs() < 1.0);
+    // A tab made: the others are a quarter of the row each on the frame
+    // that draws it, no glide — and one moved in the same breath would
+    // not make them.
+    d.keys(&mut app, "]T");
+    ex(&mut d, &mut app, "tabnew");
+    assert!((x(&mut d, 2) - 225.25).abs() < 1.0, "{}", x(&mut d, 2));
+    assert!((x(&mut d, 1) - 450.5).abs() < 1.0, "{}", x(&mut d, 1));
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

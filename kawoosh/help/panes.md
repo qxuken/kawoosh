@@ -56,8 +56,8 @@ is highlighted while you drag.
 
 A tab is a layout of its own, shown in the strip at the top of the
 window. A click on a tab goes to it; its `×` closes it. Drag a tab
-along the strip to move it: it follows the pointer, the others making
-room.
+along the strip to move it: it follows the pointer, the others gliding
+aside to make room.
 
 | keys | what |
 |---|---|

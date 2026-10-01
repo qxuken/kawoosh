@@ -283,6 +283,11 @@ pub struct Kawoosh {
     /// The tab strip's row as last drawn, whose geometry says which
     /// tab's place the pointer is over.
     pub(crate) tabs_key: Option<kui_native::Key>,
+    /// The tabs' order as last drawn, by `Tab::id`: the same tabs in
+    /// another order glide to their places.
+    pub(crate) tabs_order: Vec<u64>,
+    /// That glide, while it runs (`chrome::TabsGlide`).
+    pub(crate) tabs_glide: Option<crate::chrome::TabsGlide>,
     pub(crate) body_h: f32,
     /// The strip's shape as last drawn, so the frame it changes on
     /// reveals the focused column (`render_strip`).
@@ -447,6 +452,8 @@ impl Kawoosh {
             pane_drag: None,
             tab_drag: None,
             tabs_key: None,
+            tabs_order: Vec::new(),
+            tabs_glide: None,
             body_h: 600.0,
             strip_seen: None,
             strip_settling: 0,
@@ -2256,14 +2263,14 @@ impl Kawoosh {
     }
 
     /// The place in the tab strip under the pointer at `x`, past either
-    /// end of the tabs the nearest: the tabs are of one width with a
-    /// hairline between, so the row's content (kui's geometry of it, as
-    /// drawn — scrolled, and mid-ease where the offset is easing)
-    /// divides evenly.
+    /// end of the tabs the nearest: the row's content (kui's geometry of
+    /// it, as drawn — scrolled, and mid-ease where the offset is easing)
+    /// divided evenly (`chrome::tab_pitch`). The places, not the tabs
+    /// drawn: one gliding to its place is not there yet.
     fn tab_place_at(&self, core: &Core, x: f32) -> Option<usize> {
         let n = self.layout.tabs.len();
         let g = core.scroll_geometry(self.tabs_key?)?;
-        let pitch = (g.content.w + 1.0) / n as f32;
+        let pitch = crate::chrome::tab_pitch(&g, n);
         if pitch <= 0.0 {
             return None;
         }

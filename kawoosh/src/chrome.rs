@@ -19,9 +19,13 @@
 //! (kui F80). The active tab and the one under the pointer carry a
 //! close button, when there is another tab to go to. When the tabs are
 //! in more than one directory each label leads with its own. A tab is
-//! dragged along the row to another place (`Kawoosh::on_tab_drag`).
+//! dragged along the row to another place (`Kawoosh::on_tab_drag`), and
+//! tabs whose order changed — by that or by `]T` — glide to their places
+//! ([`TabsGlide`]).
 
-use kui_native::{Align, CursorShape, NodeSpec, Role, Span, Stroke, Ui, Value, Vec2, widgets};
+use kui_native::{
+    Align, CursorShape, Enter, NodeSpec, Role, Span, Stroke, Ui, Value, Vec2, widgets,
+};
 
 use crate::app::Kawoosh;
 use crate::layout::Content;
@@ -30,8 +34,37 @@ use crate::rows;
 /// The narrowest a tab gets before the strip scrolls rather than
 /// squeezing it further.
 pub const TAB_MIN_W: f32 = 140.0;
-/// How long the strip takes to bring the active tab into view.
+/// How long the strip takes to bring the active tab into view, and a
+/// tab to glide to a new place in it.
 const TABS_MS: f32 = 160.0;
+/// How long past a reorder the tabs are told to glide: the glide and a
+/// frame or two over, so its last frame is drawn while they still are.
+const GLIDE_FOR: std::time::Duration = std::time::Duration::from_millis(TABS_MS as u64 + 100);
+
+/// The tabs gliding to their places after their order changed: until
+/// when, and how far from its new place each moved tab was (by
+/// `Tab::id`).
+///
+/// A reorder is the one thing in the strip that glides, so the gliding
+/// is declared for it alone and for as long as it lasts. kui's `slide`
+/// eases a node's place in the *window*, whatever moved it: left on, a
+/// wheel over a crowded row would drag the tabs behind it, and a tab
+/// made or the window resized would send them drifting through each
+/// other to widths they already have. So it is on from the reorder
+/// until the glide has run, and a tab that was not gliding — kui has
+/// no last place for one — is given where it was as the offset it
+/// enters from.
+pub(crate) struct TabsGlide {
+    until: std::time::Instant,
+    from: Vec<(u64, f32)>,
+}
+
+/// From one tab's left edge to the next's, in a row laid out as `g`
+/// with `n` tabs: they are of one width with a hairline between, so the
+/// row's content divides evenly.
+pub(crate) fn tab_pitch(g: &kui_native::ScrollGeometry, n: usize) -> f32 {
+    (g.content.w + 1.0) / n.max(1) as f32
+}
 
 impl Kawoosh {
     /// Where tab `t` is: the directory its terminal's shell last said
@@ -246,6 +279,54 @@ impl Kawoosh {
         let mut tabs_key = None;
         // A tab held and moved follows the pointer (`on_tab_drag`).
         let dragging = self.tab_drag.is_some_and(|(_, moved)| moved);
+        // The same tabs in another order than last drawn: each glides
+        // from the place it had, which the row's last geometry gives.
+        if !self
+            .layout
+            .tabs
+            .iter()
+            .map(|t| t.id)
+            .eq(self.tabs_order.iter().copied())
+        {
+            let was = std::mem::replace(
+                &mut self.tabs_order,
+                self.layout.tabs.iter().map(|t| t.id).collect(),
+            );
+            let place = |id: &u64| was.iter().position(|w| w == id);
+            let pitch = self
+                .tabs_key
+                .and_then(|k| ui.scroll_geometry(k))
+                .map(|g| tab_pitch(&g, n));
+            if was.len() == n
+                && self.tabs_order.iter().all(|id| place(id).is_some())
+                && let Some(pitch) = pitch
+            {
+                self.tabs_glide = Some(TabsGlide {
+                    until: std::time::Instant::now() + GLIDE_FOR,
+                    from: self
+                        .tabs_order
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(now, id)| {
+                            let was = place(id)?;
+                            (was != now).then_some((*id, (was as f32 - now as f32) * pitch))
+                        })
+                        .collect(),
+                });
+            } else {
+                // A tab made or closed: the widths changed with it, and
+                // the tabs take their new places whole.
+                self.tabs_glide = None;
+            }
+        }
+        if self
+            .tabs_glide
+            .as_ref()
+            .is_some_and(|g| g.until <= std::time::Instant::now())
+        {
+            self.tabs_glide = None;
+        }
+        let glide = self.tabs_glide.as_ref();
         // The plugins' segments at the strip's right end (status.md):
         // the tabs in a row beside them when there are any.
         let segs = self.status_blocks(ui, "tabs");
@@ -293,106 +374,115 @@ impl Kawoosh {
                             // side by side: a button inside the item would sit
                             // inside one roving Tab stop, where the ring never
                             // reaches it.
-                            let key = ui.with_keyed(
-                                &format!("tab{id}"),
-                                NodeSpec::column()
-                                    .grow_width()
-                                    .min_width(TAB_MIN_W)
-                                    .grow_height()
-                                    .bg(bg)
-                                    .hover_bg(if is_active {
-                                        theme.accent_hover
-                                    } else {
-                                        pal.panel
-                                    })
-                                    .hoverable()
-                                    .hover_group(&group),
-                                |ui| {
-                                    // i3's coloured top edge on the block.
-                                    ui.leaf(NodeSpec::row().grow_width().height(2.0).bg(edge));
-                                    ui.with(
-                                        NodeSpec::row().fill().gap(0.0).cross_align(Align::Center),
-                                        |ui| {
-                                            // A click goes to the tab, a
-                                            // drag takes it along the row.
-                                            let mut item = NodeSpec::row()
-                                                .fill()
-                                                .pad_xy(10.0, 0.0)
-                                                .cross_align(Align::Center)
-                                                .clip()
-                                                .hover_group(&group)
-                                                .on_click(Value::map([
-                                                    ("kind", "tab".into()),
-                                                    ("index", Value::Int(i as i64)),
-                                                ]))
-                                                .on_drag(Value::map([
-                                                    ("kind", "tabdrag".into()),
-                                                    ("index", Value::Int(i as i64)),
-                                                ]))
-                                                .role(Role::Tab)
-                                                .selected(is_active)
-                                                .label(label.as_str());
-                                            if dragging {
-                                                item = item.cursor(CursorShape::Grabbing);
+                            let mut block = NodeSpec::column()
+                                .grow_width()
+                                .min_width(TAB_MIN_W)
+                                .grow_height()
+                                .bg(bg)
+                                .hoverable()
+                                .hover_group(&group);
+                            // Under a drag the held tab alone answers the
+                            // pointer: the others pass beneath it as they
+                            // make room, and would light and show their
+                            // close buttons on the way.
+                            if !dragging || is_active {
+                                block = block.hover_bg(if is_active {
+                                    theme.accent_hover
+                                } else {
+                                    pal.panel
+                                });
+                            }
+                            if let Some(g) = glide {
+                                block = block.transition(TABS_MS).slide();
+                                if let Some((_, dx)) = g.from.iter().find(|(t, _)| t == id) {
+                                    block = block.enter(Enter::from(*dx, 0.0));
+                                }
+                            }
+                            let key = ui.with_keyed(&format!("tab{id}"), block, |ui| {
+                                // i3's coloured top edge on the block.
+                                ui.leaf(NodeSpec::row().grow_width().height(2.0).bg(edge));
+                                ui.with(
+                                    NodeSpec::row().fill().gap(0.0).cross_align(Align::Center),
+                                    |ui| {
+                                        // A click goes to the tab, a
+                                        // drag takes it along the row.
+                                        let mut item = NodeSpec::row()
+                                            .fill()
+                                            .pad_xy(10.0, 0.0)
+                                            .cross_align(Align::Center)
+                                            .clip()
+                                            .hover_group(&group)
+                                            .on_click(Value::map([
+                                                ("kind", "tab".into()),
+                                                ("index", Value::Int(i as i64)),
+                                            ]))
+                                            .on_drag(Value::map([
+                                                ("kind", "tabdrag".into()),
+                                                ("index", Value::Int(i as i64)),
+                                            ]))
+                                            .role(Role::Tab)
+                                            .selected(is_active)
+                                            .label(label.as_str());
+                                        if dragging {
+                                            item = item.cursor(CursorShape::Grabbing);
+                                        }
+                                        ui.with_keyed("item", item, |ui| {
+                                            ui.text(
+                                                label,
+                                                rows::mono(font, &pal).color(fg).ellipsis(),
+                                            )
+                                        });
+                                        if n > 1 && (is_active || (hovered && !dragging)) {
+                                            // Its own colour under the pointer
+                                            // alone: a group's hover lights
+                                            // every member.
+                                            let on = ui.is_hovered(ui.child_key("close"));
+                                            // A square shorter than the row,
+                                            // centred in it, its × two strokes
+                                            // about the middle: a glyph sits on
+                                            // the font's math axis, below it.
+                                            let side = (font.line_height * 0.75).round();
+                                            let mut close = NodeSpec::row()
+                                                .size(side, side)
+                                                .radius(3.0)
+                                                .hover_group(&group);
+                                            if on {
+                                                close = close.bg(if is_active {
+                                                    theme.accent_hover
+                                                } else {
+                                                    pal.border
+                                                });
                                             }
-                                            ui.with_keyed("item", item, |ui| {
-                                                ui.text(
-                                                    label,
-                                                    rows::mono(font, &pal).color(fg).ellipsis(),
-                                                )
-                                            });
-                                            if n > 1 && (is_active || hovered) {
-                                                // Its own colour under the pointer
-                                                // alone: a group's hover lights
-                                                // every member.
-                                                let on = ui.is_hovered(ui.child_key("close"));
-                                                // A square shorter than the row,
-                                                // centred in it, its × two strokes
-                                                // about the middle: a glyph sits on
-                                                // the font's math axis, below it.
-                                                let side = (font.line_height * 0.75).round();
-                                                let mut close = NodeSpec::row()
-                                                    .size(side, side)
-                                                    .radius(3.0)
-                                                    .hover_group(&group);
-                                                if on {
-                                                    close = close.bg(if is_active {
-                                                        theme.accent_hover
-                                                    } else {
-                                                        pal.border
-                                                    });
-                                                }
-                                                ui.with_keyed(
-                                                    "close",
-                                                    close
-                                                        .on_click(Value::map([
-                                                            ("kind", "tab close".into()),
-                                                            ("index", Value::Int(i as i64)),
-                                                        ]))
-                                                        .label("close tab"),
-                                                    |ui| {
-                                                        let (m, a) = (side / 2.0, side * 0.15);
-                                                        let stroke = Stroke::new(1.25, fg);
-                                                        ui.line(
-                                                            Vec2::new(m - a, m - a),
-                                                            Vec2::new(m + a, m + a),
-                                                            stroke,
-                                                            NodeSpec::row(),
-                                                        );
-                                                        ui.line(
-                                                            Vec2::new(m - a, m + a),
-                                                            Vec2::new(m + a, m - a),
-                                                            stroke,
-                                                            NodeSpec::row(),
-                                                        );
-                                                    },
-                                                );
-                                                ui.leaf(NodeSpec::row().width(6.0));
-                                            }
-                                        },
-                                    );
-                                },
-                            );
+                                            ui.with_keyed(
+                                                "close",
+                                                close
+                                                    .on_click(Value::map([
+                                                        ("kind", "tab close".into()),
+                                                        ("index", Value::Int(i as i64)),
+                                                    ]))
+                                                    .label("close tab"),
+                                                |ui| {
+                                                    let (m, a) = (side / 2.0, side * 0.15);
+                                                    let stroke = Stroke::new(1.25, fg);
+                                                    ui.line(
+                                                        Vec2::new(m - a, m - a),
+                                                        Vec2::new(m + a, m + a),
+                                                        stroke,
+                                                        NodeSpec::row(),
+                                                    );
+                                                    ui.line(
+                                                        Vec2::new(m - a, m + a),
+                                                        Vec2::new(m + a, m - a),
+                                                        stroke,
+                                                        NodeSpec::row(),
+                                                    );
+                                                },
+                                            );
+                                            ui.leaf(NodeSpec::row().width(6.0));
+                                        }
+                                    },
+                                );
+                            });
                             if is_active {
                                 active_key = Some(key);
                             }
