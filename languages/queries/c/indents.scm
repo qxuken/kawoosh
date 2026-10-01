@@ -1,5 +1,6 @@
 ;; From helix 25.07.1, runtime/queries/c/indents.scm (MPL-2.0,
 ;; https://github.com/helix-editor/helix); see docs/design/indent.md.
+;; kawoosh: `default` starts a line a level out, as `case` does.
 [
   (compound_statement)
   (declaration_list)
@@ -12,6 +13,7 @@
 
 [
   "case"
+  "default"
   "}"
   "]"
   ")"

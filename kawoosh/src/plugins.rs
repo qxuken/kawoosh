@@ -17,6 +17,7 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:fonts", include_str!("../lua/fonts.lua")),
     // After themes: the lab shares its sample.
     ("kawoosh:theme_lab", include_str!("../lua/theme_lab.lua")),
+    ("kawoosh:grammars", include_str!("../lua/grammars.lua")),
     ("kawoosh:pairs", include_str!("../lua/pairs.lua")),
     // After picker: `:node actions` opens one.
     (

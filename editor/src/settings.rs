@@ -685,6 +685,14 @@ const DOCS: &[(&str, &str)] = &[
         "the size of the tabs', title bars' and strips' text; `0` follows `font.size`",
     ),
     (
+        "grammars.install",
+        "what the first file of a language with a grammar to install does: `ask` says the command, `auto` installs it, `never` nothing; a project may only say `never`",
+    ),
+    (
+        "grammars.url",
+        "where grammars are fetched from, tried in order: each a folder of `manifest.json` and an archive a grammar; a project's is passed over",
+    ),
+    (
         "theme.appearance",
         "light or dark: `system` follows the OS, or `dark`, `light`",
     ),
@@ -1091,6 +1099,26 @@ impl Settings {
         // The chrome's text (tabs, title bars, the strips): `0` follows
         // `font.size` up to a cap, a number is its own size.
         defaults.set("font.chrome_size", Setting::Int(0));
+        // Where `:grammar install` fetches from (docs/design/grammars.md
+        // Decision 2): the releases of `kawoosh-grammars` on its two
+        // hosts, each a folder of `manifest.json` and one archive a
+        // grammar, tried in order. Read from the user's layers alone.
+        // What the first file of such a language on show does (Decision
+        // 7): `ask`, a corner line naming `:grammar install`, once a
+        // language a session; `auto`; `never`.
+        defaults.set("grammars.install", Setting::Str("ask".into()));
+        defaults.set(
+            "grammars.url",
+            Setting::List(
+                [
+                    "https://github.com/qxuken/kawoosh-grammars/releases/latest/download",
+                    "https://drydock9.qxuken.dev/qxuken/kawoosh-grammars/releases/download/latest",
+                ]
+                .iter()
+                .map(|s| Setting::Str(s.to_string()))
+                .collect(),
+            ),
+        );
         defaults.set("theme.appearance", Setting::Str("system".into()));
         // A family of kawoosh's own (`themes.rs`), or `system` for kui's
         // roles off the OS; `theme.dark` and `theme.light` a variant for
@@ -1124,6 +1152,7 @@ impl Settings {
             ("tabs.directory", words(&["auto", "always", "never"])),
             ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
+            ("grammars.install", words(&["ask", "auto", "never"])),
             ("markdown.reveal", words(&["line", "span", "none"])),
             ("markdown.navigation", words(&["line", "row"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
@@ -1145,6 +1174,11 @@ impl Settings {
             "format",
             SettingKind::Open,
             "formatters by name: `cmd`, `args`, `languages`, `when`, `node`, `range`, `probe`, `timeout_ms`, `enabled` (formatters.md)",
+        );
+        s.declare(
+            "grammars.sources",
+            SettingKind::Open,
+            "grammars of your own, built here by `:grammar build NAME`: `grammars.sources.NAME = { repo =, rev =, path =, symbol =, extensions =, filenames =, shebangs =, aliases = }`, or `dir =` for a directory on this machine in the repository's place; a project's is passed over",
         );
         s.declare(
             "language",
@@ -1690,6 +1724,8 @@ mod tests {
                 "font.size",
                 "format_on_save",
                 "formatter",
+                "grammars.install",
+                "grammars.url",
                 "insert_final_newline",
                 "keys.option_as_alt",
                 "language.css.tabstop",

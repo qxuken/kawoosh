@@ -115,6 +115,7 @@ const SWEEP: &[&str] = &[
     "tutor",
     "fonts",
     "themes",
+    "grammars",
     "settings",
     "theme check",
     "theme lab",

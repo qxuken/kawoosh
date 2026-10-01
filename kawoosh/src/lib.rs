@@ -28,6 +28,7 @@ pub mod editorconfig;
 pub mod fonts;
 pub mod format;
 pub mod frames;
+pub mod grammars;
 pub mod graph;
 pub mod harness;
 pub mod help;

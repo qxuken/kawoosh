@@ -18,6 +18,10 @@ serde.workspace = true
 kawoosh-languages.workspace = true
 tree-sitter.workspace = true
 rusqlite.workspace = true
+# A grammar's archive (docs/design/grammars.md): its hash checked, its
+# deflated rows inflated — both in the tree already.
+blake3.workspace = true
+flate2 = "1"
 ignore = "0.4"
 # The project search (docs/design/search.md Decision 6): the walk above,
 # its globs and the pattern — all in the tree already.

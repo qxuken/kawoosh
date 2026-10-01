@@ -9,7 +9,7 @@ kawoosh is a modal editor and a terminal multiplexer in one window. Editing is v
 - Splits, tabs, a dock, and tabs that scroll as a strip of columns.
 - A file manager whose listing is a buffer you edit to rename, move, create and delete.
 - Pickers for files, buffers, grep, symbols, commands and recent places; a project search whose results are a live, editable multibuffer.
-- Language servers (diagnostics, completion, hover, rename, code actions, formatting, inlay hints) and tree-sitter highlighting for two dozen languages, plus grammars of your own.
+- Language servers (diagnostics, completion, hover, rename, code actions, formatting, inlay hints) and tree-sitter highlighting for two dozen languages, more installed on demand (`:grammar install`), plus grammars of your own.
 - Compile mode: build output in a buffer, with `]q` walking the errors.
 - A working memory of what you yanked, deleted and visited, kept across restarts; marks, sessions and workspaces.
 - Markdown drawn rendered in the buffer that edits it.

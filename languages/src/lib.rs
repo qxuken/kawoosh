@@ -1040,7 +1040,12 @@ impl Token {
         let head = parts.next().unwrap_or(name);
         let second = parts.next();
         Some(match head {
-            "keyword" | "repeat" | "conditional" | "storageclass" => Token::Keyword,
+            // `include` and `exception` are nvim's older names for an
+            // import's and a `try`'s keywords, which many grammars'
+            // own queries still say.
+            "keyword" | "repeat" | "conditional" | "storageclass" | "include" | "exception" => {
+                Token::Keyword
+            }
             "function" | "method" => Token::Function,
             "type" => Token::Type,
             "string" | "character" | "escape" => Token::String,
@@ -1393,6 +1398,8 @@ mod tests {
     #[test]
     fn captures_read_as_classes() {
         assert_eq!(Token::from_capture("keyword.control"), Some(Token::Keyword));
+        assert_eq!(Token::from_capture("include"), Some(Token::Keyword));
+        assert_eq!(Token::from_capture("exception"), Some(Token::Keyword));
         assert_eq!(Token::from_capture("text.title"), Some(Token::Heading));
         assert_eq!(
             Token::from_capture("markup.heading.1"),

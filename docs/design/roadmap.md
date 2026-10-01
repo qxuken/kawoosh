@@ -2859,6 +2859,27 @@ In order — the bugs first, then what needs deciding:
     `set_cursor`'s and a command's `jump`, each tab's list in the
     session; `kawoosh/tests/jumps.rs`.
 
+77. ~~**Grammars installed on demand** ([grammars.md](grammars.md)),
+    asked 2026-10-01: "How can we implement Tree-Sitter grammar auto
+    installation? Like neovim does", and "windows one of my primary
+    platform, so we should resolve this problem". Built ahead, not on
+    the machine: a public `kawoosh-grammars` repository (drydock9,
+    mirrored to GitHub, CI on both) holds a `grammar.toml` a grammar —
+    its files, its upstream and revision — and cross-builds each with
+    zig for six targets into one sqlite archive with its queries and
+    licence. Kawoosh knows the listed languages from a manifest built
+    in, and `:grammar install NAME`, or the first file of one, fetches
+    its archive with `curl`, checks its blake3 and loads it as
+    `kawoosh.language` does.~~ Built 2026-10-01, six rounds: the
+    repository with sixty-nine grammars released on both hosts,
+    thirty-one of them with an indent query; `:grammar install`,
+    `update`, `remove` and `build` (`systems/src/grammars.rs`,
+    `kawoosh/src/grammars.rs`, `kawoosh/tests/grammars.rs`);
+    `grammars.install` at a language's first file; `:grammars`, the
+    pane (`kawoosh/lua/grammars.lua` over `kawoosh.grammars.list()`);
+    `grammars.sources`, a grammar of the user's own built here. No
+    Windows has loaded one of the libraries yet.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision

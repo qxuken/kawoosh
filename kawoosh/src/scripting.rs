@@ -111,6 +111,10 @@ impl Kawoosh {
         if let Err(e) = crate::fonts::lua_door(rt.lua(), self.look.fonts.clone()) {
             log::error!("kawoosh.fonts: {e}");
         }
+        self.publish_grammars();
+        if let Err(e) = crate::grammars::lua_door(rt.lua(), self.grammars.shown.clone()) {
+            log::error!("kawoosh.grammars: {e}");
+        }
         if let Err(e) = crate::du::lua_door(rt.lua(), self.du.clone()) {
             log::error!("kawoosh.du: {e}");
         }
@@ -136,6 +140,10 @@ impl Kawoosh {
     /// watch, so a save reloads its layer.
     pub fn load_config(&mut self) {
         self.config.dir = crate::settings::config_dir();
+        // Before `init.lua`, so a language it registers is the newer.
+        if let Some(dir) = crate::grammars::dir() {
+            self.load_grammars(&dir);
+        }
         self.user_fonts(crate::fonts::user_fonts_dir());
         if let Some(p) = crate::settings::user_settings_path() {
             self.config.user = Some(p.clone());

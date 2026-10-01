@@ -18,6 +18,104 @@ language, `text` for none; `:syntax` alone says which one it is. A
 language of your own is added from Lua with `kawoosh.language`; see
 [lua](lua.md).
 
+### More languages
+
+Kawoosh knows more languages than it carries grammars for — some
+seventy: C#, PHP, Java, Kotlin, Scala, Dart, Zig, Haskell, OCaml,
+F#, Elixir, Erlang, Clojure, Ruby, Perl, R, Julia, Nix, HTML, Svelte,
+Astro, SCSS, Makefiles, CMake, Dockerfiles, protobuf, GLSL and WGSL
+among them; `:grammars` lists them all. A
+file of one is recognised, and its language server starts, but it has
+no colours until its grammar is installed:
+
+`:grammar install NAME` fetches the grammar, built for this machine,
+and paints the language's open buffers; the corner shows how far it
+is. It needs `curl` and nothing else — no compiler. An installed
+grammar is kept and is there at the next launch, with no network.
+
+An installed grammar colours, outlines and selects by node as a
+built-in one does. Thirty-one of them — Ruby, Elixir, Erlang, Haskell,
+OCaml, Nix, fish, Julia, Zig, Java, Kotlin, Scala, Dart, PHP and more —
+also bring an indent query, so `<CR>`, `o` and `=` follow the syntax
+tree ([editing](editing.md)); the others indent by their brackets.
+
+The first time a file of such a language is on show, the corner says
+so and names the command. `grammars.install` chooses: `"ask"` (that
+line, once per language in a session), `"auto"` (the grammar is
+installed without asking) or `"never"`.
+
+`:grammars` opens them all in a pane: the ones installed, each at
+its revision; the ones there are to install, with their files and
+size; the ones built in. `j` `k` walk it, `⏎` (or `i`, or a row's
+button) installs the grammar under the cursor, `u` updates every one,
+`d` removes the cursor's, `q` closes. One that is on its way shows how
+far it is, and one that failed says why.
+
+| command | |
+|---|---|
+| `:grammars` | the pane |
+| `:grammar` | which grammars are installed, and how many more there are |
+| `:grammar install NAME` | fetch and load NAME's grammar |
+| `:grammar update` | fetch the list, and install again every grammar whose release moved |
+| `:grammar update NAME` | the same for one |
+| `:grammar remove NAME` | take NAME's grammar out; its files are still recognised |
+| `:grammar build NAME` | build NAME's grammar here from its source |
+
+`:grammar build NAME` is the other way in: git fetches the grammar's
+source and the machine's C compiler — `$CC`, else `cc`, `clang`, `gcc`
+or `zig cc` — compiles it. It is for a listed grammar whose releases
+have no library for your machine (an install that fails for that says
+so), and for a grammar of your own, named in your settings with where
+it is and which files are its:
+
+```lua
+grammars = {
+  sources = {
+    mylang = {
+      repo = "https://example.com/tree-sitter-mylang",
+      rev = "main",              -- a commit, a tag or a branch
+      extensions = { "my" },     -- and filenames, shebangs, aliases
+      -- path = "grammars/mylang", symbol = "tree_sitter_mylang"
+    },
+  },
+}
+```
+
+Its colours are the repository's own `queries/highlights.scm`; where
+there is none, write one under the config directory's
+`queries/mylang/`. `:grammar update mylang` builds it again when its
+source has moved.
+
+A source need not be a repository. `dir` names a directory on this
+machine instead, read as it lies — no git, and what is not committed
+too:
+
+```lua
+grammars = { sources = { mylang = {
+  dir = "~/src/tree-sitter-mylang",   -- holds src/parser.c and queries/
+  extensions = { "my" },
+} } }
+```
+
+`:grammar build mylang` compiles it when a file of it has changed —
+its parser, its scanner or its queries — and loads it afresh, so
+working on a grammar is: edit, `tree-sitter generate`, `:grammar build
+mylang`. With nothing changed it says the grammar is up to date. In the pane a grammar that can only be built says
+`build`, and `b` builds the one under the cursor.
+
+The grammars are built by the `kawoosh-grammars` repository, which
+releases them on two hosts. `grammars.url` lists where to fetch from,
+tried in order; each is a folder holding `manifest.json` and one
+archive per grammar, so a mirror of your own is a URL in your
+settings. Only your own settings are read for it: a project's
+`grammars.url` and `grammars.sources` are passed over, since a grammar
+is code that runs inside kawoosh, and of `grammars.install` a project's
+settings may say `"never"` and nothing else.
+
+A query file of your own under the config directory,
+`queries/NAME/highlights.scm` (or `injections.scm`, `outline.scm`,
+`indents.scm`), is used in place of the installed grammar's.
+
 The same tree drives selections by syntax node, `<A-o>` `<A-i>`
 `<A-n>` `<A-p>`, the move up to the node around the caret, `<A-u>`
 ([editing](editing.md)), the outline in the
