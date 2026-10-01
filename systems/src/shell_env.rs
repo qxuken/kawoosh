@@ -90,13 +90,14 @@ pub fn ask(shell: &OsStr, patience: Duration) -> Option<OsString> {
     use std::os::unix::ffi::OsStringExt;
     use std::process::{Command, Stdio};
     use std::time::Instant;
-    let mut child = Command::new(shell)
-        .args(["-l", "-i", "-c", "/usr/bin/env"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let mut child = crate::spawn::spawn(
+        Command::new(shell)
+            .args(["-l", "-i", "-c", "/usr/bin/env"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+    )
+    .ok()?;
     let started = Instant::now();
     loop {
         match child.try_wait() {

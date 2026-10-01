@@ -63,7 +63,7 @@ pub fn run(
             });
         }
     }
-    let mut child = command.spawn().map_err(|e| match e.kind() {
+    let mut child = crate::spawn::spawn(&mut command).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => Failure::new(format!("{name}: not found")),
         _ => Failure::new(format!("{name}: {e}")),
     })?;

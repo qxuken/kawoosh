@@ -48,6 +48,16 @@ fn remote_port() -> u16 {
     20_000 + (h.finish() % 40_000) as u16
 }
 
+/// A terminal spawned as one step among the process's spawns
+/// (`kawoosh_systems::spawn`): its pty opened and its shell started with
+/// no language server or job started in between, which would take the
+/// pty's sides with it — and the window would wait in here on a shell
+/// that had started long since.
+fn in_a_pty<T>(spawn: impl FnOnce() -> T) -> T {
+    let _held = kawoosh_systems::spawn::lock();
+    spawn()
+}
+
 #[derive(Default)]
 pub struct Terminals {
     pub map: HashMap<TermId, Terminal>,
@@ -379,14 +389,16 @@ impl Kawoosh {
                 };
                 // The local end runs from a local directory.
                 let home = kawoosh_systems::fs::home().unwrap_or_else(std::env::temp_dir);
-                Terminal::spawn_argv(&argv, Some(&home), size, &[]).map(|(mut t, r)| {
-                    t.set_domain(name, cwd.clone());
-                    (t, r)
-                })
+                in_a_pty(|| Terminal::spawn_argv(&argv, Some(&home), size, &[])).map(
+                    |(mut t, r)| {
+                        t.set_domain(name, cwd.clone());
+                        (t, r)
+                    },
+                )
             }
             None => {
                 let shell = self.ed.settings.str("terminal.shell");
-                Terminal::spawn(shell, cmd, Some(&cwd), size, &envs)
+                in_a_pty(|| Terminal::spawn(shell, cmd, Some(&cwd), size, &envs))
             }
         };
         self.adopt_terminal(id, spawned, cmd)
@@ -397,7 +409,7 @@ impl Kawoosh {
     /// whatever the user's shell quotes like.
     pub(crate) fn spawn_terminal_argv(&mut self, argv: &[String], cwd: &Path) -> Option<TermId> {
         let size = TermSize { rows: 24, cols: 80 };
-        let spawned = Terminal::spawn_argv(argv, Some(cwd), size, &[]);
+        let spawned = in_a_pty(|| Terminal::spawn_argv(argv, Some(cwd), size, &[]));
         self.adopt_terminal(None, spawned, None)
     }
 

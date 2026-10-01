@@ -16,13 +16,12 @@ pub fn python() -> (String, Vec<String>) {
         ("uv", &["run", "--no-project", "python"]),
     ];
     for (cmd, args) in candidates {
-        let ok = std::process::Command::new(cmd)
-            .args(args)
-            .arg("--version")
-            .output()
-            .is_ok_and(|o| {
-                o.status.success() && String::from_utf8_lossy(&o.stdout).starts_with("Python 3")
-            });
+        let ok = kawoosh_systems::spawn::output(
+            std::process::Command::new(cmd).args(args).arg("--version"),
+        )
+        .is_ok_and(|o| {
+            o.status.success() && String::from_utf8_lossy(&o.stdout).starts_with("Python 3")
+        });
         if ok {
             return (cmd.into(), args.iter().map(|a| a.to_string()).collect());
         }

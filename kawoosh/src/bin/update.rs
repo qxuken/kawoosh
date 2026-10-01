@@ -36,5 +36,5 @@ fn main() {
         let _ = std::fs::write(staged_of(&app).join(FAILED), why);
     }
     let exe = app.join(format!("kawoosh{}", std::env::consts::EXE_SUFFIX));
-    let _ = std::process::Command::new(exe).current_dir(cwd).spawn();
+    let _ = kawoosh_systems::spawn::spawn(std::process::Command::new(exe).current_dir(cwd));
 }

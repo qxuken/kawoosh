@@ -1076,12 +1076,11 @@ impl Server {
                 c
             }
         };
-        let mut child = command
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .ok()?;
+            .stderr(Stdio::piped());
+        let mut child = crate::spawn::spawn(&mut command).ok()?;
         let stdin = child.stdin.take()?;
         let stdout = child.stdout.take()?;
         // What the server says on stderr is the log's, line by line.

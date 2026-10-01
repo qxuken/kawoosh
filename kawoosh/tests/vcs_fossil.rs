@@ -15,12 +15,13 @@ use kawoosh_editor::Sign;
 use kui_native::KeyMods;
 
 fn fossil(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new("fossil")
-        .args(args)
-        .current_dir(dir)
-        .env("FOSSIL_USER", "ann")
-        .output()
-        .ok()?;
+    let out = kawoosh_systems::spawn::output(
+        std::process::Command::new("fossil")
+            .args(args)
+            .current_dir(dir)
+            .env("FOSSIL_USER", "ann"),
+    )
+    .ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -68,10 +69,7 @@ fn until(d: &mut Drive, app: &mut Kawoosh, what: &str, mut f: impl FnMut(&Kawoos
 
 #[test]
 fn a_fossil_checkout_is_signed_blamed_and_says_what_it_lacks() {
-    if std::process::Command::new("fossil")
-        .arg("version")
-        .output()
-        .is_err()
+    if kawoosh_systems::spawn::output(std::process::Command::new("fossil").arg("version")).is_err()
     {
         eprintln!("fossil is not installed: skipped");
         return;

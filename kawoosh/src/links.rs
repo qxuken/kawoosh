@@ -212,9 +212,7 @@ pub fn open_in_os(url: &str) -> Result<(), String> {
     } else {
         ("xdg-open", vec![url])
     };
-    kawoosh_systems::io::command(program)
-        .args(&args)
-        .spawn()
+    kawoosh_systems::spawn::spawn(kawoosh_systems::io::command(program).args(&args))
         .map(|_| ())
         .map_err(|e| format!("{program}: {e}"))
 }

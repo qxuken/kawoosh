@@ -665,10 +665,9 @@ fn a_formatters_indent_is_read_by_formatting_a_probe() {
 /// by `.clang-format`, its indent probed from it, the file formatted.
 #[test]
 fn the_shipped_clang_format_runs_for_real() {
-    let found = std::process::Command::new("clang-format")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let found =
+        kawoosh_systems::spawn::output(std::process::Command::new("clang-format").arg("--version"))
+            .is_ok_and(|o| o.status.success());
     if !found {
         eprintln!("clang-format is not installed: skipped");
         return;

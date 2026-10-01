@@ -10,26 +10,23 @@ use kawoosh::Kawoosh;
 use kui_native::KeyMods;
 
 fn git(dir: &std::path::Path, args: &[&str]) {
-    let ok = std::process::Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "t")
-        .env("GIT_AUTHOR_EMAIL", "t@t")
-        .env("GIT_COMMITTER_NAME", "t")
-        .env("GIT_COMMITTER_EMAIL", "t@t")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let ok = kawoosh_systems::spawn::output(
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t"),
+    )
+    .map(|o| o.status.success())
+    .unwrap_or(false);
     assert!(ok, "git {args:?}");
 }
 
 #[test]
 fn a_listing_in_a_repository_paints_what_git_says() {
-    if std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
+    if kawoosh_systems::spawn::output(std::process::Command::new("git").arg("--version")).is_err() {
         eprintln!("git is not installed: skipped");
         return;
     }

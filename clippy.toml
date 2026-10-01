@@ -1,0 +1,10 @@
+# A child process is started through `kawoosh_systems::spawn`, one at a
+# time under its lock: started bare while another thread starts one, it
+# takes with it the ends of the other's pipes that macOS had not yet
+# marked close-on-exec, and what reads them waits for as long as it
+# lives (systems/src/spawn.rs).
+disallowed-methods = [
+  { path = "std::process::Command::spawn", reason = "use kawoosh_systems::spawn::spawn: one spawn at a time (systems/src/spawn.rs)" },
+  { path = "std::process::Command::status", reason = "use kawoosh_systems::spawn::status: one spawn at a time (systems/src/spawn.rs)" },
+  { path = "std::process::Command::output", reason = "use kawoosh_systems::spawn::output: one spawn at a time (systems/src/spawn.rs)" },
+]
