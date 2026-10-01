@@ -55,6 +55,9 @@ pub enum IoMsg {
         name: String,
         step: crate::grammars::Step,
     },
+    /// The grammars there are, fetched alone (`grammars::refresh`): the
+    /// manifest, or why not.
+    Grammars(Result<crate::grammars::Manifest, String>),
     /// A wake the app asked for at a time (`Io::tick_at`): a status
     /// segment that changes with the clock (docs/design/status.md).
     Tick,

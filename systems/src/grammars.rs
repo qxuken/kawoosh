@@ -26,6 +26,7 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -202,7 +203,61 @@ pub fn prune(root: &Path) {
                 let _ = std::fs::remove_dir_all(install.path());
             }
         }
+        // A grammar removed while its library was loaded: what is left
+        // of its directory, now that nothing holds it.
+        if current.trim().is_empty() {
+            let _ = std::fs::remove_dir(&path);
+        }
     }
+}
+
+/// Takes the grammar `name` out: `current` first, so it is not
+/// installed whatever else happens, then its directory — which a
+/// Windows with the library loaded keeps until the next launch's
+/// [`prune`]. `false` when there was none.
+pub fn remove(root: &Path, name: &str) -> Result<bool, String> {
+    if !plain(name) || installed_one(root, name).is_none() {
+        return Ok(false);
+    }
+    let dir = root.join(name);
+    let current = dir.join("current");
+    std::fs::remove_file(&current).map_err(|e| format!("{}: {e}", current.display()))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(true)
+}
+
+/// The manifest of the first of `bases` that answers, fetched and kept
+/// under `root`: what there is to install, and at which archives.
+pub fn refresh(bases: &[String], root: &Path) -> Result<Manifest, String> {
+    if bases.is_empty() {
+        return Err("grammars.url names no base to fetch from".into());
+    }
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let scratch = root.join(format!(".fetch-{}-list{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
+    let mut failures = Vec::new();
+    let mut found = None;
+    for base in bases {
+        let file = scratch.join("manifest.json");
+        let got = fetch(&join(base, "manifest.json"), &file, 0, &|_| {})
+            .and_then(|()| std::fs::read_to_string(&file).map_err(|e| e.to_string()))
+            .and_then(|text| {
+                let manifest = Manifest::parse(&text).map_err(|e| format!("{base}: {e}"))?;
+                write_whole(&root.join("manifest.json"), text.as_bytes())?;
+                Ok(manifest)
+            });
+        match got {
+            Ok(manifest) => {
+                found = Some(manifest);
+                break;
+            }
+            Err(e) => failures.push(e),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
+    found.ok_or_else(|| failures.join("; "))
 }
 
 /// Fetches `url` to `to` with `curl`, saying how far it is against
@@ -259,7 +314,11 @@ fn fetch(url: &str, to: &Path, total: u64, say: &dyn Fn(Step)) -> Result<(), Str
 /// Writes `data` at `path` through a file beside it, so a reader finds
 /// the old text or the new one.
 fn write_whole(path: &Path, data: &[u8]) -> Result<(), String> {
-    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    // Two installs at once each keep the manifest: a name of its own
+    // for each write.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("tmp-{}-{n}", std::process::id()));
     std::fs::write(&tmp, data)
         .and_then(|()| std::fs::rename(&tmp, path))
         .map_err(|e| format!("{}: {e}", path.display()))
@@ -609,6 +668,43 @@ mod tests {
         assert_eq!(installed(&root), vec![newer.clone()]);
         prune(&root);
         assert!(!got.dir.exists() && newer.dir.is_dir());
+        std::fs::remove_dir_all(t).unwrap();
+    }
+
+    #[test]
+    fn a_grammar_is_removed_and_the_list_is_fetched_alone() {
+        if !has_curl() {
+            return;
+        }
+        let t = temp("remove");
+        let (remote, root) = (t.join("remote"), t.join("grammars"));
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let at = base(&remote, b"lib", &[target()]);
+
+        // The list alone: kept, and nothing installed by it.
+        let listed = refresh(&[url(&t.join("nowhere")), at.clone()], &root).unwrap();
+        assert_eq!(listed.grammars["zig"].symbol, "tree_sitter_zig");
+        assert_eq!(stored_manifest(&root), Some(listed));
+        assert!(installed(&root).is_empty());
+        let err = refresh(&[url(&t.join("nowhere"))], &root).unwrap_err();
+        assert!(err.contains("nowhere/manifest.json"), "{err}");
+        assert!(refresh(&[], &root).unwrap_err().contains("grammars.url"));
+
+        let got = install("zig", std::slice::from_ref(&at), &root, &|_| {}).unwrap();
+        assert_eq!(remove(&root, "zig"), Ok(true));
+        assert!(installed(&root).is_empty() && !got.dir.exists());
+        assert_eq!(remove(&root, "zig"), Ok(false), "there is none now");
+        assert_eq!(remove(&root, "../remote"), Ok(false));
+        assert!(remote.join("zig.sqlar").is_file());
+
+        // A directory a loaded library kept from going is not an
+        // install, and goes at the prune.
+        install("zig", std::slice::from_ref(&at), &root, &|_| {}).unwrap();
+        std::fs::remove_file(root.join("zig/current")).unwrap();
+        assert!(installed(&root).is_empty() && got.dir.is_dir());
+        prune(&root);
+        assert!(!root.join("zig").exists());
         std::fs::remove_dir_all(t).unwrap();
     }
 
