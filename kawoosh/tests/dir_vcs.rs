@@ -44,6 +44,9 @@ fn a_listing_in_a_repository_paints_what_git_says() {
     std::fs::write(dir.join("src/main.c"), "m\n").unwrap();
     std::fs::write(dir.join("src/main.gen"), "g\n").unwrap();
     std::fs::write(dir.join("src/deep/x"), "x\n").unwrap();
+    // A directory holding nothing but ignored files is ignored as one.
+    std::fs::create_dir_all(dir.join("only")).unwrap();
+    std::fs::write(dir.join("only/x.gen"), "g\n").unwrap();
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-q", "-m", "first"]);
     std::fs::write(dir.join("changed.txt"), "c2\n").unwrap();
@@ -56,6 +59,8 @@ fn a_listing_in_a_repository_paints_what_git_says() {
     d.frame(&mut app);
     d.keys(&mut app, &format!(":dir {}", dir.display()));
     d.key(&mut app, "enter", KeyMods::default());
+    // Dot files too: git's own folder is as good as ignored.
+    d.keys(&mut app, "g.");
     // The states, by the painted line's text.
     let states = |app: &Kawoosh| -> Vec<(String, String)> {
         let Some(v) = app.focused_view() else {
@@ -83,7 +88,7 @@ fn a_listing_in_a_repository_paints_what_git_says() {
     for _ in 0..300 {
         d.frame(&mut app);
         got = states(&app);
-        if got.len() >= 3 {
+        if got.len() >= 5 {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -91,9 +96,11 @@ fn a_listing_in_a_repository_paints_what_git_says() {
     assert_eq!(
         got,
         [
+            (".git/".to_string(), "ignored".to_string()),
             ("build/".to_string(), "ignored".to_string()),
             ("changed.txt".to_string(), "modified".to_string()),
             ("new.txt".to_string(), "untracked".to_string()),
+            ("only/".to_string(), "ignored".to_string()),
         ]
     );
     std::fs::remove_dir_all(&dir).ok();
