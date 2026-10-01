@@ -54,6 +54,7 @@ Most of vim's letters mean what they always did. The exceptions:
 | `,` | keeps the primary selection and drops the rest (there is no reverse `;`) |
 | `S` | changes the line, keeping its indent |
 | `s` `x` in `V` mode | change, delete the selected lines |
+| `x` on a line's end | the caret can stand past the last character, on the line break (`$` then `l`, `j` onto a shorter line, an empty line), and `x` there deletes it: the next line joins on as it is, no space put in (vim's `gJ`). A count stops at the line's end, so `9x` on the text never joins. A visual selection over the break takes it too |
 | `zz` `zs` `ze` | place the focused column of a [strip](panes.md#the-scrolling-strip), not the cursor line |
 | `-` `_` | open the file's directory, the working directory, as a listing ([files](files.md)) |
 | `<CR>` | on a `path:line` in the text, opens it |

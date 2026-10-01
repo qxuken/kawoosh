@@ -414,8 +414,14 @@ fn dot_and_macros_run_through_the_shell() {
     assert_eq!(text(&app), "a;\nb;\nc\n");
     d.keys(&mut app, ".");
     assert_eq!(text(&app), "a;\nb;\nc;\n", "`.` is the macro's last change");
-    d.keys(&mut app, "ggx..");
+    d.keys(&mut app, "ggx.");
     assert_eq!(text(&app), "\nb;\nc;\n");
+    d.keys(&mut app, ".");
+    assert_eq!(
+        text(&app),
+        "b;\nc;\n",
+        "the emptied line's newline is under the caret, and `x` takes it"
+    );
     assert!(d.warnings().is_empty());
 }
 

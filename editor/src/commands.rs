@@ -161,8 +161,10 @@ pub(crate) fn op_range(
         MotionKind::Exclusive => (s.range(), false),
         MotionKind::Inclusive => {
             let r = s.range();
-            // Inclusive of the char under the head, never of a newline.
-            let end = if buf.char_at(r.end) == Some('\n') || r.end >= buf.len() {
+            // Inclusive of the char under the head, never of a newline
+            // (`d$` on an empty line): a motion's, where a selection's
+            // takes it (`sel_range`).
+            let end = if r.end == buf.line_range(buf.line_of(r.end)).end {
                 r.end
             } else {
                 buf.next_char(r.end)
@@ -171,6 +173,49 @@ pub(crate) fn op_range(
         }
         MotionKind::Linewise => (line_range_of_sel(buf, s, count.saturating_sub(1)), true),
     }
+}
+
+/// What a selection covers in visual mode: its characters, the one
+/// under its far end in — a line's newline too, when that end stands on
+/// it, since the selection is drawn over it there (vim's `v$`, and `v`
+/// on an empty line), as `x` on it takes it.
+pub(crate) fn sel_range(buf: &Buffer, s: &Selection) -> Range<usize> {
+    let r = s.range();
+    r.start..buf.next_char(r.end)
+}
+
+/// What `x` and `s` take from each selection: under `V` its lines, a
+/// visual selection its `sel_range`, else COUNT characters from the
+/// caret, a count stopping at the line's end — or, the caret on the
+/// line's newline, that newline, the next line joined on as it is
+/// (vim's `gJ`), once whatever the count; the last line has none.
+fn chars_under(ed: &Editor, ctx: &Ctx) -> Vec<(Range<usize>, bool)> {
+    let buf = &ed.buffers[view(ed, ctx).buffer];
+    let visual = ed.mode(ctx.view) == Mode::Visual;
+    ed.views[ctx.view]
+        .sels
+        .iter()
+        .map(|s| {
+            // `Vx` `Vs` take the lines, as `d` and `c` do there.
+            if visual && ed.views[ctx.view].visual_linewise {
+                return (line_range_of_sel(buf, s, 0), true);
+            }
+            if visual && !s.is_empty() {
+                return (sel_range(buf, s), false);
+            }
+            let le = buf.line_range(buf.line_of(s.head)).end;
+            if s.head == le {
+                return (s.head..buf.next_char(le), false);
+            }
+            let mut e = s.head;
+            for _ in 0..ctx.count.max(1) {
+                if e < le {
+                    e = buf.next_char(e);
+                }
+            }
+            (s.head..e, false)
+        })
+        .collect()
 }
 
 /// The text an operator took, remembered: the `"` register and the
@@ -481,7 +526,7 @@ fn operator(ed: &mut Editor, ctx: &Ctx, op: &'static str) {
                 if linewise {
                     (line_range_of_sel(buf, s, 0), true)
                 } else {
-                    op_range(buf, s, MotionKind::Inclusive, 1)
+                    (sel_range(buf, s), false)
                 }
             })
             .collect();
@@ -1331,7 +1376,7 @@ fn paste_over(ed: &mut Editor, ctx: &Ctx, keep: bool) {
             if lines {
                 (line_range_of_sel(buf, s, 0), true)
             } else {
-                op_range(buf, s, MotionKind::Inclusive, 1)
+                (sel_range(buf, s), false)
             }
         })
         .collect();
@@ -1994,31 +2039,13 @@ pub fn install(ed: &mut Editor) {
         apply_operator(ed, ctx.view, "join", ranges);
     });
     ed.register("delete char", |ed, ctx| {
-        let id = view(ed, ctx).buffer;
-        let buf = &ed.buffers[id];
-        let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
-            .sels
-            .iter()
-            .map(|s| {
-                // `Vx` `Vs` take the lines, as `d` and `c` do there.
-                if ed.mode(ctx.view) == Mode::Visual && ed.views[ctx.view].visual_linewise {
-                    return (line_range_of_sel(buf, s, 0), true);
-                }
-                if ed.mode(ctx.view) == Mode::Visual && !s.is_empty() {
-                    return op_range(buf, s, MotionKind::Inclusive, 1);
-                }
-                let le = buf.line_range(buf.line_of(s.head)).end;
-                let mut e = s.head;
-                for _ in 0..ctx.count.max(1) {
-                    if e < le {
-                        e = buf.next_char(e);
-                    }
-                }
-                (s.head..e, false)
-            })
-            .collect();
+        let ranges = chars_under(ed, ctx);
         if ed.mode(ctx.view) == Mode::Visual {
             ed.set_mode(ctx.view, Mode::Normal);
+        }
+        // Nothing under any caret — the text's end — keeps the register.
+        if ranges.iter().all(|(r, _)| r.is_empty()) {
+            return;
         }
         apply_operator(ed, ctx.view, "delete", ranges);
     });
@@ -2051,29 +2078,7 @@ pub fn install(ed: &mut Editor) {
         apply_operator(ed, ctx.view, op, ranges);
     });
     ed.register("change char", |ed, ctx| {
-        let id = view(ed, ctx).buffer;
-        let buf = &ed.buffers[id];
-        let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
-            .sels
-            .iter()
-            .map(|s| {
-                // `Vx` `Vs` take the lines, as `d` and `c` do there.
-                if ed.mode(ctx.view) == Mode::Visual && ed.views[ctx.view].visual_linewise {
-                    return (line_range_of_sel(buf, s, 0), true);
-                }
-                if ed.mode(ctx.view) == Mode::Visual && !s.is_empty() {
-                    return op_range(buf, s, MotionKind::Inclusive, 1);
-                }
-                let le = buf.line_range(buf.line_of(s.head)).end;
-                let mut e = s.head;
-                for _ in 0..ctx.count.max(1) {
-                    if e < le {
-                        e = buf.next_char(e);
-                    }
-                }
-                (s.head..e, false)
-            })
-            .collect();
+        let ranges = chars_under(ed, ctx);
         ed.set_mode(ctx.view, Mode::Normal);
         apply_operator(ed, ctx.view, "change", ranges);
     });
@@ -3008,7 +3013,10 @@ const DOCS: &[(&str, &str)] = &[
         "cursor rotate back",
         "make the previous selection the primary (`(`)",
     ),
-    ("delete char", "delete the character under the caret (`x`)"),
+    (
+        "delete char",
+        "delete the character under the caret (`x`); on a line's newline, the newline, the next line joined on",
+    ),
     (
         "delete char back",
         "delete the character before the caret (`X`; insert's Backspace, which joins the line above at a line's start and, as vim's, leaves the register alone)",
@@ -4081,8 +4089,8 @@ fn select_all_matches(ed: &mut Editor, ctx: &Ctx) {
 
 /// What each selection of `view` covers: its lines under `V` (the last
 /// one's newline off, so a piece does not end on it), else its
-/// characters, the head's included — as an operator in visual mode
-/// takes them.
+/// characters, the head's included, a newline under its end with them
+/// (`sel_range`) — as an operator in visual mode takes them.
 pub(crate) fn sel_ranges(ed: &Editor, view_id: ViewId) -> Vec<Range<usize>> {
     let v = &ed.views[view_id];
     let buf = &ed.buffers[v.buffer];
@@ -4095,7 +4103,7 @@ pub(crate) fn sel_ranges(ed: &Editor, view_id: ViewId) -> Vec<Range<usize>> {
                 let nl = r.end > r.start && buf.slice(r.end - 1..r.end) == "\n";
                 r.start..r.end - usize::from(nl)
             } else {
-                op_range(buf, s, MotionKind::Inclusive, 1).0
+                sel_range(buf, s)
             }
         })
         .collect()

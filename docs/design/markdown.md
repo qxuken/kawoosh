@@ -415,7 +415,9 @@ After a day's use (2026-09-23), five more:
   onto a short line puts it there on purpose, so text typed lands
   after the line (vim's `$` and `l` stop on the last character; this
   engine's `l` and `j` do not) — it is the drawing that cannot leave
-  the pane.
+  the pane. The newline is the character under such a caret: `x`
+  deletes it, joining the next line on, and a visual selection over it
+  takes it (2026-10-02, keys.md).
 - **`gx` on an anchor goes to its heading**: `#seed-data`, or
   `file.md#top` after opening the file, by GitHub's slug (lower-cased,
   punctuation dropped, spaces as `-`, a repeat numbered); it had opened

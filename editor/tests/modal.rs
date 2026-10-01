@@ -1224,6 +1224,90 @@ fn insert_backspace_at_a_line_start_joins_the_line_above() {
     assert_eq!(t.text(), "ab\ncd");
 }
 
+/// The normal-mode caret may stand on a line's newline (`$` then `l`, `j`
+/// onto a shorter line), and `x` there deletes it: the next line joined
+/// on as it is, no space put in and no indent taken off (vim's `gJ`), the
+/// newline in the register as any `x`. A count stops at the line's end,
+/// as vim's, so one begun on the text never joins and one begun on the
+/// newline joins once. The last line has no newline to take.
+#[test]
+fn x_on_a_lines_newline_joins_the_next_line_on() {
+    let reg = |t: &T| t.ed.memory.head().map(|m| m.text.clone());
+    let mut t = T::new("abc\n  def\nghi\n");
+    t.keys("$lx");
+    assert_eq!(t.text(), "abc  def\nghi\n");
+    assert_eq!(t.head(), 3, "where the newline was");
+    assert_eq!(reg(&t).as_deref(), Some("\n"));
+    t.keys("u");
+    assert_eq!(t.text(), "abc\n  def\nghi\n");
+    t.keys("j$l.");
+    assert_eq!(t.text(), "abc\n  defghi\n", "`.` joins again");
+    let mut t = T::new("abc\r\ndef");
+    t.keys("$lx");
+    assert_eq!(t.text(), "abcdef", "a CRLF break whole");
+    assert_eq!(reg(&t).as_deref(), Some("\r\n"));
+    t.keys("<Del>");
+    assert_eq!(t.text(), "abcef", "normal `<Del>` is `x`");
+    // `j` onto a shorter line, and an empty line, whose only cell is its
+    // newline.
+    let mut t = T::new("abcd\nab\ncd\n\nef");
+    t.keys("3lj");
+    assert_eq!(t.head(), 7, "on `ab`'s newline");
+    t.keys("x");
+    assert_eq!(t.text(), "abcd\nabcd\n\nef");
+    t.keys("jx");
+    assert_eq!(t.text(), "abcd\nabcd\nef");
+    // A count: from the text it takes the line's characters and stops,
+    // from the newline it joins once.
+    let mut t = T::new("abc\ndef\nghi");
+    t.keys("l9x");
+    assert_eq!(t.text(), "a\ndef\nghi");
+    t.keys("l3x");
+    assert_eq!(t.text(), "adef\nghi");
+    // The last line's end: nothing taken, the register kept.
+    let mut t = T::new("abc\ndef");
+    t.keys("yiwj$lx");
+    assert_eq!(t.text(), "abc\ndef");
+    assert_eq!(reg(&t).as_deref(), Some("abc"));
+    // `X` takes the character before the newline, and stops at a line's
+    // start; `s` changes the newline as `x` deletes it.
+    let mut t = T::new("abc\ndef");
+    t.keys("$lX");
+    assert_eq!(t.text(), "ab\ndef");
+    let mut t = T::new("abc\ndef");
+    t.keys("$ls-<Esc>");
+    assert_eq!(t.text(), "abc-def");
+}
+
+/// A visual selection is drawn over a newline its end stands on, and an
+/// operator takes that newline with the rest, as `x` takes it under a
+/// bare caret — vim's `v$`, and `v` on an empty line. An inclusive
+/// motion never does: `d$` on an empty line, CRLF or not, is nothing.
+#[test]
+fn a_selection_over_a_newline_takes_it() {
+    for keys in ["$lvx", "$lvd", "$hvlld"] {
+        let mut t = T::new("abc\ndef");
+        t.keys(keys);
+        let joined = if keys.starts_with("$h") {
+            "adef"
+        } else {
+            "abcdef"
+        };
+        assert_eq!(t.text(), joined, "{keys}");
+    }
+    let mut t = T::new("ab\n\ncd");
+    t.keys("vjd");
+    assert_eq!(t.text(), "cd", "onto an empty line");
+    let mut t = T::new("ab\ncd");
+    t.keys("$lvy");
+    assert_eq!(t.ed.memory.head().unwrap().text, "\n");
+    for text in ["a\n\nb", "a\r\n\r\nb"] {
+        let mut t = T::new(text);
+        t.keys("jd$");
+        assert_eq!(t.text(), text);
+    }
+}
+
 /// Only what an operator took is remembered and put on the clipboard,
 /// as vim's: insert's `<BS>`, `<C-h>`, `<Del>` and `<C-w>`, and the
 /// prompt's `<BS>`, leave the register and the clipboard alone; `x`,
