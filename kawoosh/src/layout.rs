@@ -441,6 +441,11 @@ pub struct Tab {
     pub seen: std::collections::HashSet<kawoosh_doc::BufferId>,
     /// The places left in its panes (docs/design/jumps.md Decision 3).
     pub jumps: crate::jumps::Jumps,
+    /// The panes the keyboard settled in, the latest last
+    /// (pane-placement.md Decision 5): where it goes back to when the
+    /// pane that has it closes. Noted once an event or a frame is over
+    /// (`Layout::note_focus`); not kept by a session.
+    pub recent: Vec<PaneId>,
 }
 
 impl Tab {
@@ -453,6 +458,7 @@ impl Tab {
             bell: false,
             seen: Default::default(),
             jumps: Default::default(),
+            recent: Vec::new(),
         }
     }
 
@@ -533,6 +539,21 @@ impl Tab {
                 (s.columns.is_empty(), ps.first().copied())
             }
         }
+    }
+
+    /// The keyboard back in the tab after the pane that had it left:
+    /// to the pane it was in last of those still here (`recent`), else
+    /// to `next` — the layout's own rule — else the tab's first.
+    fn refocus(&mut self, next: Option<PaneId>) {
+        let mut ps = Vec::new();
+        self.panes(&mut ps);
+        self.recent.retain(|p| ps.contains(p));
+        self.focused = self
+            .recent
+            .last()
+            .copied()
+            .or(next.filter(|p| ps.contains(p)))
+            .unwrap_or(ps[0]);
     }
 
     /// The tree that holds `pane`: the root, or its column's node.
@@ -710,10 +731,11 @@ pub struct Layout {
     pub new_tabs_scroll: bool,
     /// What a new column is given (`layout.column_width`).
     pub column_width: Width,
-    /// The pane each split was made from: closing a pane that has the
-    /// keys hands them back there, when it is still in the same tab
-    /// (or the dock) and neither was moved apart since (`placed_anew`)
-    /// — a list opened to be read, a Lua view, a `<C-w>v` undone.
+    /// The pane each split was made from: where a pane acts — a list's
+    /// `<CR>`, a hover's `gd` — while it is still in the same tab (or
+    /// the dock) and neither was moved apart since (`placed_anew`); and
+    /// where the keys go back when a pane closes and the tab noted no
+    /// pane they were in (`Tab::recent`).
     came_from: HashMap<PaneId, PaneId>,
     next_pane: PaneId,
     /// Columns are numbered apart from panes: a pane's number is what
@@ -874,6 +896,23 @@ impl Layout {
         }
     }
 
+    /// The keyboard's pane noted as the latest its tab (or the dock) was
+    /// in (`Tab::recent`). The shell calls it once an event or a frame
+    /// is over, so it is where the keyboard settled that counts, not
+    /// each pane it passed on the way — a pane opened without the keys
+    /// and the keys put back, a picker answered in the same key.
+    pub fn note_focus(&mut self) {
+        let home = self.focused_home_mut();
+        let p = home.focused;
+        if home.recent.last() == Some(&p) {
+            return;
+        }
+        let mut ps = Vec::new();
+        home.panes(&mut ps);
+        home.recent.retain(|q| *q != p && ps.contains(q));
+        home.recent.push(p);
+    }
+
     /// Splits the focused pane; the new pane takes focus. In a strip a
     /// split beside is a new column after the focused one, at the
     /// default width; a split below is a split below inside the column.
@@ -978,8 +1017,10 @@ impl Layout {
 
     /// Closes a pane. The last pane of the last tab stays. Returns the
     /// content it showed, so the caller can decide what to keep. A
-    /// column whose last pane closes goes with it, the focus to the
-    /// column before.
+    /// column whose last pane closes goes with it. The keys, when they
+    /// were on it, go back to the pane they were in last
+    /// (pane-placement.md Decision 5), else the one it was made from,
+    /// else the column's next, the column before, the tab's first.
     pub fn close(&mut self, pane: PaneId) -> Option<Content> {
         // Where the keys go back to, and the panes made from this one
         // told they were made from where it was.
@@ -994,17 +1035,17 @@ impl Layout {
         }
         self.dock_owner.remove(&pane);
         if let Some(d) = self.dock.as_mut().filter(|d| d.contains(pane)) {
-            // The keyboard to the pane it came from, else the column's
-            // or the dock's first, when it was on the one that went.
+            // The keyboard, when it was on the one that went, to the
+            // pane it was in last, else the one it came from, else the
+            // column's or the dock's first.
             let (empty, next) = d.remove(pane);
             if empty {
                 self.dock = None;
                 self.dock_open = false;
                 self.dock_focused = false;
             } else if d.focused == pane {
-                let mut ps = Vec::new();
-                d.panes(&mut ps);
-                d.focused = back.filter(|b| ps.contains(b)).or(next).unwrap_or(ps[0]);
+                let back = back.filter(|b| d.contains(*b));
+                d.refocus(back.or(next));
             }
             return self.panes.remove(&pane);
         }
@@ -1013,12 +1054,9 @@ impl Layout {
         let (empty, next_focus) = self.tabs[ti].remove(pane);
         if !empty {
             if was_focused {
-                let mut ps = Vec::new();
-                self.tabs[ti].panes(&mut ps);
-                self.tabs[ti].focused = back
-                    .filter(|b| ps.contains(b))
-                    .or(next_focus)
-                    .unwrap_or(ps[0]);
+                let t = &mut self.tabs[ti];
+                let back = back.filter(|b| t.contains(*b));
+                t.refocus(back.or(next_focus));
             }
         } else if self.tabs.len() > 1 {
             self.drop_tab(ti);
@@ -1071,6 +1109,7 @@ impl Layout {
             bell: false,
             seen: Default::default(),
             jumps: Default::default(),
+            recent: Vec::new(),
         });
         self.tab = self.tabs.len() - 1;
         self.dock_focused = false;
@@ -1439,9 +1478,7 @@ impl Layout {
                 });
                 let (empty, next) = a.remove(pane);
                 if !empty && a.focused == pane {
-                    let mut ps = Vec::new();
-                    a.panes(&mut ps);
-                    a.focused = next.unwrap_or(ps[0]);
+                    a.refocus(next);
                 }
                 put_beside(
                     self.home_mut(to),
@@ -1584,8 +1621,7 @@ impl Layout {
         if empty {
             self.drop_tab(self.tab);
         } else if t.focused == pane {
-            ps.retain(|p| *p != pane);
-            t.focused = next.unwrap_or(ps[0]);
+            t.refocus(next);
         }
         self.set_dock(pane);
         self.placed_anew(&[pane]);
@@ -2010,9 +2046,71 @@ mod tests {
         assert_eq!(cols(&l).len(), 1);
     }
 
+    /// The keys go back to the pane they were in last (pane-placement.md
+    /// Decision 5), whatever the closed pane was made from: in a tree, a
+    /// strip and the dock. A pane carried elsewhere is not gone back to.
+    #[test]
+    fn a_closed_pane_hands_the_keys_to_the_pane_they_were_in_last() {
+        for scroll in [false, true] {
+            let mut l = Layout::new(view());
+            l.set_scroll(scroll);
+            l.note_focus();
+            let term = l.split(SplitDir::H, view());
+            l.note_focus();
+            l.focus(1);
+            l.note_focus();
+            let git = l.split(SplitDir::H, view());
+            l.note_focus();
+            assert_eq!(l.visible_panes(), [1, git, term]);
+            for p in [term, git] {
+                l.focus(p);
+                l.note_focus();
+            }
+            l.close(git);
+            assert_eq!(
+                l.focused(),
+                term,
+                "scroll {scroll}: not where git came from"
+            );
+            // Carried into the dock, the terminal is not the tab's to go
+            // back to: the pane before it is.
+            let other = l.split(SplitDir::H, view());
+            l.note_focus();
+            assert!(l.toggle_dock(term).is_some());
+            l.focus(other);
+            l.note_focus();
+            l.close(other);
+            assert_eq!(l.focused(), 1, "scroll {scroll}");
+        }
+        // The dock: c made from b, b from a; a visited last before c.
+        let mut l = Layout::new(view());
+        let a = l.open(view(), Place::Dock);
+        l.note_focus();
+        let b = l.split(SplitDir::H, view());
+        l.note_focus();
+        let c = l.split(SplitDir::H, view());
+        l.note_focus();
+        for p in [a, c] {
+            l.focus(p);
+            l.note_focus();
+        }
+        l.close(c);
+        assert_eq!(l.focused(), a, "not b, where c came from");
+        assert!(l.in_dock(b) && l.in_the_dock());
+        // Passed through and not settled in — a pane opened from it in
+        // the same event — b is not where the keys were.
+        l.focus(b);
+        let d = l.split(SplitDir::V, view());
+        l.note_focus();
+        l.close(d);
+        assert_eq!(l.focused(), a, "the last noted, not b");
+    }
+
     /// text | term1 | term2, term1 made from text and term2 from term1;
     /// term1 carried to the start: closing term2 gives the keys to the
-    /// column before it, text, not back across it to term1.
+    /// column before it, text, not back across it to term1 — when the
+    /// tab noted no pane the keys were in, which falls to where the pane
+    /// was made from.
     #[test]
     fn a_moved_opener_no_longer_takes_the_keys_back() {
         let mut l = Layout::new(view());

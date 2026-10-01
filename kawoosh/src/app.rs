@@ -2511,6 +2511,7 @@ impl kui_native::App for Kawoosh {
         t = self.perf.lap(Io, "update", t);
         self.sync_marks();
         self.sync_jumps();
+        self.layout.note_focus();
         t = self.perf.lap(Io, "marks, jumps", t);
         self.sync_moments(false);
         t = self.perf.lap(Io, "moments", t);
@@ -2721,6 +2722,9 @@ impl kui_native::App for Kawoosh {
         // Each event its own step for the jumps' look: two keys in one
         // frame are two moves, `<C-f>` twice no jump.
         self.sync_jumps();
+        // And for where the keys go back when a pane closes: the pane
+        // the event left them in.
+        self.layout.note_focus();
         // The prompt is the pane's it was opened in: an event that took
         // the keyboard elsewhere — a picker opened from its normal
         // mode's `<leader>t`, `<C-w>l` — leaves it, or it kept every

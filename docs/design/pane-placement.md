@@ -163,6 +163,38 @@ keys.md's "Panes, tabs, the dock", the table of Decision 2 in two
 lines. `terminal.place` lands in the settings pane's Terminal section
 by its prefix, with a doc.
 
+### 5. The keys go back to the pane they were in last
+
+*Added 2026-10-01, reported in use:* "3 panels: editor, terminal, tool
+git. closed git returned to editor and not to the terminal." Git had
+been opened from the editor, the user had gone to the terminal and back
+to git, and closing git handed the keys to where git was made from
+(`came_from`, roadmap step 18), which is a fact about the layout, not
+about where the user had been. Every close — `<C-w>c`, `:q`, `:close`,
+a tool or terminal whose program exits, a Lua view or a panel closed —
+goes through `Layout::close`, and the keys, when they were on the pane
+that went, now go back to the pane of its tab (or of the dock) they
+were in last.
+
+Each tab and the dock keep `recent`, the panes the keyboard settled
+in, the latest last. The shell notes it once an event or a frame is
+over (`Layout::note_focus`, beside the jumps' look), so a pane the keys
+only passed through — opened without them and the keys put back, a
+picker answered in the same key — is not one to go back to. A pane
+carried to another tab or the dock leaves its old tab's list. When
+nothing in the list is left — a session's tab before the first event —
+the old rules answer in their order: the pane it was made from, the
+column's next pane, the column before, the tab's first.
+
+`came_from` stays for what it is: where a pane acts — a list's `<CR>`,
+`*compile*`'s rows, the hover's `gd` — not where the keys go back.
+
+*Beat:* the neighbour by position (vim's "the window that gets the
+space") — what a strip did for a column's last pane, and the tree's
+first pane before step 18; the opener, which was right only until the
+user went elsewhere and came back; and noting each `Layout::focus`
+call, which counted a pane opened to be glanced at as visited.
+
 ## When built
 
 One round: `Place` and `Layout::open`; the callers of `layout.split`
