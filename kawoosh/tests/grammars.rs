@@ -1070,6 +1070,126 @@ fn a_grammar_of_the_user_s_own_is_built_from_its_source() {
     std::fs::remove_dir_all(t).ok();
 }
 
+/// A source that is a directory (`grammars.sources.NAME.dir`) is built
+/// as it lies, no git in it: what is not committed too. Built again it
+/// is compiled only when a file of it moved — a query edited is another
+/// install, painted afresh.
+#[test]
+fn a_directory_is_built_as_it_lies() {
+    let t = temp("dir");
+    let data = t.join("grammars");
+    let upstream = t.join("upstream");
+    if source_repo(&t, &upstream).is_none() {
+        return;
+    }
+    // Not a repository any more, and its query not what was committed.
+    std::fs::remove_dir_all(upstream.join(".git")).unwrap();
+    let file = t.join("a.jsond");
+    std::fs::write(&file, "{\"a\": 1}\n").unwrap();
+    let word = |w: &str| Setting::Str(w.into());
+    let source = Setting::Table(
+        [
+            ("dir", word(&upstream.display().to_string())),
+            ("symbol", word("tree_sitter_json")),
+            ("extensions", Setting::List(vec![word("jsond")])),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect(),
+    );
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with(&mut d, &data, &[]);
+    app.ed
+        .settings
+        .set(Layer::User, "grammars.sources.jsond", source);
+    app.open(&file);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    assert_eq!(&*app.ed.buffer_of(v).language, "jsond");
+
+    ex(&mut d, &mut app, "grammar build jsond");
+    until(&mut d, &mut app, "built", |a| {
+        a.grammars.installed.contains_key("jsond")
+    });
+    let first = app.grammars.installed["jsond"].clone();
+    assert!(
+        first
+            .dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("dir-"),
+        "{}",
+        first.dir.display()
+    );
+    assert_eq!(
+        app.ed.message,
+        format!("grammar: jsond built ({})", &first.row.rev[..12])
+    );
+    until(&mut d, &mut app, "painted", |a| {
+        tokens(a).contains(&Token::Number)
+    });
+    assert!(!tokens(&app).contains(&Token::String));
+
+    // Nothing of it moved: up to date, nothing compiled.
+    ex(&mut d, &mut app, "grammar build jsond");
+    until(&mut d, &mut app, "the build ended", |a| {
+        a.grammars.installing.is_empty()
+    });
+    assert_eq!(
+        app.ed.message,
+        format!("grammar: jsond is up to date ({})", &first.row.rev[..12])
+    );
+
+    // The query edited where it lies: built again, and painted by it.
+    std::fs::write(
+        upstream.join("queries/highlights.scm"),
+        "(string) @string\n",
+    )
+    .unwrap();
+    ex(&mut d, &mut app, "grammar build jsond");
+    until(&mut d, &mut app, "built again", |a| {
+        a.grammars.installed["jsond"].dir != first.dir
+    });
+    let second = app.grammars.installed["jsond"].clone();
+    assert_eq!(
+        app.ed.message,
+        format!(
+            "grammar: jsond updated ({} → {})",
+            &first.row.rev[..12],
+            &second.row.rev[..12]
+        )
+    );
+    until(&mut d, &mut app, "painted by the edited query", |a| {
+        let seen = tokens(a);
+        seen.contains(&Token::String) && !seen.contains(&Token::Number)
+    });
+    assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+
+    // A directory that is not there says so.
+    let gone = Setting::Table(
+        [("dir".to_string(), word("/nowhere/tree-sitter-gone"))]
+            .into_iter()
+            .collect(),
+    );
+    app.ed
+        .settings
+        .set(Layer::User, "grammars.sources.gone", gone);
+    ex(&mut d, &mut app, "grammar build gone");
+    until(&mut d, &mut app, "the build ended", |a| {
+        a.grammars.installing.is_empty()
+    });
+    let errors = notes(&app, Level::Error);
+    assert_eq!(
+        errors,
+        ["gone was not built: /nowhere/tree-sitter-gone: no such directory"]
+    );
+    std::fs::remove_dir_all(t).ok();
+}
+
 /// In the pane a grammar of the user's own, which no release has an
 /// archive of, says `build` where a listed one says `install`.
 #[test]

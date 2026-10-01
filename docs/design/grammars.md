@@ -748,3 +748,38 @@ scripts/verify.nu`, 869 of 869.
 Not verified: a build on Windows, where `-shared` is mingw's or
 clang's to honour and `$CC` may be needed; and any library loaded
 there at all.
+
+**A directory as a source, 2026-10-01.** Asked: "but how grammars not
+from git repo can be injected?", then "ok, let's add dir". Three ways
+there were: a library the user built, through `kawoosh.language` and
+its `path` (kui.md Decision 13, unchanged); a `repo` that is a path to
+a local checkout, which builds what is committed there; and
+`grammars.url` naming a `file://` folder of the user's own archives.
+None took a source that is in no repository, or a checkout's
+uncommitted work.
+
+- **`grammars.sources.NAME.dir`** in the repository's place (`~` the
+  home; with both said, the directory): `grammars::build` reads it as
+  it lies — no git, no scratch copy — and the install is
+  `grammars/NAME/dir-HASH12/`, the hash of `src/parser.c`,
+  `src/scanner.c` and the three query files, which is also the
+  revision it shows.
+- **Built again only when a file of it moved**: the same hash is the
+  install there already (`is up to date`), another is another
+  directory, loaded afresh — a library a process has open is never
+  written over, here as for an install. So a grammar is worked on by
+  editing, `tree-sitter generate`, `:grammar build NAME`; a query
+  edited alone is enough to be painted by it.
+- The answer given before the build said "rebuild every time it is
+  asked"; the hash is the better rule, and what was built.
+
+Verified: `a_grammar_is_built_from_its_source` (the directory's part:
+no source step, named by its hash, nothing compiled when nothing
+moved, another install for a query edited, each refusal's words);
+`a_directory_is_built_as_it_lies` (a directory that is no repository,
+built, painted, up to date, repainted by an edited query, and one that
+is not there); `a_source_is_a_repository_or_a_directory`.
+
+Not done: `kawoosh.language`'s own libraries are not in the `:grammars`
+pane; a grammar there is one the list, an install or
+`grammars.sources` names.

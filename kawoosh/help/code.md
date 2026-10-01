@@ -84,7 +84,23 @@ grammars = {
 Its colours are the repository's own `queries/highlights.scm`; where
 there is none, write one under the config directory's
 `queries/mylang/`. `:grammar update mylang` builds it again when its
-source has moved. In the pane a grammar that can only be built says
+source has moved.
+
+A source need not be a repository. `dir` names a directory on this
+machine instead, read as it lies — no git, and what is not committed
+too:
+
+```lua
+grammars = { sources = { mylang = {
+  dir = "~/src/tree-sitter-mylang",   -- holds src/parser.c and queries/
+  extensions = { "my" },
+} } }
+```
+
+`:grammar build mylang` compiles it when a file of it has changed —
+its parser, its scanner or its queries — and loads it afresh, so
+working on a grammar is: edit, `tree-sitter generate`, `:grammar build
+mylang`. With nothing changed it says the grammar is up to date. In the pane a grammar that can only be built says
 `build`, and `b` builds the one under the cursor.
 
 The grammars are built by the `kawoosh-grammars` repository, which

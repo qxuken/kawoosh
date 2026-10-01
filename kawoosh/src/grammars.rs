@@ -205,11 +205,12 @@ fn def_of(row: &Row, grammar: Option<Source>) -> LanguageDef {
     }
 }
 
-/// A grammar of the user's own, `grammars.sources.NAME`: its `repo`,
-/// its `rev` (a hash, a tag, a branch; the repository's head when not
-/// said), the `path` its `src/` is under, its `symbol`, and its files —
-/// `extensions`, `filenames`, `shebangs`, `aliases`. One with no
-/// `repo` is none.
+/// A grammar of the user's own, `grammars.sources.NAME`: its `repo`
+/// and `rev` (a hash, a tag, a branch; the repository's head when not
+/// said) — or its `dir`, a directory on this machine read as it lies,
+/// `~` the home — the `path` its `src/` is under, its `symbol`, and its
+/// files: `extensions`, `filenames`, `shebangs`, `aliases`. One with
+/// neither a `repo` nor a `dir` is none; with both, the `dir` is it.
 fn source_row(name: &str, def: &kawoosh_editor::Setting) -> Option<Row> {
     let word = |key: &str| def.get(key).and_then(|v| v.as_str()).map(str::to_string);
     let words = |key: &str| -> Vec<String> {
@@ -223,15 +224,29 @@ fn source_row(name: &str, def: &kawoosh_editor::Setting) -> Option<Row> {
             })
             .unwrap_or_default()
     };
+    let dir = word("dir").filter(|d| !d.is_empty()).map(|d| {
+        let home = kawoosh_systems::fs::home();
+        match (d.strip_prefix("~"), home) {
+            (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
+                format!("{}{rest}", home.display())
+            }
+            _ => d,
+        }
+    });
+    let repo = word("repo").filter(|r| !r.is_empty());
+    if dir.is_none() && repo.is_none() {
+        return None;
+    }
     Some(Row {
         name: name.to_string(),
         extensions: words("extensions"),
         filenames: words("filenames"),
         shebangs: words("shebangs"),
         aliases: words("aliases"),
-        repo: word("repo").filter(|r| !r.is_empty())?,
+        repo: repo.unwrap_or_default(),
         rev: word("rev").unwrap_or_else(|| "HEAD".into()),
         path: word("path").unwrap_or_else(|| ".".into()),
+        dir: dir.unwrap_or_default(),
         license: word("license").unwrap_or_default(),
         symbol: word("symbol").unwrap_or_else(|| format!("tree_sitter_{}", name.replace('-', "_"))),
         abi: 0,
@@ -676,7 +691,7 @@ impl Kawoosh {
         g.sources
             .get(name)
             .or_else(|| g.listed.get(name))
-            .filter(|row| !row.repo.is_empty())
+            .filter(|row| !row.repo.is_empty() || !row.dir.is_empty())
     }
 
     /// `grammars.sources` read again when the settings moved: each a
@@ -726,8 +741,9 @@ impl Kawoosh {
 
     /// `:grammar build NAME`: the grammar's source fetched with git at
     /// its revision and compiled here, on a thread, then loaded as an
-    /// install is. The source is the user's (`grammars.sources.NAME`),
-    /// else the list's.
+    /// install is. The source is the user's (`grammars.sources.NAME`: a
+    /// repository, or a directory read as it lies — built again only
+    /// when a file of it moved), else the list's.
     pub(crate) fn grammar_build(&mut self, name: &str) {
         let name = self.grammar_named(name);
         if linked_in(&name) {
@@ -741,7 +757,7 @@ impl Kawoosh {
         self.sync_grammar_sources();
         let Some(row) = self.grammar_source(&name).cloned() else {
             self.ed.message = format!(
-                "grammar: no source for {name}: grammars.sources.{name} = {{ repo =, rev = }} in your settings"
+                "grammar: no source for {name}: grammars.sources.{name} = {{ repo =, rev = }} or {{ dir = }} in your settings"
             );
             return;
         };
@@ -962,4 +978,39 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kawoosh_editor::Setting;
+
+    fn table(pairs: &[(&str, &str)]) -> Setting {
+        Setting::Table(
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), Setting::Str(v.to_string())))
+                .collect(),
+        )
+    }
+
+    /// A source is a repository or a directory: the directory's `~` is
+    /// the home, both said is the directory's, neither is no source.
+    #[test]
+    fn a_source_is_a_repository_or_a_directory() {
+        let home = kawoosh_systems::fs::home().unwrap();
+        let row = source_row("mine", &table(&[("dir", "~/src/tree-sitter-mine")])).unwrap();
+        assert_eq!(
+            Path::new(&row.dir),
+            home.join("src").join("tree-sitter-mine")
+        );
+        assert!(row.repo.is_empty() && row.path == "." && row.symbol == "tree_sitter_mine");
+        let row = source_row("mine", &table(&[("dir", "/abs/~x")])).unwrap();
+        assert_eq!(row.dir, "/abs/~x", "a `~` elsewhere is a name's");
+        let row = source_row("my-lang", &table(&[("repo", "https://x/y")])).unwrap();
+        assert!(row.dir.is_empty() && row.rev == "HEAD" && row.symbol == "tree_sitter_my_lang");
+        let both = table(&[("repo", "https://x/y"), ("dir", "/abs/g")]);
+        assert_eq!(source_row("mine", &both).unwrap().dir, "/abs/g");
+        assert!(source_row("mine", &table(&[("rev", "main")])).is_none());
+    }
 }
