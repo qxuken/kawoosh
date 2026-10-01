@@ -904,3 +904,19 @@ fn cw_changes_to_the_words_end() {
         assert_eq!(text(&app), want, "{keys}");
     }
 }
+
+/// `"_` before a command of the shell's — `<C-o>`, which is no change —
+/// is let go with it: the next change is not `.`'s with a register it
+/// never named.
+#[test]
+fn a_black_hole_before_a_shell_command_is_no_part_of_the_next_change() {
+    let (mut d, mut app) = with_plugins("abc");
+    d.keys(&mut app, "\"_");
+    d.key(&mut app, "o", ctrl());
+    d.keys(&mut app, "x");
+    assert_eq!(text(&app), "bc");
+    assert_eq!(register(&app), "a");
+    d.keys(&mut app, ".");
+    assert_eq!(text(&app), "c");
+    assert_eq!(register(&app), "b", "`.` is `x`, into the register");
+}

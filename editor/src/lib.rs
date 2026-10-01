@@ -2242,18 +2242,26 @@ impl Editor {
         // `.` is the engine's own edits: what the shell runs is not one,
         // and `.` and `@` are made of steps rather than being one.
         let own = matches!(resolved, Some("repeat" | "macro record" | "macro play"));
-        if own || resolved.is_some_and(|n| self.commands.body(n).is_none()) {
+        let shell = resolved.is_some_and(|n| self.commands.body(n).is_none());
+        let open = |ed: &Self| {
+            ed.pending_op.is_some()
+                || ed.pending_register.is_some()
+                || ed.awaiting_char.is_some()
+                || ed.surround.ranges.is_some()
+                || ed.surround.from.is_some()
+                || ed.prompt.is_some()
+                || matches!(ed.mode(view), Mode::Insert | Mode::Visual)
+        };
+        if own || shell {
+            // A shell's command ends what `"` or an operator began
+            // (`"_<C-o>`): those steps are no change's.
+            if shell && !own && !open(self) {
+                self.repeat.current.clear();
+            }
             return;
         }
         repeat::push(&mut self.repeat.current, step);
-        let open = self.pending_op.is_some()
-            || self.pending_register.is_some()
-            || self.awaiting_char.is_some()
-            || self.surround.ranges.is_some()
-            || self.surround.from.is_some()
-            || self.prompt.is_some()
-            || matches!(self.mode(view), Mode::Insert | Mode::Visual);
-        if open {
+        if open(self) {
             return;
         }
         if self.edited {
