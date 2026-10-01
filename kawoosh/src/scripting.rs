@@ -1660,18 +1660,8 @@ impl Kawoosh {
                 "root" | "cwd" => self.cwd.clone(),
                 other => PathBuf::from(other),
             })
-            .or_else(|| {
-                self.focused_view()
-                    .and_then(|v| self.ed.buffer_of(v).path.as_deref())
-                    .and_then(kawoosh_systems::fs::parent)
-            })
-            // From a terminal, where its shell is.
-            .or_else(|| {
-                self.term_of(self.layout.focused())
-                    .and_then(|t| self.terms.map.get(&t))
-                    .and_then(|t| t.cwd())
-            });
-        let Some(t) = self.spawn_terminal(Some(&def.cmd), cwd.as_deref()) else {
+            .unwrap_or_else(|| self.here_dir());
+        let Some(t) = self.spawn_terminal(Some(&def.cmd), Some(&cwd)) else {
             return;
         };
         self.terms.spawned.entry(t).or_default().tool = Some(name.to_string());

@@ -211,7 +211,7 @@ That is the default. kawoosh's modules are `mode`, `recording` (`REC @a`), `path
 
 A plugin pane is a function from your state to a tree of UI nodes, drawn every frame it is on screen.
 
-- `kawoosh.view(name, fn, on_event, opts)` declares a view. `fn(ctx)` returns the tree: `column`, `row`, `text` and the rest of kui's nodes. `ctx` has `width`, `height`, `focused`, and `env.theme` for the theme's colours. `opts.session = false` keeps the view out of saved sessions.
+- `kawoosh.view(name, fn, on_event, opts)` declares a view. `fn(ctx)` returns the tree: `column`, `row`, `text` and the rest of kui's nodes. `ctx` has `width`, `height`, `focused`, and `env.theme` for the theme's colours. `opts.session = false` keeps the view out of saved sessions. `opts.here(pane)` returns the directory the pane shows, if any: `<C-w>.` (`:terminal here`) starts a terminal there, as `:du` does.
 - Clicks come back to `on_event(ev)`: the table you gave as a node's `on_click`, as `ev`. A key pressed in the pane arrives as `{ kind = "key", key = "j" }`; return `true` to keep it. Keys you do not keep work as in any other pane: `<C-w>` moves, `:`, `<leader>`.
 - `kawoosh.view_open(name, { below = true, share = 0.3, focus = false })` shows the view in a column of its own, or under the focused pane with `below` ([panes](panes.md#where-a-pane-opens)), `kawoosh.view_close(name)` closes it, and `kawoosh.view_toggle(name, opts)` does one or the other. `:view NAME` opens one from the command line.
 - Pane-mode maps (`"p"`) with `view = "NAME"` apply only while your view has the keys, and a field's with `view` and `field`. Prefer them to handling keys in `on_event`: they show up in `:map list` (with `in lua:NAME`), take counts, and can be remapped.
