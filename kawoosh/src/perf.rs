@@ -3,12 +3,17 @@
 //! last frames, what the systems report of themselves (a parse's time on
 //! its thread, the rows worker's build), and what the process holds: its
 //! footprint, and the buffers' pieces, runs, chunks and indexes. kui's
-//! own HUD times the whole frame; this is the app's half of it.
+//! own HUD times the whole frame; this is the app's half of it, by
+//! phase, by system (each lap through `view`) and by plugin (Lua's time,
+//! `kawoosh_lua`'s `prof.rs`).
+//!
+//! Only while the tab is on show: closed, `view` reads no clock for it
+//! and the plugins go untimed. Reopened, it starts over.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use kui_native::{Align, Min, NodeSpec, Ui};
+use kui_native::{Align, Min, NodeSpec, TextWrap, Ui};
 
 use crate::devtab::Tab;
 
@@ -18,39 +23,47 @@ use crate::app::Kawoosh;
 pub const TAB: &str = "perf";
 /// Frames kept for the averages.
 const KEEP: usize = 120;
+/// How often the tab's readings are built again.
+const REFRESH: Duration = Duration::from_millis(250);
 /// How often the process is asked for its footprint.
 const MEM_EVERY: Duration = Duration::from_millis(500);
 
-/// What one `view` spent, milliseconds, by phase.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Phases {
-    /// The systems' channels drained: pty bytes, processes, requests.
-    pub io: f32,
+/// The parts of `view` a lap is counted under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    /// The systems' channels drained: pty bytes, processes, requests,
+    /// the disk, the settings.
+    Io,
     /// The parser's answers applied to the layers.
-    pub syntax: f32,
+    Syntax,
     /// The language servers' events, and the buffers sent to them.
-    pub lsp: f32,
+    Lsp,
     /// Lua's messages drained and the editor published to it.
-    pub lua: f32,
+    Lua,
     /// The panes: every visible row built.
-    pub rows: f32,
-    /// The whole of `view`.
-    pub total: f32,
+    Rows,
+    /// The rest: the bars, the tabs, the floats, the devtools tabs.
+    Chrome,
 }
 
-impl Phases {
-    const NAMES: [&'static str; 6] = ["io", "syntax", "lsp", "lua", "rows", "view"];
+/// What one `view` spent, milliseconds: each phase, then the whole.
+#[derive(Clone, Copy, Debug, Default)]
+struct Phases([f32; 7]);
 
-    fn get(&self, i: usize) -> f32 {
-        [
-            self.io,
-            self.syntax,
-            self.lsp,
-            self.lua,
-            self.rows,
-            self.total,
-        ][i]
-    }
+impl Phases {
+    const NAMES: [&'static str; 7] = ["io", "syntax", "lsp", "lua", "rows", "chrome", "view"];
+    const VIEW: usize = 6;
+}
+
+/// One frame's readings.
+#[derive(Clone, Debug, Default)]
+struct Reading {
+    phases: Phases,
+    /// Each lap through `view`, by name; a name lapped twice is summed.
+    laps: Vec<(&'static str, f32)>,
+    /// The plugins' time since the frame before, the input handled
+    /// between them included: ms and calls.
+    plugins: Vec<(String, f32, u32)>,
 }
 
 /// The process's memory, as the OS counts it.
@@ -80,34 +93,88 @@ struct FocusedText {
 
 #[derive(Default)]
 pub struct Perf {
-    /// The last `KEEP` frames' phases, oldest first.
-    frames: VecDeque<Phases>,
+    /// Measuring: the tab was on show the frame before. Off, `view`
+    /// reads no clock for it and the plugins are not timed.
+    on: bool,
+    /// The last `KEEP` frames' readings, oldest first.
+    frames: VecDeque<Reading>,
     /// The frame under way.
-    pub cur: Phases,
+    cur: Reading,
     /// The parser thread's last answer: what it took, and for how many
     /// bytes.
     pub ts_last: Option<(Duration, usize)>,
     pub ts_answers: u64,
     mem: Option<(Instant, Mem)>,
+    /// The tab's sections as last built, when, and whether any frame
+    /// was measured by then.
+    shown: Option<(Instant, bool, Vec<Section>)>,
 }
 
+/// A row of the breakdown: where, then avg, worst and total ms over
+/// the window, and the calls when they are counted.
+type Spent = (String, f32, f32, f32, Option<u32>);
+
 impl Perf {
-    /// Closes the frame under way: its phases join the window.
-    pub fn end_frame(&mut self, total: f32) {
-        self.cur.total = total;
+    /// Whether this frame is measured: the tab was on show the frame
+    /// before. Turned on, it starts over — what was kept is from before
+    /// it closed.
+    pub fn set_on(&mut self, on: bool) {
+        if on && !self.on {
+            self.frames.clear();
+            self.shown = None;
+        }
+        self.on = on;
+        self.cur = Reading::default();
+    }
+
+    pub fn on(&self) -> bool {
+        self.on
+    }
+
+    /// The clock read for a lap, when measuring.
+    pub fn start(&self) -> Option<Instant> {
+        self.on.then(Instant::now)
+    }
+
+    /// The lap since `t` counted as `name` under `phase`; the next lap
+    /// starts now. Nothing when not measuring.
+    pub fn lap(&mut self, phase: Phase, name: &'static str, t: Option<Instant>) -> Option<Instant> {
+        let t = t?;
+        let now = Instant::now();
+        let ms = (now - t).as_secs_f32() * 1e3;
+        self.cur.phases.0[phase as usize] += ms;
+        match self.cur.laps.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, m)) => *m += ms,
+            None => self.cur.laps.push((name, ms)),
+        }
+        Some(now)
+    }
+
+    /// Closes the frame under way, `view` having begun at `started`,
+    /// with the plugins' time since the frame before: its readings join
+    /// the window.
+    pub fn end_frame(&mut self, started: Option<Instant>, plugins: Vec<kawoosh_lua::Spent>) {
+        let Some(started) = started else {
+            return;
+        };
+        let mut r = std::mem::take(&mut self.cur);
+        r.phases.0[Phases::VIEW] = ms(started);
+        r.plugins = plugins
+            .into_iter()
+            .map(|s| (s.plugin, s.time.as_secs_f32() * 1e3, s.calls))
+            .collect();
         if self.frames.len() == KEEP {
             self.frames.pop_front();
         }
-        self.frames.push_back(self.cur);
-        self.cur = Phases::default();
+        self.frames.push_back(r);
     }
 
     /// Last, average and worst of phase `i` over the window.
     fn stats(&self, i: usize) -> (f32, f32, f32) {
-        let last = self.frames.back().map_or(0.0, |p| p.get(i));
+        let last = self.frames.back().map_or(0.0, |r| r.phases.0[i]);
         let (mut sum, mut worst) = (0.0f32, 0.0f32);
-        for p in &self.frames {
-            let v = p.get(i);
+        for r in &self.frames {
+            let v = r.phases.0[i];
             sum += v;
             worst = worst.max(v);
         }
@@ -117,6 +184,49 @@ impl Perf {
             sum / self.frames.len() as f32
         };
         (last, avg, worst)
+    }
+
+    /// Each lap and each plugin over the window: the systems, then the
+    /// plugins, each the most total first.
+    fn breakdown(&self) -> (Vec<Spent>, Vec<Spent>) {
+        let n = self.frames.len().max(1) as f32;
+        let mut systems: Vec<(&'static str, f32, f32)> = Vec::new();
+        let mut plugins: Vec<(&str, f32, f32, u32)> = Vec::new();
+        for r in &self.frames {
+            for (name, ms) in &r.laps {
+                match systems.iter_mut().find(|(s, ..)| s == name) {
+                    Some((_, total, worst)) => {
+                        *total += ms;
+                        *worst = worst.max(*ms);
+                    }
+                    None => systems.push((name, *ms, *ms)),
+                }
+            }
+            for (name, ms, calls) in &r.plugins {
+                match plugins.iter_mut().find(|(p, ..)| p == name) {
+                    Some((_, total, worst, c)) => {
+                        *total += ms;
+                        *worst = worst.max(*ms);
+                        *c += calls;
+                    }
+                    None => plugins.push((name, *ms, *ms, *calls)),
+                }
+            }
+        }
+        let mut systems: Vec<Spent> = systems
+            .into_iter()
+            .map(|(name, total, worst)| (name.to_string(), total / n, worst, total, None))
+            .collect();
+        let mut plugins: Vec<Spent> = plugins
+            .into_iter()
+            .map(|(name, total, worst, calls)| {
+                (name.to_string(), total / n, worst, total, Some(calls))
+            })
+            .collect();
+        for list in [&mut systems, &mut plugins] {
+            list.sort_by(|a, b| b.3.total_cmp(&a.3).then(a.0.cmp(&b.0)));
+        }
+        (systems, plugins)
     }
 
     /// The process's memory, asked for at most every [`MEM_EVERY`].
@@ -287,8 +397,18 @@ pub fn bytes(n: u64) -> String {
 }
 
 /// A section of the tab: its caption, a header row when the columns
-/// need naming, and its rows, a cell per column.
-type Section = (String, Option<Vec<&'static str>>, Vec<Vec<String>>);
+/// need naming, its rows, a cell per column, and a note under them.
+type Section = (
+    String,
+    Option<Vec<&'static str>>,
+    Vec<Vec<String>>,
+    Option<&'static str>,
+);
+
+/// Under the phases: why an idle editor's frames read high.
+const COLD: &str = "A frame drawn after a pause runs cold — caches emptied, \
+the core slowed — and costs several times one in a run of them: an idle \
+window's numbers read high for the same work.";
 
 fn count(n: usize) -> String {
     crate::diff::count(n)
@@ -305,6 +425,10 @@ impl Kawoosh {
 
     fn perf_body(&mut self, ui: &mut Ui<'_>) {
         self.tab_shown = Some(TAB);
+        // Just opened: measuring starts with the next frame.
+        if !self.perf.on() {
+            ui.request_frame();
+        }
         let pal = self.pal;
         let font = self.face;
         // Every size from kui's metrics (`devtab::Tab`), as the Settings
@@ -312,6 +436,85 @@ impl Kawoosh {
         let tm = Tab::of(&ui.metrics(), self.face.line_height);
         let style = move || tm.style(&pal, font);
         let dim = move || style().color(pal.dim);
+        // The readings, gathered at most every `REFRESH`: built every
+        // frame, the tab was a third of the frame it was measuring.
+        let now = Instant::now();
+        // Ones built before a frame was measured are not kept.
+        let shown = match self.perf.shown.take() {
+            Some((at, true, sections)) if now.duration_since(at) < REFRESH => (at, true, sections),
+            _ => (now, !self.perf.frames.is_empty(), self.perf_sections()),
+        };
+        let sections = &shown.2;
+
+        // A row: every other one washed and a hovered one lit, so a
+        // reading is found by eye across the gap; the name column grows.
+        let row_spec = move |i: usize| tm.row(&pal, i);
+        // The name column grows, but never below its longest name: a
+        // long value beside it takes the room, not the name.
+        let name_cell = move |ui: &mut Ui<'_>, name: &str| {
+            ui.text_in(
+                NodeSpec::row().grow_width().min_width(Min::FIT),
+                name,
+                dim(),
+            );
+        };
+        // On the panel's own surface: each section a block of its own —
+        // the caption its strip — with room between the blocks, as the
+        // Settings tab lays its layers out.
+        ui.with(
+            NodeSpec::column().fill().scroll_y().gap(tm.section_gap),
+            |ui| {
+                for (title, header, rows, note) in sections {
+                    ui.with(NodeSpec::column().grow_width(), |ui| {
+                        ui.text_in(tm.caption(&pal), title, dim());
+                        ui.with(NodeSpec::table().grow_width(), |ui| {
+                            // The header names the numeric columns and sits at
+                            // their right edge, where the numbers do.
+                            if let Some(header) = header {
+                                ui.with(row_spec(0), |ui| {
+                                    for (i, h) in header.iter().enumerate() {
+                                        if i == 0 {
+                                            name_cell(ui, h);
+                                        } else {
+                                            ui.with(NodeSpec::row().main_align(Align::End), |ui| {
+                                                ui.text(h, dim())
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                            for (r, cells) in rows.iter().enumerate() {
+                                ui.with(row_spec(r + usize::from(header.is_some())), |ui| {
+                                    for (i, cell) in cells.iter().enumerate() {
+                                        if i == 0 {
+                                            name_cell(ui, cell);
+                                        } else if header.is_some() {
+                                            ui.with(NodeSpec::row().main_align(Align::End), |ui| {
+                                                ui.text(cell, style())
+                                            });
+                                        } else {
+                                            ui.text(cell, style());
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                        if let Some(note) = note {
+                            ui.text_in(
+                                NodeSpec::row().grow_width().pad_xy(tm.pad_x, tm.gap),
+                                note,
+                                dim().wrap(TextWrap::Word),
+                            );
+                        }
+                    });
+                }
+            },
+        );
+        self.perf.shown = Some(shown);
+    }
+
+    /// The tab's sections from the readings now.
+    fn perf_sections(&mut self) -> Vec<Section> {
         // The readings, gathered before the tree is built.
         let mem = self.perf.mem();
         let phases: Vec<(&str, (f32, f32, f32))> = Phases::NAMES
@@ -320,6 +523,7 @@ impl Kawoosh {
             .map(|(i, n)| (*n, self.perf.stats(i)))
             .collect();
         let frames = self.perf.frames.len();
+        let (systems, plugins) = self.perf.breakdown();
         let ts_last = self.perf.ts_last;
         let ts_answers = self.perf.ts_answers;
         let rows_last = self.inspector.last_build;
@@ -367,13 +571,41 @@ impl Kawoosh {
                     ]
                 })
                 .collect(),
+            Some(COLD),
+        ));
+        // Each system and plugin: its average a frame, its worst frame,
+        // and its total over the window, the most total first.
+        let spent = |list: Vec<Spent>| -> Vec<Vec<String>> {
+            list.into_iter()
+                .map(|(name, avg, worst, total, calls)| {
+                    vec![
+                        name,
+                        format!("{avg:.3}"),
+                        format!("{worst:.2}"),
+                        format!("{total:.1}"),
+                        calls.map(|c| count(c as usize)).unwrap_or_default(),
+                    ]
+                })
+                .collect()
+        };
+        sections.push((
+            format!("systems · ms, over {frames} frames"),
+            Some(vec!["system", "avg", "worst", "total", ""]),
+            spent(systems),
+            Some("A lap through the frame each: a system counts the plugins it calls."),
+        ));
+        sections.push((
+            format!("plugins · ms, over {frames} frames"),
+            Some(vec!["plugin", "avg", "worst", "total", "calls"]),
+            spent(plugins),
+            Some("Lua's time by the file each function came from, its calls into other plugins theirs."),
         ));
         // The two-column sections: a name and what it reads.
         let pairs = |rows: Vec<(String, String)>| -> Vec<Vec<String>> {
             rows.into_iter().map(|(k, v)| vec![k, v]).collect()
         };
         sections.push((
-            "systems".into(),
+            "threads".into(),
             None,
             pairs(vec![
                 (
@@ -410,6 +642,7 @@ impl Kawoosh {
                 ("terminals".into(), count(terms)),
                 ("lua".into(), if lua { "attached" } else { "—" }.into()),
             ]),
+            None,
         ));
         // One reading a row, so each has its name beside it.
         let mut memory = vec![
@@ -434,64 +667,7 @@ impl Kawoosh {
         memory.push(("syntax rows".into(), count(inspector_rows)));
         memory.push(("syntax row size".into(), format!("{row_size} B")));
         memory.push(("syntax rows' bytes".into(), bytes(rows_bytes as u64)));
-        sections.push(("memory".into(), None, pairs(memory)));
-
-        // A row: every other one washed and a hovered one lit, so a
-        // reading is found by eye across the gap; the name column grows.
-        let row_spec = move |i: usize| tm.row(&pal, i);
-        // The name column grows, but never below its longest name: a
-        // long value beside it takes the room, not the name.
-        let name_cell = move |ui: &mut Ui<'_>, name: &str| {
-            ui.text_in(
-                NodeSpec::row().grow_width().min_width(Min::FIT),
-                name,
-                dim(),
-            );
-        };
-        // On the panel's own surface: each section a block of its own —
-        // the caption its strip — with room between the blocks, as the
-        // Settings tab lays its layers out.
-        ui.with(
-            NodeSpec::column().fill().scroll_y().gap(tm.section_gap),
-            |ui| {
-                for (title, header, rows) in &sections {
-                    ui.with(NodeSpec::column().grow_width(), |ui| {
-                        ui.text_in(tm.caption(&pal), title, dim());
-                        ui.with(NodeSpec::table().grow_width(), |ui| {
-                            // The header names the numeric columns and sits at
-                            // their right edge, where the numbers do.
-                            if let Some(header) = header {
-                                ui.with(row_spec(0), |ui| {
-                                    for (i, h) in header.iter().enumerate() {
-                                        if i == 0 {
-                                            name_cell(ui, h);
-                                        } else {
-                                            ui.with(NodeSpec::row().main_align(Align::End), |ui| {
-                                                ui.text(h, dim())
-                                            });
-                                        }
-                                    }
-                                });
-                            }
-                            for (r, cells) in rows.iter().enumerate() {
-                                ui.with(row_spec(r + usize::from(header.is_some())), |ui| {
-                                    for (i, cell) in cells.iter().enumerate() {
-                                        if i == 0 {
-                                            name_cell(ui, cell);
-                                        } else if header.is_some() {
-                                            ui.with(NodeSpec::row().main_align(Align::End), |ui| {
-                                                ui.text(cell, style())
-                                            });
-                                        } else {
-                                            ui.text(cell, style());
-                                        }
-                                    }
-                                });
-                            }
-                        });
-                    });
-                }
-            },
-        );
+        sections.push(("memory".into(), None, pairs(memory), None));
+        sections
     }
 }

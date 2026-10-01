@@ -313,6 +313,73 @@ fn perf_is_a_tab_of_readings() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// The Perf and Frames tabs measure only while on show: closed, no
+/// phase is timed, no plugin, no frame ledgered, kui's trace off.
+/// Open, Perf breaks the frame down by system and by plugin.
+#[test]
+fn perf_and_frames_measure_only_while_on_show() {
+    let mut app = Kawoosh::new("t", DOC);
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(1200.0, 900.0);
+    d.extension("lua", ext).unwrap();
+    let run = |d: &mut Drive, app: &mut Kawoosh, line: &str| {
+        d.keys(app, line);
+        d.key(app, "enter", KeyMods::default());
+        for _ in 0..4 {
+            d.frame(app);
+        }
+    };
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    assert!(!app.perf.on() && !app.frames.on());
+    assert!(!d.core.frame_trace(), "kui's trace is off too");
+    assert!(app.frames.ring.is_empty(), "no frame ledgered");
+
+    run(&mut d, &mut app, ":perf");
+    assert!(app.perf.on());
+    assert!(!app.frames.on(), "the other tab's ledger stays off");
+    let texts: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
+    let has = |s: &str| texts.iter().any(|t| t == s);
+    assert!(
+        texts.iter().any(|t| t.starts_with("systems · ms")),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.starts_with("plugins · ms")),
+        "{texts:?}"
+    );
+    assert!(
+        has("panes") && has("lua publish") && has("status line"),
+        "{texts:?}"
+    );
+    // The status line's modules are the bundled `status` plugin's,
+    // asked every frame.
+    assert!(has("status"), "{texts:?}");
+    let over = drive::overflows(&d);
+    assert!(over.is_empty(), "{over:?}");
+
+    run(&mut d, &mut app, ":frames");
+    assert!(app.frames.on() && d.core.frame_trace());
+    assert!(!app.perf.on(), "Perf is closed under Frames");
+    assert!(!app.frames.ring.is_empty());
+
+    run(&mut d, &mut app, ":frames");
+    assert!(!app.devtools);
+    assert!(!app.perf.on() && !app.frames.on() && !d.core.frame_trace());
+    let kept = app.frames.ring.len();
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    assert_eq!(app.frames.ring.len(), kept, "closed, no frame is kept");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn a_long_line_scrolls_sideways_to_the_caret_and_never_wraps() {
     let doc = format!("{}\njj\n", "j".repeat(60));

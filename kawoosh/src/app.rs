@@ -2372,12 +2372,21 @@ impl kui_native::App for Kawoosh {
     }
 
     fn view(&mut self, ui: &mut Ui<'_>) {
-        use crate::perf::ms;
+        use crate::perf::Phase::{Chrome, Io, Lsp, Lua, Rows, Syntax};
         self.frames_begin(ui);
-        let frame_started = Instant::now();
-        let t = Instant::now();
+        // Measured while the Perf tab was on show the frame before: a
+        // lap is a clock read then, and nothing otherwise.
+        let measure = self.tab_shown == Some(crate::perf::TAB);
+        self.perf.set_on(measure);
+        if let Some(rt) = &self.scripting.rt {
+            rt.set_profiling(measure);
+        }
+        let frame_started = self.perf.start();
+        let mut t = frame_started;
         self.drain_io();
+        t = self.perf.lap(Io, "io drain", t);
         self.flush_proc_lines();
+        t = self.perf.lap(Io, "processes", t);
         self.sync_settings();
         self.fire_settings();
         self.sync_cwd();
@@ -2385,39 +2394,48 @@ impl kui_native::App for Kawoosh {
         self.sync_probes();
         self.sync_format();
         self.fire_cwd();
+        t = self.perf.lap(Io, "settings", t);
         self.fire_watches();
+        t = self.perf.lap(Io, "watches", t);
         self.sync_histories(false);
+        t = self.perf.lap(Io, "histories", t);
         self.moments.window_focused = ui.env().focused;
         self.sync_disk(false);
+        t = self.perf.lap(Io, "disk", t);
         self.sync_update();
+        t = self.perf.lap(Io, "update", t);
         self.sync_marks();
         self.sync_jumps();
+        t = self.perf.lap(Io, "marks, jumps", t);
         self.sync_moments(false);
+        t = self.perf.lap(Io, "moments", t);
         // A file's edit from the io thread (it landed, a reload, a
         // server's) in the multibuffers showing it.
         self.sync_multis();
-        self.perf.cur.io = ms(t);
-        let t = Instant::now();
+        t = self.perf.lap(Io, "multibuffers", t);
         self.sync_syntax();
-        self.perf.cur.syntax = ms(t);
-        let t = Instant::now();
+        t = self.perf.lap(Syntax, "syntax", t);
         self.sync_lsp();
-        self.perf.cur.lsp = ms(t);
+        t = self.perf.lap(Lsp, "lsp", t);
         // Filled again by the panes this frame draws.
         self.multis.visible.clear();
         self.sync_flash();
         self.sync_notifications();
-        let t = Instant::now();
+        t = self.perf.lap(Chrome, "notifications", t);
         self.fire_changes();
+        t = self.perf.lap(Lua, "lua changes", t);
         self.sync_lists();
+        t = self.perf.lap(Lua, "lua lists", t);
         self.drain_lua();
+        t = self.perf.lap(Lua, "lua drain", t);
         self.sync_multis();
+        t = self.perf.lap(Lua, "multibuffers", t);
         if let Some(rt) = self.scripting.rt.clone() {
             rt.set_workspace(self.moments.workspace());
             self.publish_jumps();
             rt.publish(&self.ed, self.focused_view());
         }
-        self.perf.cur.lua = ms(t);
+        t = self.perf.lap(Lua, "lua publish", t);
         if self.quit {
             if !self.session_saved {
                 self.save_session();
@@ -2427,9 +2445,12 @@ impl kui_native::App for Kawoosh {
         }
         self.sync_settings_door();
         self.sync_look(ui);
+        t = self.perf.lap(Chrome, "look", t);
         self.sync_du();
+        t = self.perf.lap(Chrome, "du", t);
         self.probe_fonts(ui);
         self.probe_scroll(ui);
+        t = self.perf.lap(Chrome, "probes", t);
         self.pal = ui.theme().into();
         if let Some(hit) = self.look.hit {
             self.pal.hit = hit;
@@ -2445,12 +2466,14 @@ impl kui_native::App for Kawoosh {
         self.sync_status_tick();
         self.sync_term_settings();
         self.ring_bells(ui);
+        t = self.perf.lap(Chrome, "terminals", t);
         self.sync_dock();
         self.spawn_pending();
         self.sweep_closed_tabs();
         self.sweep_scratches();
         self.tick_secrets();
         self.register_images(ui);
+        t = self.perf.lap(Chrome, "panes' upkeep", t);
         let pal = self.pal;
         if self.devtools_synced.is_some_and(|s| s != self.devtools) {
             ui.core().set_devtools(self.devtools);
@@ -2464,8 +2487,11 @@ impl kui_native::App for Kawoosh {
         // The syntax and perf tabs: declared every frame, drawn while on
         // show, as a layer over the panel's tab body (kui ADR 0032).
         self.syntax_tab(ui);
+        t = self.perf.lap(Chrome, "tab: syntax", t);
         self.perf_tab(ui);
+        t = self.perf.lap(Chrome, "tab: perf", t);
         self.frames_tab(ui);
+        t = self.perf.lap(Chrome, "tab: frames", t);
         self.sync_undo_view();
         let m = ui.measure_text("M", &rows::mono(self.face, &pal), None);
         self.cell = (m.width.max(1.0), self.face.line_height);
@@ -2506,9 +2532,12 @@ impl kui_native::App for Kawoosh {
         let c = self.chrome;
         self.body_h = (vp.h - self.title_h - 1.0 - c.tab_h - 2.0 * c.strip_h).max(lh);
         let body_h = self.body_h;
+        t = self.perf.lap(Chrome, "window", t);
         ui.with(NodeSpec::column().fill().bg(pal.bg), |ui| {
             self.title_bar(ui);
+            t = self.perf.lap(Chrome, "title bar", t);
             self.tab_strip(ui);
+            t = self.perf.lap(Chrome, "tab strip", t);
             ui.with(NodeSpec::column().grow_width().height(body_h), |ui| {
                 let dock = match &self.layout.dock {
                     Some(d) if self.layout.dock_open => Some(d.layout.clone()),
@@ -2527,9 +2556,8 @@ impl kui_native::App for Kawoosh {
                 } else {
                     0.0
                 };
-                let t = Instant::now();
                 ui.with(NodeSpec::column().fill(), |ui| self.render_tab(ui));
-                self.perf.cur.rows = ms(t);
+                t = self.perf.lap(Rows, "panes", t);
                 if let Some(d) = dock {
                     kui_native::widgets::splitter(
                         ui,
@@ -2552,16 +2580,25 @@ impl kui_native::App for Kawoosh {
                             crate::layout::Kind::Scroll(s) => self.render_dock_strip(ui, s),
                         },
                     );
+                    t = self.perf.lap(Rows, "dock", t);
                 }
             });
             self.status(ui);
+            t = self.perf.lap(Chrome, "status line", t);
             self.command_line(ui);
+            t = self.perf.lap(Chrome, "command line", t);
             self.toasts(ui);
             self.right_stack(ui);
             self.confirm_float(ui);
+            t = self.perf.lap(Chrome, "floats", t);
         });
         self.line_cells.sweep();
-        self.perf.end_frame(ms(frame_started));
+        self.perf.lap(Rows, "line cells", t);
+        let plugins = match &self.scripting.rt {
+            Some(rt) if measure => rt.take_profile(),
+            _ => Vec::new(),
+        };
+        self.perf.end_frame(frame_started, plugins);
         self.frames.end();
         if self.hud {
             kui_native::widgets::latency_hud(ui);

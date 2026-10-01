@@ -12,7 +12,10 @@ use std::rc::Rc;
 pub mod fuzzy;
 mod meta;
 mod nodes;
+mod prof;
+
 pub use fuzzy::{Hit, Matcher};
+pub use prof::Spent;
 
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
 use std::collections::BTreeSet;
@@ -1075,6 +1078,8 @@ pub struct Runtime {
     /// command's `ctx.pane`, so a view shown in several panes knows
     /// which one a key was for (`du.lua`, roadmap step 60).
     pane: std::cell::Cell<u64>,
+    /// The plugins' time, while the Perf tab is on show (`prof.rs`).
+    prof: prof::ProfCell,
 }
 
 type DiagKey = (u64, Vec<(BufferId, kawoosh_doc::Version)>);
@@ -1108,6 +1113,8 @@ impl Runtime {
         let tracked: TrackedCell = Rc::new(RefCell::new(HashMap::new()));
         let jobs: JobsCell = Rc::new(RefCell::new(Jobs::default()));
         seed(&lua, &queue, &published, &store, &pending, &tracked, &jobs)?;
+        let prof = prof::ProfCell::default();
+        prof::seed(&lua, &prof)?;
         lua.load(BOOT).set_name("kawoosh:boot").exec()?;
         Ok((
             Self {
@@ -1123,6 +1130,7 @@ impl Runtime {
                 diag_snap: RefCell::new(None),
                 test: RefCell::new(None),
                 pane: std::cell::Cell::new(0),
+                prof,
             },
             ext,
         ))
@@ -1829,7 +1837,7 @@ impl Runtime {
         let _ = t.set("modified", tab.modified);
         let _ = t.set("bell", tab.bell);
         let _ = t.set("panes", tab.panes);
-        match f.call::<Option<String>>(t) {
+        match self.timed(&f, || f.call::<Option<String>>(t)) {
             Ok(label) => label,
             Err(e) => {
                 let _ = kawoosh.set("_tab_title", LV::Nil);
@@ -1866,7 +1874,7 @@ impl Runtime {
             };
             let ctx = self.lua.create_table().unwrap();
             let _ = ctx.set("place", place);
-            let got = match f.call::<LV>(ctx) {
+            let got = match self.timed(&f, || f.call::<LV>(ctx)) {
                 Ok(v) => v,
                 Err(e) => {
                     let _ = all.set(name.as_str(), LV::Nil);
@@ -1940,7 +1948,7 @@ impl Runtime {
             .filter_map(|(_, t)| match t.get::<LV>("every").ok()? {
                 LV::Integer(n) => Some(n as f64),
                 LV::Number(n) => Some(n),
-                LV::Function(f) => f.call::<Option<f64>>(()).ok().flatten(),
+                LV::Function(f) => self.timed(&f, || f.call::<Option<f64>>(())).ok().flatten(),
                 _ => None,
             })
             .filter(|s| *s > 0.0)
@@ -2186,7 +2194,7 @@ impl Runtime {
                     .push(Msg::Formatted { token, result });
             }
         };
-        match f.call::<LV>((t, text, done)) {
+        match self.timed(&f, || f.call::<LV>((t, text, done))) {
             Ok(LV::String(s)) => answer(Ok(s.to_string_lossy())),
             Ok(_) => {}
             Err(e) => answer(Err(e
@@ -2349,7 +2357,7 @@ impl Runtime {
             Ok(()) => (LV::Boolean(true), LV::Nil),
             Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
         };
-        if let Err(e) = f.call::<()>(args) {
+        if let Err(e) = self.timed(&f, || f.call::<()>(args)) {
             self.queue.borrow_mut().push(Msg::Echo(format!("fs: {e}")));
         }
     }
@@ -2366,7 +2374,7 @@ impl Runtime {
             Ok(t) => (LV::Table(t), LV::Nil),
             Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
         };
-        if let Err(e) = f.call::<()>(args) {
+        if let Err(e) = self.timed(&f, || f.call::<()>(args)) {
             self.queue
                 .borrow_mut()
                 .push(Msg::Echo(format!("{what}: {e}")));
@@ -2399,7 +2407,7 @@ impl Runtime {
             self.lua.registry_value::<mlua::Function>(key).ok()
         };
         if let Some(f) = f
-            && let Err(e) = f.call::<()>(lines)
+            && let Err(e) = self.timed(&f, || f.call::<()>(lines))
         {
             self.queue
                 .borrow_mut()
@@ -2419,7 +2427,7 @@ impl Runtime {
         }
         if let Some(k) = keys.done {
             if let Ok(f) = self.lua.registry_value::<mlua::Function>(&k)
-                && let Err(e) = f.call::<()>((out.unwrap_or_default(), code))
+                && let Err(e) = self.timed(&f, || f.call::<()>((out.unwrap_or_default(), code)))
             {
                 self.queue
                     .borrow_mut()
@@ -2429,7 +2437,7 @@ impl Runtime {
         }
         if let Some(k) = keys.exit {
             if let Ok(f) = self.lua.registry_value::<mlua::Function>(&k)
-                && let Err(e) = f.call::<()>(code)
+                && let Err(e) = self.timed(&f, || f.call::<()>(code))
             {
                 self.queue
                     .borrow_mut()

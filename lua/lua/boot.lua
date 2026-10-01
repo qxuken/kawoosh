@@ -20,6 +20,26 @@ kawoosh._watches = {}
 kawoosh._tools = {}
 kawoosh._nonce = 0
 
+-- `pcall(fn, ...)` for a plugin's function, its time charged to the
+-- file that defined it while the Perf tab is on show (lua/src/prof.rs);
+-- `pcall` itself otherwise. Every call into a plugin from here goes
+-- through it.
+local plugin_of = setmetatable({}, { __mode = "k" })
+local function left(...)
+  kawoosh._prof_leave()
+  return ...
+end
+local function timed(fn, ...)
+  if not kawoosh._profiling or type(fn) ~= "function" then return pcall(fn, ...) end
+  local name = plugin_of[fn]
+  if not name then
+    name = kawoosh._plugin_of(fn)
+    plugin_of[fn] = name
+  end
+  kawoosh._prof_enter(name)
+  return left(pcall(fn, ...))
+end
+
 -- kawoosh.command(name, fn[, opts]): a named command, callable from a
 -- keymap, the command line, or Rust. A name of two words is a
 -- subcommand (`"dir cd"` runs as `:dir cd`, completes under `:dir`).
@@ -216,20 +236,20 @@ end
 function kawoosh._watched(name, paths)
   local fn = kawoosh._watches[name]
   if not fn then return end
-  local ok, err = pcall(fn, paths)
+  local ok, err = timed(fn, paths)
   if not ok then kawoosh.echo("fs.watch " .. name .. ": " .. tostring(err)) end
 end
 
 function kawoosh.on_settings(fn)
   kawoosh._settings_hooks[#kawoosh._settings_hooks + 1] = fn
-  local ok, err = pcall(fn)
+  local ok, err = timed(fn)
   if not ok then kawoosh.echo("on_settings: " .. tostring(err)) end
 end
 
 -- Called from Rust when the settings' version moved.
 function kawoosh._settings()
   for _, fn in ipairs(kawoosh._settings_hooks) do
-    local ok, err = pcall(fn)
+    local ok, err = timed(fn)
     if not ok then kawoosh.echo("on_settings: " .. tostring(err)) end
   end
 end
@@ -247,7 +267,7 @@ end
 
 function kawoosh._cwd(path, how)
   for _, fn in ipairs(kawoosh._cwd_hooks) do
-    local ok, err = pcall(fn, path, how)
+    local ok, err = timed(fn, path, how)
     if not ok then kawoosh.echo("on_cwd: " .. tostring(err)) end
   end
 end
@@ -267,7 +287,7 @@ function kawoosh.on_diagnostics(fn)
 end
 function kawoosh._diagnostics()
   for _, fn in ipairs(kawoosh._diagnostics_hooks) do
-    local ok, err = pcall(fn)
+    local ok, err = timed(fn)
     if not ok then kawoosh.echo("on_diagnostics: " .. tostring(err)) end
   end
 end
@@ -277,7 +297,7 @@ function kawoosh.on_focus(fn)
 end
 function kawoosh._focus(buffer)
   for _, fn in ipairs(kawoosh._focus_hooks) do
-    local ok, err = pcall(fn, buffer)
+    local ok, err = timed(fn, buffer)
     if not ok then kawoosh.echo("on_focus: " .. tostring(err)) end
   end
 end
@@ -290,7 +310,7 @@ function kawoosh.on_write(fn)
 end
 function kawoosh._wrote(path, buffer)
   for _, fn in ipairs(kawoosh._write_hooks) do
-    local ok, err = pcall(fn, path, buffer)
+    local ok, err = timed(fn, path, buffer)
     if not ok then kawoosh.echo("on_write: " .. tostring(err)) end
   end
 end
@@ -302,7 +322,7 @@ end
 function kawoosh._places(title, items)
   local taken = false
   for _, fn in ipairs(kawoosh._places_hooks) do
-    local ok, r = pcall(fn, title, items)
+    local ok, r = timed(fn, title, items)
     if not ok then kawoosh.echo("on_places: " .. tostring(r))
     elseif r then taken = true end
   end
@@ -784,7 +804,7 @@ function view(env, slot)
                 name = name }
   ctx.field = function(opts) return field_node(name, env, opts, params.focused ~= false) end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
-  local ok, tree = pcall(fn, ctx)
+  local ok, tree = timed(fn, ctx)
   if not ok then
     return column { pad = 12, gap = 6,
       text("view `" .. name .. "` failed", { color = t.danger }),
@@ -806,7 +826,7 @@ function on_event(ev)
   end
   local h = kawoosh._handlers[name]
   if h then
-    local ok, err = pcall(h, ev)
+    local ok, err = timed(h, ev)
     if not ok then kawoosh.echo("view `" .. name .. "`: " .. tostring(err)) end
   end
 end
@@ -818,7 +838,7 @@ end
 function kawoosh._key(name, ev)
   local h = kawoosh._handlers[name]
   if not h then return false end
-  local ok, taken = pcall(h, ev)
+  local ok, taken = timed(h, ev)
   if not ok then
     kawoosh.echo("view `" .. name .. "`: " .. tostring(taken))
     return false
@@ -830,14 +850,14 @@ end
 function kawoosh._run(name, ctx)
   local fn = kawoosh._commands[name]
   if not fn then return end
-  local ok, err = pcall(fn, ctx)
+  local ok, err = timed(fn, ctx)
   if not ok then kawoosh.echo("command `" .. name .. "`: " .. tostring(err)) end
 end
 
 -- Called from Rust for each path to open: true when an opener took it.
 function kawoosh._open(path)
   for _, fn in ipairs(kawoosh._openers) do
-    local ok, taken = pcall(fn, path)
+    local ok, taken = timed(fn, path)
     if not ok then kawoosh.echo("open `" .. path .. "`: " .. tostring(taken)) end
     if ok and taken then return true end
   end
@@ -849,7 +869,7 @@ end
 function kawoosh._memory_open(kind, subject, meta)
   local fn = kawoosh._memory_openers[kind]
   if not fn then return false end
-  local ok, err = pcall(fn, { kind = kind, subject = subject, meta = meta or {} })
+  local ok, err = timed(fn, { kind = kind, subject = subject, meta = meta or {} })
   if not ok then kawoosh.echo("memory `" .. kind .. "`: " .. tostring(err)) end
   return true
 end
@@ -857,7 +877,7 @@ end
 -- Called from Rust for each scratch buffer a session restored.
 function kawoosh._restore(name, h)
   for _, fn in ipairs(kawoosh._restorers) do
-    local ok, err = pcall(fn, name, h)
+    local ok, err = timed(fn, name, h)
     if not ok then kawoosh.echo("restore `" .. name .. "`: " .. tostring(err)) end
   end
 end
@@ -866,7 +886,7 @@ end
 function kawoosh._change(name)
   local fn = kawoosh._changers[name]
   if not fn then return end
-  local ok, err = pcall(fn, name)
+  local ok, err = timed(fn, name)
   if not ok then kawoosh.echo("change `" .. name .. "`: " .. tostring(err)) end
 end
 
@@ -875,7 +895,7 @@ end
 function kawoosh._write(name, lines)
   local fn = kawoosh._writers[name]
   if not fn then return true end
-  local ok, res = pcall(fn, lines)
+  local ok, res = timed(fn, lines)
   if not ok then
     kawoosh.echo("write `" .. name .. "`: " .. tostring(res))
     return true
