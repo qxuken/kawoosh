@@ -753,6 +753,9 @@ pub struct Published {
     /// The settings' version, for what is derived from them (the mask
     /// rules `kawoosh.secrets` reads).
     pub settings_version: u64,
+    /// The settings' version and the sizes declared when `settings` was
+    /// copied: `publish` copies again only when either moved.
+    pub settings_key: Option<(u64, usize)>,
     /// The images asked for by path (`kawoosh.image`), as far as they
     /// have got.
     pub images: HashMap<PathBuf, ImageSnap>,
@@ -924,6 +927,7 @@ impl Default for Published {
             buffers: HashMap::new(),
             settings: Setting::table(),
             settings_version: 0,
+            settings_key: None,
             images: HashMap::new(),
             commands: Vec::new(),
             commands_version: 0,
@@ -1638,19 +1642,30 @@ impl Runtime {
                 },
             );
         }
-        p.settings = ed.settings.effective().clone();
-        // A size that is not one kui would take reads as unset: the view
-        // draws its default rather than failing to build, and the
-        // settings' check names the value (kui backlog F109).
-        for path in ed.settings.declared(&kawoosh_editor::SettingKind::Size) {
-            if p.settings
-                .get(path)
-                .is_some_and(|v| size_problem(v).is_some())
-            {
-                p.settings.remove(path);
+        // Copied when they moved, not every frame: the copy was most of
+        // what a publish cost. A plugin declaring a size moves no
+        // version, so the sizes declared are counted into the key.
+        let sizes = ed
+            .settings
+            .declared(&kawoosh_editor::SettingKind::Size)
+            .count();
+        let key = (ed.settings.version(), sizes);
+        if p.settings_key != Some(key) {
+            p.settings = ed.settings.effective().clone();
+            // A size that is not one kui would take reads as unset: the
+            // view draws its default rather than failing to build, and
+            // the settings' check names the value (kui backlog F109).
+            for path in ed.settings.declared(&kawoosh_editor::SettingKind::Size) {
+                if p.settings
+                    .get(path)
+                    .is_some_and(|v| size_problem(v).is_some())
+                {
+                    p.settings.remove(path);
+                }
             }
+            p.settings_version = ed.settings.version();
+            p.settings_key = Some(key);
         }
-        p.settings_version = ed.settings.version();
         if p.commands_version != ed.commands.version() {
             p.commands = ed.commands.specs().into_iter().cloned().collect();
             p.commands_version = ed.commands.version();
