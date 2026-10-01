@@ -730,6 +730,7 @@ impl Kawoosh {
         shown.extend(self.multis.visible.iter().copied());
         shown.sort();
         shown.dedup();
+        self.sync_grammar_sources();
         // The languages on show with a grammar to install and none in,
         // met for the first time (`grammars.install`).
         let mut unmet: Vec<String> = Vec::new();

@@ -7,11 +7,13 @@
 -- its step and how far its fetch is; one that failed shows why.
 --
 -- `j` `k` and the arrows walk the first two parts, a click moves the
--- cursor there; `<CR>` or `i` installs the cursor's grammar, or
--- installs it again if it is in (`:grammar install NAME`, which
--- fetches nothing when nothing moved); `u` updates every one
--- (`:grammar update`); `d` removes the cursor's (`:grammar remove
--- NAME`); `q` and `<Esc>` close. A row's button does what `<CR>` would.
+-- cursor there; `<CR>` or `i` installs the cursor's grammar — builds
+-- it here when no release has a library of it — or brings one that is
+-- in up to date (nothing is fetched when nothing moved); `b` builds
+-- the cursor's here from its source (`:grammar build NAME`); `u`
+-- updates every one (`:grammar update`); `d` removes the cursor's
+-- (`:grammar remove NAME`); `q` and `<Esc>` close. A row's button does
+-- what `<CR>` would.
 --
 -- Hackable: the pane is a reader of `kawoosh.grammars.list()`, which a
 -- statusline or a pane of your own reads the same, and its keys run
@@ -78,10 +80,14 @@ local function files(g)
   return table.concat(out, " ")
 end
 
--- What `<CR>` on `g` would do, as a button's label.
+-- What `<CR>` on `g` would do, as a button's label: a grammar no
+-- release has a library of is built here.
 local function verb(g)
   if g.state == "installing" then return nil end
-  if not g.installed then return g.state == "failed" and "again" or "install" end
+  if not g.installed then
+    if g.state == "failed" then return "again" end
+    return g.prebuilt and "install" or "build"
+  end
   return g.latest and "update" or nil
 end
 
@@ -111,6 +117,9 @@ local function line(g, ctx, on)
     if g.latest then rev = rev .. " → " .. g.latest end
     r[#r + 1] = text(rev, { family = "mono", size = SIZE - 1,
       color = g.latest and t.accent or t.muted, wrap = "none" })
+    if g.built then
+      r[#r + 1] = text("built here", { size = SIZE - 2, color = t.faint, wrap = "none" })
+    end
   end
   r[#r + 1] = row { width = "grow", min_width = 0,
     text(files(g), { family = "mono", size = SIZE - 1, color = t.faint, ellipsis = true }) }
@@ -173,7 +182,7 @@ kawoosh.view(VIEW, function(ctx)
       row { width = "grow", min_width = 0,
         text(string.format("%d installed · %d to install · %d built in", #inn, #out, #built),
           { size = SIZE - 1, color = t.muted, ellipsis = true }) } },
-    text("jk walk · ⏎ installs · u updates all · d removes · q closes",
+    text("jk walk · ⏎ installs · b builds here · u updates all · d removes · q closes",
       { size = SIZE - 2, color = t.faint, wrap = "word" }) }
 
   local body = column { key = "body", width = "grow", height = "grow", bg = t.bg, pad = PAD, gap = 14,
@@ -210,12 +219,19 @@ end, { session = false })
 
 -- ------------------------------------------------------- the commands
 
--- grammars.take(name): the grammar installed, or installed again —
--- which fetches its archive only when its release moved.
+-- grammars.take(name): the grammar installed — built here when no
+-- release has a library of it — or, one that is in, brought up to
+-- date as it came, which fetches nothing when nothing moved.
 function grammars.take(name)
   local g = by_name(name)
   if not g or g.state == "built in" then return kawoosh.echo("no grammar to install for " .. tostring(name)) end
-  kawoosh.run("grammar install " .. g.name)
+  if g.installed then
+    kawoosh.run("grammar update " .. g.name)
+  elseif g.prebuilt then
+    kawoosh.run("grammar install " .. g.name)
+  else
+    kawoosh.run("grammar build " .. g.name)
+  end
 end
 
 -- grammars.state(): what the pane shows — `cursor` (a grammar's name)
@@ -253,6 +269,9 @@ end
 on("take", function() if S and S.cursor then grammars.take(S.cursor) end end,
   "install the cursor's grammar, or install it again if its release moved")
 on("update", function() kawoosh.run("grammar update") end, "fetch the list and update every grammar installed")
+on("build", function()
+  if S and S.cursor then kawoosh.run("grammar build " .. S.cursor) end
+end, "build the cursor's grammar here from its source")
 on("remove", function()
   local g = S and S.cursor and by_name(S.cursor)
   if not g or not g.installed then return kawoosh.echo("grammars: nothing installed under the cursor") end
@@ -263,7 +282,7 @@ on("down", function() walk(1) end, "the cursor a row down")
 on("close", close, "close the pane")
 
 for k, c in pairs {
-  ["<CR>"] = "take", i = "take", u = "update", d = "remove",
+  ["<CR>"] = "take", i = "take", u = "update", d = "remove", b = "build",
   k = "up", j = "down", ["<Up>"] = "up", ["<Down>"] = "down",
   q = "close", ["<Esc>"] = "close",
 } do

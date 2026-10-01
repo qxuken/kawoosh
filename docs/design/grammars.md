@@ -1,9 +1,8 @@
 # Grammars: built ahead, installed on demand
 
-Status: decided 2026-10-01 (roadmap step 77); rounds 1 to 5 — the
-repository, `:grammar install`, the first file with `update` and
-`remove`, the pane, and the wider list — built the same day ("Built"
-at the end says where they departed from the text), round 6 not.
+Status: decided and built 2026-10-01 (roadmap step 77), in the six
+rounds of the build order and one after them; "Built" at the end says
+where the build departed from the text.
 Asked: "How
 can we implement Tree-Sitter grammar auto installation? Like neovim
 does, or at least `nvim-treesitter/nvim-treesitter` plugins do. We
@@ -696,3 +695,56 @@ top of repos?" — it did not, and only by replacing a file whole.
 Verified: the live test installs ruby from the shipped bases and a
 line opened under a `def` is a level in, where no bracket says
 anything; `nu scripts/verify.nu`.
+
+**Round 6, 2026-10-01**: `:grammar build NAME` (Decision 9), on main
+as it then was (the branch rebased onto it first, at the user's word).
+
+- **`grammars::build`** (`systems/src/grammars.rs`): one commit of the
+  repository fetched with git — `rev` a hash, a tag or a branch, the
+  commit it resolves to kept — `src/parser.c` and `src/scanner.c`
+  compiled with `$CC`, else the first of `cc`, `clang`, `gcc` and
+  `zig cc` that answers, and the checkout's `highlights.scm`,
+  `injections.scm`, `tags.scm` and licence beside the library, in
+  `grammars/NAME/src-REV12/`. The same commit built before is answered
+  as it is. A C++ scanner or no committed parser is refused with the
+  reason, as the releases' builder refuses them. `Row` has `path` and
+  `built` for it; its archive's fields are empty for a grammar built.
+- **The source** is the user's, `grammars.sources.NAME = { repo, rev,
+  path, symbol, extensions, filenames, shebangs, aliases }`, else the
+  list's row. The user's are read from the layers a project does not
+  write (a project's is passed over, said once), again whenever the
+  settings move, and each is a language of files until it is built.
+- **`:grammar update`** takes a grammar as it came: one built here is
+  built again when its source's commit is another (`is up to date`
+  otherwise), bare or by name.
+- **An install that fails for want of a library says the way**: when
+  the base "builds no libraries for" the machine and the list names
+  the grammar's source, the error ends `` `:grammar build NAME` builds
+  it here``. A failed install's manifest is listed too, as a finished
+  one's is.
+- **The pane**: a grammar no release has an archive of says `build`
+  where the others say `install`, one built here says so beside its
+  revision, `b` builds the cursor's, and `<CR>` on one that is in
+  updates it as it came. `kawoosh.grammars.list()` has `built` and
+  `prebuilt`.
+
+Where it departed from the text: a grammar with no highlights of its
+own is built all the same, and the loader says where it looked — the
+config directory's `queries/NAME/` is where the user writes one.
+`cl` is not tried: its flags are another compiler's.
+
+Verified: `a_grammar_is_built_from_its_source` (a local repository
+with json's parser: by branch, the steps, the files, the same commit
+not compiled twice, each refusal's words);
+`a_grammar_of_the_user_s_own_is_built_from_its_source` (a project's
+source passed over, the user's a language of files, built under
+`Building NAME`, painted, up to date when asked again, there at the
+next launch); the hint in `an_install_that_fails_says_why`; the
+pane's `build` in `a_grammar_that_can_only_be_built_says_so_in_the_pane`;
+over the network, kdl built from its repository at the list's revision
+with this machine's `cc` (`KAWOOSH_GRAMMARS_LIVE=1`); and `nu
+scripts/verify.nu`, 869 of 869.
+
+Not verified: a build on Windows, where `-shared` is mingw's or
+clang's to honour and `$CC` may be needed; and any library loaded
+there at all.

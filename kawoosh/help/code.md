@@ -59,15 +59,42 @@ far it is, and one that failed says why.
 | `:grammar update` | fetch the list, and install again every grammar whose release moved |
 | `:grammar update NAME` | the same for one |
 | `:grammar remove NAME` | take NAME's grammar out; its files are still recognised |
+| `:grammar build NAME` | build NAME's grammar here from its source |
+
+`:grammar build NAME` is the other way in: git fetches the grammar's
+source and the machine's C compiler — `$CC`, else `cc`, `clang`, `gcc`
+or `zig cc` — compiles it. It is for a listed grammar whose releases
+have no library for your machine (an install that fails for that says
+so), and for a grammar of your own, named in your settings with where
+it is and which files are its:
+
+```lua
+grammars = {
+  sources = {
+    mylang = {
+      repo = "https://example.com/tree-sitter-mylang",
+      rev = "main",              -- a commit, a tag or a branch
+      extensions = { "my" },     -- and filenames, shebangs, aliases
+      -- path = "grammars/mylang", symbol = "tree_sitter_mylang"
+    },
+  },
+}
+```
+
+Its colours are the repository's own `queries/highlights.scm`; where
+there is none, write one under the config directory's
+`queries/mylang/`. `:grammar update mylang` builds it again when its
+source has moved. In the pane a grammar that can only be built says
+`build`, and `b` builds the one under the cursor.
 
 The grammars are built by the `kawoosh-grammars` repository, which
 releases them on two hosts. `grammars.url` lists where to fetch from,
 tried in order; each is a folder holding `manifest.json` and one
 archive per grammar, so a mirror of your own is a URL in your
 settings. Only your own settings are read for it: a project's
-`grammars.url` is passed over, since a grammar is code that runs
-inside kawoosh, and of `grammars.install` a project's settings may
-say `"never"` and nothing else.
+`grammars.url` and `grammars.sources` are passed over, since a grammar
+is code that runs inside kawoosh, and of `grammars.install` a project's
+settings may say `"never"` and nothing else.
 
 A query file of your own under the config directory,
 `queries/NAME/highlights.scm` (or `injections.scm`, `outline.scm`,

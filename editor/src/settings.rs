@@ -1176,6 +1176,11 @@ impl Settings {
             "formatters by name: `cmd`, `args`, `languages`, `when`, `node`, `range`, `probe`, `timeout_ms`, `enabled` (formatters.md)",
         );
         s.declare(
+            "grammars.sources",
+            SettingKind::Open,
+            "grammars of your own, built here by `:grammar build NAME`: `grammars.sources.NAME = { repo =, rev =, path =, symbol =, extensions =, filenames =, shebangs =, aliases = }`; a project's is passed over",
+        );
+        s.declare(
             "language",
             SettingKind::Open,
             "a language's own settings, over the bare ones for its buffers: `language.go = { expandtab = false }`",

@@ -338,6 +338,26 @@ fn an_install_that_fails_says_why() {
         "{errors:?}"
     );
     assert!(!app.languages.has_grammar(NAME) && app.grammars.installed.is_empty());
+
+    // A release with no library for this machine, of a grammar whose
+    // source the list names: the other way in is said.
+    base(&remote, &lib);
+    let manifest = std::fs::read_to_string(remote.join("manifest.json")).unwrap();
+    let elsewhere = manifest.replace(&kawoosh_systems::grammars::target(), "some-other");
+    std::fs::write(remote.join("manifest.json"), elsewhere).unwrap();
+    ex(&mut d, &mut app, "grammar install jsonish");
+    until(&mut d, &mut app, "the install ended", |a| {
+        a.grammars.installing.is_empty()
+    });
+    let errors = notes(&app, Level::Error);
+    assert!(
+        errors.last().unwrap().contains("builds no libraries for")
+            && errors
+                .last()
+                .unwrap()
+                .ends_with("`:grammar build jsonish` builds it here"),
+        "{errors:?}"
+    );
     std::fs::remove_dir_all(t).ok();
 }
 
@@ -406,6 +426,33 @@ fn the_released_grammars_install_from_the_shipped_bases() {
         );
         eprintln!("{:?}: {}", shipped[skip].as_str(), app.ed.message);
     }
+
+    // A listed grammar built here instead, from its repository at the
+    // list's revision, with git and this machine's compiler.
+    let kdl = t.join("a.kdl");
+    std::fs::write(&kdl, "node \"value\" key=1\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    app.load_grammars(&t.join("grammars-built"));
+    app.open(&kdl);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammar build kdl");
+    for _ in 0..6000 {
+        d.frame(&mut app);
+        if app.grammars.installing.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
+    assert!(
+        app.ed.message.starts_with("grammar: kdl built (")
+            && app.grammars.installed["kdl"].row.built,
+        "{}",
+        app.ed.message
+    );
+    until(&mut d, &mut app, "painted", |a| !tokens(a).is_empty());
+    eprintln!("{}", app.ed.message);
 
     // An installed grammar brings its indent query: a line opened under
     // a Ruby `def`, where no bracket says anything, is a level in.
@@ -852,5 +899,213 @@ fn the_repository_s_samples_reindent_as_they_are() {
         names.len(),
         with_indents.join(" ")
     );
+    std::fs::remove_dir_all(t).ok();
+}
+
+/// A repository at `dir` holding json's parser, committed, with a
+/// highlights query of its own: its path, as git reads it. `None`, with
+/// why, where there is no git, no `cc` or no such source.
+fn source_repo(t: &Path, dir: &Path) -> Option<String> {
+    library(t)?;
+    let registry = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+        .map(|c| c.join("registry/src"))?;
+    let mut src = None;
+    for index in std::fs::read_dir(registry).ok()?.flatten() {
+        for krate in std::fs::read_dir(index.path()).ok()?.flatten() {
+            let name = krate.file_name().to_string_lossy().into_owned();
+            if name.starts_with("tree-sitter-json-") && krate.path().join("src/parser.c").is_file()
+            {
+                src = Some(krate.path().join("src"));
+            }
+        }
+    }
+    let src = src?;
+    std::fs::create_dir_all(dir.join("src/tree_sitter")).unwrap();
+    std::fs::create_dir_all(dir.join("queries")).unwrap();
+    std::fs::copy(src.join("parser.c"), dir.join("src/parser.c")).unwrap();
+    for header in std::fs::read_dir(src.join("tree_sitter"))
+        .unwrap()
+        .flatten()
+    {
+        std::fs::copy(
+            header.path(),
+            dir.join("src/tree_sitter").join(header.file_name()),
+        )
+        .unwrap();
+    }
+    std::fs::write(dir.join("queries/highlights.scm"), "(number) @number\n").unwrap();
+    std::fs::write(dir.join("LICENSE"), "MIT").unwrap();
+    let git = |args: &[&str]| {
+        let mut cmd = std::process::Command::new("git");
+        cmd.arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args);
+        kawoosh_systems::spawn::status(&mut cmd).is_ok_and(|s| s.success())
+    };
+    if !git(&["init", "-q", "-b", "main"]) {
+        eprintln!("no git: skipped");
+        return None;
+    }
+    assert!(git(&["add", "-A"]) && git(&["commit", "-q", "-m", "a grammar"]));
+    Some(dir.display().to_string())
+}
+
+/// `:grammar build NAME`: a grammar of the user's own, named under
+/// `grammars.sources` with its repository and its files, is a language
+/// of files until it is built — fetched with git, compiled here — and
+/// then painted, kept for the next launch, and up to date when asked
+/// again. A project may name none.
+#[test]
+fn a_grammar_of_the_user_s_own_is_built_from_its_source() {
+    let t = temp("build");
+    let data = t.join("grammars");
+    let Some(repo) = source_repo(&t, &t.join("upstream")) else {
+        return;
+    };
+    let file = t.join("a.jsonb");
+    std::fs::write(&file, "{\"a\": 1}\n").unwrap();
+    let word = |w: &str| Setting::Str(w.into());
+    let source = |repo: &str| {
+        Setting::Table(
+            [
+                ("repo", word(repo)),
+                ("rev", word("main")),
+                ("symbol", word("tree_sitter_json")),
+                ("extensions", Setting::List(vec![word("jsonb")])),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+        )
+    };
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with(&mut d, &data, &[]);
+    // A project's word on what is built here is passed over.
+    app.ed
+        .settings
+        .set(Layer::Project, "grammars.sources.sneaky", source(&repo));
+    d.frame(&mut app);
+    assert!(app.grammars.sources.is_empty() && app.languages.get("sneaky").is_none());
+    ex(&mut d, &mut app, "grammar build sneaky");
+    assert!(
+        app.ed.message.starts_with("grammar: no source for sneaky"),
+        "{}",
+        app.ed.message
+    );
+    let warned = notes(&app, Level::Warn);
+    assert!(
+        warned.len() == 1 && warned[0].contains("grammars.sources in a project's settings"),
+        "{warned:?}"
+    );
+
+    app.ed
+        .settings
+        .set(Layer::User, "grammars.sources.jsonb", source(&repo));
+    app.open(&file);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    assert_eq!(&*app.ed.buffer_of(v).language, "jsonb", "its files are its");
+    assert!(!app.languages.has_grammar("jsonb"));
+    assert_eq!(
+        notes(&app, Level::Info),
+        Vec::<String>::new(),
+        "nothing to install, so nothing asked"
+    );
+
+    ex(&mut d, &mut app, "grammar build jsonb");
+    assert!(
+        app.grammars.installing.contains("jsonb"),
+        "{}",
+        app.ed.message
+    );
+    until(&mut d, &mut app, "built", |a| {
+        a.grammars.installed.contains_key("jsonb")
+    });
+    let installed = app.grammars.installed["jsonb"].clone();
+    assert!(installed.row.built && installed.row.rev.len() == 40);
+    assert_eq!(
+        app.ed.message,
+        format!("grammar: jsonb built ({})", &installed.row.rev[..12])
+    );
+    assert!(
+        d.corner_texts()
+            .iter()
+            .any(|l| l.contains("Building jsonb")),
+        "{:?}",
+        d.corner_texts()
+    );
+    until(&mut d, &mut app, "painted", |a| {
+        tokens(a).contains(&Token::Number)
+    });
+    assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
+
+    // Asked again, at the same commit: nothing is compiled.
+    ex(&mut d, &mut app, "grammar update jsonb");
+    until(&mut d, &mut app, "the build ended", |a| {
+        a.grammars.installing.is_empty()
+    });
+    assert_eq!(
+        app.ed.message,
+        format!(
+            "grammar: jsonb is up to date ({})",
+            &installed.row.rev[..12]
+        )
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+
+    // The next launch has it, with no source named at all.
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with(&mut d, &data, &[]);
+    assert!(app.languages.has_grammar("jsonb"));
+    app.open(&file);
+    d.frame(&mut app);
+    until(&mut d, &mut app, "painted", |a| {
+        tokens(a).contains(&Token::Number)
+    });
+    std::fs::remove_dir_all(t).ok();
+}
+
+/// In the pane a grammar of the user's own, which no release has an
+/// archive of, says `build` where a listed one says `install`.
+#[test]
+fn a_grammar_that_can_only_be_built_says_so_in_the_pane() {
+    let t = temp("pane-build");
+    // Tall enough for every row to be on screen.
+    let mut d = Drive::new(760.0, 4000.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&t.join("grammars"));
+    let word = |w: &str| Setting::Str(w.into());
+    let source = Setting::Table(
+        [
+            ("repo", word("https://example.com/tree-sitter-mine")),
+            ("extensions", Setting::List(vec![word("mine")])),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect(),
+    );
+    app.ed
+        .settings
+        .set(Layer::User, "grammars.sources.mine", source);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammars");
+    d.frame(&mut app);
+    let row = |d: &Drive, name: &str| d.texts_under(&format!("grammar {name}")).join(" ");
+    let mine = row(&d, "mine");
+    assert!(
+        mine.contains(".mine") && mine.ends_with("build"),
+        "{mine:?}"
+    );
+    let zig = row(&d, "zig");
+    assert!(zig.ends_with("install"), "{zig:?}");
+    assert_eq!(overflows(&d), Vec::<String>::new());
+    assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(t).ok();
 }
