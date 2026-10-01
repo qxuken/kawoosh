@@ -4914,9 +4914,26 @@ fn seed(
             let limit: usize = q.get::<Option<usize>>("limit")?.unwrap_or(200);
             let now = kawoosh_systems::store::now();
             let p = pp.borrow();
+            // `workspace = true` the shell's workspace, a string that
+            // one, absent every workspace's: what the memory pane's
+            // `memory.scope` is between.
+            let workspace: Option<String> = match q.get::<Option<mlua::Value>>("workspace")? {
+                Some(mlua::Value::String(w)) => Some(w.to_str()?.to_string()),
+                Some(mlua::Value::Boolean(true)) => Some(p.workspace.clone()),
+                _ => None,
+            };
             if q.get::<Option<bool>>("recent")?.unwrap_or(false) {
                 let mut ring: Vec<RingRow> = pd.borrow().ring.iter().rev().cloned().collect();
-                ring.extend(s.recent(limit));
+                // Under a workspace, the transitions made there and the
+                // texts (a text is under none), as the pane's ring is.
+                ring.extend(s.recent(if workspace.is_some() {
+                    s.recent_len()
+                } else {
+                    limit
+                }));
+                if let Some(ws) = &workspace {
+                    ring.retain(|r| r.key.workspace == *ws || r.key.kind == "text");
+                }
                 ring.truncate(limit);
                 for (i, r) in ring.into_iter().enumerate() {
                     let e = lua.create_table()?;
@@ -4931,11 +4948,6 @@ fn seed(
             }
             let kind: Option<String> = q.get("kind")?;
             let subject: Option<String> = q.get("subject")?;
-            let workspace: Option<String> = match q.get::<Option<mlua::Value>>("workspace")? {
-                Some(mlua::Value::String(w)) => Some(w.to_str()?.to_string()),
-                Some(mlua::Value::Boolean(true)) => Some(p.workspace.clone()),
-                _ => None,
-            };
             let since: Option<i64> = q.get::<Option<i64>>("since")?.map(|secs| now - secs);
             let pinned = q.get::<Option<bool>>("pinned")?.unwrap_or(false);
             let query = kawoosh_systems::store::MomentQuery {

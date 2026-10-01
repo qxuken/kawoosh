@@ -247,6 +247,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `lsp` | | language servers and their rules ([code](code.md)) |
 | `compile.default`, `compile.commands` | | what `<leader>cc` and `:compile NAME` run ([code](code.md)) |
 | `tools` | | named programs to launch in terminal panes; each a `place`: `column`, `under` or `dock` |
+| `memory.scope` | `"workspace"` | the memory pane shows this `workspace`'s rows or `global`, every one's ([memory](memory.md#the-memory-pane)) |
 | `memory.text.max_mb` | `8` | how much copied text is kept across restarts; `0` for none |
 | `secrets.masks` | | which text is masked ([memory](memory.md#secrets)) |
 
