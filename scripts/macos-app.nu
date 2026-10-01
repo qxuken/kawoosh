@@ -15,6 +15,12 @@
 # inside the app too:
 #   ln -s /Applications/Kawoosh.app/Contents/MacOS/kawoosh ~/.local/bin/
 #
+# The app is made whole in a folder beside and renamed into place, so a
+# Kawoosh running from the one replaced — which macOS lets go on
+# running — sees a whole new app where it was started from the moment
+# there is one, and offers to relaunch into it (kawoosh/src/update.rs):
+# a Kawoosh builds the Kawoosh it runs from.
+#
 # A command that fails stops the script: nushell makes an external's
 # non-zero exit an error.
 
@@ -39,8 +45,15 @@ def main [
   # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
   let version = ^cargo pkgid --manifest-path $manifest -p kawoosh | str trim | str replace -r '.*[#@]' ''
 
-  let contents = $app | path join Contents
-  rm -rf $app
+  # Made in a folder beside — the same disk, so the renames at the end
+  # are renames — and under the app's own name there: `codesign` and
+  # Finder know a bundle by it. What an interrupted run left goes first.
+  let parent = $app | path dirname
+  mkdir $parent
+  let beside = $parent | path join .Kawoosh.new
+  rm -rf $beside
+  let fresh = $beside | path join Kawoosh.app
+  let contents = $fresh | path join Contents
   mkdir ($contents | path join MacOS) ($contents | path join Resources)
   for bin in [kawoosh kawoosh-edit] {
     cp ($target | path join release $bin) ($contents | path join MacOS)
@@ -80,7 +93,15 @@ def main [
   # Ad hoc: enough for this machine, which is where the app was built.
   # Handing it to another Mac takes a Developer ID and notarization.
   ^codesign --force --sign - ($contents | path join MacOS kawoosh-edit)
-  ^codesign --force --sign - $app
+  ^codesign --force --sign - $fresh
+
+  # The old app aside and the new one in: a Kawoosh running from the old
+  # one keeps the files it has open, and finds the new ones by path.
+  if ($app | path exists) {
+    mv $app ($beside | path join old.app)
+  }
+  mv $fresh $app
+  rm -rf $beside
 
   $app
 }

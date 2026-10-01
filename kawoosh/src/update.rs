@@ -1,20 +1,34 @@
-//! A new Kawoosh built over the one running (Windows). Windows renames
-//! no folder with a file open in it, so while a Kawoosh runs from its
-//! folder `scripts/windows-app.nu` cannot put the new one in its place.
-//! It leaves it beside instead — `Kawoosh.new`, whole — and writes
-//! [`READY`] in it last, with the version. The running Kawoosh watches
-//! for that file and offers to relaunch (`:relaunch`): it copies the
-//! updater, `kawoosh-update`, out of the new folder to the temp folder,
-//! starts it and quits as `:qa` does. The updater waits for it to exit,
+//! A new Kawoosh in place of the one running, and `:relaunch`: quit as
+//! `:qa` does and start Kawoosh again, the session picked up — the one
+//! installed by then, which is how a Kawoosh builds the Kawoosh it runs
+//! from. The one started (`kawoosh --after PID`) waits for the one that
+//! asked to be gone before it opens anything, so the session it reads
+//! is the one that Kawoosh saved.
+//!
+//! Where a running program's files are replaced under it (macOS, Linux)
+//! the new one is simply written over: `scripts/macos-app.nu` renames a
+//! whole app into the old one's place, `cargo install` a binary. The
+//! running Kawoosh watches the executable it was started from, and when
+//! that is no longer the file it was offers the relaunch.
+//!
+//! Windows renames no folder with a file open in it, so while a Kawoosh
+//! runs from its folder `scripts/windows-app.nu` cannot put the new one
+//! in its place. It leaves it beside instead — `Kawoosh.new`, whole —
+//! and writes [`READY`] in it last, with the version. The running
+//! Kawoosh watches for that file too, and its relaunch goes through the
+//! updater: it copies `kawoosh-update` out of the new folder to the
+//! temp folder, starts it and quits. The updater waits for it to exit,
 //! swaps the folders ([`swap`]) — or, when the old one will not move,
 //! leaves both as they were and says why in [`FAILED`] — and starts the
-//! Kawoosh that is then in the folder, which picks up the session.
+//! Kawoosh that is then in the folder.
 //!
-//! Nothing is replaced under a running Kawoosh: its `kawoosh-edit` and
-//! its fonts stay the ones it was built with until it quits.
+//! Nothing is replaced under a running Kawoosh on Windows: its
+//! `kawoosh-edit` and its fonts stay the ones it was built with until it
+//! quits. Elsewhere a terminal opened after an install runs the new
+//! `kawoosh-edit`, which speaks to the old window as the old one did.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use kawoosh_editor::{Ctx, Spec};
 use kawoosh_systems::watch::Watcher;
@@ -30,6 +44,10 @@ pub const READY: &str = "ready";
 pub const FAILED: &str = "failed";
 /// The updater's name, in the new folder beside `kawoosh`.
 pub const UPDATER: &str = "kawoosh-update";
+/// `kawoosh --after PID`: the window, once process `PID` has gone.
+pub const AFTER: &str = "--after";
+/// How long the quitting Kawoosh has to save its session and go.
+pub const QUIT: Duration = Duration::from_secs(60);
 
 /// `…\Kawoosh` → `…\Kawoosh.new`: where the next one waits.
 pub fn staged_of(app: &Path) -> PathBuf {
@@ -84,26 +102,122 @@ pub fn swap(app: &Path, patience: Duration) -> Result<(), String> {
     Ok(())
 }
 
-/// The watch on the new folder beside the running one.
+/// Whether process `pid` is gone within `limit`.
+#[cfg(windows)]
+pub fn gone_within(pid: u32, limit: Duration) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+    // SAFETY: no preconditions; a null handle is a process already gone
+    // (or never ours to wait on), and one opened is closed below.
+    unsafe {
+        let h = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if h.is_null() {
+            return true;
+        }
+        let gone = WaitForSingleObject(h, limit.as_millis() as u32) == WAIT_OBJECT_0;
+        CloseHandle(h);
+        gone
+    }
+}
+
+/// Whether process `pid` is gone within `limit`. One that started this
+/// process is gone once it is no longer its parent, reaped or not: a
+/// Kawoosh whose own parent never waits for it stays in the table.
+#[cfg(unix)]
+pub fn gone_within(pid: u32, limit: Duration) -> bool {
+    let until = Instant::now() + limit;
+    // SAFETY: `getppid` has no preconditions and cannot fail; signal 0
+    // only asks whether the process is there.
+    let parent = unsafe { libc::getppid() } as u32 == pid;
+    let there = || unsafe {
+        libc::kill(pid as libc::pid_t, 0) == 0 && (!parent || libc::getppid() as u32 == pid)
+    };
+    while there() {
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    true
+}
+
+/// What a file is, to tell one written in its place from it: a build
+/// differs in its time, and a file renamed in is another file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Stamp {
+    mtime: Option<SystemTime>,
+    len: u64,
+    file: u64,
+}
+
+fn stamp(path: &Path) -> Option<Stamp> {
+    let m = std::fs::metadata(path).ok()?;
+    #[cfg(unix)]
+    let file = std::os::unix::fs::MetadataExt::ino(&m);
+    #[cfg(not(unix))]
+    let file = 0;
+    Some(Stamp {
+        mtime: m.modified().ok(),
+        len: m.len(),
+        file,
+    })
+}
+
+/// The Kawoosh a relaunch would start, when it is not this one.
+#[derive(Debug, PartialEq, Eq)]
+enum Waiting {
+    /// A folder ready beside this one's, the version in it: the updater
+    /// puts it in place.
+    Beside(String),
+    /// Another executable where this one was started from.
+    Over,
+}
+
+/// The watch on the executable this Kawoosh runs from, and on the new
+/// folder beside its folder.
 #[derive(Default)]
 pub struct UpdateWatch {
-    /// The folder this Kawoosh runs from, for one that watches
-    /// (`watch_update`).
-    app: Option<PathBuf>,
+    /// The executable this Kawoosh was started from, for one that
+    /// watches (`watch_update`).
+    exe: Option<PathBuf>,
+    /// What that file was then.
+    started: Option<Stamp>,
     watch: Option<Watcher>,
     /// The toast offering the relaunch, while it is up.
     toast: Option<u64>,
 }
 
+impl UpdateWatch {
+    /// The folder the executable is in: what a new one waits beside.
+    fn app(&self) -> Option<&Path> {
+        self.exe.as_deref()?.parent()
+    }
+
+    fn waiting(&self) -> Option<Waiting> {
+        if let Some(version) = self.app().and_then(|a| ready_version(&staged_of(a))) {
+            return Some(Waiting::Beside(version));
+        }
+        // Gone for the moment a build takes to write it is not new.
+        let now = stamp(self.exe.as_deref()?)?;
+        (Some(now) != self.started).then_some(Waiting::Over)
+    }
+}
+
 impl Kawoosh {
-    /// Watches for a new Kawoosh beside `app`, the folder this one runs
-    /// from — and says so now if one is there already, as when the last
-    /// one quit without taking it in.
-    pub fn watch_update(&mut self, app: &Path) {
-        let staged = staged_of(app);
+    /// Watches for a new Kawoosh over `exe`, the executable this one
+    /// runs from, or beside its folder — and says so now if one is
+    /// there already, as when the last one quit without taking it in.
+    pub fn watch_update(&mut self, exe: &Path) {
+        self.update.started = stamp(exe);
+        self.update.exe = Some(exe.to_path_buf());
         let watch = Watcher::spawn(self.wake.named("update"), self.beat.clone());
-        watch.watch(vec![staged.join(READY), staged.join(FAILED)]);
-        self.update.app = Some(app.to_path_buf());
+        let mut paths = vec![exe.to_path_buf()];
+        if let Some(staged) = self.update.app().map(staged_of) {
+            paths.extend([staged.join(READY), staged.join(FAILED)]);
+        }
+        watch.watch(paths);
         self.update.watch = Some(watch);
         self.update_seen();
     }
@@ -118,14 +232,14 @@ impl Kawoosh {
         }
     }
 
-    /// The new folder looked at: an updater's failure said, then taken
-    /// out; a folder ready offered, once while its toast is up.
+    /// The executable and the new folder looked at: an updater's failure
+    /// said, then taken out; a new Kawoosh offered, once while its toast
+    /// is up.
     fn update_seen(&mut self) {
-        let Some(staged) = self.update.app.as_deref().map(staged_of) else {
-            return;
-        };
-        let failed = staged.join(FAILED);
-        if let Ok(why) = std::fs::read_to_string(&failed) {
+        let failed = self.update.app().map(|a| staged_of(a).join(FAILED));
+        if let Some(failed) = failed
+            && let Ok(why) = std::fs::read_to_string(&failed)
+        {
             let _ = std::fs::remove_file(&failed);
             if let Some(id) = self.update.toast.take() {
                 self.notes.dismiss(id);
@@ -140,48 +254,74 @@ impl Kawoosh {
             self.update.toast = Some(self.notify_with(note));
             return;
         }
-        let Some(version) = ready_version(&staged) else {
-            return;
+        let text = match self.update.waiting() {
+            Some(Waiting::Beside(version)) => {
+                format!("Kawoosh {version} is installed: relaunch to run it")
+            }
+            Some(Waiting::Over) => "a new Kawoosh is installed: relaunch to run it".to_string(),
+            None => return,
         };
         let up = |id| self.notes.shown.iter().any(|s| s.id == id);
         if self.update.toast.is_some_and(up) {
             return;
         }
-        let note = Note::new(
-            Level::Info,
-            format!("Kawoosh {version} is installed: relaunch to run it"),
-        )
-        .source("update")
-        .show(Show::Toast)
-        .action("Relaunch", "relaunch")
-        .action("Later", "relaunch?");
+        let note = Note::new(Level::Info, text)
+            .source("update")
+            .show(Show::Toast)
+            .action("Relaunch", "relaunch")
+            .action("Later", "relaunch?");
         self.update.toast = Some(self.notify_with(note));
     }
 
-    /// `:relaunch` (`!`: unsaved changes discarded, as `:qa!`): the
-    /// updater started and this Kawoosh quit; `?` says what is waiting.
+    /// `:relaunch` (`!`: unsaved changes discarded, as `:qa!`): this
+    /// Kawoosh quit and the next one started — by the updater when it
+    /// waits beside, else the executable this one was started from, run
+    /// again; `?` says which that is.
     fn relaunch_command(&mut self, ctx: &Ctx) {
-        let app = self.update.app.clone();
-        let version = app.as_deref().and_then(|a| ready_version(&staged_of(a)));
-        let (Some(app), Some(version)) = (app, version) else {
-            self.ed.message =
-                "no new Kawoosh beside this one (scripts/windows-app.nu --install builds one)"
-                    .into();
+        let Some(exe) = self.update.exe.clone() else {
+            self.ed.message = "no Kawoosh to start again: this one has no window".into();
             return;
         };
+        let waiting = self.update.waiting();
         if ctx.query() {
-            self.ed.message = format!("Kawoosh {version} is waiting: :relaunch runs it");
+            self.ed.message = match waiting {
+                Some(Waiting::Beside(version)) => {
+                    format!("Kawoosh {version} is waiting: :relaunch runs it")
+                }
+                Some(Waiting::Over) => "a new Kawoosh is installed: :relaunch runs it".into(),
+                None => "no new Kawoosh installed: :relaunch starts this one again".into(),
+            };
             return;
         }
         self.request_quit_all(ctx.bang());
         if !self.quit {
             return;
         }
-        if let Err(e) = start_updater(&app) {
+        let started = match (waiting, self.update.app()) {
+            (Some(Waiting::Beside(_)), Some(app)) => {
+                start_updater(app).map_err(|e| format!("the updater did not start: {e}"))
+            }
+            _ => again(&exe)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("{} did not start: {e}", exe.display())),
+        };
+        if let Err(e) = started {
             self.quit = false;
-            self.notify(Level::Error, format!("the updater did not start: {e}"));
+            self.notify(Level::Error, e);
         }
     }
+}
+
+/// `exe` run again where this process is, to open its window once this
+/// one has gone ([`AFTER`]): with no path, so on the session.
+fn again(exe: &Path) -> std::process::Command {
+    let mut c = std::process::Command::new(exe);
+    c.arg(AFTER).arg(std::process::id().to_string());
+    if let Ok(cwd) = std::env::current_dir() {
+        c.current_dir(cwd);
+    }
+    c
 }
 
 /// The version in a ready new folder, `?` for one without.
@@ -232,7 +372,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         Spec::new("relaunch")
             .bang("discard unsaved changes, as :qa! does")
             .query("say whether a new Kawoosh is waiting")
-            .doc("quit and start the new Kawoosh installed beside this one, the session picked up"),
+            .doc("quit and start Kawoosh again, the session picked up: a new one installed is the one that starts"),
         |k, ctx| k.relaunch_command(ctx),
     )]
 }
@@ -323,25 +463,24 @@ mod tests {
 
     /// A new folder ready beside is offered with a toast whose actions
     /// relaunch or put it off, and `:relaunch?` says what waits; with
-    /// none there `:relaunch` says so and quits nothing.
+    /// none there it says the relaunch starts this one again.
     #[test]
     fn a_new_folder_ready_is_offered() {
         let tmp = tempdir();
-        let app = folder(&tmp, "Kawoosh", &[]);
+        let app = folder(&tmp, "Kawoosh", &[("kawoosh", "old")]);
         let mut k = Kawoosh::new("x", "");
-        k.watch_update(&app);
+        k.watch_update(&app.join("kawoosh"));
         assert!(k.notes.shown.is_empty());
-        k.run_line("relaunch");
-        assert!(
-            k.ed.message.starts_with("no new Kawoosh"),
-            "{}",
-            k.ed.message
+        k.run_line("relaunch?");
+        assert_eq!(
+            k.ed.message,
+            "no new Kawoosh installed: :relaunch starts this one again"
         );
         assert!(!k.quit);
 
         folder(&tmp, "Kawoosh.new", &[(READY, "0.0.2\n")]);
         let mut k = Kawoosh::new("x", "");
-        k.watch_update(&app);
+        k.watch_update(&app.join("kawoosh"));
         let toast = &k.notes.shown[0];
         assert_eq!(toast.text, "Kawoosh 0.0.2 is installed: relaunch to run it");
         let commands: Vec<_> = toast.actions.iter().map(|a| a.command.as_str()).collect();
@@ -354,15 +493,88 @@ mod tests {
         let _ = std::fs::remove_dir_all(tmp);
     }
 
+    /// Another executable written where this Kawoosh was started from —
+    /// an app renamed into the old one's place, a build — is offered as
+    /// the folder beside is, and not while the file is away.
+    #[test]
+    fn an_executable_written_over_is_offered() {
+        let tmp = tempdir();
+        let app = folder(&tmp, "Kawoosh", &[("kawoosh", "old")]);
+        let exe = app.join("kawoosh");
+        let mut k = Kawoosh::new("x", "");
+        k.watch_update(&exe);
+        k.update_seen();
+        assert!(k.notes.shown.is_empty());
+
+        let aside = tmp.join("Kawoosh.old");
+        std::fs::rename(&app, &aside).unwrap();
+        k.update_seen();
+        assert!(k.notes.shown.is_empty());
+        folder(&tmp, "Kawoosh", &[("kawoosh", "newer")]);
+        k.update_seen();
+        let toast = &k.notes.shown[0];
+        assert_eq!(toast.text, "a new Kawoosh is installed: relaunch to run it");
+        let commands: Vec<_> = toast.actions.iter().map(|a| a.command.as_str()).collect();
+        assert_eq!(commands, ["relaunch", "relaunch?"]);
+        k.run_line("relaunch?");
+        assert_eq!(
+            k.ed.message,
+            "a new Kawoosh is installed: :relaunch runs it"
+        );
+        k.update_seen();
+        assert_eq!(k.notes.shown.len(), 1);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// The relaunch runs the executable where this process is, told to
+    /// wait for it; one that does not start leaves this Kawoosh running
+    /// and says so, and a Kawoosh with no window has none to start.
+    #[test]
+    fn a_relaunch_starts_the_executable_after_this_one() {
+        let tmp = tempdir();
+        let exe = tmp.join("kawoosh");
+        let c = again(&exe);
+        assert_eq!(c.get_program(), exe.as_os_str());
+        let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy()).collect();
+        assert_eq!(args, [AFTER.to_string(), std::process::id().to_string()]);
+        assert_eq!(c.get_current_dir(), std::env::current_dir().ok().as_deref());
+
+        let mut k = Kawoosh::new("x", "");
+        k.run_line("relaunch");
+        assert!(k.ed.message.starts_with("no Kawoosh to start again"));
+        assert!(!k.quit);
+        // No file there to run.
+        k.watch_update(&exe);
+        k.run_line("relaunch");
+        assert!(!k.quit);
+        let said = &k.notes.shown[0].text;
+        assert!(said.contains("did not start"), "{said}");
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// This process is not gone; a child that exited and was waited for
+    /// is.
+    #[test]
+    fn a_process_gone_is_told_from_one_running() {
+        assert!(!gone_within(std::process::id(), Duration::ZERO));
+        #[cfg(unix)]
+        {
+            let mut child = std::process::Command::new("true").spawn().unwrap();
+            let pid = child.id();
+            child.wait().unwrap();
+            assert!(gone_within(pid, Duration::ZERO));
+        }
+    }
+
     /// Why the updater left this Kawoosh in place is said once, the
     /// file taken out, with the relaunch offered again.
     #[test]
     fn a_failed_swap_is_said() {
         let tmp = tempdir();
-        let app = folder(&tmp, "Kawoosh", &[]);
+        let app = folder(&tmp, "Kawoosh", &[("kawoosh", "old")]);
         let staged = folder(&tmp, "Kawoosh.new", &[(READY, "0.0.2"), (FAILED, "held")]);
         let mut k = Kawoosh::new("x", "");
-        k.watch_update(&app);
+        k.watch_update(&app.join("kawoosh"));
         assert_eq!(k.notes.shown.len(), 1);
         let toast = &k.notes.shown[0];
         assert!(
