@@ -535,7 +535,7 @@ fn a_caret_past_a_headings_end_sits_after_it() {
         .core
         .nodes()
         .into_iter()
-        .find(|n| n.text.as_deref() == Some("## Head"))
+        .find(|n| n.text.as_deref().map(str::trim_end) == Some("## Head"))
         .expect("the heading, raw");
     let caret = d
         .core
@@ -634,7 +634,8 @@ fn a_code_blocks_rows_meet_without_a_line_at_any_scale() {
 fn a_visual_selection_draws_every_line_it_covers_raw() {
     let dir = fixture("visual-raw");
     let (mut d, mut app) = launch(&dir, 700.0);
-    let has = |d: &Drive, s: &str| d.line_rows().iter().any(|r| r == s);
+    // (A row a selection runs past the end of ends in the cell's space.)
+    let has = |d: &Drive, s: &str| d.line_rows().iter().any(|r| r.trim_end() == s);
     d.keys(&mut app, "7G");
     settle(&mut d, &mut app);
     assert!(has(&d, "- item one"), "{:#?}", d.line_rows());
@@ -1125,4 +1126,41 @@ fn a_click_above_the_caret_lands_on_its_line() {
     d.frame(&mut app);
     let buf = app.ed.buffer_of(v);
     assert_eq!(buf.line_of(app.ed.views[v].sels.primary().head), 139);
+}
+
+/// A block caret past a wrapped row's end — `$` then `l`, `j` onto a
+/// shorter line — is inside the pane at every length of the row: where
+/// the text filled its last visual line to the edge, the cell after it
+/// hung past the pane, on the divider (2026-10-01, "markdown again
+/// allows cursor past the boundaries").
+#[test]
+fn the_cell_past_a_rows_end_stays_in_the_pane() {
+    let dir = fixture("past-edge");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    let accent = app.pal.accent;
+    for n in 60..130 {
+        let line = "x".repeat(n);
+        std::fs::write(dir.join("doc.md"), format!("{line}\nnext\n")).unwrap();
+        ex(&mut d, &mut app, "e!");
+        d.press(&mut app, "gg$l");
+        settle(&mut d, &mut app);
+        let dl = d.core.output().0;
+        let blocks: Vec<_> = dl
+            .quads
+            .iter()
+            .filter(|q| q.kind == kui_native::QuadKind::Solid && q.color == accent)
+            .map(|q| q.rect)
+            .collect();
+        assert_eq!(blocks.len(), 1, "{n}: the block, once: {blocks:?}");
+        let r = blocks[0];
+        assert!(r.x >= 0.0 && r.x + r.w <= 700.0, "{n} inside: {r:?}");
+        // The row is a visual line taller where the cell took a new one:
+        // the block stays above the row after it.
+        let next = rect_of_text(&d, "next").expect("the row after");
+        assert!(
+            r.y + r.h <= next.1 + 0.5,
+            "{n} above `next`: {r:?} {next:?}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
 }

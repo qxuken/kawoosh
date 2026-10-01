@@ -1341,6 +1341,18 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             }
         }
         let wraps = form.is_some_and(|f| f.wrap.is_some());
+        // A wrapped row with a cell past its end (a block caret there, a
+        // selection over the newline) ends in a space of its own, which
+        // kui's `break-spaces` gives a place like a letter's: where the
+        // last visual line is full the space starts the next, and the
+        // row is a line taller, rather than the cell hanging past the
+        // pane's edge (2026-10-01).
+        let end_cell = wraps
+            && (line
+                .carets
+                .iter()
+                .any(|(r, k)| r.start >= len && *k != Caret::Bar)
+                || line.selected.iter().any(|r| r.end > len));
         let text_key: std::cell::Cell<Option<kui_native::Key>> = std::cell::Cell::new(None);
         spacer(ui, before);
         let flush = |ui: &mut Ui<'_>, segs: &[(Range<usize>, Look)]| {
@@ -1362,6 +1374,8 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 ui.text(&text[r.clone()], style);
                 return;
             }
+            let end = (end_cell && segs.last().is_some_and(|(r, _)| r.end >= len))
+                .then(|| Span::new(" "));
             let spans: Vec<Span<'_>> = segs
                 .iter()
                 .map(|(r, l)| {
@@ -1394,6 +1408,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     }
                     s
                 })
+                .chain(end)
                 .collect();
             match wraps {
                 // A wrapped text grows to the row's width less what sits

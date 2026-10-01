@@ -401,6 +401,21 @@ After a day's use (2026-09-23), five more:
   (`every_space_of_a_wrapped_row_has_a_cell_in_the_pane`). A code
   block's rows wrap `break-spaces` too, since the same day: by glyph,
   one trailing space hung there as well.
+- **The cell past a wrapped row's end has a place too** (2026-10-01).
+  The block caret on the newline (`$` then `l`, `j` onto a shorter line)
+  and a selection over it are one cell after the text, a float at where
+  the last visual line ends; where that line was full to the pane's
+  edge the cell hung past it, on the divider ("markdown again allows
+  cursor past the boundaries"). A wrapped row with such a cell now ends
+  in a space of its own, which `break-spaces` wraps like a letter: the
+  row grows a line and the cell stands at the next one's start, always
+  inside the pane (`the_cell_past_a_rows_end_stays_in_the_pane`, every
+  length of a row). The row's text then ends in that space where a cell
+  is drawn. The caret *may* stand on the newline in normal mode — `j`
+  onto a short line puts it there on purpose, so text typed lands
+  after the line (vim's `$` and `l` stop on the last character; this
+  engine's `l` and `j` do not) — it is the drawing that cannot leave
+  the pane.
 - **`gx` on an anchor goes to its heading**: `#seed-data`, or
   `file.md#top` after opening the file, by GitHub's slug (lower-cased,
   punctuation dropped, spaces as `-`, a repeat numbered); it had opened
