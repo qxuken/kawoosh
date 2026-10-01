@@ -22,6 +22,11 @@
 //!
 //! An install never writes over a library a process has open: another
 //! archive is another directory, and `current` moves to it.
+//!
+//! [`build`] is the other way in, for a grammar no release has a
+//! library of for this machine, or one of the user's own: its source
+//! fetched with git at a revision and compiled with the C compiler the
+//! machine has, into the same place — `NAME/src-REV12/`.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -58,14 +63,29 @@ pub struct Row {
     pub repo: String,
     #[serde(default)]
     pub rev: String,
+    /// The directory of the repository `src/parser.c` is in.
+    #[serde(default = "dot")]
+    pub path: String,
     #[serde(default)]
     pub license: String,
     pub symbol: String,
     #[serde(default)]
     pub abi: u32,
+    /// The release's archive, its bytes and their hash; a grammar built
+    /// here has none.
+    #[serde(default)]
     pub archive: String,
+    #[serde(default)]
     pub size: u64,
+    #[serde(default)]
     pub blake3: String,
+    /// Built on this machine ([`build`]) rather than fetched built.
+    #[serde(default)]
+    pub built: bool,
+}
+
+fn dot() -> String {
+    ".".into()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -119,6 +139,9 @@ pub enum Step {
     },
     Verifying,
     Extracting,
+    /// A build's two: the source fetched with git, and compiled.
+    Source,
+    Compiling,
     Done(Box<Installed>),
     Failed(String),
 }
@@ -499,6 +522,200 @@ pub fn install(
     done.ok_or_else(|| failures.join("; "))
 }
 
+/// The command that compiles C here: `$CC` — a command line — else
+/// the first of `cc`, `clang`, `gcc` and `zig cc` that answers
+/// `--version`.
+fn compiler() -> Result<Vec<String>, String> {
+    let said = std::env::var("CC").ok().filter(|c| !c.trim().is_empty());
+    let candidates: Vec<Vec<String>> = match &said {
+        Some(cc) => vec![cc.split_whitespace().map(str::to_string).collect()],
+        None => [&["cc"][..], &["clang"], &["gcc"], &["zig", "cc"]]
+            .iter()
+            .map(|c| c.iter().map(|w| w.to_string()).collect())
+            .collect(),
+    };
+    for argv in candidates {
+        let mut cmd = crate::io::command(&argv[0]);
+        cmd.args(&argv[1..]).arg("--version");
+        if crate::spawn::output(&mut cmd).is_ok_and(|o| o.status.success()) {
+            return Ok(argv);
+        }
+    }
+    Err(match said {
+        Some(cc) => format!("$CC is `{cc}`, which does not run"),
+        None => "no C compiler: none of cc, clang, gcc or zig is on the PATH (or set $CC)".into(),
+    })
+}
+
+/// Runs `cmd` to its end; its stderr's last lines are the error.
+fn ran(cmd: &mut std::process::Command, what: &str) -> Result<String, String> {
+    let out = crate::spawn::output(cmd).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => format!("{what}: not on the PATH"),
+        _ => format!("{what}: {e}"),
+    })?;
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let tail: Vec<&str> = err.lines().rev().take(4).collect();
+    let tail: Vec<&str> = tail.into_iter().rev().collect();
+    Err(format!("{what}: {}", tail.join(" · ").trim()))
+}
+
+/// Builds the grammar `row` names from its source under `root`: one
+/// commit of `row.repo` at `row.rev` — a hash, a tag or a branch —
+/// fetched with git, `src/parser.c` and `src/scanner.c` under
+/// `row.path` compiled into `NAME.EXT`, and the checkout's
+/// `highlights.scm`, `injections.scm` and `tags.scm` and its licence
+/// beside it, in `NAME/src-REV12/`. The same revision built before is
+/// answered as it is. A scanner in C++ is refused, as the releases'
+/// builder refuses it.
+pub fn build(row: &Row, root: &Path, say: &dyn Fn(Step)) -> Result<Installed, String> {
+    let name = row.name.as_str();
+    if !plain(name) {
+        return Err(format!("`{name}` is no grammar's name"));
+    }
+    if row.repo.is_empty() || row.rev.is_empty() {
+        return Err(format!("no source for {name}: a repo and a rev"));
+    }
+    let path = Path::new(&row.path);
+    if path.is_absolute() || path.components().any(|c| c.as_os_str() == "..") {
+        return Err(format!("path `{}` leaves the checkout", row.path));
+    }
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let scratch = root.join(format!(".fetch-{}-build{n}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let built = build_in(row, root, &scratch, say);
+    let _ = std::fs::remove_dir_all(&scratch);
+    built
+}
+
+fn build_in(
+    row: &Row,
+    root: &Path,
+    scratch: &Path,
+    say: &dyn Fn(Step),
+) -> Result<Installed, String> {
+    let name = row.name.as_str();
+    let checkout = scratch.join("src");
+    std::fs::create_dir_all(&checkout).map_err(|e| format!("{}: {e}", checkout.display()))?;
+    say(Step::Source);
+    let git = |args: &[&str]| -> Result<String, String> {
+        let mut cmd = crate::io::command("git");
+        cmd.arg("-C").arg(&checkout).args(args);
+        ran(&mut cmd, "git")
+    };
+    git(&["init", "-q"])?;
+    git(&["remote", "add", "origin", &row.repo])?;
+    git(&["fetch", "-q", "--depth", "1", "origin", &row.rev])
+        .map_err(|e| format!("{} at {}: {e}", row.repo, row.rev))?;
+    git(&[
+        "-c",
+        "advice.detachedHead=false",
+        "checkout",
+        "-q",
+        "FETCH_HEAD",
+    ])?;
+    let rev = git(&["rev-parse", "HEAD"])?.trim().to_string();
+    let dir = root
+        .join(name)
+        .join(format!("src-{}", &rev[..rev.len().min(12)]));
+    let mut row = row.clone();
+    row.rev = rev;
+    row.built = true;
+    (row.archive, row.size, row.blake3) = (String::new(), 0, String::new());
+    if let Some(have) = installed_one(root, name).filter(|i| i.dir == dir && i.row == row) {
+        return Ok(have);
+    }
+
+    let grammar = checkout.join(&row.path);
+    let src = grammar.join("src");
+    let parser = src.join("parser.c");
+    if !parser.is_file() {
+        return Err(format!(
+            "{}: no src/parser.c{}: the grammar commits no generated parser",
+            row.repo,
+            if row.path == "." {
+                String::new()
+            } else {
+                format!(" under {}", row.path)
+            }
+        ));
+    }
+    if ["scanner.cc", "scanner.cpp", "scanner.cxx"]
+        .iter()
+        .any(|f| src.join(f).is_file())
+    {
+        return Err(format!("{}: its scanner is C++", row.repo));
+    }
+    say(Step::Compiling);
+    let staged = scratch.join("install");
+    std::fs::create_dir_all(&staged).map_err(|e| format!("{}: {e}", staged.display()))?;
+    let cc = compiler()?;
+    let lib = staged.join(format!("{name}.{}", std::env::consts::DLL_EXTENSION));
+    let mut cmd = crate::io::command(&cc[0]);
+    cmd.args(&cc[1..]).args(["-shared", "-O2", "-std=c11"]);
+    if !cfg!(windows) {
+        cmd.arg("-fPIC");
+    }
+    cmd.arg("-I").arg(&src).arg(&parser);
+    let scanner = src.join("scanner.c");
+    if scanner.is_file() {
+        cmd.arg(&scanner);
+    }
+    cmd.arg("-o").arg(&lib);
+    ran(&mut cmd, &cc.join(" "))?;
+
+    // Its own queries, beside the grammar or at the checkout's root;
+    // an `indents.scm` there is nvim's dialect, and is left.
+    let queries = [grammar.join("queries"), checkout.join("queries")];
+    if let Some(from) = queries.iter().find(|d| d.is_dir()) {
+        for file in ["highlights.scm", "injections.scm", "tags.scm"] {
+            if from.join(file).is_file() {
+                let to = staged.join("queries");
+                std::fs::create_dir_all(&to).map_err(|e| format!("{}: {e}", to.display()))?;
+                std::fs::copy(from.join(file), to.join(file))
+                    .map_err(|e| format!("{file}: {e}"))?;
+            }
+        }
+    }
+    // A grammar with no highlights of its own is built all the same:
+    // the loader reads one from the config directory's `queries/NAME/`,
+    // and says where it looked when there is none.
+    for from in [&grammar, &checkout] {
+        let Ok(entries) = std::fs::read_dir(from) else {
+            continue;
+        };
+        let mut found = false;
+        for entry in entries.flatten() {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            let upper = file.to_ascii_uppercase();
+            let is = ["LICENSE", "LICENCE", "COPYING"]
+                .iter()
+                .any(|w| upper.starts_with(w));
+            if is && entry.path().is_file() && plain(&file) {
+                let _ = std::fs::copy(entry.path(), staged.join(&file));
+                found = true;
+            }
+        }
+        if found {
+            break;
+        }
+    }
+    let json = serde_json::to_string_pretty(&row).map_err(|e| e.to_string())?;
+    std::fs::write(staged.join("grammar.json"), json).map_err(|e| e.to_string())?;
+
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::rename(&staged, &dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let current = dir.file_name().unwrap().to_string_lossy().into_owned();
+    write_whole(&root.join(name).join("current"), current.as_bytes())?;
+    Ok(Installed { dir, row })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,6 +833,7 @@ mod tests {
                 Step::Fetching { .. } => "fetching",
                 Step::Verifying => "verifying",
                 Step::Extracting => "extracting",
+                Step::Source | Step::Compiling => "build",
                 Step::Done(_) | Step::Failed(_) => "end",
             })
         };
@@ -705,6 +923,172 @@ mod tests {
         assert!(installed(&root).is_empty() && got.dir.is_dir());
         prune(&root);
         assert!(!root.join("zig").exists());
+        std::fs::remove_dir_all(t).unwrap();
+    }
+
+    /// A repository at `dir` holding tree-sitter-json's parser out of
+    /// the cargo registry, committed: its path as git reads it, and the
+    /// commit. `None`, with why, where there is no git, no cc or no
+    /// such source.
+    fn source_repo(dir: &Path) -> Option<(String, String)> {
+        let registry = std::env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+            .map(|c| c.join("registry/src"))?;
+        let mut src = None;
+        for index in std::fs::read_dir(registry).ok()?.flatten() {
+            for krate in std::fs::read_dir(index.path()).ok()?.flatten() {
+                let name = krate.file_name().to_string_lossy().into_owned();
+                if name.starts_with("tree-sitter-json-")
+                    && krate.path().join("src/parser.c").is_file()
+                {
+                    src = Some(krate.path().join("src"));
+                }
+            }
+        }
+        let Some(src) = src else {
+            eprintln!("no tree-sitter-json source in the cargo registry: skipped");
+            return None;
+        };
+        if compiler().is_err() {
+            eprintln!("no C compiler: skipped");
+            return None;
+        }
+        std::fs::create_dir_all(dir.join("src/tree_sitter")).unwrap();
+        std::fs::create_dir_all(dir.join("queries")).unwrap();
+        std::fs::copy(src.join("parser.c"), dir.join("src/parser.c")).unwrap();
+        for header in std::fs::read_dir(src.join("tree_sitter"))
+            .unwrap()
+            .flatten()
+        {
+            std::fs::copy(
+                header.path(),
+                dir.join("src/tree_sitter").join(header.file_name()),
+            )
+            .unwrap();
+        }
+        std::fs::write(dir.join("queries/highlights.scm"), "(string) @string\n").unwrap();
+        std::fs::write(dir.join("queries/indents.scm"), "(object) @indent.begin\n").unwrap();
+        std::fs::write(dir.join("LICENSE"), "MIT").unwrap();
+        let git = |args: &[&str]| {
+            let mut cmd = crate::io::command("git");
+            cmd.arg("-C")
+                .arg(dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"]);
+            ran(cmd.args(args), "git")
+        };
+        if git(&["init", "-q", "-b", "main"]).is_err() {
+            eprintln!("no git: skipped");
+            return None;
+        }
+        git(&["add", "-A"]).unwrap();
+        git(&["commit", "-q", "-m", "a grammar"]).unwrap();
+        Some((
+            dir.display().to_string(),
+            git(&["rev-parse", "HEAD"]).unwrap().trim().to_string(),
+        ))
+    }
+
+    #[test]
+    fn a_grammar_is_built_from_its_source() {
+        let t = temp("build");
+        let root = t.join("grammars");
+        std::fs::create_dir_all(&root).unwrap();
+        let Some((repo, rev)) = source_repo(&t.join("upstream")) else {
+            return;
+        };
+        let row = Row {
+            name: "jsonb".into(),
+            extensions: vec!["jsonb".into()],
+            filenames: Vec::new(),
+            shebangs: Vec::new(),
+            aliases: Vec::new(),
+            repo: repo.clone(),
+            // A branch is a revision too; the commit is what is kept.
+            rev: "main".into(),
+            path: ".".into(),
+            license: "MIT".into(),
+            symbol: "tree_sitter_json".into(),
+            abi: 0,
+            archive: "jsonb.sqlar".into(),
+            size: 7,
+            blake3: "of the release".into(),
+            built: false,
+        };
+        let steps = Mutex::new(Vec::new());
+        let say = |s: Step| {
+            steps.lock().unwrap().push(match s {
+                Step::Source => "source",
+                Step::Compiling => "compiling",
+                _ => "other",
+            })
+        };
+        let got = build(&row, &root, &say).unwrap();
+        assert_eq!(*steps.lock().unwrap(), ["source", "compiling"]);
+        assert_eq!(
+            got.dir,
+            root.join("jsonb").join(format!("src-{}", &rev[..12]))
+        );
+        assert!(got.row.built && got.row.rev == rev && got.row.blake3.is_empty());
+        let ext = std::env::consts::DLL_EXTENSION;
+        assert!(
+            std::fs::metadata(got.dir.join(format!("jsonb.{ext}")))
+                .unwrap()
+                .len()
+                > 1000
+        );
+        assert_eq!(
+            std::fs::read_to_string(got.dir.join("queries/highlights.scm")).unwrap(),
+            "(string) @string\n"
+        );
+        assert!(
+            !got.dir.join("queries/indents.scm").exists(),
+            "nvim's dialect, left"
+        );
+        assert_eq!(std::fs::read(got.dir.join("LICENSE")).unwrap(), b"MIT");
+        assert_eq!(installed(&root), vec![got.clone()]);
+
+        // The same revision again is not compiled again.
+        steps.lock().unwrap().clear();
+        assert_eq!(build(&row, &root, &say).unwrap(), got);
+        assert_eq!(*steps.lock().unwrap(), ["source"]);
+
+        // What cannot be built says why.
+        let err = |row: &Row| build(row, &root, &|_| {}).unwrap_err();
+        let no_rev = Row {
+            rev: "nowhere".into(),
+            ..row.clone()
+        };
+        assert!(
+            err(&no_rev).contains("at nowhere: git:"),
+            "{}",
+            err(&no_rev)
+        );
+        let no_parser = Row {
+            path: "queries".into(),
+            ..row.clone()
+        };
+        assert!(
+            err(&no_parser).contains("no src/parser.c under queries"),
+            "{}",
+            err(&no_parser)
+        );
+        let out = Row {
+            path: "../x".into(),
+            ..row.clone()
+        };
+        assert!(err(&out).contains("leaves the checkout"));
+        let none = Row {
+            repo: String::new(),
+            ..row.clone()
+        };
+        assert!(err(&none).contains("no source for jsonb"));
+        assert!(
+            std::fs::read_dir(&root)
+                .unwrap()
+                .flatten()
+                .all(|e| { !e.file_name().to_string_lossy().starts_with(".fetch-") })
+        );
         std::fs::remove_dir_all(t).unwrap();
     }
 
