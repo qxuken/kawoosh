@@ -477,5 +477,9 @@ a project's `grammars.url` passed over. And over the network
 shipped bases alone, about two seconds each, painting keywords and
 strings.
 
-Not verified: the real window (the tests drive the app's frames, not
-a screen), and Windows.
+And in a window: a build launched on a zig file with an `init.lua`
+of `kawoosh.run("grammar install zig")` and a state of its own shows
+the file plain with `Installing zig fetching 0%` in the corner, then
+painted, the message `grammar: zig installed (6479aa13f32f)`.
+
+Not verified: Windows.
