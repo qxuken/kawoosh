@@ -3520,31 +3520,57 @@ impl Editor {
             .collect();
         buf.replace_many(&ascending);
         let mut items = self.views[view].sels.items.clone();
-        let mut placed: Vec<(usize, Selection)> = Vec::with_capacity(edits.len());
+        // Selections without an edit of their own move with the text;
+        // one with an edit is where `after` puts it.
+        let mut edited = vec![false; items.len()];
+        for (i, _, _) in &edits {
+            if let Some(e) = edited.get_mut(*i) {
+                *e = true;
+            }
+        }
+        // Apart, each edit is before every caret placed so far and moves
+        // it by its length's change: that sum, kept per caret as it is
+        // placed, places it at the end — an `=G` of 100,000 lines was
+        // quadratic walking every caret placed at every edit. Edits
+        // that overlap are walked so.
+        let apart = edits.windows(2).all(|w| w[1].1.end <= w[0].1.start);
+        let mut placed: Vec<(usize, Selection, isize)> = Vec::with_capacity(edits.len());
+        let mut moved: isize = 0;
         for (i, range, text) in edits {
             let (start, end) = (range.start, range.end);
             let edit = kawoosh_doc::Edit {
                 range: start..end,
                 new_len: text.len(),
             };
-            // Carets already placed sit after this edit; shift them.
-            for (_, s) in &mut placed {
-                *s = Selection::new(
-                    edit.transform_offset(s.anchor, kawoosh_doc::Bias::Right),
-                    edit.transform_offset(s.head, kawoosh_doc::Bias::Right),
-                );
+            if !apart {
+                // Carets already placed sit after this edit; shift them.
+                for (_, s, _) in &mut placed {
+                    *s = Selection::new(
+                        edit.transform_offset(s.anchor, kawoosh_doc::Bias::Right),
+                        edit.transform_offset(s.head, kawoosh_doc::Bias::Right),
+                    );
+                }
             }
-            // Selections without an edit of their own move with the text.
             for (j, s) in items.iter_mut().enumerate() {
-                if j != i && !placed.iter().any(|(k, _)| *k == j) {
+                if !edited[j] {
                     *s = Selection::new(
                         edit.transform_offset(s.anchor, kawoosh_doc::Bias::Left),
                         edit.transform_offset(s.head, kawoosh_doc::Bias::Left),
                     );
                 }
             }
-            placed.push((i, after(start, text.len())));
+            moved += text.len() as isize - (end - start) as isize;
+            placed.push((i, after(start, text.len()), moved));
         }
+        // What the edits after a caret's own (the ones before it in the
+        // text) moved it by: all of them less those up to its own.
+        let placed = placed.into_iter().map(|(i, s, upto)| match apart {
+            true => {
+                let by = |o: usize| o.saturating_add_signed(moved - upto);
+                (i, Selection::new(by(s.anchor), by(s.head)))
+            }
+            false => (i, s),
+        });
         for (i, s) in placed {
             if i < items.len() {
                 items[i] = s;

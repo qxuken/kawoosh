@@ -2056,3 +2056,21 @@ fn a_text_put_in_by_its_diff_keeps_the_carets() {
     assert!(t.ed.replace_diffed(id, "y\n", Some(stale)).is_err());
     assert_eq!(t.ed.replace_diffed(id, &t.text(), None), Ok(0));
 }
+
+/// An edit per line over a long file is one pass: `>G` over 100,000
+/// lines took 20 s — placing each caret walked every caret placed
+/// before it, and each edit read its line's graphemes to find a
+/// boundary between two ASCII bytes — 1.7 s now. 60,000 lines here,
+/// bounded far above that and well under the quadratic's 7 s.
+#[test]
+fn an_edit_per_line_over_a_long_file_is_one_pass() {
+    let n = 60_000;
+    let text = "x\n".repeat(n);
+    let mut t = T::new(&text);
+    let start = std::time::Instant::now();
+    t.keys(">G");
+    let took = start.elapsed();
+    assert_eq!(t.text().lines().next(), Some("    x"));
+    assert_eq!(t.text().len(), text.len() + 4 * n);
+    assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+}
