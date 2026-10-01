@@ -206,6 +206,46 @@ impl Kawoosh {
         self.spawn_terminal_as(None, cmd, cwd)
     }
 
+    /// The directory of what is in front: a terminal's, where its shell
+    /// is; a Lua view's, what its `here` says (`:du`'s directory); a
+    /// listing's, the directory it lists; a file's, the one it is in;
+    /// else the working directory. Where `:terminal here` starts.
+    pub(crate) fn here_dir(&self) -> PathBuf {
+        if let Some(d) = self
+            .term_of_focused()
+            .and_then(|t| self.terms.map.get(&t))
+            .and_then(|t| t.cwd())
+        {
+            return d;
+        }
+        let focused = self.layout.focused();
+        if let Some(Content::Lua(name)) = self.layout.content(focused)
+            && let Some(d) = self
+                .scripting
+                .rt
+                .as_ref()
+                .and_then(|rt| rt.view_here(&name, focused))
+        {
+            return d;
+        }
+        let from_buffer = self.focused_view().and_then(|v| {
+            let b = self.ed.buffer_of(v);
+            // A listing is named for the directory it lists (`dir.lua`'s
+            // `PREFIX`); it is no file, so `%` there stays refused.
+            let listed = (b.language.as_ref() == "dir")
+                .then(|| b.name.strip_prefix("dir: "))
+                .flatten()
+                .map(PathBuf::from);
+            listed.or_else(|| {
+                b.path
+                    .as_deref()
+                    .or(b.about.as_deref())
+                    .and_then(kawoosh_systems::fs::parent)
+            })
+        });
+        from_buffer.unwrap_or_else(|| self.cwd.clone())
+    }
+
     /// `:!CMD`'s terminal: `cmd` in `cwd`, kept when it ends
     /// ([`Spawned::keep`]).
     pub fn spawn_bang(&mut self, cmd: &str, cwd: &Path) -> Option<TermId> {
@@ -1079,6 +1119,18 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     .and_then(|t| k.terms.map.get(&t))
                     .and_then(|t| t.cwd())
                     .unwrap_or_else(|| k.cwd.clone());
+                if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
+                    k.fill_or_open(k.terminal_place(), Content::Terminal(t));
+                }
+            },
+        ),
+        cmd(
+            Spec::new("terminal here")
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("a terminal where the pane in front is (`<C-w>.`): the file's directory, the listing's, the shell's"),
+            |k, ctx| {
+                let cmd = (!ctx.args.is_empty()).then(|| ctx.args.join(" "));
+                let cwd = k.here_dir();
                 if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
                     k.fill_or_open(k.terminal_place(), Content::Terminal(t));
                 }

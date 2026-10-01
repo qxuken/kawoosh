@@ -60,7 +60,8 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>d` | the dock — a tree of its own, or a strip under `layout.dock = "scroll"`: a split from a dock pane stays in the dock; its panes are the window's, each titled with its project when another is in front, and a project's idle tasks end with its last tab (workspaces.md Decisions 9–12) |
 | `<C-w>D` | the pane into the dock or out of it from wherever it stands, landing as `<C-w>J` / `<C-w>K` would carry it across (a dock of it alone where there was none) — `pane dock`, the keyboard going with it; the tab's last pane stays. A title bar dragged onto a pane across does the same, on the side it is let go |
 | `<D-=>` `<D-+>` / `<D-->` `<D-_>` / `<D-0>` (Ctrl where there is no ⌘) | `font bigger` / `smaller` by a pixel for the session, `font reset` back to the settings' size; from every mode and pane |
-| `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
+| `<C-w>!` | a terminal (`:!` runs a shell, so does this), in the working directory or, from a terminal, its shell's |
+| `<C-w>.` | a terminal here (`:terminal here`): the file's directory, the one a listing or `:du` is on, a terminal's shell's — `.` as in the current directory |
 | `<C-w>n` | the keyboard onto the toasts |
 | `<C-w>:` | the command line, from a pane without one |
 | `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, in the colours it was printed in, full modal editing, the status saying `COPY`, the caret where the terminal's cursor was (scrolled back past it, on the top row the pane showed); `q`, `<C-S-x>` again, or `<Esc>` once nothing is left to clear gives the pane back |

@@ -1712,6 +1712,27 @@ impl Runtime {
             .unwrap_or(false)
     }
 
+    /// The directory view `name` says its pane `pane` shows
+    /// (`opts.here`), if it says one.
+    pub fn view_here(&self, name: &str, pane: u64) -> Option<PathBuf> {
+        let f = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<Table>("_here"))
+            .and_then(|t| t.get::<Function>(name))
+            .ok()?;
+        match self.timed(&f, || f.call::<Option<String>>(pane)) {
+            Ok(d) => d.filter(|d| !d.is_empty()).map(PathBuf::from),
+            Err(e) => {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("{name}: here: {e}")));
+                None
+            }
+        }
+    }
+
     /// Notes which field `view`'s keys are on, for the snapshot's
     /// `focused` — the shell's word, kept here so `publish` can say it.
     pub fn set_field_focus(&self, view: &str, field: Option<String>) {

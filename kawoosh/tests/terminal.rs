@@ -1708,3 +1708,91 @@ fn a_bang_pane_stays_when_its_line_ends_and_r_runs_it_again() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Where terminal `t`'s process is, once it is `want` (or the last seen).
+fn cwd_once(
+    d: &mut Drive,
+    app: &mut Kawoosh,
+    t: u64,
+    want: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let mut cwd = None;
+    for _ in 0..300 {
+        d.frame(app);
+        cwd = app.terms.map.get(&t).and_then(|t| t.cwd());
+        if cwd.as_deref() == Some(want) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    cwd
+}
+
+/// `<C-w>.` (`:terminal here`) starts where the pane in front is: a
+/// file's directory, the directory a listing lists, the one `:du` is
+/// on, a shell's own — not the working directory.
+#[test]
+fn a_terminal_here_starts_where_the_pane_in_front_is() {
+    let root = std::env::temp_dir().join(format!("kawoosh-here-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("a")).unwrap();
+    std::fs::create_dir_all(root.join("b/big")).unwrap();
+    std::fs::write(root.join("a/f.txt"), "x\n").unwrap();
+    std::fs::write(root.join("b/big/blob"), vec![0u8; 5000]).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(1200.0, 600.0);
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&root);
+    d.frame(&mut app);
+
+    // A file: its directory.
+    d.press(
+        &mut app,
+        &format!(":e {}<CR>", root.join("a/f.txt").display()),
+    );
+    let editor = app.layout.focused();
+    d.press(&mut app, "<C-w>.");
+    let t = app.term_of_focused().expect("a terminal pane");
+    assert_eq!(
+        cwd_once(&mut d, &mut app, t, &root.join("a")),
+        Some(root.join("a"))
+    );
+
+    // From that terminal, another where its shell is.
+    app.shell_command("terminal here", &[], None);
+    let t2 = app.term_of_focused().expect("a terminal pane");
+    assert_ne!(t, t2);
+    assert_eq!(
+        cwd_once(&mut d, &mut app, t2, &root.join("a")),
+        Some(root.join("a"))
+    );
+
+    // A listing: the directory it lists.
+    app.layout.focus(editor);
+    d.press(&mut app, &format!(":dir {}<CR>", root.join("b").display()));
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>.");
+    let t3 = app.term_of_focused().expect("a terminal pane");
+    assert_eq!(
+        cwd_once(&mut d, &mut app, t3, &root.join("b")),
+        Some(root.join("b"))
+    );
+
+    // `:du`, gone into its largest directory: that one.
+    app.layout.focus(editor);
+    d.press(&mut app, &format!(":du {}<CR>", root.display()));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    d.press(&mut app, "l");
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>.");
+    let t4 = app.term_of_focused().expect("a terminal pane");
+    assert_eq!(
+        cwd_once(&mut d, &mut app, t4, &root.join("b")),
+        Some(root.join("b"))
+    );
+    std::fs::remove_dir_all(&root).ok();
+}

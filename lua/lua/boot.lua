@@ -15,6 +15,7 @@ kawoosh._changers = {}
 kawoosh._restorers = {}
 kawoosh._openers = {}
 kawoosh._transient = {}
+kawoosh._here = {}
 kawoosh._settings_hooks = {}
 kawoosh._watches = {}
 kawoosh._tools = {}
@@ -384,10 +385,13 @@ end
 -- kui's env }. Events from the tree's on_click / on_key
 -- payloads reach `on_event(ev)`. `opts.session = false` keeps the view
 -- out of a session: a picker is asked for again, not brought back.
+-- `opts.here(pane)` says the directory the pane shows, if any: where
+-- `:terminal here` starts from it.
 function kawoosh.view(name, fn, on_event, opts)
   kawoosh._views[name] = fn
   kawoosh._handlers[name] = on_event
   kawoosh._transient[name] = (opts and opts.session == false) or nil
+  kawoosh._here[name] = opts and opts.here or nil
 end
 
 -- kawoosh.tool(name, { cmd =, cwd =, place =, dock =, restore = }): a

@@ -385,7 +385,11 @@ end, function(ev)
     if not e then return end
     if e.name == S.cursor then into() else S.cursor = e.name end
   end
-end, { session = false })
+end, {
+  session = false,
+  -- The directory the pane is on: where `:terminal here` starts.
+  here = function(pane) return states[pane] and states[pane].dir end,
+})
 
 -- du.state([pane]): what a pane shows — `root`, `dir`, `cursor`,
 -- `sort`, `marked` (paths), `entries` (`{ name, bytes, files, dir }` in

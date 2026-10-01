@@ -4408,6 +4408,8 @@ pub fn default_keymap(km: &mut Keymap) {
         // `HJKL` carry the pane.
         ("<C-w>D", "pane dock"),
         ("<C-w>!", "terminal"),
+        // `.` for here: where the pane in front is.
+        ("<C-w>.", "terminal here"),
         ("<C-w>n", "toast"),
         ("gt", "tab next"),
         ("gT", "tab prev"),

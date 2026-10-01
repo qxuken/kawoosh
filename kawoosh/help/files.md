@@ -48,6 +48,7 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `mA` `mS` `mM` `mE` | the same, reversed |
 | `g.` | show or hide dot files (`:dir hidden`, the `dir.hidden` setting) |
 | `~` | make the listed directory the working directory (`:dir cd`) |
+| `<C-w>.` | a terminal in the listed directory (`:terminal here`) |
 | `gz` | jump to a directory you use often ([directory jumps](#directory-jumps), zoxide's): the pick is listed here |
 
 Directories are always listed before files, and the sort is remembered
@@ -192,5 +193,6 @@ its own: `:du` in another tab walks there without touching the first.
 | `m` | mark an entry, or unmark it |
 | `d` | delete the marked entries, or the one under the cursor, after the same confirm `dir` uses |
 | `o` | list the directory in `dir` |
+| `<C-w>.` | a terminal in the directory (`:terminal here`) |
 | `r` | count again |
 | `q` `<Esc>` | close |
