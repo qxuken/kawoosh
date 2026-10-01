@@ -1073,7 +1073,12 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         d.key(app, name, KeyMods::NONE.with_shift().with_alt());
         d.frame(app);
     };
-    let Rect { y: y0, w: w0, .. } = d.rect("row README.md").unwrap();
+    let Rect {
+        x: x0,
+        y: y0,
+        w: w0,
+        ..
+    } = d.rect("row README.md").unwrap();
     alt("k", &mut app, &mut d);
     let Rect { y: y1, .. } = d.rect("row README.md").unwrap();
     assert!(
@@ -1104,8 +1109,9 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         h: dh,
     } = d.rect("picker divider").expect("the divider");
     assert!(
-        (dx - w0).abs() < 1.0,
-        "the divider after the list: {dx} vs {w0}"
+        (dx - (x0 + w0)).abs() < 1.0,
+        "the divider after the list: {dx} vs {}",
+        x0 + w0
     );
     d.drag(
         &mut app,

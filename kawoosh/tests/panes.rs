@@ -1322,3 +1322,44 @@ fn map_list_here_lists_what_applies_where_the_keys_are() {
     assert!(maps.starts_with("here: the global map alone"), "{maps}");
     assert!(!maps.contains("echo mine"), "{maps}");
 }
+
+/// A pane's title bar and rows sit inside its 1px frame, so the
+/// divider between two panes is as wide beside the title bars as
+/// beside the rows: the title bar painted over the frame while the
+/// rows let it show, and the gap widened by a frame below the titles.
+#[test]
+fn title_bar_and_rows_sit_inside_the_frame() {
+    let mut app = Kawoosh::new("t", "alpha\nbeta");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "v");
+    for _ in 0..12 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
+    let nodes = d.core.nodes();
+    for pane in app.layout.visible_panes() {
+        let r = app.layout.rects[&pane];
+        // The title bar: the band the pane's first child is, at its top.
+        let title = nodes
+            .iter()
+            .filter(|n| n.rect.h == app.chrome.pane_title_h)
+            .find(|n| (n.rect.x - r.x).abs() <= 1.0 && (n.rect.y - r.y).abs() <= 1.0)
+            .expect("the pane's title bar");
+        assert_eq!(
+            (title.rect.x, title.rect.y, title.rect.w),
+            (r.x + 1.0, r.y + 1.0, r.w - 2.0),
+            "pane {pane}'s title bar inside its frame"
+        );
+        let editor = nodes
+            .iter()
+            .filter(|n| n.label.as_deref() == Some("editor"))
+            .find(|n| (n.rect.x - r.x).abs() <= 1.0)
+            .expect("the pane's rows");
+        assert_eq!(
+            (editor.rect.x, editor.rect.w),
+            (r.x + 1.0, r.w - 2.0),
+            "pane {pane}'s rows inside its frame, under the title bar"
+        );
+    }
+}

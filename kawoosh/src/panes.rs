@@ -723,6 +723,12 @@ impl Kawoosh {
                 // row's underlines along the pane's foot, and read as a
                 // glitch there.
                 .border(1.0, pal.border)
+                // Inside the frame, as the sizes below (`r.w - 2.0`)
+                // reckon: kui's border insets nothing, so the title bar
+                // painted over it while rows without a background let
+                // it show — a divider wider beside the rows than
+                // beside the title.
+                .pad(1.0)
                 .on_layout(Value::map([
                     ("kind", "layout".into()),
                     ("pane", Value::Int(pane as i64)),
