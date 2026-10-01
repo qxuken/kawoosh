@@ -338,9 +338,11 @@ fn a_letter_launches_from_an_empty_query() {
         &mut app,
         &format!("kawoosh.pin('file', '{}')", lua_path(&dir.join("notes.md"))),
     );
+    // A tool that stays: its pane goes with its process, and one over at
+    // once may be over before the frame after its letter.
     lua(
         &mut app,
-        "kawoosh.opt('tools', { hello = { cmd = 'echo hi', key = 'e' } })",
+        "kawoosh.opt('tools', { hello = { cmd = 'cat', key = 'e' } })",
     );
     d.frame(&mut app);
     d.press(&mut app, "<C-w>v");
