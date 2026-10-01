@@ -1848,6 +1848,23 @@ pub fn encode_key(
     Some(out)
 }
 
+/// A ⌘ key in the legacy encoding, which has no ⌘: the keys a Mac
+/// edits a line with, as the readline keys they mean — ⌘⌫ `^U`, ⌘⌦
+/// `^K`, ⌘← `^A`, ⌘→ `^E`, as iTerm's natural text editing and Ghostty
+/// send them. `None` for every other ⌘ chord, which reaches nothing.
+pub fn encode_super_key(code: &str, ctrl: bool, alt: bool, shift: bool) -> Option<&'static [u8]> {
+    if ctrl || alt || shift {
+        return None;
+    }
+    Some(match code {
+        "backspace" => b"\x15",
+        "delete" => b"\x0b",
+        "left" => b"\x01",
+        "right" => b"\x05",
+        _ => return None,
+    })
+}
+
 fn rgb(c: Rgb) -> u32 {
     ((c.r as u32) << 24) | ((c.g as u32) << 16) | ((c.b as u32) << 8) | 0xFF
 }
