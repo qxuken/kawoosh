@@ -876,10 +876,12 @@ end
 -- `opts.under`: only what is under that directory (a listing's);
 -- `opts.untracked`: `normal` (an untracked directory as one entry) or
 -- `all` (every file, the default). Ignored files come too, as
--- `ignored`, for a listing to paint faint.
+-- `ignored`, for a listing to paint faint: `traditional`, so a
+-- directory holding nothing but ignored files (`.claude/` with only
+-- its `worktrees/` excluded) is named as the one entry it is.
 function git.status(root, done, opts)
   opts = opts or {}
-  local argv = { "git", "-c", "core.quotePath=false", "status", "--porcelain=v1", "--ignored=matching",
+  local argv = { "git", "-c", "core.quotePath=false", "status", "--porcelain=v1", "--ignored=traditional",
                  "--untracked-files=" .. (opts.untracked or "all"), "--no-renames" }
   if opts.under then
     argv[#argv + 1] = "--"
