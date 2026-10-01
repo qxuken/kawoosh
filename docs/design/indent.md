@@ -57,8 +57,13 @@ at the indent that line has; a line starting with an `@outdent` (a
 `}`, Lua's `elseif`) a level less; an `@indent` scoped `all` on the
 node starting the line a level more. When a line above it, under the
 same node, reads the same way — a sibling statement — the line follows
-that sibling's indent instead, by the difference in levels. With no
-indenting node around it, the levels count from the margin.
+that sibling's indent instead, by the difference in levels. A line out
+from its sibling — a `}`, an `elseif` — lines up with the node's line
+instead (as nvim-treesitter's `@indent.end` / `@indent.branch` do): a
+sibling less a level is less `shiftwidth`, which is not the file's
+width (corrected 2026-10-01: a four-space JavaScript file under the
+default two put an `if`'s `}` at 6). With no indenting node around it,
+the levels count from the margin.
 
 So a file's own width stands (a two-space file with `shiftwidth` four
 keeps two, from the sibling), a construct the query misses costs its
@@ -223,7 +228,11 @@ Measured on `editor/src/lib.rs` (3,560 lines): `<CR>` 0.5–1 ms with
 the catch-up; `=` over the whole file ~20 ms (a pass first took 388
 ms: tree-sitter's `parent` and the piece tree's line lookup each walk
 from the top, so the reader walks the chain down once and indexes its
-region's lines itself). The file reindents unchanged. Over the
+region's lines itself). The file reindents unchanged. A broken
+node's open brackets (Decision 7) are read once a pass, not walked up
+to each line: a 20,000-element JSON array with a trailing comma (a
+MISSING element, so the array `has_error()`) took 41 s, now 50 ms; a
+pass is linear, ~2.5 µs a line broken or sound. Over the
 repository, lines outside macros, strings and comments that `=` would
 move: Rust 0.14%, the hand-kept Lua 1% —
 `this_repository_reindents_as_it_is` holds them under 0.5% and 2%.
