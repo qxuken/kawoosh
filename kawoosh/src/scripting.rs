@@ -111,6 +111,10 @@ impl Kawoosh {
         if let Err(e) = crate::fonts::lua_door(rt.lua(), self.look.fonts.clone()) {
             log::error!("kawoosh.fonts: {e}");
         }
+        self.publish_grammars();
+        if let Err(e) = crate::grammars::lua_door(rt.lua(), self.grammars.shown.clone()) {
+            log::error!("kawoosh.grammars: {e}");
+        }
         if let Err(e) = crate::du::lua_door(rt.lua(), self.du.clone()) {
             log::error!("kawoosh.du: {e}");
         }
