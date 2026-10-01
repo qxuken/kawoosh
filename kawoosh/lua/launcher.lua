@@ -603,7 +603,10 @@ local function spans_of(r, t)
   return spans
 end
 
--- A row of a list: its text, its `sub`, its letter or hint.
+-- A row of a list: its text, its `sub`, its letter or hint. A row too
+-- long for the launcher — a path deep in a worktree — wraps, at its
+-- spaces and slashes and anywhere in a name with neither, and the row
+-- grows a line for it: one line is `ROW_H`, as before.
 local function list_row(i, r, R)
   local t = R.t
   local it = r.hit.item
@@ -611,11 +614,11 @@ local function list_row(i, r, R)
   local spans = spans_of(r, t)
   if it.sub and it.sub ~= "" then spans[#spans + 1] = { "  " .. it.sub, color = t.muted } end
   local line = row {
-    key = "r" .. i, width = "grow", height = ROW_H, pad = { x = 10 }, gap = 8, cross_align = "center",
+    key = "r" .. i, width = "grow", min_height = ROW_H, pad = { x = 10, y = 1 }, gap = 8, cross_align = "center",
     bg = selected and (R.focused and t.selection or t.sunken) or nil,
     hover_bg = not selected and t.sunken or nil,
     on_click = { kind = "row", i = i },
-    row { width = "grow", clip = true, text(spans, { family = "mono", size = SIZE, wrap = "none" }) },
+    column { width = "grow", text(spans, { family = "mono", size = SIZE, wrap = "word" }) },
   }
   local hint = hint_of(it)
   if hint then line[#line + 1] = text(hint, { size = SIZE - 1, color = t.faint, wrap = "none" }) end
@@ -623,17 +626,19 @@ local function list_row(i, r, R)
 end
 
 -- A row as a tile: its text and its letter, in a line of them that
--- wraps.
+-- wraps. A tile wider than the line — a path — is the line's width and
+-- wraps inside, as a row of a list does.
 local function tile(i, r, R)
   local t = R.t
   local selected = i == L.cursor
   local chip = row {
-    key = "r" .. i, height = ROW_H, pad = { x = 8 }, gap = 6, radius = 4, cross_align = "center",
+    key = "r" .. i, min_height = ROW_H, max_width = "100%", pad = { x = 8, y = 1 }, gap = 6, radius = 4,
+    cross_align = "center",
     bg = selected and (R.focused and t.selection or t.sunken) or t.raised,
     hover_bg = not selected and t.sunken or nil,
     border = { w = 1, color = t.border },
     on_click = { kind = "row", i = i },
-    text(spans_of(r, t), { family = "mono", size = SIZE, wrap = "none" }),
+    text(spans_of(r, t), { family = "mono", size = SIZE, wrap = "word" }),
   }
   local hint = hint_of(r.hit.item)
   if hint then chip[#chip + 1] = text(hint, { size = SIZE - 1, color = t.faint, wrap = "none" }) end

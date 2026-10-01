@@ -739,3 +739,125 @@ fn bd_on_a_launcher_leaves_its_field_be() {
     assert_eq!(focused_name(&app), "a.txt");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// The text node drawn starting `start` — the probe says a long text's
+/// start, and the rest is its rect's to show — and the nodes drawn.
+fn text_starting(d: &Drive, start: &str) -> (kui_native::NodeInfo, Vec<kui_native::NodeInfo>) {
+    let nodes = d.core.nodes();
+    let t = nodes
+        .iter()
+        .find(|n| {
+            n.kind == kui_native::NodeKind::Text
+                && n.text.as_deref().is_some_and(|t| t.starts_with(start))
+        })
+        .unwrap_or_else(|| panic!("a text starting {start:?}"))
+        .clone();
+    (t, nodes)
+}
+
+/// The text drawn starting `start` wraps: more than a line tall, and
+/// every box from it up to the pane holds it.
+fn wraps_inside(d: &Drive, start: &str) {
+    let (t, nodes) = text_starting(d, start);
+    assert!(
+        t.rect.h > 13.0 * 1.6,
+        "{start:?} takes more than a line: {:?}",
+        t.rect
+    );
+    let mut at = t.parent;
+    for _ in 0..6 {
+        let Some(b) = at.and_then(|k| nodes.iter().find(|n| n.key == k)) else {
+            break;
+        };
+        assert!(
+            t.rect.x + t.rect.w <= b.rect.x + b.rect.w + 0.5
+                && t.rect.y + t.rect.h <= b.rect.y + b.rect.h + 0.5,
+            "{start:?} inside {:?}: {:?} in {:?}",
+            b.label,
+            t.rect,
+            b.rect
+        );
+        at = b.parent;
+    }
+}
+
+/// The height of the row the text drawn starting `start` is in: its
+/// box's box, a column holding the text.
+fn row_height(d: &Drive, start: &str) -> f32 {
+    let (t, nodes) = text_starting(d, start);
+    let up = |k: Option<_>| k.and_then(|k| nodes.iter().find(|n| n.key == k));
+    up(up(t.parent).and_then(|c| c.parent)).map_or(0.0, |r| r.rect.h)
+}
+
+/// A long path wraps inside its row, at its slashes, rather than being
+/// cut at the pane's edge: *here*'s terminal row names the working
+/// directory, deep in a worktree, in a narrow pane — the whole path is
+/// drawn, every line of it inside the boxes it is in, a name with no
+/// place to break broken where it must, a row of one line as tall as
+/// ever, and the walk and the letters go on over the taller rows; a
+/// path as a tile wraps inside its tile (asked 2026-10-01: "launcher
+/// should be able to wrap long paths").
+#[test]
+fn a_long_path_wraps_inside_its_row() {
+    let _g = serial();
+    let root = project("wrap");
+    let dir = root
+        .join("projects")
+        .join("kawoosh")
+        .join(".claude")
+        .join("worktrees")
+        .join("launcher_should_be_able_to_wrap_long_paths_even_with_no_break_in_them");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let mut d = Drive::new(840.0, 600.0);
+    let mut app = Kawoosh::from_file(&dir.join("a.txt"));
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    app.open_store(Some(&root.join("state.db")));
+    d.press(&mut app, "<C-w>t");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(on_launcher(&app));
+    wraps_inside(&d, "terminal  a shell in /");
+    let one = row_height(&d, "scratch  a fresh buffer");
+    assert!(
+        (one - 21.0).abs() < 0.5,
+        "a row of one line as tall as ever: {one}"
+    );
+    let out = drive::overflows(&d);
+    assert!(out.is_empty(), "{}", out.join("\n"));
+    // A pin deep in the working directory, as a tile.
+    let deep = dir.join("documentation/architecture/decisions/the-launcher-wraps-long-paths");
+    std::fs::create_dir_all(&deep).unwrap();
+    std::fs::write(deep.join("notes.md"), "# notes\n").unwrap();
+    lua(
+        &mut app,
+        &format!(
+            "kawoosh.pin('file', '{}')",
+            lua_path(&deep.join("notes.md"))
+        ),
+    );
+    lua(
+        &mut app,
+        r#"kawoosh.opt("launcher.layout", { "prompt", "here", { module = "pins", style = "tiles" } })"#,
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(said(&mut app, "modules"), "prompt|here|pins");
+    wraps_inside(&d, "documentation/architecture/");
+    let out = drive::overflows(&d);
+    assert!(out.is_empty(), "{}", out.join("\n"));
+    // The walk and the letters over the taller rows.
+    d.press(&mut app, "jjj");
+    d.frame(&mut app);
+    app.run_lua_source("t", "kawoosh.echo(kawoosh.launcher.state().cursor)");
+    assert_eq!(app.ed.message, "directory");
+    d.press(&mut app, "t");
+    d.frame(&mut app);
+    assert!(!on_launcher(&app), "the letter launched");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&root).ok();
+}

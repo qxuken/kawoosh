@@ -204,6 +204,11 @@ and each tool its own letter, shown at the end of its row. `i`, `a` or
 scratch; `q` or `<C-c>` closes the pane again. `:` opens the command
 line, and `:e PATH` from there fills the new pane.
 
+A row too long for the launcher — a path deep in a worktree, in a
+narrow pane — wraps onto more lines inside its row rather than being
+cut: at its spaces and slashes, and inside a name that has neither.
+A tile does the same inside its tile.
+
 | setting | what |
 |---|---|
 | `layout.new_pane` | what a bare split is: `launcher` (the default), `same`, `scratch`, `terminal`, `dir` |

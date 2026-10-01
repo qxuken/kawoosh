@@ -293,6 +293,19 @@ fn(ctx)`) — the most freedom, but every experiment rewrites the walk,
 the letters and the scroll; and the layout in `init.lua` only — the
 user has none, and data in `settings.lua` is the edit-and-look loop.
 
+*Amended 2026-10-01, asked: "launcher should be able to wrap long
+paths".* A row is one line of `ROW_H` while it fits and grows a line
+for each it wraps onto — a list's row and a tile alike, a tile never
+wider than its line. The text is kui's `wrap = "word"`: Unicode's
+break opportunities, which fall at a space and after a `/` or a `-`,
+with a break between any two letters where a name has none
+(cosmic-text's word-or-glyph). The row no longer clips, so the overflow probe's sweep
+reads its text against its box. *Beat:* cutting the path from the
+left as the statusline does (`~/…/worktrees/x`) — the user asked to
+read the whole path; and breaking only at a separator — kui breaks
+where Unicode says, and a long name with no separator would still
+need the glyph fallback.
+
 ### 6. A session keeps nothing
 
 The view is `session = false`: a session saved with a launcher open
