@@ -563,6 +563,45 @@ fn grep_runs_rg_as_the_query_is_typed() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A search the picker asks for as it draws is one `wait_for_jobs`
+/// waits for. The query is read in the view, so `rg` is asked for on the
+/// frame after the key and sits in Lua's queue until the next drain: a
+/// wait that counted from the jobs already begun found none — nothing
+/// else running, as here, or the search before it over already, as on
+/// a busy machine — and returned on `searching…`
+/// (`grep_runs_rg_as_the_query_is_typed`, one sweep in ten).
+#[test]
+fn a_search_asked_for_by_a_draw_is_waited_for() {
+    let _serial = serial();
+    if std::process::Command::new("rg")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("rg is not installed: the grep test is skipped");
+        return;
+    }
+    let dir = project("grep-drawn");
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " g");
+    d.frame(&mut app);
+    // One key, one frame: the search is asked for, and not begun.
+    d.keys(&mut app, "h");
+    app.wait_for_jobs();
+    d.frame(&mut app);
+    let t = texts(&d);
+    assert!(
+        !t.iter().any(|s| s == "searching…"),
+        "still searching: {t:?}"
+    );
+    assert_eq!(rows(&d).len(), 2, "{:?}", rows(&d));
+    d.press(&mut app, "<C-c>");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `:commands` (`<leader>ic`), the registry as a picker: every spec a
 /// row — the shell's and a plugin's among them, a subcommand as its
 /// two-word name — with what it needs where the keyboard came from

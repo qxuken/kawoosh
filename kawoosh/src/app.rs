@@ -982,9 +982,15 @@ impl Kawoosh {
     }
 
     /// Blocks until every job a plugin asked for has been answered —
-    /// for tests, which have no loop to be woken.
+    /// for tests, which have no loop to be woken. What Lua has queued
+    /// is applied before the count: a view asks for work as it draws
+    /// (the picker's search, on the frame its query changed), and that
+    /// waits in the queue for the frame after, which a window is owed
+    /// and a test is not. Counted without it, the wait found nothing
+    /// begun and returned before the search had.
     pub fn wait_for_jobs(&mut self) {
         for _ in 0..12_000 {
+            self.drain_lua();
             self.drain_io();
             self.flush_proc_lines();
             self.sync_syntax();
