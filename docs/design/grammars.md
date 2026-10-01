@@ -853,3 +853,23 @@ frame takes it in with `put_loaded`, a failure still the warning it
 was. Verified: `an_install_s_grammar_is_loaded_off_the_frame`, the
 frame's CPU time against the load's of a heavy query (1–2 ms against
 200).
+
+**The pane's polish, 2026-10-02.** Asked, after trying it: "grammar
+title dublicated by panel name. remove title.", "use standard field in
+grammar pan", "grammar list does not implement `gg`/`G` moves."
+
+- **No title of its own**: the pane's title bar says `grammars`; the
+  head starts with the counts (`0 installed · 68 to install · 25 built
+  in`) on a line of their own, read as what is under the name.
+- **The filter is the list panes' line**: `/`, the field
+  (`ctx.field`), how many — on the pane as the fonts pane's and the
+  memory pane's are, no longer in a box of its own (the settings
+  pane's search still is).
+- **`gg` `G` `<C-d>` `<C-u>`** take the cursor to the first row, the
+  last, and ten down and up, each scrolled into view — the commands
+  `grammars first` `last` `page down` `page up`, as the fonts, settings
+  and `:du` panes have theirs.
+
+Verified: `the_head_is_the_counts_and_a_plain_filter_line_with_no_title_of_its_own`
+and `gg_and_g_go_to_the_first_and_last_row_and_ctrl_d_ctrl_u_page`
+(`kawoosh/tests/grammars.rs`).

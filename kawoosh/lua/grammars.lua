@@ -16,8 +16,9 @@
 -- `<Esc>` on the rows empties the filter, and with none closes the
 -- pane.
 --
--- `j` `k` and the arrows walk the rows shown, a click moves the cursor
--- there; `<CR>` or `i` installs the cursor's grammar — builds it here
+-- `j` `k` and the arrows walk the rows shown, `gg` `G` go to the first
+-- and the last, `<C-d>` `<C-u>` ten down and up, a click moves the
+-- cursor there; `<CR>` or `i` installs the cursor's grammar — builds it here
 -- when no release has a library of it — or brings one that is in up to
 -- date (nothing is fetched when nothing moved); `b` builds the
 -- cursor's here from its source (`:grammar build NAME`); `u` updates
@@ -287,20 +288,20 @@ kawoosh.view(VIEW, function(ctx)
   local shown = #S.rows
   local field = ctx.field { name = FIELD, placeholder = "filter by name or file", size = SIZE }
   field.width = "grow"
+  -- The title bar names the pane: the head is what is in it, then the
+  -- filter's line as the other list panes draw theirs — `/`, the
+  -- field, how many — and the keys.
   local head = column { width = "grow", gap = 6, pad = { x = PAD, top = PAD, bottom = 10 },
+    row { width = "grow", min_width = 0,
+      text(string.format("%d installed · %d to install · %d built in",
+          counts.installed, counts.out, counts.built),
+        { size = SIZE - 1, color = t.muted, ellipsis = true }) },
     row { width = "grow", gap = 8, cross_align = "center",
-      text({ { "grammars", bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
-      row { width = "grow", min_width = 0,
-        text(string.format("%d installed · %d to install · %d built in",
-            counts.installed, counts.out, counts.built),
-          { size = SIZE - 1, color = t.muted, ellipsis = true }) } },
-    row { width = "grow", height = SIZE + 14, pad = { x = 8 }, gap = 8, radius = 5, cross_align = "center",
-          bg = t.sunken, border = { w = 1, color = t.border },
       text("/", { family = "mono", size = SIZE, color = t.accent, wrap = "none" }),
       field,
       text(q == "" and (counts.all .. " grammars") or (shown .. " of " .. counts.all),
         { size = SIZE - 2, color = shown == 0 and t.danger or t.faint, wrap = "none" }) },
-    text("jk walk · / filters · ⏎ installs · b builds here · u updates all · d removes · q closes",
+    text("jk gg G walk · / filters · ⏎ installs · b builds here · u updates all · d removes · q closes",
       { size = SIZE - 2, color = t.faint, wrap = "word" }) }
 
   local list = column { key = "list", width = "grow", height = "grow", pad = { x = PAD, bottom = PAD },
@@ -419,6 +420,10 @@ on("remove", function()
 end, "take the cursor's installed grammar out")
 on("up", function() walk(-1) end, "the cursor a row up")
 on("down", function() walk(1) end, "the cursor a row down")
+on("page down", function() walk(10) end, "the cursor ten rows down")
+on("page up", function() walk(-10) end, "the cursor ten rows up")
+on("first", function() walk(-1e9) end, "the cursor on the first row")
+on("last", function() walk(1e9) end, "the cursor on the last row")
 on("filter", function() kawoosh.field_focus(VIEW, FIELD) end, "the keys to the filter")
 on("rows", function() kawoosh.field_focus(VIEW, nil) end, "the keys to the rows")
 on("escape", function()
@@ -434,6 +439,7 @@ on("close", close, "close the pane")
 for k, c in pairs {
   ["<CR>"] = "take", i = "take", u = "update", d = "remove", b = "build",
   k = "up", j = "down", ["<Up>"] = "up", ["<Down>"] = "down",
+  ["<C-d>"] = "page down", ["<C-u>"] = "page up", gg = "first", G = "last",
   ["/"] = "filter", q = "close", ["<Esc>"] = "escape",
 } do
   kawoosh.map("p", k, "grammars " .. c, { view = VIEW })
