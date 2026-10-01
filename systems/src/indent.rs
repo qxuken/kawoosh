@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::rc::Rc;
 
 use kawoosh_languages::{IndentKind, IndentScope, Indents};
 use tree_sitter::{Node, QueryCursor, QueryPredicateArg, StreamingIterator, Tree};
@@ -245,6 +246,8 @@ struct Reader<'a> {
     /// Each line's level as a line of its own, once read: a line is
     /// read again as a sibling of the lines below it.
     lines: std::cell::RefCell<HashMap<usize, Option<Level>>>,
+    /// Each broken node's brackets, by id, once read.
+    brackets: std::cell::RefCell<HashMap<usize, Rc<Brackets>>>,
 }
 
 impl<'a> Reader<'a> {
@@ -333,6 +336,7 @@ impl<'a> Reader<'a> {
             text,
             caps,
             lines: Default::default(),
+            brackets: Default::default(),
         }
     }
 
@@ -396,18 +400,19 @@ impl<'a> Reader<'a> {
             // however far its brackets reach — is a node begun on the
             // opener's line with an `@indent`, inside the node.
             if node.has_error() && line < target {
-                let (open, errors) = open_brackets(node, at);
-                broken |= errors;
+                let b = self.brackets(node);
+                broken |= b.errors_from <= at;
+                let top = b.open(at);
                 match &mut from {
                     None => {
-                        if let Some(&row) = open.last() {
+                        if let Some(top) = top {
                             let mut acc = Acc::default();
                             acc.add(IndentKind::Indent);
-                            from = Some((row, acc));
+                            from = Some((top.row, acc));
                         }
                     }
                     Some((l, acc)) => {
-                        if open.contains(l) {
+                        if b.opens_on(top, *l) {
                             acc.add(IndentKind::Indent);
                         }
                     }
@@ -466,6 +471,15 @@ impl<'a> Reader<'a> {
             None if broken => None,
             None => Some(Level::Margin(this_line.net())),
         }
+    }
+
+    /// `node`'s open brackets, read once.
+    fn brackets(&self, node: Node) -> Rc<Brackets> {
+        self.brackets
+            .borrow_mut()
+            .entry(node.id())
+            .or_insert_with(|| Rc::new(Brackets::of(node)))
+            .clone()
     }
 
     /// The level of line `ln` as it stands, its first non-blank at
@@ -614,51 +628,111 @@ fn deepest_preceding(node: Node, at: usize) -> Option<Node> {
     Some(d)
 }
 
-/// The rows of the brackets left open before `at` under `node`,
-/// outermost first, and whether it is or holds an ERROR there: an
-/// ERROR's loose `(` `[` `{` less the closers after them — an ERROR
-/// inside one read as part of it — and any other node whole, its
-/// brackets its own.
-fn open_brackets(node: Node, at: usize) -> (Vec<usize>, bool) {
-    fn scan(n: Node, at: usize, loose: bool, open: &mut Vec<(&'static str, usize)>) {
+/// The brackets a node's ERRORs leave open, read once for every line
+/// under it — a walk over the node's children up to each line was
+/// quadratic down a long flat array.
+struct Brackets {
+    /// From which byte the node is or holds an ERROR before a line: 0
+    /// for an ERROR, else its first ERROR child's end, else never.
+    errors_from: usize,
+    /// Each loose bracket in the text's order: the byte from which it
+    /// counts (its end, or its ERROR child's) and the top of the stack
+    /// of brackets open after it.
+    steps: Vec<(usize, Option<usize>)>,
+    /// That stack, shared by the steps.
+    frames: Vec<Frame>,
+}
+
+/// An open bracket: its row, the one below it, and per kind the nearest
+/// at or below it — the one a closer of that kind closes.
+struct Frame {
+    row: usize,
+    below: Option<usize>,
+    nearest: [Option<usize>; 3],
+}
+
+impl Brackets {
+    /// Under `node`: an ERROR's loose `(` `[` `{` less the closers after
+    /// them — an ERROR inside one read as part of it — and any other
+    /// node whole, its brackets its own.
+    fn of(node: Node) -> Self {
+        let mut cursor = node.walk();
+        let errors_from = if node.is_error() {
+            0
+        } else {
+            node.children(&mut cursor)
+                .find(|c| c.is_error())
+                .map_or(usize::MAX, |c| c.end_byte())
+        };
+        let mut b = Brackets {
+            errors_from,
+            steps: Vec::new(),
+            frames: Vec::new(),
+        };
+        b.scan(node, node.is_error(), None, &mut None);
+        b
+    }
+
+    /// `n`'s children onto the stack from `top`; `whole`, inside a
+    /// child ERROR, the byte all of it counts from.
+    fn scan(&mut self, n: Node, loose: bool, whole: Option<usize>, top: &mut Option<usize>) {
         let mut cursor = n.walk();
         for c in n.children(&mut cursor) {
-            if c.end_byte() > at {
-                break;
-            }
+            let from = whole.unwrap_or(c.end_byte());
             if c.is_error() {
-                scan(c, at, true, open);
+                self.scan(c, true, Some(from), top);
                 continue;
             }
             if !loose || c.is_named() || c.is_missing() {
                 continue;
             }
-            // Each bracket as its opener, and whether it opens.
-            let (opener, opens) = match c.kind() {
-                "(" => ("(", true),
-                "[" => ("[", true),
-                "{" => ("{", true),
-                ")" => ("(", false),
-                "]" => ("[", false),
-                "}" => ("{", false),
+            // Each bracket's kind, and whether it opens.
+            let (kind, opens) = match c.kind() {
+                "(" => (0, true),
+                "[" => (1, true),
+                "{" => (2, true),
+                ")" => (0, false),
+                "]" => (1, false),
+                "}" => (2, false),
                 _ => continue,
             };
             if opens {
-                open.push((opener, c.start_position().row));
-            } else if let Some(i) = open.iter().rposition(|(o, _)| *o == opener) {
-                open.truncate(i);
+                let mut nearest = top.map_or([None; 3], |t| self.frames[t].nearest);
+                nearest[kind] = Some(self.frames.len());
+                self.frames.push(Frame {
+                    row: c.start_position().row,
+                    below: *top,
+                    nearest,
+                });
+                *top = Some(self.frames.len() - 1);
+            } else if let Some(f) = top.and_then(|t| self.frames[t].nearest[kind]) {
+                *top = self.frames[f].below;
+            } else {
+                continue;
             }
+            self.steps.push((from, *top));
         }
     }
-    let mut open = Vec::new();
-    scan(node, at, node.is_error(), &mut open);
-    let mut cursor = node.walk();
-    let errors = node.is_error()
-        || node
-            .children(&mut cursor)
-            .take_while(|c| c.end_byte() <= at)
-            .any(|c| c.is_error());
-    (open.into_iter().map(|(_, row)| row).collect(), errors)
+
+    /// The innermost bracket left open before `at`.
+    fn open(&self, at: usize) -> Option<&Frame> {
+        let i = self.steps.partition_point(|(from, _)| *from <= at);
+        let top = i.checked_sub(1).and_then(|i| self.steps[i].1)?;
+        Some(&self.frames[top])
+    }
+
+    /// Whether `top` or a bracket open below it is on `row`: the rows
+    /// only fall going down.
+    fn opens_on(&self, top: Option<&Frame>, row: usize) -> bool {
+        let mut f = top;
+        while let Some(fr) = f {
+            if fr.row <= row {
+                return fr.row == row;
+            }
+            f = fr.below.map(|b| &self.frames[b]);
+        }
+        false
+    }
 }
 
 /// `target` and the nodes above it up to `top`, `top` first: from
@@ -1114,5 +1188,37 @@ mod tests {
         };
         let (m, n) = moved("lua", "lua", &["kawoosh/lua"], &two);
         assert!(m * 100 < n * 2, "lua: {m} of {n} lines moved");
+    }
+
+    /// A long flat node under an error — a big JSON array with a
+    /// trailing comma (its MISSING element), a Rust `impl` left open (an
+    /// ERROR of loose tokens) — reindented whole in time linear in its
+    /// lines: its open brackets read once, not walked up to each line
+    /// (20,000 elements took 41 s, now milliseconds). The bound is generous.
+    #[test]
+    fn a_broken_flat_node_reindents_in_linear_time() {
+        let mut json = String::from("[\n");
+        for i in 0..20_000 {
+            json += &format!("{i},\n");
+        }
+        json += "]\n";
+        let mut rust = String::from("impl A {\n");
+        for i in 0..5_000 {
+            rust += &format!("fn f{i}() {{\nx;\n}}\n");
+        }
+        for (lang, src, at) in [("json", &json, 1), ("rust", &rust, 2)] {
+            let (g, tree, text) = parse(lang, src);
+            assert!(tree.root_node().has_error(), "{lang}");
+            let n = text.line_count();
+            let t = std::time::Instant::now();
+            let got = for_lines(g.indents.as_ref().unwrap(), &tree, &text, 0..n, &spaces());
+            let took = t.elapsed();
+            assert_eq!(
+                got[n - 3].as_deref(),
+                Some(" ".repeat(4 * at).as_str()),
+                "{lang}"
+            );
+            assert!(took.as_secs() < 2, "{lang}: {n} lines in {took:?}");
+        }
     }
 }
