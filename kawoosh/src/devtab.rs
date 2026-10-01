@@ -9,7 +9,7 @@
 //! buffer text ([`Tab::line_h`]): a pane that shows what a buffer holds
 //! — a change's text, a diff's lines — shows it as the buffer does.
 
-use kui_native::{Align, Color, Metrics, NodeSpec, TextStyle};
+use kui_native::{Align, Color, Metrics, NodeSpec, Sizing, TextStyle};
 
 use crate::palette::Pal;
 
@@ -92,9 +92,17 @@ impl Tab {
             .cross_align(Align::Center)
     }
 
-    /// A pane's header or footer strip: a caption, by another name.
+    /// A pane's header or footer strip: a caption whose pieces break
+    /// onto another line when the pane is too narrow for them, rather
+    /// than each cut to a few letters (the memory pane's views and
+    /// scope, at 490 px, read `rece` `jum` `con`). A caption's height
+    /// while they fit.
     pub(crate) fn strip(&self, pal: &Pal) -> NodeSpec {
         self.caption(pal)
+            .height(Sizing::Fit)
+            .min_height(self.caption_h)
+            .wrap()
+            .cross_gap(self.gap)
     }
 
     /// A strip's note, a row's tag: the small text, one line.

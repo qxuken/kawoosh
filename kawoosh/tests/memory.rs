@@ -1551,3 +1551,73 @@ assert(kawoosh.opt("memory.scope") == "workspace")
     std::fs::remove_dir_all(&dir).ok();
     std::fs::remove_dir_all(&elsewhere).ok();
 }
+
+/// The pane's strip breaks its views and its scope onto another line in
+/// a narrow pane rather than cutting each to a few letters: seen in a
+/// window 2026-10-02, a 490 px pane drew `rece` `jum` `con` `sea` `wor`
+/// once the scope's two words had joined the nine views. Each word is
+/// as wide in a narrow pane as in a wide one, and they stand on two
+/// lines.
+#[test]
+fn the_strip_breaks_onto_a_second_line_rather_than_cutting_its_words() {
+    use kawoosh::memory::{Scope, View};
+    let strip = |w: f32| {
+        let db = tmp(&format!("strip-{w}")).join("state.db");
+        let a = db.parent().unwrap().join("a.txt");
+        std::fs::write(&a, "aaa\n").unwrap();
+        let mut d = Drive::new(w, 600.0);
+        let mut app = Kawoosh::from_file(&a);
+        app.jobs_inline = true;
+        let ext = app.attach_lua().unwrap();
+        d.extension("lua", ext).unwrap();
+        app.set_cwd(db.parent().unwrap());
+        app.open_store(Some(&db));
+        d.frame(&mut app);
+        d.keys(&mut app, ":memory");
+        d.key(&mut app, "enter", KeyMods::default());
+        for _ in 0..3 {
+            d.frame(&mut app);
+        }
+        let nodes = d.core.nodes();
+        let label = |k: Option<_>| {
+            nodes
+                .iter()
+                .find(|p| Some(p.key) == k)
+                .and_then(|p| p.label.clone())
+        };
+        let words: Vec<(String, String)> = View::ALL
+            .iter()
+            .map(|v| (v.name().to_string(), v.name().to_string()))
+            .chain(
+                Scope::ALL
+                    .iter()
+                    .map(|s| (s.name().to_string(), format!("scope {}", s.name()))),
+            )
+            .collect();
+        words
+            .into_iter()
+            .map(|(text, row)| {
+                let n = nodes
+                    .iter()
+                    .find(|n| {
+                        n.text.as_deref() == Some(text.as_str())
+                            && label(n.parent).as_deref() == Some(row.as_str())
+                    })
+                    .unwrap_or_else(|| panic!("{text} in the strip at {w} px"));
+                (text, n.rect.w, n.rect.y)
+            })
+            .collect::<Vec<_>>()
+    };
+    let wide = strip(2400.0);
+    let narrow = strip(1000.0);
+    for ((text, w, _), (_, nw, _)) in wide.iter().zip(&narrow) {
+        assert!(*nw >= w - 0.5, "{text} cut: {nw:.0} px of {w:.0}");
+    }
+    let lines = |s: &[(String, f32, f32)]| {
+        let mut ys: Vec<i32> = s.iter().map(|(_, _, y)| y.round() as i32).collect();
+        ys.dedup();
+        ys.len()
+    };
+    assert_eq!(lines(&wide), 1, "{wide:?}");
+    assert!(lines(&narrow) > 1, "{narrow:?}");
+}
