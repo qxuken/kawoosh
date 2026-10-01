@@ -400,6 +400,7 @@ impl Kawoosh {
                 .clone()
                 .filter(|c| kawoosh_systems::fs::domain_of(c).is_some() || c.is_dir());
             let tab = Tab {
+                id: layout.new_tab_id(),
                 layout: kind,
                 focused: 0,
                 cwd,

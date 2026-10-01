@@ -276,6 +276,13 @@ pub struct Kawoosh {
     /// (`on_pane_drag`); the drop it would make is drawn over the pane
     /// under it.
     pub(crate) pane_drag: Option<(PaneId, f32, f32)>,
+    /// The tab the pointer holds on the tab strip, by where it is now,
+    /// and whether the pointer has left the click's slop — a drag, the
+    /// tab following it (`on_tab_drag`).
+    pub(crate) tab_drag: Option<(usize, bool)>,
+    /// The tab strip's row as last drawn, whose geometry says which
+    /// tab's place the pointer is over.
+    pub(crate) tabs_key: Option<kui_native::Key>,
     pub(crate) body_h: f32,
     /// The strip's shape as last drawn, so the frame it changes on
     /// reveals the focused column (`render_strip`).
@@ -438,6 +445,8 @@ impl Kawoosh {
             drag_anchor: None,
             dragging: None,
             pane_drag: None,
+            tab_drag: None,
+            tabs_key: None,
             body_h: 600.0,
             strip_seen: None,
             strip_settling: 0,
@@ -2215,6 +2224,53 @@ impl Kawoosh {
         }
     }
 
+    /// A tab dragged along the tab strip: the press goes to it, as a
+    /// click does, and while held it is at the place the pointer is over,
+    /// the others shifting to make room as `]T` `[T` shift them. Where
+    /// it is let go is where it already is. Only the pointer's `x`
+    /// counts: a hand that strays off the strip keeps the tab.
+    fn on_tab_drag(&mut self, d: Drag, tag: Option<&Value>, core: &Core) {
+        match d.phase {
+            DragPhase::Start => {
+                self.tab_drag = tag.and_then(|t| t.get_int("index")).map(|i| {
+                    self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);
+                    self.layout.dock_focused = false;
+                    (self.layout.tab, false)
+                });
+            }
+            DragPhase::Move => {
+                let Some((at, _)) = self.tab_drag else {
+                    return;
+                };
+                // The keys took the keyboard to another tab, or its tab
+                // closed under it: the hold is over.
+                if at != self.layout.tab {
+                    self.tab_drag = None;
+                    return;
+                }
+                let to = self.tab_place_at(core, d.pos.x).unwrap_or(at);
+                self.tab_drag = Some((self.layout.move_tab_to(to), true));
+            }
+            DragPhase::End => self.tab_drag = None,
+        }
+    }
+
+    /// The place in the tab strip under the pointer at `x`, past either
+    /// end of the tabs the nearest: the tabs are of one width with a
+    /// hairline between, so the row's content (kui's geometry of it, as
+    /// drawn — scrolled, and mid-ease where the offset is easing)
+    /// divides evenly.
+    fn tab_place_at(&self, core: &Core, x: f32) -> Option<usize> {
+        let n = self.layout.tabs.len();
+        let g = core.scroll_geometry(self.tabs_key?)?;
+        let pitch = (g.content.w + 1.0) / n as f32;
+        if pitch <= 0.0 {
+            return None;
+        }
+        let at = ((x - g.rect.x + g.offset.x) / pitch).floor();
+        Some((at.max(0.0) as usize).min(n - 1))
+    }
+
     /// A divider drag: the cursor over the split's own rect is the ratio.
     /// A strip's gap (`gap{i}`) sets the column before it to the width
     /// the pointer makes it, as a fraction of the viewport — a `Ratio`
@@ -2688,6 +2744,7 @@ impl Kawoosh {
                 (Some("termmouse"), Some(pane)) => self.on_term_drag(pane, d),
                 (Some("termbar"), Some(pane)) => self.on_term_bar_drag(pane, d),
                 (Some("panedrag"), Some(pane)) => self.on_pane_drag(pane, d),
+                (Some("tabdrag"), _) => self.on_tab_drag(d, tag, core),
                 (_, Some(pane)) => self.on_drag(pane, d),
                 // A Lua view's own `on_drag`: its handler ran, what it
                 // asked for is applied now.

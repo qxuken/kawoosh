@@ -808,6 +808,123 @@ fn a_pane_without_a_view_has_the_pane_keys() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A tab is dragged along the tab strip: the press goes to it, and while
+/// held it is at the place the pointer is over, the others shifting —
+/// before it is let go, and wherever the hand strays above or below the
+/// row. A press let go where it landed is the click it always was. On a
+/// row scrolled sideways the place is the one drawn under the pointer.
+#[test]
+fn a_tab_is_dragged_along_the_strip() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, "tabnew");
+    d.frame(&mut app);
+    // Tabs 0 1 2, on 2. Their identities are their roots' pane ids.
+    let ids = |app: &Kawoosh| -> Vec<u64> { app.layout.tabs.iter().map(|t| t.focused).collect() };
+    // The middle of each tab drawn, left to right.
+    let tabs = |d: &Drive| -> Vec<Vec2> {
+        let mut at: Vec<Vec2> = d
+            .core
+            .nodes()
+            .iter()
+            .filter(|n| n.role == Some(kui_native::Role::Tab))
+            .map(|n| Vec2::new(n.rect.x + n.rect.w / 2.0, n.rect.y + n.rect.h / 2.0))
+            .collect();
+        at.sort_by(|a, b| a.x.total_cmp(&b.x));
+        at
+    };
+    let before = ids(&app);
+    let at = tabs(&d);
+    assert_eq!(at.len(), 3);
+    // The last onto the first's place: there, the keyboard with it, the
+    // other two a place right.
+    d.drag(&mut app, at[2], at[0]);
+    assert_eq!(ids(&app), [before[2], before[0], before[1]]);
+    assert_eq!(app.layout.tab, 0);
+    d.frame(&mut app);
+    // A tab that is not in front, held: it is in front at the press, and
+    // in the place under the pointer while still held — a hand's width
+    // below the row as well.
+    d.input(&mut app, kui_native::InputEvent::CursorMoved(at[1]));
+    d.input(&mut app, kui_native::InputEvent::mouse_down(1));
+    assert_eq!(app.layout.tab, 1, "the press goes to the tab");
+    assert_eq!(ids(&app), [before[2], before[0], before[1]]);
+    let below = Vec2::new(at[2].x, at[2].y + 200.0);
+    d.input(&mut app, kui_native::InputEvent::CursorMoved(below));
+    d.frame(&mut app);
+    assert_eq!(ids(&app), [before[2], before[1], before[0]]);
+    assert_eq!(app.layout.tab, 2);
+    // The press is the tab's, not the place's: the place it was pressed
+    // on is drawn as the other tab at rest is, and the held tab is the
+    // one lit.
+    let bgs = |d: &Drive| -> Vec<kui_native::Color> {
+        let nodes = d.core.nodes();
+        let mut blocks: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.role == Some(kui_native::Role::Tab))
+            .filter_map(|item| {
+                let row = nodes.iter().find(|n| Some(n.key) == item.parent)?;
+                nodes.iter().find(|n| Some(n.key) == row.parent)
+            })
+            .map(|b| (b.rect.x, b.bg))
+            .collect();
+        blocks.sort_by(|a, b| a.0.total_cmp(&b.0));
+        blocks.into_iter().map(|(_, bg)| bg).collect()
+    };
+    let lit = bgs(&d);
+    assert_eq!(lit.len(), 3);
+    assert_eq!(lit[1], lit[0], "the place pressed on is at rest");
+    assert_ne!(lit[2], lit[0], "the held tab is lit");
+    // Back over its first place, and past the row's left end: the first.
+    d.input(&mut app, kui_native::InputEvent::CursorMoved(at[1]));
+    assert_eq!(ids(&app), [before[2], before[0], before[1]]);
+    d.input(
+        &mut app,
+        kui_native::InputEvent::CursorMoved(Vec2::new(-40.0, at[0].y)),
+    );
+    assert_eq!(ids(&app), [before[0], before[2], before[1]]);
+    assert_eq!(app.layout.tab, 0);
+    d.input(&mut app, kui_native::InputEvent::mouse_up());
+    d.frame(&mut app);
+    assert_eq!(ids(&app), [before[0], before[2], before[1]]);
+    assert_eq!(
+        app.layout.tab, 0,
+        "the release is no click on the tab under it"
+    );
+    // A click moves nothing: it goes to the tab.
+    d.click(&mut app, at[2].x, at[2].y);
+    assert_eq!(app.layout.tab, 2);
+    assert_eq!(ids(&app), [before[0], before[2], before[1]]);
+    // Nine tabs are past the row's width at their floor: the row scrolls,
+    // the last in view. The last dragged to the row's left end lands in
+    // the place drawn there, which is not the first.
+    for _ in 0..6 {
+        ex(&mut d, &mut app, "tabnew");
+    }
+    // The reveal's ease, run out.
+    for _ in 0..10 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
+    let before = ids(&app);
+    let at = tabs(&d);
+    assert_eq!(at.len(), 9);
+    assert!(
+        at[0].x < 0.0,
+        "the first is off the row's left: {:?}",
+        at[0]
+    );
+    let first_shown = at.iter().position(|p| p.x > 0.0).unwrap();
+    assert!(first_shown > 0);
+    let from = *at.last().unwrap();
+    d.drag(&mut app, from, at[first_shown]);
+    assert_eq!(app.layout.tab, first_shown);
+    assert_eq!(app.layout.tabs[first_shown].focused, before[8]);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// A tab moves along the strip: `]T` `[T` a place right and left
 /// (COUNT places), `:tabmove +N` / `-N` / `N` / bare to the end, the
 /// keyboard staying on it; and from a pane without a view the

@@ -420,6 +420,12 @@ pub enum Kind {
 
 #[derive(Clone, Debug)]
 pub struct Tab {
+    /// A number of its own, for the key it is drawn under in the tab
+    /// strip: the tab's wherever it is moved along the row, so what the
+    /// pointer holds — a press, a drag — is the tab and not its place.
+    /// Counted from 0 as the tabs are made — not the number its label
+    /// shows, and not kept by a session. The dock's is never drawn.
+    pub id: u64,
     pub layout: Kind,
     pub focused: PaneId,
     /// The tab's working directory (docs/design/workspaces.md Decision
@@ -440,6 +446,7 @@ pub struct Tab {
 impl Tab {
     pub fn tree(root: Node, focused: PaneId) -> Tab {
         Tab {
+            id: 0,
             layout: Kind::Tree(root),
             cwd: None,
             focused,
@@ -712,6 +719,8 @@ pub struct Layout {
     /// Columns are numbered apart from panes: a pane's number is what
     /// Lua and the session see, a column's only its drawn key.
     next_column: u64,
+    /// Tabs are numbered apart too (`Tab::id`).
+    next_tab: u64,
 }
 
 impl Layout {
@@ -734,6 +743,7 @@ impl Layout {
             came_from: HashMap::new(),
             next_pane: 2,
             next_column: 1,
+            next_tab: 1,
         }
     }
 
@@ -749,6 +759,13 @@ impl Layout {
         let id = self.next_column;
         self.next_column += 1;
         Column { id, node, width }
+    }
+
+    /// A number for a new tab's drawn key (`Tab::id`).
+    pub fn new_tab_id(&mut self) -> u64 {
+        let id = self.next_tab;
+        self.next_tab += 1;
+        id
     }
 
     pub fn tab(&self) -> &Tab {
@@ -1037,7 +1054,9 @@ impl Layout {
         };
         // A new tab starts where the tab it was made from is.
         let cwd = self.tabs.get(self.tab).and_then(|t| t.cwd.clone());
+        let id = self.new_tab_id();
         self.tabs.push(Tab {
+            id,
             layout,
             focused: p,
             cwd,

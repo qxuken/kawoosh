@@ -11,9 +11,11 @@ The title bar (chrome.rs, step 13) draws the working directory on the
 left and, on the right, blocks kawoosh fills itself: the language
 servers and their documents (a click is `:lsp info`), `compiling…`
 while a compile runs. The tab strip gives each tab an even share of its
-row; a plugin can rewrite each tab's label (`kawoosh.tab_title(fn)`,
-step 50) and nothing else — the strip's own room and the title bar's
-are kawoosh's alone. wezterm's answer is `update-status`, a callback
+row, and a tab dragged along it goes to the place under the pointer
+while it is held (2026-10-01; `]T` `[T` by hand — the even share is
+what makes the place a division of the row's content); a plugin can
+rewrite each tab's label (`kawoosh.tab_title(fn)`, step 50) and nothing
+else — the strip's own room and the title bar's are kawoosh's alone. wezterm's answer is `update-status`, a callback
 that sets a left and a right status on its tab bar, on a timer.
 
 ## Decisions

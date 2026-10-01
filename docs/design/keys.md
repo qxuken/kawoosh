@@ -193,7 +193,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 |---|---|
 | `]b` `[b` | buffer (an editor pane's) |
 | `]t` `[t` | tab |
-| `]T` `[T` | *move* the tab a place right / left, COUNT places (`:tabmove +N` `-N` `N`, bare to the end) — the shifted letter, as `gT` is `gt` the other way |
+| `]T` `[T` | *move* the tab a place right / left, COUNT places (`:tabmove +N` `-N` `N`, bare to the end) — the shifted letter, as `gT` is `gt` the other way; the pointer's way is a drag along the strip |
 | `]q` `[q` | location in the compile output, or the next place of the last list — `grr`'s references, `:diagnostics` — opened beside it ([lists.md](lists.md)) |
 | `]d` `[d` | diagnostic (the message on the status line); in a multibuffer, the ones its excerpts show |
 | `]p` `[p` | right after a put: the text put replaced with the next newer / older one in the memory (the yank-pop), COUNT steps; the one chosen is the register from then on, and one `u` takes the put back whole |

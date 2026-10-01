@@ -148,7 +148,8 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     assert_eq!(app.layout.tabs.len(), 11);
     // One on a tab behind, under the pointer, closes that one and
-    // leaves the user where they were.
+    // leaves the user where they were. The first now is the tab made
+    // second: a tab is drawn under its own number, not its place's.
     app.layout.tab = 2;
     settle(&mut d, &mut app);
     let Rect {
@@ -156,7 +157,7 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
         y: ty,
         w: tw,
         h: th,
-    } = d.rect("tab0").unwrap();
+    } = d.rect("tab1").unwrap();
     d.input(
         &mut app,
         kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(tx + tw / 2.0, ty + th / 2.0)),

@@ -55,14 +55,16 @@ is highlighted while you drag.
 ## Tabs
 
 A tab is a layout of its own, shown in the strip at the top of the
-window. A click on a tab goes to it; its `×` closes it.
+window. A click on a tab goes to it; its `×` closes it. Drag a tab
+along the strip to move it: it follows the pointer, the others making
+room.
 
 | keys | what |
 |---|---|
 | `<C-w>t` | a new tab (`:tabnew`, or `:tabnew PATH`) |
 | `gt` `gT`, `]t` `[t` | the next, previous tab |
 | `<C-Tab>` `<C-S-Tab>` | the same, from every mode and pane, terminals included |
-| `]T` `[T` | move the tab a place right, left (`:tabmove +N`, `-N`, `N`) |
+| `]T` `[T` | move the tab a place right, left (`:tabmove +N`, `-N`, `N`), as a drag does |
 | `<C-w>C` | close the tab and its panes (`:tabclose`) |
 | `<C-w>m` | flip the tab between a strip and a tree (`:layout`) |
 | `<leader>t` | the tools — lazygit, top, a shell, your compile and run commands — in a picker |
