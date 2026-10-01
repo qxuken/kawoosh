@@ -73,7 +73,8 @@ effect (`Effect::Recalled`) the shell counts as the pane's recall is —
 attended, not a yank. Left: co-occurrence. *The pane's scope,
 2026-10-01* (Decision 11): `memory.scope`, `<C-a>` in the pane,
 `:memory workspace` / `:memory global` — this workspace's rows or
-every one's, in every view; `all` is every kind under it.
+every one's, in every view; `all` is every kind under it. Drawn as
+`@workspace` `@global` chips at the strip's left (2026-10-02).
 options and taken: the unit is a subject row *plus a bounded ring of
 recent transitions* (Decision 1); the histories lose their bookkeeping
 and keep their blob (Decision 6); eviction is a fixed score in Rust
@@ -521,10 +522,12 @@ it for the session, as the buffers picker's `<C-a>` flips
 [workspace|global]` is the command, bare flipping it; `:memory
 workspace` and `:memory global` open the pane on one, focused, and
 never close it as a bare `:memory` on a focused pane does. The pane's
-strip shows the two words after the views, the one on drawn as the
-view on is, and a click on either sets it; the head says whose the
-rows are (`in ~/projects/foo`, `outside any workspace`, `every
-workspace`). Two views do not move with it: `texts`, which are under
+strip shows the scope at its left, ahead of the head and apart from
+the views at its right: `@workspace` `@global`, spelt as the settings
+pane spells its layers (`@user`, `@project`), each a chip, the one on
+filled with the accent, and a click on either sets it (`:memory scope`
+takes the `@` word too); the head says whose the rows are (`in
+~/projects/foo`, `outside any workspace`, `every workspace`). Two views do not move with it: `texts`, which are under
 no workspace and so the same in either, and `jumps`, which are the
 tab's (jumps.md Decision 5). Under the workspace `all` and `recent`
 take the texts in with the workspace's rows, as the ring always did.
@@ -550,6 +553,21 @@ closing the pane. **Scoping the texts by the buffer they came from**
 — a text's row is keyed by its bytes under no workspace, so a text
 yanked in two projects is one row; splitting it would undo Decision
 1's rule that a subject attended again extends its row.
+
+*Revised 2026-10-02, asked as "memory scope needs to stand out from
+the strip of tabs".* The scope was first drawn as two more words after
+the views and a `·`, `workspace` `global`, the one on in the accent as
+the view on is, and read as two more views. It is now the chips above.
+*Beat:* **one chip naming the scope on**, a click flipping it — the
+smaller strip, but the other scope unnamed until clicked, where the
+settings pane shows every layer it can write to. **The chips after the
+views, at the strip's right end** — apart by their ground, but the
+views no longer at the edge, and the scope says whose the head's count
+is, so it stands beside it. **`@global` as a word of the `/` filter**,
+as `@user` is one of the settings search's — the scope is a session
+setting that outlasts the pane, the filter the pane's own and gone at
+`<Esc>`; folding one into the other would make clearing the filter
+change whose rows are listed.
 
 ### Deliberately not
 

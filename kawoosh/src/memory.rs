@@ -1505,7 +1505,42 @@ impl Kawoosh {
                 .on_click(tag.clone())
                 .label("memory"),
             |ui| {
+                let theme = ui.theme();
                 ui.with(tm.strip(&pal).on_click(tag.clone()), |ui| {
+                    // The scope first, apart from the views: whose rows,
+                    // spelt as the settings pane spells its layers
+                    // (`@workspace` `@global`), on chips, the one on
+                    // filled with the accent and a click on either its
+                    // `<C-a>`. Two more words after the views read as
+                    // two more views.
+                    ui.with(
+                        NodeSpec::row()
+                            .gap(tm.gap)
+                            .cross_align(kui_native::Align::Center),
+                        |ui| {
+                            for s in Scope::ALL {
+                                let on = s == scope;
+                                let key = format!("scope {}", s.name());
+                                ui.text_in_keyed(
+                                    &key,
+                                    NodeSpec::row()
+                                        .pad_xy(tm.cell_gap, 1.0)
+                                        .radius(4.0)
+                                        .bg(if on { theme.accent } else { pal.panel })
+                                        .hover_bg(if on { theme.accent_hover } else { pal.hover })
+                                        .on_click(Value::map([
+                                            ("kind", "memory".into()),
+                                            ("pane", Value::Int(pane as i64)),
+                                            ("scope", s.name().into()),
+                                        ]))
+                                        .cursor(kui_native::CursorShape::Pointer)
+                                        .label(key.as_str()),
+                                    &format!("@{}", s.name()),
+                                    small(if on { theme.on_accent } else { pal.dim }),
+                                );
+                            }
+                        },
+                    );
                     ui.text(&head, small(pal.dim));
                     ui.leaf(NodeSpec::row().grow_width());
                     for v in View::ALL {
@@ -1523,26 +1558,6 @@ impl Kawoosh {
                                 .label(v.name()),
                             v.name(),
                             small(if on { pal.accent } else { pal.faint }),
-                        );
-                    }
-                    // The scope, after the views: the one on drawn as
-                    // the view on is, a click on the other its `<C-a>`.
-                    ui.text("·", small(pal.faint));
-                    for s in Scope::ALL {
-                        let key = format!("scope {}", s.name());
-                        ui.text_in_keyed(
-                            &key,
-                            NodeSpec::row()
-                                .pad_xy(4.0, 0.0)
-                                .on_click(Value::map([
-                                    ("kind", "memory".into()),
-                                    ("pane", Value::Int(pane as i64)),
-                                    ("scope", s.name().into()),
-                                ]))
-                                .cursor(kui_native::CursorShape::Pointer)
-                                .label(key.as_str()),
-                            s.name(),
-                            small(if s == scope { pal.accent } else { pal.faint }),
                         );
                     }
                 });
@@ -2120,10 +2135,11 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("memory scope")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("the pane's rows this workspace's or every one's (`workspace`, `global`; bare flips) for the session"),
+                .doc("the pane's rows this workspace's or every one's (`workspace`, `global`, or as the pane spells them, `@global`; bare flips) for the session"),
             |k, ctx| match ctx.args.first().map(String::as_str) {
                 None => k.set_memory_scope(None),
-                Some(name) => match Scope::parse(name) {
+                // The word as the pane's strip draws it, `@global`, too.
+                Some(name) => match Scope::parse(name.strip_prefix('@').unwrap_or(name)) {
                     Some(s) => k.set_memory_scope(Some(s)),
                     None => k.ed.message = format!("no memory scope {name} (workspace, global)"),
                 },

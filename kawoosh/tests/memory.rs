@@ -1591,7 +1591,7 @@ fn the_strip_breaks_onto_a_second_line_rather_than_cutting_its_words() {
             .chain(
                 Scope::ALL
                     .iter()
-                    .map(|s| (s.name().to_string(), format!("scope {}", s.name()))),
+                    .map(|s| (format!("@{}", s.name()), format!("scope {}", s.name()))),
             )
             .collect();
         words
@@ -1620,4 +1620,95 @@ fn the_strip_breaks_onto_a_second_line_rather_than_cutting_its_words() {
     };
     assert_eq!(lines(&wide), 1, "{wide:?}");
     assert!(lines(&narrow) > 1, "{narrow:?}");
+}
+
+/// The scope stands apart from the views. Asked 2026-10-02: "memory
+/// scope needs to stand out from the strip of tabs": `workspace` and
+/// `global`, after the views and a `·`, read as two more of them. The
+/// scope is spelt as the settings pane spells its layers, `@workspace`
+/// `@global`, on chips of their own — the one on filled with the accent,
+/// the other on a ground of its own — at the strip's left, ahead of the
+/// head, and the views keep its right. A click on a chip sets it, and
+/// `:memory scope` takes the word as it is drawn.
+#[test]
+fn the_scope_is_drawn_as_at_chips_apart_from_the_views() {
+    use kawoosh::memory::{Scope, View};
+    let dir = tmp("scope-chips");
+    let db = dir.join("state.db");
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "aaa\n").unwrap();
+    // Wide enough for the strip to stand on one line.
+    let mut d = Drive::new(2400.0, 600.0);
+    let mut app = Kawoosh::from_file(&a);
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "memory");
+    d.frame(&mut app);
+    let accent = d.core.theme().accent;
+    // A chip: its words, its ground, where it is.
+    let chip = |d: &Drive, s: Scope| {
+        let nodes = d.core.nodes();
+        let label = format!("scope {}", s.name());
+        let n = nodes
+            .iter()
+            .find(|n| n.label.as_deref() == Some(label.as_str()))
+            .unwrap_or_else(|| panic!("no {label} in the strip"));
+        let words = nodes
+            .iter()
+            .find(|t| t.parent == Some(n.key) && t.text.is_some())
+            .and_then(|t| t.text.clone());
+        (words, n.bg, n.rect)
+    };
+    let views_x = |d: &Drive| {
+        let nodes = d.core.nodes();
+        View::ALL
+            .iter()
+            .map(|v| {
+                nodes
+                    .iter()
+                    .find(|n| n.label.as_deref() == Some(v.name()))
+                    .unwrap_or_else(|| panic!("no {} in the strip", v.name()))
+                    .rect
+                    .x
+            })
+            .fold(f32::INFINITY, f32::min)
+    };
+    let (ws, ws_bg, ws_rect) = chip(&d, Scope::Workspace);
+    let (gl, gl_bg, gl_rect) = chip(&d, Scope::Global);
+    assert_eq!(ws.as_deref(), Some("@workspace"));
+    assert_eq!(gl.as_deref(), Some("@global"));
+    assert_eq!(ws_bg, accent, "the scope on is filled with the accent");
+    assert!(
+        gl_bg.a > 0.0 && gl_bg != accent,
+        "the other on a ground of its own: {gl_bg:?}"
+    );
+    let first_view = views_x(&d);
+    assert!(
+        ws_rect.x + ws_rect.w < first_view
+            && gl_rect.x + gl_rect.w < first_view
+            && gl_rect.y == ws_rect.y,
+        "the scope ahead of the views: {ws_rect:?} {gl_rect:?}, the first view at {first_view}"
+    );
+    // A click on `@global` sets it; the fill moves with it (the
+    // pointer still on `@global`, lit as a hovered chip on is).
+    d.click(
+        &mut app,
+        gl_rect.x + gl_rect.w / 2.0,
+        gl_rect.y + gl_rect.h / 2.0,
+    );
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.str("memory.scope"), Some("global"));
+    assert_ne!(chip(&d, Scope::Global).1, gl_bg);
+    assert_eq!(chip(&d, Scope::Workspace).1, gl_bg);
+    // `:memory scope` takes the word as drawn, and the bare one.
+    ex(&mut d, &mut app, "memory scope @workspace");
+    assert_eq!(app.ed.settings.str("memory.scope"), Some("workspace"));
+    ex(&mut d, &mut app, "memory scope global");
+    assert_eq!(app.ed.settings.str("memory.scope"), Some("global"));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
 }
