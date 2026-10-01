@@ -42,7 +42,8 @@
 -- `<A-J>` make the pane taller and shorter (the editor's own pane
 -- keys, the height they leave kept as the setting), `<A-H>` `<A-L>`
 -- move the divider between list and preview, which drags too — the
--- session's, as the two above. A source's own keys ride on the row: `<C-x>` in `buffers`
+-- session's, as the two above; with the preview hidden the list is the
+-- whole pane and `<A-H>` `<A-L>` the pane's own, its column's width. A source's own keys ride on the row: `<C-x>` in `buffers`
 -- closes the row's buffer, asking first when it has unsaved changes.
 -- A source with `columns` draws its rows as a grid, the cells lined up
 -- (the commands: name, key, what it does). A `tree` source's rows are
@@ -65,6 +66,10 @@ local FIELD = "q"
 -- what the commands are gated by, so a pane-mode map (the list
 -- blurred, `<Esc>` twice) runs them too.
 local PANE_FACT = "lua:" .. VIEW
+-- Whether the open picker draws a preview beside its list: the width
+-- keys move the divider between them only while there is one, and
+-- without it fall through to the pane's own, the column's width.
+local PREVIEW_FACT = "picker:preview"
 -- The rows' text: the field's size, so the query and its answers line
 -- up; a row is the field's height too. The editor's chrome sizes, read
 -- off its length tokens each frame (`sizes`), so the picker follows the
@@ -1116,6 +1121,10 @@ kawoosh.view(VIEW, function(ctx)
   local h = (ctx.height or 0) > 0 and ctx.height or 400
   local w = (ctx.width or 0) > 0 and ctx.width or 800
   local preview_on = previewing() and not P.src.follow
+  if P.previewed ~= preview_on then
+    P.previewed = preview_on
+    kawoosh.fact(PREVIEW_FACT, preview_on)
+  end
   P.wrap = wrapping()
   P.split = split()
   -- The list's width: its share of the pane beside a preview, the
@@ -1251,16 +1260,28 @@ kawoosh.command("picker preview down", function(ctx) preview_by(half() * math.ma
   { when = { PANE_FACT }, doc = "the preview half a screen down, COUNT times" })
 kawoosh.command("picker preview up", function(ctx) preview_by(-half() * math.max(ctx.count or 1, 1)) end,
   { when = { PANE_FACT }, doc = "the preview half a screen up, COUNT times" })
-on("preview", function() kawoosh.opt("picker.preview", not previewing()) end,
-  "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
+on("preview", function()
+  kawoosh.opt("picker.preview", not previewing())
+  -- The fact at once, for a width key before the next frame.
+  if P then
+    P.previewed = previewing() and not P.src.follow
+    kawoosh.fact(PREVIEW_FACT, P.previewed)
+  end
+end, "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
 on("wrap", function() kawoosh.opt("picker.wrap", not wrapping()) end,
   "fold a row's text to the list's width, or cut it (the `picker.wrap` setting, for the session)")
 -- The list's width beside the preview, stepped: the setting for the
 -- session. (The pane's height is the editor's `pane taller` and
 -- `pane shorter`, the height they leave kept as `picker.share`.)
-on("list wider", function() kawoosh.opt("picker.split", math.min(0.9, split() + 0.05)) end,
+-- Only while a preview is drawn: without one the list is the whole
+-- pane, and `<A-H>` `<A-L>`, refused here, are `pane narrower` and
+-- `pane wider` — the column the picker stands in.
+local function beside(name, fn, doc)
+  kawoosh.command("picker " .. name, fn, { when = { PANE_FACT, PREVIEW_FACT }, doc = doc })
+end
+beside("list wider", function() kawoosh.opt("picker.split", math.min(0.9, split() + 0.05)) end,
   "the list wider beside the preview (the `picker.split` setting, for the session)")
-on("list narrower", function() kawoosh.opt("picker.split", math.max(0.1, split() - 0.05)) end,
+beside("list narrower", function() kawoosh.opt("picker.split", math.max(0.1, split() - 0.05)) end,
   "the list narrower beside the preview (the `picker.split` setting, for the session)")
 kawoosh.command("picker key", function(ctx)
   if not P then return end

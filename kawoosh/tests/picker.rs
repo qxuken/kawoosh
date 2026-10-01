@@ -1189,6 +1189,79 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// With the preview off there is no divider between list and preview:
+/// `<A-S-l>` `<A-S-h>` are the pane's again, the column the picker
+/// stands in wider and narrower (in a strip, its next preset), the
+/// list the whole of it, and `picker.split` untouched. The preview
+/// shown again at runtime gives them back to the divider.
+#[test]
+fn without_a_preview_the_width_keys_size_the_column() {
+    let _serial = serial();
+    let dir = project("column");
+    let mut d = Drive::new(1200.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    // A second column, so the first is half the strip, not all of it.
+    ex(&mut d, &mut app, "vsplit src/main.rs");
+    d.frame(&mut app);
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let alt = |name: &str, app: &mut Kawoosh, d: &mut Drive| {
+        d.key(app, name, KeyMods::NONE.with_shift().with_alt());
+        d.frame(app);
+        d.frame(app);
+    };
+    let pane_w = |app: &Kawoosh| {
+        let p = app.lua_view_pane("picker").expect("the picker's pane");
+        app.layout.rects[&p].w
+    };
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"assert(kawoosh.opt("picker.preview") == false)"#,
+    );
+    assert!(d.rect("picker divider").is_none(), "no divider");
+    let p0 = pane_w(&app);
+    let Rect { w: w0, .. } = d.rect("row README.md").unwrap();
+    assert!(w0 > p0 - 20.0, "the list the whole pane: {w0} of {p0}");
+    alt("l", &mut app, &mut d);
+    let p1 = pane_w(&app);
+    let Rect { w: w1, .. } = d.rect("row README.md").unwrap();
+    assert!(p1 > p0 + 50.0, "the column wider: {p1} > {p0}");
+    assert!(
+        w1 > p1 - 20.0,
+        "the list still the whole of it: {w1} of {p1}"
+    );
+    lua(
+        &mut app,
+        r#"assert(math.abs(kawoosh.opt("picker.split") - 0.5) < 0.001, kawoosh.opt("picker.split"))"#,
+    );
+    assert!(picker_open(&app) && keyed_on_query(&app), "the picker kept");
+    alt("h", &mut app, &mut d);
+    let p2 = pane_w(&app);
+    assert!((p2 - p0).abs() < 1.0, "and back: {p2} vs {p0}");
+    // The preview again: the keys move the divider, the column holds.
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    assert!(d.rect("picker divider").is_some(), "the divider");
+    let Rect { w: l0, .. } = d.rect("row README.md").unwrap();
+    alt("l", &mut app, &mut d);
+    let Rect { w: l1, .. } = d.rect("row README.md").unwrap();
+    assert!(l1 > l0 + 20.0, "the list wider: {l1} > {l0}");
+    assert!((pane_w(&app) - p0).abs() < 1.0, "the column as it was");
+    lua(
+        &mut app,
+        r#"assert(math.abs(kawoosh.opt("picker.split") - 0.55) < 0.001)"#,
+    );
+    app.run_lua_source("t", r#"kawoosh.opt("picker.split", 0.5)"#);
+    d.press(&mut app, "<C-c>");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A row's height in the picker (`picker.lua`'s `ROW_H`).
 const ROW_H: f32 = 19.0;
 
