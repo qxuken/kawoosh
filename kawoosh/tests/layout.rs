@@ -960,3 +960,75 @@ fn a_sideways_swipe_over_a_terminal_moves_the_strip() {
     settle(&mut d, &mut app);
     assert_eq!(app.layout.rects[&pane].x, at.x);
 }
+
+/// The strip's rect as drawn last frame: the ribbon the columns are in.
+fn strip_rect(d: &Drive) -> kui_native::Rect {
+    let nodes = d.core.nodes();
+    let col = nodes
+        .iter()
+        .find(|n| n.label.as_deref().is_some_and(|l| l.starts_with("col")))
+        .expect("a column");
+    nodes
+        .iter()
+        .find(|n| Some(n.key) == col.parent)
+        .map(|n| n.rect)
+        .expect("the strip")
+}
+
+/// The strip's scrollbar has a band of its own under the columns while
+/// the ribbon has anything to scroll: the panes end above it, a
+/// sideways swipe there is the ribbon's even under an editor's column,
+/// and its thumb drags the ribbon. One column, nothing to scroll: no
+/// band, the pane down to the strip's foot.
+#[test]
+fn the_strips_scrollbar_has_a_band_of_its_own_under_the_columns() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    settle(&mut d, &mut app);
+    let strip = strip_rect(&d);
+    let lone = app.layout.rects[&1];
+    assert!(
+        (lone.y + lone.h - (strip.y + strip.h)).abs() < 2.0,
+        "one column, no band: {lone:?} in {strip:?}"
+    );
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    let strip = strip_rect(&d);
+    let pane = app.layout.focused();
+    let before = app.layout.rects[&pane];
+    let foot = strip.y + strip.h;
+    assert!(
+        before.y + before.h <= foot - 9.0,
+        "the panes end above the band: {before:?} in {strip:?}"
+    );
+    // A swipe in the band, under the focused editor's column: the
+    // ribbon's, where over the editor's rows it is the editor's own.
+    let band = Vec2::new(before.x + before.w / 2.0, foot - 4.0);
+    for (i, dx) in [30.0, 60.0, 60.0].into_iter().enumerate() {
+        d.scroll_gesture(&mut app, band.x, band.y, Vec2::new(dx, 0.0), i == 0);
+        d.frame(&mut app);
+    }
+    settle(&mut d, &mut app);
+    let swiped = app.layout.rects[&pane];
+    assert!(
+        swiped.x > before.x + 50.0,
+        "the swipe moved the ribbon: {before:?} → {swiped:?}"
+    );
+    // The thumb: a third of the track long, a swipe short of the
+    // ribbon's end, so 100 px in from the right is on it. Dragged left.
+    let thumb_y = foot - 5.0;
+    let from = Vec2::new(strip.x + strip.w - 100.0, thumb_y);
+    d.drag(&mut app, from, Vec2::new(from.x - 200.0, thumb_y));
+    settle(&mut d, &mut app);
+    assert!(
+        app.layout.rects[&pane].x > swiped.x + 50.0,
+        "the thumb moved the ribbon: {swiped:?} → {:?}",
+        app.layout.rects[&pane]
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

@@ -31,6 +31,12 @@ pub(crate) const RIBBON_MS: f32 = 160.0;
 /// a second ask against a ribbon already gliding would measure from
 /// where the content has got to and stop the leg short of the column.
 const STRIP_SETTLING: u8 = 1;
+/// The band under a strip's columns that its scrollbar lies in while
+/// the ribbon has anything to scroll: kui's grabbable gutter (its
+/// `SCROLLBAR_HIT_W`), so the thumb sits under the panes' foot rather
+/// than over their last row, and a swipe or a press there is the
+/// ribbon's.
+const STRIP_BAR: f32 = 10.0;
 
 /// Where `zs` / `ze` / `zz` (`strip left` / `right` / `center`) put
 /// the focused column in the viewport.
@@ -474,6 +480,7 @@ impl Kawoosh {
             px
         };
         let (lead, trail) = (lead.max(0.0).round(), trail.max(0.0).round());
+        let overflows = lead + span + trail > vw + 0.5;
         // Which columns are worth their rows this frame: the ones the
         // ribbon's offset puts within half a viewport of it, and the
         // focused one wherever it is. Read from the model — the widths
@@ -516,9 +523,18 @@ impl Kawoosh {
                 // F80, asked for from here); a swipe is the hand's and
                 // lands whole.
                 .transition(RIBBON_MS)
-                // No bar, as the tab rows have none: kui's lies over
-                // the columns' foot, on the last row of every pane.
-                .scrollbar(kui_native::ScrollbarMode::Hidden)
+                // The bar in a band of its own under the columns, never
+                // over a pane's last row, and only while there is
+                // anything to scroll: no empty band under one column.
+                .scrollbar(if overflows {
+                    kui_native::ScrollbarMode::Visible
+                } else {
+                    kui_native::ScrollbarMode::Hidden
+                })
+                .padding(kui_native::Edges {
+                    b: if overflows { STRIP_BAR } else { 0.0 },
+                    ..Default::default()
+                })
                 .cross_align(Align::Start)
                 .label("strip"),
             |ui| {
