@@ -289,7 +289,12 @@ impl Kawoosh {
             tail.push_str(&format!("\x1b[0m\r\n\x1b[2m[{status}]\x1b[0m"));
             t.feed(tail.as_bytes());
             t.scroll_to_bottom();
+            let ok = matches!(exit, Some(kawoosh_term::Exit::Code(0)));
             self.terms.done.insert(id, exit);
+            // Kept by the pane, for `r` to install again.
+            if let Some(command) = self.lsp.installs.get(&id).cloned() {
+                self.lsp_installed(command, ok);
+            }
             return;
         }
         if let Some(t) = self.terms.map.get_mut(&id) {
@@ -326,6 +331,9 @@ impl Kawoosh {
         let Some(t) = self.spawn_bang(&cmd, &cwd) else {
             return;
         };
+        if let Some(command) = self.lsp.installs.remove(&old) {
+            self.lsp.installs.insert(t, command);
+        }
         if let Some(c) = self.layout.panes.insert(pane, Content::Terminal(t)) {
             self.drop_content(c);
         }

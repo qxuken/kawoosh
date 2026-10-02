@@ -1,7 +1,7 @@
 //! A language server as the settings say it (docs/design/lsp-rules.md):
 //! `lsp.NAME` in the settings tree over the definition of that name Lua
 //! or the builtin table gave — `cmd`, `args`, `roots`, `languages`,
-//! `settings` replaced, and the rules switched: `enabled`, `load_all`
+//! `settings`, `install` replaced, and the rules switched: `enabled`, `load_all`
 //! (every file of its languages sent to the server, `load_max` of them
 //! at most) and `inlay_hints`. A server is named by the language it is
 //! first for and serves the languages one program reads —
@@ -183,8 +183,16 @@ impl Kawoosh {
             if field("enabled").and_then(Setting::as_bool) == Some(false) {
                 continue;
             }
-            if let Some(c) = field("cmd").and_then(Setting::as_str) {
+            if let Some(c) = field("cmd").and_then(Setting::as_str)
+                && c != def.command
+            {
+                // Another program: the line that installed the old one
+                // is not its.
                 def.command = c.to_string();
+                def.install.clear();
+            }
+            if let Some(i) = field("install").and_then(Setting::as_str) {
+                def.install = i.to_string();
             }
             if let Some(a) = field("args").and_then(strings) {
                 def.args = a;

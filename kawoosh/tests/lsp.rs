@@ -270,7 +270,8 @@ fn diagnostics_wait_for_the_typing_to_pause() {
 
 /// A server's `$/progress` is a corner line under the server's name —
 /// live while it runs, "Completed" once done — its `window/showMessage`
-/// a toast by type, its `window/logMessage` the log's alone.
+/// a corner line too, whatever its type, its `window/logMessage` the
+/// log's alone.
 #[test]
 fn progress_and_messages_land_in_the_corner() {
     // The server is named by its command, whichever python ran it.
@@ -326,10 +327,10 @@ fn progress_and_messages_land_in_the_corner() {
             .any(|n| n.label.as_deref() == Some("done")),
         "done, the `check` icon: {texts:?}"
     );
-    // A toast is one paragraph, its source first.
+    // A warning is a line under the server's name, not a toast.
     assert!(
-        texts.iter().any(|t| *t == format!("{server} the warning")),
-        "a toast: {texts:?}"
+        texts.iter().any(|t| t == "the warning"),
+        "a corner line: {texts:?}"
     );
     let warning = app
         .notes
@@ -337,7 +338,12 @@ fn progress_and_messages_land_in_the_corner() {
         .iter()
         .find(|s| s.text == "the warning")
         .unwrap();
-    assert!(warning.toast);
+    assert!(!warning.toast);
+    assert_eq!(
+        warning.level,
+        kawoosh::notify::Level::Warn,
+        "logged at its type"
+    );
     assert_eq!(warning.source.as_deref(), Some(server.as_str()));
     assert!(
         !texts.iter().any(|t| t == "the log line"),
@@ -1153,6 +1159,84 @@ fn a_server_installed_later_is_found_on_restart() {
 
     ex(&mut d, &mut app, "lsp restart cobol");
     assert_eq!(app.ed.message, "no language server for cobol");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A server not installed is a corner line, not a toast, naming the
+/// way in: `:lsp servers` lists it missing with its install line,
+/// `:lsp install` runs that line in a pane of its own, and once it ends
+/// well the server is started for the file it missed (lsp-servers.md).
+#[cfg(unix)]
+#[test]
+fn a_missing_server_is_installed_by_its_line() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lspinstall-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    // What the install puts in place: a script running the fake server.
+    let real = fake_server();
+    let mut line = format!("exec '{}'", real.command);
+    for a in &real.args {
+        line += &format!(" '{a}'");
+    }
+    let built = dir.join("fake-ls.sh");
+    std::fs::write(&built, format!("#!/bin/sh\n{line} \"$@\"\n")).unwrap();
+    std::fs::set_permissions(&built, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let bin = dir.join("bin/fake-ls");
+    let mut def = real.clone();
+    def.command = bin.display().to_string();
+    def.args = Vec::new();
+    def.install = format!(
+        "mkdir -p '{}' && cp '{}' '{}'",
+        bin.parent().unwrap().display(),
+        built.display(),
+        bin.display()
+    );
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(def.clone());
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    let said = format!("`{}` not found; lsp off. :lsp install rust", def.command);
+    assert!(until(&mut d, &mut app, |a| noted(a, &said)), "{said}");
+    let shown = app.notes.shown.iter().find(|s| s.text == said).unwrap();
+    assert!(!shown.toast, "a corner line");
+
+    ex(&mut d, &mut app, "lsp servers");
+    let text = app.ed.buffer_of(app.focused_view().unwrap()).text();
+    let row = text.lines().find(|l| l.starts_with("lsp.rust ")).unwrap();
+    assert!(row.contains("missing"), "{text}");
+    assert!(
+        text.contains(&format!("install: {}", def.install)),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("lsp.zig ") && l.contains("zls")),
+        "the builtin ones too: {text}"
+    );
+    ex(&mut d, &mut app, "close");
+
+    let panes = app.layout.all_panes().len();
+    ex(&mut d, &mut app, "lsp install");
+    assert_eq!(app.layout.all_panes().len(), panes + 1, "a pane of its own");
+    assert!(
+        until(&mut d, &mut app, |a| !a.ed.buffers[buf_id]
+            .runs(DIAG_LAYER, 0..3)
+            .is_empty()),
+        "installed, started, the file sent: {}",
+        app.ed.message
+    );
+    assert!(noted(
+        &app,
+        &format!("`{}` installed; started", def.command)
+    ));
+
+    ex(&mut d, &mut app, "lsp install cobol");
+    assert_eq!(app.ed.message, "lsp install: no language server for cobol");
     std::fs::remove_dir_all(&dir).ok();
 }
 

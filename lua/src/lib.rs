@@ -528,6 +528,8 @@ pub enum Msg {
         /// The server's configuration (`settings = { Lua = { … } }`),
         /// JSON; `Null` for none.
         settings: serde_json::Value,
+        /// The shell line that installs `command`; empty for none.
+        install: String,
     },
     /// `kawoosh.formatter(name, def)`: a formatter (formatters.md) — its
     /// data as `format.NAME` would have it, and whether a `run` function
@@ -3736,6 +3738,7 @@ fn seed(
                 args: t.get::<Option<Vec<String>>>("args")?.unwrap_or_default(),
                 roots: t.get::<Option<Vec<String>>>("roots")?.unwrap_or_default(),
                 settings: lua_to_json(&t.get::<LV>("settings")?)?,
+                install: t.get::<Option<String>>("install")?.unwrap_or_default(),
             });
             Ok(())
         })?,

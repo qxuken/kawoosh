@@ -2886,6 +2886,14 @@ In order — the bugs first, then what needs deciding:
     `grammars.sources`, a grammar of the user's own built here. No
     Windows has loaded one of the libraries yet.
 
+78. ~~**A server for every known language** ([lsp-servers.md](lsp-servers.md)),
+    asked 2026-10-02: "Let's integrate more lsps … And make lsp
+    notificationas just info, not a toast". Forty-seven builtin
+    servers where there were six, each with its project's install
+    line; `:lsp install` runs it in a terminal pane and starts the
+    server once it ends well; `:lsp servers` lists them all; whatever
+    a server says, or is said of it, a corner line.~~ Built 2026-10-02.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision

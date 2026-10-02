@@ -1356,6 +1356,7 @@ impl Kawoosh {
                 self.terms.map.remove(&t);
                 self.terms.spawned.remove(&t);
                 self.terms.done.remove(&t);
+                self.lsp.installs.remove(&t);
             }
             Content::Memory => self.memory_filter_clear(),
             Content::Lua(_) | Content::Undo => {}
