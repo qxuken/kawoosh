@@ -226,11 +226,37 @@ update LANGUAGE` for one). The rest — brew, rustup, gem, opam, ghcup —
 are installed by the line their project gives (`brew install
 marksman`), as you would.
 
-The same works with no window: `kawoosh lsp install yaml toml`,
-`kawoosh lsp update`, `kawoosh lsp remove yaml` and `kawoosh lsp
-list`, which says of each server whether kawoosh installed it, it is
-on your `PATH`, or it is missing, and how it installs.
-`$KAWOOSH_SERVERS` names another folder.
+Versions are locked. An install takes the version you ask for —
+`:lsp install yaml@1.15.0` — or the registry's latest, and stays at it:
+nothing updates a server until you ask. Once a day kawoosh asks the
+registries what is newer and says so in the corner; `:lsp servers`
+shows `1.14.0 → 1.24.0`, and `:lsp update` (or `:lsp update yaml`)
+moves to the latest. `lsp.check_updates = false` stops the asking.
+
+The servers a machine wants go in your settings, so they travel with
+them:
+
+```lua
+return {
+  lsp = {
+    ensure_installed = { "rust", "typescript", "yaml@1.15.0", "toml" },
+  },
+}
+```
+
+kawoosh installs what is missing in the background, a line in the
+corner saying so, and starts each server once it is in. A name with a
+version is kept at that version; one without is installed at the
+latest and then left. A server kawoosh does not install itself (brew's,
+rustup's) is named in the corner with how to install it. With
+[qd](settings.md#dotfiles-with-qd) keeping your settings, a new machine gets its
+servers at the first launch.
+
+The same works with no window: `kawoosh lsp install yaml toml@0.9.3`,
+`kawoosh lsp update`, `kawoosh lsp outdated`, `kawoosh lsp remove yaml`
+and `kawoosh lsp list`, which says of each server whether kawoosh
+installed it (at which version), it is on your `PATH`, or it is
+missing, and how it installs. `$KAWOOSH_SERVERS` names another folder.
 
 `:lsp servers` lists every server: running, off, installed by kawoosh,
 found on the `PATH` or missing, and how a missing one installs.

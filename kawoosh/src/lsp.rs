@@ -320,6 +320,8 @@ impl Kawoosh {
 
     pub(crate) fn sync_lsp(&mut self) {
         self.sync_lsp_rules();
+        self.sync_lsp_installs();
+        self.drain_lsp_installs();
         for ev in self.lsp.lsp.drain() {
             self.frames.drained(ev.kind());
             match ev {
@@ -1055,7 +1057,7 @@ impl Kawoosh {
                 };
                 let spec = serde_json::to_string(p).unwrap_or_default();
                 (
-                    self.lsp_cli(&["install", "--spec", &spec, &def.language]),
+                    self.lsp_cli(&["update", "--spec", &spec, &def.language]),
                     vec![def.command.clone()],
                 )
             }
@@ -1164,6 +1166,18 @@ impl Kawoosh {
             for a in &d.args {
                 line.push(' ');
                 line.push_str(a);
+            }
+            // One kawoosh installed: at its version, and the newer one a
+            // check found (lsp-installs.md Decision 6).
+            if let (Some(root), Some(p)) = (&root, &d.package)
+                && let Some(r) = kawoosh_systems::servers::installed(root, p)
+            {
+                if let Some(v) = &r.version {
+                    line += &format!("  {v}");
+                }
+                if let Some(new) = r.update() {
+                    line += &format!(" → {new} (:lsp update {})", d.language);
+                }
             }
             out += line.trim_end();
             out += &format!("\n{:<w$}           {}\n", "", d.served().join(" "));

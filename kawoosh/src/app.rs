@@ -83,6 +83,8 @@ pub struct Kawoosh {
     pub lsp: LspState,
     /// qd, the dotfiles manager, linked: the `:qd` pane's door.
     pub(crate) dotfiles: crate::dotfiles::Dotfiles,
+    /// `lsp.ensure_installed`'s installs and the registries' checks.
+    pub lsp_installs: crate::lsp_installs::Installs,
     pub scripting: Scripting,
     /// The hosts reached through ssh (docs/design/domains.md).
     pub domains: crate::domains::Domains,
@@ -388,6 +390,7 @@ impl Kawoosh {
             grammars: crate::grammars::Grammars::default(),
             lsp: LspState::new(wake.clone()),
             dotfiles: crate::dotfiles::Dotfiles::new(wake.named("qd")),
+            lsp_installs: crate::lsp_installs::Installs::new(wake.named("lsp installs")),
             scripting: Scripting {
                 servers: kawoosh_systems::lsp::ServerDef::builtin(),
                 ..Default::default()

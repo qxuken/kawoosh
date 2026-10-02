@@ -1,16 +1,23 @@
 //! `kawoosh lsp …`: language servers installed with no window open
-//! (docs/design/lsp-installs.md). What `:lsp install` runs in its pane,
-//! and what a qd module's `kawoosh = { lsp = … }` asks for:
+//! (docs/design/lsp-installs.md). What `:lsp install` and `:lsp update`
+//! run in their pane:
 //!
 //! ```text
-//! kawoosh lsp install NAME…       its package into kawoosh's servers/,
-//!                                 or its line for a manager kawoosh
-//!                                 does not drive (brew, rustup, gem)
-//! kawoosh lsp update [NAME…]      every installed package again, at the
-//!                                 manager's latest — or those named
-//! kawoosh lsp remove NAME…        a package's directory gone
-//! kawoosh lsp list                every server: how it installs, and
-//!                                 whether it is in, on the PATH, missing
+//! kawoosh lsp install NAME[@VERSION]…   its package into kawoosh's
+//!                                       servers/ at VERSION, or the
+//!                                       registry's latest, locked there;
+//!                                       or its line for a manager
+//!                                       kawoosh does not drive (brew,
+//!                                       rustup, gem)
+//! kawoosh lsp update [NAME…]            every installed package moved to
+//!                                       its registry's latest — or those
+//!                                       named; one there already is left
+//! kawoosh lsp outdated                  the registries asked; what has a
+//!                                       newer version
+//! kawoosh lsp remove NAME…              a package's directory gone
+//! kawoosh lsp list                      every server: how it installs,
+//!                                       whether it is in (and at which
+//!                                       version), on the PATH, missing
 //! ```
 //!
 //! A NAME is a server's `lsp.NAME` or a language it serves. `--spec
@@ -20,11 +27,12 @@
 use std::path::Path;
 
 use kawoosh_systems::lsp::ServerDef;
-use kawoosh_systems::servers::{self, Package};
+use kawoosh_systems::servers::{self, Out, Package};
 
 const USAGE: &str = "\
-kawoosh lsp install [--spec JSON] NAME…
-kawoosh lsp update [NAME…]
+kawoosh lsp install [--spec JSON] NAME[@VERSION]…
+kawoosh lsp update [--spec JSON] [NAME…]
+kawoosh lsp outdated
 kawoosh lsp remove NAME…
 kawoosh lsp list
 ";
@@ -37,6 +45,14 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("kawoosh lsp: {e}");
             1
         }
+    }
+}
+
+/// `yaml@1.15.0` → (`yaml`, `1.15.0`); a name has no `@`.
+pub fn name_version(s: &str) -> (&str, Option<&str>) {
+    match s.split_once('@') {
+        Some((n, v)) if !v.is_empty() => (n, Some(v)),
+        _ => (s.trim_end_matches('@'), None),
     }
 }
 
@@ -54,52 +70,80 @@ fn go(args: &[String]) -> Result<(), String> {
         rest.drain(i..i + 2);
     }
     let defs = ServerDef::builtin();
+    // The package NAME means: the one `--spec` gave, else its server's.
+    let package = |name: &str| match &spec {
+        Some(p) => Ok(p.clone()),
+        None => package_of(&defs, name),
+    };
+    let each = |names: &[String], what: &str, f: &dyn Fn(&str) -> Result<(), String>| {
+        let failed = names
+            .iter()
+            .filter(|n| {
+                f(n).map_err(|e| eprintln!("kawoosh lsp: {n}: {e}"))
+                    .is_err()
+            })
+            .count();
+        if failed > 0 {
+            return Err(format!("{failed} of {} not {what}", names.len()));
+        }
+        Ok(())
+    };
     match verb.as_str() {
         "install" => {
             if rest.is_empty() {
                 return Err("install which? (kawoosh lsp list names them)".into());
             }
-            let mut failed = 0;
-            for name in &rest {
-                let r = match &spec {
-                    Some(p) => install_package(&root, name, p),
-                    None => install(&root, &defs, name),
-                };
-                if let Err(e) = r {
-                    eprintln!("kawoosh lsp: {name}: {e}");
-                    failed += 1;
+            each(&rest, "installed", &|arg| {
+                let (name, version) = name_version(arg);
+                if spec.is_none() && def_of(&defs, name)?.package.is_none() {
+                    return install_line(def_of(&defs, name)?);
                 }
-            }
-            if failed > 0 {
-                return Err(format!("{failed} of {} not installed", rest.len()));
-            }
-            Ok(())
+                install_package(&root, name, &package(name)?, version)
+            })
         }
         "update" => {
-            let installed = servers::installed_in(&root);
-            let wanted: Vec<(String, Package)> = if rest.is_empty() {
-                installed
+            let names: Vec<String> = if rest.is_empty() && spec.is_none() {
+                servers::installed_in(&root)
                     .into_iter()
-                    .map(|(dir, p)| (dir_name(&dir), p))
+                    .map(|(dir, _)| dir_name(&dir))
                     .collect()
             } else {
-                rest.iter()
-                    .map(|n| Ok((n.clone(), package_of(&defs, n)?)))
-                    .collect::<Result<_, String>>()?
+                rest.clone()
             };
-            if wanted.is_empty() {
+            if names.is_empty() {
                 println!("nothing installed in {}", root.display());
                 return Ok(());
             }
-            let mut failed = 0;
-            for (name, p) in &wanted {
-                if let Err(e) = install_package(&root, name, p) {
-                    eprintln!("kawoosh lsp: {name}: {e}");
-                    failed += 1;
+            let installed = servers::installed_in(&root);
+            each(&names, "updated", &|name| {
+                // By server, or — bare `update` — by its directory's name.
+                let p = match installed.iter().find(|(d, _)| dir_name(d) == name) {
+                    Some((_, r)) if rest.is_empty() && spec.is_none() => r.package.clone(),
+                    _ => package(name)?,
+                };
+                let now = servers::installed(&root, &p).and_then(|r| r.version);
+                match servers::latest(&p)? {
+                    Some(v) if Some(&v) == now.as_ref() => {
+                        println!("{name}: {v}, the latest");
+                        Ok(())
+                    }
+                    Some(v) => install_package(&root, name, &p, Some(&v)),
+                    None => install_package(&root, name, &p, None),
                 }
+            })
+        }
+        "outdated" => {
+            let out = servers::check(&root, 0);
+            if out.is_empty() {
+                println!("every server kawoosh installed is at its latest");
             }
-            if failed > 0 {
-                return Err(format!("{failed} of {} not updated", wanted.len()));
+            for (dir, r) in out {
+                println!(
+                    "{}  {} → {}",
+                    dir_name(&dir),
+                    r.version.as_deref().unwrap_or("?"),
+                    r.update().unwrap_or("?")
+                );
             }
             Ok(())
         }
@@ -107,12 +151,11 @@ fn go(args: &[String]) -> Result<(), String> {
             if rest.is_empty() {
                 return Err("remove which?".into());
             }
-            for name in &rest {
-                let p = package_of(&defs, name)?;
-                let dir = servers::remove(&root, &p)?;
+            each(&rest, "removed", &|name| {
+                let dir = servers::remove(&root, &package(name)?)?;
                 println!("removed {}", dir.display());
-            }
-            Ok(())
+                Ok(())
+            })
         }
         "list" => {
             print!("{}", list(&root, &defs));
@@ -127,7 +170,7 @@ fn go(args: &[String]) -> Result<(), String> {
 }
 
 /// The server `name` means: by its `lsp.NAME`, else a language it serves.
-fn def_of<'a>(defs: &'a [ServerDef], name: &str) -> Result<&'a ServerDef, String> {
+pub fn def_of<'a>(defs: &'a [ServerDef], name: &str) -> Result<&'a ServerDef, String> {
     defs.iter()
         .find(|d| d.language == name)
         .or_else(|| defs.iter().find(|d| d.serves(name)))
@@ -141,12 +184,8 @@ fn package_of(defs: &[ServerDef], name: &str) -> Result<Package, String> {
         .ok_or_else(|| format!("`{}` is not one kawoosh installs", d.command))
 }
 
-/// `name`'s server: its package into `root`, or its line run in a shell.
-fn install(root: &Path, defs: &[ServerDef], name: &str) -> Result<(), String> {
-    let d = def_of(defs, name)?;
-    if let Some(p) = &d.package {
-        return install_package(root, name, p);
-    }
+/// A server kawoosh does not install itself: its line, in a shell.
+fn install_line(d: &ServerDef) -> Result<(), String> {
     if d.install.is_empty() {
         return Err(format!(
             "no way to install `{}` is known; install it and put it on the PATH",
@@ -169,10 +208,24 @@ fn install(root: &Path, defs: &[ServerDef], name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn install_package(root: &Path, name: &str, p: &Package) -> Result<(), String> {
-    println!("{name}: {}", p.describe());
-    let dir = servers::install(root, p, |line| println!("› {line}"))?;
-    println!("{name}: in {}", dir.display());
+fn install_package(
+    root: &Path,
+    name: &str,
+    p: &Package,
+    version: Option<&str>,
+) -> Result<(), String> {
+    println!(
+        "{name}: {}{}",
+        p.describe(),
+        version.map(|v| format!(" at {v}")).unwrap_or_default()
+    );
+    let mut say = |line: &str| println!("› {line}");
+    let (dir, v) = servers::install(root, p, version, Out::Shown(&mut say))?;
+    println!(
+        "{name}: {} in {}",
+        v.as_deref().unwrap_or("installed"),
+        dir.display()
+    );
     Ok(())
 }
 
@@ -183,24 +236,37 @@ fn dir_name(dir: &Path) -> String {
 }
 
 /// Every server, one line each: its name, where it stands — `kawoosh`
-/// (installed here), `path` (found on the PATH), `missing` — its command
-/// and how it installs.
+/// (installed here, at its version, with the newer one a check found),
+/// `path` (found on the PATH), `missing` — its command and how it
+/// installs.
 fn list(root: &Path, defs: &[ServerDef]) -> String {
     let w = defs.iter().map(|d| d.language.len()).max().unwrap_or(0);
     let cw = defs.iter().map(|d| d.command.len()).max().unwrap_or(0);
     let mut out = String::new();
     for d in defs {
-        let state = if servers::find_in(root, &d.command).is_some() {
+        let record = d
+            .package
+            .as_ref()
+            .and_then(|p| servers::installed(root, p))
+            .filter(|_| servers::find_in(root, &d.command).is_some());
+        let state = if record.is_some() {
             "kawoosh"
         } else if kawoosh_systems::io::on_path(&d.command) == Some(true) {
             "path"
         } else {
             "missing"
         };
-        let how = match (&d.package, d.install.as_str()) {
-            (Some(p), _) => p.describe(),
-            (None, "") => "-".to_string(),
-            (None, line) => line.to_string(),
+        let how = match (&record, &d.package, d.install.as_str()) {
+            (Some(r), ..) => {
+                let v = r.version.as_deref().unwrap_or("?");
+                match r.update() {
+                    Some(new) => format!("{v} → {new} (kawoosh lsp update {})", d.language),
+                    None => v.to_string(),
+                }
+            }
+            (None, Some(p), _) => p.describe(),
+            (None, None, "") => "-".to_string(),
+            (None, None, line) => line.to_string(),
         };
         out += &format!(
             "{:<w$}  {state:<7}  {:<cw$}  {how}\n",
@@ -215,7 +281,7 @@ mod tests {
     use super::*;
 
     /// A name is a server's or a language it serves; one installed by a
-    /// line is not kawoosh's to update or remove.
+    /// line is not kawoosh's to update or remove; `@` asks a version.
     #[test]
     fn a_name_is_a_server_or_its_language() {
         let defs = ServerDef::builtin();
@@ -233,5 +299,8 @@ mod tests {
             package_of(&defs, "markdown").unwrap_err(),
             "`marksman` is not one kawoosh installs"
         );
+        assert_eq!(name_version("yaml@1.15.0"), ("yaml", Some("1.15.0")));
+        assert_eq!(name_version("yaml"), ("yaml", None));
+        assert_eq!(name_version("yaml@"), ("yaml", None));
     }
 }

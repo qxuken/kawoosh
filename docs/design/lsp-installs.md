@@ -97,7 +97,7 @@ dotfiles."
 - **`lsp.ensure_installed`**, a list in kawoosh's settings (`{ "rust",
   "yaml@1.15.0", "eslint" }`), is what a machine installs: kawoosh does
   it at launch and when the settings change, in the background, a
-  corner line saying so (Decision 6).
+  corner line saying so; what is in stays at its version (Decision 6).
 - **`:qd setup`** is the one step to keep kawoosh's config folder —
   `settings.lua` with that list in it, `init.lua`, plugins — in the
   dotfiles: module `kawoosh`, `fonts/**` left out, pulled in; one that
@@ -109,6 +109,30 @@ dotfiles."
 
 Beaten: the qd plugin (qd's `packages` runs one manager, and the list
 lived apart from the settings it serves).
+
+### 6. Versions are locked, any one can be had, an update is said and not made *(the user's)*
+
+Asked 2026-10-03, over Decision 2's "no version is kept": "however we
+do not lock, i would lock installed versions so we can indicate updates
+and don't cause breaks when it's unnessesary. basically we should give
+ability to install any version."
+
+- **An install is at a version**: the one asked (`kawoosh lsp install
+  yaml@1.15.0`, `"yaml@1.15.0"` in `lsp.ensure_installed`) or, with
+  none, the registry's latest, asked first — `npm view`, `go list -m`,
+  PyPI's, crates.io's and NuGet's JSON with curl — and installed at
+  exactly that (`pkg@1.15.0`, `pkg==1.15.0`, `cargo install --version`,
+  `@v0.17.1`, `dotnet tool --version`). The record keeps it. A cargo
+  `--git` has no version.
+- **Nothing moves it unasked**: a name in `lsp.ensure_installed` that is
+  in stays at its version; one pinned is installed again when the one
+  in is another.
+- **Updates are said**: `kawoosh lsp outdated` asks the registries;
+  with `lsp.ensure_installed` set, kawoosh asks once a day
+  (`lsp.check_updates`, on), keeps the answer in each record and says
+  in the corner what `:lsp update` would bring; `:lsp servers` and
+  `kawoosh lsp list` show `1.14.0 → 1.24.0`. `update` installs the
+  latest only where it is newer.
 
 ### 5. kawoosh → qd: a `:qd` pane *(round three)*
 

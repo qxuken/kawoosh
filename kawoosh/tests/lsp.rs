@@ -1269,7 +1269,8 @@ fn a_package_is_installed_into_kawooshs_directory_and_run_from_there() {
     std::fs::write(
         &npm,
         format!(
-            "#!/bin/sh\nwhile [ \"$1\" != --prefix ]; do shift; done\n\
+            "#!/bin/sh\nif [ \"$1\" = view ]; then echo 1.0.0; exit 0; fi\n\
+             while [ \"$1\" != --prefix ]; do shift; done\n\
              mkdir -p \"$2/node_modules/.bin\"\n\
              printf '#!/bin/sh\\n%s \"$@\"\\n' \"{}\" > \"$2/node_modules/.bin/fake-pkg-ls\"\n\
              chmod +x \"$2/node_modules/.bin/fake-pkg-ls\"\necho installed\n",
@@ -1322,6 +1323,158 @@ fn a_package_is_installed_into_kawooshs_directory_and_run_from_there() {
         kawoosh_systems::servers::find("fake-pkg-ls"),
         Some(pkg.join("node_modules/.bin/fake-pkg-ls"))
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `lsp.ensure_installed` (lsp-installs.md Decisions 4 and 6): a name
+/// not in is installed in the background, at the registry's latest —
+/// asked of npm first and locked in the record — and its server started
+/// once it is; a name at a version is installed at that one, and again
+/// when the one in is another; the registries' check says in the corner
+/// what an `:lsp update` would bring, and nothing is updated unasked.
+#[cfg(unix)]
+#[test]
+fn ensure_installed_installs_locks_and_says_updates() {
+    use kawoosh_editor::{Layer, Setting};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lspensure-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let real = fake_server();
+    let mut line = format!("exec '{}'", real.command);
+    for a in &real.args {
+        line += &format!(" '{a}'");
+    }
+    // `npm view NAME version` says the registry's latest from a file;
+    // `npm install --prefix DIR …` logs what it was asked and puts the
+    // program in DIR/node_modules/.bin.
+    let tools = dir.join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::fs::write(dir.join("latest"), "2.0.0\n").unwrap();
+    let npm = tools.join("npm");
+    std::fs::write(
+        &npm,
+        format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = view ]; then cat '{d}/latest'; exit 0; fi\n\
+             echo \"$*\" >> '{d}/asked'\n\
+             while [ \"$1\" != --prefix ]; do shift; done\n\
+             mkdir -p \"$2/node_modules/.bin\"\n\
+             printf '#!/bin/sh\\n%s \"$@\"\\n' \"{l}\" > \"$2/node_modules/.bin/fake-ensure-ls\"\n\
+             chmod +x \"$2/node_modules/.bin/fake-ensure-ls\"\n",
+            d = dir.display(),
+            l = line.replace('"', "\\\"")
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::var("PATH").unwrap_or_default();
+    let servers = dir.join("servers");
+    unsafe {
+        std::env::set_var("PATH", format!("{}:{path}", tools.display()));
+        std::env::set_var("KAWOOSH_SERVERS", &servers);
+    }
+    let asked = || std::fs::read_to_string(dir.join("asked")).unwrap_or_default();
+    let record = || {
+        std::fs::read_to_string(servers.join("npm/fake-ensure-ls/kawoosh-package.json"))
+            .unwrap_or_default()
+    };
+
+    let mut def = real.clone();
+    def.command = "fake-ensure-ls".into();
+    def.args = Vec::new();
+    def.package = Some(kawoosh_systems::servers::Package::new(
+        kawoosh_systems::servers::Manager::Npm,
+        &["fake-ensure-ls"],
+        &[],
+    ));
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    let list =
+        |items: &[&str]| Setting::List(items.iter().map(|s| Setting::Str(s.to_string())).collect());
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.ensure_installed", list(&["rust"]));
+    assert!(
+        until(&mut d, &mut app, |a| !a.ed.buffers[buf_id]
+            .runs(DIAG_LAYER, 0..3)
+            .is_empty()),
+        "installed, started: {}",
+        app.ed.message
+    );
+    assert!(
+        asked().contains("fake-ensure-ls@2.0.0"),
+        "locked at the latest: {}",
+        asked()
+    );
+    assert!(record().contains("\"version\": \"2.0.0\""), "{}", record());
+    let shown: Vec<String> = app.notes.log.iter().map(|e| e.text.clone()).collect();
+    assert!(
+        app.notes.shown.iter().all(|s| !s.toast),
+        "nothing a toast: {shown:?}"
+    );
+
+    // A newer one on the registry: in again only when asked for — by a
+    // pinned version here.
+    std::fs::write(dir.join("latest"), "2.1.0\n").unwrap();
+    let before = asked();
+    app.ed.settings.set(
+        Layer::Session,
+        "lsp.ensure_installed",
+        list(&["rust", "rust"]),
+    );
+    for _ in 0..20 {
+        d.frame(&mut app);
+    }
+    assert_eq!(asked(), before, "in already: left where it is");
+    app.ed.settings.set(
+        Layer::Session,
+        "lsp.ensure_installed",
+        list(&["rust@1.9.0"]),
+    );
+    assert!(
+        until(&mut d, &mut app, |_| record()
+            .contains("\"version\": \"1.9.0\"")),
+        "the version pinned: {}",
+        asked()
+    );
+    assert!(asked().contains("fake-ensure-ls@1.9.0"));
+
+    // The next launch checks (a version pinned outright was never
+    // checked): what is newer, in the corner, and nothing installed.
+    let before = asked();
+    let def2 = app
+        .lsp
+        .defs
+        .iter()
+        .find(|d| d.command == "fake-ensure-ls")
+        .cloned()
+        .unwrap();
+    let mut next = Kawoosh::from_file(&file);
+    next.add_lsp_server(def2);
+    next.ed.settings.set(
+        Layer::Session,
+        "lsp.ensure_installed",
+        list(&["rust@1.9.0"]),
+    );
+    let said = "1 server update: fake-ensure-ls 1.9.0 → 2.1.0 (:lsp update)";
+    assert!(until(&mut d, &mut next, |a| noted(a, said)), "{said}");
+    assert!(
+        !next
+            .notes
+            .shown
+            .iter()
+            .find(|s| s.text == said)
+            .unwrap()
+            .toast
+    );
+    assert_eq!(asked(), before, "an update said, not made");
     std::fs::remove_dir_all(&dir).ok();
 }
 
