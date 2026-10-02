@@ -3278,6 +3278,30 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // ---- kawoosh.json: JSON read and written, for a program that
+    // answers in it (`qd status --json`).
+    let json = lua.create_table()?;
+    // `kawoosh.json.decode(text)`: JSON as Lua data — an array a
+    // list, an object a table, `null` nil — or `nil, why`.
+    json.set(
+        "decode",
+        lua.create_function(|lua, text: String| {
+            match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(v) => Ok((json_to_lua(lua, &v)?, LV::Nil)),
+                Err(e) => Ok((LV::Nil, LV::String(lua.create_string(e.to_string())?))),
+            }
+        })?,
+    )?;
+    // `kawoosh.json.encode(value)`: Lua data as JSON text — a list an
+    // array, a table with string keys an object.
+    json.set(
+        "encode",
+        lua.create_function(|_, v: LV| {
+            let j = lua_to_json(&v)?;
+            serde_json::to_string(&j).map_err(mlua::Error::external)
+        })?,
+    )?;
+    k.set("json", json)?;
     let qq = q(queue);
     k.set(
         "echo",

@@ -144,3 +144,18 @@ first, `qd packages install --manager kawoosh --dry-run` printing
 `kawoosh lsp install yaml toml markdown`, `upgrade` `kawoosh lsp
 update`, `lsps` refused by name; plain `qd packages list` takes brew,
 as Decision 4 says.
+
+Round three, 2026-10-02: Decision 5, over the `qd` CLI.
+`kawoosh/lua/qd.lua` (bundled after vcs): `:qd`, `:qd push`, `:qd
+pull`, `:qd add [PATH] [NAME]` (bare: kawoosh's config folder as
+`kawoosh`, `fonts/**` ignored — a bought font is not the user's to
+publish, and the dotfiles mirror to GitHub), `:qd init [URL]`; `>`
+`<` `<CR>` `a` `r` in the pane; `kawoosh.qd.status(fn)` and
+`kawoosh.qd.state()`. `kawoosh.json.decode`/`encode` came with it.
+Test `kawoosh/tests/qd.rs` against a fake `qd`; seen in a window
+against the user's own repo (thirteen modules, wezterm's `ui.lua`
+differing), read only. Asked while it was built: "you probably can
+interface by building a library … publish qd even on a crates.io as
+well as drydock9 registry" — the CLI stays the door until that is
+decided (the version a linked qd would be, against the one the user
+runs on the same state, is the question).
