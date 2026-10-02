@@ -135,3 +135,12 @@ fake `npm`, the real `kawoosh lsp install` in the pane, the server
 started from the folder). Run for real into a scratch folder:
 yaml-language-server by npm; cmake-language-server and fortls by uv —
 cmake-language-server broke on pygls 2, hence its `pygls<2`.
+
+Round two, 2026-10-02: Decision 4. `contrib/qd/kawoosh.lua`, the
+`kawoosh` key (`lsp`, a list of names), its program found on the PATH
+or in `Kawoosh.app`. Tried against qd 0.x with a scratch dotfiles repo
+and `QD_STATE` of its own: two modules' lists folded first mention
+first, `qd packages install --manager kawoosh --dry-run` printing
+`kawoosh lsp install yaml toml markdown`, `upgrade` `kawoosh lsp
+update`, `lsps` refused by name; plain `qd packages list` takes brew,
+as Decision 4 says.
