@@ -10,6 +10,7 @@ pub mod indent;
 pub mod io;
 pub mod lsp;
 pub mod search;
+pub mod servers;
 pub mod sftp;
 pub mod shell_env;
 pub mod spawn;

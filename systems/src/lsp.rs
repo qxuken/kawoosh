@@ -22,6 +22,7 @@ use kawoosh_doc::{BufferId, Diagnostic, Run, Update, Version};
 use serde_json::{Value, json};
 
 use crate::WakeHandle;
+use crate::servers::{Manager, Package};
 
 pub use kawoosh_doc::diagnostic::LAYER as DIAG_LAYER;
 
@@ -58,10 +59,14 @@ pub struct ServerDef {
     /// a private buffer's text never leaves the process
     /// (docs/design/secrets.md Decision 1).
     pub private: Vec<String>,
-    /// The shell line that installs its command (`npm i -g …`), run by
-    /// `:lsp install` in a pane of its own; empty for none known
-    /// (docs/design/lsp-servers.md).
+    /// The shell line that installs its command with a manager kawoosh
+    /// does not drive (`brew install …`), run by `:lsp install` in a pane
+    /// of its own; empty for none known (docs/design/lsp-servers.md).
     pub install: String,
+    /// The package kawoosh installs it from into a directory of its own
+    /// (`kawoosh lsp install`, docs/design/lsp-installs.md); over
+    /// `install`, which is for a manager kawoosh does not drive.
+    pub package: Option<crate::servers::Package>,
 }
 
 /// A language's files: by extension (no dot, any case) or whole name.
@@ -90,6 +95,7 @@ impl Default for ServerDef {
             files: Vec::new(),
             private: Vec::new(),
             install: String::new(),
+            package: None,
         }
     }
 }
@@ -173,10 +179,13 @@ struct Builtin {
     install: Install,
 }
 
-/// How a server is installed: one line everywhere, or one for macOS
-/// and Linux and one for Windows — `""` where no line is known.
+/// How a server is installed: a package kawoosh installs into its own
+/// directory, or a line — one everywhere, or one for macOS and Linux and
+/// one for Windows, `""` where none is known — for a manager it does not
+/// drive (brew, rustup, gem, opam).
 #[derive(Clone, Copy)]
 enum Install {
+    Pkg(Manager, &'static [&'static str], &'static [&'static str]),
     Any(&'static str),
     Os {
         mac: &'static str,
@@ -186,8 +195,9 @@ enum Install {
 }
 
 impl Install {
-    fn here(self) -> &'static str {
+    fn line(self) -> &'static str {
         match self {
+            Install::Pkg(..) => "",
             Install::Any(line) => line,
             Install::Os {
                 mac,
@@ -215,8 +225,13 @@ const fn brew(line: &'static str) -> Install {
     }
 }
 
+/// An npm package, the commonest way.
+const fn npm(packages: &'static [&'static str]) -> Install {
+    Install::Pkg(Manager::Npm, packages, &[])
+}
+
 /// One program's npm package, for the many servers published there.
-const VSCODE_EXTRACTED: Install = Install::Any("npm i -g vscode-langservers-extracted");
+const VSCODE_EXTRACTED: Install = npm(&["vscode-langservers-extracted"]);
 
 /// The builtin servers, by the language each is first for: the ones
 /// every editor's LSP setup reaches for, run as their projects install
@@ -236,7 +251,7 @@ const BUILTIN: &[Builtin] = &[
         command: "typescript-language-server",
         args: &["--stdio"],
         roots: &["tsconfig.json", "jsconfig.json", "package.json"],
-        install: Install::Any("npm i -g typescript-language-server typescript@5"),
+        install: npm(&["typescript-language-server", "typescript@5"]),
     },
     Builtin {
         name: "lua",
@@ -257,7 +272,7 @@ const BUILTIN: &[Builtin] = &[
             "setup.py",
             "requirements.txt",
         ],
-        install: Install::Any("npm i -g pyright"),
+        install: npm(&["pyright"]),
     },
     Builtin {
         name: "go",
@@ -265,7 +280,7 @@ const BUILTIN: &[Builtin] = &[
         command: "gopls",
         args: &[],
         roots: &["go.work", "go.mod"],
-        install: Install::Any("go install golang.org/x/tools/gopls@latest"),
+        install: Install::Pkg(Manager::Go, &["golang.org/x/tools/gopls"], &[]),
     },
     Builtin {
         name: "c",
@@ -290,7 +305,7 @@ const BUILTIN: &[Builtin] = &[
         command: "bash-language-server",
         args: &["start"],
         roots: &[],
-        install: Install::Any("npm i -g bash-language-server"),
+        install: npm(&["bash-language-server"]),
     },
     Builtin {
         name: "fish",
@@ -298,7 +313,7 @@ const BUILTIN: &[Builtin] = &[
         command: "fish-lsp",
         args: &["start"],
         roots: &[],
-        install: Install::Any("npm i -g fish-lsp"),
+        install: npm(&["fish-lsp"]),
     },
     Builtin {
         name: "nu",
@@ -342,7 +357,7 @@ const BUILTIN: &[Builtin] = &[
         command: "yaml-language-server",
         args: &["--stdio"],
         roots: &[],
-        install: Install::Any("npm i -g yaml-language-server"),
+        install: npm(&["yaml-language-server"]),
     },
     Builtin {
         name: "toml",
@@ -350,11 +365,11 @@ const BUILTIN: &[Builtin] = &[
         command: "taplo",
         args: &["lsp", "stdio"],
         roots: &["taplo.toml", ".taplo.toml"],
-        install: Install::Os {
-            mac: "brew install taplo",
-            linux: "cargo install taplo-cli --locked --features lsp",
-            windows: "cargo install taplo-cli --locked --features lsp",
-        },
+        install: Install::Pkg(
+            Manager::Cargo,
+            &["taplo-cli"],
+            &["--locked", "--features", "lsp"],
+        ),
     },
     Builtin {
         name: "markdown",
@@ -370,7 +385,7 @@ const BUILTIN: &[Builtin] = &[
         command: "docker-langserver",
         args: &["--stdio"],
         roots: &[],
-        install: Install::Any("npm i -g dockerfile-language-server-nodejs"),
+        install: npm(&["dockerfile-language-server-nodejs"]),
     },
     Builtin {
         name: "svelte",
@@ -378,7 +393,7 @@ const BUILTIN: &[Builtin] = &[
         command: "svelteserver",
         args: &["--stdio"],
         roots: &["svelte.config.js", "package.json"],
-        install: Install::Any("npm i -g svelte-language-server"),
+        install: npm(&["svelte-language-server"]),
     },
     Builtin {
         name: "php",
@@ -386,7 +401,7 @@ const BUILTIN: &[Builtin] = &[
         command: "intelephense",
         args: &["--stdio"],
         roots: &["composer.json"],
-        install: Install::Any("npm i -g intelephense"),
+        install: npm(&["intelephense"]),
     },
     Builtin {
         name: "ruby",
@@ -438,7 +453,7 @@ const BUILTIN: &[Builtin] = &[
         command: "csharp-ls",
         args: &[],
         roots: &["global.json", "Directory.Build.props"],
-        install: Install::Any("dotnet tool install --global csharp-ls"),
+        install: Install::Pkg(Manager::Dotnet, &["csharp-ls"], &[]),
     },
     Builtin {
         name: "fsharp",
@@ -446,7 +461,7 @@ const BUILTIN: &[Builtin] = &[
         command: "fsautocomplete",
         args: &[],
         roots: &["global.json", "Directory.Build.props"],
-        install: Install::Any("dotnet tool install --global fsautocomplete"),
+        install: Install::Pkg(Manager::Dotnet, &["fsautocomplete"], &[]),
     },
     Builtin {
         name: "dart",
@@ -510,7 +525,7 @@ const BUILTIN: &[Builtin] = &[
         command: "elm-language-server",
         args: &[],
         roots: &["elm.json"],
-        install: Install::Any("npm i -g @elm-tooling/elm-language-server"),
+        install: npm(&["@elm-tooling/elm-language-server"]),
     },
     Builtin {
         name: "purescript",
@@ -518,7 +533,7 @@ const BUILTIN: &[Builtin] = &[
         command: "purescript-language-server",
         args: &["--stdio"],
         roots: &["spago.yaml", "spago.dhall"],
-        install: Install::Any("npm i -g purescript-language-server"),
+        install: npm(&["purescript-language-server"]),
     },
     Builtin {
         name: "clojure",
@@ -550,7 +565,12 @@ const BUILTIN: &[Builtin] = &[
         command: "cmake-language-server",
         args: &[],
         roots: &["CMakeLists.txt"],
-        install: Install::Any("pipx install cmake-language-server"),
+        install: Install::Pkg(
+            Manager::Pip,
+            // pygls 2 took away the class it imports (2026-10).
+            &["cmake-language-server", "pygls<2"],
+            &[],
+        ),
     },
     Builtin {
         name: "fortran",
@@ -558,7 +578,7 @@ const BUILTIN: &[Builtin] = &[
         command: "fortls",
         args: &[],
         roots: &[".fortls"],
-        install: Install::Any("pipx install fortls"),
+        install: Install::Pkg(Manager::Pip, &["fortls"], &[]),
     },
     Builtin {
         name: "r",
@@ -576,7 +596,7 @@ const BUILTIN: &[Builtin] = &[
         command: "prisma-language-server",
         args: &["--stdio"],
         roots: &["package.json"],
-        install: Install::Any("npm i -g @prisma/language-server"),
+        install: npm(&["@prisma/language-server"]),
     },
     Builtin {
         name: "proto",
@@ -584,7 +604,7 @@ const BUILTIN: &[Builtin] = &[
         command: "protols",
         args: &[],
         roots: &["protols.toml", "buf.yaml"],
-        install: Install::Any("cargo install protols"),
+        install: Install::Pkg(Manager::Cargo, &["protols"], &[]),
     },
     Builtin {
         name: "dot",
@@ -592,7 +612,7 @@ const BUILTIN: &[Builtin] = &[
         command: "dot-language-server",
         args: &["--stdio"],
         roots: &[],
-        install: Install::Any("npm i -g dot-language-server"),
+        install: npm(&["dot-language-server"]),
     },
     Builtin {
         name: "awk",
@@ -600,7 +620,7 @@ const BUILTIN: &[Builtin] = &[
         command: "awk-language-server",
         args: &[],
         roots: &[],
-        install: Install::Any("npm i -g awk-language-server"),
+        install: npm(&["awk-language-server"]),
     },
     Builtin {
         name: "wgsl",
@@ -608,8 +628,10 @@ const BUILTIN: &[Builtin] = &[
         command: "wgsl-analyzer",
         args: &[],
         roots: &[],
-        install: Install::Any(
-            "cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer wgsl-analyzer",
+        install: Install::Pkg(
+            Manager::Cargo,
+            &["wgsl-analyzer"],
+            &["--git", "https://github.com/wgsl-analyzer/wgsl-analyzer"],
         ),
     },
     Builtin {
@@ -657,7 +679,11 @@ impl ServerDef {
                 command: b.command.into(),
                 args: strings(b.args),
                 roots: strings(b.roots),
-                install: b.install.here().into(),
+                install: b.install.line().into(),
+                package: match b.install {
+                    Install::Pkg(m, packages, args) => Some(Package::new(m, packages, args)),
+                    _ => None,
+                },
                 ..Default::default()
             })
             .collect()
@@ -1516,8 +1542,13 @@ impl Server {
                 }
                 t.remote_command(&crate::io::remote_script(dir, &[], &line, false))
             }
+            // One kawoosh installed is started from its directory, ahead
+            // of the PATH (docs/design/lsp-installs.md).
             None => {
-                let mut c = crate::io::command(&def.command);
+                let program = crate::servers::find(&def.command)
+                    .map(PathBuf::into_os_string)
+                    .unwrap_or_else(|| def.command.clone().into());
+                let mut c = crate::io::command(program);
                 c.args(&def.args).current_dir(root);
                 c
             }

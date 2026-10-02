@@ -48,6 +48,7 @@ pub mod lists;
 pub mod logger;
 pub mod look;
 pub mod lsp;
+pub mod lsp_cli;
 pub mod lsp_logs;
 pub mod lsp_rules;
 pub mod markdown;

@@ -1240,6 +1240,91 @@ fn a_missing_server_is_installed_by_its_line() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A server kawoosh installs itself (lsp-installs.md): `:lsp install`
+/// runs `kawoosh lsp install` in a pane, which asks the package's
+/// manager — a fake `npm` on the PATH here — for it in kawoosh's own
+/// servers directory, never the manager's global one; once it ends
+/// well the server is started from there, the PATH having no such
+/// program, and `:lsp servers` says it is kawoosh's.
+#[cfg(unix)]
+#[test]
+fn a_package_is_installed_into_kawooshs_directory_and_run_from_there() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsppkg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    // The fake server, as the package's program.
+    let real = fake_server();
+    let mut line = format!("exec '{}'", real.command);
+    for a in &real.args {
+        line += &format!(" '{a}'");
+    }
+    // `npm install --prefix DIR …`: the program in DIR/node_modules/.bin.
+    let tools = dir.join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    let npm = tools.join("npm");
+    std::fs::write(
+        &npm,
+        format!(
+            "#!/bin/sh\nwhile [ \"$1\" != --prefix ]; do shift; done\n\
+             mkdir -p \"$2/node_modules/.bin\"\n\
+             printf '#!/bin/sh\\n%s \"$@\"\\n' \"{}\" > \"$2/node_modules/.bin/fake-pkg-ls\"\n\
+             chmod +x \"$2/node_modules/.bin/fake-pkg-ls\"\necho installed\n",
+            line.replace('"', "\\\"")
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Each test is a process of its own under nextest: its PATH and
+    // servers directory are its own to set.
+    let path = std::env::var("PATH").unwrap_or_default();
+    let servers = dir.join("servers");
+    unsafe {
+        std::env::set_var("PATH", format!("{}:{path}", tools.display()));
+        std::env::set_var("KAWOOSH_SERVERS", &servers);
+    }
+    let mut def = real.clone();
+    def.command = "fake-pkg-ls".into();
+    def.args = Vec::new();
+    def.package = Some(kawoosh_systems::servers::Package::new(
+        kawoosh_systems::servers::Manager::Npm,
+        &["fake-pkg-ls"],
+        &[],
+    ));
+
+    let mut app = Kawoosh::from_file(&file);
+    app.lsp.cli = vec![env!("CARGO_BIN_EXE_kawoosh").into(), "lsp".into()];
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    let said = "`fake-pkg-ls` not found; lsp off. :lsp install rust";
+    assert!(until(&mut d, &mut app, |a| noted(a, said)), "{said}");
+
+    ex(&mut d, &mut app, "lsp install");
+    assert!(
+        until(&mut d, &mut app, |a| !a.ed.buffers[buf_id]
+            .runs(DIAG_LAYER, 0..3)
+            .is_empty()),
+        "installed, started from kawoosh's directory: {}",
+        app.ed.message
+    );
+    let pkg = servers.join("npm/fake-pkg-ls");
+    assert!(pkg.join("node_modules/.bin/fake-pkg-ls").is_file());
+    assert!(
+        pkg.join(kawoosh_systems::servers::RECORD).is_file(),
+        "the record, for an update"
+    );
+    assert_eq!(
+        kawoosh_systems::servers::find("fake-pkg-ls"),
+        Some(pkg.join("node_modules/.bin/fake-pkg-ls"))
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A rename across the workspace and a multibuffer (search.md): every
 /// file a multibuffer holds is its server's, shown or not, as its text
 /// stands — one edited only through the multibuffer too — so the rename lands where the word is now; and
