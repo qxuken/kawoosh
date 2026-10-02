@@ -188,7 +188,7 @@ The pane is a Lua plugin over `kawoosh.settings`, which a pane of your own can r
 
 ## Dotfiles with qd
 
-[qd](https://drydock9.qxuken.dev/qxuken/qd) keeps dotfiles in a git
+[qd](https://github.com/qxuken/qdot) keeps dotfiles in a git
 repository, a module per folder. kawoosh has it built in, and works
 with the `qd` on your `PATH` as well — through it whenever the two are
 different versions, since they share qd's state.
