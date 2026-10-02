@@ -10,6 +10,10 @@ authors = ["Nasonov Viktor <me@qxuken.dev>"]
 repository = "https://drydock9.qxuken.dev/qxuken/kawoosh"
 
 [workspace.dependencies]
+# qd, the dotfiles manager, as a library (docs/design/lsp-installs.md
+# Decision 5): by path to its `claude/library-api` branch until a `qdot`
+# release is on drydock9, then `{ version = "0.2", registry = "drydock9" }`.
+qdot = { path = "../../../../qd/.claude/worktrees/library-api", default-features = false }
 text-buffer = { path = "./text-buffer" }
 kawoosh-doc = { path = "./doc" }
 kawoosh-editor = { path = "./editor" }

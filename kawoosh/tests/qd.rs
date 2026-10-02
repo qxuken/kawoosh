@@ -28,7 +28,12 @@ fn until(d: &mut Drive, app: &mut Kawoosh, what: &str, done: impl Fn(&mut Kawoos
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    panic!("never: {what}; the message is {:?}", app.ed.message);
+    let journal = std::env::var_os("QD_STATE")
+        .and_then(|s| std::fs::read_to_string(std::path::Path::new(&s).join("journal.jsonl")).ok());
+    panic!(
+        "never: {what}; the message is {:?}; journal {journal:?}",
+        app.ed.message
+    );
 }
 
 fn lua(app: &mut Kawoosh, src: &str) -> String {
@@ -153,7 +158,7 @@ fn the_pane_lists_modules_and_pushes_pulls_and_adds() {
         asked(&t).contains("push wezterm")
     });
     d.keys(&mut app, "j");
-    d.keys(&mut app, "<lt>");
+    d.keys(&mut app, "<");
     until(&mut d, &mut app, "pulled", |_| {
         asked(&t).contains("pull wezterm")
     });
@@ -168,7 +173,117 @@ fn the_pane_lists_modules_and_pushes_pulls_and_adds() {
     assert!(file.contains("path = "), "{file}");
     ex(&mut d, &mut app, "qd add");
     until(&mut d, &mut app, "a second add refused", |a| {
-        a.ed.message.contains("is there already")
+        a.ed.message.contains("exists already")
     });
+    std::fs::remove_dir_all(&t).ok();
+}
+
+/// With a `qd` on the PATH of the linked library's version, the pane
+/// goes through the library (`kawoosh._qd`): the status read from the
+/// repo and the state the binary would read, a pull done in-process —
+/// the binary asked for its version and nothing else — and `:qd add`
+/// writing the module through `qd::Session::add_module`.
+#[test]
+fn the_linked_library_is_the_door_when_it_is_the_binarys_version() {
+    let t = std::env::temp_dir().join(format!("kawoosh-qdlib-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&t);
+    let (repo, machine, bin) = (t.join("repo"), t.join("machine"), t.join("bin"));
+    for d in [
+        &repo.join("tool"),
+        &machine.join("tool"),
+        &bin,
+        &t.join("state"),
+    ] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(repo.join("qd.lua"), "return {}\n").unwrap();
+    std::fs::write(
+        repo.join("tool/qd.lua"),
+        format!(
+            "return {{ path = {:?} }}\n",
+            machine.join("tool").display().to_string()
+        ),
+    )
+    .unwrap();
+    std::fs::write(repo.join("tool/a.txt"), "a\n").unwrap();
+    std::fs::write(machine.join("tool/a.txt"), "changed here\n").unwrap();
+    std::fs::write(machine.join("tool/b.txt"), "only here\n").unwrap();
+    let qd = bin.join("qd");
+    std::fs::write(
+        &qd,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'qd {}'; exit 0; fi\n\
+             echo \"$*\" >> '{}/asked'\n",
+            qd::VERSION,
+            t.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&qd, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::var("PATH").unwrap_or_default();
+    unsafe {
+        std::env::set_var("PATH", format!("{}:{path}", bin.display()));
+        std::env::set_var("QD_STATE", t.join("state"));
+        std::env::set_var("QD_REPO", &repo);
+    }
+
+    let mut d = Drive::new(900.0, 600.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "qd");
+    until(&mut d, &mut app, "the status read", |a| {
+        lua(
+            a,
+            "local s = kawoosh.qd.state(); kawoosh.echo(s and (s.modules and 'read' or s.why) or 'no')",
+        ) == "read"
+    });
+    let states = lua(
+        &mut app,
+        "local out = {} \
+         for _, m in ipairs(kawoosh.qd.state().modules) do \
+           for _, f in ipairs(m.files) do out[#out + 1] = m.name .. ':' .. f.rel .. '=' .. f.state end \
+         end kawoosh.echo(table.concat(out, ' '))",
+    );
+    assert_eq!(states, "tool:a.txt=differs tool:b.txt=machine only");
+
+    // `<` on the module: pulled in-process, the repo now the machine's.
+    d.keys(&mut app, "<");
+    until(&mut d, &mut app, "pulled", |_| {
+        std::fs::read_to_string(repo.join("tool/b.txt")).is_ok()
+    });
+    assert_eq!(
+        std::fs::read_to_string(repo.join("tool/a.txt")).unwrap(),
+        "changed here\n"
+    );
+    until(&mut d, &mut app, "read again, up to date", |a| {
+        lua(
+            a,
+            "local out = {} for _, f in ipairs(kawoosh.qd.state().modules[1].files) do out[#out+1] = f.rel .. '=' .. f.state end kawoosh.echo(#out == 0 and '0' or table.concat(out, ' '))",
+        ) == "0"
+    });
+
+    let other = t.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("o.conf"), "o\n").unwrap();
+    ex(
+        &mut d,
+        &mut app,
+        &format!("qd add {} other", other.display()),
+    );
+    until(&mut d, &mut app, "added", |_| {
+        repo.join("other/o.conf").is_file()
+    });
+    assert!(
+        std::fs::read_to_string(repo.join("other/qd.lua"))
+            .unwrap()
+            .contains("path = ")
+    );
+    assert_eq!(
+        std::fs::read_to_string(t.join("asked")).unwrap_or_default(),
+        "",
+        "the binary asked nothing but its version"
+    );
     std::fs::remove_dir_all(&t).ok();
 }

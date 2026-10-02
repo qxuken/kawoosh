@@ -23,6 +23,7 @@ pub mod diff;
 pub mod disk;
 pub mod dock;
 pub mod domains;
+pub mod dotfiles;
 pub mod du;
 pub mod editorconfig;
 pub mod fonts;

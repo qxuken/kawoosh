@@ -113,7 +113,29 @@ call, not made here.
 
 ### 5. kawoosh → qd: a `:qd` pane *(round three)*
 
-A Lua plugin in kawoosh over the `qd` CLI: `:qd` opens the status —
+A Lua plugin in kawoosh over qd — linked as a library, asked by the
+user after the first build over the CLI ("you probably can interface by
+building a library … publish qd even on a crates.io as well as drydock9
+registry"), and the binary when the two differ:
+
+- **qd is a library**: `qd::Session` (qd's `src/session.rs`) holds the
+  state and the repo and does every operation, returning data; the
+  binary is a printer over it, behind a default `cli` feature. The
+  crate is `qdot` (crates.io's `qd` is a float crate); lib and bin stay
+  `qd`. drydock9 from CI on a tag, crates.io by hand once qd has a
+  license.
+- **Which door**: the library while `qd::VERSION` is the version of the
+  `qd` on the PATH, or there is none — they share `state.toml`, the
+  journal and the trash, and an older reader of a newer journal is
+  where `undo` goes wrong — and the binary otherwise. Flags and `qd
+  init` always go to the binary.
+- **One at a time**: the library's operations run on one worker thread
+  in the order asked (`kawoosh/src/dotfiles.rs`). A test typing `<lt>`
+  — four keys, the last `>` — ran a push into a pull in flight and
+  removed a file the pull was writing; qd's own CLI never meets that,
+  being one process a command.
+
+The first build, over the CLI alone: `:qd` opens the status —
 `qd status --json`, by module, what push and pull would do — with
 keys to push, pull, add a file to a module, and `qd init` on a new
 machine. Shipped with kawoosh like the VCS panes; nothing when `qd` is
