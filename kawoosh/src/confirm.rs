@@ -135,11 +135,11 @@ impl Kawoosh {
                     TextStyle::new(self.chrome.face.size).color(pal.fg),
                 );
                 if !c.lines.is_empty() {
-                    ui.with(NodeSpec::column().grow_width().gap(2.0), |ui| {
+                    ui.with(NodeSpec::column().gap(2.0), |ui| {
                         // A plan's line wraps, after a `/` as at a space,
-                        // in the dialog's width (the column grows to it,
-                        // where sized to its lines it took the longest
-                        // one's): a path between two deep directories,
+                        // in the dialog's width (a fit column is held to
+                        // it since kui F116, where it took the longest
+                        // line's): a path between two deep directories,
                         // one line, ran past the dialog's edge, its
                         // destination past reading.
                         for l in c.lines.iter().take(LINES_SHOWN) {

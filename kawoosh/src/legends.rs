@@ -5,11 +5,18 @@
 //! `keys.legend` says how a pane's starts (`compact`, `full`); a flip is
 //! the pane's for the session, kept over a change of the setting.
 //!
-//! The state is shared with Lua ([`lua_door`]: `kawoosh._legend`), so a
-//! view reads its pane's as the chrome does.
+//! The way to a pane's legend is in its title bar (icons.md Decision
+//! 7): a view that draws a legend says so ([`Legends::declare`]), and the
+//! title bar ends in `⌥/ keys` — `⌥/ hide keys` while the legend is
+//! whole — for every pane whose view said so; the pane's own rows carry
+//! the legend only while it is whole.
+//!
+//! The state is shared with Lua ([`lua_door`]: `kawoosh._legend`,
+//! `kawoosh._legend_drawn`), so a view reads its pane's as the chrome
+//! does.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use kui_native::{Align, Color, NodeSpec, TextStyle, Ui, Value};
@@ -27,6 +34,11 @@ pub const KEY: &str = "<A-/>";
 #[derive(Default)]
 pub struct Legends {
     panes: HashMap<PaneId, bool>,
+    /// The panes whose view drew a legend this frame, and the frame
+    /// before: a title bar is drawn before its pane's rows, so it reads
+    /// both, and a change asks for a frame more ([`Self::settled`]).
+    drawn: HashSet<PaneId>,
+    last: HashSet<PaneId>,
 }
 
 pub type Shared = Rc<RefCell<Legends>>;
@@ -40,6 +52,28 @@ impl Legends {
     /// Pane `pane`'s legend made `full` (or compact) for the session.
     pub fn set(&mut self, pane: PaneId, full: bool) {
         self.panes.insert(pane, full);
+    }
+
+    /// A frame begins: what was drawn is the frame before's.
+    pub fn roll(&mut self) {
+        self.last = std::mem::take(&mut self.drawn);
+    }
+
+    /// Pane `pane`'s view drew a legend this frame.
+    pub fn declare(&mut self, pane: PaneId) {
+        self.drawn.insert(pane);
+    }
+
+    /// Whether pane `pane`'s title bar carries the way to its legend.
+    pub fn has(&self, pane: PaneId) -> bool {
+        self.drawn.contains(&pane) || self.last.contains(&pane)
+    }
+
+    /// Whether this frame's title bars saw what the views drew: false on
+    /// the frame a pane began or stopped drawing a legend, which asks
+    /// for one more.
+    pub fn settled(&self) -> bool {
+        self.drawn == self.last
     }
 
     /// Only the panes `alive` keeps.
@@ -77,20 +111,21 @@ pub struct LegendStyle {
 }
 
 /// A legend in the row open now, as pane `pane` has it: full, its
-/// items ([`crate::icons::legend_items`]) and the way back, `⌥/ hide
-/// keys`; compact, that way alone, `⌥/ keys`. A click on it flips it.
+/// items ([`crate::icons::legend_items`]); compact, nothing — the way to
+/// it is the title bar's, which this tells it of.
 pub fn legend(
     ui: &mut Ui<'_>,
     icons: &Icons,
+    legends: &Shared,
     pane: PaneId,
     full: bool,
     items: &[(&[&str], &str)],
     style: &LegendStyle,
 ) {
+    legends.borrow_mut().declare(pane);
     if full {
         crate::icons::legend_items(ui, icons, items, &style.keys, style.words);
     }
-    toggle(ui, icons, pane, full, style);
 }
 
 /// The way to a legend and back: `⌥/ keys`, or `⌥/ hide keys` when it
@@ -118,9 +153,18 @@ pub fn toggle(ui: &mut Ui<'_>, icons: &Icons, pane: PaneId, full: bool, style: &
 
 /// `kawoosh._legend(pane)`: pane `pane`'s flip, `nil` when it has none
 /// (boot.lua's `ctx.legend` reads `keys.legend` then);
-/// `kawoosh._legend(pane, full)` flips it.
+/// `kawoosh._legend(pane, full)` flips it; `kawoosh._legend_drawn(pane)`
+/// says the pane's view drew a legend this frame, for its title bar.
 pub(crate) fn lua_door(lua: &mlua::Lua, legends: Shared) -> mlua::Result<()> {
     let k: mlua::Table = lua.globals().get("kawoosh")?;
+    let drawn = legends.clone();
+    k.set(
+        "_legend_drawn",
+        lua.create_function(move |_, pane: PaneId| {
+            drawn.borrow_mut().declare(pane);
+            Ok(())
+        })?,
+    )?;
     k.set(
         "_legend",
         lua.create_function(move |_, (pane, full): (PaneId, Option<bool>)| {
@@ -162,5 +206,22 @@ mod tests {
         assert!(!l.full(2, false), "another pane its own");
         l.prune(|p| p != 1);
         assert!(!l.full(1, false), "a closed pane's forgotten");
+    }
+
+    #[test]
+    fn a_title_bar_reads_this_frames_legends_and_the_last() {
+        let mut l = Legends::default();
+        l.roll();
+        l.declare(1);
+        assert!(l.has(1) && !l.has(2));
+        assert!(!l.settled(), "a legend new this frame asks for one more");
+        l.roll();
+        assert!(l.has(1), "drawn before its view runs again");
+        l.declare(1);
+        assert!(l.settled());
+        l.roll();
+        assert!(!l.settled(), "one gone asks too");
+        l.roll();
+        assert!(!l.has(1) && l.settled());
     }
 }

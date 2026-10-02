@@ -31,6 +31,12 @@ pub(crate) const RIBBON_MS: f32 = 160.0;
 /// a second ask against a ribbon already gliding would measure from
 /// where the content has got to and stop the leg short of the column.
 const STRIP_SETTLING: u8 = 1;
+/// The band under a strip's columns that its scrollbar lies in while
+/// the ribbon has anything to scroll: kui's grabbable gutter (its
+/// `SCROLLBAR_HIT_W`), so the thumb sits under the panes' foot rather
+/// than over their last row, and a swipe or a press there is the
+/// ribbon's.
+const STRIP_BAR: f32 = 10.0;
 
 /// Where `zs` / `ze` / `zz` (`strip left` / `right` / `center`) put
 /// the focused column in the viewport.
@@ -474,6 +480,7 @@ impl Kawoosh {
             px
         };
         let (lead, trail) = (lead.max(0.0).round(), trail.max(0.0).round());
+        let overflows = lead + span + trail > vw + 0.5;
         // Which columns are worth their rows this frame: the ones the
         // ribbon's offset puts within half a viewport of it, and the
         // focused one wherever it is. Read from the model — the widths
@@ -516,9 +523,18 @@ impl Kawoosh {
                 // F80, asked for from here); a swipe is the hand's and
                 // lands whole.
                 .transition(RIBBON_MS)
-                // No bar, as the tab rows have none: kui's lies over
-                // the columns' foot, on the last row of every pane.
-                .scrollbar(kui_native::ScrollbarMode::Hidden)
+                // The bar in a band of its own under the columns, never
+                // over a pane's last row, and only while there is
+                // anything to scroll: no empty band under one column.
+                .scrollbar(if overflows {
+                    kui_native::ScrollbarMode::Visible
+                } else {
+                    kui_native::ScrollbarMode::Hidden
+                })
+                .padding(kui_native::Edges {
+                    b: if overflows { STRIP_BAR } else { 0.0 },
+                    ..Default::default()
+                })
                 .cross_align(Align::Start)
                 .label("strip"),
             |ui| {
@@ -703,6 +719,14 @@ impl Kawoosh {
             _ => Vec::new(),
         };
         let width = self.layout.rects.get(&pane).map_or(0.0, |r| r.w - 2.0);
+        // The way to the pane's key legend, at the bar's end, for a pane
+        // whose view draws one (icons.md Decision 7): `⌥/ keys`, or
+        // `⌥/ hide keys` while its rows carry it whole.
+        let legend = self
+            .legends
+            .borrow()
+            .has(pane)
+            .then(|| self.legend_full(pane));
         // A pane goes where its title bar is dragged: in the tab, in
         // the dock, or from one into the other (`Layout::move_pane`).
         let dragged = self.pane_drag.is_some_and(|(p, _, _)| p == pane);
@@ -780,7 +804,12 @@ impl Kawoosh {
                             + 12.0
                             + ui.measure_text(&c.name, &style, None).width.min(80.0)
                     });
-                    let name_room = width - 16.0 - dot - reserve;
+                    let hint_style = TextStyle::new(self.chrome.small).color(pal.faint);
+                    let hint = legend.map_or(0.0, |full| {
+                        let word = if full { "hide keys" } else { "keys" };
+                        ui.measure_text(word, &hint_style, None).width + 48.0
+                    });
+                    let name_room = width - 16.0 - dot - reserve - hint;
                     let name = fit_title(&name, |s| {
                         ui.measure_text(s, &style, None).width <= name_room
                     });
@@ -790,8 +819,26 @@ impl Kawoosh {
                         crate::icons::icon(ui, &set, "dot", self.chrome.small, pal.command);
                     }
                     if !crumbs.is_empty() {
-                        let room = width - 16.0 - ui.measure_text(&name, &style, None).width - dot;
+                        let room =
+                            width - 16.0 - ui.measure_text(&name, &style, None).width - dot - hint;
                         self.breadcrumbs(ui, pane, &crumbs, room, focused);
+                    }
+                    if let Some(full) = legend {
+                        ui.leaf(NodeSpec::row().grow_width());
+                        crate::legends::toggle(
+                            ui,
+                            &self.icons.borrow(),
+                            pane,
+                            full,
+                            &crate::legends::LegendStyle {
+                                keys: crate::icons::KeyStyle::new(
+                                    TextStyle::new(self.chrome.small).color(pal.dim),
+                                    pal.border,
+                                ),
+                                words: hint_style,
+                                hover: pal.hover,
+                            },
+                        );
                     }
                 });
                 // Where the dragged pane would land here: the whole pane
@@ -1679,7 +1726,11 @@ impl Kawoosh {
                 .clip()
                 .on_key(tag.clone())
                 .on_drag(tag.clone())
+                // Up and down only: sideways is the text column's while
+                // it has room that way (kui F118) and else the strip's,
+                // which a pane taking both axes here never let reach it.
                 .on_scroll(tag.clone())
+                .scroll_axes(kui_native::ScrollAxes::Y)
                 .cursor(kui_native::CursorShape::Text)
                 .role(Role::MultilineTextInput)
                 .label(title.as_str()),
@@ -1723,8 +1774,12 @@ impl Kawoosh {
                     "lines",
                     if tall {
                         // Its rect, for the next frame to find the
-                        // caret's row in it (`markdown::Anchor`).
+                        // caret's row in it (`markdown::Anchor`). Rows
+                        // as tall as they wrap to have no sideways
+                        // scroll: a swipe that way is a table's, or the
+                        // strip's.
                         lines_spec
+                            .scroll_axes(kui_native::ScrollAxes::Y)
                             .clip()
                             .on_layout(Value::map([("kind", "lines".into())]))
                     } else {

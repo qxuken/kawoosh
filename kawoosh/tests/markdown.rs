@@ -1164,3 +1164,137 @@ fn the_cell_past_a_rows_end_stays_in_the_pane() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A markdown pane in a strip with a column beside it, focused on the
+/// markdown, the ribbon at its start; time let pass so the rects are
+/// where a hand would see them.
+fn md_in_a_strip(dir: &std::path::Path) -> (Drive, Kawoosh, u64) {
+    let (mut d, mut app) = launch(dir, 700.0);
+    ex(&mut d, &mut app, "layout scroll");
+    let md = app.layout.focused();
+    d.press(&mut app, "<C-w>v");
+    d.press(&mut app, "<Esc>");
+    d.press(&mut app, "<C-w>h");
+    assert_eq!(app.layout.focused(), md);
+    d.press(&mut app, "gg");
+    for _ in 0..12 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
+    (d, app, md)
+}
+
+/// A sideways swipe that starts on wrapped prose — rows with no
+/// sideways scroll — moves the strip around the pane, where the pane
+/// took it for a sideways offset it never draws (the todo of
+/// 2026-10-02: "when i am … not over the table i should be able to
+/// scroll horizontally").
+#[test]
+fn a_sideways_swipe_over_prose_moves_the_strip() {
+    let dir = fixture("prose-swipe");
+    let (mut d, mut app, md) = md_in_a_strip(&dir);
+    let before = app.layout.rects[&md];
+    let (x, y, _, h) = rect_of_text(&d, "The end.").expect("the closing prose");
+    for (i, dx) in [-30.0, -60.0].into_iter().enumerate() {
+        d.scroll_gesture(
+            &mut app,
+            x + 5.0,
+            y + h / 2.0,
+            kui_native::Vec2::new(dx, 0.0),
+            i == 0,
+        );
+        d.frame(&mut app);
+    }
+    for _ in 0..6 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
+    let after = app.layout.rects[&md];
+    assert!(
+        after.x < before.x - 50.0,
+        "the strip moved: {before:?} → {after:?}"
+    );
+}
+
+/// A wide table takes a sideways swipe while it has room that way; at
+/// its right edge a swipe further right is the strip's, and back left
+/// the table's again (kui F118: a handler that scrolls an axis is
+/// answered by its room).
+#[test]
+fn a_table_at_its_edge_passes_a_sideways_swipe_to_the_strip() {
+    let dir = fixture("table-edge");
+    let (mut d, mut app, md) = md_in_a_strip(&dir);
+    let header = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| {
+                n.text.as_deref() == Some("another rather long column heading to make it wide")
+            })
+            .map(|n| n.rect)
+            .expect("the wide table's third header")
+    };
+    let h0 = header(&d);
+    let at = (h0.x - 100.0, h0.y + 5.0);
+    let swipe = |d: &mut Drive, app: &mut Kawoosh, dx: f32| {
+        d.scroll_gesture(app, at.0, at.1, kui_native::Vec2::new(dx, 0.0), true);
+        for _ in 0..4 {
+            d.advance(0.05);
+            d.frame(app);
+        }
+    };
+    // One touch, far right: the table to its edge, and the same
+    // gesture going on past it stays the table's — the strip moves
+    // only for another touch, never partway through this one.
+    let pane0 = app.layout.rects[&md];
+    let mut edge = None;
+    for i in 0..30 {
+        let begins = i == 0;
+        d.scroll_gesture(
+            &mut app,
+            at.0,
+            at.1,
+            kui_native::Vec2::new(-200.0, 0.0),
+            begins,
+        );
+        d.advance(0.016);
+        d.frame(&mut app);
+        let h = header(&d);
+        if edge == Some(h.x) {
+            break;
+        }
+        edge = Some(h.x);
+    }
+    for _ in 0..10 {
+        d.scroll_gesture(
+            &mut app,
+            at.0,
+            at.1,
+            kui_native::Vec2::new(-200.0, 0.0),
+            false,
+        );
+        d.advance(0.016);
+        d.frame(&mut app);
+    }
+    let h1 = header(&d);
+    assert!(h1.x < h0.x - 50.0, "the table moved: {h0:?} → {h1:?}");
+    assert_eq!(Some(h1.x), edge, "at its edge");
+    assert_eq!(
+        app.layout.rects[&md].x, pane0.x,
+        "the strip did not, past the edge either"
+    );
+    // Further right, a gesture of its own: the table has no room, the
+    // strip does.
+    swipe(&mut d, &mut app, -60.0);
+    let pane1 = app.layout.rects[&md];
+    assert!(
+        pane1.x < pane0.x - 30.0,
+        "the strip took it: {pane0:?} → {pane1:?}"
+    );
+    // Back left over the table: its own again.
+    let h2 = header(&d);
+    swipe(&mut d, &mut app, 40.0);
+    let h3 = header(&d);
+    assert!(h3.x > h2.x + 20.0, "the table came back: {h2:?} → {h3:?}");
+    assert_eq!(app.layout.rects[&md].x, pane1.x, "and the strip stayed");
+}
