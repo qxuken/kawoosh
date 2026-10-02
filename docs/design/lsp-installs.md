@@ -85,31 +85,30 @@ servers on those commands. `--spec` carries a package the settings say
 { "x", "dep<2" } }`, `{ cargo = "x", args = { … } }`. A `cmd` that
 names another program clears both, unless a new one is said.
 
-### 4. qd → kawoosh: a `kawoosh` key *(round two)*
+### 4. The servers a machine wants are a setting, synced as the settings are *(the user's)*
 
-qd plugins are pure: `compile` returns files, `packages.install`
-returns argv lists the core runs, so `--dry-run` and `undo` hold. The
-plugin is a few lines in this repository, `contrib/qd/kawoosh.lua`,
-copied into the dotfiles' `plugins/` as qd's own `contrib/apt.lua` is:
+First built as a qd plugin — a `kawoosh = { lsp = { … } }` key in a
+dotfiles module, its `packages.install` running `kawoosh lsp install` —
+and taken out the next day: "no plugin in qd is not right. let just add
+list of ensure installed lsps inside a kawoosh itself. kawoosh need to
+have easy setup for it's sync into qd. and opening as a workspace
+dotfiles."
 
-```lua
--- dotfiles/kawoosh/qd.lua
-return {
-  path = qd.path.config("kawoosh"),          -- settings.lua, init.lua, plugins: synced by qd's core
-  kawoosh = { lsp = { "rust", "typescript", "yaml", "toml", "markdown" } },
-}
-```
+- **`lsp.ensure_installed`**, a list in kawoosh's settings (`{ "rust",
+  "yaml@1.15.0", "eslint" }`), is what a machine installs: kawoosh does
+  it at launch and when the settings change, in the background, a
+  corner line saying so (Decision 6).
+- **`:qd setup`** is the one step to keep kawoosh's config folder —
+  `settings.lua` with that list in it, `init.lua`, plugins — in the
+  dotfiles: module `kawoosh`, `fonts/**` left out, pulled in; one that
+  keeps the folder already is pulled again. A new machine's `qd init`
+  brings the settings, and kawoosh's first launch the servers. qd needs
+  no plugin and knows nothing of servers.
+- **`:qd open`** opens the dotfiles repository as a workspace: a tab on
+  it, its working directory (workspaces.md Decision 6's gesture).
 
-`packages.install` → `kawoosh lsp install …`, `upgrade` → `kawoosh lsp
-update`, `list` the servers. Everything that knows a server — its
-package, its folder — stays in kawoosh: "the code put under our repo".
-The settings are a module like any other; nothing of qd's is needed
-for them but `path`.
-
-One thing on qd's side: `qd packages install` runs the first available
-package plugin only — brew on macOS — so the `kawoosh` key needs
-`--manager kawoosh` until qd runs every available one. That is qd's
-call, not made here.
+Beaten: the qd plugin (qd's `packages` runs one manager, and the list
+lived apart from the settings it serves).
 
 ### 5. kawoosh → qd: a `:qd` pane *(round three)*
 
@@ -158,14 +157,8 @@ started from the folder). Run for real into a scratch folder:
 yaml-language-server by npm; cmake-language-server and fortls by uv —
 cmake-language-server broke on pygls 2, hence its `pygls<2`.
 
-Round two, 2026-10-02: Decision 4. `contrib/qd/kawoosh.lua`, the
-`kawoosh` key (`lsp`, a list of names), its program found on the PATH
-or in `Kawoosh.app`. Tried against qd 0.x with a scratch dotfiles repo
-and `QD_STATE` of its own: two modules' lists folded first mention
-first, `qd packages install --manager kawoosh --dry-run` printing
-`kawoosh lsp install yaml toml markdown`, `upgrade` `kawoosh lsp
-update`, `lsps` refused by name; plain `qd packages list` takes brew,
-as Decision 4 says.
+Round two, 2026-10-02: the qd plugin, `contrib/qd/kawoosh.lua` —
+taken out 2026-10-03 for Decision 4 as it now reads.
 
 Round three, 2026-10-02: Decision 5, over the `qd` CLI.
 `kawoosh/lua/qd.lua` (bundled after vcs): `:qd`, `:qd push`, `:qd

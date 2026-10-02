@@ -264,6 +264,39 @@ fn the_linked_library_is_the_door_when_it_is_the_binarys_version() {
         ) == "0"
     });
 
+    // `:qd setup`: kawoosh's config folder as module `kawoosh`, its
+    // fonts left out; again, the module kept is pulled again.
+    let config = t.join("config/kawoosh");
+    std::fs::create_dir_all(config.join("fonts")).unwrap();
+    std::fs::write(config.join("settings.lua"), "return {}\n").unwrap();
+    std::fs::write(config.join("fonts/Paid.ttf"), "font").unwrap();
+    unsafe { std::env::set_var("KAWOOSH_SETTINGS", config.join("settings.lua")) };
+    ex(&mut d, &mut app, "qd setup");
+    until(&mut d, &mut app, "set up", |_| {
+        repo.join("kawoosh/settings.lua").is_file()
+    });
+    assert!(!repo.join("kawoosh/fonts").exists(), "fonts left out");
+    until(&mut d, &mut app, "read again", |a| {
+        lua(
+            a,
+            "local n = 0 for _, m in ipairs(kawoosh.qd.state().modules) do if m.name == 'kawoosh' then n = 1 end end kawoosh.echo(n)",
+        ) == "1"
+    });
+    std::fs::write(config.join("settings.lua"), "return { x = 1 }\n").unwrap();
+    ex(&mut d, &mut app, "qd setup");
+    until(&mut d, &mut app, "pulled again", |_| {
+        std::fs::read_to_string(repo.join("kawoosh/settings.lua")).unwrap_or_default()
+            == "return { x = 1 }\n"
+    });
+
+    // `:qd open`: a tab on the repository, its working directory.
+    let tabs = app.layout.tabs.len();
+    ex(&mut d, &mut app, "qd open");
+    until(&mut d, &mut app, "opened", |a| {
+        a.layout.tabs.len() == tabs + 1
+    });
+    assert!(app.cwd.ends_with("repo"), "{}", app.cwd.display());
+
     let other = t.join("other");
     std::fs::create_dir_all(&other).unwrap();
     std::fs::write(other.join("o.conf"), "o\n").unwrap();

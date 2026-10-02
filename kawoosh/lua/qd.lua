@@ -18,7 +18,9 @@
 --   adds a module (`:qd add`), `r` reads the status again, `j` `k`
 --   `gg` `G` walk, `q` closes.
 --
--- `:qd add [PATH] [NAME]` starts keeping a folder: it writes
+-- `:qd setup` is the one step to keep kawoosh's own settings in the
+-- dotfiles (`qd.setup`), `:qd open` opens the repository as a workspace
+-- (a tab on it). `:qd add [PATH] [NAME]` starts keeping a folder: it writes
 -- `NAME/qd.lua` in the repo — `path` the folder, under the home as
 -- `qd.path.home(…)` — and pulls it in. Bare, it is kawoosh's own config
 -- folder as module `kawoosh`: your settings, `init.lua` and plugins,
@@ -294,7 +296,7 @@ kawoosh.view(VIEW, function(ctx)
   end
   if S.busy then head[#head + 1] = note(S.busy .. "…", t.accent) end
   head[#head + 1] = ctx.legend({ { { "j", "k" }, "walk" }, { ">", "pushes" }, { "<", "pulls" },
-    { "<CR>", "opens" }, { "a", "adds" }, { "r", "reads again" }, { "q", "closes" } }, { size = NOTE })
+    { "<CR>", "opens" }, { "a", "adds" }, { "o", "opens the repo" }, { "r", "reads again" }, { "q", "closes" } }, { size = NOTE })
 
   S.rows = {}
   for _, m in ipairs(S.modules or {}) do
@@ -430,6 +432,44 @@ kawoosh.command("qd add", function(ctx)
   qd.add(a[1], a[2])
 end, { args = { "path", "text" }, doc = "keep a folder in the dotfiles: `NAME/qd.lua` written for PATH and pulled in; bare, kawoosh's config folder as `kawoosh`" })
 
+-- qd.setup(): kawoosh's own settings kept by qd — its config folder
+-- (`settings.lua`, `init.lua`, plugins; `lsp.ensure_installed` among
+-- the settings, so a new machine installs its servers at the first
+-- launch) — as module `kawoosh`, pulled in; one that keeps it already
+-- is pulled again.
+function qd.setup()
+  local mine = config_dir()
+  qd.status(function(modules, why, repo)
+    if not modules then
+      return kawoosh.echo("qd setup: " .. tostring(why) .. " (a new machine: :qd init URL)")
+    end
+    for _, m in ipairs(modules) do
+      -- By its folder, or by the name `:qd setup` gives it: a folder
+      -- under a link reads two ways (`/var`, `/private/var`).
+      if m.name == "kawoosh" or fs.expand(m.dest) == fs.expand(mine) then
+        return run_qd({ "pull", m.name }, "qd setup: " .. m.name .. " keeps " .. fs.short(mine) .. ", pulled")
+      end
+    end
+    qd.add()
+  end)
+end
+
+-- qd.open(): the dotfiles repository as a workspace — a tab on it, its
+-- working directory.
+function qd.open()
+  qd.status(function(_, why, repo)
+    if not repo then return kawoosh.echo("qd open: " .. tostring(why or "no dotfiles repo")) end
+    kawoosh.open(repo, { split = "tab" })
+    fs.chdir(repo)
+  end)
+end
+
+kawoosh.command("qd setup", function() qd.setup() end,
+  { doc = "keep kawoosh's settings in your dotfiles: its config folder as module `kawoosh`, pulled in" })
+
+kawoosh.command("qd open", function() qd.open() end,
+  { doc = "the dotfiles repository as a workspace: a tab on it" })
+
 kawoosh.command("qd init", function(ctx)
   local a = ctx.args or {}
   local line = "qd init"
@@ -448,7 +488,7 @@ on("module pull", function()
   local c = current()
   if c then run_qd({ "pull", c.module.name }, "qd pull " .. c.module.name) end
 end, "pull the cursor's module: this machine into the repo")
-on("open", function()
+on("open row", function()
   local c = current()
   if not c then return end
   if c.file and c.file.state ~= "repo only" then
@@ -461,6 +501,7 @@ on("open", function()
 end, "open the cursor's file, or its module's folder")
 on("refresh", refresh, "read qd's status again")
 on("add here", function() kawoosh.cmdline("qd add ") end, "keep a folder in the dotfiles")
+on("open repo", function() qd.open() end, "the dotfiles repository as a workspace")
 on("up", function() walk(-1) end, "the cursor a row up")
 on("down", function() walk(1) end, "the cursor a row down")
 on("first", function() walk(-1e9) end, "the cursor on the first row")
@@ -468,7 +509,7 @@ on("last", function() walk(1e9) end, "the cursor on the last row")
 on("close", close, "close the pane")
 
 for k, c in pairs {
-  [">"] = "module push", ["<lt>"] = "module pull", ["<CR>"] = "open", r = "refresh", a = "add here",
+  [">"] = "module push", ["<lt>"] = "module pull", ["<CR>"] = "open row", r = "refresh", a = "add here", o = "open repo",
   k = "up", j = "down", ["<Up>"] = "up", ["<Down>"] = "down", gg = "first", G = "last",
   q = "close", ["<Esc>"] = "close",
 } do
