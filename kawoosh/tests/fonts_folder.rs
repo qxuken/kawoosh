@@ -109,3 +109,46 @@ fn a_font_dropped_in_the_users_folder_is_a_family() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A font installed on the machine while kawoosh runs: kui rescans the
+/// system's fonts and says so with a `fonts` event (kui alpha.32), and
+/// the families are read again — the completion and the pane list it,
+/// as a font dropped in the user's folder is. Stood in for by a face
+/// loaded after the families were read, and the event kui would raise.
+#[test]
+fn a_font_installed_while_running_is_a_family() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-fonts-ev-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = Kawoosh::from_file(&dir.join("a.txt"));
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    let name = "Intel One Mono";
+    if families(&mut d, &mut app).iter().any(|f| f == name) {
+        // Installed on this machine already: nothing to tell apart.
+        return;
+    }
+    let intel =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts/IntelOneMono");
+    kawoosh::fonts::load_shipped(&mut d.core, &intel);
+    d.frame(&mut app);
+    assert!(
+        !families(&mut d, &mut app).iter().any(|f| f == name),
+        "not read again until told"
+    );
+    let ev = kui_native::UiEvent::on(
+        kui_native::OriginId::HOST,
+        kui_native::Key::ROOT,
+        kui_native::Value::map([("kind", kui_native::Value::str("fonts"))]),
+    );
+    kui_native::App::on_event_with(&mut app, ev, &mut d.core);
+    d.frame(&mut app);
+    assert!(
+        families(&mut d, &mut app).iter().any(|f| f == name),
+        "the family appears"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

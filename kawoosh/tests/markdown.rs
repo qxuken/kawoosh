@@ -1221,7 +1221,6 @@ fn a_sideways_swipe_over_prose_moves_the_strip() {
 /// the table's again (kui F118: a handler that scrolls an axis is
 /// answered by its room).
 #[test]
-#[ignore = "needs kui F118 (unreleased, after alpha.32): un-ignore with the pin that carries it"]
 fn a_table_at_its_edge_passes_a_sideways_swipe_to_the_strip() {
     let dir = fixture("table-edge");
     let (mut d, mut app, md) = md_in_a_strip(&dir);

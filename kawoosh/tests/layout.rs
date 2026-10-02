@@ -1037,7 +1037,6 @@ fn the_strips_scrollbar_has_a_band_of_its_own_under_the_columns() {
 /// strip: the text column scrolls sideways only while it has room that
 /// way (kui F118), and the pane around it takes up and down alone.
 #[test]
-#[ignore = "needs kui F118 (unreleased, after alpha.32): un-ignore with the pin that carries it"]
 fn a_sideways_swipe_over_text_that_fits_moves_the_strip() {
     let vw = 900.0;
     let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");

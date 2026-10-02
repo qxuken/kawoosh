@@ -2779,6 +2779,14 @@ impl Kawoosh {
             }
             return;
         }
+        // A font installed on the machine or taken off it while kawoosh
+        // runs (kui alpha.32 rescans and says so): the families read
+        // again at the frame, as when the user's folder changes, so the
+        // fonts pane lists it and a `font.family` naming it resolves.
+        if ev.kind() == Some("fonts") {
+            self.look.fonts.borrow_mut().rescan = true;
+            return;
+        }
         if let Some(m) = ev.modifiers() {
             self.mods = m;
             return;

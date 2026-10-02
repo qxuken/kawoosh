@@ -355,7 +355,12 @@ language's parser is looked for in goes the same way.
 
 *Beat:* watching the system's font folders too. A font installed
 through the OS is the OS's to announce, and its folders are many and
-large; a restart sees it.
+large. *Since kui alpha.32 the OS's announcement arrives:* the runner
+rescans when macOS or Windows says the installed fonts changed and
+raises a `fonts` event, which reads the families again as the folder's
+watch does — the pane, the completion and a waiting `font.family` see
+the font with no restart (`a_font_installed_while_running_is_a_family`).
+Linux's fontconfig says nothing; a restart still sees it there.
 
 ### 8. The families by where they came from
 
