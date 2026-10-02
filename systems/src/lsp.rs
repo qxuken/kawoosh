@@ -58,6 +58,10 @@ pub struct ServerDef {
     /// a private buffer's text never leaves the process
     /// (docs/design/secrets.md Decision 1).
     pub private: Vec<String>,
+    /// The shell line that installs its command (`npm i -g …`), run by
+    /// `:lsp install` in a pane of its own; empty for none known
+    /// (docs/design/lsp-servers.md).
+    pub install: String,
 }
 
 /// A language's files: by extension (no dot, any case) or whole name.
@@ -85,6 +89,7 @@ impl Default for ServerDef {
             load_max: LOAD_MAX,
             files: Vec::new(),
             private: Vec::new(),
+            install: String::new(),
         }
     }
 }
@@ -135,6 +140,10 @@ impl ServerDef {
 fn language_id(language: &str) -> &str {
     match language {
         "tsx" => "typescriptreact",
+        "bash" => "shellscript",
+        "objc" => "objective-c",
+        "gomod" => "go.mod",
+        "nu" => "nushell",
         l => l,
     }
 }
@@ -152,69 +161,506 @@ fn setting_at(settings: &Value, section: Option<&str>) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// A builtin server: its name, the languages it serves (empty for its
+/// name alone), its command and arguments, its root markers and the
+/// line that installs it here.
+struct Builtin {
+    name: &'static str,
+    languages: &'static [&'static str],
+    command: &'static str,
+    args: &'static [&'static str],
+    roots: &'static [&'static str],
+    install: Install,
+}
+
+/// How a server is installed: one line everywhere, or one for macOS
+/// and Linux and one for Windows — `""` where no line is known.
+#[derive(Clone, Copy)]
+enum Install {
+    Any(&'static str),
+    Os {
+        mac: &'static str,
+        linux: &'static str,
+        windows: &'static str,
+    },
+}
+
+impl Install {
+    fn here(self) -> &'static str {
+        match self {
+            Install::Any(line) => line,
+            Install::Os {
+                mac,
+                linux,
+                windows,
+            } => {
+                if cfg!(target_os = "macos") {
+                    mac
+                } else if cfg!(windows) {
+                    windows
+                } else {
+                    linux
+                }
+            }
+        }
+    }
+}
+
+/// Homebrew's, on macOS and Linux; none known on Windows.
+const fn brew(line: &'static str) -> Install {
+    Install::Os {
+        mac: line,
+        linux: line,
+        windows: "",
+    }
+}
+
+/// One program's npm package, for the many servers published there.
+const VSCODE_EXTRACTED: Install = Install::Any("npm i -g vscode-langservers-extracted");
+
+/// The builtin servers, by the language each is first for: the ones
+/// every editor's LSP setup reaches for, run as their projects install
+/// them (docs/design/lsp-servers.md).
+const BUILTIN: &[Builtin] = &[
+    Builtin {
+        name: "rust",
+        languages: &[],
+        command: "rust-analyzer",
+        args: &[],
+        roots: &["Cargo.toml"],
+        install: Install::Any("rustup component add rust-analyzer"),
+    },
+    Builtin {
+        name: "typescript",
+        languages: &["typescript", "tsx", "javascript"],
+        command: "typescript-language-server",
+        args: &["--stdio"],
+        roots: &["tsconfig.json", "jsconfig.json", "package.json"],
+        install: Install::Any("npm i -g typescript-language-server typescript@5"),
+    },
+    Builtin {
+        name: "lua",
+        languages: &[],
+        command: "lua-language-server",
+        args: &[],
+        roots: &[".luarc.json", ".luarc.jsonc"],
+        install: brew("brew install lua-language-server"),
+    },
+    Builtin {
+        name: "python",
+        languages: &[],
+        command: "pyright-langserver",
+        args: &["--stdio"],
+        roots: &[
+            "pyproject.toml",
+            "pyrightconfig.json",
+            "setup.py",
+            "requirements.txt",
+        ],
+        install: Install::Any("npm i -g pyright"),
+    },
+    Builtin {
+        name: "go",
+        languages: &["go", "gomod"],
+        command: "gopls",
+        args: &[],
+        roots: &["go.work", "go.mod"],
+        install: Install::Any("go install golang.org/x/tools/gopls@latest"),
+    },
+    Builtin {
+        name: "c",
+        languages: &["c", "cpp", "objc"],
+        command: "clangd",
+        args: &[],
+        roots: &[
+            "compile_commands.json",
+            ".clangd",
+            "CMakeLists.txt",
+            "Makefile",
+        ],
+        install: Install::Os {
+            mac: "xcode-select --install",
+            linux: "",
+            windows: "winget install LLVM.LLVM",
+        },
+    },
+    Builtin {
+        name: "bash",
+        languages: &[],
+        command: "bash-language-server",
+        args: &["start"],
+        roots: &[],
+        install: Install::Any("npm i -g bash-language-server"),
+    },
+    Builtin {
+        name: "fish",
+        languages: &[],
+        command: "fish-lsp",
+        args: &["start"],
+        roots: &[],
+        install: Install::Any("npm i -g fish-lsp"),
+    },
+    Builtin {
+        name: "nu",
+        languages: &[],
+        command: "nu",
+        args: &["--lsp"],
+        roots: &[],
+        install: Install::Os {
+            mac: "brew install nushell",
+            linux: "cargo install nu --locked",
+            windows: "winget install nushell",
+        },
+    },
+    Builtin {
+        name: "html",
+        languages: &[],
+        command: "vscode-html-language-server",
+        args: &["--stdio"],
+        roots: &["package.json"],
+        install: VSCODE_EXTRACTED,
+    },
+    Builtin {
+        name: "css",
+        languages: &["css", "scss"],
+        command: "vscode-css-language-server",
+        args: &["--stdio"],
+        roots: &["package.json"],
+        install: VSCODE_EXTRACTED,
+    },
+    Builtin {
+        name: "json",
+        languages: &["json", "jsonc"],
+        command: "vscode-json-language-server",
+        args: &["--stdio"],
+        roots: &[],
+        install: VSCODE_EXTRACTED,
+    },
+    Builtin {
+        name: "yaml",
+        languages: &[],
+        command: "yaml-language-server",
+        args: &["--stdio"],
+        roots: &[],
+        install: Install::Any("npm i -g yaml-language-server"),
+    },
+    Builtin {
+        name: "toml",
+        languages: &[],
+        command: "taplo",
+        args: &["lsp", "stdio"],
+        roots: &["taplo.toml", ".taplo.toml"],
+        install: Install::Os {
+            mac: "brew install taplo",
+            linux: "cargo install taplo-cli --locked --features lsp",
+            windows: "cargo install taplo-cli --locked --features lsp",
+        },
+    },
+    Builtin {
+        name: "markdown",
+        languages: &[],
+        command: "marksman",
+        args: &["server"],
+        roots: &[".marksman.toml"],
+        install: brew("brew install marksman"),
+    },
+    Builtin {
+        name: "dockerfile",
+        languages: &[],
+        command: "docker-langserver",
+        args: &["--stdio"],
+        roots: &[],
+        install: Install::Any("npm i -g dockerfile-language-server-nodejs"),
+    },
+    Builtin {
+        name: "svelte",
+        languages: &[],
+        command: "svelteserver",
+        args: &["--stdio"],
+        roots: &["svelte.config.js", "package.json"],
+        install: Install::Any("npm i -g svelte-language-server"),
+    },
+    Builtin {
+        name: "php",
+        languages: &[],
+        command: "intelephense",
+        args: &["--stdio"],
+        roots: &["composer.json"],
+        install: Install::Any("npm i -g intelephense"),
+    },
+    Builtin {
+        name: "ruby",
+        languages: &[],
+        command: "ruby-lsp",
+        args: &[],
+        roots: &["Gemfile", ".ruby-version"],
+        install: Install::Any("gem install ruby-lsp"),
+    },
+    Builtin {
+        name: "java",
+        languages: &[],
+        command: "jdtls",
+        args: &[],
+        roots: &[
+            "pom.xml",
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+        ],
+        install: brew("brew install jdtls"),
+    },
+    Builtin {
+        name: "kotlin",
+        languages: &[],
+        command: "kotlin-language-server",
+        args: &[],
+        roots: &[
+            "settings.gradle.kts",
+            "settings.gradle",
+            "build.gradle.kts",
+            "build.gradle",
+            "pom.xml",
+        ],
+        install: brew("brew install kotlin-language-server"),
+    },
+    Builtin {
+        name: "scala",
+        languages: &[],
+        command: "metals",
+        args: &[],
+        roots: &["build.sbt", "build.sc", "build.mill"],
+        install: Install::Any("cs install metals"),
+    },
+    Builtin {
+        name: "csharp",
+        languages: &[],
+        command: "csharp-ls",
+        args: &[],
+        roots: &["global.json", "Directory.Build.props"],
+        install: Install::Any("dotnet tool install --global csharp-ls"),
+    },
+    Builtin {
+        name: "fsharp",
+        languages: &[],
+        command: "fsautocomplete",
+        args: &[],
+        roots: &["global.json", "Directory.Build.props"],
+        install: Install::Any("dotnet tool install --global fsautocomplete"),
+    },
+    Builtin {
+        name: "dart",
+        languages: &[],
+        command: "dart",
+        args: &["language-server", "--protocol=lsp"],
+        roots: &["pubspec.yaml"],
+        install: brew("brew install dart-lang/dart/dart"),
+    },
+    Builtin {
+        name: "zig",
+        languages: &[],
+        command: "zls",
+        args: &[],
+        roots: &["build.zig", "build.zig.zon"],
+        install: brew("brew install zls"),
+    },
+    Builtin {
+        name: "haskell",
+        languages: &[],
+        command: "haskell-language-server-wrapper",
+        args: &["--lsp"],
+        roots: &["hie.yaml", "stack.yaml", "cabal.project", "package.yaml"],
+        install: Install::Any("ghcup install hls"),
+    },
+    Builtin {
+        name: "ocaml",
+        languages: &[],
+        command: "ocamllsp",
+        args: &[],
+        roots: &["dune-project", "dune-workspace"],
+        install: Install::Any("opam install ocaml-lsp-server"),
+    },
+    Builtin {
+        name: "elixir",
+        languages: &[],
+        command: "elixir-ls",
+        args: &[],
+        roots: &["mix.exs"],
+        install: brew("brew install elixir-ls"),
+    },
+    Builtin {
+        name: "erlang",
+        languages: &[],
+        command: "erlang_ls",
+        args: &[],
+        roots: &["rebar.config", "erlang.mk"],
+        install: brew("brew install erlang_ls"),
+    },
+    Builtin {
+        name: "gleam",
+        languages: &[],
+        command: "gleam",
+        args: &["lsp"],
+        roots: &["gleam.toml"],
+        install: brew("brew install gleam"),
+    },
+    Builtin {
+        name: "elm",
+        languages: &[],
+        command: "elm-language-server",
+        args: &[],
+        roots: &["elm.json"],
+        install: Install::Any("npm i -g @elm-tooling/elm-language-server"),
+    },
+    Builtin {
+        name: "purescript",
+        languages: &[],
+        command: "purescript-language-server",
+        args: &["--stdio"],
+        roots: &["spago.yaml", "spago.dhall"],
+        install: Install::Any("npm i -g purescript-language-server"),
+    },
+    Builtin {
+        name: "clojure",
+        languages: &[],
+        command: "clojure-lsp",
+        args: &[],
+        roots: &["deps.edn", "project.clj", "bb.edn", "shadow-cljs.edn"],
+        install: brew("brew install clojure-lsp/brew/clojure-lsp-native"),
+    },
+    Builtin {
+        name: "racket",
+        languages: &[],
+        command: "racket",
+        args: &["-l", "racket-langserver"],
+        roots: &["info.rkt"],
+        install: Install::Any("raco pkg install --auto racket-langserver"),
+    },
+    Builtin {
+        name: "nix",
+        languages: &[],
+        command: "nil",
+        args: &[],
+        roots: &["flake.nix"],
+        install: Install::Any("nix profile install nixpkgs#nil"),
+    },
+    Builtin {
+        name: "cmake",
+        languages: &[],
+        command: "cmake-language-server",
+        args: &[],
+        roots: &["CMakeLists.txt"],
+        install: Install::Any("pipx install cmake-language-server"),
+    },
+    Builtin {
+        name: "fortran",
+        languages: &[],
+        command: "fortls",
+        args: &[],
+        roots: &[".fortls"],
+        install: Install::Any("pipx install fortls"),
+    },
+    Builtin {
+        name: "r",
+        languages: &[],
+        command: "R",
+        args: &["--no-echo", "-e", "languageserver::run()"],
+        roots: &["DESCRIPTION", ".Rprofile"],
+        install: Install::Any(
+            "R -e 'install.packages(\"languageserver\", repos = \"https://cloud.r-project.org\")'",
+        ),
+    },
+    Builtin {
+        name: "prisma",
+        languages: &[],
+        command: "prisma-language-server",
+        args: &["--stdio"],
+        roots: &["package.json"],
+        install: Install::Any("npm i -g @prisma/language-server"),
+    },
+    Builtin {
+        name: "proto",
+        languages: &[],
+        command: "protols",
+        args: &[],
+        roots: &["protols.toml", "buf.yaml"],
+        install: Install::Any("cargo install protols"),
+    },
+    Builtin {
+        name: "dot",
+        languages: &[],
+        command: "dot-language-server",
+        args: &["--stdio"],
+        roots: &[],
+        install: Install::Any("npm i -g dot-language-server"),
+    },
+    Builtin {
+        name: "awk",
+        languages: &[],
+        command: "awk-language-server",
+        args: &[],
+        roots: &[],
+        install: Install::Any("npm i -g awk-language-server"),
+    },
+    Builtin {
+        name: "wgsl",
+        languages: &[],
+        command: "wgsl-analyzer",
+        args: &[],
+        roots: &[],
+        install: Install::Any(
+            "cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer wgsl-analyzer",
+        ),
+    },
+    Builtin {
+        name: "glsl",
+        languages: &[],
+        command: "glsl_analyzer",
+        args: &[],
+        roots: &[],
+        install: Install::Any(""),
+    },
+    Builtin {
+        name: "odin",
+        languages: &[],
+        command: "ols",
+        args: &[],
+        roots: &["ols.json", "odinfmt.json"],
+        install: Install::Any(""),
+    },
+    Builtin {
+        name: "luau",
+        languages: &[],
+        command: "luau-lsp",
+        args: &["lsp"],
+        roots: &[".luaurc"],
+        install: Install::Any(""),
+    },
+];
+
 impl ServerDef {
-    /// The obvious servers for the grammars kawoosh ships, each by the
-    /// command its project installs it as (roadmap step 7); a
-    /// `kawoosh.lsp.server` from Lua replaces one by name. One server
-    /// serves the languages one program reads — typescript-language-
-    /// server the three of TypeScript and JavaScript, clangd C and C++
-    /// (lsp-rules.md Decision 1).
+    /// The obvious servers for the languages kawoosh knows, built in or
+    /// installable (roadmap step 7, lsp-servers.md), each by the command
+    /// its project installs it as and with the line that installs it; a
+    /// `kawoosh.lsp.server` from Lua or `lsp.NAME` in the settings
+    /// replaces one by name. One server serves the languages one program
+    /// reads — typescript-language-server the three of TypeScript and
+    /// JavaScript, clangd C, C++ and Objective-C (lsp-rules.md
+    /// Decision 1).
     pub fn builtin() -> Vec<ServerDef> {
-        let def = |language: &str, command: &str, args: &[&str], roots: &[&str]| ServerDef {
-            language: language.into(),
-            command: command.into(),
-            args: args.iter().map(|a| a.to_string()).collect(),
-            roots: roots.iter().map(|r| r.to_string()).collect(),
-            ..Default::default()
-        };
-        let serving = |mut d: ServerDef, languages: &[&str]| {
-            d.languages = languages.iter().map(|l| l.to_string()).collect();
-            d
-        };
-        vec![
-            def("rust", "rust-analyzer", &[], &["Cargo.toml"]),
-            serving(
-                def(
-                    "typescript",
-                    "typescript-language-server",
-                    &["--stdio"],
-                    &["tsconfig.json", "jsconfig.json", "package.json"],
-                ),
-                &["typescript", "tsx", "javascript"],
-            ),
-            def(
-                "lua",
-                "lua-language-server",
-                &[],
-                &[".luarc.json", ".luarc.jsonc"],
-            ),
-            def(
-                "python",
-                "pyright-langserver",
-                &["--stdio"],
-                &[
-                    "pyproject.toml",
-                    "pyrightconfig.json",
-                    "setup.py",
-                    "requirements.txt",
-                ],
-            ),
-            def("go", "gopls", &[], &["go.work", "go.mod"]),
-            serving(
-                def(
-                    "c",
-                    "clangd",
-                    &[],
-                    &[
-                        "compile_commands.json",
-                        ".clangd",
-                        "CMakeLists.txt",
-                        "Makefile",
-                    ],
-                ),
-                &["c", "cpp"],
-            ),
-        ]
+        let strings = |s: &[&str]| s.iter().map(|a| a.to_string()).collect();
+        BUILTIN
+            .iter()
+            .map(|b| ServerDef {
+                language: b.name.into(),
+                languages: strings(b.languages),
+                command: b.command.into(),
+                args: strings(b.args),
+                roots: strings(b.roots),
+                install: b.install.here().into(),
+                ..Default::default()
+            })
+            .collect()
     }
 }
 

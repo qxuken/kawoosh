@@ -1175,6 +1175,7 @@ impl Kawoosh {
                 args,
                 roots,
                 settings,
+                install,
             } => {
                 self.add_lsp_server(ServerDef {
                     language,
@@ -1183,6 +1184,7 @@ impl Kawoosh {
                     args,
                     roots,
                     settings,
+                    install,
                     ..Default::default()
                 });
             }

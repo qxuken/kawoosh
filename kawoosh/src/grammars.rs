@@ -1085,4 +1085,18 @@ mod tests {
         assert_eq!(source_row("mine", &both).unwrap().dir, "/abs/g");
         assert!(source_row("mine", &table(&[("rev", "main")])).is_none());
     }
+
+    /// Every builtin language server serves languages kawoosh knows —
+    /// built in, or listed for install — by the names they are known by.
+    #[test]
+    fn every_builtin_server_serves_a_known_language() {
+        let listed = Manifest::parse(BUILT_IN).unwrap();
+        let known =
+            |l: &str| LANGUAGES.iter().any(|d| d.name == l) || listed.grammars.contains_key(l);
+        for def in kawoosh_systems::lsp::ServerDef::builtin() {
+            for l in def.served() {
+                assert!(known(l), "lsp.{}: no language {l}", def.language);
+            }
+        }
+    }
 }

@@ -156,6 +156,9 @@ pub struct LspState {
     /// rename's edits in files it loaded, and what a server held before
     /// a restart or a rule took it away.
     also_sync: HashSet<BufferId>,
+    /// `:lsp install`'s terminals, by the command each installs: one
+    /// that ends well restarts its servers.
+    pub(crate) installs: HashMap<crate::terminals::TermId, String>,
 }
 
 /// What a symbol the hover names is looked up for.
@@ -198,6 +201,7 @@ impl LspState {
             symbol_asks: HashMap::new(),
             next_ask: ENGINE_TOKENS,
             also_sync: HashSet::new(),
+            installs: HashMap::new(),
         }
     }
 }
@@ -505,7 +509,11 @@ impl Kawoosh {
                     if again {
                         let text =
                             format!("`{command}` {why} in {}; started again", home_short(&root));
-                        self.notify_with(Note::new(Level::Warn, text).source(language));
+                        self.notify_with(
+                            Note::new(Level::Warn, text)
+                                .source(language)
+                                .show(Show::Corner),
+                        );
                     } else {
                         let why = format!(
                             "stopped in {}: {why}, {} exits in {} minutes",
@@ -527,8 +535,10 @@ impl Kawoosh {
                     }
                 }
                 Event::Status(s) => self.lsp.status = s,
-                // A server's word: shown by its type, or — a log
-                // message — kept to the log.
+                // A server's word: a corner line, whatever its type —
+                // logged at it — or, a log message, the log's alone.
+                // A server speaks often and of itself; a toast is for
+                // what the user must answer (lsp-servers.md Decision 4).
                 Event::Message {
                     server,
                     kind,
@@ -536,10 +546,9 @@ impl Kawoosh {
                     log,
                 } => {
                     self.lsp.logs.push(&server, kind, &text);
-                    let mut note = Note::new(Level::from_lsp(kind), text).source(server);
-                    if log {
-                        note = note.show(Show::Log);
-                    }
+                    let note = Note::new(Level::from_lsp(kind), text)
+                        .source(server)
+                        .show(if log { Show::Log } else { Show::Corner });
                     self.notify_with(note);
                 }
                 Event::Progress {
@@ -964,6 +973,108 @@ impl Kawoosh {
         self.lsp.requested = None;
     }
 
+    /// `:lsp install [LANGUAGE]`: the install line of the server of the
+    /// caret buffer's language — or `LANGUAGE`'s — run in a `:!` pane
+    /// of its own, in the working directory (a project's node or ruby
+    /// is the one the server will be found by); once it ends well, the
+    /// server is started again ([`Kawoosh::lsp_installed`]).
+    fn lsp_install(&mut self, language: Option<&str>) {
+        let language = match language {
+            Some(l) => l.to_string(),
+            None => match self.lsp_at_caret() {
+                Some((_, b, _)) => self.ed.buffers[b].language.to_string(),
+                None => {
+                    self.ed.message = "lsp install: which language?".into();
+                    return;
+                }
+            },
+        };
+        let Some(def) = self.lsp.defs.iter().find(|d| d.serves(&language)) else {
+            self.ed.message = format!("lsp install: no language server for {language}");
+            return;
+        };
+        if def.install.is_empty() {
+            self.ed.message = format!(
+                "lsp install: no install line known for `{}`; say one as lsp.{}.install",
+                def.command, def.language
+            );
+            return;
+        }
+        let (line, command) = (def.install.clone(), def.command.clone());
+        let cwd = self.cwd.clone();
+        if let Some(t) = self.spawn_bang(&line, &cwd) {
+            self.lsp.installs.insert(t, command);
+            self.fill_or_open(self.terminal_place(), Content::Terminal(t));
+        }
+    }
+
+    /// An `:lsp install` terminal ended: `ok`, its command is looked for
+    /// again and its servers started for their buffers.
+    pub(crate) fn lsp_installed(&mut self, command: String, ok: bool) {
+        if !ok {
+            return;
+        }
+        self.notify_with(
+            Note::new(Level::Info, format!("`{command}` installed; started"))
+                .source("lsp")
+                .show(Show::Corner),
+        );
+        self.lsp_restart_commands(vec![command]);
+    }
+
+    /// `:lsp servers`: every server there is to run — each one's name,
+    /// whether it runs, is off, is found or not on the PATH, its command
+    /// and languages — and, for one not found, the line that installs
+    /// it (lsp-servers.md Decision 2).
+    fn lsp_servers_text(&self) -> String {
+        let running: HashSet<&str> = self
+            .lsp
+            .status
+            .iter()
+            .map(|(_, cmd, _, _)| cmd.as_str())
+            .collect();
+        let rows: Vec<(String, &'static str, &ServerDef)> = self
+            .lsp
+            .defs
+            .iter()
+            .map(|d| {
+                let state = if running.contains(d.command.as_str()) {
+                    "running"
+                } else if let Some(why) = self.lsp.said_unavailable.get(&d.command) {
+                    if why.is_some() { "off" } else { "missing" }
+                } else {
+                    match kawoosh_systems::io::on_path(&d.command) {
+                        Some(true) => "found",
+                        Some(false) => "missing",
+                        None => "",
+                    }
+                };
+                (format!("lsp.{}", d.language), state, d)
+            })
+            .collect();
+        let w = rows.iter().map(|(n, ..)| n.len()).max().unwrap_or(0);
+        let mut out = String::from(
+            "every language server kawoosh runs, by its settings' name;              :lsp install LANGUAGE runs a missing one's install line\n\n",
+        );
+        for (name, state, d) in &rows {
+            let mut line = format!("{name:<w$}  {state:<7}  {}", d.command);
+            for a in &d.args {
+                line.push(' ');
+                line.push_str(a);
+            }
+            out += line.trim_end();
+            out += &format!("\n{:<w$}           {}\n", "", d.served().join(" "));
+            if *state == "missing" {
+                if d.install.is_empty() {
+                    out += &format!("{:<w$}           install: none known\n", "");
+                } else {
+                    out += &format!("{:<w$}           install: {}\n", "", d.install);
+                }
+            }
+        }
+        out
+    }
+
     /// `command` off until `:lsp restart`, said once: not found (`why`
     /// None), or what befell it in the project at `root` — with how to
     /// keep it off there, when that project is no place for it.
@@ -977,7 +1088,15 @@ impl Kawoosh {
         if self.lsp.said_unavailable.contains_key(&command) {
             return;
         }
+        let install = self
+            .lsp
+            .defs
+            .iter()
+            .any(|d| d.command == command && !d.install.is_empty());
         let text = match (&why, root) {
+            (None, _) if install => {
+                format!("`{command}` not found; lsp off. :lsp install {language}")
+            }
             (None, _) => format!("`{command}` not found; lsp off. Installed since? :lsp restart"),
             (Some(why), None) => format!("`{command}` {why} (:lsp restart once fixed)"),
             (Some(why), Some(root)) => {
@@ -991,7 +1110,13 @@ impl Kawoosh {
                 )
             }
         };
-        self.notify_with(Note::new(Level::Warn, text).source(language));
+        // A corner line, as the server's own word is: the log and
+        // `:lsp servers` keep it (lsp-servers.md Decision 4).
+        self.notify_with(
+            Note::new(Level::Warn, text)
+                .source(language)
+                .show(Show::Corner),
+        );
         self.lsp.said_unavailable.insert(command, why);
     }
 
@@ -2085,6 +2210,23 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             |k, ctx| {
                 let language = ctx.args.first().cloned();
                 k.lsp_restart(language.as_deref());
+            },
+        ),
+        cmd(
+            Spec::new("lsp install")
+                .args(Args::new(&[ArgKind::Language]))
+                .doc("install the server of the caret's language — or LANGUAGE's — by its install line, in a pane of its own; started once it ends well (`lsp.NAME.install`)"),
+            |k, ctx| {
+                let language = ctx.args.first().cloned();
+                k.lsp_install(language.as_deref());
+            },
+        ),
+        cmd(
+            Spec::new("lsp servers")
+                .doc("every language server there is to run, in a pane: running, off, found or missing, and how to install a missing one"),
+            |k, _| {
+                let text = k.lsp_servers_text();
+                k.show_in_pane("*lsp servers*", &text);
             },
         ),
         cmd(

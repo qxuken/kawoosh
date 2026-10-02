@@ -162,8 +162,64 @@ of its marker files.
 | `lsp.typescript` | `typescript-language-server` | TypeScript, TSX, JavaScript |
 | `lsp.lua` | `lua-language-server` | Lua |
 | `lsp.python` | `pyright-langserver` | Python |
-| `lsp.go` | `gopls` | Go |
-| `lsp.c` | `clangd` | C, C++ |
+| `lsp.go` | `gopls` | Go, go.mod |
+| `lsp.c` | `clangd` | C, C++, Objective-C |
+| `lsp.bash` | `bash-language-server` | Bash |
+| `lsp.fish` | `fish-lsp` | fish |
+| `lsp.nu` | `nu` | Nushell |
+| `lsp.html` | `vscode-html-language-server` | HTML |
+| `lsp.css` | `vscode-css-language-server` | CSS, SCSS |
+| `lsp.json` | `vscode-json-language-server` | JSON, JSONC |
+| `lsp.yaml` | `yaml-language-server` | YAML |
+| `lsp.toml` | `taplo` | TOML |
+| `lsp.markdown` | `marksman` | Markdown |
+| `lsp.dockerfile` | `docker-langserver` | Dockerfile |
+| `lsp.svelte` | `svelteserver` | Svelte |
+| `lsp.php` | `intelephense` | PHP |
+| `lsp.ruby` | `ruby-lsp` | Ruby |
+| `lsp.java` | `jdtls` | Java |
+| `lsp.kotlin` | `kotlin-language-server` | Kotlin |
+| `lsp.scala` | `metals` | Scala |
+| `lsp.csharp` | `csharp-ls` | C# |
+| `lsp.fsharp` | `fsautocomplete` | F# |
+| `lsp.dart` | `dart` | Dart |
+| `lsp.zig` | `zls` | Zig |
+| `lsp.haskell` | `haskell-language-server-wrapper` | Haskell |
+| `lsp.ocaml` | `ocamllsp` | OCaml |
+| `lsp.elixir` | `elixir-ls` | Elixir |
+| `lsp.erlang` | `erlang_ls` | Erlang |
+| `lsp.gleam` | `gleam` | Gleam |
+| `lsp.elm` | `elm-language-server` | Elm |
+| `lsp.purescript` | `purescript-language-server` | PureScript |
+| `lsp.clojure` | `clojure-lsp` | Clojure |
+| `lsp.racket` | `racket` | Racket |
+| `lsp.nix` | `nil` | Nix |
+| `lsp.cmake` | `cmake-language-server` | CMake |
+| `lsp.fortran` | `fortls` | Fortran |
+| `lsp.r` | `R` | R |
+| `lsp.prisma` | `prisma-language-server` | Prisma |
+| `lsp.proto` | `protols` | protobuf |
+| `lsp.dot` | `dot-language-server` | Graphviz |
+| `lsp.awk` | `awk-language-server` | AWK |
+| `lsp.wgsl` | `wgsl-analyzer` | WGSL |
+| `lsp.glsl` | `glsl_analyzer` | GLSL |
+| `lsp.odin` | `ols` | Odin |
+| `lsp.luau` | `luau-lsp` | Luau |
+
+Most of them are not installed with an editor. When a file's server
+is not found, the corner says so once, and how to get it: `:lsp
+install` (or `:lsp install LANGUAGE`) runs the line its project
+installs it with — `npm i -g yaml-language-server`, `gem install
+ruby-lsp`, `rustup component add rust-analyzer` — in a terminal pane
+of its own, where you see it run and answer what it asks. When the
+line ends well the server starts for the files that missed it.
+`:lsp servers` lists every server: running, off, found or missing,
+and a missing one's install line. `lsp.NAME.install` says another
+line.
+
+What a server says — its messages, an exit, a program not found — is
+a line in the corner, never a toast; `:messages` keeps each at its
+level, and `:lsp logs` keeps the server's own words.
 
 typescript-language-server needs TypeScript 5 installed beside it
 (`typescript@5`), in the project or globally; it does not work with
@@ -200,6 +256,7 @@ return {
 | `roots` | the marker files that find the project root |
 | `languages` | the languages this server serves |
 | `settings` | the configuration sent to the server |
+| `install` | the shell line `:lsp install` runs to install the program |
 
 ### Commands
 
@@ -207,6 +264,8 @@ return {
 |---|---|
 | `:lsp` | the servers running, on the status line |
 | `:lsp info` | the servers in a pane: each one's root, documents and rules |
+| `:lsp servers` | every server there is: running, off, found or missing, and how to install a missing one |
+| `:lsp install [LANGUAGE]` | run the server's install line in a terminal pane; it starts once that ends well |
 | `:lsp restart [LANGUAGE]` | restart one server, or all; a missing program, or one that refused to start or kept exiting, is tried again |
 | `:lsp logs [LANGUAGE]` | what a server said, its errors included, live; `:lsp logs clear` forgets it |
 | `:lsp toggle RULE [LANGUAGE]` | flip `enabled`, `load_all` or `inlay_hints` for the session |
