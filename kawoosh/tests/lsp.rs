@@ -1478,6 +1478,116 @@ fn ensure_installed_installs_locks_and_says_updates() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Several servers for a language (lsp-installs.md Decision 7): a
+/// linter beside the language's server runs where its `when` file is —
+/// here, not in a project without it — and its diagnostics are the
+/// buffer's beside the server's; code actions are both servers', a
+/// command running on the one that offers it; a request goes to the
+/// first that answers it, so with the linter first (`lsp.languages`)
+/// the hover is still the language server's.
+#[test]
+fn a_linter_runs_beside_the_language_server_where_its_config_is() {
+    use kawoosh_editor::{Layer, Setting};
+    let dir = std::env::temp_dir().join(format!("kawoosh-lspmulti-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let project = |name: &str, lint: bool| {
+        let p = dir.join(name);
+        std::fs::create_dir_all(p.join("src")).unwrap();
+        std::fs::create_dir_all(p.join(".git")).unwrap();
+        std::fs::write(p.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        if lint {
+            std::fs::write(p.join("lint.toml"), "").unwrap();
+        }
+        let file = p.join("src/main.rs");
+        std::fs::write(&file, "fn main() {\n    hello()\n}\n").unwrap();
+        file
+    };
+    let linted = project("linted", true);
+    let plain = project("plain", false);
+    let mut linter = fake_lsp("lint");
+    linter
+        .args
+        .extend(["--linter".to_string(), "lint".to_string()]);
+    linter.languages = vec!["rust".into()];
+    linter.when = vec!["lint.toml".into()];
+
+    let mut app = Kawoosh::from_file(&linted);
+    app.add_lsp_server(fake_server());
+    app.add_lsp_server(linter);
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    let both = |a: &Kawoosh| {
+        let mut m = msgs(a, buf_id);
+        m.sort();
+        m == ["boom", "lint: lint"]
+    };
+    assert!(
+        until(&mut d, &mut app, both),
+        "both servers': {:?}",
+        msgs(&app, buf_id)
+    );
+
+    // Code actions: both servers'; the linter's runs on the linter.
+    ex(&mut d, &mut app, "lsp action");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.actions.len() == 3),
+        "{:?}",
+        app.lsp.actions.iter().map(|a| &a.title).collect::<Vec<_>>()
+    );
+    let n = app
+        .lsp
+        .actions
+        .iter()
+        .position(|a| a.title == "lint fix")
+        .unwrap()
+        + 1;
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, &format!("lsp action {n}"));
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
+            .text()
+            .starts_with("// lint fixed")),
+        "the linter's command: {:?}",
+        app.ed.buffers[buf_id].text()
+    );
+
+    // The linter first: the hover is still the language server's, the
+    // linter answering none.
+    app.ed.settings.set(
+        Layer::Session,
+        "lsp.languages.rust",
+        Setting::List(vec![
+            Setting::Str("lint".into()),
+            Setting::Str("rust".into()),
+        ]),
+    );
+    assert!(until(&mut d, &mut app, both), "sent again to both");
+    d.keys(&mut app, "K");
+    assert!(
+        until(&mut d, &mut app, |a| a.focused_view().is_some_and(|v| a
+            .ed
+            .buffer_of(v)
+            .text()
+            .contains("the hover"))),
+        "the language server's hover"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+
+    // A project with no `lint.toml`: the language server alone.
+    ex(&mut d, &mut app, &format!("e {}", plain.display()));
+    let plain_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert!(until(&mut d, &mut app, |a| msgs(a, plain_id) == ["boom"]));
+    for _ in 0..10 {
+        d.frame(&mut app);
+    }
+    assert_eq!(msgs(&app, plain_id), ["boom"], "no linter there");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A rename across the workspace and a multibuffer (search.md): every
 /// file a multibuffer holds is its server's, shown or not, as its text
 /// stands — one edited only through the multibuffer too — so the rename lands where the word is now; and

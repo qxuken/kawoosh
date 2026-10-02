@@ -41,6 +41,14 @@ const SWITCHES: [(&str, &str); 3] = [
     ),
 ];
 
+/// The keys of `lsp` that are not servers.
+const RESERVED: [&str; 4] = [
+    "inlay_hints",
+    "languages",
+    "ensure_installed",
+    "check_updates",
+];
+
 /// The keys of `lsp.NAME` that are rules, for `:lsp info`.
 const RULES: [&str; 4] = ["enabled", "load_all", "load_max", "inlay_hints"];
 
@@ -62,6 +70,7 @@ impl Kawoosh {
                 self.notify(Level::Warn, text);
             }
         }
+        self.sync_lsp_order();
         if new == self.lsp.defs {
             return;
         }
@@ -146,8 +155,9 @@ impl Kawoosh {
             .map(|d| d.language.clone())
             .collect();
         for (k, v) in said.into_iter().flatten() {
-            // `lsp.inlay_hints` is the global switch, not a server.
-            if v.is_table() && !names.contains(k) {
+            // `lsp.inlay_hints` is the global switch and `lsp.languages`
+            // each language's servers, not a server.
+            if v.is_table() && !names.contains(k) && !RESERVED.contains(&k.as_str()) {
                 names.push(k.clone());
             }
         }
@@ -217,6 +227,9 @@ impl Kawoosh {
             if let Some(l) = field("languages").and_then(strings) {
                 def.languages = l;
             }
+            if let Some(w) = field("when").and_then(strings) {
+                def.when = w;
+            }
             if let Some(s) = field("settings") {
                 def.settings = setting_json(s);
             }
@@ -237,11 +250,16 @@ impl Kawoosh {
             out.push(def);
         }
         // A language with a server of its own name is served there: a
-        // `lsp.javascript = { cmd = … }` takes it from typescript's.
+        // `lsp.javascript = { cmd = … }` takes it from typescript's. A
+        // server with `when` files runs beside — eslint beside
+        // typescript's — and keeps its languages (lsp-installs.md
+        // Decision 7); `lsp.languages` says outright who serves what.
         let own: HashSet<String> = out.iter().map(|d| d.language.clone()).collect();
         for d in &mut out {
             let name = d.language.clone();
-            d.languages.retain(|l| *l == name || !own.contains(l));
+            let beside = !d.when.is_empty();
+            d.languages
+                .retain(|l| beside || *l == name || !own.contains(l));
             d.files = d
                 .served()
                 .iter()
@@ -256,10 +274,10 @@ impl Kawoosh {
         let mut said: Vec<(String, String)> = strays
             .into_iter()
             .map(|name| {
-                let by = out
-                    .iter()
-                    .chain(self.scripting.servers.iter())
-                    .find(|d| d.serves(&name))
+                let all = || out.iter().chain(self.scripting.servers.iter());
+                let by = all()
+                    .find(|d| d.when.is_empty() && d.serves(&name))
+                    .or_else(|| all().find(|d| d.serves(&name)))
                     .map(|d| d.language.clone());
                 let text = match by {
                     Some(by) => format!(
@@ -274,14 +292,49 @@ impl Kawoosh {
         (out, said)
     }
 
+    /// `lsp.languages` sent when it moved (lsp-installs.md Decision 7):
+    /// each language's servers, the first asked first — a name a
+    /// server's `lsp.NAME` or its command. A language whose list moved
+    /// has its buffers sent again, to the servers it has now.
+    fn sync_lsp_order(&mut self) {
+        let order: std::collections::BTreeMap<String, Vec<String>> =
+            match self.ed.settings.get("lsp.languages") {
+                Some(Setting::Table(t)) => t
+                    .iter()
+                    .filter_map(|(language, v)| {
+                        let names = match v {
+                            Setting::Str(s) => vec![s.clone()],
+                            v => strings(v)?,
+                        };
+                        Some((language.clone(), names))
+                    })
+                    .collect(),
+                _ => Default::default(),
+            };
+        if order == self.lsp.order {
+            return;
+        }
+        let moved: HashSet<String> = order
+            .keys()
+            .chain(self.lsp.order.keys())
+            .filter(|l| order.get(*l) != self.lsp.order.get(*l))
+            .cloned()
+            .collect();
+        self.lsp.order = order.clone();
+        self.lsp.lsp.send(Cmd::Order(order));
+        self.lsp_forget_languages(&moved, true);
+    }
+
     /// The name of the server for `language` — the running table's, else
     /// the one it would be when switched back on — or the language.
     pub(crate) fn lsp_name_of(&self, language: &str) -> String {
-        self.lsp
-            .defs
-            .iter()
-            .chain(self.scripting.servers.iter())
-            .find(|d| d.serves(language))
+        // The language's own server: one of its name, else one that
+        // serves it unconditionally — not a linter beside it.
+        let all = || self.lsp.defs.iter().chain(self.scripting.servers.iter());
+        all()
+            .find(|d| d.language == language)
+            .or_else(|| all().find(|d| d.when.is_empty() && d.serves(language)))
+            .or_else(|| all().find(|d| d.serves(language)))
             .map(|d| d.language.clone())
             .unwrap_or_else(|| language.to_string())
     }

@@ -126,6 +126,12 @@ pub struct LspState {
     /// The settings version `defs` was made at; `None` when the base
     /// table or the languages moved since.
     pub(crate) rules_seen: Option<u64>,
+    /// The servers holding each buffer, by command, as the pool last
+    /// said (`Event::Holders`): a linter beside the language's own is
+    /// one to ask.
+    pub(crate) holders: HashMap<BufferId, Vec<String>>,
+    /// `lsp.languages` as last sent (`sync_lsp_order`).
+    pub(crate) order: std::collections::BTreeMap<String, Vec<String>>,
     /// The `lsp.NAME` tables that are no server's, said once each.
     pub(crate) said_strays: HashSet<String>,
     /// What each server said, all of it (`:lsp logs`).
@@ -192,6 +198,8 @@ impl LspState {
             status: Vec::new(),
             defs: ServerDef::builtin(),
             rules_seen: None,
+            order: Default::default(),
+            holders: HashMap::new(),
             said_strays: HashSet::new(),
             logs: Default::default(),
             caps: HashMap::new(),
@@ -546,6 +554,9 @@ impl Kawoosh {
                     }
                 }
                 Event::Status(s) => self.lsp.status = s,
+                Event::Holders { buffer, commands } => {
+                    self.lsp.holders.insert(buffer, commands);
+                }
                 // A server's word: a corner line, whatever its type —
                 // logged at it — or, a log message, the log's alone.
                 // A server speaks often and of itself; a toast is for
@@ -866,7 +877,7 @@ impl Kawoosh {
             // once it lands.
             if b.private
                 || b.loading.is_some()
-                || !self.lsp_serves(&b.language)
+                || !self.lsp_syncs(&b.language)
                 || self.lsp.sent.get(&id) == Some(&b.version())
             {
                 continue;
@@ -972,6 +983,7 @@ impl Kawoosh {
         self.lsp.held.remove(&id);
         self.lsp.hints.remove(&id);
         self.lsp.hints_asked.remove(&id);
+        self.lsp.holders.remove(&id);
         let b = &self.ed.buffers[id];
         let clear = Update {
             layer: DIAG_LAYER,
@@ -1320,6 +1332,21 @@ impl Kawoosh {
     /// Whether anyone serves `language`: a definition, its command not
     /// found missing and not being restarted.
     pub(crate) fn lsp_serves(&self, language: &str) -> bool {
+        // A server beside the language's (`when`, lsp-installs.md
+        // Decision 7) runs only where its files are, so it is not one to
+        // count on.
+        self.lsp.defs.iter().any(|d| {
+            d.when.is_empty()
+                && d.serves(language)
+                && !self.lsp.said_unavailable.contains_key(&d.command)
+                && !self.lsp.restarting.contains_key(&d.command)
+        })
+    }
+
+    /// Whether a buffer of `language` is sent: any server for it — one
+    /// beside the language's own (`when`) too, which the pool runs where
+    /// its files are — not found missing and not being restarted.
+    pub(crate) fn lsp_syncs(&self, language: &str) -> bool {
         self.lsp.defs.iter().any(|d| {
             d.serves(language)
                 && !self.lsp.said_unavailable.contains_key(&d.command)
@@ -1337,7 +1364,12 @@ impl Kawoosh {
     /// Why `language`'s server is not there to ask, when it has one:
     /// restarting, or it did not start.
     pub(crate) fn lsp_down(&self, language: &str) -> Option<String> {
-        let defs = || self.lsp.defs.iter().filter(|d| d.serves(language));
+        let defs = || {
+            self.lsp
+                .defs
+                .iter()
+                .filter(|d| d.when.is_empty() && d.serves(language))
+        };
         if defs().any(|d| self.lsp.restarting.contains_key(&d.command)) {
             return Some(format!("the {language} server is restarting"));
         }
@@ -1368,6 +1400,11 @@ impl Kawoosh {
                 document_symbol: true,
                 workspace_symbol: true,
                 inlay_hint: true,
+                definition: true,
+                hover: true,
+                completion: true,
+                commands: Vec::new(),
+                pull: false,
                 triggers: Vec::new(),
             })
     }
@@ -1405,7 +1442,14 @@ impl Kawoosh {
             return;
         };
         let language = self.ed.buffers[buffer].language.to_string();
-        if !self.lsp_serves(&language) {
+        // A server beside (eslint) that holds the buffer answers what it
+        // does, the language's own down or not.
+        let held = self
+            .lsp
+            .holders
+            .get(&buffer)
+            .is_some_and(|c| c.iter().any(|c| !self.lsp.said_unavailable.contains_key(c)));
+        if !self.lsp_serves(&language) && !held {
             self.ed.message = self.lsp_absent(&language);
             return;
         }
@@ -1641,10 +1685,10 @@ impl Kawoosh {
         &self,
         buffer: BufferId,
         range: Range<usize>,
-    ) -> Vec<(usize, usize, u32, String)> {
+    ) -> Vec<(usize, usize, Diagnostic)> {
         self.diagnostics_here(buffer, range)
             .into_iter()
-            .map(|(r, d)| (r.start, r.end, d.severity, d.message))
+            .map(|(r, d)| (r.start, r.end, d))
             .collect()
     }
 

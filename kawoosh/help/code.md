@@ -205,6 +205,9 @@ of its marker files.
 | `lsp.glsl` | `glsl_analyzer` | GLSL |
 | `lsp.odin` | `ols` | Odin |
 | `lsp.luau` | `luau-lsp` | Luau |
+| `lsp.eslint` | `vscode-eslint-language-server` | TypeScript, TSX, JavaScript (beside, where an eslint config is) |
+| `lsp.biome` | `biome` | TypeScript, TSX, JavaScript, JSON, JSONC, CSS (beside, where `biome.json` is) |
+| `lsp.ruff` | `ruff` | Python (beside, where `ruff.toml` is) |
 
 Most of them are not installed with an editor. When a file's server
 is not found, the corner says so once, and how to get it: `:lsp
@@ -280,6 +283,33 @@ minutes it is off until `:lsp restart`. Either way the corner names
 the project's `.kawoosh/settings.lua`, where `lsp = { NAME = {
 enabled = false } }` keeps it off in a project that is no place for it.
 
+### Several servers for a language
+
+A language can have more than one server: TypeScript has its language
+server and, where the project lints with eslint, eslint beside it. The
+diagnostics of all of them are shown together; code actions are all of
+theirs (eslint's fixes beside TypeScript's refactorings); everything
+else — hover, completion, rename, go to definition — is answered by the
+first server that does it.
+
+A server with `when` files runs only where one of them is in the
+file's directory or one above it, up to the repository's root: eslint
+needs an `eslint.config.*` or an `.eslintrc*`, biome a `biome.json`,
+ruff a `ruff.toml`. Say which servers a language has, in which order,
+with `lsp.languages`:
+
+```lua
+return {
+  lsp = {
+    languages = { typescript = { "typescript", "eslint" }, python = { "python", "ruff" } },
+    -- A server of your own beside a language's: it runs where `.mylint` is.
+    mylint = { cmd = "mylint-lsp", languages = { "typescript" }, when = { ".mylint" } },
+  },
+}
+```
+
+A name is a server's `lsp.NAME` or its program (`"typescript-language-server"`).
+
 ### Settings per server
 
 `lsp.NAME` in your [settings](settings.md) changes a server, and a
@@ -304,6 +334,7 @@ return {
 | `cmd` `args` | the program and its arguments; a change restarts the server |
 | `roots` | the marker files that find the project root |
 | `languages` | the languages this server serves |
+| `when` | files one of which must be at or above a file for the server to run for it |
 | `settings` | the configuration sent to the server |
 | `install` | how `:lsp install` installs the program: a package (`{ npm = "name" }`; `pip`, `cargo`, `go`, `dotnet`) into kawoosh's folder, or a shell line |
 

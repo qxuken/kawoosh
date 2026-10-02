@@ -134,6 +134,60 @@ ability to install any version."
   `kawoosh lsp list` show `1.14.0 → 1.24.0`. `update` installs the
   latest only where it is newer.
 
+### 7. Several servers for a language, each where the project says so *(the user's)*
+
+Asked 2026-10-03: "also we should run multiple servers for a language
+for example typescript = {"eslint", "typescript-language-server"} but
+detect whether to run it. for example eslint if eslint config exists."
+
+- **A buffer has a list of servers.** Every server that serves its
+  language runs for it, in the table's order — or, with
+  `lsp.languages.LANG = { … }` (a server's `lsp.NAME` or its command),
+  those named, in that order and no others.
+- **`when`**: a server with `when` files runs for a file only where one
+  of them is at or above it, up to the repository's root — eslint where
+  an `eslint.config.*` or `.eslintrc*` is, biome where a `biome.json`
+  is, ruff where a `ruff.toml` is. Such a server runs *beside* the
+  language's own and keeps its languages; one without `when` named for
+  another language's files still gives them up to that language's own
+  (lsp-rules.md Decision 1). Looked up once a directory, again after
+  `:lsp restart` or a settings change.
+- **Who answers what**: a request goes to the first of the buffer's
+  servers whose capabilities say it answers it (eslint has no hover:
+  typescript's answers even with eslint first) — the first of all when
+  none says so. Code actions are asked of every server and gathered,
+  and a command runs on the server that offers it. Diagnostics are
+  every server's together, per document. A language's capabilities, as
+  the shell reads them, are its servers' together.
+- **One process per command and arguments**: two definitions run alike
+  share a server; two run differently (a fake server and the same
+  fake as a linter) do not.
+- **Counting on a server**: a server beside (`when`) is not counted as
+  the language's — a missing eslint is not why TypeScript has no
+  server, and a formatter list does not wait on biome where there is
+  no `biome.json`.
+
+- **Pulled diagnostics**: a server that gives diagnostics only when
+  asked (`diagnosticProvider` — vscode-eslint does nothing else) is
+  asked for a document's (`textDocument/diagnostic`) after each sync,
+  again for all of its documents on `workspace/diagnostic/refresh`, and
+  the answer joins the others as a push would. lists.md's "pull model"
+  is built this far; `workspace/diagnostic` is not.
+- **A code action's diagnostics go back as they came**: `source` and
+  `code` with them (a number as a number) — eslint finds its fixes by
+  the rule's code, and offered none without.
+- **Who is counted**: a buffer is sent while any of its language's
+  servers is up, a linter beside included (`lsp_syncs`); a request is
+  made when the language's own server is up or a server the pool says
+  holds the buffer is (`Event::Holders`) — eslint's fixes in a
+  JavaScript project with no TypeScript.
+
+Builtin beside: eslint (`vscode-eslint-language-server`, from
+`vscode-langservers-extracted`, the editor extension's settings with
+`workspaceFolder` answered as the root and its
+`eslint/confirmESLintExecution` approved), biome (`biome lsp-proxy`),
+ruff (`ruff server`).
+
 ### 5. kawoosh → qd: a `:qd` pane *(round three)*
 
 A Lua plugin in kawoosh over qd — linked as a library, asked by the
@@ -183,6 +237,20 @@ cmake-language-server broke on pygls 2, hence its `pygls<2`.
 
 Round two, 2026-10-02: the qd plugin, `contrib/qd/kawoosh.lua` —
 taken out 2026-10-03 for Decision 4 as it now reads.
+
+Round four, 2026-10-03: Decision 7 in the pool (`systems/src/lsp.rs`):
+`homes` a list a buffer, `Cmd::Order`, `ServerDef::when` with
+`marked`, `answerer` by `Caps::answers`, code action groups, merged
+`published` diagnostics, `Caps::union`; servers keyed by their
+arguments too. The shell's `lsp.languages` (`sync_lsp_order`, its
+languages' buffers sent again) and `lsp.NAME.when`. The fake server's
+`--linter NAME`; test `a_linter_runs_beside_the_language_server_where_its_config_is`.
+Tried for real headless: `kawoosh lsp install eslint` into a scratch
+folder (vscode-langservers-extracted 4.10.0), a project with eslint 9
+and a flat config — eslint started there and TypeScript said why it
+did not; eslint's `no-unused-vars` pulled, and its four code actions
+(remove, disable for the line, for the file, documentation) offered
+once the diagnostics went back with their codes.
 
 Round three, 2026-10-02: Decision 5, over the `qd` CLI.
 `kawoosh/lua/qd.lua` (bundled after vcs): `:qd`, `:qd push`, `:qd
