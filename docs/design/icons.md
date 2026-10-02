@@ -249,6 +249,44 @@ search bar growing behind the pane one asked in. *Beat:* a setting per
 pane (`search.legend`, `grammars.legend`…): a setting for each plugin
 to declare for one behaviour.
 
+### 7. The way to a legend is the pane's title bar
+
+Asked the same day, of the grammars, fonts, themes, memory and
+settings panes: the hint "kinda sticks too much. In search it is
+integrated well. I think it either should be scrolled by or be placed
+somewhere else." A compact legend was a row of its own, `⌥/ keys`
+alone, in the head those panes keep over their list — a fixed row for
+two words, under every scroll. The search's sits at the end of a row
+it has anyway.
+
+- **Placed somewhere else: the title bar's end.** Every pane has one,
+  its right end is empty but for an editor's crumbs, and it is where
+  the pane already says what it is. `⌥/ keys` there, `⌥/ hide keys`
+  while the legend is whole; a click flips it, as `<A-/>` does. The
+  pane's rows carry the legend only while it is whole — where the
+  view puts it, since which row suits is the view's — and nothing
+  while it is compact.
+- **A view says it has one; the chrome draws the way.** `ctx.legend`
+  tells the pane's title bar (`kawoosh._legend_drawn`), and returns
+  `nil` while compact; the memory and undo panes' `legends::legend`
+  the same. The title bar is drawn before the pane's rows, so it reads
+  the panes that drew a legend this frame or the last
+  (`Legends::roll`, `declare`, `has`), and a frame in which one began
+  or stopped asks for one more (`settled`, "legend hint"). A pane with
+  no legend has no hint; `full = true` (a prompt's two keys) and
+  `toggle = false` (a view drawing its own way, the search bar's) say
+  nothing to the title bar.
+- **The search bar keeps its own**, at the end of its stages' row: the
+  integration that was the reference, in a header that is the bar.
+
+*Beat:* scrolled by, with the list. A pane's list is a virtual one
+(the fonts', a `uniform_list`) or a scroller of the view's own, and the
+head is outside it; the hint would have to move into each list as its
+first row, and a hint scrolled away is a hint lost — the key works
+wherever, but the way to learn it would be at the top of a list one
+had scrolled past. *Beat:* the status line, which is the window's and
+says nothing of the pane under it.
+
 ## What moves now
 
 The first round: the tab's close (`close`), the search stages'
@@ -314,4 +352,13 @@ Tests: `kawoosh/tests/legends.rs` — a pane's legend one hint until
 own), the undo pane's the same, `keys.legend = "full"` starting them
 whole; the search panel's legend test on the shared state;
 `search.legend` named as moved.
+
+Decision 7, 2026-10-02: `Legends::roll` / `declare` / `has` /
+`settled`, `legends::legend` declaring and drawing items alone,
+`legends::toggle` at the title bar's end (`render_pane`, the name's
+room less the hint's), `kawoosh._legend_drawn`, boot.lua's
+`ctx.legend` returning `nil` while compact. Tests:
+`the_way_to_a_legend_is_in_the_panes_title_bar` (the six panes: the
+hint in the title bar and none in the rows, none on the editor, a click
+on it opening and closing), `a_title_bar_reads_this_frames_legends_and_the_last`.
 

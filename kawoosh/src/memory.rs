@@ -1885,6 +1885,7 @@ impl Kawoosh {
                     crate::legends::legend(
                         ui,
                         &self.icons.borrow(),
+                        &self.legends,
                         pane,
                         legend,
                         &[

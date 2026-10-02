@@ -719,6 +719,14 @@ impl Kawoosh {
             _ => Vec::new(),
         };
         let width = self.layout.rects.get(&pane).map_or(0.0, |r| r.w - 2.0);
+        // The way to the pane's key legend, at the bar's end, for a pane
+        // whose view draws one (icons.md Decision 7): `⌥/ keys`, or
+        // `⌥/ hide keys` while its rows carry it whole.
+        let legend = self
+            .legends
+            .borrow()
+            .has(pane)
+            .then(|| self.legend_full(pane));
         // A pane goes where its title bar is dragged: in the tab, in
         // the dock, or from one into the other (`Layout::move_pane`).
         let dragged = self.pane_drag.is_some_and(|(p, _, _)| p == pane);
@@ -796,7 +804,12 @@ impl Kawoosh {
                             + 12.0
                             + ui.measure_text(&c.name, &style, None).width.min(80.0)
                     });
-                    let name_room = width - 16.0 - dot - reserve;
+                    let hint_style = TextStyle::new(self.chrome.small).color(pal.faint);
+                    let hint = legend.map_or(0.0, |full| {
+                        let word = if full { "hide keys" } else { "keys" };
+                        ui.measure_text(word, &hint_style, None).width + 48.0
+                    });
+                    let name_room = width - 16.0 - dot - reserve - hint;
                     let name = fit_title(&name, |s| {
                         ui.measure_text(s, &style, None).width <= name_room
                     });
@@ -806,8 +819,26 @@ impl Kawoosh {
                         crate::icons::icon(ui, &set, "dot", self.chrome.small, pal.command);
                     }
                     if !crumbs.is_empty() {
-                        let room = width - 16.0 - ui.measure_text(&name, &style, None).width - dot;
+                        let room =
+                            width - 16.0 - ui.measure_text(&name, &style, None).width - dot - hint;
                         self.breadcrumbs(ui, pane, &crumbs, room, focused);
+                    }
+                    if let Some(full) = legend {
+                        ui.leaf(NodeSpec::row().grow_width());
+                        crate::legends::toggle(
+                            ui,
+                            &self.icons.borrow(),
+                            pane,
+                            full,
+                            &crate::legends::LegendStyle {
+                                keys: crate::icons::KeyStyle::new(
+                                    TextStyle::new(self.chrome.small).color(pal.dim),
+                                    pal.border,
+                                ),
+                                words: hint_style,
+                                hover: pal.hover,
+                            },
+                        );
                     }
                 });
                 // Where the dragged pane would land here: the whole pane

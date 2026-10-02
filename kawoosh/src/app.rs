@@ -2648,6 +2648,7 @@ impl kui_native::App for Kawoosh {
         self.body_h = (vp.h - self.title_h - 1.0 - c.tab_h - 2.0 * c.strip_h).max(lh);
         let body_h = self.body_h;
         t = self.perf.lap(Chrome, "window", t);
+        self.legends.borrow_mut().roll();
         ui.with(NodeSpec::column().fill().bg(pal.bg), |ui| {
             self.title_bar(ui);
             t = self.perf.lap(Chrome, "title bar", t);
@@ -2707,6 +2708,11 @@ impl kui_native::App for Kawoosh {
             self.confirm_float(ui);
             t = self.perf.lap(Chrome, "floats", t);
         });
+        // A pane that began or stopped drawing a legend: its title bar,
+        // drawn before its rows, catches up next frame.
+        if !self.legends.borrow().settled() {
+            crate::frames::request(ui, "legend hint");
+        }
         self.line_cells.sweep();
         self.perf.lap(Rows, "line cells", t);
         let plugins = match &self.scripting.rt {
