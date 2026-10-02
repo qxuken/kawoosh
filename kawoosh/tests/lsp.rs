@@ -1240,6 +1240,354 @@ fn a_missing_server_is_installed_by_its_line() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A server kawoosh installs itself (lsp-installs.md): `:lsp install`
+/// runs `kawoosh lsp install` in a pane, which asks the package's
+/// manager — a fake `npm` on the PATH here — for it in kawoosh's own
+/// servers directory, never the manager's global one; once it ends
+/// well the server is started from there, the PATH having no such
+/// program, and `:lsp servers` says it is kawoosh's.
+#[cfg(unix)]
+#[test]
+fn a_package_is_installed_into_kawooshs_directory_and_run_from_there() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsppkg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    // The fake server, as the package's program.
+    let real = fake_server();
+    let mut line = format!("exec '{}'", real.command);
+    for a in &real.args {
+        line += &format!(" '{a}'");
+    }
+    // `npm install --prefix DIR …`: the program in DIR/node_modules/.bin.
+    let tools = dir.join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    let npm = tools.join("npm");
+    std::fs::write(
+        &npm,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = view ]; then echo 1.0.0; exit 0; fi\n\
+             while [ \"$1\" != --prefix ]; do shift; done\n\
+             mkdir -p \"$2/node_modules/.bin\"\n\
+             printf '#!/bin/sh\\n%s \"$@\"\\n' \"{}\" > \"$2/node_modules/.bin/fake-pkg-ls\"\n\
+             chmod +x \"$2/node_modules/.bin/fake-pkg-ls\"\necho installed\n",
+            line.replace('"', "\\\"")
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Each test is a process of its own under nextest: its PATH and
+    // servers directory are its own to set.
+    let path = std::env::var("PATH").unwrap_or_default();
+    let servers = dir.join("servers");
+    unsafe {
+        std::env::set_var("PATH", format!("{}:{path}", tools.display()));
+        std::env::set_var("KAWOOSH_SERVERS", &servers);
+    }
+    let mut def = real.clone();
+    def.command = "fake-pkg-ls".into();
+    def.args = Vec::new();
+    def.package = Some(kawoosh_systems::servers::Package::new(
+        kawoosh_systems::servers::Manager::Npm,
+        &["fake-pkg-ls"],
+        &[],
+    ));
+
+    let mut app = Kawoosh::from_file(&file);
+    app.lsp.cli = vec![env!("CARGO_BIN_EXE_kawoosh").into(), "lsp".into()];
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    let said = "`fake-pkg-ls` not found; lsp off. :lsp install rust";
+    assert!(until(&mut d, &mut app, |a| noted(a, said)), "{said}");
+
+    ex(&mut d, &mut app, "lsp install");
+    assert!(
+        until(&mut d, &mut app, |a| !a.ed.buffers[buf_id]
+            .runs(DIAG_LAYER, 0..3)
+            .is_empty()),
+        "installed, started from kawoosh's directory: {}",
+        app.ed.message
+    );
+    let pkg = servers.join("npm/fake-pkg-ls");
+    assert!(pkg.join("node_modules/.bin/fake-pkg-ls").is_file());
+    assert!(
+        pkg.join(kawoosh_systems::servers::RECORD).is_file(),
+        "the record, for an update"
+    );
+    assert_eq!(
+        kawoosh_systems::servers::find("fake-pkg-ls"),
+        Some(pkg.join("node_modules/.bin/fake-pkg-ls"))
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `lsp.ensure_installed` (lsp-installs.md Decisions 4 and 6): a name
+/// not in is installed in the background, at the registry's latest —
+/// asked of npm first and locked in the record — and its server started
+/// once it is; a name at a version is installed at that one, and again
+/// when the one in is another; the registries' check says in the corner
+/// what an `:lsp update` would bring, and nothing is updated unasked.
+#[cfg(unix)]
+#[test]
+fn ensure_installed_installs_locks_and_says_updates() {
+    use kawoosh_editor::{Layer, Setting};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lspensure-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let real = fake_server();
+    let mut line = format!("exec '{}'", real.command);
+    for a in &real.args {
+        line += &format!(" '{a}'");
+    }
+    // `npm view NAME version` says the registry's latest from a file;
+    // `npm install --prefix DIR …` logs what it was asked and puts the
+    // program in DIR/node_modules/.bin.
+    let tools = dir.join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::fs::write(dir.join("latest"), "2.0.0\n").unwrap();
+    let npm = tools.join("npm");
+    std::fs::write(
+        &npm,
+        format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = view ]; then cat '{d}/latest'; exit 0; fi\n\
+             echo \"$*\" >> '{d}/asked'\n\
+             while [ \"$1\" != --prefix ]; do shift; done\n\
+             mkdir -p \"$2/node_modules/.bin\"\n\
+             printf '#!/bin/sh\\n%s \"$@\"\\n' \"{l}\" > \"$2/node_modules/.bin/fake-ensure-ls\"\n\
+             chmod +x \"$2/node_modules/.bin/fake-ensure-ls\"\n",
+            d = dir.display(),
+            l = line.replace('"', "\\\"")
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::var("PATH").unwrap_or_default();
+    let servers = dir.join("servers");
+    unsafe {
+        std::env::set_var("PATH", format!("{}:{path}", tools.display()));
+        std::env::set_var("KAWOOSH_SERVERS", &servers);
+    }
+    let asked = || std::fs::read_to_string(dir.join("asked")).unwrap_or_default();
+    let record = || {
+        std::fs::read_to_string(servers.join("npm/fake-ensure-ls/kawoosh-package.json"))
+            .unwrap_or_default()
+    };
+
+    let mut def = real.clone();
+    def.command = "fake-ensure-ls".into();
+    def.args = Vec::new();
+    def.package = Some(kawoosh_systems::servers::Package::new(
+        kawoosh_systems::servers::Manager::Npm,
+        &["fake-ensure-ls"],
+        &[],
+    ));
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    let list =
+        |items: &[&str]| Setting::List(items.iter().map(|s| Setting::Str(s.to_string())).collect());
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.ensure_installed", list(&["rust"]));
+    assert!(
+        until(&mut d, &mut app, |a| !a.ed.buffers[buf_id]
+            .runs(DIAG_LAYER, 0..3)
+            .is_empty()),
+        "installed, started: {}",
+        app.ed.message
+    );
+    assert!(
+        asked().contains("fake-ensure-ls@2.0.0"),
+        "locked at the latest: {}",
+        asked()
+    );
+    assert!(record().contains("\"version\": \"2.0.0\""), "{}", record());
+    let shown: Vec<String> = app.notes.log.iter().map(|e| e.text.clone()).collect();
+    assert!(
+        app.notes.shown.iter().all(|s| !s.toast),
+        "nothing a toast: {shown:?}"
+    );
+
+    // A newer one on the registry: in again only when asked for — by a
+    // pinned version here.
+    std::fs::write(dir.join("latest"), "2.1.0\n").unwrap();
+    let before = asked();
+    app.ed.settings.set(
+        Layer::Session,
+        "lsp.ensure_installed",
+        list(&["rust", "rust"]),
+    );
+    for _ in 0..20 {
+        d.frame(&mut app);
+    }
+    assert_eq!(asked(), before, "in already: left where it is");
+    app.ed.settings.set(
+        Layer::Session,
+        "lsp.ensure_installed",
+        list(&["rust@1.9.0"]),
+    );
+    assert!(
+        until(&mut d, &mut app, |_| record()
+            .contains("\"version\": \"1.9.0\"")),
+        "the version pinned: {}",
+        asked()
+    );
+    assert!(asked().contains("fake-ensure-ls@1.9.0"));
+
+    // The next launch checks (a version pinned outright was never
+    // checked): what is newer, in the corner, and nothing installed.
+    let before = asked();
+    let def2 = app
+        .lsp
+        .defs
+        .iter()
+        .find(|d| d.command == "fake-ensure-ls")
+        .cloned()
+        .unwrap();
+    let mut next = Kawoosh::from_file(&file);
+    next.add_lsp_server(def2);
+    next.ed.settings.set(
+        Layer::Session,
+        "lsp.ensure_installed",
+        list(&["rust@1.9.0"]),
+    );
+    let said = "1 server update: fake-ensure-ls 1.9.0 → 2.1.0 (:lsp update)";
+    assert!(until(&mut d, &mut next, |a| noted(a, said)), "{said}");
+    assert!(
+        !next
+            .notes
+            .shown
+            .iter()
+            .find(|s| s.text == said)
+            .unwrap()
+            .toast
+    );
+    assert_eq!(asked(), before, "an update said, not made");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Several servers for a language (lsp-installs.md Decision 7): a
+/// linter beside the language's server runs where its `when` file is —
+/// here, not in a project without it — and its diagnostics are the
+/// buffer's beside the server's; code actions are both servers', a
+/// command running on the one that offers it; a request goes to the
+/// first that answers it, so with the linter first (`lsp.languages`)
+/// the hover is still the language server's.
+#[test]
+fn a_linter_runs_beside_the_language_server_where_its_config_is() {
+    use kawoosh_editor::{Layer, Setting};
+    let dir = std::env::temp_dir().join(format!("kawoosh-lspmulti-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let project = |name: &str, lint: bool| {
+        let p = dir.join(name);
+        std::fs::create_dir_all(p.join("src")).unwrap();
+        std::fs::create_dir_all(p.join(".git")).unwrap();
+        std::fs::write(p.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        if lint {
+            std::fs::write(p.join("lint.toml"), "").unwrap();
+        }
+        let file = p.join("src/main.rs");
+        std::fs::write(&file, "fn main() {\n    hello()\n}\n").unwrap();
+        file
+    };
+    let linted = project("linted", true);
+    let plain = project("plain", false);
+    let mut linter = fake_lsp("lint");
+    linter
+        .args
+        .extend(["--linter".to_string(), "lint".to_string()]);
+    linter.languages = vec!["rust".into()];
+    linter.when = vec!["lint.toml".into()];
+
+    let mut app = Kawoosh::from_file(&linted);
+    app.add_lsp_server(fake_server());
+    app.add_lsp_server(linter);
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    let both = |a: &Kawoosh| {
+        let mut m = msgs(a, buf_id);
+        m.sort();
+        m == ["boom", "lint: lint"]
+    };
+    assert!(
+        until(&mut d, &mut app, both),
+        "both servers': {:?}",
+        msgs(&app, buf_id)
+    );
+
+    // Code actions: both servers'; the linter's runs on the linter.
+    ex(&mut d, &mut app, "lsp action");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.actions.len() == 3),
+        "{:?}",
+        app.lsp.actions.iter().map(|a| &a.title).collect::<Vec<_>>()
+    );
+    let n = app
+        .lsp
+        .actions
+        .iter()
+        .position(|a| a.title == "lint fix")
+        .unwrap()
+        + 1;
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, &format!("lsp action {n}"));
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
+            .text()
+            .starts_with("// lint fixed")),
+        "the linter's command: {:?}",
+        app.ed.buffers[buf_id].text()
+    );
+
+    // The linter first: the hover is still the language server's, the
+    // linter answering none.
+    app.ed.settings.set(
+        Layer::Session,
+        "lsp.languages.rust",
+        Setting::List(vec![
+            Setting::Str("lint".into()),
+            Setting::Str("rust".into()),
+        ]),
+    );
+    assert!(until(&mut d, &mut app, both), "sent again to both");
+    d.keys(&mut app, "K");
+    assert!(
+        until(&mut d, &mut app, |a| a.focused_view().is_some_and(|v| a
+            .ed
+            .buffer_of(v)
+            .text()
+            .contains("the hover"))),
+        "the language server's hover"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+
+    // A project with no `lint.toml`: the language server alone.
+    ex(&mut d, &mut app, &format!("e {}", plain.display()));
+    let plain_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert!(until(&mut d, &mut app, |a| msgs(a, plain_id) == ["boom"]));
+    for _ in 0..10 {
+        d.frame(&mut app);
+    }
+    assert_eq!(msgs(&app, plain_id), ["boom"], "no linter there");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A rename across the workspace and a multibuffer (search.md): every
 /// file a multibuffer holds is its server's, shown or not, as its text
 /// stands — one edited only through the multibuffer too — so the rename lands where the word is now; and

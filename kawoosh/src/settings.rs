@@ -229,7 +229,7 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
         (
             "lsp",
             K::Open,
-            "a server by name and its rules: `cmd`, `args`, `roots`, `languages`, `settings`, `install`, `enabled`, `load_all`, `load_max`, `inlay_hints` (lsp-rules.md, lsp-servers.md)",
+            "a server by name and its rules: `cmd`, `args`, `roots`, `languages`, `settings`, `install`, `when`, `enabled`, `load_all`, `load_max`, `inlay_hints` (lsp-rules.md, lsp-servers.md); `lsp.languages`, each language's servers in order; `lsp.ensure_installed`, the servers this machine installs (`\"yaml\"`, `\"yaml@1.15.0\"`), `lsp.check_updates` (lsp-installs.md)",
         ),
         (
             "domains",

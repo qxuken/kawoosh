@@ -957,6 +957,10 @@ impl Kawoosh {
                 query,
                 source,
             } => self.ask_symbols(token, kawoosh_lua::id_of(buffer), workspace, query, &source),
+            Msg::Qd { token, op, args } => {
+                self.pending_jobs += 1;
+                self.dotfiles.ask(token, op, args);
+            }
             // A pass outside a command a key ran has no key to hand on.
             Msg::Pass => {}
             Msg::Watch { name, paths } => {

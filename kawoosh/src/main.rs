@@ -178,6 +178,8 @@ From a terminal inside kawoosh (through $KAWOOSH_SOCKET):
                                  --wait returns when the buffer is closed
   kawoosh ex LINE                run LINE as a : command there
   kawoosh theme                  print `dark` or `light`
+  kawoosh lsp install NAME...    install a language server into kawoosh's
+                                 own servers/ folder (update, remove, list)
   kawoosh pick SOURCE [QUERY]    the picker on SOURCE (dirs, files, …);
                                  prints what is picked, or exits 1
   kawoosh-edit [+LINE] PATH...   edit --wait as one program: $EDITOR
@@ -195,6 +197,7 @@ Environment:
   KAWOOSH_FONTS      your fonts folder (default: $XDG_CONFIG_HOME/kawoosh/fonts)
   KAWOOSH_STATE      the state db (default: $XDG_DATA_HOME/kawoosh/state.db)
   KAWOOSH_TYPES      where the Lua type stubs go (default: a folder per build under types/ beside the db)
+  KAWOOSH_SERVERS    language servers kawoosh installs (default: servers/ beside the db)
 ";
 
 fn main() -> anyhow::Result<()> {
@@ -239,6 +242,12 @@ fn main() -> anyhow::Result<()> {
                 eprintln!("kawoosh: process {pid} did not quit");
                 std::process::exit(1);
             }
+        }
+        // `kawoosh lsp install yaml`: servers installed with no window
+        // (docs/design/lsp-installs.md).
+        Some("lsp") => {
+            attach_console();
+            std::process::exit(kawoosh::lsp_cli::run(&args[1..]));
         }
         // Everything after is a path, dash or not.
         Some("--") => {

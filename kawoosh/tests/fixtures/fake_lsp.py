@@ -73,6 +73,38 @@ def send(msg):
     sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
     sys.stdout.buffer.flush()
 
+# `--linter NAME`: a server beside the language's own (lsp-installs.md
+# Decision 7) — a warning "NAME: lint" on line 0 of every document it
+# holds, a code action "NAME fix" running command `NAME.fix`, whose
+# execution puts `// NAME fixed` at the top; nothing else (no hover,
+# completion, rename), and no progress or messages.
+LINTER = sys.argv[sys.argv.index("--linter") + 1] if "--linter" in sys.argv else None
+
+def lint(method, mid, m):
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
+            "codeActionProvider": True,
+            "executeCommandProvider": {"commands": [LINTER + ".fix"]}}}})
+    elif method in ("textDocument/didOpen", "textDocument/didChange"):
+        uri = m["params"]["textDocument"]["uri"]
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+            "uri": uri, "diagnostics": [{"range": {"start": {"line": 0, "character": 0},
+                                                   "end": {"line": 0, "character": 1}},
+                                         "severity": 2, "source": LINTER, "message": LINTER + ": lint"}]}})
+    elif method == "textDocument/codeAction":
+        uri = m["params"]["textDocument"]["uri"]
+        send({"jsonrpc": "2.0", "id": mid, "result": [
+            {"title": LINTER + " fix", "command": LINTER + ".fix", "arguments": [uri]}]})
+    elif method == "workspace/executeCommand":
+        uri = m["params"]["arguments"][0]
+        send({"jsonrpc": "2.0", "id": mid, "result": None})
+        send({"jsonrpc": "2.0", "id": 3000, "method": "workspace/applyEdit", "params": {
+            "label": LINTER + " fix", "edit": {"changes": {uri: [
+                {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                 "newText": "// " + LINTER + " fixed\n"}]}}}})
+    elif mid is not None:
+        send({"jsonrpc": "2.0", "id": mid, "result": None})
+
 while True:
     m = read()
     if m is None:
@@ -81,6 +113,9 @@ while True:
     mid = m.get("id")
     if method is None:
         continue  # a response to a request of ours
+    if LINTER:
+        lint(method, mid, m)
+        continue
     if method == "initialize" and "--refuse" in sys.argv:
         send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32603,
               "message": "Could not find a valid TypeScript installation."}})
@@ -88,6 +123,7 @@ while True:
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
             "completionProvider": {"triggerCharacters": ["."]},
+            "hoverProvider": True, "definitionProvider": True,
             "renameProvider": True, "referencesProvider": True,
             "codeActionProvider": True,
             "documentFormattingProvider": "--no-format" not in sys.argv,

@@ -205,17 +205,69 @@ of its marker files.
 | `lsp.glsl` | `glsl_analyzer` | GLSL |
 | `lsp.odin` | `ols` | Odin |
 | `lsp.luau` | `luau-lsp` | Luau |
+| `lsp.eslint` | `vscode-eslint-language-server` | TypeScript, TSX, JavaScript (beside, where an eslint config is) |
+| `lsp.biome` | `biome` | TypeScript, TSX, JavaScript, JSON, JSONC, CSS (beside, where `biome.json` is) |
+| `lsp.ruff` | `ruff` | Python (beside, where `ruff.toml` is) |
 
 Most of them are not installed with an editor. When a file's server
 is not found, the corner says so once, and how to get it: `:lsp
-install` (or `:lsp install LANGUAGE`) runs the line its project
-installs it with — `npm i -g yaml-language-server`, `gem install
-ruby-lsp`, `rustup component add rust-analyzer` — in a terminal pane
-of its own, where you see it run and answer what it asks. When the
-line ends well the server starts for the files that missed it.
-`:lsp servers` lists every server: running, off, found or missing,
-and a missing one's install line. `lsp.NAME.install` says another
-line.
+install` (or `:lsp install LANGUAGE`) installs it in a terminal pane
+of its own, where you see it run and answer what it asks. When that
+ends well the server starts for the files that missed it.
+
+A server published to npm, PyPI, crates.io, Go or NuGet is installed
+by kawoosh itself, with your own `npm`, `uv` (or `python3`), `cargo`,
+`go` or `dotnet`, into a folder of kawoosh's —
+`~/.local/share/kawoosh/servers` — not the package manager's global
+one. A server installed with `npm i -g` lives inside one Node of
+fnm's, and is gone when you switch to another; one in kawoosh's folder
+stays, and runs on whichever `node` or `python` is current. kawoosh
+starts a server from there before it looks on your `PATH`. Nothing
+pins a version: an install takes the latest the manager has, and
+`:lsp update` asks again for every server kawoosh installed (`:lsp
+update LANGUAGE` for one). The rest — brew, rustup, gem, opam, ghcup —
+are installed by the line their project gives (`brew install
+marksman`), as you would.
+
+Versions are locked. An install takes the version you ask for —
+`:lsp install yaml@1.15.0` — or the registry's latest, and stays at it:
+nothing updates a server until you ask. Once a day kawoosh asks the
+registries what is newer and says so in the corner; `:lsp servers`
+shows `1.14.0 → 1.24.0`, and `:lsp update` (or `:lsp update yaml`)
+moves to the latest. `lsp.check_updates = false` stops the asking.
+
+The servers a machine wants go in your settings, so they travel with
+them:
+
+```lua
+return {
+  lsp = {
+    ensure_installed = { "rust", "typescript", "yaml@1.15.0", "toml" },
+  },
+}
+```
+
+kawoosh installs what is missing in the background, a line in the
+corner saying so, and starts each server once it is in. A name with a
+version is kept at that version; one without is installed at the
+latest and then left. A server kawoosh does not install itself (brew's,
+rustup's) is named in the corner with how to install it. With
+[qd](settings.md#dotfiles-with-qd) keeping your settings, a new machine gets its
+servers at the first launch.
+
+The same works with no window: `kawoosh lsp install yaml toml@0.9.3`,
+`kawoosh lsp update`, `kawoosh lsp outdated`, `kawoosh lsp remove yaml`
+and `kawoosh lsp list`, which says of each server whether kawoosh
+installed it (at which version), it is on your `PATH`, or it is
+missing, and how it installs. `$KAWOOSH_SERVERS` names another folder.
+
+`:lsp servers` lists every server: running, off, installed by kawoosh,
+found on the `PATH` or missing, and how a missing one installs.
+`lsp.NAME.install` says another way: a line, or a package —
+`install = { npm = "my-language-server" }`, `{ pip = {
+"cmake-language-server", "pygls<2" } }` (the first is the program, the
+others go in beside it), `{ cargo = "taplo-cli", args = { "--locked",
+"--features", "lsp" } }`.
 
 What a server says — its messages, an exit, a program not found — is
 a line in the corner, never a toast; `:messages` keeps each at its
@@ -230,6 +282,33 @@ files, the corner saying how it ended; after three exits in three
 minutes it is off until `:lsp restart`. Either way the corner names
 the project's `.kawoosh/settings.lua`, where `lsp = { NAME = {
 enabled = false } }` keeps it off in a project that is no place for it.
+
+### Several servers for a language
+
+A language can have more than one server: TypeScript has its language
+server and, where the project lints with eslint, eslint beside it. The
+diagnostics of all of them are shown together; code actions are all of
+theirs (eslint's fixes beside TypeScript's refactorings); everything
+else — hover, completion, rename, go to definition — is answered by the
+first server that does it.
+
+A server with `when` files runs only where one of them is in the
+file's directory or one above it, up to the repository's root: eslint
+needs an `eslint.config.*` or an `.eslintrc*`, biome a `biome.json`,
+ruff a `ruff.toml`. Say which servers a language has, in which order,
+with `lsp.languages`:
+
+```lua
+return {
+  lsp = {
+    languages = { typescript = { "typescript", "eslint" }, python = { "python", "ruff" } },
+    -- A server of your own beside a language's: it runs where `.mylint` is.
+    mylint = { cmd = "mylint-lsp", languages = { "typescript" }, when = { ".mylint" } },
+  },
+}
+```
+
+A name is a server's `lsp.NAME` or its program (`"typescript-language-server"`).
 
 ### Settings per server
 
@@ -255,8 +334,9 @@ return {
 | `cmd` `args` | the program and its arguments; a change restarts the server |
 | `roots` | the marker files that find the project root |
 | `languages` | the languages this server serves |
+| `when` | files one of which must be at or above a file for the server to run for it |
 | `settings` | the configuration sent to the server |
-| `install` | the shell line `:lsp install` runs to install the program |
+| `install` | how `:lsp install` installs the program: a package (`{ npm = "name" }`; `pip`, `cargo`, `go`, `dotnet`) into kawoosh's folder, or a shell line |
 
 ### Commands
 
@@ -265,7 +345,8 @@ return {
 | `:lsp` | the servers running, on the status line |
 | `:lsp info` | the servers in a pane: each one's root, documents and rules |
 | `:lsp servers` | every server there is: running, off, found or missing, and how to install a missing one |
-| `:lsp install [LANGUAGE]` | run the server's install line in a terminal pane; it starts once that ends well |
+| `:lsp install [LANGUAGE]` | install the server in a terminal pane — its package into kawoosh's folder, else its line; it starts once that ends well |
+| `:lsp update [LANGUAGE]` | every server kawoosh installed, or one, at its manager's latest; restarted once that ends well |
 | `:lsp restart [LANGUAGE]` | restart one server, or all; a missing program, or one that refused to start or kept exiting, is tried again |
 | `:lsp logs [LANGUAGE]` | what a server said, its errors included, live; `:lsp logs clear` forgets it |
 | `:lsp toggle RULE [LANGUAGE]` | flip `enabled`, `load_all` or `inlay_hints` for the session |

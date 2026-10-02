@@ -9,6 +9,7 @@ default-run = "kawoosh"
 
 [dependencies]
 text-buffer.workspace = true
+qdot.workspace = true
 kawoosh-doc.workspace = true
 kawoosh-editor.workspace = true
 kawoosh-term.workspace = true

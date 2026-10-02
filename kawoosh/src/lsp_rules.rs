@@ -17,6 +17,7 @@ use std::collections::HashSet;
 use kawoosh_editor::settings::Layer;
 use kawoosh_editor::{ArgKind, Args, Setting, Spec};
 use kawoosh_systems::lsp::{Cmd, LanguageFiles, ServerDef};
+use kawoosh_systems::servers::{Manager, Package};
 use serde_json::Value;
 
 use crate::app::Kawoosh;
@@ -40,6 +41,14 @@ const SWITCHES: [(&str, &str); 3] = [
     ),
 ];
 
+/// The keys of `lsp` that are not servers.
+const RESERVED: [&str; 4] = [
+    "inlay_hints",
+    "languages",
+    "ensure_installed",
+    "check_updates",
+];
+
 /// The keys of `lsp.NAME` that are rules, for `:lsp info`.
 const RULES: [&str; 4] = ["enabled", "load_all", "load_max", "inlay_hints"];
 
@@ -55,20 +64,13 @@ impl Kawoosh {
             return;
         }
         self.lsp.rules_seen = Some(v);
-        let (new, strays) = self.lsp_table();
-        for (name, served_by) in strays {
-            if self.lsp.said_strays.insert(name.clone()) {
-                self.notify(
-                    Level::Warn,
-                    match served_by {
-                        Some(by) => format!(
-                            "lsp.{name}: {name} is served by lsp.{by}; its rules go there (or give lsp.{name} a cmd)"
-                        ),
-                        None => format!("lsp.{name}: no server of that name; give it a cmd"),
-                    },
-                );
+        let (new, said) = self.lsp_table();
+        for (key, text) in said {
+            if self.lsp.said_strays.insert(key) {
+                self.notify(Level::Warn, text);
             }
         }
+        self.sync_lsp_order();
         if new == self.lsp.defs {
             return;
         }
@@ -138,9 +140,10 @@ impl Kawoosh {
     /// settings over it and its languages' files the registry's; one
     /// switched off (`enabled = false`) left out. A language with a
     /// server of its own name is that server's, not another's. Beside
-    /// it, each `lsp.NAME` that is no server's — a language another one
-    /// serves (`lsp.tsx`), and which — for a word to the user.
-    fn lsp_table(&self) -> (Vec<ServerDef>, Vec<(String, Option<String>)>) {
+    /// it, what to tell the user once, each by a key: an `lsp.NAME`
+    /// that is no server's — a language another one serves (`lsp.tsx`),
+    /// and which — and an `install` that does not read.
+    fn lsp_table(&self) -> (Vec<ServerDef>, Vec<(String, String)>) {
         let said = match self.ed.settings.get("lsp") {
             Some(Setting::Table(t)) => Some(t),
             _ => None,
@@ -152,14 +155,16 @@ impl Kawoosh {
             .map(|d| d.language.clone())
             .collect();
         for (k, v) in said.into_iter().flatten() {
-            // `lsp.inlay_hints` is the global switch, not a server.
-            if v.is_table() && !names.contains(k) {
+            // `lsp.inlay_hints` is the global switch and `lsp.languages`
+            // each language's servers, not a server.
+            if v.is_table() && !names.contains(k) && !RESERVED.contains(&k.as_str()) {
                 names.push(k.clone());
             }
         }
         let private = private_files(self.ed.settings.get("secrets.masks"));
         let mut out = Vec::new();
         let mut strays: Vec<String> = Vec::new();
+        let mut mistakes: Vec<(String, String)> = Vec::new();
         for name in names {
             let t = said.and_then(|t| t.get(&name)).filter(|v| v.is_table());
             let field = |key: &str| t.and_then(|t| t.get(key));
@@ -190,9 +195,28 @@ impl Kawoosh {
                 // is not its.
                 def.command = c.to_string();
                 def.install.clear();
+                def.package = None;
             }
-            if let Some(i) = field("install").and_then(Setting::as_str) {
-                def.install = i.to_string();
+            // A line, for a manager kawoosh does not drive; a table, a
+            // package it installs itself (lsp-installs.md Decision 2).
+            match field("install") {
+                Some(Setting::Str(line)) => {
+                    def.install = line.clone();
+                    def.package = None;
+                }
+                Some(t) => match package_setting(t) {
+                    Ok(p) => {
+                        def.package = Some(p);
+                        def.install.clear();
+                    }
+                    Err(e) => {
+                        mistakes.push((
+                            format!("{name}.install"),
+                            format!("lsp.{name}.install: {e}"),
+                        ));
+                    }
+                },
+                None => {}
             }
             if let Some(a) = field("args").and_then(strings) {
                 def.args = a;
@@ -202,6 +226,9 @@ impl Kawoosh {
             }
             if let Some(l) = field("languages").and_then(strings) {
                 def.languages = l;
+            }
+            if let Some(w) = field("when").and_then(strings) {
+                def.when = w;
             }
             if let Some(s) = field("settings") {
                 def.settings = setting_json(s);
@@ -223,11 +250,16 @@ impl Kawoosh {
             out.push(def);
         }
         // A language with a server of its own name is served there: a
-        // `lsp.javascript = { cmd = … }` takes it from typescript's.
+        // `lsp.javascript = { cmd = … }` takes it from typescript's. A
+        // server with `when` files runs beside — eslint beside
+        // typescript's — and keeps its languages (lsp-installs.md
+        // Decision 7); `lsp.languages` says outright who serves what.
         let own: HashSet<String> = out.iter().map(|d| d.language.clone()).collect();
         for d in &mut out {
             let name = d.language.clone();
-            d.languages.retain(|l| *l == name || !own.contains(l));
+            let beside = !d.when.is_empty();
+            d.languages
+                .retain(|l| beside || *l == name || !own.contains(l));
             d.files = d
                 .served()
                 .iter()
@@ -239,28 +271,70 @@ impl Kawoosh {
                 })
                 .collect();
         }
-        let strays = strays
+        let mut said: Vec<(String, String)> = strays
             .into_iter()
             .map(|name| {
-                let by = out
-                    .iter()
-                    .chain(self.scripting.servers.iter())
-                    .find(|d| d.serves(&name))
+                let all = || out.iter().chain(self.scripting.servers.iter());
+                let by = all()
+                    .find(|d| d.when.is_empty() && d.serves(&name))
+                    .or_else(|| all().find(|d| d.serves(&name)))
                     .map(|d| d.language.clone());
-                (name, by)
+                let text = match by {
+                    Some(by) => format!(
+                        "lsp.{name}: {name} is served by lsp.{by}; its rules go there (or give lsp.{name} a cmd)"
+                    ),
+                    None => format!("lsp.{name}: no server of that name; give it a cmd"),
+                };
+                (name, text)
             })
             .collect();
-        (out, strays)
+        said.extend(mistakes);
+        (out, said)
+    }
+
+    /// `lsp.languages` sent when it moved (lsp-installs.md Decision 7):
+    /// each language's servers, the first asked first — a name a
+    /// server's `lsp.NAME` or its command. A language whose list moved
+    /// has its buffers sent again, to the servers it has now.
+    fn sync_lsp_order(&mut self) {
+        let order: std::collections::BTreeMap<String, Vec<String>> =
+            match self.ed.settings.get("lsp.languages") {
+                Some(Setting::Table(t)) => t
+                    .iter()
+                    .filter_map(|(language, v)| {
+                        let names = match v {
+                            Setting::Str(s) => vec![s.clone()],
+                            v => strings(v)?,
+                        };
+                        Some((language.clone(), names))
+                    })
+                    .collect(),
+                _ => Default::default(),
+            };
+        if order == self.lsp.order {
+            return;
+        }
+        let moved: HashSet<String> = order
+            .keys()
+            .chain(self.lsp.order.keys())
+            .filter(|l| order.get(*l) != self.lsp.order.get(*l))
+            .cloned()
+            .collect();
+        self.lsp.order = order.clone();
+        self.lsp.lsp.send(Cmd::Order(order));
+        self.lsp_forget_languages(&moved, true);
     }
 
     /// The name of the server for `language` — the running table's, else
     /// the one it would be when switched back on — or the language.
     pub(crate) fn lsp_name_of(&self, language: &str) -> String {
-        self.lsp
-            .defs
-            .iter()
-            .chain(self.scripting.servers.iter())
-            .find(|d| d.serves(language))
+        // The language's own server: one of its name, else one that
+        // serves it unconditionally — not a linter beside it.
+        let all = || self.lsp.defs.iter().chain(self.scripting.servers.iter());
+        all()
+            .find(|d| d.language == language)
+            .or_else(|| all().find(|d| d.when.is_empty() && d.serves(language)))
+            .or_else(|| all().find(|d| d.serves(language)))
             .map(|d| d.language.clone())
             .unwrap_or_else(|| language.to_string())
     }
@@ -347,6 +421,49 @@ impl Kawoosh {
 }
 
 /// A list of strings, or `None` for anything else.
+/// `{ npm = "yaml-language-server" }`, `{ pip = { "x", "dep<2" } }`,
+/// `{ cargo = "taplo-cli", args = { "--features", "lsp" } }`: one
+/// manager's key, its package or packages, and `args` besides.
+pub(crate) fn package_setting(v: &Setting) -> Result<Package, String> {
+    let Setting::Table(t) = v else {
+        return Err("a line, or a table like { npm = \"name\" }".into());
+    };
+    let mut found = None;
+    for (k, v) in t {
+        if k == "args" {
+            continue;
+        }
+        let Some(manager) = Manager::parse(k) else {
+            let all: Vec<&str> = Manager::ALL.iter().map(|m| m.name()).collect();
+            return Err(format!(
+                "no manager {k} (one of {}, and args)",
+                all.join(", ")
+            ));
+        };
+        if found.is_some() {
+            return Err("one manager a server".into());
+        }
+        let packages = match v {
+            Setting::Str(s) => vec![s.clone()],
+            v => strings(v).ok_or("a package, or a list of them")?,
+        };
+        if packages.is_empty() {
+            return Err("no package".into());
+        }
+        found = Some((manager, packages));
+    }
+    let (manager, packages) = found.ok_or("which manager? { npm = … }")?;
+    let args = match t.get("args") {
+        Some(a) => strings(a).ok_or("args is a list of strings")?,
+        None => Vec::new(),
+    };
+    Ok(Package {
+        manager,
+        packages,
+        args,
+    })
+}
+
 fn strings(v: &Setting) -> Option<Vec<String>> {
     v.as_list()?
         .iter()

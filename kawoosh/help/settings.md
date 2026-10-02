@@ -186,6 +186,31 @@ The pane is a Lua plugin over `kawoosh.settings`, which a pane of your own can r
 - `kawoosh.settings.write(path, value, { scope = "user" | "project" | "session" })`, `kawoosh.settings.reset(path, { scope })` and `kawoosh.settings.open(path, { scope, add })` do what the pane does. `kawoosh.settings.check(path, value)` says why a value would be refused, or nil.
 - `kawoosh.settings.sections` is the list of sections, `{ name, paths }`, a path either a setting's or a prefix ending in `.`. Change it in `init.lua` to reorder the pane or add a section of your own.
 
+## Dotfiles with qd
+
+[qd](https://github.com/qxuken/qdot) keeps dotfiles in a git
+repository, a module per folder. kawoosh has it built in, and works
+with the `qd` on your `PATH` as well — through it whenever the two are
+different versions, since they share qd's state.
+
+- `:qd setup` keeps kawoosh's own settings in your dotfiles: its config
+  folder — `settings.lua`, `init.lua`, plugins — becomes module
+  `kawoosh` and is pulled in, `fonts/` left out (a font you bought is
+  not yours to publish; `encrypt = { "fonts/**" }` in the module's
+  `qd.lua` keeps it, encrypted). Run again, it pulls again. The
+  language servers you list in `lsp.ensure_installed` come along: a new
+  machine installs them at kawoosh's first launch.
+- `:qd` opens the modules in a column, each with the files out of step
+  — `differs`, `machine only`, `repo only`. `>` pushes the module under
+  the cursor (repo → machine), `<` pulls it (machine → repo), `⏎` opens
+  the file, `a` adds a folder, `o` opens the repository, `r` reads
+  again, `q` closes.
+- `:qd open` opens the dotfiles repository as a workspace: a tab on it.
+- `:qd push [MODULE…]` and `:qd pull [MODULE…]` take qd's own arguments
+  (`:qd pull -s "message"` commits and pushes after). `:qd add [PATH]
+  [NAME]` starts keeping a folder. `:qd init [URL]` sets up a new
+  machine, in a terminal.
+
 ## Types for the Lua language server
 
 At startup kawoosh writes type definitions for its Lua API and for every declared setting to a folder under `types` beside its state database (`~/.local/share/kawoosh/types` unless `$XDG_DATA_HOME` says otherwise). Each kawoosh executable has a folder of its own there, `kawoosh-` and a hash of its path, with an `exe` file naming it, so two builds side by side never overwrite each other's types; a folder whose executable is gone is removed at the next launch. `$KAWOOSH_TYPES` names one folder instead. When kawoosh runs the Lua language server, it adds that folder to the server's library, so `kawoosh.` and the keys of a settings table complete, with their docs. Put `---@type kawoosh.Settings` above the `return` of a settings file. To use them in another editor, set `KAWOOSH_TYPES` to a folder of your choosing and add that folder to its `workspace.library`.

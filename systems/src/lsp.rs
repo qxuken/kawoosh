@@ -10,7 +10,7 @@
 //! of it in the workspace sent from disk as a document no buffer owns,
 //! which a buffer opened on the file takes over and gives back.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -22,6 +22,7 @@ use kawoosh_doc::{BufferId, Diagnostic, Run, Update, Version};
 use serde_json::{Value, json};
 
 use crate::WakeHandle;
+use crate::servers::{Manager, Package};
 
 pub use kawoosh_doc::diagnostic::LAYER as DIAG_LAYER;
 
@@ -58,10 +59,19 @@ pub struct ServerDef {
     /// a private buffer's text never leaves the process
     /// (docs/design/secrets.md Decision 1).
     pub private: Vec<String>,
-    /// The shell line that installs its command (`npm i -g …`), run by
-    /// `:lsp install` in a pane of its own; empty for none known
-    /// (docs/design/lsp-servers.md).
+    /// The shell line that installs its command with a manager kawoosh
+    /// does not drive (`brew install …`), run by `:lsp install` in a pane
+    /// of its own; empty for none known (docs/design/lsp-servers.md).
     pub install: String,
+    /// The package kawoosh installs it from into a directory of its own
+    /// (`kawoosh lsp install`, docs/design/lsp-installs.md); over
+    /// `install`, which is for a manager kawoosh does not drive.
+    pub package: Option<crate::servers::Package>,
+    /// Files one of which must be at or above a file's directory — up to
+    /// its repository's root — for the server to run for it: eslint's
+    /// configs. Empty: it runs wherever its languages are
+    /// (docs/design/lsp-installs.md Decision 7).
+    pub when: Vec<String>,
 }
 
 /// A language's files: by extension (no dot, any case) or whole name.
@@ -90,6 +100,8 @@ impl Default for ServerDef {
             files: Vec::new(),
             private: Vec::new(),
             install: String::new(),
+            package: None,
+            when: Vec::new(),
         }
     }
 }
@@ -171,12 +183,17 @@ struct Builtin {
     args: &'static [&'static str],
     roots: &'static [&'static str],
     install: Install,
+    /// [`ServerDef::when`].
+    when: &'static [&'static str],
 }
 
-/// How a server is installed: one line everywhere, or one for macOS
-/// and Linux and one for Windows — `""` where no line is known.
+/// How a server is installed: a package kawoosh installs into its own
+/// directory, or a line — one everywhere, or one for macOS and Linux and
+/// one for Windows, `""` where none is known — for a manager it does not
+/// drive (brew, rustup, gem, opam).
 #[derive(Clone, Copy)]
 enum Install {
+    Pkg(Manager, &'static [&'static str], &'static [&'static str]),
     Any(&'static str),
     Os {
         mac: &'static str,
@@ -186,8 +203,9 @@ enum Install {
 }
 
 impl Install {
-    fn here(self) -> &'static str {
+    fn line(self) -> &'static str {
         match self {
+            Install::Pkg(..) => "",
             Install::Any(line) => line,
             Install::Os {
                 mac,
@@ -215,8 +233,13 @@ const fn brew(line: &'static str) -> Install {
     }
 }
 
+/// An npm package, the commonest way.
+const fn npm(packages: &'static [&'static str]) -> Install {
+    Install::Pkg(Manager::Npm, packages, &[])
+}
+
 /// One program's npm package, for the many servers published there.
-const VSCODE_EXTRACTED: Install = Install::Any("npm i -g vscode-langservers-extracted");
+const VSCODE_EXTRACTED: Install = npm(&["vscode-langservers-extracted"]);
 
 /// The builtin servers, by the language each is first for: the ones
 /// every editor's LSP setup reaches for, run as their projects install
@@ -229,6 +252,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["Cargo.toml"],
         install: Install::Any("rustup component add rust-analyzer"),
+        when: &[],
     },
     Builtin {
         name: "typescript",
@@ -236,7 +260,8 @@ const BUILTIN: &[Builtin] = &[
         command: "typescript-language-server",
         args: &["--stdio"],
         roots: &["tsconfig.json", "jsconfig.json", "package.json"],
-        install: Install::Any("npm i -g typescript-language-server typescript@5"),
+        install: npm(&["typescript-language-server", "typescript@5"]),
+        when: &[],
     },
     Builtin {
         name: "lua",
@@ -245,6 +270,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &[".luarc.json", ".luarc.jsonc"],
         install: brew("brew install lua-language-server"),
+        when: &[],
     },
     Builtin {
         name: "python",
@@ -257,7 +283,8 @@ const BUILTIN: &[Builtin] = &[
             "setup.py",
             "requirements.txt",
         ],
-        install: Install::Any("npm i -g pyright"),
+        install: npm(&["pyright"]),
+        when: &[],
     },
     Builtin {
         name: "go",
@@ -265,7 +292,8 @@ const BUILTIN: &[Builtin] = &[
         command: "gopls",
         args: &[],
         roots: &["go.work", "go.mod"],
-        install: Install::Any("go install golang.org/x/tools/gopls@latest"),
+        install: Install::Pkg(Manager::Go, &["golang.org/x/tools/gopls"], &[]),
+        when: &[],
     },
     Builtin {
         name: "c",
@@ -283,6 +311,7 @@ const BUILTIN: &[Builtin] = &[
             linux: "",
             windows: "winget install LLVM.LLVM",
         },
+        when: &[],
     },
     Builtin {
         name: "bash",
@@ -290,7 +319,8 @@ const BUILTIN: &[Builtin] = &[
         command: "bash-language-server",
         args: &["start"],
         roots: &[],
-        install: Install::Any("npm i -g bash-language-server"),
+        install: npm(&["bash-language-server"]),
+        when: &[],
     },
     Builtin {
         name: "fish",
@@ -298,7 +328,8 @@ const BUILTIN: &[Builtin] = &[
         command: "fish-lsp",
         args: &["start"],
         roots: &[],
-        install: Install::Any("npm i -g fish-lsp"),
+        install: npm(&["fish-lsp"]),
+        when: &[],
     },
     Builtin {
         name: "nu",
@@ -311,6 +342,7 @@ const BUILTIN: &[Builtin] = &[
             linux: "cargo install nu --locked",
             windows: "winget install nushell",
         },
+        when: &[],
     },
     Builtin {
         name: "html",
@@ -319,6 +351,7 @@ const BUILTIN: &[Builtin] = &[
         args: &["--stdio"],
         roots: &["package.json"],
         install: VSCODE_EXTRACTED,
+        when: &[],
     },
     Builtin {
         name: "css",
@@ -327,6 +360,7 @@ const BUILTIN: &[Builtin] = &[
         args: &["--stdio"],
         roots: &["package.json"],
         install: VSCODE_EXTRACTED,
+        when: &[],
     },
     Builtin {
         name: "json",
@@ -335,6 +369,7 @@ const BUILTIN: &[Builtin] = &[
         args: &["--stdio"],
         roots: &[],
         install: VSCODE_EXTRACTED,
+        when: &[],
     },
     Builtin {
         name: "yaml",
@@ -342,7 +377,8 @@ const BUILTIN: &[Builtin] = &[
         command: "yaml-language-server",
         args: &["--stdio"],
         roots: &[],
-        install: Install::Any("npm i -g yaml-language-server"),
+        install: npm(&["yaml-language-server"]),
+        when: &[],
     },
     Builtin {
         name: "toml",
@@ -350,11 +386,12 @@ const BUILTIN: &[Builtin] = &[
         command: "taplo",
         args: &["lsp", "stdio"],
         roots: &["taplo.toml", ".taplo.toml"],
-        install: Install::Os {
-            mac: "brew install taplo",
-            linux: "cargo install taplo-cli --locked --features lsp",
-            windows: "cargo install taplo-cli --locked --features lsp",
-        },
+        install: Install::Pkg(
+            Manager::Cargo,
+            &["taplo-cli"],
+            &["--locked", "--features", "lsp"],
+        ),
+        when: &[],
     },
     Builtin {
         name: "markdown",
@@ -363,6 +400,7 @@ const BUILTIN: &[Builtin] = &[
         args: &["server"],
         roots: &[".marksman.toml"],
         install: brew("brew install marksman"),
+        when: &[],
     },
     Builtin {
         name: "dockerfile",
@@ -370,7 +408,8 @@ const BUILTIN: &[Builtin] = &[
         command: "docker-langserver",
         args: &["--stdio"],
         roots: &[],
-        install: Install::Any("npm i -g dockerfile-language-server-nodejs"),
+        install: npm(&["dockerfile-language-server-nodejs"]),
+        when: &[],
     },
     Builtin {
         name: "svelte",
@@ -378,7 +417,8 @@ const BUILTIN: &[Builtin] = &[
         command: "svelteserver",
         args: &["--stdio"],
         roots: &["svelte.config.js", "package.json"],
-        install: Install::Any("npm i -g svelte-language-server"),
+        install: npm(&["svelte-language-server"]),
+        when: &[],
     },
     Builtin {
         name: "php",
@@ -386,7 +426,8 @@ const BUILTIN: &[Builtin] = &[
         command: "intelephense",
         args: &["--stdio"],
         roots: &["composer.json"],
-        install: Install::Any("npm i -g intelephense"),
+        install: npm(&["intelephense"]),
+        when: &[],
     },
     Builtin {
         name: "ruby",
@@ -395,6 +436,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["Gemfile", ".ruby-version"],
         install: Install::Any("gem install ruby-lsp"),
+        when: &[],
     },
     Builtin {
         name: "java",
@@ -409,6 +451,7 @@ const BUILTIN: &[Builtin] = &[
             "settings.gradle.kts",
         ],
         install: brew("brew install jdtls"),
+        when: &[],
     },
     Builtin {
         name: "kotlin",
@@ -423,6 +466,7 @@ const BUILTIN: &[Builtin] = &[
             "pom.xml",
         ],
         install: brew("brew install kotlin-language-server"),
+        when: &[],
     },
     Builtin {
         name: "scala",
@@ -431,6 +475,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["build.sbt", "build.sc", "build.mill"],
         install: Install::Any("cs install metals"),
+        when: &[],
     },
     Builtin {
         name: "csharp",
@@ -438,7 +483,8 @@ const BUILTIN: &[Builtin] = &[
         command: "csharp-ls",
         args: &[],
         roots: &["global.json", "Directory.Build.props"],
-        install: Install::Any("dotnet tool install --global csharp-ls"),
+        install: Install::Pkg(Manager::Dotnet, &["csharp-ls"], &[]),
+        when: &[],
     },
     Builtin {
         name: "fsharp",
@@ -446,7 +492,8 @@ const BUILTIN: &[Builtin] = &[
         command: "fsautocomplete",
         args: &[],
         roots: &["global.json", "Directory.Build.props"],
-        install: Install::Any("dotnet tool install --global fsautocomplete"),
+        install: Install::Pkg(Manager::Dotnet, &["fsautocomplete"], &[]),
+        when: &[],
     },
     Builtin {
         name: "dart",
@@ -455,6 +502,7 @@ const BUILTIN: &[Builtin] = &[
         args: &["language-server", "--protocol=lsp"],
         roots: &["pubspec.yaml"],
         install: brew("brew install dart-lang/dart/dart"),
+        when: &[],
     },
     Builtin {
         name: "zig",
@@ -463,6 +511,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["build.zig", "build.zig.zon"],
         install: brew("brew install zls"),
+        when: &[],
     },
     Builtin {
         name: "haskell",
@@ -471,6 +520,7 @@ const BUILTIN: &[Builtin] = &[
         args: &["--lsp"],
         roots: &["hie.yaml", "stack.yaml", "cabal.project", "package.yaml"],
         install: Install::Any("ghcup install hls"),
+        when: &[],
     },
     Builtin {
         name: "ocaml",
@@ -479,6 +529,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["dune-project", "dune-workspace"],
         install: Install::Any("opam install ocaml-lsp-server"),
+        when: &[],
     },
     Builtin {
         name: "elixir",
@@ -487,6 +538,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["mix.exs"],
         install: brew("brew install elixir-ls"),
+        when: &[],
     },
     Builtin {
         name: "erlang",
@@ -495,6 +547,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["rebar.config", "erlang.mk"],
         install: brew("brew install erlang_ls"),
+        when: &[],
     },
     Builtin {
         name: "gleam",
@@ -503,6 +556,7 @@ const BUILTIN: &[Builtin] = &[
         args: &["lsp"],
         roots: &["gleam.toml"],
         install: brew("brew install gleam"),
+        when: &[],
     },
     Builtin {
         name: "elm",
@@ -510,7 +564,8 @@ const BUILTIN: &[Builtin] = &[
         command: "elm-language-server",
         args: &[],
         roots: &["elm.json"],
-        install: Install::Any("npm i -g @elm-tooling/elm-language-server"),
+        install: npm(&["@elm-tooling/elm-language-server"]),
+        when: &[],
     },
     Builtin {
         name: "purescript",
@@ -518,7 +573,8 @@ const BUILTIN: &[Builtin] = &[
         command: "purescript-language-server",
         args: &["--stdio"],
         roots: &["spago.yaml", "spago.dhall"],
-        install: Install::Any("npm i -g purescript-language-server"),
+        install: npm(&["purescript-language-server"]),
+        when: &[],
     },
     Builtin {
         name: "clojure",
@@ -527,6 +583,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["deps.edn", "project.clj", "bb.edn", "shadow-cljs.edn"],
         install: brew("brew install clojure-lsp/brew/clojure-lsp-native"),
+        when: &[],
     },
     Builtin {
         name: "racket",
@@ -535,6 +592,7 @@ const BUILTIN: &[Builtin] = &[
         args: &["-l", "racket-langserver"],
         roots: &["info.rkt"],
         install: Install::Any("raco pkg install --auto racket-langserver"),
+        when: &[],
     },
     Builtin {
         name: "nix",
@@ -543,6 +601,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["flake.nix"],
         install: Install::Any("nix profile install nixpkgs#nil"),
+        when: &[],
     },
     Builtin {
         name: "cmake",
@@ -550,7 +609,13 @@ const BUILTIN: &[Builtin] = &[
         command: "cmake-language-server",
         args: &[],
         roots: &["CMakeLists.txt"],
-        install: Install::Any("pipx install cmake-language-server"),
+        install: Install::Pkg(
+            Manager::Pip,
+            // pygls 2 took away the class it imports (2026-10).
+            &["cmake-language-server", "pygls<2"],
+            &[],
+        ),
+        when: &[],
     },
     Builtin {
         name: "fortran",
@@ -558,7 +623,8 @@ const BUILTIN: &[Builtin] = &[
         command: "fortls",
         args: &[],
         roots: &[".fortls"],
-        install: Install::Any("pipx install fortls"),
+        install: Install::Pkg(Manager::Pip, &["fortls"], &[]),
+        when: &[],
     },
     Builtin {
         name: "r",
@@ -569,6 +635,7 @@ const BUILTIN: &[Builtin] = &[
         install: Install::Any(
             "R -e 'install.packages(\"languageserver\", repos = \"https://cloud.r-project.org\")'",
         ),
+        when: &[],
     },
     Builtin {
         name: "prisma",
@@ -576,7 +643,8 @@ const BUILTIN: &[Builtin] = &[
         command: "prisma-language-server",
         args: &["--stdio"],
         roots: &["package.json"],
-        install: Install::Any("npm i -g @prisma/language-server"),
+        install: npm(&["@prisma/language-server"]),
+        when: &[],
     },
     Builtin {
         name: "proto",
@@ -584,7 +652,8 @@ const BUILTIN: &[Builtin] = &[
         command: "protols",
         args: &[],
         roots: &["protols.toml", "buf.yaml"],
-        install: Install::Any("cargo install protols"),
+        install: Install::Pkg(Manager::Cargo, &["protols"], &[]),
+        when: &[],
     },
     Builtin {
         name: "dot",
@@ -592,7 +661,8 @@ const BUILTIN: &[Builtin] = &[
         command: "dot-language-server",
         args: &["--stdio"],
         roots: &[],
-        install: Install::Any("npm i -g dot-language-server"),
+        install: npm(&["dot-language-server"]),
+        when: &[],
     },
     Builtin {
         name: "awk",
@@ -600,7 +670,8 @@ const BUILTIN: &[Builtin] = &[
         command: "awk-language-server",
         args: &[],
         roots: &[],
-        install: Install::Any("npm i -g awk-language-server"),
+        install: npm(&["awk-language-server"]),
+        when: &[],
     },
     Builtin {
         name: "wgsl",
@@ -608,9 +679,12 @@ const BUILTIN: &[Builtin] = &[
         command: "wgsl-analyzer",
         args: &[],
         roots: &[],
-        install: Install::Any(
-            "cargo install --git https://github.com/wgsl-analyzer/wgsl-analyzer wgsl-analyzer",
+        install: Install::Pkg(
+            Manager::Cargo,
+            &["wgsl-analyzer"],
+            &["--git", "https://github.com/wgsl-analyzer/wgsl-analyzer"],
         ),
+        when: &[],
     },
     Builtin {
         name: "glsl",
@@ -619,6 +693,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &[],
         install: Install::Any(""),
+        when: &[],
     },
     Builtin {
         name: "odin",
@@ -627,6 +702,7 @@ const BUILTIN: &[Builtin] = &[
         args: &[],
         roots: &["ols.json", "odinfmt.json"],
         install: Install::Any(""),
+        when: &[],
     },
     Builtin {
         name: "luau",
@@ -635,8 +711,80 @@ const BUILTIN: &[Builtin] = &[
         args: &["lsp"],
         roots: &[".luaurc"],
         install: Install::Any(""),
+        when: &[],
+    },
+    // Beside a language's own server, where the project says so
+    // (Decision 7): its config, at or above the file.
+    Builtin {
+        name: "eslint",
+        languages: &["typescript", "tsx", "javascript"],
+        command: "vscode-eslint-language-server",
+        args: &["--stdio"],
+        roots: &["package.json"],
+        install: VSCODE_EXTRACTED,
+        when: ESLINT_CONFIGS,
+    },
+    Builtin {
+        name: "biome",
+        languages: &["typescript", "tsx", "javascript", "json", "jsonc", "css"],
+        command: "biome",
+        args: &["lsp-proxy"],
+        roots: &["biome.json", "biome.jsonc"],
+        install: npm(&["@biomejs/biome"]),
+        when: &["biome.json", "biome.jsonc"],
+    },
+    Builtin {
+        name: "ruff",
+        languages: &["python"],
+        command: "ruff",
+        args: &["server"],
+        roots: &["pyproject.toml", "ruff.toml", ".ruff.toml"],
+        install: Install::Pkg(Manager::Pip, &["ruff"], &[]),
+        when: &["ruff.toml", ".ruff.toml"],
     },
 ];
+
+/// The files that say a project lints with eslint: flat configs and the
+/// older `.eslintrc`s.
+const ESLINT_CONFIGS: &[&str] = &[
+    "eslint.config.js",
+    "eslint.config.mjs",
+    "eslint.config.cjs",
+    "eslint.config.ts",
+    "eslint.config.mts",
+    "eslint.config.cts",
+    ".eslintrc",
+    ".eslintrc.js",
+    ".eslintrc.cjs",
+    ".eslintrc.json",
+    ".eslintrc.yaml",
+    ".eslintrc.yml",
+];
+
+/// What vscode-eslint-language-server reads as its configuration — the
+/// editor extension's defaults, as nvim-lspconfig sends them; a `null`
+/// `workspaceFolder` is answered with the server's root.
+fn eslint_settings() -> Value {
+    json!({
+        "validate": "on",
+        "useESLintClass": false,
+        "experimental": { "useFlatConfig": false },
+        "codeActionOnSave": { "enable": false, "mode": "all" },
+        "format": false,
+        "quiet": false,
+        "onIgnoredFiles": "off",
+        "rulesCustomizations": [],
+        "run": "onType",
+        "problems": { "shortenToSingleLine": false },
+        "nodePath": "",
+        "workingDirectory": { "mode": "location" },
+        "workspaceFolder": null,
+        "codeAction": {
+            "disableRuleComment": { "enable": true, "location": "separateLine" },
+            "showDocumentation": { "enable": true }
+        }
+    })
+}
 
 impl ServerDef {
     /// The obvious servers for the languages kawoosh knows, built in or
@@ -657,7 +805,17 @@ impl ServerDef {
                 command: b.command.into(),
                 args: strings(b.args),
                 roots: strings(b.roots),
-                install: b.install.here().into(),
+                install: b.install.line().into(),
+                package: match b.install {
+                    Install::Pkg(m, packages, args) => Some(Package::new(m, packages, args)),
+                    _ => None,
+                },
+                when: strings(b.when),
+                settings: if b.name == "eslint" {
+                    eslint_settings()
+                } else {
+                    Value::Null
+                },
                 ..Default::default()
             })
             .collect()
@@ -780,6 +938,38 @@ pub fn workspace_root(path: &Path, def: &ServerDef) -> PathBuf {
         .unwrap_or_else(|| dir.to_path_buf())
 }
 
+/// Whether one of `files` is in `dir` or a directory above it, up to the
+/// repository's root (the nearest `.git`) — or, with none, the root of
+/// the disk. On a host, through its domain.
+fn marked(dir: &Path, files: &[String]) -> bool {
+    if let Some((name, rest)) = crate::fs::domain_of(dir) {
+        use kawoosh_doc::paths::{host_join, host_parent};
+        let exists = |d: &Path, m: &str| {
+            crate::fs::exists(&crate::fs::on_domain(name, &host_join(d, Path::new(m))))
+        };
+        let mut d = Some(rest);
+        while let Some(at) = d {
+            if files.iter().any(|f| exists(at, f)) {
+                return true;
+            }
+            if exists(at, ".git") {
+                return false;
+            }
+            d = host_parent(at).filter(|p| !p.as_os_str().is_empty());
+        }
+        return false;
+    }
+    for d in dir.ancestors() {
+        if files.iter().any(|f| d.join(f).exists()) {
+            return true;
+        }
+        if d.join(".git").exists() {
+            return false;
+        }
+    }
+    false
+}
+
 pub enum Cmd {
     /// The buffer's text at `version` — didOpen the first time, then
     /// didChange.
@@ -811,6 +1001,11 @@ pub enum Cmd {
     /// its new `settings` and rules as they come; a new command or
     /// arguments are the shell's to restart for.
     Servers(Vec<ServerDef>),
+    /// Each language's servers by name, in the order asked of them
+    /// (`lsp.languages`, Decision 7): only these run for it, and a
+    /// request goes to the first that answers it. A language not here
+    /// has every server that serves it, in the table's order.
+    Order(BTreeMap<String, Vec<String>>),
     /// The servers on these commands stopped: no language uses them now.
     Stop {
         commands: Vec<String>,
@@ -867,7 +1062,10 @@ pub enum Cmd {
         buffer: BufferId,
         start: usize,
         end: usize,
-        diagnostics: Vec<(usize, usize, u32, String)>,
+        /// The diagnostics there, as the server said them: its range
+        /// and the diagnostic — `source` and `code` with it, which a
+        /// linter finds its fixes by (eslint's rule).
+        diagnostics: Vec<(usize, usize, Diagnostic)>,
     },
     Format {
         buffer: BufferId,
@@ -1008,6 +1206,75 @@ pub struct Caps {
     pub document_symbol: bool,
     pub workspace_symbol: bool,
     pub inlay_hint: bool,
+    pub definition: bool,
+    pub hover: bool,
+    pub completion: bool,
+    /// The commands `workspace/executeCommand` runs on it.
+    pub commands: Vec<String>,
+    /// It gives diagnostics when asked (`diagnosticProvider`), not only
+    /// as it publishes them.
+    pub pull: bool,
+}
+
+impl Caps {
+    /// What `self` and `other` do between them: a language's servers
+    /// together.
+    pub fn union(&self, other: &Caps) -> Caps {
+        let mut triggers = self.triggers.clone();
+        triggers.extend(
+            other
+                .triggers
+                .iter()
+                .filter(|t| !self.triggers.contains(t))
+                .cloned(),
+        );
+        let mut commands = self.commands.clone();
+        commands.extend(
+            other
+                .commands
+                .iter()
+                .filter(|c| !self.commands.contains(c))
+                .cloned(),
+        );
+        Caps {
+            triggers,
+            rename: self.rename || other.rename,
+            references: self.references || other.references,
+            code_action: self.code_action || other.code_action,
+            format: self.format || other.format,
+            type_definition: self.type_definition || other.type_definition,
+            implementation: self.implementation || other.implementation,
+            declaration: self.declaration || other.declaration,
+            document_symbol: self.document_symbol || other.document_symbol,
+            workspace_symbol: self.workspace_symbol || other.workspace_symbol,
+            inlay_hint: self.inlay_hint || other.inlay_hint,
+            definition: self.definition || other.definition,
+            pull: self.pull || other.pull,
+            hover: self.hover || other.hover,
+            completion: self.completion || other.completion,
+            commands,
+        }
+    }
+
+    /// Whether it answers `method`.
+    pub fn answers(&self, method: &str) -> bool {
+        match method {
+            "textDocument/definition" => self.definition,
+            "textDocument/hover" => self.hover,
+            "textDocument/completion" => self.completion,
+            "textDocument/rename" => self.rename,
+            "textDocument/references" => self.references,
+            "textDocument/codeAction" => self.code_action,
+            "textDocument/formatting" => self.format,
+            "textDocument/typeDefinition" => self.type_definition,
+            "textDocument/implementation" => self.implementation,
+            "textDocument/declaration" => self.declaration,
+            "textDocument/documentSymbol" => self.document_symbol,
+            "workspace/symbol" => self.workspace_symbol,
+            "textDocument/inlayHint" => self.inlay_hint,
+            _ => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1167,6 +1434,12 @@ pub enum Event {
         text: String,
         log: bool,
     },
+    /// The servers holding `buffer` now, by command: told when the list
+    /// moves — a server beside (eslint) joined, or one went.
+    Holders {
+        buffer: BufferId,
+        commands: Vec<String>,
+    },
     /// `$/progress`: one of a server's work-done tokens moved. `title`
     /// comes with the begin, `message` and `percentage` with any step,
     /// `done` with the end.
@@ -1205,6 +1478,7 @@ impl Event {
             Event::Message { log: true, .. } => "lsp log message",
             Event::Message { .. } => "lsp show message",
             Event::Progress { .. } => "lsp progress",
+            Event::Holders { .. } => "lsp holders",
         }
     }
 }
@@ -1494,6 +1768,9 @@ struct Server {
     loading: BTreeSet<String>,
     /// Its last line on stderr: what it said as it went, when it exits.
     last_stderr: Option<String>,
+    /// What it said it does, once `initialize` is answered; a server
+    /// not up yet is taken to do everything.
+    caps: Option<Caps>,
 }
 
 impl Server {
@@ -1516,8 +1793,13 @@ impl Server {
                 }
                 t.remote_command(&crate::io::remote_script(dir, &[], &line, false))
             }
+            // One kawoosh installed is started from its directory, ahead
+            // of the PATH (docs/design/lsp-installs.md).
             None => {
-                let mut c = crate::io::command(&def.command);
+                let program = crate::servers::find(&def.command)
+                    .map(PathBuf::into_os_string)
+                    .unwrap_or_else(|| def.command.clone().into());
+                let mut c = crate::io::command(program);
                 c.args(&def.args).current_dir(root);
                 c
             }
@@ -1598,6 +1880,7 @@ impl Server {
             root: root.to_path_buf(),
             loading: BTreeSet::new(),
             last_stderr: None,
+            caps: None,
         })
     }
 
@@ -1733,9 +2016,26 @@ impl Pace {
 
 struct Pool {
     defs: Vec<ServerDef>,
-    keys: HashMap<(PathBuf, String), usize>,
+    /// The servers running, by their root, command and arguments: two
+    /// definitions run alike are one process.
+    keys: HashMap<(PathBuf, String, Vec<String>), usize>,
     servers: Vec<Option<Server>>,
-    homes: HashMap<BufferId, usize>,
+    /// Each buffer's servers, the first asked first.
+    homes: HashMap<BufferId, Vec<usize>>,
+    /// `Cmd::Order`'s.
+    order: BTreeMap<String, Vec<String>>,
+    /// Whether a server's `when` files are at or above a directory, by
+    /// the directory and the server's name: asked at every sync.
+    when_seen: HashMap<(PathBuf, String), bool>,
+    /// What each server last published for a document, by its uri and
+    /// the server: a document's diagnostics are all of theirs.
+    published: HashMap<String, BTreeMap<usize, Value>>,
+    /// Code action requests asked of several servers, by group: how
+    /// many answers are still to come, what came, and who asked.
+    actions: HashMap<u64, (usize, Vec<CodeAction>, BufferId)>,
+    /// Each code action request's group, by server and request id.
+    action_of: HashMap<(usize, i64), u64>,
+    next_group: u64,
     from_tx: Sender<(usize, FromServer)>,
     event_tx: Sender<Event>,
     wake: WakeHandle,
@@ -1782,6 +2082,12 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         keys: HashMap::new(),
         servers: Vec::new(),
         homes: HashMap::new(),
+        order: BTreeMap::new(),
+        when_seen: HashMap::new(),
+        published: HashMap::new(),
+        actions: HashMap::new(),
+        action_of: HashMap::new(),
+        next_group: 0,
         from_tx,
         event_tx,
         progress_pace: Pace::new(PROGRESS_PACE),
@@ -1857,7 +2163,7 @@ impl Pool {
         let mut list: Vec<(PathBuf, String, usize, usize)> = self
             .keys
             .iter()
-            .filter_map(|((root, cmd), key)| {
+            .filter_map(|((root, cmd, _), key)| {
                 let s = self.servers.get(*key)?.as_ref()?;
                 let loaded = s.documents.values().filter(|d| d.buffer.is_none()).count();
                 Some((
@@ -2001,10 +2307,62 @@ impl Pool {
         self.status();
     }
 
-    fn server_for(&mut self, path: &Path, language: &str) -> Option<usize> {
-        let def = self.defs.iter().find(|d| d.serves(language))?.clone();
+    /// The servers for a file of `language` at `path`, the first asked
+    /// first: `Cmd::Order`'s for the language, else every one that
+    /// serves it — each whose `when` files are there — started as
+    /// needed.
+    fn servers_for(&mut self, path: &Path, language: &str) -> Vec<usize> {
+        let defs: Vec<ServerDef> = match self.order.get(language) {
+            Some(names) => names
+                .iter()
+                .filter_map(|n| {
+                    self.defs
+                        .iter()
+                        .find(|d| d.language == *n)
+                        .or_else(|| self.defs.iter().find(|d| d.command == *n))
+                })
+                .cloned()
+                .collect(),
+            None => self
+                .defs
+                .iter()
+                .filter(|d| d.serves(language))
+                .cloned()
+                .collect(),
+        };
+        let mut keys = Vec::new();
+        for d in &defs {
+            if self.wanted_at(d, path)
+                && let Some(k) = self.server_of(d, path)
+                && !keys.contains(&k)
+            {
+                keys.push(k);
+            }
+        }
+        keys
+    }
+
+    /// Whether `def` runs for the file at `path`: it has no `when`, or
+    /// one of its files is at or above the file's directory, up to the
+    /// repository's root.
+    fn wanted_at(&mut self, def: &ServerDef, path: &Path) -> bool {
+        if def.when.is_empty() {
+            return true;
+        }
+        let dir = path.parent().unwrap_or(path).to_path_buf();
+        let k = (dir.clone(), def.language.clone());
+        if let Some(&seen) = self.when_seen.get(&k) {
+            return seen;
+        }
+        let seen = marked(&dir, &def.when);
+        self.when_seen.insert(k, seen);
+        seen
+    }
+
+    fn server_of(&mut self, def: &ServerDef, path: &Path) -> Option<usize> {
+        let def = def.clone();
         let root = workspace_root(path, &def);
-        let k = (root.clone(), def.command.clone());
+        let k = (root.clone(), def.command.clone(), def.args.clone());
         if let Some(&key) = self.keys.get(&k) {
             return self.servers[key].as_ref().map(|_| key);
         }
@@ -2054,6 +2412,7 @@ impl Pool {
                         "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
                         "inlayHint": {},
                         "formatting": {},
+                        "diagnostic": { "dynamicRegistration": false, "relatedDocumentSupport": false },
                         "codeAction": { "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [
                             "", "quickfix", "refactor", "refactor.extract", "refactor.inline",
                             "refactor.rewrite", "source", "source.organizeImports"
@@ -2061,6 +2420,7 @@ impl Pool {
                     },
                     "workspace": {
                         "symbol": {},
+                        "diagnostics": { "refreshSupport": true },
                         "configuration": true, "workspaceFolders": true, "applyEdit": true,
                         "workspaceEdit": { "documentChanges": true }
                     },
@@ -2076,8 +2436,10 @@ impl Pool {
 
     fn handle_cmd(&mut self, cmd: Cmd) {
         match cmd {
+            Cmd::Order(order) => self.order = order,
             Cmd::Servers(defs) => {
                 self.defs = defs;
+                self.when_seen.clear();
                 for key in 0..self.servers.len() {
                     // New settings reach a server running, as the
                     // protocol has them change.
@@ -2108,31 +2470,27 @@ impl Pool {
                 let stopped: Vec<usize> = self
                     .keys
                     .iter()
-                    .filter(|((_, c), _)| commands.contains(c))
+                    .filter(|((_, c, _), _)| commands.contains(c))
                     .map(|(_, &key)| key)
                     .collect();
-                self.keys.retain(|(_, c), _| !commands.contains(c));
-                self.homes.retain(|_, key| !stopped.contains(key));
-                for key in stopped {
-                    self.servers[key] = None;
-                }
+                self.keys.retain(|(_, c, _), _| !commands.contains(c));
+                self.forget_servers(&stopped);
                 self.status();
             }
             Cmd::Restart { commands } => {
+                // A config written since is looked for again.
+                self.when_seen.clear();
                 // Dropped, each server is killed; what it still says on
                 // its threads finds no server at its key, and a document
                 // synced again starts a new one at a new key.
                 let stopped: Vec<usize> = self
                     .keys
                     .iter()
-                    .filter(|((_, c), _)| commands.contains(c))
+                    .filter(|((_, c, _), _)| commands.contains(c))
                     .map(|(_, &key)| key)
                     .collect();
-                self.keys.retain(|(_, c), _| !commands.contains(c));
-                self.homes.retain(|_, key| !stopped.contains(key));
-                for key in stopped {
-                    self.servers[key] = None;
-                }
+                self.keys.retain(|(_, c, _), _| !commands.contains(c));
+                self.forget_servers(&stopped);
                 self.status();
                 // A login shell takes a while; the servers of other
                 // commands are answered meanwhile.
@@ -2158,111 +2516,36 @@ impl Pool {
                 version,
                 text,
             } => {
-                let Some(key) = self.server_for(&path, &language) else {
+                let keys = self.servers_for(&path, &language);
+                if keys.is_empty() {
                     return;
-                };
-                self.homes.insert(buffer, key);
-                let server = self.servers[key].as_mut().unwrap();
-                let uri = uri_of(&path);
-                match server.documents.get_mut(&uri) {
-                    Some(doc) => {
-                        // A file `load_all` sent is the buffer's now: the
-                        // server holds it open already.
-                        let took = doc.buffer.replace(buffer).is_none();
-                        if doc.text == text {
-                            doc.version = version;
-                            if took {
-                                self.status();
-                            }
-                            return;
-                        }
-                        doc.text = text.clone();
-                        doc.version = version;
-                        doc.lsp_version += 1;
-                        let v = doc.lsp_version;
-                        server.notify(
-                            "textDocument/didChange",
-                            json!({
-                                "textDocument": { "uri": uri, "version": v },
-                                "contentChanges": [{ "text": text }]
-                            }),
-                        );
-                        if took {
-                            self.status();
-                        }
-                    }
-                    None => {
-                        server.notify(
-                            "textDocument/didOpen",
-                            json!({
-                                "textDocument": {
-                                    "uri": uri, "languageId": language_id(&language),
-                                    "version": 1, "text": text
-                                }
-                            }),
-                        );
-                        server.documents.insert(
-                            uri,
-                            Document {
-                                buffer: Some(buffer),
-                                language,
-                                text,
-                                version,
-                                lsp_version: 1,
-                            },
-                        );
-                        self.status();
-                    }
+                }
+                // A server no longer for it (an order changed) lets go.
+                for gone in self
+                    .homes
+                    .get(&buffer)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|k| !keys.contains(k))
+                {
+                    self.close_on(gone, buffer);
+                }
+                if self.homes.insert(buffer, keys.clone()).as_ref() != Some(&keys) {
+                    let commands = keys
+                        .iter()
+                        .filter_map(|&k| self.servers[k].as_ref().map(|s| s.name.clone()))
+                        .collect();
+                    self.emit(Event::Holders { buffer, commands });
+                }
+                for key in keys {
+                    self.sync_to(key, buffer, &path, &language, version, &text);
                 }
             }
             Cmd::Close { buffer } => {
-                let Some(&key) = self.homes.get(&buffer) else {
-                    return;
-                };
-                let Some(server) = self.servers[key].as_mut() else {
-                    return;
-                };
-                if let Some((uri, doc)) = server.doc_of(buffer) {
-                    // A file of a language `load_all` holds goes back to
-                    // being the pool's, as the disk has it.
-                    let disk = server
-                        .loading
-                        .contains(&doc.language)
-                        .then(|| path_of_uri(&uri))
-                        .flatten()
-                        .map(|p| match &server.domain {
-                            Some(d) => crate::fs::on_domain(d, &p),
-                            None => p,
-                        })
-                        .and_then(|p| crate::fs::read(&p).ok());
-                    match disk {
-                        Some(text) => {
-                            let doc = server.documents.get_mut(&uri).unwrap();
-                            doc.buffer = None;
-                            doc.version = Version::INITIAL;
-                            if doc.text != text {
-                                doc.text = text.clone();
-                                doc.lsp_version += 1;
-                                let v = doc.lsp_version;
-                                server.notify(
-                                    "textDocument/didChange",
-                                    json!({
-                                        "textDocument": { "uri": uri, "version": v },
-                                        "contentChanges": [{ "text": text }]
-                                    }),
-                                );
-                            }
-                        }
-                        None => {
-                            server.documents.remove(&uri);
-                            server.notify(
-                                "textDocument/didClose",
-                                json!({ "textDocument": { "uri": uri } }),
-                            );
-                        }
-                    }
+                for key in self.homes.remove(&buffer).unwrap_or_default() {
+                    self.close_on(key, buffer);
                 }
-                self.homes.remove(&buffer);
                 self.status();
             }
             Cmd::Definition { buffer, offset } => self.positional(
@@ -2398,8 +2681,21 @@ impl Pool {
                 };
                 let diags: Vec<Value> = diagnostics
                     .iter()
-                    .map(|(a, b, severity, message)| {
-                        json!({ "range": range(*a, *b), "severity": severity, "message": message })
+                    .map(|(a, b, d)| {
+                        let mut v = json!({
+                            "range": range(*a, *b), "severity": d.severity, "message": d.message
+                        });
+                        if let Some(source) = &d.source {
+                            v["source"] = json!(source);
+                        }
+                        // A number said as one (TypeScript's 2322).
+                        if let Some(code) = &d.code {
+                            v["code"] = match code.parse::<i64>() {
+                                Ok(n) => json!(n),
+                                Err(_) => json!(code),
+                            };
+                        }
+                        v
                     })
                     .collect();
                 let params = json!({
@@ -2407,13 +2703,33 @@ impl Pool {
                     "range": range(start, end),
                     "context": { "diagnostics": diags }
                 });
-                self.request_for(
-                    buffer,
-                    "textDocument/codeAction",
-                    params,
-                    Version::INITIAL,
-                    start,
-                );
+                // Every server's, gathered: a linter's fixes beside the
+                // language server's refactorings.
+                let keys: Vec<usize> = self
+                    .homes
+                    .get(&buffer)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|&k| self.answers(k, "textDocument/codeAction"))
+                    .collect();
+                if keys.is_empty() {
+                    return;
+                }
+                self.next_group += 1;
+                let group = self.next_group;
+
+                self.actions.insert(group, (keys.len(), Vec::new(), buffer));
+                for key in keys {
+                    if let Some(server) = self.servers[key].as_mut() {
+                        let id = server.request(
+                            "textDocument/codeAction",
+                            params.clone(),
+                            (buffer, Version::INITIAL, start),
+                        );
+                        self.action_of.insert((key, id), group);
+                    }
+                }
             }
             Cmd::Format {
                 buffer,
@@ -2435,21 +2751,264 @@ impl Pool {
                 command,
                 arguments,
             } => {
+                // On the server that offers the command; else the first.
+                let keys = self.homes.get(&buffer).cloned().unwrap_or_default();
+                let key = keys
+                    .iter()
+                    .copied()
+                    .find(|&k| {
+                        self.servers[k]
+                            .as_ref()
+                            .and_then(|s| s.caps.as_ref())
+                            .is_some_and(|c| c.commands.contains(&command))
+                    })
+                    .or_else(|| keys.first().copied());
                 let params = json!({ "command": command, "arguments": arguments });
-                self.request_for(
-                    buffer,
-                    "workspace/executeCommand",
-                    params,
-                    Version::INITIAL,
-                    0,
-                );
+                if let Some(server) = key.and_then(|k| self.servers[k].as_mut()) {
+                    server.request(
+                        "workspace/executeCommand",
+                        params,
+                        (buffer, Version::INITIAL, 0),
+                    );
+                }
             }
+        }
+    }
+
+    /// What server `key` says of the document at `uri` — pushed or pulled
+    /// — with every other server's for it: a linter's beside the
+    /// language server's, handed up as the buffer's, or the file's when
+    /// no buffer holds it.
+    fn diagnostics_from(&mut self, key: usize, uri: &str, items: Value) {
+        let uri = canonical_uri(uri);
+        let by = self.published.entry(uri.clone()).or_default();
+        by.insert(key, items);
+        let all: Vec<Value> = by
+            .values()
+            .filter_map(Value::as_array)
+            .flatten()
+            .cloned()
+            .collect();
+        let params = json!({ "uri": uri, "diagnostics": all });
+        let Some(server) = self.servers.get(key).and_then(Option::as_ref) else {
+            return;
+        };
+        if let Some(doc) = server.documents.get(&uri)
+            && let Some(buffer) = doc.buffer
+        {
+            let (update, diagnostics) = diagnostics_update(&params, doc);
+            self.emit_from(
+                key,
+                Event::Diagnostics {
+                    buffer,
+                    update,
+                    diagnostics,
+                },
+            );
+        } else if let Some(path) = path_of_uri(&uri) {
+            // A file it was not sent, or one `load_all` sent that no
+            // buffer holds: kept by path, placed as the server placed it.
+            let diagnostics = placed_diagnostics(&params);
+            self.emit_from(key, Event::FileDiagnostics { path, diagnostics });
+        }
+    }
+
+    /// The pull model (`textDocument/diagnostic`): a server that gives
+    /// its diagnostics only when asked — vscode-eslint — is asked for
+    /// `uri`'s after it is sent.
+    fn pull_diagnostics(&mut self, key: usize, uri: &str, buffer: BufferId) {
+        let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+            return;
+        };
+        if !server.caps.as_ref().is_some_and(|c| c.pull) {
+            return;
+        }
+        server.request(
+            "textDocument/diagnostic",
+            json!({ "textDocument": { "uri": uri } }),
+            (buffer, Version::INITIAL, 0),
+        );
+    }
+
+    /// Every document server `key` holds for a buffer, pulled again: it
+    /// came up, or asked (`workspace/diagnostic/refresh`).
+    fn pull_all(&mut self, key: usize) {
+        let docs: Vec<(String, BufferId)> = self
+            .servers
+            .get(key)
+            .and_then(Option::as_ref)
+            .map(|s| {
+                s.documents
+                    .iter()
+                    .filter_map(|(u, d)| Some((u.clone(), d.buffer?)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (uri, buffer) in docs {
+            self.pull_diagnostics(key, &uri, buffer);
+        }
+    }
+
+    /// Buffer `buffer`'s text sent to server `key`: `didOpen` the first
+    /// time, `didChange` after.
+    fn sync_to(
+        &mut self,
+        key: usize,
+        buffer: BufferId,
+        path: &Path,
+        language: &str,
+        version: Version,
+        text: &str,
+    ) {
+        let Some(server) = self.servers[key].as_mut() else {
+            return;
+        };
+        let uri = uri_of(path);
+        match server.documents.get_mut(&uri) {
+            Some(doc) => {
+                // A file `load_all` sent is the buffer's now: the
+                // server holds it open already.
+                let took = doc.buffer.replace(buffer).is_none();
+                if doc.text == text {
+                    doc.version = version;
+                    if took {
+                        self.status();
+                    }
+                    return;
+                }
+                doc.text = text.to_string();
+                doc.version = version;
+                doc.lsp_version += 1;
+                let v = doc.lsp_version;
+                server.notify(
+                    "textDocument/didChange",
+                    json!({
+                        "textDocument": { "uri": uri, "version": v },
+                        "contentChanges": [{ "text": text }]
+                    }),
+                );
+                if took {
+                    self.status();
+                }
+                self.pull_diagnostics(key, &uri, buffer);
+            }
+            None => {
+                server.notify(
+                    "textDocument/didOpen",
+                    json!({
+                        "textDocument": {
+                            "uri": uri, "languageId": language_id(language),
+                            "version": 1, "text": text
+                        }
+                    }),
+                );
+                server.documents.insert(
+                    uri.clone(),
+                    Document {
+                        buffer: Some(buffer),
+                        language: language.to_string(),
+                        text: text.to_string(),
+                        version,
+                        lsp_version: 1,
+                    },
+                );
+                self.status();
+                self.pull_diagnostics(key, &uri, buffer);
+            }
+        }
+    }
+
+    /// Buffer `buffer` closed on server `key`.
+    fn close_on(&mut self, key: usize, buffer: BufferId) {
+        let Some(server) = self.servers[key].as_mut() else {
+            return;
+        };
+        if let Some((uri, doc)) = server.doc_of(buffer) {
+            // A file of a language `load_all` holds goes back to
+            // being the pool's, as the disk has it.
+            let disk = server
+                .loading
+                .contains(&doc.language)
+                .then(|| path_of_uri(&uri))
+                .flatten()
+                .map(|p| match &server.domain {
+                    Some(d) => crate::fs::on_domain(d, &p),
+                    None => p,
+                })
+                .and_then(|p| crate::fs::read(&p).ok());
+            match disk {
+                Some(text) => {
+                    let doc = server.documents.get_mut(&uri).unwrap();
+                    doc.buffer = None;
+                    doc.version = Version::INITIAL;
+                    if doc.text != text {
+                        doc.text = text.clone();
+                        doc.lsp_version += 1;
+                        let v = doc.lsp_version;
+                        server.notify(
+                            "textDocument/didChange",
+                            json!({
+                                "textDocument": { "uri": uri, "version": v },
+                                "contentChanges": [{ "text": text }]
+                            }),
+                        );
+                    }
+                }
+                None => {
+                    server.documents.remove(&uri);
+                    server.notify(
+                        "textDocument/didClose",
+                        json!({ "textDocument": { "uri": uri } }),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Servers `keys` gone: no buffer's any more, what they published
+    /// forgotten, and dropped — each killed.
+    fn forget_servers(&mut self, keys: &[usize]) {
+        for homes in self.homes.values_mut() {
+            homes.retain(|k| !keys.contains(k));
+        }
+        self.homes.retain(|_, h| !h.is_empty());
+        for by in self.published.values_mut() {
+            by.retain(|k, _| !keys.contains(k));
+        }
+        for &key in keys {
+            self.servers[key] = None;
+        }
+        // A code action group waits on them no more.
+        let waiting: Vec<((usize, i64), u64)> = self
+            .action_of
+            .iter()
+            .filter(|((k, _), _)| keys.contains(k))
+            .map(|(k, g)| (*k, *g))
+            .collect();
+        for (at, group) in waiting {
+            self.action_of.remove(&at);
+            self.action_answered(group, Vec::new());
+        }
+    }
+
+    /// One of a code action group's answers: gathered, and the whole
+    /// handed up once the last is in.
+    fn action_answered(&mut self, group: u64, mut items: Vec<CodeAction>) {
+        let Some(g) = self.actions.get_mut(&group) else {
+            return;
+        };
+        g.0 = g.0.saturating_sub(1);
+        g.1.append(&mut items);
+        if g.0 == 0
+            && let Some((_, actions, buffer)) = self.actions.remove(&group)
+        {
+            self.emit(Event::CodeActions { buffer, actions });
         }
     }
 
     /// The document the server holds for `buffer`: its uri and text.
     fn doc_text(&self, buffer: BufferId) -> Option<(String, String)> {
-        let key = *self.homes.get(&buffer)?;
+        let key = *self.homes.get(&buffer)?.first()?;
         let server = self.servers[key].as_ref()?;
         let (uri, doc) = server.doc_of(buffer)?;
         Some((uri, doc.text.clone()))
@@ -2464,13 +3023,32 @@ impl Pool {
         version: Version,
         offset: usize,
     ) {
-        let Some(&key) = self.homes.get(&buffer) else {
+        let Some(key) = self.answerer(buffer, method) else {
             return;
         };
         let Some(server) = self.servers[key].as_mut() else {
             return;
         };
         server.request(method, params, (buffer, version, offset));
+    }
+
+    /// Whether server `key` answers `method`: one not up yet is taken to.
+    fn answers(&self, key: usize, method: &str) -> bool {
+        self.servers[key]
+            .as_ref()
+            .is_some_and(|s| s.caps.as_ref().is_none_or(|c| c.answers(method)))
+    }
+
+    /// The first of `buffer`'s servers that answers `method` — or, none
+    /// saying it does, the first: a server that does not declare its
+    /// hover may still answer one.
+    fn answerer(&self, buffer: BufferId, method: &str) -> Option<usize> {
+        let homes = self.homes.get(&buffer)?;
+        homes
+            .iter()
+            .copied()
+            .find(|&k| self.answers(k, method))
+            .or_else(|| homes.first().copied())
     }
 
     /// A positional request with more in its params than the position.
@@ -2506,7 +3084,7 @@ impl Pool {
         version: Version,
         context: Option<Value>,
     ) {
-        let Some(&key) = self.homes.get(&buffer) else {
+        let Some(key) = self.answerer(buffer, method) else {
             return;
         };
         let Some(server) = self.servers[key].as_mut() else {
@@ -2565,7 +3143,7 @@ impl Pool {
         } else {
             self.failed.insert(crashed_as);
         }
-        self.homes.retain(|_, k| *k != key);
+        self.forget_servers(&[key]);
         let buffers = server.documents.values().filter_map(|d| d.buffer).collect();
         self.emit(Event::Exited {
             language: server.language.clone(),
@@ -2625,7 +3203,7 @@ impl Pool {
                 let root = Some(server.root.clone());
                 self.failed.insert((server.domain.clone(), command.clone()));
                 self.servers[key] = None;
-                self.homes.retain(|_, k| *k != key);
+                self.forget_servers(&[key]);
                 self.emit(Event::Unavailable {
                     language,
                     command,
@@ -2635,6 +3213,17 @@ impl Pool {
                 self.status();
                 return;
             }
+            if let Some(group) = self.action_of.remove(&(key, id)) {
+                if message.get("error").is_some() {
+                    // A server with no actions to give is one answer.
+                    self.action_answered(group, Vec::new());
+                    return;
+                }
+                self.action_of.insert((key, id), group);
+            }
+            let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+                return;
+            };
             if let Some(err) = message.get("error") {
                 let text = err
                     .get("message")
@@ -2652,7 +3241,7 @@ impl Pool {
                     ),
                     // Hints are asked for as the view moves; one refused
                     // is nothing to say.
-                    "textDocument/inlayHint" => {}
+                    "textDocument/inlayHint" | "textDocument/diagnostic" => {}
                     _ => self.emit_from(
                         key,
                         Event::Failed {
@@ -2678,10 +3267,41 @@ impl Pool {
                     for q in std::mem::take(&mut server.queued) {
                         server.send(q);
                     }
+                    server.caps = Some(capabilities(result));
+                    // What a language's servers do between them: each
+                    // language this one serves, with the others up for it.
                     let languages = server.languages.clone();
-                    let caps = capabilities(result);
-                    self.emit_from(key, Event::Capabilities { languages, caps });
+                    for language in languages {
+                        let caps = self
+                            .servers
+                            .iter()
+                            .flatten()
+                            .filter(|s| s.languages.contains(&language))
+                            .filter_map(|s| s.caps.as_ref())
+                            .fold(Caps::default(), |all, c| all.union(c));
+                        self.emit_from(
+                            key,
+                            Event::Capabilities {
+                                languages: vec![language],
+                                caps,
+                            },
+                        );
+                    }
                     self.reconcile_loads(key);
+                    self.pull_all(key);
+                }
+                "textDocument/diagnostic" => {
+                    // `full`: the items; `unchanged`: as it was.
+                    if result.and_then(|r| r.get("kind")).and_then(Value::as_str) == Some("full")
+                        && let Some(server) = self.servers[key].as_ref()
+                        && let Some((uri, _)) = server.doc_of(buffer)
+                    {
+                        let items = result
+                            .and_then(|r| r.get("items"))
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        self.diagnostics_from(key, &uri, items);
+                    }
                 }
                 "textDocument/rename" => {
                     let edit = workspace_edit(result);
@@ -2797,7 +3417,22 @@ impl Pool {
                 }
                 "textDocument/codeAction" => {
                     let actions = code_actions(result);
-                    self.emit_from(key, Event::CodeActions { buffer, actions });
+                    match self.action_of.remove(&(key, id)) {
+                        // One of several servers': its paths spelled as
+                        // its host has them, then gathered.
+                        Some(group) => {
+                            let domain = self.servers[key].as_ref().and_then(|s| s.domain.clone());
+                            let ev = Event::CodeActions { buffer, actions };
+                            let ev = match domain {
+                                Some(d) => on_host(ev, &d),
+                                None => ev,
+                            };
+                            if let Event::CodeActions { actions, .. } = ev {
+                                self.action_answered(group, actions);
+                            }
+                        }
+                        None => self.emit_from(key, Event::CodeActions { buffer, actions }),
+                    }
                 }
                 "textDocument/formatting" => {
                     let edits = text_edits(result);
@@ -2848,6 +3483,7 @@ impl Pool {
             message.get("method").and_then(Value::as_str),
         ) {
             let mut handed_up = None;
+            let mut refresh = false;
             let result = match method {
                 "workspace/configuration" => {
                     let items = message
@@ -2859,10 +3495,19 @@ impl Pool {
                         items
                             .iter()
                             .map(|item| {
-                                setting_at(
+                                let mut v = setting_at(
                                     &server.settings,
                                     item.get("section").and_then(Value::as_str),
-                                )
+                                );
+                                // `workspaceFolder: null` is the server's
+                                // root (vscode-eslint asks for its own).
+                                if v.get("workspaceFolder").is_some_and(Value::is_null) {
+                                    v["workspaceFolder"] = json!({
+                                        "uri": uri_of(&server.root),
+                                        "name": crate::fs::basename(&server.root).unwrap_or_default(),
+                                    });
+                                }
+                                v
                             })
                             .collect(),
                     )
@@ -2879,11 +3524,27 @@ impl Pool {
                     handed_up = Some(Event::WorkspaceEdit { title, edit });
                     json!({ "applied": true })
                 }
+                "workspace/workspaceFolders" => json!([{
+                    "uri": uri_of(&server.root),
+                    "name": crate::fs::basename(&server.root).unwrap_or_default(),
+                }]),
+                // vscode-eslint asks before it runs a project's eslint;
+                // 4 is "approved", as the editor extension answers when
+                // the user has allowed it.
+                "eslint/confirmESLintExecution" => json!(4),
+                // Pulled again, once answered.
+                "workspace/diagnostic/refresh" => {
+                    refresh = true;
+                    Value::Null
+                }
                 _ => Value::Null,
             };
             server.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
             if let Some(ev) = handed_up {
                 self.emit_from(key, ev);
+            }
+            if refresh {
+                self.pull_all(key);
             }
             return;
         }
@@ -2896,25 +3557,8 @@ impl Pool {
                 let Some(uri) = params.get("uri").and_then(Value::as_str) else {
                     return;
                 };
-                if let Some(doc) = server.documents.get(&canonical_uri(uri))
-                    && let Some(buffer) = doc.buffer
-                {
-                    let (update, diagnostics) = diagnostics_update(params, doc);
-                    self.emit_from(
-                        key,
-                        Event::Diagnostics {
-                            buffer,
-                            update,
-                            diagnostics,
-                        },
-                    );
-                } else if let Some(path) = path_of_uri(uri) {
-                    // A file it was not sent, or one `load_all` sent that
-                    // no buffer holds: kept by path, placed as the server
-                    // placed it.
-                    let diagnostics = placed_diagnostics(params);
-                    self.emit_from(key, Event::FileDiagnostics { path, diagnostics });
-                }
+                let items = params.get("diagnostics").cloned().unwrap_or(Value::Null);
+                self.diagnostics_from(key, uri, items);
             }
             Some(m @ ("window/showMessage" | "window/logMessage")) => {
                 let Some(params) = params else { return };
@@ -3020,6 +3664,22 @@ fn capabilities(result: Option<&Value>) -> Caps {
         document_symbol: provides("documentSymbolProvider"),
         workspace_symbol: provides("workspaceSymbolProvider"),
         inlay_hint: provides("inlayHintProvider"),
+        definition: provides("definitionProvider"),
+        pull: provides("diagnosticProvider"),
+        hover: provides("hoverProvider"),
+        completion: caps
+            .and_then(|c| c.get("completionProvider"))
+            .is_some_and(|v| !v.is_null()),
+        commands: caps
+            .and_then(|c| c.pointer("/executeCommandProvider/commands"))
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

@@ -314,6 +314,14 @@ pub enum Msg {
         query: String,
         source: String,
     },
+    /// `kawoosh._qd(op, args, fn)`: qd, linked as a library, asked
+    /// `op` (the shell's `dotfiles.rs`), answered to `token`
+    /// (`Runtime::qd_answered`).
+    Qd {
+        token: u64,
+        op: String,
+        args: Vec<String>,
+    },
     /// `kawoosh.cmdline(text)`: the command line opened with `text` on
     /// it, to finish and submit.
     Cmdline(String),
@@ -2345,6 +2353,17 @@ impl Runtime {
         self.answer(token, result, "lsp.symbols");
     }
 
+    /// A `kawoosh._qd` answer to its asker: the data, JSON-shaped, or
+    /// why not.
+    pub fn qd_answered(&self, token: u64, result: Result<serde_json::Value, String>) {
+        let result = result.and_then(|v| match json_to_lua(&self.lua, &v) {
+            Ok(LV::Table(t)) => Ok(t),
+            Ok(_) => self.lua.create_table().map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        });
+        self.answer(token, result, "qd");
+    }
+
     /// A search for `kawoosh.search(query, fn)`: the callback called
     /// with what it found — `files`, each `{ path =, rel =, lines = {
     /// { line =, text =, cols = { {from, to}, … } }, … } }` (lines from
@@ -3278,6 +3297,54 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh._qd(op, args, fn)`: qd, the dotfiles manager, linked as a
+    // library — `version`, `status`, `sync`, `add` — answered as `fn(data,
+    // why)`; the qd pane's door when the library is the binary's version.
+    let qq = q(queue);
+    let jj = jobs.clone();
+    k.set(
+        "_qd",
+        lua.create_function(
+            move |lua, (op, args, cb): (String, Option<Vec<String>>, mlua::Function)| {
+                let token = {
+                    let mut j = jj.borrow_mut();
+                    let token = j.token();
+                    j.waiting.insert(token, lua.create_registry_value(cb)?);
+                    token
+                };
+                qq.borrow_mut().push(Msg::Qd {
+                    token,
+                    op,
+                    args: args.unwrap_or_default(),
+                });
+                Ok(token)
+            },
+        )?,
+    )?;
+    // ---- kawoosh.json: JSON read and written, for a program that
+    // answers in it (`qd status --json`).
+    let json = lua.create_table()?;
+    // `kawoosh.json.decode(text)`: JSON as Lua data — an array a
+    // list, an object a table, `null` nil — or `nil, why`.
+    json.set(
+        "decode",
+        lua.create_function(|lua, text: String| {
+            match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(v) => Ok((json_to_lua(lua, &v)?, LV::Nil)),
+                Err(e) => Ok((LV::Nil, LV::String(lua.create_string(e.to_string())?))),
+            }
+        })?,
+    )?;
+    // `kawoosh.json.encode(value)`: Lua data as JSON text — a list an
+    // array, a table with string keys an object.
+    json.set(
+        "encode",
+        lua.create_function(|_, v: LV| {
+            let j = lua_to_json(&v)?;
+            serde_json::to_string(&j).map_err(mlua::Error::external)
+        })?,
+    )?;
+    k.set("json", json)?;
     let qq = q(queue);
     k.set(
         "echo",

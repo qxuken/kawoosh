@@ -107,6 +107,9 @@ pub struct Spawned {
     /// A `:!CMD`'s: the directory its line ran in. Its pane outlives
     /// the process ([`Terminals::done`]), for `r` to run it there again.
     pub keep: Option<PathBuf>,
+    /// A kept one's program and arguments, run with no shell between
+    /// ([`Kawoosh::spawn_bang_argv`]): what `r` runs again.
+    pub argv: Option<Vec<String>>,
 }
 
 /// A terminal to start: in `cwd`, the tool's command or the shell.
@@ -264,6 +267,23 @@ impl Kawoosh {
         Some(t)
     }
 
+    /// [`Kawoosh::spawn_bang`] for a program and its arguments, with no
+    /// shell between — whatever the user's shell quotes like — given the
+    /// PATH a shell made: `:lsp install`'s `kawoosh lsp install …`.
+    pub fn spawn_bang_argv(&mut self, argv: &[String], cwd: &Path) -> Option<TermId> {
+        let mut envs = vec![("TERM_PROGRAM".to_string(), "kawoosh".to_string())];
+        if let Some(path) = kawoosh_systems::shell_env::path() {
+            envs.push(("PATH".into(), path.to_string_lossy().into_owned()));
+        }
+        let size = TermSize { rows: 24, cols: 80 };
+        let spawned = in_a_pty(|| Terminal::spawn_argv(argv, Some(cwd), size, &envs));
+        let t = self.adopt_terminal(None, spawned, None)?;
+        let s = self.terms.spawned.entry(t).or_default();
+        s.keep = Some(cwd.to_path_buf());
+        s.argv = Some(argv.to_vec());
+        Some(t)
+    }
+
     /// Terminal `id`'s pty closed: its process is gone. A `:!`'s stays
     /// in its pane with how it ended printed under its output, as
     /// `*compile*` ends; any other's pane closes, keeping nothing.
@@ -319,16 +339,23 @@ impl Kawoosh {
         let Some(old) = self.term_of(pane) else {
             return;
         };
-        let Some(Spawned {
-            cmd: Some(cmd),
-            keep: Some(cwd),
-            ..
-        }) = self.terms.spawned.get(&old).cloned()
-        else {
-            self.ed.message = "terminal again: only in a finished `:!` pane".into();
-            return;
+        let again = match self.terms.spawned.get(&old).cloned() {
+            Some(Spawned {
+                argv: Some(argv),
+                keep: Some(cwd),
+                ..
+            }) => self.spawn_bang_argv(&argv, &cwd),
+            Some(Spawned {
+                cmd: Some(cmd),
+                keep: Some(cwd),
+                ..
+            }) => self.spawn_bang(&cmd, &cwd),
+            _ => {
+                self.ed.message = "terminal again: only in a finished `:!` pane".into();
+                return;
+            }
         };
-        let Some(t) = self.spawn_bang(&cmd, &cwd) else {
+        let Some(t) = again else {
             return;
         };
         if let Some(command) = self.lsp.installs.remove(&old) {
