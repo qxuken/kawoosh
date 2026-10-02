@@ -1695,7 +1695,11 @@ impl Kawoosh {
                 .clip()
                 .on_key(tag.clone())
                 .on_drag(tag.clone())
+                // Up and down only: sideways is the text column's while
+                // it has room that way (kui F118) and else the strip's,
+                // which a pane taking both axes here never let reach it.
                 .on_scroll(tag.clone())
+                .scroll_axes(kui_native::ScrollAxes::Y)
                 .cursor(kui_native::CursorShape::Text)
                 .role(Role::MultilineTextInput)
                 .label(title.as_str()),
@@ -1739,8 +1743,12 @@ impl Kawoosh {
                     "lines",
                     if tall {
                         // Its rect, for the next frame to find the
-                        // caret's row in it (`markdown::Anchor`).
+                        // caret's row in it (`markdown::Anchor`). Rows
+                        // as tall as they wrap to have no sideways
+                        // scroll: a swipe that way is a table's, or the
+                        // strip's.
                         lines_spec
+                            .scroll_axes(kui_native::ScrollAxes::Y)
                             .clip()
                             .on_layout(Value::map([("kind", "lines".into())]))
                     } else {

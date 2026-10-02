@@ -1032,3 +1032,34 @@ fn the_strips_scrollbar_has_a_band_of_its_own_under_the_columns() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// A sideways swipe over a code pane whose lines fit it moves the
+/// strip: the text column scrolls sideways only while it has room that
+/// way (kui F118), and the pane around it takes up and down alone.
+#[test]
+#[ignore = "needs kui F118 (unreleased, after alpha.32): un-ignore with the pin that carries it"]
+fn a_sideways_swipe_over_text_that_fits_moves_the_strip() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    let code = app.layout.focused();
+    ctrl_w(&mut d, &mut app, "v");
+    d.press(&mut app, "<Esc>");
+    ctrl_w(&mut d, &mut app, "h");
+    assert_eq!(app.layout.focused(), code);
+    settle(&mut d, &mut app);
+    let before = app.layout.rects[&code];
+    let over = (before.x + 200.0, before.y + 60.0);
+    for (i, dx) in [-30.0, -60.0].into_iter().enumerate() {
+        d.scroll_gesture(&mut app, over.0, over.1, Vec2::new(dx, 0.0), i == 0);
+        d.frame(&mut app);
+    }
+    settle(&mut d, &mut app);
+    let after = app.layout.rects[&code];
+    assert!(
+        after.x < before.x - 50.0,
+        "the strip moved: {before:?} → {after:?}"
+    );
+}

@@ -214,9 +214,13 @@ session saved and restored as a strip.
 - **The swipe and the focus in one frame.** The focus wins (Decision
   3); a swipe that lands a click on another pane focuses it and
   reveals it, which is the expected thing. *A swipe over an editor
-  pane's rows never reaches the ribbon, as it happens: the editor owns
-  horizontal scrolling there (`on_scroll` on its `lines`). The title
-  bars and the gaps are where a pointer scrolls the ribbon; the
+  pane's rows reaches the ribbon when the text cannot go that way
+  (2026-10-02): the text column (`on_scroll` and `scroll_x` on its
+  `lines`) is answered by its room since kui F118, a rendered table
+  likewise, and the pane around them and rendered markdown's rows take
+  up and down alone (`scroll_axes(Y)`). Until then the editor kept
+  every sideways swipe, and the title bars and the gaps were where a
+  pointer scrolled the ribbon; the
   keyboard has `<C-w>hl`, `<C-N>` and `zs` `ze` `zz`, and the
   scrollbar's band. From 2026-09-30 the ribbon had no scrollbar, kui's
   having lain over the last row of every pane; since 2026-10-02 the bar
