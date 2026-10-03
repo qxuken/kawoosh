@@ -1614,6 +1614,7 @@ fn the_escape_looks_past_a_binding_gated_off_here() {
 }
 
 /// The text of terminal `t`'s screen, a line a row.
+#[cfg(unix)]
 fn screen_text(app: &Kawoosh, t: u64) -> String {
     let term = &app.terms.map[&t];
     (0..term.size().rows as usize)

@@ -168,6 +168,58 @@ state: `gr` again makes the list again.
   by `]q`, or `places = "diagnostics"`, the diagnostics its files have;
   `beside = true` shows it as a list beside.
 
+### 7. A plugin publishes under a name of its own
+
+Asked 2026-10-03, from this note's "Not built": a plugin's diagnostics
+— a linter a plugin runs, a spell checker, a project's own check —
+beside the servers'.
+
+`kawoosh.diagnostics.set(buffer, name, list)` says what plugin `name`
+finds in a buffer, in place of what `name` said of it before; an empty
+list takes them back, `kawoosh.diagnostics.clear(name)` takes back all
+of `name`'s, every buffer's and every file's. An item is a row as
+`kawoosh.lsp.diagnostics` reads one — `line` `col` `end_line`
+`end_col` from 1, a column in characters, `severity` (a number or its
+word, an error unless said), `message`, `source` (the name unless
+said), `code` — so a row read back is an item again; the end is the
+character after the start unless said. `kawoosh.diagnostics.get(opts)`
+is `kawoosh.lsp.diagnostics` with `from = NAME` besides, and every row
+says `from`: `lsp` for the servers', the name for a plugin's. `lsp` is
+no plugin's name.
+
+**One layer, every publisher's runs in it.** Each diagnostic says
+whose it is (`Diagnostic::from`, none for the servers, together); a
+publisher's word replaces its own runs and keeps the rest where the
+layer has carried them (`Editor::publish_diagnostics`): the runs of the
+others are read off the layer, the new ones applied at the version they
+were worked out against, and the two made one layer and one list
+again. So every reader already there — the underline, the row's end,
+`]d`, `<C-e>`, `*diagnostics*`, the counts, `on_diagnostics` — has a
+plugin's with the servers' and asks nothing new, and an edit carries
+them as it carries a server's: there is no version for a plugin to
+race, its runs are placed in the text as it is when the message lands
+and carried from there until it speaks again. A server's word
+(`:lsp restart` included) leaves a plugin's standing, and a code
+action is asked with the servers' diagnostics alone.
+
+**A path is taken as well as a buffer**, since the store keeps a
+file's by path already (Decision 2): a plugin that checks a project —
+a `cargo clippy`, a `tsc` run through `kawoosh.spawn` — publishes for
+files no buffer holds, they are listed in `:diagnostics`, and a buffer
+that opens one takes them into its layer, beside whatever was said of
+it since; closed, a buffer leaves every publisher's to its file, each
+still marked. A path a buffer holds is that buffer; a buffer still
+opening has no text to place them in, and its file keeps them until it
+lands. A file's columns are kept as given and placed as a server's are
+(UTF-16 units), which are a plugin's characters but past the BMP.
+
+Beaten: **a layer per publisher** (`diagnostics:lint`). Each reader —
+the renderer's underline and row end, `]d`, the multibuffer's runs,
+the lists, the counts — would gather several layers and their lists,
+and the layer names are `&'static str`. **neovim's namespaces** as
+handles to make first: a name is enough to replace and to clear by,
+and a plugin has one already.
+
 ## Built
 
 2026-09-26, in four commits and one from a look: the store and whole
@@ -203,8 +255,18 @@ Departed from the note as written: the keys are `<leader>ce`
   ([lsp-installs.md](lsp-installs.md) Decision 7): a buffer has a list
   of servers, and diagnostics are every server's together, per
   document.
-- **A plugin's diagnostics** (`kawoosh.diagnostics.set(buffer, source,
-  list)`): the store is ready; no caller yet.
+- ~~**A plugin's diagnostics** (`kawoosh.diagnostics.set(buffer, source,
+  list)`): the store is ready; no caller yet.~~ Built 2026-10-03
+  (Decision 7): `kawoosh.diagnostics.set`, `get` and `clear`
+  (`lua/src/lib.rs`), `Editor::publish_diagnostics`,
+  `publish_placed` and `clear_diagnostics_from`
+  (`editor/src/diagnostics.rs`), `Diagnostic::from`, the shell's
+  `plugin_diagnostics` (`kawoosh/src/lists.rs`). Tests:
+  `editor/tests/diagnostics.rs`'s
+  `a_plugins_diagnostics_live_beside_the_servers`,
+  `kawoosh/lua/tests/plugin_diagnostics.lua`, `kawoosh/tests/lsp.rs`'s
+  `a_plugins_diagnostics_beside_a_servers` (the fake server's word and
+  `:lsp restart` leaving a plugin's standing).
 - ~~**Growing an excerpt**: the search's, again.~~ Built 2026-10-03
   ([search.md](search.md) Decision 13): the engine's, so a list grows
   as the search's results do — a place's run cut by its message grows

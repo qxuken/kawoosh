@@ -164,7 +164,7 @@ enum Cmd {
     /// the shell loaded one — `None` for a language of files alone,
     /// or a builtin, which the thread loads itself.
     Language {
-        def: LanguageDef,
+        def: Box<LanguageDef>,
         grammar: Option<Arc<Grammar>>,
     },
 }
@@ -195,7 +195,7 @@ impl Ts {
                     let mut job = match cmd {
                         Cmd::Job(job) => job,
                         Cmd::Language { def, grammar } => {
-                            grammars.add(def, grammar, &mut parsed);
+                            grammars.add(*def, grammar, &mut parsed);
                             continue;
                         }
                         Cmd::Text(t) => {
@@ -218,7 +218,7 @@ impl Ts {
                         let mut next = match next {
                             Cmd::Job(job) => job,
                             Cmd::Language { def, grammar } => {
-                                grammars.add(def, grammar, &mut parsed);
+                                grammars.add(*def, grammar, &mut parsed);
                                 continue;
                             }
                             Cmd::Text(t) => {
@@ -289,7 +289,10 @@ impl Ts {
     /// language parses whole at its next job.
     pub fn add_language(&self, def: LanguageDef, grammar: Option<Grammar>) {
         let grammar = grammar.map(Arc::new);
-        let _ = self.cmds.send(Cmd::Language { def, grammar });
+        let _ = self.cmds.send(Cmd::Language {
+            def: Box::new(def),
+            grammar,
+        });
     }
 
     pub fn drain(&self) -> Vec<Answer> {

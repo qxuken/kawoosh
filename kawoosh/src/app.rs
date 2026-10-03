@@ -732,6 +732,16 @@ impl Kawoosh {
                 a.elapsed,
                 self.ed.buffers.get(a.buffer).map_or(0, |b| b.len()),
             ));
+            // The spans whose syntax changed, for the tree hooks.
+            let spans: Vec<std::ops::Range<usize>> = a
+                .updates
+                .iter()
+                .filter(|u| u.layer == kawoosh_systems::ts::SYNTAX_LAYER)
+                .map(|u| u.span.clone())
+                .collect();
+            self.nodes
+                .news
+                .parsed(a.buffer, a.version, spans, a.tree.is_some());
             if let Some(b) = self.ed.buffers.get_mut(a.buffer) {
                 for u in a.updates {
                     let _ = b.apply(u);
@@ -763,6 +773,7 @@ impl Kawoosh {
             .retain(|id, _| self.ed.buffers.contains_key(*id));
         self.indent_trees
             .retain(|id| self.ed.buffers.contains_key(id));
+        self.tell_trees();
         // What a pane shows, and the files whose excerpts a multibuffer
         // drew last frame.
         let mut shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();

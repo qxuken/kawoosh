@@ -133,6 +133,49 @@ the session layer, and says where it now stands. The session layer is what `:set
 writes, so the settings tab shows it as the session's and `:set
 lsp.typescript.load_all -` takes it back.
 
+### 6. A plugin's rules, set where the shell's are
+
+Asked 2026-10-03, from "Not built" below: a rule that is not the
+shell's — a plugin that organizes imports on save, runs a server's
+fix-all, or turns a code lens on, per server and per project.
+
+`kawoosh.lsp.rule(name, { doc =, default = })` declares one. It is set
+exactly as the shell's rules are: `lsp.NAME.RULE` in the settings'
+layers — the user's file, a project's `.kawoosh/settings.lua`, the
+session — for the server `NAME`, and, like `inlay_hints`, `lsp.RULE`
+for every server that does not say; then `default` (`false` unless
+said; any value a setting holds). On or off, it is a switch: `:lsp
+toggle RULE [LANGUAGE]` flips it for the caret's server in the session,
+as it flips `load_all`. `:lsp info` lists it where it is set, with its
+origin (`organize (project: /repo/.kawoosh/settings.lua)`).
+
+`kawoosh.lsp.rules(where)` reads them for a buffer (a handle, the
+current one by default) or a language (a name): `{ server = NAME,
+enabled =, load_all =, load_max =, inlay_hints = }` and every rule
+plugins declared, each resolved as above. `server` is the `lsp.NAME`
+the rules go under — a `.tsx` buffer's are `typescript`'s (Decision
+1), which the shell tells Lua whenever its table moves
+(`Runtime::set_lsp_names`), so the plugin need not know which server
+serves what.
+
+The pool never reads a plugin's rule: the plugin does, when it acts
+(on a write, on a key), so a rule switched mid-session holds from its
+next read and nothing restarts. A rule's name is lowercase, digits and
+`_`, and none of `lsp.NAME`'s own keys or `lsp`'s (`cmd`, `settings`,
+`load_all`, `languages` …) — `lsp.RULE` would read as one — and a
+table under `lsp.RULE` is not taken for a server. The same name again
+replaces the rule.
+
+Beaten: **rules in `kawoosh.lsp.server`'s table**, beside a server's
+data: a rule is a plugin's, not a server's, and reaches every server —
+a format-on-save plugin's switch is the same for rust-analyzer and
+gopls. **`kawoosh.setting` per server** (`lsp.rust.organize` declared
+for each name): the names are the table's and move with it; one
+declaration under `lsp.*` is what a rule is. **A rule `enabled` by
+the shell for the plugin** (the pool skipping a server, say): a rule
+the shell acts on is the shell's to add; a plugin's means what the
+plugin does with it.
+
 ## Beside it
 
 `didOpen`'s `languageId` is the document's own language now, where it
@@ -179,5 +222,12 @@ as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
   lists.md's; with it a server that answers would need no `load_all`.
   A document's own pull is built ([lsp-installs.md](lsp-installs.md)
   Decision 7).
-- **Rules a plugin defines**: the table is open, but only the shell
-  reads its rules.
+- ~~**Rules a plugin defines**: the table is open, but only the shell
+  reads its rules.~~ Built 2026-10-03 (Decision 6):
+  `kawoosh.lsp.rule` and `kawoosh.lsp.rules` (`lua/src/lib.rs`),
+  `add_lsp_rule` and `tell_lsp_names` with the plugin's rules in
+  `:lsp info` and `:lsp toggle` (`kawoosh/src/lsp_rules.rs`). Test:
+  `kawoosh/tests/lsp.rs`'s
+  `a_plugins_rule_is_set_and_flipped_as_the_shells_are` (toggled from a
+  default either way, the session's word, a project's, `lsp.RULE` for
+  every server, `.tsx` read under `typescript`).

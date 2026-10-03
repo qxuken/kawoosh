@@ -190,6 +190,55 @@ and their trailing parameters. The names a grammar gives — `boolean_literal`, 
 `consequence` — are read off `:syntax_tree`, which shows each node's
 type and field under the caret; `help/lua.md` says so.
 
+### 8. A hook for each new tree, once a frame
+
+Asked 2026-10-03, from "Left" below: `kawoosh.on_tree(fn)`, for a
+plugin that paints from the tree — a rainbow of brackets, a scope's
+wash, a semantic colour the grammar's queries do not give.
+
+`fn(root, changed)` after a frame in which a buffer's tree was parsed
+again: `root` is `kawoosh.node.root(buffer)` — its `buffer`,
+`language` and `version` on it, walked with §4 and queried with §5 —
+and `changed` a list of `{ from, to }` byte ranges whose syntax
+changed since the hook last heard of the buffer. They are the ts
+thread's own spans, the ones its answer repaints (the edits and
+`changed_ranges`, each widened to its neighbourhood), so a plugin
+paints again what the highlighter did; the first time, and for a hook
+set later, the whole text. It returns a function that takes the hook
+off — the first `on_*` to; the others stay until the runtime goes.
+
+It runs on the main thread, in the frame, so its cost is kept to what
+it is asked for:
+
+- **Coalesced.** Once a buffer a frame at most, every hook in one call
+  into Lua, after the frame's answers are in — two answers in one
+  frame are one word, their spans together.
+- **Only a tree of the text as it is.** An answer behind the typing
+  (the tree §2 would refuse) is not told; its spans wait, carried
+  through the journal (`clamp_range`) to the text of the answer that
+  catches up, which is told with them. Past 64 waiting spans, or a
+  journal that no longer reaches back, it is the whole text.
+- **Nothing while no hook is set.** The spans are gathered only while
+  one is (`Runtime::tree_hooks`, a look at a Lua table a frame), and
+  the snapshot is published for the call only when there is a tree
+  to tell of.
+- **Only what is parsed**: the buffers on show and a multibuffer's
+  visible files — the ts thread's jobs. A buffer no pane shows has no
+  new tree to tell of.
+
+A hook new since the last frame (`kawoosh._tree_gen` moved) hears every
+tree there is, whole, the next frame — so does every other hook,
+which a painter takes as a repaint; a hook that fails is said on the
+message line and the others still run.
+
+Beaten: **the tree's diff as nodes** (neovim's `on_changedtree` gives
+ranges too): a node table per changed node is a walk the plugin may not
+want. **A call per answer**: during fast typing the thread answers
+versions the text has already left, and each such call would read a
+tree §2 refuses. **The hook told per buffer it asked for**
+(`on_tree(buffer, fn)`): `root.buffer` and `root.language` filter as
+cheaply in the hook, and a painter wants every buffer of its language.
+
 ## What it is for
 
 ts-node-action's two examples, against this API — a command each, every
@@ -261,8 +310,14 @@ actions ship for which languages, where the caret lands after one.
 ## Left
 
 - Injected languages' trees (§6).
-- `kawoosh.node.wait`, and a hook when a buffer's tree changes
-  (`kawoosh.on_tree`), for a plugin that paints from the tree.
+- `kawoosh.node.wait`. ~~A hook when a buffer's tree changes
+  (`kawoosh.on_tree`), for a plugin that paints from the tree.~~ Built
+  2026-10-03 (Decision 8): `kawoosh.on_tree` in `lua/lua/boot.lua`,
+  `Runtime::tree_hooks` and `tree_hook` (`lua/src/lib.rs`), the spans
+  gathered by `TreeNews` and told by `Kawoosh::tell_trees`
+  (`kawoosh/src/nodes.rs`) from `sync_syntax`. Test:
+  `kawoosh/lua/tests/on_tree.lua` (the whole text first, a span around
+  an edit after, a late hook told whole, the handle, a failing hook).
 - Queries a grammar ships by name — `textobjects.scm` beside
   `highlights.scm` — and `af` / `if` / `ac` on them.
 - Node actions (above).

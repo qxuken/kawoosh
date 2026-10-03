@@ -17,7 +17,16 @@ pub struct Diagnostic {
     pub source: Option<String>,
     /// Its code (`2322`, `E0308`), when it has one.
     pub code: Option<String>,
+    /// Who published it: `None` for the language servers, together; a
+    /// plugin's name for what it said through `kawoosh.diagnostics.set`
+    /// (lists.md Decision 7). Each says its own and replaces only its
+    /// own.
+    pub from: Option<String>,
 }
+
+/// What the language servers' diagnostics are published under, as Lua
+/// names them (`from = "lsp"`); no plugin may take it.
+pub const LSP: &str = "lsp";
 
 impl Diagnostic {
     /// The severity as a word: `error`, `warning`, `info`, `hint`.

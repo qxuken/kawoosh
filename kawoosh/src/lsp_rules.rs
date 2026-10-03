@@ -72,9 +72,11 @@ impl Kawoosh {
         }
         self.sync_lsp_order();
         if new == self.lsp.defs {
+            self.tell_lsp_names();
             return;
         }
         let old = std::mem::replace(&mut self.lsp.defs, new);
+        self.tell_lsp_names();
         self.lsp.lsp.send(Cmd::Servers(self.lsp.defs.clone()));
 
         // What a server was started as: a change there is a new one.
@@ -157,7 +159,12 @@ impl Kawoosh {
         for (k, v) in said.into_iter().flatten() {
             // `lsp.inlay_hints` is the global switch and `lsp.languages`
             // each language's servers, not a server.
-            if v.is_table() && !names.contains(k) && !RESERVED.contains(&k.as_str()) {
+            // A plugin's rule said for every server is no server either.
+            if v.is_table()
+                && !names.contains(k)
+                && !RESERVED.contains(&k.as_str())
+                && !self.lsp.plugin_rules.iter().any(|(r, ..)| r == k)
+            {
                 names.push(k.clone());
             }
         }
@@ -313,6 +320,8 @@ impl Kawoosh {
     pub(crate) fn lsp_rules_said(&self, name: &str) -> Vec<String> {
         RULES
             .iter()
+            .copied()
+            .chain(self.lsp.plugin_rules.iter().map(|(r, ..)| r.as_str()))
             .filter_map(|rule| {
                 let path = format!("lsp.{name}.{rule}");
                 let v = self.ed.settings.get(&path)?;
@@ -364,7 +373,20 @@ impl Kawoosh {
             None => match rule {
                 "enabled" => true,
                 "inlay_hints" => self.lsp_hints_on(&language),
-                _ => false,
+                // A plugin's: `lsp.RULE` for every server, else its own
+                // default.
+                _ => self
+                    .ed
+                    .settings
+                    .bool(&format!("lsp.{rule}"))
+                    .or_else(|| {
+                        self.lsp
+                            .plugin_rules
+                            .iter()
+                            .find(|(r, ..)| r == rule)
+                            .and_then(|(.., d)| d.as_bool())
+                    })
+                    .unwrap_or(false),
             },
         };
         self.ed
@@ -375,6 +397,61 @@ impl Kawoosh {
         if !self.ed.message.starts_with("lsp: restarting") {
             self.ed.message = format!("{path} {}", if now { "off" } else { "on" });
         }
+    }
+
+    /// `kawoosh.lsp.rule(name, { doc =, default = })`: a plugin's rule
+    /// (Decision 6) — listed by `:lsp info` where it is set, and, when it
+    /// is on or off, `:lsp toggle NAME [LANGUAGE]` beside the shell's.
+    /// The same name again replaces it. The pool never reads it: the
+    /// plugin does, through `kawoosh.lsp.rules`.
+    pub(crate) fn add_lsp_rule(&mut self, name: String, doc: String, default: Setting) {
+        self.lsp.plugin_rules.retain(|(r, ..)| *r != name);
+        self.lsp
+            .plugin_rules
+            .push((name.clone(), doc.clone(), default.clone()));
+        if default.as_bool().is_none() {
+            return;
+        }
+        let doc = if doc.is_empty() {
+            format!("a plugin's rule on or off for the session (`lsp.NAME.{name}`)")
+        } else {
+            format!("{doc} (`lsp.NAME.{name}`, a plugin's rule)")
+        };
+        self.add_command(cmd(
+            Spec::new(&format!("lsp toggle {name}"))
+                .args(Args::new(&[ArgKind::Language]))
+                .doc(&doc),
+            move |k, ctx| k.lsp_toggle(&name, ctx.args.first().cloned()),
+        ));
+    }
+
+    /// Each language a server serves, and the `lsp.NAME` its rules are
+    /// set under (`lsp_name_of`), told to Lua when it moved: what
+    /// `kawoosh.lsp.rules` reads a buffer's by.
+    pub(crate) fn tell_lsp_names(&mut self) {
+        let languages: HashSet<String> = self
+            .lsp
+            .defs
+            .iter()
+            .chain(self.scripting.servers.iter())
+            .flat_map(|d| d.served())
+            .map(str::to_string)
+            .collect();
+        let names: std::collections::HashMap<String, String> = languages
+            .into_iter()
+            .map(|l| {
+                let name = self.lsp_name_of(&l);
+                (l, name)
+            })
+            .collect();
+        if names == self.lsp.names_told {
+            return;
+        }
+        let Some(rt) = &self.scripting.rt else {
+            return;
+        };
+        rt.set_lsp_names(names.clone());
+        self.lsp.names_told = names;
     }
 }
 
