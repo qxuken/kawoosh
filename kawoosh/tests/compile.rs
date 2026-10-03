@@ -4,6 +4,8 @@
 //! runs, the lines run kept by the memory and offered again, `<Tab>`
 //! over the names and the paths, and a trusted `init.lua` saying where
 //! with `kawoosh.project` and `kawoosh.fs.join`.
+// The tests run a POSIX shell's lines; elsewhere their helpers are unused.
+#![cfg_attr(not(unix), allow(dead_code))]
 
 mod drive;
 
