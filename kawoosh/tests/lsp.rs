@@ -411,7 +411,7 @@ fn a_server_that_exits_is_started_again_then_given_up() {
     d.key(&mut app, "escape", KeyMods::default());
     let why =
         format!("stopped in {root}: exited with 3: fake server crashing, 3 exits in 3 minutes");
-    let settings = kawoosh_systems::fs::abbreviate_home(&dir.join(".kawoosh/settings.lua"));
+    let settings = kawoosh_systems::fs::abbreviate_home(&dir.join(".kawoosh").join("settings.lua"));
     let said = format!(
         "`{server}` {why}. :lsp restart once fixed; to leave it off in that project, \
          `lsp = {{ rust = {{ enabled = false }} }}` in {settings}"

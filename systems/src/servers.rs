@@ -603,8 +603,10 @@ pub fn remove(root: &Path, p: &Package) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    /// The steps as shown, with `/` for the separator a Windows join
+    /// writes as `\`, so one spelling is checked on every platform.
     fn argv(steps: &[Step]) -> Vec<String> {
-        steps.iter().map(Step::show).collect()
+        steps.iter().map(|s| s.show().replace('\\', "/")).collect()
     }
 
     /// Each manager is asked for the latest into the package's directory

@@ -1733,7 +1733,11 @@ fn a_line_yanked_before_its_listing_moved_on_is_still_its_entry() {
     // Two `fonts/`, so by their paths, which the confirm cuts.
     let c = d.confirm_texts();
     assert_eq!(c[1], "between them:");
-    assert!(c[2].starts_with("  copy FiraMono/: /"), "{c:?}");
+    let root = dir.ancestors().last().unwrap().display().to_string();
+    assert!(
+        c[2].starts_with(&format!("  copy FiraMono/: {root}")),
+        "{c:?}"
+    );
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(

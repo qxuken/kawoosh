@@ -821,7 +821,7 @@ fn a_long_path_wraps_inside_its_row() {
     d.frame(&mut app);
     d.frame(&mut app);
     assert!(on_launcher(&app));
-    wraps_inside(&d, "terminal  a shell in /");
+    wraps_inside(&d, "terminal  a shell in ");
     let one = row_height(&d, "scratch  a fresh buffer");
     assert!(
         (one - 21.0).abs() < 0.5,
@@ -847,7 +847,10 @@ fn a_long_path_wraps_inside_its_row() {
     d.frame(&mut app);
     d.frame(&mut app);
     assert_eq!(said(&mut app, "modules"), "prompt|here|pins");
-    wraps_inside(&d, "documentation/architecture/");
+    wraps_inside(
+        &d,
+        &format!("documentation{0}architecture{0}", std::path::MAIN_SEPARATOR),
+    );
     let out = drive::overflows(&d);
     assert!(out.is_empty(), "{}", out.join("\n"));
     // The walk and the letters over the taller rows.
