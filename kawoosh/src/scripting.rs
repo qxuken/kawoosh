@@ -1287,6 +1287,7 @@ impl Kawoosh {
             }
             Msg::Edit { .. }
             | Msg::SearchPaint { .. }
+            | Msg::SearchReplace { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }
             | Msg::Type(_)
