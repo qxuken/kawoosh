@@ -94,8 +94,16 @@ fn a_right_click_in_the_text_places_the_caret_and_opens_the_editors_menu() {
     ] {
         assert!(names.iter().any(|n| n == want), "{want} in {names:?}");
     }
-    // No server serves a buffer with no file: its rows dimmed, not gone.
-    assert!(!row(&d, "Go to Definition").1.enabled);
+    // No server serves a buffer with no file: its rows dimmed, not gone —
+    // every one of them, not only those whose command has a `when`.
+    for label in [
+        "Go to Definition",
+        "Go to References",
+        "Rename Symbol…",
+        "Code Actions…",
+    ] {
+        assert!(!row(&d, label).1.enabled, "{label} lit with no server");
+    }
     // Nothing selected: nothing to copy or cut.
     assert!(!row(&d, "Copy").1.enabled);
     assert!(!row(&d, "Cut").1.enabled);
@@ -284,6 +292,34 @@ fn the_menu_bar_is_declared_where_the_platform_owns_one() {
         .find(|i| i.text() == "Quit kawoosh")
         .unwrap();
     assert_eq!(quit.accel, None, "⌘Q mapped by the user stays the user's");
+
+    // ⌘, bound to the settings pane, as settings.lua binds it: the
+    // Settings row runs the same, so it keeps the chord.
+    for mode in [Mode::Normal, Mode::Insert] {
+        app.ed.keymap.bind(mode, "<D-,>", "settings");
+    }
+    d.frame(&mut app);
+    let bar = d.core.menu_bar().cloned().unwrap();
+    let settings = bar.menus[0]
+        .items
+        .iter()
+        .find(|i| i.text() == "Settings…")
+        .unwrap();
+    assert_eq!(
+        settings.accel.as_deref(),
+        Some("⌘,"),
+        "the key's own command"
+    );
+    // Bound to something else, it is the keymap's.
+    app.ed.keymap.bind(Mode::Normal, "<D-,>", "settings user");
+    d.frame(&mut app);
+    let bar = d.core.menu_bar().cloned().unwrap();
+    let settings = bar.menus[0]
+        .items
+        .iter()
+        .find(|i| i.text() == "Settings…")
+        .unwrap();
+    assert_eq!(settings.accel, None);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

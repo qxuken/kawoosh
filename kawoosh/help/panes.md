@@ -69,7 +69,8 @@ you clicked (unless you clicked inside the selection) and the menu has
 the language server's moves — Go to Definition, Go to References,
 Rename Symbol, Code Actions, Format — then Cut, Copy, Paste and Select
 All, then Split Right, Split Down, Close Other Panes and Close Pane.
-The keys beside a row are the ones that do the same (`gd`, `grr`…).
+The keys beside a row are the ones that do the same (`gd`, `grr`…);
+macOS's own menus do not show them yet.
 A terminal's menu has Copy, Paste and Select All, and a pane's title
 bar has the pane's own rows (and an editor's Copy Path).
 
