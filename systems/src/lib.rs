@@ -15,6 +15,7 @@ pub mod sftp;
 pub mod shell_env;
 pub mod spawn;
 pub mod store;
+pub mod textobjects;
 pub mod ts;
 pub mod watch;
 

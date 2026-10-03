@@ -21,6 +21,7 @@ fn grammar() -> Result<crate::Grammar, String> {
     )
     .and_then(|g| g.with_outline(OUTLINE))
     .and_then(|g| g.with_indents(include_str!("../queries/nu/indents.scm")))
+    .map(|g| g.with_textobjects("nu", include_str!("../queries/nu/textobjects.scm")))
 }
 
 /// The outline: what `symbols` lists without a server (docs/design/marks.md).

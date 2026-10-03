@@ -35,6 +35,12 @@ fn grammar() -> Result<crate::Grammar, String> {
             .concat(),
         )
     })
+    .map(|g| {
+        g.with_textobjects(
+            "javascript",
+            include_str!("../queries/ecma/textobjects.scm"),
+        )
+    })
 }
 
 /// The outline: what `symbols` lists without a server (docs/design/marks.md).

@@ -35,4 +35,5 @@ fn grammar() -> Result<crate::Grammar, String> {
             .concat(),
         )
     })
+    .map(|g| g.with_textobjects("tsx", &crate::typescript::TEXTOBJECTS.concat()))
 }

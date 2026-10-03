@@ -76,6 +76,7 @@ Beside vim's `hjkl`, `w` `b` `e` `ge`, `0` `^` `$`, `gg` `G`, `f` `t`,
 | `gh` `gl` | the line's first non-blank, its end (helix) |
 | `W` `B` `E` `gE` | WORDs: runs that only whitespace ends, like `a.b(c)` or a path |
 | `}` `{` | the blank line after, before the paragraph — also after an operator (`d}`) |
+| `]f` `[f` | the start of the next, previous function, by the syntax — also after an operator (`d]f`) |
 | `H` `M` `L` | the pane's top, middle, bottom line |
 | `<C-d>` `<C-u>` `<C-f>` `<C-b>` | half a screen, a screen |
 | `]<Space>` `[<Space>` | add an empty line below, above, the caret staying |
@@ -86,6 +87,21 @@ Text objects follow `i` (inside) or `a` (around): `w` word, `W` WORD,
 quotes `"` `'` `` ` ``. So `ciw`, `da(`, `yi"`, `vip`. When the object is
 not there, the operator does nothing — nothing is yanked over the
 register.
+
+The syntax adds its own, read from the language's grammar: `f` a
+function, `c` a class (a struct, an enum, an impl, an interface — the
+type), `a` an argument, `/` a comment, `T` a test, `e` an entry (an
+array's element, a table's pair). `if` is a function's body wherever in
+the function the caret is, `af` the whole of it; `daf` takes its lines
+whole when it has them to itself, and `daa` takes the argument with its
+comma. A count is the one further out (`2daf` from a closure is the
+function around it), `vaf` again grows to the next one out, and every
+caret takes its own. With the caret before any, the first after it on
+the line is taken (`cia` on the `(`). `]f` `[f` go to the functions'
+starts. Rust, JavaScript, TypeScript, Go, Lua, Bash, Nushell, C, C++
+and Python have them; JSON, TOML and YAML their entries (and comments),
+SQL its comments. A grammar installed with `:grammar install` has them
+when it brings a `textobjects.scm`.
 
 `:s/PAT/REP/g` replaces on the lines every selection touches (the
 caret's line, with one caret), `:%s` in the whole file, `:N,Ms` on lines N

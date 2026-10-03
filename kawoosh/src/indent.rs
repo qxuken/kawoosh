@@ -6,6 +6,10 @@
 //! language's grammar is kept too, as the thread's answers bring it, so
 //! a buffer never shown — one a `:wa` formats — is parsed whole when
 //! asked about.
+//!
+//! The same trees answer the syntax text objects (docs/design/nodes.md
+//! Decision 8), read by `kawoosh_systems::textobjects`: a `daf` typed
+//! right after an edit reads the text as it is, as a `<CR>` does.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -14,9 +18,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use kawoosh_doc::{Buffer, BufferId, Version};
-use kawoosh_editor::IndentUnit;
+use kawoosh_editor::{IndentUnit, SyntaxObject};
 use kawoosh_languages::Grammar;
 use kawoosh_systems::indent::{self, Unit};
+use kawoosh_systems::textobjects;
 use kawoosh_systems::ts::{self, Parse};
 use tree_sitter::{Parser, Tree};
 
@@ -32,7 +37,8 @@ struct Kept {
 #[derive(Default)]
 struct Inner {
     kept: HashMap<BufferId, Kept>,
-    /// Each language's grammar with an indent query, by its name.
+    /// Each language's grammar with an indent or a text-object query,
+    /// by its name.
     grammars: HashMap<String, Arc<Grammar>>,
 }
 
@@ -43,8 +49,8 @@ pub struct Trees(Rc<RefCell<Inner>>);
 
 impl Trees {
     /// A thread's answer for `id`, whose language is `language`: its
-    /// tree kept, when its grammar has an indent query; else what was
-    /// kept goes.
+    /// tree kept, when its grammar has an indent or a text-object
+    /// query; else what was kept goes.
     pub fn answered(
         &self,
         id: BufferId,
@@ -81,12 +87,18 @@ impl Trees {
         self.0.borrow_mut().kept.retain(|id, _| live(*id));
     }
 
-    /// Whether buffer `id`, in `language`, can be read: a tree kept
-    /// for it, or its language's grammar to parse it with.
+    /// Whether buffer `id`, in `language`, can be indented: a tree kept
+    /// for it, or its language's grammar to parse it with, and an
+    /// indent query in the grammar.
     pub fn serves(&self, id: BufferId, language: &str) -> bool {
         let inner = self.0.borrow();
-        inner.kept.get(&id).is_some_and(|k| k.language == language)
-            || inner.grammars.contains_key(language)
+        inner
+            .kept
+            .get(&id)
+            .filter(|k| k.language == language)
+            .map(|k| &k.grammar)
+            .or_else(|| inner.grammars.get(language))
+            .is_some_and(|g| g.indents.is_some())
     }
 
     /// The editor's indenter over these trees.
@@ -96,23 +108,25 @@ impl Trees {
             parser: Parser::new(),
         }
     }
-}
 
-pub struct Indenter {
-    trees: Trees,
-    parser: Parser,
-}
+    /// The editor's syntax text objects over these trees.
+    pub fn objects(&self) -> Objects {
+        Objects {
+            trees: self.clone(),
+            parser: Parser::new(),
+        }
+    }
 
-impl Indenter {
     /// `id`'s tree as of `buf`'s text: kept, or caught up — told the
     /// journal's edits since and reparsed, a whole parse when the
     /// journal no longer reaches back — and kept so.
     fn current(
-        &mut self,
+        &self,
+        parser: &mut Parser,
         id: BufferId,
         buf: &Buffer,
     ) -> Option<(Tree, text_buffer::Buffer, Arc<Grammar>)> {
-        let mut inner = self.trees.0.borrow_mut();
+        let mut inner = self.0.borrow_mut();
         let Inner { kept, grammars } = &mut *inner;
         let language = &*buf.language;
         // None kept, or kept in another language: parsed whole, when
@@ -120,7 +134,7 @@ impl Indenter {
         if kept.get(&id).is_none_or(|k| k.language != language) {
             let grammar = grammars.get(language)?.clone();
             let snap = buf.snapshot();
-            let tree = ts::reparse(&mut self.parser, &grammar.language, &snap.text, None)?;
+            let tree = ts::reparse(parser, &grammar.language, &snap.text, None)?;
             kept.insert(
                 id,
                 Kept {
@@ -141,12 +155,49 @@ impl Indenter {
                 .ok()
                 .map(|it| it.cloned().collect());
             let old = edits.as_deref().map(|e| (k.tree.clone(), &k.text, e));
-            let tree = ts::reparse(&mut self.parser, &k.grammar.language, &snap.text, old)?;
+            let tree = ts::reparse(parser, &k.grammar.language, &snap.text, old)?;
             k.version = snap.version;
             k.text = snap.text;
             k.tree = tree;
         }
         Some((k.tree.clone(), k.text.clone(), k.grammar.clone()))
+    }
+}
+
+pub struct Indenter {
+    trees: Trees,
+    parser: Parser,
+}
+
+/// The syntax text objects (`kawoosh_editor::SyntaxObjects`): the
+/// buffer's tree, caught up, and its grammar's text-object query.
+pub struct Objects {
+    trees: Trees,
+    parser: Parser,
+}
+
+impl kawoosh_editor::SyntaxObjects for Objects {
+    fn find(
+        &mut self,
+        id: BufferId,
+        buf: &Buffer,
+        object: &str,
+        within: Range<usize>,
+    ) -> Result<Vec<SyntaxObject>, String> {
+        let language = &*buf.language;
+        let Some((tree, text, g)) = self.trees.current(&mut self.parser, id, buf) else {
+            return Err(format!("no syntax tree for {language}"));
+        };
+        let Some(t) = &g.textobjects else {
+            return Err(format!("no syntax text objects for {language}"));
+        };
+        Ok(textobjects::find(t, &tree, &text, object, within)
+            .into_iter()
+            .map(|f| SyntaxObject {
+                around: f.around,
+                inside: f.inside,
+            })
+            .collect())
     }
 }
 
@@ -166,7 +217,7 @@ impl kawoosh_editor::Indenter for Indenter {
         at: usize,
         u: &IndentUnit,
     ) -> Option<String> {
-        let (tree, text, g) = self.current(id, buf)?;
+        let (tree, text, g) = self.trees.current(&mut self.parser, id, buf)?;
         indent::for_new_line(g.indents.as_ref()?, &tree, &text, at, &unit(u))
     }
 
@@ -177,7 +228,7 @@ impl kawoosh_editor::Indenter for Indenter {
         lines: Range<usize>,
         u: &IndentUnit,
     ) -> Option<Vec<Option<String>>> {
-        let (tree, text, g) = self.current(id, buf)?;
+        let (tree, text, g) = self.trees.current(&mut self.parser, id, buf)?;
         Some(indent::for_lines(
             g.indents.as_ref()?,
             &tree,

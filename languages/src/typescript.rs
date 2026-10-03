@@ -36,7 +36,15 @@ fn grammar() -> Result<crate::Grammar, String> {
             .concat(),
         )
     })
+    .map(|g| g.with_textobjects("typescript", &TEXTOBJECTS.concat()))
 }
+
+/// javascript's text objects, then typescript's additions; tsx's too.
+#[cfg(feature = "typescript")]
+pub(crate) const TEXTOBJECTS: [&str; 2] = [
+    include_str!("../queries/ecma/textobjects.scm"),
+    include_str!("../queries/typescript/textobjects.scm"),
+];
 
 /// The outline: what `symbols` lists without a server (docs/design/marks.md).
 #[cfg(feature = "typescript")]

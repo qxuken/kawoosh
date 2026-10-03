@@ -561,6 +561,9 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
     let Some(c) = ctx.arg_char else {
         return;
     };
+    if let Some(object) = syntax_object_of(c) {
+        return syntax_textobject(ed, ctx, c, object, around);
+    }
     let visual = ed.mode(ctx.view) == Mode::Visual;
     let id = view(ed, ctx).buffer;
     let buf = &ed.buffers[id];
@@ -639,6 +642,284 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
     if !found {
         ed.pending_op = None;
     }
+}
+
+/// The syntax text objects by their key (docs/design/nodes.md Decision
+/// 8): the object a grammar's `textobjects.scm` names. `f` a function,
+/// `c` a class — a struct, an enum, an impl, an interface: the type —
+/// `a` an argument or a parameter, `/` a comment, `T` a test, `e` an
+/// entry (an array's element, a table's pair).
+pub const SYNTAX_OBJECTS: &[(char, &str)] = &[
+    ('f', "function"),
+    ('c', "class"),
+    ('a', "parameter"),
+    ('/', "comment"),
+    ('T', "test"),
+    ('e', "entry"),
+];
+
+fn syntax_object_of(c: char) -> Option<&'static str> {
+    SYNTAX_OBJECTS
+        .iter()
+        .find(|(k, _)| *k == c)
+        .map(|(_, o)| *o)
+}
+
+/// `af` `if` `ac` …: each selection's object from the buffer's syntax,
+/// [`pick_object`] choosing among what the query found over it. In
+/// visual mode the selection becomes the object, its head on its last
+/// character, linewise when every object has its lines to itself; under
+/// an operator each that does is taken linewise ([`object_ranges`]).
+fn syntax_textobject(ed: &mut Editor, ctx: &Ctx, c: char, object: &str, around: bool) {
+    let visual = ed.mode(ctx.view) == Mode::Visual;
+    let id = view(ed, ctx).buffer;
+    let Some(mut finder) = ed.syntax_objects.take() else {
+        ed.message = format!("no text object for {c} here: no syntax");
+        ed.pending_op = None;
+        return;
+    };
+    let buf = &ed.buffers[id];
+    let mut picked = Vec::with_capacity(ed.views[ctx.view].sels.len());
+    let mut why = None;
+    for s in ed.views[ctx.view].sels.iter() {
+        // The caret's character, or the selected bytes — which a visual
+        // selection of more than one has the object grow past.
+        let at = sel_range(buf, s);
+        let grow = visual && s.start() != s.end();
+        // To the line's end, for an object after the caret on its line.
+        let line_end = buf.line_range(buf.line_of(at.start)).end;
+        match finder.find(id, buf, object, at.start..line_end.max(at.end)) {
+            Ok(found) => {
+                let r = pick_object(&found, at, around, grow, ctx.count);
+                // A list's item goes with its separator.
+                let item = around && matches!(object, "parameter" | "entry");
+                picked.push(r.map(|r| if item { with_separator(buf, r) } else { r }));
+            }
+            Err(e) => {
+                why = Some(e);
+                picked.push(None);
+            }
+        }
+    }
+    ed.syntax_objects = Some(finder);
+    let found = picked.iter().any(Option::is_some);
+    let lines = found
+        && picked
+            .iter()
+            .flatten()
+            .all(|r| has_its_lines(&ed.buffers[id], r));
+    let buf = &ed.buffers[id];
+    let v = &mut ed.views[ctx.view];
+    let mut i = 0;
+    v.sels.map(|s| {
+        let r = picked[i.min(picked.len() - 1)].clone();
+        i += 1;
+        match r {
+            // As the other objects: a visual head on the last character.
+            Some(r) if visual && r.end > r.start => Selection::new(r.start, buf.prev_char(r.end)),
+            Some(r) => Selection::new(r.start, r.end),
+            None => s,
+        }
+    });
+    if visual && found {
+        v.visual_linewise = lines;
+    }
+    if picked.iter().any(Option::is_none) {
+        ed.message = why.unwrap_or_else(|| format!("no {object} here"));
+    }
+    if !found {
+        ed.pending_op = None;
+    } else if !visual && ed.pending_op.is_some() {
+        ed.object_lines = true;
+    }
+}
+
+/// Which object a syntax text object takes over `at` — the caret's
+/// character, or a visual selection's bytes — from what the query found:
+/// the `count`th smallest whose around is over `at` (its inside, for a
+/// match with no around), and of it the part asked for — so `if` on a
+/// function's signature is its body. `grow`, a visual selection of more
+/// than a character, asks for one past the selection: `vafaf` is the
+/// function around. With none over `at`, the first object that starts
+/// after it, on its line: `cia` with the caret on the `(`.
+pub(crate) fn pick_object(
+    found: &[crate::SyntaxObject],
+    at: Range<usize>,
+    around: bool,
+    grow: bool,
+    count: usize,
+) -> Option<Range<usize>> {
+    let part = |f: &crate::SyntaxObject| {
+        if around {
+            f.around.clone()
+        } else {
+            f.inside.clone()
+        }
+    };
+    // What an object is found over: its around — for an inside its
+    // pattern took alone, as nvim's queries write them, the smallest
+    // around round it.
+    let key = |f: &crate::SyntaxObject| {
+        f.around.clone().or_else(|| {
+            let inside = f.inside.clone()?;
+            found
+                .iter()
+                .filter_map(|g| g.around.clone())
+                .filter(|a| a.start <= inside.start && inside.end <= a.end)
+                .min_by_key(|a| a.len())
+                .or(Some(inside))
+        })
+    };
+    let over = |r: &Range<usize>| r.start <= at.start && at.end <= r.end;
+    let mut over_at: Vec<(usize, usize, Range<usize>)> = found
+        .iter()
+        .filter_map(|f| {
+            let (k, p) = (key(f)?, part(f)?);
+            (over(&k) && (!grow || (over(&p) && p != at))).then(|| (k.len(), p.len(), p))
+        })
+        .collect();
+    over_at.sort_by_key(|(k, p, r)| (*k, *p, r.start));
+    let mut seen: Vec<Range<usize>> = Vec::new();
+    over_at.retain(|(_, _, p)| {
+        let new = !seen.contains(p);
+        if new {
+            seen.push(p.clone());
+        }
+        new
+    });
+    if !over_at.is_empty() {
+        return over_at.into_iter().nth(count.max(1) - 1).map(|(_, _, p)| p);
+    }
+    if grow {
+        return None;
+    }
+    found
+        .iter()
+        .filter_map(|f| {
+            let (k, p) = (key(f)?, part(f)?);
+            (k.start >= at.end).then(|| (k.start, std::cmp::Reverse(k.len()), p))
+        })
+        .min_by_key(|(s, l, _)| (*s, *l))
+        .map(|(_, _, p)| p)
+}
+
+/// A list item's around — an argument, an entry — with what separates
+/// it from the next on its line: the `,` after it (the query's around
+/// may hold it already) and the blanks after that; or, the last item,
+/// the `,` before it and the blanks between. So `daa` leaves `f(a, b)`
+/// as `f(b)` from `a` and `f(a)` from `b`, as targets.vim's does.
+fn with_separator(buf: &Buffer, r: Range<usize>) -> Range<usize> {
+    let line = buf.line_range(buf.line_of(r.start));
+    let blank = |c: char| c == ' ' || c == '\t';
+    let skip_after = |mut e: usize| {
+        while e < line.end && buf.char_at(e).is_some_and(blank) {
+            e = buf.next_char(e);
+        }
+        e
+    };
+    if r.end > r.start && buf.char_at(buf.prev_char(r.end)) == Some(',') {
+        return r.start..skip_after(r.end);
+    }
+    let after = skip_after(r.end);
+    if after < line.end && buf.char_at(after) == Some(',') {
+        return r.start..skip_after(buf.next_char(after));
+    }
+    let mut b = r.start;
+    while b > line.start && buf.char_at(buf.prev_char(b)).is_some_and(blank) {
+        b = buf.prev_char(b);
+    }
+    if b > line.start && buf.char_at(buf.prev_char(b)) == Some(',') {
+        return buf.prev_char(b)..r.end;
+    }
+    r
+}
+
+/// Whether `r` has its lines to itself: nothing but blanks before it on
+/// its first line and after it on its last — a function, a comment, a
+/// parameter on lines of their own.
+fn has_its_lines(buf: &Buffer, r: &Range<usize>) -> bool {
+    if r.end <= r.start {
+        return false;
+    }
+    let first = buf.line_of(r.start);
+    let before = buf.slice(buf.line_start(first)..r.start);
+    let end = buf.line_range(buf.line_of(buf.prev_char(r.end))).end;
+    let after = if r.end < end {
+        buf.slice(r.end..end)
+    } else {
+        String::new()
+    };
+    before.trim().is_empty() && after.trim().is_empty()
+}
+
+/// What an operator takes from a text object's selections: each as it
+/// is, or — after a syntax object (`lines`) — the lines of one that has
+/// them to itself, linewise, as `dd` takes them: `daf` leaves no blank
+/// line where the function was, and `yaf` puts back as lines.
+pub(crate) fn object_ranges(ed: &Editor, view: ViewId, lines: bool) -> Vec<(Range<usize>, bool)> {
+    let buf = &ed.buffers[ed.views[view].buffer];
+    ed.views[view]
+        .sels
+        .iter()
+        .map(|s| {
+            let r = s.range();
+            if lines && has_its_lines(buf, &r) {
+                let last = Selection::new(r.start, buf.prev_char(r.end));
+                (line_range_of_sel(buf, &last, 0), true)
+            } else {
+                (r, false)
+            }
+        })
+        .collect()
+}
+
+/// `]f` `[f`: every head to the start of the next (previous) object of
+/// the syntax, COUNT of them on — as far as there are. A motion: `d]f`
+/// deletes up to the next function, `v]f` extends to it.
+fn syntax_jump(ed: &mut Editor, ctx: &Ctx, object: &str, forward: bool) {
+    let extend = ed.mode(ctx.view) == Mode::Visual || ed.pending_op.is_some();
+    let id = view(ed, ctx).buffer;
+    let Some(mut finder) = ed.syntax_objects.take() else {
+        ed.message = format!("no {object} to go to: no syntax");
+        return;
+    };
+    let buf = &ed.buffers[id];
+    let mut to = Vec::with_capacity(ed.views[ctx.view].sels.len());
+    let mut why = None;
+    for s in ed.views[ctx.view].sels.iter() {
+        let h = s.head.min(buf.len());
+        let within = if forward { h..buf.len() } else { 0..h };
+        let mut starts: Vec<usize> = match finder.find(id, buf, object, within) {
+            Ok(found) => found
+                .iter()
+                .filter_map(|f| f.around.as_ref().or(f.inside.as_ref()).map(|r| r.start))
+                .filter(|&st| if forward { st > h } else { st < h })
+                .collect(),
+            Err(e) => {
+                why = Some(e);
+                Vec::new()
+            }
+        };
+        starts.sort_unstable();
+        starts.dedup();
+        if !forward {
+            starts.reverse();
+        }
+        to.push(starts.into_iter().take(ctx.count.max(1)).next_back());
+    }
+    ed.syntax_objects = Some(finder);
+    if to.iter().all(Option::is_none) {
+        let way = if forward { "next" } else { "previous" };
+        ed.message = why.unwrap_or_else(|| format!("no {way} {object}"));
+    }
+    let v = &mut ed.views[ctx.view];
+    let mut i = 0;
+    v.sels.map(|s| {
+        let t = to[i.min(to.len() - 1)];
+        i += 1;
+        t.map_or(s, |t| s.with_head(t, extend))
+    });
+    v.goal_col = None;
 }
 
 /// The paragraph at `o`: its run of non-blank lines — or of blank ones,
@@ -1960,6 +2241,13 @@ pub fn install(ed: &mut Editor) {
     ed.register_kind_key("textobject around", Kind::TextObject, |ed, ctx| {
         textobject(ed, ctx, true)
     });
+    // The syntax's own, walked: `]f` `[f` (docs/design/nodes.md
+    // Decision 8).
+    for (name, forward) in [("function next", true), ("function prev", false)] {
+        ed.register_kind(name, Kind::Motion(Exclusive), move |ed, ctx| {
+            syntax_jump(ed, ctx, "function", forward)
+        });
+    }
 
     // ---- operators
     for op in [
@@ -2931,11 +3219,19 @@ const DOCS: &[(&str, &str)] = &[
     // text objects
     (
         "textobject inner",
-        "select inside a pair, word or paragraph: iw, i(, i\", ip, ...",
+        "select inside a pair, word, paragraph or syntax object: iw, i(, i\", ip, if, ic, ia, ...",
     ),
     (
         "textobject around",
-        "select a pair, word or paragraph with what surrounds it: aw, a(, ap, ...",
+        "select a pair, word, paragraph or syntax object with what surrounds it: aw, a(, ap, af, ...",
+    ),
+    (
+        "function next",
+        "the start of the next function, by the syntax, COUNT on (`]f`)",
+    ),
+    (
+        "function prev",
+        "the start of the previous function, by the syntax, COUNT back (`[f`)",
     ),
     // operators
     (
@@ -4530,6 +4826,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("`", "mark go"),
         ("]'", "mark next"),
         ("['", "mark prev"),
+        // The syntax's functions (docs/design/nodes.md Decision 8).
+        ("]f", "function next"),
+        ("[f", "function prev"),
         // The yank-pop: the last put walked through the memory.
         ("[p", "put older"),
         ("]p", "put newer"),
@@ -4948,5 +5247,77 @@ pub fn default_keymap(km: &mut Keymap) {
         (Insert, "<C-n>", "prompt history next"),
     ] {
         km.bind_local("prompt", mode, k, c, &[]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SyntaxObject;
+
+    fn obj(around: Option<Range<usize>>, inside: Option<Range<usize>>) -> SyntaxObject {
+        SyntaxObject { around, inside }
+    }
+
+    /// The innermost over the caret, the Nth out for a count, the part
+    /// asked for; an inside on a signature is still its function's; a
+    /// selection grows past itself; with none over the caret, the next
+    /// on its line (docs/design/nodes.md Decision 8).
+    #[test]
+    fn which_object_a_key_takes() {
+        // fn outer { … fn inner { body } … }
+        let outer = obj(Some(0..100), Some(10..90));
+        let inner = obj(Some(20..60), Some(30..50));
+        let found = [outer, inner];
+        assert_eq!(pick_object(&found, 35..36, true, false, 1), Some(20..60));
+        assert_eq!(pick_object(&found, 35..36, false, false, 1), Some(30..50));
+        assert_eq!(pick_object(&found, 35..36, true, false, 2), Some(0..100));
+        assert_eq!(pick_object(&found, 35..36, true, false, 3), None);
+        // On the inner's signature, outside its body: still its body.
+        assert_eq!(pick_object(&found, 22..23, false, false, 1), Some(30..50));
+        // A selection that is the inner already: the outer.
+        assert_eq!(pick_object(&found, 20..60, true, true, 1), Some(0..100));
+        assert_eq!(pick_object(&found, 30..50, false, true, 1), Some(10..90));
+        assert_eq!(pick_object(&found, 0..100, true, true, 1), None);
+        // An inside its pattern took alone, nvim's way: keyed by the
+        // around round it.
+        let split = [obj(Some(20..60), None), obj(None, Some(30..50))];
+        assert_eq!(pick_object(&split, 22..23, false, false, 1), Some(30..50));
+        // Over nothing: the first after the caret.
+        let args = [obj(Some(5..7), Some(5..6)), obj(Some(8..9), Some(8..9))];
+        assert_eq!(pick_object(&args, 4..5, false, false, 1), Some(5..6));
+        assert_eq!(pick_object(&args, 9..10, false, false, 1), None);
+    }
+
+    /// `daa` leaves the list well-formed: the `,` after an item and the
+    /// blanks after that, or the last's `,` before it.
+    #[test]
+    fn an_item_goes_with_its_comma() {
+        let buf = Buffer::new("t", "f(a, b,  c)\n");
+        let at = |s: &str| {
+            let i = "f(a, b,  c)".find(s).unwrap();
+            i..i + s.len()
+        };
+        let cut = |r: Range<usize>| buf.slice(r);
+        assert_eq!(cut(with_separator(&buf, at("a"))), "a, ");
+        assert_eq!(cut(with_separator(&buf, at("a,"))), "a, ");
+        assert_eq!(cut(with_separator(&buf, at("b"))), "b,  ");
+        assert_eq!(cut(with_separator(&buf, at("c"))), ",  c");
+        let alone = Buffer::new("t", "[x]\n");
+        assert_eq!(with_separator(&alone, 1..2), 1..2);
+    }
+
+    #[test]
+    fn an_object_with_its_lines_to_itself() {
+        let src = "fn a() {\n    x();\n}\nlet f = |v| v;\n";
+        let buf = Buffer::new("t", src);
+        let at = |s: &str| {
+            let i = src.find(s).unwrap();
+            i..i + s.len()
+        };
+        assert!(has_its_lines(&buf, &at("fn a() {\n    x();\n}")));
+        assert!(has_its_lines(&buf, &at("x();")));
+        assert!(!has_its_lines(&buf, &at("|v| v")));
+        assert!(!has_its_lines(&buf, &(3..3)));
     }
 }

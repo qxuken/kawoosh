@@ -75,8 +75,10 @@ pub struct Answer {
     pub tree: Option<Tree>,
     /// The text the tree was parsed from and the grammar that read it,
     /// for the shell's indenter to bring the tree up to the buffer's
-    /// text on the spot (docs/design/indent.md Decision 4); only for a
-    /// grammar with an indent query that reads the text as it is.
+    /// text on the spot (docs/design/indent.md Decision 4) — its indent
+    /// and its text objects (docs/design/nodes.md Decision 8); only for
+    /// a grammar with an indent or a text-object query that reads the
+    /// text as it is.
     pub parse: Option<Parse>,
     /// What the parse and the queries took on the thread — the devtools'
     /// reading of a system the frame never waits on.
@@ -639,7 +641,7 @@ fn highlight(
                         block_spans = Some(lines);
                     }
                     let handle = tree.clone();
-                    if stood_in.is_none() && g.indents.is_some() {
+                    if stood_in.is_none() && (g.indents.is_some() || g.textobjects.is_some()) {
                         parse = Some(Parse {
                             text: text.clone(),
                             grammar: g.clone(),

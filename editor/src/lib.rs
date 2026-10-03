@@ -979,6 +979,39 @@ pub struct Editor {
     /// over its trees; docs/design/indent.md Decision 3); with none,
     /// or no answer, the bracket rule.
     pub indenter: Option<Box<dyn Indenter>>,
+    /// What finds the text objects a buffer's syntax has — `af`, `ic`,
+    /// `]f` (docs/design/nodes.md Decision 8): the shell's, over the
+    /// same trees as the indenter.
+    pub syntax_objects: Option<Box<dyn SyntaxObjects>>,
+    /// The selections an operator waits on are a syntax text object's:
+    /// each that has its lines to itself is taken linewise (`daf` takes
+    /// a function's lines whole). Read and cleared by the operator.
+    object_lines: bool,
+}
+
+/// A syntax text object as one match of a grammar's text-object query
+/// found it: its around (`af`) and its inside (`if`), each where the
+/// match had one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SyntaxObject {
+    pub around: Option<std::ops::Range<usize>>,
+    pub inside: Option<std::ops::Range<usize>>,
+}
+
+/// The text objects a buffer's syntax says (docs/design/nodes.md
+/// Decision 8), asked by `af` `if` `ac` … and `]f` `[f`; which one a
+/// key takes is the engine's choice.
+pub trait SyntaxObjects {
+    /// Buffer `id`'s objects named `object` (`function`, `class`) with
+    /// a part over `within`, one a match, in no order. The error is why
+    /// there are none to ask for: no grammar, no text-object query.
+    fn find(
+        &mut self,
+        id: BufferId,
+        buf: &Buffer,
+        object: &str,
+        within: std::ops::Range<usize>,
+    ) -> Result<Vec<SyntaxObject>, String>;
 }
 
 /// One level of a buffer's indentation: `text` (a tab, or `width`
@@ -1065,6 +1098,8 @@ impl Editor {
             released: Vec::new(),
             jumping: false,
             indenter: None,
+            syntax_objects: None,
+            object_lines: false,
         };
         commands::install(&mut ed);
         commands::default_keymap(&mut ed.keymap);
@@ -2133,9 +2168,12 @@ impl Editor {
         }
         // A count before the operator is the motion's, multiplied
         // with the motion's own as vim's is: `2dw` is `d2w`, `2d3w`
-        // six words. (`2dd` is the operator's own doubling.)
+        // six words. (`2dd` is the operator's own doubling.) A text
+        // object's the same: `2daf` is `d2af`.
         let count = match (kind, self.pending_op) {
-            (Kind::Motion(_), Some((_, n))) if n > 0 => Some(count.unwrap_or(1).max(1) * n),
+            (Kind::Motion(_) | Kind::TextObject, Some((_, n))) if n > 0 => {
+                Some(count.unwrap_or(1).max(1) * n)
+            }
             _ => count,
         };
         let ctx = Ctx {
@@ -2195,11 +2233,8 @@ impl Editor {
                 }
                 Kind::TextObject => {
                     self.pending_op = None;
-                    let ranges = self.views[ctx.view]
-                        .sels
-                        .iter()
-                        .map(|s| (s.range(), false))
-                        .collect();
+                    let lines = std::mem::take(&mut self.object_lines);
+                    let ranges = commands::object_ranges(self, ctx.view, lines);
                     commands::apply_operator(self, ctx.view, op, ranges);
                 }
                 Kind::Operator => {}

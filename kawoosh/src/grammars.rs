@@ -438,7 +438,7 @@ impl Kawoosh {
     /// there is a warning, and the language is one of files alone.
     fn found_def(&mut self, i: &Installed, found: Result<Option<Library>, String>) -> LanguageDef {
         let grammar = match found {
-            Ok(lib) => lib.map(Source::Library),
+            Ok(lib) => lib.map(|l| Source::Library(Box::new(l))),
             Err(e) => {
                 self.notify_with(Note::new(Level::Warn, e).source(SOURCE));
                 None
