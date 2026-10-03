@@ -22,6 +22,7 @@
 --     worktrees = function(root, done) … end,
 --     worktree_add = function(root, path, branch, done) … end,
 --     watch = function(root) … end,                 -- the paths whose change means "ask again"
+--     stage = function(root, path, patch, done) … end, -- the index patched: done(true) or done(false, why)
 --   })
 
 local fs = kawoosh.fs
@@ -229,6 +230,10 @@ end
 
 -- vcs.refresh(buffer): the buffer's base given by its backend — the
 -- file as the index (or HEAD, `vcs.base`) has it — or taken away.
+-- Under the index, when the backend can stage, HEAD's text comes with
+-- it as the base's own (Decision 12): what differs between the two is
+-- staged. A file HEAD has not got reads as empty there — all of it
+-- staged.
 function vcs.refresh(h)
   if not enabled() or not has_buffer(h) then return end
   local path = kawoosh.buf.path(h)
@@ -237,14 +242,28 @@ function vcs.refresh(h)
   vcs.root(fs.parent(path), function(r)
     if not r or not r.backend.base then return end
     local rev = kawoosh.opt("vcs.base") == "head" and "HEAD" or nil
-    r.backend.base(r.root, path, rev, function(text)
+    local staging = rev == nil and r.backend.stage ~= nil
+    local text, head, left = nil, nil, staging and 2 or 1
+    local function give()
+      left = left - 1
+      if left > 0 then return end
       if not has_buffer(h) or kawoosh.buf.path(h) ~= path then return end
       if text then
-        kawoosh.buf.base(text, rev or "index", h)
+        kawoosh.buf.base(text, rev or "index", h, staging and { head = head or "" } or nil)
       else
         kawoosh.buf.base(false, nil, h)
       end
+    end
+    r.backend.base(r.root, path, rev, function(t)
+      text = t
+      give()
     end)
+    if staging then
+      r.backend.base(r.root, path, "HEAD", function(t)
+        head = t
+        give()
+      end)
+    end
   end)
 end
 
@@ -277,6 +296,28 @@ kawoosh.on_settings(function()
     end
     fetched = {}
   end
+end)
+
+-- `hunk stage` and `hunk unstage` (Decision 12): the editor made the
+-- patch against the buffer's base; the backend's `stage` applies it to
+-- the index, and the base is read again — the hunk gone from the
+-- gutter, or back in it. A base that is not the index (`vcs.base =
+-- "head"`, a review's merge base) is no index to patch.
+kawoosh.on_stage(function(path, patch, o)
+  local verb = o.unstage and "unstage" or "stage"
+  if o.label ~= "index" then
+    return kawoosh.echo(verb .. ": this buffer is read against " .. tostring(o.label)
+      .. ", not the index (`:vcs refresh` reads it against the index again)")
+  end
+  vcs.root(fs.parent(path), function(r)
+    if not r then return kawoosh.echo("no version control here") end
+    if not can(r, "stage") then return end
+    r.backend.stage(r.root, path, patch, function(ok, why)
+      if not ok then return kawoosh.echo(verb .. ": " .. tostring(why or "failed")) end
+      kawoosh.echo(o.count .. " hunk" .. (o.count == 1 and "" or "s") .. " " .. verb .. "d")
+      vcs.refresh(o.buffer)
+    end)
+  end)
 end)
 
 -- ------------------------------------------------------------ the status line
@@ -410,7 +451,11 @@ local function worktree_review(r, files, rev, what, name)
       end
       local rel = fs.relative(f.path, r.root) or f.path
       out[#out + 1] = { rel = rel, path = f.path, hunks = kawoosh.diff(base, text), lines = line_count(text) }
-      if h then
+      if not rev then
+        -- The buffer's own base, which `vcs.refresh` gives with what
+        -- is staged under it; a file not open gets it when it is.
+        if h then vcs.refresh(h) end
+      elseif h then
         kawoosh.buf.base(base, label, h)
         fetched[h] = true
       elseif fs.is_file(f.path) then
@@ -594,8 +639,10 @@ picker.source("vcs status", {
         local items = {}
         for _, f in ipairs(files or {}) do
           if f.state ~= "ignored" then
+            -- Staged or not, where the backend says (git's X and Y).
+            local sub = f.staged and (f.unstaged and "partly staged" or "staged") or nil
             items[#items + 1] = { text = (STATE_LETTER[f.state] or " ") .. "  " .. (fs.relative(f.path, r.root) or f.path),
-                                  path = f.path, state = f.state, root = r }
+                                  sub = sub, path = f.path, state = f.state, staged = f.staged, root = r }
           end
         end
         table.sort(items, function(a, b) return a.text:sub(4) < b.text:sub(4) end)
@@ -606,22 +653,39 @@ picker.source("vcs status", {
   preview = function(item)
     if item.diff then return item.diff end
     local r = item.root
-    local function build(base)
-      local text = fs.is_file(item.path) and (fs.read(item.path) or "") or ""
-      local h = buffer_of(item.path)
-      if h and kawoosh.buf.modified(h) then text = kawoosh.buf.text(h) end
-      local new = lines_of(text)
-      local out = {}
-      for _, hk in ipairs(kawoosh.diff(base, text)) do
+    -- `old` against `new` as `@@` sections onto `out`.
+    local function sections(out, old, new_text)
+      local new = lines_of(new_text)
+      for _, hk in ipairs(kawoosh.diff(old, new_text)) do
         out[#out + 1] = "@@ -" .. hk.old_line .. "," .. (hk.old_end - hk.old_line) .. " +" .. hk.line .. "," .. (hk.end_line - hk.line) .. " @@"
         for _, l in ipairs(hk.old) do out[#out + 1] = "-" .. l end
         for i = hk.line, hk.end_line - 1 do out[#out + 1] = "+" .. (new[i] or "") end
       end
+    end
+    -- What is staged (HEAD against the index) first when there is
+    -- any, then what is not (the index against the file).
+    local function build(base, head)
+      local text = fs.is_file(item.path) and (fs.read(item.path) or "") or ""
+      local h = buffer_of(item.path)
+      if h and kawoosh.buf.modified(h) then text = kawoosh.buf.text(h) end
+      local out = {}
+      if head then
+        out[#out + 1] = "--- HEAD"
+        out[#out + 1] = "+++ index (staged)"
+        sections(out, head, base)
+        out[#out + 1] = "--- index"
+        out[#out + 1] = "+++ working tree"
+      end
+      sections(out, base, text)
       item.diff = { title = item.text:sub(4), lines = out, path = "changes.diff" }
       picker.reload()
     end
     if item.state == "untracked" or not r.backend.base then
       build("")
+    elseif item.staged then
+      r.backend.base(r.root, item.path, nil, function(base)
+        r.backend.base(r.root, item.path, "HEAD", function(head) build(base or "", head or "") end)
+      end)
     else
       r.backend.base(r.root, item.path, nil, function(base) build(base or "") end)
     end
@@ -712,7 +776,7 @@ kawoosh.command("vcs", function()
       local who = r.name .. " at " .. fs.short(r.root)
       if head then who = who .. ", on " .. (head.branch or (head.rev or ""):sub(1, 10)) end
       local caps = {}
-      for _, k in ipairs { "base", "status", "changed", "merge_base", "refs", "blame", "log", "show", "worktrees", "worktree_add" } do
+      for _, k in ipairs { "base", "status", "changed", "merge_base", "refs", "blame", "log", "show", "worktrees", "worktree_add", "stage" } do
         if r.backend[k] then caps[#caps + 1] = k end
       end
       kawoosh.echo(who .. " — " .. table.concat(caps, " "))
@@ -898,13 +962,30 @@ function git.status(root, done, opts)
         local xy, path = l:match("^(..) (.+)$")
         if xy then
           path = path:gsub('^"(.*)"$', "%1")
-          files[#files + 1] = { path = fs.join(root, path), state = git_state(xy) }
+          -- X is the index against HEAD, Y the working tree against
+          -- the index: staged, and changed since.
+          local x, y = xy:sub(1, 1), xy:sub(2, 2)
+          files[#files + 1] = { path = fs.join(root, path), state = git_state(xy),
+                                staged = not (" ?!"):find(x, 1, true), unstaged = not (" ?!"):find(y, 1, true) }
         end
       end
       -- Git never lists its own folder, ignored or not; it is as good as.
       files[#files + 1] = { path = fs.join(root, ".git"), state = "ignored" }
       done(files)
     end)
+end
+
+-- The patch's sections under a header naming the file from the root,
+-- applied to the index alone (`--cached`, no file touched).
+-- `--whitespace=nowarn`: a user's `apply.whitespace = error` would
+-- refuse a line's trailing blank the working tree has already.
+function git.stage(root, path, patch, done)
+  local rel = ((fs.relative(path, root) or fs.basename(path)):gsub("\\", "/"))
+  local header = "diff --git a/" .. rel .. " b/" .. rel .. "\n--- a/" .. rel .. "\n+++ b/" .. rel .. "\n"
+  run({ "git", "apply", "--cached", "--whitespace=nowarn", "-" }, root, function(text, code)
+    if code ~= 0 then return done(false, trim(text)) end
+    done(true)
+  end, header .. patch)
 end
 
 function git.changed(root, from, to, done)
@@ -1053,7 +1134,9 @@ vcs.register("git", git)
 
 -- What fossil answers plainly: the root, the branch, a file's
 -- checked-in text, the changes, a blame, the timeline, a check-in's
--- diff. No merge base, no worktrees: `vcs diff main` says so.
+-- diff. No merge base, no worktrees: `vcs diff main` says so. No
+-- `stage`: fossil has no index, a commit takes the files as they are
+-- (`fossil commit FILE` for some of them).
 local fossil = {}
 
 function fossil.probe(dir, done)

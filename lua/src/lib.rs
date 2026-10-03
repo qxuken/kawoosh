@@ -499,12 +499,15 @@ pub enum Msg {
     /// `kawoosh.buf.base(text, label[, buffer])`: what the buffer is
     /// read against (docs/design/vcs.md Decision 1) — the diff of the
     /// two the gutter's signs and `]h`'s hunks; `text` nil or false
-    /// takes the base away.
+    /// takes the base away. `head`: what the base is itself read
+    /// against, HEAD's text under the index — the staged hunks
+    /// (Decision 12).
     Base {
         buffer: Option<u64>,
         name: Option<String>,
         text: Option<String>,
         label: String,
+        head: Option<String>,
     },
     /// `kawoosh.buf.blame(rows[, buffer])`: the blame column's runs —
     /// `(line from 0, count, label, rev, summary)` — for the text as
@@ -2515,6 +2518,46 @@ impl Runtime {
         );
     }
 
+    /// Hands `hunk stage`'s patch — `hunk unstage`'s with `unstage` —
+    /// for the file at `path` to the plugins (`kawoosh.on_stage`,
+    /// docs/design/vcs.md Decision 12), with the buffer, what its base
+    /// is called and how many hunks: false when nothing takes patches.
+    pub fn stage_hook(
+        &self,
+        path: &std::path::Path,
+        patch: &str,
+        id: BufferId,
+        label: &str,
+        count: usize,
+        unstage: bool,
+    ) -> bool {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_stage"))
+        else {
+            return false;
+        };
+        let opts = (|| {
+            let t = self.lua.create_table()?;
+            t.set("buffer", handle_of(id))?;
+            t.set("label", label)?;
+            t.set("count", count)?;
+            t.set("unstage", unstage)?;
+            Ok::<_, mlua::Error>(t)
+        })();
+        match opts.and_then(|o| f.call::<bool>((path.display().to_string(), patch, o))) {
+            Ok(taken) => taken,
+            Err(e) => {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("on_stage: {e}")));
+                true
+            }
+        }
+    }
+
     pub fn take_msgs(&self) -> Vec<Msg> {
         std::mem::take(&mut *self.queue.borrow_mut())
     }
@@ -3989,23 +4032,38 @@ fn seed(
     // `label` (`index`, `HEAD`, `main`); the diff of the two is the
     // gutter's signs and `]h`'s hunks, made again once the text has
     // been still. `text` nil or false takes the base away. The buffer
-    // by handle, by name, or the current one.
+    // by handle, by name, or the current one. `opts.head`: the text the
+    // base is itself read against — HEAD's under the index — whose
+    // difference from the base is what is staged, drawn faint and
+    // what `hunk unstage` takes back (Decision 12); a base given
+    // without one has nothing staged.
     let (qq, pp) = (q(queue), published.clone());
     buf.set(
         "base",
         lua.create_function(
-            move |_, (text, label, which): (Option<LV>, Option<String>, Option<LV>)| {
+            move |_,
+                  (text, label, which, opts): (
+                Option<LV>,
+                Option<String>,
+                Option<LV>,
+                Option<Table>,
+            )| {
                 let (buffer, name) = which_buffer(&pp, which)?;
                 let text = match text {
                     Some(LV::String(s)) => Some(s.to_str()?.to_string()),
                     Some(LV::Nil) | Some(LV::Boolean(false)) | None => None,
                     _ => return Err(mlua::Error::runtime("base: a text, or nil")),
                 };
+                let head = match &opts {
+                    Some(o) => o.get::<Option<String>>("head")?,
+                    None => None,
+                };
                 qq.borrow_mut().push(Msg::Base {
                     buffer,
                     name,
                     text,
                     label: label.unwrap_or_else(|| "base".into()),
+                    head,
                 });
                 Ok(())
             },

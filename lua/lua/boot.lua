@@ -316,6 +316,23 @@ function kawoosh._wrote(path, buffer)
   end
 end
 
+-- kawoosh.on_stage(fn): `fn(path, patch, opts)` for `hunk stage` and
+-- `hunk unstage` (docs/design/vcs.md Decision 12): the file's path,
+-- the patch the editor made against its base — the `@@` sections
+-- alone — and `opts` `{ buffer =, label =, count =, unstage = }`, the
+-- base's label and how many hunks. One function, a second replacing
+-- the first: the bundled `vcs.lua` hands it to its backend's `stage`.
+function kawoosh.on_stage(fn)
+  kawoosh._stage_hook = fn
+end
+function kawoosh._stage(path, patch, opts)
+  local fn = kawoosh._stage_hook
+  if not fn then return false end
+  local ok, err = timed(fn, path, patch, opts)
+  if not ok then kawoosh.echo("on_stage: " .. tostring(err)) end
+  return true
+end
+
 kawoosh._places_hooks = {}
 function kawoosh.on_places(fn)
   kawoosh._places_hooks[#kawoosh._places_hooks + 1] = fn

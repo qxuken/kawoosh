@@ -63,6 +63,73 @@ pub fn line_hunks(old: &str, new: &str) -> Vec<(Range<usize>, Range<usize>)> {
         .collect()
 }
 
+/// `old` against `new` as a unified diff's hunks — the `@@` sections
+/// alone, no file names — with `context` lines of `old` around each
+/// change, and changes whose context meets made one section: the patch
+/// a version control backend applies to its index (docs/design/vcs.md
+/// Decision 12). A line is written as it is but for its `\n` — a `\r`
+/// before it stays, so a CRLF blob's patch matches the blob — and a
+/// last line with no newline is followed by `\ No newline at end of
+/// file`, as diff writes it. Empty when the two are the same.
+pub fn unified(old: &str, new: &str, context: usize) -> String {
+    let hunks = line_hunks(old, new);
+    let mut out = String::new();
+    if hunks.is_empty() {
+        return out;
+    }
+    let (os, ns) = (starts(old), starts(new));
+    let old_lines = os.len() - 1;
+    let mut groups: Vec<Vec<(Range<usize>, Range<usize>)>> = Vec::new();
+    for h in hunks {
+        match groups.last_mut() {
+            Some(g) if h.0.start <= g[g.len() - 1].0.end + 2 * context => g.push(h),
+            _ => groups.push(vec![h]),
+        }
+    }
+    let push = |out: &mut String, sign: char, line: &str| {
+        out.push(sign);
+        match line.strip_suffix('\n') {
+            Some(l) => {
+                out.push_str(l);
+                out.push('\n');
+            }
+            None => {
+                out.push_str(line);
+                out.push_str("\n\\ No newline at end of file\n");
+            }
+        }
+    };
+    for g in groups {
+        let (first, last) = (&g[0], &g[g.len() - 1]);
+        // The lines before the first change and after the last are the
+        // same on both sides, so either side's count of them holds.
+        let pre = first.0.start.min(context);
+        let post = (old_lines - last.0.end).min(context);
+        let (o0, o1) = (first.0.start - pre, last.0.end + post);
+        let (n0, n1) = (first.1.start - pre, last.1.end + post);
+        // `-l,s`: a side with no lines names the line before them.
+        let span = |a: usize, b: usize| format!("{},{}", a + usize::from(b > a), b - a);
+        out.push_str(&format!("@@ -{} +{} @@\n", span(o0, o1), span(n0, n1)));
+        let mut at = o0;
+        for (o, n) in &g {
+            for i in at..o.start {
+                push(&mut out, ' ', &old[os[i]..os[i + 1]]);
+            }
+            for i in o.clone() {
+                push(&mut out, '-', &old[os[i]..os[i + 1]]);
+            }
+            for i in n.clone() {
+                push(&mut out, '+', &new[ns[i]..ns[i + 1]]);
+            }
+            at = o.end;
+        }
+        for i in at..o1 {
+            push(&mut out, ' ', &old[os[i]..os[i + 1]]);
+        }
+    }
+    out
+}
+
 /// `old[a]` becoming `to`, as the one edit of the bytes that differ
 /// (on char boundaries); none when they are the same.
 fn narrowed(old: &str, a: Range<usize>, to: &str, out: &mut Vec<(Range<usize>, String)>) {
@@ -146,6 +213,93 @@ mod tests {
         assert!(line_hunks(&base_line_ends("one\ntwo\n", crlf), crlf).is_empty());
         assert_eq!(base_line_ends(crlf, "one\ntwo\n"), crlf);
         assert_eq!(base_line_ends("one\n", "one"), "one\n");
+    }
+
+    /// A unified patch applied to `old` as `git apply` reads it: each
+    /// section's `-` and context lines checked against `old` where the
+    /// header says, its `+` and context lines the new text.
+    fn patched(old: &str, patch: &str) -> String {
+        let os = starts(old);
+        let line = |i: usize| &old[os[i]..os[i + 1]];
+        let mut out = String::new();
+        let mut at = 0;
+        let mut lines = patch.split_inclusive('\n').peekable();
+        while let Some(h) = lines.next() {
+            let o = h.strip_prefix("@@ -").expect("a section");
+            let (a, len) = o.split_once(' ').unwrap().0.split_once(',').unwrap();
+            let (a, len): (usize, usize) = (a.parse().unwrap(), len.parse().unwrap());
+            let from = if len == 0 { a } else { a - 1 };
+            for i in at..from {
+                out.push_str(line(i));
+            }
+            at = from;
+            while let Some(l) = lines.next_if(|l| !l.starts_with("@@")) {
+                let body = l[1..].strip_suffix('\n').unwrap();
+                let ends = !lines.peek().is_some_and(|n| n.starts_with('\\'));
+                let text = format!("{body}{}", if ends { "\n" } else { "" });
+                if !ends {
+                    lines.next();
+                }
+                match &l[..1] {
+                    " " | "-" => {
+                        assert_eq!(line(at), text, "the patch's line {at} is the old text's");
+                        at += 1;
+                        if &l[..1] == " " {
+                            out.push_str(&text);
+                        }
+                    }
+                    "+" => out.push_str(&text),
+                    _ => panic!("{l:?}"),
+                }
+            }
+        }
+        for i in at..os.len() - 1 {
+            out.push_str(line(i));
+        }
+        out
+    }
+
+    /// The patch names both sides' lines, its sections `context` apart
+    /// or one, and says where a text has no last newline; a CRLF line
+    /// keeps its `\r`.
+    #[test]
+    fn a_unified_patch_makes_the_new_text() {
+        let old = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n";
+        let new = "a\nB\nc\nd\ne\nf\ng\nh\ni\nJ\n";
+        assert_eq!(
+            unified(old, new, 1),
+            "@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -9,2 +9,2 @@\n i\n-j\n+J\n"
+        );
+        // Contexts that meet make one section.
+        assert_eq!(unified(old, new, 4).matches("@@ -").count(), 1);
+        assert_eq!(unified(old, old, 3), "");
+        assert_eq!(
+            unified("one\ntwo", "one\ntwo\nthree\n", 3),
+            "@@ -1,2 +1,3 @@\n one\n-two\n\\ No newline at end of file\n+two\n+three\n"
+        );
+        assert_eq!(
+            unified("one\n", "one\nend", 3),
+            "@@ -1,1 +1,2 @@\n one\n+end\n\\ No newline at end of file\n"
+        );
+        assert_eq!(unified("", "x\n", 3), "@@ -0,0 +1,1 @@\n+x\n");
+        assert_eq!(
+            unified("a\r\nb\r\n", "a\r\nB\r\n", 3),
+            "@@ -1,2 +1,2 @@\n a\r\n-b\r\n+B\r\n"
+        );
+        for (a, b) in [
+            (old, new),
+            ("", "x\n"),
+            ("x\n", ""),
+            ("a\nb", "a\nb\n"),
+            ("a\nb\n", "a\nb"),
+            ("keep\nlast", "keep\nlast\nmore"),
+            ("a\r\nb\r\nc\r\n", "a\r\nB\r\nc\r\nd"),
+            ("one\ntwo\nthree\n", "zero\none\nthree\nfour"),
+        ] {
+            for context in [0, 1, 3] {
+                assert_eq!(patched(a, &unified(a, b, context)), b, "{a:?} → {b:?}");
+            }
+        }
     }
 
     fn apply(old: &str, edits: &[(Range<usize>, String)]) -> String {
