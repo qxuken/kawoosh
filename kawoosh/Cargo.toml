@@ -38,7 +38,7 @@ regex = "1"
 [target.'cfg(windows)'.dependencies]
 # The process's memory for the perf tab (`perf::read_mem`); the parent's
 # console for the CLI half of a GUI program (`main.rs`).
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 # The window's icon on X11 (`main.rs`, `window_icon`): the PNG rendered
 # from `assets/icons/kawoosh-icon.svg`, decoded to the RGBA kui takes.

@@ -722,6 +722,89 @@ fn the_released_grammars_install_from_the_shipped_bases() {
     std::fs::remove_dir_all(t).ok();
 }
 
+/// Five released grammars over the network, in one session: two with
+/// no scanner (zig, java) and three whose scanner is C (ruby, html,
+/// php), each loaded and painting a file of its own; a bare update that
+/// finds them all up to date; and one removed while its library is
+/// loaded, then installed again (`KAWOOSH_GRAMMARS_LIVE=1`). Run on
+/// Windows 2026-10-03, where zig's mingw-built libraries had not been
+/// loaded by an MSVC kawoosh before.
+#[test]
+fn several_released_grammars_paint_update_and_come_back() {
+    if std::env::var_os("KAWOOSH_GRAMMARS_LIVE").is_none() {
+        return;
+    }
+    let t = temp("live-several");
+    let samples = [
+        ("zig", "a.zig", "const x = \"s\";\npub fn main() void {}\n"),
+        ("java", "A.java", "class A { String s = \"s\"; }\n"),
+        ("ruby", "a.rb", "def area\n  \"s\"\nend\n"),
+        ("html", "a.html", "<p class=\"s\">hi</p>\n"),
+        ("php", "a.php", "<?php\nfunction f() { return \"s\"; }\n"),
+    ];
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    app.load_grammars(&t.join("grammars"));
+    d.frame(&mut app);
+    let settle = |d: &mut Drive, app: &mut Kawoosh, what: &str| {
+        for _ in 0..6000 {
+            d.frame(app);
+            if app.grammars.installing.is_empty() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("never: {what}; the message is {:?}", app.ed.message);
+    };
+    for (name, file, text) in samples {
+        let path = t.join(file);
+        std::fs::write(&path, text).unwrap();
+        app.open(&path);
+        d.frame(&mut app);
+        let v = app.focused_view().unwrap();
+        assert_eq!(&*app.ed.buffer_of(v).language, name);
+        ex(&mut d, &mut app, &format!("grammar install {name}"));
+        settle(&mut d, &mut app, name);
+        assert_eq!(notes(&app, Level::Error), Vec::<String>::new(), "{name}");
+        assert!(app.languages.has_grammar(name), "{}", app.ed.message);
+        until(&mut d, &mut app, name, |a| {
+            let seen = tokens(a);
+            (seen.contains(&Token::Keyword) || seen.contains(&Token::Tag))
+                && seen.contains(&Token::String)
+        });
+        eprintln!("{name}: {}", app.ed.message);
+    }
+
+    ex(&mut d, &mut app, "grammar update");
+    until(&mut d, &mut app, "the list landed", |a| !a.grammars.listing);
+    settle(&mut d, &mut app, "the update");
+    assert!(
+        app.ed
+            .message
+            .starts_with("grammar: 5 installed, up to date"),
+        "{}",
+        app.ed.message
+    );
+
+    // Ruby's file on show, its library loaded: removed, and back.
+    app.open(&t.join("a.rb"));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammar remove ruby");
+    assert_eq!(app.ed.message, "grammar: ruby removed");
+    for _ in 0..5 {
+        d.frame(&mut app);
+    }
+    assert!(tokens(&app).is_empty());
+    assert!(!t.join("grammars/ruby").exists(), "its directory gone");
+    ex(&mut d, &mut app, "grammar install ruby");
+    settle(&mut d, &mut app, "ruby again");
+    assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
+    until(&mut d, &mut app, "ruby painted again", |a| {
+        tokens(a).contains(&Token::Keyword)
+    });
+    std::fs::remove_dir_all(t).ok();
+}
+
 /// The first file of a listed language on show is said once, with the
 /// command — `grammars.install`'s `ask` — and of that setting a project
 /// may say `never` and nothing else.
@@ -968,9 +1051,37 @@ fn auto_installs_at_the_first_file_and_update_and_remove_follow() {
     assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
     assert_eq!(d.warnings(), Vec::<String>::new());
 
+    // Installed again the same session, the same archive: the library
+    // removed is still loaded — a process never lets one go — and on
+    // Windows its file could not be deleted, so the directory its hash
+    // names was not empty to be installed into.
+    ex(&mut d, &mut app, "grammar install jsonish");
+    until(&mut d, &mut app, "the install ended", |a| {
+        a.grammars.installing.is_empty()
+    });
+    assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
+    assert_eq!(app.ed.message, "grammar: jsonish installed (fedcba987654)");
+    until(&mut d, &mut app, "painted again", |a| {
+        tokens(a).contains(&Token::Property)
+    });
+    ex(&mut d, &mut app, "grammar remove jsonish");
+    assert_eq!(app.ed.message, "grammar: jsonish removed");
+    drop(app);
+
+    // Nothing of the grammar is left by the next launch but the list.
+    // The libraries Windows would not delete were set aside, and stay
+    // while this process has them loaded — a launch of its own takes
+    // them out.
     let mut d = Drive::new(900.0, 500.0);
     let app = app_with(&mut d, &data, &[]);
     assert!(!app.languages.has_grammar(NAME) && app.grammars.listed.contains_key(NAME));
+    let left: Vec<_> = std::fs::read_dir(&data)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.starts_with(".gone-"))
+        .collect();
+    assert_eq!(left, ["manifest.json"]);
     std::fs::remove_dir_all(t).ok();
 }
 
@@ -1476,12 +1587,10 @@ fn a_directory_is_built_as_it_lies() {
     assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
     assert_eq!(d.warnings(), Vec::<String>::new());
 
-    // A directory that is not there says so.
-    let gone = Setting::Table(
-        [("dir".to_string(), word("/nowhere/tree-sitter-gone"))]
-            .into_iter()
-            .collect(),
-    );
+    // A directory that is not there says so: an absolute path, on
+    // Windows too, where `/nowhere` is not one.
+    let missing = t.join("tree-sitter-gone").display().to_string();
+    let gone = Setting::Table([("dir".to_string(), word(&missing))].into_iter().collect());
     app.ed
         .settings
         .set(Layer::User, "grammars.sources.gone", gone);
@@ -1492,7 +1601,7 @@ fn a_directory_is_built_as_it_lies() {
     let errors = notes(&app, Level::Error);
     assert_eq!(
         errors,
-        ["gone was not built: /nowhere/tree-sitter-gone: no such directory"]
+        [format!("gone was not built: {missing}: no such directory")]
     );
     std::fs::remove_dir_all(t).ok();
 }

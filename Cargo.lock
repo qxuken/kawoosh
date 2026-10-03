@@ -2558,7 +2558,7 @@ dependencies = [
  "tree-sitter-lua",
  "unicode-segmentation",
  "unicode-width",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2583,7 +2583,7 @@ dependencies = [
  "slotmap",
  "text-buffer",
  "unicode-width",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2673,7 +2673,7 @@ dependencies = [
  "libc",
  "log",
  "portable-pty",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
