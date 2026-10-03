@@ -496,6 +496,10 @@ const DOCS: &[(&str, &str)] = &[
     ("format_on_save", "a save formats the buffer first"),
     ("scrolloff", "lines kept above and below the caret"),
     (
+        "multi.expand",
+        "lines a multibuffer's excerpt grows by at a time: `zo` `zk` `zj` `<S-CR>`, a click on its `⋯`",
+    ),
+    (
         "relativenumber",
         "number lines by their distance from the caret's",
     ),
@@ -850,6 +854,9 @@ impl Settings {
             }
         }
         defaults.set("scrolloff", Setting::Int(3));
+        // Lines an excerpt grows by (search.md Decision 12): Zed's
+        // `expand_excerpt_lines`.
+        defaults.set("multi.expand", Setting::Int(5));
         // The gutter numbers each line by its distance from the caret's,
         // which keeps its own number (vim's `number relativenumber`).
         defaults.set("relativenumber", Setting::Bool(false));
@@ -1785,6 +1792,7 @@ mod tests {
                 "memory.scope",
                 "memory.text.keep_days",
                 "memory.text.max_mb",
+                "multi.expand",
                 "pairs.enabled",
                 "picker.preview",
                 "picker.share",

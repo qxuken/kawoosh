@@ -20,6 +20,10 @@
 //! excerpt is always whole lines. Undo is the sources': a change made
 //! through a multibuffer is one state of each source it reached, and
 //! `u` in the multibuffer steps those sources back ([`Editor::undo`]).
+//!
+//! An excerpt grows ([`Editor::multi_grow`], search.md Decision 12): more
+//! of its source's lines read in above or below, joined with the next
+//! excerpt of the file when they meet.
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -79,6 +83,16 @@ pub struct Excerpt {
     /// The file's last line had no newline when it was taken, and the
     /// multibuffer added one ([`added`]).
     bare: bool,
+}
+
+/// Which way [`Editor::multi_grow`] shows more of a file: above the
+/// excerpt, below it, or both — on a gap's line, the excerpts on either
+/// side of it toward it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grow {
+    Above,
+    Below,
+    Both,
 }
 
 /// A change made through a multibuffer: the state each source it
@@ -201,6 +215,46 @@ fn shift(r: &Range<usize>, e: &Edit) -> Range<usize> {
         };
         start..end.max(start)
     }
+}
+
+/// The source's lines an excerpt shows now (from 0, end exclusive): its
+/// first line's, and one more for each newline in it and for a last line
+/// without one.
+fn seen(e: &Excerpt, src: &Buffer) -> Range<usize> {
+    let a = src.line_of(e.src.start);
+    let text = src.tree().collect_range(e.src.clone());
+    let tail = text.last().is_some_and(|b| *b != b'\n');
+    a..a + text.iter().filter(|b| **b == b'\n').count() + usize::from(tail)
+}
+
+/// The excerpts after `k` moved by `delta` bytes of the multibuffer.
+fn shift_after(m: &mut Multi, k: usize, delta: isize) {
+    for x in &mut m.excerpts[k + 1..] {
+        x.body = (x.body.start as isize + delta) as usize..(x.body.end as isize + delta) as usize;
+    }
+}
+
+/// The first (or, with `last`, the last) excerpt of the run excerpt `i`
+/// is in: the excerpts after one another that show one file's lines
+/// with none left out between — one place's lines cut by a note under
+/// its line.
+fn run_edge(m: &Multi, mut i: usize, last: bool) -> usize {
+    let touch = |a: &Excerpt, b: &Excerpt| {
+        a.source == b.source
+            && !(a.dead || b.dead || a.pending || b.pending)
+            && a.src_ver == b.src_ver
+            && a.src.end == b.src.start
+    };
+    if last {
+        while i + 1 < m.excerpts.len() && touch(&m.excerpts[i], &m.excerpts[i + 1]) {
+            i += 1;
+        }
+    } else {
+        while i > 0 && touch(&m.excerpts[i - 1], &m.excerpts[i]) {
+            i -= 1;
+        }
+    }
+    i
 }
 
 /// Which body an edit of the multibuffer lies in, edges counting: the
@@ -503,6 +557,268 @@ impl Editor {
         out
     }
 
+    /// Whether `offset` of multibuffer `id` is on a gap that stands for
+    /// lines left out of one file — the `⋯` between two excerpts of it,
+    /// not a header, not a note the caller painted: what a click grows.
+    pub fn multi_elided(&self, id: BufferId, offset: usize) -> bool {
+        let (Some(m), Some(bodies)) = (self.multis.get(&id), self.bodies_now(id)) else {
+            return false;
+        };
+        if bodies.iter().any(|b| b.start <= offset && offset < b.end) {
+            return false;
+        }
+        let next = bodies.partition_point(|b| b.start <= offset);
+        let (Some(a), Some(b)) = (
+            next.checked_sub(1).and_then(|i| m.excerpts.get(i)),
+            m.excerpts.get(next),
+        ) else {
+            return false;
+        };
+        a.source == b.source
+            && !(a.dead || b.dead || a.pending || b.pending)
+            && a.src.end < b.src.start
+            && b.gap_paint.is_empty()
+            && !b.gap.trim().is_empty()
+    }
+
+    /// Multibuffer `id`'s excerpt at `offset` shown `n` more of its
+    /// file's lines `way` (search.md Decision 12, Zed's `⋯`): the lines
+    /// read from the source as it is now and written into the
+    /// multibuffer, where the mirror holds them from then on as any
+    /// other. Excerpts that touch — a diagnostic's message between two
+    /// halves of one run — grow as one. One that reaches the next
+    /// excerpt of its file becomes one with it, the gap between gone,
+    /// unless the caller painted that gap: then the two only touch. On a
+    /// gap's line, `Above` grows the excerpt under it and `Below` the
+    /// one over it, `Both` the two toward it. How many lines came into
+    /// view, or why none did.
+    pub fn multi_grow(
+        &mut self,
+        id: BufferId,
+        offset: usize,
+        way: Grow,
+        n: usize,
+    ) -> Result<usize, String> {
+        if !self.is_multi(id) {
+            return Err("not a multibuffer".into());
+        }
+        self.sync_multi(id);
+        let Some(bodies) = self.bodies_now(id) else {
+            return Err("the multibuffer is out of step; make it again".into());
+        };
+        let m = &self.multis[&id];
+        if m.excerpts.is_empty() {
+            return Err("no file's lines here".into());
+        }
+        let (over, under) = match bodies
+            .iter()
+            .position(|b| b.start <= offset && offset < b.end.max(b.start + 1))
+        {
+            Some(i) => (Some(i), Some(i)),
+            // A gap's line: the excerpt under it grows up, the one over
+            // it down.
+            None => {
+                let next = bodies.partition_point(|b| b.start <= offset);
+                (next.checked_sub(1), (next < bodies.len()).then_some(next))
+            }
+        };
+        let down = match way {
+            Grow::Above => None,
+            _ => over.map(|i| run_edge(m, i, true)),
+        };
+        let up = match way {
+            Grow::Below => None,
+            _ => under.map(|i| run_edge(m, i, false)),
+        };
+        if up.is_none() && down.is_none() {
+            return Err("no file's lines to grow there".into());
+        }
+        let mut m = self.multis.remove(&id).expect("a multibuffer");
+        let (mut grown, mut why) = (0, None);
+        let mut joined = false;
+        // Below first: a join takes the excerpt after, which leaves the
+        // ones before where they were for the growth above.
+        if let Some(k) = down {
+            match self.grow_one(id, &mut m, k, true, n) {
+                Ok((l, j)) => (grown, joined) = (l, j),
+                Err(w) => why = Some(w),
+            }
+        }
+        let up = match (up, down) {
+            (Some(k), Some(d)) if joined && k == d + 1 => None,
+            (Some(k), Some(d)) if joined && k > d + 1 => Some(k - 1),
+            (k, _) => k,
+        };
+        if let Some(k) = up {
+            match self.grow_one(id, &mut m, k, false, n) {
+                Ok((l, _)) => grown += l,
+                Err(w) => why = why.or(Some(w)),
+            }
+        }
+        self.multis.insert(id, m);
+        match (grown, why) {
+            (0, Some(w)) => Err(w),
+            (0, None) => Err("nothing more to show".into()),
+            (l, _) => Ok(l),
+        }
+    }
+
+    /// Excerpt `k` of `m` (taken out of `self.multis` for this) shown
+    /// `n` more lines below or above: the lines it took, and whether it
+    /// was joined with its neighbour.
+    fn grow_one(
+        &mut self,
+        id: BufferId,
+        m: &mut Multi,
+        k: usize,
+        below: bool,
+        n: usize,
+    ) -> Result<(usize, bool), String> {
+        let e = &m.excerpts[k];
+        if e.pending {
+            return Err("still opening".into());
+        }
+        let sb = match self.buffers.get(e.source) {
+            Some(sb) if !e.dead => sb,
+            _ => return Err("that file's buffer was closed".into()),
+        };
+        if e.src_ver != sb.version() {
+            return Err("the multibuffer is out of step; make it again".into());
+        }
+        let span = seen(e, sb);
+        // The next excerpt of the same file on that side, when it is
+        // further on in the file: as far as this one can grow.
+        let near = if below { Some(k + 1) } else { k.checked_sub(1) };
+        let next = near.filter(|j| {
+            m.excerpts.get(*j).is_some_and(|x| {
+                x.source == e.source
+                    && !x.dead
+                    && !x.pending
+                    && x.src_ver == e.src_ver
+                    && if below {
+                        e.src.end <= x.src.start
+                    } else {
+                        x.src.end <= e.src.start
+                    }
+            })
+        });
+        let at = |ln: usize| {
+            if ln >= sb.line_count() {
+                sb.len()
+            } else {
+                sb.line_start(ln)
+            }
+        };
+        // The lines that come into view, as bytes of the source, and
+        // whether they reach the neighbour.
+        let (from, to, lines, meets) = if below {
+            let ends_bare = !sb.is_empty() && sb.byte_at(sb.len() - 1) != Some(b'\n');
+            let last = sb.line_count() - usize::from(!ends_bare);
+            let limit = next.map_or(last, |j| seen(&m.excerpts[j], sb).start);
+            let z = (span.end + n).min(limit).max(span.end);
+            if z == span.end {
+                return Err("nothing more below: the file's end".into());
+            }
+            (e.src.end, at(z), z - span.end, next.is_some() && z == limit)
+        } else {
+            let limit = next.map_or(0, |j| seen(&m.excerpts[j], sb).end);
+            let a = span.start.saturating_sub(n).max(limit).min(span.start);
+            if a == span.start {
+                return Err("nothing more above: the file's start".into());
+            }
+            (
+                at(a),
+                e.src.start,
+                span.start - a,
+                next.is_some() && a == limit,
+            )
+        };
+        let mut text = sb.tree().collect_range(from..to);
+        // Joined unless the gap between — the later excerpt's — is the
+        // caller's paint, a note.
+        let join =
+            next.filter(|j| meets && m.excerpts[if below { *j } else { k }].gap_paint.is_empty());
+        let shown_bare = below && join.is_none() && bare(sb, &(e.src.start..to));
+        if shown_bare {
+            text.push(b'\n');
+        }
+        let Ok(text) = String::from_utf8(text) else {
+            return Err("not UTF-8 there".into());
+        };
+        let len = text.len();
+        match (join, below) {
+            (Some(j), true) => {
+                // This one and the next made one: the gap between them
+                // is the lines that were hidden.
+                let gap = m.excerpts[k].body.end..m.excerpts[j].body.start;
+                let delta = len as isize - gap.len() as isize;
+                self.write_grown(id, gap, &text);
+                let x = m.excerpts.remove(j);
+                let e = &mut m.excerpts[k];
+                e.src.end = x.src.end;
+                e.bare = x.bare;
+                e.body.end = (x.body.end as isize + delta) as usize;
+                shift_after(m, k, delta);
+            }
+            (Some(j), false) => {
+                let gap = m.excerpts[j].body.end..m.excerpts[k].body.start;
+                let delta = len as isize - gap.len() as isize;
+                self.write_grown(id, gap, &text);
+                let x = m.excerpts.remove(k);
+                let e = &mut m.excerpts[j];
+                e.src.end = x.src.end;
+                e.bare = x.bare;
+                e.body.end = (x.body.end as isize + delta) as usize;
+                shift_after(m, j, delta);
+            }
+            (None, true) => {
+                let at = m.excerpts[k].body.end;
+                self.write_grown(id, at..at, &text);
+                let e = &mut m.excerpts[k];
+                e.src.end = to;
+                e.bare = shown_bare;
+                e.body.end += len;
+                shift_after(m, k, len as isize);
+            }
+            (None, false) => {
+                let at = m.excerpts[k].body.start;
+                self.write_grown(id, at..at, &text);
+                let e = &mut m.excerpts[k];
+                e.src.start = from;
+                e.body.end += len;
+                shift_after(m, k, len as isize);
+            }
+        }
+        m.ver = self.buffers[id].version();
+        let k = match (join, below) {
+            (Some(j), false) => j,
+            _ => k,
+        };
+        let src = &self.buffers[m.excerpts[k].source];
+        m.excerpts[k].lines = seen(&m.excerpts[k], src);
+        Ok((lines, join.is_some()))
+    }
+
+    /// A growth's write into multibuffer `id`: the carets carried, and a
+    /// view whose top is past it kept on the lines it showed.
+    fn write_grown(&mut self, id: BufferId, range: Range<usize>, text: &str) {
+        let buf = &self.buffers[id];
+        let line = buf.line_of(range.start);
+        let removed = buf
+            .tree()
+            .collect_range(range.clone())
+            .iter()
+            .filter(|b| **b == b'\n')
+            .count();
+        let added = text.matches('\n').count();
+        self.write_carrying(id, range, text);
+        for v in self.views.values_mut().filter(|v| v.buffer == id) {
+            if v.top > line {
+                v.top = (v.top + added).saturating_sub(removed);
+            }
+        }
+    }
+
     /// Multibuffer `id`'s body ranges as the text is now: carried
     /// through its edits since the last sync, as the sync would. None
     /// when its journal cannot say.
@@ -767,15 +1083,7 @@ impl Editor {
             if let Some(src) = self.buffers.get(e.source)
                 && e.src_ver == src.version()
             {
-                let a = src.line_of(e.src.start);
-                let lines = src
-                    .tree()
-                    .collect_range(e.src.clone())
-                    .iter()
-                    .filter(|b| **b == b'\n')
-                    .count();
-                let tail = e.src.end > e.src.start && src.byte_at(e.src.end - 1) != Some(b'\n');
-                e.lines = a..a + lines + usize::from(tail);
+                e.lines = seen(e, src);
             }
         }
         // A change through the multibuffer that is done — not an insert

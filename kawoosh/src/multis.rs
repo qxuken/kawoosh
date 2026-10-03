@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use kawoosh_doc::BufferId;
-use kawoosh_editor::{Part, Selection, Spec, ViewId};
+use kawoosh_editor::{Grow, Part, Selection, Spec, ViewId};
 use kawoosh_lua::{MultiPart, MultiPlaces};
 use kawoosh_systems::io::IoMsg;
 use kawoosh_systems::search::{Cancel, Compiled, Query};
@@ -350,6 +350,28 @@ impl Kawoosh {
                 .collect();
             self.ed.message = format!("also opened: {} (:ls)", names.join(", "));
         }
+    }
+
+    /// A click on a multibuffer's `⋯` (search.md Decision 12, Zed's):
+    /// the excerpts on either side of it grown toward it by
+    /// `multi.expand` lines, joined when they meet. False when `off` of
+    /// `view` is not on one, for the press to place the caret as any.
+    pub(crate) fn multi_click(&mut self, view: ViewId, off: usize) -> bool {
+        let id = self.ed.views[view].buffer;
+        if !self.ed.multi_elided(id, off) {
+            return false;
+        }
+        let n = self
+            .ed
+            .settings
+            .int("multi.expand")
+            .map_or(5, |n| n.max(1) as usize);
+        self.ed.views[view].sels = kawoosh_editor::Selections::single(Selection::point(off));
+        if let Err(why) = self.ed.multi_grow(id, off, Grow::Both, n) {
+            self.ed.message = why;
+        }
+        self.follow_caret = true;
+        true
     }
 
     /// Buffer `src` shown in the pane the focused panel (showing `panel`)

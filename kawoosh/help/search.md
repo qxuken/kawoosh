@@ -128,8 +128,23 @@ numbers, with its colours and diagnostics.
 |---|---|
 | `<CR>` `g<Space>` | open the file at the caret in the pane the search was opened from (the panel stays); with carets in several files, open them all |
 | `<C-v>` | open the file in a column of its own, beside the panel |
+| `zk` `zj` | show more of the file above, below the excerpt at the caret |
+| `zo`, `<S-CR>` | show more both ways; on a `⋯`, fill it from both sides |
 
 `search.context` sets how many lines are shown around each match.
+
+### More lines around an excerpt
+
+Every multibuffer — the search's results, the lists below — shows a
+few lines around each place. `zk` shows more of the file above the
+excerpt the caret is in, `zj` more below, and `zo` (or `<S-CR>`, as in
+Zed) both; on a `⋯` line they show what it hides, from either side. A
+click on a `⋯` does the same. Each shows `multi.expand` lines (5), or
+as many as a count says: `20zj`. When an excerpt reaches the next one
+of the same file the two become one and the `⋯` goes; a growth stops at
+the file's start and end. The new lines are live like the rest: what
+you type there is in the file. Running the search again, or a list
+being made again, lays the excerpts out afresh.
 
 A file the search opened stays out of `:ls` and the buffers picker
 until you open it from the results or edit it. A multibuffer holds the

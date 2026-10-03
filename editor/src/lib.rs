@@ -34,7 +34,7 @@ pub use hunks::{Base, Blame, BlameRow, LineHunk, Sign};
 pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
-pub use multi::{Excerpt, Multi, MultiLine, Part};
+pub use multi::{Excerpt, Grow, Multi, MultiLine, Part};
 pub use repeat::Step;
 pub use selection::{Selection, Selections};
 pub use settings::{Decl, Layer, Scope, Setting, SettingKind, Settings};

@@ -205,4 +205,9 @@ Departed from the note as written: the keys are `<leader>ce`
   document.
 - **A plugin's diagnostics** (`kawoosh.diagnostics.set(buffer, source,
   list)`): the store is ready; no caller yet.
-- **Growing an excerpt**: the search's, again.
+- ~~**Growing an excerpt**: the search's, again.~~ Built 2026-10-03
+  ([search.md](search.md) Decision 12): the engine's, so a list grows
+  as the search's results do — a place's run cut by its message grows
+  as one, the message kept; `zo` `zk` `zj` `<S-CR>` and a click on a
+  `⋯`. A list made again (Decision 5) lays its places out afresh.
+  Tested in `kawoosh/tests/excerpts.rs` over `kawoosh.lists.layout`.
