@@ -776,6 +776,14 @@ impl Kawoosh {
                         ("kind", "title".into()),
                         ("pane", Value::Int(pane as i64)),
                     ]))
+                    // The pane's menu whatever the pane holds; its body
+                    // has its own (an editor's, a terminal's), or kui's
+                    // over a Lua view's fields and text (`menus.rs`).
+                    .on_context_menu(Value::map([
+                        ("kind", "panemenu".into()),
+                        ("pane", Value::Int(pane as i64)),
+                        ("title", Value::Bool(true)),
+                    ]))
                     .keep_focus()
                     .label(name.as_str());
                 title = title
@@ -1007,10 +1015,16 @@ impl Kawoosh {
                             .flatten()
                     })
                     .flatten();
+                // Not reporting, a right-click is the terminal's menu, on
+                // the grid itself so its Select All is the grid's
+                // (`menus.rs`).
                 spec = if reporting {
                     spec.on_drag(drag_tag)
                 } else {
-                    spec.selectable()
+                    spec.selectable().on_context_menu(Value::map([
+                        ("kind", "panemenu".into()),
+                        ("pane", Value::Int(pane as i64)),
+                    ]))
                 };
                 // The other buttons: the middle one pastes, and while a
                 // program reports the mouse every button is its — the
@@ -1731,6 +1745,15 @@ impl Kawoosh {
                 // which a pane taking both axes here never let reach it.
                 .on_scroll(tag.clone())
                 .scroll_axes(kui_native::ScrollAxes::Y)
+                // The secondary button is the editor's menu, claimed
+                // rather than asked for (`on_context_menu`) so its press
+                // comes with the row and byte it landed on: the caret
+                // goes there first (`menus.rs`).
+                .on_button(Value::map([
+                    ("kind", "editbutton".into()),
+                    ("pane", Value::Int(pane as i64)),
+                ]))
+                .buttons(kui_native::Buttons::SECONDARY)
                 .cursor(kui_native::CursorShape::Text)
                 .role(Role::MultilineTextInput)
                 .label(title.as_str()),

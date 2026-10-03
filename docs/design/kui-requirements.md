@@ -39,7 +39,8 @@ And the kawoosh milestone (kui.md's build order, M1–M8) that first needs it.
 | R2.4 | Window title, minimum size, an opening size from the environment | ✓ | `ui.window_title`, `Launcher::min_size`, `KUI_WINDOW=WxH`. M1 |
 | R2.5 | Devtools with no app code | ✓ | `KUI_DEVTOOLS=1`. M1 |
 | R2.6 | Window position, declared on open and read back, for session restore | ○ | kui's own wish list (third round). Sessions restore size only until then. M8 |
-| R2.7 | Native menu bar with the standard macOS rows kawoosh does not draw | ✓ | ADR 0018 / 0030; kawoosh declares nothing and takes the runner's standard menus. |
+| R2.7 | Native menu bar with the standard macOS rows kawoosh does not draw | ✓ | ADR 0018 / 0030; kawoosh declares its bar since 2026-10-03 ([menus.md](menus.md)) with a `Window` menu for the platform's rows. A declared bar loses winit's Hide / Hide Others / Services: kui has no application-menu roles (ADR 0018 declined them), a kui round when wanted. |
+| R2.8 | Context menus over custom-drawn panes | ✓ | ADR 0017: `on_context_menu`, `Core::open_menu`; an editor claims the secondary button (`on_button`, F105) for the press's `line` and `byte` ([menus.md](menus.md)). |
 
 ## 3. The editor pane: rows of runs
 

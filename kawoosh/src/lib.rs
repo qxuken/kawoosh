@@ -56,6 +56,7 @@ pub mod lsp_rules;
 pub mod markdown;
 pub mod marks;
 pub mod memory;
+pub mod menus;
 pub mod moments;
 pub mod multis;
 pub mod nodes;

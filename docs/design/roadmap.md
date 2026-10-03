@@ -2894,6 +2894,17 @@ In order — the bugs first, then what needs deciding:
     server once it ends well; `:lsp servers` lists them all; whatever
     a server says, or is said of it, a corner line.~~ Built 2026-10-02.
 
+79. ~~**Menus** ([menus.md](menus.md)), asked 2026-10-02: "Let's
+    implement proper context menu for editors and maybe panes. Also
+    for macos let's add system menu. kui should support both
+    already". A right-click's menu over every pane — an editor's with
+    the language server's moves, the edits and the pane's rows, the
+    caret placed first; a terminal's with kui's Copy; every title
+    bar's — each row a command line on its pane; and
+    on macOS the application menu bar, binding only the chords no
+    binding takes.~~ Built 2026-10-03: `kawoosh/src/menus.rs`,
+    `kawoosh/tests/menus.rs`. Not yet seen on a Mac.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision

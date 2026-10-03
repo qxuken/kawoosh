@@ -46,7 +46,7 @@ Programs that speak kitty's keyboard protocol — neovim, helix, kakoune, fish 4
 
 **Raw.** In a raw pane kawoosh keeps only `<C-\>` and the ⌘ chords it binds; everything else — `<C-S-h>`, `<C-Tab>`, `<S-PageUp>`, F12 — goes to the program, and the status line says `RAW`. `<C-\>r` turns it on or off for the program in front: raw set at the shell's prompt stays through the commands you run from it, and the next full-screen program starts as `terminal.raw` says. `terminal.raw = { "nvim", "hx" }` makes a pane raw whenever one of those programs is in front. (On Windows only `<C-\>r` does it: the program in front is not known there.)
 
-Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line), and `⌘c` copies it. The middle button pastes the clipboard, as `⌘v` does. When a full-screen program asks for the mouse it gets the clicks and drags of every button, the right one included (tmux's and htop's menus, a file manager's); hold Shift to select anyway.
+Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line), and `⌘c` copies it. The middle button pastes the clipboard, as `⌘v` does, and the right one opens a menu with Copy, Paste and Select All. When a full-screen program asks for the mouse it gets the clicks and drags of every button, the right one included (tmux's and htop's menus, a file manager's); hold Shift to select anyway.
 
 ## Scrollback
 

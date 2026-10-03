@@ -290,6 +290,10 @@ pub struct Kawoosh {
     /// it until the caret moves again.
     pub(crate) follow_caret: bool,
     pub(crate) drag_anchor: Option<usize>,
+    /// Which of the menu bar's own chords the keymap leaves free, for
+    /// the keymap's version it was read at (`menus.rs`): a chord the
+    /// bar binds is AppKit's before any keymap hears it.
+    pub(crate) bar_chords: Option<(u64, crate::menus::FreeChords)>,
     /// The split divider being dragged, by path.
     pub(crate) dragging: Option<String>,
     /// The pane being dragged by its title bar, and where the pointer is
@@ -476,6 +480,7 @@ impl Kawoosh {
             scroll_carry: 0.0,
             follow_caret: true,
             drag_anchor: None,
+            bar_chords: None,
             dragging: None,
             pane_drag: None,
             tab_drag: None,
@@ -2023,55 +2028,9 @@ impl Kawoosh {
             return;
         };
         let clicks = d.clicks.unwrap_or(1);
-        let tabstop = self.ed.tabstop_in(self.ed.views[view].buffer);
-        let top = self
-            .drawn_top
-            .get(&view)
-            .copied()
-            .unwrap_or(self.ed.views[view].top);
-        let marked = self.marks.any(self.ed.views[view].buffer);
+        let (off, ln) = self.offset_at(pane, view, line as usize, byte);
         let buf = self.ed.buffer_of(view);
-        let ln = (top + line as usize).min(buf.line_count() - 1);
         let range = buf.line_range(ln);
-        // A long line was drawn from its window's slice, and `byte`
-        // counts from the slice's start: the same slice maps it back.
-        let width = self
-            .layout
-            .rects
-            .get(&pane)
-            .map(|r| {
-                let gutter = rows::gutter_w(
-                    self.cell.0,
-                    buf.line_count(),
-                    marked,
-                    self.ed.blame_width(self.ed.views[view].buffer),
-                );
-                (r.w - gutter - 2.0).max(0.0)
-            })
-            .unwrap_or(0.0);
-        let window = rows::Window {
-            left: self.ed.views[view].left,
-            width,
-            cell_w: self.cell.0,
-        };
-        // A rendered row maps back through the fold it was drawn with —
-        // around the carets, as the frame drew it.
-        let drawn = if self.markdown_rendered(self.ed.views[view].buffer) {
-            let style = self.markdown_style(self.dark);
-            crate::markdown::Carets::of(&self.ed, view, self.md_shown.get(&view))
-                .line(
-                    buf,
-                    ln,
-                    &style,
-                    tabstop,
-                    &mut crate::markdown::Tables::default(),
-                )
-                .0
-                .drawn
-        } else {
-            Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0, None).0
-        };
-        let off = (range.start + drawn.to_src(byte)).min(range.end);
         let word = motions::word_at(buf, off);
         match d.phase {
             DragPhase::Start => {
@@ -2128,6 +2087,70 @@ impl Kawoosh {
             DragPhase::End => self.drag_anchor = None,
         }
         self.follow_caret = true;
+    }
+
+    /// Where a press in an editor pane's rows lands in its buffer: kui's
+    /// `line` (the drawn row's ordinal) and `byte` (into the row's drawn
+    /// text) mapped back through the row as the frame drew it — a long
+    /// line's slice, a rendered row's fold. The byte offset and its line.
+    /// A drag's and the secondary button's press alike (`menus.rs`).
+    pub(crate) fn offset_at(
+        &self,
+        pane: PaneId,
+        view: ViewId,
+        line: usize,
+        byte: usize,
+    ) -> (usize, usize) {
+        let tabstop = self.ed.tabstop_in(self.ed.views[view].buffer);
+        let top = self
+            .drawn_top
+            .get(&view)
+            .copied()
+            .unwrap_or(self.ed.views[view].top);
+        let marked = self.marks.any(self.ed.views[view].buffer);
+        let buf = self.ed.buffer_of(view);
+        let ln = (top + line).min(buf.line_count() - 1);
+        let range = buf.line_range(ln);
+        // A long line was drawn from its window's slice, and `byte`
+        // counts from the slice's start: the same slice maps it back.
+        let width = self
+            .layout
+            .rects
+            .get(&pane)
+            .map(|r| {
+                let gutter = rows::gutter_w(
+                    self.cell.0,
+                    buf.line_count(),
+                    marked,
+                    self.ed.blame_width(self.ed.views[view].buffer),
+                );
+                (r.w - gutter - 2.0).max(0.0)
+            })
+            .unwrap_or(0.0);
+        let window = rows::Window {
+            left: self.ed.views[view].left,
+            width,
+            cell_w: self.cell.0,
+        };
+        // A rendered row maps back through the fold it was drawn with —
+        // around the carets, as the frame drew it.
+        let drawn = if self.markdown_rendered(self.ed.views[view].buffer) {
+            let style = self.markdown_style(self.dark);
+            crate::markdown::Carets::of(&self.ed, view, self.md_shown.get(&view))
+                .line(
+                    buf,
+                    ln,
+                    &style,
+                    tabstop,
+                    &mut crate::markdown::Tables::default(),
+                )
+                .0
+                .drawn
+        } else {
+            Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0, None).0
+        };
+        let off = (range.start + drawn.to_src(byte)).min(range.end);
+        (off, ln)
     }
 
     fn on_scroll(&mut self, pane: PaneId, s: Scroll, tag: Option<&Value>) {
@@ -2656,6 +2679,7 @@ impl kui_native::App for Kawoosh {
             ui.request_paste();
         }
         ui.window_title(&format!("{} — kawoosh", self.title()));
+        self.sync_menu_bar(ui);
         let vp = ui.viewport();
         let lh = self.face.line_height;
         // The title bar's height is the platform's; its hairline is one
@@ -2826,8 +2850,10 @@ impl Kawoosh {
             return;
         }
         if let Some(b) = ev.button() {
-            if let (Some("termbutton"), Some(pane)) = (tag_kind, pane) {
-                self.on_term_button(pane, b);
+            match (tag_kind, pane) {
+                (Some("termbutton"), Some(pane)) => self.on_term_button(pane, b),
+                (Some("editbutton"), Some(pane)) => self.on_edit_button(pane, b, ev.key, core),
+                _ => {}
             }
             return;
         }
@@ -2969,6 +2995,16 @@ impl Kawoosh {
                 }
             }
             Some("toast") => self.on_toast(p),
+            // A right-click a pane asked to answer (`menus.rs`), and a
+            // row chosen from any of kawoosh's menus, a pane's or the
+            // bar's.
+            Some("contextmenu") if tag_kind == Some("panemenu") && ev.slot.is_none() => {
+                self.on_context_menu(ev.key, p, core);
+            }
+            Some("menu") if ev.slot.is_none() => {
+                self.on_menu(p.get("item"), core);
+                self.drain_lua();
+            }
             Some("confirm") => {
                 self.on_confirm(p);
                 self.drain_effects();
