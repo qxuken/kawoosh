@@ -13,18 +13,23 @@ use drive::Drive;
 use kawoosh::Kawoosh;
 use kui_native::KeyMods;
 
-/// The tests set the process's PATH, `QD_STATE`, `QD_REPO` and
+/// The tests set the process's PATH, HOME, `QD_STATE`, `QD_REPO` and
 /// `KAWOOSH_SETTINGS`: under nextest each test is a process of its own,
 /// under `cargo test` both share one — so one at a time, each from the
-/// PATH the process started with and none of the others' variables.
-/// Else the second's `qd`, at the library's version, is the first's,
-/// and its pane reads the second's repository in-process.
+/// PATH and HOME the process started with and none of the others'
+/// variables. Else the second's `qd`, at the library's version, is the
+/// first's, and its pane reads the second's repository in-process.
 static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static HOME: std::sync::OnceLock<Option<std::ffi::OsString>> = std::sync::OnceLock::new();
 
 fn env_alone() -> std::sync::MutexGuard<'static, ()> {
     let guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
     PATH.get_or_init(|| std::env::var("PATH").unwrap_or_default());
+    match HOME.get_or_init(|| std::env::var_os("HOME")) {
+        Some(home) => unsafe { std::env::set_var("HOME", home) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
     for k in ["QD_STATE", "QD_REPO", "KAWOOSH_SETTINGS"] {
         unsafe { std::env::remove_var(k) };
     }
@@ -206,17 +211,24 @@ fn the_pane_lists_modules_and_pushes_pulls_and_adds() {
 /// repo and the state the binary would read, a pull done in-process —
 /// the binary asked for its version and nothing else — and `:qd add`
 /// writing the module through `qd::Session::add_module`.
+///
+/// A sync in-process runs qd's compile step after it, which writes the
+/// nushell plugin's `~/.dotfiles.local.nu` and `~/.dotfiles-env.local.nu`
+/// from this repository's modules — none — so HOME is the test's own:
+/// the user's were emptied by every run before.
 #[test]
 fn the_linked_library_is_the_door_when_it_is_the_binarys_version() {
     let _env = env_alone();
     let t = std::env::temp_dir().join(format!("kawoosh-qdlib-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&t);
     let (repo, machine, bin) = (t.join("repo"), t.join("machine"), t.join("bin"));
+    let home = t.join("home");
     for d in [
         &repo.join("tool"),
         &machine.join("tool"),
         &bin,
         &t.join("state"),
+        &home,
     ] {
         std::fs::create_dir_all(d).unwrap();
     }
@@ -248,6 +260,7 @@ fn the_linked_library_is_the_door_when_it_is_the_binarys_version() {
     unsafe {
         std::env::set_var("QD_STATE", t.join("state"));
         std::env::set_var("QD_REPO", &repo);
+        std::env::set_var("HOME", &home);
     }
 
     let mut d = Drive::new(900.0, 600.0);
@@ -279,6 +292,10 @@ fn the_linked_library_is_the_door_when_it_is_the_binarys_version() {
     assert_eq!(
         std::fs::read_to_string(repo.join("tool/a.txt")).unwrap(),
         "changed here\n"
+    );
+    assert!(
+        home.join(".dotfiles.local.nu").is_file(),
+        "qd compiled into the test's home"
     );
     until(&mut d, &mut app, "read again, up to date", |a| {
         lua(
