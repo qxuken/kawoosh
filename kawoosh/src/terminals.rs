@@ -3,12 +3,14 @@
 //! the locations pattern table that turns `src/main.rs:42` under the
 //! pointer into an open file (mvp.md Decisions 3, 3b, 5c).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use kawoosh_doc::Buffer;
 use kawoosh_editor::keymap::{LEADER, parse_notation};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec};
+use kawoosh_systems::io::PtyOutput;
 use kawoosh_term::{TermSize, Terminal, encode_key, encode_super_key};
 use kui_native::KeyPress;
 
@@ -18,6 +20,30 @@ use crate::layout::{Content, PaneId, Place};
 use crate::links::Target;
 
 pub type TermId = u64;
+
+/// The parsing a frame does of the terminals' output, at most. A flood
+/// of output takes this of every frame and leaves the rest to the next,
+/// the window drawing and its keys heard between (a `^C` among them);
+/// the reader waits meanwhile ([`PTY_HELD`]). What a frame at 120 Hz
+/// has left after drawing a full-window grid: measured with a 512 MB
+/// `cat` on a 237×109 grid, 6 ms kept every frame in its refresh and
+/// 8 ms made every other one miss it — fewer frames, and less parsed.
+///
+/// [`PTY_HELD`]: kawoosh_systems::io::PTY_HELD
+const PTY_BUDGET: Duration = Duration::from_millis(6);
+
+/// The output parsed at a go, each terminal with some in turn: a
+/// fraction of a millisecond, so the budget is kept to near it.
+const PTY_CHUNK: usize = 64 * 1024;
+
+/// A terminal's output on its way to its screen: what its pty's reader
+/// holds, and what the frame took of it and has not yet parsed.
+pub struct Flow {
+    output: PtyOutput,
+    taken: Vec<u8>,
+    /// How far into `taken` was parsed.
+    at: usize,
+}
 
 /// A link's cells on a terminal's screen: a row and its columns, for
 /// each row it is on.
@@ -61,6 +87,14 @@ fn in_a_pty<T>(spawn: impl FnOnce() -> T) -> T {
 #[derive(Default)]
 pub struct Terminals {
     pub map: HashMap<TermId, Terminal>,
+    /// Each terminal's output from its pty, while the pty is read.
+    flows: HashMap<TermId, Flow>,
+    /// The terminals with output to parse: its reader said so, or a
+    /// frame's budget left some. In order, for each to have its turn.
+    pub flowing: BTreeSet<TermId>,
+    /// Terminals whose pty closed while their output was still to
+    /// parse: closed once it is, the output on screen before the close.
+    closing: HashSet<TermId>,
     /// The bell's sound, registered with kui the first time one rings.
     bell_sound: Option<kui_native::SoundId>,
     /// When the bell was last heard: at most one in [`BELL_GAP`].
@@ -130,6 +164,15 @@ impl Terminals {
     pub fn reserve(&mut self) -> TermId {
         self.next += 1;
         self.next
+    }
+
+    /// Terminal `id` gone: its screen, and its output — the reader, if
+    /// it still reads, let go.
+    pub fn forget(&mut self, id: TermId) {
+        self.map.remove(&id);
+        self.flows.remove(&id);
+        self.flowing.remove(&id);
+        self.closing.remove(&id);
     }
 }
 
@@ -329,7 +372,53 @@ impl Kawoosh {
         for p in panes {
             self.close_gone(p);
         }
-        self.terms.map.remove(&id);
+        self.terms.forget(id);
+    }
+
+    /// Terminal `id`'s output was all read (its pty closed): closed now,
+    /// or once the output still to parse is.
+    pub(crate) fn pty_closed(&mut self, id: TermId) {
+        if self.terms.flowing.contains(&id) {
+            self.terms.closing.insert(id);
+        } else {
+            self.term_closed(id);
+        }
+    }
+
+    /// The terminals' output parsed, each in turn a [`PTY_CHUNK`] at a
+    /// time, until none is left or the frame's [`PTY_BUDGET`] is spent;
+    /// what is left stays in [`Terminals::flowing`] for the next frame.
+    pub(crate) fn pump_ptys(&mut self) {
+        let started = Instant::now();
+        let mut closed = Vec::new();
+        while !self.terms.flowing.is_empty() && started.elapsed() < PTY_BUDGET {
+            let ids: Vec<TermId> = self.terms.flowing.iter().copied().collect();
+            for id in ids {
+                let Some(flow) = self.terms.flows.get_mut(&id) else {
+                    self.terms.flowing.remove(&id);
+                    continue;
+                };
+                if flow.at == flow.taken.len() {
+                    flow.taken.clear();
+                    flow.at = 0;
+                    if !flow.output.take(&mut flow.taken) {
+                        self.terms.flowing.remove(&id);
+                        if self.terms.closing.remove(&id) {
+                            closed.push(id);
+                        }
+                        continue;
+                    }
+                }
+                let end = (flow.at + PTY_CHUNK).min(flow.taken.len());
+                if let Some(t) = self.terms.map.get_mut(&id) {
+                    t.feed(&flow.taken[flow.at..end]);
+                }
+                flow.at = end;
+            }
+        }
+        for id in closed {
+            self.term_closed(id);
+        }
     }
 
     /// `terminal again` (`r` in a finished `:!` pane): its line run
@@ -474,7 +563,15 @@ impl Kawoosh {
                         ..Default::default()
                     },
                 );
-                self.io.watch_pty(id, reader, exited);
+                let output = self.io.watch_pty(id, reader, exited);
+                self.terms.flows.insert(
+                    id,
+                    Flow {
+                        output,
+                        taken: Vec::new(),
+                        at: 0,
+                    },
+                );
                 Some(id)
             }
             Err(e) => {

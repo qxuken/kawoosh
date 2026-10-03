@@ -5,7 +5,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -15,10 +15,10 @@ use crate::WakeHandle;
 /// One message from a reader thread.
 #[derive(Debug)]
 pub enum IoMsg {
-    /// Bytes from terminal `id`'s pty.
+    /// Terminal `id`'s pty has output waiting in its [`PtyOutput`],
+    /// where there was none: sent once until the output is taken.
     Pty {
         id: u64,
-        bytes: Vec<u8>,
     },
     /// Terminal `id`'s pty closed (the process exited).
     PtyClosed {
@@ -487,6 +487,76 @@ pub fn shell_quote(s: &str) -> String {
 /// A process [`Io::run_process`] started, to be killed early — a search
 /// the next keystroke made stale, a compile stopped. Its exit still
 /// arrives as [`IoMsg::ProcExit`], with no code.
+/// What a pty's reader holds for the frame at most. Past it the reader
+/// stops reading, the pty's own buffer fills, and the program's writes
+/// block: a terminal goes at the pace its output is parsed, as any
+/// terminal's does, and a `cat` of a big file is a megabyte ahead of
+/// the screen, not the file — a `^C` stops it now, not when the screen
+/// has caught up (and the memory the file took is never taken).
+pub const PTY_HELD: usize = 1 << 20;
+
+/// A terminal's output between its pty's reader and the frame: what was
+/// read and not yet taken, [`PTY_HELD`] at most. The reader tells the
+/// loop (an [`IoMsg::Pty`]) when there is output where there was none;
+/// the frame takes it all at once ([`PtyOutput::take`]). Dropped with
+/// its terminal, it lets a reader waiting for room go.
+pub struct PtyOutput {
+    shared: Arc<PtyShared>,
+}
+
+struct PtyShared {
+    held: Mutex<Held>,
+    /// Signalled when the output was taken or dropped.
+    room: Condvar,
+}
+
+#[derive(Default)]
+struct Held {
+    bytes: Vec<u8>,
+    /// The loop was told of these bytes and has not taken them.
+    told: bool,
+    /// The terminal is gone: the reader stops.
+    dropped: bool,
+}
+
+impl PtyOutput {
+    /// Everything held, swapped into `into` (empty, its capacity given
+    /// back to the reader); the reader's room made again. Whether there
+    /// was anything.
+    pub fn take(&self, into: &mut Vec<u8>) -> bool {
+        debug_assert!(into.is_empty());
+        let mut held = self.shared.held.lock().unwrap();
+        std::mem::swap(&mut held.bytes, into);
+        held.told = false;
+        drop(held);
+        self.shared.room.notify_one();
+        !into.is_empty()
+    }
+}
+
+impl Drop for PtyOutput {
+    fn drop(&mut self) {
+        self.shared.held.lock().unwrap().dropped = true;
+        self.shared.room.notify_one();
+    }
+}
+
+impl PtyShared {
+    /// `bytes` held for the frame once there is room for them, and
+    /// whether the loop is to be told; None when the terminal is gone.
+    fn hold(&self, bytes: &[u8]) -> Option<bool> {
+        let mut held = self.held.lock().unwrap();
+        while held.bytes.len() >= PTY_HELD && !held.dropped {
+            held = self.room.wait(held).unwrap();
+        }
+        if held.dropped {
+            return None;
+        }
+        held.bytes.extend_from_slice(bytes);
+        Some(!std::mem::replace(&mut held.told, true))
+    }
+}
+
 #[derive(Clone)]
 pub struct ProcHandle {
     child: Arc<Mutex<Option<std::process::Child>>>,
@@ -527,17 +597,22 @@ impl Io {
         Self { tx, rx, wake }
     }
 
-    /// Pumps `reader` into the channel until it closes, waking the loop
-    /// after every chunk. `exited`, when there is one, blocks until the
-    /// process exits — where the reader does not end with it (ConPTY) —
-    /// and the terminal is closed then; one close is sent, whichever
-    /// comes first.
+    /// Pumps `reader` into the [`PtyOutput`] handed back until it
+    /// closes, waking the loop when output waits where none did, and
+    /// waiting itself while [`PTY_HELD`] does. `exited`, when there is
+    /// one, blocks until the process exits — where the reader does not
+    /// end with it (ConPTY) — and the terminal is closed then; one close
+    /// is sent, whichever comes first, after the last output's notice.
     pub fn watch_pty(
         &self,
         id: u64,
         mut reader: Box<dyn Read + Send>,
         exited: Option<Box<dyn FnOnce() + Send>>,
-    ) {
+    ) -> PtyOutput {
+        let shared = Arc::new(PtyShared {
+            held: Mutex::new(Held::default()),
+            room: Condvar::new(),
+        });
         let closed = Arc::new(AtomicBool::new(false));
         let close = {
             let tx = self.tx.clone();
@@ -562,6 +637,7 @@ impl Io {
         }
         let tx = self.tx.clone();
         let wake = self.wake.named("pty");
+        let held = shared.clone();
         thread::Builder::new()
             .name(format!("pty-{id}"))
             .spawn(move || {
@@ -572,22 +648,21 @@ impl Io {
                             close(&closed);
                             return;
                         }
-                        Ok(n) => {
-                            if tx
-                                .send(IoMsg::Pty {
-                                    id,
-                                    bytes: buf[..n].to_vec(),
-                                })
-                                .is_err()
-                            {
-                                return;
+                        Ok(n) => match held.hold(&buf[..n]) {
+                            None => return,
+                            Some(false) => {}
+                            Some(true) => {
+                                if tx.send(IoMsg::Pty { id }).is_err() {
+                                    return;
+                                }
+                                wake.wake();
                             }
-                            wake.wake();
-                        }
+                        },
                     }
                 }
             })
             .expect("spawning a pty reader thread");
+        PtyOutput { shared }
     }
 
     /// Runs `job` on a thread of its own and delivers what it returns,
@@ -1196,6 +1271,76 @@ mod tests {
         install_host_shim(&host);
         assert!(host.has("~/.cache/kawoosh/kawoosh"));
         assert!(host.has("~/.cache/kawoosh/kawoosh-edit"));
+    }
+
+    /// A pty that never stops writing: the reader holds [`PTY_HELD`] and
+    /// a read more, and stops reading until the output is taken; one
+    /// notice for output waiting, not one a read; and the reader ends
+    /// when its terminal is gone, the pty let go.
+    #[test]
+    fn a_pty_reader_holds_a_megabyte_and_no_more() {
+        use std::sync::atomic::AtomicUsize;
+        use std::time::{Duration, Instant};
+        struct Endless {
+            read: Arc<AtomicUsize>,
+            gone: Arc<AtomicBool>,
+        }
+        impl Read for Endless {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = buf.len().min(4096);
+                buf[..n].fill(b'y');
+                self.read.fetch_add(n, Ordering::Relaxed);
+                Ok(n)
+            }
+        }
+        impl Drop for Endless {
+            fn drop(&mut self) {
+                self.gone.store(true, Ordering::Relaxed);
+            }
+        }
+        let read = Arc::new(AtomicUsize::new(0));
+        let gone = Arc::new(AtomicBool::new(false));
+        let io = Io::new(WakeHandle::new());
+        let output = io.watch_pty(
+            7,
+            Box::new(Endless {
+                read: read.clone(),
+                gone: gone.clone(),
+            }),
+            None,
+        );
+        let until = |what: &dyn Fn() -> bool| {
+            let t = Instant::now();
+            while !what() && t.elapsed() < Duration::from_secs(10) {
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        until(&|| read.load(Ordering::Relaxed) >= PTY_HELD);
+        thread::sleep(Duration::from_millis(100));
+        let first = read.load(Ordering::Relaxed);
+        assert_eq!(
+            first,
+            PTY_HELD + 4096,
+            "held, and one read waiting for room"
+        );
+        let notices = io.drain();
+        assert!(
+            matches!(notices[..], [IoMsg::Pty { id: 7 }]),
+            "one notice: {notices:?}"
+        );
+
+        let mut taken = Vec::new();
+        assert!(output.take(&mut taken));
+        assert_eq!(taken.len(), PTY_HELD, "all held, taken at once");
+        until(&|| read.load(Ordering::Relaxed) >= first + PTY_HELD);
+        assert!(
+            matches!(io.drain()[..], [IoMsg::Pty { id: 7 }]),
+            "told again"
+        );
+
+        drop(output);
+        until(&|| gone.load(Ordering::Relaxed));
+        assert!(gone.load(Ordering::Relaxed), "the reader let go");
     }
 
     #[test]
