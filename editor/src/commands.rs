@@ -1435,6 +1435,30 @@ fn paste_over(ed: &mut Editor, ctx: &Ctx, keep: bool) {
 /// `[<Space>` / `]<Space>`: COUNT empty lines above or below each
 /// caret's line — once a line, however many carets are on it — and every
 /// selection kept where it was in the text.
+/// `multi more`: the excerpt at the primary caret grown `way` by the
+/// argument's lines, else COUNT's, else `multi.expand`'s; the message
+/// says how many came, or why none did.
+fn multi_more(ed: &mut Editor, ctx: &Ctx, way: crate::Grow) {
+    let n = match ctx.arg(0).map(str::parse::<usize>) {
+        Some(Ok(n)) => n,
+        Some(Err(_)) => {
+            ed.message = "multi more: a number of lines".into();
+            return;
+        }
+        None if ctx.has_count => ctx.count,
+        None => ed
+            .settings
+            .int("multi.expand")
+            .map_or(5, |n| n.max(1) as usize),
+    };
+    let id = view(ed, ctx).buffer;
+    let head = view(ed, ctx).sels.primary().head;
+    ed.message = match ed.multi_grow(id, head, way, n) {
+        Ok(l) => format!("{l} more line{}", if l == 1 { "" } else { "s" }),
+        Err(why) => why,
+    };
+}
+
 fn blank_lines(ed: &mut Editor, ctx: &Ctx, below: bool) {
     let id = view(ed, ctx).buffer;
     let buf = &ed.buffers[id];
@@ -2015,6 +2039,34 @@ pub fn install(ed: &mut Editor) {
     // caret's line, the carets staying where they are (unimpaired's).
     for (name, below) in [("line blank above", false), ("line blank below", true)] {
         ed.register(name, move |ed, ctx| blank_lines(ed, ctx, below));
+    }
+    // A multibuffer's excerpt grown (docs/design/search.md Decision 13):
+    // `zo` `<S-CR>` both ways, `zk` `zj` above and below — N lines, a
+    // COUNT's, else `multi.expand`.
+    for (name, way, doc) in [
+        (
+            "multi more",
+            crate::Grow::Both,
+            "COUNT more of the file's lines (`multi.expand`) above and below the excerpt at the caret — on a `⋯`, both sides toward it (`zo`, `<S-CR>`)",
+        ),
+        (
+            "multi more above",
+            crate::Grow::Above,
+            "COUNT more of the file's lines (`multi.expand`) above the excerpt at the caret (`zk`)",
+        ),
+        (
+            "multi more below",
+            crate::Grow::Below,
+            "COUNT more of the file's lines (`multi.expand`) below the excerpt at the caret (`zj`)",
+        ),
+    ] {
+        ed.register_spec(
+            Spec::new(name)
+                .when(&["language:multibuffer"])
+                .args(Args::new(&[ArgKind::Text]))
+                .doc(doc),
+            move |ed, ctx| multi_more(ed, ctx, way),
+        );
     }
     ed.register("join", |ed, ctx| {
         let n = ctx.count.max(2) - 1;
@@ -4810,6 +4862,17 @@ pub fn default_keymap(km: &mut Keymap) {
     ];
     for (k, c) in p {
         km.bind(Pane, k, c);
+    }
+    // A multibuffer's excerpt grown (docs/design/search.md Decision 13):
+    // the lines it leaves out read as a closed fold, so vim's fold keys —
+    // `zo` open, `zk` `zj` up and down — and Zed's `<S-CR>`.
+    for (k, c) in [
+        ("zo", "multi more"),
+        ("<S-CR>", "multi more"),
+        ("zk", "multi more above"),
+        ("zj", "multi more below"),
+    ] {
+        km.bind_local("language:multibuffer", Normal, k, c, &[]);
     }
     // The memory pane's own and the undo pane's, local to each: no
     // other pane finds them (local-maps.md).

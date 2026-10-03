@@ -2071,6 +2071,11 @@ impl Kawoosh {
                     self.drain_effects();
                     return;
                 }
+                // A click on a multibuffer's `⋯` shows what it hides.
+                if clicks == 1 && self.multi_click(view, off) {
+                    self.drag_anchor = None;
+                    return;
+                }
                 if clicks == 2 {
                     self.ed.views[view].sels =
                         kawoosh_editor::Selections::single(Selection::point(off));

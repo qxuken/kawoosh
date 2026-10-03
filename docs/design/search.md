@@ -435,6 +435,63 @@ the dropped lines' too. **The files edited directly**, each at the
 answer's places: simpler, but made outside the multibuffer, so `u` in
 the results would not reach it, and the places are stale once the
 results are edited.
+### 13. An excerpt grows; the engine reads the lines in
+
+Asked 2026-10-03, from the roadmap's list: "Growing an excerpt: show
+more lines above or below a result, like Zed's ⋯. This affects search,
+references and diagnostics alike". The engine took excerpts as given,
+and growing one meant the caller making them all again. It is the
+engine's now (`Editor::multi_grow`), so every multibuffer — the
+search's results, `*references*`, `*diagnostics*`, a plugin's — grows
+the same way and no caller is asked:
+
+- **The excerpt at the caret shows N more of its file's lines** above,
+  below or both: the lines read from the source as it is now and
+  written into the multibuffer, the excerpt's range in the source
+  widened by them. From then on the mirror holds them as it holds the
+  rest — a key typed on a grown line is in the file, the file's edit is
+  in it, `u` steps the files back (Decision 4); the growth itself is
+  not a change of any file and is not undone.
+- **A run grows as one.** Excerpts that show one file's lines with none
+  left out between — one place cut by a diagnostic's message under its
+  line (lists.md Decision 3) — are a run: above is its first excerpt's,
+  below its last's.
+- **Meeting the next excerpt of the file joins them**: the gap between
+  goes, and the two are one excerpt. Not past it: what is between two
+  excerpts is all one growth can show, the rest is the next one's. A
+  gap the caller painted — a note, not a `⋯` — is kept, and the two
+  only touch, a run from then on. Another file's excerpt is never met:
+  a growth stops at its file's ends.
+- **On a gap's line**, the excerpts on either side grow toward it:
+  `above` the one under it, `below` the one over it, both ways both of
+  them — a `⋯` filled from its two ends.
+- **A remake undoes it.** The caller's parts are the multibuffer's
+  truth: a search run again, `*diagnostics*` made again when the
+  diagnostics move, `grr` again, lay the excerpts out as the caller
+  says. Growths are not remembered across that; they are a look.
+
+The keys, normal mode in any multibuffer (`language:multibuffer`):
+`zo` grows both ways, `zk` above and `zj` below, and `<S-CR>` both, as
+Zed's `editor::ExpandExcerpts` (shift-enter). A COUNT is the lines; by
+default `multi.expand` (5, Zed's `expand_excerpt_lines`). The lines a
+multibuffer leaves out are a closed fold's in all but name, so vim's
+fold keys read on them: `zo` opens, and `zj` `zk` — vim's moves to the
+next and previous fold, of which kawoosh has none — are the direction
+it opens in; `zv` already reads a mask as a fold (secrets.md). `<S-CR>`
+sits beside `<CR>`, which opens the file: shift for "show me more here
+instead". **A click on a `⋯`** grows both sides toward it by
+`multi.expand`, Zed's click — a press on a line no caret has use for,
+since nothing is typed there. `:multi more [N]`, `:multi more above
+[N]`, `:multi more below [N]` are the commands.
+
+Beaten: **the lines given as a count of context in the caller's parts,
+the caller asked to make them again** (the shape "a re-make" named). It
+keeps the engine as it was, but every caller — the search, the lists,
+`vcs.lua`, a plugin's — would carry the growth state and its keys, and
+a remake loses the carets' places and the scroll for a look. **Growing
+past a met excerpt** (both joined and grown on by what is left of N) was
+left out: the next excerpt's lines are already on the screen, and a
+growth that jumps over them is harder to read than a second `zj`.
 
 ## Built
 
@@ -455,7 +512,11 @@ three rows.
   `kawoosh.search_replace`, the bar's field in `kawoosh/lua/search.lua`;
   `editor/tests/replace.rs`, `kawoosh/tests/search_replace.rs`,
   `kawoosh/lua/tests/search_replace.lua`.
-- **Expanding an excerpt** (Zed's `⋯` click, more lines above or below).
-  The engine takes excerpts as given; growing one is a re-make.
+- ~~**Expanding an excerpt** (Zed's `⋯` click, more lines above or below).
+  The engine takes excerpts as given; growing one is a re-make.~~ Built
+  2026-10-03 (Decision 13): `Editor::multi_grow` and
+  `Editor::multi_elided` in `editor/src/multi.rs`, `multi more` and its
+  keys in `editor/src/commands.rs`, the click in `kawoosh/src/multis.rs`;
+  tested in `editor/tests/multi.rs` and `kawoosh/tests/excerpts.rs`.
 - **A multibuffer for other answers**: a diff's hunks. References and
   diagnostics are lists now ([lists.md](lists.md), 2026-09-26).

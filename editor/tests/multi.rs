@@ -467,3 +467,239 @@ fn a_sources_runs_are_found_in_its_excerpts() {
     assert_eq!(runs[0].1, t.b);
     assert_eq!(&t.multi()[11..12], "1");
 }
+
+/// A file of `n` lines `c0`…, and a multibuffer of `parts` over it.
+fn long(n: usize, parts: impl Fn(BufferId) -> Vec<Part>) -> T {
+    let mut ed = Editor::new();
+    let text: String = (0..n).map(|i| format!("c{i}\n")).collect();
+    let a = ed.add_buffer(Buffer::new("c", &text));
+    let b = ed.add_buffer(Buffer::new("b", "b0\nb1\nb2"));
+    let m = ed.open_multi("search", parts(a));
+    let v = ed.add_view(m);
+    T { ed, v, m, a, b }
+}
+
+/// `c5 c6 ⋯ c12 c13` under a header.
+fn split_file() -> T {
+    long(20, |c| {
+        vec![
+            Part::Gap("C\n".into()),
+            Part::Lines(c, 5..7),
+            Part::Gap("⋯\n".into()),
+            Part::Lines(c, 12..14),
+        ]
+    })
+}
+
+fn lines(from: usize, to: usize) -> String {
+    (from..to).map(|i| format!("c{i}\n")).collect()
+}
+
+/// Growing an excerpt (search.md Decision 13): `zk` `zj` show more of
+/// its file above and below, COUNT lines, and an excerpt that meets the
+/// next of its file is one with it, the `⋯` gone.
+#[test]
+fn an_excerpt_grows_above_and_below() {
+    let mut t = split_file();
+    assert_eq!(t.multi(), "C\nc5\nc6\n⋯\nc12\nc13\n");
+    t.keys("j2zk");
+    assert_eq!(t.multi(), format!("C\n{}⋯\n{}", lines(3, 7), lines(12, 14)));
+    assert_eq!(t.ed.message, "2 more lines");
+    // The caret stays on its line of the file.
+    let head = t.ed.views[t.v].sels.primary().head;
+    let c5 = t.ed.buffers[t.a].line_start(5);
+    assert_eq!(t.ed.multi_at(t.m, head), Some((t.a, c5)));
+    // The gutter numbers the new lines as the file's.
+    assert_eq!(
+        t.ed.multi_lines(t.m, 1..3),
+        vec![MultiLine::File(t.a, 3), MultiLine::File(t.a, 4)]
+    );
+    t.keys("2zj");
+    assert_eq!(t.multi(), format!("C\n{}⋯\n{}", lines(3, 9), lines(12, 14)));
+    // `multi.expand`'s 5 reach the next excerpt's first line: one
+    // excerpt, the `⋯` gone.
+    t.keys("zj");
+    assert_eq!(t.multi(), format!("C\n{}", lines(3, 14)));
+    assert_eq!(t.ed.message, "3 more lines");
+    // To the file's start, and no further.
+    t.keys("zk");
+    assert_eq!(t.multi(), format!("C\n{}", lines(0, 14)));
+    t.keys("zk");
+    assert!(t.ed.message.contains("start"), "{}", t.ed.message);
+    // To its end, from the command line too.
+    let v = t.v;
+    t.ed.execute(v, "multi more below 100");
+    assert_eq!(t.multi(), format!("C\n{}", lines(0, 20)));
+    t.keys("zj");
+    assert!(t.ed.message.contains("end"), "{}", t.ed.message);
+    assert_eq!(t.text(t.a), lines(0, 20), "the file is not touched");
+    assert!(!t.ed.buffers[t.a].modified);
+}
+
+/// The lines a growth brought in are the excerpt's like any other: an
+/// edit there is in the file, and the file's is in them.
+#[test]
+fn grown_lines_are_mirrored() {
+    let mut t = split_file();
+    t.keys("jjzj");
+    // c7 c8 c9 c10 c11 came in, and met c12: one excerpt.
+    assert_eq!(t.multi(), format!("C\n{}", lines(5, 14)));
+    // On c9, a line that came in.
+    t.keys("gg5jA!<Esc>");
+    assert_eq!(t.ed.buffers[t.a].line_text(9), "c9!");
+    // And c12, which was the other excerpt's.
+    t.keys("3jA?<Esc>");
+    assert_eq!(t.ed.buffers[t.a].line_text(12), "c12?");
+    // `u` in the multibuffer steps the file back; the growth stays.
+    t.keys("u");
+    assert_eq!(t.ed.buffers[t.a].line_text(12), "c12");
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}", lines(5, 14)).replace("c9\n", "c9!\n")
+    );
+    // An edit in the file is in the grown lines.
+    let va = t.view_on(t.a);
+    t.keys_on(va, "8GA+<Esc>");
+    assert!(t.multi().starts_with("C\nc5\nc6\nc7+\n"), "{}", t.multi());
+}
+
+/// On a `⋯`, `zo` (and a click there, the shell's) grows the excerpts on
+/// either side toward it; in an excerpt, `zo` and `<S-CR>` (Zed's) grow
+/// it both ways.
+#[test]
+fn on_the_dots_both_sides_grow_toward_them() {
+    let mut t = split_file();
+    let dots = t.multi().find('⋯').unwrap();
+    assert!(t.ed.multi_elided(t.m, dots));
+    assert!(!t.ed.multi_elided(t.m, 0), "a header is not");
+    assert!(!t.ed.multi_elided(t.m, 3), "nor a file's line");
+    t.keys("3j2zo");
+    assert_eq!(t.multi(), format!("C\n{}⋯\n{}", lines(5, 9), lines(10, 14)));
+    assert_eq!(t.ed.message, "4 more lines");
+    // On c10: 5 below, and up only as far as c9, where it meets the
+    // excerpt before.
+    t.keys("gg6j<S-CR>");
+    assert_eq!(t.multi(), format!("C\n{}", lines(5, 19)));
+    assert_eq!(t.ed.message, "6 more lines");
+    assert!(!t.ed.multi_elided(t.m, dots));
+}
+
+/// A last line with no newline: grown to, it gets the multibuffer's
+/// own, which is not written back; and a growth stops at its file.
+#[test]
+fn growth_stops_at_the_file() {
+    let mut t = two();
+    // `a`'s excerpt is a1 a2, the header `B` after it.
+    t.keys("jzj");
+    assert_eq!(t.multi(), "A\na1\na2\na3\nB\nb1\nb2\n");
+    t.keys("zj");
+    assert!(t.ed.message.contains("end"), "{}", t.ed.message);
+    t.keys("zk");
+    assert_eq!(t.multi(), "A\na0\na1\na2\na3\nB\nb1\nb2\n");
+    let mut t = long(3, |_| Vec::new());
+    let b = t.b;
+    t.m =
+        t.ed.open_multi("bare", vec![Part::Gap("B\n".into()), Part::Lines(b, 0..1)]);
+    t.v = t.ed.add_view(t.m);
+    t.keys("jzj");
+    assert_eq!(t.multi(), "B\nb0\nb1\nb2\n");
+    t.keys("jjA?<Esc>");
+    assert_eq!(t.text(b), "b0\nb1\nb2?", "still bare");
+    assert_eq!(t.multi(), "B\nb0\nb1\nb2?\n");
+}
+
+/// A diagnostic's message under its line cuts its run in two; the run
+/// grows as one, and a gap the caller painted is kept when an excerpt
+/// meets the next across it.
+#[test]
+fn a_run_cut_by_a_note_grows_as_one() {
+    let mut t = long(20, |c| {
+        vec![
+            Part::Gap("C\n".into()),
+            Part::Lines(c, 3..6),
+            Part::Painted("  error: boom\n".into(), "error".into()),
+            Part::Lines(c, 6..8),
+            Part::Gap("⋯\n".into()),
+            Part::Lines(c, 15..16),
+            Part::Painted("  note\n".into(), "info".into()),
+            Part::Lines(c, 18..19),
+        ]
+    });
+    // On c6, under the message: above is the run's first excerpt's.
+    t.keys("5j2zk");
+    assert_eq!(
+        t.multi(),
+        format!(
+            "C\n{}  error: boom\n{}⋯\nc15\n  note\nc18\n",
+            lines(1, 6),
+            lines(6, 8)
+        )
+    );
+    // Below is the run's last's: it meets c15 across the `⋯`, joined.
+    t.keys("10zj");
+    assert_eq!(
+        t.multi(),
+        format!(
+            "C\n{}  error: boom\n{}  note\nc18\n",
+            lines(1, 6),
+            lines(6, 16)
+        )
+    );
+    // Across the painted note: the two touch, the note kept.
+    t.keys("G");
+    let note = t.multi().find("  note").unwrap();
+    assert!(!t.ed.multi_elided(t.m, note), "a note is not `⋯`");
+    t.keys("gg16jzj");
+    assert_eq!(
+        t.multi(),
+        format!(
+            "C\n{}  error: boom\n{}  note\nc18\n",
+            lines(1, 6),
+            lines(6, 18)
+        )
+    );
+    // The run now reaches c18: the whole of it grows to the file's end.
+    t.keys("zj");
+    assert!(t.multi().ends_with("  note\nc18\nc19\n"), "{}", t.multi());
+}
+
+/// `zo` on the `⋯` after a run cut by a note: the two sides meet.
+#[test]
+fn the_dots_after_a_note_close() {
+    let mut t = long(30, |c| {
+        vec![
+            Part::Gap("C\n".into()),
+            Part::Lines(c, 2..5),
+            Part::Painted("  error: boom\n".into(), "error".into()),
+            Part::Lines(c, 5..7),
+            Part::Gap("⋯\n".into()),
+            Part::Lines(c, 17..22),
+        ]
+    });
+    t.keys("7jzo");
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}  error: boom\n{}", lines(2, 5), lines(5, 22))
+    );
+    // Grown up to the excerpt over a note: they touch, the note kept.
+    let mut t = long(30, |c| {
+        vec![
+            Part::Gap("C\n".into()),
+            Part::Lines(c, 2..4),
+            Part::Painted("  note\n".into(), "info".into()),
+            Part::Lines(c, 8..10),
+        ]
+    });
+    t.keys("4jzk");
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}  note\n{}", lines(2, 4), lines(4, 10))
+    );
+    assert_eq!(t.ed.message, "4 more lines");
+    // One run now: `zk` from its foot grows its head.
+    t.keys("Gkzk");
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}  note\n{}", lines(0, 4), lines(4, 10))
+    );
+}
