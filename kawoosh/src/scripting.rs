@@ -1172,25 +1172,15 @@ impl Kawoosh {
                 }
                 self.notify_with(note);
             }
-            Msg::LspServer {
-                language,
-                languages,
-                command,
-                args,
-                roots,
-                settings,
-                install,
-            } => {
-                self.add_lsp_server(ServerDef {
+            Msg::LspServer { language, def: t } => {
+                let mut def = ServerDef {
                     language,
-                    languages,
-                    command,
-                    args,
-                    roots,
-                    settings,
-                    install,
                     ..Default::default()
-                });
+                };
+                for (_, text) in crate::lsp_rules::fold(&mut def, &t) {
+                    self.notify(Level::Warn, text);
+                }
+                self.add_lsp_server(def);
             }
             Msg::Formatter { name, def, run } => self.formatter_from_lua(&name, def, run),
             Msg::Formatted { token, result } => self.lua_formatted(token, result),

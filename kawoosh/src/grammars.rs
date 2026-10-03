@@ -1093,7 +1093,7 @@ mod tests {
         let listed = Manifest::parse(BUILT_IN).unwrap();
         let known =
             |l: &str| LANGUAGES.iter().any(|d| d.name == l) || listed.grammars.contains_key(l);
-        for def in kawoosh_systems::lsp::ServerDef::builtin() {
+        for def in crate::lsp_rules::builtin() {
             for l in def.served() {
                 assert!(known(l), "lsp.{}: no language {l}", def.language);
             }

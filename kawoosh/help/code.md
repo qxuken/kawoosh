@@ -336,7 +336,13 @@ return {
 | `languages` | the languages this server serves |
 | `when` | files one of which must be at or above a file for the server to run for it |
 | `settings` | the configuration sent to the server |
-| `install` | how `:lsp install` installs the program: a package (`{ npm = "name" }`; `pip`, `cargo`, `go`, `dotnet`) into kawoosh's folder, or a shell line |
+| `answers` | requests of the server's own and the result each is answered with: `{ ["eslint/confirmESLintExecution"] = 4 }` |
+| `install` | how `:lsp install` installs the program: a package (`{ npm = "name" }`; `pip`, `cargo`, `go`, `dotnet`) into kawoosh's folder, a shell line, or a line for each platform (`{ mac = "brew install x", windows = "winget install x" }`; `linux` too) |
+
+The servers kawoosh knows are rows of these same keys (`servers.lua` in
+kawoosh's source), and `kawoosh.lsp.server(NAME, t)` in
+[Lua](lua.md) takes the same table, the rules aside: `lsp.NAME` over
+either changes what you say and keeps the rest.
 
 ### Commands
 

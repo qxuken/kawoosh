@@ -40,7 +40,10 @@ space after every `;`, an edit each, in UTF-16 columns. Started with
 typescript-language-server does with no TypeScript to run, and exits;
 with `--no-format`, it does not declare formatting. A text changed to
 have `@crash` in it, or opened with `@crash-open`, makes it say "fake
-server crashing" on stderr and exit with 3."""
+server crashing" on stderr and exit with 3. Started with `--ask
+METHOD`, a document's first open sends the request METHOD of its own
+(id 4000), and the result it is answered with is published as that
+document's one diagnostic, `answered: RESULT` in JSON."""
 import json
 import re, sys
 
@@ -79,6 +82,8 @@ def send(msg):
 # execution puts `// NAME fixed` at the top; nothing else (no hover,
 # completion, rename), and no progress or messages.
 LINTER = sys.argv[sys.argv.index("--linter") + 1] if "--linter" in sys.argv else None
+ASK = sys.argv[sys.argv.index("--ask") + 1] if "--ask" in sys.argv else None
+asked = False
 
 def lint(method, mid, m):
     if method == "initialize":
@@ -112,7 +117,14 @@ while True:
     method = m.get("method")
     mid = m.get("id")
     if method is None:
-        continue  # a response to a request of ours
+        # A response to a request of ours: `--ask`'s is said back.
+        if ASK and mid == 4000:
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+                "uri": last_uri, "diagnostics": [{"range": {"start": {"line": 0, "character": 0},
+                                                            "end": {"line": 0, "character": 1}},
+                                                  "severity": 3,
+                                                  "message": "answered: " + json.dumps(m.get("result"))}]}})
+        continue
     if LINTER:
         lint(method, mid, m)
         continue
@@ -183,6 +195,9 @@ while True:
                           "message": "Type '{ " + "; ".join(f"field{i}: string" for i in range(30)) + " }' is not assignable to type 'B'."})
         send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
             "uri": uri, "diagnostics": diags}})
+        if ASK and not asked:
+            asked = True
+            send({"jsonrpc": "2.0", "id": 4000, "method": ASK, "params": {}})
         if "@workspace" in text:
             # A file beside it the client never sent: rust-analyzer's
             # check speaks of every file it looked at.
