@@ -640,6 +640,62 @@ mod tests {
         }
     }
 
+    /// Every row's install line, on every platform, runs a manager one
+    /// of the rows runs — a misspelt one would fail only when someone
+    /// ran it — and a line Windows runs quotes nothing with `'` outside
+    /// `"`: there it goes to `cmd /C`, where a single quote is a
+    /// character like any other (R's `-e '…'` was cut into words,
+    /// 2026-10-03).
+    #[test]
+    fn every_install_line_runs_a_known_manager_and_reads_under_cmd() {
+        const MANAGERS: [&str; 12] = [
+            "brew",
+            "rustup",
+            "winget",
+            "xcode-select",
+            "cargo",
+            "gem",
+            "cs",
+            "ghcup",
+            "opam",
+            "raco",
+            "nix",
+            "R",
+        ];
+        let rows = kawoosh_lua::eval_data("servers.lua", include_str!("../lua/servers.lua"))
+            .expect("servers.lua reads");
+        for row in rows.as_list().expect("a list") {
+            let name = row.get("name").and_then(Setting::as_str).unwrap_or("?");
+            let lines: Vec<(&str, &str)> = match row.get("install") {
+                Some(Setting::Str(line)) => vec![("every", line.as_str())],
+                Some(t) if platform_line(t).is_some() => PLATFORMS
+                    .iter()
+                    .filter_map(|p| Some((*p, t.get(p)?.as_str()?)))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for (platform, line) in lines {
+                let program = line.split_whitespace().next().unwrap_or_default();
+                assert!(
+                    MANAGERS.contains(&program),
+                    "lsp.{name} ({platform}): `{line}` runs `{program}`"
+                );
+                // A `'` outside double quotes, where sh would quote with it.
+                let mut quoted = false;
+                let single = line.chars().any(|c| {
+                    quoted ^= c == '"';
+                    c == '\'' && !quoted
+                });
+                if !matches!(platform, "mac" | "linux") {
+                    assert!(
+                        !single,
+                        "lsp.{name} ({platform}): `{line}` quotes with ' under cmd"
+                    );
+                }
+            }
+        }
+    }
+
     /// An install by platform is this machine's line; a table with
     /// another key is a package, or a mistake.
     #[test]

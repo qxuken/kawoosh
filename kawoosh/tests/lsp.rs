@@ -2294,3 +2294,60 @@ fn a_servers_own_request_is_answered_from_its_row() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The builtin servers kawoosh installed, started as kawoosh starts
+/// them — the program `servers::find` gives, a Windows `.cmd` among them
+/// — each answering `initialize` for a file of its language. Over real
+/// installs, after `kawoosh lsp install` into DIR: `KAWOOSH_SERVERS=DIR
+/// cargo nextest run -p kawoosh --run-ignored only installed_servers`. A
+/// server not in DIR is passed over (lsp-servers.md, "Tried").
+#[test]
+#[ignore]
+fn installed_servers_answer_kawoosh() {
+    let Some(root) = std::env::var_os("KAWOOSH_SERVERS").map(std::path::PathBuf::from) else {
+        eprintln!("KAWOOSH_SERVERS not set");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("kawoosh-real-ls-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = [
+        ("yaml", "a.yaml", "a: 1\n"),
+        ("toml", "a.toml", "a = 1\n"),
+        ("python", "a.py", "x = 1\n"),
+        ("go", "main.go", "package main\n"),
+        ("json", "a.json", "{}\n"),
+        ("css", "a.css", "a {}\n"),
+        ("bash", "a.sh", "echo hi\n"),
+        ("typescript", "a.ts", "let a = 1\n"),
+    ];
+    let mut tried = Vec::new();
+    for (language, name, text) in files {
+        let file = dir.join(name);
+        std::fs::write(&file, text).unwrap();
+        let mut app = Kawoosh::from_file(&file);
+        let mut d = Drive::new(900.0, 500.0);
+        // The first frame gives the pool its table.
+        d.frame(&mut app);
+        let def = app.lsp.defs.iter().find(|d| d.language == language);
+        let command = def.unwrap().command.clone();
+        if kawoosh_systems::servers::find_in(&root, &command).is_none() {
+            eprintln!("{language}: `{command}` not in {}", root.display());
+            continue;
+        }
+        let t = std::time::Instant::now();
+        while !app.lsp.caps.contains_key(language) && t.elapsed().as_secs() < 90 {
+            d.frame(&mut app);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            app.lsp.caps.contains_key(language),
+            "{language}: `{command}` did not answer: {}",
+            app.ed.message
+        );
+        eprintln!("{language}: `{command}` answered in {:?}", t.elapsed());
+        tried.push(language);
+    }
+    assert!(!tried.is_empty(), "none installed in {}", root.display());
+    std::fs::remove_dir_all(&dir).ok();
+}

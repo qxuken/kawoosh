@@ -201,10 +201,22 @@ pub enum ProcCmd {
 /// up on too — where the window was opened outside one. On Windows it
 /// opens no console window — `kawoosh` is a GUI program there, with no
 /// console for a console child to share, and each would get one of its
-/// own.
+/// own. A program that is a `.cmd` there — `npm`, a server npm put on
+/// the PATH — is started by its path ([`shim`]).
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    let mut c = std::process::Command::new(program);
-    if let Some(path) = crate::shell_env::path() {
+    let path = crate::shell_env::path();
+    #[cfg(windows)]
+    let shim = path
+        .clone()
+        .or_else(|| std::env::var_os("PATH"))
+        .and_then(|p| shim(program.as_ref(), &p));
+    #[cfg(not(windows))]
+    let shim: Option<PathBuf> = None;
+    let mut c = match shim {
+        Some(p) => std::process::Command::new(p),
+        None => std::process::Command::new(program),
+    };
+    if let Some(path) = path {
         c.env("PATH", path);
     }
     #[cfg(windows)]
@@ -215,6 +227,32 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
         c.creation_flags(CREATE_NO_WINDOW);
     }
     c
+}
+
+/// A bare `program` that is no `.exe` in a directory of `path` but a
+/// `.cmd` or `.bat` in one — `npm.cmd`, the shims npm writes for a
+/// package's programs — as that file's path, the first directory's that
+/// has one. std looks for `PROGRAM.exe` alone and says "program not
+/// found"; given the `.cmd`'s path it runs it through `cmd.exe`, its
+/// arguments quoted for it. `None` for a path, a name with an extension,
+/// or one that is an `.exe` somewhere: std's own lookup is left to it.
+#[cfg(any(windows, test))]
+fn shim(program: &std::ffi::OsStr, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    let p = std::path::Path::new(program);
+    if p.components().count() != 1 || p.extension().is_some() {
+        return None;
+    }
+    let dirs: Vec<PathBuf> = std::env::split_paths(path).collect();
+    let named = |d: &PathBuf, ext: &str| d.join(p).with_extension(ext);
+    if dirs.iter().any(|d| named(d, "exe").is_file()) {
+        return None;
+    }
+    dirs.iter().find_map(|d| {
+        ["cmd", "bat"]
+            .into_iter()
+            .map(|e| named(d, e))
+            .find(|f| f.is_file())
+    })
 }
 
 /// Whether `program` would be found by [`command`]: a path that is a
@@ -1262,6 +1300,37 @@ pub fn decode_image_bytes(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A program npm installed on Windows is `NAME.cmd`, which std does
+    /// not look for: it is taken by its path, the first directory's of
+    /// the PATH; an `.exe` anywhere, a path or an extension leave std to
+    /// it.
+    #[test]
+    fn a_cmd_on_the_path_is_taken_by_its_path() {
+        let root = std::env::temp_dir().join(format!("kawoosh-cmd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (a, b) = (root.join("a"), root.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("npm.cmd"), "").unwrap();
+        std::fs::write(b.join("npm.cmd"), "").unwrap();
+        std::fs::write(b.join("tool.bat"), "").unwrap();
+        std::fs::write(a.join("both.cmd"), "").unwrap();
+        std::fs::write(b.join("both.exe"), "").unwrap();
+        let path = std::env::join_paths([&a, &b]).unwrap();
+        let shim = |p: &str| shim(p.as_ref(), &path);
+        assert_eq!(
+            shim("npm"),
+            Some(a.join("npm.cmd")),
+            "the first directory's"
+        );
+        assert_eq!(shim("tool"), Some(b.join("tool.bat")));
+        assert_eq!(shim("both"), None, "an .exe is std's to find");
+        assert_eq!(shim("missing"), None);
+        assert_eq!(shim("npm.cmd"), None, "an extension is said");
+        assert_eq!(shim(&a.join("npm").display().to_string()), None, "a path");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// The shim lands in `~/.cache/kawoosh/` on the host's `/`, not in a
     /// file named `kawoosh\kawoosh` beside it.
