@@ -2254,3 +2254,43 @@ fn lsp_logs_keep_what_a_server_said() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A server's own request is answered with what its row's `answers`
+/// says (`eslint/confirmESLintExecution` → 4 in servers.lua); one it
+/// does not name gets the pool's answer, `null` for one it does not
+/// know.
+#[test]
+fn a_servers_own_request_is_answered_from_its_row() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-answers-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "").unwrap();
+    let file = dir.join("main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let answered = |answers: &[(&str, serde_json::Value)]| {
+        let mut server = fake_server();
+        server.args.extend(["--ask".into(), "fake/confirm".into()]);
+        server.answers = answers
+            .iter()
+            .map(|(m, v)| (m.to_string(), v.clone()))
+            .collect();
+        let mut app = Kawoosh::from_file(&file);
+        app.add_lsp_server(server);
+        let mut d = Drive::new(900.0, 500.0);
+        let v = app.focused_view().unwrap();
+        let id = app.ed.views[v].buffer;
+        let said = until(&mut d, &mut app, |a| {
+            msgs(a, id).iter().any(|m| m.starts_with("answered"))
+        });
+        assert!(said, "the answer came back: {:?}", msgs(&app, id));
+        msgs(&app, id).remove(0)
+    };
+    assert_eq!(
+        answered(&[("fake/confirm", serde_json::json!(4))]),
+        "answered: 4"
+    );
+    assert_eq!(
+        answered(&[("fake/other", serde_json::json!(4))]),
+        "answered: null"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

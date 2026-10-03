@@ -3436,3 +3436,43 @@ fn a_lua_field_takes_the_word_and_line_keys() {
     assert_eq!(text(&app), "");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// `kawoosh.lsp.server` reads a server as `lsp.NAME` says it and as
+/// the builtin table's rows are: `when`, a package to install, a line
+/// by platform.
+#[test]
+fn a_lua_server_is_an_lsp_table() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "*scratch*", "");
+    app.run_lua_source(
+        "init.lua",
+        "kawoosh.lsp.server('mylint', { cmd = 'mylint-lsp', languages = { 'typescript' },\n\
+         when = { '.mylint' }, install = { npm = 'mylint-lsp' } })\n\
+         kawoosh.lsp.server('mine', { cmd = 'mine-ls', install = { mac = 'brew install mine', linux = 'brew install mine', windows = 'scoop install mine' } })\n",
+    );
+    let def = |n: &str| {
+        app.lsp
+            .defs
+            .iter()
+            .find(|s| s.language == n)
+            .unwrap()
+            .clone()
+    };
+    let mylint = def("mylint");
+    assert_eq!(mylint.when, [".mylint"]);
+    assert_eq!(mylint.package.unwrap().packages, ["mylint-lsp"]);
+    let mine = def("mine");
+    assert!(mine.package.is_none());
+    assert_eq!(
+        mine.install,
+        if cfg!(windows) {
+            "scoop install mine"
+        } else {
+            "brew install mine"
+        }
+    );
+    assert!(
+        app.lsp.defs.iter().any(|s| s.language == "typescript"),
+        "the builtin beside"
+    );
+}
