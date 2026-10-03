@@ -42,7 +42,7 @@ impl Kawoosh {
         };
         let home = self.config.dir.clone();
         let grammar = match Library::find(&name, &said, home.as_deref()) {
-            Ok(lib) => lib.map(Source::Library),
+            Ok(lib) => lib.map(|l| Source::Library(Box::new(l))),
             Err(e) => {
                 self.notify_with(Note::new(Level::Warn, e).source("language"));
                 None

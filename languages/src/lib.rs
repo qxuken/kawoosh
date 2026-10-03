@@ -130,6 +130,10 @@ pub struct Grammar {
     /// An indent query: how many levels in a line is, read off the tree
     /// (docs/design/indent.md).
     pub indents: Option<Indents>,
+    /// A text-object query: `af`, `ic`, `]f` (docs/design/nodes.md
+    /// Decision 9). One that does not compile is left out with a
+    /// warning, the grammar loading without it.
+    pub textobjects: Option<TextObjects>,
 }
 
 /// An indent query in helix's dialect (docs/design/indent.md, the
@@ -240,6 +244,116 @@ impl Indents {
             kinds,
             scopes,
         })
+    }
+}
+
+/// A text-object query (docs/design/nodes.md Decision 9): which nodes
+/// are a function, a class, an argument, a comment — `af`, `ic`, `da/`.
+/// Its captures are `@OBJECT.PART`, the part helix's `around` /
+/// `inside` or nvim-treesitter-textobjects' `outer` / `inner`, read
+/// alike; nodes one match captures under one name are one object, from
+/// the first's start to the last's end (`(comment)+ @comment.around`,
+/// a parameter and the `,` after it), and nvim's `#make-range!` names
+/// one from two captures. Other directives are not read.
+#[derive(Debug)]
+pub struct TextObjects {
+    pub query: Query,
+    /// Capture index → the object it is part of, and which part;
+    /// `None` for a capture a predicate reads (`@_start`).
+    pub captures: Vec<Option<(String, Part)>>,
+    /// Pattern index → its `#make-range!` directives.
+    pub made: Vec<Vec<MadeRange>>,
+}
+
+/// Which part of a text object a capture is: `af` takes the around,
+/// `if` the inside.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Part {
+    Around,
+    Inside,
+}
+
+/// `(#make-range! "function.inner" @_start @_end)`: an object part
+/// from one capture's start to another's end.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MadeRange {
+    pub object: String,
+    pub part: Part,
+    pub from: u32,
+    pub to: u32,
+}
+
+impl Part {
+    /// `function.around` → (`function`, around); `None` for a name no
+    /// part reads.
+    pub fn of_capture(name: &str) -> Option<(String, Part)> {
+        let (object, part) = name.rsplit_once('.')?;
+        let part = match part {
+            "around" | "outer" => Part::Around,
+            "inside" | "inner" => Part::Inside,
+            _ => return None,
+        };
+        (!object.is_empty() && !object.starts_with('_')).then(|| (object.to_string(), part))
+    }
+}
+
+impl TextObjects {
+    pub fn new(language: &tree_sitter::Language, text: &str) -> Result<Self, String> {
+        let query = Query::new(language, text).map_err(|e| format!("textobjects: {e}"))?;
+        let captures: Vec<Option<(String, Part)>> = query
+            .capture_names()
+            .iter()
+            .map(|n| Part::of_capture(n))
+            .collect();
+        let mut made = Vec::with_capacity(query.pattern_count());
+        for i in 0..query.pattern_count() {
+            let mut here = Vec::new();
+            for p in query.general_predicates(i) {
+                if &*p.operator != "make-range!" {
+                    continue;
+                }
+                use tree_sitter::QueryPredicateArg as A;
+                let (Some(A::String(name)), Some(A::Capture(from)), Some(A::Capture(to))) =
+                    (p.args.first(), p.args.get(1), p.args.get(2))
+                else {
+                    return Err(format!(
+                        "textobjects: #make-range! takes a name and two captures (pattern {i})"
+                    ));
+                };
+                let Some((object, part)) = Part::of_capture(name) else {
+                    return Err(format!("textobjects: #make-range! {name:?} names no part"));
+                };
+                here.push(MadeRange {
+                    object,
+                    part,
+                    from: *from,
+                    to: *to,
+                });
+            }
+            made.push(here);
+        }
+        if !captures.iter().any(Option::is_some) && !made.iter().any(|m| !m.is_empty()) {
+            return Err("textobjects: no @OBJECT.around or @OBJECT.inside capture".into());
+        }
+        Ok(Self {
+            query,
+            captures,
+            made,
+        })
+    }
+
+    /// The objects the query names, sorted: what a key may ask for.
+    pub fn objects(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = self
+            .captures
+            .iter()
+            .flatten()
+            .map(|(o, _)| o.as_str())
+            .chain(self.made.iter().flatten().map(|m| m.object.as_str()))
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 }
 
@@ -419,6 +533,7 @@ impl Grammar {
             stand_ins: None,
             outline: None,
             indents: None,
+            textobjects: None,
         })
     }
 
@@ -426,6 +541,17 @@ impl Grammar {
     pub fn with_indents(mut self, text: &str) -> Result<Self, String> {
         self.indents = Some(Indents::new(&self.language, text)?);
         Ok(self)
+    }
+
+    /// A text-object query over the same tree ([`TextObjects`]). One
+    /// that does not compile is a warning naming `what` (the language,
+    /// the file), and the grammar goes without: its colours and indent
+    /// do not wait on its text objects.
+    pub fn with_textobjects(mut self, what: &str, text: &str) -> Self {
+        self.textobjects = TextObjects::new(&self.language, text)
+            .inspect_err(|e| log::warn!("{what}: {e}; no syntax text objects"))
+            .ok();
+        self
     }
 
     /// An outline query over the same tree ([`Outline`]). A capture
@@ -557,7 +683,7 @@ pub enum Source {
     /// Linked into this build: the module's loader.
     Builtin(fn() -> Result<Grammar, String>),
     /// A shared library on disk, with its queries beside it.
-    Library(Library),
+    Library(Box<Library>),
 }
 
 impl From<&Language> for LanguageDef {
@@ -615,6 +741,8 @@ pub struct Library {
     /// `indents.scm`, where the highlights are looked for — by
     /// convention only (docs/design/indent.md).
     pub indents: Option<PathBuf>,
+    /// `textobjects.scm`, the same way (docs/design/nodes.md Decision 9).
+    pub textobjects: Option<PathBuf>,
 }
 
 /// What a registration said about where a grammar is; [`Library::find`]
@@ -737,6 +865,7 @@ impl Library {
             None => query(&None, "tags.scm")?,
         };
         let indents = query(&None, "indents.scm")?;
+        let textobjects = query(&None, "textobjects.scm")?;
         Ok(Some(Library {
             path,
             symbol,
@@ -744,6 +873,7 @@ impl Library {
             injections,
             outline,
             indents,
+            textobjects,
         }))
     }
 
@@ -791,6 +921,14 @@ impl Library {
             g = g
                 .with_indents(&text)
                 .map_err(|e| format!("{}: {e}", p.display()))?;
+        }
+        // Text objects are the one query a grammar loads without: one
+        // that cannot be read or compiled is a warning.
+        if let Some(p) = &self.textobjects {
+            match read(p) {
+                Ok(text) => g = g.with_textobjects(&p.display().to_string(), &text),
+                Err(e) => log::warn!("{e}; no syntax text objects"),
+            }
         }
         Ok(g)
     }
@@ -1130,6 +1268,88 @@ mod tests {
         }
     }
 
+    /// Every text-object query shipped compiles against the grammar
+    /// it is for, at the revision pinned — straight, so a failure says
+    /// why where the load would only warn — and the grammar loads with
+    /// it (docs/design/nodes.md Decision 9).
+    #[test]
+    fn every_text_object_query_compiles() {
+        let shipped = [
+            "rust",
+            "toml",
+            "javascript",
+            "typescript",
+            "tsx",
+            "go",
+            "lua",
+            "bash",
+            "nu",
+            "c",
+            "cpp",
+            "python",
+            "json",
+            "jsonc",
+            "yaml",
+            "sql",
+        ];
+        let q = |name: &str| -> String {
+            let one = |l: &str| match l {
+                "rust" => include_str!("../queries/rust/textobjects.scm"),
+                "toml" => include_str!("../queries/toml/textobjects.scm"),
+                "ecma" => include_str!("../queries/ecma/textobjects.scm"),
+                "typescript" => include_str!("../queries/typescript/textobjects.scm"),
+                "go" => include_str!("../queries/go/textobjects.scm"),
+                "lua" => include_str!("../queries/lua/textobjects.scm"),
+                "bash" => include_str!("../queries/bash/textobjects.scm"),
+                "nu" => include_str!("../queries/nu/textobjects.scm"),
+                "c" => include_str!("../queries/c/textobjects.scm"),
+                "cpp" => include_str!("../queries/cpp/textobjects.scm"),
+                "python" => include_str!("../queries/python/textobjects.scm"),
+                "json" => include_str!("../queries/json/textobjects.scm"),
+                "yaml" => include_str!("../queries/yaml/textobjects.scm"),
+                "sql" => include_str!("../queries/sql/textobjects.scm"),
+                _ => unreachable!("{l}"),
+            };
+            match name {
+                "javascript" => one("ecma").to_string(),
+                "typescript" | "tsx" => [one("ecma"), one("typescript")].concat(),
+                "cpp" => [one("c"), one("cpp")].concat(),
+                "jsonc" => one("json").to_string(),
+                n => one(n).to_string(),
+            }
+        };
+        for l in LANGUAGES {
+            let Some(load) = l.grammar else {
+                continue;
+            };
+            let g = load().unwrap();
+            if shipped.contains(&l.name) {
+                let t = TextObjects::new(&g.language, &q(l.name))
+                    .unwrap_or_else(|e| panic!("{}: {e}", l.name));
+                assert!(t.objects().contains(&"comment") || l.name == "json" || l.name == "jsonc");
+                assert!(g.textobjects.is_some(), "{}: loaded without", l.name);
+            } else {
+                assert!(g.textobjects.is_none(), "{}: text objects", l.name);
+            }
+        }
+        // One that does not compile: the grammar loads without it.
+        let g = (rust::LANGUAGE.grammar.unwrap())()
+            .unwrap()
+            .with_textobjects("test", "(nope) @function.around");
+        assert!(g.textobjects.is_none() && g.indents.is_some());
+        // Captures read in both spellings; a name no part reads is none.
+        assert_eq!(
+            Part::of_capture("function.outer"),
+            Some(("function".into(), Part::Around))
+        );
+        assert_eq!(
+            Part::of_capture("class.inside"),
+            Some(("class".into(), Part::Inside))
+        );
+        assert_eq!(Part::of_capture("_start"), None);
+        assert_eq!(Part::of_capture("number"), None);
+    }
+
     #[test]
     fn names_are_unique_and_aliases_resolve() {
         let mut names: Vec<&str> = LANGUAGES.iter().map(|l| l.name).collect();
@@ -1210,13 +1430,20 @@ mod tests {
                 injections: None,
                 outline: None,
                 indents: None,
+                textobjects: None,
             }))
         );
         let inj = touch(home.join("queries/zig/injections.scm"));
         let ind = touch(home.join("queries/zig/indents.scm"));
+        let tobj = touch(home.join("queries/zig/textobjects.scm"));
         let found = Library::find("zig", &none, Some(&home)).unwrap().unwrap();
         assert_eq!(found.injections, Some(inj));
         assert_eq!(found.indents, Some(ind));
+        assert_eq!(
+            found.textobjects,
+            Some(tobj),
+            "an archive's text objects, by convention"
+        );
         // A checkout: `tree-sitter build` left `<name>.so` in it.
         let co = dir.join("tree-sitter-nim");
         let so = touch(co.join("nim.so"));
@@ -1333,6 +1560,7 @@ mod tests {
             injections: None,
             outline: None,
             indents: None,
+            textobjects: None,
         };
         let g = library.load().unwrap();
         assert_eq!(g.query.capture_names(), &["string", "number", "property"]);
@@ -1351,8 +1579,24 @@ mod tests {
         assert!(!tree.root_node().has_error());
         // Through a def, as the registry would.
         let mut def = LanguageDef::named("json-lib");
-        def.grammar = Some(Source::Library(library.clone()));
+        def.grammar = Some(Source::Library(Box::new(library.clone())));
         assert!(def.load().unwrap().is_some());
+        // Its text objects, when it has them; one that does not compile
+        // leaves the grammar loading without (nodes.md Decision 9).
+        let tobj = dir.join("textobjects.scm");
+        std::fs::write(&tobj, "(pair key: (_) @entry.inside) @entry.around\n").unwrap();
+        let with = Library {
+            textobjects: Some(tobj.clone()),
+            ..library.clone()
+        };
+        let g = with.load().unwrap();
+        assert_eq!(
+            g.textobjects.as_ref().map(|t| t.objects()),
+            Some(vec!["entry"])
+        );
+        std::fs::write(&tobj, "(nope) @entry.around\n").unwrap();
+        let g = with.load().unwrap();
+        assert!(g.textobjects.is_none() && g.classes.len() == 3);
         // The errors name what went wrong.
         let wrong = Library {
             symbol: "tree_sitter_nope".into(),

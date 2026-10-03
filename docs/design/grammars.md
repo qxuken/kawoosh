@@ -986,3 +986,26 @@ macOS alone.
   `a_directory_is_built_as_it_lies` named `/nowhere/…` for a directory
   that is not there, which Windows does not read as an absolute path,
   so it names one under the test's own directory.
+
+**Text objects, 2026-10-03** ([nodes.md](nodes.md) Decision 9). An
+installed grammar has `af` `if` `ac` … when its archive carries a
+`queries/textobjects.scm`: the install already writes every `.scm` of
+the archive's `queries/`, and `Library::find` now takes that file as it
+takes `indents.scm`; one built on the machine takes its checkout's
+(`build`, beside `highlights.scm`, `injections.scm` and `tags.scm`),
+since the reader reads nvim's spelling (`@function.outer`,
+`#make-range!`) as well as helix's. A query that does not compile is a
+warning and the grammar loads without it. The kawoosh-grammars
+repository is not changed here; to ship them it would need:
+
+- the builder to take a `textobjects.scm` from a grammar directory's
+  `queries/` (helix's or nvim-treesitter-textobjects' for the language,
+  adapted to the revision pinned, its licence notice kept — MPL-2.0 for
+  helix's, Apache-2.0 for nvim's), with `inherits` and `; extends`
+  applied as for the other queries, and from the checkout when the
+  grammar's own repository carries one;
+- step 4's check to compile it against the grammar, so a revision moved
+  past it fails the release rather than warning on every machine;
+- a sample per grammar with a function in it, if the check should say
+  more than that it compiles (`each_shipped_query_finds_its_objects` is
+  the builtins' model).

@@ -883,16 +883,24 @@ fn build_in(
     }
     let scanner = Some(src.join("scanner.c")).filter(|s| s.is_file());
     // Its own queries, beside the grammar or at the source's root; an
-    // `indents.scm` there is nvim's dialect, and is left.
+    // `indents.scm` there is nvim's dialect, and is left. A
+    // `textobjects.scm` is read in nvim's spelling as well as helix's
+    // (nodes.md Decision 9), and one that does not compile is left out
+    // at the load, so it is taken.
     let queries: Vec<(&str, PathBuf)> = [grammar.join("queries"), checkout.join("queries")]
         .iter()
         .find(|d| d.is_dir())
         .map(|d| {
-            ["highlights.scm", "injections.scm", "tags.scm"]
-                .into_iter()
-                .map(|file| (file, d.join(file)))
-                .filter(|(_, path)| path.is_file())
-                .collect()
+            [
+                "highlights.scm",
+                "injections.scm",
+                "tags.scm",
+                "textobjects.scm",
+            ]
+            .into_iter()
+            .map(|file| (file, d.join(file)))
+            .filter(|(_, path)| path.is_file())
+            .collect()
         })
         .unwrap_or_default();
 
@@ -1336,6 +1344,7 @@ mod tests {
         }
         std::fs::write(dir.join("queries/highlights.scm"), "(string) @string\n").unwrap();
         std::fs::write(dir.join("queries/indents.scm"), "(object) @indent.begin\n").unwrap();
+        std::fs::write(dir.join("queries/textobjects.scm"), "(pair) @entry.outer\n").unwrap();
         std::fs::write(dir.join("LICENSE"), "MIT").unwrap();
         let git = |args: &[&str]| {
             let mut cmd = crate::io::command("git");
@@ -1414,6 +1423,10 @@ mod tests {
         assert!(
             !got.dir.join("queries/indents.scm").exists(),
             "nvim's dialect, left"
+        );
+        assert!(
+            got.dir.join("queries/textobjects.scm").is_file(),
+            "nvim's text objects read as they are"
         );
         assert_eq!(std::fs::read(got.dir.join("LICENSE")).unwrap(), b"MIT");
         assert_eq!(installed(&root), vec![got.clone()]);
