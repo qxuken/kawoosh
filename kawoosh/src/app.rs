@@ -1399,7 +1399,9 @@ impl Kawoosh {
 
     /// Removes buffer `id`: every view on it moves to `next`, a
     /// `--wait` caller on it is answered, the server told, and what
-    /// was remembered about it forgotten.
+    /// was remembered about it forgotten. A multibuffer still showing
+    /// it holds it, as a pane does: it is handed back instead
+    /// ([`Self::hand_back`]).
     pub(crate) fn delete_buffer(&mut self, id: BufferId, next: BufferId) {
         // Each view on it shows `next` where it was last left there.
         let on: Vec<ViewId> = self
@@ -1412,7 +1414,26 @@ impl Kawoosh {
         for v in on {
             self.show_buffer(v, next);
         }
-        self.drop_buffer(id);
+        if self.ed.multi_holds(id) {
+            self.hand_back(id);
+        } else {
+            self.drop_buffer(id);
+        }
+    }
+
+    /// Buffer `id`, closed while a multibuffer still shows it, borrowed
+    /// again (docs/design/search.md Decision 5): out of `:ls`, the
+    /// pickers, every tab's own and the session, a `--wait` caller on it
+    /// answered — but open, its excerpts as live as before, the server
+    /// still holding it. It closes with the last multibuffer that holds
+    /// it, as one only a search opened does.
+    fn hand_back(&mut self, id: BufferId) {
+        self.alternate.retain(|_, b| *b != id);
+        for t in &mut self.layout.tabs {
+            t.seen.remove(&id);
+        }
+        self.ed.borrowed.insert(id);
+        self.release_waiters(id);
     }
 
     /// Removes buffer `id`, which no view shows: a `--wait` caller on

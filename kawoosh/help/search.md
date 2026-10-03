@@ -131,6 +131,12 @@ numbers, with its colours and diagnostics.
 
 `search.context` sets how many lines are shown around each match.
 
+A file the search opened stays out of `:ls` and the buffers picker
+until you open it from the results or edit it. A multibuffer holds the
+files it shows, as a pane does: `:bd` on one of them takes it out of
+the pane and `:ls`, and its excerpts stay live. It closes when the last
+multibuffer showing it does, unless it has unsaved changes.
+
 A session brings the search panel back where it was, with the last
 search made in the workspace in the bar, run again: the results are
 the files as they are now.
