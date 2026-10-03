@@ -192,6 +192,15 @@ fn install_line(d: &ServerDef) -> Result<(), String> {
             d.command
         ));
     }
+    // The manager it runs, looked for first: one not here is said as a
+    // package's is, not as a shell's "not recognized" after it.
+    let program = d.install.split_whitespace().next().unwrap_or_default();
+    if kawoosh_systems::io::on_path(program) == Some(false) {
+        return Err(format!(
+            "`{}` needs `{program}`, which is not on the PATH",
+            d.install
+        ));
+    }
     println!("› {}", d.install);
     let (shell, flag) = if cfg!(windows) {
         ("cmd", "/C")

@@ -129,6 +129,7 @@ return {
     name = "fish",
     cmd = "fish-lsp",
     args = { "start" },
+    -- It runs `fish` to answer `initialize`: no use where fish is not.
     install = { npm = "fish-lsp" },
   },
   {
@@ -310,7 +311,8 @@ return {
     name = "nix",
     cmd = "nil",
     roots = { "flake.nix" },
-    install = "nix profile install nixpkgs#nil",
+    -- Nix is not on Windows.
+    install = { mac = "nix profile install nixpkgs#nil", linux = "nix profile install nixpkgs#nil" },
   },
   {
     name = "cmake",
@@ -330,7 +332,9 @@ return {
     cmd = "R",
     args = { "--no-echo", "-e", "languageserver::run()" },
     roots = { "DESCRIPTION", ".Rprofile" },
-    install = [[R -e 'install.packages("languageserver", repos = "https://cloud.r-project.org")']],
+    -- Double quotes outside: on Windows the line runs under `cmd /C`,
+    -- where `'` quotes nothing.
+    install = [[R -e "install.packages('languageserver', repos = 'https://cloud.r-project.org')"]],
   },
   {
     name = "prisma",
@@ -354,6 +358,9 @@ return {
   {
     name = "awk",
     cmd = "awk-language-server",
+    -- Its tree-sitter-awk is built at install where no prebuilt one fits
+    -- the Node (Windows, Node 25): node-gyp then wants a Python and a
+    -- C++ compiler (`PYTHON=…` names the Python).
     install = { npm = "awk-language-server" },
   },
   {

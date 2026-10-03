@@ -196,11 +196,111 @@ left `systems/src/lsp.rs`. Tests: `lsp_rules.rs`'s
 `a_servers_own_request_is_answered_from_its_row` (the fake server's
 `--ask METHOD`).
 
+## Tried 2026-10-03 on Windows 11
+
+Asked as one item of a round: "The install commands for the 47
+language servers: each one is copied from the server project's docs,
+and none has been run." Every server kawoosh installs itself was run
+through `kawoosh lsp install NAME` into a scratch folder — HOME,
+USERPROFILE, APPDATA, LOCALAPPDATA, TEMP, `KAWOOSH_SERVERS`,
+`KAWOOSH_STATE`, the settings, `XDG_*`, `CARGO_HOME`, `GOPATH`,
+`GOCACHE`, `NUGET_PACKAGES`, `DOTNET_CLI_HOME` and the npm and uv
+caches all pointed into it, rustup's toolchains read where they are —
+and each program, found as `servers::find` finds it, was sent
+`initialize` and answered or not. Each manager stays in the package's
+directory as lsp-installs.md Decision 1 says: npm `--prefix`, uv's
+`UV_TOOL_DIR`/`UV_TOOL_BIN_DIR`, `cargo install --root`, `GOBIN`,
+`dotnet tool --tool-path`. A line kawoosh does not drive was not run
+where it installs globally (rustup, winget); where its manager is not
+on this machine it was not fetched, and the package's name was looked
+up in its registry instead. uv made its tools on the CPython it had
+installed already (found, not written to). The user's own package
+folders — `~/.cargo/bin`, `~/go`, `~/.dotnet/tools`, `~/.nuget`, the
+global npm, uv's tools and Pythons, `~/.config/kawoosh`,
+`~/.local/share/kawoosh` — were listed before and after: no entry was
+added or removed. The one rewritten, `state.db`, was another kawoosh's
+on the machine; `kawoosh lsp` opens no state, and the scratch
+`KAWOOSH_STATE` stayed empty.
+
+| server | how | installed | answers `initialize` |
+|---|---|---|---|
+| rust | `rustup component add` | not run (a toolchain's component; in already) | rust-analyzer 1.99.0, on the PATH |
+| typescript | npm | typescript-language-server 6.0.1, typescript@5 | yes |
+| lua | brew; none on Windows | not tried | 3.19.1, on the PATH (scoop) |
+| python | npm | pyright 1.1.414 | yes |
+| go | go | gopls v0.23.0 | yes |
+| c | `winget install LLVM.LLVM` | not run (global); the package is there, 23.1.2 | clangd 23.1.0, on the PATH (scoop) |
+| bash | npm | bash-language-server 5.8.1 | yes |
+| fish | npm | fish-lsp 1.1.5 | no: it runs `fish`, which Windows has not |
+| nu | `winget install nushell` | not run (global); resolves to Nushell.Nushell 0.116.0 | `nu --lsp` 0.115.0, on the PATH |
+| html, css, json, eslint | npm | vscode-langservers-extracted 4.10.0 | yes, all four |
+| yaml | npm | yaml-language-server 1.24.0 | yes |
+| toml | cargo | taplo-cli 0.10.0 (`--locked --features lsp`) | yes |
+| dockerfile | npm | dockerfile-language-server-nodejs 0.15.0 | yes |
+| svelte | npm | svelte-language-server 0.18.4 | yes |
+| php | npm | intelephense 1.18.5 | yes |
+| csharp | dotnet | csharp-ls 0.28.0 | yes |
+| fsharp | dotnet | fsautocomplete 0.84.0 | yes |
+| elm | npm | @elm-tooling/elm-language-server 2.10.0 | yes |
+| purescript | npm | purescript-language-server 0.18.5 | yes |
+| cmake | pip (uv) | cmake-language-server 0.1.11, pygls 1.3.1 | yes |
+| fortran | pip (uv) | fortls 3.2.2 | yes |
+| prisma | npm | @prisma/language-server 31.12.10 | yes |
+| proto | cargo | protols 0.14.1 | yes |
+| dot | npm | dot-language-server 3.2.1 | yes |
+| awk | npm | awk-language-server 0.10.6 — failed bare: its tree-sitter-awk has no prebuilt binary for Node 25 and node-gyp found no Python (`python` is the Store's alias); installed with `PYTHON` naming one | yes |
+| wgsl | cargo `--git` | wgsl-analyzer at d368db82, no version | yes |
+| biome | npm | @biomejs/biome 2.5.15 | yes (`lsp-proxy`) |
+| ruff | pip (uv) | ruff 0.16.10 | yes |
+| ruby, scala, haskell, ocaml, racket, r | gem, cs, ghcup, opam, raco, R | not tried (none here); ruby-lsp 0.26.11, metals, hls, ocaml-lsp-server, racket-langserver and languageserver are where the lines look | — |
+| markdown, java, kotlin, dart, zig, elixir, erlang, gleam, clojure | brew; none on Windows | not tried; each formula is there | — |
+| nix | `nix profile install` | not tried (no Nix on Windows) | — |
+| glsl, odin, luau | none known | — | — |
+
+Twenty-five packages, every one kawoosh drives: all installed (awk
+given a Python), and all but fish-lsp answered.
+
+Found and fixed:
+
+- **No npm package installed on Windows at all**: `npm` is `npm.cmd`
+  there, and `std::process::Command` looks for `npm.exe` alone —
+  "program not found" before anything ran. `io::command` takes a bare
+  name that is no `.exe` on the PATH but a `.cmd` or `.bat` by that
+  file's path (`io::shim`), which std runs through `cmd.exe`. It is
+  every child's: `npm view`, and a server npm put on the PATH
+  (`typescript-language-server.cmd`), which was not found either. One
+  kawoosh installed was always started by its path, `.cmd` included.
+- **R's line did not survive `cmd /C`**: `R -e 'install.packages(…)'`
+  quotes with `'`, which cmd does not read as quoting. Double quotes
+  outside, single inside, which sh reads the same.
+- **nil's line ran on Windows**, where there is no Nix: mac and Linux
+  only now, so `kawoosh lsp install nix` says no way is known.
+- **A line whose manager is not here** went to the shell and ended with
+  cmd's "not recognized". It is looked for first and said as a
+  package's missing manager is: `` `gem install ruby-lsp` needs `gem`,
+  which is not on the PATH ``.
+- awk and fish keep their rows, each with a comment saying what it
+  needs on Windows.
+
+Guards: `io.rs`'s `a_cmd_on_the_path_is_taken_by_its_path`;
+`lsp_rules.rs`'s `every_install_line_runs_a_known_manager_and_reads_under_cmd`
+(every row's line on every platform starts with a manager some row
+runs, and one Windows runs has no `'` outside `"`); and, over real
+installs, `kawoosh/tests/lsp.rs`'s ignored `installed_servers_answer_kawoosh`
+— kawoosh itself starting yaml, taplo, pyright, gopls, the json and
+css servers, bash and typescript from `KAWOOSH_SERVERS` and each
+answering, under a second each here.
+
+Not tried: the pip fallback without uv (on Windows `python` is often
+the Store's alias, which `on_path` finds and which runs nothing); a
+global line run for real.
+
 ## Not built
 
-- **Install lines checked against the package managers.** Each line is
-  the server project's documented one as of this writing; none was run
-  here but the fake server's.
+- ~~**Install lines checked against the package managers.**~~ Tried
+  2026-10-03 on Windows 11, above: every package kawoosh installs, and
+  the lines' packages looked up. Not on macOS or Linux, and not the
+  lines whose managers this machine has not.
 - **A server's `initializationOptions`**, which would bring astro-ls
   and Volar.
 - ~~**More than one server for a language**~~ (a linter beside the
