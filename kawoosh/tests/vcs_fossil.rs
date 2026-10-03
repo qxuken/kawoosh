@@ -114,6 +114,15 @@ fn a_fossil_checkout_is_signed_blamed_and_says_what_it_lacks() {
     until(&mut d, &mut app, "the refusal", |app| {
         app.ed.message == "fossil here has no merge_base"
     });
+    // Fossil has no index: a hunk is not staged, and its base has no
+    // HEAD under it, so nothing is staged to take back.
+    assert!(app.ed.base(id).unwrap().head.is_none());
+    d.press(&mut app, "ggj<leader>ha");
+    until(&mut d, &mut app, "the stage refused", |app| {
+        app.ed.message == "fossil here has no stage"
+    });
+    d.press(&mut app, "<leader>hu");
+    assert_eq!(app.ed.message, "nothing staged: index has no HEAD under it");
 
     // The review of the working tree, and the blame column.
     d.press(&mut app, "<leader>hd");

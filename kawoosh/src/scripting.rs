@@ -1051,9 +1051,13 @@ impl Kawoosh {
                 name,
                 text,
                 label,
+                head,
             } => match self.lua_buffer(buffer, name) {
                 Some(id) => match text {
-                    Some(t) => self.ed.set_base(id, std::sync::Arc::from(t), label),
+                    Some(t) => {
+                        self.ed.set_base(id, std::sync::Arc::from(t), label);
+                        self.ed.set_base_head(id, head.map(std::sync::Arc::from));
+                    }
                     None => {
                         self.ed.clear_base(id);
                     }

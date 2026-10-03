@@ -4567,6 +4567,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>hr", "hunk reset"),
         ("<leader>hR", "hunk reset!"),
         ("<leader>hp", "hunk preview"),
+        // Staged as `git add` does (`a`), taken back out (`u`); the
+        // shifted letter the whole buffer, as `hR` is.
+        ("<leader>ha", "hunk stage"),
+        ("<leader>hA", "hunk stage!"),
+        ("<leader>hu", "hunk unstage"),
+        ("<leader>hU", "hunk unstage!"),
         // Merge conflicts: walked, and resolved a side at a time.
         ("]x", "conflict next"),
         ("[x", "conflict prev"),

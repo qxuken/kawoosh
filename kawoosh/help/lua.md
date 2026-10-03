@@ -143,7 +143,7 @@ kawoosh.formatter("pg_format", {
 
 ## Version control
 
-A buffer's hunks ([vcs](vcs.md)) are the difference between its text and a *base* — the editor diffs them; a backend only says what the base is. `kawoosh.buf.base(text, label[, buffer])` gives a buffer its base (`kawoosh.buf.base(nil)` takes it away), `kawoosh.buf.hunks([buffer])` reads the hunks back once diffed — each `{ kind = "added" | "modified" | "deleted", line, end_line, old_line, old_end, old = { … } }`, lines from 1, ends exclusive — and `kawoosh.diff(old, new)` diffs two texts at once, the same shape. `kawoosh.buf.blame(rows[, buffer])` puts the blame column on from rows `{ line, count, label, rev, summary }`; `kawoosh.buf.blame_at(line)` reads one back.
+A buffer's hunks ([vcs](vcs.md)) are the difference between its text and a *base* — the editor diffs them; a backend only says what the base is. `kawoosh.buf.base(text, label[, buffer[, { head = }]])` gives a buffer its base (`kawoosh.buf.base(nil)` takes it away; `head`, the text the base is itself read against — HEAD's under the index — makes what is staged), `kawoosh.buf.hunks([buffer])` reads the hunks back once diffed — each `{ kind = "added" | "modified" | "deleted", line, end_line, old_line, old_end, old = { … } }`, lines from 1, ends exclusive — and `kawoosh.diff(old, new)` diffs two texts at once, the same shape. `kawoosh.buf.blame(rows[, buffer])` puts the blame column on from rows `{ line, count, label, rev, summary }`; `kawoosh.buf.blame_at(line)` reads one back.
 
 Another version control system is a table of functions, and what it lacks it does not have:
 
@@ -156,11 +156,12 @@ kawoosh.vcs.register("jj", {
   blame = function(root, path, text, done) … end,
   log = function(root, path, done) … end,
   show = function(root, rev, done) … end,
+  stage = function(root, path, patch, done) … end, -- done(true) or done(false, why)
   -- changed, merge_base, refs, worktrees, worktree_add, watch: the rest
 })
 ```
 
-`probe` and `base` alone colour the gutter. The bundled `vcs.lua` has git whole and fossil in part, as the worked examples. `kawoosh.vcs.of(dir)` says which backend owns a directory; `kawoosh.on_write(fn(path, buffer))` runs after a file is written, where a backend reads it again.
+`probe` and `base` alone colour the gutter. `stage` takes the patch `hunk stage` and `hunk unstage` made against the index — the `@@` sections alone, three lines of context, the file named by `path` — and applies it to the index (git's is `git apply --cached`); with it, `vcs.lua` fetches HEAD's text with the base, and the lines staged show. The bundled `vcs.lua` has git whole and fossil in part, as the worked examples. `kawoosh.vcs.of(dir)` says which backend owns a directory; `kawoosh.on_write(fn(path, buffer))` runs after a file is written, where a backend reads it again; `kawoosh.on_stage(fn(path, patch, opts))` is where the editor hands a patch to stage (`vcs.lua` sets it).
 
 ## Files and processes
 

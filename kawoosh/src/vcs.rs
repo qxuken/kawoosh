@@ -2,16 +2,18 @@
 //! buffer with a base run on the io thread once its text has been
 //! still for [`QUIET`] — one ask per buffer in flight, the answer
 //! handed to the engine ([`kawoosh_editor::hunks`]) — the signs' colours,
-//! and the hunk commands: `]h` `[h`, `hunk reset`, `hunk preview`. What
-//! a base *is* — the index's text, a revision's — is a backend's word,
-//! given through `kawoosh.buf.base` by `vcs.lua`.
+//! and the hunk commands: `]h` `[h`, `hunk reset`, `hunk preview`,
+//! `hunk stage` and `hunk unstage`. What a base *is* — the index's
+//! text, a revision's — is a backend's word, given through
+//! `kawoosh.buf.base` by `vcs.lua`; a patch staged is made here and
+//! handed to it (`kawoosh.on_stage`).
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{
-    Conflict, LineHunk, Mode, MultiLine, Selection, Selections, Sign, Spec, Take, motions,
+    Conflict, LineHunk, Mode, MultiLine, Selection, Selections, Sign, Spec, Take, ViewId, motions,
 };
 use kawoosh_systems::io::IoMsg;
 use kawoosh_systems::{Alarm, WakeHandle};
@@ -27,6 +29,10 @@ pub const QUIET: Duration = Duration::from_millis(100);
 
 /// The context either side of a previewed hunk.
 const PREVIEW_CONTEXT: usize = 3;
+
+/// How strong a staged line's sign is against an unstaged one's
+/// (docs/design/vcs.md Decision 12): there, and settled.
+pub(crate) const STAGED_ALPHA: f32 = 0.4;
 
 pub struct Vcs {
     /// Each buffer's conflicts as last read, and the version they are
@@ -78,12 +84,41 @@ impl Kawoosh {
         top: usize,
         from_files: &[MultiLine],
     ) -> HashMap<usize, Sign> {
+        self.signs_through(id, top, from_files, false)
+    }
+
+    /// The staged signs of the same lines (docs/design/vcs.md Decision
+    /// 12): what the base has and its head does not, drawn faint where
+    /// no unstaged sign is.
+    pub fn staged_signs_of(
+        &self,
+        id: BufferId,
+        top: usize,
+        from_files: &[MultiLine],
+    ) -> HashMap<usize, Sign> {
+        self.signs_through(id, top, from_files, true)
+    }
+
+    fn signs_through(
+        &self,
+        id: BufferId,
+        top: usize,
+        from_files: &[MultiLine],
+        staged: bool,
+    ) -> HashMap<usize, Sign> {
         if !self.signs_on() {
             return HashMap::new();
         }
+        let signs_in = |id: BufferId, lines: std::ops::Range<usize>| {
+            if staged {
+                self.ed.staged_signs_in(id, lines)
+            } else {
+                self.ed.signs_in(id, lines)
+            }
+        };
         if from_files.is_empty() {
             let last = top + self.ed.buffers.get(id).map_or(0, |b| b.line_count());
-            return self.ed.signs_in(id, top..last);
+            return signs_in(id, top..last);
         }
         let mut per_src: HashMap<BufferId, HashMap<usize, Sign>> = HashMap::new();
         let mut out = HashMap::new();
@@ -91,7 +126,7 @@ impl Kawoosh {
             if let MultiLine::File(src, n) = l {
                 let m = per_src
                     .entry(*src)
-                    .or_insert_with(|| self.ed.signs_in(*src, 0..usize::MAX));
+                    .or_insert_with(|| signs_in(*src, 0..usize::MAX));
                 if let Some(s) = m.get(n) {
                     out.insert(top + i, *s);
                 }
@@ -257,30 +292,7 @@ impl Kawoosh {
             self.ed.message = "no base to reset to".into();
             return;
         }
-        let hunks: Vec<LineHunk> = if all {
-            self.ed.hunks(src).to_vec()
-        } else if self.ed.mode(v) == Mode::Visual && !self.ed.is_multi(self.ed.views[v].buffer) {
-            let b = &self.ed.buffers[src];
-            let mut lines: Vec<usize> = Vec::new();
-            for r in self.ed.selection_ranges(v) {
-                let a = b.line_of(r.start.min(b.len()));
-                let z = b.line_of(r.end.saturating_sub(1).max(r.start).min(b.len()));
-                lines.extend(a..=z);
-            }
-            lines.sort_unstable();
-            lines.dedup();
-            let mut out: Vec<LineHunk> = Vec::new();
-            for ln in lines {
-                if let Some(h) = self.ed.hunk_at(src, ln)
-                    && !out.contains(h)
-                {
-                    out.push(h.clone());
-                }
-            }
-            out
-        } else {
-            self.ed.hunk_at(src, line).cloned().into_iter().collect()
-        };
+        let hunks = self.chosen_hunks(v, src, line, all, false);
         if hunks.is_empty() {
             self.ed.message = "no hunk here".into();
             return;
@@ -294,6 +306,136 @@ impl Kawoosh {
             self.sync_multis();
         } else if self.ed.message.is_empty() {
             self.ed.message = "nothing reset".into();
+        }
+    }
+
+    /// The hunks a hunk command takes from buffer `src`: every one with
+    /// `all`; in visual mode over a plain buffer, each the selection's
+    /// lines touch; else the one on line `line` — of the staged hunks
+    /// with `staged`, as the gutter shows them.
+    fn chosen_hunks(
+        &self,
+        v: ViewId,
+        src: BufferId,
+        line: usize,
+        all: bool,
+        staged: bool,
+    ) -> Vec<LineHunk> {
+        if all {
+            return if staged {
+                self.ed.base(src).map_or(Vec::new(), |b| b.staged.to_vec())
+            } else {
+                self.ed.hunks(src).to_vec()
+            };
+        }
+        let mut lines: Vec<usize> = Vec::new();
+        if self.ed.mode(v) == Mode::Visual && !self.ed.is_multi(self.ed.views[v].buffer) {
+            let b = &self.ed.buffers[src];
+            for r in self.ed.selection_ranges(v) {
+                let a = b.line_of(r.start.min(b.len()));
+                let z = b.line_of(r.end.saturating_sub(1).max(r.start).min(b.len()));
+                lines.extend(a..=z);
+            }
+            lines.sort_unstable();
+            lines.dedup();
+        } else {
+            lines.push(line);
+        }
+        let mut out: Vec<LineHunk> = Vec::new();
+        for ln in lines {
+            let here = if staged {
+                self.ed.staged_in(src, ln..ln + 1)
+            } else {
+                self.ed.hunk_at(src, ln).cloned().into_iter().collect()
+            };
+            for h in here {
+                if !out.contains(&h) {
+                    out.push(h);
+                }
+            }
+        }
+        out
+    }
+
+    /// Buffer `id`'s hunks made the text's as it is now, when they are
+    /// of an older version: a patch is made of the lines there are,
+    /// not the ones the gutter showed 100 ms ago.
+    fn diff_now(&mut self, id: BufferId) {
+        let (Some(base), Some(b)) = (self.ed.base(id), self.ed.buffers.get(id)) else {
+            return;
+        };
+        let version = b.version();
+        if base.version == Some(version) {
+            return;
+        }
+        let hunks = kawoosh_doc::line_diff::line_hunks(&base.text, &b.text());
+        self.ed.set_hunks(id, version, hunks);
+    }
+
+    /// `hunk stage` / `hunk unstage` (docs/design/vcs.md Decision 12):
+    /// the hunk under the caret — the selection's hunks in visual mode,
+    /// every one with `!` — taken into the index, or (`unstage`) a
+    /// staged one taken back out of it. The patch is made here against
+    /// the base and handed to the plugins (`kawoosh.on_stage`), whose
+    /// backend applies it and gives the base again.
+    pub(crate) fn hunk_stage(&mut self, unstage: bool, all: bool) {
+        let Some(v) = self.focused_view() else {
+            return;
+        };
+        let Some((src, line)) = self.hunk_place() else {
+            self.ed.message = "not on a file's line".into();
+            return;
+        };
+        let Some(path) = self.ed.buffers[src].path.clone() else {
+            self.ed.message = "not a file: nothing to stage it in".into();
+            return;
+        };
+        let Some(base) = self.ed.base(src) else {
+            self.ed.message = "no base to stage against".into();
+            return;
+        };
+        if unstage && base.head.is_none() {
+            self.ed.message = format!("nothing staged: {} has no HEAD under it", base.label);
+            return;
+        }
+        self.diff_now(src);
+        let hunks = self.chosen_hunks(v, src, line, all, unstage);
+        if hunks.is_empty() {
+            self.ed.message = match (unstage, all) {
+                (true, true) => "nothing staged".into(),
+                (true, false) => "no staged hunk here".into(),
+                (false, true) => "no hunks".into(),
+                (false, false) => "no hunk here".into(),
+            };
+            return;
+        }
+        let patch = if unstage {
+            self.ed.unstage_patch(src, &hunks)
+        } else {
+            self.ed.stage_patch(src, &hunks)
+        };
+        let Some(patch) = patch.filter(|p| !p.is_empty()) else {
+            self.ed.message = "nothing to stage".into();
+            return;
+        };
+        let label = self
+            .ed
+            .base(src)
+            .map(|b| b.label.clone())
+            .unwrap_or_default();
+        let Some(rt) = self.scripting.rt.clone() else {
+            self.ed.message = "no version control to stage with".into();
+            return;
+        };
+        rt.publish(&self.ed, self.focused_view());
+        let taken = rt.stage_hook(&path, &patch, src, &label, hunks.len(), unstage);
+        self.drain_lua();
+        if !taken {
+            self.ed.message = "no version control to stage with".into();
+            return;
+        }
+        if self.ed.mode(v) == Mode::Visual {
+            self.ed.set_mode(v, Mode::Normal);
         }
     }
 
@@ -525,8 +667,12 @@ impl Kawoosh {
                 Sign::Modified => (a, m + 1, d),
                 _ => (a, m, d + 1),
             });
+        let staged = match base.staged.len() {
+            0 => String::new(),
+            s => format!(", {s} staged"),
+        };
         self.ed.message = format!(
-            "against {}: {n} hunk{} (+{a} ~{m} −{d})",
+            "against {}: {n} hunk{} (+{a} ~{m} −{d}){staged}",
             base.label,
             if n == 1 { "" } else { "s" }
         );
@@ -558,6 +704,20 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("hunk preview").doc("the hunk under the caret as a diff in a `*hunk*` pane"),
             |k, _| k.hunk_preview(),
+        ),
+        cmd(
+            Spec::new("hunk stage")
+                .bang("every hunk of the buffer")
+                .doc("the hunk under the caret (the selection's hunks) taken into the index"),
+            |k, ctx| k.hunk_stage(false, ctx.form == kawoosh_editor::Form::Bang),
+        ),
+        cmd(
+            Spec::new("hunk unstage")
+                .bang("every staged hunk of the file")
+                .doc(
+                    "the staged hunk under the caret (the selection's) taken back out of the index",
+                ),
+            |k, ctx| k.hunk_stage(true, ctx.form == kawoosh_editor::Form::Bang),
         ),
         cmd(
             Spec::new("conflict").doc("the merge conflicts counted, and which the caret is in"),

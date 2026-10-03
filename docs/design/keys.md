@@ -210,7 +210,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `]q` `[q` | location in the compile output, or the next place of the last list — `grr`'s references, `:diagnostics` — opened beside it ([lists.md](lists.md)) |
 | `]d` `[d` | diagnostic (the message on the status line); in a multibuffer, the ones its excerpts show |
 | `]p` `[p` | right after a put: the text put replaced with the next newer / older one in the memory (the yank-pop), COUNT steps; the one chosen is the register from then on, and one `u` takes the put back whole |
-| `]h` `[h` | hunk — the next, previous change against the buffer's base, COUNT hunks; in a multibuffer, the excerpts' ([vcs.md](vcs.md)) |
+| `]h` `[h` | hunk — the next, previous change against the buffer's base, COUNT hunks; in a multibuffer, the excerpts' ([vcs.md](vcs.md)); `<leader>ha` `hu` stage the one under the caret into the index and take a staged one back out (the selection's in visual mode, from a review the file's), `<leader>hA` `hU` every one of the buffer ([vcs.md](vcs.md) Decision 12) |
 | `]x` `[x` | the next, previous merge conflict, COUNT conflicts; `<leader>hxo` `hxt` `hxb` `hxn` resolve the one under the caret as ours, theirs, both, neither ([vcs.md](vcs.md) Decision 11) |
 | `]e` `[e` | *reserved*: the next, previous pin |
 | `]'` `['` | the next, previous marked line of the file, COUNT marks ([marks.md](marks.md)) |
@@ -446,6 +446,8 @@ objects, or any other character on both sides.
 | `<leader>yp` `<leader>yP` | copy the file's path from the working directory (whole when outside it), its absolute path — onto the clipboard and into the register (`path copy relative`, `absolute`); in a `dir` listing the entry's under the caret, the listed directory's on `../` |
 | `<leader>yd` `<leader>yD` | copy its directory, from the working directory (`.` for the working one) and absolute (`path copy dir`, `dir absolute`) |
 | `<leader>yn` `<leader>yN` | copy its name, and its name without the extension (`path copy name`, `stem`) |
+| `<leader>ha` `<leader>hA` | stage the hunk under the caret into the index (`hunk stage`; in visual mode the hunks the selection touches, in a review its file's), every hunk of the buffer (`hunk stage!`); the staged lines' signs stay, faint ([vcs.md](vcs.md) Decision 12) |
+| `<leader>hu` `<leader>hU` | take the staged hunk under the caret back out of the index (`hunk unstage`), every staged hunk of the file (`hunk unstage!`) |
 | `<leader>u` | the undo history |
 | `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
 | `~` | the listed directory as the working one (oil's; in a listing only) |
