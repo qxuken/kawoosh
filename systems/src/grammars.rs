@@ -323,8 +323,8 @@ pub fn stored_manifest(root: &Path) -> Option<Manifest> {
 }
 
 /// Takes out what installs left behind: a fetch's scratch directory,
-/// and an install `current` no longer names — which on Windows could
-/// not go while its library was loaded. At launch, before any is.
+/// the libraries [`clear`] moved aside, and an install `current` no
+/// longer names. At launch, before any library is loaded.
 pub fn prune(root: &Path) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
@@ -332,7 +332,7 @@ pub fn prune(root: &Path) {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with(".fetch-") {
+        if name.starts_with(".fetch-") || name.starts_with(GONE) {
             let _ = std::fs::remove_dir_all(&path);
             continue;
         }
@@ -356,10 +356,47 @@ pub fn prune(root: &Path) {
     }
 }
 
+/// The prefix of a directory under the grammars directory that holds
+/// what [`clear`] could not delete.
+const GONE: &str = ".gone-";
+
+/// `dir` taken out, whole, so that its name is free for an install. A
+/// library this process loaded stays loaded to its end
+/// ([`Library::load`]), and Windows deletes no such file, nor renames
+/// the directory around it — but it renames the file: what will not go
+/// is moved into a [`GONE`] directory of `root`'s, which the next
+/// launch's [`prune`] takes out, and then `dir` goes. Removed and
+/// installed again in one session, a grammar's archive has the same
+/// directory as before.
+fn clear(root: &Path, dir: &Path) -> Result<(), String> {
+    if std::fs::remove_dir_all(dir).is_ok() || !dir.exists() {
+        return Ok(());
+    }
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let gone = root.join(format!("{GONE}{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&gone).map_err(|e| format!("{}: {e}", gone.display()))?;
+    let mut held = 0;
+    let mut dirs = vec![dir.to_path_buf()];
+    while let Some(d) = dirs.pop() {
+        for entry in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                dirs.push(entry.path());
+                continue;
+            }
+            held += 1;
+            let mut to = std::ffi::OsString::from(format!("{held}-"));
+            to.push(entry.file_name());
+            let _ = std::fs::rename(entry.path(), gone.join(to));
+        }
+    }
+    std::fs::remove_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))
+}
+
 /// Takes the grammar `name` out: `current` first, so it is not
-/// installed whatever else happens, then its directory — which a
-/// Windows with the library loaded keeps until the next launch's
-/// [`prune`]. `false` when there was none.
+/// installed whatever else happens, then its directory ([`clear`]: a
+/// library still loaded goes aside, until the next launch's [`prune`]).
+/// `false` when there was none.
 pub fn remove(root: &Path, name: &str) -> Result<bool, String> {
     if !plain(name) || installed_one(root, name).is_none() {
         return Ok(false);
@@ -367,7 +404,7 @@ pub fn remove(root: &Path, name: &str) -> Result<bool, String> {
     let dir = root.join(name);
     let current = dir.join("current");
     std::fs::remove_file(&current).map_err(|e| format!("{}: {e}", current.display()))?;
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = clear(root, &dir);
     Ok(true)
 }
 
@@ -633,7 +670,7 @@ fn from_base(
         let staged = scratch.join("install");
         let _ = std::fs::remove_dir_all(&staged);
         extract(&archive, row, &staged)?;
-        let _ = std::fs::remove_dir_all(&dir);
+        clear(root, &dir)?;
         if let Some(parent) = dir.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
@@ -791,9 +828,13 @@ fn build_in(
         git(&["remote", "add", "origin", &row.repo])?;
         git(&["fetch", "-q", "--depth", "1", "origin", &row.rev])
             .map_err(|e| format!("{} at {}: {e}", row.repo, row.rev))?;
+        // The commit's bytes as committed, whatever this machine's git
+        // makes of a checkout's line ends (`core.autocrlf` on Windows).
         git(&[
             "-c",
             "advice.detachedHead=false",
+            "-c",
+            "core.autocrlf=false",
             "checkout",
             "-q",
             "FETCH_HEAD",
@@ -934,7 +975,7 @@ fn build_in(
     let json = serde_json::to_string_pretty(&row).map_err(|e| e.to_string())?;
     std::fs::write(staged.join("grammar.json"), json).map_err(|e| e.to_string())?;
 
-    let _ = std::fs::remove_dir_all(&dir);
+    clear(root, &dir)?;
     if let Some(parent) = dir.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }

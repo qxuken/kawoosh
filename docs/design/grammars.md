@@ -62,7 +62,8 @@ the cargo registry:
   (x86_64 and aarch64, each of Windows, Linux at glibc 2.17, macOS)
   with no failure, 14–31 s a target, 15–16 MiB a target. The Windows
   libraries import `KERNEL32` and the UCRT alone, and export
-  `tree_sitter_NAME`. **Not loaded on a Windows yet.**
+  `tree_sitter_NAME`. ~~**Not loaded on a Windows yet.**~~ Loaded
+  there 2026-10-03 ("Tried on Windows", below).
 - A grammar built `-O0` parses 10–50% slower than one built `-O2`
   (Rust, 121 KiB: 8.4 ms against 5.7 ms): the time is in tree-sitter's
   runtime, which is kawoosh's. A compiler that does not optimise would
@@ -336,10 +337,11 @@ clang's.
 
 ## Risks
 
-- **No Windows has loaded one of these libraries.** They are built by
-  zig's mingw target and loaded by an MSVC kawoosh: the boundary is C
-  functions, a scanner frees what it allocated itself, and both sides
-  use the UCRT. The first thing round 1 proves.
+- ~~**No Windows has loaded one of these libraries.**~~ They are built
+  by zig's mingw target and loaded by an MSVC kawoosh: the boundary is
+  C functions, a scanner frees what it allocated itself, and both sides
+  use the UCRT. Loaded on Windows 11 2026-10-03, scanners and all
+  ("Tried on Windows", below).
 - **A grammar's own queries are uneven**, and written for the
   `tree-sitter` CLI's capture names. `Token::from_capture` reads nvim's
   spellings; a capture it does not know is plain. The directory's
@@ -424,7 +426,8 @@ the `.comment` section, where Homebrew's zig names its own clang. So
 Decision 2's rule stands as the safe one, and today either host's
 manifest would do for the other's archives.
 
-Not verified: no Windows has loaded a library.
+~~Not verified: no Windows has loaded a library.~~ Done 2026-10-03
+("Tried on Windows", below).
 
 **Round 2, 2026-10-01**: `:grammar install NAME`.
 `systems/src/grammars.rs` is the install, on a thread
@@ -484,7 +487,7 @@ of `kawoosh.run("grammar install zig")` and a state of its own shows
 the file plain with `Installing zig fetching 0%` in the corner, then
 painted, the message `grammar: zig installed (6479aa13f32f)`.
 
-Not verified: Windows.
+~~Not verified: Windows.~~ Done 2026-10-03 ("Tried on Windows", below).
 
 **Round 3, 2026-10-01**: the first file, `update`, `remove`.
 
@@ -505,7 +508,9 @@ Not verified: Windows.
   is not installed whatever a Windows with the library loaded lets go
   of; the language is one of files again, its buffers' syntax layer
   cleared, and it is not asked about again that session. The
-  directory left behind goes at the next launch's prune.
+  directory left behind goes at the next launch's prune. (Since
+  2026-10-03 the directory goes at once, a loaded library moved aside
+  for the prune: "Tried on Windows", below.)
 - **`:grammar`**, bare, says what is installed and how many more there
   are — the line until round 4's pane.
 - **An install's manifest is listed as it lands**: a language released
@@ -647,7 +652,7 @@ hosts; the pane in a window with sixty-seven rows to install.
   fetch's `curl` and the tests' `cc` and `curl` start through the rule
   from the commits that brought them.
 
-Not verified: Windows.
+~~Not verified: Windows.~~ Done 2026-10-03 ("Tried on Windows", below).
 
 **After the rounds, 2026-10-01**: queries on top, and indentation.
 Asked: "will indent work with this grammars? Can we add our queries on
@@ -747,9 +752,10 @@ over the network, kdl built from its repository at the list's revision
 with this machine's `cc` (`KAWOOSH_GRAMMARS_LIVE=1`); and `nu
 scripts/verify.nu`, 869 of 869.
 
-Not verified: a build on Windows, where `-shared` is mingw's or
+~~Not verified: a build on Windows, where `-shared` is mingw's or
 clang's to honour and `$CC` may be needed; and any library loaded
-there at all.
+there at all.~~ Done 2026-10-03, with mingw's `cc`, clang and `zig cc`
+each, and no `$CC` needed for the first ("Tried on Windows", below).
 
 **A directory as a source, 2026-10-01.** Asked: "but how grammars not
 from git repo can be injected?", then "ok, let's add dir". Three ways
@@ -927,3 +933,56 @@ detected, the install from the second base with the first down, said
 once though its URL is given twice, and taken from the first again
 when it is back); the moved key in
 `an_undeclared_key_is_named_once_and_the_types_know_the_rest`.
+
+**Tried on Windows, 2026-10-03.** Windows 11 x86_64, an MSVC kawoosh.
+Asked, of the roadmap's leftovers: "Windows: three things still need a
+run there: the windows-sys 0.61 update, :relaunch, and grammar
+installs". Until now every library above had been built and loaded on
+macOS alone.
+
+- **Over the network, in the tests** (`KAWOOSH_GRAMMARS_LIVE=1`): zig
+  from each of the two shipped bases alone; then
+  `several_released_grammars_paint_update_and_come_back`, new — zig
+  and java (no scanner), ruby, html and php (a scanner in C) installed
+  in one session, each loaded and painting a file of its own, a bare
+  `:grammar update` finding the five up to date, and ruby removed with
+  its file on show and installed again; ruby's indent query putting a
+  line under a `def` a level in; and kdl built from its repository at
+  the list's revision three times, with mingw's `cc` (gcc 16, found as
+  `cc` with no `$CC`), `CC=clang` (LLVM, the MSVC target) and
+  `CC="zig cc"` (0.15.2), each library loading. zig's mingw libraries
+  load into the MSVC process with nothing more, scanners and all.
+- **In a window**: a release build in a folder of its own, with a
+  state, a config and a grammars directory of its own, driven through
+  its socket (`kawoosh ex`): `:grammar install ruby` and `zig` from the
+  shipped bases, each file painted, ruby's outline in the breadcrumb;
+  `:grammar remove ruby` with its file painted, then `install` again,
+  painted again; the next launch with nothing of the removal left.
+- **Found: removed and installed again in one session, a grammar
+  failed on Windows** — `…\jsonish\1d061dac4aeb: The directory is not
+  empty. (os error 145)`. A library is never let go of once loaded
+  (`Library::load` forgets it) and Windows deletes no loaded library,
+  so the removal left it in the directory its archive's hash names,
+  and the install of that archive could not rename its own into that
+  name. Now a directory an install, a build or a removal takes out goes
+  through `clear` (`systems/src/grammars.rs`): what will not be deleted
+  is renamed into a `.gone-PID-N` directory beside the grammars —
+  Windows renames a loaded library, though not the directory around
+  it — the directory then goes, and `prune` takes the `.gone-` ones out
+  at the next launch, before anything is loaded. Test:
+  `auto_installs_at_the_first_file_and_update_and_remove_follow`
+  installs again after its removal and paints, and fails with that
+  error without the change; the next launch finds nothing of the
+  grammar left.
+- **Seen and left**: the window's first install sat at `fetching` for
+  26 seconds, `C:\Windows\System32\curl.exe` on the manifest from
+  GitHub, where the same command by hand at the time took under one;
+  every fetch after took about two seconds. Not seen again.
+- **Two of the build's tests held on Unix alone**, red in the Windows
+  sweep: a build from a repository took the checkout's line ends from
+  the machine's git — `core.autocrlf`, on in Windows' git, turned the
+  queries copied out of it to CRLF — so the checkout is made with
+  `core.autocrlf=false` now, the commit's bytes; and
+  `a_directory_is_built_as_it_lies` named `/nowhere/…` for a directory
+  that is not there, which Windows does not read as an absolute path,
+  so it names one under the test's own directory.
