@@ -372,10 +372,19 @@ fn clear(root: &Path, dir: &Path) -> Result<(), String> {
     if std::fs::remove_dir_all(dir).is_ok() || !dir.exists() {
         return Ok(());
     }
+    // A folder of its own, never one an earlier process of the same id
+    // left — another Kawoosh may still hold that one's libraries, and a
+    // rename onto a loaded one fails.
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let gone = root.join(format!("{GONE}{}-{n}", std::process::id()));
-    std::fs::create_dir_all(&gone).map_err(|e| format!("{}: {e}", gone.display()))?;
+    let gone = loop {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let gone = root.join(format!("{GONE}{}-{n}", std::process::id()));
+        match std::fs::create_dir(&gone) {
+            Ok(()) => break gone,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("{}: {e}", gone.display())),
+        }
+    };
     let mut held = 0;
     let mut dirs = vec![dir.to_path_buf()];
     while let Some(d) = dirs.pop() {
