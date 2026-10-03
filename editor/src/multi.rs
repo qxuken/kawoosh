@@ -257,6 +257,32 @@ fn run_edge(m: &Multi, mut i: usize, last: bool) -> usize {
     i
 }
 
+/// The runs of an excerpt's gap the caller did not paint, in order: a
+/// `⋯`, a blank — what is left of it around its notes.
+fn plain(e: &Excerpt) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for (r, _) in &e.gap_paint {
+        if r.start > at {
+            out.push(at..r.start);
+        }
+        at = at.max(r.end);
+    }
+    if at < e.gap.len() {
+        out.push(at..e.gap.len());
+    }
+    out
+}
+
+/// Whether an excerpt's gap says lines are left out before it: some of
+/// it is the caller's plain text and not blank — a `⋯`, alone or after
+/// a note that ends the excerpt before.
+fn elides(e: &Excerpt) -> bool {
+    plain(e)
+        .into_iter()
+        .any(|r| e.gap.get(r).is_some_and(|t| !t.trim().is_empty()))
+}
+
 /// Which body an edit of the multibuffer lies in, edges counting: the
 /// first whose range holds it whole.
 fn owner(bodies: &[Range<usize>], e: &Range<usize>) -> Option<usize> {
@@ -559,7 +585,8 @@ impl Editor {
 
     /// Whether `offset` of multibuffer `id` is on a gap that stands for
     /// lines left out of one file — the `⋯` between two excerpts of it,
-    /// not a header, not a note the caller painted: what a click grows.
+    /// after a note or not — and not on a header or a note the caller
+    /// painted: what a click grows.
     pub fn multi_elided(&self, id: BufferId, offset: usize) -> bool {
         let (Some(m), Some(bodies)) = (self.multis.get(&id), self.bodies_now(id)) else {
             return false;
@@ -574,11 +601,13 @@ impl Editor {
         ) else {
             return false;
         };
+        // Where the offset is in the gap: not on a note in it.
+        let within = offset.saturating_sub(bodies[next].start.saturating_sub(b.gap.len()));
         a.source == b.source
             && !(a.dead || b.dead || a.pending || b.pending)
             && a.src.end < b.src.start
-            && b.gap_paint.is_empty()
-            && !b.gap.trim().is_empty()
+            && elides(b)
+            && !b.gap_paint.iter().any(|(r, _)| r.contains(&within))
     }
 
     /// Multibuffer `id`'s excerpt at `offset` shown `n` more of its
@@ -789,6 +818,11 @@ impl Editor {
                 shift_after(m, k, len as isize);
             }
         }
+        // Met across a note: the two touch, the note kept, and a `⋯`
+        // after it — the lines it stood for all shown now — goes.
+        if let Some(j) = next.filter(|_| meets && join.is_none()) {
+            self.drop_elision(id, m, if below { j } else { k });
+        }
         m.ver = self.buffers[id].version();
         let k = match (join, below) {
             (Some(j), false) => j,
@@ -797,6 +831,32 @@ impl Editor {
         let src = &self.buffers[m.excerpts[k].source];
         m.excerpts[k].lines = seen(&m.excerpts[k], src);
         Ok((lines, join.is_some()))
+    }
+
+    /// Excerpt `g`'s gap left its painted runs alone, when the rest of
+    /// it is a `⋯` ([`elides`]): the excerpt before it has met it.
+    fn drop_elision(&mut self, id: BufferId, m: &mut Multi, g: usize) {
+        let e = &m.excerpts[g];
+        if !elides(e) {
+            return;
+        }
+        let at = e.body.start - e.gap.len();
+        for r in plain(e).into_iter().rev() {
+            self.write_grown(id, at + r.start..at + r.end, "");
+        }
+        let e = &mut m.excerpts[g];
+        let mut gap = String::new();
+        let mut paint = Vec::with_capacity(e.gap_paint.len());
+        for (r, color) in &e.gap_paint {
+            let s = gap.len();
+            gap.push_str(&e.gap[r.clone()]);
+            paint.push((s..gap.len(), color.clone()));
+        }
+        let delta = gap.len() as isize - e.gap.len() as isize;
+        e.gap = gap;
+        e.gap_paint = paint;
+        e.body = (e.body.start as isize + delta) as usize..(e.body.end as isize + delta) as usize;
+        shift_after(m, g, delta);
     }
 
     /// A growth's write into multibuffer `id`: the carets carried, and a
@@ -1041,6 +1101,7 @@ impl Editor {
                         continue;
                     };
                     let source = e.source;
+                    let mine = e.src.clone();
                     let at = e.src.start + d.range.start..e.src.start + d.range.end;
                     let v0 = src.version();
                     if !m.open.contains(&source)
@@ -1060,16 +1121,27 @@ impl Editor {
                     e.src.end = (e.src.end as isize + delta).max(e.src.start as isize) as usize;
                     e.src_ver = v1;
                     // The source's other excerpts move with it; one the
-                    // edit reached is looked at again.
+                    // edit reached is looked at again. Lines added at
+                    // this one's end are its own, though the next excerpt
+                    // of the file starts there — one that touches it
+                    // across a note: that one moves on whole, both edges.
                     for (j, x) in m.excerpts.iter_mut().enumerate() {
                         if j == i || x.source != source || x.dead || x.src_ver != v0 {
                             continue;
                         }
-                        if edit.range.start < x.src.end && edit.range.end > x.src.start {
-                            there[j] = true;
-                            moved = true;
+                        let past_mine = edit.is_insertion()
+                            && edit.range.start == mine.end
+                            && x.src.start == mine.end
+                            && x.src != mine;
+                        if past_mine {
+                            x.src = x.src.start + edit.new_len..x.src.end + edit.new_len;
+                        } else {
+                            if edit.range.start < x.src.end && edit.range.end > x.src.start {
+                                there[j] = true;
+                                moved = true;
+                            }
+                            x.src = shift(&x.src, &edit);
                         }
-                        x.src = shift(&x.src, &edit);
                         x.src_ver = v1;
                     }
                 }

@@ -532,6 +532,9 @@ fn an_excerpt_grows_above_and_below() {
     assert_eq!(t.multi(), format!("C\n{}", lines(0, 20)));
     t.keys("zj");
     assert!(t.ed.message.contains("end"), "{}", t.ed.message);
+    // No lines asked for is not the file's end.
+    t.ed.execute(v, "multi more above 0");
+    assert_eq!(t.ed.message, "multi more: a number of lines, 1 or more");
     assert_eq!(t.text(t.a), lines(0, 20), "the file is not touched");
     assert!(!t.ed.buffers[t.a].modified);
 }
@@ -702,4 +705,191 @@ fn the_dots_after_a_note_close() {
         t.multi(),
         format!("C\n{}  note\n{}", lines(0, 4), lines(4, 10))
     );
+}
+
+/// A `⋯` after a note — a list with no context, the note ending its
+/// place's excerpt — is a `⋯` still: clicked it grows, and when the two
+/// sides meet it goes, the note kept.
+#[test]
+fn the_dots_after_a_note_are_dots() {
+    let mut t = long(12, |c| {
+        vec![
+            Part::Gap("C\n".into()),
+            Part::Lines(c, 3..4),
+            Part::Painted("  error: boom\n".into(), "error".into()),
+            Part::Gap("⋯\n".into()),
+            Part::Lines(c, 9..10),
+        ]
+    });
+    assert_eq!(t.multi(), "C\nc3\n  error: boom\n⋯\nc9\n");
+    let dots = t.multi().find('⋯').unwrap();
+    let note = t.multi().find("  error").unwrap();
+    assert!(t.ed.multi_elided(t.m, dots));
+    assert!(!t.ed.multi_elided(t.m, note), "the note is not `⋯`");
+    t.keys("3j2zo");
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}  error: boom\n⋯\n{}", lines(3, 6), lines(7, 10))
+    );
+    let dots = t.multi().find('⋯').unwrap();
+    assert!(t.ed.multi_elided(t.m, dots));
+    // The sides meet: the `⋯` goes, the note stays where it was.
+    t.keys("gg5jzo");
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}  error: boom\n{}", lines(3, 7), lines(7, 10))
+    );
+    assert!(!t.multi().contains('⋯'));
+    // Its colour still on it.
+    let note = t.multi().find("  error").unwrap();
+    assert_eq!(
+        t.ed.multi_paints(t.m),
+        vec![(note..note + "  error: boom\n".len(), "error")]
+    );
+    // And the two a run: each a file's lines, the edits theirs.
+    t.keys("GkA!<Esc>");
+    assert_eq!(t.ed.buffers[t.a].line_text(9), "c9!");
+    t.keys("gg4jA?<Esc>");
+    assert_eq!(t.ed.buffers[t.a].line_text(6), "c6?");
+}
+
+/// `c3 c4 c5`, a note, `c6 c7`: two excerpts that touch across it.
+fn noted() -> T {
+    long(12, |c| {
+        vec![
+            Part::Gap("C\n".into()),
+            Part::Lines(c, 3..6),
+            Part::Painted("  error: boom\n".into(), "error".into()),
+            Part::Lines(c, 6..8),
+        ]
+    })
+}
+
+impl T {
+    /// What the multibuffer's lines are, from its first: the empty one
+    /// after its last line break left out.
+    fn gutter(&self) -> Vec<MultiLine> {
+        let n = self.ed.buffers[self.m].line_count() - 1;
+        self.ed.multi_lines(self.m, 0..n)
+    }
+}
+
+/// A line added after the last of an excerpt that touches the next
+/// across a note is the first's: the second keeps its lines, its
+/// numbers and its offsets, and the next edit there is its own.
+#[test]
+fn a_line_added_at_a_touching_excerpts_end_is_its_own() {
+    use MultiLine::{File, Gap, Header};
+    let mut t = noted();
+    // `o` on c5, the first excerpt's last line.
+    t.keys("3jonew<Esc>");
+    assert_eq!(t.text(t.a), format!("{}new\n{}", lines(0, 6), lines(6, 12)));
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}new\n  error: boom\n{}", lines(3, 6), lines(6, 8))
+    );
+    let a = t.a;
+    assert_eq!(
+        t.gutter(),
+        vec![
+            Header(a),
+            File(a, 3),
+            File(a, 4),
+            File(a, 5),
+            File(a, 6),
+            Gap,
+            File(a, 7),
+            File(a, 8),
+        ]
+    );
+    // The caret on c6 is on c6 in the file.
+    t.keys("2j0");
+    let head = t.ed.views[t.v].sels.primary().head;
+    let c6 = t.ed.buffers[t.a].line_start(7);
+    assert_eq!(t.ed.multi_at(t.m, head), Some((t.a, c6)));
+    // An edit there is c6's, the new line left in the file and the note
+    // left a note.
+    t.keys("A!<Esc>");
+    assert_eq!(
+        t.text(t.a),
+        format!("{}new\nc6!\n{}", lines(0, 6), lines(7, 12))
+    );
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}new\n  error: boom\nc6!\nc7\n", lines(3, 6))
+    );
+    // `u` and `<C-r>` step the file through both, the excerpts with it.
+    t.keys("uu");
+    assert_eq!(t.text(t.a), lines(0, 12));
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}  error: boom\n{}", lines(3, 6), lines(6, 8))
+    );
+    t.keys("<C-r>");
+    assert_eq!(t.text(t.a), format!("{}new\n{}", lines(0, 6), lines(6, 12)));
+    t.keys("gg6jA?<Esc>");
+    assert_eq!(t.ed.buffers[t.a].line_text(7), "c6?", "{}", t.multi());
+}
+
+/// The same through a replace that adds a line after one: `c5` → `c5`
+/// and a new line, at the end of an excerpt touching the next.
+#[test]
+fn a_replace_that_adds_a_line_keeps_the_next_excerpt() {
+    use kawoosh_editor::replace::{Find, Replace};
+    let mut t = noted();
+    let (m, v) = (t.m, t.v);
+    let done = t.ed.multi_replace(
+        m,
+        v,
+        &Replace {
+            find: Find {
+                pattern: "c5".into(),
+                regex: true,
+                ..Default::default()
+            },
+            with: r"$0\nnew".into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(done.map(|d| d.matches), Some(1));
+    assert_eq!(t.text(t.a), format!("{}new\n{}", lines(0, 6), lines(6, 12)));
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}new\n  error: boom\n{}", lines(3, 6), lines(6, 8))
+    );
+    assert_eq!(t.gutter()[6], MultiLine::File(t.a, 7));
+    // The next edit in the second excerpt is its own.
+    t.keys("gg6jdd");
+    assert_eq!(t.text(t.a), format!("{}new\n{}", lines(0, 6), lines(7, 12)));
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}new\n  error: boom\nc7\n", lines(3, 6))
+    );
+}
+
+/// Grown to touch the excerpt after a note, then a line added at its
+/// end: the line is the grown excerpt's.
+#[test]
+fn grown_to_touch_then_a_line_added() {
+    let mut t = long(20, |c| {
+        vec![
+            Part::Gap("C\n".into()),
+            Part::Lines(c, 2..4),
+            Part::Painted("  note\n".into(), "info".into()),
+            Part::Lines(c, 6..8),
+        ]
+    });
+    t.keys("2jzj");
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}  note\n{}", lines(2, 6), lines(6, 8))
+    );
+    t.keys("gg4jonew<Esc>");
+    assert_eq!(
+        t.multi(),
+        format!("C\n{}new\n  note\n{}", lines(2, 6), lines(6, 8))
+    );
+    t.keys("jjA!<Esc>");
+    assert_eq!(t.ed.buffers[t.a].line_text(7), "c6!");
+    assert_eq!(t.ed.buffers[t.a].line_text(6), "new");
 }

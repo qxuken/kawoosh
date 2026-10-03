@@ -267,3 +267,31 @@ fn a_line_two_excerpts_show_is_replaced_once() {
     assert_eq!(done.map(|d| d.matches), Some(4));
     assert_eq!(ed.buffers[a].text(), "kk0\nkk1 kk\nkk2\n");
 }
+
+/// A pattern that matches nothing — `x*` — matches between characters,
+/// not inside one: a character of two bytes takes its replacement once.
+#[test]
+fn an_empty_match_is_between_characters() {
+    let mut ed = Editor::new();
+    let a = ed.add_buffer(Buffer::new("a", "αβ\n"));
+    let m = ed.open_multi(
+        "*search*",
+        vec![Part::Gap("a\n".into()), Part::Lines(a, 0..1)],
+    );
+    let v = ed.add_view(m);
+    let done = ed.multi_replace(
+        m,
+        v,
+        &Replace {
+            find: Find {
+                pattern: "x*".into(),
+                regex: true,
+                ..Default::default()
+            },
+            with: "-".into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(ed.buffers[a].text(), "-α-β-\n");
+    assert_eq!(done.map(|d| d.matches), Some(3));
+}

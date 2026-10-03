@@ -417,15 +417,21 @@ the calls are taken here, each the user's to overturn.
   skipping one. Each is a change of its own. Alt-Enter is bound nowhere
   else ([keys.md](keys.md)), is the same key on every platform, and is
   no dead key on a Mac.
-- **The count goes stale, and says so.** After a replace the bar says
-  `replaced · ⏎ to search again` in the count's place until the next
-  run. The matches are not searched again (Decision 10's rule): the
+- **The count goes stale, and says so.** After a replace that replaced
+  something the bar says `replaced · ⏎ to search again` in the count's
+  place until the next run; one refused or that found nothing leaves
+  the count, the message saying why (`kawoosh.search_replace`'s
+  callback tells the bar which). The matches are not searched again (Decision 10's rule): the
   excerpts show the replaced text to look over, and `u` is one key
   away.
-- **Any multibuffer may.** `kawoosh.search_replace{ buffer =, pattern =,
+- **Any multibuffer may.** `kawoosh.search_replace({ buffer =, pattern =,
   regex =, word =, case =, with =, lines = { { pattern =, keep = }, … },
-  one = }` is the engine's (`kawoosh_editor::replace`); the bar is its
-  one caller.
+  one = }[, fn])` is the engine's (`kawoosh_editor::replace`), `fn`
+  called when it is done with `{ matches =, files =, read_only = }` or
+  `nil` and why nothing was; the bar is its one caller.
+- **An empty match is between characters.** A pattern that can match
+  nothing (`x*`) matches before each character and at the line's end,
+  never inside a character of several bytes.
 
 Beaten: **`:%s` spelled by the plugin**, the note's own "sugar". Its
 pattern is vim's `/` regex with a delimiter to escape and `\1` `&` in
@@ -460,8 +466,18 @@ the same way and no caller is asked:
   goes, and the two are one excerpt. Not past it: what is between two
   excerpts is all one growth can show, the rest is the next one's. A
   gap the caller painted — a note, not a `⋯` — is kept, and the two
-  only touch, a run from then on. Another file's excerpt is never met:
-  a growth stops at its file's ends.
+  only touch, a run from then on. A `⋯` after a note (a list with no
+  context, the note ending its place's excerpt) is a `⋯` all the same:
+  clicked it grows, and when the two meet it goes, the note kept.
+  Another file's excerpt is never met: a growth stops at its file's
+  ends.
+- **A line added at the end of the first of two that touch is its.**
+  An edit through the first that adds lines after its last — `o` there,
+  a replace that adds a line break — lands in the file where the second
+  starts; the second moves on whole, its lines and numbers its own, as
+  the first's text says. (A file's own edit there, seen only in its
+  journal, goes to the second, which shows it: the two stay true
+  either way.)
 - **On a gap's line**, the excerpts on either side grow toward it:
   `above` the one under it, `below` the one over it, both ways both of
   them — a `⋯` filled from its two ends.

@@ -267,11 +267,20 @@ pub enum Msg {
     /// `kawoosh.search_replace{ buffer =, pattern =, regex =, word =,
     /// case =, with =, lines =, one = }`: a project search's matches
     /// replaced in its results multibuffer — by its handle, or its
-    /// name — as one change (`Editor::multi_replace`).
+    /// name — as one change (`Editor::multi_replace`); with a callback,
+    /// its answer to `Runtime::replaced` under `token` (`Msg::Replaced`).
     SearchReplace {
         buffer: Option<u64>,
         name: Option<String>,
         replace: kawoosh_editor::replace::Replace,
+        token: Option<u64>,
+    },
+    /// What a `kawoosh.search_replace` with a callback did, for the
+    /// shell to hand to `Runtime::replaced`: the counts, or why nothing
+    /// was replaced.
+    Replaced {
+        token: u64,
+        done: Result<kawoosh_editor::replace::Replaced, String>,
     },
     /// `kawoosh.highlight(text, { language = | path = }, fn)`: the
     /// text's syntax runs from the ts thread, the language given or
@@ -2513,6 +2522,24 @@ impl Runtime {
         }
     }
 
+    /// What a `kawoosh.search_replace` with a callback did: it called
+    /// with `{ matches =, files =, read_only = }`, or `nil` and why
+    /// nothing was replaced.
+    pub fn replaced(&self, token: u64, done: Result<kawoosh_editor::replace::Replaced, String>) {
+        let result = done.and_then(|d| {
+            let t = self.lua.create_table().map_err(|e| e.to_string())?;
+            for (k, v) in [
+                ("matches", d.matches),
+                ("files", d.files),
+                ("read_only", d.read_only),
+            ] {
+                t.set(k, v).map_err(|e| e.to_string())?;
+            }
+            Ok(t)
+        });
+        self.answer(token, result, "search_replace");
+    }
+
     fn answer(&self, token: u64, result: Result<Table, String>, what: &str) {
         let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
             return;
@@ -2758,6 +2785,7 @@ impl Runtime {
                     buffer,
                     name,
                     replace,
+                    token,
                 } => {
                     let id = match (buffer, name) {
                         (Some(h), _) => Some(id_of(h)),
@@ -2768,11 +2796,20 @@ impl Runtime {
                             .map(|(id, _)| id),
                         (None, None) => None,
                     };
-                    match id {
-                        Some(id) => {
-                            ed.multi_replace(id, view, &replace);
+                    let done = match id {
+                        Some(id) => ed.multi_replace(id, view, &replace),
+                        None => {
+                            ed.message = "no such multibuffer".into();
+                            None
                         }
-                        None => ed.message = "no such multibuffer".into(),
+                    };
+                    // The caller told what came of it: the counts, or
+                    // why none — the message.
+                    if let Some(token) = token {
+                        rest.push(Msg::Replaced {
+                            token,
+                            done: done.ok_or_else(|| ed.message.clone()),
+                        });
                     }
                 }
                 Msg::Edits { buffer, edits } => {
@@ -5850,11 +5887,14 @@ fn seed(
     // takes it back. `lines = { { pattern =, keep = }, … }` takes only
     // the lines that match each `keep = true` and none `keep = false`;
     // `one = true` only the match at the caret, the caret then on the
-    // next. The message says how many.
+    // next. The message says how many. A function after the table is
+    // called once it is done: with `{ matches =, files =, read_only = }`,
+    // or `nil` and why nothing was replaced.
     let qq = q(queue);
+    let jj = jobs.clone();
     k.set(
         "search_replace",
-        lua.create_function(move |_, t: Table| {
+        lua.create_function(move |lua, (t, cb): (Table, Option<mlua::Function>)| {
             fn find(t: &Table) -> mlua::Result<kawoosh_editor::replace::Find> {
                 let pattern: String = t.get::<Option<String>>("pattern")?.unwrap_or_default();
                 let ignore_case = match t.get::<Option<String>>("case")?.as_deref() {
@@ -5885,15 +5925,26 @@ fn seed(
                     lines.push((find(&l)?, l.get::<Option<bool>>("keep")?.unwrap_or(true)));
                 }
             }
+            let replace = kawoosh_editor::replace::Replace {
+                find: find(&t)?,
+                with: t.get::<Option<String>>("with")?.unwrap_or_default(),
+                lines,
+                one: t.get::<Option<bool>>("one")?.unwrap_or(false),
+            };
+            let token = match cb {
+                Some(cb) => {
+                    let mut j = jj.borrow_mut();
+                    let token = j.token();
+                    j.waiting.insert(token, lua.create_registry_value(cb)?);
+                    Some(token)
+                }
+                None => None,
+            };
             qq.borrow_mut().push(Msg::SearchReplace {
                 buffer,
                 name,
-                replace: kawoosh_editor::replace::Replace {
-                    find: find(&t)?,
-                    with: t.get::<Option<String>>("with")?.unwrap_or_default(),
-                    lines,
-                    one: t.get::<Option<bool>>("one")?.unwrap_or(false),
-                },
+                replace,
+                token,
             });
             Ok(())
         })?,

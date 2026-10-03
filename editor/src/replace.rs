@@ -152,6 +152,12 @@ impl Editor {
             let locked = self.buffers.get(src).is_none_or(|s| s.read_only);
             for caps in re.captures_iter(&line) {
                 let m = caps.get(0).expect("a match is group 0");
+                // A bytes regex finds an empty match at every byte, a
+                // character's inner ones too: those are not between
+                // two characters, and would replace twice.
+                if m.is_empty() && line.get(m.start()).is_some_and(|b| (*b as i8) < -0x40) {
+                    continue;
+                }
                 if locked {
                     read_only += 1;
                     continue;
