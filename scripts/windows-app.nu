@@ -10,10 +10,13 @@
 #                              (left out with --no-fonts)
 #
 # A Kawoosh running from the folder keeps it: Windows renames no folder
-# with a file open in it. The new one is then left beside, whole, as
-# Kawoosh.new with a `ready` file in it, and the running Kawoosh offers
-# to relaunch into it (kawoosh/src/update.rs) — so a Kawoosh builds the
-# Kawoosh it runs from.
+# with a file open in it, and a Kawoosh holds its fonts open. The new
+# one is then left beside, whole, as Kawoosh.new with a `ready` file in
+# it, and the running Kawoosh offers to relaunch into it
+# (kawoosh/src/update.rs) — so a Kawoosh builds the Kawoosh it runs
+# from. A folder built --no-fonts does move under its Kawoosh, whose
+# executable alone Windows lets be renamed: the new one goes in place,
+# and the running one offers the relaunch as for one written over.
 #
 # With --install the folder goes to %LOCALAPPDATA%\Programs — a user's
 # own programs, no administrator — and a Start menu shortcut opens it in
@@ -88,7 +91,13 @@ def main [
   let moved = if ($app | path exists) { try { mv $app $old; true } catch { false } } else { true }
   if $moved {
     mv $fresh $app
-    rm -rf $old
+    # A Kawoosh running from a folder of no fonts lets it move: the
+    # loader leaves a running executable free to rename, though not to
+    # delete. That one stays aside until the Kawoosh quits — it offers
+    # to relaunch into the one now in place — and goes at the next run.
+    try { rm -rf $old } catch {
+      print -e $"($old) stays until the Kawoosh running from it quits; the next run takes it out."
+    }
   } else {
     $version | save ($fresh | path join ready)
     print -e $"($app) is in use, so Kawoosh ($version) waits beside it in ($fresh).

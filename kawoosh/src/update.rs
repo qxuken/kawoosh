@@ -11,9 +11,14 @@
 //! running Kawoosh watches the executable it was started from, and when
 //! that is no longer the file it was offers the relaunch.
 //!
-//! Windows renames no folder with a file open in it, so while a Kawoosh
-//! runs from its folder `scripts/windows-app.nu` cannot put the new one
-//! in its place. It leaves it beside instead — `Kawoosh.new`, whole —
+//! Windows renames no folder with a file open in it — a Kawoosh's fonts,
+//! which it holds open from its folder — so while a Kawoosh runs from
+//! its folder `scripts/windows-app.nu` cannot put the new one in its
+//! place. (A running executable alone does not hold it: the loader
+//! lets one be renamed though not deleted, so a folder of no fonts
+//! moves aside under its Kawoosh, the new one goes in, and the running
+//! one offers the relaunch as one written over does. Tried on Windows
+//! 11, 2026-10-03.) It leaves it beside instead — `Kawoosh.new`, whole —
 //! and writes [`READY`] in it last, with the version. The running
 //! Kawoosh watches for that file too, and its relaunch goes through the
 //! updater: it copies `kawoosh-update` out of the new folder to the
@@ -561,6 +566,18 @@ mod tests {
         {
             let mut child =
                 kawoosh_systems::spawn::spawn(&mut std::process::Command::new("true")).unwrap();
+            let pid = child.id();
+            child.wait().unwrap();
+            assert!(gone_within(pid, Duration::ZERO));
+        }
+        // Its handle still held here, so the process is there to open,
+        // and signalled.
+        #[cfg(windows)]
+        {
+            let mut child = kawoosh_systems::spawn::spawn(
+                std::process::Command::new("cmd").args(["/C", "exit"]),
+            )
+            .unwrap();
             let pid = child.id();
             child.wait().unwrap();
             assert!(gone_within(pid, Duration::ZERO));
