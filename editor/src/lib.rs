@@ -15,6 +15,7 @@ pub mod masks;
 pub mod motions;
 pub mod multi;
 pub mod repeat;
+pub mod replace;
 pub mod search;
 pub mod selection;
 pub mod settings;

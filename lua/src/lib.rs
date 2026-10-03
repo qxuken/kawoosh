@@ -264,6 +264,15 @@ pub enum Msg {
         word: bool,
         ignore_case: bool,
     },
+    /// `kawoosh.search_replace{ buffer =, pattern =, regex =, word =,
+    /// case =, with =, lines =, one = }`: a project search's matches
+    /// replaced in its results multibuffer — by its handle, or its
+    /// name — as one change (`Editor::multi_replace`).
+    SearchReplace {
+        buffer: Option<u64>,
+        name: Option<String>,
+        replace: kawoosh_editor::replace::Replace,
+    },
     /// `kawoosh.highlight(text, { language = | path = }, fn)`: the
     /// text's syntax runs from the ts thread, the language given or
     /// told from the path and the first line, the answer to
@@ -636,6 +645,7 @@ impl Msg {
             Msg::Edit { .. }
                 | Msg::SetText { .. }
                 | Msg::SearchPaint { .. }
+                | Msg::SearchReplace { .. }
                 | Msg::SetCursor { .. }
                 | Msg::Type(_)
                 | Msg::Edits { .. }
@@ -2620,6 +2630,27 @@ impl Runtime {
                     let p = kawoosh_editor::search::pattern_of(&pattern, regex, word);
                     if !pattern.is_empty() && ed.set_search(&p, ignore_case).is_ok() {
                         ed.search_hl = true;
+                    }
+                }
+                Msg::SearchReplace {
+                    buffer,
+                    name,
+                    replace,
+                } => {
+                    let id = match (buffer, name) {
+                        (Some(h), _) => Some(id_of(h)),
+                        (None, Some(n)) => ed
+                            .buffers
+                            .iter()
+                            .find(|(id, b)| b.name == n && ed.is_multi(*id))
+                            .map(|(id, _)| id),
+                        (None, None) => None,
+                    };
+                    match id {
+                        Some(id) => {
+                            ed.multi_replace(id, view, &replace);
+                        }
+                        None => ed.message = "no such multibuffer".into(),
                     }
                 }
                 Msg::Edits { buffer, edits } => {
@@ -5359,6 +5390,62 @@ fn seed(
                 word: t.get::<Option<bool>>("word")?.unwrap_or(false),
                 pattern,
                 ignore_case,
+            });
+            Ok(())
+        })?,
+    )?;
+    // `kawoosh.search_replace({ buffer =, pattern =, with =, … })`: the
+    // matches of `pattern` (`regex`, `word`, `case` as `kawoosh.search`
+    // reads them) in the multibuffer `buffer` (a handle or a name)
+    // replaced by `with` — `$1` `${name}` a group's text when it is a
+    // regex, `\n` `\t` the characters — as one change, so one `u` there
+    // takes it back. `lines = { { pattern =, keep = }, … }` takes only
+    // the lines that match each `keep = true` and none `keep = false`;
+    // `one = true` only the match at the caret, the caret then on the
+    // next. The message says how many.
+    let qq = q(queue);
+    k.set(
+        "search_replace",
+        lua.create_function(move |_, t: Table| {
+            fn find(t: &Table) -> mlua::Result<kawoosh_editor::replace::Find> {
+                let pattern: String = t.get::<Option<String>>("pattern")?.unwrap_or_default();
+                let ignore_case = match t.get::<Option<String>>("case")?.as_deref() {
+                    Some("sensitive") => false,
+                    Some("insensitive") => true,
+                    _ => !pattern.chars().any(char::is_uppercase),
+                };
+                Ok(kawoosh_editor::replace::Find {
+                    regex: t.get::<Option<bool>>("regex")?.unwrap_or(false),
+                    word: t.get::<Option<bool>>("word")?.unwrap_or(false),
+                    pattern,
+                    ignore_case,
+                })
+            }
+            let (buffer, name) = match t.get::<LV>("buffer")? {
+                LV::String(s) => (None, Some(s.to_str()?.to_string())),
+                LV::Integer(n) => (Some(n as u64), None),
+                LV::Number(n) => (Some(n as u64), None),
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "search_replace: `buffer`, a multibuffer's handle or name",
+                    ));
+                }
+            };
+            let mut lines = Vec::new();
+            if let Some(list) = t.get::<Option<Vec<Table>>>("lines")? {
+                for l in list {
+                    lines.push((find(&l)?, l.get::<Option<bool>>("keep")?.unwrap_or(true)));
+                }
+            }
+            qq.borrow_mut().push(Msg::SearchReplace {
+                buffer,
+                name,
+                replace: kawoosh_editor::replace::Replace {
+                    find: find(&t)?,
+                    with: t.get::<Option<String>>("with")?.unwrap_or_default(),
+                    lines,
+                    one: t.get::<Option<bool>>("one")?.unwrap_or(false),
+                },
             });
             Ok(())
         })?,

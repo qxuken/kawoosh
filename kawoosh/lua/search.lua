@@ -28,6 +28,9 @@
 -- caret's) opens the file at the caret in the pane the search was asked
 -- for from, the panel staying; `<C-v>` in a column of its own beside;
 -- `n` walks the matches (the editor's search is set to the pattern).
+-- The replace field is the search's (Decision 12): `<A-CR>` in the bar
+-- replaces every match the results show, `<A-CR>` in the results the
+-- one at the caret, each one change that `u` there takes back.
 
 local fs = kawoosh.fs
 
@@ -35,7 +38,10 @@ kawoosh.setting("search.context", { type = "integer", doc = "lines shown above a
 
 local VIEW = "search"
 local RESULTS = "*search*"
-local FIELDS = { "find", "include", "exclude" }
+-- In `<Tab>`'s order. The replacement is the search's, not a stage's:
+-- the stages keep the rest (`STAGED`).
+local FIELDS = { "find", "replace", "include", "exclude" }
+local STAGED = { "find", "include", "exclude" }
 local PANE_FACT = "lua:" .. VIEW
 -- The panes' one scale (`kawoosh.metrics`), read each frame: the
 -- fields, their labels and the stages at its text size, the toggles
@@ -181,11 +187,11 @@ end
 local function save_fields()
   if not search.live then return end
   local st = search.stages[search.cur]
-  for _, f in ipairs(FIELDS) do st[f] = kawoosh.field_text(VIEW, f) end
+  for _, f in ipairs(STAGED) do st[f] = kawoosh.field_text(VIEW, f) end
 end
 local function load_fields()
   local st = search.stages[search.cur]
-  for _, f in ipairs(FIELDS) do kawoosh.field_set(VIEW, f, st[f]) end
+  for _, f in ipairs(STAGED) do kawoosh.field_set(VIEW, f, st[f]) end
   search.live = false
 end
 
@@ -196,8 +202,23 @@ end
 local function painter(upto)
   for i = upto, 1, -1 do
     local st = search.stages[i]
-    if (st.kind == "search" or st.kind == "in") and st.find ~= "" then return st end
+    if (st.kind == "search" or st.kind == "in") and st.find ~= "" then return st, i end
   end
+end
+
+-- What a replace takes (Decision 12): the painter's matches on the
+-- lines the `keep` and `drop` stages after it, up to `upto`, left —
+-- the matches the answer counts, found again in the text as it is.
+local function replaceable(p, at, upto)
+  if not p then return nil end
+  local lines = {}
+  for j = at + 1, upto do
+    local s = search.stages[j]
+    if (s.kind == "keep" or s.kind == "drop") and s.find ~= "" then
+      lines[#lines + 1] = { pattern = s.find, regex = s.regex, word = s.word, case = s.case, keep = s.kind == "keep" }
+    end
+  end
+  return { pattern = p.find, regex = p.regex, word = p.word, case = p.case, lines = lines }
 end
 
 -- The buffer named `name`, if one is open.
@@ -248,7 +269,8 @@ local function show(answer, upto)
     end
   end
   panel(parts, { focus = false, line = 2 })
-  local p = painter(upto)
+  local p, at = painter(upto)
+  search.shown = answer and #answer.files > 0 and replaceable(p, at, upto) or nil
   if p then kawoosh.search_paint { pattern = p.find, regex = p.regex, word = p.word, case = p.case } end
 end
 
@@ -258,7 +280,7 @@ end
 -- answer before the first that failed.
 function search.run(from)
   save_fields()
-  search.back = nil
+  search.back, search.replaced = nil, nil
   from = from or search.cur
   if search.token then kawoosh.search_cancel(search.token) end
   search.gen = search.gen + 1
@@ -433,6 +455,20 @@ function search.close()
   kawoosh.cmd("close")
 end
 
+-- search.replace([one]): the matches the results show replaced by the
+-- replace field's text (`$1` a group's when the pattern is a regex) —
+-- every one, or with `one` the one at the results' caret, the caret
+-- then on the next — as one change, which `u` in the results takes
+-- back from each file; `:w` there writes them.
+function search.replace(one)
+  local q = search.shown
+  if not q then return kawoosh.echo("nothing to replace: ⏎ searches first") end
+  kawoosh.search_replace { buffer = RESULTS, pattern = q.pattern, regex = q.regex, word = q.word,
+                           case = q.case, lines = q.lines, one = one or false,
+                           with = kawoosh.field_text(VIEW, "replace") or "" }
+  search.replaced = true
+end
+
 -- search.state(): the bar as it stands — `stages` (each `kind`,
 -- `find`, `include`, `exclude`, the flags, `files` and `matches` of
 -- its answer, `err`), `cur`, `running`, `root` — for a test, a
@@ -466,6 +502,8 @@ local function status(t)
   end
   local a = last.answer or st.answer
   if not a then return text("⏎ to search", { size = SMALL, color = t.faint, wrap = "none" }) end
+  -- The count is the answer's from before: the results show the text.
+  if search.replaced then return text("replaced · ⏎ to search again", { size = SMALL, color = t.muted, wrap = "none" }) end
   local files = #a.files
   local s = a.matches .. (a.matches == 1 and " match" or " matches") .. " in " .. files ..
             (files == 1 and " file" or " files")
@@ -520,7 +558,7 @@ end
 -- hints, never inside one (`ctx.legend`); under the bar only while
 -- the pane's legend is whole, its way there at the trail's end.
 local HINTS = {
-  { "<CR>", "search" }, { "<Tab>", "next field" }, { "<S-Tab>", "previous field" },
+  { "<CR>", "search" }, { "<A-CR>", "replace all" }, { "<Tab>", "next field" }, { "<S-Tab>", "previous field" },
   { "<Up>", "earlier search" }, { "<Down>", "later search" },
   { "<A-r>", "regex" }, { "<A-c>", "case" }, { "<A-w>", "whole word" }, { "<A-g>", "ignored files" },
   { "<A-a>", "add stage" }, { "<A-k>", "stage kind" }, { "<A-x>", "remove stage" },
@@ -539,12 +577,15 @@ kawoosh.view(VIEW, function(ctx)
   local kind = search.kinds[st.kind]
   local find = ctx.field { name = "find", placeholder = "search", size = SIZE }
   find.width = "grow"
+  local replace = ctx.field { name = "replace", placeholder = "e.g. new_name, $1 with .*", size = SIZE }
+  replace.width = "grow"
   local include = ctx.field { name = "include", placeholder = "e.g. src/*.[ts,tsx], tests/", size = SIZE }
   include.width = "grow"
   local exclude = ctx.field { name = "exclude", placeholder = "e.g. *__test__*, vendor", size = SIZE }
   exclude.width = "grow"
   -- Two rows, the fewest that hold the fields: the pattern with its
-  -- toggles and count, the globs with the way to the keys; the stages'
+  -- toggles, the replacement and the count, the globs with the way to
+  -- the keys — two fields a row, one over the other; the stages'
   -- row under them once there are stages to walk.
   local head = row { width = "grow", height = ROW_H + 2, gap = 6, cross_align = "center",
     text(search.cur > 1 and (kind.title or st.kind) or "find", { size = SIZE, color = t.accent, wrap = "none" }),
@@ -553,6 +594,8 @@ kawoosh.view(VIEW, function(ctx)
     chip(t, "Aa", st.case == "sensitive", "case"),
     chip(t, "W", st.word, "word"),
     chip(t, "ign", st.ignored, "ignored"),
+    text("replace", { size = SIZE, color = t.muted, wrap = "none" }),
+    replace,
     status(t),
   }
   local globs = row { width = "grow", height = ROW_H + 2, gap = 6, cross_align = "center",
@@ -665,6 +708,10 @@ on("stage remove", function() search.remove() end, "the cursor's stage taken out
 on("stage kind", function() search.cycle() end, "the cursor's stage's kind: in, keep, drop")
 on("stage next", function() search.go(search.cur + 1) end, "the next stage to the fields")
 on("stage prev", function() search.go(search.cur - 1) end, "the previous stage to the fields")
+on("replace all", function() search.replace(false) end,
+   "every match the results show replaced by the replace field's text, as one change")
+on("replace one", function() search.replace(true) end,
+   "the match at the results' caret replaced by the replace field's text, the caret to the next")
 on("close", function() search.close() end, "close the search's panel, its results kept for the next")
 on("earlier", function() search.earlier(1) end, "the search made before this one here, in the bar")
 on("later", function() search.earlier(-1) end, "the search made after this one here, in the bar")
@@ -734,6 +781,7 @@ for _, m in ipairs { "i", "n" } do
     kawoosh.map(m, "<A-k>", "search stage kind", w)
     kawoosh.map(m, "<A-h>", "search stage prev", w)
     kawoosh.map(m, "<A-l>", "search stage next", w)
+    kawoosh.map(m, "<A-CR>", "search replace all", w)
     -- Every pane's legend key (`legend`), from the bar's fields too.
     kawoosh.map(m, "<A-/>", "legend", w)
   end
@@ -752,3 +800,6 @@ kawoosh.map("n", "<CR>", "multi open", results)
 kawoosh.map("n", "g<Space>", "multi open", results)
 -- In a column of its own, beside the panel.
 kawoosh.map("n", "<C-v>", "multi open beside", results)
+-- The bar's `<A-CR>` replaces every match; the results' the one at the
+-- caret, as their `<CR>` opens the one file (Decision 12).
+kawoosh.map("n", "<A-CR>", "search replace one", { buffer = RESULTS })
