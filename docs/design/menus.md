@@ -181,8 +181,9 @@ pane is not the buffer. And Settings… ran `settings user` while ⌘,,
 bound since the settings pane (roadmap step 72), opened the pane — so
 the bar left ⌘, off a row that did something else (Decision 4).
 
-Not drawn on a Mac: the keys beside a row (Decision 4's hint). kui's
-`macos_menu.rs` keeps an accelerator only when it parses with a
-modifier, so `gd` reaches `NSMenu` as nothing, though its comment says
-modifier-less ones are drawn. A kui round: a hint drawn in the title
-(an attributed title with a right tab stop), bound by nobody.
+The keys beside a row (Decision 4's hint) were not drawn on a Mac:
+kui's `macos_menu.rs` kept an accelerator only when it parsed with a
+modifier, so `gd` reached `NSMenu` as nothing. Fixed in kui as F119
+and released in alpha.34 (2026-10-03), which kawoosh pins: a hint is
+drawn in the row's title, right-aligned in a column of the menu's own,
+bound by nobody.

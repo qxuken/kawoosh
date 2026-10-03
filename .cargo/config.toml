@@ -1,8 +1,5 @@
-# drydock9, the Forgejo cargo registry kui publishes to
-# (docs/design/kui-requirements.md R1.1). Needed to resolve
-# `kui-native = { version = "...", registry = "drydock9" }`. kui's own
-# manifests still name it `forgejo`, so taking the three crates by path needs
-# that name too (a `[registries.forgejo]` with this index, e.g. in
-# ~/.cargo/config.toml) until kui renames it.
+# drydock9, the Forgejo cargo registry: `qdot` comes from it. kui
+# publishes there too, but kawoosh takes kui from crates.io since alpha.34
+# (Cargo.toml's comment says why).
 [registries.drydock9]
 index = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"

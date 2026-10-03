@@ -2905,7 +2905,7 @@ In order — the bugs first, then what needs deciding:
     binding takes.~~ Built 2026-10-03: `kawoosh/src/menus.rs`,
     `kawoosh/tests/menus.rs`. Seen on a Mac 2026-10-03: the language
     server's rows lit only where a server answers, Settings… the pane
-    as ⌘, is; the rows' key hints wait on kui (menus.md's "Built").
+    as ⌘, is; the rows' key hints drawn there since kui alpha.34 (F119).
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
