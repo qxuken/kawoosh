@@ -401,6 +401,16 @@ that is not; it never reaches the pane beside.
 A server may report on files you have not opened. rust-analyzer does
 for its whole crate; for TypeScript, turn on `load_all`.
 
+What another program changes in the project — a checkout, a
+generator, a formatter run in a terminal — reaches the servers: a file
+`load_all` sent is read again (gone, it is closed; a new one is sent),
+and a server that asked to hear of files (rust-analyzer's `Cargo.toml`)
+is told. A file open in a buffer is the buffer's: the server has the
+buffer's text, reloaded or not. Changes under `.git`, `target`,
+`node_modules` and what `.gitignore` names are not passed on. A server
+on another machine ([remote](remote.md)) is not told; rust-analyzer and
+TypeScript's watch the files there themselves.
+
 TypeScript shortens a long type in a message to `... 4 more ...`.
 Kawoosh shows what the server sends, and the server has no
 setting for this: it is the compiler option `noErrorTruncation`, so put

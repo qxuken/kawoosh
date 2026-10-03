@@ -2294,3 +2294,294 @@ fn a_servers_own_request_is_answered_from_its_row() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Frames until `pred` holds, `write` run again each time it has not
+/// within a while: a tree watch comes up a moment after it is asked
+/// for, and a write before that is not heard of.
+fn written_until(
+    d: &mut Drive,
+    app: &mut Kawoosh,
+    mut write: impl FnMut(),
+    mut pred: impl FnMut(&Kawoosh) -> bool,
+) -> bool {
+    for _ in 0..8 {
+        write();
+        for _ in 0..80 {
+            d.frame(app);
+            if pred(app) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    false
+}
+
+/// A folder removed once whatever watched it has let go of it.
+fn remove_soon(dir: &std::path::Path) {
+    for _ in 0..50 {
+        if std::fs::remove_dir_all(dir).is_ok() || !dir.exists() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Files other programs change (lsp-rules.md Decision 6): a server that
+/// registered watches hears of what is made, changed and deleted
+/// outside kawoosh — a relative pattern, an absolute glob string with
+/// the root in it as rust-analyzer writes one, a `kind` mask — and not
+/// of what `target` or `node_modules` hold, nor of the file a buffer
+/// has, whose text it has from the buffer; once a registration is
+/// unregistered, not of what that one asked for.
+#[test]
+fn files_changed_outside_reach_the_servers_that_watch_them() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-watch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for d in ["src", "target/debug", "node_modules/m"] {
+        std::fs::create_dir_all(dir.join(d)).unwrap();
+    }
+    let src = dir.join("src");
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(src.join("a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(dir.join("notes.txt"), "one\n").unwrap();
+
+    let mut server = fake_server();
+    let txt = format!("{}/**/*.txt", dir.display());
+    for a in [
+        "--watch-rel",
+        "rs",
+        "0",
+        "**/*.rs",
+        "--watch",
+        "txt",
+        "2",
+        &txt,
+        "--watch",
+        "toml",
+        "1",
+        "**/*.toml",
+    ] {
+        server.args.push(a.to_string());
+    }
+    let mut app = Kawoosh::from_file(&src.join("main.rs"));
+    app.add_lsp_server(server);
+    let mut d = Drive::new(900.0, 500.0);
+    let main_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    let noted = |a: &Kawoosh, note: &str| msgs(a, main_id).iter().any(|m| m == note);
+    assert!(
+        until(&mut d, &mut app, |a| noted(a, "registered")),
+        "the registration answered: {:?}",
+        msgs(&app, main_id)
+    );
+    let probe = src.join("probe.rs");
+    let mut n = 0;
+    assert!(
+        written_until(
+            &mut d,
+            &mut app,
+            || {
+                n += 1;
+                std::fs::write(&probe, format!("// {n}\n")).unwrap();
+            },
+            |a| msgs(a, main_id)
+                .iter()
+                .any(|m| m.starts_with("watched: ") && m.ends_with(" probe.rs"))
+        ),
+        "the watch came up: {:?}",
+        msgs(&app, main_id)
+    );
+
+    // What is not to be heard of first: had it been, it would be heard
+    // of before what follows.
+    std::fs::write(dir.join("target/debug/t.rs"), "// built\n").unwrap();
+    std::fs::write(dir.join("node_modules/m/i.rs"), "// installed\n").unwrap();
+    std::fs::write(src.join("main.rs"), "fn main() { 1 }\n").unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"y\"\n").unwrap();
+    std::fs::write(src.join("a.rs"), "fn a() { 1 }\n").unwrap();
+    std::fs::write(src.join("new.rs"), "fn new() {}\n").unwrap();
+    std::fs::write(dir.join("notes.txt"), "two\n").unwrap();
+    std::fs::write(dir.join("x.toml"), "x = 1\n").unwrap();
+    let said = [
+        "watched: changed a.rs",
+        "watched: created new.rs",
+        "watched: changed notes.txt",
+        "watched: created x.toml",
+    ];
+    assert!(
+        until(&mut d, &mut app, |a| said.iter().all(|s| noted(a, s))),
+        "{:?}",
+        msgs(&app, main_id)
+    );
+    let notes = msgs(&app, main_id);
+    for quiet in ["t.rs", "i.rs", "main.rs", "Cargo.toml"] {
+        assert!(
+            !notes.iter().any(|m| m.ends_with(&format!(" {quiet}"))),
+            "{quiet} not heard of: {notes:?}"
+        );
+    }
+    // The buffer's file is the buffer's: reloaded, and sent from it.
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[main_id]
+            .text()
+            .contains("{ 1 }")),
+        "the buffer reloaded"
+    );
+
+    std::fs::remove_file(src.join("a.rs")).unwrap();
+    assert!(
+        until(&mut d, &mut app, |a| noted(a, "watched: deleted a.rs")),
+        "{:?}",
+        msgs(&app, main_id)
+    );
+
+    // Unregistered, `rs` asks for nothing: b.rs made is not said, the
+    // change to notes.txt after it is.
+    d.keys(&mut app, "O");
+    d.commit(&mut app, "// @unwatch rs");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(
+        until(&mut d, &mut app, |a| noted(a, "unregistered rs")),
+        "{:?}",
+        msgs(&app, main_id)
+    );
+    std::fs::write(src.join("b.rs"), "fn b() {}\n").unwrap();
+    std::fs::write(dir.join("notes.txt"), "three\n").unwrap();
+    let changed_notes = |a: &Kawoosh| {
+        msgs(a, main_id)
+            .iter()
+            .filter(|m| *m == "watched: changed notes.txt")
+            .count()
+    };
+    assert!(
+        until(&mut d, &mut app, |a| changed_notes(a) == 2),
+        "{:?}",
+        msgs(&app, main_id)
+    );
+    assert!(
+        !noted(&app, "watched: created b.rs"),
+        "{:?}",
+        msgs(&app, main_id)
+    );
+    drop(app);
+    remove_soon(&dir);
+}
+
+/// A file `load_all` sent its server, changed on disk by another
+/// program, reaches the server (lsp-rules.md Decision 6): new text as
+/// a `didChange` — the fake's `!!` cascade listed for it — gone as a
+/// `didClose`, its diagnostics dropped, and one made since loaded. A
+/// file a buffer holds is the buffer's: its unsaved text stays what
+/// the server has, whatever the disk's became.
+#[test]
+fn a_loaded_file_changed_on_disk_reaches_the_server() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-reload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let src = dir.join("src");
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(src.join("a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(src.join("b.rs"), "fn b() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&src.join("main.rs"));
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let main_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    let status = |a: &Kawoosh| a.lsp.status.first().map(|s| (s.2, s.3));
+    assert!(until(&mut d, &mut app, |a| status(a) == Some((1, 0))
+        && !msgs(a, main_id).is_empty()));
+    // Each file a server spoke of that no buffer holds, by name, with
+    // what it said.
+    let listed = |a: &Kawoosh| -> Vec<(String, Vec<String>)> {
+        let mut v: Vec<(String, Vec<String>)> =
+            a.ed.diagnostics
+                .files()
+                .filter(|(_, l)| !l.is_empty())
+                .filter_map(|(p, l)| {
+                    Some((
+                        p.file_name()?.to_string_lossy().into_owned(),
+                        l.iter().map(|d| d.diagnostic.message.clone()).collect(),
+                    ))
+                })
+                .collect();
+        v.sort();
+        v
+    };
+    let names = |a: &Kawoosh| -> Vec<String> { listed(a).into_iter().map(|(n, _)| n).collect() };
+    let cascade = |a: &Kawoosh, name: &str| {
+        listed(a)
+            .iter()
+            .any(|(n, m)| n == name && m.iter().any(|m| m == "expected SEMICOLON"))
+    };
+    ex(&mut d, &mut app, "lsp toggle load_all");
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((1, 2))
+            && names(a) == ["a.rs", "b.rs"]),
+        "{:?} {:?}",
+        app.lsp.status,
+        listed(&app)
+    );
+
+    // b.rs changed: the server has its new text.
+    assert!(
+        written_until(
+            &mut d,
+            &mut app,
+            || std::fs::write(src.join("b.rs"), "fn b() {}\n!!\n").unwrap(),
+            |a| cascade(a, "b.rs")
+        ),
+        "{:?}",
+        listed(&app)
+    );
+    // Gone: closed, its diagnostics dropped.
+    std::fs::remove_file(src.join("b.rs")).unwrap();
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((1, 1))
+            && names(a) == ["a.rs"]),
+        "{:?} {:?}",
+        app.lsp.status,
+        listed(&app)
+    );
+    // Made: loaded.
+    std::fs::write(src.join("c.rs"), "fn c() {}\n").unwrap();
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((1, 2))
+            && names(a) == ["a.rs", "c.rs"]),
+        "{:?} {:?}",
+        app.lsp.status,
+        listed(&app)
+    );
+
+    // a.rs in a buffer, edited and not saved: the disk's change is not
+    // sent over the buffer's text. c.rs changed after it is the sign
+    // the watch has said what it heard.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", src.join("a.rs").display()),
+    );
+    let a_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((2, 1))
+            && msgs(a, a_id) == ["boom"]),
+        "{:?} {:?}",
+        app.lsp.status,
+        msgs(&app, a_id)
+    );
+    d.keys(&mut app, "O");
+    d.commit(&mut app, "// mine");
+    d.key(&mut app, "escape", KeyMods::default());
+    std::fs::write(src.join("a.rs"), "fn a() {}\n!!\n").unwrap();
+    std::fs::write(src.join("c.rs"), "fn c() {}\n!!\n").unwrap();
+    assert!(
+        until(&mut d, &mut app, |a| cascade(a, "c.rs")),
+        "{:?}",
+        listed(&app)
+    );
+    assert_eq!(msgs(&app, a_id), ["boom"], "a.rs is the buffer's");
+    assert!(app.ed.buffers[a_id].text().contains("// mine"));
+    drop(app);
+    remove_soon(&dir);
+}

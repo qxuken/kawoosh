@@ -133,6 +133,91 @@ the session layer, and says where it now stands. The session layer is what `:set
 writes, so the settings tab shows it as the session's and `:set
 lsp.typescript.load_all -` takes it back.
 
+### 6. What another program changes on disk reaches the server
+
+Written 2026-10-03, from "Not built" below: a file `load_all` sent was
+the server's as the walk read it, whatever a checkout, a generator or
+a `git pull` did to it after; and a server was told nothing of files
+it holds no document for — rust-analyzer's `Cargo.toml`, a file made
+in the project. The protocol's way is `workspace/didChangeWatchedFiles`,
+which the server asks for with the globs it cares about.
+
+**A watch on the workspace, on the platform's events.** The pool
+watches the root of each server here that hears of files — it
+registered watches, or `load_all` holds files for it — and any folder
+outside the root its watches name (a path dependency's crate):
+`systems/src/tree_watch.rs`, on `notify` 8, the one new dependency.
+ReadDirectoryChangesW and FSEvents watch a tree in one handle; on
+inotify, whose recursive watch is a watch per folder anyway, the
+folders are walked as the picker's walk reads `.gitignore` and watched
+one by one, a folder made later as it comes. The buffers' watch
+(`watch.rs`, roadmap step 12) is not it and stays: it polls a few
+named paths, and a workspace is thousands — polled, a walk at every
+beat — with the files made in it on no list.
+
+**What is no news is cut before it counts**: a path in `.git` (`.hg`,
+`.svn`, `.jj`), `target` or `node_modules`, or one a `.gitignore` names
+in a repository, read as the walk reads them. A build or an `npm
+install` stirs nothing a server hears.
+
+**Batched**: what changed is gathered until the tree has been still
+for 150 ms, or for a second since the first, and each path is said once,
+as the disk has it then — made and gone again is nothing, gone and made
+again (a save by rename) is a change, a folder's own stir is said by
+its files. Where the platform dropped events (its buffer ran over),
+every file loaded under that root is read again.
+
+**What a server is sent**, path by path:
+
+- *A file `load_all` sent it* (the pool's document) is read again: its
+  new text a `didChange`, gone — or grown past a MiB — a `didClose`,
+  its diagnostics dropped as a rule switched off drops them; a folder
+  gone takes its files. A file of a loaded language made since, or a
+  folder of them, is sent as the walk sends: not hidden, not private,
+  under `load_max`.
+- *A file a buffer holds* is the buffer's, and nothing of the disk's is
+  said: the protocol has the client own an open document's text and
+  the server not read it from disk. The buffer's own watch reloads a
+  clean buffer, and the reload reaches the server as the buffer's
+  `didChange`; a modified one is asked, and meanwhile the server keeps
+  the buffer's text. A save from kawoosh is the same: news to no
+  server holding that buffer, but to one that holds no document for it
+  — `Cargo.toml` saved, to rust-analyzer — it is said.
+- *The rest*: `workspace/didChangeWatchedFiles`, one notification a
+  batch, the paths each server's watches ask for.
+
+**Registration.** A server here is offered
+`workspace.didChangeWatchedFiles` with `dynamicRegistration` and
+`relativePatternSupport`; its `client/registerCapability` for the method
+is kept by registration, and `client/unregisterCapability` drops one —
+under the protocol's spelling `unregisterations` or the word it meant.
+A glob is LSP's (`*` within a segment, `**`, `{a,b}`, `[…]`): a
+`RelativePattern` is matched on the path under its folder, a string
+from a disk's root on the whole path, any other under the server's
+root or whole; `kind` masks created, changed and deleted. On Windows a
+`\` in a glob is a separator — rust-analyzer writes its root into a
+glob string for a client without relative patterns — paths and globs
+are matched case aside, and paths go out as every URI here does,
+`file:///C:/…`. Offered this, rust-analyzer turns its own watcher off:
+kawoosh's is its watcher now.
+
+**Not watched**: a server on a host ([domains.md](domains.md)). SFTP
+has no watch and a walk there is a round trip a folder, so such a
+server is not offered the capability, and rust-analyzer and tsserver
+go on watching on their host themselves; its `load_all` files are, as
+before, what the walk read until a buffer opens one, the rule is
+switched or it restarts. Nor a disk's root or the home folder as a
+root: a loose file's server starts in its file's folder, and a home's
+caches stir all day.
+
+Beaten: the buffers' polling watch handed every loaded file (no file
+made is on it, and two thousand stats each half second — on Windows a
+stat opens a handle); the workspace polled with the walk; a recursive
+inotify watch (a watch on every folder of `target` and `node_modules`);
+`didChangeWatchedFiles` for an open buffer's file as well, as VS Code
+sends it — a server takes a document it holds from the client, not the
+disk, and the buffer has said its text.
+
 ## Beside it
 
 `didOpen`'s `languageId` is the document's own language now, where it
@@ -171,10 +256,24 @@ as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
 
 ## Not built
 
-- **A loaded file changed on disk by another program** is not read
+- ~~**A loaded file changed on disk by another program** is not read
   again; the server holds what the walk read until a buffer opens it,
   the rule is switched, or the server restarts. A
-  `workspace/didChangeWatchedFiles` registration is the way.
+  `workspace/didChangeWatchedFiles` registration is the way.~~ Built
+  2026-10-03 (Decision 6): `systems/src/tree_watch.rs` (the watch,
+  batched and cut by the ignores), `systems/src/lsp.rs` (the
+  registrations — `FileWatch`, `file_watches` — `rewatch`,
+  `handle_files` and `files_changed`, `load_made`); tests
+  `tree_watch`'s `changes_are_heard_recursively`,
+  `changes_are_heard_a_folder_at_a_time`,
+  `a_path_heard_of_twice_is_said_as_it_ended` and
+  `gitignores_are_read_as_the_walk_reads_them`, `lsp`'s
+  `watched_files_match_as_the_protocol_reads_them`, and
+  `kawoosh/tests/lsp.rs`'s
+  `files_changed_outside_reach_the_servers_that_watch_them` and
+  `a_loaded_file_changed_on_disk_reaches_the_server` against the fake
+  server's `--watch`, `--watch-rel` and `@unwatch`. A server on a host
+  is still not told.
 - **The pull model, workspace-wide** (`workspace/diagnostic`) —
   lists.md's; with it a server that answers would need no `load_all`.
   A document's own pull is built ([lsp-installs.md](lsp-installs.md)
