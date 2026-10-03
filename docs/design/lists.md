@@ -193,14 +193,16 @@ Departed from the note as written: the keys are `<leader>ce`
 
 ## Not built
 
-- **The pull model.** `workspace/diagnostic` for a server that declares
-  `diagnosticProvider.workspaceDiagnostics` — a project's errors
-  without opening its files. vtsls answers it; the servers used here do
-  not.
-- **More than one server per file.** A file's layer is one server's
-  word; two servers for one language (a linter beside the compiler)
-  would overwrite each other. The store is where a source's own list
-  would be kept.
+- **The pull model, workspace-wide.** `workspace/diagnostic` for a
+  server that declares `diagnosticProvider.workspaceDiagnostics` — a
+  project's errors without opening its files. vtsls answers it; the
+  servers used here do not. A document's own pull
+  (`textDocument/diagnostic`) is built ([lsp-installs.md](lsp-installs.md)
+  Decision 7, 2026-10-03).
+- ~~**More than one server per file.**~~ Built 2026-10-03
+  ([lsp-installs.md](lsp-installs.md) Decision 7): a buffer has a list
+  of servers, and diagnostics are every server's together, per
+  document.
 - **A plugin's diagnostics** (`kawoosh.diagnostics.set(buffer, source,
   list)`): the store is ready; no caller yet.
 - **Growing an excerpt**: the search's, again.

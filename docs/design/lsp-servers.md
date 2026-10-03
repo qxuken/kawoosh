@@ -122,5 +122,6 @@ corner line, logged as a warning); `grammars.rs`'s
   here but the fake server's.
 - **A server's `initializationOptions`**, which would bring astro-ls
   and Volar.
-- **More than one server for a language** (a linter beside the
-  language's server, ruff beside pyright). The table is by language.
+- ~~**More than one server for a language**~~ (a linter beside the
+  language's server, ruff beside pyright). Built 2026-10-03:
+  [lsp-installs.md](lsp-installs.md) Decision 7, `when` files.

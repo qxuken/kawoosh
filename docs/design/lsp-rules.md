@@ -175,7 +175,9 @@ as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
   again; the server holds what the walk read until a buffer opens it,
   the rule is switched, or the server restarts. A
   `workspace/didChangeWatchedFiles` registration is the way.
-- **The pull model** (`workspace/diagnostic`) — lists.md's; with it a
-  server that answers would need no `load_all`.
+- **The pull model, workspace-wide** (`workspace/diagnostic`) —
+  lists.md's; with it a server that answers would need no `load_all`.
+  A document's own pull is built ([lsp-installs.md](lsp-installs.md)
+  Decision 7).
 - **Rules a plugin defines**: the table is open, but only the shell
   reads its rules.
