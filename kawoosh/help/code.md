@@ -344,6 +344,11 @@ kawoosh's source), and `kawoosh.lsp.server(NAME, t)` in
 [Lua](lua.md) takes the same table, the rules aside: `lsp.NAME` over
 either changes what you say and keeps the rest.
 
+A plugin can add rules of its own with `kawoosh.lsp.rule`
+([lua](lua.md#language-servers)). They are set the same way, as
+`lsp.NAME.RULE` for one server or `lsp.RULE` for all of them, and `:lsp
+toggle` and `:lsp info` know them.
+
 ### Commands
 
 | command | what |
@@ -355,7 +360,7 @@ either changes what you say and keeps the rest.
 | `:lsp update [LANGUAGE]` | every server kawoosh installed, or one, at its manager's latest; restarted once that ends well |
 | `:lsp restart [LANGUAGE]` | restart one server, or all; a missing program, or one that refused to start or kept exiting, is tried again |
 | `:lsp logs [LANGUAGE]` | what a server said, its errors included, live; `:lsp logs clear` forgets it |
-| `:lsp toggle RULE [LANGUAGE]` | flip `enabled`, `load_all` or `inlay_hints` for the session |
+| `:lsp toggle RULE [LANGUAGE]` | flip `enabled`, `load_all`, `inlay_hints` or a plugin's rule for the session |
 
 ### Keys
 
@@ -400,6 +405,10 @@ that is not; it never reaches the pane beside.
 
 A server may report on files you have not opened. rust-analyzer does
 for its whole crate; for TypeScript, turn on `load_all`.
+
+A plugin can report diagnostics too, under a name of its own
+(`kawoosh.diagnostics.set`, [lua](lua.md#diagnostics)). They show in
+all the same places, beside the servers'.
 
 TypeScript shortens a long type in a message to `... 4 more ...`.
 Kawoosh shows what the server sends, and the server has no

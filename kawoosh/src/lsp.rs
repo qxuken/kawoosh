@@ -134,6 +134,12 @@ pub struct LspState {
     pub(crate) order: std::collections::BTreeMap<String, Vec<String>>,
     /// The `lsp.NAME` tables that are no server's, said once each.
     pub(crate) said_strays: HashSet<String>,
+    /// The rules plugins defined (`kawoosh.lsp.rule`): name, what it
+    /// does, its default (docs/design/lsp-rules.md Decision 6).
+    pub(crate) plugin_rules: Vec<(String, String, kawoosh_editor::Setting)>,
+    /// Each served language's server as Lua was last told
+    /// (`Runtime::set_lsp_names`).
+    pub(crate) names_told: HashMap<String, String>,
     /// What each server said, all of it (`:lsp logs`).
     pub logs: crate::lsp_logs::ServerLogs,
     /// What each language's server said it does.
@@ -201,6 +207,8 @@ impl LspState {
             order: Default::default(),
             holders: HashMap::new(),
             said_strays: HashSet::new(),
+            plugin_rules: Vec::new(),
+            names_told: HashMap::new(),
             logs: Default::default(),
             caps: HashMap::new(),
             actions: Vec::new(),
@@ -349,7 +357,7 @@ impl Kawoosh {
                     // A buffer on the file after all — opened since the
                     // server looked — is sent to it and hears again.
                     if self.ed.buffer_at(&path).is_none() {
-                        self.ed.diagnostics.set_file(path, diagnostics);
+                        self.ed.diagnostics.set_file(path, None, diagnostics);
                     }
                 }
                 Event::Definition {
@@ -822,13 +830,10 @@ impl Kawoosh {
         self.positional_cmd(cmd);
     }
 
+    /// The servers' word on `buffer`, in place of their last; a plugin's
+    /// beside it kept (`Editor::publish_diagnostics`).
     fn apply_diagnostics(&mut self, buffer: BufferId, update: Update, list: Vec<Diagnostic>) {
-        if let Some(b) = self.ed.buffers.get_mut(buffer)
-            && b.apply(update).is_ok()
-        {
-            let path = b.path.clone();
-            self.ed.diagnostics.set(buffer, path.as_deref(), list);
-        }
+        self.ed.publish_diagnostics(buffer, None, update, list);
     }
 
     /// Sends every shown buffer whose text moved since the server last
@@ -1687,7 +1692,8 @@ impl Kawoosh {
     }
 
     /// The diagnostics at the caret (or over the selection): `(start,
-    /// end, severity, message)` — what a code action request sends.
+    /// end, severity, message)` — what a code action request sends. The
+    /// servers' alone: a plugin's diagnostic is nothing a server can fix.
     fn diagnostics_at(
         &self,
         buffer: BufferId,
@@ -1695,6 +1701,7 @@ impl Kawoosh {
     ) -> Vec<(usize, usize, Diagnostic)> {
         self.diagnostics_here(buffer, range)
             .into_iter()
+            .filter(|(_, d)| d.from.is_none())
             .map(|(r, d)| (r.start, r.end, d))
             .collect()
     }

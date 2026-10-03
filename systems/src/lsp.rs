@@ -3383,6 +3383,7 @@ fn diagnostic_of(d: &Value) -> Diagnostic {
             Some(Value::Number(n)) => Some(n.to_string()),
             _ => None,
         },
+        from: None,
     }
 }
 

@@ -2294,3 +2294,183 @@ fn a_servers_own_request_is_answered_from_its_row() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A plugin's diagnostics beside a server's (docs/design/lists.md
+/// Decision 7): drawn on their row, read back by publisher, carried
+/// through an edit while the server's next word replaces only its own,
+/// and kept when `:lsp restart` clears the server's.
+#[test]
+fn a_plugins_diagnostics_beside_a_servers() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-plugin-diag-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n    hel\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    let buf_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, buf_id) == ["boom"]),
+        "the server's"
+    );
+    lua(
+        &mut app,
+        "kawoosh.diagnostics.set(0, 'lint', { { line = 2, col = 5, end_col = 8, severity = 'warning', message = 'hel?' } })",
+    );
+    d.frame(&mut app);
+    let sorted = |a: &Kawoosh| {
+        let mut m = msgs(a, buf_id);
+        m.sort();
+        m
+    };
+    assert_eq!(sorted(&app), ["boom", "hel?"]);
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("hel?")),
+        "the plugin's message is on its row"
+    );
+    lua(
+        &mut app,
+        "assert(#kawoosh.diagnostics.get { from = 'lsp' } == 1)\n\
+         assert(kawoosh.diagnostics.get { from = 'lint' }[1].level == 'warning')\n\
+         assert(#kawoosh.lsp.diagnostics { buffer = 0 } == 2)",
+    );
+
+    // The server's next word, after an edit above both, replaces its
+    // own; the plugin's stays where the edit carried it. (The fake
+    // server says an error on every line of a text with `!!` in it.)
+    d.keys(&mut app, "O");
+    d.commit(&mut app, "// !!");
+    d.key(&mut app, "escape", KeyMods::default());
+    let semis = |a: &Kawoosh| {
+        msgs(a, buf_id)
+            .iter()
+            .filter(|m| *m == "expected SEMICOLON")
+            .count()
+    };
+    assert!(
+        until(&mut d, &mut app, |a| semis(a) == 4),
+        "the server spoke again: {:?}",
+        msgs(&app, buf_id)
+    );
+    assert_eq!(sorted(&app).last().map(String::as_str), Some("hel?"));
+    assert!(
+        !msgs(&app, buf_id).contains(&"boom".to_string()),
+        "its own replaced"
+    );
+    let lint = app
+        .ed
+        .diagnostics_listed(Some(buf_id))
+        .into_iter()
+        .find(|l| l.diagnostic.from.as_deref() == Some("lint"))
+        .expect("the plugin's kept");
+    assert_eq!(
+        (lint.line, lint.col, lint.end_col),
+        (2, 4, 7),
+        "moved down a line"
+    );
+
+    // A restart clears the server's until its new word; the plugin's
+    // are not the server's to clear.
+    ex(&mut d, &mut app, "lsp restart");
+    assert_eq!(msgs(&app, buf_id), ["hel?"]);
+    assert!(
+        until(&mut d, &mut app, |a| sorted(a) == ["boom", "hel?"]),
+        "the restarted server's beside it: {:?}",
+        msgs(&app, buf_id)
+    );
+    lua(&mut app, "kawoosh.diagnostics.clear('lint')");
+    d.frame(&mut app);
+    assert_eq!(msgs(&app, buf_id), ["boom"]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A rule a plugin defines (docs/design/lsp-rules.md Decision 6): set
+/// per server as the shell's are — the session's word over a project's,
+/// `lsp.RULE` for every server, the default last — flipped by `:lsp
+/// toggle`, listed by `:lsp info`, read by `kawoosh.lsp.rules` for a
+/// buffer or a language under the server its rules go under.
+#[test]
+fn a_plugins_rule_is_set_and_flipped_as_the_shells_are() {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-plugin-rule-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        "kawoosh.lsp.rule('organize', { doc = 'imports organized on save' })\n\
+         kawoosh.lsp.rule('tidy', { default = true })\n\
+         kawoosh.lsp.rule('width', { default = 80 })\n\
+         local r = kawoosh.lsp.rules(0)\n\
+         assert(r.server == 'rust', r.server)\n\
+         assert(r.organize == false and r.tidy == true and r.width == 80)\n\
+         assert(r.enabled == true and r.load_all == false and r.inlay_hints == false)\n\
+         assert(kawoosh.lsp.rules('tsx').server == 'typescript')\n\
+         assert(not pcall(kawoosh.lsp.rule, 'load_all'))\n\
+         assert(not pcall(kawoosh.lsp.rule, 'Bad-Name'))",
+    );
+
+    // Flipped for the caret's server in the session, as `load_all` is.
+    ex(&mut d, &mut app, "lsp toggle organize");
+    assert_eq!(app.ed.message, "lsp.rust.organize on");
+    ex(&mut d, &mut app, "lsp toggle tidy");
+    assert_eq!(app.ed.message, "lsp.rust.tidy off", "from its default");
+    lua(
+        &mut app,
+        "local r = kawoosh.lsp.rules(0)\nassert(r.organize == true and r.tidy == false)",
+    );
+    ex(&mut d, &mut app, "lsp info");
+    let rows = d.line_rows().join("\n");
+    assert!(
+        rows.contains("organize (session)") && rows.contains("no tidy (session)"),
+        "{rows}"
+    );
+    d.keys(&mut app, "q");
+    // A rule that is not on or off is no switch.
+    ex(&mut d, &mut app, "lsp toggle width");
+    assert_ne!(app.ed.message, "lsp.rust.width on");
+
+    // A project's word for the server, and one for every server.
+    app.ed.settings.unset(Layer::Session, "lsp.rust.organize");
+    let mut project = Setting::table();
+    project.set("lsp.rust.width", Setting::Int(100));
+    project.set("lsp.organize", Setting::Bool(true));
+    app.ed.settings.replace(
+        Layer::Project,
+        vec![(
+            dir.join(".kawoosh/settings.lua").display().to_string(),
+            project,
+        )],
+    );
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        "local r = kawoosh.lsp.rules(0)\n\
+         assert(r.width == 100, r.width)\n\
+         assert(r.organize == true, 'lsp.organize for every server')\n\
+         assert(kawoosh.lsp.rules('python').width == 80, 'another server: the default')",
+    );
+    ex(&mut d, &mut app, "lsp info");
+    let rows = d.line_rows().join("\n");
+    assert!(rows.contains("width=100 (project: "), "{rows}");
+    d.keys(&mut app, "q");
+    std::fs::remove_dir_all(&dir).ok();
+}

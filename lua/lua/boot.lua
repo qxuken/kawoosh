@@ -292,6 +292,52 @@ function kawoosh._diagnostics()
     if not ok then kawoosh.echo("on_diagnostics: " .. tostring(err)) end
   end
 end
+kawoosh._tree_hooks = {}
+kawoosh._tree_gen = 0
+-- kawoosh.on_tree(fn): `fn(root, changed)` after a frame in which a
+-- buffer's syntax tree was parsed again, for a plugin that paints from
+-- the tree (docs/design/nodes.md Decision 8). `root` is
+-- `kawoosh.node.root(buffer)` — `root.buffer`, `root.language`,
+-- `root.version`, walked with the node API — and `changed` a list of
+-- `{ from, to }` byte ranges (from 0, `to` exclusive) whose syntax
+-- changed since the hook last heard of the buffer, the whole text the
+-- first time. Once a buffer a frame at most, only for a tree of the
+-- text as it is (a tree behind the typing waits for the next), only
+-- buffers on show are parsed, and nothing is published for it while no
+-- hook is set. It runs in the frame: read what changed, not the whole
+-- tree. Returns a function that takes the hook off.
+-- @return fun(): boolean off true when it took the hook off
+function kawoosh.on_tree(fn)
+  local entry = { fn = fn }
+  local hooks = kawoosh._tree_hooks
+  hooks[#hooks + 1] = entry
+  -- A new hook hears every tree there is, whole, the next frame.
+  kawoosh._tree_gen = kawoosh._tree_gen + 1
+  return function()
+    entry.gone = true
+    for i, e in ipairs(hooks) do
+      if e == entry then
+        table.remove(hooks, i)
+        return true
+      end
+    end
+    return false
+  end
+end
+function kawoosh._tree(trees)
+  local hooks = { table.unpack(kawoosh._tree_hooks) }
+  for _, t in ipairs(trees) do
+    local root = kawoosh.node.root(t.buffer)
+    if root then
+      for _, e in ipairs(hooks) do
+        if not e.gone then
+          local ok, err = timed(e.fn, root, t.changed)
+          if not ok then kawoosh.echo("on_tree: " .. tostring(err)) end
+        end
+      end
+    end
+  end
+end
 kawoosh._focus_hooks = {}
 function kawoosh.on_focus(fn)
   kawoosh._focus_hooks[#kawoosh._focus_hooks + 1] = fn

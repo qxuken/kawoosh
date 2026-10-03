@@ -102,6 +102,10 @@ impl Kawoosh {
         let (rt, ext) = Runtime::new().map_err(|e| e.to_string())?;
         let rt = Rc::new(rt);
         self.scripting.rt = Some(rt.clone());
+        // The servers' names for `kawoosh.lsp.rules`, said again to this
+        // runtime.
+        self.lsp.names_told.clear();
+        self.tell_lsp_names();
         // The memory's pending deltas are the runtime's to read
         // (`kawoosh.memory { … }` folds them in).
         self.moments.adopt_pending(rt.pending_moments());
@@ -1182,6 +1186,14 @@ impl Kawoosh {
                 }
                 self.add_lsp_server(def);
             }
+            Msg::LspRule { name, doc, default } => self.add_lsp_rule(name, doc, default),
+            Msg::Diagnostics {
+                buffer,
+                path,
+                from,
+                list,
+            } => self.plugin_diagnostics(buffer, path, &from, list),
+            Msg::DiagnosticsClear(from) => self.ed.clear_diagnostics_from(&from),
             Msg::Formatter { name, def, run } => self.formatter_from_lua(&name, def, run),
             Msg::Formatted { token, result } => self.lua_formatted(token, result),
             Msg::Format { buffer, with } => self.format_from_lua(buffer, with),
