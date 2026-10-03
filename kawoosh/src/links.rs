@@ -203,18 +203,77 @@ pub fn resolve(path: &str, bases: &[PathBuf]) -> Option<PathBuf> {
         .find(|p| kawoosh_systems::fs::exists(p))
 }
 
+/// How the OS is asked to open a URL: never through a shell or `cmd`,
+/// which would read the URL as a command line — `cmd /c start "" URL`
+/// ran what followed a `&` in `https://x/?a=1&calc`, std quoting only
+/// an argument with a space, a tab or a `"` in it.
+#[derive(Debug, PartialEq, Eq)]
+enum Opener<'a> {
+    /// A program given the URL as its one argument (`open`, `xdg-open`).
+    Program(&'static str, &'a str),
+    /// Windows' `ShellExecuteW` with the verb `open` and the URL as the
+    /// file: the shell's URL handler, no command line parsed.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Shell(&'a str),
+}
+
+fn opener(url: &str) -> Opener<'_> {
+    if cfg!(target_os = "macos") {
+        Opener::Program("open", url)
+    } else if cfg!(windows) {
+        Opener::Shell(url)
+    } else {
+        Opener::Program("xdg-open", url)
+    }
+}
+
 /// Hands `url` to the OS's opener.
 pub fn open_in_os(url: &str) -> Result<(), String> {
-    let (program, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
-        ("open", vec![url])
-    } else if cfg!(windows) {
-        ("cmd", vec!["/c", "start", "", url])
-    } else {
-        ("xdg-open", vec![url])
+    match opener(url) {
+        Opener::Program(program, url) => {
+            kawoosh_systems::spawn::spawn(kawoosh_systems::io::command(program).arg(url))
+                .map(|_| ())
+                .map_err(|e| format!("{program}: {e}"))
+        }
+        Opener::Shell(url) => shell_open(url),
+    }
+}
+
+#[cfg(windows)]
+fn shell_open(url: &str) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    if url.contains('\0') {
+        return Err(format!("{url}: not a URL"));
+    }
+    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let (verb, file) = (wide("open"), wide(url));
+    // SAFETY: both strings are NUL-terminated and live past the call;
+    // the null window, parameters and directory are allowed.
+    let r = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
     };
-    kawoosh_systems::spawn::spawn(kawoosh_systems::io::command(program).args(&args))
-        .map(|_| ())
-        .map_err(|e| format!("{program}: {e}"))
+    // Above 32 is success; at or below, an error code.
+    if r as usize > 32 {
+        Ok(())
+    } else {
+        Err(format!(
+            "{url}: the shell could not open it (error {})",
+            r as usize
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn shell_open(url: &str) -> Result<(), String> {
+    Err(format!("{url}: no shell opener here"))
 }
 
 impl Kawoosh {
@@ -393,5 +452,31 @@ mod tests {
             location_at("see a.ts (the file)", 5),
             Some(("a.ts".into(), None, None))
         );
+    }
+
+    /// A URL with a shell's metacharacters in it reaches the OS's
+    /// opener whole, as the one thing it opens: never through `cmd`,
+    /// whose `&` ran the rest as a command (and cut the URL there).
+    #[test]
+    fn urls_are_opened_whole_and_never_run() {
+        let line = r#"see https://x.example/?a=1&whoami|more^x%PATH%"q and on"#;
+        let at = line.find("x.example").unwrap();
+        let Some(Link {
+            target: Target::Url(url),
+            ..
+        }) = link_at(line, at)
+        else {
+            panic!("no URL at {at}");
+        };
+        assert_eq!(url, "https://x.example/?a=1&whoami|more^x%PATH%");
+        let tricky = r#"https://x.example/?a=1&whoami|calc^x%PATH%"&b"#;
+        let expected = if cfg!(windows) {
+            Opener::Shell(tricky)
+        } else if cfg!(target_os = "macos") {
+            Opener::Program("open", tricky)
+        } else {
+            Opener::Program("xdg-open", tricky)
+        };
+        assert_eq!(opener(tricky), expected, "no shell, the URL whole");
     }
 }
