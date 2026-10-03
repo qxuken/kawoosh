@@ -12,8 +12,12 @@ use kui_native::{KeyMods, Rect};
 
 const SRC: &str = "interface P { n: number }\nconst e = <div className=\"x\">{1}</div>;\n";
 
-fn tsx_app() -> (Kawoosh, Drive, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("kawoosh-inspector-{}", std::process::id()));
+/// `m.tsx` opened and parsed, in a directory of the test's own (`tag`):
+/// under `cargo test` the tests share a process id, and one removing a
+/// shared directory as it ended left another opening a missing file —
+/// an empty buffer, no tokens.
+fn tsx_app(tag: &str) -> (Kawoosh, Drive, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("kawoosh-inspector-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("m.tsx");
     std::fs::write(&file, SRC).unwrap();
@@ -62,7 +66,7 @@ fn drawn_rows(d: &Drive) -> Vec<(String, Rect)> {
 
 #[test]
 fn tsx_is_its_own_language_and_highlights_tags() {
-    let (app, mut d, dir) = tsx_app();
+    let (app, mut d, dir) = tsx_app("tags");
     let v = app.focused_view().unwrap();
     let buf = app.ed.buffer_of(v);
     assert_eq!(&*buf.language, "tsx");
@@ -82,7 +86,7 @@ fn tsx_is_its_own_language_and_highlights_tags() {
 
 #[test]
 fn syntax_tree_is_a_command_that_shows_the_tab_and_toggles_it() {
-    let (mut app, mut d, dir) = tsx_app();
+    let (mut app, mut d, dir) = tsx_app("toggle");
     let ex = |d: &mut Drive, app: &mut Kawoosh, cmd: &str| {
         d.keys(app, ":");
         d.keys(app, cmd);
@@ -192,7 +196,7 @@ fn a_large_trees_rows_are_built_off_the_frame() {
 
 #[test]
 fn the_syntax_tab_shows_the_tree_and_follows_the_caret() {
-    let (mut app, mut d, dir) = tsx_app();
+    let (mut app, mut d, dir) = tsx_app("caret");
     let v = app.focused_view().unwrap();
     // Off: declared, drawn nowhere.
     assert!(drawn_rows(&d).is_empty());
@@ -280,7 +284,7 @@ fn the_syntax_tab_shows_the_tree_and_follows_the_caret() {
 
 #[test]
 fn a_row_selects_its_node_and_a_fold_hides_its_children() {
-    let (mut app, mut d, dir) = tsx_app();
+    let (mut app, mut d, dir) = tsx_app("fold");
     let v = app.focused_view().unwrap();
     d.key(&mut app, "f12", KeyMods::default());
     d.frame(&mut app);

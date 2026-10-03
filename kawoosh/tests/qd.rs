@@ -13,6 +13,30 @@ use drive::Drive;
 use kawoosh::Kawoosh;
 use kui_native::KeyMods;
 
+/// The tests set the process's PATH, `QD_STATE`, `QD_REPO` and
+/// `KAWOOSH_SETTINGS`: under nextest each test is a process of its own,
+/// under `cargo test` both share one — so one at a time, each from the
+/// PATH the process started with and none of the others' variables.
+/// Else the second's `qd`, at the library's version, is the first's,
+/// and its pane reads the second's repository in-process.
+static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn env_alone() -> std::sync::MutexGuard<'static, ()> {
+    let guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    PATH.get_or_init(|| std::env::var("PATH").unwrap_or_default());
+    for k in ["QD_STATE", "QD_REPO", "KAWOOSH_SETTINGS"] {
+        unsafe { std::env::remove_var(k) };
+    }
+    guard
+}
+
+/// `bin` ahead of the PATH the process started with.
+fn path_with(bin: &Path) {
+    let path = PATH.get().expect("env_alone first");
+    unsafe { std::env::set_var("PATH", format!("{}:{path}", bin.display())) };
+}
+
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
     d.keys(app, line);
@@ -81,9 +105,7 @@ fn fake_qd(t: &Path) -> (PathBuf, PathBuf) {
     let qd = bin.join("qd");
     std::fs::write(&qd, script).unwrap();
     std::fs::set_permissions(&qd, std::fs::Permissions::from_mode(0o755)).unwrap();
-    // Each test is a process of its own under nextest.
-    let path = std::env::var("PATH").unwrap_or_default();
-    unsafe { std::env::set_var("PATH", format!("{}:{path}", bin.display())) };
+    path_with(&bin);
     (repo, home)
 }
 
@@ -99,6 +121,7 @@ fn asked(t: &Path) -> String {
 /// out.
 #[test]
 fn the_pane_lists_modules_and_pushes_pulls_and_adds() {
+    let _env = env_alone();
     let t = std::env::temp_dir().join(format!("kawoosh-qd-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&t);
     std::fs::create_dir_all(&t).unwrap();
@@ -185,6 +208,7 @@ fn the_pane_lists_modules_and_pushes_pulls_and_adds() {
 /// writing the module through `qd::Session::add_module`.
 #[test]
 fn the_linked_library_is_the_door_when_it_is_the_binarys_version() {
+    let _env = env_alone();
     let t = std::env::temp_dir().join(format!("kawoosh-qdlib-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&t);
     let (repo, machine, bin) = (t.join("repo"), t.join("machine"), t.join("bin"));
@@ -220,9 +244,8 @@ fn the_linked_library_is_the_door_when_it_is_the_binarys_version() {
     )
     .unwrap();
     std::fs::set_permissions(&qd, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let path = std::env::var("PATH").unwrap_or_default();
+    path_with(&bin);
     unsafe {
-        std::env::set_var("PATH", format!("{}:{path}", bin.display()));
         std::env::set_var("QD_STATE", t.join("state"));
         std::env::set_var("QD_REPO", &repo);
     }

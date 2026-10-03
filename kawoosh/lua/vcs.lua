@@ -837,6 +837,9 @@ local gitdirs = {}
 local git = {}
 
 function git.probe(dir, done)
+  -- Not installed: owns nothing, and no spawn to fail in the message
+  -- line. `nil` (the PATH still being asked for) tries anyway.
+  if fs.on_path("git") == false then return done(nil) end
   run({ "git", "rev-parse", "--show-toplevel", "--git-dir" }, dir, function(text, code)
     if code ~= 0 then return done(nil) end
     local ls = git_lines(text)
@@ -1054,6 +1057,7 @@ vcs.register("git", git)
 local fossil = {}
 
 function fossil.probe(dir, done)
+  if fs.on_path("fossil") == false then return done(nil) end
   run({ "fossil", "info" }, dir, function(text, code)
     if code ~= 0 then return done(nil) end
     local root = text:match("local%-root:%s*(%S+)")

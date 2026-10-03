@@ -1203,7 +1203,12 @@ impl Kawoosh {
 
     /// `command` off until `:lsp restart`, said once: not found (`why`
     /// None), or what befell it in the project at `root` — with how to
-    /// keep it off there, when that project is no place for it.
+    /// keep it off there, when that project is no place for it. Not
+    /// while `command` is being restarted: that word is from before the
+    /// restart was asked for — a start tried while `lsp.ensure_installed`
+    /// was still installing it, drained in the frame the install ended —
+    /// and the restart tries again. The pool's events come in order, so
+    /// a failure of the new start lands after its `Restarted`.
     fn lsp_off(
         &mut self,
         language: String,
@@ -1211,7 +1216,9 @@ impl Kawoosh {
         why: Option<String>,
         root: Option<&Path>,
     ) {
-        if self.lsp.said_unavailable.contains_key(&command) {
+        if self.lsp.said_unavailable.contains_key(&command)
+            || self.lsp.restarting.contains_key(&command)
+        {
             return;
         }
         let install = self

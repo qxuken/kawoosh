@@ -2231,21 +2231,32 @@ fn a_text_put_in_by_its_diff_keeps_the_carets() {
 /// An edit per line over a long file is one pass: `>G` over 100,000
 /// lines took 20 s — placing each caret walked every caret placed
 /// before it, and each edit read its line's graphemes to find a
-/// boundary between two ASCII bytes — 1.7 s now. 60,000 lines here,
-/// bounded far above that and well under the quadratic's 7 s. The
-/// thread's CPU time, not the clock's: under a loaded machine (eight
-/// builds at a load of 90) the clock read 6 to 15 s for the same pass.
+/// boundary between two ASCII bytes — 1.7 s now. Bounded by how it
+/// grows, not by a time: four times the lines cost four times as much
+/// in one pass and sixteen in the quadratic, whatever the machine's
+/// speed (a 4-core Linux VM took 6 s for 60,000 lines, over the 5 s
+/// this bound once was, and 1.5 s for 15,000: linear). The thread's
+/// CPU time, not the clock's: under a loaded machine (eight builds at
+/// a load of 90) the clock read 6 to 15 s for the same pass.
 #[test]
 fn an_edit_per_line_over_a_long_file_is_one_pass() {
-    let n = 60_000;
-    let text = "x\n".repeat(n);
-    let mut t = T::new(&text);
-    let start = thread_cpu();
-    t.keys(">G");
-    let took = thread_cpu() - start;
-    assert_eq!(t.text().lines().next(), Some("    x"));
-    assert_eq!(t.text().len(), text.len() + 4 * n);
-    assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+    let pass = |n: usize| {
+        let text = "x\n".repeat(n);
+        let mut t = T::new(&text);
+        let start = thread_cpu();
+        t.keys(">G");
+        let took = thread_cpu() - start;
+        assert_eq!(t.text().lines().next(), Some("    x"));
+        assert_eq!(t.text().len(), text.len() + 4 * n);
+        took
+    };
+    let small = pass(15_000);
+    let large = pass(60_000);
+    let growth = large.as_secs_f64() / small.as_secs_f64();
+    assert!(
+        growth < 8.0,
+        "4x the lines took {growth:.1}x as long ({small:?}, then {large:?})"
+    );
 }
 
 /// The CPU time this thread has had, which other processes do not

@@ -327,6 +327,10 @@ fn phys_footprint() -> u64 {
     if ok { info.phys_footprint } else { 0 }
 }
 
+/// Resident pages from `statm`, the peak from `getrusage`, and as the
+/// footprint the process's anonymous pages, resident or swapped out
+/// (`RssAnon` + `VmSwap`): its own memory, not a file's cached pages —
+/// the nearest Linux has to `phys_footprint`.
 #[cfg(target_os = "linux")]
 pub fn read_mem() -> Mem {
     let page = 4096u64;
@@ -347,8 +351,27 @@ pub fn read_mem() -> Mem {
     Mem {
         resident,
         peak,
-        footprint: 0,
+        footprint: linux_footprint(),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_footprint() -> u64 {
+    std::fs::read_to_string("/proc/self/status").map_or(0, |s| status_footprint(&s))
+}
+
+/// `RssAnon` and `VmSwap` from a `/proc/<pid>/status`, in bytes; 0 where
+/// neither is there (a kernel before 4.5 has no `RssAnon`).
+#[cfg(any(target_os = "linux", test))]
+fn status_footprint(status: &str) -> u64 {
+    let kb = |key: &str| {
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))
+            .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
+            .unwrap_or(0)
+    };
+    (kb("RssAnon") + kb("VmSwap")) * 1024
 }
 
 /// The working set and its peak, and the private commit as the
@@ -669,5 +692,19 @@ impl Kawoosh {
         memory.push(("syntax rows' bytes".into(), bytes(rows_bytes as u64)));
         sections.push(("memory".into(), None, pairs(memory), None));
         sections
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_footprint;
+
+    #[test]
+    fn the_footprint_is_the_anonymous_pages_resident_or_swapped() {
+        let status = "Name:\tkawoosh\nVmRSS:\t  90000 kB\nRssAnon:\t   61440 kB\n\
+                      RssFile:\t   28560 kB\nVmSwap:\t    1024 kB\n";
+        assert_eq!(status_footprint(status), (61440 + 1024) * 1024);
+        // Neither reading: no footprint, not a wrong one.
+        assert_eq!(status_footprint("Name:\tkawoosh\nVmRSS:\t 9 kB\n"), 0);
     }
 }
