@@ -394,3 +394,69 @@ fn a_session_brings_the_panel_back_with_its_search() {
     assert_eq!(app.ed.field_name(f), Some("lua:search/find"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A file opened from the results and closed is the results' still
+/// (asked 2026-10-03: "when i open multibuffer and then go to result
+/// and then i close a buffer result point to it becomes gray. how about
+/// buffer would not close but stays open by multibuffer?"). The
+/// multibuffer holds it as a pane does: `:bd` takes it out of `:ls` and
+/// the pane, and it is borrowed again — its excerpt live, `<CR>` the
+/// same buffer — until the last multibuffer showing it goes.
+#[test]
+fn a_file_closed_while_the_results_show_it_stays_theirs() {
+    let (mut d, mut app, _dir) = launch("hold");
+    let first = app.layout.focused();
+    ex(&mut d, &mut app, "search project needle");
+    searched(&mut d, &mut app);
+    let panel = app.layout.focused();
+    let results = match app.layout.content(panel) {
+        Some(Content::Editor(v)) => app.ed.views[v].buffer,
+        other => panic!("{other:?}"),
+    };
+    d.press(&mut app, "<Esc><Esc>");
+    d.frame(&mut app);
+    d.press(&mut app, "gg/needle<CR>");
+    d.press(&mut app, "<CR>");
+    d.frame(&mut app);
+    assert_eq!(shows(&app, first), "c.txt");
+    let c = app.ed.buffer_of(app.focused_view().unwrap()).path.clone();
+    let c = app.ed.buffer_at(c.as_deref().unwrap()).unwrap();
+    assert!(app.ed.listed_buffers().contains(&c), "shown, listed");
+
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(shows(&app, first), "a.txt", "the pane went back");
+    assert!(app.ed.buffers.contains_key(c), "the results still hold it");
+    assert!(
+        !app.ed.listed_buffers().contains(&c),
+        "out of :ls, as one only the search opened"
+    );
+    assert!(app.ed.multi_holds(c), "its excerpt live, not washed");
+    // The match's line maps into it, and an edit there is taken.
+    let at = app
+        .ed
+        .multi_offset(results, c, "one\n".len())
+        .expect("the excerpt maps into the file");
+    assert_eq!(app.ed.multi_refuses(results, &[(at..at, "x")]), None);
+
+    // `<CR>` from the results again: the same buffer, not a fresh read.
+    app.layout.focus(panel);
+    d.frame(&mut app);
+    d.press(&mut app, "gg/needle<CR>");
+    d.press(&mut app, "<CR>");
+    d.frame(&mut app);
+    assert_eq!(app.ed.views[app.focused_view().unwrap()].buffer, c);
+    ex(&mut d, &mut app, "bd");
+    assert!(app.ed.buffers.contains_key(c));
+
+    // The results closed: nothing holds it, and it goes with them.
+    app.layout.focus(panel);
+    d.frame(&mut app);
+    d.press(&mut app, "<Esc><Esc>");
+    ex(&mut d, &mut app, "bd");
+    assert!(!app.ed.buffers.contains_key(results), "the results closed");
+    d.frame(&mut app);
+    assert!(
+        !app.ed.buffers.contains_key(c),
+        "closed with the last multibuffer that held it"
+    );
+}

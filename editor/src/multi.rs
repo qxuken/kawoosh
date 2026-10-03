@@ -346,6 +346,14 @@ impl Editor {
         self.borrowed.remove(&id);
     }
 
+    /// Whether a multibuffer still shows buffer `id` in an excerpt: a
+    /// hold on it, as a pane is ([`Multi::sources`]).
+    pub fn multi_holds(&self, id: BufferId) -> bool {
+        self.multis
+            .values()
+            .any(|m| m.excerpts.iter().any(|e| e.source == id && !e.dead))
+    }
+
     /// The borrowed buffers no multibuffer holds any more: the shell
     /// closes them as `:bd` would.
     pub fn take_released(&mut self) -> Vec<BufferId> {

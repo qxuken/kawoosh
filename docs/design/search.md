@@ -120,6 +120,20 @@ multibuffers show it, listed from the moment a pane shows it or it is
 edited, and closed with the last multibuffer that borrowed it if
 neither happened.
 
+Amended 2026-10-03, asked: "when i open multibuffer and then go to
+result and then i close a buffer result point to it becomes gray. how
+about buffer would not close but stays open by multibuffer? maybe
+refcounted or hidden toggle somewhere". **A multibuffer holds its
+sources as a pane does.** Closing one a multibuffer still shows —
+`:bd`, `:bdo`, a tab's close, Lua's — moves the panes off it as before
+and makes it borrowed again rather than gone: out of `:ls`, the
+pickers, every tab's own and the session, a `--wait` caller answered,
+but its excerpts live and the server still holding it. `:bd!` reverts
+it to the file first, so the excerpts show what is on disk. It closes
+with the last multibuffer that holds it, as a borrowed source always
+did (`Editor::multi_holds`, `App::hand_back`). A washed, refused
+excerpt is left for a source removed some way other than a close.
+
 ### 6. The search is the engine's, not `rg`'s
 
 `kawoosh.search(query, handlers)` searches on the io thread: ripgrep's
