@@ -69,7 +69,7 @@ fn go(args: &[String]) -> Result<(), String> {
         spec = Some(serde_json::from_str(json).map_err(|e| format!("--spec: {e}"))?);
         rest.drain(i..i + 2);
     }
-    let defs = ServerDef::builtin();
+    let defs = crate::lsp_rules::builtin();
     // The package NAME means: the one `--spec` gave, else its server's.
     let package = |name: &str| match &spec {
         Some(p) => Ok(p.clone()),
@@ -284,7 +284,7 @@ mod tests {
     /// line is not kawoosh's to update or remove; `@` asks a version.
     #[test]
     fn a_name_is_a_server_or_its_language() {
-        let defs = ServerDef::builtin();
+        let defs = crate::lsp_rules::builtin();
         assert_eq!(def_of(&defs, "tsx").unwrap().language, "typescript");
         assert_eq!(
             def_of(&defs, "yaml").unwrap().command,

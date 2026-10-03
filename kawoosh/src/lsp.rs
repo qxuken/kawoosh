@@ -196,7 +196,7 @@ impl LspState {
             said_unavailable: HashMap::new(),
             restarting: HashMap::new(),
             status: Vec::new(),
-            defs: ServerDef::builtin(),
+            defs: Vec::new(),
             rules_seen: None,
             order: Default::default(),
             holders: HashMap::new(),

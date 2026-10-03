@@ -526,18 +526,11 @@ pub enum Msg {
         restore: bool,
     },
     Compile(String),
+    /// `kawoosh.lsp.server(name, def)`: a server — its data as
+    /// `lsp.NAME` would have it (`kawoosh/lua/servers.lua`).
     LspServer {
         language: String,
-        /// Every language it serves; empty for `language` alone.
-        languages: Vec<String>,
-        command: String,
-        args: Vec<String>,
-        roots: Vec<String>,
-        /// The server's configuration (`settings = { Lua = { … } }`),
-        /// JSON; `Null` for none.
-        settings: serde_json::Value,
-        /// The shell line that installs `command`; empty for none.
-        install: String,
+        def: Setting,
     },
     /// `kawoosh.formatter(name, def)`: a formatter (formatters.md) — its
     /// data as `format.NAME` would have it, and whether a `run` function
@@ -1351,7 +1344,7 @@ impl Runtime {
     /// that opening the project runs (kui.md D10). `name` is for the
     /// error.
     pub fn eval_settings(&self, name: &str, src: &str) -> Result<Setting, String> {
-        let env = self.settings_env().map_err(|e| format!("{name}: {e}"))?;
+        let env = data_env(&self.lua).map_err(|e| format!("{name}: {e}"))?;
         let v: LV = self
             .lua
             .load(src)
@@ -1366,21 +1359,6 @@ impl Runtime {
                 other.type_name()
             )),
         }
-    }
-
-    /// The sandbox a settings file runs in: the functions that compute
-    /// and nothing that reaches out.
-    fn settings_env(&self) -> mlua::Result<Table> {
-        let g = self.lua.globals();
-        let env = self.lua.create_table()?;
-        for name in [
-            "assert", "error", "ipairs", "pairs", "next", "select", "tonumber", "tostring", "type",
-            "pcall", "math", "string", "table", "utf8",
-        ] {
-            env.set(name, g.get::<LV>(name)?)?;
-        }
-        env.set("_G", &env)?;
-        Ok(env)
     }
 
     /// Remembers every line of `id` at its current version, so a later
@@ -3796,17 +3774,12 @@ fn seed(
     lsp.set(
         "server",
         lua.create_function(move |_, (language, t): (String, Table)| {
-            qq.borrow_mut().push(Msg::LspServer {
-                language,
-                languages: t
-                    .get::<Option<Vec<String>>>("languages")?
-                    .unwrap_or_default(),
-                command: t.get("cmd")?,
-                args: t.get::<Option<Vec<String>>>("args")?.unwrap_or_default(),
-                roots: t.get::<Option<Vec<String>>>("roots")?.unwrap_or_default(),
-                settings: lua_to_json(&t.get::<LV>("settings")?)?,
-                install: t.get::<Option<String>>("install")?.unwrap_or_default(),
-            });
+            let at = format!("lsp.{language}");
+            let def = from_lua(&LV::Table(t), &at).map_err(mlua::Error::runtime)?;
+            if def.get("cmd").and_then(Setting::as_str).is_none() {
+                return Err(mlua::Error::runtime("lsp.server: a `cmd`"));
+            }
+            qq.borrow_mut().push(Msg::LspServer { language, def });
             Ok(())
         })?,
     )?;
@@ -5721,6 +5694,39 @@ fn seed(
 /// A settings file's error as `FILE:LINE: what`: Lua's own message
 /// with its chunk name — `[string "…"]`, cut to sixty characters — put
 /// back as the path, whole.
+/// The sandbox a settings file runs in: the functions that compute
+/// and nothing that reaches out.
+fn data_env(lua: &Lua) -> mlua::Result<Table> {
+    let g = lua.globals();
+    let env = lua.create_table()?;
+    for name in [
+        "assert", "error", "ipairs", "pairs", "next", "select", "tonumber", "tostring", "type",
+        "pcall", "math", "string", "table", "utf8",
+    ] {
+        env.set(name, g.get::<LV>(name)?)?;
+    }
+    env.set("_G", &env)?;
+    Ok(env)
+}
+
+/// Evaluates a chunk of data as a settings file is
+/// ([`Runtime::eval_settings`]: the pure library, nothing that reaches
+/// out) in a Lua of its own, so it is read where no runtime is — the
+/// builtin language servers (`kawoosh/lua/servers.lua`), which
+/// `kawoosh lsp` on the command line reads too. `name` is for the
+/// error.
+pub fn eval_data(name: &str, src: &str) -> Result<Setting, String> {
+    let lua = Lua::new();
+    let env = data_env(&lua).map_err(|e| format!("{name}: {e}"))?;
+    let v: LV = lua
+        .load(src)
+        .set_name(name)
+        .set_environment(env)
+        .eval()
+        .map_err(|e| settings_error(name, &e))?;
+    from_lua(&v, "").map_err(|e| format!("{name}: {e}"))
+}
+
 fn settings_error(name: &str, e: &mlua::Error) -> String {
     let msg = match e {
         mlua::Error::SyntaxError { message, .. } => message.clone(),

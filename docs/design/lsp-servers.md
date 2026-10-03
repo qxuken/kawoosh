@@ -29,7 +29,9 @@ once installed, colours, but no server.
 
 ### 1. A server for every language a known one serves
 
-`ServerDef::builtin` is a table (`BUILTIN` in `systems/src/lsp.rs`):
+The builtin servers are a table — since 2026-10-03 Lua data,
+`kawoosh/lua/servers.lua` (Decision 5); `BUILTIN` in
+`systems/src/lsp.rs` before —
 each row a server by the language it is first for, the languages it
 serves, its command and arguments, its root markers and its install
 line. It covers the builtin languages (bash, CSS, JSON, YAML, TOML,
@@ -102,6 +104,71 @@ with what matters; the rest is in the log.
 Toasts stay for what is kawoosh's own to say and the user's to answer
 — a grammar's offer, a settings mistake. A server has none of those.
 
+### 5. The table is Lua data, in the shape `lsp.NAME` has *(the user's)*
+
+Asked 2026-10-03: "maybe we should extract data from code about lsps?
+put the lsp configuration in a separate repo like we did with
+grammars?", then, on the answer below, "let's do that in lua".
+
+`kawoosh/lua/servers.lua` returns the rows, a list in the asking order
+(a language's servers, when `lsp.languages` does not say, are asked
+first to last — typescript's before eslint's and biome's). A row is
+what `lsp.NAME` says, with its `name`: `cmd`, `args`, `roots`,
+`languages`, `when`, `install`, `settings`, `answers`. It is read as a settings
+file is — the pure library, nothing that reaches out, no `kawoosh` —
+in a Lua of its own (`kawoosh_lua::eval_data`), once, so `kawoosh lsp`
+on the command line, which has no runtime, reads it too. Local
+helpers are allowed (`brew(formula)`, eslint's configs and settings);
+what it returns is data.
+
+One reading for the three places a server is said
+(`lsp_rules::fold`): a row of the table, `kawoosh.lsp.server(name, t)`
+and `lsp.NAME` in the settings. So `kawoosh.lsp.server` takes `when`
+and a package `install`, which it did not, and every place takes an
+install line by platform, `{ mac = …, linux = …, windows = … }` (this
+machine's taken, `""` where it has none) — what `Install::Os` was in
+Rust, now a user's too: a settings file kept by qd across a Mac and a
+Windows machine says both. The rules (`enabled`, `load_all`,
+`load_max`, `inlay_hints`) stay the settings' alone, as lsp-rules.md
+decided.
+
+Two values Lua data cannot hold changed: eslint's `workspaceFolder`,
+`null` before and answered with the server's root, is the string
+`"root"` (a `{ uri, name }` object is what the server reads, so no
+real value is that string); its `rulesCustomizations = []` is left
+out, which the server reads as none (an empty Lua table would go as
+`{}`). Every other field of every row is what the Rust table gave,
+compared row by row when it moved.
+
+Beaten: **a repository of its own**, as the grammars have. The
+grammars' repository is there to build libraries for six targets and
+publish them where anyone can fetch; a server table is a few
+kilobytes of text with nothing to build. Fetched, it would want a
+cache, a manifest version between two repositories and a copy built
+in for a first launch offline — the grammars' machinery for none of
+their reasons — and what a server needs beyond data (`language_id`'s
+spellings, how a manager installs) would stay in kawoosh's code. Once
+the table is data the move is small, if there is ever a reason: rows
+added without a release, other people's servers, another tool reading
+the list. **TOML**: a second format beside the settings' Lua, and no
+helpers. **The rows run in the user's runtime** (`kawoosh.lsp.server`
+calls in a bundled plugin): the command line has no runtime, and the
+table would be code, not data.
+
+`answers` (asked the same day, "it would help future packages to
+declare lsp integrations"): a server's own requests and the result
+each is answered with, looked up before the pool's own answers. It
+took the last server's name out of the pool — vscode-eslint's
+`eslint/confirmESLintExecution`, answered 4 ("approved") by a match
+arm, is the eslint row's `answers` now — and lets a row, a plugin's
+`kawoosh.lsp.server` or a user's `lsp.NAME` answer a server's
+extension without code. A fixed result only: an answer that must read
+the request or the editor is the pool's.
+
+`language_id` (`tsx` → `typescriptreact`) stays in
+`systems/src/lsp.rs`: it is a language's name in LSP, not a server's,
+and every server of the language reads it.
+
 ## Built
 
 2026-10-02, as decided. `BUILTIN`, `Install` and `ServerDef::install`
@@ -114,6 +181,20 @@ install terminal's end in `terminals.rs` `term_closed`. Tests:
 server) and `progress_and_messages_land_in_the_corner` (a warning a
 corner line, logged as a warning); `grammars.rs`'s
 `every_builtin_server_serves_a_known_language`.
+
+Decision 5, 2026-10-03: `kawoosh/lua/servers.lua`;
+`lsp_rules::builtin` (read once) and `lsp_rules::fold` (the one
+reading, with `platform_line`) in `kawoosh/src/lsp_rules.rs`;
+`kawoosh_lua::eval_data`; `Msg::LspServer` carries the table as a
+`Setting`; the pool starts with no servers until the shell sends its
+table; `ServerDef::answers`, looked up first among a server's
+requests. `BUILTIN`, `Install`, `ESLINT_CONFIGS` and `eslint_settings`
+left `systems/src/lsp.rs`. Tests: `lsp_rules.rs`'s
+`the_builtin_servers_are_read_from_lua` and
+`an_install_line_by_platform`, `kawoosh/tests/lua.rs`'s
+`a_lua_server_is_an_lsp_table`, `kawoosh/tests/lsp.rs`'s
+`a_servers_own_request_is_answered_from_its_row` (the fake server's
+`--ask METHOD`).
 
 ## Not built
 

@@ -22,7 +22,6 @@ use kawoosh_doc::{BufferId, Diagnostic, Run, Update, Version};
 use serde_json::{Value, json};
 
 use crate::WakeHandle;
-use crate::servers::{Manager, Package};
 
 pub use kawoosh_doc::diagnostic::LAYER as DIAG_LAYER;
 
@@ -72,6 +71,11 @@ pub struct ServerDef {
     /// configs. Empty: it runs wherever its languages are
     /// (docs/design/lsp-installs.md Decision 7).
     pub when: Vec<String>,
+    /// What it is answered when it asks: a request of its own
+    /// (`eslint/confirmESLintExecution`) and the result sent back,
+    /// looked up before the pool's own answers — an integration a
+    /// server's row declares, not code.
+    pub answers: BTreeMap<String, Value>,
 }
 
 /// A language's files: by extension (no dot, any case) or whole name.
@@ -102,6 +106,7 @@ impl Default for ServerDef {
             install: String::new(),
             package: None,
             when: Vec::new(),
+            answers: BTreeMap::new(),
         }
     }
 }
@@ -171,655 +176,6 @@ fn setting_at(settings: &Value, section: Option<&str>) -> Value {
         .try_fold(settings, |v, key| v.get(key))
         .cloned()
         .unwrap_or(Value::Null)
-}
-
-/// A builtin server: its name, the languages it serves (empty for its
-/// name alone), its command and arguments, its root markers and the
-/// line that installs it here.
-struct Builtin {
-    name: &'static str,
-    languages: &'static [&'static str],
-    command: &'static str,
-    args: &'static [&'static str],
-    roots: &'static [&'static str],
-    install: Install,
-    /// [`ServerDef::when`].
-    when: &'static [&'static str],
-}
-
-/// How a server is installed: a package kawoosh installs into its own
-/// directory, or a line — one everywhere, or one for macOS and Linux and
-/// one for Windows, `""` where none is known — for a manager it does not
-/// drive (brew, rustup, gem, opam).
-#[derive(Clone, Copy)]
-enum Install {
-    Pkg(Manager, &'static [&'static str], &'static [&'static str]),
-    Any(&'static str),
-    Os {
-        mac: &'static str,
-        linux: &'static str,
-        windows: &'static str,
-    },
-}
-
-impl Install {
-    fn line(self) -> &'static str {
-        match self {
-            Install::Pkg(..) => "",
-            Install::Any(line) => line,
-            Install::Os {
-                mac,
-                linux,
-                windows,
-            } => {
-                if cfg!(target_os = "macos") {
-                    mac
-                } else if cfg!(windows) {
-                    windows
-                } else {
-                    linux
-                }
-            }
-        }
-    }
-}
-
-/// Homebrew's, on macOS and Linux; none known on Windows.
-const fn brew(line: &'static str) -> Install {
-    Install::Os {
-        mac: line,
-        linux: line,
-        windows: "",
-    }
-}
-
-/// An npm package, the commonest way.
-const fn npm(packages: &'static [&'static str]) -> Install {
-    Install::Pkg(Manager::Npm, packages, &[])
-}
-
-/// One program's npm package, for the many servers published there.
-const VSCODE_EXTRACTED: Install = npm(&["vscode-langservers-extracted"]);
-
-/// The builtin servers, by the language each is first for: the ones
-/// every editor's LSP setup reaches for, run as their projects install
-/// them (docs/design/lsp-servers.md).
-const BUILTIN: &[Builtin] = &[
-    Builtin {
-        name: "rust",
-        languages: &[],
-        command: "rust-analyzer",
-        args: &[],
-        roots: &["Cargo.toml"],
-        install: Install::Any("rustup component add rust-analyzer"),
-        when: &[],
-    },
-    Builtin {
-        name: "typescript",
-        languages: &["typescript", "tsx", "javascript"],
-        command: "typescript-language-server",
-        args: &["--stdio"],
-        roots: &["tsconfig.json", "jsconfig.json", "package.json"],
-        install: npm(&["typescript-language-server", "typescript@5"]),
-        when: &[],
-    },
-    Builtin {
-        name: "lua",
-        languages: &[],
-        command: "lua-language-server",
-        args: &[],
-        roots: &[".luarc.json", ".luarc.jsonc"],
-        install: brew("brew install lua-language-server"),
-        when: &[],
-    },
-    Builtin {
-        name: "python",
-        languages: &[],
-        command: "pyright-langserver",
-        args: &["--stdio"],
-        roots: &[
-            "pyproject.toml",
-            "pyrightconfig.json",
-            "setup.py",
-            "requirements.txt",
-        ],
-        install: npm(&["pyright"]),
-        when: &[],
-    },
-    Builtin {
-        name: "go",
-        languages: &["go", "gomod"],
-        command: "gopls",
-        args: &[],
-        roots: &["go.work", "go.mod"],
-        install: Install::Pkg(Manager::Go, &["golang.org/x/tools/gopls"], &[]),
-        when: &[],
-    },
-    Builtin {
-        name: "c",
-        languages: &["c", "cpp", "objc"],
-        command: "clangd",
-        args: &[],
-        roots: &[
-            "compile_commands.json",
-            ".clangd",
-            "CMakeLists.txt",
-            "Makefile",
-        ],
-        install: Install::Os {
-            mac: "xcode-select --install",
-            linux: "",
-            windows: "winget install LLVM.LLVM",
-        },
-        when: &[],
-    },
-    Builtin {
-        name: "bash",
-        languages: &[],
-        command: "bash-language-server",
-        args: &["start"],
-        roots: &[],
-        install: npm(&["bash-language-server"]),
-        when: &[],
-    },
-    Builtin {
-        name: "fish",
-        languages: &[],
-        command: "fish-lsp",
-        args: &["start"],
-        roots: &[],
-        install: npm(&["fish-lsp"]),
-        when: &[],
-    },
-    Builtin {
-        name: "nu",
-        languages: &[],
-        command: "nu",
-        args: &["--lsp"],
-        roots: &[],
-        install: Install::Os {
-            mac: "brew install nushell",
-            linux: "cargo install nu --locked",
-            windows: "winget install nushell",
-        },
-        when: &[],
-    },
-    Builtin {
-        name: "html",
-        languages: &[],
-        command: "vscode-html-language-server",
-        args: &["--stdio"],
-        roots: &["package.json"],
-        install: VSCODE_EXTRACTED,
-        when: &[],
-    },
-    Builtin {
-        name: "css",
-        languages: &["css", "scss"],
-        command: "vscode-css-language-server",
-        args: &["--stdio"],
-        roots: &["package.json"],
-        install: VSCODE_EXTRACTED,
-        when: &[],
-    },
-    Builtin {
-        name: "json",
-        languages: &["json", "jsonc"],
-        command: "vscode-json-language-server",
-        args: &["--stdio"],
-        roots: &[],
-        install: VSCODE_EXTRACTED,
-        when: &[],
-    },
-    Builtin {
-        name: "yaml",
-        languages: &[],
-        command: "yaml-language-server",
-        args: &["--stdio"],
-        roots: &[],
-        install: npm(&["yaml-language-server"]),
-        when: &[],
-    },
-    Builtin {
-        name: "toml",
-        languages: &[],
-        command: "taplo",
-        args: &["lsp", "stdio"],
-        roots: &["taplo.toml", ".taplo.toml"],
-        install: Install::Pkg(
-            Manager::Cargo,
-            &["taplo-cli"],
-            &["--locked", "--features", "lsp"],
-        ),
-        when: &[],
-    },
-    Builtin {
-        name: "markdown",
-        languages: &[],
-        command: "marksman",
-        args: &["server"],
-        roots: &[".marksman.toml"],
-        install: brew("brew install marksman"),
-        when: &[],
-    },
-    Builtin {
-        name: "dockerfile",
-        languages: &[],
-        command: "docker-langserver",
-        args: &["--stdio"],
-        roots: &[],
-        install: npm(&["dockerfile-language-server-nodejs"]),
-        when: &[],
-    },
-    Builtin {
-        name: "svelte",
-        languages: &[],
-        command: "svelteserver",
-        args: &["--stdio"],
-        roots: &["svelte.config.js", "package.json"],
-        install: npm(&["svelte-language-server"]),
-        when: &[],
-    },
-    Builtin {
-        name: "php",
-        languages: &[],
-        command: "intelephense",
-        args: &["--stdio"],
-        roots: &["composer.json"],
-        install: npm(&["intelephense"]),
-        when: &[],
-    },
-    Builtin {
-        name: "ruby",
-        languages: &[],
-        command: "ruby-lsp",
-        args: &[],
-        roots: &["Gemfile", ".ruby-version"],
-        install: Install::Any("gem install ruby-lsp"),
-        when: &[],
-    },
-    Builtin {
-        name: "java",
-        languages: &[],
-        command: "jdtls",
-        args: &[],
-        roots: &[
-            "pom.xml",
-            "build.gradle",
-            "build.gradle.kts",
-            "settings.gradle",
-            "settings.gradle.kts",
-        ],
-        install: brew("brew install jdtls"),
-        when: &[],
-    },
-    Builtin {
-        name: "kotlin",
-        languages: &[],
-        command: "kotlin-language-server",
-        args: &[],
-        roots: &[
-            "settings.gradle.kts",
-            "settings.gradle",
-            "build.gradle.kts",
-            "build.gradle",
-            "pom.xml",
-        ],
-        install: brew("brew install kotlin-language-server"),
-        when: &[],
-    },
-    Builtin {
-        name: "scala",
-        languages: &[],
-        command: "metals",
-        args: &[],
-        roots: &["build.sbt", "build.sc", "build.mill"],
-        install: Install::Any("cs install metals"),
-        when: &[],
-    },
-    Builtin {
-        name: "csharp",
-        languages: &[],
-        command: "csharp-ls",
-        args: &[],
-        roots: &["global.json", "Directory.Build.props"],
-        install: Install::Pkg(Manager::Dotnet, &["csharp-ls"], &[]),
-        when: &[],
-    },
-    Builtin {
-        name: "fsharp",
-        languages: &[],
-        command: "fsautocomplete",
-        args: &[],
-        roots: &["global.json", "Directory.Build.props"],
-        install: Install::Pkg(Manager::Dotnet, &["fsautocomplete"], &[]),
-        when: &[],
-    },
-    Builtin {
-        name: "dart",
-        languages: &[],
-        command: "dart",
-        args: &["language-server", "--protocol=lsp"],
-        roots: &["pubspec.yaml"],
-        install: brew("brew install dart-lang/dart/dart"),
-        when: &[],
-    },
-    Builtin {
-        name: "zig",
-        languages: &[],
-        command: "zls",
-        args: &[],
-        roots: &["build.zig", "build.zig.zon"],
-        install: brew("brew install zls"),
-        when: &[],
-    },
-    Builtin {
-        name: "haskell",
-        languages: &[],
-        command: "haskell-language-server-wrapper",
-        args: &["--lsp"],
-        roots: &["hie.yaml", "stack.yaml", "cabal.project", "package.yaml"],
-        install: Install::Any("ghcup install hls"),
-        when: &[],
-    },
-    Builtin {
-        name: "ocaml",
-        languages: &[],
-        command: "ocamllsp",
-        args: &[],
-        roots: &["dune-project", "dune-workspace"],
-        install: Install::Any("opam install ocaml-lsp-server"),
-        when: &[],
-    },
-    Builtin {
-        name: "elixir",
-        languages: &[],
-        command: "elixir-ls",
-        args: &[],
-        roots: &["mix.exs"],
-        install: brew("brew install elixir-ls"),
-        when: &[],
-    },
-    Builtin {
-        name: "erlang",
-        languages: &[],
-        command: "erlang_ls",
-        args: &[],
-        roots: &["rebar.config", "erlang.mk"],
-        install: brew("brew install erlang_ls"),
-        when: &[],
-    },
-    Builtin {
-        name: "gleam",
-        languages: &[],
-        command: "gleam",
-        args: &["lsp"],
-        roots: &["gleam.toml"],
-        install: brew("brew install gleam"),
-        when: &[],
-    },
-    Builtin {
-        name: "elm",
-        languages: &[],
-        command: "elm-language-server",
-        args: &[],
-        roots: &["elm.json"],
-        install: npm(&["@elm-tooling/elm-language-server"]),
-        when: &[],
-    },
-    Builtin {
-        name: "purescript",
-        languages: &[],
-        command: "purescript-language-server",
-        args: &["--stdio"],
-        roots: &["spago.yaml", "spago.dhall"],
-        install: npm(&["purescript-language-server"]),
-        when: &[],
-    },
-    Builtin {
-        name: "clojure",
-        languages: &[],
-        command: "clojure-lsp",
-        args: &[],
-        roots: &["deps.edn", "project.clj", "bb.edn", "shadow-cljs.edn"],
-        install: brew("brew install clojure-lsp/brew/clojure-lsp-native"),
-        when: &[],
-    },
-    Builtin {
-        name: "racket",
-        languages: &[],
-        command: "racket",
-        args: &["-l", "racket-langserver"],
-        roots: &["info.rkt"],
-        install: Install::Any("raco pkg install --auto racket-langserver"),
-        when: &[],
-    },
-    Builtin {
-        name: "nix",
-        languages: &[],
-        command: "nil",
-        args: &[],
-        roots: &["flake.nix"],
-        install: Install::Any("nix profile install nixpkgs#nil"),
-        when: &[],
-    },
-    Builtin {
-        name: "cmake",
-        languages: &[],
-        command: "cmake-language-server",
-        args: &[],
-        roots: &["CMakeLists.txt"],
-        install: Install::Pkg(
-            Manager::Pip,
-            // pygls 2 took away the class it imports (2026-10).
-            &["cmake-language-server", "pygls<2"],
-            &[],
-        ),
-        when: &[],
-    },
-    Builtin {
-        name: "fortran",
-        languages: &[],
-        command: "fortls",
-        args: &[],
-        roots: &[".fortls"],
-        install: Install::Pkg(Manager::Pip, &["fortls"], &[]),
-        when: &[],
-    },
-    Builtin {
-        name: "r",
-        languages: &[],
-        command: "R",
-        args: &["--no-echo", "-e", "languageserver::run()"],
-        roots: &["DESCRIPTION", ".Rprofile"],
-        install: Install::Any(
-            "R -e 'install.packages(\"languageserver\", repos = \"https://cloud.r-project.org\")'",
-        ),
-        when: &[],
-    },
-    Builtin {
-        name: "prisma",
-        languages: &[],
-        command: "prisma-language-server",
-        args: &["--stdio"],
-        roots: &["package.json"],
-        install: npm(&["@prisma/language-server"]),
-        when: &[],
-    },
-    Builtin {
-        name: "proto",
-        languages: &[],
-        command: "protols",
-        args: &[],
-        roots: &["protols.toml", "buf.yaml"],
-        install: Install::Pkg(Manager::Cargo, &["protols"], &[]),
-        when: &[],
-    },
-    Builtin {
-        name: "dot",
-        languages: &[],
-        command: "dot-language-server",
-        args: &["--stdio"],
-        roots: &[],
-        install: npm(&["dot-language-server"]),
-        when: &[],
-    },
-    Builtin {
-        name: "awk",
-        languages: &[],
-        command: "awk-language-server",
-        args: &[],
-        roots: &[],
-        install: npm(&["awk-language-server"]),
-        when: &[],
-    },
-    Builtin {
-        name: "wgsl",
-        languages: &[],
-        command: "wgsl-analyzer",
-        args: &[],
-        roots: &[],
-        install: Install::Pkg(
-            Manager::Cargo,
-            &["wgsl-analyzer"],
-            &["--git", "https://github.com/wgsl-analyzer/wgsl-analyzer"],
-        ),
-        when: &[],
-    },
-    Builtin {
-        name: "glsl",
-        languages: &[],
-        command: "glsl_analyzer",
-        args: &[],
-        roots: &[],
-        install: Install::Any(""),
-        when: &[],
-    },
-    Builtin {
-        name: "odin",
-        languages: &[],
-        command: "ols",
-        args: &[],
-        roots: &["ols.json", "odinfmt.json"],
-        install: Install::Any(""),
-        when: &[],
-    },
-    Builtin {
-        name: "luau",
-        languages: &[],
-        command: "luau-lsp",
-        args: &["lsp"],
-        roots: &[".luaurc"],
-        install: Install::Any(""),
-        when: &[],
-    },
-    // Beside a language's own server, where the project says so
-    // (Decision 7): its config, at or above the file.
-    Builtin {
-        name: "eslint",
-        languages: &["typescript", "tsx", "javascript"],
-        command: "vscode-eslint-language-server",
-        args: &["--stdio"],
-        roots: &["package.json"],
-        install: VSCODE_EXTRACTED,
-        when: ESLINT_CONFIGS,
-    },
-    Builtin {
-        name: "biome",
-        languages: &["typescript", "tsx", "javascript", "json", "jsonc", "css"],
-        command: "biome",
-        args: &["lsp-proxy"],
-        roots: &["biome.json", "biome.jsonc"],
-        install: npm(&["@biomejs/biome"]),
-        when: &["biome.json", "biome.jsonc"],
-    },
-    Builtin {
-        name: "ruff",
-        languages: &["python"],
-        command: "ruff",
-        args: &["server"],
-        roots: &["pyproject.toml", "ruff.toml", ".ruff.toml"],
-        install: Install::Pkg(Manager::Pip, &["ruff"], &[]),
-        when: &["ruff.toml", ".ruff.toml"],
-    },
-];
-
-/// The files that say a project lints with eslint: flat configs and the
-/// older `.eslintrc`s.
-const ESLINT_CONFIGS: &[&str] = &[
-    "eslint.config.js",
-    "eslint.config.mjs",
-    "eslint.config.cjs",
-    "eslint.config.ts",
-    "eslint.config.mts",
-    "eslint.config.cts",
-    ".eslintrc",
-    ".eslintrc.js",
-    ".eslintrc.cjs",
-    ".eslintrc.json",
-    ".eslintrc.yaml",
-    ".eslintrc.yml",
-];
-
-/// What vscode-eslint-language-server reads as its configuration — the
-/// editor extension's defaults, as nvim-lspconfig sends them; a `null`
-/// `workspaceFolder` is answered with the server's root.
-fn eslint_settings() -> Value {
-    json!({
-        "validate": "on",
-        "useESLintClass": false,
-        "experimental": { "useFlatConfig": false },
-        "codeActionOnSave": { "enable": false, "mode": "all" },
-        "format": false,
-        "quiet": false,
-        "onIgnoredFiles": "off",
-        "rulesCustomizations": [],
-        "run": "onType",
-        "problems": { "shortenToSingleLine": false },
-        "nodePath": "",
-        "workingDirectory": { "mode": "location" },
-        "workspaceFolder": null,
-        "codeAction": {
-            "disableRuleComment": { "enable": true, "location": "separateLine" },
-            "showDocumentation": { "enable": true }
-        }
-    })
-}
-
-impl ServerDef {
-    /// The obvious servers for the languages kawoosh knows, built in or
-    /// installable (roadmap step 7, lsp-servers.md), each by the command
-    /// its project installs it as and with the line that installs it; a
-    /// `kawoosh.lsp.server` from Lua or `lsp.NAME` in the settings
-    /// replaces one by name. One server serves the languages one program
-    /// reads — typescript-language-server the three of TypeScript and
-    /// JavaScript, clangd C, C++ and Objective-C (lsp-rules.md
-    /// Decision 1).
-    pub fn builtin() -> Vec<ServerDef> {
-        let strings = |s: &[&str]| s.iter().map(|a| a.to_string()).collect();
-        BUILTIN
-            .iter()
-            .map(|b| ServerDef {
-                language: b.name.into(),
-                languages: strings(b.languages),
-                command: b.command.into(),
-                args: strings(b.args),
-                roots: strings(b.roots),
-                install: b.install.line().into(),
-                package: match b.install {
-                    Install::Pkg(m, packages, args) => Some(Package::new(m, packages, args)),
-                    _ => None,
-                },
-                when: strings(b.when),
-                settings: if b.name == "eslint" {
-                    eslint_settings()
-                } else {
-                    Value::Null
-                },
-                ..Default::default()
-            })
-            .collect()
-    }
 }
 
 /// What `load_all` sends a server started in `root` for `defs`: the
@@ -1759,6 +1115,8 @@ struct Server {
     name: String,
     /// Its definition's `settings`.
     settings: Value,
+    /// Its definition's `answers`.
+    answers: BTreeMap<String, Value>,
     /// The domain it runs on: the paths it speaks of are that host's,
     /// spelled `box:/…` on the way out (`Pool::emit_from`).
     domain: Option<String>,
@@ -1876,6 +1234,7 @@ impl Server {
             languages: def.served().iter().map(|l| l.to_string()).collect(),
             name: def.command.clone(),
             settings: def.settings.clone(),
+            answers: def.answers.clone(),
             domain,
             root: root.to_path_buf(),
             loading: BTreeSet::new(),
@@ -2078,7 +1437,7 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
     let (from_tx, from_rx) = unbounded::<(usize, FromServer)>();
     let (refreshed_tx, refreshed_rx) = unbounded::<Vec<String>>();
     let mut pool = Pool {
-        defs: ServerDef::builtin(),
+        defs: Vec::new(),
         keys: HashMap::new(),
         servers: Vec::new(),
         homes: HashMap::new(),
@@ -2446,10 +1805,14 @@ impl Pool {
                     let Some(server) = self.servers[key].as_mut() else {
                         continue;
                     };
-                    if let Some(d) = self
+                    let def = self
                         .defs
                         .iter()
-                        .find(|d| d.command == server.name && d.language == server.language)
+                        .find(|d| d.command == server.name && d.language == server.language);
+                    if let Some(d) = def {
+                        server.answers = d.answers.clone();
+                    }
+                    if let Some(d) = def
                         && d.settings != server.settings
                     {
                         server.settings = d.settings.clone();
@@ -3485,6 +2848,8 @@ impl Pool {
             let mut handed_up = None;
             let mut refresh = false;
             let result = match method {
+                // What its row says to answer, first.
+                m if server.answers.contains_key(m) => server.answers[m].clone(),
                 "workspace/configuration" => {
                     let items = message
                         .pointer("/params/items")
@@ -3499,9 +2864,10 @@ impl Pool {
                                     &server.settings,
                                     item.get("section").and_then(Value::as_str),
                                 );
-                                // `workspaceFolder: null` is the server's
-                                // root (vscode-eslint asks for its own).
-                                if v.get("workspaceFolder").is_some_and(Value::is_null) {
+                                // `workspaceFolder = "root"` is the
+                                // server's root (vscode-eslint asks for
+                                // its own; servers.lua says so).
+                                if v.get("workspaceFolder").and_then(Value::as_str) == Some("root") {
                                     v["workspaceFolder"] = json!({
                                         "uri": uri_of(&server.root),
                                         "name": crate::fs::basename(&server.root).unwrap_or_default(),
@@ -3528,10 +2894,6 @@ impl Pool {
                     "uri": uri_of(&server.root),
                     "name": crate::fs::basename(&server.root).unwrap_or_default(),
                 }]),
-                // vscode-eslint asks before it runs a project's eslint;
-                // 4 is "approved", as the editor extension answers when
-                // the user has allowed it.
-                "eslint/confirmESLintExecution" => json!(4),
                 // Pulled again, once answered.
                 "workspace/diagnostic/refresh" => {
                     refresh = true;
@@ -4356,12 +3718,22 @@ mod tests {
         assert_eq!(language_id("typescript"), "typescript");
     }
 
+    /// rust-analyzer's, as the builtin table has it.
+    fn rust() -> ServerDef {
+        ServerDef {
+            language: "rust".into(),
+            command: "rust-analyzer".into(),
+            roots: vec!["Cargo.toml".into()],
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn workspace_root_finds_markers() {
         let dir = std::env::temp_dir().join(format!("kawoosh-root-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("src/deep")).unwrap();
         std::fs::write(dir.join("Cargo.toml"), "").unwrap();
-        let def = &ServerDef::builtin()[0];
+        let def = &rust();
         assert_eq!(workspace_root(&dir.join("src/deep/a.rs"), def), dir);
         // A member crate inside a workspace resolves to the workspace.
         std::fs::create_dir_all(dir.join("member/src")).unwrap();
@@ -4381,7 +3753,7 @@ mod tests {
             &["/w", "/w/.git", "/w/member", "/w/member/src"],
             &["/w/Cargo.toml", "/w/member/Cargo.toml"],
         );
-        let def = &ServerDef::builtin()[0];
+        let def = &rust();
         let root = workspace_root(Path::new(&format!("{name}:/w/member/src/x.rs")), def);
         assert_eq!(root.display().to_string(), format!("{name}:/w"));
         let asked = host.asked.lock().unwrap().clone();

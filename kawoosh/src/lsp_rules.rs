@@ -188,50 +188,8 @@ impl Kawoosh {
             if field("enabled").and_then(Setting::as_bool) == Some(false) {
                 continue;
             }
-            if let Some(c) = field("cmd").and_then(Setting::as_str)
-                && c != def.command
-            {
-                // Another program: the line that installed the old one
-                // is not its.
-                def.command = c.to_string();
-                def.install.clear();
-                def.package = None;
-            }
-            // A line, for a manager kawoosh does not drive; a table, a
-            // package it installs itself (lsp-installs.md Decision 2).
-            match field("install") {
-                Some(Setting::Str(line)) => {
-                    def.install = line.clone();
-                    def.package = None;
-                }
-                Some(t) => match package_setting(t) {
-                    Ok(p) => {
-                        def.package = Some(p);
-                        def.install.clear();
-                    }
-                    Err(e) => {
-                        mistakes.push((
-                            format!("{name}.install"),
-                            format!("lsp.{name}.install: {e}"),
-                        ));
-                    }
-                },
-                None => {}
-            }
-            if let Some(a) = field("args").and_then(strings) {
-                def.args = a;
-            }
-            if let Some(r) = field("roots").and_then(strings) {
-                def.roots = r;
-            }
-            if let Some(l) = field("languages").and_then(strings) {
-                def.languages = l;
-            }
-            if let Some(w) = field("when").and_then(strings) {
-                def.when = w;
-            }
-            if let Some(s) = field("settings") {
-                def.settings = setting_json(s);
+            if let Some(t) = t {
+                mistakes.extend(fold(&mut def, t));
             }
             if let Some(b) = field("load_all").and_then(Setting::as_bool) {
                 def.load_all = b;
@@ -420,6 +378,136 @@ impl Kawoosh {
     }
 }
 
+/// The builtin servers: `lua/servers.lua`'s rows, each an `lsp.NAME`
+/// table with its `name`, in the order a language's servers are asked
+/// (docs/design/lsp-servers.md Decision 1). Read once.
+pub(crate) fn builtin() -> Vec<ServerDef> {
+    static DEFS: std::sync::OnceLock<Vec<ServerDef>> = std::sync::OnceLock::new();
+    DEFS.get_or_init(|| {
+        let rows = kawoosh_lua::eval_data("servers.lua", include_str!("../lua/servers.lua"))
+            .expect("servers.lua reads");
+        let rows = rows.as_list().expect("servers.lua returns a list");
+        rows.iter()
+            .map(|row| {
+                let name = row.get("name").and_then(Setting::as_str);
+                let mut def = ServerDef {
+                    language: name.expect("a servers.lua row has a name").to_string(),
+                    ..Default::default()
+                };
+                let mistakes = fold(&mut def, row);
+                assert!(mistakes.is_empty(), "servers.lua: {mistakes:?}");
+                def
+            })
+            .collect()
+    })
+    .clone()
+}
+
+/// `t`, what a server is as `lsp.NAME` says it — a row of
+/// `lua/servers.lua`, a `kawoosh.lsp.server`'s table, the settings' —
+/// over `def`: `cmd`, `args`, `roots`, `languages`, `when`, `install`,
+/// `settings` and `answers`, each one said replacing what was. The rules
+/// (`enabled`, `load_all`…) are the settings' alone (lsp-rules.md). What
+/// does not read is left as it was and said, by a key, for the user.
+pub(crate) fn fold(def: &mut ServerDef, t: &Setting) -> Vec<(String, String)> {
+    let name = def.language.clone();
+    let field = |key: &str| t.get(key);
+    let mut mistakes = Vec::new();
+    if let Some(c) = field("cmd").and_then(Setting::as_str)
+        && c != def.command
+    {
+        // Another program: the line that installed the old one is not
+        // its.
+        def.command = c.to_string();
+        def.install.clear();
+        def.package = None;
+    }
+    // A line, for a manager kawoosh does not drive — or one a platform;
+    // a table, a package it installs itself (lsp-installs.md
+    // Decision 2).
+    match field("install") {
+        Some(Setting::Str(line)) => {
+            def.install = line.clone();
+            def.package = None;
+        }
+        Some(t) if let Some(line) = platform_line(t) => {
+            def.install = line;
+            def.package = None;
+        }
+        Some(t) => match package_setting(t) {
+            Ok(p) => {
+                def.package = Some(p);
+                def.install.clear();
+            }
+            Err(e) => {
+                mistakes.push((
+                    format!("{name}.install"),
+                    format!("lsp.{name}.install: {e}"),
+                ));
+            }
+        },
+        None => {}
+    }
+    if let Some(a) = field("args").and_then(strings) {
+        def.args = a;
+    }
+    if let Some(r) = field("roots").and_then(strings) {
+        def.roots = r;
+    }
+    if let Some(l) = field("languages").and_then(strings) {
+        def.languages = l;
+    }
+    if let Some(w) = field("when").and_then(strings) {
+        def.when = w;
+    }
+    if let Some(s) = field("settings") {
+        def.settings = setting_json(s);
+    }
+    match field("answers") {
+        Some(Setting::Table(t)) => {
+            def.answers = t
+                .iter()
+                .map(|(method, v)| (method.clone(), setting_json(v)))
+                .collect();
+        }
+        Some(_) => mistakes.push((
+            format!("{name}.answers"),
+            format!("lsp.{name}.answers: a table of a request's method and its result"),
+        )),
+        None => {}
+    }
+    mistakes
+}
+
+/// The platforms an install line may be said for.
+const PLATFORMS: [&str; 3] = ["mac", "linux", "windows"];
+
+/// `{ mac = "brew install x", windows = "winget install x" }`: this
+/// machine's line, `""` where it has none; `None` for a table that is
+/// not lines by platform.
+fn platform_line(v: &Setting) -> Option<String> {
+    let Setting::Table(t) = v else { return None };
+    let lines = !t.is_empty()
+        && t.iter()
+            .all(|(k, v)| PLATFORMS.contains(&k.as_str()) && v.as_str().is_some());
+    if !lines {
+        return None;
+    }
+    let here = if cfg!(target_os = "macos") {
+        "mac"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "linux"
+    };
+    Some(
+        t.get(here)
+            .and_then(Setting::as_str)
+            .unwrap_or("")
+            .to_string(),
+    )
+}
+
 /// A list of strings, or `None` for anything else.
 /// `{ npm = "yaml-language-server" }`, `{ pip = { "x", "dep<2" } }`,
 /// `{ cargo = "taplo-cli", args = { "--features", "lsp" } }`: one
@@ -520,6 +608,76 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// servers.lua reads whole, in its asking order: a language's own
+    /// server before the ones that run beside it.
+    #[test]
+    fn the_builtin_servers_are_read_from_lua() {
+        let defs = builtin();
+        let at = |n: &str| defs.iter().position(|d| d.language == n).unwrap();
+        assert_eq!(defs[0].command, "rust-analyzer");
+        assert!(at("typescript") < at("eslint") && at("typescript") < at("biome"));
+        assert!(at("python") < at("ruff"));
+        let names: HashSet<&str> = defs.iter().map(|d| d.language.as_str()).collect();
+        assert_eq!(names.len(), defs.len(), "a name once");
+        let ts = &defs[at("typescript")];
+        assert_eq!(ts.served(), ["typescript", "tsx", "javascript"]);
+        let pkg = ts.package.as_ref().unwrap();
+        assert_eq!(pkg.manager, Manager::Npm);
+        assert_eq!(pkg.packages, ["typescript-language-server", "typescript@5"]);
+        let eslint = &defs[at("eslint")];
+        assert!(eslint.when.contains(&"eslint.config.js".to_string()));
+        assert_eq!(eslint.settings["workspaceFolder"], "root");
+        assert_eq!(eslint.answers["eslint/confirmESLintExecution"], 4);
+        let taplo = defs[at("toml")].package.as_ref().unwrap();
+        assert_eq!(taplo.args, ["--locked", "--features", "lsp"]);
+        let lua = &defs[at("lua")];
+        assert!(lua.package.is_none());
+        if cfg!(windows) {
+            assert_eq!(lua.install, "");
+        } else {
+            assert_eq!(lua.install, "brew install lua-language-server");
+        }
+    }
+
+    /// An install by platform is this machine's line; a table with
+    /// another key is a package, or a mistake.
+    #[test]
+    fn an_install_line_by_platform() {
+        let mut t = Setting::table();
+        t.set("mac", Setting::Str("brew install x".into()));
+        t.set("windows", Setting::Str("winget install x".into()));
+        let here = platform_line(&t).unwrap();
+        if cfg!(target_os = "macos") {
+            assert_eq!(here, "brew install x");
+        } else if cfg!(windows) {
+            assert_eq!(here, "winget install x");
+        } else {
+            assert_eq!(here, "", "none known on Linux");
+        }
+        let mut npm = Setting::table();
+        npm.set("npm", Setting::Str("x".into()));
+        assert!(platform_line(&npm).is_none());
+        assert!(platform_line(&Setting::table()).is_none());
+
+        let mut def = ServerDef {
+            language: "x".into(),
+            ..Default::default()
+        };
+        let mut row = Setting::table();
+        row.set("cmd", Setting::Str("x-ls".into()));
+        row.set("install", t);
+        assert!(fold(&mut def, &row).is_empty());
+        assert_eq!(def.install, here);
+        let mut bad = Setting::table();
+        bad.set("install.brew", Setting::Str("x".into()));
+        let said = fold(&mut def, &bad);
+        assert_eq!(said.len(), 1);
+        assert!(
+            said[0].1.starts_with("lsp.x.install: no manager brew"),
+            "{said:?}"
+        );
+    }
 
     #[test]
     fn the_secrets_files_are_never_loaded() {

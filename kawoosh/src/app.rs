@@ -396,7 +396,7 @@ impl Kawoosh {
             dotfiles: crate::dotfiles::Dotfiles::new(wake.named("qd")),
             lsp_installs: crate::lsp_installs::Installs::new(wake.named("lsp installs")),
             scripting: Scripting {
-                servers: kawoosh_systems::lsp::ServerDef::builtin(),
+                servers: crate::lsp_rules::builtin(),
                 ..Default::default()
             },
             domains: Default::default(),
