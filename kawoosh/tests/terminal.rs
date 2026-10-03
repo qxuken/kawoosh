@@ -1622,6 +1622,50 @@ fn screen_text(app: &Kawoosh, t: u64) -> String {
         .join("\n")
 }
 
+/// A flood of output is parsed a frame's budget at a time, the rest
+/// left for the frames after (`pump_ptys`), and a kept pane's close
+/// still comes after the last of it.
+#[cfg(unix)]
+#[test]
+fn a_flood_of_output_is_parsed_over_frames_and_closes_after_it() {
+    let mut app = Kawoosh::new("t", "editor text");
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.shell",
+        kawoosh_editor::Setting::Str("/bin/sh".into()),
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    // Some 14 MB from a file: `cat` writes faster than a terminal
+    // parses, where `seq` would not.
+    let file = std::env::temp_dir().join(format!("kawoosh-flood-{}", std::process::id()));
+    let lines: String = (1..=2_000_000).map(|i| format!("{i}\n")).collect();
+    std::fs::write(&file, lines).unwrap();
+    d.keys(&mut app, &format!(":!cat {}", file.display()));
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.term_of_focused().expect("a terminal pane");
+    let (mut frames, mut left) = (0, 0);
+    for _ in 0..3000 {
+        d.frame(&mut app);
+        frames += 1;
+        if app.terms.flowing.contains(&t) {
+            left += 1;
+        }
+        if app.terms.done.contains_key(&t) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(app.terms.done.contains_key(&t), "the line ended");
+    assert!(
+        left > 1,
+        "frames left output to the next: {left} of {frames}"
+    );
+    std::fs::remove_file(&file).ok();
+    let seen = screen_text(&app, t);
+    assert!(seen.contains("1999999\n2000000\n\n[finished]"), "{seen}");
+}
+
 /// A `:!CMD` pane outlives its line: how it ended is printed under its
 /// output, the status says `DONE`, and its keys are normal mode's — `r`
 /// runs the line again where it ran, `q` closes the pane. A

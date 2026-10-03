@@ -835,18 +835,17 @@ impl Kawoosh {
         }
     }
 
-    /// Everything the systems sent since the last frame.
+    /// Everything the systems sent since the last frame, and the
+    /// terminals' output for a frame's budget (`pump_ptys`).
     pub(crate) fn drain_io(&mut self) {
         for msg in self.io.drain() {
             match msg {
-                IoMsg::Pty { id, bytes } => {
-                    if let Some(t) = self.terms.map.get_mut(&id) {
-                        t.feed(&bytes);
-                    }
+                IoMsg::Pty { id } => {
+                    self.terms.flowing.insert(id);
                 }
                 IoMsg::DomainUp { name } => self.domain_up(&name),
                 IoMsg::DomainFailed { name, error } => self.domain_failed(&name, &error),
-                IoMsg::PtyClosed { id } => self.term_closed(id),
+                IoMsg::PtyClosed { id } => self.pty_closed(id),
                 IoMsg::Request(incoming) => self.on_request(incoming),
                 IoMsg::Grammar { name, step } => self.on_grammar(name, step),
                 IoMsg::Grammars(result) => self.on_grammars(result),
@@ -1034,6 +1033,7 @@ impl Kawoosh {
                 }
             }
         }
+        self.pump_ptys();
     }
 
     /// Blocks until every job a plugin asked for has been answered —
@@ -1374,7 +1374,7 @@ impl Kawoosh {
         match c {
             Content::Editor(v) => self.drop_view(v),
             Content::Terminal(t) => {
-                self.terms.map.remove(&t);
+                self.terms.forget(t);
                 self.terms.spawned.remove(&t);
                 self.terms.done.remove(&t);
                 self.lsp.installs.remove(&t);
@@ -2537,6 +2537,10 @@ impl kui_native::App for Kawoosh {
         let frame_started = self.perf.start();
         let mut t = frame_started;
         self.drain_io();
+        // Output a budget left behind: parsed on the next frame.
+        if !self.terms.flowing.is_empty() {
+            crate::frames::request(ui, "pty backlog");
+        }
         t = self.perf.lap(Io, "io drain", t);
         self.flush_proc_lines();
         t = self.perf.lap(Io, "processes", t);
