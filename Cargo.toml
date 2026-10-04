@@ -12,7 +12,7 @@ repository = "https://drydock9.qxuken.dev/qxuken/kawoosh"
 [workspace.dependencies]
 # qd, the dotfiles manager, as a library (docs/design/lsp-installs.md
 # Decision 5): its crate `qdot` (lib `qd`), the core alone.
-qdot = { version = "=0.2.0", registry = "drydock9", default-features = false }
+qdot = { version = "=0.2.0", default-features = false }
 text-buffer = { path = "./text-buffer" }
 kawoosh-doc = { path = "./doc" }
 kawoosh-editor = { path = "./editor" }

@@ -58,9 +58,6 @@ def main [
   }
   let app = $out_dir | default $default_dir | path join Kawoosh | path expand
   let manifest = $root | path join Cargo.toml
-  # Cargo reads `.cargo/config.toml` — the registry kui's crates come
-  # from — in the directory it runs in, not the manifest's.
-  cd $root
   let fonts = $root | path join assets fonts
 
   # A checkout without `git lfs pull` has the faces as pointers of a

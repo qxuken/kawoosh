@@ -1,5 +1,0 @@
-# drydock9, the Forgejo cargo registry: `qdot` comes from it. kui
-# publishes there too, but kawoosh takes kui from crates.io since alpha.34
-# (Cargo.toml's comment says why).
-[registries.drydock9]
-index = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
