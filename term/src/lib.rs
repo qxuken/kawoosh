@@ -3,6 +3,8 @@
 //! key bytes out to the pty, a screenful of cells per frame; scrollback
 //! as text for the materialise-into-a-buffer command.
 
+#[cfg(windows)]
+mod console_host;
 mod graphics;
 pub mod kitty;
 
@@ -433,6 +435,10 @@ impl Terminal {
                 pixel_height: 0,
             })
             .context("opening pty")?;
+        // The pseudo console's host, started with it, ahead of a build's
+        // compilers: every echo goes through it (`console_host`).
+        #[cfg(windows)]
+        console_host::raise_hosts();
         builder.env("TERM", "xterm-256color");
         builder.env("COLORTERM", "truecolor");
         for (k, v) in envs {
