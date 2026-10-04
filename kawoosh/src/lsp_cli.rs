@@ -202,19 +202,36 @@ fn install_line(d: &ServerDef) -> Result<(), String> {
         ));
     }
     println!("› {}", d.install);
-    let (shell, flag) = if cfg!(windows) {
-        ("cmd", "/C")
-    } else {
-        ("sh", "-c")
-    };
-    let mut c = kawoosh_systems::io::command(shell);
-    c.args([flag, &d.install]);
+    let mut c = shell_line(&d.install);
+    let shell = c.get_program().to_string_lossy().into_owned();
     let mut child = kawoosh_systems::spawn::spawn(&mut c).map_err(|e| format!("{shell}: {e}"))?;
     let status = child.wait().map_err(|e| e.to_string())?;
     if !status.success() {
         return Err(format!("`{}` ended with {status}", d.install));
     }
     Ok(())
+}
+
+/// `line` run by the shell as it would be typed there: `sh -c LINE`;
+/// on Windows `cmd /S /C "LINE"`, given to cmd as it is — std's quoting
+/// of one argument writes an inner `"` as `\"`, which cmd does not read
+/// back, and `R -e "install.packages(…)"` reached R broken. `/S` has
+/// cmd take off just the outer pair of quotes, whatever the line starts
+/// with.
+fn shell_line(line: &str) -> std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut c = kawoosh_systems::io::command("cmd");
+        c.raw_arg(format!("/S /C \"{line}\""));
+        c
+    }
+    #[cfg(not(windows))]
+    {
+        let mut c = kawoosh_systems::io::command("sh");
+        c.args(["-c", line]);
+        c
+    }
 }
 
 fn install_package(
@@ -311,5 +328,29 @@ mod tests {
         assert_eq!(name_version("yaml@1.15.0"), ("yaml", Some("1.15.0")));
         assert_eq!(name_version("yaml"), ("yaml", None));
         assert_eq!(name_version("yaml@"), ("yaml", None));
+    }
+
+    /// An install line reaches cmd as it was written: its quotes its
+    /// own, not std's `\"` (R's `-e "install.packages(…)"`), a `&` in
+    /// them the text's, and a line that starts with a quote kept whole.
+    #[cfg(windows)]
+    #[test]
+    fn an_install_line_reaches_cmd_as_written() {
+        let run = |line: &str| {
+            let out = kawoosh_systems::spawn::output(&mut shell_line(line)).unwrap();
+            assert!(out.status.success(), "{line}: {out:?}");
+            String::from_utf8(out.stdout)
+                .unwrap()
+                .trim_end()
+                .to_string()
+        };
+        let r =
+            r#"R -e "install.packages('languageserver', repos = 'https://x.example/?a=1&b=2')""#;
+        assert_eq!(run(&format!("echo {r}")), r);
+        let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
+        assert_eq!(
+            run(&format!(r#""{comspec}" /C echo "a b" c"#)),
+            r#""a b" c"#
+        );
     }
 }

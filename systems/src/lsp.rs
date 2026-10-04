@@ -1113,15 +1113,16 @@ enum Anchor {
     /// rust-analyzer's `C:\w/**/*.rs` to a client without relative
     /// patterns): the whole path.
     Whole,
-    /// Any other glob string (`**/*.rs`): the path under the server's
-    /// root, or the whole.
+    /// Any other glob string (`**/*.rs`): the protocol reads it under
+    /// the workspace's folders — the path under the server's root, or
+    /// under a folder its other watches name; never another workspace's.
     Loose,
 }
 
 impl FileWatch {
-    /// Whether it asks for `change` at `path` — both spelled with `/`
-    /// ([`slash_path`]), `root` the server's.
-    fn wants(&self, root: &str, path: &str, change: Change) -> bool {
+    /// Whether it asks for `change` at `path` — all spelled with `/`
+    /// ([`slash_path`]), `bases` the server's ([`Server::watch_bases`]).
+    fn wants(&self, bases: &[String], path: &str, change: Change) -> bool {
         if self.kinds & change.kind_bit() == 0 {
             return false;
         }
@@ -1130,10 +1131,9 @@ impl FileWatch {
                 under(path, &slash_path(base)).is_some_and(|rel| self.glob.is_match(rel))
             }
             Anchor::Whole => self.glob.is_match(path),
-            Anchor::Loose => {
-                under(path, root).is_some_and(|rel| self.glob.is_match(rel))
-                    || self.glob.is_match(path)
-            }
+            Anchor::Loose => bases
+                .iter()
+                .any(|b| under(path, b).is_some_and(|rel| self.glob.is_match(rel))),
         }
     }
 
@@ -1249,6 +1249,26 @@ fn under<'a>(path: &'a str, dir: &str) -> Option<&'a str> {
     path[dir.len()..].strip_prefix('/')
 }
 
+/// Whether a folder (spelled with `/`) is too wide to watch whole: a
+/// disk's root (`/`, `C:`), or `home` or a folder it is under.
+fn wide_folder(d: &str, home: Option<&str>) -> bool {
+    let d = d.trim_end_matches('/');
+    d.is_empty()
+        || !d.contains('/')
+        || home.is_some_and(|h| under(&format!("{}/", h.trim_end_matches('/')), d).is_some())
+}
+
+/// A path as [`under`] compares it, for a lookup in path order: spelled
+/// with `/`, and on Windows in one case.
+fn path_key(p: &Path) -> String {
+    let s = slash_path(p);
+    if cfg!(windows) {
+        s.to_ascii_lowercase()
+    } else {
+        s
+    }
+}
+
 /// A file's text as `load_all` sends it: none for a folder, one over
 /// [`LOAD_FILE_MAX_BYTES`], or one gone.
 fn loadable_text(path: &Path) -> Option<String> {
@@ -1259,40 +1279,85 @@ fn loadable_text(path: &Path) -> Option<String> {
     crate::fs::read(path).ok()
 }
 
+/// The made folders walked for one batch, each once whichever server
+/// asks first: its files' paths.
+#[derive(Default)]
+struct Walks(HashMap<PathBuf, Vec<PathBuf>>);
+
+impl Walks {
+    fn of(&mut self, dir: &Path) -> &[PathBuf] {
+        self.0.entry(dir.to_path_buf()).or_insert_with(|| {
+            crate::fs::walk(dir, LOAD_WALK_MAX)
+                .unwrap_or_default()
+                .iter()
+                .map(|rel| crate::fs::join(dir, Path::new(rel)))
+                .collect()
+        })
+    }
+}
+
 /// Files made under `server` — a folder's walked — sent to it as the
 /// `load_all` walk sends: each of a language it loads, under its root
 /// and no hidden folder, not private, none over a MiB, under each
 /// definition's `load_max`. Whether one was.
-fn load_made(server: &mut Server, defs: &[ServerDef], made: Vec<PathBuf>) -> bool {
+///
+/// The cheap questions come first — under the root, in no hidden folder,
+/// room under `load_max` — and a made folder is walked only then, once
+/// for every server that asks (`walks`), a folder made inside another
+/// made one not walked again.
+fn load_made(
+    server: &mut Server,
+    defs: &[ServerDef],
+    made: Vec<PathBuf>,
+    walks: &mut Walks,
+) -> bool {
+    let root = slash_path(&server.root);
+    let visible = |p: &Path| {
+        under(&slash_path(p), &root).is_some_and(|rel| !rel.split('/').any(|c| c.starts_with('.')))
+    };
+    let mut held: Vec<usize> = defs
+        .iter()
+        .map(|d| {
+            server
+                .documents
+                .values()
+                .filter(|doc| doc.buffer.is_none() && d.serves(&doc.language))
+                .count()
+        })
+        .collect();
+    if !defs.iter().zip(&held).any(|(d, h)| *h < d.load_max) {
+        return false;
+    }
+    let mut made: Vec<PathBuf> = made.into_iter().filter(|p| visible(p)).collect();
+    // In path order a folder's own come right after it: one under a
+    // made folder is the folder's walk's.
+    made.sort();
+    made.dedup();
     let mut files = Vec::new();
+    let mut last_dir: Option<PathBuf> = None;
     for p in made {
+        if last_dir.as_ref().is_some_and(|d| p.starts_with(d)) {
+            continue;
+        }
         if p.is_dir() {
-            let walked = crate::fs::walk(&p, LOAD_WALK_MAX).unwrap_or_default();
-            files.extend(walked.iter().map(|rel| crate::fs::join(&p, Path::new(rel))));
-        } else {
+            files.extend(walks.of(&p).iter().cloned());
+            last_dir = Some(p);
+        } else if defs.iter().any(|d| d.language_of(&p).is_some()) {
             files.push(p);
         }
     }
-    let root = slash_path(&server.root);
     let mut any = false;
-    for d in defs {
+    for (d, held) in defs.iter().zip(held.iter_mut()) {
         let private = private_globs(&d.private);
-        let mut held = server
-            .documents
-            .values()
-            .filter(|doc| doc.buffer.is_none() && d.serves(&doc.language))
-            .count();
         for p in &files {
-            if held >= d.load_max {
+            if *held >= d.load_max {
                 break;
             }
             let Some(language) = d.language_of(p).filter(|l| server.loading.contains(*l)) else {
                 continue;
             };
-            let hidden = under(&slash_path(p), &root)
-                .is_none_or(|rel| rel.split('/').any(|c| c.starts_with('.')));
             let uri = uri_of(p);
-            if hidden || private(p) || server.documents.contains_key(&uri) {
+            if !visible(p) || private(p) || server.documents.contains_key(&uri) {
                 continue;
             }
             let Some(text) = loadable_text(p) else {
@@ -1317,7 +1382,7 @@ fn load_made(server: &mut Server, defs: &[ServerDef], made: Vec<PathBuf>) -> boo
                     lsp_version: 1,
                 },
             );
-            held += 1;
+            *held += 1;
             any = true;
         }
     }
@@ -1372,6 +1437,22 @@ struct Server {
     /// The files it asked to hear of, by registration
     /// (`client/registerCapability` for `workspace/didChangeWatchedFiles`).
     watches: BTreeMap<String, Vec<FileWatch>>,
+}
+
+impl Server {
+    /// The folders a loose glob of its watches is read under, spelled
+    /// with `/`: its root — its one workspace folder — and the folders
+    /// its other watches name.
+    fn watch_bases(&self) -> Vec<String> {
+        let mut bases = vec![slash_path(&self.root)];
+        for d in self.watches.values().flatten().filter_map(FileWatch::dir) {
+            let d = slash_path(&d);
+            if !bases.contains(&d) {
+                bases.push(d);
+            }
+        }
+        bases
+    }
 }
 
 impl Server {
@@ -1883,10 +1964,34 @@ impl Pool {
         let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
             return;
         };
+        // Files made while it walked may have been sent already
+        // (`load_made`): with them each definition stays under its
+        // `load_max`.
+        let defs: Vec<&ServerDef> = self
+            .defs
+            .iter()
+            .filter(|d| d.command == server.name && d.load_all)
+            .collect();
+        let mut held: Vec<usize> = defs
+            .iter()
+            .map(|d| {
+                server
+                    .documents
+                    .values()
+                    .filter(|doc| doc.buffer.is_none() && d.serves(&doc.language))
+                    .count()
+            })
+            .collect();
         for (path, language, text) in loaded.files {
             let uri = uri_of(&path);
             if !server.loading.contains(&language) || server.documents.contains_key(&uri) {
                 continue;
+            }
+            if let Some(i) = defs.iter().position(|d| d.serves(&language)) {
+                if held[i] >= defs[i].load_max {
+                    continue;
+                }
+                held[i] += 1;
             }
             server.notify(
                 "textDocument/didOpen",
@@ -1929,20 +2034,13 @@ impl Pool {
     /// here that hears of files — it registered watches, or `load_all`
     /// holds files for it — and the folders its watches are under,
     /// where those are outside it (a path dependency's crate). A server
-    /// on a host is not watched, nor a disk's root or the home folder —
-    /// a loose file's server is started in its folder, and a home's
-    /// caches stir all day (lsp-rules.md Decision 7).
+    /// on a host is not watched, nor a disk's root, the home folder or
+    /// one above it (`/home`, `C:/Users`) — a loose file's server is
+    /// started in its folder, and a home's caches stir all day
+    /// (lsp-rules.md Decision 7).
     fn rewatch(&mut self) {
         let home = kawoosh_doc::paths::home().map(|h| slash_path(&h));
-        let wide = |d: &Path| {
-            let d = slash_path(d);
-            let d = d.trim_end_matches('/');
-            d.is_empty()
-                || !d.contains('/')
-                || home
-                    .as_deref()
-                    .is_some_and(|h| under(&format!("{h}/"), d) == Some(""))
-        };
+        let wide = |d: &Path| wide_folder(&slash_path(d), home.as_deref());
         let mut dirs = BTreeSet::new();
         for s in self.servers.iter().flatten() {
             if s.domain.is_some() || (s.watches.is_empty() && s.loading.is_empty()) {
@@ -1971,6 +2069,8 @@ impl Pool {
     /// hears of files; where its events were lost, every file it loaded
     /// is looked at again.
     fn handle_files(&mut self, batch: Batch) {
+        // A folder made is walked once, whichever servers load from it.
+        let mut walks = Walks::default();
         for key in 0..self.servers.len() {
             let Some(server) = self.servers[key].as_ref() else {
                 continue;
@@ -1992,7 +2092,7 @@ impl Pool {
                         .filter_map(|(u, _)| Some((path_of_uri(u)?, Change::Changed))),
                 );
             }
-            self.files_changed(key, &changes);
+            self.files_changed(key, &changes, &mut walks);
         }
     }
 
@@ -2005,7 +2105,7 @@ impl Pool {
     /// it. A file a buffer holds is the buffer's: the server has its
     /// text from the buffer, reloaded or kept, and owns no copy to read
     /// from disk (the protocol's `didOpen`), so the disk's is not said.
-    fn files_changed(&mut self, key: usize, changes: &[(PathBuf, Change)]) {
+    fn files_changed(&mut self, key: usize, changes: &[(PathBuf, Change)], walks: &mut Walks) {
         let Some(name) = self.servers[key].as_ref().map(|s| s.name.clone()) else {
             return;
         };
@@ -2020,6 +2120,7 @@ impl Pool {
         };
         let mut dropped: Vec<(String, PathBuf)> = Vec::new();
         let mut made = Vec::new();
+        let mut gone: Vec<&PathBuf> = Vec::new();
         for (path, change) in changes {
             let uri = uri_of(path);
             match server.documents.get_mut(&uri) {
@@ -2045,17 +2146,32 @@ impl Pool {
                         None => dropped.push((uri, path.clone())),
                     }
                 }
-                // A folder gone: the files loaded from it with it.
-                None if *change == Change::Deleted => {
-                    let folder = slash_path(path);
-                    dropped.extend(server.documents.iter().filter_map(|(u, d)| {
-                        let p = path_of_uri(u)?;
-                        (d.buffer.is_none() && under(&slash_path(&p), &folder).is_some())
-                            .then(|| (u.clone(), p))
-                    }));
-                }
+                // Perhaps a folder gone: looked up below.
+                None if *change == Change::Deleted => gone.push(path),
                 None if !server.loading.is_empty() => made.push(path.clone()),
                 None => {}
+            }
+        }
+        // A folder gone: the files loaded from it with it — each looked
+        // up in the loaded files in path order, not each file against
+        // each folder.
+        if !gone.is_empty() {
+            let mut loaded: Vec<(String, &String)> = server
+                .documents
+                .iter()
+                .filter(|(_, d)| d.buffer.is_none())
+                .filter_map(|(u, _)| Some((path_key(&path_of_uri(u)?), u)))
+                .collect();
+            loaded.sort();
+            for folder in gone {
+                let head = format!("{}/", path_key(folder).trim_end_matches('/'));
+                let from = loaded.partition_point(|(k, _)| *k < head);
+                dropped.extend(
+                    loaded[from..]
+                        .iter()
+                        .take_while(|(k, _)| k.starts_with(&head))
+                        .filter_map(|(_, u)| Some(((*u).clone(), path_of_uri(u)?))),
+                );
             }
         }
         // A file and its folder both gone: closed once.
@@ -2068,8 +2184,8 @@ impl Pool {
                 json!({ "textDocument": { "uri": uri } }),
             );
         }
-        let opened = !made.is_empty() && load_made(server, &defs, made);
-        let root = slash_path(&server.root);
+        let opened = !made.is_empty() && load_made(server, &defs, made, walks);
+        let bases = server.watch_bases();
         let events: Vec<Value> = changes
             .iter()
             .filter(|(p, _)| !server.documents.contains_key(&uri_of(p)))
@@ -2079,7 +2195,7 @@ impl Pool {
                     .watches
                     .values()
                     .flatten()
-                    .any(|w| w.wants(&root, &p, *c))
+                    .any(|w| w.wants(&bases, &p, *c))
             })
             .map(|(p, c)| json!({ "uri": uri_of(p), "type": c.code() }))
             .collect();
@@ -4231,7 +4347,8 @@ mod tests {
             { "globPattern": "[" }
         ]})));
         assert_eq!(watches.len(), 4, "the glob that does not parse dropped");
-        let wants = |i: usize, rel: &str, c: Change| watches[i].wants(&r, &p(rel), c);
+        let bases = [r.clone()];
+        let wants = |i: usize, rel: &str, c: Change| watches[i].wants(&bases, &p(rel), c);
         assert!(wants(0, "src/a.rs", Change::Created));
         assert!(wants(0, "a.rs", Change::Deleted));
         assert!(!wants(0, "src/a.ts", Change::Changed));
@@ -4271,10 +4388,57 @@ mod tests {
             let ra = file_watches(Some(
                 &json!({ "watchers": [{ "globPattern": r"c:\W\src/**/*.rs" }] }),
             ));
-            assert!(ra[0].wants(&r, &p("src/deep/a.rs"), Change::Changed));
-            assert!(ra[0].wants(&r, &p("SRC/A.RS"), Change::Changed));
+            assert!(ra[0].wants(&bases, &p("src/deep/a.rs"), Change::Changed));
+            assert!(ra[0].wants(&bases, &p("SRC/A.RS"), Change::Changed));
             assert_eq!(ra[0].dir(), Some(PathBuf::from(r"c:\W\src")));
         }
+    }
+
+    /// A loose glob is read under the workspace's folders: clangd in one
+    /// workspace asking for `**/compile_commands.json` hears of its own,
+    /// and of one under a folder its other watches name, never another
+    /// workspace's.
+    #[test]
+    fn a_loose_glob_stays_in_its_workspace() {
+        let (a, b, dep) = if cfg!(windows) {
+            (r"C:\a", r"C:\b", r"C:\dep")
+        } else {
+            ("/a", "/b", "/dep")
+        };
+        let watches = file_watches(Some(&json!({ "watchers": [
+            { "globPattern": "**/compile_commands.json" },
+            { "globPattern": { "baseUri": uri_of(Path::new(dep)), "pattern": "*.h" } }
+        ]})));
+        let bases: Vec<String> = [a, dep].iter().map(|d| slash_path(Path::new(d))).collect();
+        let at = |d: &str, rel: &str| format!("{}/{rel}", slash_path(Path::new(d)));
+        let loose = &watches[0];
+        assert!(loose.wants(&bases, &at(a, "compile_commands.json"), Change::Changed));
+        assert!(loose.wants(
+            &bases,
+            &at(a, "build/compile_commands.json"),
+            Change::Created
+        ));
+        assert!(loose.wants(&bases, &at(dep, "compile_commands.json"), Change::Changed));
+        assert!(
+            !loose.wants(&bases, &at(b, "compile_commands.json"), Change::Changed),
+            "another workspace's"
+        );
+        assert!(!loose.wants(&bases, &at(b, "x/compile_commands.json"), Change::Changed));
+    }
+
+    /// Not watched whole: a disk's root, the home folder, or a folder
+    /// the home is under; a project under the home is.
+    #[test]
+    fn a_folder_above_the_home_is_not_watched() {
+        let home = Some("/home/u");
+        for wide in ["/", "", "C:", "C:/", "/home", "/home/u", "/home/u/"] {
+            assert!(wide_folder(wide, home), "{wide}");
+        }
+        for narrow in ["/home/u/p", "/home/other", "/work/p", "C:/w"] {
+            assert!(!wide_folder(narrow, home), "{narrow}");
+        }
+        assert!(wide_folder("C:/Users", Some("C:/Users/u")));
+        assert!(!wide_folder("/home", None));
     }
 
     #[test]

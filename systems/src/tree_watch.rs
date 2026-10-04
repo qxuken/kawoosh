@@ -38,6 +38,21 @@ const SKIPPED: &[&str] = &[".git", ".hg", ".svn", ".jj", "target", "node_modules
 /// The most folders a watch a folder at a time takes on.
 const FOLDERS_MAX: usize = 50_000;
 
+/// How many events heard under a root in one batch's time — ignored
+/// ones too — count as a burst that may have run over the platform's
+/// buffer where the platform does not say it did (Windows: notify's
+/// ReadDirectoryChangesW reads 16 KiB, a hundred and some paths, and
+/// drops an overflow without a word). Every loaded file is read again
+/// once the burst is over (lsp-rules.md Decision 7).
+const BURST: usize = 128;
+
+/// How often each root is looked at: one gone is waited for, one made
+/// again — or first made — is watched again.
+const CHECK: Duration = Duration::from_secs(2);
+
+/// How long "no repository here" is believed before it is asked again.
+const NO_REPO_FOR: Duration = Duration::from_secs(10);
+
 /// What happened to a path, as the protocol's `FileChangeType` has it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Change {
@@ -131,11 +146,21 @@ type Raw = notify::Result<notify::Event>;
 fn run(mode: Mode, roots_rx: Receiver<Vec<PathBuf>>, batch_tx: Sender<Batch>) {
     let (raw_tx, raw_rx) = unbounded::<Raw>();
     let mut tree = Tree::new(mode, raw_tx);
+    let mut next_check = Instant::now() + CHECK;
     loop {
         let timer = tree
             .due()
             .map_or_else(crossbeam_channel::never, crossbeam_channel::at);
+        let check = if tree.roots.is_empty() {
+            crossbeam_channel::never()
+        } else {
+            crossbeam_channel::at(next_check)
+        };
         select! {
+            recv(check) -> _ => {
+                tree.check_roots();
+                next_check = Instant::now() + CHECK;
+            }
             recv(roots_rx) -> roots => {
                 let Ok(roots) = roots else { return };
                 // Only the last of the sets that waited counts.
@@ -179,8 +204,13 @@ struct Tree {
     /// Each root's real path where it is another — FSEvents speaks of
     /// `/private/var/…` for a root asked for as `/var/…` — and the root.
     real: Vec<(PathBuf, PathBuf)>,
-    /// [`Mode::PerFolder`]'s: every folder it watches.
-    folders: HashSet<PathBuf>,
+    /// [`Mode::PerFolder`]'s: every folder it watches — in path order,
+    /// so a folder's own are the run after it.
+    folders: BTreeSet<PathBuf>,
+    /// Roots not there to watch — not made yet, or gone — and what each
+    /// was when last watched ([`Identity`]), to tell one made again.
+    dormant: HashSet<PathBuf>,
+    identity: HashMap<PathBuf, Identity>,
     ignores: Ignores,
     /// What was heard of each path since the last batch — the first
     /// word of it — and the order they came in.
@@ -189,6 +219,38 @@ struct Tree {
     first: Option<Instant>,
     last: Option<Instant>,
     lost: BTreeSet<PathBuf>,
+    /// Where an overflow goes unsaid (Windows), how many events make a
+    /// burst ([`BURST`]); `None` where the platform says so itself.
+    burst: Option<usize>,
+    /// Events heard under each root since `heard_since`, and the roots
+    /// a burst has stirred, said as lost once the tree is still.
+    heard: HashMap<PathBuf, usize>,
+    heard_since: Option<Instant>,
+    last_heard: Option<Instant>,
+    bursting: BTreeSet<PathBuf>,
+}
+
+/// What a root folder is, to tell it from one made again in its place:
+/// its inode where there are inodes; on Windows when it was made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Identity(u64, u64);
+
+fn identity(dir: &Path) -> Option<Identity> {
+    let m = std::fs::metadata(dir).ok().filter(|m| m.is_dir())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(Identity(m.dev(), m.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let made = m
+            .created()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .unwrap_or_default();
+        Some(Identity(made.as_secs(), made.subsec_nanos().into()))
+    }
 }
 
 impl Tree {
@@ -199,13 +261,20 @@ impl Tree {
             watcher: None,
             roots: Vec::new(),
             real: Vec::new(),
-            folders: HashSet::new(),
+            folders: BTreeSet::new(),
+            dormant: HashSet::new(),
+            identity: HashMap::new(),
             ignores: Ignores::default(),
             pending: HashMap::new(),
             order: Vec::new(),
             first: None,
             last: None,
             lost: BTreeSet::new(),
+            burst: (cfg!(windows) && mode == Mode::Recursive).then_some(BURST),
+            heard: HashMap::new(),
+            heard_since: None,
+            last_heard: None,
+            bursting: BTreeSet::new(),
         }
     }
 
@@ -245,6 +314,10 @@ impl Tree {
             .collect();
         for r in &gone {
             self.unwatch_root(r);
+            self.dormant.remove(r);
+            self.identity.remove(r);
+            self.heard.remove(r);
+            self.bursting.remove(r);
         }
         self.real = outer
             .iter()
@@ -272,7 +345,15 @@ impl Tree {
         path.to_path_buf()
     }
 
-    fn watch_root(&mut self, root: &Path) {
+    /// `root` watched; one not there (yet) is dormant, looked at again
+    /// by [`Tree::check_roots`]. `report`: what is in it said as made.
+    fn watch_root_as(&mut self, root: &Path, report: bool) {
+        let Some(id) = identity(root) else {
+            self.dormant.insert(root.to_path_buf());
+            return;
+        };
+        self.dormant.remove(root);
+        self.identity.insert(root.to_path_buf(), id);
         match self.mode {
             Mode::Recursive => {
                 let Some(w) = self.watcher.as_mut() else {
@@ -282,30 +363,67 @@ impl Tree {
                     log::warn!("tree watch {}: {e}", root.display());
                 }
             }
-            Mode::PerFolder => self.watch_folders(root, false),
+            Mode::PerFolder => self.watch_folders(root, report),
         }
     }
 
+    fn watch_root(&mut self, root: &Path) {
+        self.watch_root_as(root, false);
+    }
+
     fn unwatch_root(&mut self, root: &Path) {
-        let Some(w) = self.watcher.as_mut() else {
-            return;
-        };
         match self.mode {
             Mode::Recursive => {
-                let _ = w.unwatch(root);
-            }
-            Mode::PerFolder => {
-                let under: Vec<PathBuf> = self
-                    .folders
-                    .iter()
-                    .filter(|f| f.starts_with(root))
-                    .cloned()
-                    .collect();
-                for f in under {
-                    let _ = w.unwatch(&f);
-                    self.folders.remove(&f);
+                if let Some(w) = self.watcher.as_mut() {
+                    let _ = w.unwatch(root);
                 }
             }
+            Mode::PerFolder => self.drop_folders(root),
+        }
+    }
+
+    /// [`Mode::PerFolder`]: the watches on `dir` and every folder under
+    /// it ended — it is gone, or moved away, and the platform's watch
+    /// went with it (inotify's `IN_DELETE_SELF`, `IN_MOVE_SELF`); one
+    /// made again in its place is watched as new.
+    fn drop_folders(&mut self, dir: &Path) {
+        let under: Vec<PathBuf> = self
+            .folders
+            .range::<Path, _>((std::ops::Bound::Included(dir), std::ops::Bound::Unbounded))
+            .take_while(|f| f.starts_with(dir))
+            .cloned()
+            .collect();
+        for f in under {
+            if let Some(w) = self.watcher.as_mut() {
+                let _ = w.unwatch(&f);
+            }
+            self.folders.remove(&f);
+        }
+    }
+
+    /// Each root looked at: one gone is let go — its watch went with it
+    /// (Windows' ends on the folder's deletion) — and one there again,
+    /// or there for the first time, or another folder in its place, is
+    /// watched again, what is in it said as made and every file loaded
+    /// under it read again.
+    fn check_roots(&mut self) {
+        for root in self.roots.clone() {
+            let now = identity(&root);
+            let was = self.identity.get(&root).copied();
+            if now.is_some() && now == was && !self.dormant.contains(&root) {
+                continue;
+            }
+            if was.is_some() {
+                self.unwatch_root(&root);
+                self.identity.remove(&root);
+            }
+            if now.is_none() {
+                self.dormant.insert(root);
+                continue;
+            }
+            self.watch_root_as(&root, true);
+            self.lost.insert(root);
+            self.stirred();
         }
     }
 
@@ -389,8 +507,20 @@ impl Tree {
             _ => Some(Seen::Touched),
         };
         for (i, path) in ev.paths.iter().enumerate() {
-            let Some(seen) = seen(i) else { continue };
             let path = &self.spelled(path);
+            self.heard_at(path);
+            let Some(seen) = seen(i) else { continue };
+            // A folder gone or moved away took its watches with it — one
+            // there again already is another, watched below as made.
+            if self.mode == Mode::PerFolder
+                && (seen == Seen::Gone || (seen == Seen::Moved && !path.is_dir()))
+            {
+                self.drop_folders(path);
+            }
+            // A repository made (`git init`): the ignores are its now.
+            if seen != Seen::Touched && path.file_name().is_some_and(|n| n == ".git") {
+                self.ignores.forget_repos();
+            }
             if self.ignored(path) {
                 continue;
             }
@@ -400,7 +530,7 @@ impl Tree {
                 self.ignores.forget(dir);
             }
             if self.mode == Mode::PerFolder
-                && matches!(seen, Seen::Made | Seen::Moved)
+                && matches!(seen, Seen::Made | Seen::Moved | Seen::Gone)
                 && path.is_dir()
             {
                 self.watch_folders(path, true);
@@ -423,16 +553,51 @@ impl Tree {
         self.last = Some(now);
     }
 
+    /// An event heard at `path`, ignored or not, counted toward a burst
+    /// under its root where an overflow goes unsaid. Counts start over
+    /// a batch's longest time ([`MOST`]) after they began.
+    fn heard_at(&mut self, path: &Path) {
+        let Some(burst) = self.burst else { return };
+        let Some(root) = self.root_of(path).map(Path::to_path_buf) else {
+            return;
+        };
+        let now = Instant::now();
+        if self.heard_since.is_none_or(|t| now >= t + MOST) {
+            self.heard.clear();
+            self.heard_since = Some(now);
+        }
+        self.last_heard = Some(now);
+        let n = self.heard.entry(root.clone()).or_default();
+        *n += 1;
+        if *n == burst && self.bursting.insert(root) {
+            // A batch to come, though all it heard were ignored.
+            self.stirred();
+        }
+    }
+
     /// When the batch is to go: still for [`QUIET`], or [`MOST`] since
     /// the first word.
     fn due(&self) -> Option<Instant> {
         Some((self.last? + QUIET).min(self.first? + MOST))
     }
 
-    /// What was heard, as the disk has it now.
+    /// What was heard, as the disk has it now. A burst's roots are
+    /// said as lost once nothing has been heard for [`QUIET`] — what
+    /// its overflow dropped is on disk by then — and until then another
+    /// batch is kept coming.
     fn flush(&mut self) -> Batch {
         self.first = None;
         self.last = None;
+        if !self.bursting.is_empty() {
+            let still = self.last_heard.is_none_or(|t| t.elapsed() >= QUIET);
+            if still {
+                self.lost.append(&mut self.bursting);
+                self.heard.clear();
+                self.heard_since = None;
+            } else {
+                self.stirred();
+            }
+        }
         let mut pending = std::mem::take(&mut self.pending);
         let changes = std::mem::take(&mut self.order)
             .into_iter()
@@ -493,8 +658,9 @@ fn settled(seen: Seen, now: Option<bool>) -> Option<Change> {
 #[derive(Default)]
 struct Ignores {
     /// Each root's repository: the nearest folder at or above it with a
-    /// `.git`, if any.
-    repos: HashMap<PathBuf, Option<PathBuf>>,
+    /// `.git`, if any — "none" asked again after [`NO_REPO_FOR`], or
+    /// when a `.git` is heard of.
+    repos: HashMap<PathBuf, (Option<PathBuf>, Instant)>,
     /// Each folder's `.gitignore`.
     files: HashMap<PathBuf, Option<Gitignore>>,
     /// Each repository's `.git/info/exclude`.
@@ -504,26 +670,40 @@ struct Ignores {
 
 impl Ignores {
     fn ignored(&mut self, root: &Path, path: &Path) -> bool {
-        let repo = self
+        let stale = self
             .repos
-            .entry(root.to_path_buf())
-            .or_insert_with(|| {
-                root.ancestors()
-                    .find(|d| d.join(".git").exists())
-                    .map(Path::to_path_buf)
-            })
-            .clone();
-        let Some(repo) = repo else {
+            .get(root)
+            .is_none_or(|(repo, at)| repo.is_none() && at.elapsed() >= NO_REPO_FOR);
+        if stale {
+            let repo = root
+                .ancestors()
+                .find(|d| d.join(".git").exists())
+                .map(Path::to_path_buf);
+            self.repos
+                .insert(root.to_path_buf(), (repo, Instant::now()));
+        }
+        let Some(repo) = self.repos.get(root).and_then(|(r, _)| r.clone()) else {
             return false;
         };
-        let Ok(in_repo) = path.strip_prefix(&repo) else {
+        if path.strip_prefix(&repo).is_err() {
+            return false;
+        }
+        match std::fs::symlink_metadata(path) {
+            Ok(m) => self.ignored_as(&repo, path, m.is_dir()),
+            // Gone: what it was is not known, and a folder-only line
+            // (`/gen/`) names the folder itself only as a folder.
+            Err(_) => self.ignored_as(&repo, path, false) || self.ignored_as(&repo, path, true),
+        }
+    }
+
+    fn ignored_as(&mut self, repo: &Path, path: &Path, is_dir: bool) -> bool {
+        let Ok(in_repo) = path.strip_prefix(repo) else {
             return false;
         };
-        let is_dir = path.is_dir();
         let dirs: Vec<PathBuf> = path
             .ancestors()
             .skip(1)
-            .take_while(|d| d.starts_with(&repo))
+            .take_while(|d| d.starts_with(repo))
             .map(Path::to_path_buf)
             .collect();
         for d in dirs {
@@ -539,8 +719,8 @@ impl Ignores {
         }
         let exclude = self
             .excludes
-            .entry(repo.clone())
-            .or_insert_with(|| read_ignore(&repo, &repo.join(".git").join("info").join("exclude")));
+            .entry(repo.to_path_buf())
+            .or_insert_with(|| read_ignore(repo, &repo.join(".git").join("info").join("exclude")));
         if let Some(gi) = exclude
             && let Some(said) = decide(gi, in_repo, is_dir)
         {
@@ -561,6 +741,13 @@ impl Ignores {
     /// `dir`'s `.gitignore` changed: read again when next asked.
     fn forget(&mut self, dir: &Path) {
         self.files.remove(dir);
+    }
+
+    /// A `.git` made or gone: which repository each root is in, and its
+    /// `info/exclude`, asked again.
+    fn forget_repos(&mut self) {
+        self.repos.clear();
+        self.excludes.clear();
     }
 }
 
@@ -784,6 +971,160 @@ mod tests {
         tree.ignores.forget(&w);
         assert!(tree.ignored(&w.join("a.rs")));
         assert!(!tree.ignored(&w.join("a.gen")));
+        remove(&dir);
+    }
+
+    /// "No repository" is not believed for good: a `.git` made under the
+    /// root is heard of and its `.gitignore` read from then on. A folder
+    /// a folder-only line names (`/gen/`) is no news gone, as there.
+    #[test]
+    fn a_repository_made_later_and_a_folder_gone_are_read_as_ignored() {
+        use notify::event::{CreateKind, EventKind, RemoveKind};
+        let dir = scratch("repo-later");
+        std::fs::write(dir.join(".gitignore"), "*.gen\n/gen/\n").unwrap();
+        std::fs::create_dir_all(dir.join("gen")).unwrap();
+        let mut tree = Tree::new(Mode::Recursive, unbounded().0);
+        tree.roots = vec![dir.clone()];
+        assert!(!tree.ignored(&dir.join("a.gen")), "no repository yet");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        tree.take(Ok(notify::Event::new(EventKind::Create(
+            CreateKind::Folder,
+        ))
+        .add_path(dir.join(".git"))));
+        assert!(tree.ignored(&dir.join("a.gen")), "the repository heard of");
+        assert!(tree.ignored(&dir.join("gen")));
+        std::fs::remove_dir_all(dir.join("gen")).unwrap();
+        assert!(
+            tree.ignored(&dir.join("gen")),
+            "gone, still a folder it names"
+        );
+        tree.take(Ok(notify::Event::new(EventKind::Remove(
+            RemoveKind::Folder,
+        ))
+        .add_path(dir.join("gen"))));
+        assert!(tree.flush().changes.is_empty());
+        remove(&dir);
+    }
+
+    /// Where an overflow goes unsaid, a burst — ignored paths too — has
+    /// its root said as lost, once, when the tree has been still for
+    /// [`QUIET`]; fewer events than a burst are nothing.
+    #[test]
+    fn a_burst_is_said_as_lost_once_it_is_over() {
+        use notify::event::{EventKind, ModifyKind};
+        let dir = scratch("burst");
+        let mut tree = Tree::new(Mode::Recursive, unbounded().0);
+        tree.roots = vec![dir.clone()];
+        tree.burst = Some(10);
+        let stir = |tree: &mut Tree, n: usize| {
+            for i in 0..n {
+                tree.take(Ok(notify::Event::new(EventKind::Modify(ModifyKind::Any))
+                    .add_path(dir.join("target").join(format!("{i}.o")))));
+            }
+        };
+        stir(&mut tree, 9);
+        assert_eq!(tree.due(), None, "ignored and under a burst: nothing");
+        stir(&mut tree, 1);
+        assert!(tree.due().is_some(), "a burst: a batch to come");
+        let b = tree.flush();
+        assert!(b.lost.is_empty(), "not over yet: {b:?}");
+        assert!(tree.due().is_some(), "another batch kept coming");
+        std::thread::sleep(QUIET + Duration::from_millis(20));
+        assert_eq!(tree.flush().lost, std::slice::from_ref(&dir));
+        assert_eq!(tree.due(), None);
+        assert!(tree.flush().lost.is_empty(), "said once");
+        remove(&dir);
+    }
+
+    /// A folder at a time: a folder deleted, or moved away, lets its
+    /// watches go, and one made again in its place is watched again —
+    /// what is changed in it heard of.
+    #[test]
+    fn a_folder_made_again_is_watched_again() {
+        use notify::event::{CreateKind, EventKind, RemoveKind};
+        let dir = scratch("again");
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(sub.join("deep")).unwrap();
+        // The bookkeeping, events given by hand.
+        let mut tree = Tree::new(Mode::PerFolder, unbounded().0);
+        tree.set_roots(vec![dir.clone()]);
+        assert!(tree.folders.contains(&sub) && tree.folders.contains(&sub.join("deep")));
+        remove(&sub);
+        tree.take(Ok(notify::Event::new(EventKind::Remove(
+            RemoveKind::Folder,
+        ))
+        .add_path(sub.clone())));
+        assert!(
+            !tree.folders.iter().any(|f| f.starts_with(&sub)),
+            "{:?}",
+            tree.folders
+        );
+        assert!(tree.folders.contains(&dir));
+        std::fs::create_dir_all(&sub).unwrap();
+        tree.take(Ok(notify::Event::new(EventKind::Create(
+            CreateKind::Folder,
+        ))
+        .add_path(sub.clone())));
+        assert!(tree.folders.contains(&sub), "{:?}", tree.folders);
+        drop(tree);
+
+        // And the platform's own events.
+        let w = TreeWatch::spawn(Mode::PerFolder);
+        w.watch(vec![dir.clone()]);
+        wait_up(&w, &dir.join("probe.txt"));
+        remove(&sub);
+        let all = until_heard(&w, &sub, Duration::from_secs(5)).expect("sub's removal heard of");
+        assert_eq!(of(&all, &sub), [Change::Deleted], "{all:?}");
+        for _ in 0..50 {
+            if std::fs::create_dir(&sub).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let c = sub.join("c.rs");
+        std::fs::write(&c, "1").unwrap();
+        until_heard(&w, &c, Duration::from_secs(5)).expect("c.rs heard of");
+        std::thread::sleep(QUIET * 2);
+        std::fs::write(&c, "2").unwrap();
+        let all = until_heard(&w, &c, Duration::from_secs(5)).expect("c.rs's change heard of");
+        assert_eq!(of(&all, &c), [Change::Changed], "{all:?}");
+        drop(w);
+        remove(&dir);
+    }
+
+    /// A root not there yet is watched once it is made, and one deleted
+    /// and made again is watched again, said as lost both times.
+    #[test]
+    fn a_root_made_later_is_watched() {
+        let dir = scratch("root-later");
+        let root = dir.join("w");
+        let w = TreeWatch::spawn(Mode::native());
+        w.watch(vec![root.clone()]);
+        std::thread::sleep(QUIET);
+        std::fs::create_dir_all(&root).unwrap();
+        let lost = |w: &TreeWatch| {
+            let deadline = Instant::now() + CHECK * 3;
+            while let Ok(b) = w.batches.recv_deadline(deadline) {
+                if b.lost.contains(&root) {
+                    return true;
+                }
+            }
+            false
+        };
+        assert!(lost(&w), "the root made is looked at");
+        wait_up(&w, &root.join("probe.txt"));
+        remove(&root);
+        // Seen gone, then made again.
+        std::thread::sleep(CHECK + QUIET);
+        for _ in 0..50 {
+            if std::fs::create_dir(&root).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(lost(&w), "the root made again is looked at");
+        wait_up(&w, &root.join("probe.txt"));
+        drop(w);
         remove(&dir);
     }
 }
