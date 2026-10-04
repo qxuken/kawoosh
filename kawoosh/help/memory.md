@@ -18,13 +18,13 @@ Texts survive a restart, for `memory.text.keep_days` days (7) and up to `memory.
 | `p` on a selection | replace the selection; what it replaced becomes the newest text |
 | `P` on a selection | replace the selection, keeping the register as it was |
 | `]p` `[p` | right after a put: swap what was put for the next newer / older text, COUNT steps |
-| `⌘v`, `<C-S-v>` (insert mode) | put the system clipboard at the caret |
+| {{mac:`⌘v`, }}`<C-S-v>` (insert mode) | put the system clipboard at the caret |
 
 The yank-pop (`[p` `]p`) walks the memory from the put you just made. The text you settle on becomes the register, so `p` puts it again, and one `u` takes the whole put back. Any edit ends the walk.
 
 ## The system clipboard
 
-Every yank also goes onto the system clipboard. With `clipboard.system` on (the default), the other direction works too: when the window comes back to the front, or the keys come back to an editor pane from a terminal or another pane, whatever another program (or a terminal selection) put on the clipboard becomes the newest text, so a plain `p` puts it. Set `clipboard.system = false` to keep `p` to kawoosh's own texts; `⌘v` still pastes the clipboard.
+Every yank also goes onto the system clipboard. With `clipboard.system` on (the default), the other direction works too: when the window comes back to the front, or the keys come back to an editor pane from a terminal or another pane, whatever another program (or a terminal selection) put on the clipboard becomes the newest text, so a plain `p` puts it. Set `clipboard.system = false` to keep `p` to kawoosh's own texts; {{mac:`⌘v`}}{{pc:`<C-S-v>`}} still pastes the clipboard.
 
 Text that a password manager marks as concealed or transient is not picked up this way; pasted explicitly, it is treated as a [secret](#secrets).
 

@@ -46,7 +46,7 @@ substitution.
 
 ## Project search
 
-`<leader>ss` (or ⌘⇧F, `:search project`, `:grep`) opens the search
+`<leader>ss` (or {{mac:⌘⇧F, }}`:search project`, `:grep`) opens the search
 panel: one pane, a column of its own beside the one you were in, with
 the bar on top and the results under it. `<leader>sS` (`:search here`) searches from the
 current file's directory instead of the workspace's root. From visual

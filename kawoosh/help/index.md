@@ -9,8 +9,7 @@ tutorial to try the keys on.
 ## Reading these pages
 
 A page is a markdown file shown rendered and read-only. Put the caret on
-a link and press `gx` to follow it, or ⌘-click it (ctrl-click where there
-is no ⌘). `:help` brings you back here; `[b` and `]b` step through the
+a link and press `gx` to follow it, or {{mac:⌘-click}}{{pc:Ctrl-click}} it. `:help` brings you back here; `[b` and `]b` step through the
 buffers you have open, the pages among them.
 
 ## The pages

@@ -72,11 +72,11 @@ tokens = {
 | | `:font` | say the face on show, its size and row height |
 | | `:font NAME` | use family NAME for the session (it completes, monospaced first) |
 | `<leader>of` | `:fonts` | the fonts pane |
-| `⌘=` `⌘+` | `:font bigger` | a pixel bigger, for the session |
-| `⌘-` `⌘_` | `:font smaller` | a pixel smaller |
-| `⌘0` | `:font reset` | back to `font.size` |
+| {{mac:`⌘=` `⌘+`}}{{pc:`<C-=>` `<C-+>`}} | `:font bigger` | a pixel bigger, for the session |
+| {{mac:`⌘-` `⌘_`}}{{pc:`<C-->` `<C-_>`}} | `:font smaller` | a pixel smaller |
+| {{mac:`⌘0`}}{{pc:`<C-0>`}} | `:font reset` | back to `font.size` |
 
-The size keys use Ctrl where there is no ⌘, and work in every mode and pane.
+The size keys work in every mode and pane.
 
 The fonts pane lists every family as a card drawn in that font, with two lines of code in the current theme: yours first, then the ones kawoosh ships (JetBrains Mono, Cascadia Code, Fira Mono, IBM Plex Mono, Monaspace and more), then the system's. `<CR>` or a click uses the family; `j` `k` `gg` `G` `<C-d>` `<C-u>` walk; `/` searches by name, with `n` `N` for the next and previous match; `m` switches between monospaced families and all; `+` `-` change the size; `y` copies the settings line; `q` closes.
 
