@@ -358,7 +358,7 @@ toggle` and `:lsp info` know them.
 | `:lsp servers` | every server there is: running, off, found or missing, and how to install a missing one |
 | `:lsp install [LANGUAGE]` | install the server in a terminal pane — its package into kawoosh's folder, else its line; it starts once that ends well |
 | `:lsp update [LANGUAGE]` | every server kawoosh installed, or one, at its manager's latest; restarted once that ends well |
-| `:lsp restart [LANGUAGE]` | restart one server, or all; a missing program, or one that refused to start or kept exiting, is tried again |
+| `:lsp restart [LANGUAGE]` | restart the language's server, or bare every one running or wanted by an open file; a missing program, or one that refused to start or kept exiting, is tried again |
 | `:lsp logs [LANGUAGE]` | what a server said, its errors included, live; `:lsp logs clear` forgets it |
 | `:lsp toggle RULE [LANGUAGE]` | flip `enabled`, `load_all`, `inlay_hints` or a plugin's rule for the session |
 

@@ -1004,17 +1004,25 @@ impl Kawoosh {
     }
 
     /// `:lsp restart [LANGUAGE]`: the language's server — bare, every
-    /// one — stopped, and a command that was not found forgotten; once
+    /// one running and every one an open buffer's language asks for (a
+    /// server not found or given up on among them), not the whole table
+    /// — stopped, and a command that was not found forgotten; once
     /// the shell gave its PATH again (`Event::Restarted`) the documents
     /// start them again: a server installed from a terminal pane after
     /// the "not found" is found. Each buffer they held is sent whole
     /// again then, its diagnostics cleared until the new server's land.
     fn lsp_restart(&mut self, language: Option<&str>) {
+        // Bare: what runs, and what the open buffers' languages want.
+        let running: HashSet<&str> = self.lsp.status.iter().map(|s| s.1.as_str()).collect();
+        let open: HashSet<&str> = self.ed.buffers.values().map(|b| &*b.language).collect();
         let mut commands: Vec<String> = self
             .lsp
             .defs
             .iter()
-            .filter(|d| language.is_none_or(|l| d.serves(l)))
+            .filter(|d| match language {
+                Some(l) => d.serves(l),
+                None => running.contains(d.command.as_str()) || open.iter().any(|l| d.serves(l)),
+            })
             .map(|d| d.command.clone())
             .collect();
         commands.sort();
@@ -1022,7 +1030,7 @@ impl Kawoosh {
         if commands.is_empty() {
             self.ed.message = match language {
                 Some(l) => format!("no language server for {l}"),
-                None => "lsp: no servers".into(),
+                None => "lsp: no server runs or is wanted here".into(),
             };
             return;
         }
@@ -2482,7 +2490,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("lsp restart")
                 .args(Args::new(&[ArgKind::Language]))
-                .doc("stop the language's server — bare, every one — and start it again; one not found is looked for again, on the shell's PATH as it is now"),
+                .doc("stop the language's server — bare, every one running or wanted by an open file — and start it again; one not found is looked for again, on the shell's PATH as it is now"),
             |k, ctx| {
                 let language = ctx.args.first().cloned();
                 k.lsp_restart(language.as_deref());

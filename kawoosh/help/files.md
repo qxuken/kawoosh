@@ -32,7 +32,10 @@ are removed, so read the list first. A deleted entry leaves the listing
 at once, even a folder of many gigabytes: it is renamed aside and
 removed in the background, and copies are made in the background too,
 so the window never waits on the disk. The count of changes appears
-when the last of it is done. If two lines claim the same name,
+when the last of it is done. A folder that cannot be removed whole —
+a program running from it, a file another program holds — comes back
+under its own name with what is left, and an error says how many files
+and one of them: free it and delete it again. If two lines claim the same name,
 the write refuses and says why rather than guessing.
 
 Edits in a listing are kept if you leave it: come back and they are
