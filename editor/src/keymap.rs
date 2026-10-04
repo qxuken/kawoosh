@@ -357,6 +357,27 @@ fn normalize_chord(inner: &str) -> String {
     format!("<{m}{base_s}>")
 }
 
+/// Whether `key`, one stroke as the map spells it, is a chord on ⌘
+/// (`<D-s>`, `<C-D-x>`, `<D-->`).
+pub fn super_chord(key: &str) -> bool {
+    let Some(inner) = key.strip_prefix('<') else {
+        return false;
+    };
+    let inner = inner.strip_prefix("C-").unwrap_or(inner);
+    let inner = inner.strip_prefix("A-").unwrap_or(inner);
+    inner.starts_with("D-")
+}
+
+/// Whether a list of keys — the which-key, the palette's key, the
+/// help's keys page — shows the sequence `keys`: every one on a Mac,
+/// and elsewhere those without a ⌘ chord. A PC's ⌘ is the Win or Super
+/// key, whose chords the system takes for itself, so the Mac's
+/// spellings stay bound there (a desktop that hands one over runs it)
+/// and are not offered; `:map list` is the map and shows them all.
+pub fn listed<S: AsRef<str>>(keys: &[S]) -> bool {
+    cfg!(target_os = "macos") || !keys.iter().any(|k| super_chord(k.as_ref()))
+}
+
 /// What a key sequence runs. A key can carry several, newest first:
 /// the engine takes the first whose `when` holds and whose command can
 /// run ([`crate::Editor::pick_binding`]), so `r` bound to `terminal
@@ -945,6 +966,16 @@ mod tests {
         assert_eq!(parse_notation("<C-S-1>"), ["<C-S-1>"]);
         assert_eq!(parse_notation("<C-1>"), ["<C-1>"]);
         assert_eq!(parse_notation("<D-1>"), ["<D-1>"]);
+        // A ⌘ chord is told by its modifiers, not by a `D` it types.
+        for k in ["<D-1>", "<D-L>", "<D-->", "<D-Up>", "<C-D-x>", "<A-D-x>"] {
+            assert!(super_chord(k), "{k}");
+        }
+        for k in ["D", "d", "<C-D>", "<A-D>", "<C-d>", "<Down>", "<Del>", "-"] {
+            assert!(!super_chord(k), "{k}");
+        }
+        let mac = cfg!(target_os = "macos");
+        assert_eq!(listed(&["g", "<D-s>"]), mac, "off a Mac, not offered");
+        assert!(listed(&["<C-w>", "D"]));
         // A `!` nobody shifted is still a `!`.
         let mut k = KeyStroke::plain("!");
         k.ctrl = true;

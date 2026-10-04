@@ -114,7 +114,11 @@ impl Kawoosh {
             (Mode::Pane, "In a pane that is not an editor"),
         ] {
             let _ = write!(s, "\n## {title}\n\n");
-            for (keys, b) in self.ed.keymap.bindings(mode) {
+            for (keys, b) in self.ed.keymap.binding_strokes(mode) {
+                if !kawoosh_editor::keymap::listed(&keys) {
+                    continue;
+                }
+                let keys = keys.concat();
                 let _ = write!(s, "- `{keys}` — `:{}`", b.line());
                 let name = self.ed.commands.resolve(&b.command, &b.args).name;
                 if let Some(doc) = self.ed.commands.spec(&name).map(|c| c.doc.as_str())

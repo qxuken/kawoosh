@@ -1781,7 +1781,11 @@ impl Runtime {
                 kawoosh_editor::Mode::Insert,
                 kawoosh_editor::Mode::OperatorPending,
             ] {
-                for (keys, b) in ed.keymap.bindings(mode) {
+                for (keys, b) in ed.keymap.binding_strokes(mode) {
+                    if !kawoosh_editor::keymap::listed(&keys) {
+                        continue;
+                    }
+                    let keys = keys.concat();
                     let inv = ed.commands.resolve(&b.command, &b.args);
                     p.keys
                         .entry(inv.name.clone())
