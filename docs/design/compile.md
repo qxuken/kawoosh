@@ -236,6 +236,24 @@ kawoosh.opt("compile.commands.web", {
 })
 ```
 
+**And on which system.** A settings file cannot ask, being data; code
+can: `kawoosh.os` is `"mac"`, `"linux"` or `"windows"` — the names a
+server's install lines are keyed with — so one name runs this system's
+line. This repository's `.kawoosh/init.lua` names `install` so
+(`scripts/windows-app.nu --install`, `scripts/macos-app.nu
+/Applications`):
+
+```lua
+local install = { mac = "nu scripts/macos-app.nu /Applications",
+                  windows = "nu scripts/windows-app.nu --install" }
+kawoosh.opt("compile.commands.install", install[kawoosh.os])
+```
+
+Beaten there: an `os` in the settings sandbox (the builtin servers'
+table is read in it too, and a file of data that branches is code); a
+fact, `kawoosh.holds("windows")` (a `when` is about where the keys are,
+and a table keyed by system wants the name).
+
 Beaten: `compile.commands.default` (the default is compile mode's, not
 a command's); commands straight in `compile` (above); `@name` to call
 one (names first reads better; a hidden program is the user's own

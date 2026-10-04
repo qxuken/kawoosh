@@ -25,6 +25,17 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+/// The system kawoosh was built for, by the names a server's install
+/// lines are keyed with (`{ mac =, linux =, windows = }`) and Lua reads
+/// as `kawoosh.os`; any other unix is `linux`.
+pub const PLATFORM: &str = if cfg!(target_os = "macos") {
+    "mac"
+} else if cfg!(windows) {
+    "windows"
+} else {
+    "linux"
+};
+
 /// Wakes the UI loop. Cheap to clone, safe from any thread.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 

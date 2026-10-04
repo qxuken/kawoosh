@@ -304,6 +304,31 @@ fn compile_mode_streams_and_jumps_to_locations() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `kawoosh.os` names the system — `mac`, `linux` or `windows` — so an
+/// `init.lua` names one command whose line is this system's.
+#[test]
+fn kawoosh_os_picks_a_command_by_system() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "x");
+    app.run_lua_source(
+        "init",
+        r#"
+        local lines = { mac = "echo mac", linux = "echo linux", windows = "echo windows" }
+        kawoosh.opt("compile.commands.install", lines[kawoosh.os])
+        "#,
+    );
+    d.frame(&mut app);
+    let here = if cfg!(target_os = "macos") {
+        "echo mac"
+    } else if cfg!(windows) {
+        "echo windows"
+    } else {
+        "echo linux"
+    };
+    assert_eq!(app.ed.settings.str("compile.commands.install"), Some(here));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// A bare `:compile` with no `compile.default` runs what the project's
 /// files offer first (docs/design/compile.md), then what it ran last;
 /// `compile pick` offers them all, `compile pick N` runs one; the

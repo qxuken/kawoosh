@@ -607,15 +607,8 @@ fn platform_line(v: &Setting) -> Option<String> {
     if !lines {
         return None;
     }
-    let here = if cfg!(target_os = "macos") {
-        "mac"
-    } else if cfg!(windows) {
-        "windows"
-    } else {
-        "linux"
-    };
     Some(
-        t.get(here)
+        t.get(kawoosh_systems::PLATFORM)
             .and_then(Setting::as_str)
             .unwrap_or("")
             .to_string(),
