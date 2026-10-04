@@ -278,6 +278,79 @@ fn the_gap_drags_a_columns_width_and_a_click_reveals_a_column() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// The last column has a handle too, at its right edge and inside its
+/// width: a lone column is dragged narrower and wider by it, and the
+/// last of a ribbon scrolled to its end keeps its place under the
+/// pointer — the ribbon holds its length while the drag lasts, where a
+/// shorter one would be scrolled back and each move measure a width
+/// from an edge the move before had shifted.
+#[test]
+fn the_last_column_drags_by_its_right_edge() {
+    use kui_native::InputEvent;
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&1];
+    assert!(
+        r.x.abs() < 1.0 && r.x + r.w < vw - 3.0 && r.x + r.w > vw - 9.0,
+        "a lone column, its handle after it: {r:?}"
+    );
+    let y = r.y + r.h / 2.0;
+    d.drag(&mut app, Vec2::new(vw - 2.0, y), Vec2::new(vw / 2.0, y));
+    settle(&mut d, &mut app);
+    let w = app.layout.tab().strip().unwrap().columns[0].width;
+    assert!(
+        matches!(w, Width::Ratio(r) if (r - 0.5).abs() < 0.02),
+        "{w:?}"
+    );
+    let r = app.layout.rects[&1];
+    assert!((r.x + r.w - vw / 2.0).abs() < 8.0, "{r:?}");
+    // And wider again.
+    d.drag(
+        &mut app,
+        Vec2::new(vw / 2.0, y),
+        Vec2::new(vw * 2.0 / 3.0, y),
+    );
+    settle(&mut d, &mut app);
+    let w = app.layout.tab().strip().unwrap().columns[0].width;
+    assert!(
+        matches!(w, Width::Ratio(r) if (r - 2.0 / 3.0).abs() < 0.02),
+        "{w:?}"
+    );
+    // Three halves, the keyboard on the last: the ribbon is at its end.
+    ex(&mut d, &mut app, "set layout.column_width=half");
+    app.layout.tab_mut().strip_mut().unwrap().columns[0].width = Width::Half;
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    let last = app.layout.focused();
+    let r = app.layout.rects[&last];
+    assert!((r.w - vw / 2.0).abs() < 8.0 && in_view(&d, &app, last, vw));
+    // Its handle taken left in steps, a frame after each as a hand's
+    // drag has: the column's left edge stays where it was and its
+    // right edge is the pointer's.
+    let from = r.x + r.w + 2.0;
+    d.input(&mut app, InputEvent::CursorMoved(Vec2::new(from, y)));
+    d.input(&mut app, InputEvent::mouse_down(1));
+    for step in 1..=5 {
+        let x = from - 40.0 * step as f32;
+        d.input(&mut app, InputEvent::CursorMoved(Vec2::new(x, y)));
+        d.frame(&mut app);
+        d.frame(&mut app);
+    }
+    d.input(&mut app, InputEvent::mouse_up());
+    settle(&mut d, &mut app);
+    let after = app.layout.rects[&last];
+    assert!((after.x - r.x).abs() < 2.0, "{r:?} then {after:?}");
+    assert!(
+        (after.x + after.w - (r.x + r.w - 200.0)).abs() < 8.0,
+        "{r:?} then {after:?}"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
     let dir = std::env::temp_dir().join(format!("kawoosh-strip-{}", std::process::id()));
@@ -390,7 +463,10 @@ fn each_tab_keeps_its_own_strip_and_a_moved_tab_stays_in_view() {
     d.keys(&mut app, "gt");
     settle(&mut d, &mut app);
     assert!(in_view(&d, &app, t2a, vw));
-    assert!(!in_view(&d, &app, t2b, vw), "{:?}", app.layout.rects[&t2b]);
+    // Two halves and the gap between: the second pane fits, its handle
+    // past the edge.
+    let r = app.layout.rects[&t2b];
+    assert!((r.x + r.w - vw).abs() < 1.0, "{r:?}");
     // The tab moved along the tab strip keeps its focused column in
     // view under its new key.
     ctrl_w(&mut d, &mut app, "l");
@@ -420,16 +496,18 @@ fn an_alignment_has_room_past_the_ribbons_ends() {
     assert!(r.x.abs() < 2.0, "flush left, unasked: {r:?}");
     d.press(&mut app, "zz");
     settle(&mut d, &mut app);
+    // A last column's width holds its handle (`GAP` px, the divider's).
+    const GAP: f32 = 4.0;
     let r = app.layout.rects[&1];
     assert!(
-        (r.x - (vw - r.w) / 2.0).abs() < 2.0,
+        (r.x - (vw - r.w - GAP) / 2.0).abs() < 2.0,
         "a lone column centred: {r:?}"
     );
     d.press(&mut app, "ze");
     settle(&mut d, &mut app);
     let r = app.layout.rects[&1];
     assert!(
-        (r.x + r.w - vw).abs() < 2.0,
+        (r.x + r.w + GAP - vw).abs() < 2.0,
         "against the right edge: {r:?}"
     );
     d.press(&mut app, "zs");
@@ -442,7 +520,7 @@ fn an_alignment_has_room_past_the_ribbons_ends() {
     settle(&mut d, &mut app);
     let (a, b) = (app.layout.rects[&1], app.layout.rects[&2]);
     assert!(a.x.abs() < 2.0, "the room went with the lone column: {a:?}");
-    assert!((b.w - vw / 3.0).abs() < 4.0, "{b:?}");
+    assert!((b.w + GAP - vw / 3.0).abs() < 4.0, "{b:?}");
     // The half centred, the third on its right.
     ctrl_w(&mut d, &mut app, "h");
     d.press(&mut app, "zz");
@@ -462,7 +540,7 @@ fn an_alignment_has_room_past_the_ribbons_ends() {
     ctrl_w(&mut d, &mut app, "q");
     settle(&mut d, &mut app);
     let r = app.layout.rects[&1];
-    assert!((r.x - (vw - r.w) / 2.0).abs() < 2.0, "always: {r:?}");
+    assert!((r.x - (vw - r.w - GAP) / 2.0).abs() < 2.0, "always: {r:?}");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

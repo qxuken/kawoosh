@@ -345,7 +345,8 @@ impl Kawoosh {
     /// The strip (scrolling-tab.md Decisions 3 and 4): one `scroll_x`
     /// row per tab — keyed by the tab, so each keeps the offset kui
     /// retains for it — a keyed column per `Column` at its width in
-    /// viewport fractions, a draggable gap between.
+    /// viewport fractions, a draggable gap after each — the last
+    /// column's too, at its right edge.
     ///
     /// **The ribbon is what moves.** The row declares a `transition`,
     /// so the offset a reveal takes it to is eased over `RIBBON_MS`
@@ -429,6 +430,8 @@ impl Kawoosh {
             })
             .collect();
         let span = widths.iter().sum::<f32>() + gap * n.saturating_sub(1) as f32;
+        // Keyed by its tab: each tab's ribbon is its own scroller.
+        let strip_key = ui.child_key("strip").index(tab as u64);
         let always = self.ed.settings.str("layout.scroll.center") == Some("always");
         let align = self
             .strip_align
@@ -473,6 +476,21 @@ impl Kawoosh {
                 room.lead = room.lead.max(nl / vw);
                 room.trail = room.trail.max(nt / vw);
             }
+            // Under a gap drag a scrolled ribbon runs a viewport past
+            // its offset whatever its columns come to, the room after
+            // the last one taking what a column gives up: a ribbon
+            // grown shorter than that is scrolled back under the
+            // pointer, and the column's edge moving feeds the width
+            // the drag measures.
+            let offset = ui.scroll_offset(strip_key).x;
+            if offset > 0.5
+                && self
+                    .dragging
+                    .as_deref()
+                    .is_some_and(|p| p.starts_with("gap"))
+            {
+                room.trail = ((offset + vw - span) / vw - room.lead).max(0.0);
+            }
             let px = (room.lead * vw, room.trail * vw);
             if room.lead > 0.0 || room.trail > 0.0 {
                 self.strip_room = Some(room);
@@ -490,8 +508,6 @@ impl Kawoosh {
         // a sliding column is drawn between two places, and only the
         // one it is going to is known here.
         self.culled.clear();
-        // Keyed by its tab: each tab's ribbon is its own scroller.
-        let strip_key = ui.child_key("strip").index(tab as u64);
         if !settling && !arriving {
             // Where the ribbon *is*, which during a glide is not where
             // it is going (kui F80): the geometry answers the drawn
@@ -555,15 +571,12 @@ impl Kawoosh {
                     if arriving && !self.strip_known.contains(&col.id) {
                         wrap = wrap.enter(Enter::from((px / 3.0).min(200.0), 0.0).opacity(0.0));
                     }
-                    let key = ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
-                        ui.with(NodeSpec::column().width(px).grow_height(), |ui| {
-                            self.render_node(ui, &col.node, &format!("{i}/"))
-                        });
-                    });
-                    if Some(i) == fi {
-                        focus_key = Some(key);
-                    }
-                    if i + 1 < n {
+                    // The gap after a column drags its width. The last
+                    // column's is inside the column — its width and its
+                    // key — so a lone full column is the viewport and
+                    // no more, and a reveal brings the handle with it.
+                    let last = i + 1 == n;
+                    let handle = |ui: &mut Ui<'_>| {
                         widgets::splitter(
                             ui,
                             &format!("gap{}", col.id),
@@ -573,8 +586,25 @@ impl Kawoosh {
                                 ("kind", "split".into()),
                                 ("path", Value::str(format!("gap{i}"))),
                                 ("dir", "h".into()),
+                                ("vw", vw.into()),
                             ]),
                         );
+                    };
+                    let key = ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
+                        ui.with(NodeSpec::row().width(px).grow_height(), |ui| {
+                            ui.with(NodeSpec::column().grow_width().grow_height(), |ui| {
+                                self.render_node(ui, &col.node, &format!("{i}/"))
+                            });
+                            if last {
+                                handle(ui);
+                            }
+                        });
+                    });
+                    if Some(i) == fi {
+                        focus_key = Some(key);
+                    }
+                    if !last {
+                        handle(ui);
                     }
                 }
                 if trail > 0.0 {
