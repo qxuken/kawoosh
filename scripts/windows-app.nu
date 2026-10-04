@@ -6,8 +6,20 @@
 #   Kawoosh\kawoosh.exe        the window, its icon linked in (build.rs)
 #   Kawoosh\kawoosh-edit.exe   a terminal's $EDITOR, found beside it
 #   Kawoosh\kawoosh-update.exe what :relaunch puts the next one in with
+#   Kawoosh\conpty.dll         the pseudo console, and the host a terminal's
+#   Kawoosh\OpenConsole.exe    screen is rendered in (`console-host` below)
 #   Kawoosh\fonts\             the bundled faces, found from the binary
 #                              (left out with --no-fonts)
+#
+# The console host is Microsoft's own, newer than the one in Windows:
+# `portable-pty` takes a `conpty.dll` beside the executable before the
+# system's. Windows' renders a program's output in frames of its own, so
+# a `cargo build`'s progress line came in two reads 10 to 20 ms apart,
+# the cursor mid-line between them for a frame to show — jumping; this
+# one passes the program's writes through, 0.05 to 0.2 ms apart
+# (measured 2026-10-04, Windows 11 26300 against 1.24). They are taken
+# from the NuGet package, one version, its hash checked, and kept in
+# `target\conpty` so the next build asks for nothing.
 #
 # A Kawoosh running from the folder keeps it: Windows renames no folder
 # with a file open in it, and a Kawoosh holds its fonts open. The new
@@ -60,6 +72,9 @@ def main [
     }
   }
 
+  # Before the build: a package that cannot be had stops it early.
+  let host = console-host $target
+
   ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit --bin kawoosh-update
   # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
   let version = ^cargo pkgid --manifest-path $manifest -p kawoosh | str trim | str replace -r '.*[#@]' ''
@@ -83,6 +98,9 @@ def main [
   mkdir $fresh
   for bin in [kawoosh kawoosh-edit kawoosh-update] {
     cp ($target | path join release $"($bin).exe") $fresh
+  }
+  for f in $host {
+    cp $f $fresh
   }
   if not $no_fonts {
     cp -r $fonts $fresh
@@ -128,4 +146,43 @@ One built before it cannot: quit it and run this again."
   }
 
   $app
+}
+
+# Microsoft.Windows.Console.ConPTY (MIT), the version shipped and its
+# package's SHA-256. To move to another: both, and a build.
+const CONPTY_VERSION = '1.24.261001001'
+const CONPTY_SHA256 = '4d6aaddc1d2385c9f5897df28f33879f699f8f2783315d5204cf3d8c3616ac5f'
+
+# `conpty.dll` and `OpenConsole.exe` for this machine's architecture, as
+# paths under `target\conpty`: the package downloaded where it is not
+# there already, checked against its hash either way, and unpacked.
+def console-host [target: path]: nothing -> list<path> {
+  let arch = match $nu.os-info.arch {
+    'x86_64' => 'x64'
+    'aarch64' => 'arm64'
+    $a => { error make {msg: $"no console host is packaged for ($a)"} }
+  }
+  let dir = $target | path join conpty $CONPTY_VERSION
+  # A `.zip` by name: `Expand-Archive` reads no other.
+  let package = $dir | path join package.zip
+  if not ($package | path exists) {
+    mkdir $dir
+    let id = 'microsoft.windows.console.conpty'
+    http get --raw $"https://api.nuget.org/v3-flatcontainer/($id)/($CONPTY_VERSION)/($id).($CONPTY_VERSION).nupkg" | save --raw $package
+  }
+  let hash = open --raw $package | hash sha256
+  if $hash != $CONPTY_SHA256 {
+    rm $package
+    error make {msg: $"the ConPTY package ($CONPTY_VERSION) is not the one named here: its SHA-256 is ($hash). Taken out; run this again, or see CONPTY_SHA256"}
+  }
+  let files = [
+    ($dir | path join runtimes $"win-($arch)" native conpty.dll)
+    ($dir | path join build native runtimes $arch OpenConsole.exe)
+  ]
+  if not ($files | all {|f| $f | path exists }) {
+    with-env {KAWOOSH_ZIP: $package, KAWOOSH_DIR: $dir} {
+      ^powershell -NoProfile -NonInteractive -Command 'Expand-Archive -Force -LiteralPath $env:KAWOOSH_ZIP -DestinationPath $env:KAWOOSH_DIR'
+    }
+  }
+  $files
 }

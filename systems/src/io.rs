@@ -229,6 +229,57 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
     c
 }
 
+/// The shell a command line is run through here, as a terminal's is
+/// chosen (`kawoosh_term::Terminal::spawn`): `$SHELL` where there is
+/// one (an MSYS bash sets it on Windows too), else `/bin/sh`, or
+/// `%ComSpec%` on Windows — where `/bin/sh` is no path at all, and every
+/// `:compile` said "The system cannot find the path specified".
+fn local_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into())
+            } else {
+                "/bin/sh".into()
+            }
+        })
+}
+
+/// `shell` running `line`: cmd.exe and PowerShell by their own flags,
+/// every other shell by `-c`. cmd is given the line as it is, between
+/// the quotes its `/s` takes off: it does not read the backslashes std
+/// would put before a `"` in an argument. `/d`: no AutoRun before it.
+fn shell_command(shell: &str, line: &str) -> std::process::Command {
+    // Split on both separators by hand: a shell is named the same on
+    // every platform.
+    let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
+    let mut stem = name.to_ascii_lowercase();
+    if stem.ends_with(".exe") {
+        stem.truncate(stem.len() - 4);
+    }
+    let mut cm = command(shell);
+    match stem.as_str() {
+        "cmd" => {
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cm.raw_arg(format!("/d /s /c \"{line}\""));
+            }
+            #[cfg(not(windows))]
+            cm.args(["/d", "/c", line]);
+        }
+        "pwsh" | "powershell" => {
+            cm.args(["-NoLogo", "-Command", line]);
+        }
+        _ => {
+            cm.args(["-c", line]);
+        }
+    }
+    cm
+}
+
 /// A bare `program` that cmd would run as a `.cmd` or `.bat` — `npm.cmd`,
 /// the shims npm writes for a package's programs — as that file's path.
 /// cmd's order is followed: the PATH's directories in turn, and in each
@@ -933,12 +984,7 @@ impl Io {
                 t.remote_command(&script)
             }
             None => match &cmd {
-                ProcCmd::Shell(c) => {
-                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-                    let mut cm = command(shell);
-                    cm.arg("-c").arg(c);
-                    cm
-                }
+                ProcCmd::Shell(c) => shell_command(&local_shell(), c),
                 ProcCmd::Argv(argv) => {
                     let mut cm = command(&argv[0]);
                     cm.args(&argv[1..]);
@@ -1382,6 +1428,20 @@ mod tests {
         assert_eq!(shim("npm.cmd"), None, "an extension is said");
         assert_eq!(shim(&a.join("npm").display().to_string()), None, "a path");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A command line runs through cmd where that is the shell — no
+    /// `$SHELL`, on Windows — its quotes reaching cmd as they were typed.
+    #[cfg(windows)]
+    #[test]
+    fn a_line_runs_through_cmd() {
+        let run = |line: &str| {
+            let out = crate::spawn::output(&mut shell_command("cmd.exe", line)).unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        assert_eq!(run("echo one&& echo two"), "one\r\ntwo");
+        assert_eq!(run(r#"echo "a b" c"#), r#""a b" c"#);
+        assert_eq!(run(r#"cmd /c "echo in""#), "in");
     }
 
     /// The shim lands in `~/.cache/kawoosh/` on the host's `/`, not in a
