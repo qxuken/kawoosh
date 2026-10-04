@@ -645,7 +645,7 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
 }
 
 /// The syntax text objects by their key (docs/design/nodes.md Decision
-/// 8): the object a grammar's `textobjects.scm` names. `f` a function,
+/// 9): the object a grammar's `textobjects.scm` names. `f` a function,
 /// `c` a class — a struct, an enum, an impl, an interface: the type —
 /// `a` an argument or a parameter, `/` a comment, `T` a test, `e` an
 /// entry (an array's element, a table's pair).
@@ -690,7 +690,7 @@ fn syntax_textobject(ed: &mut Editor, ctx: &Ctx, c: char, object: &str, around: 
         let line_end = buf.line_range(buf.line_of(at.start)).end;
         match finder.find(id, buf, object, at.start..line_end.max(at.end)) {
             Ok(found) => {
-                let r = pick_object(&found, at, around, grow, ctx.count);
+                let r = pick_object(&found, at, around, grow, ctx.count, line_end);
                 // A list's item goes with its separator.
                 let item = around && matches!(object, "parameter" | "entry");
                 picked.push(r.map(|r| if item { with_separator(buf, r) } else { r }));
@@ -737,17 +737,23 @@ fn syntax_textobject(ed: &mut Editor, ctx: &Ctx, c: char, object: &str, around: 
 /// Which object a syntax text object takes over `at` — the caret's
 /// character, or a visual selection's bytes — from what the query found:
 /// the `count`th smallest whose around is over `at` (its inside, for a
-/// match with no around), and of it the part asked for — so `if` on a
-/// function's signature is its body. `grow`, a visual selection of more
+/// match with no around), and of it the part asked for. An object found
+/// with several parts of a kind — a pair's key and its value, a field's
+/// name and its type, one match each — gives the one over `at`, or, none
+/// being, the nearest: `cie` on a value is the value, and `if` on a
+/// function's signature its body. A count steps out to the objects
+/// around, never to a sibling part. `grow`, a visual selection of more
 /// than a character, asks for one past the selection: `vafaf` is the
 /// function around. With none over `at`, the first object that starts
-/// after it, on its line: `cia` with the caret on the `(`.
+/// after it and before `line_end`, its line's end: `cia` with the caret
+/// on the `(`.
 pub(crate) fn pick_object(
     found: &[crate::SyntaxObject],
     at: Range<usize>,
     around: bool,
     grow: bool,
     count: usize,
+    line_end: usize,
 ) -> Option<Range<usize>> {
     let part = |f: &crate::SyntaxObject| {
         if around {
@@ -771,16 +777,36 @@ pub(crate) fn pick_object(
         })
     };
     let over = |r: &Range<usize>| r.start <= at.start && at.end <= r.end;
-    let mut over_at: Vec<(usize, usize, Range<usize>)> = found
-        .iter()
-        .filter_map(|f| {
-            let (k, p) = (key(f)?, part(f)?);
-            (over(&k) && (!grow || (over(&p) && p != at))).then(|| (k.len(), p.len(), p))
+    // How far a part is from `at`: none for one over it or touching it.
+    let distance =
+        |p: &Range<usize>| at.start.saturating_sub(p.end) + p.start.saturating_sub(at.end);
+    // Each object over `at`, by its key, with the parts it was found
+    // with — a match each.
+    let mut objects: Vec<(Range<usize>, Vec<Range<usize>>)> = Vec::new();
+    for f in found {
+        let (Some(k), Some(p)) = (key(f), part(f)) else {
+            continue;
+        };
+        if !over(&k) || (grow && !(over(&p) && p != at)) {
+            continue;
+        }
+        match objects.iter_mut().find(|(o, _)| *o == k) {
+            Some((_, parts)) => parts.push(p),
+            None => objects.push((k, vec![p])),
+        }
+    }
+    let mut over_at: Vec<(usize, Range<usize>)> = objects
+        .into_iter()
+        .filter_map(|(k, parts)| {
+            let p = parts
+                .into_iter()
+                .min_by_key(|p| (!over(p), distance(p), p.len(), p.start))?;
+            Some((k.len(), p))
         })
         .collect();
-    over_at.sort_by_key(|(k, p, r)| (*k, *p, r.start));
+    over_at.sort_by_key(|(k, p)| (*k, p.len(), p.start));
     let mut seen: Vec<Range<usize>> = Vec::new();
-    over_at.retain(|(_, _, p)| {
+    over_at.retain(|(_, p)| {
         let new = !seen.contains(p);
         if new {
             seen.push(p.clone());
@@ -788,28 +814,33 @@ pub(crate) fn pick_object(
         new
     });
     if !over_at.is_empty() {
-        return over_at.into_iter().nth(count.max(1) - 1).map(|(_, _, p)| p);
+        return over_at.into_iter().nth(count.max(1) - 1).map(|(_, p)| p);
     }
     if grow {
         return None;
     }
+    // Held to the line: tree-sitter finishes a match it started inside
+    // the range asked about, so what starts on a later line is found too.
     found
         .iter()
         .filter_map(|f| {
             let (k, p) = (key(f)?, part(f)?);
-            (k.start >= at.end).then(|| (k.start, std::cmp::Reverse(k.len()), p))
+            (k.start >= at.end && k.start < line_end)
+                .then(|| ((k.start, std::cmp::Reverse(k.len()), p.start), p))
         })
-        .min_by_key(|(s, l, _)| (*s, *l))
-        .map(|(_, _, p)| p)
+        .min_by_key(|(order, _)| *order)
+        .map(|(_, p)| p)
 }
 
 /// A list item's around — an argument, an entry — with what separates
-/// it from the next on its line: the `,` after it (the query's around
-/// may hold it already) and the blanks after that; or, the last item,
-/// the `,` before it and the blanks between. So `daa` leaves `f(a, b)`
-/// as `f(b)` from `a` and `f(a)` from `b`, as targets.vim's does.
+/// it from the next: the `,` after it on its last line (the query's
+/// around may hold it already) and the blanks after that; or, the last
+/// item, the `,` before it and the blanks between, line breaks too. So
+/// `daa` leaves `f(a, b)` as `f(b)` from `a` and `f(a)` from `b`, as
+/// targets.vim's does, and the last item of a list across lines takes
+/// the comma that ended the line before it: the list stays well-formed.
 fn with_separator(buf: &Buffer, r: Range<usize>) -> Range<usize> {
-    let line = buf.line_range(buf.line_of(r.start));
+    let line = buf.line_range(buf.line_of(r.end));
     let blank = |c: char| c == ' ' || c == '\t';
     let skip_after = |mut e: usize| {
         while e < line.end && buf.char_at(e).is_some_and(blank) {
@@ -825,10 +856,14 @@ fn with_separator(buf: &Buffer, r: Range<usize>) -> Range<usize> {
         return r.start..skip_after(buf.next_char(after));
     }
     let mut b = r.start;
-    while b > line.start && buf.char_at(buf.prev_char(b)).is_some_and(blank) {
+    while b > 0
+        && buf
+            .char_at(buf.prev_char(b))
+            .is_some_and(char::is_whitespace)
+    {
         b = buf.prev_char(b);
     }
-    if b > line.start && buf.char_at(buf.prev_char(b)) == Some(',') {
+    if b > 0 && buf.char_at(buf.prev_char(b)) == Some(',') {
         return buf.prev_char(b)..r.end;
     }
     r
@@ -5338,24 +5373,101 @@ mod tests {
         let outer = obj(Some(0..100), Some(10..90));
         let inner = obj(Some(20..60), Some(30..50));
         let found = [outer, inner];
-        assert_eq!(pick_object(&found, 35..36, true, false, 1), Some(20..60));
-        assert_eq!(pick_object(&found, 35..36, false, false, 1), Some(30..50));
-        assert_eq!(pick_object(&found, 35..36, true, false, 2), Some(0..100));
-        assert_eq!(pick_object(&found, 35..36, true, false, 3), None);
+        assert_eq!(
+            pick_object(&found, 35..36, true, false, 1, 200),
+            Some(20..60)
+        );
+        assert_eq!(
+            pick_object(&found, 35..36, false, false, 1, 200),
+            Some(30..50)
+        );
+        assert_eq!(
+            pick_object(&found, 35..36, true, false, 2, 200),
+            Some(0..100)
+        );
+        assert_eq!(pick_object(&found, 35..36, true, false, 3, 200), None);
         // On the inner's signature, outside its body: still its body.
-        assert_eq!(pick_object(&found, 22..23, false, false, 1), Some(30..50));
+        assert_eq!(
+            pick_object(&found, 22..23, false, false, 1, 200),
+            Some(30..50)
+        );
         // A selection that is the inner already: the outer.
-        assert_eq!(pick_object(&found, 20..60, true, true, 1), Some(0..100));
-        assert_eq!(pick_object(&found, 30..50, false, true, 1), Some(10..90));
-        assert_eq!(pick_object(&found, 0..100, true, true, 1), None);
+        assert_eq!(
+            pick_object(&found, 20..60, true, true, 1, 200),
+            Some(0..100)
+        );
+        assert_eq!(
+            pick_object(&found, 30..50, false, true, 1, 200),
+            Some(10..90)
+        );
+        assert_eq!(pick_object(&found, 0..100, true, true, 1, 200), None);
         // An inside its pattern took alone, nvim's way: keyed by the
         // around round it.
         let split = [obj(Some(20..60), None), obj(None, Some(30..50))];
-        assert_eq!(pick_object(&split, 22..23, false, false, 1), Some(30..50));
+        assert_eq!(
+            pick_object(&split, 22..23, false, false, 1, 200),
+            Some(30..50)
+        );
         // Over nothing: the first after the caret.
         let args = [obj(Some(5..7), Some(5..6)), obj(Some(8..9), Some(8..9))];
-        assert_eq!(pick_object(&args, 4..5, false, false, 1), Some(5..6));
-        assert_eq!(pick_object(&args, 9..10, false, false, 1), None);
+        assert_eq!(pick_object(&args, 4..5, false, false, 1, 200), Some(5..6));
+        assert_eq!(pick_object(&args, 9..10, false, false, 1, 200), None);
+        // The lookahead is held to the line: what starts past `line_end`
+        // is not taken, though tree-sitter finished its match.
+        assert_eq!(pick_object(&args, 4..5, false, false, 1, 5), None);
+        assert_eq!(pick_object(&args, 4..5, false, false, 1, 6), Some(5..6));
+    }
+
+    /// A pattern that captures each child of a node as its inside — a
+    /// pair's key and value, a field's name and type — finds one object
+    /// several times, its around the same: the part under the caret is
+    /// the one taken, and a count steps out to the object around, not to
+    /// a sibling (docs/design/nodes.md Decision 9).
+    #[test]
+    fn the_part_under_the_caret() {
+        // As json's `(pair (_) @entry.inside) @entry.around` finds them.
+        let src = r#"{"o": {"k": "long value"}}"#;
+        let at = |s: &str| {
+            let i = src.find(s).unwrap();
+            i..i + s.len()
+        };
+        let (outer, inner) = (
+            at(r#""o": {"k": "long value"}"#),
+            at(r#""k": "long value""#),
+        );
+        let (value, key) = (at(r#""long value""#), at(r#""k""#));
+        let found = [
+            obj(Some(outer.clone()), Some(at(r#""o""#))),
+            // The `{ }` value, between its brackets.
+            obj(Some(outer.clone()), Some(inner.clone())),
+            obj(Some(inner.clone()), Some(key.clone())),
+            obj(Some(inner.clone()), Some(value.clone())),
+        ];
+        let on = |s: &str| {
+            let i = src.find(s).unwrap();
+            i..i + 1
+        };
+        // On the value: the value, whichever order they came in.
+        let pick = |at, around, grow, count| pick_object(&found, at, around, grow, count, 99);
+        assert_eq!(pick(on("value"), false, false, 1), Some(value.clone()));
+        let mut back = found.clone();
+        back.reverse();
+        assert_eq!(
+            pick_object(&back, on("value"), false, false, 1, 99),
+            Some(value.clone())
+        );
+        // On the key: the key.
+        assert_eq!(pick(on("k"), false, false, 1), Some(key.clone()));
+        // `2ie`: the enclosing entry's part over the caret, not the key.
+        assert_eq!(pick(on("value"), false, false, 2), Some(inner.clone()));
+        assert_eq!(pick(on("value"), false, false, 3), None);
+        // On the `:` between, over neither: the nearer.
+        assert_eq!(pick(on(r#": ""#), false, false, 1), Some(key.clone()));
+        // `ae` is the pair whatever the part.
+        assert_eq!(pick(on("value"), true, false, 1), Some(inner.clone()));
+        assert_eq!(pick(on("value"), true, false, 2), Some(outer));
+        // A selection that is the value grows to the outer entry's part.
+        assert_eq!(pick(value, false, true, 1), Some(inner));
     }
 
     /// `daa` leaves the list well-formed: the `,` after an item and the
@@ -5374,6 +5486,26 @@ mod tests {
         assert_eq!(cut(with_separator(&buf, at("c"))), ",  c");
         let alone = Buffer::new("t", "[x]\n");
         assert_eq!(with_separator(&alone, 1..2), 1..2);
+        // Across lines, the last item takes the `,` that ended the line
+        // before it; one with its comma after on its last line, that.
+        let src = "[\n  {\n    \"a\": 1\n  },\n  2\n]\n";
+        let lines = Buffer::new("t", src);
+        let first = src.find('{').unwrap()..src.find('}').unwrap() + 1;
+        assert_eq!(
+            cut_of(&lines, with_separator(&lines, first)),
+            "{\n    \"a\": 1\n  },"
+        );
+        let two = src.find('2').unwrap();
+        assert_eq!(
+            cut_of(&lines, with_separator(&lines, two..two + 1)),
+            ",\n  2"
+        );
+        let one = Buffer::new("t", "[\n  1\n]\n");
+        assert_eq!(with_separator(&one, 4..5), 4..5);
+    }
+
+    fn cut_of(buf: &Buffer, r: Range<usize>) -> String {
+        buf.slice(r)
     }
 
     #[test]

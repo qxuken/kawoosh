@@ -264,7 +264,8 @@ below). The calls, each the user's to overturn:
   helix's `function`, go 0.25's `method_elem` / `type_elem` for
   `method_spec`, and go's `func_literal` taking its `body` where
   helix's took each child in turn. nu's is tree-sitter-nu's own, at
-  the revision pinned (MIT), in nvim's spelling. css, scheme and the
+  the revision pinned (MIT, its copyright and permission notice kept in
+  the file's head as the licence asks), in nvim's spelling. css, scheme and the
   markup and data languages without one have no syntax text objects.
   `every_text_object_query_compiles` compiles each against its grammar;
   `each_shipped_query_finds_its_objects` (`systems/src/textobjects.rs`)
@@ -284,7 +285,10 @@ below). The calls, each the user's to overturn:
   `{` `(` `[` token and its closer is read from its first inner child to
   its last (blanks at the ends left out), as nvim's queries say with
   `#make-range!` — `dif` empties the body and keeps the braces, `dic`
-  a struct's fields. A guessed (MISSING) closer is not a bracket.
+  a struct's fields. A guessed (MISSING) closer is not a bracket. An
+  empty body across lines (`{` and `}` with only blanks between) is the
+  empty range after the `{`, so `dif` there leaves it as it is, as
+  vim's `di{` does — the line break taken would join the braces.
 - **The keys follow `i` and `a`**, beside the pairs, words and
   paragraph: `f` function, `c` class — this note's `ac` read as the
   type: a struct, an enum, an impl, a trait, an interface, a class —
@@ -299,14 +303,22 @@ below). The calls, each the user's to overturn:
 - **Which one: the innermost over the caret, a count further out.**
   An object is over the caret when its around is (an inside its pattern
   took alone, nvim's way, is keyed by the smallest around round it), so
-  `if` on a function's signature is that function's body; `2af` (and
-  `2daf`, `d2af` — a count before the operator multiplies a text
-  object's as a motion's) is the one around it, and a count past the
-  outermost does nothing. A visual selection of more than one character
-  grows: `vafaf` is the function, then the one around it. Over nothing
-  — `cia` on the `(` — the first that starts after the caret on its
-  line, nvim's lookahead held to the line, so a key never lands a
-  screen away.
+  `if` on a function's signature is that function's body. An object a
+  pattern finds once for each child it captures as the inside — helix's
+  `(pair (_) @entry.inside) @entry.around`, a field's, an enumerator's,
+  one match a child, the around the same — is one object, and its
+  inside is the part over the caret (helix's smallest inside over the
+  cursor), the nearest when none is: `cie` on a value is the value,
+  `die` on a field's type the type. `2af` (and `2daf`, `d2af` — a count
+  before the operator multiplies a text object's as a motion's) is the
+  one around it — `2ie` the entry around, never the sibling key — and
+  a count past the outermost does nothing. A visual selection of more
+  than one character grows: `vafaf` is the function, then the one
+  around it. Over nothing — `cia` on the `(` — the first that starts
+  after the caret on its line, nvim's lookahead held to the line, so a
+  key never lands a screen away: tree-sitter finishes a match it began
+  in the bytes asked about, so what starts on a later line is found and
+  passed over (`cia` on `fn f(` with the arguments below does nothing).
 - **An object with its lines to itself is taken as lines.** A function,
   a body, a comment, an argument on lines of its own (only blanks
   before it on its first line and after it on its last) is linewise:
@@ -314,10 +326,13 @@ below). The calls, each the user's to overturn:
   lines, `cif` keeps the body's indent and opens a line as `cc` does,
   and `vaf` is `V` over it. One that shares a line is charwise.
 - **A list's item goes with its comma.** `aa` and `ae` take the `,`
-  after the item and the blanks after that — the last item the `,`
-  before it — so `daa` leaves `f(a, b)` as `f(b)` or `f(a)`, as
-  targets.vim's does; helix's queries take the comma after but not the
-  space, and nothing for the last.
+  after the item on its last line and the blanks after that — the last
+  item the `,` before it, across a line break too — so `daa` leaves
+  `f(a, b)` as `f(b)` or `f(a)`, as targets.vim's does, and `dae` on
+  the last element of a list a line each takes the comma ending the
+  line above with it, the list still well-formed (charwise, then: the
+  comma is not on its lines). helix's queries take the comma after but
+  not the space, and nothing for the last.
 - **Every caret its own, `.` again.** Each selection finds its own
   object (mvp.md Decision 4; two carets in one function take it once),
   and the step is the key's, so `.` finds the object again where the
