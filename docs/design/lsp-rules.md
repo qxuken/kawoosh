@@ -210,14 +210,49 @@ again (a save by rename) is a change, a folder's own stir is said by
 its files. Where the platform dropped events (its buffer ran over),
 every file loaded under that root is read again.
 
+*Lost on Windows* (found in the review, 2026-10-03): inotify says it
+ran over (`Q_OVERFLOW`) and FSEvents says a tree must be scanned, both
+notify's `need_rescan`; notify 8.2's ReadDirectoryChangesW backend reads
+16 KiB at a time — a hundred and some paths — ignores the byte count of
+an overflowed read and says nothing, so a `git checkout` during a
+`cargo build` lost changes silently. A probe (a slow handler, 3000
+files written) heard 2 events and no error. So on Windows a **burst** —
+[`BURST`] (128) events heard under a root in one batch's time, ignored
+ones (`target`) included, since they fill the same buffer — counts as
+possibly lost, and once nothing has been heard for 150 ms every file
+loaded under it is read again, once per burst, not per batch: a build
+costs one read of the loaded files after it, the text compared and only
+a difference sent. What it cannot catch is an overflow whose whole
+burst came while notify's thread was starved, fewer than [`BURST`] of
+it heard; a buffer of our own (a ReadDirectoryChangesW of kawoosh's)
+would be the cure, and is not built.
+
+*Roots that come and go*: each root is looked at every 2 s — a stat —
+and one not there (not made yet, or deleted: Windows' watch ends with
+its folder) waits, and is watched again when it is there, or when
+another folder stands in its place (its inode; on Windows its creation
+time — file tunnelling may keep that for a folder made again within
+15 s of its deletion and a check, which is not caught). Watched again,
+what is in it is said as made and its loaded files read again. On
+inotify a folder deleted or moved away lets go of its watches and of
+those under it (they died with it), so one made again in its place is
+watched as new and churn does not use up the 50 000 folders.
+"No repository" is believed for 10 s, or until a `.git` is heard of
+(`git init`); a folder a folder-only line names (`/gen/`) is read as
+ignored when it is gone too.
+
 **What a server is sent**, path by path:
 
 - *A file `load_all` sent it* (the pool's document) is read again: its
   new text a `didChange`, gone — or grown past a MiB — a `didClose`,
   its diagnostics dropped as a rule switched off drops them; a folder
-  gone takes its files. A file of a loaded language made since, or a
-  folder of them, is sent as the walk sends: not hidden, not private,
-  under `load_max`.
+  gone takes its files (looked up in the loaded files in path order,
+  not each file against each folder). A file of a loaded language made
+  since, or a folder of them, is sent as the walk sends: not hidden,
+  not private, under `load_max` — asked before a made folder is walked,
+  a folder walked once a batch whichever servers want it, one inside
+  another made folder not walked again. A `load_all` walk that ends
+  after files made meanwhile were sent counts them toward `load_max`.
 - *A file a buffer holds* is the buffer's, and nothing of the disk's is
   said: the protocol has the client own an open document's text and
   the server not read it from disk. The buffer's own watch reloads a
@@ -236,8 +271,11 @@ is kept by registration, and `client/unregisterCapability` drops one —
 under the protocol's spelling `unregisterations` or the word it meant.
 A glob is LSP's (`*` within a segment, `**`, `{a,b}`, `[…]`): a
 `RelativePattern` is matched on the path under its folder, a string
-from a disk's root on the whole path, any other under the server's
-root or whole; `kind` masks created, changed and deleted. On Windows a
+from a disk's root on the whole path, any other — as the protocol reads
+it, relative to the workspace folders — under the server's root or a
+folder its other watches name, never on the whole path (clangd in `/a`
+asking for `**/compile_commands.json` was told of `/b`'s); `kind` masks
+created, changed and deleted. On Windows a
 `\` in a glob is a separator — rust-analyzer writes its root into a
 glob string for a client without relative patterns — paths and globs
 are matched case aside, and paths go out as every URI here does,
@@ -249,9 +287,9 @@ has no watch and a walk there is a round trip a folder, so such a
 server is not offered the capability, and rust-analyzer and tsserver
 go on watching on their host themselves; its `load_all` files are, as
 before, what the walk read until a buffer opens one, the rule is
-switched or it restarts. Nor a disk's root or the home folder as a
-root: a loose file's server starts in its file's folder, and a home's
-caches stir all day.
+switched or it restarts. Nor a disk's root, the home folder or one
+above it (`/home`, `C:/Users`) as a root: a loose file's server starts
+in its file's folder, and a home's caches stir all day.
 
 Beaten: the buffers' polling watch handed every loaded file (no file
 made is on it, and two thousand stats each half second — on Windows a
@@ -316,7 +354,16 @@ as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
   `files_changed_outside_reach_the_servers_that_watch_them` and
   `a_loaded_file_changed_on_disk_reaches_the_server` against the fake
   server's `--watch`, `--watch-rel` and `@unwatch`. A server on a host
-  is still not told.
+  is still not told. The review's fixes (2026-10-03: Windows' unsaid
+  overflow, folders and roots made again, loose globs kept to their
+  workspace, the made-file walk's cost, the home's ancestors, "no
+  repository" forgotten, `load_max` kept with made files) are tested by
+  `tree_watch`'s `a_burst_is_said_as_lost_once_it_is_over`,
+  `a_folder_made_again_is_watched_again`, `a_root_made_later_is_watched`
+  and `a_repository_made_later_and_a_folder_gone_are_read_as_ignored`,
+  `lsp`'s `a_loose_glob_stays_in_its_workspace` and
+  `a_folder_above_the_home_is_not_watched`, and a folder made and moved
+  away in `a_loaded_file_changed_on_disk_reaches_the_server`.
 - **The pull model, workspace-wide** (`workspace/diagnostic`) —
   lists.md's; with it a server that answers would need no `load_all`.
   A document's own pull is built ([lsp-installs.md](lsp-installs.md)

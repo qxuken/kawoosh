@@ -2790,6 +2790,29 @@ fn a_loaded_file_changed_on_disk_reaches_the_server() {
         app.lsp.status,
         listed(&app)
     );
+    // A folder made with a folder in it: their files loaded. Moved away
+    // whole — one word, of the folder alone — they are closed with it.
+    std::fs::create_dir_all(src.join("m/n")).unwrap();
+    std::fs::write(src.join("m/x.rs"), "fn x() {}\n").unwrap();
+    std::fs::write(src.join("m/n/y.rs"), "fn y() {}\n").unwrap();
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((1, 4))
+            && names(a) == ["a.rs", "c.rs", "x.rs", "y.rs"]),
+        "{:?} {:?}",
+        app.lsp.status,
+        listed(&app)
+    );
+    let away = dir.with_extension("away");
+    let _ = std::fs::remove_dir_all(&away);
+    std::fs::rename(src.join("m"), &away).unwrap();
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((1, 2))
+            && names(a) == ["a.rs", "c.rs"]),
+        "{:?} {:?}",
+        app.lsp.status,
+        listed(&app)
+    );
+    let _ = std::fs::remove_dir_all(&away);
 
     // a.rs in a buffer, edited and not saved: the disk's change is not
     // sent over the buffer's text. c.rs changed after it is the sign
