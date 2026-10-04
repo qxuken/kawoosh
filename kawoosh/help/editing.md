@@ -92,12 +92,14 @@ The syntax adds its own, read from the language's grammar: `f` a
 function, `c` a class (a struct, an enum, an impl, an interface — the
 type), `a` an argument, `/` a comment, `T` a test, `e` an entry (an
 array's element, a table's pair). `if` is a function's body wherever in
-the function the caret is, `af` the whole of it; `daf` takes its lines
+the function the caret is, `af` the whole of it; `ie` is the key or
+the value of a pair, whichever the caret is on. `daf` takes its lines
 whole when it has them to itself, and `daa` takes the argument with its
-comma. A count is the one further out (`2daf` from a closure is the
-function around it), `vaf` again grows to the next one out, and every
-caret takes its own. With the caret before any, the first after it on
-the line is taken (`cia` on the `(`). `]f` `[f` go to the functions'
+comma — the last of a list across lines the comma before it. A count
+is the one further out (`2daf` from a closure is the function around
+it), `vaf` again grows to the next one out, and every caret takes its
+own. With the caret before any, the first after it on the line is
+taken (`cia` on the `(`); none on the line, nothing is. `]f` `[f` go to the functions'
 starts. Rust, JavaScript, TypeScript, Go, Lua, Bash, Nushell, C, C++
 and Python have them; JSON, TOML and YAML their entries (and comments),
 SQL its comments. A grammar installed with `:grammar install` has them

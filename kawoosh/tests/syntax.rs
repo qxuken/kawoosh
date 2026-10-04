@@ -398,6 +398,50 @@ fn text_objects_at_every_caret() {
     std::fs::remove_dir_all(&dir2).ok();
 }
 
+/// A pair's or a field's inside is the part under the caret, not the
+/// shortest; the lookahead keeps to the caret's line; the last item of a
+/// list across lines goes with the comma before it; an empty body across
+/// lines has nothing inside to delete (docs/design/nodes.md Decision 9).
+#[test]
+fn text_objects_take_what_is_under_the_caret() {
+    let src = "{\"a\": \"long value\"}\n";
+    let (mut app, mut d, dir) = parsed("p.json", src);
+    d.press(&mut app, "flciez<Esc>");
+    assert_eq!(text_of(&app), "{\"a\": z}\n");
+    d.press(&mut app, "uggfadie");
+    assert_eq!(text_of(&app), "{: \"long value\"}\n");
+    let list = "[\n  1,\n  2\n]\n";
+    let (mut app, mut d, dir2) = parsed("l.json", list);
+    d.press(&mut app, "3G^dae");
+    assert_eq!(text_of(&app), "[\n  1\n]\n");
+    d.press(&mut app, "u2G^dae");
+    assert_eq!(text_of(&app), "[\n  2\n]\n");
+
+    let src = "struct S {\n    pub name: String,\n}\nfn f(\n    a: u8,\n    b: u8,\n) {\n}\n";
+    let (mut app, mut d, dir3) = parsed("f.rs", src);
+    d.press(&mut app, "2GfSdie");
+    assert!(
+        text_of(&app).contains("    pub name: ,\n"),
+        "{}",
+        text_of(&app)
+    );
+    // On the `(` with nothing after it on its line: nothing, though an
+    // argument starts on the next.
+    d.press(&mut app, "u4Gf(dia");
+    assert_eq!(text_of(&app), src);
+    assert!(
+        app.ed.message.contains("no parameter"),
+        "{}",
+        app.ed.message
+    );
+    // An empty body across lines: `dif` leaves it as it is.
+    d.press(&mut app, "4Gdif");
+    assert_eq!(text_of(&app), src);
+    for dir in [dir, dir2, dir3] {
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
 /// A comment run is one object from any of its lines; a class's inside
 /// in a language of indented blocks is its body's lines, and an object
 /// with its lines to itself is yanked as lines.

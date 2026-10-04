@@ -1,5 +1,5 @@
 //! Text objects read off a syntax tree (docs/design/nodes.md Decision
-//! 8): a grammar's `textobjects.scm` run over the bytes asked about,
+//! 9): a grammar's `textobjects.scm` run over the bytes asked about,
 //! each match an object's around and inside as far as it captured them.
 //! Which one a key takes is the engine's (`kawoosh_editor`'s
 //! `pick_object`); this says what is there.
@@ -110,6 +110,10 @@ fn grow(into: &mut Option<Range<usize>>, r: Range<usize>) {
 /// from the first child after the opener to the last before the closer,
 /// or the empty range between them — the blanks at either end left out
 /// (go's statement list ends with its newline); any other node whole.
+/// Nothing but blanks between brackets on lines of their own — `{` and
+/// `}` of an empty body across lines — is the empty range after the
+/// opener, so `dif` leaves the body's lines as they are, as vim's `di{`
+/// does, where taking the line break would join the braces.
 fn between_brackets(n: Node, text: &text_buffer::Buffer) -> Range<usize> {
     let count = n.child_count();
     if count >= 2
@@ -134,7 +138,15 @@ fn between_brackets(n: Node, text: &text_buffer::Buffer) -> Range<usize> {
                     .count();
                 a + lead..b - trail
             }
-            _ => open.end_byte()..close.start_byte(),
+            _ => {
+                let (a, b) = (open.end_byte(), close.start_byte());
+                let gap = text.collect_range(a..b);
+                if gap.contains(&b'\n') && gap.iter().all(u8::is_ascii_whitespace) {
+                    a..a
+                } else {
+                    a..b
+                }
+            }
         };
     }
     n.byte_range()
@@ -355,6 +367,20 @@ mod tests {
             3..4,
         );
         assert_eq!(got[0].inside, Some(8..8));
+        // One across lines, `{` and `}` on lines of their own: the empty
+        // range after the `{`, not the line break between.
+        for src in ["fn a() {\n}\n", "fn a() {\n    \n}\n", "fn a() {\r\n}\r\n"] {
+            let tree = parser.parse(src, None).unwrap();
+            let text = text_buffer::Buffer::with_text(src.as_bytes());
+            let got = find(
+                g.textobjects.as_ref().unwrap(),
+                &tree,
+                &text,
+                "function",
+                3..4,
+            );
+            assert_eq!(got[0].inside, Some(8..8), "{src:?}");
+        }
         // An object the query does not name: nothing, and no error.
         assert!(find(g.textobjects.as_ref().unwrap(), &tree, &text, "nope", 0..1).is_empty());
     }
