@@ -2910,8 +2910,16 @@ In order — the bugs first, then what needs deciding:
 The steps after 79 were asked together, 2026-10-03, from the "not
 built" lists: "let's implement everything except 1. fanout agents to
 do the work then merge it and verify that it's done. then review once
-more" — every candidate but seeing step 79's menu bar on a Mac. Each
-was built on a branch of its own and merged here.
+more" — every candidate but seeing step 79's menu bar on a Mac (seen
+the same day in a round of its own, above). Each was built on a branch
+of its own and merged here; then each was reviewed, and what the
+review found was fixed before the round went to `main`: among it a
+link opened on Windows through `cmd` (a URL with `&` ran what came
+after it — older than this round), a staged hunk written into another
+file of the same name, an excerpt gone stale when a line was added at
+the end of the one before it, `cie` on an entry's value taking its
+key, and a plugin's republish from `on_diagnostics` looping every
+frame.
 
 80. ~~**Install lines run** ([lsp-servers.md](lsp-servers.md),
     "Tried 2026-10-03 on Windows 11"). Each builtin server's line was
