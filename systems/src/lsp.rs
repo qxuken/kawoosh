@@ -1491,6 +1491,9 @@ impl Server {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = crate::spawn::spawn(&mut command).ok()?;
+        // It ends with this process, however that ends, and what it
+        // starts with it (`job.rs`): `Drop` below is the orderly way.
+        crate::job::adopt(&child);
         let stdin = child.stdin.take()?;
         let stdout = child.stdout.take()?;
         // What the server says on stderr is the log's, line by line.

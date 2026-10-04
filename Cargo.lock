@@ -2658,6 +2658,7 @@ dependencies = [
  "serde_json",
  "text-buffer",
  "tree-sitter",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
