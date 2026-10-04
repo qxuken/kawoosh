@@ -6,6 +6,8 @@
 #[cfg(windows)]
 mod console_host;
 mod graphics;
+#[cfg(windows)]
+mod job;
 pub mod kitty;
 
 pub use graphics::Placed;
@@ -344,6 +346,10 @@ pub struct Terminal {
     pty: Option<Box<dyn MasterPty + Send>>,
     writer: Option<Box<dyn Write + Send>>,
     child: Option<Box<dyn Child + Send + Sync>>,
+    /// The job the child runs in, ending what it started as this is
+    /// dropped (`job`).
+    #[cfg(windows)]
+    _job: Option<job::Job>,
     events: Receiver<Event>,
     size: TermSize,
     pub title: String,
@@ -451,6 +457,8 @@ impl Terminal {
             .slave
             .spawn_command(builder)
             .context("spawning shell in pty")?;
+        #[cfg(windows)]
+        let job = child.as_raw_handle().and_then(job::Job::of);
         drop(pair.slave);
         let reader = pair
             .master
@@ -474,6 +482,8 @@ impl Terminal {
                 pty: Some(pair.master),
                 writer: Some(writer),
                 child: Some(child),
+                #[cfg(windows)]
+                _job: job,
                 events,
                 size,
                 title: String::new(),
@@ -508,6 +518,8 @@ impl Terminal {
             pty: None,
             writer: None,
             child: None,
+            #[cfg(windows)]
+            _job: None,
             events,
             size,
             title: String::new(),
