@@ -677,18 +677,23 @@ impl PtyShared {
 #[derive(Clone)]
 pub struct ProcHandle {
     child: Arc<Mutex<Option<std::process::Child>>>,
+    #[cfg(windows)]
+    tree: Arc<crate::job::Tree>,
 }
 
 impl ProcHandle {
-    /// Kills the process and, on unix, everything it started: the shell
-    /// that ran the command need not `exec` it (nushell does not), and
-    /// a `cargo` left behind would hold the pipes open and the exit
-    /// back until it finished. The process leads a session of its own
-    /// (`run_process_with`), so its group is the command's.
+    /// Kills the process and everything it started: the shell that ran
+    /// the command need not `exec` it (nushell does not, cmd cannot),
+    /// and a `cargo` left behind would hold the pipes open and the exit
+    /// back until it finished. On unix the process leads a session of
+    /// its own (`run_process_with`), so its group is the command's; on
+    /// Windows it is in a job of its own (`job::Tree`).
     pub fn kill(&self) {
         if let Ok(mut c) = self.child.lock()
             && let Some(child) = c.as_mut()
         {
+            #[cfg(windows)]
+            self.tree.kill(child);
             // Not yet waited on, so the pid is still this process's.
             #[cfg(unix)]
             if let Ok(pid) = libc::pid_t::try_from(child.id()) {
@@ -1023,6 +1028,8 @@ impl Io {
             }
         }
         let mut child = crate::spawn::spawn(&mut command)?;
+        #[cfg(windows)]
+        let tree = Arc::new(crate::job::Tree::of(&child));
         if let (Some(mut text), Some(mut pipe)) = (stdin, child.stdin.take()) {
             thread::spawn(move || {
                 let _ = pipe.write_all(text.as_bytes());
@@ -1084,6 +1091,8 @@ impl Io {
         let b = pump(Box::new(stderr), tx.clone(), wake.clone(), split_err);
         let handle = ProcHandle {
             child: child.clone(),
+            #[cfg(windows)]
+            tree: tree.clone(),
         };
         thread::spawn(move || {
             // The pipes close when the process ends — or was killed —
@@ -1097,6 +1106,10 @@ impl Io {
                 .and_then(|mut c| c.take())
                 .and_then(|mut c| c.wait().ok())
                 .and_then(|s| s.code());
+            // Windows has no signal to die by: a killed process exits
+            // with the code the kill gave it.
+            #[cfg(windows)]
+            let code = code.filter(|_| !tree.killed());
             let _ = tx.send(IoMsg::ProcExit { id, code });
             wake.wake();
         });
