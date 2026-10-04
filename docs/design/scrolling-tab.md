@@ -113,7 +113,8 @@ has room past them now, see "Built".*
 
 The gap between columns is `layout.gap` px (the divider's width by
 default) and is draggable like a divider: a drag turns the column's
-width into `Width::Ratio`.
+width into `Width::Ratio`. *The last column had no gap after it and so
+no handle; it has one inside its right edge now, see "Built".*
 
 *Beat:* kawoosh owning the offset every frame (computing it from the
 focused column and writing it) — which fights the swipe and rebuilds
@@ -385,6 +386,24 @@ departed from the text above, and what day one found:
   column's centring needs, from the shape alone, so it stays put as
   the focus walks and a lone column sits in the middle. Test:
   `an_alignment_has_room_past_the_ribbons_ends`.
+- **The last column drags by its right edge** (2026-10-05, asked: "I
+  can resize panels when there is a split except the last one"). A
+  handle stood between columns only, so the last column — a lone one
+  too — had a width only the preset keys could change. It has a handle
+  of its own now, the gap's width, *inside* its width and under its
+  key: a lone full column is still the viewport and no more (no bar
+  under it), the pane is the gap narrower than its column, and a
+  reveal brings the handle into view with the column. The drag reads
+  the viewport's width from the handle's tag, its parent being the
+  column there. And a ribbon scrolled away from its start holds its
+  length under any gap drag, the room after the last column
+  (`StripRoom::trail`) taking what a column gives up: shorter, the
+  ribbon was scrolled back under the pointer, and each move measured a
+  width from an edge the move before had shifted — the last column at
+  the ribbon's end shrank to its least in a few moves. The room stays
+  after the drag as an alignment's does, so the column is where it was
+  let go. The dock's strip has no handles at all, as before. Test:
+  `the_last_column_drags_by_its_right_edge`.
 - **The status line shows the columns** as `▯▮▯`, the focused one
   filled, before the caret's line and column — a column off the
   viewport is not out of mind.

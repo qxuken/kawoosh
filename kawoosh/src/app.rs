@@ -2420,7 +2420,8 @@ impl Kawoosh {
     /// A divider drag: the cursor over the split's own rect is the ratio.
     /// A strip's gap (`gap{i}`) sets the column before it to the width
     /// the pointer makes it, as a fraction of the viewport — a `Ratio`
-    /// until a preset key snaps it (scrolling-tab.md Decision 3).
+    /// until a preset key snaps it (scrolling-tab.md Decision 3). The
+    /// last column has one too, at its right edge.
     fn on_split_drag(&mut self, d: Drag, tag: Option<&Value>) {
         let Some(path) = tag.and_then(|t| t.get_str("path")) else {
             return;
@@ -2430,7 +2431,12 @@ impl Kawoosh {
             DragPhase::End => self.dragging = None,
             _ if path.starts_with("gap") => {
                 let x = d.pos.x;
-                let vw = d.parent.w.max(1.0);
+                // The viewport's width, which the last column's handle,
+                // inside its column, has no parent to give.
+                let vw = tag
+                    .and_then(|t| t.get_f32("vw"))
+                    .unwrap_or(d.parent.w)
+                    .max(1.0);
                 let gap = self.strip_gap();
                 if let Ok(i) = path[3..].parse::<usize>()
                     && let Some(s) = self.layout.tab().strip()
@@ -2441,7 +2447,9 @@ impl Kawoosh {
                     // The column's left edge is its top pane's, where it
                     // was drawn last frame.
                     if let Some(r) = ps.first().and_then(|p| self.layout.rects.get(p)) {
-                        let w = (x - gap / 2.0 - r.x) / vw;
+                        // The last column's width holds its handle.
+                        let own = if i + 1 == s.columns.len() { gap } else { 0.0 };
+                        let w = (x - gap / 2.0 + own - r.x) / vw;
                         let s = self.layout.tab_mut().strip_mut().unwrap();
                         s.columns[i].width = crate::layout::Width::Ratio(w.clamp(0.1, 1.0));
                     }

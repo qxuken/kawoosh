@@ -163,9 +163,12 @@ local function button(label, ev, t)
   }
 end
 
--- A state as a tag: a button's shape with nothing to press.
+-- A state as a tag: a button's shape with nothing to press. No narrower
+-- than its label: in a pane too narrow for the row it was squeezed to
+-- its padding, the label outside it.
 local function tag(label, t)
   return row { pad = { x = 8 }, height = SIZE + 8, radius = 4, cross_align = "center",
+    min_width = "fit",
     border = { w = 1, color = t.border },
     text(label, { size = SMALL, color = t.muted, wrap = "none" }) }
 end
