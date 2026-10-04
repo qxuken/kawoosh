@@ -337,7 +337,8 @@ with a linked panels".
   and drew at sizes of its own — 13 px hard-coded, so `font.chrome_size`
   never reached it, its labels and stages a step under, its keys three
   (10 px, the smallest anywhere). It is two rows: `find` with the
-  toggles and the count, then `include` and `exclude` with the root
+  toggles and the count (`replace` between them since Decision 12),
+  then `include` and `exclude` with the root
   when it is not the workspace's and `⌥/ keys` at the end; the stages'
   row comes only once there is a second stage — with one, its lone chip
   said again what the field and the count say. Its sizes are the panes'
@@ -363,6 +364,151 @@ with a linked panels".
   before the restores fire, not on the first frame, so a plugin's
   restore can ask the memory.
 
+### 12. Replace: a field, and one change made in the results
+
+Built 2026-10-03, from this note's own "Not built": "a `replace` field
+and "replace all" — `:%s` in the multibuffer does it through the mirror
+today, and a field is sugar over it". Zed and VS Code were the models;
+the calls are taken here, each the user's to overturn.
+
+- **The field is the search's, not a stage's.** `replace` sits on the
+  find row after the toggles, so the bar stays two rows: find and
+  replace over include and exclude, each field over its fellow. `<Tab>`
+  goes find, replace, include, exclude. A stage keeps its pattern and
+  its globs; the replacement is what the painted matches become,
+  whichever stage the fields are editing, and is not in the memory's
+  moments.
+- **Replace all is one change made in the results.** `<A-CR>` in any
+  field (`search replace all`) makes the edits in `*search*` as one
+  change (`Editor::apply_edits`), and the sync writes them into each
+  file as it writes a key typed there (Decision 3): one state of each
+  file, one entry of the results' undo (Decision 4). One `u` in the
+  results takes every file back; `u` in a file's own pane only that
+  file. The files are modified, not written — `:w` in the results
+  writes them, as Zed's and VS Code's replace leave them — and so no
+  longer borrowed (Decision 10). The message counts the matches and
+  the files.
+- **What is replaced is what the answer counts, found again.** The
+  matches of the last stage that found lines — the painter, whose
+  matches `n` walks — on the lines the `keep` and `drop` stages after
+  it left: a line a `drop` stage took out but shown as another's
+  context is painted, and keeps its match. They are found again in the
+  excerpts as they are now, each file's line once, not taken from the
+  answer's line numbers, which an edit in the results has moved since.
+  A match is on one line, as the search reports them: a line break is
+  never part of one, so no replacement joins two lines or takes an
+  excerpt's last line break (Decision 2). A read-only file's matches
+  are left, and counted. Only what the results hold is replaced: past
+  the search's 10 000 matches or 1 000 files nothing is shown and
+  nothing replaced.
+- **A regex's groups are `$1`.** With `.*` on, the replacement is the
+  regex crate's: `$1`, `${name}`, `$0`, `$$` for a `$` — `${1}x` where
+  a word character follows, since `$1x` names a group `1x` — and `\n`
+  `\t` `\\` the characters, as Zed's and VS Code's fields read them.
+  Without it the field's text is the text: a `$` is a `$`. Not vim's
+  `\1` and `&`, which `:s` keeps: the bar is Zed's shape, and a `&` in
+  a replacement is more often meant than not.
+- **One match: `<A-CR>` in the results.** In the bar `<CR>` runs the
+  search over everything and `<A-CR>` replaces everything; in the
+  results `<CR>` opens the one file at the caret and `<A-CR>` (`search
+  replace one`, local to `*search*`) replaces the one match under the
+  caret — or the next after it, round to the first — and puts the caret
+  on the next match. So `<A-CR>` `<A-CR>` `n` `<A-CR>` walks them, `n`
+  skipping one. Each is a change of its own. Alt-Enter is bound nowhere
+  else ([keys.md](keys.md)), is the same key on every platform, and is
+  no dead key on a Mac.
+- **The count goes stale, and says so.** After a replace that replaced
+  something the bar says `replaced · ⏎ to search again` in the count's
+  place until the next run; one refused or that found nothing leaves
+  the count, the message saying why (`kawoosh.search_replace`'s
+  callback tells the bar which). The matches are not searched again (Decision 10's rule): the
+  excerpts show the replaced text to look over, and `u` is one key
+  away.
+- **Any multibuffer may.** `kawoosh.search_replace({ buffer =, pattern =,
+  regex =, word =, case =, with =, lines = { { pattern =, keep = }, … },
+  one = }[, fn])` is the engine's (`kawoosh_editor::replace`), `fn`
+  called when it is done with `{ matches =, files =, read_only = }` or
+  `nil` and why nothing was; the bar is its one caller.
+- **An empty match is between characters.** A pattern that can match
+  nothing (`x*`) matches before each character and at the line's end,
+  never inside a character of several bytes.
+
+Beaten: **`:%s` spelled by the plugin**, the note's own "sugar". Its
+pattern is vim's `/` regex with a delimiter to escape and `\1` `&` in
+the replacement, where the bar's is the `regex` crate behind three
+toggles and a smart case; and `:%s` takes every match in the excerpts,
+the dropped lines' too. **The files edited directly**, each at the
+answer's places: simpler, but made outside the multibuffer, so `u` in
+the results would not reach it, and the places are stale once the
+results are edited.
+### 13. An excerpt grows; the engine reads the lines in
+
+Asked 2026-10-03, from the roadmap's list: "Growing an excerpt: show
+more lines above or below a result, like Zed's ⋯. This affects search,
+references and diagnostics alike". The engine took excerpts as given,
+and growing one meant the caller making them all again. It is the
+engine's now (`Editor::multi_grow`), so every multibuffer — the
+search's results, `*references*`, `*diagnostics*`, a plugin's — grows
+the same way and no caller is asked:
+
+- **The excerpt at the caret shows N more of its file's lines** above,
+  below or both: the lines read from the source as it is now and
+  written into the multibuffer, the excerpt's range in the source
+  widened by them. From then on the mirror holds them as it holds the
+  rest — a key typed on a grown line is in the file, the file's edit is
+  in it, `u` steps the files back (Decision 4); the growth itself is
+  not a change of any file and is not undone.
+- **A run grows as one.** Excerpts that show one file's lines with none
+  left out between — one place cut by a diagnostic's message under its
+  line (lists.md Decision 3) — are a run: above is its first excerpt's,
+  below its last's.
+- **Meeting the next excerpt of the file joins them**: the gap between
+  goes, and the two are one excerpt. Not past it: what is between two
+  excerpts is all one growth can show, the rest is the next one's. A
+  gap the caller painted — a note, not a `⋯` — is kept, and the two
+  only touch, a run from then on. A `⋯` after a note (a list with no
+  context, the note ending its place's excerpt) is a `⋯` all the same:
+  clicked it grows, and when the two meet it goes, the note kept.
+  Another file's excerpt is never met: a growth stops at its file's
+  ends.
+- **A line added at the end of the first of two that touch is its.**
+  An edit through the first that adds lines after its last — `o` there,
+  a replace that adds a line break — lands in the file where the second
+  starts; the second moves on whole, its lines and numbers its own, as
+  the first's text says. (A file's own edit there, seen only in its
+  journal, goes to the second, which shows it: the two stay true
+  either way.)
+- **On a gap's line**, the excerpts on either side grow toward it:
+  `above` the one under it, `below` the one over it, both ways both of
+  them — a `⋯` filled from its two ends.
+- **A remake undoes it.** The caller's parts are the multibuffer's
+  truth: a search run again, `*diagnostics*` made again when the
+  diagnostics move, `grr` again, lay the excerpts out as the caller
+  says. Growths are not remembered across that; they are a look.
+
+The keys, normal mode in any multibuffer (`language:multibuffer`):
+`zo` grows both ways, `zk` above and `zj` below, and `<S-CR>` both, as
+Zed's `editor::ExpandExcerpts` (shift-enter). A COUNT is the lines; by
+default `multi.expand` (5, Zed's `expand_excerpt_lines`). The lines a
+multibuffer leaves out are a closed fold's in all but name, so vim's
+fold keys read on them: `zo` opens, and `zj` `zk` — vim's moves to the
+next and previous fold, of which kawoosh has none — are the direction
+it opens in; `zv` already reads a mask as a fold (secrets.md). `<S-CR>`
+sits beside `<CR>`, which opens the file: shift for "show me more here
+instead". **A click on a `⋯`** grows both sides toward it by
+`multi.expand`, Zed's click — a press on a line no caret has use for,
+since nothing is typed there. `:multi more [N]`, `:multi more above
+[N]`, `:multi more below [N]` are the commands.
+
+Beaten: **the lines given as a count of context in the caller's parts,
+the caller asked to make them again** (the shape "a re-make" named). It
+keeps the engine as it was, but every caller — the search, the lists,
+`vcs.lua`, a plugin's — would carry the growth state and its keys, and
+a remake loses the carets' places and the scroll for a look. **Growing
+past a met excerpt** (both joined and grown on by what is left of N) was
+left out: the next excerpt's lines are already on the screen, and a
+growth that jumps over them is harder to read than a second `zj`.
+
 ## Built
 
 2026-09-25, in four commits: the engine (`editor/src/multi.rs`,
@@ -376,10 +522,17 @@ three rows.
 
 ## Not built
 
-- **Replace**: a `replace` field and "replace all" — `:%s` in the
+- ~~**Replace**: a `replace` field and "replace all" — `:%s` in the
   multibuffer does it through the mirror today, and a field is sugar
-  over it.
-- **Expanding an excerpt** (Zed's `⋯` click, more lines above or below).
-  The engine takes excerpts as given; growing one is a re-make.
+  over it.~~ Built 2026-10-03 (Decision 12): `editor/src/replace.rs`,
+  `kawoosh.search_replace`, the bar's field in `kawoosh/lua/search.lua`;
+  `editor/tests/replace.rs`, `kawoosh/tests/search_replace.rs`,
+  `kawoosh/lua/tests/search_replace.lua`.
+- ~~**Expanding an excerpt** (Zed's `⋯` click, more lines above or below).
+  The engine takes excerpts as given; growing one is a re-make.~~ Built
+  2026-10-03 (Decision 13): `Editor::multi_grow` and
+  `Editor::multi_elided` in `editor/src/multi.rs`, `multi more` and its
+  keys in `editor/src/commands.rs`, the click in `kawoosh/src/multis.rs`;
+  tested in `editor/tests/multi.rs` and `kawoosh/tests/excerpts.rs`.
 - **A multibuffer for other answers**: a diff's hunks. References and
   diagnostics are lists now ([lists.md](lists.md), 2026-09-26).

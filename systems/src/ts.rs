@@ -75,8 +75,10 @@ pub struct Answer {
     pub tree: Option<Tree>,
     /// The text the tree was parsed from and the grammar that read it,
     /// for the shell's indenter to bring the tree up to the buffer's
-    /// text on the spot (docs/design/indent.md Decision 4); only for a
-    /// grammar with an indent query that reads the text as it is.
+    /// text on the spot (docs/design/indent.md Decision 4) — its indent
+    /// and its text objects (docs/design/nodes.md Decision 9); only for
+    /// a grammar with an indent or a text-object query that reads the
+    /// text as it is.
     pub parse: Option<Parse>,
     /// What the parse and the queries took on the thread — the devtools'
     /// reading of a system the frame never waits on.
@@ -164,7 +166,7 @@ enum Cmd {
     /// the shell loaded one — `None` for a language of files alone,
     /// or a builtin, which the thread loads itself.
     Language {
-        def: LanguageDef,
+        def: Box<LanguageDef>,
         grammar: Option<Arc<Grammar>>,
     },
 }
@@ -195,7 +197,7 @@ impl Ts {
                     let mut job = match cmd {
                         Cmd::Job(job) => job,
                         Cmd::Language { def, grammar } => {
-                            grammars.add(def, grammar, &mut parsed);
+                            grammars.add(*def, grammar, &mut parsed);
                             continue;
                         }
                         Cmd::Text(t) => {
@@ -218,7 +220,7 @@ impl Ts {
                         let mut next = match next {
                             Cmd::Job(job) => job,
                             Cmd::Language { def, grammar } => {
-                                grammars.add(def, grammar, &mut parsed);
+                                grammars.add(*def, grammar, &mut parsed);
                                 continue;
                             }
                             Cmd::Text(t) => {
@@ -289,7 +291,10 @@ impl Ts {
     /// language parses whole at its next job.
     pub fn add_language(&self, def: LanguageDef, grammar: Option<Grammar>) {
         let grammar = grammar.map(Arc::new);
-        let _ = self.cmds.send(Cmd::Language { def, grammar });
+        let _ = self.cmds.send(Cmd::Language {
+            def: Box::new(def),
+            grammar,
+        });
     }
 
     pub fn drain(&self) -> Vec<Answer> {
@@ -639,7 +644,7 @@ fn highlight(
                         block_spans = Some(lines);
                     }
                     let handle = tree.clone();
-                    if stood_in.is_none() && g.indents.is_some() {
+                    if stood_in.is_none() && (g.indents.is_some() || g.textobjects.is_some()) {
                         parse = Some(Parse {
                             text: text.clone(),
                             grammar: g.clone(),

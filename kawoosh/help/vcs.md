@@ -25,9 +25,36 @@ The bars take no room, so nothing moves when they appear.
 | `<leader>hp` | the hunk under the caret as a diff in a `*hunk*` pane below; `q` there closes it |
 
 `:hunk` says what the buffer is read against and counts the hunks
-(`against index: 3 hunks (+1 ~1 −1)`). `vcs.base = "head"` in the
-settings reads against HEAD instead of the index; `vcs.signs = false`
-leaves the gutter plain and keeps `]h`.
+(`against index: 3 hunks (+1 ~1 −1)`, and `, 2 staged` when some
+are). `vcs.base = "head"` in the settings reads against HEAD instead
+of the index; `vcs.signs = false` leaves the gutter plain and keeps
+`]h`.
+
+## Staging
+
+| keys | what |
+|---|---|
+| `<leader>ha` | stage the hunk under the caret: its lines go into the index as the buffer has them (`:hunk stage`) — in visual mode, every hunk the selection touches |
+| `<leader>hA` | stage every hunk of the buffer (`:hunk stage!`) |
+| `<leader>hu` | take the staged hunk under the caret back out of the index (`:hunk unstage`) |
+| `<leader>hU` | take every staged hunk of the file back out (`:hunk unstage!`) |
+
+A staged line keeps its bar, faint: it differs from HEAD but no
+longer from the index. Edit it again and the bar is full again — the
+change since is not staged. The keys work in a review too, on the file
+the caret's excerpt is from — open or not: a file the review opened
+for its excerpts is read against the index as an open one is. When git
+refuses a stage (the index locked, or moved under the buffer since it
+was read), the message line says what git said. What is staged is the buffer's text, saved
+or not, with a CRLF file's lines staged as LF where git keeps them so
+(`core.autocrlf`), as `git add` would. A whole hunk is staged; for
+part of one, use `git add -p` in `:tool git`.
+
+Staging needs an index: git has one. Fossil does not (`fossil here has
+no stage`), and with `vcs.base = "head"` or a buffer a `:vcs main`
+review is reading against main, the buffer is not read against the
+index and staging says so — `:vcs refresh` reads it against the index
+again.
 
 The status line shows the branch and the counts (` main +3 ~1`) in
 its `vcs` module, wherever `statusline.layout` puts it
@@ -40,7 +67,7 @@ its `vcs` module, wherever `statusline.layout` puts it
 | `<leader>hd` | `:vcs diff` — every changed file, its hunks, in one buffer beside |
 | `<leader>hm` | `:vcs main` — the working tree against where `main` and this branch parted: what the branch did, whatever main did since |
 | `<leader>hD` | pick a branch or tag to read the working tree against |
-| `<leader>hf` | `:vcs status` — the changed files as a picker, each previewed as its diff |
+| `<leader>hf` | `:vcs status` — the changed files as a picker, each previewed as its diff — what is staged first — with `staged` or `partly staged` beside a file that has some |
 
 The review is a multibuffer ([search](search.md#multibuffers)): a
 header per file with its counts (`src/a.ts  +12 −3`), then each hunk —
@@ -114,7 +141,7 @@ moves the directory.
 
 `:vcs` says which backend owns the directory, the branch, and what the
 backend can do (`git at ~/p, on main — base status changed merge_base
-refs blame log show worktrees worktree_add`). Backends are asked in
+refs blame log show worktrees worktree_add stage`). Backends are asked in
 `vcs.backends`' order (`{ "git", "fossil" }`). A command a backend has
 no function for says so — `fossil here has no merge_base` — and does
 nothing. `:vcs refresh` asks everything again; `vcs.enabled = false`
@@ -124,4 +151,4 @@ Fossil answers the root, the branch, a file's checked-in text, the
 changes, a blame, the timeline and a check-in's diff — so the gutter,
 `]h`, a reset, `:vcs diff`, blame, history and `:vcs show` work in a
 fossil checkout; `:vcs main`, two-revision reviews of what a merge
-base would give, and worktrees do not.
+base would give, worktrees and staging do not — fossil has no index.

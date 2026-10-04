@@ -43,7 +43,17 @@ have `@crash` in it, or opened with `@crash-open`, makes it say "fake
 server crashing" on stderr and exit with 3. Started with `--ask
 METHOD`, a document's first open sends the request METHOD of its own
 (id 4000), and the result it is answered with is published as that
-document's one diagnostic, `answered: RESULT` in JSON."""
+document's one diagnostic, `answered: RESULT` in JSON. Watched files
+(lsp-rules.md Decision 7): `--watch ID KIND GLOB`, any number of them —
+or `--watch-rel ID KIND GLOB`, the glob a RelativePattern under the
+root — registers on `initialized` one `workspace/didChangeWatchedFiles`
+registration per ID with its watchers (KIND 0 names none), and notes
+"registered" once answered; each `workspace/didChangeWatchedFiles` it
+gets is noted, a change at a time, as "watched: created NAME" (changed,
+deleted; NAME the file's); a text changed to have `@unwatch ID` in it
+unregisters ID, noted "unregistered ID" once answered. The notes so far
+are published on the first document it was sent, as information beside
+its "boom"."""
 import json
 import re, sys
 
@@ -85,6 +95,37 @@ LINTER = sys.argv[sys.argv.index("--linter") + 1] if "--linter" in sys.argv else
 ASK = sys.argv[sys.argv.index("--ask") + 1] if "--ask" in sys.argv else None
 asked = False
 
+# `--watch` / `--watch-rel`: each registration's watchers, by ID.
+WATCHES = {}
+for i, a in enumerate(sys.argv):
+    if a in ("--watch", "--watch-rel"):
+        rid, kind, glob = sys.argv[i + 1:i + 4]
+        WATCHES.setdefault(rid, []).append((a == "--watch-rel", int(kind), glob))
+root_uri = None
+first_uri = None
+notes = []
+# Unregistrations asked, by request id: the registration's ID.
+unwatching = {}
+
+def boom():
+    return {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
+            "severity": 1, "message": "boom"}
+
+def noted():
+    return [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
+             "severity": 3, "message": n} for n in notes]
+
+def report():
+    if first_uri:
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+            "uri": first_uri, "diagnostics": [boom()] + noted()}})
+
+def watcher(relative, kind, glob):
+    w = {"globPattern": {"baseUri": root_uri, "pattern": glob} if relative else glob}
+    if kind:
+        w["kind"] = kind
+    return w
+
 def lint(method, mid, m):
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
@@ -124,6 +165,18 @@ while True:
                                                             "end": {"line": 0, "character": 1}},
                                                   "severity": 3,
                                                   "message": "answered: " + json.dumps(m.get("result"))}]}})
+        if mid == 5000:
+            notes.append("registered")
+            report()
+        elif isinstance(mid, int) and mid > 5100:
+            notes.append("unregistered " + unwatching.pop(mid))
+            report()
+        continue
+    if method == "workspace/didChangeWatchedFiles":
+        for c in m["params"]["changes"]:
+            name = c["uri"].rsplit("/", 1)[-1]
+            notes.append("watched: %s %s" % (["", "created", "changed", "deleted"][c["type"]], name))
+        report()
         continue
     if LINTER:
         lint(method, mid, m)
@@ -133,6 +186,7 @@ while True:
               "message": "Could not find a valid TypeScript installation."}})
         break
     if method == "initialize":
+        root_uri = m["params"].get("rootUri")
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
             "completionProvider": {"triggerCharacters": ["."]},
             "hoverProvider": True, "definitionProvider": True,
@@ -143,6 +197,11 @@ while True:
             "declarationProvider": True, "documentSymbolProvider": True,
             "workspaceSymbolProvider": True, "inlayHintProvider": True}}})
     elif method == "initialized":
+        if WATCHES:
+            send({"jsonrpc": "2.0", "id": 5000, "method": "client/registerCapability", "params": {
+                "registrations": [{"id": rid, "method": "workspace/didChangeWatchedFiles",
+                                   "registerOptions": {"watchers": [watcher(*w) for w in ws]}}
+                                  for rid, ws in WATCHES.items()]}})
         send({"jsonrpc": "2.0", "id": 1000, "method": "window/workDoneProgress/create",
               "params": {"token": "ws"}})
         send({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "ws", "value": {
@@ -156,6 +215,12 @@ while True:
         if "@crash" in text:
             print("fake server crashing", file=sys.stderr, flush=True)
             sys.exit(3)
+        for rid in re.findall(r"@unwatch (\w+)", text):
+            if rid in WATCHES and rid not in unwatching.values():
+                req = 5101 + len(unwatching)
+                unwatching[req] = rid
+                send({"jsonrpc": "2.0", "id": req, "method": "client/unregisterCapability", "params": {
+                    "unregisterations": [{"id": rid, "method": "workspace/didChangeWatchedFiles"}]}})
         if not ended:
             ended = True
             send({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "ws", "value": {
@@ -174,6 +239,8 @@ while True:
         uri = m["params"]["textDocument"]["uri"]
         docs[uri] = m["params"]["textDocument"]["text"]
         last_uri = uri
+        if first_uri is None:
+            first_uri = uri
         if "@crash-open" in docs[uri]:
             print("fake server crashing", file=sys.stderr, flush=True)
             sys.exit(3)
@@ -193,6 +260,8 @@ while True:
             diags.append({"range": {"start": {"line": ln, "character": 4}, "end": {"line": ln, "character": 7}},
                           "severity": 1, "source": "ts", "code": 2322,
                           "message": "Type '{ " + "; ".join(f"field{i}: string" for i in range(30)) + " }' is not assignable to type 'B'."})
+        if uri == first_uri:
+            diags += noted()
         send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
             "uri": uri, "diagnostics": diags}})
         if ASK and not asked:

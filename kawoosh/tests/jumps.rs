@@ -481,7 +481,7 @@ fn lua_reads_the_list_and_declares_its_own_jumps() {
         kawoosh.command("show jumps", function()
           local parts = {}
           for _, j in ipairs(kawoosh.memory { jumps = true }) do
-            parts[#parts + 1] = j.path:match("[^/]+$") .. ":" .. j.line .. ":" .. j.col
+            parts[#parts + 1] = j.path:match("[^/\\]+$") .. ":" .. j.line .. ":" .. j.col
               .. (j.current and "*" or "") .. (j.buffer and "" or "?")
           end
           kawoosh.echo(table.concat(parts, " "))

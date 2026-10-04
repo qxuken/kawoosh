@@ -305,9 +305,16 @@ fn the_menu_bar_is_declared_where_the_platform_owns_one() {
         .iter()
         .find(|i| i.text() == "Settings…")
         .unwrap();
+    // kui spells the chord as the platform does: ⌘ on a Mac, Ctrl
+    // elsewhere (the bar is declared everywhere in the tests).
+    let chord = if cfg!(target_os = "macos") {
+        "⌘,"
+    } else {
+        "Ctrl+,"
+    };
     assert_eq!(
         settings.accel.as_deref(),
-        Some("⌘,"),
+        Some(chord),
         "the key's own command"
     );
     // Bound to something else, it is the keymap's.

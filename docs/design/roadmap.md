@@ -2883,8 +2883,8 @@ In order — the bugs first, then what needs deciding:
     `kawoosh/src/grammars.rs`, `kawoosh/tests/grammars.rs`);
     `grammars.install` at a language's first file; `:grammars`, the
     pane (`kawoosh/lua/grammars.lua` over `kawoosh.grammars.list()`);
-    `grammars.sources`, a grammar of the user's own built here. No
-    Windows has loaded one of the libraries yet.
+    `grammars.sources`, a grammar of the user's own built here. Loaded
+    on Windows 2026-10-03 (step 81).
 
 78. ~~**A server for every known language** ([lsp-servers.md](lsp-servers.md)),
     asked 2026-10-02: "Let's integrate more lsps … And make lsp
@@ -2906,6 +2906,130 @@ In order — the bugs first, then what needs deciding:
     `kawoosh/tests/menus.rs`. Seen on a Mac 2026-10-03: the language
     server's rows lit only where a server answers, Settings… the pane
     as ⌘, is; the rows' key hints drawn there since kui alpha.34 (F119).
+
+The steps after 79 were asked together, 2026-10-03, from the "not
+built" lists: "let's implement everything except 1. fanout agents to
+do the work then merge it and verify that it's done. then review once
+more" — every candidate but seeing step 79's menu bar on a Mac (seen
+the same day in a round of its own, above). Each was built on a branch
+of its own and merged here; then each was reviewed, and what the
+review found was fixed before the round went to `main`: among it a
+link opened on Windows through `cmd` (a URL with `&` ran what came
+after it — older than this round), a staged hunk written into another
+file of the same name, an excerpt gone stale when a line was added at
+the end of the one before it, `cie` on an entry's value taking its
+key, and a plugin's republish from `on_diagnostics` looping every
+frame.
+
+80. ~~**Install lines run** ([lsp-servers.md](lsp-servers.md),
+    "Tried 2026-10-03 on Windows 11"). Each builtin server's line was
+    its project's documented one, and none had been run.~~ Done
+    2026-10-03: every server kawoosh installs itself put through
+    `kawoosh lsp install` into a scratch root and sent `initialize` —
+    twenty-five packages over npm, uv, cargo, go and dotnet, all but
+    fish-lsp (it runs `fish`) answering; the line-only servers looked
+    up in their registries. Found: no npm package installed on Windows
+    at all (`npm` is `npm.cmd`, which std does not look for;
+    `io::command` takes a `.cmd`/`.bat` on the PATH by its path), R's
+    line quoted for sh and not `cmd /C`, nil's Nix line offered on
+    Windows, a missing manager said only by cmd. Guards in
+    `systems/src/io.rs` and `kawoosh/src/lsp_rules.rs`, and an ignored
+    `installed_servers_answer_kawoosh` over real installs.
+
+81. ~~**Windows runs**: windows-sys 0.61, `:relaunch`, grammar
+    installs — built for Windows and never run there.~~ Done
+    2026-10-03 ([grammars.md](grammars.md), "Tried on Windows"):
+    windows-sys 0.59 → 0.61 in editor, kawoosh and term with no code
+    change. `:relaunch` run from a scratch app folder over its socket:
+    the plain restart, a build waiting as `Kawoosh.new` swapped in by
+    `kawoosh-update`, a folder held past the updater's patience left
+    whole with the old Kawoosh back saying why; a `--no-fonts` folder
+    moves under its running Kawoosh, so the script's removal of the
+    old one is best effort now. Grammars zig, java, ruby, html and php
+    installed from the releases and painting, kdl built with mingw
+    `cc`, clang and `zig cc`; a grammar removed and installed again in
+    one session failed on its loaded DLL, now moved aside
+    (`grammars::clear`, `.gone-*` pruned at launch). The Windows sweep
+    made green beside it: clippy 1.99's `large_enum_variant` on
+    `ts::Cmd::Language`, unix-only test helpers, and seven tests that
+    spelled paths the unix way.
+
+82. ~~**Search replace** ([search.md](search.md) Decision 12): a
+    `replace` field and "replace all" in the search's bar.~~ Built
+    2026-10-03: the field on the find row, the bar still two rows;
+    `<A-CR>` in the bar replaces every match the results show,
+    `<A-CR>` in the results the one at the caret, then on to the next.
+    One change in `*search*`, which the mirror writes into each file
+    as one state: one `u` there takes them back, `:w` writes them.
+    What is replaced is what the answer counts, per line; `$1` and
+    `${name}` with a regex. `editor/src/replace.rs` behind
+    `kawoosh.search_replace`; `editor/tests/replace.rs`,
+    `kawoosh/tests/search_replace.rs`,
+    `kawoosh/lua/tests/search_replace.lua`.
+
+83. ~~**Growing an excerpt** ([search.md](search.md) Decision 13),
+    Zed's `⋯`, for the search, references and diagnostics alike.~~
+    Built 2026-10-03: `zk` `zj` more above and below, `zo` and
+    `<S-CR>` both ways, COUNT lines or `multi.expand` (5), a click on
+    a `⋯` filling it from both sides; `Editor::multi_grow` reads the
+    lines in and the mirror keeps them live. A place cut by its
+    diagnostic's message grows as one run; an excerpt meeting the next
+    of its file joins it. `editor/src/multi.rs`, `kawoosh/src/multis.rs`;
+    `editor/tests/multi.rs`, `kawoosh/tests/excerpts.rs`.
+
+84. ~~**Staging** ([vcs.md](vcs.md) Decision 12): `hunk stage` and
+    `hunk unstage` through the door Decision 3 named.~~ Built
+    2026-10-03: `<leader>ha` `hA` `hu` `hU`, the selection's hunks in
+    visual mode, the excerpt's file from a review. The editor makes
+    the patch (`line_diff::unified`, CRLF checkouts over an LF index as
+    `git add` would) and `vcs.lua` applies it with `git apply
+    --cached` through `kawoosh.on_stage`; under an index base HEAD's
+    text comes too, so staged hunks are drawn faint, counted by
+    `:hunk` and said by the `vcs status` picker. Fossil has no index
+    and says so. `kawoosh/tests/vcs_git.rs`, `kawoosh/lua/tests/stage.lua`.
+
+85. ~~**Text objects from the grammar** ([nodes.md](nodes.md)
+    Decision 9): `af`, `if` and `ac` from each grammar's
+    `textobjects.scm`.~~ Built 2026-10-03: every builtin language
+    with a tree ships one — helix 25.07.1's (MPL-2.0) adapted to the
+    revisions pinned here, nu's from tree-sitter-nu — read in helix's
+    and nvim-treesitter-textobjects' spellings. `if` `af` `ic` `ac`
+    `ia` `aa` `i/` `a/` `iT` `aT` `ie` `ae`: function, class (the
+    type), argument, comment, test, entry; `]f` `[f` to the functions'
+    starts. The innermost object over the caret, a count the Nth one
+    out, a visual selection growing outward, the next on the line when
+    none is over it; linewise when it has its lines to itself, `aa`
+    with its comma, every caret its own, `.` repeating. A query that
+    does not compile is a warning; an installed grammar's archive
+    `textobjects.scm` is picked up. `systems/src/textobjects.rs`,
+    `kawoosh/src/indent.rs` (`Objects`), `editor/src/commands.rs`;
+    `kawoosh/tests/syntax.rs`.
+
+86. ~~**Files other programs change** ([lsp-rules.md](lsp-rules.md)
+    Decision 7): a loaded file changed on disk outside kawoosh did not
+    reach its server.~~ Built 2026-10-03: the pool watches each local
+    server's workspace on the platform's events
+    (`systems/src/tree_watch.rs`, `notify` 8), drops `.git`,
+    `target`, `node_modules` and what `.gitignore` names, and batches
+    over 150 ms of quiet. A file `load_all` sent is read again, closed
+    or newly loaded; the rest goes as `workspace/didChangeWatchedFiles`
+    to the globs a server registered. An open buffer's file stays the
+    buffer's; a server on an ssh host is not offered the capability.
+    `kawoosh/tests/lsp.rs` over the fake server's `--watch`.
+
+87. ~~**Plugin surface**: `kawoosh.diagnostics.set`, `kawoosh.on_tree`,
+    rules a plugin defines.~~ Built 2026-10-03:
+    `kawoosh.diagnostics.set(buffer|path, name, list)`, `get` and
+    `clear` publish under a plugin's name into the one `diagnostics`
+    layer beside the servers' ([lists.md](lists.md) Decision 7);
+    `kawoosh.on_tree(fn)` calls `fn(root, changed)` at most once a
+    frame per buffer, for a tree of the current text, and returns a
+    function that takes it off ([nodes.md](nodes.md) Decision 8);
+    `kawoosh.lsp.rule(name, {doc, default})` declares a rule set as the
+    shell's are and `kawoosh.lsp.rules` reads them
+    ([lsp-rules.md](lsp-rules.md) Decision 6).
+    `kawoosh/lua/tests/plugin_diagnostics.lua`, `on_tree.lua`,
+    `kawoosh/tests/lsp.rs`.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

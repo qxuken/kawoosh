@@ -102,6 +102,13 @@ impl Kawoosh {
         let (rt, ext) = Runtime::new().map_err(|e| e.to_string())?;
         let rt = Rc::new(rt);
         self.scripting.rt = Some(rt.clone());
+        // The servers' names for `kawoosh.lsp.rules`, said again to this
+        // runtime; the last runtime's rules forgotten — this one's
+        // plugins declare their own.
+        self.forget_lsp_rules();
+        self.lsp.names_told.clear();
+        self.lsp.servers_told.clear();
+        self.tell_lsp_names();
         // The memory's pending deltas are the runtime's to read
         // (`kawoosh.memory { … }` folds them in).
         self.moments.adopt_pending(rt.pending_moments());
@@ -1051,9 +1058,13 @@ impl Kawoosh {
                 name,
                 text,
                 label,
+                head,
             } => match self.lua_buffer(buffer, name) {
                 Some(id) => match text {
-                    Some(t) => self.ed.set_base(id, std::sync::Arc::from(t), label),
+                    Some(t) => {
+                        self.ed.set_base(id, std::sync::Arc::from(t), label);
+                        self.ed.set_base_head(id, head.map(std::sync::Arc::from));
+                    }
                     None => {
                         self.ed.clear_base(id);
                     }
@@ -1182,6 +1193,17 @@ impl Kawoosh {
                 }
                 self.add_lsp_server(def);
             }
+            Msg::LspRule { name, doc, default } => self.add_lsp_rule(name, doc, default),
+            Msg::Diagnostics {
+                buffer,
+                path,
+                from,
+                list,
+            } => self.plugin_diagnostics(buffer, path, &from, list),
+            Msg::DiagnosticsClear(from) => {
+                self.lsp.plugin_held.retain(|(_, f), _| *f != from);
+                self.ed.clear_diagnostics_from(&from);
+            }
             Msg::Formatter { name, def, run } => self.formatter_from_lua(&name, def, run),
             Msg::Formatted { token, result } => self.lua_formatted(token, result),
             Msg::Format { buffer, with } => self.format_from_lua(buffer, with),
@@ -1285,8 +1307,10 @@ impl Kawoosh {
                     let _ = reply.send(text.unwrap_or_default());
                 }
             }
+            Msg::Replaced { token, done } => rt.replaced(token, done),
             Msg::Edit { .. }
             | Msg::SearchPaint { .. }
+            | Msg::SearchReplace { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }
             | Msg::Type(_)

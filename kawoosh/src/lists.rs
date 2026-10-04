@@ -36,6 +36,58 @@ pub struct Lists {
 }
 
 impl Kawoosh {
+    /// `kawoosh.diagnostics.set` (lists.md Decision 7): plugin `from`'s
+    /// word on a buffer, or on a file by path — the buffer open on it
+    /// when there is one, else kept by path, as a server's word on a
+    /// file no buffer holds is, for the buffer that opens it — on
+    /// Windows a path names the buffer however its case is spelled. A
+    /// buffer still opening has no text to place them in: its file keeps
+    /// them, in characters, until it lands. A word on a buffer being
+    /// typed in waits as a server's does (`hold_plugin_diagnostics`).
+    pub(crate) fn plugin_diagnostics(
+        &mut self,
+        buffer: Option<u64>,
+        path: Option<PathBuf>,
+        from: &str,
+        mut list: Vec<kawoosh_doc::diagnostic::Placed>,
+    ) {
+        let id = match (buffer, &path) {
+            (Some(h), _) => {
+                let id = kawoosh_lua::id_of(h);
+                if !self.ed.buffers.contains_key(id) {
+                    self.ed.message = format!("diagnostics.set: no buffer {h}");
+                    return;
+                }
+                Some(id)
+            }
+            (None, Some(p)) => self.ed.buffer_at(p).or_else(|| {
+                self.ed
+                    .buffers
+                    .iter()
+                    .find(|(_, b)| {
+                        b.path
+                            .as_deref()
+                            .is_some_and(|bp| kawoosh_doc::paths::same(bp, p))
+                    })
+                    .map(|(id, _)| id)
+            }),
+            (None, None) => None,
+        };
+        let file = match id {
+            Some(id) if self.ed.buffers[id].loading.is_none() => {
+                if !self.hold_plugin_diagnostics(id, from, &mut list) {
+                    self.ed.publish_placed(id, from, list);
+                }
+                return;
+            }
+            Some(id) => self.ed.buffers[id].path.clone(),
+            None => path,
+        };
+        if let Some(p) = file {
+            self.ed.diagnostics.set_file(p, Some(from), list);
+        }
+    }
+
     /// Multibuffer `list` made the list `]q` walks, listing `places`:
     /// the places given marked on their files, or a layer its files
     /// have. The last list's marks are taken off.

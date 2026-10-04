@@ -270,3 +270,196 @@ fn a_scratch_takes_a_syntax() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// A file of `name` holding `src` in a folder of its own, open and
+/// parsed.
+fn parsed(name: &str, src: &str) -> (Kawoosh, Drive, std::path::PathBuf) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("kawoosh-tobj-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(name);
+    std::fs::write(&file, src).unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    (app, d, dir)
+}
+
+fn text_of(app: &Kawoosh) -> String {
+    app.ed.buffer_of(app.focused_view().unwrap()).text()
+}
+
+/// What the primary selection covers, its head's character included.
+fn selected_text(app: &Kawoosh) -> String {
+    let v = app.focused_view().unwrap();
+    let s = app.ed.views[v].sels.primary();
+    let buf = app.ed.buffer_of(v);
+    buf.slice(s.start()..buf.next_char(s.end()))
+}
+
+/// The text objects of the grammar's `textobjects.scm`
+/// (docs/design/nodes.md Decision 9): `af` `if` a function and its body,
+/// `aa` `ia` an argument, a count for the one further out, `.` again,
+/// `]f` `[f` to the functions' starts.
+#[test]
+fn text_objects_from_the_grammar() {
+    let src = "fn a() {\n    x();\n}\nfn b(p: u8, q: u8) {\n    let f = |v| {\n        v\n    };\n    y(p, q);\n}\n";
+    let (mut app, mut d, dir) = parsed("t.rs", src);
+    let v = app.focused_view().unwrap();
+    let mode = |app: &Kawoosh| app.ed.mode(v);
+    // `vif` anywhere in a function, its signature too: the body, which
+    // has its lines to itself, so linewise.
+    d.press(&mut app, "vif");
+    assert_eq!(selected_text(&app), "x();");
+    assert!(app.ed.views[v].visual_linewise);
+    d.press(&mut app, "<Esc>j^vaf");
+    assert_eq!(selected_text(&app), "fn a() {\n    x();\n}");
+    // Again: the next one out — none past the outermost.
+    d.press(&mut app, "<Esc>6G^vaf");
+    assert_eq!(selected_text(&app), "|v| {\n        v\n    }");
+    d.press(&mut app, "af");
+    assert!(selected_text(&app).starts_with("fn b(p: u8, q: u8) {"));
+    d.press(&mut app, "<Esc>");
+    assert_eq!(mode(&app), kawoosh_editor::Mode::Normal);
+    // `daf`: the function's lines, whole.
+    d.press(&mut app, "ggjdaf");
+    assert_eq!(text_of(&app), &src["fn a() {\n    x();\n}\n".len()..]);
+    d.press(&mut app, "u");
+    assert_eq!(text_of(&app), src);
+    // `cif` from the signature: the body's lines, its indent kept.
+    d.press(&mut app, "ggcifz<Esc>");
+    assert!(
+        text_of(&app).starts_with("fn a() {\n    z\n}\nfn b"),
+        "{}",
+        text_of(&app)
+    );
+    d.press(&mut app, "u");
+    assert_eq!(text_of(&app), src);
+    // `daa` takes an argument and its comma; `cia` the argument alone.
+    d.press(&mut app, "4Gf(ldaa");
+    assert!(text_of(&app).contains("fn b(q: u8) {"), "{}", text_of(&app));
+    d.press(&mut app, "u4Gfqdaa");
+    assert!(text_of(&app).contains("fn b(p: u8) {"), "{}", text_of(&app));
+    d.press(&mut app, "u8Gfqciaz<Esc>");
+    assert!(text_of(&app).contains("y(p, z);"), "{}", text_of(&app));
+    // On the `(`, the first argument after it on the line.
+    d.press(&mut app, "u8Gf(dia");
+    assert!(text_of(&app).contains("y(, q);"), "{}", text_of(&app));
+    d.press(&mut app, "u");
+    assert_eq!(text_of(&app), src);
+    // A count is the Nth out: from the closure's body, `2daf` is `fn b`
+    // — and so is `d2af`.
+    d.press(&mut app, "6G^2daf");
+    assert_eq!(text_of(&app), "fn a() {\n    x();\n}\n");
+    d.press(&mut app, "u6G^d2af");
+    assert_eq!(text_of(&app), "fn a() {\n    x();\n}\n");
+    d.press(&mut app, "u");
+    // `]f` `[f`: the starts, nested ones too, COUNT on.
+    let head = |app: &Kawoosh| app.ed.views[v].sels.primary().head;
+    d.press(&mut app, "gg]f");
+    assert_eq!(head(&app), src.find("fn b").unwrap());
+    d.press(&mut app, "]f");
+    assert_eq!(head(&app), src.find("|v|").unwrap());
+    d.press(&mut app, "[f");
+    assert_eq!(head(&app), src.find("fn b").unwrap());
+    d.press(&mut app, "gg2]f");
+    assert_eq!(head(&app), src.find("|v|").unwrap());
+    // `d]f` up to the next one.
+    d.press(&mut app, "ggd]f");
+    assert!(text_of(&app).starts_with("fn b("));
+    // `.` does it again where the caret is.
+    d.press(&mut app, "uggdaf");
+    assert!(text_of(&app).starts_with("fn b("));
+    d.press(&mut app, ".");
+    assert_eq!(text_of(&app), "");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Every caret its own object; carets in one take it once.
+#[test]
+fn text_objects_at_every_caret() {
+    let src = "fn a() {\n    x();\n}\nfn b() {\n    y();\n}\n";
+    let (mut app, mut d, dir) = parsed("m.rs", src);
+    d.press(&mut app, "j<C-j><C-j><C-j>");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].sels.len(), 4);
+    d.press(&mut app, "dif");
+    assert_eq!(text_of(&app), "fn a() {\n}\nfn b() {\n}\n");
+    // No grammar's objects in a language without them: said, nothing done.
+    let (mut app, mut d, dir2) = parsed("n.txt", "a b\n");
+    d.press(&mut app, "daf");
+    assert_eq!(text_of(&app), "a b\n");
+    assert!(app.ed.message.contains("no syntax"), "{}", app.ed.message);
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&dir2).ok();
+}
+
+/// A pair's or a field's inside is the part under the caret, not the
+/// shortest; the lookahead keeps to the caret's line; the last item of a
+/// list across lines goes with the comma before it; an empty body across
+/// lines has nothing inside to delete (docs/design/nodes.md Decision 9).
+#[test]
+fn text_objects_take_what_is_under_the_caret() {
+    let src = "{\"a\": \"long value\"}\n";
+    let (mut app, mut d, dir) = parsed("p.json", src);
+    d.press(&mut app, "flciez<Esc>");
+    assert_eq!(text_of(&app), "{\"a\": z}\n");
+    d.press(&mut app, "uggfadie");
+    assert_eq!(text_of(&app), "{: \"long value\"}\n");
+    let list = "[\n  1,\n  2\n]\n";
+    let (mut app, mut d, dir2) = parsed("l.json", list);
+    d.press(&mut app, "3G^dae");
+    assert_eq!(text_of(&app), "[\n  1\n]\n");
+    d.press(&mut app, "u2G^dae");
+    assert_eq!(text_of(&app), "[\n  2\n]\n");
+
+    let src = "struct S {\n    pub name: String,\n}\nfn f(\n    a: u8,\n    b: u8,\n) {\n}\n";
+    let (mut app, mut d, dir3) = parsed("f.rs", src);
+    d.press(&mut app, "2GfSdie");
+    assert!(
+        text_of(&app).contains("    pub name: ,\n"),
+        "{}",
+        text_of(&app)
+    );
+    // On the `(` with nothing after it on its line: nothing, though an
+    // argument starts on the next.
+    d.press(&mut app, "u4Gf(dia");
+    assert_eq!(text_of(&app), src);
+    assert!(
+        app.ed.message.contains("no parameter"),
+        "{}",
+        app.ed.message
+    );
+    // An empty body across lines: `dif` leaves it as it is.
+    d.press(&mut app, "4Gdif");
+    assert_eq!(text_of(&app), src);
+    for dir in [dir, dir2, dir3] {
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+/// A comment run is one object from any of its lines; a class's inside
+/// in a language of indented blocks is its body's lines, and an object
+/// with its lines to itself is yanked as lines.
+#[test]
+fn comment_runs_and_python_classes() {
+    let src = "x = 1\n# one\n# two\nclass K:\n    def m(self):\n        return 1\ny = 2\n";
+    let (mut app, mut d, dir) = parsed("c.py", src);
+    d.press(&mut app, "3Gda/");
+    assert_eq!(text_of(&app), src.replace("# one\n# two\n", ""));
+    d.press(&mut app, "u6Gdic");
+    assert_eq!(text_of(&app), "x = 1\n# one\n# two\nclass K:\ny = 2\n");
+    d.press(&mut app, "u6Gyaf");
+    assert_eq!(text_of(&app), src);
+    d.press(&mut app, "7Gp");
+    assert_eq!(
+        text_of(&app),
+        format!("{src}    def m(self):\n        return 1\n"),
+        "yanked as lines"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

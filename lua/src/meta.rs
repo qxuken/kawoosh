@@ -337,5 +337,27 @@ mod tests {
         );
         assert!(meta.contains("---@class kawoosh.Node\n"));
         assert!(meta.contains("function Node:closest(types) end"));
+        // The plugin surface of 2026-10-03: a plugin's diagnostics, the
+        // tree hook and its handle, a plugin's server rules.
+        assert!(meta.contains("---@class kawoosh.diagnostics\n"), "{meta}");
+        assert!(
+            meta.contains(
+                "---@param buffer any\n---@param name? any\n---@param list? any\n---@return any\nfunction kawoosh.diagnostics.set(buffer, name, list) end"
+            ),
+            "{meta}"
+        );
+        assert!(
+            meta.contains("function kawoosh.diagnostics.get(opts) end"),
+            "{meta}"
+        );
+        assert!(meta.contains("function kawoosh.diagnostics.clear(name) end"));
+        assert!(
+            meta.contains(
+                "---@return fun(): boolean off true when it took the hook off\n---@param fn function\nfunction kawoosh.on_tree(fn) end"
+            ),
+            "{meta}"
+        );
+        assert!(meta.contains("function kawoosh.lsp.rule(name, opts) end"));
+        assert!(meta.contains("function kawoosh.lsp.rules(where) end"));
     }
 }

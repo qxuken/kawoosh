@@ -4,6 +4,10 @@
 //! runs, the lines run kept by the memory and offered again, `<Tab>`
 //! over the names and the paths, and a trusted `init.lua` saying where
 //! with `kawoosh.project` and `kawoosh.fs.join`.
+//!
+//! Each reads what a Unix shell prints (`echo %`, `pwd`), so the file is
+//! unix's alone: on Windows its helpers would be dead code.
+#![cfg(unix)]
 
 mod drive;
 

@@ -44,6 +44,16 @@ fn grammar() -> Result<crate::Grammar, String> {
             .concat(),
         )
     })
+    .map(|g| {
+        g.with_textobjects(
+            "cpp",
+            &[
+                include_str!("../queries/c/textobjects.scm"),
+                include_str!("../queries/cpp/textobjects.scm"),
+            ]
+            .concat(),
+        )
+    })
 }
 
 /// The outline: what `symbols` lists without a server (docs/design/marks.md).

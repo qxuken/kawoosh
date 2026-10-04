@@ -201,10 +201,22 @@ pub enum ProcCmd {
 /// up on too — where the window was opened outside one. On Windows it
 /// opens no console window — `kawoosh` is a GUI program there, with no
 /// console for a console child to share, and each would get one of its
-/// own.
+/// own. A program that is a `.cmd` there — `npm`, a server npm put on
+/// the PATH — is started by its path ([`shim`]).
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    let mut c = std::process::Command::new(program);
-    if let Some(path) = crate::shell_env::path() {
+    let path = crate::shell_env::path();
+    #[cfg(windows)]
+    let shim = path
+        .clone()
+        .or_else(|| std::env::var_os("PATH"))
+        .and_then(|p| shim(program.as_ref(), &p));
+    #[cfg(not(windows))]
+    let shim: Option<PathBuf> = None;
+    let mut c = match shim {
+        Some(p) => std::process::Command::new(p),
+        None => std::process::Command::new(program),
+    };
+    if let Some(path) = path {
         c.env("PATH", path);
     }
     #[cfg(windows)]
@@ -215,6 +227,56 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
         c.creation_flags(CREATE_NO_WINDOW);
     }
     c
+}
+
+/// A bare `program` that cmd would run as a `.cmd` or `.bat` — `npm.cmd`,
+/// the shims npm writes for a package's programs — as that file's path.
+/// cmd's order is followed: the PATH's directories in turn, and in each
+/// the extensions in `PATHEXT`'s order, the first file found the one;
+/// an empty entry (`;;`, a trailing `;`) is no directory. std looks for
+/// `PROGRAM.exe` alone and says "program not found"; given the `.cmd`'s
+/// path it runs it through `cmd.exe`, its arguments quoted for it.
+/// `None` for a path, a name with an extension, or one whose first find
+/// is an `.exe` or a `.com`: std's own lookup is left to it.
+#[cfg(windows)]
+fn shim(program: &std::ffi::OsStr, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    let pathext = std::env::var("PATHEXT").unwrap_or_default();
+    shim_in(program, path, &pathext)
+}
+
+/// [`shim`] with `PATHEXT` given (empty: cmd's default).
+#[cfg(any(windows, test))]
+fn shim_in(program: &std::ffi::OsStr, path: &std::ffi::OsStr, pathext: &str) -> Option<PathBuf> {
+    let p = std::path::Path::new(program);
+    if p.components().count() != 1 || p.extension().is_some() {
+        return None;
+    }
+    let pathext = if pathext.trim().is_empty() {
+        ".COM;.EXE;.BAT;.CMD"
+    } else {
+        pathext
+    };
+    // Only what std can start: an executable itself, a batch file
+    // through cmd.
+    let exts: Vec<String> = pathext
+        .split(';')
+        .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|e| ["com", "exe", "bat", "cmd"].contains(&e.as_str()))
+        .collect();
+    let found = path_dirs(path).into_iter().find_map(|d| {
+        exts.iter()
+            .map(|e| (e, d.join(p).with_extension(e)))
+            .find(|(_, f)| f.is_file())
+    })?;
+    matches!(found.0.as_str(), "bat" | "cmd").then_some(found.1)
+}
+
+/// The directories of a PATH, in order, an empty entry — no directory,
+/// which a join would make the working directory — left out.
+fn path_dirs(path: &std::ffi::OsStr) -> Vec<PathBuf> {
+    std::env::split_paths(path)
+        .filter(|d| !d.as_os_str().is_empty())
+        .collect()
 }
 
 /// Whether `program` would be found by [`command`]: a path that is a
@@ -235,7 +297,11 @@ pub fn on_path(program: &str) -> Option<bool> {
     } else {
         vec![program.to_string()]
     };
-    Some(std::env::split_paths(&path).any(|d| names.iter().any(|n| d.join(n).is_file())))
+    Some(
+        path_dirs(&path)
+            .iter()
+            .any(|d| names.iter().any(|n| d.join(n).is_file())),
+    )
 }
 
 /// How a domain is reached (docs/design/domains.md Decision 3): the
@@ -1262,6 +1328,61 @@ pub fn decode_image_bytes(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A program npm installed on Windows is `NAME.cmd`, which std does
+    /// not look for: it is taken by its path, found in cmd's order —
+    /// the PATH's directories in turn, `PATHEXT`'s order in each; an
+    /// `.exe` found first, a path or an extension leave std to it; an
+    /// empty PATH entry is no directory.
+    #[test]
+    fn a_cmd_on_the_path_is_taken_by_its_path() {
+        let root = std::env::temp_dir().join(format!("kawoosh-cmd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (a, b) = (root.join("a"), root.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("npm.cmd"), "").unwrap();
+        std::fs::write(b.join("npm.cmd"), "").unwrap();
+        std::fs::write(b.join("tool.bat"), "").unwrap();
+        std::fs::write(a.join("both.cmd"), "").unwrap();
+        std::fs::write(b.join("both.exe"), "").unwrap();
+        std::fs::write(a.join("same.exe"), "").unwrap();
+        std::fs::write(a.join("same.cmd"), "").unwrap();
+        std::fs::write(b.join("later.exe"), "").unwrap();
+        std::fs::write(b.join("later.cmd"), "").unwrap();
+        // Empty entries around and between, as a PATH has them.
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let path = std::ffi::OsString::from(format!(
+            "{sep}{}{sep}{sep}{}{sep}",
+            a.display(),
+            b.display()
+        ));
+        assert_eq!(path_dirs(&path), [a.clone(), b.clone()]);
+        let shim = |p: &str| shim_in(p.as_ref(), &path, "");
+        assert_eq!(
+            shim("npm"),
+            Some(a.join("npm.cmd")),
+            "the first directory's"
+        );
+        assert_eq!(shim("tool"), Some(b.join("tool.bat")));
+        assert_eq!(
+            shim("both"),
+            Some(a.join("both.cmd")),
+            "an earlier directory's .cmd before a later one's .exe"
+        );
+        assert_eq!(shim("same"), None, "an .exe before a .cmd in one directory");
+        assert_eq!(shim("later"), None);
+        // PATHEXT's own order, and what it leaves out not looked for.
+        assert_eq!(
+            shim_in("same".as_ref(), &path, ".CMD;.EXE"),
+            Some(a.join("same.cmd"))
+        );
+        assert_eq!(shim_in("tool".as_ref(), &path, ".EXE;.CMD"), None);
+        assert_eq!(shim("missing"), None);
+        assert_eq!(shim("npm.cmd"), None, "an extension is said");
+        assert_eq!(shim(&a.join("npm").display().to_string()), None, "a path");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// The shim lands in `~/.cache/kawoosh/` on the host's `/`, not in a
     /// file named `kawoosh\kawoosh` beside it.

@@ -17,7 +17,9 @@
 //! takes the node's first named child.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
+use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{Mode, Selection, Selections, Spec, ViewId};
 use tree_sitter::Node;
 
@@ -28,6 +30,70 @@ use crate::commands::{ShellCommand, cmd};
 pub struct NodeSelect {
     /// What each view's selections were before each `<A-o>`, newest last.
     pub stack: HashMap<ViewId, Vec<Selections>>,
+    /// What the tree hooks have not heard yet (`kawoosh.on_tree`).
+    pub(crate) news: TreeNews,
+}
+
+/// The trees parsed since the tree hooks last heard (`kawoosh.on_tree`,
+/// docs/design/nodes.md Decision 8), gathered only while a hook is set:
+/// for each buffer the spans whose syntax changed — the ts thread's
+/// answer's own, each in the text of the version it is of — or `None`
+/// for the whole text.
+#[derive(Default)]
+pub(crate) struct TreeNews {
+    /// The hooks' count as last seen; `None` while there are none.
+    hooks: Option<u64>,
+    pending: HashMap<BufferId, Option<Spans>>,
+}
+
+/// Spans of a buffer's text, each with the version it is of.
+type Spans = Vec<(Version, Range<usize>)>;
+
+/// Ranges in order, those that meet or overlap made one.
+fn merge(mut spans: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    spans.sort_by_key(|r| r.start);
+    let mut out: Vec<Range<usize>> = Vec::with_capacity(spans.len());
+    for r in spans {
+        match out.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => out.push(r),
+        }
+    }
+    out
+}
+
+/// Past this many spans a buffer's news is its whole text: a tree that
+/// stays behind a long run of typing is told once, whole.
+const NEWS_MAX: usize = 64;
+
+impl TreeNews {
+    /// The ts thread answered `buffer` at `version`, its syntax changed
+    /// over `spans`; with no tree now there is nothing to tell.
+    pub(crate) fn parsed(
+        &mut self,
+        buffer: BufferId,
+        version: Version,
+        spans: Vec<Range<usize>>,
+        tree: bool,
+    ) {
+        if self.hooks.is_none() {
+            return;
+        }
+        if !tree {
+            self.pending.remove(&buffer);
+            return;
+        }
+        let news = self
+            .pending
+            .entry(buffer)
+            .or_insert_with(|| Some(Vec::new()));
+        if let Some(list) = news {
+            list.extend(spans.into_iter().map(|s| (version, s)));
+            if list.len() > NEWS_MAX {
+                *news = None;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -81,6 +147,63 @@ fn wider<'t>(mut node: Node<'t>, r: &std::ops::Range<usize>) -> Node<'t> {
 }
 
 impl Kawoosh {
+    /// Once a frame, after the ts thread's answers: the tree hooks told
+    /// of each buffer whose tree is of its text now and changed since
+    /// they last heard, with the spans that changed carried to that text
+    /// (`kawoosh.on_tree`). A hook new since the last frame hears every
+    /// tree there is, whole. Nothing is gathered while none is set.
+    pub(crate) fn tell_trees(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        let hooks = rt.tree_hooks();
+        let news = &mut self.nodes.news;
+        if hooks != news.hooks {
+            news.hooks = hooks;
+            news.pending.clear();
+            if hooks.is_some() {
+                news.pending
+                    .extend(self.inspector.trees.keys().map(|id| (*id, None)));
+            }
+        }
+        if news.pending.is_empty() {
+            return;
+        }
+        let mut ready: Vec<(BufferId, Vec<Range<usize>>)> = Vec::new();
+        news.pending.retain(|id, spans| {
+            let Some(b) = self.ed.buffers.get(*id) else {
+                return false;
+            };
+            let Some((v, _)) = self.inspector.trees.get(id) else {
+                return false;
+            };
+            // A tree behind the text waits for the one of it.
+            if *v != b.version() {
+                return true;
+            }
+            let whole = || std::iter::once(0..b.len()).collect::<Vec<_>>();
+            let changed = match spans.take() {
+                None => whole(),
+                Some(list) => {
+                    let carried: Option<Vec<Range<usize>>> = list
+                        .into_iter()
+                        .map(|(v, r)| b.journal().clamp_range(r, v).ok())
+                        .collect();
+                    carried.map_or_else(whole, merge)
+                }
+            };
+            ready.push((*id, changed));
+            false
+        });
+        if ready.is_empty() {
+            return;
+        }
+        ready.sort_by_key(|(id, _)| *id);
+        rt.publish(&self.ed, self.focused_view());
+        rt.tree_hook(&ready);
+        self.drain_lua();
+    }
+
     /// The tree of `view`'s buffer at the text as it is, or why not.
     fn tree_for(&self, view: ViewId) -> Result<tree_sitter::Tree, String> {
         let id = self.ed.views[view].buffer;

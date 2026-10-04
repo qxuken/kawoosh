@@ -72,9 +72,11 @@ impl Kawoosh {
         }
         self.sync_lsp_order();
         if new == self.lsp.defs {
+            self.tell_lsp_names();
             return;
         }
         let old = std::mem::replace(&mut self.lsp.defs, new);
+        self.tell_lsp_names();
         self.lsp.lsp.send(Cmd::Servers(self.lsp.defs.clone()));
 
         // What a server was started as: a change there is a new one.
@@ -154,12 +156,29 @@ impl Kawoosh {
             .iter()
             .map(|d| d.language.clone())
             .collect();
+        let mut clashes: Vec<(String, String)> = Vec::new();
         for (k, v) in said.into_iter().flatten() {
             // `lsp.inlay_hints` is the global switch and `lsp.languages`
             // each language's servers, not a server.
-            if v.is_table() && !names.contains(k) && !RESERVED.contains(&k.as_str()) {
-                names.push(k.clone());
+            if !v.is_table() || names.contains(k) || RESERVED.contains(&k.as_str()) {
+                continue;
             }
+            // A plugin's rule said for every server is no server either —
+            // but a table that defines one is a server's, whatever the
+            // rules are named: the server is not dropped for the rule.
+            let rule = self.lsp.plugin_rules.iter().any(|(r, ..)| r == k);
+            if rule && !kawoosh_lua::defines_server(v) {
+                continue;
+            }
+            if rule {
+                clashes.push((
+                    format!("{k}.rule"),
+                    format!(
+                        "lsp.{k}: a server named as a plugin's rule {k}; lsp.{k} is the server, not {k} for every server"
+                    ),
+                ));
+            }
+            names.push(k.clone());
         }
         let private = private_files(self.ed.settings.get("secrets.masks"));
         let mut out = Vec::new();
@@ -247,6 +266,7 @@ impl Kawoosh {
             })
             .collect();
         said.extend(mistakes);
+        said.extend(clashes);
         (out, said)
     }
 
@@ -313,6 +333,8 @@ impl Kawoosh {
     pub(crate) fn lsp_rules_said(&self, name: &str) -> Vec<String> {
         RULES
             .iter()
+            .copied()
+            .chain(self.lsp.plugin_rules.iter().map(|(r, ..)| r.as_str()))
             .filter_map(|rule| {
                 let path = format!("lsp.{name}.{rule}");
                 let v = self.ed.settings.get(&path)?;
@@ -364,7 +386,20 @@ impl Kawoosh {
             None => match rule {
                 "enabled" => true,
                 "inlay_hints" => self.lsp_hints_on(&language),
-                _ => false,
+                // A plugin's: `lsp.RULE` for every server, else its own
+                // default.
+                _ => self
+                    .ed
+                    .settings
+                    .bool(&format!("lsp.{rule}"))
+                    .or_else(|| {
+                        self.lsp
+                            .plugin_rules
+                            .iter()
+                            .find(|(r, ..)| r == rule)
+                            .and_then(|(.., d)| d.as_bool())
+                    })
+                    .unwrap_or(false),
             },
         };
         self.ed
@@ -375,6 +410,85 @@ impl Kawoosh {
         if !self.ed.message.starts_with("lsp: restarting") {
             self.ed.message = format!("{path} {}", if now { "off" } else { "on" });
         }
+    }
+
+    /// `kawoosh.lsp.rule(name, { doc =, default = })`: a plugin's rule
+    /// (Decision 6) — listed by `:lsp info` where it is set, and, when it
+    /// is on or off, `:lsp toggle NAME [LANGUAGE]` beside the shell's.
+    /// The same name again replaces it, its switch with it: one declared
+    /// again as no switch has no `:lsp toggle`. The pool never reads it:
+    /// the plugin does, through `kawoosh.lsp.rules`. The table is made
+    /// again at once, since a rule's name is no server's (`lsp_table`).
+    pub(crate) fn add_lsp_rule(&mut self, name: String, doc: String, default: Setting) {
+        self.lsp.plugin_rules.retain(|(r, ..)| *r != name);
+        self.lsp
+            .plugin_rules
+            .push((name.clone(), doc.clone(), default.clone()));
+        self.lsp.rules_seen = None;
+        self.sync_lsp_rules();
+        if default.as_bool().is_none() {
+            self.remove_command(&format!("lsp toggle {name}"));
+            return;
+        }
+        let doc = if doc.is_empty() {
+            format!("a plugin's rule on or off for the session (`lsp.NAME.{name}`)")
+        } else {
+            format!("{doc} (`lsp.NAME.{name}`, a plugin's rule)")
+        };
+        self.add_command(cmd(
+            Spec::new(&format!("lsp toggle {name}"))
+                .args(Args::new(&[ArgKind::Language]))
+                .doc(&doc),
+            move |k, ctx| k.lsp_toggle(&name, ctx.args.first().cloned()),
+        ));
+    }
+
+    /// The plugins' rules forgotten, with their `:lsp toggle`s: a new
+    /// Lua runtime declares its own again.
+    pub(crate) fn forget_lsp_rules(&mut self) {
+        let rules = std::mem::take(&mut self.lsp.plugin_rules);
+        for (name, ..) in rules {
+            self.remove_command(&format!("lsp toggle {name}"));
+        }
+        self.lsp.rules_seen = None;
+    }
+
+    /// Each language a server serves, and the `lsp.NAME` its rules are
+    /// set under (`lsp_name_of`), told to Lua when it moved: what
+    /// `kawoosh.lsp.rules` reads a buffer's by.
+    pub(crate) fn tell_lsp_names(&mut self) {
+        let languages: HashSet<String> = self
+            .lsp
+            .defs
+            .iter()
+            .chain(self.scripting.servers.iter())
+            .flat_map(|d| d.served())
+            .map(str::to_string)
+            .collect();
+        let names: std::collections::HashMap<String, String> = languages
+            .into_iter()
+            .map(|l| {
+                let name = self.lsp_name_of(&l);
+                (l, name)
+            })
+            .collect();
+        // Every server's name, switched off or not: no rule may take one.
+        let servers: std::collections::BTreeSet<String> = self
+            .lsp
+            .defs
+            .iter()
+            .chain(self.scripting.servers.iter())
+            .map(|d| d.language.clone())
+            .collect();
+        if names == self.lsp.names_told && servers == self.lsp.servers_told {
+            return;
+        }
+        let Some(rt) = &self.scripting.rt else {
+            return;
+        };
+        rt.set_lsp_names(names.clone(), servers.clone());
+        self.lsp.names_told = names;
+        self.lsp.servers_told = servers;
     }
 }
 
@@ -637,6 +751,62 @@ mod tests {
             assert_eq!(lua.install, "");
         } else {
             assert_eq!(lua.install, "brew install lua-language-server");
+        }
+    }
+
+    /// Every row's install line, on every platform, runs a manager one
+    /// of the rows runs — a misspelt one would fail only when someone
+    /// ran it — and a line Windows runs quotes nothing with `'` outside
+    /// `"`: there it goes to `cmd /C`, where a single quote is a
+    /// character like any other (R's `-e '…'` was cut into words,
+    /// 2026-10-03).
+    #[test]
+    fn every_install_line_runs_a_known_manager_and_reads_under_cmd() {
+        const MANAGERS: [&str; 12] = [
+            "brew",
+            "rustup",
+            "winget",
+            "xcode-select",
+            "cargo",
+            "gem",
+            "cs",
+            "ghcup",
+            "opam",
+            "raco",
+            "nix",
+            "R",
+        ];
+        let rows = kawoosh_lua::eval_data("servers.lua", include_str!("../lua/servers.lua"))
+            .expect("servers.lua reads");
+        for row in rows.as_list().expect("a list") {
+            let name = row.get("name").and_then(Setting::as_str).unwrap_or("?");
+            let lines: Vec<(&str, &str)> = match row.get("install") {
+                Some(Setting::Str(line)) => vec![("every", line.as_str())],
+                Some(t) if platform_line(t).is_some() => PLATFORMS
+                    .iter()
+                    .filter_map(|p| Some((*p, t.get(p)?.as_str()?)))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for (platform, line) in lines {
+                let program = line.split_whitespace().next().unwrap_or_default();
+                assert!(
+                    MANAGERS.contains(&program),
+                    "lsp.{name} ({platform}): `{line}` runs `{program}`"
+                );
+                // A `'` outside double quotes, where sh would quote with it.
+                let mut quoted = false;
+                let single = line.chars().any(|c| {
+                    quoted ^= c == '"';
+                    c == '\'' && !quoted
+                });
+                if !matches!(platform, "mac" | "linux") {
+                    assert!(
+                        !single,
+                        "lsp.{name} ({platform}): `{line}` quotes with ' under cmd"
+                    );
+                }
+            }
         }
     }
 

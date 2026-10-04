@@ -115,6 +115,58 @@ end, { when = { "editor", "!readonly" }, doc = "flip the boolean under every car
 
 `g.` does this for you, from actions you can add to. `kawoosh.node.action(name, { types = { … }, languages = "*" | { … }, run = fn(n, ctx) })` adds one: `types` are the node types it takes (a token such as `==` is a type too), or a function of a type saying whether it takes it, and `run` answers the node's new text, `{ text = …, cursor = i }` to put the caret `i` bytes into it, or `nil` when this node is not one it changes, and then the next action, or the next node up, is asked. `run` only reads; `g.` makes the edits, at every caret. `ctx` has `language`, `caret`, `indent` (the node's line's leading whitespace) and `unit` (one indent). The same name again replaces an action — the shipped ones are `flip`, `operator`, `split`, `quotes` and `digits` — and `nil` removes it. The newest action is asked first. `kawoosh.node_actions.lists` holds `split`'s lists by language, to add to.
 
+`kawoosh.on_tree(fn)` calls `fn(root, changed)` when a buffer's tree is parsed again, for a plugin that colours from the tree: `root` is the buffer's root node (`root.buffer`, `root.language`), and `changed` is a list of `{ from, to }` byte ranges whose syntax changed since your hook last heard of that buffer. The first time, and whenever a new hook is added, that is the whole text. It runs at most once per buffer per frame, only for a tree that has caught up with the text, and only for buffers on screen. It runs while the frame is drawn, so look at the ranges that changed rather than walking the whole tree. It returns a function that removes the hook:
+
+```lua
+local off = kawoosh.on_tree(function(root, changed)
+  if root.language ~= "rust" then return end
+  for _, r in ipairs(changed) do
+    -- the node over what changed, and the macros in it
+    local n = kawoosh.node.at({ r.from, r.to }, root.buffer)
+    for _, m in ipairs(n and n:query("(macro_invocation) @m") or {}) do
+      -- paint m.captures.m.from .. m.captures.m.to
+    end
+  end
+end)
+-- later: off()
+```
+
+## Diagnostics
+
+A plugin can report problems the way a language server does: a linter you run, a spell checker, your project's own check. `kawoosh.diagnostics.set(buffer, name, list)` sets what `name` says about a buffer (a handle, or `0` for the current one) or about a file (a path). It replaces what `name` said there before, and leaves the servers' and other plugins' alone. An empty list takes yours back, and `kawoosh.diagnostics.clear(name)` takes back everything `name` said, everywhere.
+
+```lua
+kawoosh.diagnostics.set(0, "todo", {
+  { line = 3, col = 5, end_col = 9, severity = "info", message = "a TODO left" },
+})
+```
+
+Each item has `line` and `col` (from 1, the column in characters), optionally `end_line` and `end_col` (one character unless you say), `severity` (`"error"`, `"warning"`, `"info"`, `"hint"` or 1–4; an error unless you say), `message`, `source` (your `name` unless you say) and `code`. They are underlined, shown at the end of the row, walked by `]d`, shown by `<C-e>`, listed by `:diagnostics` and counted by `kawoosh.lsp.counts()`, beside the servers'. They move with the text as you edit, until you set them again. A file's that no buffer has open yet appear in the list, and the buffer that opens it takes them; their columns are characters there too. A line or column is a whole number from 1; anything else is an error. A line the text does not have (it moved since your linter read it) is not shown.
+
+Setting the same list again changes nothing and wakes no `on_diagnostics`, so a linter can publish on every keystroke or reparse. While you are typing in a buffer, a new list for it waits, as a server's does, until the typing pauses or you leave insert mode; `get` reads what has landed.
+
+`kawoosh.diagnostics.get { buffer =, root =, severity =, from = }` reads every diagnostic, or a buffer's, those under a folder, those at least as bad as a severity, or one publisher's: each row has the fields above, plus `path`, `buffer`, `level` and `from` (`"lsp"` for the servers, otherwise the plugin's name). A row read back can be set again as it is. `buffer = 0` with no buffer open reads none. A server's row for a file no buffer holds has the column as the server counted it (UTF-16 units, which differ from characters only past the Basic Multilingual Plane). `kawoosh.lsp.diagnostics` is the same function.
+
+## Language servers
+
+`kawoosh.lsp.server(name, t)` adds or changes a server, with the keys of `lsp.NAME` ([code](code.md#settings-per-server)).
+
+`kawoosh.lsp.rule(name, { doc = ..., default = false })` adds a rule your plugin reads, set like kawoosh's own: `lsp.NAME.RULE` for one server, in your settings, a project's or the session's, or `lsp.RULE` for every server. A rule that is on or off can be flipped with `:lsp toggle RULE`, and `:lsp info` shows where it is set. `kawoosh.lsp.rules(buffer)` (or a language's name) reads a server's rules as they stand now: `server` (the `lsp.NAME` they are set under; a `.tsx` file's is `typescript`), `enabled`, `load_all`, `load_max`, `inlay_hints` and every plugin's rule. A rule can't take a server's name (`rust`, one from `kawoosh.lsp.server`, or an `lsp.NAME` with a `cmd`), and a server can't take a rule's.
+
+```lua
+kawoosh.lsp.rule("organize_on_save", { doc = "organize imports when a file is saved" })
+kawoosh.on_write(function(path, buffer)
+  if kawoosh.lsp.rules(buffer).organize_on_save then
+    -- ask the server for its "source.organizeImports" action
+  end
+end)
+```
+
+```lua
+-- .kawoosh/settings.lua
+return { lsp = { typescript = { organize_on_save = true } } }
+```
+
 ## Formatters
 
 `kawoosh.formatter(name, def)` adds a formatter ([code](code.md#formatting)): `def` has the keys of `format.NAME` (`cmd`, `args`, `languages`, `when`, …), and your settings file still overrides them. For a tool that does not read stdin and write stdout, or one that is slow, give `run` instead of `cmd`:
@@ -143,7 +195,7 @@ kawoosh.formatter("pg_format", {
 
 ## Version control
 
-A buffer's hunks ([vcs](vcs.md)) are the difference between its text and a *base* — the editor diffs them; a backend only says what the base is. `kawoosh.buf.base(text, label[, buffer])` gives a buffer its base (`kawoosh.buf.base(nil)` takes it away), `kawoosh.buf.hunks([buffer])` reads the hunks back once diffed — each `{ kind = "added" | "modified" | "deleted", line, end_line, old_line, old_end, old = { … } }`, lines from 1, ends exclusive — and `kawoosh.diff(old, new)` diffs two texts at once, the same shape. `kawoosh.buf.blame(rows[, buffer])` puts the blame column on from rows `{ line, count, label, rev, summary }`; `kawoosh.buf.blame_at(line)` reads one back.
+A buffer's hunks ([vcs](vcs.md)) are the difference between its text and a *base* — the editor diffs them; a backend only says what the base is. `kawoosh.buf.base(text, label[, buffer[, { head = }]])` gives a buffer its base (`kawoosh.buf.base(nil)` takes it away; `head`, the text the base is itself read against — HEAD's under the index — makes what is staged), `kawoosh.buf.hunks([buffer])` reads the hunks back once diffed — each `{ kind = "added" | "modified" | "deleted", line, end_line, old_line, old_end, old = { … } }`, lines from 1, ends exclusive — and `kawoosh.diff(old, new)` diffs two texts at once, the same shape. `kawoosh.buf.blame(rows[, buffer])` puts the blame column on from rows `{ line, count, label, rev, summary }`; `kawoosh.buf.blame_at(line)` reads one back.
 
 Another version control system is a table of functions, and what it lacks it does not have:
 
@@ -156,11 +208,12 @@ kawoosh.vcs.register("jj", {
   blame = function(root, path, text, done) … end,
   log = function(root, path, done) … end,
   show = function(root, rev, done) … end,
+  stage = function(root, path, patch, done) … end, -- done(true) or done(false, why)
   -- changed, merge_base, refs, worktrees, worktree_add, watch: the rest
 })
 ```
 
-`probe` and `base` alone colour the gutter. The bundled `vcs.lua` has git whole and fossil in part, as the worked examples. `kawoosh.vcs.of(dir)` says which backend owns a directory; `kawoosh.on_write(fn(path, buffer))` runs after a file is written, where a backend reads it again.
+`probe` and `base` alone colour the gutter. `stage` takes the patch `hunk stage` and `hunk unstage` made against the index — the `@@` sections alone, three lines of context, the file named by `path` — and applies it to the index (git's is `git apply --cached`); with it, `vcs.lua` fetches HEAD's text with the base, and the lines staged show. The bundled `vcs.lua` has git whole and fossil in part, as the worked examples. `kawoosh.vcs.of(dir)` says which backend owns a directory; `kawoosh.on_write(fn(path, buffer))` runs after a file is written, where a backend reads it again; `kawoosh.on_stage(fn(path, patch, opts))` is where the editor hands a patch to stage (`vcs.lua` sets it).
 
 ## Files and processes
 
@@ -203,7 +256,8 @@ That is the default. kawoosh's modules are `mode`, `recording` (`REC @a`), `path
 - `kawoosh.on_settings(fn)`: when the settings change, as above.
 - `kawoosh.on_cwd(fn)`: `fn(path, how)` when the working directory changes.
 - `kawoosh.on_focus(fn)`: `fn(buffer)` when the keys go to an editor pane on another buffer.
-- `kawoosh.on_diagnostics(fn)`: after the diagnostics change; read them with `kawoosh.lsp.diagnostics`.
+- `kawoosh.on_diagnostics(fn)`: after the diagnostics change; read them with `kawoosh.diagnostics.get`.
+- `kawoosh.on_tree(fn)`: `fn(root, changed)` when a buffer's syntax tree is parsed again ([above](#the-syntax-tree)). It returns a function that removes the hook.
 - `kawoosh.on_restore(fn)`: `fn(name, buffer)` for each scratch buffer a session brings back, so you can fill it again.
 - `kawoosh.tab_title(fn)`: `fn(tab)` returns the label for each tab in the tab strip, or `nil` for kawoosh's own. It runs every frame, so keep it cheap.
 

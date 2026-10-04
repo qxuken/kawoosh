@@ -249,6 +249,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `tabs.directory` | `"auto"` | the directory in tab labels: `auto`, `always`, `never` |
 | `dir.hidden` | | whether directory listings show dot files |
 | `picker.preview` | `true` | a preview beside the picker's list |
+| `multi.expand` | `5` | lines a multibuffer's excerpt grows by: `zo` `zk` `zj` `<S-CR>`, a click on `⋯` ([search](search.md#more-lines-around-an-excerpt)) |
 | `font.family`, `font.size` | `""`, `13` | the font ([look](look.md#fonts)) |
 | `theme.name`, `theme.dark`, `theme.light` | `"rose-pine"`, `""`, `""` | the theme family, and a dark and a light theme apart from it ([look](look.md#themes)) |
 | `theme.appearance` | `"system"` | `system`, `dark` or `light` |

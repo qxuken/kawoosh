@@ -190,6 +190,193 @@ and their trailing parameters. The names a grammar gives — `boolean_literal`, 
 `consequence` — are read off `:syntax_tree`, which shows each node's
 type and field under the caret; `help/lua.md` says so.
 
+### 8. A hook for each new tree, once a frame
+
+Asked 2026-10-03, from "Left" below: `kawoosh.on_tree(fn)`, for a
+plugin that paints from the tree — a rainbow of brackets, a scope's
+wash, a semantic colour the grammar's queries do not give.
+
+`fn(root, changed)` after a frame in which a buffer's tree was parsed
+again: `root` is `kawoosh.node.root(buffer)` — its `buffer`,
+`language` and `version` on it, walked with §4 and queried with §5 —
+and `changed` a list of `{ from, to }` byte ranges whose syntax
+changed since the hook last heard of the buffer. They are the ts
+thread's own spans, the ones its answer repaints (the edits and
+`changed_ranges`, each widened to its neighbourhood), so a plugin
+paints again what the highlighter did; the first time, and for a hook
+set later, the whole text. It returns a function that takes the hook
+off — the first `on_*` to; the others stay until the runtime goes.
+
+It runs on the main thread, in the frame, so its cost is kept to what
+it is asked for:
+
+- **Coalesced.** Once a buffer a frame at most, every hook in one call
+  into Lua, after the frame's answers are in — two answers in one
+  frame are one word, their spans together.
+- **Only a tree of the text as it is.** An answer behind the typing
+  (the tree §2 would refuse) is not told; its spans wait, carried
+  through the journal (`clamp_range`) to the text of the answer that
+  catches up, which is told with them. Past 64 waiting spans, or a
+  journal that no longer reaches back, it is the whole text.
+- **Nothing while no hook is set.** The spans are gathered only while
+  one is (`Runtime::tree_hooks`, a look at a Lua table a frame), and
+  the snapshot is published for the call only when there is a tree
+  to tell of.
+- **Only what is parsed**: the buffers on show and a multibuffer's
+  visible files — the ts thread's jobs. A buffer no pane shows has no
+  new tree to tell of.
+
+A linter in the hook may publish on every tree (`kawoosh.diagnostics.set`):
+the same list again moves nothing, and a new one for a buffer being
+typed in waits for the typing to pause, as a server's does (lists.md
+Decision 7, from the review of 2026-10-03) — so neither the underline
+nor `*diagnostics*` is redone on every key.
+
+A hook new since the last frame (`kawoosh._tree_gen` moved) hears every
+tree there is, whole, the next frame — so does every other hook,
+which a painter takes as a repaint; a hook that fails is said on the
+message line and the others still run.
+
+Beaten: **the tree's diff as nodes** (neovim's `on_changedtree` gives
+ranges too): a node table per changed node is a walk the plugin may not
+want. **A call per answer**: during fast typing the thread answers
+versions the text has already left, and each such call would read a
+tree §2 refuses. **The hook told per buffer it asked for**
+(`on_tree(buffer, fn)`): `root.buffer` and `root.language` filter as
+cheaply in the hook, and a painter wants every buffer of its language.
+
+### 9. Text objects from the grammar's `textobjects.scm`
+
+Decided and built 2026-10-03, asked as "Text objects from the grammar:
+af, if and ac from each grammar's textobjects.scm" (the Left list
+below). The calls, each the user's to overturn:
+
+- **A query a grammar ships by name, beside its others.**
+  `languages/queries/<lang>/textobjects.scm`, loaded as
+  `Grammar::textobjects` (`TextObjects`), as `indents.scm` is
+  (indent.md Decision 1). For rust, js/ts/tsx (ecma, plus typescript's
+  additions), go, lua, bash, c, cpp (c's, plus cpp's), python, json and
+  jsonc, toml, yaml and sql they are helix 25.07.1's
+  `runtime/queries/*/textobjects.scm` (MPL-2.0; each file names its
+  source and licence in its first lines, as the indent queries do),
+  changed where the grammar pinned names a node otherwise — each change
+  a `; kawoosh:` comment: javascript 0.25's `function_expression` for
+  helix's `function`, go 0.25's `method_elem` / `type_elem` for
+  `method_spec`, and go's `func_literal` taking its `body` where
+  helix's took each child in turn. nu's is tree-sitter-nu's own, at
+  the revision pinned (MIT, its copyright and permission notice kept in
+  the file's head as the licence asks), in nvim's spelling. css, scheme and the
+  markup and data languages without one have no syntax text objects.
+  `every_text_object_query_compiles` compiles each against its grammar;
+  `each_shipped_query_finds_its_objects` (`systems/src/textobjects.rs`)
+  runs it on a sample and finds the function, the class, the argument,
+  the comment, the entry it should.
+- **Both dialects' captures, read alike.** `@OBJECT.around` /
+  `@OBJECT.inside` (helix) and `@OBJECT.outer` / `@OBJECT.inner`
+  (nvim-treesitter-textobjects), and nvim's `#make-range!` naming a
+  part from two captures. A part one match captures several nodes for
+  is one range, the first's start to the last's end: helix's
+  `(line_comment)+ @comment.around` is the run, its `((_) @parameter.inside
+  . ","? @parameter.around) @parameter.around` the argument and its
+  comma. Other directives (`#offset!`, `#set!`) are not read.
+- **An inside that is one bracketed node is between the brackets.**
+  helix captures a function's body, `{` and `}` with it, so its `dif`
+  takes the braces; here a node whose first and last children are a
+  `{` `(` `[` token and its closer is read from its first inner child to
+  its last (blanks at the ends left out), as nvim's queries say with
+  `#make-range!` — `dif` empties the body and keeps the braces, `dic`
+  a struct's fields. A guessed (MISSING) closer is not a bracket. An
+  empty body across lines (`{` and `}` with only blanks between) is the
+  empty range after the `{`, so `dif` there leaves it as it is, as
+  vim's `di{` does — the line break taken would join the braces.
+- **The keys follow `i` and `a`**, beside the pairs, words and
+  paragraph: `f` function, `c` class — this note's `ac` read as the
+  type: a struct, an enum, an impl, a trait, an interface, a class —
+  `a` argument (a parameter or an argument; helix's and
+  nvim-treesitter-textobjects' usual letter), `/` comment (`c` being
+  taken, and `//` the comment most of these languages write), `T` test
+  and `e` entry (helix's letters: an array's element, a table's pair).
+  None was a text object before; `]f` `[f` walk the functions' starts
+  (`function next`, `function prev`, a motion: `d]f`, `v]f`). `]c` and
+  `[c` stay vim's (the diff's changes, `]h` here) and no class walk is
+  bound.
+- **Which one: the innermost over the caret, a count further out.**
+  An object is over the caret when its around is (an inside its pattern
+  took alone, nvim's way, is keyed by the smallest around round it), so
+  `if` on a function's signature is that function's body. An object a
+  pattern finds once for each child it captures as the inside — helix's
+  `(pair (_) @entry.inside) @entry.around`, a field's, an enumerator's,
+  one match a child, the around the same — is one object, and its
+  inside is the part over the caret (helix's smallest inside over the
+  cursor), the nearest when none is: `cie` on a value is the value,
+  `die` on a field's type the type. `2af` (and `2daf`, `d2af` — a count
+  before the operator multiplies a text object's as a motion's) is the
+  one around it — `2ie` the entry around, never the sibling key — and
+  a count past the outermost does nothing. A visual selection of more
+  than one character grows: `vafaf` is the function, then the one
+  around it. Over nothing — `cia` on the `(` — the first that starts
+  after the caret on its line, nvim's lookahead held to the line, so a
+  key never lands a screen away: tree-sitter finishes a match it began
+  in the bytes asked about, so what starts on a later line is found and
+  passed over (`cia` on `fn f(` with the arguments below does nothing).
+- **An object with its lines to itself is taken as lines.** A function,
+  a body, a comment, an argument on lines of its own (only blanks
+  before it on its first line and after it on its last) is linewise:
+  `daf` leaves no empty line where the function was, `yaf` puts back as
+  lines, `cif` keeps the body's indent and opens a line as `cc` does,
+  and `vaf` is `V` over it. One that shares a line is charwise.
+- **A list's item goes with its comma.** `aa` and `ae` take the `,`
+  after the item on its last line and the blanks after that — the last
+  item the `,` before it, across a line break too — so `daa` leaves
+  `f(a, b)` as `f(b)` or `f(a)`, as targets.vim's does, and `dae` on
+  the last element of a list a line each takes the comma ending the
+  line above with it, the list still well-formed (charwise, then: the
+  comma is not on its lines). helix's queries take the comma after but
+  not the space, and nothing for the last.
+- **Every caret its own, `.` again.** Each selection finds its own
+  object (mvp.md Decision 4; two carets in one function take it once),
+  and the step is the key's, so `.` finds the object again where the
+  caret is.
+- **The engine asks, the shell answers — the indenter's trees.**
+  `kawoosh-editor` has no tree-sitter: it asks `Editor::syntax_objects`
+  (the `SyntaxObjects` trait) for the objects of a name over a range,
+  and chooses among them itself (`pick_object`). The shell's answer
+  reads the trees the indenter keeps (`kawoosh/src/indent.rs`), caught
+  up to the text on the spot as a `<CR>` is (indent.md Decision 4), so
+  `daf` right after an edit sees the edit; the ts thread hands over a
+  tree for a grammar with text objects as for one with an indent query.
+  The reader, `systems/src/textobjects.rs`, runs the query over the
+  bytes asked about: the caret to its line's end for a key, the rest of
+  the file one way for `]f`.
+- **A query that does not compile costs only itself.** A builtin's or
+  an installed grammar's `textobjects.scm` that fails is a warning in
+  the log (`NAME: textobjects: … ; no syntax text objects`) and the
+  grammar loads without it — colours and indent do not wait on text
+  objects, where an indent query that fails fails the grammar. A key
+  with nothing to ask says why: `no syntax tree for text`, `no syntax
+  text objects for css`, `no function here`.
+- **An installed grammar's comes from its archive.** `Library::find`
+  takes a `textobjects.scm` from where the highlights are (an archive's
+  `queries/`, a checkout's, the config directory's `queries/NAME/`), so
+  a grammar whose archive carries one has them; one built on the
+  machine takes its checkout's. What the kawoosh-grammars repository
+  would do to ship them is in grammars.md.
+
+Beaten: **a bundled Lua plugin over `kawoosh.node.query`**, which §5
+was written to make possible. It would be the right home for a user's
+own objects, but the keys are the engine's (`i` and `a` read their
+character there, under counts, carets and `.`), and a round trip to
+Lua for each caret would put the plugin runtime between an operator
+and its range. **helix's reading alone** — an inside over the caret,
+the block with its braces — leaves `if` on a signature with nothing
+and `dif` without its braces. **nvim's lookahead across lines**: a
+`daf` on a blank line deleting the next function down the screen.
+
+Not done: Lua does not see the text objects (`kawoosh.node` could
+answer `kawoosh.node.objects("function")` from the same reader);
+injected languages' objects (§6); `]F` `[F` to the ends, and walks of
+the other objects.
+
 ## What it is for
 
 ts-node-action's two examples, against this API — a command each, every
@@ -261,8 +448,22 @@ actions ship for which languages, where the caret lands after one.
 ## Left
 
 - Injected languages' trees (§6).
-- `kawoosh.node.wait`, and a hook when a buffer's tree changes
-  (`kawoosh.on_tree`), for a plugin that paints from the tree.
-- Queries a grammar ships by name — `textobjects.scm` beside
-  `highlights.scm` — and `af` / `if` / `ac` on them.
+- `kawoosh.node.wait`. ~~A hook when a buffer's tree changes
+  (`kawoosh.on_tree`), for a plugin that paints from the tree.~~ Built
+  2026-10-03 (Decision 8): `kawoosh.on_tree` in `lua/lua/boot.lua`,
+  `Runtime::tree_hooks` and `tree_hook` (`lua/src/lib.rs`), the spans
+  gathered by `TreeNews` and told by `Kawoosh::tell_trees`
+  (`kawoosh/src/nodes.rs`) from `sync_syntax`. Test:
+  `kawoosh/lua/tests/on_tree.lua` (the whole text first, a span around
+  an edit after, a late hook told whole, the handle, a failing hook).
+- ~~Queries a grammar ships by name — `textobjects.scm` beside
+  `highlights.scm` — and `af` / `if` / `ac` on them.~~ Built
+  2026-10-03 (Decision 9): `languages/queries/*/textobjects.scm`,
+  `languages/src/lib.rs` (`TextObjects`), `systems/src/textobjects.rs`,
+  `editor/src/commands.rs` (`syntax_textobject`, `pick_object`,
+  `function next` / `prev`), `kawoosh/src/indent.rs` (`Objects`);
+  tests `every_text_object_query_compiles`,
+  `each_shipped_query_finds_its_objects`, `which_object_a_key_takes`,
+  `text_objects_from_the_grammar`, `text_objects_at_every_caret`,
+  `comment_runs_and_python_classes`.
 - Node actions (above).

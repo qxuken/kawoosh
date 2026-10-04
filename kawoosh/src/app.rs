@@ -509,6 +509,7 @@ impl Kawoosh {
         app.install_commands();
         crate::settings::declare_shell_settings(&mut app.ed.settings);
         app.ed.indenter = Some(Box::new(app.indent_trees.indenter()));
+        app.ed.syntax_objects = Some(Box::new(app.indent_trees.objects()));
         app
     }
 
@@ -732,6 +733,16 @@ impl Kawoosh {
                 a.elapsed,
                 self.ed.buffers.get(a.buffer).map_or(0, |b| b.len()),
             ));
+            // The spans whose syntax changed, for the tree hooks.
+            let spans: Vec<std::ops::Range<usize>> = a
+                .updates
+                .iter()
+                .filter(|u| u.layer == kawoosh_systems::ts::SYNTAX_LAYER)
+                .map(|u| u.span.clone())
+                .collect();
+            self.nodes
+                .news
+                .parsed(a.buffer, a.version, spans, a.tree.is_some());
             if let Some(b) = self.ed.buffers.get_mut(a.buffer) {
                 for u in a.updates {
                     let _ = b.apply(u);
@@ -763,6 +774,7 @@ impl Kawoosh {
             .retain(|id, _| self.ed.buffers.contains_key(*id));
         self.indent_trees
             .retain(|id| self.ed.buffers.contains_key(id));
+        self.tell_trees();
         // What a pane shows, and the files whose excerpts a multibuffer
         // drew last frame.
         let mut shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
@@ -2069,6 +2081,11 @@ impl Kawoosh {
                     self.drag_anchor = None;
                     self.open_link();
                     self.drain_effects();
+                    return;
+                }
+                // A click on a multibuffer's `⋯` shows what it hides.
+                if clicks == 1 && self.multi_click(view, off) {
+                    self.drag_anchor = None;
                     return;
                 }
                 if clicks == 2 {

@@ -52,9 +52,9 @@ the bar on top and the results under it. `<leader>sS` (`:search here`) searches 
 current file's directory instead of the workspace's root. From visual
 mode, the selection is put in the pattern field.
 
-The bar has three fields on two rows: **find**, with the toggles and
-the count beside it, and **include** and **exclude** under it, with
-`⌥/ keys` at the end for the legend. Include and exclude take
+The bar has four fields on two rows: **find**, with the toggles,
+**replace** and the count beside it, and **include** and **exclude**
+under them, with `⌥/ keys` at the end for the legend. Include and exclude take
 comma-separated globs:
 
 | glob | matches |
@@ -73,6 +73,7 @@ you turn them on.
 | keys (in the bar) | what |
 |---|---|
 | `<CR>` | run the search |
+| `<A-CR>` | replace every match the results show (see below) |
 | `<Tab>` `<S-Tab>` | next, previous field |
 | `<A-r>` | regex on or off |
 | `<A-c>` | match case, or smart case |
@@ -90,6 +91,26 @@ results open files in. From the results, `<C-S-k>` (or `<C-w>k`) goes
 back up to the field you were in, and `<C-S-j>` (`<C-w>j`) down again:
 inside the panel, the bar and the results are two stops, as two panes
 stacked would be. A click on a field moves the keys there too.
+
+### Replacing
+
+Type the replacement in **replace** and press `<A-CR>`: every match
+the results show is replaced, in every file, as one change. The files
+are changed but not saved: `u` in the results undoes the whole
+replace in every file, and `:w` there writes them. A line a `drop`
+stage took out keeps its match, even when it is shown around another.
+
+In the results, `<A-CR>` replaces just the match under the caret (or
+the next one) and moves to the next match; `n` skips one. Each of those
+is undone on its own.
+
+With regex on, `$1`, `$2`… in the replacement are the pattern's
+groups, `${name}` a named one, `$0` the whole match and `$$` a dollar
+sign; write `${1}x` when a letter follows. `\n` and `\t` are a
+newline and a tab. With regex off, the replacement is used as typed.
+
+After a replace the count says `replaced`; `<CR>` searches again. A
+replace that found nothing to replace leaves the count as it was.
 
 ### Stages: search in search
 
@@ -128,8 +149,25 @@ numbers, with its colours and diagnostics.
 |---|---|
 | `<CR>` `g<Space>` | open the file at the caret in the pane the search was opened from (the panel stays); with carets in several files, open them all |
 | `<C-v>` | open the file in a column of its own, beside the panel |
+| `<A-CR>` | replace the match at the caret with the bar's replace field, and go to the next |
+| `zk` `zj` | show more of the file above, below the excerpt at the caret |
+| `zo`, `<S-CR>` | show more both ways; on a `⋯`, fill it from both sides |
 
 `search.context` sets how many lines are shown around each match.
+
+### More lines around an excerpt
+
+Every multibuffer — the search's results, the lists below — shows a
+few lines around each place. `zk` shows more of the file above the
+excerpt the caret is in, `zj` more below, and `zo` (or `<S-CR>`, as in
+Zed) both; on a `⋯` line they show what it hides, from either side. A
+click on a `⋯` does the same. Each shows `multi.expand` lines (5), or
+as many as a count says: `20zj`. When an excerpt reaches the next one
+of the same file the two become one and the `⋯` goes (a note between
+them, a diagnostic's message, stays); a growth stops at
+the file's start and end. The new lines are live like the rest: what
+you type there is in the file. Running the search again, or a list
+being made again, lays the excerpts out afresh.
 
 A file the search opened stays out of `:ls` and the buffers picker
 until you open it from the results or edit it. A multibuffer holds the

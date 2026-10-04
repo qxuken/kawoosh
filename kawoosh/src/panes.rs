@@ -1559,20 +1559,39 @@ impl Kawoosh {
         // The hunks' signs beside their lines (docs/design/vcs.md
         // Decision 2) — a multibuffer's excerpt lines their sources' —
         // and, in a multibuffer, an added or changed line washed in its
-        // sign's colour, so a review reads as a diff.
-        let signs: HashMap<usize, (kawoosh_editor::Sign, kui_native::Color)> = self
-            .signs_of(buf_id, top, &from_files)
+        // sign's colour, so a review reads as a diff. A staged line's
+        // sign (Decision 12) is the same drawn faint, its wash fainter,
+        // where no unstaged sign stands.
+        let staged_alpha = crate::vcs::STAGED_ALPHA;
+        let mut signs: HashMap<usize, (kawoosh_editor::Sign, kui_native::Color, f32)> = self
+            .staged_signs_of(buf_id, top, &from_files)
             .into_iter()
-            .map(|(ln, s)| (ln, (s, self.sign_color(s))))
+            .map(|(ln, s)| (ln, (s, self.sign_color(s), staged_alpha)))
             .collect();
+        signs.extend(
+            self.signs_of(buf_id, top, &from_files)
+                .into_iter()
+                .map(|(ln, s)| (ln, (s, self.sign_color(s), 1.0))),
+        );
         if !from_files.is_empty() {
             use kawoosh_editor::Sign;
-            for (ln, (s, c)) in &signs {
+            for (ln, (s, c, strength)) in &signs {
                 if matches!(s, Sign::Added | Sign::Modified) && *ln < buf.line_count() {
-                    washes.push((buf.line_range(*ln), c.with_alpha(0.12)));
+                    washes.push((buf.line_range(*ln), c.with_alpha(0.12 * strength)));
                 }
             }
         }
+        let signs: HashMap<usize, (kawoosh_editor::Sign, kui_native::Color)> = signs
+            .into_iter()
+            .map(|(ln, (s, c, strength))| {
+                let c = if strength < 1.0 {
+                    c.with_alpha(strength)
+                } else {
+                    c
+                };
+                (ln, (s, c))
+            })
+            .collect();
         // The places a list marked on its files, drawn in that list
         // alone: another multibuffer on the same lines is not the list.
         let places_here =

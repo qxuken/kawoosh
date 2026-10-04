@@ -199,6 +199,12 @@ impl Kawoosh {
         self.commands.map.insert(spec.name, Rc::new(c));
     }
 
+    /// Takes away a shell command added after start.
+    pub(crate) fn remove_command(&mut self, name: &str) {
+        self.ed.undeclare(name);
+        self.commands.map.remove(name);
+    }
+
     /// Runs a shell command with its context, as an `Effect::Shell`
     /// hands it over: resolved, checked, the arguments ready.
     pub(crate) fn shell_run(&mut self, name: &str, ctx: &Ctx) {
