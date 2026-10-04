@@ -3305,6 +3305,10 @@ fn seed(
             Ok(facts.holds(&fact))
         })?,
     )?;
+    // ---- `kawoosh.os`: the system kawoosh runs on — `"mac"`,
+    // `"linux"` or `"windows"`, a server's install lines' names — for
+    // an `init.lua` whose command differs by system.
+    k.set("os", kawoosh_systems::PLATFORM)?;
     // ---- fuzzy matching (`fuzzy.rs`): `kawoosh.fuzzy(needle, list,
     // limit)` over a small list; `kawoosh.matcher(list)` holds a big
     // one — forty thousand paths — so a keystroke's query crosses one
