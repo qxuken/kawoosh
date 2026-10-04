@@ -160,3 +160,43 @@ fn every_link_in_the_pages_reaches_a_page_and_a_heading() {
     }
     assert_eq!(bad, Vec::<String>::new());
 }
+
+/// The commands' and the settings' own descriptions — `:help commands`,
+/// the palette, the settings pane — read for the host's keyboard as the
+/// pages do: no span left open, and off a Mac none of its signs nor a
+/// chord on the system's key.
+#[test]
+fn the_descriptions_say_the_hosts_keys() {
+    let mut d = Drive::new(900.0, 600.0);
+    let app = app_with_lua(&mut d);
+    let mut docs: Vec<(String, String)> = app
+        .ed
+        .commands
+        .specs()
+        .into_iter()
+        .map(|s| (format!(":{}", s.name), s.doc.clone()))
+        .collect();
+    docs.extend(
+        app.ed
+            .settings
+            .schema()
+            .into_iter()
+            .map(|(p, d)| (p, d.doc)),
+    );
+    assert!(
+        docs.len() > 200,
+        "the commands and the settings: {}",
+        docs.len()
+    );
+    for (name, doc) in docs {
+        assert!(
+            !doc.contains("{{mac:") && !doc.contains("{{pc:"),
+            "{name}: {doc}"
+        );
+        if !cfg!(target_os = "macos") {
+            for sign in ["⌘", "⌥", "⌃", "⇧", "win+", "super+", "<D-"] {
+                assert!(!doc.contains(sign), "{name}: {sign} in {doc}");
+            }
+        }
+    }
+}

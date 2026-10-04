@@ -9,6 +9,7 @@ pub mod conflicts;
 pub mod diagnostics;
 pub mod disk;
 pub mod editorconfig;
+pub mod host;
 pub mod hunks;
 pub mod keymap;
 pub mod masks;

@@ -511,7 +511,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "keys.option_as_alt",
-        "macOS: which ⌥ is Alt for key chords (`<A-u>`) rather than typing accents (`ü`): `left`, `right`, `both`, `none`",
+        "macOS: which {{mac:⌥}}{{pc:Option key}} is Alt for key chords (`<A-u>`) rather than typing accents (`ü`): `left`, `right`, `both`, `none`",
     ),
     (
         "layout.default",
@@ -607,7 +607,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "terminal.raw",
-        "programs a terminal pane is raw for while one is in front: every key but the escape and ⌘ theirs",
+        "programs a terminal pane is raw for while one is in front: every key but the escape {{mac:and ⌘ }}theirs",
     ),
     (
         "editor.bell",
@@ -1285,7 +1285,7 @@ impl Settings {
             path.to_string(),
             Decl {
                 kind,
-                doc: doc.to_string(),
+                doc: crate::host::for_host(doc, crate::host::Host::HERE),
             },
         );
     }
@@ -1296,13 +1296,11 @@ impl Settings {
     /// there is one.
     pub fn describe(&mut self, path: &str, doc: &str) {
         let Some(kind) = self.kind(path) else { return };
+        let doc = crate::host::for_host(doc, crate::host::Host::HERE);
         self.decls
             .entry(path.to_string())
-            .and_modify(|d| d.doc = doc.to_string())
-            .or_insert(Decl {
-                kind,
-                doc: doc.to_string(),
-            });
+            .and_modify(|d| d.doc = doc.clone())
+            .or_insert(Decl { kind, doc });
     }
 
     /// What `path` holds: its declaration's kind, else its default's.

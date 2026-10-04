@@ -387,26 +387,7 @@ pub const CAP: CapMeasures = CapMeasures {
     item_gap: 12.0,
 };
 
-/// The system whose keyboard a chord's modifiers are spelled for: a
-/// Mac's caps print ⌃ ⌥ ⇧ ⌘, a PC's the words, and the key between
-/// Ctrl and Alt is Win on Windows and Super on Linux.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Host {
-    Mac,
-    Windows,
-    Linux,
-}
-
-impl Host {
-    /// The one this build is for.
-    pub const HERE: Host = if cfg!(target_os = "macos") {
-        Host::Mac
-    } else if cfg!(windows) {
-        Host::Windows
-    } else {
-        Host::Linux
-    };
-}
+pub use kawoosh_editor::host::Host;
 
 /// The caps a notation is drawn as: one a key, a chord's modifiers in
 /// it before its key — on a Mac ⌃⌥⇧⌘ as icons, in the Mac's order;
