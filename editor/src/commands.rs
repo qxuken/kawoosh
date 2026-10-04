@@ -1713,17 +1713,14 @@ fn paste_over(ed: &mut Editor, ctx: &Ctx, keep: bool) {
     clamp_sels(ed, ctx.view);
 }
 
-/// `[<Space>` / `]<Space>`: COUNT empty lines above or below each
-/// caret's line — once a line, however many carets are on it — and every
-/// selection kept where it was in the text.
 /// `multi more`: the excerpt at the primary caret grown `way` by the
 /// argument's lines, else COUNT's, else `multi.expand`'s; the message
 /// says how many came, or why none did.
 fn multi_more(ed: &mut Editor, ctx: &Ctx, way: crate::Grow) {
     let n = match ctx.arg(0).map(str::parse::<usize>) {
-        Some(Ok(n)) => n,
-        Some(Err(_)) => {
-            ed.message = "multi more: a number of lines".into();
+        Some(Ok(n)) if n > 0 => n,
+        Some(_) => {
+            ed.message = "multi more: a number of lines, 1 or more".into();
             return;
         }
         None if ctx.has_count => ctx.count,
@@ -1740,6 +1737,9 @@ fn multi_more(ed: &mut Editor, ctx: &Ctx, way: crate::Grow) {
     };
 }
 
+/// `[<Space>` / `]<Space>`: COUNT empty lines above or below each
+/// caret's line — once a line, however many carets are on it — and every
+/// selection kept where it was in the text.
 fn blank_lines(ed: &mut Editor, ctx: &Ctx, below: bool) {
     let id = view(ed, ctx).buffer;
     let buf = &ed.buffers[id];

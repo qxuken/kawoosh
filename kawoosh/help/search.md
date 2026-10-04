@@ -109,7 +109,8 @@ groups, `${name}` a named one, `$0` the whole match and `$$` a dollar
 sign; write `${1}x` when a letter follows. `\n` and `\t` are a
 newline and a tab. With regex off, the replacement is used as typed.
 
-After a replace the count says `replaced`; `<CR>` searches again.
+After a replace the count says `replaced`; `<CR>` searches again. A
+replace that found nothing to replace leaves the count as it was.
 
 ### Stages: search in search
 
@@ -162,7 +163,8 @@ excerpt the caret is in, `zj` more below, and `zo` (or `<S-CR>`, as in
 Zed) both; on a `⋯` line they show what it hides, from either side. A
 click on a `⋯` does the same. Each shows `multi.expand` lines (5), or
 as many as a count says: `20zj`. When an excerpt reaches the next one
-of the same file the two become one and the `⋯` goes; a growth stops at
+of the same file the two become one and the `⋯` goes (a note between
+them, a diagnostic's message, stays); a growth stops at
 the file's start and end. The new lines are live like the rest: what
 you type there is in the file. Running the search again, or a list
 being made again, lays the excerpts out afresh.

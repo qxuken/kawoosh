@@ -1301,6 +1301,7 @@ impl Kawoosh {
                     let _ = reply.send(text.unwrap_or_default());
                 }
             }
+            Msg::Replaced { token, done } => rt.replaced(token, done),
             Msg::Edit { .. }
             | Msg::SearchPaint { .. }
             | Msg::SearchReplace { .. }

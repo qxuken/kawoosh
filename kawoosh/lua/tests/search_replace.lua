@@ -47,6 +47,7 @@ kawoosh.frame()
 kawoosh.cmd("search run")
 settled("the search")
 kawoosh.test.eq(S.state().stages[1].matches, 4)
+kawoosh.test.eq(S.state().replaced, false)
 
 -- `<Tab>` from find is the replace field: it is the search's, not a
 -- stage's, so a stage added keeps it.
@@ -65,6 +66,7 @@ assert(a and b, "the files a replace edited are listed buffers")
 kawoosh.test.eq(kawoosh.buf.text(a):gsub("\r", ""), "new_name = 1\nkeep new_name\nprint(new_name)\n")
 kawoosh.test.eq(kawoosh.buf.text(b):gsub("\r", ""), "new_name()\n")
 kawoosh.test.ok(kawoosh.message():find("4 matches replaced in 2 files", 1, true), kawoosh.message())
+kawoosh.test.eq(S.state().replaced, true, "the count stale")
 kawoosh.test.ok(kawoosh.buf.text(results()):find(native("a.txt") .. "  3", 1, true), "the header as it was")
 -- Not on disk until `:w`; one `u` in the results takes both back.
 local disk = io.open(kawoosh.fs.join(dir, "b.txt")):read("a")
@@ -144,6 +146,22 @@ kawoosh.test.eq(kawoosh.buf.text(a):gsub("\r", ""), "X = 1\nkeep old_name\nprint
 kawoosh.press("u")
 kawoosh.frame()
 kawoosh.test.eq(kawoosh.buf.text(a):gsub("\r", ""), "old_name = 1\nkeep old_name\nprint(old_name)\n")
+kawoosh.test.eq(S.state().replaced, true, "the count stale")
+
+-- A replace that finds nothing leaves the count as the search said it.
+kawoosh.cmd("search run")
+settled("searched again")
+kawoosh.test.eq(S.state().replaced, false, "a run makes it fresh")
+kawoosh.cmd("search results")
+kawoosh.frame()
+kawoosh.cmd("%s/old_name/zz/g")
+kawoosh.frame()
+kawoosh.cmd("search replace all")
+kawoosh.frame(2)
+kawoosh.test.ok(kawoosh.message():find("no match in the results", 1, true), kawoosh.message())
+kawoosh.test.eq(S.state().replaced, false, "nothing replaced: not stale")
+kawoosh.press("u")
+kawoosh.frame()
 
 kawoosh.cmd("search close")
 kawoosh.frame()

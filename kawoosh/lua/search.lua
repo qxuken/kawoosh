@@ -463,18 +463,24 @@ end
 function search.replace(one)
   local q = search.shown
   if not q then return kawoosh.echo("nothing to replace: ⏎ searches first") end
-  kawoosh.search_replace { buffer = RESULTS, pattern = q.pattern, regex = q.regex, word = q.word,
+  -- The count goes stale only when something was replaced: a refused
+  -- or empty replace leaves it as the search said it.
+  local gen = search.gen
+  kawoosh.search_replace({ buffer = RESULTS, pattern = q.pattern, regex = q.regex, word = q.word,
                            case = q.case, lines = q.lines, one = one or false,
-                           with = kawoosh.field_text(VIEW, "replace") or "" }
-  search.replaced = true
+                           with = kawoosh.field_text(VIEW, "replace") or "" },
+                         function(done)
+                           if done and search.gen == gen then search.replaced = true end
+                         end)
 end
 
 -- search.state(): the bar as it stands — `stages` (each `kind`,
 -- `find`, `include`, `exclude`, the flags, `files` and `matches` of
--- its answer, `err`), `cur`, `running`, `root` — for a test, a
--- status line.
+-- its answer, `err`), `cur`, `running`, `root`, and `replaced` when a
+-- replace has made the count stale — for a test, a status line.
 function search.state()
-  local out = { cur = search.cur, running = search.running, root = search.root, stages = {} }
+  local out = { cur = search.cur, running = search.running, root = search.root,
+                replaced = search.replaced or false, stages = {} }
   for i, st in ipairs(search.stages) do
     out.stages[i] = { kind = st.kind, find = st.find, include = st.include, exclude = st.exclude,
                       regex = st.regex, case = st.case, word = st.word, ignored = st.ignored, err = st.err,
