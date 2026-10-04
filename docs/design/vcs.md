@@ -286,8 +286,20 @@ file; the backend does, in its terms. Git puts `diff --git a/REL b/REL`
 and the `---` `+++` lines over it and runs `git apply --cached
 --whitespace=nowarn -` in the root (`nowarn`: a user's
 `apply.whitespace = error` would refuse a trailing blank the file has
-already). Applied, the base is read again: the hunk leaves the
-unstaged signs.
+already). REL is git's own: `git rev-parse --show-prefix` in the
+file's directory, which git spells as the disk does, then the file's
+name — never cut from the buffer's path against the root. The two are
+spelled apart more often than not on some machines (Windows' case,
+`C:\REPO\SUB` typed; a link; macOS's `/tmp` for `/private/tmp`), and a
+cut that failed once fell back to the bare name and staged a
+subdirectory's `b.txt` into the root's. Nor is `git apply` run from
+the file's directory: there it passes over a path outside it and says
+nothing. Applied, the base is read again: the hunk leaves the
+unstaged signs. Refused, the message line says git's `error:` and
+`fatal:` lines (`kawoosh.spawn`'s `on_stderr`; stdout is empty when
+git refuses). The repository moving under the buffers — a `git add`
+in a terminal — gives every buffer under the root its base again,
+matched as the platform names paths (`\` and any case on Windows).
 
 **Unstaging is a patch to the index too**, so it is the same door.
 Under an index, `vcs.lua` gives HEAD's text with the base
@@ -304,7 +316,13 @@ unstaging every hunk leaves it in the index empty — `git restore
 (`base_line_ends`, `core.autocrlf`) is marked so (`Base::crlf`); the
 patch is made against the LF text, and the buffer's lines go in with
 their `\r` taken off — what `git add` would store. An index of CRLF
-lines was not converted and keeps them. A last line with no newline is
+lines was not converted and keeps them. A base given again is the
+same base only when the backend's text is the same (`Base::given`) and
+read the same: an index blob gone from LF to CRLF (`git -c
+core.autocrlf=false add`) reads as the text it was, and keeping its
+old reading made every patch against LF the index no longer had. A
+base given while its file still loads is read with the file's line
+ends before its first diff (`settle_base`). A last line with no newline is
 followed by `\ No newline at end of file` on whichever side has it, as
 diff writes it.
 
@@ -320,7 +338,14 @@ index text would overwrite it.
 buffer's through the unstaged hunks — a line an unstaged hunk changed
 again is that hunk's — and drawn with their sign at 40%
 (`STAGED_ALPHA`) where no unstaged sign stands; a review's wash of
-them is at 40% of an unstaged line's too. After `<leader>ha` the bar fades rather
+them is at 40% of an unstaged line's too. A review's file no buffer
+held gets its base in the buffer the review opened for its excerpts
+(`kawoosh.buf.list { borrowed = true }` finds those), asked once the
+review is made — so `]h` reaches its hunks and `hunk stage` stages
+them there as in an open file. In visual mode the staged hunks are
+carried to the buffer once for the selection, not once a line
+(`staged_in_any`, one walk over the hunks): `ggVG` and `hunk unstage`
+over 30 000 lines took seconds. After `<leader>ha` the bar fades rather
 than goes, and `<leader>hu` on it brings it back. `:hunk` counts them
 (`against index: 1 hunk (+0 ~1 −0), 2 staged`). The `vcs status`
 picker says `staged` or `partly staged` beside a file — git's `status`

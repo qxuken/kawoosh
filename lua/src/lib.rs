@@ -4387,20 +4387,27 @@ fn seed(
     let pp = published.clone();
     buf.set(
         "list",
-        // `kawoosh.buf.list([{ tab = true }])`: every buffer, or the
-        // focused tab's (`buffers.scope`).
+        // `kawoosh.buf.list([{ tab = true, borrowed = true }])`: every
+        // buffer, or the focused tab's (`buffers.scope`); `borrowed`,
+        // the files a multibuffer opened for its excerpts too, which
+        // `:ls` leaves out (search.md Decision 5) — a review's, whose
+        // bases version control gives (docs/design/vcs.md Decision 12).
         lua.create_function(move |lua, opts: Option<Table>| {
-            let tab = opts
-                .map(|o| o.get::<Option<bool>>("tab"))
-                .transpose()?
-                .flatten()
-                .unwrap_or(false);
+            let flag = |name: &str| -> mlua::Result<bool> {
+                Ok(opts
+                    .as_ref()
+                    .map(|o| o.get::<Option<bool>>(name))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or(false))
+            };
+            let (tab, borrowed) = (flag("tab")?, flag("borrowed")?);
             let p = pp.borrow();
             let t = lua.create_table()?;
             let mut hs: Vec<u64> = p
                 .buffers
                 .iter()
-                .filter(|(_, b)| !b.field && !b.borrowed && (!tab || b.in_tab))
+                .filter(|(_, b)| !b.field && (borrowed || !b.borrowed) && (!tab || b.in_tab))
                 .map(|(h, _)| *h)
                 .collect();
             hs.sort();

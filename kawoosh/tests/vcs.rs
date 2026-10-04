@@ -155,3 +155,98 @@ fn signs_are_off_by_a_setting_and_the_hunks_stay() {
     assert_eq!(caret_line(&app), 1, "`]h` still walks them");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `ggVG` and `hunk unstage` over a long file newly added — every line
+/// staged, one hunk, and every tenth changed again since — asks the
+/// staged hunks once for the selection, not once a line: 30 000 lines
+/// took 9.5 s of CPU when each line carried every staged line to the
+/// buffer through the unstaged hunks. Bounded by how it grows, as
+/// `an_edit_per_line_over_a_long_file_is_one_pass` is: four times the
+/// lines cost four times as much in one pass, sixteen in the quadratic.
+#[test]
+fn unstaging_a_selection_over_a_long_file_is_one_pass() {
+    let dir = tmp("unstage-long");
+    let pass = |n: usize| {
+        let file = dir.join(format!("long-{n}.txt"));
+        let index: String = (0..n).map(|i| format!("line {i}\n")).collect();
+        let text: String = (0..n)
+            .map(|i| match i % 10 {
+                0 => format!("line {i} again\n"),
+                _ => format!("line {i}\n"),
+            })
+            .collect();
+        std::fs::write(&file, &text).unwrap();
+        let (mut d, mut app) = launch(&file);
+        let id = app.ed.views[app.focused_view().unwrap()].buffer;
+        app.ed
+            .set_base(id, Arc::from(index.as_str()), "index".into());
+        app.ed.set_base_head(id, Some(Arc::from("")));
+        d.frame(&mut app);
+        d.frame(&mut app);
+        assert_eq!(app.ed.hunks(id).len(), n / 10);
+        assert_eq!(app.ed.base(id).unwrap().staged.len(), 1);
+        app.run_lua_source(
+            "stage",
+            r#"kawoosh.on_stage(function(_, patch, o)
+              kawoosh.echo("unstage " .. o.count .. " " .. select(2, patch:gsub("\n", "")))
+            end)"#,
+        );
+        d.press(&mut app, "gg");
+        let start = thread_cpu();
+        d.press(&mut app, "VG<leader>hu");
+        let took = thread_cpu() - start;
+        // One staged hunk; its patch takes every index line out.
+        assert_eq!(app.ed.message, format!("unstage 1 {}", n + 1));
+        took
+    };
+    let small = pass(7_500);
+    let large = pass(30_000);
+    // The thread's clock ticks in 15.6 ms on Windows: a pass that read
+    // as none counts as one tick.
+    let tick = std::time::Duration::from_millis(16);
+    let growth = large.as_secs_f64() / small.max(tick).as_secs_f64();
+    assert!(
+        growth < 8.0,
+        "4x the lines took {growth:.1}x as long ({small:?}, then {large:?})"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The CPU time this thread has had, which other processes do not
+/// stretch.
+#[cfg(unix)]
+fn thread_cpu() -> std::time::Duration {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid timespec for the call to fill.
+    let ok = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    assert_eq!(ok, 0);
+    std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
+
+#[cfg(windows)]
+fn thread_cpu() -> std::time::Duration {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+    let zero = || FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero(), zero(), zero(), zero());
+    // SAFETY: the current thread's pseudo-handle, four FILETIMEs to fill.
+    let ok = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(ok, 0);
+    let ticks = |f: FILETIME| (f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64;
+    // FILETIME counts 100 ns.
+    std::time::Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+}

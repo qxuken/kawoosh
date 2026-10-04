@@ -62,6 +62,15 @@ impl LineHunk {
     pub fn touches(&self, line: usize) -> bool {
         self.new.contains(&line) || (self.new.is_empty() && self.new.start == line)
     }
+
+    /// Whether the hunk stands on any of `lines`.
+    pub fn touches_any(&self, lines: &Range<usize>) -> bool {
+        if self.new.is_empty() {
+            lines.contains(&self.new.start)
+        } else {
+            self.new.start < lines.end && lines.start < self.new.end
+        }
+    }
 }
 
 /// A buffer's base: the text, what it is called (`index`, `HEAD`, a
@@ -77,12 +86,45 @@ pub struct Base {
     /// (`line_diff::base_line_ends`): a patch for the backend takes the
     /// `\r` off again, as git's `core.autocrlf` does on `git add`.
     pub crlf: bool,
+    /// The text as the backend gave it, before any reading of its line
+    /// ends: what a base given again is compared with — the same text
+    /// read the same is the same base, an index blob gone from LF to
+    /// CRLF is not though it reads alike — and what a patch is made
+    /// against.
+    pub given: Arc<str>,
     /// What the base is itself read against, as the backend gave it —
     /// HEAD's text under the index (docs/design/vcs.md Decision 12) —
     /// and the hunks between the two, `old` HEAD's lines and `new` the
     /// base's: what is staged.
     pub head: Option<Arc<str>>,
     pub staged: Arc<[LineHunk]>,
+}
+
+/// [`Base::to_buffer`]'s walk: the hunks passed so far, and how many
+/// lines they put in or took out.
+struct ToBuffer<'a> {
+    hunks: &'a [LineHunk],
+    next: usize,
+    delta: isize,
+}
+
+impl ToBuffer<'_> {
+    /// Base line `line` as the buffer has it: none for a line a hunk
+    /// took out or changed. The base's end (its line count) maps to
+    /// the buffer's. Lines are asked in order, none before the last.
+    fn line(&mut self, line: usize) -> Option<usize> {
+        while let Some(h) = self.hunks.get(self.next) {
+            if line < h.old.start {
+                break;
+            }
+            if h.old.contains(&line) {
+                return None;
+            }
+            self.delta += h.new.len() as isize - h.old.len() as isize;
+            self.next += 1;
+        }
+        line.checked_add_signed(self.delta)
+    }
 }
 
 /// The context either side of a change in a patch for the backend:
@@ -93,28 +135,18 @@ impl Base {
     /// The base as the backend has it, in its own line ends: what a
     /// patch for the backend is made against.
     pub fn own_text(&self) -> std::borrow::Cow<'_, str> {
-        if self.crlf {
-            std::borrow::Cow::Owned(self.text.replace("\r\n", "\n"))
-        } else {
-            std::borrow::Cow::Borrowed(&*self.text)
-        }
+        std::borrow::Cow::Borrowed(&*self.given)
     }
 
-    /// Base line `line` as the buffer has it now, through the hunks as
-    /// last diffed: none for a line a hunk took out or changed. The
-    /// base's end (its line count) maps to the buffer's.
-    fn to_buffer(&self, line: usize) -> Option<usize> {
-        let mut delta: isize = 0;
-        for h in self.hunks.iter() {
-            if line < h.old.start {
-                break;
-            }
-            if h.old.contains(&line) {
-                return None;
-            }
-            delta += h.new.len() as isize - h.old.len() as isize;
+    /// Base lines as the buffer has them now, through the hunks as last
+    /// diffed — asked in order, so the walk over the hunks is one pass
+    /// whatever the lines asked.
+    fn to_buffer(&self) -> ToBuffer<'_> {
+        ToBuffer {
+            hunks: &self.hunks,
+            next: 0,
+            delta: 0,
         }
-        line.checked_add_signed(delta)
     }
 
     /// Where each line of the base starts, and the text's end after
@@ -292,33 +324,35 @@ impl Editor {
     /// base the same as the one it has keeps its hunks — a backend
     /// asked again after a commit elsewhere; another starts them over.
     /// A base of LF lines against a buffer of CRLF ones is read with
-    /// CRLF (`line_diff::base_line_ends`, git's `core.autocrlf`).
-    pub fn set_base(&mut self, id: BufferId, text: Arc<str>, label: String) {
+    /// CRLF (`line_diff::base_line_ends`, git's `core.autocrlf`). The
+    /// same is the text as given, read the same way: an index blob that
+    /// went from LF to CRLF reads as the text it was, and keeping its
+    /// old reading would make every patch against the LF it no longer
+    /// is.
+    pub fn set_base(&mut self, id: BufferId, given: Arc<str>, label: String) {
         let Some(buffer) = self.buffers.get(id) else {
             return;
         };
-        let head = buffer.slice(0..buffer.len().min(64 * 1024));
-        let (text, crlf) = match kawoosh_doc::line_diff::base_line_ends(&text, &head) {
-            std::borrow::Cow::Owned(t) => (Arc::from(t), true),
-            std::borrow::Cow::Borrowed(_) => (text, false),
-        };
+        let (text, crlf) = read_line_ends(&given, buffer);
         if let Some(b) = self.bases.get_mut(&id) {
-            if *b.text == *text {
+            if *b.given == *given && b.crlf == crlf {
                 b.label = label;
                 return;
             }
             b.text = text;
+            b.given = given;
             b.crlf = crlf;
             b.label = label;
             b.hunks = Arc::from(Vec::new());
             b.version = None;
-            b.staged = staged_of(b.head.as_deref(), &b.own_text());
+            b.staged = staged_of(b.head.as_deref(), &b.given);
             return;
         }
         self.bases.insert(
             id,
             Base {
                 text,
+                given,
                 label,
                 hunks: Arc::from(Vec::new()),
                 version: None,
@@ -327,6 +361,24 @@ impl Editor {
                 staged: Arc::from(Vec::new()),
             },
         );
+    }
+
+    /// Buffer `id`'s base read again with the buffer's line ends before
+    /// it is first diffed: a base given while the file was still
+    /// loading — a review's file not open, whose buffer the review
+    /// made — was read against no lines at all.
+    pub fn settle_base(&mut self, id: BufferId) {
+        let (Some(buffer), Some(b)) = (self.buffers.get(id), self.bases.get_mut(&id)) else {
+            return;
+        };
+        if b.version.is_some() || buffer.loading.is_some() {
+            return;
+        }
+        let (text, crlf) = read_line_ends(&b.given, buffer);
+        if crlf != b.crlf {
+            b.text = text;
+            b.crlf = crlf;
+        }
     }
 
     /// What buffer `id`'s base is itself read against (docs/design/
@@ -417,7 +469,7 @@ impl Editor {
     pub fn hunks_in(&self, id: BufferId, lines: Range<usize>) -> Vec<LineHunk> {
         self.hunks(id)
             .iter()
-            .filter(|h| lines.clone().any(|ln| h.touches(ln)))
+            .filter(|h| h.touches_any(&lines))
             .cloned()
             .collect()
     }
@@ -445,9 +497,11 @@ impl Editor {
             return out;
         };
         let count = b.line_count();
+        // The staged hunks' base lines come in order: one walk.
+        let mut walk = base.to_buffer();
         for (i, h) in base.staged.iter().enumerate() {
             match h.kind() {
-                Sign::Deleted => match base.to_buffer(h.new.start) {
+                Sign::Deleted => match walk.line(h.new.start) {
                     Some(ln) if ln < count => out.push((i, ln, Sign::Deleted)),
                     Some(_) if count > 0 => out.push((i, count - 1, Sign::DeletedBelow)),
                     _ => {}
@@ -455,7 +509,7 @@ impl Editor {
                 kind => out.extend(
                     h.new
                         .clone()
-                        .filter_map(|l| base.to_buffer(l))
+                        .filter_map(|l| walk.line(l))
                         .filter(|&ln| ln < count)
                         .map(|ln| (i, ln, kind)),
                 ),
@@ -477,13 +531,20 @@ impl Editor {
     /// The staged hunks any of whose lines in buffer `id` are in
     /// `lines`, in order.
     pub fn staged_in(&self, id: BufferId, lines: Range<usize>) -> Vec<LineHunk> {
+        self.staged_in_any(id, std::slice::from_ref(&lines))
+    }
+
+    /// The staged hunks any of whose lines in buffer `id` are in one of
+    /// `ranges` — a visual selection's, each caret's — in order: the
+    /// staged lines carried to the buffer once for them all.
+    pub fn staged_in_any(&self, id: BufferId, ranges: &[Range<usize>]) -> Vec<LineHunk> {
         let Some(base) = self.bases.get(&id) else {
             return Vec::new();
         };
         let mut at: Vec<usize> = self
             .staged_shown(id)
             .into_iter()
-            .filter(|(_, ln, _)| lines.contains(ln))
+            .filter(|(_, ln, _)| ranges.iter().any(|r| r.contains(ln)))
             .map(|(i, ..)| i)
             .collect();
         at.dedup();
@@ -673,6 +734,16 @@ fn splice(text: &str, mut cuts: Vec<(Range<usize>, String)>) -> String {
     out
 }
 
+/// `given` read with `buffer`'s line ends, and whether that made its
+/// LF lines CRLF ([`kawoosh_doc::line_diff::base_line_ends`]).
+fn read_line_ends(given: &Arc<str>, buffer: &kawoosh_doc::Buffer) -> (Arc<str>, bool) {
+    let head = buffer.slice(0..buffer.len().min(64 * 1024));
+    match kawoosh_doc::line_diff::base_line_ends(given, &head) {
+        std::borrow::Cow::Owned(t) => (Arc::from(t), true),
+        std::borrow::Cow::Borrowed(_) => (given.clone(), false),
+    }
+}
+
 /// The hunks between `head` and `base`: what is staged; none without
 /// a head.
 fn staged_of(head: Option<&str>, base: &str) -> Arc<[LineHunk]> {
@@ -789,6 +860,101 @@ mod tests {
             ed.stage_patch(crlf, &hs).unwrap(),
             "@@ -1,2 +1,2 @@\n a\r\n-b\r\n+B\r\n"
         );
+    }
+
+    /// An index blob gone from LF to CRLF (`git -c core.autocrlf=false
+    /// add` in an autocrlf checkout) reads as the text it was against a
+    /// CRLF buffer, but is another base: read as CRLF's own, its staged
+    /// hunks against HEAD made again, and a patch keeps the `\r` — the
+    /// old reading made every patch against the LF the index no longer
+    /// has. And back.
+    #[test]
+    fn an_index_gone_from_lf_to_crlf_is_another_base() {
+        let mut ed = Editor::new();
+        let id = ed.add_buffer(Buffer::new("a", "one\r\ntwo!\r\n"));
+        ed.add_view(id);
+        ed.set_base(id, Arc::from("one\ntwo\n"), "index".into());
+        ed.set_base_head(id, Some(Arc::from("one\ntwo\n")));
+        assert!(ed.base(id).unwrap().crlf);
+        assert!(ed.base(id).unwrap().staged.is_empty());
+        diffed(&mut ed, id);
+        let lf_text = ed.base(id).unwrap().text.clone();
+        ed.set_base(id, Arc::from("one\r\ntwo\r\n"), "index".into());
+        let b = ed.base(id).unwrap();
+        assert_eq!(b.text, lf_text, "the same text read");
+        assert!(!b.crlf, "but none of it converted");
+        assert_eq!(b.own_text(), "one\r\ntwo\r\n");
+        assert_eq!(
+            b.staged.len(),
+            1,
+            "every line staged: CRLF against HEAD's LF"
+        );
+        diffed(&mut ed, id);
+        let hs = ed.hunks(id).to_vec();
+        assert_eq!(
+            ed.stage_patch(id, &hs).unwrap(),
+            "@@ -1,2 +1,2 @@\n one\r\n-two\r\n+two!\r\n"
+        );
+        ed.set_base(id, Arc::from("one\ntwo\n"), "index".into());
+        let b = ed.base(id).unwrap();
+        assert!(b.crlf);
+        assert!(b.staged.is_empty());
+        diffed(&mut ed, id);
+        let hs = ed.hunks(id).to_vec();
+        assert_eq!(
+            ed.stage_patch(id, &hs).unwrap(),
+            "@@ -1,2 +1,2 @@\n one\n-two\n+two!\n"
+        );
+        // The same blob given again keeps its hunks.
+        ed.set_base(id, Arc::from("one\ntwo\n"), "index".into());
+        assert_eq!(ed.hunks(id).len(), 1);
+    }
+
+    /// A base given while its file still loads — a review's file not
+    /// open, whose buffer the review made — is read with the file's
+    /// line ends once there are lines, before its first diff.
+    #[test]
+    fn a_base_given_while_the_file_loads_takes_its_line_ends_after() {
+        let mut ed = Editor::new();
+        let id = ed.add_buffer(Buffer::new("a", ""));
+        ed.buffers[id].loading = Some((0, 0));
+        ed.set_base(id, Arc::from("one\ntwo\n"), "index".into());
+        assert!(!ed.base(id).unwrap().crlf, "no lines to read yet");
+        ed.settle_base(id);
+        assert!(!ed.base(id).unwrap().crlf, "still loading");
+        ed.buffers[id] = Buffer::new("a", "one\r\ntwo\r\n");
+        ed.settle_base(id);
+        let b = ed.base(id).unwrap();
+        assert!(b.crlf);
+        assert_eq!(&*b.text, "one\r\ntwo\r\n");
+        diffed(&mut ed, id);
+        assert!(ed.hunks(id).is_empty());
+    }
+
+    /// The staged lines carried to the buffer in one walk are where the
+    /// line-by-line walk put them, and a selection's ranges take the
+    /// staged hunks they touch at once.
+    #[test]
+    fn staged_hunks_are_taken_for_several_ranges_at_once() {
+        let mut ed = Editor::new();
+        // HEAD: a b c d e f g. Index: a B c d E f G. Buffer: x a B c E f
+        // G y (x put in, d taken out, y added: unstaged).
+        let id = ed.add_buffer(Buffer::new("a", "x\na\nB\nc\nE\nf\nG\ny\n"));
+        ed.add_view(id);
+        ed.set_base(id, Arc::from("a\nB\nc\nd\nE\nf\nG\n"), "index".into());
+        ed.set_base_head(id, Some(Arc::from("a\nb\nc\nd\ne\nf\ng\n")));
+        diffed(&mut ed, id);
+        assert_eq!(ed.base(id).unwrap().staged.len(), 3);
+        let staged = ed.staged_signs_in(id, 0..20);
+        assert_eq!(staged.get(&2), Some(&Sign::Modified), "B");
+        assert_eq!(staged.get(&4), Some(&Sign::Modified), "E, d gone above");
+        assert_eq!(staged.get(&6), Some(&Sign::Modified), "G");
+        assert_eq!(staged.len(), 3);
+        let both = ed.staged_in_any(id, &[2..3, 6..8]);
+        assert_eq!(both.len(), 2);
+        assert_eq!(both[0], ed.staged_in(id, 2..3)[0]);
+        assert_eq!(both[1], ed.staged_in(id, 6..7)[0]);
+        assert!(ed.staged_in_any(id, &[0..2, 3..4, 7..8]).is_empty());
     }
 
     /// Under a head, the base's own changes are staged: shown on the
