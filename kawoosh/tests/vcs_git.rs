@@ -587,6 +587,236 @@ fn a_crlf_checkout_and_a_file_without_a_last_newline_stage_as_git_add_would() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A repository with `b.txt` at the root and `sub/b.txt` under it, both
+/// `one two three` committed, `sub/b.txt` changed to `one two! three`.
+fn same_names_repo(tag: &str) -> PathBuf {
+    let dir = staging_repo(tag, false);
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("b.txt"), "one\ntwo\nthree\n").unwrap();
+    std::fs::write(dir.join("sub").join("b.txt"), "one\ntwo\nthree\n").unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "the same names"]);
+    std::fs::write(dir.join("sub").join("b.txt"), "one\ntwo!\nthree\n").unwrap();
+    dir
+}
+
+/// A hunk of `sub/b.txt` is staged into `sub/b.txt`, never into the
+/// root's `b.txt` of the same name: the name from the root is git's,
+/// asked in the file's directory, not cut from the buffer's path
+/// against the root — which failed whenever the two were spelled
+/// differently (Windows' case, a link, macOS's `/private/tmp`) and fell
+/// back to the bare name. An external `git add` then reads the base
+/// again (`vcs.moved` matching the buffer under the root).
+#[test]
+fn a_hunk_is_staged_into_its_own_file_not_one_of_the_same_name() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = same_names_repo("stage-sub");
+    let file = dir.join("sub").join("b.txt");
+    let (mut d, mut app) = launch(&file, &dir);
+    let id = focused_buffer(&app).unwrap();
+    until(&mut d, &mut app, "the base from the index", |app| {
+        app.ed.base(id).is_some_and(|b| b.version.is_some())
+    });
+    d.press(&mut app, "gg]h<leader>ha");
+    staged_after(&mut d, &mut app, id, "1 hunk staged", 1);
+    assert_eq!(index_text(&dir, "sub/b.txt"), "one\ntwo!\nthree\n");
+    assert_eq!(
+        index_text(&dir, "b.txt"),
+        "one\ntwo\nthree\n",
+        "the root's untouched"
+    );
+
+    // Taken back out by hand, and the gutter follows.
+    git(&dir, &["reset", "-q", "--", "sub/b.txt"]);
+    until(
+        &mut d,
+        &mut app,
+        "the base read again after git reset",
+        |app| {
+            app.ed
+                .base(id)
+                .is_some_and(|b| b.version.is_some() && b.staged.is_empty() && !b.hunks.is_empty())
+        },
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The same on Windows with the file opened by a path in capitals —
+/// `C:\USERS\…\SUB\b.txt` — where git spells the root as the disk does.
+#[cfg(windows)]
+#[test]
+fn a_hunk_is_staged_from_a_path_spelled_in_other_case() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = same_names_repo("stage-case");
+    let upper = PathBuf::from(dir.to_str().unwrap().to_uppercase());
+    let file = upper.join("SUB").join("b.txt");
+    assert!(file.is_file());
+    let (mut d, mut app) = launch(&file, &upper);
+    let id = focused_buffer(&app).unwrap();
+    assert_eq!(
+        app.ed.buffers[id].path.as_deref(),
+        Some(file.as_path()),
+        "the buffer's path as typed, not as the disk spells it"
+    );
+    until(&mut d, &mut app, "the base from the index", |app| {
+        app.ed.base(id).is_some_and(|b| b.version.is_some())
+    });
+    d.press(&mut app, "gg]h<leader>ha");
+    staged_after(&mut d, &mut app, id, "1 hunk staged", 1);
+    assert_eq!(index_text(&dir, "sub/b.txt"), "one\ntwo!\nthree\n");
+    assert_eq!(
+        index_text(&dir, "b.txt"),
+        "one\ntwo\nthree\n",
+        "the root's untouched"
+    );
+    // An external `git reset` is heard though the root git names is
+    // spelled otherwise than the buffer's path.
+    git(&dir, &["reset", "-q", "--", "sub/b.txt"]);
+    until(
+        &mut d,
+        &mut app,
+        "the base read again after git reset",
+        |app| {
+            app.ed
+                .base(id)
+                .is_some_and(|b| b.version.is_some() && b.staged.is_empty())
+        },
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A stage git refuses says why — git's `fatal:` line, from stderr —
+/// not `stage: ` and nothing: here the index is locked.
+#[test]
+fn a_stage_git_refuses_says_why() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = staging_repo("stage-refused", false);
+    std::fs::write(dir.join("a.txt"), "one\ntwo!\nthree\ngone\nfour\n").unwrap();
+    let file = dir.join("a.txt");
+    let (mut d, mut app) = launch(&file, &dir);
+    let id = focused_buffer(&app).unwrap();
+    until(&mut d, &mut app, "the base from the index", |app| {
+        app.ed.base(id).is_some_and(|b| b.version.is_some())
+    });
+    let lock = dir.join(".git").join("index.lock");
+    std::fs::write(&lock, "").unwrap();
+    d.press(&mut app, "gg]h<leader>ha");
+    until(&mut d, &mut app, "the refusal", |app| {
+        app.ed.message.starts_with("stage: ")
+    });
+    let said = app.ed.message.clone();
+    assert!(
+        said.starts_with("stage: fatal: ") && said.contains("index.lock"),
+        "{said}"
+    );
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// In a review, a file no buffer held gets its base in the buffer the
+/// review made for it: `]h` reaches its hunks and `hunk stage` stages
+/// them, as for an open file (docs/design/vcs.md Decision 12).
+#[test]
+fn a_file_not_open_is_staged_from_the_review() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = same_names_repo("stage-review");
+    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\ngone\nfour\nfive\n").unwrap();
+    let file = dir.join("a.txt");
+    let (mut d, mut app) = launch(&file, &dir);
+    let id = focused_buffer(&app).unwrap();
+    until(&mut d, &mut app, "the base from the index", |app| {
+        app.ed.base(id).is_some_and(|b| b.version.is_some())
+    });
+    d.press(&mut app, "<leader>hd");
+    until(&mut d, &mut app, "the review", |app| {
+        buffer_named(app, "*vcs diff*").is_some_and(|r| focused_buffer(app) == Some(r))
+    });
+    let review = buffer_named(&app, "*vcs diff*").unwrap();
+    let sub = dir.join("sub").join("b.txt");
+    let src = app
+        .ed
+        .buffers
+        .iter()
+        .find(|(_, b)| b.path.as_deref() == Some(sub.as_path()))
+        .map(|(id, _)| id)
+        .expect("the review's buffer of sub/b.txt");
+    until(&mut d, &mut app, "sub/b.txt's base", |app| {
+        app.ed
+            .base(src)
+            .is_some_and(|b| b.version.is_some() && b.label == "index" && b.hunks.len() == 1)
+    });
+    // a.txt's hunk, then sub/b.txt's `two!`.
+    d.press(&mut app, "gg]h]h");
+    let v = app.focused_view().unwrap();
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(
+        app.ed.multi_at(review, head).map(|(b, _)| b),
+        Some(src),
+        "on sub/b.txt's hunk: {}",
+        app.ed.buffers[review].text()
+    );
+    d.press(&mut app, "<leader>ha");
+    staged_after(&mut d, &mut app, src, "1 hunk staged", 1);
+    assert_eq!(index_text(&dir, "sub/b.txt"), "one\ntwo!\nthree\n");
+    assert_eq!(index_text(&dir, "a.txt"), "one\ntwo\nthree\ngone\nfour\n");
+    d.press(&mut app, "q");
+    d.frame(&mut app);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A blob the index holds goes from LF to CRLF under the buffer (`git
+/// -c core.autocrlf=false add` in an autocrlf checkout): read again, it
+/// is another base, and a hunk stages against the CRLF there is.
+#[test]
+fn an_index_gone_to_crlf_under_the_buffer_still_stages() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = staging_repo("stage-flip", true);
+    std::fs::write(dir.join("a.txt"), "one\r\ntwo\r\nthree\r\ngone\r\nfour\r\n").unwrap();
+    let file = dir.join("a.txt");
+    let (mut d, mut app) = launch(&file, &dir);
+    let id = focused_buffer(&app).unwrap();
+    until(&mut d, &mut app, "the base from the index", |app| {
+        app.ed.base(id).is_some_and(|b| b.version.is_some())
+    });
+    assert!(app.ed.base(id).unwrap().crlf);
+    git(&dir, &["-c", "core.autocrlf=false", "add", "a.txt"]);
+    assert_eq!(
+        index_text(&dir, "a.txt"),
+        "one\r\ntwo\r\nthree\r\ngone\r\nfour\r\n"
+    );
+    ex(&mut d, &mut app, "vcs refresh");
+    until(&mut d, &mut app, "the CRLF index read", |app| {
+        app.ed
+            .base(id)
+            .is_some_and(|b| !b.crlf && b.version.is_some())
+    });
+    d.press(&mut app, "ggjA!<esc>");
+    d.press(&mut app, "<leader>ha");
+    until(&mut d, &mut app, "staged", |app| {
+        app.ed.message == "1 hunk staged"
+    });
+    assert_eq!(
+        index_text(&dir, "a.txt"),
+        "one\r\ntwo!\r\nthree\r\ngone\r\nfour\r\n"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The buffer of file `path`, once it is open and loaded.
 fn until_buffer(d: &mut Drive, app: &mut Kawoosh, path: &Path) -> kawoosh_doc::BufferId {
     until(d, app, "the buffer", |app| {

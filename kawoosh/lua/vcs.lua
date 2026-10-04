@@ -79,19 +79,68 @@ function vcs.ago(time)
   return math.floor(d / (86400 * 365)) .. "y"
 end
 
--- The program and its arguments run in `cwd`, `done(text, code)` with
--- stdout whole.
+-- The program and its arguments run in `cwd`, `done(text, code, err)`
+-- with stdout whole and stderr's lines — where a program says why it
+-- failed.
 local function run(argv, cwd, done, stdin)
-  kawoosh.spawn(argv, { cwd = cwd, stdin = stdin, on_done = done })
+  local err = {}
+  kawoosh.spawn(argv, {
+    cwd = cwd,
+    stdin = stdin,
+    on_stderr = function(lines)
+      for _, l in ipairs(lines) do err[#err + 1] = l end
+    end,
+    on_done = function(text, code) done(text, code, table.concat(err, "\n")) end,
+  })
+end
+
+-- Why a program failed, for the message line: its `error:` and
+-- `fatal:` lines when it wrote any — git's, not its advice under them —
+-- else what it wrote on stderr, else on stdout, else `fallback`.
+local function failure(err, out, fallback)
+  local said, all = {}, {}
+  for line in ((err or "") .. "\n"):gmatch("([^\n]*)\n") do
+    local l = trim(line)
+    if l ~= "" then
+      all[#all + 1] = l
+      if l:match("^error:") or l:match("^fatal:") then said[#said + 1] = l end
+    end
+  end
+  if #said > 0 then return table.concat(said, "; ") end
+  if #all > 0 then return table.concat(all, "; ") end
+  out = trim(out or "")
+  return out ~= "" and out or fallback
+end
+
+-- Paths in `\`: the platform's own separator, as `fs.join` writes it.
+local windows = fs.join("a", "b") == "a\\b"
+
+-- Whether `path` is under directory `root` — on Windows as its file
+-- system names them, `/` or `\`, in any case: a root git spelled from
+-- the disk holds a buffer's path typed in capitals.
+local function is_under(path, root)
+  if windows then
+    path, root = path:gsub("/", "\\"):lower(), root:gsub("/", "\\"):lower()
+  end
+  local sep = windows and "\\" or "/"
+  if root:sub(-1) ~= sep then root = root .. sep end
+  return path:sub(1, #root) == root
 end
 
 local function has_buffer(h)
   return h ~= nil and pcall(kawoosh.buf.name, h)
 end
 
+-- Every buffer with a file, a review's too: the files its excerpts are
+-- of (`borrowed`, not listed) have a base for their signs, `]h` and
+-- `hunk stage` as an open file does.
+local function file_buffers()
+  return kawoosh.buf.list { borrowed = true }
+end
+
 -- The buffer holding `path`, if one does.
 local function buffer_of(path)
-  for _, h in ipairs(kawoosh.buf.list()) do
+  for _, h in ipairs(file_buffers()) do
     if kawoosh.buf.path(h) == path then return h end
   end
 end
@@ -193,9 +242,9 @@ end
 -- a base is given its base again.
 function vcs.moved(root)
   heads[root] = nil
-  for _, h in ipairs(kawoosh.buf.list()) do
+  for _, h in ipairs(file_buffers()) do
     local p = kawoosh.buf.path(h)
-    if p and p:sub(1, #root + 1) == root .. "/" then
+    if p and is_under(p, root) then
       fetched[h] = nil
       if kawoosh.buf.base_label(h) or h == kawoosh.buf.current() then vcs.refresh(h) end
       if blamed[h] then vcs.blame_on(h) end
@@ -234,11 +283,11 @@ end
 -- it as the base's own (Decision 12): what differs between the two is
 -- staged. A file HEAD has not got reads as empty there — all of it
 -- staged.
-function vcs.refresh(h)
-  if not enabled() or not has_buffer(h) then return end
-  local path = kawoosh.buf.path(h)
-  if not path then return end
-  fetched[h] = true
+-- `holder()` is the buffer the base goes to once the backend answers:
+-- the one asked for, or — for a review's file not open — the one the
+-- review made for it since.
+local function fetch_base(path, holder)
+  if not enabled() then return end
   vcs.root(fs.parent(path), function(r)
     if not r or not r.backend.base then return end
     local rev = kawoosh.opt("vcs.base") == "head" and "HEAD" or nil
@@ -247,7 +296,9 @@ function vcs.refresh(h)
     local function give()
       left = left - 1
       if left > 0 then return end
+      local h = holder()
       if not has_buffer(h) or kawoosh.buf.path(h) ~= path then return end
+      fetched[h] = true
       if text then
         kawoosh.buf.base(text, rev or "index", h, staging and { head = head or "" } or nil)
       else
@@ -267,10 +318,18 @@ function vcs.refresh(h)
   end)
 end
 
+function vcs.refresh(h)
+  if not enabled() or not has_buffer(h) then return end
+  local path = kawoosh.buf.path(h)
+  if not path then return end
+  fetched[h] = true
+  fetch_base(path, function() return h end)
+end
+
 -- A base a review fetched, put on the file's buffer once there is one.
 local function apply_pending()
   if next(pending_bases) == nil then return end
-  for _, h in ipairs(kawoosh.buf.list()) do
+  for _, h in ipairs(file_buffers()) do
     local p = kawoosh.buf.path(h)
     local b = p and pending_bases[p]
     if b then
@@ -313,7 +372,9 @@ kawoosh.on_stage(function(path, patch, o)
     if not r then return kawoosh.echo("no version control here") end
     if not can(r, "stage") then return end
     r.backend.stage(r.root, path, patch, function(ok, why)
-      if not ok then return kawoosh.echo(verb .. ": " .. tostring(why or "failed")) end
+      if not ok then
+        return kawoosh.echo(verb .. ": " .. ((why and why ~= "") and tostring(why) or "failed"))
+      end
       kawoosh.echo(o.count .. " hunk" .. (o.count == 1 and "" or "s") .. " " .. verb .. "d")
       vcs.refresh(o.buffer)
     end)
@@ -403,7 +464,9 @@ end
 
 local REVIEWS = {}
 
-local function open_review(name, files, what)
+-- `unopened`: the review's files no buffer held, given their bases
+-- once the review has made buffers for them.
+local function open_review(name, files, what, unopened)
   table.sort(files, function(a, b) return a.rel < b.rel end)
   local kept = {}
   for _, f in ipairs(files) do
@@ -425,6 +488,10 @@ local function open_review(name, files, what)
     kawoosh.map("n", "q", "close", { buffer = name })
   end
   apply_pending()
+  -- Asked after the review is made: the answer lands in its buffer.
+  for _, path in ipairs(unopened or {}) do
+    fetch_base(path, function() return buffer_of(path) end)
+  end
   kawoosh.echo(#kept .. " file" .. (#kept == 1 and "" or "s") .. " against " .. what .. ": +" .. add .. " −" .. del
     .. " — <CR> opens one, ]h walks the hunks, q closes")
 end
@@ -434,7 +501,7 @@ end
 -- base fetched, the text the buffer's when one is modified, else the
 -- file's, and the review opened.
 local function worktree_review(r, files, rev, what, name)
-  local out, left = {}, #files
+  local out, left, unopened = {}, #files, {}
   if left == 0 then return kawoosh.echo("nothing changed against " .. what) end
   local label = rev or (kawoosh.opt("vcs.base") == "head" and "HEAD" or "index")
   local function one(f)
@@ -453,8 +520,14 @@ local function worktree_review(r, files, rev, what, name)
       out[#out + 1] = { rel = rel, path = f.path, hunks = kawoosh.diff(base, text), lines = line_count(text) }
       if not rev then
         -- The buffer's own base, which `vcs.refresh` gives with what
-        -- is staged under it; a file not open gets it when it is.
-        if h then vcs.refresh(h) end
+        -- is staged under it; a file not open gets it in the buffer
+        -- the review makes for it, so `]h` and `hunk stage` work there
+        -- (Decision 12).
+        if h then
+          vcs.refresh(h)
+        elseif fs.is_file(f.path) then
+          unopened[#unopened + 1] = f.path
+        end
       elseif h then
         kawoosh.buf.base(base, label, h)
         fetched[h] = true
@@ -462,7 +535,7 @@ local function worktree_review(r, files, rev, what, name)
         pending_bases[f.path] = { text = base, label = label }
       end
       left = left - 1
-      if left == 0 then open_review(name, out, what) end
+      if left == 0 then open_review(name, out, what, unopened) end
     end
     if f.state == "untracked" then return finish("") end
     r.backend.base(r.root, f.path, rev, function(text) finish(text) end)
@@ -976,16 +1049,27 @@ function git.status(root, done, opts)
 end
 
 -- The patch's sections under a header naming the file from the root,
--- applied to the index alone (`--cached`, no file touched).
--- `--whitespace=nowarn`: a user's `apply.whitespace = error` would
--- refuse a line's trailing blank the working tree has already.
+-- applied to the index alone (`--cached`, no file touched), in the root
+-- — from a directory under it `git apply` passes over a path outside
+-- that directory and says nothing. The name from the root is git's:
+-- the file's directory asked for its prefix (`sub/`, as the disk
+-- spells it, whatever the buffer's path says — `C:\REPO\SUB` typed,
+-- a link, macOS's `/tmp` for `/private/tmp`), the file's name after it.
+-- Never a guess: a name cut from the buffer's path against a root
+-- spelled otherwise was the file's bare name, which is another file's
+-- at the root. `--whitespace=nowarn`: a user's `apply.whitespace =
+-- error` would refuse a line's trailing blank the working tree has
+-- already.
 function git.stage(root, path, patch, done)
-  local rel = ((fs.relative(path, root) or fs.basename(path)):gsub("\\", "/"))
-  local header = "diff --git a/" .. rel .. " b/" .. rel .. "\n--- a/" .. rel .. "\n+++ b/" .. rel .. "\n"
-  run({ "git", "apply", "--cached", "--whitespace=nowarn", "-" }, root, function(text, code)
-    if code ~= 0 then return done(false, trim(text)) end
-    done(true)
-  end, header .. patch)
+  run({ "git", "rev-parse", "--show-prefix" }, fs.parent(path), function(prefix, c1, e1)
+    if c1 ~= 0 then return done(false, failure(e1, prefix, "not in the repository")) end
+    local rel = prefix:gsub("[\r\n]+$", "") .. fs.basename(path)
+    local header = "diff --git a/" .. rel .. " b/" .. rel .. "\n--- a/" .. rel .. "\n+++ b/" .. rel .. "\n"
+    run({ "git", "apply", "--cached", "--whitespace=nowarn", "-" }, root, function(text, code, err)
+      if code ~= 0 then return done(false, failure(err, text, "git apply failed")) end
+      done(true)
+    end, header .. patch)
+  end)
 end
 
 function git.changed(root, from, to, done)
@@ -1021,11 +1105,9 @@ function git.refs(root, done)
 end
 
 function git.blame(root, path, text, done)
-  kawoosh.spawn({ "git", "blame", "--porcelain", "--contents", "-", "--", fs.basename(path) }, {
-    cwd = fs.parent(path),
-    stdin = text,
-    on_done = function(out, code)
-      if code ~= 0 then return done(nil, "git blame failed") end
+  run({ "git", "blame", "--porcelain", "--contents", "-", "--", fs.basename(path) }, fs.parent(path),
+    function(out, code, err)
+      if code ~= 0 then return done(nil, failure(err, nil, "git blame failed")) end
       local authors, times, summaries = {}, {}, {}
       local rows, sha, final = {}, nil, nil
       for _, l in ipairs(git_lines(out)) do
@@ -1050,18 +1132,27 @@ function git.blame(root, path, text, done)
         r.author, r.time, r.summary = authors[r.rev], times[r.rev], summaries[r.rev]
       end
       done(rows)
-    end,
-  })
+    end, text)
 end
 
+-- A file's log asked from its directory, by its name there: an absolute
+-- path spelled otherwise than the root (`C:\REPO\SUB\b.txt`) matches
+-- nothing from the root, and git says nothing of it.
 function git.log(root, path, done)
   local argv = { "git", "log", "--format=%H\31%h\31%an\31%at\31%s", "-n", "300" }
+  local cwd = root
   if path then
     argv[#argv + 1] = "--"
-    argv[#argv + 1] = path
+    if fs.is_dir(path) then
+      cwd = path
+      argv[#argv + 1] = "."
+    else
+      cwd = fs.parent(path)
+      argv[#argv + 1] = ":(literal)" .. fs.basename(path)
+    end
   end
-  run(argv, root, function(text, code)
-    if code ~= 0 then return done(nil, "git log failed") end
+  run(argv, cwd, function(text, code, err)
+    if code ~= 0 then return done(nil, failure(err, nil, "git log failed")) end
     local rows = {}
     for _, l in ipairs(git_lines(text)) do
       local rev, short, author, time, summary = l:match("^([^\31]*)\31([^\31]*)\31([^\31]*)\31([^\31]*)\31(.*)$")
@@ -1072,8 +1163,8 @@ function git.log(root, path, done)
 end
 
 function git.show(root, rev, done)
-  run({ "git", "show", "--stat", "--patch", "--format=medium", rev, "--" }, root, function(text, code)
-    if code ~= 0 then return done(nil, trim(text)) end
+  run({ "git", "show", "--stat", "--patch", "--format=medium", rev, "--" }, root, function(text, code, err)
+    if code ~= 0 then return done(nil, failure(err, text, "git show failed")) end
     done(text)
   end)
 end
@@ -1103,8 +1194,8 @@ function git.worktree_add(root, path, branch, done)
       if r == branch then exists = true end
     end
     local argv = exists and { "git", "worktree", "add", path, branch } or { "git", "worktree", "add", "-b", branch, path }
-    run(argv, root, function(text, code)
-      if code ~= 0 then return done(false, trim(text)) end
+    run(argv, root, function(text, code, err)
+      if code ~= 0 then return done(false, failure(err, text, "git worktree add failed")) end
       -- The worktrees' directory kept out of `git status`: a line in
       -- the repository's own exclude file, not the project's
       -- `.gitignore`.
@@ -1217,8 +1308,8 @@ function fossil.changed(root, from, to, done)
 end
 
 function fossil.blame(root, path, _, done)
-  run({ "fossil", "blame", fs.basename(path) }, fs.parent(path), function(text, code)
-    if code ~= 0 then return done(nil, "fossil blame failed") end
+  run({ "fossil", "blame", fs.basename(path) }, fs.parent(path), function(text, code, err)
+    if code ~= 0 then return done(nil, failure(err, nil, "fossil blame failed")) end
     local rows = {}
     local n = 0
     for _, l in ipairs(git_lines(text)) do
@@ -1244,8 +1335,8 @@ function fossil.log(root, path, done)
     argv[#argv + 1] = "-p"
     argv[#argv + 1] = fs.relative(path, root) or path
   end
-  run(argv, root, function(text, code)
-    if code ~= 0 then return done(nil, "fossil timeline failed") end
+  run(argv, root, function(text, code, err)
+    if code ~= 0 then return done(nil, failure(err, nil, "fossil timeline failed")) end
     local rows = {}
     for _, l in ipairs(git_lines(text)) do
       local rev, date, author, summary = l:match("^([^\31]*)\31([^\31]*)\31([^\31]*)\31(.*)$")
@@ -1261,8 +1352,8 @@ function fossil.log(root, path, done)
 end
 
 function fossil.show(root, rev, done)
-  run({ "fossil", "diff", "--checkin", rev }, root, function(text, code)
-    if code ~= 0 then return done(nil, trim(text)) end
+  run({ "fossil", "diff", "--checkin", rev }, root, function(text, code, err)
+    if code ~= 0 then return done(nil, failure(err, text, "fossil diff failed")) end
     done(text)
   end)
 end

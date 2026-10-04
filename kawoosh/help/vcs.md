@@ -42,7 +42,10 @@ of the index; `vcs.signs = false` leaves the gutter plain and keeps
 A staged line keeps its bar, faint: it differs from HEAD but no
 longer from the index. Edit it again and the bar is full again — the
 change since is not staged. The keys work in a review too, on the file
-the caret's excerpt is from. What is staged is the buffer's text, saved
+the caret's excerpt is from — open or not: a file the review opened
+for its excerpts is read against the index as an open one is. When git
+refuses a stage (the index locked, or moved under the buffer since it
+was read), the message line says what git said. What is staged is the buffer's text, saved
 or not, with a CRLF file's lines staged as LF where git keeps them so
 (`core.autocrlf`), as `git add` would. A whole hunk is staged; for
 part of one, use `git add -p` in `:tool git`.

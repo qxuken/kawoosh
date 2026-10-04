@@ -145,12 +145,13 @@ impl Kawoosh {
         let now = Instant::now();
         let ids: Vec<BufferId> = self.ed.bases.keys().copied().collect();
         for id in ids {
-            let Some(b) = self.ed.buffers.get(id) else {
-                continue;
-            };
-            if b.loading.is_some() {
+            if self.ed.buffers.get(id).is_none_or(|b| b.loading.is_some()) {
                 continue;
             }
+            // A base given while the file loaded is read with its line
+            // ends now there are lines to read them from.
+            self.ed.settle_base(id);
+            let b = &self.ed.buffers[id];
             let version = b.version();
             let base = &self.ed.bases[&id];
             if base.version == Some(version) {
@@ -328,39 +329,37 @@ impl Kawoosh {
                 self.ed.hunks(src).to_vec()
             };
         }
-        let mut lines: Vec<usize> = Vec::new();
+        // The lines as ranges, one a selection: the hunks are asked
+        // once for them all, not line by line — the staged ones carried
+        // to the buffer each time made `ggVG` over 30 000 lines seconds.
+        let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
         if self.ed.mode(v) == Mode::Visual && !self.ed.is_multi(self.ed.views[v].buffer) {
             let b = &self.ed.buffers[src];
             for r in self.ed.selection_ranges(v) {
                 let a = b.line_of(r.start.min(b.len()));
                 let z = b.line_of(r.end.saturating_sub(1).max(r.start).min(b.len()));
-                lines.extend(a..=z);
+                ranges.push(a..z + 1);
             }
-            lines.sort_unstable();
-            lines.dedup();
         } else {
-            lines.push(line);
+            ranges.push(line..line + 1);
         }
-        let mut out: Vec<LineHunk> = Vec::new();
-        for ln in lines {
-            let here = if staged {
-                self.ed.staged_in(src, ln..ln + 1)
-            } else {
-                self.ed.hunk_at(src, ln).cloned().into_iter().collect()
-            };
-            for h in here {
-                if !out.contains(&h) {
-                    out.push(h);
-                }
-            }
+        if staged {
+            self.ed.staged_in_any(src, &ranges)
+        } else {
+            self.ed
+                .hunks(src)
+                .iter()
+                .filter(|h| ranges.iter().any(|r| h.touches_any(r)))
+                .cloned()
+                .collect()
         }
-        out
     }
 
     /// Buffer `id`'s hunks made the text's as it is now, when they are
     /// of an older version: a patch is made of the lines there are,
     /// not the ones the gutter showed 100 ms ago.
     fn diff_now(&mut self, id: BufferId) {
+        self.ed.settle_base(id);
         let (Some(base), Some(b)) = (self.ed.base(id), self.ed.buffers.get(id)) else {
             return;
         };
