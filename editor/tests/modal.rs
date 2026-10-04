@@ -684,13 +684,18 @@ fn select_next_and_all_matches() {
     assert_eq!(t.sel(), Selection::new(4, 4));
     t.keys("cx<Esc>");
     assert_eq!(t.text(), "x b x b x");
-    // `gh` / `gl`, `ZZ`, `<C-s>` in every mode, and `<D-a>` are bound.
+    // `gh` / `gl`, `ZZ`, `<C-s>` in every mode, and `<D-a>` `<C-S-a>` are bound.
     let mut t = T::new("  ab cd");
     t.keys("$gh");
     assert_eq!(t.head(), 2);
     t.keys("gl");
     assert_eq!(t.head(), 6);
     t.keys("<D-a>");
+    assert_eq!(t.sels(), [(0, 7)]);
+    assert_eq!(t.ed.mode(t.v), Mode::Visual);
+    // And on ctrl-shift, for a keyboard without ⌘ (asked 2026-10-04:
+    // "add a PC key for select all"); `<C-a>` stays the increment.
+    t.keys("<Esc>0<C-S-a>");
     assert_eq!(t.sels(), [(0, 7)]);
     assert_eq!(t.ed.mode(t.v), Mode::Visual);
     t.keys("<C-s>");
