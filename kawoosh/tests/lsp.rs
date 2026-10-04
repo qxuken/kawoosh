@@ -210,7 +210,7 @@ fn diagnostics_definition_hover_and_completion() {
 /// A diagnostics answer to a keystroke waits until the typing pauses:
 /// the server's cascade for a half-typed line is held while the text
 /// keeps moving in insert mode — the rows keep the answer before,
-/// shifted — and lands once the buffer has been still for `DIAG_QUIET`,
+/// shifted — and lands once the buffer has been still for the quiet period,
 /// or the moment insert mode ends.
 #[test]
 fn diagnostics_wait_for_the_typing_to_pause() {
@@ -222,6 +222,12 @@ fn diagnostics_wait_for_the_typing_to_pause() {
 
     let mut app = Kawoosh::from_file(&file);
     app.add_lsp_server(fake_server());
+    // A quiet period of seconds, and the waits below two thirds of it:
+    // at `DIAG_QUIET`'s 600 ms a loaded machine's stall between two
+    // steps was a pause of the typing, and the held answer landed
+    // before the test looked (seen 2026-10-04, six runs at once).
+    let quiet = std::time::Duration::from_secs(3);
+    app.lsp.quiet = quiet;
     let mut d = Drive::new(900.0, 500.0);
     let v = app.focused_view().unwrap();
     let buf_id = app.ed.views[v].buffer;
@@ -248,11 +254,12 @@ fn diagnostics_wait_for_the_typing_to_pause() {
     let runs = app.ed.buffers[buf_id].runs(DIAG_LAYER, 0..100);
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].range.start, 3, "shifted past the typed line");
-    // More typing within the quiet period: still held, the newest kept.
-    std::thread::sleep(kawoosh::lsp::DIAG_QUIET / 2);
+    // More typing within the quiet period: still held, the newest kept
+    // — the two waits longer than the period together, each within it.
+    std::thread::sleep(quiet * 2 / 3);
     d.commit(&mut app, "x");
     d.frame(&mut app);
-    std::thread::sleep(kawoosh::lsp::DIAG_QUIET / 2);
+    std::thread::sleep(quiet * 2 / 3);
     d.frame(&mut app);
     assert!(
         app.lsp.held.contains_key(&buf_id),
@@ -261,7 +268,6 @@ fn diagnostics_wait_for_the_typing_to_pause() {
     assert_eq!(msgs(&app, buf_id), ["boom"]);
     // Still for the quiet period: the frame after applies it, insert
     // mode or not.
-    std::thread::sleep(kawoosh::lsp::DIAG_QUIET);
     assert!(
         until(&mut d, &mut app, |a| a.lsp.held.is_empty()),
         "the answer landed"

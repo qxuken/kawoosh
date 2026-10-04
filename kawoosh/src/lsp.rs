@@ -103,6 +103,9 @@ pub struct LspState {
     /// kept until the text has been still for [`DIAG_QUIET`] or insert
     /// mode ends; the alarm brings the frame that applies it.
     pub held: HashMap<BufferId, (Update, Vec<Diagnostic>)>,
+    /// The quiet period: [`DIAG_QUIET`], but for a test, which waits by
+    /// a longer one so that a loaded machine's stall is not a pause.
+    pub quiet: Duration,
     /// A plugin's newest word on a buffer being typed in, by buffer and
     /// publisher, held as a server's is (lists.md Decision 7): worked
     /// out against the text it was said of, carried by the journal to
@@ -207,6 +210,7 @@ impl LspState {
             sent: HashMap::new(),
             moved: HashMap::new(),
             held: HashMap::new(),
+            quiet: DIAG_QUIET,
             plugin_held: HashMap::new(),
             typed: None,
             alarm: Alarm::spawn(wake.named("lsp alarm")),
@@ -254,7 +258,7 @@ impl LspState {
             && self
                 .moved
                 .get(&id)
-                .is_some_and(|t| t.elapsed() < DIAG_QUIET)
+                .is_some_and(|t| t.elapsed() < self.quiet)
     }
 }
 
@@ -362,7 +366,7 @@ impl Kawoosh {
                 } => {
                     if self.lsp.typing(buffer, self.pane_mode()) {
                         self.lsp.held.insert(buffer, (update, diagnostics));
-                        self.lsp.alarm.set(self.lsp.moved[&buffer] + DIAG_QUIET);
+                        self.lsp.alarm.set(self.lsp.moved[&buffer] + self.lsp.quiet);
                     } else {
                         self.apply_diagnostics(buffer, update, diagnostics);
                     }
@@ -646,7 +650,7 @@ impl Kawoosh {
         if let Some((id, _, Some(at))) = self.lsp.typed
             && self.lsp.plugin_held.keys().any(|(b, _)| *b == id)
         {
-            self.lsp.alarm.set(at + DIAG_QUIET);
+            self.lsp.alarm.set(at + self.lsp.quiet);
         }
         // A file's kept diagnostics to the buffer opened on it.
         self.ed.adopt_file_diagnostics();
@@ -685,7 +689,7 @@ impl Kawoosh {
                 .copied()
                 .unwrap_or_else(Instant::now),
         };
-        self.lsp.alarm.set(since + DIAG_QUIET);
+        self.lsp.alarm.set(since + self.lsp.quiet);
         true
     }
 
@@ -696,7 +700,7 @@ impl Kawoosh {
         mode == Mode::Insert
             && (self.lsp.typing(id, mode)
                 || self.lsp.typed.is_some_and(|(b, _, at)| {
-                    b == id && at.is_some_and(|t| t.elapsed() < DIAG_QUIET)
+                    b == id && at.is_some_and(|t| t.elapsed() < self.lsp.quiet)
                 }))
     }
 
@@ -990,7 +994,7 @@ impl Kawoosh {
             if self.lsp.sent.insert(id, b.version()).is_some() {
                 self.lsp.moved.insert(id, Instant::now());
                 if self.lsp.held.contains_key(&id) {
-                    self.lsp.alarm.set(Instant::now() + DIAG_QUIET);
+                    self.lsp.alarm.set(Instant::now() + self.lsp.quiet);
                 }
             }
             self.lsp.lsp.send(Cmd::Sync {

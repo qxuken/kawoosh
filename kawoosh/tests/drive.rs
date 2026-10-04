@@ -8,13 +8,25 @@ pub use kawoosh::harness::Harness as Drive;
 
 /// A Python that runs: `python3`, `python`, or uv's — Windows puts Store
 /// aliases named `python3` and `python` on the path that only say to
-/// install one, so each is asked its version first.
+/// install one, so each is asked its version first. Asked once a test
+/// binary, and uv first on Windows: every fake server asked all three
+/// again, and under ten runs at once a Store alias did not answer at
+/// all — `AppInstallerPythonRedirector.exe` waited on with no end, the
+/// tests behind it hung (seen 2026-10-04).
 pub fn python() -> (String, Vec<String>) {
-    let candidates: [(&str, &[&str]); 3] = [
+    static FOUND: std::sync::OnceLock<(String, Vec<String>)> = std::sync::OnceLock::new();
+    FOUND.get_or_init(find_python).clone()
+}
+
+fn find_python() -> (String, Vec<String>) {
+    let mut candidates: [(&str, &[&str]); 3] = [
         ("python3", &[]),
         ("python", &[]),
         ("uv", &["run", "--no-project", "python"]),
     ];
+    if cfg!(windows) {
+        candidates.rotate_right(1);
+    }
     for (cmd, args) in candidates {
         let ok = kawoosh_systems::spawn::output(
             std::process::Command::new(cmd).args(args).arg("--version"),
