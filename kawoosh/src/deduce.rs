@@ -223,6 +223,54 @@ pub fn deduce(start: &Path, markers: &[String]) -> Project {
     Project { found, commands }
 }
 
+/// The most `package.json` files [`packages`] reads, and the most
+/// entries it looks at for them.
+const PACKAGES: usize = 500;
+const PACKAGES_LOOK: usize = 200_000;
+
+/// The scripts of every package in a monorepo (Decision 9), for the
+/// picker: each `package.json` nearest a directory of `open` — the open
+/// buffers' — first, then every one in `start`'s repository that git
+/// does not ignore, in the walk's order; each package's commands as
+/// [`deduce`] reads its own, run in its directory. Outside a repository
+/// only the open buffers' are read.
+pub fn packages(start: &Path, open: &[PathBuf]) -> Vec<Deduced> {
+    let local = |d: &&PathBuf| kawoosh_systems::fs::domain_of(d).is_none();
+    let marker = Kind::Node.markers()[0];
+    let mut files: Vec<PathBuf> = Vec::new();
+    for dir in open.iter().filter(local) {
+        let nearest = walked(dir)
+            .into_iter()
+            .map(|d| d.join(marker))
+            .find(|p| p.is_file());
+        if let Some(p) = nearest.filter(|p| !files.contains(p)) {
+            files.push(p);
+        }
+    }
+    if kawoosh_systems::fs::domain_of(start).is_none()
+        && let Some(repo) = start.ancestors().find(|d| d.join(".git").exists())
+    {
+        for p in kawoosh_systems::fs::files_named(repo, marker, PACKAGES, PACKAGES_LOOK) {
+            if !files.contains(&p) {
+                files.push(p);
+            }
+        }
+    }
+    files.truncate(PACKAGES);
+    files
+        .into_iter()
+        .filter_map(|file| {
+            let dir = file.parent()?.to_path_buf();
+            Some(Found {
+                kind: Kind::Node,
+                file,
+                dir,
+            })
+        })
+        .flat_map(|f| commands_of(&f, &walked(&f.dir)))
+        .collect()
+}
+
 /// The directories looked in, nearest first.
 fn walked(start: &Path) -> Vec<PathBuf> {
     let repo = start.ancestors().find(|d| d.join(".git").exists());
@@ -913,6 +961,52 @@ mod tests {
         assert_eq!(p.found[0].kind, Kind::Just);
         assert_eq!(cmds(&p)[..2], ["just", "just all"]);
         assert_eq!(p.commands[1].why, "everything");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn every_package_of_a_monorepo_offers_its_scripts() {
+        let dir = tree(
+            "packages",
+            &[
+                (".gitignore", "node_modules\n"),
+                ("package.json", r#"{ "scripts": { "lint": "eslint ." } }"#),
+                ("yarn.lock", ""),
+                (
+                    "apps/web/package.json",
+                    r#"{ "scripts": { "build": "vite build" } }"#,
+                ),
+                ("apps/web/src/a.ts", ""),
+                (
+                    "apps/api/package.json",
+                    r#"{ "scripts": { "build": "tsc -b" } }"#,
+                ),
+                ("apps/api/src/b.ts", ""),
+                (
+                    "node_modules/dep/package.json",
+                    r#"{ "scripts": { "build": "no" } }"#,
+                ),
+            ],
+        );
+        let rows = |p: &[Deduced]| -> Vec<(String, PathBuf)> {
+            p.iter().map(|d| (d.cmd.clone(), d.cwd.clone())).collect()
+        };
+        // From one package: the others', the root's, nothing ignored; the
+        // package manager by the lockfile above them.
+        let p = packages(&dir.join("apps/web/src"), &[]);
+        assert_eq!(
+            rows(&p),
+            [
+                ("yarn run build".to_string(), dir.join("apps/api")),
+                ("yarn run build".to_string(), dir.join("apps/web")),
+                ("yarn run lint".to_string(), dir.clone()),
+            ]
+        );
+        assert_eq!(p[0].why, "tsc -b");
+        // An open buffer's package first.
+        let p = packages(&dir.join("apps/api/src"), &[dir.join("apps/web/src")]);
+        assert_eq!(p[0].cwd, dir.join("apps/web"));
+        assert_eq!(p.len(), 3, "each once");
         std::fs::remove_dir_all(&dir).ok();
     }
 

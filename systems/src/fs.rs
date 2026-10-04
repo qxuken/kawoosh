@@ -391,6 +391,36 @@ pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
     Ok(out)
 }
 
+/// The files named `name` under `root`, as [`walk`] sees it — nothing
+/// git ignores, so no `node_modules` — in the walk's order. Stops at
+/// `max` found, and after `look` entries seen, so a vast tree costs a
+/// bounded amount. A host's tree is not walked for it: nothing is found
+/// there.
+pub fn files_named(root: &Path, name: &str, max: usize, look: usize) -> Vec<PathBuf> {
+    if on_host(root).is_some() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let walk = ignore::WalkBuilder::new(root)
+        .hidden(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .follow_links(false)
+        .sort_by_file_name(|a, b| a.cmp(b))
+        .build();
+    for entry in walk.take(look) {
+        let Ok(entry) = entry else { continue };
+        if entry.file_name() == name && entry.file_type().is_some_and(|t| t.is_file()) {
+            out.push(entry.into_path());
+            if out.len() >= max {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// The most files a walk on a host lists: every directory is a round
 /// trip there (docs/design/domains.md Decision 8, Risk "Latency").
 pub const HOST_WALK_MAX: usize = 5_000;

@@ -565,7 +565,10 @@ package's scripts. `compile.deduce = false` turns this off.
 
 `<leader>cC` (`:compile pick`) lists everything: `compile.default`,
 your named commands, the last lines run here, and every command the
-project's files offer, each with where it came from. `<CR>` runs it;
+project's files offer, each with where it came from. In a monorepo it
+also lists the scripts of every other `package.json` in the repository
+(the open files' packages first), each run in its own package; type
+part of the path to narrow them (`api build`). `<CR>` runs it;
 `<C-e>` puts it in the prompt so you can add arguments first. A
 command that needs arguments always opens the prompt.
 
