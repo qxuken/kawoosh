@@ -882,6 +882,10 @@ pub struct Published {
     /// set under (`Runtime::set_lsp_names`): what `kawoosh.lsp.rules`
     /// reads a buffer's rules by.
     pub lsp_names: Rc<HashMap<String, String>>,
+    /// Every server's name the shell knows — builtin, `servers.lua`'s,
+    /// `kawoosh.lsp.server`'s, a settings table's — switched on or off:
+    /// what no plugin's rule may be named (lsp-rules.md Decision 6).
+    pub lsp_servers: Rc<BTreeSet<String>>,
 }
 
 /// One place of a tab's jumps as Lua reads it: lines and columns from 1.
@@ -1023,6 +1027,7 @@ impl Default for Published {
             trees: HashMap::new(),
             jumps: Rc::new(Vec::new()),
             lsp_names: Rc::default(),
+            lsp_servers: Rc::default(),
         }
     }
 }
@@ -1493,9 +1498,12 @@ impl Runtime {
     }
 
     /// Each served language's server by name, as the shell's table has
-    /// it now: what `kawoosh.lsp.rules` reads a buffer's rules under.
-    pub fn set_lsp_names(&self, names: HashMap<String, String>) {
-        self.published.borrow_mut().lsp_names = Rc::new(names);
+    /// it now: what `kawoosh.lsp.rules` reads a buffer's rules under;
+    /// and every server's name, which no rule may take.
+    pub fn set_lsp_names(&self, names: HashMap<String, String>, servers: BTreeSet<String>) {
+        let mut p = self.published.borrow_mut();
+        p.lsp_names = Rc::new(names);
+        p.lsp_servers = Rc::new(servers);
     }
 
     pub fn publish(&self, ed: &Editor, current: Option<ViewId>) {
@@ -2874,7 +2882,12 @@ fn diagnostic_rows(lua: &Lua, p: &Published, opts: Option<Table>) -> mlua::Resul
     use kawoosh_systems::fs as kfs;
     let get = |k: &str| opts.as_ref().map(|t| t.get::<LV>(k)).transpose();
     let only = match get("buffer")? {
-        Some(LV::Integer(0)) => p.current,
+        // The current buffer's — none when there is none, not every
+        // buffer's.
+        Some(LV::Integer(0)) => match p.current {
+            Some(h) => Some(h),
+            None => return lua.create_table(),
+        },
         Some(LV::Integer(n)) => Some(n as u64),
         Some(LV::Number(n)) => Some(n as u64),
         _ => None,
@@ -2959,6 +2972,26 @@ fn diagnostic_rows(lua: &Lua, p: &Published, opts: Option<Table>) -> mlua::Resul
     Ok(t)
 }
 
+/// The keys of `lsp.NAME` that define a server rather than switch one
+/// (docs/design/lsp-rules.md Decision 2).
+pub const LSP_DEFINITION_KEYS: [&str; 8] = [
+    "cmd",
+    "args",
+    "roots",
+    "languages",
+    "when",
+    "install",
+    "settings",
+    "answers",
+];
+
+/// Whether `t`, an `lsp.NAME` table, says something of a server's
+/// definition ([`LSP_DEFINITION_KEYS`]): such a table is a server's,
+/// whatever else its name is — a plugin's rule's included.
+pub fn defines_server(t: &Setting) -> bool {
+    t.is_table() && LSP_DEFINITION_KEYS.iter().any(|k| t.get(k).is_some())
+}
+
 /// The keys of `lsp.NAME` that are the server or the shell's rules, and
 /// of `lsp` that are not servers: no plugin's rule may be one, or
 /// `lsp.RULE` would read as one of them.
@@ -2996,23 +3029,42 @@ fn severity_of(word: &str) -> Option<u32> {
 /// 1, a column in characters; `col` 1 unless said, the end the
 /// character after the start unless said; `severity` a number or its
 /// word, an error unless said; `source` the publisher's name unless
-/// said. A row `kawoosh.diagnostics.get` gave reads back as it was.
+/// said. A row `kawoosh.diagnostics.get` gave reads back as it was. A
+/// line or column is a whole number from 1 to 2³² − 1 (a float with no
+/// fraction is one); anything else is an error, not a wrap. A line the
+/// text does not have is no error — the text may have moved since the
+/// linter read it — and the diagnostic is not shown.
 fn placed_list(list: &Table, from: &str) -> mlua::Result<Vec<kawoosh_doc::diagnostic::Placed>> {
     let mut out = Vec::new();
     for (i, item) in list.sequence_values::<Table>().enumerate() {
         let item = item.map_err(|e| mlua::Error::runtime(format!("diagnostic {}: {e}", i + 1)))?;
         let at = |e: String| mlua::Error::runtime(format!("diagnostic {}: {e}", i + 1));
         let num = |k: &str| -> mlua::Result<Option<u32>> {
-            match item.get::<LV>(k)? {
-                LV::Nil => Ok(None),
-                LV::Integer(n) if n >= 1 => Ok(Some(n as u32 - 1)),
-                LV::Number(n) if n >= 1.0 => Ok(Some(n as u32 - 1)),
-                v => Err(at(format!("`{k}` is a number from 1, not {v:?}"))),
-            }
+            let v = item.get::<LV>(k)?;
+            let n = match v {
+                LV::Nil => return Ok(None),
+                LV::Integer(n) => Some(n),
+                LV::Number(n) if n.fract() == 0.0 && n >= 1.0 && n <= u32::MAX as f64 => {
+                    Some(n as i64)
+                }
+                _ => None,
+            };
+            // From 1, so less one it is a `u32`: 2³² is no line.
+            n.and_then(|n| n.checked_sub(1))
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n < u32::MAX)
+                .map(Some)
+                .ok_or_else(|| {
+                    at(format!(
+                        "`{k}` is a whole number from 1 to {}, not {v:?}",
+                        u32::MAX
+                    ))
+                })
         };
         let line = num("line")?.ok_or_else(|| at("a `line`, from 1".into()))?;
         let col = num("col")?.unwrap_or(0);
         let end_line = num("end_line")?.unwrap_or(line);
+        // `col` is at most 2³² − 2 here, so the one after it is a `u32`.
         let end_col = num("end_col")?.unwrap_or(col + 1);
         let severity = match item.get::<LV>("severity")? {
             LV::Nil => match item.get::<Option<String>>("level")? {
@@ -3048,6 +3100,7 @@ fn placed_list(list: &Table, from: &str) -> mlua::Result<Vec<kawoosh_doc::diagno
             character: col,
             end_line,
             end_character: end_col,
+            columns: kawoosh_doc::diagnostic::Columns::Chars,
             diagnostic: kawoosh_doc::Diagnostic {
                 severity,
                 message: message.trim_end().to_string(),
@@ -4046,7 +4099,13 @@ fn seed(
             diagnostic_rows(lua, &pp.borrow(), opts)
         })?,
     )?;
-    let qq = q(queue);
+    // The rules plugins declared, by name, with their defaults: read
+    // here at once, the shell told by a message. Beside them the servers
+    // `kawoosh.lsp.server` defined in this runtime, which the shell may
+    // not have told back yet: a rule and a server never share a name.
+    let declared: Rc<RefCell<Vec<(String, Setting)>>> = Rc::default();
+    let defined: Rc<RefCell<BTreeSet<String>>> = Rc::default();
+    let (qq, dd, ss) = (q(queue), declared.clone(), defined.clone());
     lsp.set(
         "server",
         lua.create_function(move |_, (language, t): (String, Table)| {
@@ -4055,6 +4114,12 @@ fn seed(
             if def.get("cmd").and_then(Setting::as_str).is_none() {
                 return Err(mlua::Error::runtime("lsp.server: a `cmd`"));
             }
+            if dd.borrow().iter().any(|(r, _)| *r == language) {
+                return Err(mlua::Error::runtime(format!(
+                    "lsp.server: {language} is a plugin's rule (kawoosh.lsp.rule); a server needs another name"
+                )));
+            }
+            ss.borrow_mut().insert(language.clone());
             qq.borrow_mut().push(Msg::LspServer { language, def });
             Ok(())
         })?,
@@ -4110,9 +4175,6 @@ fn seed(
             Ok(token)
         })?,
     )?;
-    // The rules plugins declared, by name, with their defaults: read
-    // here at once, the shell told by a message.
-    let declared: Rc<RefCell<Vec<(String, Setting)>>> = Rc::default();
     // ---- `kawoosh.lsp.rule(name, { doc =, default = })`: a rule of a
     // language server that a plugin defines and reads
     // (docs/design/lsp-rules.md Decision 6) — set as the shell's are, per
@@ -4120,8 +4182,14 @@ fn seed(
     // for every server, else `default`, `false` unless said), and, when
     // it is on or off, flipped by `:lsp toggle RULE [LANGUAGE]` and
     // listed by `:lsp info`. `kawoosh.lsp.rules` reads it. The same name
-    // again replaces it.
-    let (qq, dd) = (q(queue), declared.clone());
+    // again replaces it. A server's name is no rule's: `lsp.NAME` is that
+    // server's table, and `lsp.RULE` for every server would read as it.
+    let (qq, dd, pp, ss) = (
+        q(queue),
+        declared.clone(),
+        published.clone(),
+        defined.clone(),
+    );
     lsp.set(
         "rule",
         lua.create_function(move |_, (name, opts): (String, Option<Table>)| {
@@ -4137,6 +4205,19 @@ fn seed(
             if LSP_TAKEN.contains(&name.as_str()) {
                 return Err(mlua::Error::runtime(format!(
                     "lsp.rule: {name} is lsp.NAME's own key"
+                )));
+            }
+            let server = {
+                let p = pp.borrow();
+                p.lsp_servers.contains(&name)
+                    || ss.borrow().contains(&name)
+                    || p.settings
+                        .get(&format!("lsp.{name}"))
+                        .is_some_and(defines_server)
+            };
+            if server {
+                return Err(mlua::Error::runtime(format!(
+                    "lsp.rule: {name} is a language server's name (lsp.{name}); a rule needs another"
                 )));
             }
             let doc = match &opts {
@@ -4193,10 +4274,14 @@ fn seed(
                 .get(&language)
                 .cloned()
                 .unwrap_or_else(|| language.clone());
+            // `lsp.RULE` for every server — unless it is a server's own
+            // table, said since the rule was declared.
             let said = |rule: &str| {
-                p.settings
-                    .get(&format!("lsp.{server}.{rule}"))
-                    .or_else(|| p.settings.get(&format!("lsp.{rule}")))
+                p.settings.get(&format!("lsp.{server}.{rule}")).or_else(|| {
+                    p.settings
+                        .get(&format!("lsp.{rule}"))
+                        .filter(|v| !defines_server(v))
+                })
             };
             let t = lua.create_table()?;
             t.set("server", server.as_str())?;
@@ -6818,5 +6903,72 @@ mod tests {
         )
         .unwrap();
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `kawoosh.diagnostics.set` takes a line or column from 1 to 2³² − 1
+    /// and errors on anything else — never a wrap, never a panic in the
+    /// callback (lists.md Decision 7) — and `get { buffer = 0 }` with no
+    /// current buffer is none, not every buffer's.
+    #[test]
+    fn diagnostics_take_what_fits_and_the_current_buffer_of_none_is_none() {
+        let (rt, _ext) = Runtime::new().unwrap();
+        let mut ed = Editor::new();
+        let b = ed.add_buffer(Buffer::new("t.txt", "a\n"));
+        let mark = kawoosh_doc::diagnostic::Placed {
+            line: 0,
+            character: 0,
+            end_line: 0,
+            end_character: 1,
+            columns: kawoosh_doc::diagnostic::Columns::Chars,
+            diagnostic: kawoosh_doc::Diagnostic {
+                severity: 1,
+                message: "a".into(),
+                ..Default::default()
+            },
+        };
+        assert!(ed.publish_placed(b, "lint", vec![mark]));
+        rt.publish(&ed, None);
+        rt.load_source(
+            "t",
+            r#"
+            local bad = { 2^32, 4294967296, 0, -1, 1.5, math.huge, -math.huge, 0/0, "x", true }
+            for _, n in ipairs(bad) do
+              local ok, err = pcall(kawoosh.diagnostics.set, "/p/x.txt", "lint", { { line = n, message = "m" } })
+              assert(not ok and tostring(err):find("`line` is a whole number", 1, true), tostring(n) .. ": " .. tostring(err))
+              ok = pcall(kawoosh.diagnostics.set, "/p/x.txt", "lint", { { line = 1, col = n, message = "m" } })
+              assert(not ok, "col " .. tostring(n))
+              ok = pcall(kawoosh.diagnostics.set, "/p/x.txt", "lint", { { line = 1, end_col = n, message = "m" } })
+              assert(not ok, "end_col " .. tostring(n))
+            end
+            -- The most there is, its end the one after; a whole float.
+            kawoosh.diagnostics.set("/p/x.txt", "lint", { { line = 4294967295, col = 4294967295, message = "m" } })
+            kawoosh.diagnostics.set("/p/x.txt", "lint", { { line = 2.0, message = "m" } })
+            assert(#kawoosh.diagnostics.get() == 1)
+            assert(#kawoosh.diagnostics.get { buffer = 0 } == 0, "no current buffer: none")
+            assert(#kawoosh.lsp.diagnostics { buffer = 0 } == 0)
+            assert(not pcall(kawoosh.diagnostics.set, 0, "lint", {}), "set has no current buffer to say it of")
+            "#,
+        )
+        .unwrap();
+        let placed: Vec<(u32, u32, u32, u32)> = rt
+            .take_msgs()
+            .into_iter()
+            .filter_map(|m| match m {
+                Msg::Diagnostics { list, .. } => Some(list),
+                _ => None,
+            })
+            .flatten()
+            .map(|p| {
+                assert_eq!(p.columns, kawoosh_doc::diagnostic::Columns::Chars);
+                (p.line, p.character, p.end_line, p.end_character)
+            })
+            .collect();
+        assert_eq!(
+            placed,
+            [
+                (u32::MAX - 1, u32::MAX - 1, u32::MAX - 1, u32::MAX),
+                (1, 0, 1, 1)
+            ]
+        );
     }
 }

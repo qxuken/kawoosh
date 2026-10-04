@@ -2532,6 +2532,247 @@ fn a_plugins_rule_is_set_and_flipped_as_the_shells_are() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A plugin that says again what it said wakes nothing (lists.md
+/// Decision 7): `on_diagnostics` republishing the same list is heard
+/// once, not every frame. A word on a buffer being typed in waits as a
+/// server's does, and lands when insert mode ends.
+#[test]
+fn a_plugins_word_said_again_wakes_nothing_and_waits_for_the_typing() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-plugin-again-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("notes.txt");
+    std::fs::write(&file, "one two\nthree\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    let buf_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    lua(
+        &mut app,
+        "_G.heard = 0\n\
+         _G.lint = function(msg)\n\
+           _G.last = msg\n\
+           kawoosh.diagnostics.set(0, 'lint', { { line = 1, col = 1, end_col = 4, message = msg } })\n\
+         end\n\
+         kawoosh.on_diagnostics(function() heard = heard + 1; if last then lint(last) end end)\n\
+         lint('one?')",
+    );
+    for _ in 0..20 {
+        d.frame(&mut app);
+    }
+    assert_eq!(msgs(&app, buf_id), ["one?"]);
+    lua(&mut app, "assert(heard == 1, 'heard ' .. heard)");
+    let v = app.ed.diagnostics.version();
+    lua(&mut app, "lint('one?')");
+    d.frame(&mut app);
+    assert_eq!(app.ed.diagnostics.version(), v, "the same again");
+
+    // Typing: the word waits, then lands on <Esc>.
+    d.keys(&mut app, "A");
+    d.commit(&mut app, " four");
+    lua(&mut app, "lint('typed')");
+    assert!(
+        app.lsp
+            .plugin_held
+            .contains_key(&(buf_id, "lint".to_string())),
+        "held while typing"
+    );
+    d.frame(&mut app);
+    assert_eq!(msgs(&app, buf_id), ["one?"]);
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, buf_id) == ["typed"]),
+        "landed: {:?}",
+        msgs(&app, buf_id)
+    );
+    assert!(app.lsp.plugin_held.is_empty());
+    // A clear drops a held word too.
+    d.keys(&mut app, "A");
+    d.commit(&mut app, "!");
+    lua(
+        &mut app,
+        "lint('held')\nkawoosh.diagnostics.clear('lint')\n_G.last = nil",
+    );
+    assert!(app.lsp.plugin_held.is_empty());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert!(msgs(&app, buf_id).is_empty());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A plugin's columns are characters, through the file store too
+/// (lists.md Decision 7): said by path of a file no buffer holds, or by
+/// the handle of a buffer still opening, `col = 3` on `😀😀x` is the
+/// `x` — not the second emoji, as a server's UTF-16 count would place
+/// it — and reads back as 3.
+#[test]
+fn a_plugins_columns_are_characters_through_the_file_store() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-plugin-utf16-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = "😀😀x\n";
+    let a = dir.join("a.txt");
+    let b = dir.join("b.txt");
+    std::fs::write(&a, text).unwrap();
+    std::fs::write(&b, text).unwrap();
+
+    let mut app = Kawoosh::from_file(&dir.join("other.txt"));
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    // By path, no buffer on it.
+    let path = a.display().to_string().replace('\\', "/");
+    lua(
+        &mut app,
+        &format!(
+            "kawoosh.diagnostics.set('{path}', 'lint', {{ {{ line = 1, col = 3, message = 'x' }} }})"
+        ),
+    );
+    lua(
+        &mut app,
+        "local r = kawoosh.diagnostics.get { from = 'lint' }\n\
+         assert(#r == 1 and r[1].col == 3 and r[1].end_col == 4, r[1] and r[1].col)",
+    );
+    // By the handle of a buffer still opening.
+    let mut opening = kawoosh_doc::Buffer::new("b.txt", "");
+    opening.path = Some(b.clone());
+    opening.loading = Some((0, text.len()));
+    let b_id = app.ed.add_buffer(opening);
+    let handle = kawoosh_lua::handle_of(b_id);
+    lua(
+        &mut app,
+        &format!(
+            "kawoosh.diagnostics.set({handle}, 'lint', {{ {{ line = 1, col = 3, message = 'x' }} }})"
+        ),
+    );
+    assert!(
+        app.ed.diagnostics_listed(Some(b_id)).len() == 1,
+        "kept by its file"
+    );
+    // It lands; and a.txt is opened.
+    {
+        let bb = &mut app.ed.buffers[b_id];
+        bb.loading = None;
+        bb.replace(0..0, text);
+    }
+    ex(&mut d, &mut app, &format!("e {path}"));
+    let opened = |app: &Kawoosh| {
+        app.ed
+            .buffers
+            .iter()
+            .find(|(_, b)| {
+                b.loading.is_none() && b.path.as_deref().is_some_and(|p| p.ends_with("a.txt"))
+            })
+            .map(|(id, _)| id)
+    };
+    assert!(
+        until(&mut d, &mut app, |a| opened(a).is_some_and(|id| !a
+            .ed
+            .diagnostics_listed(Some(id))
+            .is_empty()
+            && !a.ed.buffers[id].is_empty())),
+        "a.txt opened, its diagnostic taken"
+    );
+    let a_id = opened(&app).unwrap();
+    for id in [a_id, b_id] {
+        let runs = app.ed.buffers[id].runs(DIAG_LAYER, 0..100);
+        assert_eq!(
+            runs.iter()
+                .map(|r| (r.range.start, r.range.end))
+                .collect::<Vec<_>>(),
+            [(8, 9)],
+            "on the x"
+        );
+    }
+    lua(
+        &mut app,
+        "for _, r in ipairs(kawoosh.diagnostics.get { from = 'lint' }) do\n\
+           assert(r.buffer and r.col == 3 and r.end_col == 4, r.col)\n\
+         end\n\
+         assert(#kawoosh.diagnostics.get { from = 'lint' } == 2)",
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A rule's name is no server's (lsp-rules.md Decision 6): not a
+/// builtin's, not one `kawoosh.lsp.server` defined, not a settings
+/// table's that defines one — and a server is not named after a rule.
+/// A table that defines a server named as a rule said later is the
+/// server still, not that rule for every server. A rule declared again
+/// as no switch loses its `:lsp toggle`, and a new runtime starts
+/// without the last one's rules.
+#[test]
+fn a_rule_is_no_servers_name_and_goes_with_its_runtime() {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-rule-names-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("notes.txt");
+    std::fs::write(&file, "x\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.zed.cmd", Setting::Str("zls".into()));
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        "local ok, err = pcall(kawoosh.lsp.rule, 'rust')\n\
+         assert(not ok and tostring(err):find('a language server', 1, true), tostring(err))\n\
+         assert(not pcall(kawoosh.lsp.rule, 'typescript'), 'a builtin')\n\
+         assert(not pcall(kawoosh.lsp.rule, 'zed'), 'a settings table with a cmd')\n\
+         kawoosh.lsp.server('mine', { cmd = 'mine-ls' })\n\
+         assert(not pcall(kawoosh.lsp.rule, 'mine'), 'defined in this runtime')\n\
+         kawoosh.lsp.rule('tidy', { default = true })\n\
+         kawoosh.lsp.rule('organize')\n\
+         assert(not pcall(kawoosh.lsp.server, 'tidy', { cmd = 'x' }), 'a rule is no server')",
+    );
+    assert!(app.ed.spec("lsp toggle tidy").is_some());
+
+    // A server said under a rule's name is a server still; the rule is
+    // not read from its table.
+    app.ed.settings.set(
+        Layer::Session,
+        "lsp.organize.cmd",
+        Setting::Str("org-ls".into()),
+    );
+    d.frame(&mut app);
+    assert!(
+        app.lsp.defs.iter().any(|d| d.language == "organize"),
+        "the server is not dropped for the rule"
+    );
+    lua(
+        &mut app,
+        "assert(kawoosh.lsp.rules(0).organize == false, 'the default, not the server table')",
+    );
+
+    // Declared again as no switch: no toggle.
+    lua(&mut app, "kawoosh.lsp.rule('tidy', { default = 80 })");
+    assert!(app.ed.spec("lsp toggle tidy").is_none());
+    lua(&mut app, "kawoosh.lsp.rule('tidy', { default = false })");
+    assert!(app.ed.spec("lsp toggle tidy").is_some());
+
+    // A new runtime: the last one's rules gone with their switches.
+    let _ = app.attach_lua().unwrap();
+    d.frame(&mut app);
+    assert!(app.ed.spec("lsp toggle tidy").is_none());
+    lua(
+        &mut app,
+        "assert(kawoosh.lsp.rules(0).tidy == nil)\n\
+         kawoosh.lsp.rule('tidy')",
+    );
+    assert!(app.ed.spec("lsp toggle tidy").is_some());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Frames until `pred` holds, `write` run again each time it has not
 /// within a while: a tree watch comes up a moment after it is asked
 /// for, and a write before that is not heard of.

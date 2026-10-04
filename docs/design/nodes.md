@@ -226,6 +226,12 @@ it is asked for:
   visible files — the ts thread's jobs. A buffer no pane shows has no
   new tree to tell of.
 
+A linter in the hook may publish on every tree (`kawoosh.diagnostics.set`):
+the same list again moves nothing, and a new one for a buffer being
+typed in waits for the typing to pause, as a server's does (lists.md
+Decision 7, from the review of 2026-10-03) — so neither the underline
+nor `*diagnostics*` is redone on every key.
+
 A hook new since the last frame (`kawoosh._tree_gen` moved) hears every
 tree there is, whole, the next frame — so does every other hook,
 which a painter takes as a repaint; a hook that fails is said on the

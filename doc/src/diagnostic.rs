@@ -51,16 +51,41 @@ impl Diagnostic {
     }
 }
 
-/// A diagnostic of a file no buffer holds, where its server put it:
-/// lines from 0, characters as a language server counts them (UTF-16
-/// units) — there is no text here to count bytes in.
+/// A diagnostic of a file no buffer holds, where its publisher put it:
+/// lines from 0, columns counted as [`Placed::columns`] says — there is
+/// no text here to count bytes in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Placed {
     pub line: u32,
     pub character: u32,
     pub end_line: u32,
     pub end_character: u32,
+    /// What `character` and `end_character` count: a server's UTF-16
+    /// units, or characters — a plugin's, and what a closed buffer left
+    /// (lists.md Decision 7). Kept with each, so a file's are placed and
+    /// read back in the unit they were given in.
+    pub columns: Columns,
     pub diagnostic: Diagnostic,
+}
+
+/// What a [`Placed`]'s columns count.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Columns {
+    /// UTF-16 code units, as a language server counts.
+    #[default]
+    Utf16,
+    /// Characters (Unicode scalar values), as Lua's rows are.
+    Chars,
+}
+
+impl Columns {
+    /// How many units character `c` is.
+    pub fn len_of(self, c: char) -> usize {
+        match self {
+            Columns::Utf16 => c.len_utf16(),
+            Columns::Chars => 1,
+        }
+    }
 }
 
 /// Severity `n` as a word; anything past 3 is a hint.

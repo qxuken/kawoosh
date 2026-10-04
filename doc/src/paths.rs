@@ -91,6 +91,25 @@ pub fn relative(path: &Path, base: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Whether `a` and `b` name one file as the disk reads them, without
+/// asking it: equal as paths (`/` and `\` alike on Windows), or — on
+/// Windows, a local path, whose names are matched case aside — equal
+/// but for case. A host's path is matched as spelled.
+pub fn same(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    if !cfg!(windows) || domain_of(a).is_some() || domain_of(b).is_some() {
+        return false;
+    }
+    match (a.to_str(), b.to_str()) {
+        (Some(x), Some(y)) => {
+            native(Path::new(&x.to_lowercase())) == native(Path::new(&y.to_lowercase()))
+        }
+        _ => false,
+    }
+}
+
 /// A local path in this platform's separators: on Windows, where `/`
 /// is a separator too but never a name's character, every `/` is `\`;
 /// elsewhere the path as it is. A host's path is not one to give it —

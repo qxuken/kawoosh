@@ -3952,6 +3952,7 @@ fn placed_diagnostics(params: &Value) -> Vec<Placed> {
                 character,
                 end_line,
                 end_character,
+                columns: kawoosh_doc::diagnostic::Columns::Utf16,
                 diagnostic: diagnostic_of(d),
             })
         })

@@ -156,17 +156,29 @@ impl Kawoosh {
             .iter()
             .map(|d| d.language.clone())
             .collect();
+        let mut clashes: Vec<(String, String)> = Vec::new();
         for (k, v) in said.into_iter().flatten() {
             // `lsp.inlay_hints` is the global switch and `lsp.languages`
             // each language's servers, not a server.
-            // A plugin's rule said for every server is no server either.
-            if v.is_table()
-                && !names.contains(k)
-                && !RESERVED.contains(&k.as_str())
-                && !self.lsp.plugin_rules.iter().any(|(r, ..)| r == k)
-            {
-                names.push(k.clone());
+            if !v.is_table() || names.contains(k) || RESERVED.contains(&k.as_str()) {
+                continue;
             }
+            // A plugin's rule said for every server is no server either —
+            // but a table that defines one is a server's, whatever the
+            // rules are named: the server is not dropped for the rule.
+            let rule = self.lsp.plugin_rules.iter().any(|(r, ..)| r == k);
+            if rule && !kawoosh_lua::defines_server(v) {
+                continue;
+            }
+            if rule {
+                clashes.push((
+                    format!("{k}.rule"),
+                    format!(
+                        "lsp.{k}: a server named as a plugin's rule {k}; lsp.{k} is the server, not {k} for every server"
+                    ),
+                ));
+            }
+            names.push(k.clone());
         }
         let private = private_files(self.ed.settings.get("secrets.masks"));
         let mut out = Vec::new();
@@ -254,6 +266,7 @@ impl Kawoosh {
             })
             .collect();
         said.extend(mistakes);
+        said.extend(clashes);
         (out, said)
     }
 
@@ -402,14 +415,19 @@ impl Kawoosh {
     /// `kawoosh.lsp.rule(name, { doc =, default = })`: a plugin's rule
     /// (Decision 6) — listed by `:lsp info` where it is set, and, when it
     /// is on or off, `:lsp toggle NAME [LANGUAGE]` beside the shell's.
-    /// The same name again replaces it. The pool never reads it: the
-    /// plugin does, through `kawoosh.lsp.rules`.
+    /// The same name again replaces it, its switch with it: one declared
+    /// again as no switch has no `:lsp toggle`. The pool never reads it:
+    /// the plugin does, through `kawoosh.lsp.rules`. The table is made
+    /// again at once, since a rule's name is no server's (`lsp_table`).
     pub(crate) fn add_lsp_rule(&mut self, name: String, doc: String, default: Setting) {
         self.lsp.plugin_rules.retain(|(r, ..)| *r != name);
         self.lsp
             .plugin_rules
             .push((name.clone(), doc.clone(), default.clone()));
+        self.lsp.rules_seen = None;
+        self.sync_lsp_rules();
         if default.as_bool().is_none() {
+            self.remove_command(&format!("lsp toggle {name}"));
             return;
         }
         let doc = if doc.is_empty() {
@@ -423,6 +441,16 @@ impl Kawoosh {
                 .doc(&doc),
             move |k, ctx| k.lsp_toggle(&name, ctx.args.first().cloned()),
         ));
+    }
+
+    /// The plugins' rules forgotten, with their `:lsp toggle`s: a new
+    /// Lua runtime declares its own again.
+    pub(crate) fn forget_lsp_rules(&mut self) {
+        let rules = std::mem::take(&mut self.lsp.plugin_rules);
+        for (name, ..) in rules {
+            self.remove_command(&format!("lsp toggle {name}"));
+        }
+        self.lsp.rules_seen = None;
     }
 
     /// Each language a server serves, and the `lsp.NAME` its rules are
@@ -444,14 +472,23 @@ impl Kawoosh {
                 (l, name)
             })
             .collect();
-        if names == self.lsp.names_told {
+        // Every server's name, switched off or not: no rule may take one.
+        let servers: std::collections::BTreeSet<String> = self
+            .lsp
+            .defs
+            .iter()
+            .chain(self.scripting.servers.iter())
+            .map(|d| d.language.clone())
+            .collect();
+        if names == self.lsp.names_told && servers == self.lsp.servers_told {
             return;
         }
         let Some(rt) = &self.scripting.rt else {
             return;
         };
-        rt.set_lsp_names(names.clone());
+        rt.set_lsp_names(names.clone(), servers.clone());
         self.lsp.names_told = names;
+        self.lsp.servers_told = servers;
     }
 }
 
