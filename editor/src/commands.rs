@@ -3202,7 +3202,7 @@ pub fn install(ed: &mut Editor) {
 
     for (name, doc) in DOCS {
         match ed.commands.spec_mut(name) {
-            Some(spec) => spec.doc = doc.to_string(),
+            Some(spec) => spec.doc = crate::host::for_host(doc, crate::host::Host::HERE),
             None => debug_assert!(false, "DOCS names no command: {name}"),
         }
     }
@@ -3253,7 +3253,7 @@ const DOCS: &[(&str, &str)] = &[
     ("word end back", "the end of the previous word (`ge`)"),
     (
         "word end insert",
-        "past the end of the word, or of the next on whitespace (insert mode's ⌥→)",
+        "past the end of the word, or of the next on whitespace (insert mode's {{mac:⌥→}}{{pc:<C-Right>}})",
     ),
     (
         "bigword next",
@@ -3406,7 +3406,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "delete to end",
-        "delete to the end of the line (`D`; insert's ⌘⌦, which leaves the register alone)",
+        "delete to the end of the line (`D`{{mac:; insert's ⌘⌦, which leaves the register alone}})",
     ),
     (
         "delete forward",
@@ -3414,11 +3414,11 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "delete word back",
-        "delete the word before the caret, the register left alone (insert's <C-w>, ⌥⌫)",
+        "delete the word before the caret, the register left alone (insert's <C-w>, {{mac:⌥⌫}}{{pc:<C-BS>}})",
     ),
     (
         "delete word forward",
-        "delete to the end of the word after the caret, the register left alone (insert's ⌥⌦)",
+        "delete to the end of the word after the caret, the register left alone (insert's {{mac:⌥⌦}}{{pc:<C-Del>}})",
     ),
     (
         "delete line",
@@ -3426,7 +3426,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "delete to start",
-        "delete to the start of the line (insert's <C-u>, ⌘⌫)",
+        "delete to the start of the line (insert's <C-u>{{mac:, ⌘⌫}})",
     ),
     (
         "change char",
@@ -3532,11 +3532,11 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "select next",
-        "select the next match of the selection, or the word under the caret (<C-n>, <D-d>)",
+        "select the next match of the selection, or the word under the caret (<C-n>{{mac:, <D-d>}})",
     ),
     (
         "select all matches",
-        "select every match of the selection, or of the word under the caret (<C-S-n>, <D-L>)",
+        "select every match of the selection, or of the word under the caret (<C-S-n>{{mac:, <D-L>}})",
     ),
     (
         "select within",

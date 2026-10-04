@@ -1343,7 +1343,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             Spec::new("terminal raw")
                 .when(&["terminal"])
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("every key but the escape and ⌘ to the terminal's program, or back; `on` / `off`, bare flips it (`<C-\\>r`)"),
+                .doc("every key but the escape {{mac:and ⌘ }}to the terminal's program, or back; `on` / `off`, bare flips it (`<C-\\>r`)"),
             |k, ctx| k.toggle_raw(ctx.args.first().map(String::as_str)),
         ),
         cmd(
@@ -1379,13 +1379,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("terminal prompt prev")
                 .when(&["terminal"])
-                .doc("the prompt above the view at its top (the shell's OSC 133 marks; `<D-Up>` `<C-S-Up>`)"),
+                .doc("the prompt above the view at its top (the shell's OSC 133 marks; {{mac:`<D-Up>` }}`<C-S-Up>`)"),
             |k, _| k.jump_prompt(true),
         ),
         cmd(
             Spec::new("terminal prompt next")
                 .when(&["terminal"])
-                .doc("the prompt below at the top, past the last back at the bottom (`<D-Down>` `<C-S-Down>`)"),
+                .doc("the prompt below at the top, past the last back at the bottom ({{mac:`<D-Down>` }}`<C-S-Down>`)"),
             |k, _| k.jump_prompt(false),
         ),
         cmd(

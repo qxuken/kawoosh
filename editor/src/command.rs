@@ -531,8 +531,10 @@ impl Spec {
         self
     }
 
+    /// What it does, in the words of the keyboard this build is for
+    /// ([`crate::host::for_host`]).
     pub fn doc(mut self, doc: &str) -> Self {
-        self.doc = doc.to_string();
+        self.doc = crate::host::for_host(doc, crate::host::Host::HERE);
         self
     }
 
