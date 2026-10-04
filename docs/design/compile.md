@@ -8,7 +8,8 @@ build.nu files with arguments" (Decisions 2 and 6); round three,
 from "propose a way to pass arguments. i often use `yarn pw
 ...some-project-path`" and "we probably need custom compile commands
 that i can call", shaped over three exchanges (Decision 7); the keys
-in `*compile*` and `:c` 2026-10-02 (Decision 8). The calls
+in `*compile*` and `:c` 2026-10-02 (Decision 8); a monorepo's
+packages in the picker 2026-10-05 (Decision 9). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -278,6 +279,41 @@ Beaten: focusing only a pane just made (what `show_in_pane` alone
 would say for a text pane), for the inconsistency above; and `:cc`,
 which is vim's "go to error N" and would be the natural spelling of a
 `]q` with a count.
+
+### 9. The picker reads every package of a monorepo
+
+*Added 2026-10-05, asked:* "I want `:compile pick` to look inside all
+package.jsons in a workspace or at least relative to open buffers. It
+relevant to monorepos". Decision 1 reads one `package.json`, the
+nearest above the caret: from `apps/web` the picker had nothing of
+`apps/api`, nor the root's scripts.
+
+After the caret's project's rows, the picker lists each other
+package's — `deduce::packages`: the `package.json` nearest each open
+buffer first (they are what is being worked on, and may sit outside
+the caret's repository), then every one in the caret's repository, as
+the file picker's walk sees it — nothing git ignores, so no
+`node_modules`. Each is read as Decision 1 reads the nearest: its
+scripts, its `tsc`, the package manager by the lockfile at or above
+it, run in its own directory; what said so (`apps/api/package.json`)
+is beside the row and matched as it is typed, so `api build` finds it.
+
+A command is listed once *where it runs* now: `yarn run build` in two
+packages is two rows, where the picker went by the command alone.
+
+Only the picker: a bare `:compile` and Decision 4's directory stay the
+caret's project's — a build picked for me from a package I am not in
+would be a guess. The walk is made as the picker opens, stopped at 500
+packages or 200 000 entries seen; outside a repository only the open
+buffers' packages are read, and `compile.deduce = false` turns it off
+with the rest.
+
+Beaten: the workspace globs (`workspaces`, `pnpm-workspace.yaml`) — a
+reader per package manager, and a repository of packages that is no
+workspace would list nothing; `<pm> --filter` rows from the root — the
+same commands spelled three ways. The other kinds (a crate's, a
+directory's Makefile) the same way waits for the ask: cargo's are the
+workspace's already.
 
 ## Not built
 

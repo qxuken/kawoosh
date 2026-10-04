@@ -221,6 +221,24 @@ impl Kawoosh {
         deduce::deduce(&dir, &markers)
     }
 
+    /// The scripts of the packages around (compile.md Decision 9): the
+    /// open buffers' `package.json`s, then every one in the caret's
+    /// repository. Nothing when `compile.deduce` is off.
+    fn compile_packages(&self) -> Vec<Deduced> {
+        if self.ed.settings.bool("compile.deduce") == Some(false) {
+            return Vec::new();
+        }
+        let (dir, _) = self.compile_start();
+        let mut open: Vec<PathBuf> = Vec::new();
+        for (_, b) in self.ed.buffers.iter() {
+            let d = b.path.as_deref().and_then(kawoosh_systems::fs::parent);
+            if let Some(d) = d.filter(|d| !open.contains(d)) {
+                open.push(d);
+            }
+        }
+        deduce::packages(&dir, &open)
+    }
+
     /// The commands the settings name (`compile.commands`), by name. A
     /// relative `cwd` is the project's whose `.kawoosh/settings.lua`
     /// said it; from any other source — the user's file, an `init.lua`,
@@ -526,9 +544,10 @@ impl Kawoosh {
     pub fn offer_compile(&mut self) {
         let mut rows: Vec<Offer> = Vec::new();
         let add = |rows: &mut Vec<Offer>, o: Offer| {
+            // Once where it runs: two packages' `yarn run build` are two.
             if !rows
                 .iter()
-                .any(|r| r.cmd == o.cmd && (r.name.is_some() || o.name.is_none()))
+                .any(|r| r.cmd == o.cmd && r.cwd == o.cwd && (r.name.is_some() || o.name.is_none()))
             {
                 rows.push(o);
             }
@@ -573,7 +592,10 @@ impl Kawoosh {
             let from = if i == 0 { "last run here" } else { "recent" };
             add(&mut rows, Offer::of(&cmd, cwd, from, ""));
         }
-        for d in project.commands {
+        // After the caret's project's, every package's in the repository
+        // (Decision 9).
+        let packages = self.compile_packages();
+        for d in project.commands.into_iter().chain(packages) {
             let from = self.compile_from(&d.file);
             let mut o = Offer::of(&d.cmd, d.cwd, &from, &d.why);
             o.needs = d.needs;
