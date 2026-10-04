@@ -171,9 +171,17 @@ The Rust half (`icons::keys`, `icons::legend_items`) and the Lua half
 they are glyphs (Decision 1), and a legend in a string is a key map
 copied by hand. *Beat:* words for everything (`C-w`, `RET`), the
 which-key's: plain, but `RET` on a cap reads worse than the ⏎ the
-legends already use. The modifiers are the Mac's symbols on every
-system for now (the legends already were); words on Linux and Windows
-are Not yet.
+legends already use.
+
+The modifiers are the keyboard's own (2026-10-04: "We should render
+proper keys for windows and linux hosts. probably just build time
+feature host"): the Mac's symbols on a Mac, and on a PC, whose caps
+print no ⌃ ⌥ ⌘, the words with the key in one text — `ctrl+shift+j`,
+`alt+/`, `win+s` on Windows and `super+s` on Linux, the system's key
+first as those systems write a chord. Which is the build's
+(`icons::Host::HERE`, by `target_os`), not a setting; `caps_on` reads
+a notation for any of the three, which is what the tests pin. The
+named keys stay icons everywhere (`shift+` and the tab).
 
 ### 5. Lua: `kawoosh.icon`, `kawoosh.icons`, and a view's `ctx`
 
