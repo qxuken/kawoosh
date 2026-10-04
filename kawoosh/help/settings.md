@@ -143,7 +143,7 @@ Paths complete as you type, and so do the choices of a setting that takes a few 
 
 ## The settings pane
 
-`:settings` (or `⌘,`, or `<leader>,`) opens every setting in a column beside the one you are in, so a change shows on the code at once. `:settings QUERY` opens it already searched: `:settings font`.
+`:settings` (or {{mac:`⌘,`, or }}`<leader>,`) opens every setting in a column beside the one you are in, so a change shows on the code at once. `:settings QUERY` opens it already searched: `:settings font`.
 
 Each setting is a row: its path as a settings file spells it, what it does, and a control for its kind. A switch flips, a word is one of a few chips, a number steps with `−` and `+` or takes a typed value, and a text is typed in place. A list or a table has **edit in file**, which opens the file at the key and adds the key first when the file does not have it. The rows are grouped into sections (Editing, Look, Layout, …), and a wide pane lists the sections down the left.
 
@@ -235,7 +235,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `leader` | `" "` | the `<leader>` key |
 | `whichkey` | `true` | show the keys that can follow a prefix |
 | `keys.legend` | `"compact"` | a pane's key legend starts as one `⌥/ keys` (`compact`), which `<A-/>` opens, or whole (`full`) ([look](look.md#icons-and-keys)) |
-| `keys.option_as_alt` | `"left"` | macOS: which ⌥ key is Alt for chords such as `<A-u>`: `left`, `right`, `both` or `none`; the other one types accents (`ü`) |
+| `keys.option_as_alt` | `"left"` | macOS: which {{mac:⌥}}{{pc:Option}} key is Alt for chords such as `<A-u>`: `left`, `right`, `both` or `none`; the other one types accents (`ü`) |
 | `pairs.enabled` | `true` | close brackets and quotes as you type; `pairs.rules` per language |
 | `clipboard.system` | `true` | `p` puts what other programs copied ([memory](memory.md)) |
 | `layout.default` | `"scroll"` | a new tab is a strip of columns (`scroll`) or a tree of splits (`tree`) |
@@ -269,7 +269,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `terminal.bell` | `"sound"` | `sound`, `visual` or `off` |
 | `terminal.escape` | `"<C-\\>"` | the key before normal mode's keys in a terminal; `""` for none ([terminal](terminal.md)) |
 | `terminal.place` | `"column"` | where `:terminal` and `:!` open: `column` (its own) or `under` the focused pane ([panes](panes.md#where-a-pane-opens)) |
-| `terminal.raw` | `{}` | programs a terminal pane is raw for while one is in front: every key but the escape and ⌘ theirs ([terminal](terminal.md)) |
+| `terminal.raw` | `{}` | programs a terminal pane is raw for while one is in front: every key but the escape {{mac:and ⌘ }}theirs ([terminal](terminal.md)) |
 | `lsp.inlay_hints` | `false` | types and parameter names drawn in the line |
 | `lsp` | | language servers and their rules ([code](code.md)) |
 | `compile.default`, `compile.commands` | | what `<leader>cc` and `:compile NAME` run ([code](code.md)) |

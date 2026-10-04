@@ -24,9 +24,9 @@ Wherever text is typed — insert mode, the command line, a pane's field
 
 | keys | what |
 |---|---|
-| `<A-BS>` `<A-Del>` (⌥⌫ ⌥⌦) | delete the word before the caret (where `<C-w>` stops), the word after it |
-| `<D-BS>` `<D-Del>` (⌘⌫ ⌘⌦) | delete to the line's start (as `<C-u>`), to its end |
-| `<A-Left>` `<A-Right>` | the caret a word back, past the end of the word |
+| {{mac:`<A-BS>` `<A-Del>` (⌥⌫ ⌥⌦)}}{{pc:`<C-BS>` `<C-Del>`}} | delete the word before the caret (where `<C-w>` stops), the word after it |
+{{mac:| `<D-BS>` `<D-Del>` (⌘⌫ ⌘⌦) | delete to the line's start (as `<C-u>`), to its end |
+}}| `<A-Left>` `<A-Right>` | the caret a word back, past the end of the word |
 | `<D-Left>` `<D-Right>` | the caret to the line's start, its end (as `<Home>` `<End>`) |
 
 On Windows and Linux the word keys are Ctrl's: `<C-BS>` `<C-Del>`
@@ -148,8 +148,8 @@ Every command acts on each selection, so inserting, deleting, operators,
 |---|---|
 | `<C-j>` `<C-k>` | add a caret on the line below, above (also `<C-Down>` `<C-Up>`) |
 | `<C-j>` `<C-k>` in visual mode | a caret on every selected line, at the same column |
-| `<C-n>` | select the word under the caret; again, the next match too (`⌘d` on macOS) |
-| `<C-S-n>` | select every match at once (`⌘⇧L`) |
+| `<C-n>` | select the word under the caret; again, the next match too{{mac: (`⌘d`)}} |
+| `<C-S-n>` | select every match at once{{mac: (`⌘⇧L`)}} |
 | `,` | keep only the primary selection |
 | `(` `)` | make the previous, next selection the primary one |
 | `<Esc>` | in normal mode, drop the extra carets |
@@ -158,7 +158,7 @@ Every command acts on each selection, so inserting, deleting, operators,
 | `<A-o>` `<A-i>` | select the syntax node under the caret, then the one around it; back in |
 | `<A-n>` `<A-p>` | the next, previous sibling node |
 | `<A-u>` | the caret up to the start of the node around it, one more each press; in visual mode the head goes |
-| `⌘a` | select the whole buffer |
+| {{mac:`⌘a`}}{{pc:`:select all`}} | select the whole buffer |
 | `o` in visual mode | swap the selection's ends |
 
 The primary selection is drawn solid, the others washed. `<C-n>` also
@@ -180,7 +180,7 @@ back.
 | `<leader>vl` | every line of every selection its own selection (`:select lines`) |
 | `<A-,>` | drop the primary selection, from normal mode too (`:select drop primary`) |
 
-`⌘a<leader>vs` then a pattern selects every match in the file;
+{{mac:`⌘a<leader>vs`}}{{pc:`:select all` and `<leader>vs`,}} then a pattern selects every match in the file;
 `vip<leader>vs` every match in the paragraph.
 
 ## Putting over a selection
@@ -252,10 +252,10 @@ one over a whole file. Search and `:` lines are recorded too.
 
 `y`, `d` and `c` put the text in the register and on the system clipboard,
 and text copied in another program becomes the register when you come
-back to the window — so `p` pastes it. In insert mode `⌘v` (`<C-S-v>`)
+back to the window — so `p` pastes it. In insert mode {{mac:`⌘v` (`<C-S-v>`)}}{{pc:`<C-S-v>`}}
 pastes the clipboard; `<C-S-u>` deletes the whole line into the register
 without leaving insert mode. As in vim, insert's `<BS>`, `<Del>`, `<C-w>`
-and `<C-u>` — and the ⌥ and ⌘ deletes above — leave the register and
+and `<C-u>` — and the {{mac:⌥ and ⌘}}{{pc:Ctrl}} deletes above — leave the register and
 the clipboard alone; `x` and `X` are
 deletes like `dl` and `dh` and fill them.
 

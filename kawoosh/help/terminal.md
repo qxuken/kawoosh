@@ -31,22 +31,22 @@ Almost every key goes to the program in the terminal, `<C-w>`, `<C-l>`, `<C-r>` 
 | `<C-\><C-n>` | copy mode (below), as in vim |
 | `<C-\><C-\>` | sends `<C-\>` itself to the program |
 | `<C-\><Esc>` | nothing: the keys are the program's again |
-| `<C-\>r` | raw on or off for the program in front (`:terminal raw`): every key but `<C-\>` and ⌘ goes to it |
+| `<C-\>r` | raw on or off for the program in front (`:terminal raw`): every key but `<C-\>` {{mac:and ⌘ }}goes to it |
 | `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | focus the pane left, below, above, right |
 | `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>` | the pane narrower, wider, shorter, taller |
-| `⌘1`…`⌘9`, `<C-S-1>`…`<C-S-9>` | the Nth column (or pane) |
+| {{mac:`⌘1`…`⌘9`, }}`<C-S-1>`…`<C-S-9>` | the Nth column (or pane) |
 | `<C-Tab>` `<C-S-Tab>` | the next and previous tab |
-| `⌘=` `⌘-` `⌘0` | font bigger, smaller, back to the setting (on macOS) |
-| `⌘v`, `<C-S-v>` | paste the clipboard, bracketed when the program asks for it |
+| {{mac:`⌘=` `⌘-` `⌘0`}}{{pc:`<C-=>` `<C-->` `<C-0>`}} | font bigger, smaller, back to the setting |
+| {{mac:`⌘v`, }}`<C-S-v>` | paste the clipboard, bracketed when the program asks for it |
 | `F12` | the devtools |
 
-Any Ctrl+Shift or Alt+Shift chord, and any ⌘ chord, runs its normal-mode binding instead of reaching the shell. A ⌘ chord bound to nothing does nothing — but for ⌘⌫ ⌘⌦ ⌘← ⌘→, which a shell gets as `<C-u>` `<C-k>` `<C-a>` `<C-e>` (delete to the line's start, its end, go to its start, its end), and unless the program speaks kitty's keyboard protocol (below). ⌥⌫ is Alt+Backspace, every shell's delete-word. Your own normal-mode maps on such chords work from terminals too.
+Any Ctrl+Shift or Alt+Shift chord{{mac:, and any ⌘ chord,}} runs its normal-mode binding instead of reaching the shell. {{mac:A ⌘ chord bound to nothing does nothing — but for ⌘⌫ ⌘⌦ ⌘← ⌘→, which a shell gets as `<C-u>` `<C-k>` `<C-a>` `<C-e>` (delete to the line's start, its end, go to its start, its end), and unless the program speaks kitty's keyboard protocol (below). ⌥⌫ is Alt+Backspace, every shell's delete-word. }}Your own normal-mode maps on such chords work from terminals too.
 
-Programs that speak kitty's keyboard protocol — neovim, helix, kakoune, fish 4, nushell, yazi — are sent every key as it is: `<C-i>` apart from Tab, `<C-S-l>` apart from `<C-l>`, Esc on its own, the keypad apart from the main keys, and, when they ask, key releases and a lone Shift. A ⌘ chord kawoosh does not bind reaches them as a Super chord (`<D-j>` in neovim). The keys kawoosh keeps above are still its own, and so is ⌘-click on a link, even in a program that reads the mouse.
+Programs that speak kitty's keyboard protocol — neovim, helix, kakoune, fish 4, nushell, yazi — are sent every key as it is: `<C-i>` apart from Tab, `<C-S-l>` apart from `<C-l>`, Esc on its own, the keypad apart from the main keys, and, when they ask, key releases and a lone Shift. {{mac:A ⌘ chord kawoosh does not bind reaches them as a Super chord (`<D-j>` in neovim). }}The keys kawoosh keeps above are still its own, and so is {{mac:⌘-click}}{{pc:Ctrl-click}} on a link, even in a program that reads the mouse.
 
-**Raw.** In a raw pane kawoosh keeps only `<C-\>` and the ⌘ chords it binds; everything else — `<C-S-h>`, `<C-Tab>`, `<S-PageUp>`, F12 — goes to the program, and the status line says `RAW`. `<C-\>r` turns it on or off for the program in front: raw set at the shell's prompt stays through the commands you run from it, and the next full-screen program starts as `terminal.raw` says. `terminal.raw = { "nvim", "hx" }` makes a pane raw whenever one of those programs is in front. (On Windows only `<C-\>r` does it: the program in front is not known there.)
+**Raw.** In a raw pane kawoosh keeps only `<C-\>`{{mac: and the ⌘ chords it binds}}; everything else — `<C-S-h>`, `<C-Tab>`, `<S-PageUp>`, F12 — goes to the program, and the status line says `RAW`. `<C-\>r` turns it on or off for the program in front: raw set at the shell's prompt stays through the commands you run from it, and the next full-screen program starts as `terminal.raw` says. `terminal.raw = { "nvim", "hx" }` makes a pane raw whenever one of those programs is in front. (On Windows only `<C-\>r` does it: the program in front is not known there.)
 
-Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line), and `⌘c` copies it. The middle button pastes the clipboard, as `⌘v` does, and the right one opens a menu with Copy, Paste and Select All. When a full-screen program asks for the mouse it gets the clicks and drags of every button, the right one included (tmux's and htop's menus, a file manager's); hold Shift to select anyway.
+Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line){{mac:, and `⌘c` copies it}}. The middle button pastes the clipboard, as {{mac:`⌘v`}}{{pc:`<C-S-v>`}} does, and the right one opens a menu with Copy, Paste and Select All. When a full-screen program asks for the mouse it gets the clicks and drags of every button, the right one included (tmux's and htop's menus, a file manager's); hold Shift to select anyway.
 
 ## Scrollback
 
@@ -56,7 +56,7 @@ A terminal keeps `terminal.scrollback` lines of history (10 000 by default; a sm
 |---|---|
 | `<S-PageUp>` `<S-PageDown>` | a page back into history, a page toward the prompt |
 | `<S-Home>` `<S-End>` | the top of history, back at the prompt |
-| `⌘↑` `⌘↓`, `<C-S-Up>` `<C-S-Down>` | the previous prompt, the next one (needs [shell integration](#shell-integration)) |
+| {{mac:`⌘↑` `⌘↓`, }}`<C-S-Up>` `<C-S-Down>` | the previous prompt, the next one (needs [shell integration](#shell-integration)) |
 | `<C-S-o>` | the last command's output onto the clipboard (needs shell integration) |
 
 The `Shift` page keys go to the program instead while it has the whole screen (an editor, `less`, `htop`). Scrolled away from the prompt, the pane shows a scrollbar you can drag and a badge with the lines below it; click the badge to go back. Typing also jumps back to the prompt.
@@ -69,9 +69,9 @@ To go back to the terminal: `q`, `<C-S-x>` again, or `<Esc>` once there is nothi
 
 ## Opening paths and links
 
-Hold `⌘` (Ctrl where there is no ⌘) over the terminal: a URL, or a path that exists, is underlined under the pointer. Click it to open it: a URL in the browser, a file in an editor pane at the line and column it names (`src/main.rs:42:7`, `a.ts(3,5)`), a directory as a listing. A relative path is looked for in the terminal's directory first, then in the working directory. `gx` does the same in an editor pane.
+Hold {{mac:`⌘`}}{{pc:Ctrl}} over the terminal: a URL, or a path that exists, is underlined under the pointer. Click it to open it: a URL in the browser, a file in an editor pane at the line and column it names (`src/main.rs:42:7`, `a.ts(3,5)`), a directory as a listing. A relative path is looked for in the terminal's directory first, then in the working directory. `gx` does the same in an editor pane.
 
-Some programs print links on purpose, with text that need not be the address: `ls --hyperlink`, `gcc`, `delta`, `gh`, `rg --hyperlink-format`. Those come first. While one is under the pointer with `⌘` held, its address shows at the bottom left of the terminal, so you see where a click goes before you click. A `file://` link opens in an editor pane, at the line its `#12` or `#L12` names; over ssh, a link names a file on that host. A link to a file on another machine says so and opens nothing.
+Some programs print links on purpose, with text that need not be the address: `ls --hyperlink`, `gcc`, `delta`, `gh`, `rg --hyperlink-format`. Those come first. While one is under the pointer with {{mac:`⌘`}}{{pc:Ctrl}} held, its address shows at the bottom left of the terminal, so you see where a click goes before you click. A `file://` link opens in an editor pane, at the line its `#12` or `#L12` names; over ssh, a link names a file on that host. A link to a file on another machine says so and opens nothing.
 
 ## Images
 

@@ -163,8 +163,8 @@ def --env zk [...q] { cd (kawoosh pick dirs ...$q) }
   file first, then under the working directory. A directory is listed
   in `dir`.
 
-⌘-click (ctrl-click where there is no ⌘) does the same where you click.
-In a terminal pane, ⌘-click opens paths and URLs in the output.
+{{mac:⌘-click}}{{pc:Ctrl-click}} does the same where you click.
+In a terminal pane, {{mac:⌘-click}}{{pc:Ctrl-click}} opens paths and URLs in the output.
 
 ## Copying paths
 

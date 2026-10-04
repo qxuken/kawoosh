@@ -22,7 +22,7 @@ hides what it showed: buffers and terminals live on and come back with
 | `<C-w>H` `<C-w>J` `<C-w>K` `<C-w>L` | carry the pane a place left, down, up, right |
 | `<A-S-h>` `<A-S-l>` | the pane narrower, wider (also `<C-w><` `<C-w>>`) |
 | `<A-S-j>` `<A-S-k>` | the pane shorter, taller (also `<C-w>-` `<C-w>+`) |
-| `⌘1` … `⌘9`, `<C-S-1>` … `<C-S-9>` | the Nth pane, or the Nth column of a strip (`:pane goto N`) |
+| {{mac:`⌘1` … `⌘9`, }}`<C-S-1>` … `<C-S-9>` | the Nth pane, or the Nth column of a strip (`:pane goto N`) |
 | `<C-w>:` | the command line, from a pane without one (a view of a plugin's); from a terminal, `<C-\>:` |
 | `<A-/>` | a tool pane's key legend whole, or back to its one `⌥/ keys` ([look](look.md#icons-and-keys)) |
 
@@ -74,9 +74,9 @@ A terminal's menu has Copy, Paste and Select All, and a pane's title
 bar has the pane's own rows (and an editor's Copy Path).
 
 On macOS the menu bar at the top of the screen has kawoosh's commands
-too: File, Edit, View, Go, Window and Help. Its Edit rows take no
+too: File, Edit, View, Go, Window and Help.{{mac: Its Edit rows take no
 shortcut, so ⌘C, ⌘V and the rest stay the keymap's; ⌘Q, ⌘, and ⌘M are
-the bar's unless you map them yourself.
+the bar's unless you map them yourself.}}
 
 ## Tabs
 
@@ -136,7 +136,7 @@ The pane keys mean the same thing on the strip's axis:
 | `<C-w>e` | take the pane out of its column into a column of its own |
 | `<C-w>i` | pull the next column's top pane into this column, under the focused one |
 | `zs` `ze` `zz` | put the focused column at the left edge, the right edge, the middle (`:strip left`, `right`, `center`) |
-| `⌘1` … `⌘9` | the Nth column |
+| {{mac:`⌘1` … `⌘9`}}{{pc:`<C-S-1>` … `<C-S-9>`}} | the Nth column |
 
 `:layout scroll` and `:layout tree` turn the tab into one kind or the
 other, keeping its panes; a bare `:layout` flips it. The status line
