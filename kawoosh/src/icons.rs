@@ -483,9 +483,18 @@ fn cap(key: &str, host: Host) -> Vec<CapPart> {
     }
     // A PC's order, the system's key first (`win+shift+s`), and one
     // text with the key when the key is text, so the face spaces it.
-    let sup_word = if host == Host::Windows { "win" } else { "super" };
+    let sup_word = if host == Host::Windows {
+        "win"
+    } else {
+        "super"
+    };
     let mut words = String::new();
-    for (held, word) in [(sup, sup_word), (ctrl, "ctrl"), (alt, "alt"), (shift, "shift")] {
+    for (held, word) in [
+        (sup, sup_word),
+        (ctrl, "ctrl"),
+        (alt, "alt"),
+        (shift, "shift"),
+    ] {
         if held {
             words.push_str(word);
             words.push('+');
