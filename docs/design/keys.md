@@ -261,7 +261,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `<A-o>` `<A-i>` | `select node`: the syntax node under the caret, then the one around it; back in |
 | `<A-n>` `<A-p>` | the next, the previous sibling node |
 | `<A-u>` | `node parent`: the caret up to the start of the node around it — each press one more, as vim's `[{` by the tree, and each a jump `<C-o>` comes back from ([jumps.md](jumps.md)); in visual mode the head goes, the anchor stays |
-| `<D-a>` | select all |
+| `<D-a>` `<C-S-a>` | select all — ctrl-shift the spelling without a ⌘ (2026-10-04: "add a PC key for select all"), as `<C-S-v>` and `<C-S-1>` are; `<C-a>` stays vim's increment |
 | `<leader>vs` `<leader>vS` (visual) | helix's `s` `S`: the matches of a pattern inside every selection become the selections, or every selection is split on them — a prompt previewed as it is typed, `<Esc>` putting the selections back (`select within`, `select split`; [selections.md](selections.md)); `<D-a><leader>vs` is helix's `%s` |
 | `<leader>vk` (visual) | helix's `K` and `<A-K>`: keep the selections that match, or with `!pattern` those that do not (`select keep`) |
 | `<leader>vl` (visual) | helix's `<A-s>`: every line of every selection its own selection (`select lines`) |

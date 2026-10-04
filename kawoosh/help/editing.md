@@ -158,7 +158,7 @@ Every command acts on each selection, so inserting, deleting, operators,
 | `<A-o>` `<A-i>` | select the syntax node under the caret, then the one around it; back in |
 | `<A-n>` `<A-p>` | the next, previous sibling node |
 | `<A-u>` | the caret up to the start of the node around it, one more each press; in visual mode the head goes |
-| {{mac:`⌘a`}}{{pc:`:select all`}} | select the whole buffer |
+| {{mac:`⌘a`, }}`<C-S-a>` | select the whole buffer (`:select all`) |
 | `o` in visual mode | swap the selection's ends |
 
 The primary selection is drawn solid, the others washed. `<C-n>` also
@@ -180,7 +180,7 @@ back.
 | `<leader>vl` | every line of every selection its own selection (`:select lines`) |
 | `<A-,>` | drop the primary selection, from normal mode too (`:select drop primary`) |
 
-{{mac:`⌘a<leader>vs`}}{{pc:`:select all` and `<leader>vs`,}} then a pattern selects every match in the file;
+{{mac:`⌘a<leader>vs`}}{{pc:`<C-S-a><leader>vs`}} then a pattern selects every match in the file;
 `vip<leader>vs` every match in the paragraph.
 
 ## Putting over a selection

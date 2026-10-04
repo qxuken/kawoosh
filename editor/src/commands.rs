@@ -3602,7 +3602,10 @@ const DOCS: &[(&str, &str)] = &[
         "surround replace with",
         "the second character `surround replace` waits for",
     ),
-    ("select all", "select the whole buffer"),
+    (
+        "select all",
+        "select the whole buffer ({{mac:<D-a>, }}<C-S-a>)",
+    ),
     ("command", "open the command line"),
 ];
 
@@ -4757,6 +4760,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-S-n>", "select all matches"),
         ("<D-S-l>", "select all matches"),
         ("<D-a>", "select all"),
+        // Ctrl-shift where there is no ⌘, as the clipboard's `<C-S-v>`
+        // and the panes' `<C-S-1>` are: `<C-a>` is vim's increment.
+        ("<C-S-a>", "select all"),
         ("<A-j>", "move line down"),
         ("<A-k>", "move line up"),
         ("<A-h>", "nudge left"),
