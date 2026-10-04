@@ -35,12 +35,22 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
 }
 
 fn until(d: &mut Drive, app: &mut Kawoosh, mut pred: impl FnMut(&Kawoosh) -> bool) -> bool {
-    // By the clock, and long: the fake server is a process to start, and
-    // under a loaded machine three seconds of frames were not enough.
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    frames_until(d, app, |_, a| pred(a))
+}
+
+/// [`until`] for what is asked of the frame drawn, or of the app by a
+/// call that changes it. By the clock, and long: the fake server is a
+/// process to start, and under a loaded machine two or three seconds
+/// of frames were not enough.
+fn frames_until(
+    d: &mut Drive,
+    app: &mut Kawoosh,
+    mut pred: impl FnMut(&mut Drive, &mut Kawoosh) -> bool,
+) -> bool {
+    let end = std::time::Instant::now() + WAIT;
     loop {
         d.frame(app);
-        if pred(app) {
+        if pred(d, app) {
             return true;
         }
         if std::time::Instant::now() >= end {
@@ -49,6 +59,9 @@ fn until(d: &mut Drive, app: &mut Kawoosh, mut pred: impl FnMut(&Kawoosh) -> boo
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
+
+/// How long a test waits for the server before it fails.
+const WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 #[test]
 fn diagnostics_definition_hover_and_completion() {
@@ -998,17 +1011,13 @@ fn symbols_implementations_hints_and_acting_from_the_hover() {
     // `grs`: the buffer's symbols, `inner` inside `main`.
     d.keys(&mut app, "grs");
     d.frame(&mut app);
-    for _ in 0..200 {
-        app.run_lua_source(
+    frames_until(&mut d, &mut app, |_, a| {
+        a.run_lua_source(
             "t",
             "local s = kawoosh.picker.state(); kawoosh.echo(s and tostring(s.count) or '-')",
         );
-        if app.ed.message == "2" {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        d.frame(&mut app);
-    }
+        a.ed.message == "2"
+    });
     lua(
         &mut app,
         r#"local s = kawoosh.picker.state()
@@ -1023,17 +1032,13 @@ fn symbols_implementations_hints_and_acting_from_the_hover() {
     d.keys(&mut app, "grS");
     d.frame(&mut app);
     d.keys(&mut app, "widg");
-    for _ in 0..200 {
-        app.run_lua_source(
+    frames_until(&mut d, &mut app, |_, a| {
+        a.run_lua_source(
             "t",
             "local s = kawoosh.picker.state(); kawoosh.echo(s and tostring(s.count) or '-')",
         );
-        if app.ed.message == "2" {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        d.frame(&mut app);
-    }
+        a.ed.message == "2"
+    });
     lua(
         &mut app,
         r#"local s = kawoosh.picker.state()
@@ -1054,15 +1059,7 @@ fn symbols_implementations_hints_and_acting_from_the_hover() {
     assert!(!hinted(&d));
     d.keys(&mut app, " oh");
     assert_eq!(app.ed.message, "inlay hints on");
-    let mut seen = false;
-    for _ in 0..200 {
-        d.frame(&mut app);
-        if hinted(&d) {
-            seen = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    let seen = frames_until(&mut d, &mut app, |d, _| hinted(d));
     assert!(seen, "the hint in its line");
     assert!(
         d.core
@@ -1996,15 +1993,7 @@ fn rules_load_all_hints_and_enabled() {
     assert!(!hinted(&d));
     ex(&mut d, &mut app, "lsp toggle inlay_hints");
     assert_eq!(app.ed.message, "lsp.rust.inlay_hints on");
-    let mut seen = false;
-    for _ in 0..200 {
-        d.frame(&mut app);
-        if hinted(&d) {
-            seen = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    let seen = frames_until(&mut d, &mut app, |d, _| hinted(d));
     assert!(seen, "the language's hints drawn");
     assert_eq!(app.ed.settings.bool("lsp.inlay_hints"), Some(false));
 
@@ -2789,9 +2778,11 @@ fn written_until(
     mut write: impl FnMut(),
     mut pred: impl FnMut(&Kawoosh) -> bool,
 ) -> bool {
-    for _ in 0..8 {
+    let end = std::time::Instant::now() + WAIT;
+    while std::time::Instant::now() < end {
         write();
-        for _ in 0..80 {
+        let again = std::time::Instant::now() + std::time::Duration::from_millis(800);
+        while std::time::Instant::now() < again {
             d.frame(app);
             if pred(app) {
                 return true;
