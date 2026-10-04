@@ -38,3 +38,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# The job a language server is put in, so it ends when this process
+# does (`job.rs`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

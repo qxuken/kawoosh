@@ -8,6 +8,7 @@ pub mod fs;
 pub mod grammars;
 pub mod indent;
 pub mod io;
+pub mod job;
 pub mod lsp;
 pub mod search;
 pub mod servers;
