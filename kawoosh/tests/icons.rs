@@ -228,7 +228,7 @@ fn a_lua_icon_is_drawn_as_the_chromes() {
 }
 
 /// A cap is as tall as its text's line, so a line with keys in it is no
-/// taller than without; its icons (⌃ ⇧) sit about its middle; a legend
+/// taller than without; its icons (⌃ ⇧ ⇥) sit about its middle; a legend
 /// wraps between its items, never inside one.
 #[test]
 fn key_caps_keep_the_line_and_a_legend_wraps_between_items() {
@@ -240,7 +240,7 @@ fn key_caps_keep_the_line_and_a_legend_wraps_between_items() {
         r#"kawoosh.view("caps", function(ctx)
              return column { pad = 8, gap = 8,
                row { key = "line", cross_align = "center", gap = 4,
-                 text("walk", { size = 12, wrap = "none" }), ctx.keys("<C-S-j>", { size = 12 }) },
+                 text("walk", { size = 12, wrap = "none" }), ctx.keys("<C-S-Tab>", { size = 12 }) },
                column { key = "narrow", width = 150,
                  ctx.legend({ { "<CR>", "installs" }, { { "j", "k" }, "walk" }, { "/", "filters" },
                               { "<A-/>", "keys" }, { "q", "closes" } }, { size = 12, full = true }) } }
@@ -264,7 +264,9 @@ fn key_caps_keep_the_line_and_a_legend_wraps_between_items() {
         .into_iter()
         .filter(|n| n.kind == NodeKind::Box)
         .collect();
-    assert_eq!(icons.len(), 2, "⌃ and ⇧");
+    // ⌃ ⇧ and the tab on a Mac; a PC's modifiers are words (`ctrl+shift+`).
+    let drawn = if cfg!(target_os = "macos") { 3 } else { 1 };
+    assert_eq!(icons.len(), drawn);
     for i in icons {
         let ink = ink(&nodes, nodes.iter().position(|n| n.key == i.key).unwrap());
         assert!(

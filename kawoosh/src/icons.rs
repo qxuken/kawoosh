@@ -387,12 +387,43 @@ pub const CAP: CapMeasures = CapMeasures {
     item_gap: 12.0,
 };
 
+/// The system whose keyboard a chord's modifiers are spelled for: a
+/// Mac's caps print ⌃ ⌥ ⇧ ⌘, a PC's the words, and the key between
+/// Ctrl and Alt is Win on Windows and Super on Linux.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Host {
+    Mac,
+    Windows,
+    Linux,
+}
+
+impl Host {
+    /// The one this build is for.
+    pub const HERE: Host = if cfg!(target_os = "macos") {
+        Host::Mac
+    } else if cfg!(windows) {
+        Host::Windows
+    } else {
+        Host::Linux
+    };
+}
+
 /// The caps a notation is drawn as: one a key, a chord's modifiers in
-/// it before its key, ⌃⌥⇧⌘ in the Mac's order. A letter keeps its
-/// case (`j` and `J` are two keys); a chord's capital is its shift
-/// spelled out (`<C-H>` is ⌃⇧h, the which-key's rule).
+/// it before its key — on a Mac ⌃⌥⇧⌘ as icons, in the Mac's order;
+/// elsewhere as that keyboard's words, `ctrl+shift+j`, `win+s`
+/// (`super+s` on Linux). A letter keeps its case (`j` and `J` are two
+/// keys); a chord's capital is its shift spelled out (`<C-H>` is ⌃⇧h,
+/// the which-key's rule).
 pub fn caps(notation: &str) -> Vec<Vec<CapPart>> {
-    parse_notation(notation).iter().map(|k| cap(k)).collect()
+    caps_on(notation, Host::HERE)
+}
+
+/// [`caps`] as `host` spells them.
+pub fn caps_on(notation: &str, host: Host) -> Vec<Vec<CapPart>> {
+    parse_notation(notation)
+        .iter()
+        .map(|k| cap(k, host))
+        .collect()
 }
 
 fn named(key: &str) -> Option<CapPart> {
@@ -416,7 +447,7 @@ fn named(key: &str) -> Option<CapPart> {
     })
 }
 
-fn cap(key: &str) -> Vec<CapPart> {
+fn cap(key: &str, host: Host) -> Vec<CapPart> {
     if key == LEADER {
         return vec![CapPart::Text("spc".into())];
     }
@@ -433,24 +464,51 @@ fn cap(key: &str) -> Vec<CapPart> {
     };
     let has = |m: &str| mods.split('-').any(|x| x == m);
     let capital = base.len() == 1 && base.as_bytes()[0].is_ascii_uppercase();
-    let mut out = Vec::new();
-    if has("C") {
-        out.push(CapPart::Icon("ctrl"));
-    }
-    if has("A") || has("M") {
-        out.push(CapPart::Icon("alt"));
-    }
-    if has("S") || (capital && !mods.is_empty()) {
-        out.push(CapPart::Icon("shift"));
-    }
-    if has("D") {
-        out.push(CapPart::Icon("cmd"));
-    }
-    out.push(match named(base) {
+    let (ctrl, alt) = (has("C"), has("A") || has("M"));
+    let (shift, sup) = (has("S") || (capital && !mods.is_empty()), has("D"));
+    let base = match named(base) {
         Some(p) => p,
         None if capital && !mods.is_empty() => CapPart::Text(base.to_ascii_lowercase()),
         None => CapPart::Text(base.to_string()),
-    });
+    };
+    let mut out = Vec::new();
+    if host == Host::Mac {
+        for (held, name) in [(ctrl, "ctrl"), (alt, "alt"), (shift, "shift"), (sup, "cmd")] {
+            if held {
+                out.push(CapPart::Icon(name));
+            }
+        }
+        out.push(base);
+        return out;
+    }
+    // A PC's order, the system's key first (`win+shift+s`), and one
+    // text with the key when the key is text, so the face spaces it.
+    let sup_word = if host == Host::Windows {
+        "win"
+    } else {
+        "super"
+    };
+    let mut words = String::new();
+    for (held, word) in [
+        (sup, sup_word),
+        (ctrl, "ctrl"),
+        (alt, "alt"),
+        (shift, "shift"),
+    ] {
+        if held {
+            words.push_str(word);
+            words.push('+');
+        }
+    }
+    match base {
+        CapPart::Text(t) => out.push(CapPart::Text(words + &t)),
+        icon => {
+            if !words.is_empty() {
+                out.push(CapPart::Text(words));
+            }
+            out.push(icon);
+        }
+    }
     out
 }
 
@@ -863,6 +921,7 @@ mod tests {
     fn a_notation_reads_as_caps_modifiers_first() {
         use CapPart::{Icon, Text};
         let t = |s: &str| Text(s.into());
+        let caps = |n: &str| caps_on(n, Host::Mac);
         assert_eq!(
             caps("<C-w>j"),
             vec![vec![Icon("ctrl"), t("w")], vec![t("j")]]
@@ -883,6 +942,31 @@ mod tests {
         assert_eq!(caps("<Esc>"), vec![vec![t("esc")]]);
         assert_eq!(caps("<D-->"), vec![vec![Icon("cmd"), t("-")]]);
         assert_eq!(caps("g-"), vec![vec![t("g")], vec![t("-")]]);
+    }
+
+    /// A PC's keyboard has no ⌃ ⌥ ⌘: its modifiers are the words on its
+    /// keys, the system's first, and ⌘'s key is Win or Super.
+    #[test]
+    fn a_pc_spells_a_chords_modifiers_as_words() {
+        use CapPart::{Icon, Text};
+        let t = |s: &str| Text(s.into());
+        let win = |n: &str| caps_on(n, Host::Windows);
+        assert_eq!(win("<C-w>j"), vec![vec![t("ctrl+w")], vec![t("j")]]);
+        assert_eq!(win("<C-S-j>"), vec![vec![t("ctrl+shift+j")]]);
+        assert_eq!(win("<C-H>"), win("<C-S-h>"));
+        assert_eq!(win("<A-/>"), vec![vec![t("alt+/")]]);
+        assert_eq!(win("<A-S-h>"), vec![vec![t("alt+shift+h")]]);
+        assert_eq!(win("<D-s>"), vec![vec![t("win+s")]]);
+        assert_eq!(win("<D-S-f>"), vec![vec![t("win+shift+f")]]);
+        assert_eq!(win("<D-->"), vec![vec![t("win+-")]]);
+        assert_eq!(win("<S-Tab>"), vec![vec![t("shift+"), Icon("tab")]]);
+        assert_eq!(win("<S-End>"), vec![vec![t("shift+end")]]);
+        assert_eq!(caps_on("<D-s>", Host::Linux), vec![vec![t("super+s")]]);
+        // What has no modifier reads the same everywhere.
+        for n in ["J", "<CR>", "<leader>f", "<Esc>", "g-"] {
+            assert_eq!(win(n), caps_on(n, Host::Mac), "{n}");
+        }
+        assert_eq!(caps("<C-w>"), caps_on("<C-w>", Host::HERE));
     }
 
     #[test]

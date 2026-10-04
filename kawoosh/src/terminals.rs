@@ -810,7 +810,12 @@ impl Kawoosh {
         self.terms.raw.insert(t, (pgid, on));
         let escape = self.term_escape_key().unwrap_or_default();
         self.ed.message = if on {
-            format!("raw: every key the program's but {escape} and ⌘")
+            let sup = match crate::icons::Host::HERE {
+                crate::icons::Host::Mac => "⌘",
+                crate::icons::Host::Windows => "win",
+                crate::icons::Host::Linux => "super",
+            };
+            format!("raw: every key the program's but {escape} and {sup}")
         } else {
             "raw off".into()
         };
