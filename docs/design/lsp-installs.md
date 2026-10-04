@@ -200,7 +200,8 @@ registry"), and the binary when the two differ:
   binary is a printer over it, behind a default `cli` feature. The
   crate is `qdot` (crates.io's `qd` is a float crate); lib and bin stay
   `qd`. drydock9 from CI on a tag, crates.io by hand once qd has a
-  license.
+  license — it has one since 0.2.0, and kawoosh takes `qdot` from
+  crates.io (2026-10-04), naming no registry of its own.
 - **Which door**: the library while `qd::VERSION` is the version of the
   `qd` on the PATH, or there is none — they share `state.toml`, the
   journal and the trash, and an older reader of a newer journal is

@@ -4061,7 +4061,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 [[package]]
 name = "qdot"
 version = "0.2.0"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65803ee14ba4708fbb403907c49588ced41c89dbdf3158da1526db034218ba97"
 dependencies = [
  "age",
