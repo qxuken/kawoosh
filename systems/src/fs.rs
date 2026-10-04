@@ -214,7 +214,39 @@ pub fn remove(path: &Path) -> io::Result<()> {
             std::fs::remove_file(path)
         }
     })
-    .map_err(|e| named(path, e))
+    .map_err(|e| match meta.is_dir().then(|| left_in(path)).flatten() {
+        // A directory partly removed: what is left, and a file of it —
+        // the one a running program or another holder most likely has.
+        Some((n, first)) => io::Error::new(
+            e.kind(),
+            format!(
+                "{}: {e}; {n} file{} left, {} among them",
+                path.display(),
+                if n == 1 { "" } else { "s" },
+                first.display()
+            ),
+        ),
+        None => named(path, e),
+    })
+}
+
+/// The files still under `dir` (links counted as files, not followed)
+/// and the first found, a depth at a time; `None` when there are none.
+fn left_in(dir: &Path) -> Option<(usize, PathBuf)> {
+    let mut n = 0;
+    let mut first = None;
+    let mut dirs = vec![dir.to_path_buf()];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                dirs.push(e.path());
+            } else {
+                n += 1;
+                first.get_or_insert_with(|| e.path());
+            }
+        }
+    }
+    first.map(|f| (n, f))
 }
 
 /// Creates a directory (and its parents), or an empty file (and its

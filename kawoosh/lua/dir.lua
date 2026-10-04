@@ -791,7 +791,7 @@ local function apply(groups, between, edited, here, from, applied)
         local back, err = pcall(fs.rename, a.tmp, a.path)
         outcome(a.op, false, back and "kept, nothing came in its place" or err)
       else
-        removals[#removals + 1] = { op = a.op, path = a.tmp, dir = a.op.name:sub(-1) == "/" }
+        removals[#removals + 1] = { op = a.op, path = a.tmp, from = a.path, dir = a.op.name:sub(-1) == "/" }
       end
     end
     for _, g in ipairs(gone_now) do
@@ -808,6 +808,20 @@ local function apply(groups, between, edited, here, from, applied)
     end
     for _, r in ipairs(removals) do
       fs.remove(r.path, function(ok, err)
+        -- Not all of it went (a running program's file, one another
+        -- holds): what is left goes back under its own name, where the
+        -- listing shows it, for the user to free and delete again; the
+        -- name taken since, it stays put aside, and the error says where.
+        if not ok and r.from and fs.exists(r.path) then
+          err = reason(err)
+          if not fs.exists(r.from) and pcall(fs.rename, r.path, r.from) then
+            err = err:gsub(r.path:gsub("%p", "%%%0"), (r.from:gsub("%%", "%%%%")))
+            err = err .. " — what is left is back as " .. fs.basename(r.from)
+              .. "; free it and delete again"
+          else
+            err = err .. " — what is left is in " .. r.path
+          end
+        end
         outcome(r.op, ok, err)
         left = left - 1
         if left == 0 then finish() end

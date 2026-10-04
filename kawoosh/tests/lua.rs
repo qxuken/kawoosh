@@ -3398,6 +3398,99 @@ fn a_write_deletes_and_copies_off_the_frame() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A delete that cannot take everything — a program running from the
+/// directory, a folder that refuses — is an error toast saying what is
+/// left and where: put back under its own name, where the listing shows
+/// it, for the user to free and delete again. Nothing stays hidden as
+/// `.~gone N~`.
+#[test]
+fn a_delete_that_cannot_take_everything_puts_the_rest_back() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dir-held-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("big/held")).unwrap();
+    for i in 0..20 {
+        std::fs::write(dir.join(format!("big/f{i}")), "x").unwrap();
+    }
+    // Something keeps a file there: a running program's own executable
+    // on Windows, a folder whose entries cannot be unlinked elsewhere.
+    #[cfg(windows)]
+    let mut holder = {
+        let exe = dir.join("big/held/ping.exe");
+        std::fs::copy(r"C:\Windows\System32\PING.EXE", &exe).unwrap();
+        kawoosh_systems::spawn::spawn(
+            std::process::Command::new(&exe)
+                .args(["-n", "60", "127.0.0.1"])
+                .stdout(std::process::Stdio::null()),
+        )
+        .unwrap()
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(dir.join("big/held/kept"), "k").unwrap();
+        std::fs::set_permissions(dir.join("big/held"), std::fs::Permissions::from_mode(0o555))
+            .unwrap();
+    }
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    assert_eq!(d.line_rows(), ["../", "big/"]);
+    d.keys(&mut app, "jdd");
+    app.jobs_inline = false;
+    ex(&mut d, &mut app, "w");
+    d.key(&mut app, "enter", KeyMods::default());
+    let failed = |app: &Kawoosh| {
+        app.notes
+            .shown
+            .iter()
+            .find(|s| s.text.starts_with("1 of 1 failed"))
+            .map(|s| s.text.clone())
+    };
+    for _ in 0..400 {
+        app.wait_for_jobs();
+        d.frame(&mut app);
+        if failed(&app).is_some() {
+            break;
+        }
+    }
+    let said = failed(&app).expect("an error toast");
+    assert!(
+        said.contains("what is left is back as big; free it and delete again"),
+        "{said}"
+    );
+    assert!(said.contains("1 file left"), "{said}");
+    assert!(!said.contains("~gone"), "named as it is now: {said}");
+    assert!(
+        app.notes
+            .shown
+            .iter()
+            .any(|s| s.text == said && s.level == kawoosh::notify::Level::Error),
+        "a toast, at error"
+    );
+    // Back where it was, with only what was held; nothing aside.
+    let names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["big"]);
+    assert!(!dir.join("big/f0").exists(), "what could go went");
+    assert_eq!(d.line_rows(), ["../", "big/"], "the listing shows it");
+    #[cfg(windows)]
+    {
+        let _ = holder.kill();
+        let _ = holder.wait();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ =
+            std::fs::set_permissions(dir.join("big/held"), std::fs::Permissions::from_mode(0o755));
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A Lua view's field takes the text keys a Mac types with (Ctrl's
 /// word keys elsewhere) as every line does: `<A-BS>` `<A-Del>` a word
 /// before, after the caret, `<D-BS>` `<D-Del>` to the start, the end,
