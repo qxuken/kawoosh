@@ -39,7 +39,7 @@ fn an_image_is_drawn_at_its_cell_over_or_under_the_text() {
     d.frame(&mut app);
     let t = app.add_headless_terminal();
     d.frame(&mut app);
-    let (cw, ch) = app.cell_metrics();
+    let (cw, ch) = app.grid_cell_metrics();
     // Two cells by one, at the third column of the second row.
     app.feed_terminal(t, b"one\r\nab");
     app.feed_terminal(t, &apc("a=T,f=24,s=4,v=2,i=1,c=2,r=1,q=2", &[9; 4 * 2 * 3]));

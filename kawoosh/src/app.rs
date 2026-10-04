@@ -342,6 +342,11 @@ pub struct Kawoosh {
     pub(crate) dock_state: crate::dock::DockState,
     /// A mono cell's advance and height, measured each frame.
     pub(crate) cell: (f32, f32),
+    /// A terminal grid's cell: the mono cell on whole device pixels, as
+    /// kui's cell grid draws it. At a fractional scale it is not `cell`
+    /// — a 23 px row at 125% is 29 device px, 23.2 — and rows counted
+    /// by `cell` ran past the pane's foot.
+    pub(crate) grid_cell: (f32, f32),
     /// Modifier state, from `{kind="modifiers"}` events.
     pub(crate) mods: KeyMods,
     /// The question on show, if one (`confirm.rs`): the keys are its.
@@ -499,6 +504,7 @@ impl Kawoosh {
             strip_known: Default::default(),
             dock_state: Default::default(),
             cell: (7.8, crate::rows::LH),
+            grid_cell: (8.0, crate::rows::LH),
             mods: KeyMods::NONE,
             confirm: None,
             pending_jobs: 0,
@@ -615,6 +621,11 @@ impl Kawoosh {
     /// A mono cell's advance and height, as measured last frame.
     pub fn cell_metrics(&self) -> (f32, f32) {
         self.cell
+    }
+
+    /// A terminal grid's cell, on whole device pixels as it is drawn.
+    pub fn grid_cell_metrics(&self) -> (f32, f32) {
+        self.grid_cell
     }
 
     /// Pane `pane`'s terminal, if it is one.
@@ -1220,7 +1231,7 @@ impl Kawoosh {
 
     /// Sizes terminal `id` to `w × h` px of cells.
     pub(crate) fn fit_terminal(&mut self, id: TermId, w: f32, h: f32) -> TermSize {
-        let (cw, ch) = self.cell;
+        let (cw, ch) = self.grid_cell;
         let size = TermSize {
             cols: ((w / cw).floor().max(2.0)) as u16,
             rows: ((h / ch).floor().max(1.0)) as u16,
@@ -2201,7 +2212,7 @@ impl Kawoosh {
             // rect, past its border, title and padding.
             let (row, col) = match self.layout.rects.get(&pane) {
                 Some(r) => {
-                    let (cw, ch) = self.cell;
+                    let (cw, ch) = self.grid_cell;
                     (
                         ((s.pos.y - r.y - self.chrome.pane_title_h - 1.0 - 4.0) / ch).max(0.0)
                             as usize,
@@ -2692,6 +2703,9 @@ impl kui_native::App for Kawoosh {
         self.sync_undo_view();
         let m = ui.measure_text("M", &rows::mono(self.face, &pal), None);
         self.cell = (m.width.max(1.0), self.face.line_height);
+        let scale = ui.core().scale();
+        let snap = |v: f32| (v * scale).round().max(1.0) / scale;
+        self.grid_cell = (snap(self.cell.0), snap(self.cell.1));
         self.publish_face();
         if let Some(text) = self.clip_out.take() {
             self.clip_last = Some(text.clone());
