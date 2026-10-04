@@ -1298,3 +1298,68 @@ fn a_table_at_its_edge_passes_a_sideways_swipe_to_the_strip() {
     assert!(h3.x > h2.x + 20.0, "the table came back: {h2:?} → {h3:?}");
     assert_eq!(app.layout.rects[&md].x, pane1.x, "and the strip stayed");
 }
+
+/// A menu opened over a rendered pane stays over its rows. A right
+/// click on another line moves the caret there, and the frames after
+/// draw the pane around it, the rows above in their float: kui stacks
+/// a float over all that opened before it, so the float is one the
+/// pane has every frame, and not one that opens after the menu.
+#[test]
+fn a_menu_stays_over_the_rows_above_the_caret() {
+    let dir = fixture("menu-over");
+    let (mut d, mut app) = launch(&dir, 900.0);
+    d.press(&mut app, "gg");
+    d.keys(&mut app, "2j");
+    settle(&mut d, &mut app);
+    let lines = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.label.as_deref() == Some("lines"))
+        .expect("an editor pane")
+        .rect;
+    let (_, lh) = app.cell_metrics();
+    d.button_click(
+        &mut app,
+        lines.x + 200.0,
+        lines.y + 9.5 * lh,
+        kui_native::MouseButton::Secondary,
+    );
+    let view = app.focused_view().unwrap();
+    let head = app.ed.views[view].sels.primary().head;
+    assert!(
+        app.ed.buffer_of(view).line_of(head) > 2,
+        "the caret went to the row pressed"
+    );
+    for _ in 0..3 {
+        d.frame(&mut app);
+        assert!(d.core.menu().is_some(), "the menu is open");
+        let menu = d
+            .core
+            .nodes()
+            .into_iter()
+            .find(|n| n.role == Some(kui_native::Role::Menu))
+            .expect("the menu is open")
+            .rect;
+        let (dl, _) = d.core.output();
+        let s = dl.scale;
+        let inside = |q: &kui_native::Quad| {
+            q.rect.x >= menu.x * s - 2.0
+                && q.rect.y >= menu.y * s - 2.0
+                && q.rect.x + q.rect.w <= (menu.x + menu.w) * s + 2.0
+                && q.rect.y + q.rect.h <= (menu.y + menu.h) * s + 2.0
+        };
+        let panel = dl
+            .quads
+            .iter()
+            .position(|q| {
+                q.kind == kui_native::QuadKind::Solid
+                    && (q.rect.w - menu.w * s).abs() < 1.0
+                    && (q.rect.h - menu.h * s).abs() < 1.0
+                    && inside(q)
+            })
+            .expect("the menu's panel is drawn");
+        let over = dl.quads[panel..].iter().filter(|q| !inside(q)).count();
+        assert_eq!(over, 0, "nothing of the pane is drawn after the menu");
+    }
+}

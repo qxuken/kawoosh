@@ -2406,18 +2406,28 @@ impl Kawoosh {
                                 );
                             }
                         };
-                        match md_anchored {
+                        // A tall pane has the box and its float every
+                        // frame, empty while nothing is anchored: kui
+                        // stacks a float above all that opened before
+                        // it, and one that came and went with the
+                        // anchor came back over a menu or a toast put
+                        // up in between, the rows above the caret
+                        // drawn across it (2026-10-04).
+                        let anchored = md_anchored
+                            .map(|a| (a.y, a.line))
+                            .or(tall.then_some((0.0, top)));
+                        match anchored {
                             // The rows above the caret's stacked up from
                             // it: a box as tall as its row's place, and in
                             // it a float by its bottom edge, which grows
                             // upward and is cut at the pane's top.
-                            Some(a) => {
+                            Some((y, line)) => {
                                 ui.with_keyed(
                                     "above",
                                     NodeSpec::column()
                                         .grow_width()
-                                        .height(a.y)
-                                        .min_height(kui_native::Min::px(a.y)),
+                                        .height(y)
+                                        .min_height(kui_native::Min::px(y)),
                                     |ui| {
                                         ui.with_keyed(
                                             "lines above",
@@ -2430,11 +2440,11 @@ impl Kawoosh {
                                                         .inside(Align::Start, Align::End)
                                                         .clipped(),
                                                 ),
-                                            |ui| span(ui, top, a.line),
+                                            |ui| span(ui, top, line),
                                         );
                                     },
                                 );
-                                span(ui, a.line, last);
+                                span(ui, line, last);
                             }
                             None => span(ui, top, last),
                         }
