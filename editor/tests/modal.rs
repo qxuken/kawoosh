@@ -917,6 +917,18 @@ fn search_walks_from_the_cursor_and_counts_off_the_frame_when_big() {
     assert_eq!(t.head(), 12, "`*` from `two` finds the next whole `two`");
     assert!(t.ed.message.contains("2 match(es)"), "{}", t.ed.message);
     assert!(effects(&mut t).is_empty());
+    // Over a selection `*` searches its text, not the word under the
+    // head, and leaves visual mode on the next match (reported
+    // 2026-10-05: `conpty.dll` selected, `conpty` searched and the
+    // selection stretched to the match).
+    let mut t = T::new("conpty.dll conpty conpty.dll");
+    t.keys("vt *");
+    assert_eq!(t.ed.search.as_ref().unwrap().pattern, r"conpty\.dll");
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    assert_eq!(t.head(), 18, "`*` on the next `conpty.dll`");
+    assert!(t.ed.views[t.v].sels.primary().is_empty());
+    let mut t = T::new("one two one\ntwo one");
+    t.keys("w*");
     t.keys("/(<CR>");
     assert!(t.ed.message.starts_with("bad pattern"), "{}", t.ed.message);
     assert_eq!(

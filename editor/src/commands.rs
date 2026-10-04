@@ -2276,15 +2276,30 @@ pub fn install(ed: &mut Editor) {
         search(ed, ctx, false)
     });
     ed.register_with_args("substitute", Args::rest(&[ArgKind::Text]), substitute);
+    // `*`: the word under the caret, whole — or, in visual mode, the
+    // primary selection's text as it is, the selections put down at
+    // their starts first (vim's `*` over a selection), so the caret
+    // lands on the next match and nothing is stretched to it.
     ed.register("search word", |ed, ctx| {
         let id = view(ed, ctx).buffer;
-        let buf = &ed.buffers[id];
-        let (a, b) = m::word_at(buf, ed.views[ctx.view].sels.primary().head);
-        if a == b {
-            return;
-        }
-        let word = buf.slice(a..b);
-        if let Err(e) = ed.set_search(&format!(r"\b{}\b", regex::escape(&word)), false) {
+        let pattern = if ed.mode(ctx.view) == Mode::Visual {
+            let sels = &ed.views[ctx.view].sels;
+            let primary = sels.primary();
+            let at = sels.iter().position(|s| *s == primary).unwrap_or(0);
+            let r = sel_ranges(ed, ctx.view).swap_remove(at);
+            let text = regex::escape(&ed.buffers[id].slice(r));
+            ed.set_mode(ctx.view, Mode::Normal);
+            ed.views[ctx.view].sels.map(|s| Selection::point(s.start()));
+            text
+        } else {
+            let buf = &ed.buffers[id];
+            let (a, b) = m::word_at(buf, ed.views[ctx.view].sels.primary().head);
+            if a == b {
+                return;
+            }
+            format!(r"\b{}\b", regex::escape(&buf.slice(a..b)))
+        };
+        if let Err(e) = ed.set_search(&pattern, false) {
             ed.message = e;
             return;
         }
@@ -3295,7 +3310,7 @@ const DOCS: &[(&str, &str)] = &[
     ("search prev", "the previous match of the search, wrapping"),
     (
         "search word",
-        "search for the word under the caret, forward",
+        "search for the word under the caret, forward; in visual mode, for the selection's text",
     ),
     ("search", "open the search prompt, forward"),
     ("search back", "open the search prompt, backward"),

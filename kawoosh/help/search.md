@@ -10,7 +10,7 @@ marks, and the symbols picker.
 |---|---|
 | `/` `?` | search forward, backward (`:search`, `:search back`) |
 | `n` `N` | the next, previous match, wrapping round the file |
-| `*` | search for the word under the caret, as a whole word |
+| `*` | search for the word under the caret, as a whole word; in visual mode, for the selected text as it is |
 | `<Esc>` | in normal mode, hide the match highlight; `n` still works |
 
 The pattern is a regular expression, and letters match either case;
