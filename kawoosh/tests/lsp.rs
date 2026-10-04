@@ -425,9 +425,11 @@ fn a_server_that_exits_is_started_again_then_given_up() {
     d.frame(&mut app);
     assert_eq!(app.ed.message, format!("the rust server {why}"));
 
-    // Mended, and restarted.
+    // Mended, and restarted: bare, the server the open file wants —
+    // given up on, so not running — and none of the table's others.
     d.keys(&mut app, "u");
     ex(&mut d, &mut app, "lsp restart");
+    assert_eq!(app.ed.message, format!("lsp: restarting {server}"));
     assert!(
         until(&mut d, &mut app, |a| msgs(a, buf_id) == ["boom"]),
         "a server again"
