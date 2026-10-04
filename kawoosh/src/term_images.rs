@@ -73,7 +73,7 @@ impl Kawoosh {
     /// A cell's size in the window's pixels.
     fn cell_px(&self, ui: &mut Ui<'_>) -> (u16, u16) {
         let scale = ui.core().scale();
-        let (cw, ch) = self.cell;
+        let (cw, ch) = self.grid_cell;
         (
             (cw * scale).round().max(1.0) as u16,
             (ch * scale).round().max(1.0) as u16,
@@ -91,7 +91,7 @@ impl Kawoosh {
             return Vec::new();
         }
         let (pw, ph) = self.cell_px(ui);
-        let (cw, ch) = self.cell;
+        let (cw, ch) = self.grid_cell;
         // A pixel as the program counted it, in logical ones: a cell is
         // a cell whatever the rounding.
         let (sx, sy) = (cw / pw as f32, ch / ph as f32);

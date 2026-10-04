@@ -1003,7 +1003,7 @@ impl Kawoosh {
                     .then(|| {
                         let r = ui.layout_of(ui.child_key("cells"))?;
                         let p = ui.core().cursor()?;
-                        let (cw, ch) = self.cell;
+                        let (cw, ch) = self.grid_cell;
                         let inside = p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h;
                         if !inside || cw <= 0.0 || ch <= 0.0 {
                             return None;
@@ -1094,7 +1094,7 @@ impl Kawoosh {
                                     .inside(Align::Start, Align::End)
                                     .offset(6.0, -6.0),
                             )
-                            .max_width((screen.cols as f32 * self.cell.0 * 0.8).max(160.0))
+                            .max_width((screen.cols as f32 * self.grid_cell.0 * 0.8).max(160.0))
                             .pad_xy(8.0, 3.0)
                             .radius(4.0)
                             .bg(pal.strip)

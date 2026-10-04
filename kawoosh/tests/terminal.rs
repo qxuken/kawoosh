@@ -1885,3 +1885,32 @@ fn cmds_text_keys_reach_a_shell_as_readlines() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// The grid fits its pane at every scale. Reported 2026-10-05: "Prompt
+/// line in `cmd.exe` kinda is under the bottom row when I maximize" —
+/// kui draws a cell on whole device pixels (a 23 px row at 125% is 29
+/// of them, 23.2 px), the rows were counted by the line height unsnapped,
+/// and over a tall pane the difference came to a row past its foot.
+#[test]
+fn the_grid_fits_its_pane_at_any_scale() {
+    for scale in [1.0f32, 1.25, 1.5, 1.75, 2.175] {
+        let mut app = Kawoosh::new("t", "editor text");
+        let mut d = Drive::new(1400.0, 1100.0);
+        d.scale = scale;
+        d.frame(&mut app);
+        app.add_headless_terminal();
+        d.frame(&mut app);
+        d.frame(&mut app); // the rect is known now, the grid is sized to it
+        d.frame(&mut app);
+        let nodes = d.core.nodes();
+        let cells = nodes
+            .iter()
+            .find(|n| n.kind == kui_native::NodeKind::Cells)
+            .unwrap();
+        let (c, p) = (cells.rect, app.layout.rects[&app.layout.focused()]);
+        assert!(
+            c.y + c.h <= p.y + p.h + 0.01 && c.x + c.w <= p.x + p.w + 0.01,
+            "the grid {c:?} inside its pane {p:?}, {scale}×"
+        );
+    }
+}
