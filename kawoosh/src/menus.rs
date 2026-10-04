@@ -14,6 +14,7 @@
 //! bound chord before the window sees it.
 
 use kawoosh_editor::{Mode, Selection, Selections, ViewId};
+use kawoosh_systems::lsp::Caps;
 use kui_native::{
     Accel, BarMenu, ButtonEvent, ButtonPhase, Core, Key, Menu, MenuBar, MenuItem, MenuRole,
     MouseButton, Ui, Value, Vec2, WindowCommand,
@@ -33,10 +34,16 @@ impl FreeChords {
     }
 }
 
-/// The chords the bar may bind, in the keymap's notation and the bar's:
-/// Quit, Settings, Minimize — what a Mac app has under them, and none
-/// bound by kawoosh's defaults.
-const BAR_CHORDS: [(&str, &str); 3] = [("<D-q>", "mod+q"), ("<D-,>", "mod+,"), ("<D-m>", "mod+m")];
+/// The chords the bar may bind, in the keymap's notation and the bar's,
+/// with the command line of the row that takes them: Quit, Settings,
+/// Minimize — what a Mac app has under them. A chord bound only to its
+/// row's own command (`<D-,>`, the settings pane's) is still the row's:
+/// AppKit taking it first runs what the key would.
+const BAR_CHORDS: [(&str, &str, &str); 3] = [
+    ("<D-q>", "mod+q", "quit all"),
+    ("<D-,>", "mod+,", "settings"),
+    ("<D-m>", "mod+m", ""),
+];
 const QUIT: usize = 0;
 const SETTINGS: usize = 1;
 const MINIMIZE: usize = 2;
@@ -198,11 +205,19 @@ impl Kawoosh {
         self.ed.mode(view) == Mode::Visual || self.ed.views[view].sels.iter().any(|s| !s.is_empty())
     }
 
-    /// Whether `command` can run on view `view` now — a server's for a
-    /// buffer one serves, `format` where a formatter is — so its row is
-    /// lit or dimmed, never missing.
+    /// Whether `command` can run on view `view` now — `format` where a
+    /// formatter is — so its row is lit or dimmed, never missing.
     fn can_run(&self, view: ViewId, command: &str) -> bool {
         self.ed.can(Some(view), command).is_ok()
+    }
+
+    /// Whether a language server's row is lit on `view`: a server
+    /// answers for its buffer and does what the row asks. Asked of the
+    /// shell, not of the commands' `when` — the `lsp` fact is the
+    /// focused pane's, and a command run without a server says why.
+    fn lsp_lit(&self, view: ViewId, does: impl Fn(&Caps) -> bool) -> bool {
+        let buffer = self.ed.views[view].buffer;
+        self.lsp_answers(buffer) && does(&self.caps_of(buffer))
     }
 
     /// The keys normal mode runs `command` with, the shortest of them,
@@ -246,17 +261,18 @@ impl Kawoosh {
     /// the pane's own rows. Every row present whatever is possible, its
     /// enabling what moves (kui's rule for menus, ADR 0017).
     pub(crate) fn editor_menu(&self, pane: PaneId, view: ViewId) -> Vec<MenuItem> {
-        let lsp = |label: &str, command: &str| {
+        let lsp = |label: &str, command: &str, does: fn(&Caps) -> bool| {
             self.run_hinted(label, pane, command)
-                .enabled(self.can_run(view, command))
+                .enabled(self.lsp_lit(view, does))
         };
         let selected = self.has_selection(view);
         let mut items = vec![
-            lsp("Go to Definition", "lsp definition"),
-            lsp("Go to References", "lsp references"),
-            lsp("Rename Symbol…", "lsp rename"),
-            lsp("Code Actions…", "lsp action"),
-            lsp("Format", "format"),
+            lsp("Go to Definition", "lsp definition", |c| c.definition),
+            lsp("Go to References", "lsp references", |c| c.references),
+            lsp("Rename Symbol…", "lsp rename", |c| c.rename),
+            lsp("Code Actions…", "lsp action", |c| c.code_action),
+            self.run_hinted("Format", pane, "format")
+                .enabled(self.can_run(view, "format")),
             MenuItem::separator(),
             edit("Cut", Some(pane), "cut").enabled(selected),
             edit("Copy", Some(pane), "copy").enabled(selected),
@@ -310,8 +326,8 @@ impl Kawoosh {
         ui.core().declare_menu_bar(bar);
     }
 
-    /// Which of [`BAR_CHORDS`] no binding takes, in any mode: read once
-    /// a keymap version.
+    /// Which of [`BAR_CHORDS`] no binding takes, in any mode, but one
+    /// running the row's own command: read once a keymap version.
     fn free_chords(&mut self) -> FreeChords {
         let version = self.ed.keymap.version();
         if let Some((v, free)) = self.bar_chords
@@ -327,9 +343,13 @@ impl Kawoosh {
             Mode::OperatorPending,
             Mode::Pane,
         ] {
-            for (keys, _) in self.ed.keymap.binding_strokes(mode) {
-                for (i, (chord, _)) in BAR_CHORDS.iter().enumerate() {
-                    if keys.first().is_some_and(|k| k == chord) {
+            for (keys, b) in self.ed.keymap.binding_strokes(mode) {
+                for (i, (chord, _, line)) in BAR_CHORDS.iter().enumerate() {
+                    let rows = keys.len() == 1
+                        && b.scope.is_none()
+                        && b.when.is_empty()
+                        && b.line() == *line;
+                    if keys.first().is_some_and(|k| k == chord) && !rows {
                         taken[i] = true;
                     }
                 }
@@ -364,15 +384,16 @@ impl Kawoosh {
         let view = self.view_of(pane);
         let term = self.term_of(pane).is_some();
         let on_view = |command: &str| view.is_some_and(|v| self.can_run(v, command));
+        let lsp_lit = |does: fn(&Caps) -> bool| view.is_some_and(|v| self.lsp_lit(v, does));
         let editing = view.is_some();
         let app = vec![
             run("Keys", None, "keys"),
             run("Commands…", None, "commands"),
             MenuItem::separator(),
-            chord(run("Settings…", None, "settings user"), SETTINGS),
+            chord(run("Settings…", None, BAR_CHORDS[SETTINGS].2), SETTINGS),
             run("Project Settings", None, "settings project"),
             MenuItem::separator(),
-            chord(run("Quit kawoosh", None, "quit all"), QUIT),
+            chord(run("Quit kawoosh", None, BAR_CHORDS[QUIT].2), QUIT),
         ];
         let file = vec![
             run("New Tab", None, "tab new"),
@@ -420,8 +441,8 @@ impl Kawoosh {
             run("Split Down", None, "split"),
         ];
         let go = vec![
-            run("Go to Definition", None, "lsp definition").enabled(on_view("lsp definition")),
-            run("Go to References", None, "lsp references").enabled(on_view("lsp references")),
+            run("Go to Definition", None, "lsp definition").enabled(lsp_lit(|c| c.definition)),
+            run("Go to References", None, "lsp references").enabled(lsp_lit(|c| c.references)),
             run("Go to Symbol…", None, "picker symbols"),
             MenuItem::separator(),
             run("Back", None, "jump back"),

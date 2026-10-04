@@ -2903,7 +2903,9 @@ In order — the bugs first, then what needs deciding:
     bar's — each row a command line on its pane; and
     on macOS the application menu bar, binding only the chords no
     binding takes.~~ Built 2026-10-03: `kawoosh/src/menus.rs`,
-    `kawoosh/tests/menus.rs`. Not yet seen on a Mac.
+    `kawoosh/tests/menus.rs`. Seen on a Mac 2026-10-03: the language
+    server's rows lit only where a server answers, Settings… the pane
+    as ⌘, is; the rows' key hints drawn there since kui alpha.34 (F119).
 
 The steps after 79 were asked together, 2026-10-03, from the "not
 built" lists: "let's implement everything except 1. fanout agents to

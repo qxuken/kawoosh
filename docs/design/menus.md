@@ -67,9 +67,9 @@ mode ends there. Then, every row present and only its enabling moving
 
 | Row | Runs | Lit when |
 |---|---|---|
-| Go to Definition · References | `lsp definition` · `lsp references` | `Editor::can` says so (a server serves the buffer) |
+| Go to Definition · References | `lsp definition` · `lsp references` | a server answers for the buffer and does it (`Kawoosh::lsp_answers`, `caps_of`) |
 | Rename Symbol… · Code Actions… | `lsp rename` · `lsp action` | the same |
-| Format | `format` | the same (a formatter, the server's or not) |
+| Format | `format` | `Editor::can` says so (a formatter, the server's or not) |
 | Cut · Copy | visual `d` · `y` over the selection | a selection |
 | Paste · Select All | `paste clipboard` · `select all` | always |
 | Split Right · Down, Close Other Panes, Close Pane | `vsplit` · `split` · `only` · `close` | always (Close Other with another pane) |
@@ -105,10 +105,13 @@ the window sees it (kui ADR 0018 Decision 7):
 - **The bar binds three chords, and only while free.** ⌘Q (Quit,
   `quit all`: refused, as `:qa` is, while a buffer is unsaved and the
   history does not keep it — where winit's Quit closed regardless), ⌘, (Settings,
-  `settings user`) and ⌘M (Minimize). None is bound by default; a user
-  who maps one gets it back, since the bar reads the keymap — every
-  mode, every scope, cached by the keymap's version — and leaves a
-  taken chord off its row. The Edit menu's rows bind nothing, so ⌘C,
+  `settings`, the pane) and ⌘M (Minimize). A user who maps one gets
+  it back, since the bar reads the keymap — every mode, every scope,
+  cached by the keymap's version — and leaves a taken chord off its
+  row. A chord bound only to its row's own command, global and
+  unconditioned, is not taken: AppKit running the row runs what the
+  key would. ⌘, is such a one — the settings pane binds it in every
+  mode (settings.md) — so Settings… opens the pane, not the file. The Edit menu's rows bind nothing, so ⌘C,
   ⌘V, ⌘A, ⌘Z reach the keymap and kui's runner exactly as they do
   without a bar.
 
@@ -162,5 +165,25 @@ the bar each frame. Tests, `kawoosh/tests/menus.rs`:
 `the_menu_bar_is_declared_where_the_platform_owns_one` (the platform's
 half by hand: `set_native_menu_bar`, `activate_menu_bar_item`).
 
-Not yet seen on a Mac: built and tested on Linux, where kui draws the
-context menus. On macOS the same rows go to `NSMenu`.
+Built and tested on Linux, where kui draws the context menus; seen on
+a Mac 2026-10-03, where the same rows go to `NSMenu`: the bar (read
+through Accessibility, rows run from it), the editor's menu at the
+press with Go to Definition taken, a title bar's, a terminal's. Two
+fixes from it. The language server's rows read `Editor::can`, and only
+`lsp definition` and `lsp hover` have a `when` — and its `lsp` fact is
+"a server is up somewhere" — so References, Rename and Code Actions
+were lit in a file no server serves; they ask the shell now (Decision
+2's table). Gating the commands instead was tried and beaten: a gate's
+reason ("only in a buffer with a language server") hid the server's
+own ("did not start: Could not find a valid TypeScript installation"),
+and `lsp action N` runs from the actions' picker, where the focused
+pane is not the buffer. And Settings… ran `settings user` while ⌘,,
+bound since the settings pane (roadmap step 72), opened the pane — so
+the bar left ⌘, off a row that did something else (Decision 4).
+
+The keys beside a row (Decision 4's hint) were not drawn on a Mac:
+kui's `macos_menu.rs` kept an accelerator only when it parsed with a
+modifier, so `gd` reached `NSMenu` as nothing. Fixed in kui as F119
+and released in alpha.34 (2026-10-03), which kawoosh pins: a hint is
+drawn in the row's title, right-aligned in a column of the menu's own,
+bound by nobody.

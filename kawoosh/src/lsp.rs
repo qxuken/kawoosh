@@ -1454,6 +1454,18 @@ impl Kawoosh {
         })
     }
 
+    /// Whether anyone answers for `buffer`: its language served, or a
+    /// server beside (eslint) that holds it, the language's own down or
+    /// not.
+    pub(crate) fn lsp_answers(&self, buffer: BufferId) -> bool {
+        let held = self
+            .lsp
+            .holders
+            .get(&buffer)
+            .is_some_and(|c| c.iter().any(|c| !self.lsp.said_unavailable.contains_key(c)));
+        held || self.lsp_serves(&self.ed.buffers[buffer].language)
+    }
+
     /// Whether a buffer of `language` is sent: any server for it — one
     /// beside the language's own (`when`) too, which the pool runs where
     /// its files are — not found missing and not being restarted.
@@ -1553,14 +1565,7 @@ impl Kawoosh {
             return;
         };
         let language = self.ed.buffers[buffer].language.to_string();
-        // A server beside (eslint) that holds the buffer answers what it
-        // does, the language's own down or not.
-        let held = self
-            .lsp
-            .holders
-            .get(&buffer)
-            .is_some_and(|c| c.iter().any(|c| !self.lsp.said_unavailable.contains_key(c)));
-        if !self.lsp_serves(&language) && !held {
+        if !self.lsp_answers(buffer) {
             self.ed.message = self.lsp_absent(&language);
             return;
         }

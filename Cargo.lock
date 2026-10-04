@@ -2751,9 +2751,9 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.33"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "f73da1d3b8c2fd92485e376a68c8fa43680e7475b7b040c4979061d4ef4f5680"
+version = "0.1.0-alpha.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17b8364b88a7229cd3d916ca548e678adcb1014e8101161a61e14e776676321d"
 dependencies = [
  "cosmic-text",
  "kui-derive",
@@ -2767,9 +2767,9 @@ dependencies = [
 
 [[package]]
 name = "kui-derive"
-version = "0.1.0-alpha.33"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "9133d28a369d30ac27f8c242024dc16d7de78bb61164ed73262f26bb8a3b445d"
+version = "0.1.0-alpha.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99c1f84257dd7ca452a0c59ab44b55e9343328eeda97fb75a4edb80f986846ff"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2778,18 +2778,18 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.33"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "9fb5fcb16adcbdfa5dda7c3f9a23e383e892375fedb3b25c6204180d93963203"
+version = "0.1.0-alpha.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02d2b8613f873664a46b5dc8d86f339cd6bc78cf36a0b9fda0501b3155cbb883"
 dependencies = [
  "kui-core",
 ]
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.33"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "e74dcda33300616c8c93dda159c897fa9c2de7c34c55c6dce581e9ab4669f8fb"
+version = "0.1.0-alpha.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9712b0b9a8d2a8ba28c802b7d563e51b57899cb2c2b47a8fab793a9c15e5760f"
 dependencies = [
  "kui-core",
  "kui-ffi",
@@ -2798,9 +2798,9 @@ dependencies = [
 
 [[package]]
 name = "kui-native"
-version = "0.1.0-alpha.33"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "2dffd383ebb75b6991ad310ee85ecd9b907b6cdb2d8e670b26a821bbf74ccb00"
+version = "0.1.0-alpha.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b82c0b1976fbad8a71afa67f7ca09059db2537c2fd3b574181c2804631afe44"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2821,9 +2821,9 @@ dependencies = [
 
 [[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.33"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "330ccf1f2c31f53ef8d8c6f47aab98aa321d2768eb96517f66332a3dd137526d"
+version = "0.1.0-alpha.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b745e16d2355aa1c5a65929f8f07b04fe5ecf307077f78aafa130f1c578946cd"
 dependencies = [
  "bytemuck",
  "kui-core",
