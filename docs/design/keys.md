@@ -518,7 +518,13 @@ as tall as the window holds, there are as many columns as its width
 holds, and what is past them is counted in the title (`normal mode ·
 15 more`); a run of keys counting up a digit to commands counting up
 the same digit is one row (`A-1…9 memory pin 1…9`, `D-1…9 pane goto
-1…9`). `whichkey = false` in `settings.lua`
+1…9`). A ⌘ chord (`<D-s>`, `<D-1>`) is listed where there is a ⌘:
+off macOS it stays bound — ⌘ there is the Win or Super key, whose
+chords the system takes, and a desktop that hands one over runs it —
+but the card, the palette's key and `:help keys` leave it out, its
+other spelling (`<C-s>`, `<C-S-1>`) being the one to offer
+(`keymap::listed`, 2026-10-04: "hide the `<D-…>` bindings off
+macOS"); `:map list` is the map and shows it. `whichkey = false` in `settings.lua`
 (`:set -whichkey`) turns it off, and so does its switch in the
 Settings tab (`:settings`), where every boolean of the effective table
 is a click that flips it for the session.

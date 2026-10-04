@@ -35,14 +35,19 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
 }
 
 fn until(d: &mut Drive, app: &mut Kawoosh, mut pred: impl FnMut(&Kawoosh) -> bool) -> bool {
-    for _ in 0..300 {
+    // By the clock, and long: the fake server is a process to start, and
+    // under a loaded machine three seconds of frames were not enough.
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
         d.frame(app);
         if pred(app) {
             return true;
         }
+        if std::time::Instant::now() >= end {
+            return false;
+        }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    false
 }
 
 #[test]

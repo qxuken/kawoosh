@@ -273,6 +273,21 @@ fn a_which_key_fits_the_window_and_folds_numbered_runs() {
         caps(&d, reset) && has(&t, "font reset"),
         "not part of the run: {t:?}"
     );
+    // A ⌘ chord is offered where there is a ⌘ (asked 2026-10-04: "hide
+    // the `<D-…>` bindings off macOS"); elsewhere it is bound all the
+    // same, and its other spelling is the one listed.
+    let mac = cfg!(target_os = "macos");
+    assert_eq!(caps(&d, "<D-s>"), mac, "{t:?}");
+    assert_eq!(caps(&d, "<D-1>"), mac, "{t:?}");
+    assert!(caps(&d, "<C-s>") && caps(&d, "<C-S-1>"), "{t:?}");
+    assert!(
+        app.ed
+            .keymap
+            .bindings(kawoosh_editor::Mode::Normal)
+            .iter()
+            .any(|(k, b)| k == "<D-s>" && b.command == "write"),
+        "bound on every system"
+    );
 }
 
 /// A column's commands start in one line whatever the width of their

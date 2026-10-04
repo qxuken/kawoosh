@@ -132,6 +132,7 @@ impl Kawoosh {
             }
         }
         next.iter()
+            .filter(|(k, _)| kawoosh_editor::keymap::listed(&[k]))
             .filter(|(k, bs)| {
                 pick(bs).is_some() || {
                     depth > 0 && {
@@ -170,6 +171,8 @@ impl Kawoosh {
             }
             rows.sort_by(|a, b| a.0.cmp(&b.0));
         }
+        // A ⌘ chord where there is no ⌘ is bound and not offered.
+        rows.retain(|(k, _)| kawoosh_editor::keymap::listed(&[k]));
         (!rows.is_empty()).then_some((keys, mode, rows))
     }
 
