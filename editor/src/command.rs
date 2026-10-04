@@ -673,6 +673,19 @@ impl Registry {
         self.version += 1;
     }
 
+    /// Command `name` taken away, its aliases with it; whether there was
+    /// one.
+    pub fn remove(&mut self, name: &str) -> bool {
+        let Some(old) = self.entries.remove(name) else {
+            return false;
+        };
+        for a in &old.spec.aliases {
+            self.aliases.remove(a);
+        }
+        self.version += 1;
+        true
+    }
+
     pub fn version(&self) -> u64 {
         self.version
     }

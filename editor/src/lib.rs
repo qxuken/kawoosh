@@ -1668,6 +1668,12 @@ impl Editor {
         self.commands.declare(spec);
     }
 
+    /// Command `name` declared or added before taken away again (a
+    /// plugin's rule's switch gone with the rule); whether it was there.
+    pub fn undeclare(&mut self, name: &str) -> bool {
+        self.commands.remove(name)
+    }
+
     pub fn register_kind(
         &mut self,
         name: &str,

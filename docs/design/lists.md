@@ -185,7 +185,8 @@ said), `code` — so a row read back is an item again; the end is the
 character after the start unless said. `kawoosh.diagnostics.get(opts)`
 is `kawoosh.lsp.diagnostics` with `from = NAME` besides, and every row
 says `from`: `lsp` for the servers', the name for a plugin's. `lsp` is
-no plugin's name.
+no plugin's name. `buffer = 0` with no current buffer reads none (it
+read every buffer's, found in review).
 
 **One layer, every publisher's runs in it.** Each diagnostic says
 whose it is (`Diagnostic::from`, none for the servers, together); a
@@ -210,8 +211,52 @@ that opens one takes them into its layer, beside whatever was said of
 it since; closed, a buffer leaves every publisher's to its file, each
 still marked. A path a buffer holds is that buffer; a buffer still
 opening has no text to place them in, and its file keeps them until it
-lands. A file's columns are kept as given and placed as a server's are
-(UTF-16 units), which are a plugin's characters but past the BMP.
+lands. On Windows a path is the buffer's, or the file's kept list,
+however its case is spelled (`kawoosh_doc::paths::same`); elsewhere
+the spelling is the file.
+
+**A column keeps its unit.** Each kept diagnostic of a file says what
+its columns count (`Placed::columns`): a server's UTF-16 units, a
+plugin's characters — and a closed buffer leaves its own in characters,
+having the text to count them in. A buffer that opens the file places
+each by its own unit, and `get` reads a plugin's back as given. So
+`{ line = 1, col = 3 }` on `😀😀x` is the `x` whether it was said of a
+buffer, of a path, or of a buffer still opening. A server's word on a
+file no buffer holds is read back in its own count: there is no text
+to count characters in, and past the BMP the two differ. (Found in
+review, 2026-10-03: a plugin's path-kept columns were placed as UTF-16,
+the second emoji underlined; and `get` read a closed buffer's in
+UTF-16 beside a plugin's paths' in characters.)
+
+**Said again, nothing moves.** The version moves when what a buffer's
+diagnostics say, and where, is not what it was — each run's range and
+its diagnostic compared, in one order — and a file's list when it is
+not what that publisher said before; so does a file's list taken into
+a buffer. A plugin republishing what it said — from `on_diagnostics`,
+which the version wakes, or an `on_tree` linter on every reparse —
+wakes no listener, and `*diagnostics*` is not remade under excerpts
+the user grew. (Found in review: every `set` moved the version, even
+an empty list on a buffer with none, so a republish from
+`on_diagnostics` ran every frame.)
+
+**A word on a buffer being typed in waits**, as a server's does
+(`DIAG_QUIET`, 600 ms still or insert mode left): placed against the
+text it was said of (`Editor::placed_update`), held by buffer and
+publisher (`LspState::plugin_held`), the newest replacing the one
+before, and carried by the journal to the text it lands on. For a
+buffer no server is sent, "typing" is the focused buffer's version
+moving under the keyboard. A tree-reading linter says a half-typed
+line is broken as a server does, and its messages would reflow on
+every key. `get` reads what has landed; `clear(name)` drops a held
+word with the rest. A word not held drops one held before it — it is
+newer.
+
+**Lines and columns** are whole numbers from 1 to 2³² − 1 (a float with
+no fraction counts); anything else is an error raised in the call — a
+`line = 2^32` once wrapped and panicked inside the callback. A line the
+text does not have is no error, since the text may have moved since
+the linter read it: the diagnostic is not shown, and a file keeps it
+until a buffer opens it and finds no such line.
 
 Beaten: **a layer per publisher** (`diagnostics:lint`). Each reader —
 the renderer's underline and row end, `]d`, the multibuffer's runs,

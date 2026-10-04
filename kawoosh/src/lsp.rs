@@ -103,6 +103,15 @@ pub struct LspState {
     /// kept until the text has been still for [`DIAG_QUIET`] or insert
     /// mode ends; the alarm brings the frame that applies it.
     pub held: HashMap<BufferId, (Update, Vec<Diagnostic>)>,
+    /// A plugin's newest word on a buffer being typed in, by buffer and
+    /// publisher, held as a server's is (lists.md Decision 7): worked
+    /// out against the text it was said of, carried by the journal to
+    /// the text it lands on.
+    pub plugin_held: HashMap<(BufferId, String), (Update, Vec<Diagnostic>)>,
+    /// The focused buffer, its version last seen, and when it last moved
+    /// under the keyboard — none since it was focused: whether it is
+    /// being typed in, for a buffer no server is sent.
+    typed: Option<(BufferId, Version, Option<Instant>)>,
     alarm: Alarm,
     pub completion: Option<Completion>,
     /// A completion asked for and not yet answered: the buffer and where
@@ -140,6 +149,8 @@ pub struct LspState {
     /// Each served language's server as Lua was last told
     /// (`Runtime::set_lsp_names`).
     pub(crate) names_told: HashMap<String, String>,
+    /// Every server's name as Lua was last told: what no rule may take.
+    pub(crate) servers_told: std::collections::BTreeSet<String>,
     /// What each server said, all of it (`:lsp logs`).
     pub logs: crate::lsp_logs::ServerLogs,
     /// What each language's server said it does.
@@ -196,6 +207,8 @@ impl LspState {
             sent: HashMap::new(),
             moved: HashMap::new(),
             held: HashMap::new(),
+            plugin_held: HashMap::new(),
+            typed: None,
             alarm: Alarm::spawn(wake.named("lsp alarm")),
             completion: None,
             requested: None,
@@ -209,6 +222,7 @@ impl LspState {
             said_strays: HashSet::new(),
             plugin_rules: Vec::new(),
             names_told: HashMap::new(),
+            servers_told: Default::default(),
             logs: Default::default(),
             caps: HashMap::new(),
             actions: Vec::new(),
@@ -615,11 +629,96 @@ impl Kawoosh {
             let (update, diagnostics) = self.lsp.held.remove(&id).unwrap();
             self.apply_diagnostics(id, update, diagnostics);
         }
+        // And a plugin's, by the same measure.
+        self.note_typed();
+        let quiet: Vec<(BufferId, String)> = self
+            .lsp
+            .plugin_held
+            .keys()
+            .filter(|(id, _)| !self.plugin_waits(*id, mode))
+            .cloned()
+            .collect();
+        for key in quiet {
+            let (update, list) = self.lsp.plugin_held.remove(&key).unwrap();
+            self.ed
+                .publish_diagnostics(key.0, Some(&key.1), update, list);
+        }
+        if let Some((id, _, Some(at))) = self.lsp.typed
+            && self.lsp.plugin_held.keys().any(|(b, _)| *b == id)
+        {
+            self.lsp.alarm.set(at + DIAG_QUIET);
+        }
         // A file's kept diagnostics to the buffer opened on it.
         self.ed.adopt_file_diagnostics();
         self.push_documents();
         self.ask_inlay_hints(mode);
         self.sync_lsp_logs();
+    }
+
+    /// Plugin `from`'s word on buffer `id` held, when the keyboard is
+    /// typing in it, to land as a server's held word does — once the
+    /// typing pauses or insert mode ends — in place of any it held
+    /// before; or, not typing, its held one dropped, the word newer.
+    /// Whether it was held.
+    pub(crate) fn hold_plugin_diagnostics(
+        &mut self,
+        id: BufferId,
+        from: &str,
+        list: &mut Vec<kawoosh_doc::diagnostic::Placed>,
+    ) -> bool {
+        self.note_typed();
+        let key = (id, from.to_string());
+        if !self.plugin_waits(id, self.pane_mode()) {
+            self.lsp.plugin_held.remove(&key);
+            return false;
+        }
+        let Some(held) = self.ed.placed_update(id, std::mem::take(list)) else {
+            return false;
+        };
+        self.lsp.plugin_held.insert(key, held);
+        let since = match self.lsp.typed {
+            Some((b, _, Some(at))) if b == id => at,
+            _ => self
+                .lsp
+                .moved
+                .get(&id)
+                .copied()
+                .unwrap_or_else(Instant::now),
+        };
+        self.lsp.alarm.set(since + DIAG_QUIET);
+        true
+    }
+
+    /// Whether a plugin's word on buffer `id` waits: in insert mode, its
+    /// text moved within [`DIAG_QUIET`] — as its server last heard, or
+    /// under the keyboard, for a buffer no server is sent.
+    fn plugin_waits(&self, id: BufferId, mode: Mode) -> bool {
+        mode == Mode::Insert
+            && (self.lsp.typing(id, mode)
+                || self.lsp.typed.is_some_and(|(b, _, at)| {
+                    b == id && at.is_some_and(|t| t.elapsed() < DIAG_QUIET)
+                }))
+    }
+
+    /// The focused buffer's version looked at: moved since it was last
+    /// seen, it moved now.
+    fn note_typed(&mut self) {
+        let Some(v) = self.focused_view() else {
+            return;
+        };
+        let id = self.ed.views[v].buffer;
+        let Some(version) = self.ed.buffers.get(id).map(|b| b.version()) else {
+            return;
+        };
+        match &mut self.lsp.typed {
+            Some((b, seen, at)) if *b == id => {
+                if *seen != version {
+                    *seen = version;
+                    *at = Some(Instant::now());
+                }
+            }
+            slot => *slot = Some((id, version, None)),
+        }
     }
 
     /// With inlay hints on for its language (`lsp.LANGUAGE.inlay_hints`,

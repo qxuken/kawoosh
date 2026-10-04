@@ -166,6 +166,29 @@ next read and nothing restarts. A rule's name is lowercase, digits and
 table under `lsp.RULE` is not taken for a server. The same name again
 replaces the rule.
 
+**A rule's name is no server's, and a server's no rule's.** Found in
+review, 2026-10-03: a rule named like a user's server (`lsp.zed = {
+cmd = … }`) took `lsp.zed` out of the table, the server silently gone;
+one named like a builtin (`rust`) made `kawoosh.lsp.rules` return that
+server's table as the rule's value. Now `kawoosh.lsp.rule` raises on a
+server's name — a builtin's, `servers.lua`'s, one `kawoosh.lsp.server`
+defined (in this runtime too, before the shell has heard), or an
+`lsp.NAME` that defines one (a key of `cmd` `args` `roots` `languages`
+`when` `install` `settings` `answers`, `kawoosh_lua::defines_server`)
+— and `kawoosh.lsp.server` raises on a rule's. The shell tells Lua
+every server's name with the languages' (`Runtime::set_lsp_names`). A
+table that defines a server and is said after a rule of its name (the
+settings move later) is the server still, said once on the message
+line, and `kawoosh.lsp.rules` does not read it as that rule for every
+server; only a table under a rule's name that defines nothing is left
+out of the servers. Declaring a rule makes the table again at once
+(`rules_seen` reset), so what it leaves out is out from then.
+
+**A rule goes with its runtime and its switch with its kind.** A new
+Lua runtime (`attach_lua`) forgets the last one's rules and their
+`:lsp toggle`s (`forget_lsp_rules`); a rule declared again as no
+switch loses its toggle (`Editor::undeclare`).
+
 Beaten: **rules in `kawoosh.lsp.server`'s table**, beside a server's
 data: a rule is a plugin's, not a server's, and reaches every server —
 a format-on-save plugin's switch is the same for rust-analyzer and

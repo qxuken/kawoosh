@@ -18,14 +18,16 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use kawoosh_doc::diagnostic::{LAYER, Placed};
+use kawoosh_doc::diagnostic::{Columns, LAYER, Placed};
+use kawoosh_doc::paths;
 use kawoosh_doc::{Buffer, BufferId, Diagnostic, Run, Update};
 
 use crate::Editor;
 
 /// One diagnostic as a list reads it ([`Editor::diagnostics_listed`]):
 /// where it is — lines and columns from 0, a column in characters (a
-/// file's as its server counted them) — and what it says.
+/// file's in the unit it was given in: a server's UTF-16 units, else
+/// characters) — and what it says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Listed {
     /// The buffer that holds it; none for a file no buffer holds.
@@ -49,7 +51,8 @@ pub struct Diagnostics {
 
 impl Diagnostics {
     /// Moves with every change of what is said — not with an edit that
-    /// only carries the runs along: what a listener waits on.
+    /// only carries the runs along, nor with a word that says again what
+    /// was said: what a listener waits on.
     pub fn version(&self) -> u64 {
         self.version
     }
@@ -81,16 +84,45 @@ impl Diagnostics {
         from: Option<&str>,
         list: Vec<Diagnostic>,
     ) {
-        if let Some(p) = path
-            && let Some(kept) = self.files.get_mut(p)
-        {
-            kept.retain(|d| d.diagnostic.from.as_deref() != from);
-            if kept.is_empty() {
-                self.files.remove(p);
-            }
+        let mut moved = false;
+        if let Some(p) = path.and_then(|p| self.file_key(p)) {
+            moved = self.drop_file_from(&p, from);
         }
-        self.buffers.insert(id, list);
-        self.version += 1;
+        if self.buffers.get(&id) != Some(&list) {
+            self.buffers.insert(id, list);
+            moved = true;
+        }
+        if moved {
+            self.version += 1;
+        }
+    }
+
+    /// The key the files are kept under for `path`: itself, or — on
+    /// Windows, where a name is matched case aside — the spelling it was
+    /// kept under ([`paths::same`]).
+    fn file_key(&self, path: &Path) -> Option<PathBuf> {
+        if self.files.contains_key(path) {
+            return Some(path.to_path_buf());
+        }
+        if !cfg!(windows) {
+            return None;
+        }
+        self.files.keys().find(|k| paths::same(k, path)).cloned()
+    }
+
+    /// File `key`'s kept diagnostics of publisher `from` dropped, the
+    /// file forgotten when none are left; whether there were any.
+    fn drop_file_from(&mut self, key: &Path, from: Option<&str>) -> bool {
+        let Some(kept) = self.files.get_mut(key) else {
+            return false;
+        };
+        let n = kept.len();
+        kept.retain(|d| d.diagnostic.from.as_deref() != from);
+        let dropped = kept.len() != n;
+        if kept.is_empty() {
+            self.files.remove(key);
+        }
+        dropped
     }
 
     /// Buffer `id` forgotten; what it had, if anything.
@@ -105,17 +137,20 @@ impl Diagnostics {
     /// What publisher `from` (none: the servers) said about a file no
     /// buffer holds, in place of what it said before; the others' kept.
     /// None clears its.
+    /// Said again as it was, nothing moves. On Windows a path is the
+    /// file's however its case is spelled.
     pub fn set_file(&mut self, path: PathBuf, from: Option<&str>, mut list: Vec<Placed>) {
-        let had = self.files.get(&path).map_or(0, |kept| {
-            kept.iter()
-                .filter(|d| d.diagnostic.from.as_deref() == from)
-                .count()
-        });
-        if had == 0 && list.is_empty() {
-            return;
-        }
+        let path = self.file_key(&path).unwrap_or(path);
         for d in &mut list {
             d.diagnostic.from = from.map(str::to_string);
+        }
+        let had: Vec<&Placed> = self.files.get(&path).map_or(Vec::new(), |kept| {
+            kept.iter()
+                .filter(|d| d.diagnostic.from.as_deref() == from)
+                .collect()
+        });
+        if had.len() == list.len() && had.iter().zip(&list).all(|(a, b)| *a == b) {
+            return;
         }
         let kept = self.files.entry(path.clone()).or_default();
         kept.retain(|d| d.diagnostic.from.as_deref() != from);
@@ -147,8 +182,13 @@ impl Diagnostics {
         self.files.iter().map(|(p, l)| (p, l.as_slice()))
     }
 
+    /// What the file at `path` keeps — on Windows, however its name's
+    /// case is spelled.
     pub fn file(&self, path: &Path) -> &[Placed] {
-        self.files.get(path).map_or(&[], Vec::as_slice)
+        match self.file_key(path) {
+            Some(k) => self.files.get(&k).map_or(&[], Vec::as_slice),
+            None => &[],
+        }
     }
 }
 
@@ -253,10 +293,7 @@ impl Editor {
             .filter(|(_, b)| b.loading.is_none())
             .filter_map(|(id, b)| {
                 let p = b.path.as_ref()?;
-                self.diagnostics
-                    .files
-                    .contains_key(p)
-                    .then(|| (id, p.clone()))
+                Some((id, self.diagnostics.file_key(p)?))
             })
             .collect();
         for (id, path) in takers {
@@ -264,14 +301,16 @@ impl Editor {
                 continue;
             };
             let b = &self.buffers[id];
-            let (runs, list) = placed_runs(b, placed, char::len_utf16);
+            let (runs, list) = placed_runs(b, placed);
             let update = Update {
                 layer: LAYER,
                 version: b.version(),
                 span: 0..b.len(),
                 runs,
             };
+            // The file's are gone from the list either way.
             self.merge_diagnostics(id, |_| true, update, list);
+            self.diagnostics.version += 1;
         }
     }
 
@@ -297,31 +336,43 @@ impl Editor {
             return false;
         }
         if let Some(p) = self.buffers[id].path.clone()
-            && let Some(kept) = self.diagnostics.files.get_mut(&p)
+            && let Some(key) = self.diagnostics.file_key(&p)
+            && self.diagnostics.drop_file_from(&key, from)
         {
-            kept.retain(|d| d.diagnostic.from.as_deref() != from);
-            if kept.is_empty() {
-                self.diagnostics.files.remove(&p);
-            }
+            self.diagnostics.version += 1;
         }
         true
     }
 
     /// A plugin's diagnostics for buffer `id` (`kawoosh.diagnostics.set`),
-    /// placed by lines and columns from 0 counted in characters, in the
-    /// text as it is now; replaces what `from` said of it before.
+    /// placed by lines and columns from 0 (each counted in its
+    /// [`Placed::columns`], a plugin's characters), in the text as it is
+    /// now; replaces what `from` said of it before.
     pub fn publish_placed(&mut self, id: BufferId, from: &str, placed: Vec<Placed>) -> bool {
-        let Some(b) = self.buffers.get(id) else {
+        let Some((update, list)) = self.placed_update(id, placed) else {
             return false;
         };
-        let (runs, list) = placed_runs(b, placed, |_| 1);
+        self.publish_diagnostics(id, Some(from), update, list)
+    }
+
+    /// `placed` as an update of buffer `id`'s layer at its version now,
+    /// and the list its runs' tags index: what [`Editor::publish_placed`]
+    /// publishes, or what is held to publish later — the journal carries
+    /// it to the text it lands on. None without such a buffer.
+    pub fn placed_update(
+        &self,
+        id: BufferId,
+        placed: Vec<Placed>,
+    ) -> Option<(Update, Vec<Diagnostic>)> {
+        let b = self.buffers.get(id)?;
+        let (runs, list) = placed_runs(b, placed);
         let update = Update {
             layer: LAYER,
             version: b.version(),
             span: 0..b.len(),
             runs,
         };
-        self.publish_diagnostics(id, Some(from), update, list)
+        Some((update, list))
     }
 
     /// Every diagnostic plugin `from` published — every buffer's and
@@ -343,6 +394,10 @@ impl Editor {
     /// Buffer `id`'s layer made of `update` — its tags indexing `list` —
     /// and of the runs it has now whose diagnostic `keep` keeps, carried
     /// to wherever the layer has them; the list beside it made to match.
+    /// The version moves only when what the buffer's diagnostics say, and
+    /// where, is not what it was: a publisher saying again what it said —
+    /// a linter run on every reparse, a server's answer to a keystroke
+    /// that changed nothing it checks — wakes no listener.
     fn merge_diagnostics(
         &mut self,
         id: BufferId,
@@ -354,6 +409,7 @@ impl Editor {
             return false;
         };
         let had = self.diagnostics.of(id);
+        let before = said(b, had);
         // Read before the update replaces the layer's whole span.
         let kept: Vec<(Range<usize>, Diagnostic)> = if had.iter().any(&keep) {
             b.runs(LAYER, 0..b.len())
@@ -391,8 +447,11 @@ impl Editor {
                 runs,
             });
         }
+        let moved = said(b, &list) != before;
         self.diagnostics.buffers.insert(id, list);
-        self.diagnostics.version += 1;
+        if moved {
+            self.diagnostics.version += 1;
+        }
         true
     }
 
@@ -408,26 +467,32 @@ impl Editor {
         let Some(path) = b.path.clone() else {
             return;
         };
-        let utf16 = |c: char| c.len_utf16();
+        // In characters, the unit kept with each: a list reads a closed
+        // buffer's columns as it read them open, and the buffer that
+        // opens the file places them back where they were.
         let placed: Vec<Placed> = b
             .runs(LAYER, 0..b.len())
             .into_iter()
             .filter_map(|r| {
                 let d = list.get(r.tag as usize)?.clone();
-                let (line, character) = position(b, r.range.start, utf16);
-                let (end_line, end_character) = position(b, r.range.end, utf16);
+                let (line, character) = position(b, r.range.start, |_| 1);
+                let (end_line, end_character) = position(b, r.range.end, |_| 1);
                 Some(Placed {
                     line: line as u32,
                     character: character as u32,
                     end_line: end_line as u32,
                     end_character: end_character as u32,
+                    columns: Columns::Chars,
                     diagnostic: d,
                 })
             })
             .collect();
         // Every publisher's at once, each still marked with its own.
+        let had = match self.diagnostics.file_key(&path) {
+            Some(k) => self.diagnostics.files.remove(&k).is_some(),
+            None => false,
+        };
         let d = &mut self.diagnostics;
-        let had = d.files.remove(&path).is_some();
         if !placed.is_empty() {
             d.files.insert(path, placed);
         } else if !had {
@@ -437,17 +502,53 @@ impl Editor {
     }
 }
 
-/// `placed` as runs of `b`'s layer and the list their tags index, a
-/// column counted by `count` (UTF-16 units, a server's; characters, a
-/// plugin's); a range empty or backwards is the character at its start.
-fn placed_runs(
-    b: &Buffer,
-    placed: Vec<Placed>,
-    count: impl Fn(char) -> usize + Copy,
-) -> (Vec<Run>, Vec<Diagnostic>) {
+/// What buffer `b`'s layer says with `list`: each run's range and its
+/// diagnostic, in one order whatever the tags — so two words that say
+/// the same compare equal.
+fn said(b: &Buffer, list: &[Diagnostic]) -> Vec<(Range<usize>, Diagnostic)> {
+    if list.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<(Range<usize>, Diagnostic)> = b
+        .runs(LAYER, 0..b.len())
+        .into_iter()
+        .filter_map(|r| Some((r.range, list.get(r.tag as usize)?.clone())))
+        .collect();
+    type Key<'a> = (
+        usize,
+        usize,
+        u32,
+        &'a str,
+        Option<&'a str>,
+        Option<&'a str>,
+        Option<&'a str>,
+    );
+    fn key(x: &(Range<usize>, Diagnostic)) -> Key<'_> {
+        let (r, d) = x;
+        (
+            r.start,
+            r.end,
+            d.severity,
+            &d.message,
+            d.from.as_deref(),
+            d.source.as_deref(),
+            d.code.as_deref(),
+        )
+    }
+    out.sort_by(|a, b| key(a).cmp(&key(b)));
+    out
+}
+
+/// `placed` as runs of `b`'s layer and the list their tags index, each
+/// column counted in its own unit (a server's UTF-16 units, a plugin's
+/// characters); a range empty or backwards is the character at its
+/// start, and one on a line past the text's end — a line the buffer
+/// does not have — is dropped.
+fn placed_runs(b: &Buffer, placed: Vec<Placed>) -> (Vec<Run>, Vec<Diagnostic>) {
     let mut runs = Vec::new();
     let mut list = Vec::new();
     for p in placed {
+        let count = |c: char| p.columns.len_of(c);
         let a = offset_by(b, p.line as usize, p.character as usize, count);
         let z = offset_by(b, p.end_line as usize, p.end_character as usize, count).max(a);
         let z = if z == a {
@@ -474,6 +575,8 @@ fn listed_file(path: &Path, p: &Placed) -> Listed {
         buffer: None,
         path: Some(path.to_path_buf()),
         line: p.line as usize,
+        // A server's UTF-16 count as it gave it: there is no text here
+        // to count characters in.
         col: p.character as usize,
         end_line: p.end_line as usize,
         end_col: p.end_character as usize,
