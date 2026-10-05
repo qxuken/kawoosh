@@ -3045,8 +3045,8 @@ frame.
     floats that start at the cursor, `e` the byte order. A file with a
     NUL in its first 8000 bytes opens there instead of as repaired
     text (`hex.binary`; `t` opens it as text). What was decided:
-    - *A viewer.* Nothing is written; editing bytes wants an undo and
-      a save of its own and nothing asked for it.
+    - *A viewer* at first; bytes written over came the same day,
+      below.
     - *Never the whole file.* `kawoosh.fs.bytes(path, offset, len)`
       reads the screenful each frame it is drawn and
       `kawoosh.fs.find(path, needle, from, back)` searches a megabyte
@@ -3061,11 +3061,42 @@ frame.
       first row the pane keeps itself — a scroller's pixel offset is
       an `f32`, coarser than a row past some hundred megabytes. The
       thumb at the side is the pane's own.
-    - Not built: editing; a session bringing the pane back; a find
-      off the frame's thread; other encodings in the text half.
+    - Not built: a session bringing the pane back; a find off the
+      frame's thread; other encodings in the text half.
     `kawoosh/tests/hex.rs`; `systems` `fs::tests::bytes_are_read_and_found_without_the_whole`.
     A command's `ctx.counted` (a count was typed) came with it, for
     `Ngo` against `go`.
+
+    *Bytes written over*, 2026-10-05 ("What would it cost to build the
+    editor?", then "let's implement overwrite-only"): `r` takes a byte
+    and `R` bytes until `<Esc>`, into the half the cursor is in — two
+    hex digits a byte, a character its bytes; `<Tab>` or a click the
+    other half; `u` `<C-r>`; `]c` `[c`; `<C-s>` / `:hex write`,
+    `:hex revert`. What was decided:
+    - *Over, never in or out.* The file stays as long as it is, so an
+      offset means what it meant, the changes are a map of offset to
+      byte laid over what is read — the grid's screenful, the foot, a
+      copy, a find — and a write is the changed bytes alone, in place
+      (`kawoosh.fs.patch`, `systems/src/fs.rs` `patch`): a byte of a
+      4 GB file costs a byte. Not atomic: a failure between two runs
+      leaves the first written. Putting bytes in or taking them out
+      wants a piece table and a write of the whole file; not built.
+    - *A change is a draft.* A Lua pane has no "modified" the shell
+      asks about at a close or a quit, and none was added: what is not
+      written is kept by the file's path — in the plugin while the
+      editor runs, in the store (`hex`) past it, written there at each
+      change — so a close or a quit loses nothing, as a buffer's draft
+      (history.rs). Without a store a quit loses it, unasked. The
+      undo list is the run's.
+    - *Not over a file that moved.* The file's size and time are
+      stamped at the first change; a write with either different is
+      refused, `:hex write!` writes over it, `:hex revert` drops.
+    - A find reads the file as it is to be: the disk's matches clear
+      of changed bytes, and each run of changes with the bytes a
+      match there could reach.
+    `kawoosh/tests/hex.rs`
+    (`bytes_are_written_over_undone_and_saved_in_place`,
+    `changes_not_written_are_kept_past_the_pane_and_the_editor`).
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

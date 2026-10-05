@@ -3,7 +3,7 @@
 -- of sixteen, each its offset, its bytes in hex and what they say as
 -- text — and a file that is not text (a NUL in its first eight
 -- thousand bytes, git's rule) opens here instead of as a buffer of
--- repaired text (`hex.binary`). A viewer: nothing is written.
+-- repaired text (`hex.binary`).
 --
 -- The cursor is a cell, one byte, lit in both halves. `h` `j` `k` `l`
 -- walk a byte or a row; `w` `b` a group of four; `0` `$` the row's
@@ -17,6 +17,21 @@
 -- foot reads numbers in; `t` opens the file as text after all; `q`
 -- closes. A click puts the cursor on a byte, in either half.
 --
+-- Bytes are written over, never put in or taken out: the file stays as
+-- long as it is. `r` takes one byte and `R` bytes until `<Esc>`, typed
+-- into the half the cursor is in — two hex digits a byte in the hex
+-- half, a character its bytes in the text half; `<Tab>` (or a click)
+-- changes the half, `<BS>` in `R` takes the last one back. `u` and
+-- `<C-r>` undo and redo, `]c` `[c` go to the next change and the one
+-- before, `:hex revert` drops them all. A change is drawn in the
+-- warning colour and is not on the disk until `<C-s>` (`:hex write`)
+-- writes it — the changed bytes alone, in place
+-- (`kawoosh.fs.patch`), refused when the file changed on disk since
+-- the first of them (`:hex write!` writes over it). What is not
+-- written is kept by the file's path while the editor runs and in the
+-- store past it, as a buffer's draft is: closing the pane or quitting
+-- loses none of it.
+--
 -- The foot says where the cursor is and what starts there: the byte,
 -- and the integers and floats of each width in the order `e` chose.
 --
@@ -27,7 +42,7 @@
 -- scrolled by whole rows as a terminal is.
 --
 -- Hackable: `kawoosh.hex` — `open(path)`, `state([pane])`, `panes()`,
--- `is_binary(path)`, `parse_offset`, `parse_needle` — and the
+-- `is_binary(path)`, `changes(path)`, `parse_offset`, `parse_needle` — and the
 -- settings `hex.binary`, `hex.columns`.
 
 local fs = kawoosh.fs
@@ -150,15 +165,355 @@ local function selection()
   return math.min(S.anchor, S.cursor), math.max(S.anchor, S.cursor)
 end
 
+local function grouped(n)
+  local s = tostring(n)
+  return (s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+end
+local function grouped_bytes(n) return grouped(n) .. (n == 1 and " byte" or " bytes") end
+
+-- ------------------------------------------------------------ the changes
+
+-- A file's changes, not written yet: `map` (offset → `{ new, disk }`,
+-- the byte it is to be and the byte the disk had when it was changed),
+-- their `count`, the `undo` and `redo` lists (each item a list of `{
+-- at, old, new }`, taken back whole) and `stamp`, the file's size and
+-- time when the first was made. One a path, whatever panes show it,
+-- kept while the editor runs and in the store (`hex`) past it.
+local edits = {}
+local kept = kawoosh.store("hex")
+
+local function stamp_of(path)
+  local ok, st = pcall(fs.stat, path)
+  if ok and st and not st.is_dir then return { size = st.size, modified = st.modified } end
+  return nil
+end
+
+local function changes(path)
+  local E = edits[path]
+  if E then return E end
+  E = { map = {}, count = 0, undo = {}, redo = {} }
+  edits[path] = E
+  local ok, text = pcall(kept.get, path)
+  local saved = ok and type(text) == "string" and kawoosh.json.decode(text) or nil
+  if type(saved) == "table" and type(saved.patches) == "table" then
+    for _, p in ipairs(saved.patches) do
+      local at, new, disk = math.tointeger(p[1]), math.tointeger(p[2]), math.tointeger(p[3])
+      if at and new and disk and not E.map[at] then
+        E.map[at] = { new = new, disk = disk }
+        E.count = E.count + 1
+      end
+    end
+    E.stamp = type(saved.stamp) == "table" and saved.stamp or nil
+  end
+  return E
+end
+
+-- The changed offsets in order, sorted once a change.
+local function sorted(E)
+  if not E.sorted then
+    local offs = {}
+    for at in pairs(E.map) do offs[#offs + 1] = at end
+    table.sort(offs)
+    E.sorted = offs
+  end
+  return E.sorted
+end
+
+-- The changes as they are now, into the store; none is no row.
+local function keep(path, E)
+  E.sorted = nil
+  if E.count == 0 then
+    E.stamp = nil
+    pcall(kept.del, path)
+    return
+  end
+  local patches = {}
+  for at, p in pairs(E.map) do patches[#patches + 1] = { at, p.new, p.disk } end
+  pcall(kept.set, path, kawoosh.json.encode({ stamp = E.stamp, patches = patches }))
+end
+
+local function disk_byte(path, at)
+  local ok, b = pcall(fs.bytes, path, at, 1)
+  return ok and b:byte(1) or nil
+end
+
+-- Byte `at` is to be `value`: a change, or — the byte the disk has —
+-- no change any more.
+local function put(path, E, at, value)
+  local p = E.map[at]
+  local disk = p and p.disk or disk_byte(path, at)
+  if not disk then return false end
+  if p and value == disk then
+    E.map[at], E.count = nil, E.count - 1
+  elseif p then
+    p.new = value
+  elseif value ~= disk then
+    if E.count == 0 then E.stamp = stamp_of(path) end
+    E.map[at], E.count = { new = value, disk = disk }, E.count + 1
+  end
+  return true
+end
+
+-- `bytes`, read from `at`, with the changes there over them.
+local function overlay(E, at, bytes)
+  if E.count == 0 or #bytes == 0 then return bytes end
+  local hits = {}
+  if E.count <= #bytes then
+    for o in pairs(E.map) do
+      if o >= at and o < at + #bytes then hits[#hits + 1] = o end
+    end
+    table.sort(hits)
+  else
+    for o = at, at + #bytes - 1 do
+      if E.map[o] then hits[#hits + 1] = o end
+    end
+  end
+  if #hits == 0 then return bytes end
+  local parts, from = {}, 1
+  for _, o in ipairs(hits) do
+    local i = o - at + 1
+    parts[#parts + 1] = bytes:sub(from, i - 1)
+    parts[#parts + 1] = string.char(E.map[o].new)
+    from = i + 1
+  end
+  parts[#parts + 1] = bytes:sub(from)
+  return table.concat(parts)
+end
+
+-- `len` bytes from `at` as the file is to be: the disk's, the changes
+-- over them. Nil and why when it cannot be read.
+local function read(path, at, len)
+  local ok, bytes = pcall(fs.bytes, path, at, len)
+  if not ok then return nil, bytes end
+  return overlay(changes(path), at, bytes)
+end
+
+-- One change of the pane's file, `items` of `{ at, value }`, undone
+-- whole: the undo item, or nil when every byte was that already.
+local function change(items)
+  local E = changes(S.path)
+  local done = {}
+  for _, it in ipairs(items) do
+    local at, value = it[1], it[2]
+    local old = E.map[at] and E.map[at].new or disk_byte(S.path, at)
+    if old and old ~= value and put(S.path, E, at, value) then
+      done[#done + 1] = { at = at, old = old, new = value }
+    end
+  end
+  if #done == 0 then return nil end
+  E.undo[#E.undo + 1] = done
+  E.redo = {}
+  keep(S.path, E)
+  return done
+end
+
+-- The byte at the cursor finished: `item`, the change its first digit
+-- made and still the newest, takes the whole byte — one undo for the
+-- two digits — or a change is made when the first digit was none.
+local function amend(item, value)
+  local E = changes(S.path)
+  if not item or E.undo[#E.undo] ~= item then return change({ { S.cursor, value } }) end
+  put(S.path, E, item[1].at, value)
+  item[1].new = value
+  if item[1].old == value then
+    E.undo[#E.undo] = nil
+    item = nil
+  end
+  keep(S.path, E)
+  return item
+end
+
+local function undo(redo)
+  local E = changes(S.path)
+  local from, to = redo and E.redo or E.undo, redo and E.undo or E.redo
+  local item = table.remove(from)
+  if not item then return kawoosh.echo(redo and "nothing to redo" or "nothing to undo") end
+  for i = redo and 1 or #item, redo and #item or 1, redo and 1 or -1 do
+    put(S.path, E, item[i].at, redo and item[i].new or item[i].old)
+  end
+  to[#to + 1] = item
+  keep(S.path, E)
+  S.nibble = nil
+  go(item[1].at, true)
+end
+
+-- `:hex write`: the changes onto the disk, in place, runs of bytes
+-- beside each other one write each.
+local function write(force)
+  local E = changes(S.path)
+  if E.count == 0 then return kawoosh.echo("nothing to write") end
+  local now = stamp_of(S.path)
+  if not now then return kawoosh.echo("not there to write: " .. S.path) end
+  if not force and E.stamp and (now.size ~= E.stamp.size or now.modified ~= E.stamp.modified) then
+    return kawoosh.echo("changed on disk since these changes began: `:hex write!` writes over it, `:hex revert` drops them")
+  end
+  local runs = {}
+  local at, bytes = nil, nil
+  for _, o in ipairs(sorted(E)) do
+    if at and o == at + #bytes then
+      bytes[#bytes + 1] = string.char(E.map[o].new)
+    else
+      if at then runs[#runs + 1] = { at, table.concat(bytes) } end
+      at, bytes = o, { string.char(E.map[o].new) }
+    end
+  end
+  if at then runs[#runs + 1] = { at, table.concat(bytes) } end
+  local ok, why = pcall(fs.patch, S.path, runs)
+  if not ok then return kawoosh.echo(tostring(why)) end
+  local n = E.count
+  E.map, E.count = {}, 0
+  keep(S.path, E)
+  kawoosh.echo(string.format("%s written to %s", grouped_bytes(n), fs.basename(S.path)))
+end
+
+local function revert()
+  local E = changes(S.path)
+  if E.count == 0 then return kawoosh.echo("nothing changed") end
+  local items = {}
+  for at, p in pairs(E.map) do items[#items + 1] = { at, p.disk } end
+  table.sort(items, function(a, b) return a[1] < b[1] end)
+  local n = E.count
+  change(items)
+  kawoosh.echo(grouped_bytes(n) .. " back as on the disk (u brings them back)")
+end
+
+-- The next change after the cursor, or the one before it, round the ends.
+local function to_change(back)
+  local offs = sorted(changes(S.path))
+  if #offs == 0 then return kawoosh.echo("nothing changed") end
+  local to
+  if back then
+    for i = #offs, 1, -1 do
+      if offs[i] < S.cursor then to = offs[i] break end
+    end
+    to = to or offs[#offs]
+  else
+    for i = 1, #offs do
+      if offs[i] > S.cursor then to = offs[i] break end
+    end
+    to = to or offs[1]
+  end
+  go(to, true)
+end
+
+-- A key while bytes are taken (`r`, `R`): true when it was one of
+-- theirs. A digit or a character goes into the half the cursor is in;
+-- a key that is neither — an arrow, a chord — is the pane's as ever.
+local function typed(ev)
+  local key = ev.key
+  if key == "<Esc>" then
+    S.mode, S.nibble, S.session = nil, nil, nil
+    return true
+  end
+  if key == "<Tab>" then
+    S.side, S.nibble = S.side == "text" and "hex" or "text", nil
+    return true
+  end
+  if key == "<BS>" then
+    local E = changes(S.path)
+    if S.nibble then
+      if S.nibble.item and E.undo[#E.undo] == S.nibble.item then undo(false) end
+      S.nibble = nil
+    elseif S.session and #S.session > 0 then
+      local was = table.remove(S.session)
+      if was.item and E.undo[#E.undo] == was.item then undo(false) end
+      go(was.at)
+    elseif S.mode == "replace" then
+      go(S.cursor - 1)
+    end
+    return true
+  end
+  local text = ev.text
+  if ev.ctrl or ev.alt or type(text) ~= "string" or text == "" or key:match("^<[CDA]%-") then
+    S.nibble = nil
+    return false
+  end
+  if S.size == 0 then return true end
+  local at, item, step = S.cursor, nil, nil
+  if S.side == "text" then
+    local items = {}
+    for i = 1, #text do
+      if at + i - 1 <= last_byte() then items[#items + 1] = { at + i - 1, text:byte(i) } end
+    end
+    item, step = change(items), #items
+  else
+    local d = #text == 1 and tonumber(text, 16) or nil
+    if not d then return true end
+    local now = read(S.path, at, 1)
+    local b = now and now:byte(1)
+    if not b then return true end
+    if not S.nibble then
+      S.nibble = { item = change({ { at, d << 4 | b & 0x0F } }) }
+      S.reveal = "edge"
+      return true
+    end
+    item, step = amend(S.nibble.item, b & 0xF0 | d), 1
+    S.nibble = nil
+  end
+  if S.mode == "one" then
+    S.mode = nil
+    S.reveal = "edge"
+  else
+    S.session[#S.session + 1] = { at = at, item = item }
+    go(at + step)
+  end
+  return true
+end
+
+-- Where `needle` next starts in the file as it is to be: on the disk
+-- clear of the changes, or among them — each run of changes read with
+-- the bytes a match there could reach.
+local function find_in(path, needle, from, back)
+  local E = changes(path)
+  local len = #needle
+  local best = nil
+  local at = from
+  while true do
+    local hit = fs.find(path, needle, at, back)
+    if not hit then break end
+    local touched = false
+    if E.count > 0 then
+      for o = hit, hit + len - 1 do
+        if E.map[o] then touched = true break end
+      end
+    end
+    if not touched then best = hit break end
+    at = back and hit or hit + 1
+  end
+  if E.count == 0 then return best end
+  local offs = sorted(E)
+  local i = 1
+  while i <= #offs do
+    local j = i
+    while j < #offs and offs[j + 1] - offs[j] <= len do j = j + 1 end
+    local start = math.max(0, offs[i] - len + 1)
+    local text = read(path, start, offs[j] - start + len)
+    local init = 1
+    while text do
+      local s = text:find(needle, init, true)
+      if not s then break end
+      local hit = start + s - 1
+      if back then
+        if hit < from and (not best or hit > best) then best = hit end
+      elseif hit >= from and (not best or hit < best) then
+        best = hit
+      end
+      init = s + 1
+    end
+    i = j + 1
+  end
+  return best
+end
+
 local function find(back)
   if not S then return end
   if not S.needle then return kawoosh.echo("nothing asked for yet: / finds") end
-  local ok, at = pcall(fs.find, S.path, S.needle, back and S.cursor or S.cursor + 1, back)
+  local ok, at = pcall(find_in, S.path, S.needle, back and S.cursor or S.cursor + 1, back)
   if not ok then return kawoosh.echo(tostring(at)) end
   local wrapped = false
   if not at then
     wrapped = true
-    ok, at = pcall(fs.find, S.path, S.needle, back and S.size or 0, back)
+    ok, at = pcall(find_in, S.path, S.needle, back and S.size or 0, back)
     if not ok then return kawoosh.echo(tostring(at)) end
   end
   if not at then return kawoosh.echo("not found: " .. S.said) end
@@ -176,8 +531,8 @@ local function copy(as_text)
   if not S or S.size == 0 then return end
   local a, b = selection()
   local len = math.min(b - a + 1, 1 << 20)
-  local ok, bytes = pcall(fs.bytes, S.path, a, len)
-  if not ok then return kawoosh.echo(tostring(bytes)) end
+  local bytes, why = read(S.path, a, len)
+  if not bytes then return kawoosh.echo(tostring(why)) end
   local out
   if not as_text then
     out = spaced(bytes)
@@ -230,11 +585,6 @@ local function human(n)
   local v, i = n / 1024, 1
   while v >= 1024 and i < #units do v, i = v / 1024, i + 1 end
   return string.format(v < 10 and "%.1f %s" or "%.0f %s", v, units[i])
-end
-
-local function grouped(n)
-  local s = tostring(n)
-  return (s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
 end
 
 -- What starts at the cursor, as `{ label, value }`: the byte, and each
@@ -335,8 +685,10 @@ kawoosh.view(VIEW, function(ctx)
   end
   S.top = math.max(0, math.min(math.max(0, total - rows), S.top))
 
+  local E = changes(S.path)
   local ok, data = pcall(fs.bytes, S.path, S.top * n, rows * n)
   if not ok then data, gone = "", true end
+  data = overlay(E, S.top * n, data)
 
   local lines, runs = {}, {}
   local function run(r, c, len, fg, bg, flags) runs[#runs + 1] = { r, c, len, fg or 0, bg or 0, flags or 0 } end
@@ -398,18 +750,33 @@ kawoosh.view(VIEW, function(ctx)
       run(r + 1, hex_col(hx, n, i), hex_col(hx, n, j) + 2 - hex_col(hx, n, i), fg, bg)
       run(r + 1, tx + i, j - i + 1, fg, bg)
     end
+    -- A byte changed and not written, in the warning colour.
+    if E.count > 0 then
+      for i = 0, #chunk - 1 do
+        if E.map[at + i] then
+          run(r + 1, hex_col(hx, n, i), 2, t.warning, 0, 1)
+          run(r + 1, tx + i, 1, t.warning, 0, 1)
+        end
+      end
+    end
     local f = S.found
     if f and not S.anchor then span(f.at, f.at + f.len - 1, t.sunken) end
     if S.anchor then span(sel_a, sel_b, t.selection) end
     if S.size > 0 and S.cursor >= at and S.cursor < at + n then
       local i = S.cursor - at
-      if ctx.focused then
-        run(r + 1, hex_col(hx, n, i), 2, t.bg, t.accent, 1)
-        run(r + 1, tx + i, 1, t.bg, t.accent, 1)
-      else
-        run(r + 1, hex_col(hx, n, i), 2, 0, t.border)
-        run(r + 1, tx + i, 1, 0, t.border)
+      -- The half the keys are in is lit whole, the other marked; the
+      -- warning colour while bytes are taken, a byte half typed
+      -- underlined.
+      local lit = S.mode and t.warning or t.accent
+      local function cell(col, len, on)
+        if ctx.focused and on then
+          run(r + 1, col, len, t.bg, lit, 1 | ((S.nibble and len == 2) and 4 or 0))
+        else
+          run(r + 1, col, len, 0, t.border)
+        end
       end
+      cell(hex_col(hx, n, i), 2, S.side ~= "text")
+      cell(tx + i, 1, S.side == "text")
     end
   end
   for r = #lines + 1, rows + 1 do lines[r] = "" end
@@ -432,16 +799,28 @@ kawoosh.view(VIEW, function(ctx)
 
   -- The head: the file and its size.
   local said = gone and "not there to read" or (human(S.size) .. " · " .. grouped(S.size) .. " bytes")
+  -- What is taken now, and what is not on the disk yet.
+  local note = nil
+  if S.mode then
+    note = (S.mode == "one" and "one byte" or "bytes") .. " into the " .. (S.side == "text" and "text" or "hex")
+        .. " half · Tab the other · Esc ends"
+  end
+  if E.count > 0 then
+    note = (note and note .. " · " or "") .. grouped_bytes(E.count) .. " changed, not written"
+  end
   local head = column { width = "grow", gap = 4, pad = { x = 12, top = 10 },
     row { width = "grow", gap = 8, cross_align = "center",
       text({ { "bytes", bold = true } }, { size = m.text, color = t.fg, wrap = "none" }),
       row { width = "grow", min_width = 0,
         text(fs.short and fs.short(S.path) or S.path, { family = "mono", size = m.text, color = t.accent, ellipsis = true }) } },
-    text(said, { size = m.small, color = gone and t.danger or t.muted, ellipsis = true }),
-    ctx.legend({ { { "h", "j", "k", "l" }, "walk" }, { { "w", "b" }, "by fours" }, { { "0", "$" }, "the row's ends" },
+    text(said, { size = m.small, color = gone and t.danger or t.muted, ellipsis = true }) }
+  if note then head[#head + 1] = text(note, { size = m.small, color = t.warning, ellipsis = true }) end
+  head[#head + 1] = ctx.legend({ { { "h", "j", "k", "l" }, "walk" }, { { "w", "b" }, "by fours" }, { { "0", "$" }, "the row's ends" },
       { { "gg", "G" }, "the file's" }, { "go", "to an offset" }, { "/", "finds" }, { { "n", "N" }, "next, back" },
-      { "v", "selects" }, { { "y", "Y" }, "copies hex, text" }, { "e", "byte order" }, { "t", "as text" },
-      { "q", "closes" } }, { size = m.note }) }
+      { "v", "selects" }, { { "y", "Y" }, "copies hex, text" }, { "e", "byte order" },
+      { { "r", "R" }, "takes a byte, bytes" }, { "<Tab>", "the other half" }, { { "u", "<C-r>" }, "undoes, redoes" },
+      { { "]c", "[c" }, "next change, back" }, { "<C-s>", "writes" }, { "t", "as text" },
+      { "q", "closes" } }, { size = m.note })
 
   -- The foot: where the cursor is, and what starts there.
   local foot = column { width = "grow", gap = 2, pad = { x = 12, bottom = 8 } }
@@ -452,7 +831,8 @@ kawoosh.view(VIEW, function(ctx)
       where = where .. string.format(" · %s byte%s selected, 0x%X–0x%X", grouped(len), len == 1 and "" or "s", sel_a, sel_b)
     end
     foot[#foot + 1] = text(where, { family = "mono", size = m.small, color = t.fg, ellipsis = true })
-    local okr, at_cursor = pcall(fs.bytes, S.path, S.cursor, 8)
+    local at_cursor = read(S.path, S.cursor, 8)
+    local okr = at_cursor ~= nil
     local chips = row { width = "grow", gap = 12, cross_gap = 2, wrap_children = true, cross_align = "center",
       row { gap = 4, on_click = { kind = "order" }, radius = 3, hover_bg = t.sunken,
         text(S.order == "<" and "little-endian" or "big-endian", { size = m.note, color = t.accent, wrap = "none" }) } }
@@ -473,6 +853,12 @@ kawoosh.view(VIEW, function(ctx)
       bar },
     foot }
 end, function(ev)
+  -- A key says no pane: the one with the keyboard's.
+  if ev.kind == "key" then
+    S = states[last]
+    if not S or not S.mode then return false end
+    return typed(ev)
+  end
   S = states[pane_of(ev.slot)]
   if not S then return end
   local n = S.n
@@ -492,7 +878,11 @@ end, function(ev)
   if (kind == "drag" or kind == "scroll") and type(ev.tag) == "table" then kind = ev.tag.kind end
   if kind == "cell" then
     local at = byte_under(ev.cell)
-    if at then S.cursor, S.anchor = at, nil end
+    if at then
+      local _, tx = columns(n, digits)
+      S.cursor, S.anchor, S.nibble = at, nil, nil
+      S.side = ev.cell.col >= tx and "text" or "hex"
+    end
   elseif kind == "drag" then
     local at = byte_under(ev.cell)
     if not at then return end
@@ -532,10 +922,21 @@ function hex.open(path)
 end
 
 -- hex.state([pane]): what a pane shows — `path`, `size`, `cursor`,
--- `top` (the first row on show), `columns`, `rows`, `anchor`, `order`
+-- `top` (the first row on show), `columns`, `rows`, `anchor`, `side`
+-- (`"hex"`, `"text"`: the half the keys are in), `mode` (`"one"`,
+-- `"replace"` while bytes are taken), `changed` (bytes not written), `order`
 -- (`"little"`, `"big"`), `needle`, `lines` (the grid's rows as drawn,
 -- the columns' names first) — or nil when it is not open: the pane
 -- last drawn with the keyboard when none is named.
+-- hex.changes(path): a file's changes not written yet, `{ { at =,
+-- new =, disk = }, … }` in the file's order.
+function hex.changes(path)
+  local E = changes(fs.expand(path))
+  local out = {}
+  for i, at in ipairs(sorted(E)) do out[i] = { at = at, new = E.map[at].new, disk = E.map[at].disk } end
+  return out
+end
+
 function hex.panes()
   local out = {}
   for p in pairs(states) do out[#out + 1] = p end
@@ -548,7 +949,7 @@ function hex.state(pane)
   if not st then return nil end
   return { path = st.path, size = st.size, cursor = st.cursor, top = st.top, columns = st.n, rows = st.rows,
            anchor = st.anchor, order = st.order == "<" and "little" or "big", needle = st.needle,
-           lines = st.lines }
+           lines = st.lines, side = st.side or "hex", mode = st.mode, changed = changes(st.path).count }
 end
 
 kawoosh.command("hex", function(ctx)
@@ -649,10 +1050,29 @@ on("text", function()
   plain[S.path] = true
   kawoosh.open(S.path)
 end, "open the file as text after all")
+on("replace one", function()
+  if S.size == 0 then return end
+  S.mode, S.nibble, S.session, S.anchor = "one", nil, nil, nil
+end, "take one byte over the cursor's: two hex digits, or a character in the text half")
+on("replace", function()
+  if S.size == 0 then return end
+  S.mode, S.nibble, S.session, S.anchor = "replace", nil, {}, nil
+end, "take bytes over the file's from the cursor on, until <Esc>")
+on("half", function() S.side, S.nibble = S.side == "text" and "hex" or "text", nil end,
+  "the keys into the other half: hex, text")
+on("undo", function() undo(false) end, "take the last change back")
+on("redo", function() undo(true) end, "make the change taken back again")
+on("next change", function() to_change(false) end, "the cursor to the next byte changed and not written")
+on("previous change", function() to_change(true) end, "the cursor to the changed byte before")
+on("write", function(ctx) write(ctx.bang) end, "write the changed bytes into the file, in place",
+  { bang = "over a file that changed on disk since the changes began" })
+on("revert", revert, "drop every change not written: the bytes as on the disk")
 on("close", function(ctx)
+  local n = changes(S.path).count
+  if n > 0 then kawoosh.echo(grouped_bytes(n) .. " changed and not written: kept for :hex " .. fs.basename(S.path)) end
   states[ctx.pane], S = nil, nil
   kawoosh.view_close(VIEW)
-end, "close the pane")
+end, "close the pane; what is not written is kept")
 
 for k, c in pairs {
   h = "left", l = "right", j = "down", k = "up",
@@ -664,6 +1084,8 @@ for k, c in pairs {
   ["<PageDown>"] = "page down", ["<PageUp>"] = "page up",
   ["/"] = "find", n = "next", N = "previous",
   v = "select", ["<Esc>"] = "escape", y = "copy", Y = "copy text", e = "order", t = "text",
+  r = "replace one", R = "replace", ["<Tab>"] = "half", u = "undo", ["<C-r>"] = "redo",
+  ["]c"] = "next change", ["[c"] = "previous change", ["<C-s>"] = "write", ["<D-s>"] = "write",
   q = "close",
 } do
   kawoosh.map("p", k, "hex " .. c, { view = VIEW })

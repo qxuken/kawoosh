@@ -677,6 +677,57 @@ pub fn find_bytes(path: &Path, needle: &[u8], from: u64, back: bool) -> io::Resu
     Ok(None)
 }
 
+/// Writes each of `runs` — an offset and the bytes that go there —
+/// over a file's own bytes, in place: nothing before, between or after
+/// them is read or written, and the file is as long as it was. A run
+/// that would reach past the file's end refuses the whole before
+/// anything is written. What the bytes pane's `:hex write` saves by:
+/// a few changed bytes of a file of any size. Not atomic — a failure
+/// between runs leaves the earlier ones written. A host's file is read
+/// whole, changed and written back through its domain.
+pub fn patch(path: &Path, runs: &[(u64, Vec<u8>)]) -> io::Result<()> {
+    use std::io::{Seek, SeekFrom, Write};
+    let size = stat(path)?.size;
+    for (at, bytes) in runs {
+        if at.saturating_add(bytes.len() as u64) > size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{}: {} bytes at {at} are past its end ({size})",
+                    path.display(),
+                    bytes.len()
+                ),
+            ));
+        }
+    }
+    if on_host(path).is_some() {
+        let mut all = read_bytes(path)?;
+        for (at, bytes) in runs {
+            let at = *at as usize;
+            match all.get_mut(at..at + bytes.len()) {
+                Some(there) => there.copy_from_slice(bytes),
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("{}: shorter than it said", path.display()),
+                    ));
+                }
+            }
+        }
+        return write(path, all);
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|e| named(path, e))?;
+    for (at, bytes) in runs {
+        f.seek(SeekFrom::Start(*at))
+            .and_then(|_| f.write_all(bytes))
+            .map_err(|e| named(path, e))?;
+    }
+    f.sync_data().map_err(|e| named(path, e))
+}
+
 /// Writes `text`, creating the file's directory when it is missing.
 pub fn write(path: &Path, text: impl AsRef<[u8]>) -> io::Result<()> {
     if let Some(h) = on_host(path) {
@@ -1002,6 +1053,23 @@ mod tests {
         assert_eq!(find(0, true), None);
         assert_eq!(find_bytes(&path, b"", 0, false).unwrap(), None);
         assert_eq!(find_bytes(&path, b"NOPE", 0, false).unwrap(), None);
+        // Runs written over its own bytes, the rest and its length as
+        // they were; one past the end refuses them all.
+        patch(
+            &path,
+            &[(1, b"ade".to_vec()), (last as u64, b"DONE".to_vec())],
+        )
+        .unwrap();
+        assert_eq!(read_at(&path, 0, 5).unwrap(), b"Made\0");
+        assert_eq!(read_at(&path, last as u64 - 1, 16).unwrap(), b"\0DONE");
+        assert_eq!(stat(&path).unwrap().size, 3 << 20);
+        assert_eq!(read_at(&path, cut as u64, 4).unwrap(), b"MARK");
+        let err = patch(
+            &path,
+            &[(0, b"x".to_vec()), (last as u64 + 1, b"long".to_vec())],
+        );
+        assert!(err.unwrap_err().to_string().contains("past its end"));
+        assert_eq!(read_at(&path, 0, 1).unwrap(), b"M", "nothing written");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

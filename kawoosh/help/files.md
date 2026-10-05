@@ -188,9 +188,8 @@ or four in a narrow pane, or `hex.columns`), each its offset, its bytes
 in hex and what they say as text. A file that is not text — a NUL in
 its first eight thousand bytes — opens here by itself, rather than as
 a buffer of repaired text (`hex.binary = false` for the buffer; `t` in
-the pane opens this one as text). It is a viewer: nothing is written,
-and a file of any size costs a screenful, read again each time it is
-drawn.
+the pane opens this one as text). A file of any size costs a screenful,
+read again each time it is drawn.
 
 The cursor is one byte, lit in both halves; a click puts it, a drag
 selects. The foot says its offset and what starts there: the byte in
@@ -212,6 +211,26 @@ binary, the integers and floats of each width, the character.
 | `e` | the byte order the foot reads numbers in |
 | `t` | opens the file as text after all |
 | `q` | closes |
+
+Bytes are written over, never put in or taken out, so the file stays
+as long as it is. They are typed into the half the cursor is in: two
+hex digits make a byte in the hex half, a character is its bytes in
+the text half. A changed byte is drawn in the warning colour and is not
+on the disk until it is written; the write puts the changed bytes
+alone into the file, in place, and is refused when the file changed on
+disk since the first of them. What is not written is kept by the
+file's path — closing the pane or quitting loses none of it, and
+`:hex` on the file shows it again.
+
+| keys | what |
+|---|---|
+| `r` | takes one byte over the cursor's |
+| `R` | takes bytes from the cursor on until `<Esc>`; `<BS>` takes the last back |
+| `<Tab>`, a click | the keys into the other half |
+| `u` `<C-r>` | undo, redo |
+| `]c` `[c` | the next changed byte, the one before |
+| `<C-s>`, `:hex write` | writes the changes; `:hex write!` over a file that changed on disk |
+| `:hex revert` | drops every change not written |
 
 ## Disk usage
 

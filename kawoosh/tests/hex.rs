@@ -305,3 +305,189 @@ fn a_click_puts_the_cursor_and_a_file_that_is_not_text_opens_here() {
     assert!(text(&mut app).starts_with("EZNO"), "opened as a buffer");
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// `changed mode side` of the pane with the keyboard.
+fn editing(app: &mut Kawoosh) -> String {
+    lua(
+        app,
+        r#"local s = kawoosh.hex.state()
+           kawoosh.echo(string.format("%d %s %s", s.changed, tostring(s.mode), s.side))"#,
+    )
+}
+
+/// Bytes are written over in either half, undone, found among, and
+/// reach the disk only when written — in place, the file as long as it
+/// was — and not over a file that changed meanwhile.
+#[test]
+fn bytes_are_written_over_undone_and_saved_in_place() {
+    let (mut d, mut app, root) = open("edit");
+    let blob = root.join("blob.bin");
+    let before = std::fs::read(&blob).unwrap();
+    // `r` and two digits: one byte, the cursor where it was.
+    d.press(&mut app, "lrf");
+    assert_eq!(
+        editing(&mut app),
+        "1 one hex",
+        "the first digit shows at once"
+    );
+    d.press(&mut app, "F");
+    assert_eq!(editing(&mut app), "1 nil hex");
+    assert_eq!(cursor(&mut app), 1);
+    d.frame(&mut app);
+    assert!(
+        rows(&mut app)[1].starts_with("00000000  45 FF 4E 4F"),
+        "{}",
+        rows(&mut app)[1]
+    );
+    assert_eq!(std::fs::read(&blob).unwrap(), before, "not on the disk yet");
+    // One undo for the two digits, and a redo.
+    d.press(&mut app, "u");
+    assert_eq!(editing(&mut app), "0 nil hex");
+    d.press(&mut app, "<C-r>");
+    assert_eq!(editing(&mut app), "1 nil hex");
+    // `R` in the text half: characters, the cursor going on; a
+    // backspace takes the last back; a letter that is a key of the
+    // pane's is typed, not run.
+    ex(&mut d, &mut app, "hex goto 16");
+    d.press(&mut app, "<Tab>Rhjq<BS>");
+    assert_eq!(editing(&mut app), "3 replace text");
+    assert_eq!(cursor(&mut app), 18);
+    d.press(&mut app, "<Esc>");
+    assert_eq!(editing(&mut app), "3 nil text");
+    d.frame(&mut app);
+    assert!(
+        rows(&mut app)[2].starts_with("00000010  68 6A 12 13"),
+        "{}",
+        rows(&mut app)[2]
+    );
+    // `R` in the hex half: a byte each two digits, a key that is no
+    // digit nothing; the byte typed as it was is no change.
+    d.press(&mut app, "<Tab>");
+    ex(&mut d, &mut app, "hex goto 0x20");
+    d.press(&mut app, "R00zz2122<Esc>");
+    assert_eq!(cursor(&mut app), 0x23);
+    assert_eq!(editing(&mut app), "4 nil hex", "0x21 as 21 is no change");
+    let changes = |app: &mut Kawoosh| {
+        lua(
+            app,
+            r#"local out = {}
+               for _, c in ipairs(kawoosh.hex.changes(kawoosh.hex.state().path)) do
+                 out[#out + 1] = string.format("%X:%02X>%02X", c.at, c.disk, c.new)
+               end
+               kawoosh.echo(table.concat(out, " "))"#,
+        )
+    };
+    assert_eq!(changes(&mut app), "1:5A>FF 10:10>68 11:11>6A 20:20>00");
+    // The changes are walked, and found among: `hj` is nowhere on the
+    // disk, and `EZNO` is no longer in the file as it is to be.
+    d.press(&mut app, "gg]c");
+    assert_eq!(cursor(&mut app), 1);
+    d.press(&mut app, "]c]c]c]c");
+    assert_eq!(cursor(&mut app), 1, "round the end");
+    d.press(&mut app, "[c");
+    assert_eq!(cursor(&mut app), 0x20);
+    ex(&mut d, &mut app, "hex find hj");
+    assert_eq!(cursor(&mut app), 0x10);
+    ex(&mut d, &mut app, "hex find EZNO");
+    assert!(app.ed.message.contains("not found"), "{}", app.ed.message);
+    // A copy is of the bytes as they are to be.
+    ex(&mut d, &mut app, "hex goto 0");
+    d.press(&mut app, "vly");
+    assert_eq!(app.clipboard_last(), Some("45 FF"));
+    // Written: those bytes alone, the file as long as it was.
+    assert_eq!(std::fs::read(&blob).unwrap(), before, "not on the disk yet");
+    d.press(&mut app, "<C-s>");
+    assert!(
+        app.ed.message.contains("4 bytes written"),
+        "{}",
+        app.ed.message
+    );
+    let mut want = before.clone();
+    (want[1], want[0x10], want[0x11], want[0x20]) = (0xFF, b'h', b'j', 0);
+    assert_eq!(std::fs::read(&blob).unwrap(), want);
+    assert_eq!(editing(&mut app), "0 nil hex");
+    // An undo past the write is a change again.
+    d.press(&mut app, "u");
+    assert_eq!(changes(&mut app), "20:00>20");
+    // The file changed on disk since: the write is refused, `!` writes.
+    want[4000] = 0xAB;
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(&blob, &want).unwrap();
+    let later =
+        std::fs::metadata(&blob).unwrap().modified().unwrap() + std::time::Duration::from_secs(5);
+    std::fs::File::options()
+        .write(true)
+        .open(&blob)
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    ex(&mut d, &mut app, "hex write");
+    assert!(
+        app.ed.message.contains("changed on disk"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(std::fs::read(&blob).unwrap(), want);
+    ex(&mut d, &mut app, "hex write!");
+    want[0x20] = 0x20;
+    assert_eq!(std::fs::read(&blob).unwrap(), want, "{}", app.ed.message);
+    // Every change dropped at once, and back by one undo.
+    d.press(&mut app, "rAr0");
+    ex(&mut d, &mut app, "hex goto 9");
+    d.press(&mut app, "r00");
+    assert_eq!(editing(&mut app), "2 nil hex");
+    ex(&mut d, &mut app, "hex revert");
+    assert_eq!(editing(&mut app), "0 nil hex");
+    d.press(&mut app, "u");
+    assert_eq!(editing(&mut app), "2 nil hex");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// What is not written is kept: by the pane's close, and by the store
+/// past the editor.
+#[test]
+fn changes_not_written_are_kept_past_the_pane_and_the_editor() {
+    let (root, blob) = fixture("kept");
+    let db = root.join("state.db");
+    let launch = |db: &std::path::Path| {
+        let mut app = Kawoosh::new("t", "");
+        app.jobs_inline = true;
+        let ext = app.attach_lua().unwrap();
+        let mut d = Drive::new(1600.0, 700.0);
+        d.extension("lua", ext).unwrap();
+        app.open_store(Some(db));
+        d.frame(&mut app);
+        (d, app)
+    };
+    let show = |d: &mut Drive, app: &mut Kawoosh| {
+        ex(d, app, &format!("hex {}", blob.display()));
+        for _ in 0..3 {
+            d.frame(app);
+        }
+    };
+    let (mut d, mut app) = launch(&db);
+    show(&mut d, &mut app);
+    d.press(&mut app, "llrAB");
+    assert_eq!(editing(&mut app), "1 nil hex");
+    d.press(&mut app, "q");
+    assert!(app.ed.message.contains("kept"), "{}", app.ed.message);
+    show(&mut d, &mut app);
+    assert_eq!(editing(&mut app), "1 nil hex", "the pane closed and opened");
+    drop((d, app));
+    let (mut d, mut app) = launch(&db);
+    show(&mut d, &mut app);
+    assert_eq!(editing(&mut app), "1 nil hex", "another run of the editor");
+    assert!(
+        rows(&mut app)[1].starts_with("00000000  45 5A AB 4F"),
+        "{}",
+        rows(&mut app)[1]
+    );
+    d.press(&mut app, "<C-s>");
+    assert_eq!(std::fs::read(&blob).unwrap()[2], 0xAB, "{}", app.ed.message);
+    drop((d, app));
+    let (mut d, mut app) = launch(&db);
+    show(&mut d, &mut app);
+    assert_eq!(editing(&mut app), "0 nil hex", "written, nothing is kept");
+    std::fs::remove_dir_all(&root).ok();
+}

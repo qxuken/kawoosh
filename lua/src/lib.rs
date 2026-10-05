@@ -6312,6 +6312,24 @@ fn seed(
             },
         )?,
     )?;
+    // `kawoosh.fs.patch(path, { { offset, bytes }, … })`: each run of
+    // bytes written over the file's own at its offset (0-based), in
+    // place — the file as long as it was, nothing else of it read or
+    // written; a run past its end refuses them all. What `:hex write`
+    // saves a few changed bytes of a file of any size by.
+    fs.set(
+        "patch",
+        lua.create_function(|_, (p, runs): (String, Table)| {
+            let mut out = Vec::new();
+            for run in runs.sequence_values::<Table>() {
+                let run = run?;
+                let at: u64 = run.get(1)?;
+                let bytes: mlua::LuaString = run.get(2)?;
+                out.push((at, bytes.as_bytes().to_vec()));
+            }
+            kfs::patch(&expand(&p), &out).map_err(io_err)
+        })?,
+    )?;
     fs.set(
         "write",
         // Any Lua string: its bytes, text or not.
