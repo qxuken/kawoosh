@@ -31,6 +31,21 @@ fn settle(d: &mut Drive, app: &mut Kawoosh) {
     }
 }
 
+/// The pointer put on the first tab, which carries its close button
+/// under the pointer alone.
+fn on_a_tab(d: &mut Drive, app: &mut Kawoosh) {
+    let tab = d.rect("tab0").expect("a tab");
+    d.input(
+        app,
+        kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(
+            tab.x + tab.w / 2.0,
+            tab.y + tab.h / 2.0,
+        )),
+    );
+    d.frame(app);
+    d.frame(app);
+}
+
 /// The nodes under the node at `at`, in order.
 fn under(nodes: &[NodeInfo], at: usize) -> &[NodeInfo] {
     let n = nodes[at + 1..]
@@ -101,6 +116,7 @@ fn the_tab_close_icon_is_centred_in_its_button_and_the_button_in_its_tab() {
     d.frame(&mut app);
     ex(&mut d, &mut app, "tabnew");
     settle(&mut d, &mut app);
+    on_a_tab(&mut d, &mut app);
     let nodes = d.core.nodes();
     let at = find(&nodes, "close");
     let button = nodes[at].rect;
@@ -139,6 +155,7 @@ fn a_users_icon_is_the_chromes_too_until_cleared() {
         "lua kawoosh.icons.close = { { dot = 0.3 } }",
     );
     settle(&mut d, &mut app);
+    on_a_tab(&mut d, &mut app);
     let nodes = d.core.nodes();
     let at = find(&nodes, "close");
     assert!(ink(&nodes, at).is_empty(), "no strokes");
@@ -187,6 +204,7 @@ fn a_lua_icon_is_drawn_as_the_chromes() {
     d.frame(&mut app);
     ex(&mut d, &mut app, "tabnew");
     settle(&mut d, &mut app);
+    on_a_tab(&mut d, &mut app);
     let nodes = d.core.nodes();
     let at = find(&nodes, "close");
     let icon = children(&nodes, at)[0];

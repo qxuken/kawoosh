@@ -143,6 +143,10 @@ pub fn toggle(ui: &mut Ui<'_>, icons: &Icons, pane: PaneId, full: bool, style: &
         node.gap(crate::icons::CAP.word_gap)
             .pad_xy(4.0, 0.0)
             .radius(4.0)
+            // Whole or not at all: in a bar too narrow for its name,
+            // the hint and the close button's room, the name is what
+            // is cut, where a hint squeezed put `keys` under its cap.
+            .min_width(kui_native::Min::FIT)
             .hover_group(&crate::panes::title_group(pane))
             .cross_align(Align::Center)
             .on_click(Value::map([
