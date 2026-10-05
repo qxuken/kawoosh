@@ -508,11 +508,15 @@ pub enum Msg {
     /// on the buffer's tracked lines by id, set or (`false`) taken
     /// off, the rest kept (`Runtime::annotate`). The buffer by handle,
     /// by name (a scratch just asked for, not yet in the snapshot), or
-    /// the current one.
+    /// the current one. `align` (`{ align = true }`) says whether the
+    /// buffer's notes start at one place, past its widest line — a
+    /// column, as a listing's sizes are — rather than each past its own
+    /// line's end; `None` leaves it as it was.
     Annotate {
         buffer: Option<u64>,
         name: Option<String>,
         notes: Vec<(usize, Option<String>)>,
+        align: Option<bool>,
     },
     /// `kawoosh.buf.base(text, label[, buffer])`: what the buffer is
     /// read against (docs/design/vcs.md Decision 1) — the diff of the
@@ -1089,6 +1093,9 @@ struct Tracked {
     since: kawoosh_doc::Version,
     lines: Vec<Followed>,
     snap: Option<(kawoosh_doc::Version, Rc<TrackedSnap>)>,
+    /// Whether the notes are a column: all from one place, past the
+    /// buffer's widest line.
+    aligned: bool,
 }
 
 type TrackedCell = Rc<RefCell<HashMap<BufferId, Tracked>>>;
@@ -1444,23 +1451,35 @@ impl Runtime {
                 since: v,
                 lines,
                 snap: None,
+                aligned: false,
             },
         );
     }
 
     /// Sets the notes on `id`'s tracked lines — `(id, note)`, `None`
     /// taking one off — the rest kept; an id the buffer has no line
-    /// for is nothing.
-    pub fn annotate(&self, id: BufferId, notes: Vec<(usize, Option<String>)>) {
+    /// for is nothing. `align`, when given, is whether the notes are a
+    /// column from then on ([`Runtime::notes_aligned`]).
+    pub fn annotate(&self, id: BufferId, notes: Vec<(usize, Option<String>)>, align: Option<bool>) {
         let mut tracked = self.tracked.borrow_mut();
         let Some(t) = tracked.get_mut(&id) else {
             return;
         };
+        if let Some(a) = align {
+            t.aligned = a;
+        }
         for (n, note) in notes {
             if let Some(f) = n.checked_sub(1).and_then(|i| t.lines.get_mut(i)) {
                 f.note = note;
             }
         }
+    }
+
+    /// Whether `id`'s notes are a column — each drawn from one place,
+    /// past the buffer's widest line — as its last `annotate` that said
+    /// so left it.
+    pub fn notes_aligned(&self, id: BufferId) -> bool {
+        self.tracked.borrow().get(&id).is_some_and(|t| t.aligned)
     }
 
     /// The notes on `id`'s tracked lines that lie on `rows` (lines
@@ -5327,7 +5346,11 @@ fn seed(
     let pp = published.clone();
     buf.set(
         "annotate",
-        lua.create_function(move |_, (notes, which): (Table, LV)| {
+        lua.create_function(move |_, (notes, which, opts): (Table, LV, Option<Table>)| {
+            let align = match opts {
+                Some(o) => o.get::<Option<bool>>("align")?,
+                None => None,
+            };
             let (buffer, name) = match which {
                 LV::String(s) => (None, Some(s.to_str()?.to_string())),
                 LV::Integer(n) => (Some(n as u64), None),
@@ -5360,6 +5383,7 @@ fn seed(
                 buffer,
                 name,
                 notes: out,
+                align,
             });
             Ok(())
         })?,

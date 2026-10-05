@@ -87,7 +87,7 @@ return {
 - Changing: `insert(offset, text)`, `replace(from, to, text)`, `set_text(text)`, `edits({ { from, to, text }, ... })` (several edits as one undo step), `type(text)` (typed at every caret), `set_cursor(offset, h, { top =, center =, jump = })` (`jump = true`: the move goes on the tab's [jumps](editing.md#jumps) however near), `set_selections(...)`.
 - Showing: `show(buffer)` puts a buffer in the focused pane, `close(buffer)` closes it as `:bd` does.
 - `open_scratch { name = ..., text = ..., on_write = fn, read_only = ..., language = ... }` makes a buffer that is not a file. With `on_write(lines)`, `:w` hands you its lines.
-- `annotate(notes)` draws dim text after lines, and `paint(set, spans)` colours ranges over the syntax colours.
+- `annotate(notes)` draws dim text after lines, and `paint(set, spans)` colours ranges over the syntax colours. `annotate(notes, buffer, { align = true })` makes the buffer's notes a column: each starts past the buffer's widest line, as a listing's sizes do.
 
 `kawoosh.open(path, { line = ..., col = ..., split = "vsplit" | "split" | "tab" })` opens a file in an editor pane.
 

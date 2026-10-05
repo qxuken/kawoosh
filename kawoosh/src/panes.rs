@@ -215,6 +215,7 @@ impl Kawoosh {
                         access,
                         underlined: &[],
                         trailing: None,
+                        trailing_at: None,
                         ghost: ghost.map(|g| (clip(primary.head), g)),
                         hints: &[],
                         before: 0.0,
@@ -1697,6 +1698,22 @@ impl Kawoosh {
             .as_ref()
             .map(|rt| rt.notes_on(buf_id, buf.version(), top..last))
             .unwrap_or_default();
+        // A column of notes — a listing's sizes — starts past the
+        // buffer's widest line, measured (`rows::NoteColumns`).
+        let aligned = self
+            .scripting
+            .rt
+            .as_ref()
+            .is_some_and(|rt| rt.notes_aligned(buf_id));
+        let note_column = if aligned {
+            let mut columns = std::mem::take(&mut self.note_columns);
+            let at = columns.widest(ui, font, &pal, (buf_id, buf), tabstop, self.cell.0);
+            self.note_columns = columns;
+            Some(at)
+        } else {
+            self.note_columns.forget(buf_id);
+            None
+        };
         let ghost = self
             .completion_typed()
             .filter(|(v, _)| *v == view && focused)
@@ -2186,6 +2203,13 @@ impl Kawoosh {
                                     Some((m, diag_colors[(r.style as usize).min(4)]))
                                 })
                                 .or_else(|| annotated.get(&ln).map(|t| (t.as_str(), pal.dim)));
+                            // A note, not a diagnostic's message: one
+                            // of the buffer's column when it has one.
+                            let on_note = trailing.is_some_and(|(t, _)| {
+                                annotated
+                                    .get(&ln)
+                                    .is_some_and(|n| std::ptr::eq(n.as_str(), t))
+                            });
                             let ghost_here = ghost
                                 .as_deref()
                                 .filter(|_| ln == cur_line)
@@ -2310,6 +2334,7 @@ impl Kawoosh {
                                     access,
                                     underlined: &underlined,
                                     trailing,
+                                    trailing_at: note_column.filter(|_| on_note),
                                     ghost: ghost_here,
                                     hints: &row_hints,
                                     before: drawn.before_cols as f32 * cell_w,

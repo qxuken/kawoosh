@@ -376,6 +376,86 @@ impl LineCellsCache {
     }
 }
 
+/// Where a buffer's notes start when they are a column
+/// (`kawoosh.buf.annotate(.., { align = true })`): the width of its
+/// widest line, measured. A count of characters is not it: a name in a
+/// script the mono font has no glyphs for is drawn in a fallback font
+/// at that font's advances, so a listing padded with spaces to its
+/// longest name put the sizes of `Календарь релизов.yaml` left of the
+/// rest (2026-10-05). Kept per buffer for a version and a face; a line
+/// of plain ASCII is its cells, any other is shaped, once — its width
+/// kept by its text across the versions, so a keystroke in a listing of
+/// forty thousand names shapes the line it changed.
+#[derive(Default)]
+pub struct NoteColumns {
+    per: HashMap<BufferId, NoteColumn>,
+}
+
+struct NoteColumn {
+    version: Version,
+    face: Face,
+    tabstop: usize,
+    /// The widths of the lines that had to be shaped, by their text.
+    shaped: HashMap<String, f32>,
+    widest: f32,
+}
+
+impl NoteColumns {
+    /// The width of `buf`'s widest line as `face` draws it.
+    pub fn widest(
+        &mut self,
+        ui: &mut Ui<'_>,
+        face: Face,
+        pal: &Pal,
+        (id, buf): (BufferId, &kawoosh_doc::Buffer),
+        tabstop: usize,
+        cell_w: f32,
+    ) -> f32 {
+        let version = buf.version();
+        let col = self.per.entry(id).or_insert_with(|| NoteColumn {
+            version,
+            face,
+            tabstop,
+            shaped: HashMap::new(),
+            widest: -1.0,
+        });
+        if col.face != face || col.tabstop != tabstop {
+            (col.face, col.tabstop, col.widest) = (face, tabstop, -1.0);
+            col.shaped.clear();
+        }
+        if col.version == version && col.widest >= 0.0 {
+            return col.widest;
+        }
+        let style = mono(face, pal);
+        let text = buf.text();
+        let mut shaped = HashMap::new();
+        let mut widest: f32 = 0.0;
+        for line in text.split('\n') {
+            let plain = line.bytes().all(|b| (0x20..0x7f).contains(&b));
+            let w = if plain {
+                line.len() as f32 * cell_w
+            } else if let Some((k, w)) = col.shaped.remove_entry(line) {
+                shaped.insert(k, w);
+                w
+            } else {
+                let w = ui
+                    .measure_text(&Drawn::new(line, tabstop).text, &style, None)
+                    .width;
+                shaped.insert(line.to_string(), w);
+                w
+            };
+            widest = widest.max(w);
+        }
+        (col.version, col.shaped, col.widest) = (version, shaped, widest);
+        widest
+    }
+
+    /// `id`'s notes are no column, or it is gone.
+    pub fn forget(&mut self, id: BufferId) {
+        self.per.remove(&id);
+    }
+}
+
 impl Drawn {
     pub fn new(src: &str, tabstop: usize) -> Self {
         Self::expand(src, tabstop, 0, 0, None)
@@ -661,6 +741,10 @@ pub struct LineDraw<'a> {
     /// Text after the line's end that is not the document's (a
     /// diagnostic message), drawn dim under `role = none`.
     pub trailing: Option<(&'a str, Color)>,
+    /// Where the trailing text starts when it is one of a column
+    /// ([`NoteColumns`]): the widest line's width, from the text's
+    /// start. `None` starts it past this line's own end.
+    pub trailing_at: Option<f32>,
     /// Virtual text at a byte — the completion candidate's rest — drawn
     /// dim under `role = none`. It shifts the real text and never hides
     /// it (mvp.md Decision 5).
@@ -1624,8 +1708,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         // this one (2026-10-01). An unwrapped row's is in its flow, and
         // the column scrolls sideways to it.
         if let Some((t, color)) = line.trailing {
+            // One of a column: from the widest line's end, not its own.
+            let own = |ui: &mut Ui<'_>| ui.measure_text(text, &base, None).width;
             if wraps {
                 let (x, y) = wrapped_at(ui, len);
+                let x = line.trailing_at.map_or(x, |at| at.max(x));
                 let style = base
                     .color(color)
                     .wrap(kui_native::TextWrap::None)
@@ -1647,8 +1734,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     |ui| ui.text(t, style),
                 );
             } else {
+                let short = line.trailing_at.map_or(0.0, |at| (at - own(ui)).max(0.0));
                 let spec = NodeSpec::row().padding(kui_native::Edges {
-                    l: (TRAILING_GAP - cell_w).max(0.0),
+                    l: short + (TRAILING_GAP - cell_w).max(0.0),
                     r: TRAILING_GAP,
                     t: 0.0,
                     b: 0.0,

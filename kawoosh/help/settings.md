@@ -248,6 +248,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `buffers.scope` | `"tab"` | buffer lists show the tab's buffers or `all` |
 | `tabs.directory` | `"auto"` | the directory in tab labels: `auto`, `always`, `never` |
 | `dir.hidden` | | whether directory listings show dot files |
+| `dir.sizes` | | whether directory listings size their directories, everything under each counted (`gS`); a listing sorted by size does either way |
 | `picker.preview` | `true` | a preview beside the picker's list |
 | `multi.expand` | `5` | lines a multibuffer's excerpt grows by: `zo` `zk` `zj` `<S-CR>`, a click on `⋯` ([search](search.md#more-lines-around-an-excerpt)) |
 | `font.family`, `font.size` | `""`, `13` | the font ([look](look.md#fonts)) |
