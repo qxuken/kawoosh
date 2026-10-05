@@ -9,6 +9,7 @@ mod graphics;
 #[cfg(windows)]
 mod job;
 pub mod kitty;
+pub mod plain;
 
 pub use graphics::Placed;
 

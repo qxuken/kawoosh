@@ -187,6 +187,9 @@ pub struct ProcSpec {
     /// stderr's lines as [`IoMsg::ProcErr`], apart from stdout's;
     /// else merged in as lines.
     pub split_err: bool,
+    /// Variables the process has over the ones it inherits; on a host,
+    /// exported there.
+    pub env: Vec<(String, String)>,
 }
 
 /// A command line for the shell, or a program and its arguments with
@@ -937,6 +940,7 @@ impl Io {
                 stdin,
                 whole: false,
                 split_err: false,
+                env: Vec::new(),
             },
         )
     }
@@ -956,6 +960,7 @@ impl Io {
             stdin,
             whole,
             split_err,
+            env,
         } = spec;
         if let ProcCmd::Argv(argv) = &cmd
             && argv.is_empty()
@@ -988,7 +993,7 @@ impl Io {
                         format!("exec {}", quoted.join(" "))
                     }
                 };
-                let script = remote_script(dir, &[], &exec, false);
+                let script = remote_script(dir, &env, &exec, false);
                 t.remote_command(&script)
             }
             None => match &cmd {
@@ -1012,6 +1017,9 @@ impl Io {
             && host.is_none()
         {
             command.current_dir(d);
+        }
+        if host.is_none() {
+            command.envs(env.iter().map(|(k, v)| (k, v)));
         }
         // A session of its own, so no controlling terminal: a tool that
         // would ask on `/dev/tty` — `ansible-vault` with no password

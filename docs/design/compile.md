@@ -11,7 +11,8 @@ that i can call", shaped over three exchanges (Decision 7); the keys
 in `*compile*` and `:c` 2026-10-02 (Decision 8); a monorepo's
 packages in the picker 2026-10-05 (Decision 9); the buffer named
 for its command, then a buffer a command and directory, the same day
-(Decisions 10 and 11). The calls
+(Decisions 10 and 11); the colours, the head and how long it took
+2026-10-06 (Decision 12). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -401,7 +402,75 @@ name is what is read in a list); a pane per command (a row of columns
 after a morning's commands); closing the buffer on `q` (the output of
 a build just read is what `]q` walks next).
 
+### 12. The output in its colours, under where and when, over how long
+
+*Added 2026-10-06, asked:* "I don't like that it doesn't have colors,
+error highlighting is convenient. And we probably should print some
+info at first line like the directory and time it was run on. At the
+end would be cool to see time it took to complete a task."
+
+```
+~/projects/kawoosh · 2026-10-06 14:03:22
+$ cargo build
+   Compiling kawoosh v0.0.1
+error[E0308]: mismatched types
+…
+
+[exited with 101 in 8.2s]
+```
+
+- **The head.** The first line is the directory the command runs in
+  (from home) and the local date and time it was started, dim; the
+  command's echo is the second, where it was the first. Neither is a
+  location (`location_on`).
+- **The last line** says how it ended and how long it took, in the
+  colour of how: `[finished in 8.2s]` green, `[exited with 1 in
+  0.34s]` red, `[killed after 2m 03s]` yellow (`compile::took`: `0.34s`
+  under a second, `8.2s` under a minute, `2m 03s`, `1h 02m`). The
+  corner's note says the same words.
+- **The colours are asked for.** The command still runs on a pipe, so
+  its programs would print plain; it is given `FORCE_COLOR=1`,
+  `CLICOLOR=1`, `CLICOLOR_FORCE=1` and `CARGO_TERM_COLOR=always`
+  (`ProcSpec::env`; exported on a host), each only where the editor's
+  environment has no word of its own. `compile.color = false` gives
+  none, as does a `NO_COLOR` in the environment.
+- **And kept as paints.** Each line goes through vte — the parser the
+  terminal reads with, already in the graph under alacritty
+  (`kawoosh_term::plain`; a hand-written reader was the first build:
+  "maybe we will use some libs we have?"). The buffer's text has no
+  escape sequence in it — what `/`, a yank and `]q` read — and the
+  foregrounds they set are the buffer's `compile` paint set. One of
+  the sixteen is the paint `ansi:N`, resolved as it is drawn, so the
+  output follows the theme as a terminal's does; the 256 and true
+  colours are `#rrggbb`; dim is `dim`. Bold, backgrounds and underlines
+  are read past: a paint is a colour. A carriage return drops what it
+  wrote over, so a progress line is its last state. The state runs on
+  from line to line.
+- **A line printed plain** has its `error` and `warning` painted where
+  it says one as compilers do — before a `:` or a code (`error:`,
+  `error[E0308]`, `error TS2322`) — in the diagnostics' colours. A line
+  its program coloured is left as printed.
+- **A frame resolves the paints of the lines it draws.** A compile has
+  a paint a word, hundreds of thousands in a long build, and
+  `paints_of` resolved every one of a buffer's a frame: 45 ms a frame
+  on 200 000 coloured lines. It is two now — `settle_paints` carries
+  the sets through edits, `paints_in` resolves what reaches into the
+  drawn lines — and the same output is 0.4 ms. An append leaves the
+  set at the buffer's version, nothing to carry.
+
+Beaten: a pty for the command — every program would colour unasked,
+but a pty also means a width to wrap at, pagers, progress bars
+redrawing, and a prompt on `/dev/tty` waiting where today it fails at
+once (`run_command`'s own session); `:!` is that door. Colours resolved
+to RGB as they arrive — a theme switched after would leave the old
+ones. A grammar for compiler output — each tool's format a guess, where
+its own colours are exact.
+
 ## Not built
+
+- A program that colours only on a terminal and reads none of the
+  variables (gcc and clang without `-fdiagnostics-color`, `go`): plain,
+  but for `error:` and `warning:`.
 
 - rust-analyzer's runnables as a kind (the test at the caret).
 - A deducer registry for plugins (Decision 1's beaten).

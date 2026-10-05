@@ -195,6 +195,7 @@ mod tests {
             stdin: None,
             whole: false,
             split_err: false,
+            env: Vec::new(),
         };
         let handle = io.run_command(1, spec).unwrap();
         let bound = Duration::from_secs(20);

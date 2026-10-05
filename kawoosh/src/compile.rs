@@ -3,13 +3,15 @@
 //! there, in a scrollback buffer, or in a terminal — is one mechanism
 //! with three consumers.
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::{Duration, Instant, SystemTime};
 
 use kawoosh_doc::{Buffer, BufferId};
 use kawoosh_editor::{ArgKind, Args, Editor, Selection, Setting, Spec, ViewId};
 use kawoosh_lua::CompileOfferSnap;
-use kawoosh_systems::io::{IoMsg, ProcHandle};
+use kawoosh_systems::io::{IoMsg, ProcCmd, ProcHandle, ProcSpec};
 use kawoosh_systems::store::MomentKey;
 
 use crate::app::Kawoosh;
@@ -18,11 +20,61 @@ use crate::deduce::{self, Deduced, Project};
 use crate::layout::PaneId;
 use crate::links::location_at;
 use crate::notify::{Level, Note};
+use crate::scripting::Painted;
 
 /// A compile buffer's kind: what its maps and a `when` name it by
 /// (`buffer:*compile*`). Each is named for its command, and its
 /// directory ([`buffer_name`]).
 pub const COMPILE_BUFFER: &str = "*compile*";
+
+/// The paint set a compile buffer's colours are (compile.md Decision
+/// 12): its programs', and the buffer's own lines'.
+const PAINT: &str = "compile";
+
+/// What asks a program for the colours a pipe would not get, where the
+/// environment does not say already: node's and python's tools, the
+/// BSD convention (cmake, ninja, `ls`), cargo.
+const COLOR_ENV: [(&str, &str); 4] = [
+    ("FORCE_COLOR", "1"),
+    ("CLICOLOR", "1"),
+    ("CLICOLOR_FORCE", "1"),
+    ("CARGO_TERM_COLOR", "always"),
+];
+
+/// How long a run took, as its last line says it: `0.34s`, `8.2s`,
+/// `2m 03s`, `1h 02m`.
+pub fn took(d: Duration) -> String {
+    let secs = d.as_secs();
+    match secs {
+        0 => format!("{:.2}s", d.as_secs_f64()),
+        1..=59 => format!("{:.1}s", d.as_secs_f64()),
+        60..=3599 => format!("{}m {:02}s", secs / 60, secs % 60),
+        _ => format!("{}h {:02}m", secs / 3600, secs % 3600 / 60),
+    }
+}
+
+/// `error` and `warning` where a line of output says one as compilers
+/// do — before a `:` or a code (`error[E0308]`, `error TS2322`) — for a
+/// line its program printed plain.
+fn severities(line: &str) -> Vec<(Range<usize>, String)> {
+    let mut out = Vec::new();
+    let lower = line.to_ascii_lowercase();
+    for (word, paint) in [("error", "error"), ("warning", "warning")] {
+        let mut from = 0;
+        while let Some(i) = lower[from..].find(word) {
+            let (start, end) = (from + i, from + i + word.len());
+            from = end;
+            let before = lower[..start].chars().next_back();
+            let after = &lower[end..];
+            if before.is_none_or(|c| !c.is_alphanumeric())
+                && (after.starts_with([':', '[']) || after.starts_with(" ts"))
+            {
+                out.push((start..end, paint.to_string()));
+            }
+        }
+    }
+    out
+}
 
 /// How much of a command the buffer's name says.
 const NAME_CHARS: usize = 60;
@@ -69,6 +121,11 @@ pub struct Run {
     /// The command's, while it runs: for `compile kill` (`<C-c>` in its
     /// buffer) and for its next run, which replaces it.
     pub proc: Option<ProcHandle>,
+    /// When it was started: what its last line says it took.
+    pub started: Instant,
+    /// Its output's reader: the escape sequences out, the colours
+    /// they set so far kept.
+    pub plain: kawoosh_term::plain::Plain,
 }
 
 impl Run {
@@ -551,8 +608,10 @@ impl Kawoosh {
             .unwrap_or_else(|| self.cwd.clone())
     }
 
-    /// `cmd` run in `cwd` into the buffer of that command there, exactly,
-    /// and remembered at the head of the memory's list for this
+    /// `cmd` run in `cwd` into the buffer of that command there, exactly
+    /// — under a line saying where and when, its colours kept and its
+    /// last line what it came to and how long it took (compile.md
+    /// Decision 12) — and remembered at the head of the memory's list for this
     /// workspace. The keys go to the buffer ([`Self::compile_show`]),
     /// and `q` there gives them back to the pane they were in
     /// (`Layout::close`).
@@ -597,10 +656,24 @@ impl Kawoosh {
                 self.ed.add_buffer(b)
             }
         };
+        // Where and when, then the command: what the output below is of.
+        let head = format!(
+            "{} · {}\n",
+            kawoosh_systems::fs::abbreviate_home(&cwd),
+            crate::notify::stamp(SystemTime::now())
+        );
         let b = &mut self.ed.buffers[buffer];
         b.name = name;
-        b.set_text(&format!("$ {cmd}\n"));
+        b.set_text(&format!("{head}$ {cmd}\n"));
         b.mark_saved();
+        let version = b.version();
+        self.scripting.paints.entry(buffer).or_default().insert(
+            PAINT.into(),
+            Painted {
+                version,
+                spans: vec![(0..head.len() - 1, "dim".into())],
+            },
+        );
         self.compile_show(buffer);
         // Its views start at the end, and follow the output from there
         // (`compile_append`).
@@ -612,7 +685,15 @@ impl Kawoosh {
         }
         self.compile.started += 1;
         let proc_id = self.compile.started;
-        let (proc, failed) = match self.io.run_process(proc_id, cmd, Some(&cwd)) {
+        let spec = ProcSpec {
+            cmd: ProcCmd::Shell(cmd.to_string()),
+            cwd: Some(cwd.clone()),
+            stdin: None,
+            whole: false,
+            split_err: false,
+            env: self.compile_env(),
+        };
+        let (proc, failed) = match self.io.run_command(proc_id, spec) {
             Ok(p) => (Some(p), None),
             Err(e) => (None, Some(e)),
         };
@@ -623,14 +704,35 @@ impl Kawoosh {
             file,
             proc_id,
             proc,
+            started: Instant::now(),
+            plain: Default::default(),
         });
         self.locations = Locations {
             buffer: Some(buffer),
             ..Default::default()
         };
         if let Some(e) = failed {
-            self.compile_append(buffer, &format!("cannot run: {e}\n"));
+            let line = format!("cannot run: {e}");
+            let paints = vec![(0..line.len(), "error".to_string())];
+            self.compile_append(buffer, &format!("{line}\n"), paints);
         }
+    }
+
+    /// The variables a compile's command has over the editor's: the
+    /// ones asking for colours ([`COLOR_ENV`]), unless `compile.color`
+    /// is off or the environment says `NO_COLOR` — each only where the
+    /// environment has no word of its own.
+    fn compile_env(&self) -> Vec<(String, String)> {
+        if self.ed.settings.bool("compile.color") == Some(false)
+            || std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
+        {
+            return Vec::new();
+        }
+        COLOR_ENV
+            .iter()
+            .filter(|(k, _)| std::env::var_os(k).is_none())
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     /// Where a run in `cwd` is, as its buffer's name says it: nothing in
@@ -805,13 +907,36 @@ impl Kawoosh {
         }
     }
 
-    pub(crate) fn compile_append(&mut self, id: BufferId, text: &str) {
+    /// `text` at the end of run buffer `id`, `paints` its colours as
+    /// ranges of it.
+    pub(crate) fn compile_append(
+        &mut self,
+        id: BufferId,
+        text: &str,
+        paints: Vec<(Range<usize>, String)>,
+    ) {
         let Some(b) = self.ed.buffers.get_mut(id) else {
             return;
         };
         let len = b.len();
         b.replace(len..len, text);
         b.mark_saved();
+        // Only its end moved: the paints before it stand as they are, at
+        // the buffer's version, with nothing to carry through the edit.
+        let version = b.version();
+        if let Some(p) = self
+            .scripting
+            .paints
+            .get_mut(&id)
+            .and_then(|sets| sets.get_mut(PAINT))
+        {
+            p.version = version;
+            p.spans.extend(
+                paints
+                    .into_iter()
+                    .map(|(r, c)| (len + r.start..len + r.end, c)),
+            );
+        }
         // Views on the buffer follow the output while their caret is at
         // its end; one moved up to read a line stays there.
         let last = b.len();
@@ -822,18 +947,28 @@ impl Kawoosh {
         }
     }
 
-    /// The run process `id` is the current one of: a line of one
-    /// replaced since is nobody's.
-    fn compile_run(&self, id: u64) -> Option<&Run> {
-        self.compile.runs.iter().find(|r| r.proc_id == id)
-    }
-
     pub(crate) fn on_proc_msg(&mut self, msg: IoMsg) {
         match msg {
             IoMsg::ProcLine { id, line } => {
-                if let Some(b) = self.compile_run(id).map(|r| r.buffer) {
-                    self.compile_append(b, &format!("{line}\n"));
-                }
+                let Some(run) = self.compile.runs.iter_mut().find(|r| r.proc_id == id) else {
+                    return;
+                };
+                // The program's colours; a line it printed plain says
+                // its `error` and `warning` in ours.
+                use kawoosh_term::plain::Paint;
+                let (text, printed) = run.plain.read(&line);
+                let paints = if printed.is_empty() {
+                    severities(&text)
+                } else {
+                    let name = |p| match p {
+                        Paint::Ansi(n) => format!("ansi:{n}"),
+                        Paint::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+                        Paint::Dim => "dim".into(),
+                    };
+                    printed.into_iter().map(|(r, p)| (r, name(p))).collect()
+                };
+                let buffer = run.buffer;
+                self.compile_append(buffer, &format!("{text}\n"), paints);
             }
             IoMsg::ProcExit { id, code } => {
                 let Some(run) = self.compile.runs.iter_mut().find(|r| r.proc_id == id) else {
@@ -841,12 +976,15 @@ impl Kawoosh {
                 };
                 run.proc = None;
                 let (buffer, cmd) = (run.buffer, run.cmd.clone());
-                let status = match code {
-                    Some(0) => "finished".to_string(),
-                    Some(c) => format!("exited with {c}"),
-                    None => "killed".into(),
+                let took = took(run.started.elapsed());
+                let (status, paint) = match code {
+                    Some(0) => (format!("finished in {took}"), "added"),
+                    Some(c) => (format!("exited with {c} in {took}"), "error"),
+                    None => (format!("killed after {took}"), "warning"),
                 };
-                self.compile_append(buffer, &format!("\n[{status}]\n"));
+                let last = format!("[{status}]");
+                let paints = vec![(1..1 + last.len(), paint.to_string())];
+                self.compile_append(buffer, &format!("\n{last}\n"), paints);
                 // Asynchronous: the corner, not the command line. Which
                 // one, when another still runs.
                 let level = if code == Some(0) {
@@ -873,9 +1011,10 @@ impl Kawoosh {
     ) -> Option<(PathBuf, Option<usize>, Option<usize>)> {
         let b = self.ed.buffers.get(buffer)?;
         let text = b.line_text(ln);
-        // The command echo names its own arguments; not a location.
+        // The head says where it ran and the command echo names its own
+        // arguments; neither is a location.
         let run = self.compile.of(buffer);
-        if run.is_some() && text.starts_with("$ ") {
+        if run.is_some() && (ln == 0 || text.starts_with("$ ")) {
             return None;
         }
         // The first path-looking token on the line.

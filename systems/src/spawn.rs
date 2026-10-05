@@ -178,6 +178,7 @@ mod tests {
                             stdin: None,
                             whole: false,
                             split_err: false,
+                            env: Vec::new(),
                         };
                         io.run_command(jobs, spec).expect("true");
                         loop {

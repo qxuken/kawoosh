@@ -1314,8 +1314,10 @@ impl Kawoosh {
         let masks = self.masks_of(buf_id);
         // The server's inlay hints, while `lsp.inlay_hints` is on.
         let inlay = self.inlay_hints_of(buf_id);
-        // What plugins painted (`kawoosh.buf.paint`): over the syntax.
-        let (painted, mut washes) = self.paints_of(buf_id);
+        // What plugins painted (`kawoosh.buf.paint`), where its text is
+        // now: read below, once the lines drawn are known.
+        self.settle_paints(buf_id);
+        let mut washes = Vec::new();
         // A merge's conflicts, each side washed in its colour
         // (docs/design/vcs.md Decision 11): every one, wherever it is —
         // they are few, and the rows clip.
@@ -1619,6 +1621,15 @@ impl Kawoosh {
         let top = md_anchored.map_or(v.top, |a| a.from);
         let mut left = if tall { 0.0 } else { v.left };
         let last = md_last.unwrap_or((top + rows_n).min(buf.line_count()));
+        // The paints of the lines drawn, over the syntax; their washes
+        // under the conflicts'.
+        let drawn = buf.line_start(top.min(last))..if last < buf.line_count() {
+            buf.line_start(last)
+        } else {
+            buf.len()
+        };
+        let (painted, behind) = self.paints_in(buf_id, drawn);
+        washes.splice(0..0, behind);
         let sels = &v.sels;
         let primary = sels.primary();
         let cur_line = buf.line_of(primary.head);

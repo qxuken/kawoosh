@@ -521,7 +521,9 @@ end
 -- earlier ones and carried through edits after; `{}` clears the set.
 -- A colour is a role — `fg` `dim` `faint` `accent` `danger`, `added`
 -- `modified` `ignored` `conflict` — or a syntax token's name
--- (`comment`, `keyword`, …). `dir.lua`'s version control marks paint.
+-- (`comment`, `keyword`, …) — or `ansi:N`, one of the terminal's
+-- sixteen as the theme has them, or `#rrggbb` itself. `dir.lua`'s
+-- version control marks paint.
 -- kawoosh.buf.header({ view =, height =, field = }[, buffer]): the
 -- Lua view `view` drawn over the buffer's text, `height` logical px
 -- tall (as tall as the view draws without one), in every pane that
