@@ -287,6 +287,9 @@ pub struct Kawoosh {
     pub(crate) secrets: crate::secrets::Secrets,
     /// The wheel's fraction of a line carried to the next notch.
     pub(crate) scroll_carry: f32,
+    /// What the wheel turned with ⌘ or Ctrl held that did not make a
+    /// pixel of `font.size` yet (`look.rs`, `on_zoom`).
+    pub(crate) zoom_carry: f32,
     /// False after a wheel scroll, so the view stays where the wheel put
     /// it until the caret moves again.
     pub(crate) follow_caret: bool,
@@ -484,6 +487,7 @@ impl Kawoosh {
             left: Vec::new(),
             secrets: crate::secrets::Secrets::new(secrets_wake),
             scroll_carry: 0.0,
+            zoom_carry: 0.0,
             follow_caret: true,
             drag_anchor: None,
             bar_chords: None,
@@ -2747,6 +2751,9 @@ impl kui_native::App for Kawoosh {
             .and_then(kui_native::OptionAsAlt::from_name)
             .unwrap_or(kui_native::OptionAsAlt::Left);
         ui.option_as_alt(option);
+        // The wheel with ⌘ or Ctrl held is the font's size, over every
+        // pane and list alike (kui F122): no scroller takes it first.
+        ui.core().set_wheel_zoom(true);
         if self.awaiting_paste {
             ui.request_paste();
         }
@@ -2942,6 +2949,10 @@ impl Kawoosh {
                 _ if ev.slot.is_some() => self.drain_lua(),
                 _ => {}
             }
+            return;
+        }
+        if let Some(z) = ev.zoom() {
+            self.on_zoom(z.delta.y);
             return;
         }
         if let Some(s) = ev.scroll() {

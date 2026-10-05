@@ -287,6 +287,18 @@ monospaced first), a family kui cannot see saying so. `font bigger`,
 `smaller`, `reset` are as they were. `:set font.family ` completes the
 same way (the step before this one), monospaced first.
 
+The wheel steps the size too (asked 2026-10-05: "let's add
+ctrl/cmd-scroll up/down to change font size"): with ⌘ or Ctrl held, up
+is bigger and down smaller, a pixel for a notch of a mouse's wheel and
+for as many of a trackpad's pixels, the rest carried (`look.rs`,
+`on_zoom`). It is the window's, not a pane's: kui's scrollers take a
+wheel before any app hears it, so a handler on the editor's panes would
+have left the pickers, the lists and every Lua view scrolling under the
+same gesture. kui's F122 (`Core::set_wheel_zoom`) makes such a wheel a
+`zoom` event on the root, a swipe's glide staying what the swipe began
+as. What it costs: a terminal program that reports the mouse no longer
+hears a Ctrl-wheel.
+
 ### 6. Nerd Fonts' symbols ship as the icons' fallback
 
 Asked the same day ("add fallback nerd icons font … should be put

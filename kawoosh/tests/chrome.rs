@@ -542,3 +542,54 @@ fn the_title_bar_counts_the_docks_tasks() {
     assert!(app.layout.dock_open, "shown");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// The wheel with ⌘ or Ctrl held is the font's size (kui F122): up is
+/// bigger, a pixel a notch, over a pane and over the tabs alike, and
+/// nothing scrolls under it; with nothing held the wheel scrolls.
+#[test]
+fn the_wheel_with_a_modifier_held_sizes_the_font() {
+    use kui_native::InputEvent;
+    let doc = (0..200)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", &doc);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let top = |app: &Kawoosh| app.ed.views[app.focused_view().unwrap()].top;
+    let held = |ctrl: bool, super_key: bool| {
+        InputEvent::Modifiers(KeyMods {
+            ctrl,
+            super_key,
+            ..KeyMods::default()
+        })
+    };
+    assert_eq!(app.face.size, 13.0);
+    d.input(&mut app, held(false, true));
+    d.wheel(&mut app, 300.0, 250.0, 0.0, 40.0);
+    d.frame(&mut app);
+    assert_eq!(app.face.size, 14.0, "a notch up, a pixel bigger");
+    // A trackpad's pixels add up to a notch.
+    for _ in 0..4 {
+        d.wheel(&mut app, 300.0, 250.0, 0.0, 10.0);
+    }
+    d.frame(&mut app);
+    assert_eq!(app.face.size, 15.0);
+    d.input(&mut app, held(true, false));
+    d.wheel(&mut app, 300.0, 250.0, 0.0, -120.0);
+    d.frame(&mut app);
+    assert_eq!(app.face.size, 12.0, "three notches down, under Ctrl");
+    // Over the tabs, which no pane's handler hears.
+    let tab = d.rect("tab0").unwrap();
+    d.wheel(&mut app, tab.x + 10.0, tab.y + 5.0, 0.0, 40.0);
+    d.frame(&mut app);
+    assert_eq!(app.face.size, 13.0);
+    assert_eq!(top(&app), 0, "nothing scrolled under it");
+    // Nothing held: a scroll, and the size stays.
+    d.input(&mut app, held(false, false));
+    d.wheel(&mut app, 300.0, 250.0, 0.0, -120.0);
+    d.frame(&mut app);
+    assert!(top(&app) > 0);
+    assert_eq!(app.face.size, 13.0);
+}

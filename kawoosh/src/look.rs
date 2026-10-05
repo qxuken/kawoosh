@@ -853,10 +853,53 @@ impl Kawoosh {
     }
 }
 
+/// How far the wheel turns, with ⌘ or Ctrl held, for a pixel of
+/// `font.size`: a notch of a mouse's wheel as kui counts one.
+const ZOOM_STEP: f32 = 40.0;
+
+impl Kawoosh {
+    /// `font.size` moved `by` pixels in the session layer, within what
+    /// is honoured.
+    pub(crate) fn font_step(&mut self, by: f64) {
+        use kawoosh_editor::Layer;
+        let now = self
+            .ed
+            .settings
+            .get("font.size")
+            .and_then(Setting::as_float)
+            .unwrap_or(FONT as f64);
+        let next = (now + by).clamp(SIZE_RANGE.0 as f64, SIZE_RANGE.1 as f64);
+        self.ed
+            .settings
+            .set(Layer::Session, "font.size", Setting::Float(next));
+        self.ed.message = format!("font {next}");
+    }
+
+    /// The wheel with ⌘ or Ctrl held, anywhere in the window (kui F122,
+    /// `set_wheel_zoom`): up is bigger, a pixel a notch, what a notch
+    /// did not cover carried to the next — a trackpad's swipe comes in
+    /// pixels. A turn the other way starts from nothing.
+    pub(crate) fn on_zoom(&mut self, dy: f32) {
+        if dy == 0.0 {
+            return;
+        }
+        if (dy > 0.0) != (self.zoom_carry > 0.0) {
+            self.zoom_carry = 0.0;
+        }
+        self.zoom_carry += dy;
+        let steps = (self.zoom_carry / ZOOM_STEP).trunc();
+        if steps != 0.0 {
+            self.zoom_carry -= steps * ZOOM_STEP;
+            self.font_step(steps as f64);
+        }
+    }
+}
+
 /// `font bigger` / `smaller` step `font.size` by a pixel in the session
 /// layer, within what is honoured; `font reset` takes the session's
 /// value out, back to the settings files'. ⌘= ⌘+ ⌘- ⌘_ ⌘0, Ctrl where
-/// there is no ⌘ (keys.md).
+/// there is no ⌘ (keys.md); the wheel with either held steps it too
+/// (`Kawoosh::on_zoom`).
 ///
 /// `theme` (docs/design/themes.md Decision 3) says what is shown;
 /// `theme toggle` pins the other base, `theme system` follows the OS
@@ -935,25 +978,14 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
             },
         ));
     }
-    let step = |k: &mut Kawoosh, by: f64| {
-        let now =
-            k.ed.settings
-                .get("font.size")
-                .and_then(Setting::as_float)
-                .unwrap_or(FONT as f64);
-        let next = (now + by).clamp(SIZE_RANGE.0 as f64, SIZE_RANGE.1 as f64);
-        k.ed.settings
-            .set(Layer::Session, "font.size", Setting::Float(next));
-        k.ed.message = format!("font {next}");
-    };
     theme.extend([
         cmd(
             Spec::new("font bigger").doc("the font a pixel bigger, for the session"),
-            move |k, ctx| step(k, ctx.count.max(1) as f64),
+            move |k, ctx| k.font_step(ctx.count.max(1) as f64),
         ),
         cmd(
             Spec::new("font smaller").doc("the font a pixel smaller, for the session"),
-            move |k, ctx| step(k, -(ctx.count.max(1) as f64)),
+            move |k, ctx| k.font_step(-(ctx.count.max(1) as f64)),
         ),
         cmd(
             Spec::new("font reset").doc("the font back to the size the settings say"),
