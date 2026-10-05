@@ -286,16 +286,47 @@ impl Store {
     /// trimmed to `ring_max`, in one transaction: whole or nothing. A
     /// `SQLITE_BUSY` (another window held the lock past [`BUSY_MS`])
     /// comes back as the error, and the caller keeps its deltas for
-    /// the next tick.
+    /// the next tick. Answers how many rows the flush made — the
+    /// deltas whose key the table had not — since only a row made can
+    /// bring a kind past its cap (memory.md Decision 4).
     pub fn flush_moments(
         &self,
         deltas: &[(MomentKey, MomentDelta)],
         ring: &[RingRow],
         ring_max: usize,
-    ) -> rusqlite::Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
+    ) -> rusqlite::Result<usize> {
+        // The write lock first (`BEGIN IMMEDIATE`, waited for up to
+        // [`BUSY_MS`]): a count read before it would open a read
+        // transaction, and SQLite refuses to raise one to a write
+        // while another window writes, at once and without waiting.
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let made = self.flush_moments_in(deltas, ring, ring_max);
+        match made {
+            Ok(made) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(made)
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
+    /// [`Self::flush_moments`] inside its transaction.
+    fn flush_moments_in(
+        &self,
+        deltas: &[(MomentKey, MomentDelta)],
+        ring: &[RingRow],
+        ring_max: usize,
+    ) -> rusqlite::Result<usize> {
+        let rows = || -> rusqlite::Result<i64> {
+            self.conn
+                .query_row("SELECT count(*) FROM moments", [], |r| r.get(0))
+        };
+        let before = rows()?;
         {
-            let mut up = tx.prepare_cached(
+            let mut up = self.conn.prepare_cached(
                 "INSERT INTO moments (kind, subject, workspace, first_at, last_at,
                                       visits, dwell_ms, edits, yanks, meta, text)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, coalesce(?10, '{}'), ?11)
@@ -324,7 +355,7 @@ impl Store {
                     d.text,
                 ])?;
             }
-            let mut ins = tx.prepare_cached(
+            let mut ins = self.conn.prepare_cached(
                 "INSERT INTO recent (at, kind, subject, workspace) VALUES (?1, ?2, ?3, ?4)",
             )?;
             for r in ring {
@@ -332,13 +363,13 @@ impl Store {
             }
         }
         if !ring.is_empty() {
-            tx.execute(
+            self.conn.execute(
                 "DELETE FROM recent WHERE rowid NOT IN
                      (SELECT rowid FROM recent ORDER BY at DESC, rowid DESC LIMIT ?1)",
                 params![ring_max as i64],
             )?;
         }
-        tx.commit()
+        Ok((rows()? - before).max(0) as usize)
     }
 
     /// The rows a query names, last attended first.
@@ -497,6 +528,20 @@ impl Store {
             )
             .map(|n| n as usize)
             .unwrap_or(0)
+    }
+
+    /// How many rows each kind has: the per-kind caps read off the
+    /// index, without the rows.
+    pub fn kind_counts(&self) -> Vec<(String, usize)> {
+        let Ok(mut stmt) = self
+            .conn
+            .prepare("SELECT kind, count(*) FROM moments GROUP BY kind")
+        else {
+            return Vec::new();
+        };
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as usize)))
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default()
     }
 
     /// What the text moments' bytes add up to.
@@ -1063,9 +1108,23 @@ mod tests {
         assert!(r.is_err(), "busy");
         assert!(t.elapsed() >= std::time::Duration::from_millis(BUSY_MS - 50));
         other.execute_batch("COMMIT").unwrap();
-        s.flush_moments(&[visit("file", "/x", 1)], &[], 10).unwrap();
+        assert_eq!(
+            s.flush_moments(&[visit("file", "/x", 1)], &[], 10).unwrap(),
+            1,
+            "the row made"
+        );
         assert_eq!(
             s.moment(&MomentKey::new("file", "/x", "")).unwrap().visits,
+            1
+        );
+        assert_eq!(
+            s.flush_moments(&[visit("file", "/x", 2)], &[], 10).unwrap(),
+            0,
+            "a visit to a row the table has makes none"
+        );
+        assert_eq!(
+            s.flush_moments(&[visit("file", "/x", 3), visit("file", "/y", 3)], &[], 10)
+                .unwrap(),
             1
         );
         drop((s, other));

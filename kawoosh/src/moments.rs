@@ -124,6 +124,13 @@ pub struct Moments {
     /// The subject the keyboard last attended, with the buffer it was
     /// in: the next visit is to another subject.
     attended: Option<(BufferId, MomentKey)>,
+    /// `histories.changed` as of the last eviction: a history saved
+    /// since is weight the store cap has not seen.
+    evicted_at: u64,
+    /// The histories' bytes as last summed, with `histories.changed`
+    /// then: summing them reads every history, and nothing saved
+    /// since means the sum stands.
+    histories_bytes: Option<(u64, usize)>,
     /// Each buffer's undo states as last counted.
     states_seen: HashMap<BufferId, usize>,
     /// `Editor::memory`'s version as last seen: a new head is a yank.
@@ -171,6 +178,8 @@ impl Moments {
             attended: None,
             states_seen: HashMap::new(),
             memory_seen: 0,
+            evicted_at: 0,
+            histories_bytes: None,
             head_seen: None,
             workspace: (std::path::PathBuf::new(), String::new()),
             last_tick: now,
@@ -650,8 +659,9 @@ impl Kawoosh {
                 p.ring.clone(),
             )
         };
+        let texts = deltas.iter().any(|(_, d)| d.text.is_some());
         match store.flush_moments(&deltas, &ring, RECENT_MAX) {
-            Ok(()) => {
+            Ok(made) => {
                 // Cleared only now, after the upsert returned: nothing
                 // is dropped and nothing doubled.
                 let mut p = self.moments.pending.borrow_mut();
@@ -661,7 +671,16 @@ impl Kawoosh {
                 self.moments.dirty_since = None;
                 self.moments.eventful = false;
                 self.moments.changed += 1;
-                self.evict_moments();
+                // The caps are looked at when something could have
+                // crossed one: a row made, a text written, a history
+                // saved since the last look. A flush of dwell and
+                // visits to rows the store has crosses none, and the
+                // look costs reading every row and weighing every
+                // history — ten milliseconds a second on a store of
+                // ten megabytes (Decision 4).
+                if made > 0 || texts || self.histories.changed != self.moments.evicted_at {
+                    self.evict_moments();
+                }
             }
             Err(e) => {
                 log::debug!("memory: flush kept for later: {e}");
@@ -774,6 +793,25 @@ impl Kawoosh {
         let Some(store) = self.store.clone() else {
             return;
         };
+        self.moments.evicted_at = self.histories.changed;
+        // The caps by their sums first — a count a kind off the index,
+        // the texts' bytes, the store's — and the rows read and scored
+        // only when one is over: a look that finds nothing over, the
+        // usual one, costs a few index reads, not every row and every
+        // history's weight (Decision 4).
+        let kinds_over = store
+            .kind_counts()
+            .iter()
+            .any(|(kind, n)| *n > cap_for(kind));
+        let texts_over = self
+            .max_bytes(TEXT_MAX_MB, None)
+            .is_some_and(|cap| store.text_bytes() > cap);
+        let store_over = self
+            .max_bytes(MAX_MB, Some(LEGACY_MAX_MB))
+            .is_some_and(|cap| store.moments_bytes() + self.histories_bytes(&store) > cap);
+        if !kinds_over && !texts_over && !store_over {
+            return;
+        }
         let t = now();
         let mut rows = store.moments(&MomentQuery::default());
         if rows.is_empty() {
@@ -823,7 +861,7 @@ impl Kawoosh {
         }
         // The store as a whole.
         if let Some(cap) = self.max_bytes(MAX_MB, Some(LEGACY_MAX_MB)) {
-            let mut total = store.moments_bytes() + store.histories_bytes();
+            let mut total = store.moments_bytes() + self.histories_bytes(&store);
             let sizes: HashMap<String, usize> = store
                 .history_rows()
                 .into_iter()
@@ -859,6 +897,20 @@ impl Kawoosh {
                     if evicted == 1 { "" } else { "s" }
                 ),
             );
+        }
+    }
+
+    /// The histories' bytes: summed again only once a history was
+    /// saved or dropped since the last sum.
+    fn histories_bytes(&mut self, store: &kawoosh_systems::store::Store) -> usize {
+        let stamp = self.histories.changed;
+        match self.moments.histories_bytes {
+            Some((at, bytes)) if at == stamp => bytes,
+            _ => {
+                let bytes = store.histories_bytes();
+                self.moments.histories_bytes = Some((stamp, bytes));
+                bytes
+            }
         }
     }
 
