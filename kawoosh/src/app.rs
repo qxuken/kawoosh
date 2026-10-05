@@ -287,6 +287,9 @@ pub struct Kawoosh {
     pub(crate) secrets: crate::secrets::Secrets,
     /// The wheel's fraction of a line carried to the next notch.
     pub(crate) scroll_carry: f32,
+    /// What the wheel turned with ⌘ or Ctrl held that did not make a
+    /// pixel of `font.size` yet (`look.rs`, `on_zoom`).
+    pub(crate) zoom_carry: f32,
     /// False after a wheel scroll, so the view stays where the wheel put
     /// it until the caret moves again.
     pub(crate) follow_caret: bool,
@@ -484,6 +487,7 @@ impl Kawoosh {
             left: Vec::new(),
             secrets: crate::secrets::Secrets::new(secrets_wake),
             scroll_carry: 0.0,
+            zoom_carry: 0.0,
             follow_caret: true,
             drag_anchor: None,
             bar_chords: None,
@@ -2762,7 +2766,15 @@ impl kui_native::App for Kawoosh {
         let body_h = self.body_h;
         t = self.perf.lap(Chrome, "window", t);
         self.legends.borrow_mut().roll();
-        ui.with(NodeSpec::column().fill().bg(pal.bg), |ui| {
+        // The wheel with ⌘ or Ctrl held is the font's size, and the
+        // window's to hear (kui F122, `scroll_mods`): ahead of every pane,
+        // list and strip under the pointer, none of which scrolls for it.
+        let window = NodeSpec::column()
+            .fill()
+            .bg(pal.bg)
+            .on_scroll(Value::map([("kind", "zoom".into())]))
+            .scroll_mods(KeyMods::NONE.with_ctrl().with_super());
+        ui.with(window, |ui| {
             self.title_bar(ui);
             t = self.perf.lap(Chrome, "title bar", t);
             self.tab_strip(ui);
@@ -2945,6 +2957,11 @@ impl Kawoosh {
             return;
         }
         if let Some(s) = ev.scroll() {
+            // The window's own, for the wheel with ⌘ or Ctrl held.
+            if tag_kind == Some("zoom") {
+                self.on_zoom(s.delta.y);
+                return;
+            }
             match pane {
                 Some(pane) => self.on_scroll(pane, s, tag),
                 // A Lua view's own `on_scroll`: its handler ran, what it

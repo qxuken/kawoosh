@@ -2817,7 +2817,7 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.36"
+version = "0.1.0-alpha.37"
 dependencies = [
  "cosmic-text",
  "kui-derive",
@@ -2832,7 +2832,7 @@ dependencies = [
 
 [[package]]
 name = "kui-derive"
-version = "0.1.0-alpha.36"
+version = "0.1.0-alpha.37"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2841,14 +2841,14 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.36"
+version = "0.1.0-alpha.37"
 dependencies = [
  "kui-core",
 ]
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.36"
+version = "0.1.0-alpha.37"
 dependencies = [
  "kui-core",
  "kui-ffi",
@@ -2857,7 +2857,7 @@ dependencies = [
 
 [[package]]
 name = "kui-native"
-version = "0.1.0-alpha.36"
+version = "0.1.0-alpha.37"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2878,7 +2878,7 @@ dependencies = [
 
 [[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.36"
+version = "0.1.0-alpha.37"
 dependencies = [
  "bytemuck",
  "kui-core",
