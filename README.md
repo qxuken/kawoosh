@@ -1,22 +1,55 @@
 # kawoosh
 
-kawoosh is a modal editor and a terminal multiplexer in one window. Editing is vim's (motions, operators, text objects, macros, `.`), with multicursor editing and a few helix and Zed habits on top. Terminals, editor buffers and plugin panes live side by side in the same splits, tabs and dock. It is written in Rust and draws on kui, a GPU UI toolkit. It is configured and extended in Lua 5.5, and the file manager, the pickers and the project search are Lua plugins written against the same API a user's `init.lua` has.
+**tmux and neovim, collapsed into one process.**
 
-## Features
+kawoosh is a modal editor and a terminal multiplexer in one GPU-drawn window. Terminals, buffers and plugin panes are peers in the same splits, tabs and dock, and you drive all of them with vim's keys.
 
-- Vim-style modal editing with several selections: `<C-n>` adds the next match, `<C-j>`/`<C-k>` add carets on nearby lines, and Alt moves the selected text or selects syntax nodes.
-- Terminals in panes, with a copy mode that turns the scrollback into a buffer, prompt jumps for shells that mark their prompts, and `$EDITOR` that opens files back in the editor.
-- Splits, tabs, a dock, and tabs that scroll as a strip of columns.
-- A file manager whose listing is a buffer you edit to rename, move, create and delete.
-- Pickers for files, buffers, grep, symbols, commands and recent places; a project search whose results are a live, editable multibuffer.
-- Language servers (diagnostics, completion, hover, rename, code actions, formatting, inlay hints) and tree-sitter highlighting for two dozen languages, more installed on demand (`:grammar install`), plus grammars of your own.
-- Compile mode: build output in a buffer, with `]q` walking the errors.
-- A working memory of what you yanked, deleted and visited, kept across restarts; marks, sessions and workspaces.
+## Why collapse them
+
+If you live in tmux with an editor per tab, every editor starts its own `rust-analyzer`, its own `tsserver`, its own everything. In kawoosh there is one process, so there is one language server per project, shared by every pane that looks at it. The same holds for buffers, search, history and sessions.
+
+The terminal stops being a foreign country:
+
+- `$EDITOR` in a kawoosh terminal opens the file in the pane next to it.
+- Scrollback becomes a buffer you search and yank from with ordinary motions.
+- Build output lands in a buffer, and `]q` walks the errors.
+
+## Everything is text you can edit
+
+- **The file manager is a buffer.** Rename, move, create and delete by editing the listing.
+- **Project search results are a live multibuffer.** Edit the matches in place and the files change.
+- **Diagnostics and references** open the same way.
+- **What you yanked, deleted and visited is kept**, across restarts, in a working memory you can browse.
+
+## Remote without a server
+
+Edit on another machine over the `ssh` you already configured: files, terminals, builds and language servers run there. Nothing is installed on the host.
+
+## Hackable all the way down
+
+The file manager, pickers, project search, version control and settings panes are Lua plugins, written against the same API your `init.lua` gets. Settings are plain data. If you dislike how a built-in works, its source is the example for replacing it.
+
+## Batteries included
+
+- Vim's editing (motions, operators, text objects, macros, `.`) with several selections: `<C-n>` adds the next match, `<C-j>`/`<C-k>` add carets on nearby lines, and Alt moves the selected text or selects syntax nodes.
+- Language servers (diagnostics, completion, hover, rename, code actions, formatting, inlay hints) with one-command installs (`:lsp install`), and formatters.
+- Tree-sitter highlighting for two dozen languages, more installed on demand (`:grammar install`), plus grammars of your own.
+- Pickers for files, buffers, grep, symbols, commands and recent places.
+- Version control: hunks in the gutter, review, blame and log.
+- Splits, tabs, a dock, and tabs that scroll as a strip of columns; marks, jumps, sessions and workspaces.
+- Terminals with prompt jumps for shells that mark their prompts.
 - Markdown drawn rendered in the buffer that edits it.
-- Themes and fonts panes, with a lab that checks a theme's contrast.
-- Editing on other machines over your own `ssh`, with nothing to install on the host.
 - Masked secrets: `.env` values and similar files are drawn as dots and kept out of history.
+- Themes and fonts panes, with a lab that checks a theme's contrast.
 - In-app help (`:help`) and a tutorial (`:tutor`).
+
+## Status
+
+Young, single-author, and macOS-first; Windows and Linux builds exist but are less tested. Written in Rust on kui, a GPU UI toolkit built for it, and configured and extended in Lua 5.5.
+
+## How it was built
+
+Most of the code was written by an AI coding agent (Claude Code) under one person's direction. The design is the author's: what the editor is, how it should behave, and which trade-off wins were decided in conversation, one feature at a time, and each decision is recorded in `docs/design/` with the alternative it beat. Commit messages quote the request that started each change and the result of the full check (`nu scripts/verify.nu`: formatting, clippy with warnings denied, every test) that it passed before merging. The author uses kawoosh daily, and most changes began as something that got in the way.
 
 ## Requirements
 
