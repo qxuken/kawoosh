@@ -4,6 +4,7 @@ publish.workspace = true
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 repository.workspace = true
 
 # One feature per grammar, all on by default: a build that wants a few
