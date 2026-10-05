@@ -89,6 +89,11 @@ quotes `"` `'` `` ` ``. So `ciw`, `da(`, `yi"`, `vip`. When the object is
 not there, the operator does nothing — nothing is yanked over the
 register.
 
+A quote object is read on the caret's line: the string the caret is in,
+else the next one on the line. Where the line leaves a string open — a
+terminal's output wrapped in the middle of one, a string written over
+several lines — its other end is found up to a hundred lines away.
+
 The syntax adds its own, read from the language's grammar: `f` a
 function, `c` a class (a struct, an enum, an impl, an interface — the
 type), `a` an argument, `/` a comment, `T` a test, `e` an entry (an
