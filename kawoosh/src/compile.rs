@@ -19,7 +19,29 @@ use crate::layout::PaneId;
 use crate::links::location_at;
 use crate::notify::{Level, Note};
 
+/// The compile buffer's kind: what its maps and a `when` name it by
+/// (`buffer:*compile*`), and its name before it has run anything. Run,
+/// it is named for its command ([`buffer_name`]).
 pub const COMPILE_BUFFER: &str = "*compile*";
+
+/// How much of a command the buffer's name says.
+const NAME_CHARS: usize = 60;
+
+/// The compile buffer's name while it shows `cmd`'s run: `*compile:
+/// cargo build*`, so a list of buffers says which build it is. The
+/// command on one line, cut at [`NAME_CHARS`].
+pub fn buffer_name(cmd: &str) -> String {
+    let line = cmd.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.is_empty() {
+        return COMPILE_BUFFER.into();
+    }
+    let said: String = if line.chars().count() > NAME_CHARS {
+        line.chars().take(NAME_CHARS - 1).chain(['…']).collect()
+    } else {
+        line
+    };
+    format!("*compile: {said}*")
+}
 
 /// A bare `:compile` with nothing to run.
 const NOTHING: &str =
@@ -493,12 +515,18 @@ impl Kawoosh {
         // Before the keys move: `r` in `*compile*` keeps the file.
         self.compile.file = self.compile_file();
         let header = format!("$ {cmd}\n");
-        self.show_in_pane(COMPILE_BUFFER, &header);
+        // One buffer, named for what it shows the run of: the one the
+        // last run was in takes this command's name.
+        let name = buffer_name(cmd);
+        if let Some(b) = self.compile.buffer.and_then(|b| self.ed.buffers.get_mut(b)) {
+            b.name = name.clone();
+        }
+        self.show_in_pane(&name, &header);
         let buffer = self
             .ed
             .buffers
             .iter()
-            .find(|(_, b)| b.name == COMPILE_BUFFER)
+            .find(|(_, b)| b.name == name)
             .map(|(id, _)| id);
         // Its views start at the end, and follow the output from there
         // (`compile_append`).
@@ -779,7 +807,11 @@ impl Kawoosh {
         let (source, message) = match from {
             Some((b, ln)) => {
                 let buf = &self.ed.buffers[b];
-                (buf.name.trim_matches('*').to_string(), buf.line_text(ln))
+                // The listing's kind, not what it lists: `compile` of
+                // `*compile: cargo build*`.
+                let name = buf.name.trim_matches('*');
+                let kind = name.split_once(": ").map_or(name, |(kind, _)| kind);
+                (kind.to_string(), buf.line_text(ln))
             }
             None => ("location".to_string(), String::new()),
         };

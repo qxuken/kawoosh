@@ -333,6 +333,24 @@ same commands spelled three ways. The other kinds (a crate's, a
 directory's Makefile) the same way waits for the ask: cargo's are the
 workspace's already.
 
+### 10. The buffer is named for its command
+
+*Added 2026-10-05, asked:* "Let's name compile mode with command that
+it points to so i could find it more easily. Something like `*compile:
+cargo build*`". The buffer a run is shown in is named `*compile: CMD*`
+(`compile::buffer_name`): the command on one line, cut at 60
+characters. Still one buffer — the next command renames it, and it is
+found by `Compile::buffer`, not by its name.
+
+Its maps and every `when` knew it as `buffer:*compile*`, a user's
+`buffer = "*compile*"` too, and a name that changes with each run
+would lose them. So a fact `buffer:*KIND*` holds of a buffer named
+`*KIND: SUBJECT*` as of one named `*KIND*` (`command::named`): the
+name's kind is what a place is, its subject what it shows. Beaten: a
+`compile` fact of its own beside the name — every map written against
+the name would have to move to it — and a title apart from the name,
+which the buffer picker and `:b` would then not match on.
+
 ## Not built
 
 - rust-analyzer's runnables as a kind (the test at the caret).

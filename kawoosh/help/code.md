@@ -522,6 +522,11 @@ it started (`:compile kill`), `r` runs it again where it ran
 you were in. A `%` in a line run from `*compile*` is the file the run
 there was started from.
 
+The buffer is named for the command it shows — `*compile: cargo
+build*` — so a list of buffers says which build it is; the next
+command renames it. A map or a `when` knows it as `*compile*` whatever
+it runs (`buffer = "*compile*"`).
+
 `<leader>cc` is a bare `:compile`. It runs, in order of preference:
 
 1. `compile.default`, if your settings set it;

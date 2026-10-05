@@ -218,6 +218,48 @@ fn r_in_the_compile_buffer_runs_it_again() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The buffer is named for the command it shows the run of, the one
+/// buffer renamed by the next command; its maps are `*compile*`'s
+/// whatever it is called.
+#[cfg(unix)]
+#[test]
+fn the_compile_buffer_is_named_for_its_command() {
+    let dir = project("named", "return {}");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    ex(&mut d, &mut app, "compile echo  one");
+    finished(&mut d, &mut app);
+    let buffer = app.compile.buffer.unwrap();
+    assert_eq!(app.ed.buffers[buffer].name, "*compile: echo one*");
+    assert!(keys_in_compile(&app));
+    assert!(app.ed.holds(app.focused_view(), "buffer:*compile*"));
+    assert!(!app.ed.holds(app.focused_view(), "buffer:*comp*"));
+
+    ex(&mut d, &mut app, "compile echo two");
+    finished(&mut d, &mut app);
+    assert_eq!(app.compile.buffer, Some(buffer), "the same buffer");
+    assert_eq!(app.ed.buffers[buffer].name, "*compile: echo two*");
+    assert_eq!(
+        app.ed
+            .buffers
+            .values()
+            .filter(|b| b.name.starts_with("*compile"))
+            .count(),
+        1
+    );
+    // `r` there is `compile again` still.
+    d.keys(&mut app, "r");
+    assert!(app.compile.running || app.compile.proc_id > 2, "again");
+    finished(&mut d, &mut app);
+
+    let long = format!("echo {}", "x".repeat(100));
+    assert_eq!(
+        kawoosh::compile::buffer_name(&long).chars().count(),
+        "*compile: *".len() + 60
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The pane showing `*compile*`, wherever it is.
 fn compile_pane(app: &Kawoosh) -> Option<kawoosh::layout::PaneId> {
     let buffer = app.compile.buffer?;
@@ -230,7 +272,7 @@ fn compile_pane(app: &Kawoosh) -> Option<kawoosh::layout::PaneId> {
 /// Whether the keys are in `*compile*`.
 fn keys_in_compile(app: &Kawoosh) -> bool {
     app.focused_view()
-        .is_some_and(|v| app.ed.buffer_of(v).name == kawoosh::compile::COMPILE_BUFFER)
+        .is_some_and(|v| Some(app.ed.views[v].buffer) == app.compile.buffer)
 }
 
 /// A way to start a compile, by name.
