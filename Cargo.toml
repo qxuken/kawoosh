@@ -29,9 +29,12 @@ kawoosh-lua = { path = "./lua" }
 # while a release is in CI, these three lines become
 #   kui-native = { path = "../kui/crates/kui-native" }  (and the same for -core, -lua).
 # The runner crate is `kui-native` (`kui` on crates.io is another crate's).
-kui-native = "=0.1.0-alpha.36"
-kui-core = "=0.1.0-alpha.36"
-kui-lua = "=0.1.0-alpha.36"
+# By path since 2026-10-05, until a release carries F120 and F121 (a cell
+# grid's fallback glyph in its cell; `Core::set_fallback_fonts`): then
+# `=0.1.0-alpha.37` again.
+kui-native = { path = "../kui/crates/kui-native" }
+kui-core = { path = "../kui/crates/kui-core" }
+kui-lua = { path = "../kui/crates/kui-lua" }
 # The one Lua in the binary is kui-lua's (kui.md D6).
 mlua = { version = "0.12", features = ["lua55", "vendored"] }
 

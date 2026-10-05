@@ -152,3 +152,32 @@ fn a_font_installed_while_running_is_a_family() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// What stands in for a character the face lacks is kawoosh's to say
+/// (kui F121), asked 2026-10-05 over Russian in a terminal drawn in the
+/// system's proportional face: the icons' symbols, the shipped face, then
+/// a monospaced one the machine has.
+#[test]
+fn the_fallbacks_are_the_symbols_the_shipped_face_and_a_known_mono() {
+    let mut d = Drive::new(900.0, 500.0);
+    let fonts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts");
+    kawoosh::fonts::load_shipped(&mut d.core, &fonts.join("IosevkaNavcon"));
+    kawoosh::fonts::load_shipped(&mut d.core, &fonts.join("NerdFontsSymbolsOnly"));
+    let family = d
+        .core
+        .system_font_families()
+        .into_iter()
+        .find(|f| f.contains("Iosevka"));
+    let Some(family) = family else {
+        // A checkout Git LFS has not filled: no shipped face to name.
+        return;
+    };
+    let bundled = d.core.add_system_font(&family);
+    kawoosh::fonts::set_fallbacks(&mut d.core, bundled);
+    let chain = d.core.fallback_fonts();
+    assert_eq!(chain[..2], ["Symbols Nerd Font Mono".to_string(), family]);
+    assert!(
+        chain.len() > 2,
+        "and a monospaced one of the machine's: {chain:?}"
+    );
+}
