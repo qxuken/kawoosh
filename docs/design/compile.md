@@ -12,7 +12,8 @@ in `*compile*` and `:c` 2026-10-02 (Decision 8); a monorepo's
 packages in the picker 2026-10-05 (Decision 9); the buffer named
 for its command, then a buffer a command and directory, the same day
 (Decisions 10 and 11); the colours, the head and how long it took
-2026-10-06 (Decision 12). The calls
+2026-10-06 (Decision 12); the end said once, a location's pane and
+the session the same day (Decision 13). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -465,6 +466,45 @@ once (`run_command`'s own session); `:!` is that door. Colours resolved
 to RGB as they arrive — a theme switched after would leave the old
 ones. A grammar for compiler output — each tool's format a guess, where
 its own colours are exact.
+
+### 13. The end said once, a location in the pane showing its file, no output across a restart
+
+*Added 2026-10-06, asked:* "It should not throw toast about completed
+task when it's in focused", "I don't like that it opens buffer in-place
+when i have it open in the editor besides", and "i don't like it opens
+scratch on restart. Either restore output or close it".
+
+- **How a run ended is said once.** Its last line says it, in its
+  colour (Decision 12); while the pane showing the run has the keys,
+  that is under the eyes, and the note goes to the log alone
+  (`Show::Log`). Away from it — in the file, the keys moved after
+  `<leader>cc` — the corner or a toast says it as before. The
+  pane with the keys at the *end* is what counts, not where the run
+  was asked from: `<leader>cc` gives the keys to the run (Decision 8),
+  so a toast comes exactly when the user left.
+- **A location opens in the pane showing its file.** `<CR>` and `]q`
+  looked first to the pane the list was opened from, then to the first
+  other editor pane, and opened the file there — over what that pane
+  showed, though the file was on show a pane further (asked from
+  `b.rs`, the error in `a.rs` open beside: `b.rs` lost its place).
+  Now a visible pane showing the location's file is the first choice
+  (`open_location`), the two rules after it as they were. The lists
+  (`gr`, `:diagnostics`) go through the same door.
+- **A session keeps no compile pane.** It kept the pane as an editor
+  on a nameless buffer, and a restart filled it with a blank scratch
+  beside the file. Its process is gone, and what it printed was of
+  the files as they were; the memory keeps the line run for
+  `<leader>cc` to run again (Decision 7). So the pane goes as a `:term
+  CMD` pane does (`PaneData::Gone`), a tab holding only it with it;
+  `:session restore` from inside leaves the output hidden, as it did.
+
+Beaten: a note quieted whenever the run is *visible* — the user asked
+for focus, and a line at the end of a pane beside is easy to miss
+while typing; `Show::Corner` instead of the log — the corner is still
+a word appearing where the eyes are not. Restoring the output: the
+text and its paints in the session (a long build's are megabytes
+written at every quit), with a run to make for `r`, or a stub saying
+the output was not kept — a scratch by another name.
 
 ## Not built
 

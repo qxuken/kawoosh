@@ -623,3 +623,88 @@ fn the_head_the_colours_and_how_long_it_took() {
     let out = finished(&mut d, &mut app);
     assert!(out.contains("\nc=\n"), "{out}");
 }
+
+/// How a run ended is a toast (or a corner line) only when its pane
+/// does not have the keys: watched, its last line says the same, and
+/// the note goes to the log alone (compile.md Decision 13).
+#[cfg(unix)]
+#[test]
+fn how_a_run_ended_is_no_toast_while_its_pane_has_the_keys() {
+    let dir = project("quiet", "return {}");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    let editor = app.layout.focused();
+    let compile_notes = |app: &Kawoosh| -> Vec<String> {
+        app.notes
+            .shown
+            .iter()
+            .filter(|s| s.source.as_deref() == Some("compile"))
+            .map(|s| s.text.clone())
+            .collect()
+    };
+
+    // Watched: the keys in `*compile*` as it ends.
+    ex(&mut d, &mut app, "compile false");
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("[exited with 1"), "{out}");
+    assert!(keys_in_compile(&app));
+    assert_eq!(compile_notes(&app), Vec::<String>::new(), "no toast");
+    assert!(
+        app.notes
+            .log
+            .iter()
+            .any(|e| e.text.starts_with("exited with 1")),
+        "the log has it"
+    );
+
+    // Away: a toast says so.
+    ex(&mut d, &mut app, "compile sleep 0.3; false");
+    app.layout.focus(editor);
+    d.frame(&mut app);
+    assert!(!keys_in_compile(&app));
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("[exited with 1"), "{out}");
+    let notes = compile_notes(&app);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].starts_with("exited with 1"), "{notes:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A location whose file is on show already opens in that pane: the
+/// pane the compile was asked from keeps what it shows (compile.md
+/// Decision 13).
+#[cfg(unix)]
+#[test]
+fn a_location_opens_in_the_pane_showing_its_file() {
+    let dir = project("shown", "return {}");
+    std::fs::write(dir.join("src/b.rs"), "two\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    let a = app.layout.focused();
+    let a_buf = app.ed.views[app.focused_view().unwrap()].buffer;
+    ex(&mut d, &mut app, "vs");
+    ex(&mut d, &mut app, "e src/b.rs");
+    let b = app.layout.focused();
+    assert_ne!(a, b);
+    let b_buf = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert_ne!(a_buf, b_buf);
+
+    // Asked from b.rs: the compile pane opens beside it.
+    ex(&mut d, &mut app, "compile echo src/a.rs:1:1: error: x");
+    finished(&mut d, &mut app);
+    assert!(keys_in_compile(&app));
+    let panes = app.layout.visible_panes().len();
+    assert_eq!(panes, 3);
+
+    d.press(&mut app, "]q");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), a, "the pane showing a.rs");
+    let shows = |app: &Kawoosh, p| match app.layout.content(p) {
+        Some(kawoosh::layout::Content::Editor(v)) => Some(app.ed.views[v].buffer),
+        _ => None,
+    };
+    assert_eq!(shows(&app, a), Some(a_buf));
+    assert_eq!(shows(&app, b), Some(b_buf), "b.rs stays on show");
+    assert_eq!(app.layout.visible_panes().len(), panes, "no pane more");
+    std::fs::remove_dir_all(&dir).ok();
+}
