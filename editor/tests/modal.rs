@@ -700,14 +700,12 @@ fn select_next_and_all_matches() {
     assert_eq!(t.ed.mode(t.v), Mode::Visual);
     t.keys("<C-s>");
     assert_eq!(t.ed.message, "no file name (use :w <path>)");
-    assert_eq!(
-        t.ed.mode(t.v),
-        Mode::Visual,
-        "a write leaves the mode alone"
-    );
+    // A save ends in normal mode, written or not (asked 2026-10-05:
+    // "save should change mode to normal"; the mode stayed before).
+    assert_eq!(t.ed.mode(t.v), Mode::Normal, "a write leaves visual");
     t.keys("<Esc>ix<C-s>");
     assert_eq!(t.ed.message, "no file name (use :w <path>)");
-    assert_eq!(t.ed.mode(t.v), Mode::Insert);
+    assert_eq!(t.ed.mode(t.v), Mode::Normal, "a write leaves insert");
     t.keys("<Esc>ZQ");
     assert!(t.ed.take_effects().contains(&Effect::Quit { force: true }));
 }

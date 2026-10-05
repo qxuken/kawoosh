@@ -3016,6 +3016,12 @@ pub fn install(ed: &mut Editor) {
             .bang("write over a file changed on disk since it was read")
             .doc("write the buffer to its file, or to PATH"),
         |ed, ctx| {
+            // A save ends the typing: `<C-s>` from insert or visual
+            // mode leaves the view in normal mode, as `<Esc>` would,
+            // whether or not the write went through.
+            if ed.mode(ctx.view) != Mode::Normal {
+                ed.run(ctx.view, "normal", &[], None);
+            }
             write(ed, ctx, crate::AfterWrite::Nothing);
         },
     );

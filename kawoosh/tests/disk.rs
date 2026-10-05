@@ -81,6 +81,37 @@ fn a_clean_buffer_follows_its_file() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A save ends the typing: `<C-s>` from insert mode writes and leaves
+/// the view in normal mode, as `<Esc>` would — the caret back on the
+/// last character typed — and from visual mode too; in normal mode it
+/// stays there.
+#[test]
+fn a_save_leaves_normal_mode() {
+    use kawoosh_editor::Mode;
+    let dir = tmp("save-normal");
+    let f = dir.join("a.txt");
+    std::fs::write(&f, "one\n").unwrap();
+    let (mut d, mut app) = launch(&f);
+    let mode = |app: &Kawoosh| app.ed.mode(app.focused_view().unwrap());
+    d.keys(&mut app, "A two");
+    assert_eq!(mode(&app), Mode::Insert);
+    d.press(&mut app, "<C-s>");
+    d.frame(&mut app);
+    assert_eq!(disk(&f), "one two\n");
+    assert_eq!(mode(&app), Mode::Normal, "insert left by the save");
+    // In normal mode for real: `x` deletes, it is not typed.
+    d.keys(&mut app, "x");
+    assert_eq!(text_of(&app), "one tw\n");
+    d.keys(&mut app, "v");
+    assert_ne!(mode(&app), Mode::Normal);
+    d.press(&mut app, "<C-s>");
+    d.frame(&mut app);
+    assert_eq!(disk(&f), "one tw\n");
+    assert_eq!(mode(&app), Mode::Normal, "visual left by the save");
+    d.press(&mut app, "<C-s>");
+    assert_eq!(mode(&app), Mode::Normal);
+}
+
 /// The report: a file edited and written, reset outside (a `git
 /// checkout`), then saved again. `:w` sees the reset rather than
 /// writing blind — the question is a confirm with the diff in it, whose
