@@ -398,7 +398,7 @@ objects, or any other character on both sides.
 
 | keys | what |
 |---|---|
-| `<C-s>` `<D-s>` | write, from normal, visual and insert mode alike; the mode stays |
+| `<C-s>` `<D-s>` | write, from normal, visual and insert mode alike, and leave the view in normal mode, as `<Esc>` would (asked 2026-10-05: "save should change mode to normal"; the mode stayed before) |
 | `ZZ` | write and quit |
 | `ZQ` | quit, discarding |
 | `ZA` | quit all |

@@ -106,7 +106,7 @@ your settings turns the card off, and `leader = ","` moves the leader.
 
 | keys | what |
 |---|---|
-| `<C-s>`{{mac: (`⌘s`)}} | write the file, from normal, visual or insert mode (`:w`) |
+| `<C-s>`{{mac: (`⌘s`)}} | write the file, from normal, visual or insert mode, ending in normal mode (`:w`) |
 | `:wa` | write every modified file |
 | `ZZ` | write and close (`:wq`, `:x`) |
 | `ZQ` | close, discarding changes (`:q!`) |

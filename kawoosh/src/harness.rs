@@ -148,6 +148,52 @@ impl Harness {
         self.rows().into_iter().map(|(_, extra)| extra).collect()
     }
 
+    /// Where each drawn row's text after its line starts and where the
+    /// line's own text ends, in window pixels — `(note_x, text_end)` for
+    /// the rows that have a note, top to bottom: a column of notes
+    /// starts at one x, past every line.
+    pub fn note_places(&self) -> Vec<(f32, f32)> {
+        let nodes = self.core.nodes();
+        let holders: Vec<_> = nodes
+            .iter()
+            .filter(|n| matches!(n.label.as_deref(), Some("lines" | "lines above")))
+            .map(|n| n.key)
+            .collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < nodes.len() {
+            if !nodes[i].parent.is_some_and(|p| holders.contains(&p)) {
+                i += 1;
+                continue;
+            }
+            let depth = nodes[i].depth;
+            let (mut note, mut end) = (None, 0.0f32);
+            let mut j = i + 1;
+            while j < nodes.len() && nodes[j].depth > depth {
+                if nodes[j].role == Some(kui_native::Role::None) {
+                    let d = nodes[j].depth;
+                    j += 1;
+                    while j < nodes.len() && nodes[j].depth > d {
+                        if nodes[j].text.as_ref().is_some_and(|t| !t.is_empty()) {
+                            note = note.or(Some(nodes[j].rect.x));
+                        }
+                        j += 1;
+                    }
+                    continue;
+                }
+                if nodes[j].text.is_some() {
+                    end = end.max(nodes[j].rect.x + nodes[j].rect.w);
+                }
+                j += 1;
+            }
+            if let Some(x) = note {
+                out.push((x, end));
+            }
+            i = j;
+        }
+        out
+    }
+
     /// The numbers in every plain pane's gutter in the last frame,
     /// pane by pane, top to bottom.
     pub fn gutter_texts(&self) -> Vec<String> {

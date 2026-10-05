@@ -2422,6 +2422,130 @@ fn renames_and_moves_swap_without_writing_over_anything() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A listing's notes are a column whatever the names are written in:
+/// every size starts at one x, past the widest name as it is drawn. A
+/// name the mono font has no glyphs for is drawn in another font at its
+/// own widths, and the spaces a count of characters padded it with put
+/// its size left or right of the rest (2026-10-05, a folder of
+/// `Grafana: Календарь релизов.yaml`).
+#[test]
+fn a_listing_s_notes_are_a_column_in_any_script() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dircol-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    for name in [
+        "a.txt",
+        "Grafana: job monitoring.yaml",
+        "Grafana: Календарь релизов.yaml",
+        "Метрики воронки заявочной формы.yaml",
+        "日本語のファイル名.txt",
+        "mixed ОП КК 文件 Webview 🎉.yaml",
+    ] {
+        std::fs::write(dir.join(name), "x").unwrap();
+    }
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let places = d.note_places();
+    assert_eq!(places.len(), 6, "a note a file: {places:?}");
+    let x = places[0].0;
+    let widest = places.iter().map(|p| p.1).fold(0.0, f32::max);
+    for (at, end) in &places {
+        assert!((at - x).abs() < 0.5, "one column: {places:?}");
+        assert!(*at >= *end, "past its own name: {places:?}");
+    }
+    assert!(x > widest, "past the widest name: {places:?}");
+    // A name grown past the rest takes the column with it.
+    d.keys(&mut app, "ggjA");
+    d.keys(&mut app, &"w".repeat(40));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    let moved = d.note_places();
+    assert!(moved[0].0 > x + 50.0, "{x} {moved:?}");
+    for (at, end) in &moved {
+        assert!((at - moved[0].0).abs() < 0.5, "one column still: {moved:?}");
+        assert!(*at >= *end, "{moved:?}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A listing sizes its directories where asked — `gS` (`dir.sizes`), or
+/// a sort by size: everything under each counted by a sizing walk
+/// (`kawoosh.du`), the size on the directory's line, and the listing
+/// sorted by size in the order of what its directories hold. Asked no
+/// more, a directory says its mtime alone again.
+#[test]
+fn a_listing_sizes_its_directories() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dirsize-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("big/deep")).unwrap();
+    std::fs::create_dir_all(dir.join("small")).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    std::fs::write(dir.join("big/deep/blob"), vec![0u8; 5000]).unwrap();
+    std::fs::write(dir.join("big/a"), vec![0u8; 120]).unwrap();
+    std::fs::write(dir.join("small/b"), vec![0u8; 10]).unwrap();
+    std::fs::write(dir.join("mid.bin"), vec![0u8; 700]).unwrap();
+    let mut d = Drive::new(1000.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "big/", "small/", "mid.bin"]);
+    let e = d.row_extras();
+    assert!(!e[1].contains(" KB") && !e[2].contains(" B "), "{e:?}");
+    // `gS`: sized, in the order the listing has.
+    d.keys(&mut app, "gS");
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    assert_eq!(d.line_rows(), ["../", "big/", "small/", "mid.bin"]);
+    let e = d.row_extras();
+    assert!(e[1].contains(" 5.0 KB  20"), "{e:?}");
+    assert!(e[2].contains(" 10 B  20"), "{e:?}");
+    assert!(e[3].contains(" 700 B  20"), "{e:?}");
+    // Off again: the mtime alone.
+    d.keys(&mut app, "gS");
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    let e = d.row_extras();
+    assert!(!e[1].contains(" KB"), "{e:?}");
+    // Sorted by size, the smallest first: sized without being asked,
+    // and in the order of what the directories hold.
+    d.keys(&mut app, "ms");
+    for _ in 0..5 {
+        d.frame(&mut app);
+    }
+    assert_eq!(d.line_rows(), ["../", "small/", "big/", "mid.bin"]);
+    let e = d.row_extras();
+    assert!(
+        e[1].contains(" 10 B  20") && e[2].contains(" 5.0 KB  20"),
+        "{e:?}"
+    );
+    d.keys(&mut app, "mS");
+    for _ in 0..5 {
+        d.frame(&mut app);
+    }
+    assert_eq!(d.line_rows(), ["../", "big/", "small/", "mid.bin"]);
+    // By name again: no sizes, and the walk let go.
+    d.keys(&mut app, "ma");
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    let e = d.row_extras();
+    assert!(!e[1].contains(" KB"), "{e:?}");
+    app.run_lua_source(
+        "t",
+        "local n = 0 for _ in pairs(kawoosh.dir.walks) do n = n + 1 end kawoosh.echo(tostring(n))",
+    );
+    assert_eq!(app.ed.message, "0", "no walk kept");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Listings are many: a listing shown in two panes is not renamed under
 /// the other pane when one of them moves on — that pane gets a buffer
 /// of its own — `:dir!` opens a new buffer outright, every listing

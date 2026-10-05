@@ -1100,6 +1100,7 @@ impl Kawoosh {
                 buffer,
                 name,
                 notes,
+                align,
             } => {
                 let id = match (buffer, name) {
                     (Some(h), _) => Some(kawoosh_lua::id_of(h)),
@@ -1115,7 +1116,7 @@ impl Kawoosh {
                     self.ed.message = "annotate: no such buffer".into();
                     return;
                 };
-                rt.annotate(id, notes);
+                rt.annotate(id, notes, align);
             }
             Msg::Tool {
                 name,

@@ -196,6 +196,8 @@ pub struct Kawoosh {
     pub(crate) show_tab: Option<&'static str>,
     /// The long lines on show, indexed for their cells (`rows::LineCells`).
     pub(crate) line_cells: rows::LineCellsCache,
+    /// Where each buffer's notes start when they are a column.
+    pub(crate) note_columns: rows::NoteColumns,
     /// The Perf tab's readings: the frame's phases, the systems' reports.
     pub perf: crate::perf::Perf,
     /// Why each frame was drawn (`frames.rs`).
@@ -452,6 +454,7 @@ impl Kawoosh {
             icons: Default::default(),
             legends: Default::default(),
             line_cells: Default::default(),
+            note_columns: Default::default(),
             perf: Default::default(),
             frames: crate::frames::Frames::with_wake(&wake),
             undo: Default::default(),
@@ -2610,6 +2613,7 @@ impl kui_native::App for Kawoosh {
         self.fire_cwd();
         t = self.perf.lap(Io, "settings", t);
         self.fire_watches();
+        self.fire_du();
         t = self.perf.lap(Io, "watches", t);
         self.sync_histories(false);
         t = self.perf.lap(Io, "histories", t);

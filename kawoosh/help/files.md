@@ -24,7 +24,16 @@ Every editing feature works here, so several selections, `:s`, macros
 and `.` all become bulk file operations. As you edit, each changed line
 says what the write would do with it: `← new`, what a renamed entry was
 called, `← move from ../b/`. Sizes and modification times are drawn
-past the names and are not part of the text.
+past the names, in a column past the widest of them, and are not part
+of the text.
+
+A directory says no size until you ask: `gS` sizes them, everything
+under each counted, hidden and ignored files too. The totals fill in as
+they are counted, `…` until then, and nothing waits on them. A listing
+sorted by size (`ms`, `mS`) sizes its directories without being asked,
+and once the count is done it is listed again in their order — unless
+you have edited it. `<C-l>` counts again. For a whole tree to clean up,
+see [disk usage](#disk-usage).
 
 `:w` shows every change in a confirm before anything happens. `y` or
 `<CR>` on **Apply** applies them, `n` or `<Esc>` cancels. Deleted files
@@ -52,6 +61,7 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `ma` `ms` `mm` `me` | sort by name, size, modification time, or type (extension) |
 | `mA` `mS` `mM` `mE` | the same, reversed |
 | `g.` | show or hide dot files (`:dir hidden`, the `dir.hidden` setting) |
+| `gS` | size the directories, or stop (`:dir sizes`, the `dir.sizes` setting) |
 | `~` | make the listed directory the working directory (`:dir cd`) |
 | `<C-w>.` | a terminal in the listed directory (`:terminal here`) |
 | `gz` | jump to a directory you use often ([directory jumps](#directory-jumps), zoxide's): the pick is listed here |

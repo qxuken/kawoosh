@@ -17,7 +17,9 @@
 -- asked first), `<C-p>` opens a preview of the entry beside the
 -- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
 -- list it again by size, mtime, name or type, yazi's keys under `m`;
--- `g.` shows or hides the dot files (`dir.hidden`); `gz` opens the
+-- `g.` shows or hides the dot files (`dir.hidden`); `gS` sizes the
+-- directories, everything under each counted (`dir.sizes`; a listing
+-- sorted by size does either way); `gz` opens the
 -- directory jumps (zoxide's, `dirs.lua`), a pick listed in the same
 -- listing; version control's
 -- word on each entry colours its name (`dir.vcs_enabled`; the backends
@@ -64,7 +66,15 @@
 -- What each entry is — a file's size, the mtime — is drawn past its
 -- line (`kawoosh.buf.annotate`, a note on the tracked line, which goes
 -- where the line goes), never in the buffer's text, so the listing
--- stays a list of names to edit; as it is edited (`on_change`) the
+-- stays a list of names to edit. The notes are a column (`align`): they
+-- start past the widest name as it is drawn, which no count of
+-- characters is — a name in Cyrillic or Chinese is drawn in another
+-- font than the mono one, at its own widths. A directory says its size
+-- too where they are asked for (`gS`, or a sort by size): a sizing walk
+-- of the listed directory (`kawoosh.du`, the disk-usage pane's) on the
+-- io thread, each directory's total filled in as its subtree is done,
+-- `…` until then, and a listing sorted by size listed again in its
+-- order once the walk is done; as it is edited (`on_change`) the
 -- lines say what the write would make of them: a renamed entry what it
 -- was, a line no entry became `← new`, or `← copy from ../b/` and `←
 -- move from ../b/` where it came from. A file renamed or moved while a
@@ -82,16 +92,18 @@
 -- failure in `:messages`.
 
 kawoosh.setting("dir.hidden", { type = "boolean", doc = "whether listings show dot files (`g.`)" })
+kawoosh.setting("dir.sizes", { type = "boolean", doc = "whether listings size their directories, everything under each counted (`gS`); one sorted by size does either way" })
 kawoosh.setting("dir.vcs_enabled", { type = "boolean", doc = "whether listings are painted by version control" })
 
 local fs = kawoosh.fs
--- `state[name]` is what the listing buffer `name` holds: its directory,
--- the width of its longest name, and `ids` — for each tracked line of
--- the buffer, by id, the entry behind it: `{ dir, name, meta }`, the
--- listing's own entries and every line pasted in since (an entry of
--- wherever it came from), `NEW` for a line typed in; the `../` line is
--- `{ up = true }`. See `state_of`.
-local dir = { state = {}, followed = nil, sorts = {} }
+-- `state[name]` is what the listing buffer `name` holds: its directory
+-- and `ids` — for each tracked line of the buffer, by id, the entry
+-- behind it: `{ dir, name, meta }`, the listing's own entries and every
+-- line pasted in since (an entry of wherever it came from), `NEW` for a
+-- line typed in; the `../` line is `{ up = true }`. See `state_of`.
+-- `walks[d]` is the sizing walk of directory `d`, while a listing of
+-- it sizes its directories: `{ walk =, done = }`.
+local dir = { state = {}, followed = nil, sorts = {}, walks = {} }
 -- The module, for a config to reach (`kawoosh.dir`).
 kawoosh.dir = dir
 
@@ -135,7 +147,7 @@ end
 local function sorted(entries, sort)
   local key, rev = sort.key, sort.reverse
   for _, e in ipairs(entries) do
-    if key == "size" then e.k = e.size
+    if key == "size" then e.k = e.size or -1
     elseif key == "mtime" then e.k = e.modified or 0
     elseif key == "type" then e.k = ext_of(e.name):lower()
     else e.k = e.name:lower() end
@@ -150,8 +162,44 @@ local function sorted(entries, sort)
   return entries
 end
 
--- The listing's lines and, by line, what each entry is: a file's size
--- right-aligned past the longest name, then the mtime.
+-- What an entry is, past its name: its size, right-aligned in a column
+-- of its own, then the mtime.
+local function meta_of(size, modified)
+  local pad = math.max(9 - (utf8.len(size) or #size), 0)
+  return string.rep(" ", pad) .. size .. "  " .. when(modified)
+end
+
+-- Whether a listing of `d` sizes its directories: asked for
+-- (`dir.sizes`, `gS`), or sorted by size, where a directory's place is
+-- its size.
+local function sizing(d)
+  return kawoosh.opt("dir.sizes") == true or sort_of(d).key == "size"
+end
+
+-- `d`'s sizing walk let go.
+local function forget(d)
+  local w = dir.walks[d]
+  if w then kawoosh.du.forget(w.walk) end
+  dir.walks[d] = nil
+end
+
+-- `d`'s sizing walk, started when there is none: one for however many
+-- listings of it, kept while one is open — the listing read again by
+-- its watch has its sizes at once — and walked again by `<C-l>` and
+-- after a write.
+local function walk_of(d)
+  local w = dir.walks[d]
+  if not w then
+    w = { done = false }
+    dir.walks[d] = w
+    w.walk = kawoosh.du.walk(d, function(done) dir.sized(d, done) end)
+  end
+  return w
+end
+
+-- The listing's lines and, by line, what each entry is (`meta_of`);
+-- and, by line, the directories whose size the walk has yet to say
+-- (`waits`: the path and the mtime, for the note when it does).
 local function shape(d, entries)
   -- Dot files left out while `dir.hidden` is false (`g.` flips it); a
   -- delete's entry put aside (`.~gone3~`) always, since it is gone the
@@ -164,24 +212,32 @@ local function shape(d, entries)
     end
   end
   entries = shown
+  -- A directory's size is its subtree's, as far as the walk has come;
+  -- a link to one is not walked into, and says none.
+  local w = sizing(d) and walk_of(d) or nil
+  if w then
+    for _, e in ipairs(entries) do
+      if e.is_dir then
+        e.size = not e.is_symlink and kawoosh.du.size(w.walk, fs.join(d, e.name)) or nil
+        e.waits = not e.size and not e.is_symlink and not w.done
+      end
+    end
+  end
   entries = sorted(entries, sort_of(d))
-  local lines, meta, width = { "../" }, {}, 3
-  for _, e in ipairs(entries) do
-    local line = e.is_dir and (e.name .. "/") or e.name
-    lines[#lines + 1] = line
-    width = math.max(width, utf8.len(line) or #line)
-  end
+  local lines, meta, waits = { "../" }, {}, {}
   for i, e in ipairs(entries) do
-    local line = lines[i + 1]
-    local pad = width - (utf8.len(line) or #line)
-    local size = e.is_dir and "" or human(e.size)
-    local cols = string.format("%9s", size)
-    meta[i + 1] = string.rep(" ", pad) .. cols .. "  " .. when(e.modified)
+    lines[i + 1] = e.is_dir and (e.name .. "/") or e.name
+    local size
+    if not e.is_dir then size = human(e.size)
+    elseif not w then size = ""
+    else size = e.size and human(e.size) or (e.waits and "…" or "") end
+    meta[i + 1] = meta_of(size, e.modified)
+    if e.waits then waits[i + 1] = { path = fs.join(d, e.name), modified = e.modified } end
   end
-  return lines, meta, width
+  return lines, meta, waits
 end
 
--- Reads `d` on the io thread and hands `done(lines, meta, width)` its
+-- Reads `d` on the io thread and hands `done(lines, meta, waits)` its
 -- listing when it is read — or `done(nil, why)` — so nothing waits on
 -- the disk: a slow share, forty thousand entries.
 local function listing(d, done)
@@ -195,16 +251,20 @@ end
 -- entries by id, which is their line — `open_scratch` tracks a buffer's
 -- lines from 1 whenever it fills it — and by name (`byname`); `odd`,
 -- the ids tracked since (lines pasted or typed in), which the plan
--- looks at whatever they read; and `noted`, the ids whose note says
--- more than what the entry is.
-local function state_of(d, lines, meta, width)
+-- looks at whatever they read; `noted`, the ids whose note says more
+-- than what the entry is; and `waits`, the ids of the directories the
+-- sizing walk has yet to size (`shape`).
+local function state_of(d, lines, meta, waits)
   local ids, byname = { { up = true } }, {}
   for i = 2, #lines do
     ids[i] = { dir = d, name = lines[i], meta = meta[i] or "" }
     byname[lines[i]] = i
   end
-  return { dir = d, width = width, ids = ids, byname = byname, odd = {}, noted = {} }
+  return { dir = d, ids = ids, byname = byname, odd = {}, noted = {}, waits = waits or {} }
 end
+
+-- A listing's notes are a column: each from past the widest name.
+local COLUMN = { align = true }
 
 -- The directory the current buffer lists; nil elsewhere, and nil where
 -- there is no buffer (the command line of a terminal pane).
@@ -302,7 +362,7 @@ end
 local function open_drives(fresh)
   local drives = fs.drives()
   local name = PREFIX .. DRIVES
-  dir.state[name] = { dir = DRIVES, width = 3, ids = {} }
+  dir.state[name] = { dir = DRIVES, ids = {} }
   local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
   keep_register(buffer_of(DRIVES) or reuse)
   kawoosh.buf.open_scratch {
@@ -343,7 +403,7 @@ function dir.open(path, from, fresh, reread)
   -- while the first read is out shows the second's directory.
   dir.nav = (dir.nav or 0) + 1
   local nav = dir.nav
-  listing(path, function(lines, meta, width)
+  listing(path, function(lines, meta, waits)
     if dir.nav ~= nav then return end
     if not lines then return kawoosh.echo(tostring(meta)) end
     -- The listing to reuse is still one, and not edited meanwhile.
@@ -351,7 +411,7 @@ function dir.open(path, from, fresh, reread)
     -- The buffer filled: the listing's own, if it is open, else the
     -- one reused.
     keep_register(buffer_of(path) or reuse)
-    dir.state[name] = state_of(path, lines, meta, width)
+    dir.state[name] = state_of(path, lines, meta, waits)
     kawoosh.buf.open_scratch {
       name = name,
       text = table.concat(lines, "\n"),
@@ -361,7 +421,7 @@ function dir.open(path, from, fresh, reread)
       reuse = reuse,
       line = line_of(lines, from),
     }
-    kawoosh.buf.annotate(meta, name)
+    kawoosh.buf.annotate(meta, name, COLUMN)
     -- A directory attended, for the jumps (`dirs.lua`); a listing read
     -- again is not a visit.
     if not reread and kawoosh.dirs then kawoosh.dirs.visit(path) end
@@ -375,21 +435,23 @@ end
 -- background — without touching the focused pane, the caret kept on
 -- its entry.
 local function relist(d, h)
-  listing(d, function(lines, meta, width)
+  listing(d, function(lines, meta, waits)
     if not lines or lists(h) ~= d then return end
     local name = PREFIX .. d
     keep_register(h)
-    dir.state[name] = state_of(d, lines, meta, width)
+    dir.state[name] = state_of(d, lines, meta, waits)
     kawoosh.buf.open_scratch {
       name = name, text = table.concat(lines, "\n"), language = "dir",
       on_write = dir.write, on_change = dir.changed, show = false,
       line = line_of(lines, under_caret(h)),
     }
-    kawoosh.buf.annotate(meta, name)
+    kawoosh.buf.annotate(meta, name, COLUMN)
     if dir.watch_sync then dir.watch_sync() end
     if dir.decorate then dir.decorate(name, d) end
   end)
 end
+
+dir.relist = relist
 
 local function at(base, entry) return fs.join(base, (entry:gsub("/$", ""))) end
 
@@ -688,6 +750,9 @@ end
 -- whose edits came to nothing too: the listing `here` in its pane, the
 -- caret on `from`, the others where they are.
 local function relist_all(touched, here, from)
+  -- What was written changed the sizes: walked again.
+  for d in pairs(touched) do forget(d) end
+  if here then forget(here) end
   for _, h in ipairs(kawoosh.buf.list()) do
     local d = lists(h)
     if d and touched[d] and d ~= here then relist(d, h) end
@@ -999,17 +1064,11 @@ function dir.changed()
     local st = L.st
     local story = stories[L.dir] or {}
     for id, mark in pairs(L.marks) do story[id] = mark end
-    local reads = {}
-    for _, a in ipairs(L.seen) do reads[a.id] = a.to end
-    for _, c in ipairs(L.creates) do reads[c.id] = c.to end
-    -- What the entry is; for a line that is none, the width's worth of
-    -- space, so the story lines up with the rest.
+    -- What the entry is; nothing for a line that is none, whose story
+    -- starts where the column does.
     local function base(id)
       local who = st.ids[id]
-      local m = who and who.meta
-      if m and m ~= "" then return m end
-      local l = reads[id] or ""
-      return string.rep(" ", math.max(st.width - (utf8.len(l) or #l), 0))
+      return who and who.meta or ""
     end
     local notes = {}
     for id in pairs(st.noted) do if not story[id] then notes[id] = base(id) end end
@@ -1017,8 +1076,46 @@ function dir.changed()
     for id, text in pairs(story) do notes[id] = base(id) .. "  " .. ARROW .. text end
     st.noted = {}
     for id in pairs(story) do st.noted[id] = true end
-    if next(notes) then kawoosh.buf.annotate(notes, L.h) end
+    if next(notes) then kawoosh.buf.annotate(notes, L.h, COLUMN) end
   end
+end
+
+-- ------------------------------------------------------ directory sizes
+
+-- `d`'s sizing walk has news (`walk_of`): each listing of `d` notes the
+-- directories sized since — the entry's meta, so a line cut and pasted
+-- elsewhere says it too — and, the walk done, one sorted by size is
+-- listed again in its order, unless it has edits. Until then the
+-- listing keeps its order under the caret; a directory the walk could
+-- not read says no size. A walk no listing wants any more is let go.
+function dir.sized(d, done)
+  local w = dir.walks[d]
+  if not w then return end
+  w.done = done
+  local wanted = false
+  for _, h in ipairs(kawoosh.buf.list()) do
+    local st = lists(h) == d and dir.state[PREFIX .. d]
+    if st then
+      wanted = true
+      local notes, story = {}, false
+      for id, e in pairs(st.waits) do
+        local size = kawoosh.du.size(w.walk, e.path)
+        if size or done then
+          st.waits[id] = nil
+          local who = st.ids[id]
+          who.meta = meta_of(size and human(size) or "", e.modified)
+          if st.noted[id] then story = true else notes[id] = who.meta end
+        end
+      end
+      if next(notes) then kawoosh.buf.annotate(notes, h, COLUMN) end
+      if done and sort_of(d).key == "size" and not kawoosh.buf.modified(h) then
+        dir.relist(d, h)
+      elseif story then
+        dir.changed()
+      end
+    end
+  end
+  if not wanted or not sizing(d) then forget(d) end
 end
 
 -- --------------------------------------------------------- navigation
@@ -1168,9 +1265,11 @@ local function refresh(here, force, from)
 end
 
 -- `:dir refresh`, or <C-l>: the directory read again, the caret kept
--- on its entry. A listing with edits asks before dropping them; `!`
--- drops them without asking.
+-- on its entry, its directories sized again where they are sized. A
+-- listing with edits asks before dropping them; `!` drops them without
+-- asking.
 kawoosh.command("dir refresh", function(ctx)
+  forget(listed())
   refresh(listed(), ctx.bang, under_caret())
 end, {
   when = { "language:dir" },
@@ -1456,6 +1555,11 @@ function dir.watch_sync(also)
       dirs[#dirs + 1] = l.dir
     end
   end
+  -- A sizing walk of a directory no listing shows, or none sizes, is
+  -- let go here: every listing opened or read again comes this way.
+  for d in pairs(dir.walks) do
+    if not seen[d] or not sizing(d) then forget(d) end
+  end
   if #dirs == 0 then return kawoosh.fs.watch("dir", nil) end
   kawoosh.fs.watch("dir", dirs, function(changed)
     local moved = {}
@@ -1477,12 +1581,25 @@ kawoosh.command("dir hidden", function()
   kawoosh.echo(show and "hidden files shown" or "hidden files hidden")
 end, { doc = "show or hide the dot files in the listings (`dir.hidden`, `g.`)" })
 
+-- `gS`: the directories sized or not (`dir.sizes`), every unedited
+-- listing read again. A listing sorted by size sizes them either way.
+kawoosh.command("dir sizes", function()
+  local on = kawoosh.opt("dir.sizes") ~= true
+  kawoosh.opt("dir.sizes", on)
+  for _, l in ipairs(open_listings()) do
+    if not kawoosh.buf.modified(l.h) then relist(l.dir, l.h) end
+  end
+  if #open_listings() == 0 then dir.watch_sync() end
+  kawoosh.echo(on and "directories sized" or "directories not sized")
+end, { doc = "size the directories in the listings, everything under each counted, or stop (`dir.sizes`, `gS`)" })
+
 -- The listing's keys are its own (docs/design/local-maps.md): found in a
 -- `dir` buffer and nowhere else, over the editor's on the same keys —
 -- `<CR>` is `goto location` everywhere but here, `m` marks everywhere
 -- but here, where `ma` `ms` `mm` `me` sort.
 local LISTING = { language = "dir" }
 kawoosh.map("n", "g.", "dir hidden", LISTING)
+kawoosh.map("n", "gS", "dir sizes", LISTING)
 kawoosh.map("n", "<CR>", "dir enter", LISTING)
 -- A double click on a line is `<CR>` on it.
 kawoosh.map("n", "<2-LeftMouse>", "dir enter", LISTING)

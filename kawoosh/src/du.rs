@@ -35,6 +35,10 @@ pub struct Walk {
     started: Instant,
     took: Option<Duration>,
     cancel: Arc<AtomicBool>,
+    /// Who asked to be told when the walk has news (`walk(root, fn)`),
+    /// and whether it has any since they were last told.
+    told: Option<mlua::Function>,
+    news: bool,
 }
 
 impl Walk {
@@ -51,12 +55,15 @@ impl Walk {
             started: Instant::now(),
             took: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            told: None,
+            news: false,
         }
     }
 
     /// A batch the walk sent, taken in.
     pub fn take(&mut self, batch: Sized) {
         self.tick += 1;
+        self.news = true;
         for d in batch.dirs {
             if let Some(parent) = d.path.parent() {
                 self.stamp(parent);
@@ -158,10 +165,42 @@ impl Kawoosh {
             w.take(batch);
         }
     }
+
+    /// Once a frame: every walk with news since the last tells who
+    /// asked (`walk(root, fn)`) — `fn(done)`, once for however many
+    /// batches the frame took in. A listing fills in its directories'
+    /// sizes on it (`kawoosh/lua/dir.lua`), where a pane reads the door
+    /// as it draws.
+    pub(crate) fn fire_du(&mut self) {
+        let told: Vec<(mlua::Function, bool)> = self
+            .du
+            .borrow_mut()
+            .walks
+            .values_mut()
+            .filter_map(|w| {
+                std::mem::take(&mut w.news).then_some(())?;
+                Some((w.told.clone()?, w.done))
+            })
+            .collect();
+        if told.is_empty() {
+            return;
+        }
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        rt.publish(&self.ed, self.focused_view());
+        for (f, done) in told {
+            if let Err(e) = f.call::<()>(done) {
+                self.ed.message = format!("du: {e}");
+            }
+        }
+        self.drain_lua();
+    }
 }
 
-/// `kawoosh.du`: `walk(root)`, a sizing walk of `root` started (an
-/// absolute path) and its number; `size(n, path)`, a directory's
+/// `kawoosh.du`: `walk(root[, fn])`, a sizing walk of `root` started (an
+/// absolute path) and its number, `fn(done)` called on a frame the walk
+/// had news in — directories sized, or the end; `size(n, path)`, a directory's
 /// subtree `bytes, files` once the walk has done it, else nil;
 /// `stamp(n, dir)`, a number that changes whenever a size in `dir`'s
 /// listing does — what the pane keys its sorted listing on;
@@ -175,11 +214,13 @@ pub(crate) fn lua_door(lua: &mlua::Lua, du: SharedDu) -> mlua::Result<()> {
     let at = du.clone();
     door.set(
         "walk",
-        lua.create_function(move |_, root: String| {
+        lua.create_function(move |_, (root, told): (String, Option<mlua::Function>)| {
             let mut d = at.borrow_mut();
             d.next += 1;
             let id = d.next;
-            d.walks.insert(id, Walk::new(PathBuf::from(root)));
+            let mut walk = Walk::new(PathBuf::from(root));
+            walk.told = told;
+            d.walks.insert(id, walk);
             d.starts.push(id);
             Ok(id)
         })?,
