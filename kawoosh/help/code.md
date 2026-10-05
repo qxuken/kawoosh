@@ -22,9 +22,9 @@ language of your own is added from Lua with `kawoosh.language`; see
 
 Kawoosh knows more languages than it carries grammars for — some
 seventy: C#, PHP, Java, Kotlin, Scala, Dart, Zig, Haskell, OCaml,
-F#, Elixir, Erlang, Clojure, Ruby, Perl, R, Julia, Nix, HTML, Svelte,
-Astro, SCSS, Makefiles, CMake, Dockerfiles, protobuf, GLSL and WGSL
-among them; `:grammars` lists them all. A
+F#, Elixir, Erlang, Clojure, Ruby, Perl, R, Julia, Nix, HTML, XML
+(SVG with it), Svelte, Astro, SCSS, Makefiles, CMake, Dockerfiles,
+protobuf, GLSL and WGSL among them; `:grammars` lists them all. A
 file of one is recognised, and its language server starts, but it has
 no colours until its grammar is installed:
 
