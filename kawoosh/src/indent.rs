@@ -9,7 +9,8 @@
 //!
 //! The same trees answer the syntax text objects (docs/design/nodes.md
 //! Decision 9), read by `kawoosh_systems::textobjects`: a `daf` typed
-//! right after an edit reads the text as it is, as a `<CR>` does.
+//! right after an edit reads the text as it is, as a `<CR>` does. And
+//! `%` on a block's keyword (`kawoosh_systems::blocks`).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -20,6 +21,7 @@ use std::sync::Arc;
 use kawoosh_doc::{Buffer, BufferId, Version};
 use kawoosh_editor::{IndentUnit, SyntaxObject};
 use kawoosh_languages::Grammar;
+use kawoosh_systems::blocks;
 use kawoosh_systems::indent::{self, Unit};
 use kawoosh_systems::textobjects;
 use kawoosh_systems::ts::{self, Parse};
@@ -198,6 +200,16 @@ impl kawoosh_editor::SyntaxObjects for Objects {
                 inside: f.inside,
             })
             .collect())
+    }
+
+    fn partner(
+        &mut self,
+        id: BufferId,
+        buf: &Buffer,
+        at: usize,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        let (tree, _, _) = self.trees.current(&mut self.parser, id, buf)?;
+        blocks::partner(&tree, at)
     }
 }
 

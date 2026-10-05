@@ -76,6 +76,7 @@ Beside vim's `hjkl`, `w` `b` `e` `ge`, `0` `^` `$`, `gg` `G`, `f` `t`,
 | `gh` `gl` | the line's first non-blank, its end (helix) |
 | `W` `B` `E` `gE` | WORDs: runs that only whitespace ends, like `a.b(c)` or a path |
 | `}` `{` | the blank line after, before the paragraph — also after an operator (`d}`) |
+| `%` | off a bracket, on a keyword of a block that a word closes (Lua's and Ruby's `end`, a shell's `fi` `done` `esac`): the block's next keyword — `if` to `elseif` to `else` to `end` and round, by the syntax; `d%` takes both keywords whole |
 | `]f` `[f` | the start of the next, previous function, by the syntax — also after an operator (`d]f`) |
 | `H` `M` `L` | the pane's top, middle, bottom line |
 | `<C-d>` `<C-u>` `<C-f>` `<C-b>` | half a screen, a screen |

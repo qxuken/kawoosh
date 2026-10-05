@@ -957,6 +957,39 @@ fn syntax_jump(ed: &mut Editor, ctx: &Ctx, object: &str, forward: bool) {
     v.goal_col = None;
 }
 
+/// `%`: each head on a bracket to the one matching it; on a keyword of
+/// a block its language closes with a word, to the block's next —
+/// `if` to `else` to `end` and back round — as the syntax tree has it
+/// ([`SyntaxObjects::partner`]). Under an operator the whole of both
+/// keywords is taken, as a bracket pair's both brackets are: `d%` on an
+/// `if` deletes through its `end`, on the `end` back through the `if`.
+fn match_pair(ed: &mut Editor, ctx: &Ctx) {
+    let ext = extend(ed, ctx.view);
+    let op = ed.pending_op.is_some();
+    let id = view(ed, ctx).buffer;
+    let mut finder = ed.syntax_objects.take();
+    let buf = &ed.buffers[id];
+    let v = &mut ed.views[ctx.view];
+    v.sels.map(|s| {
+        let h = s.head.min(buf.len());
+        if let Some(to) = m::matching_bracket(buf, h) {
+            return s.with_head(to, ext);
+        }
+        let Some((from, to)) = finder.as_mut().and_then(|f| f.partner(id, buf, h)) else {
+            return s;
+        };
+        if !op {
+            s.with_head(to.start, ext)
+        } else if to.start > from.start {
+            s.with_head(buf.prev_char(to.end), ext)
+        } else {
+            Selection::new(buf.prev_char(from.end), to.start)
+        }
+    });
+    v.goal_col = None;
+    ed.syntax_objects = finder;
+}
+
 /// The paragraph at `o`: its run of non-blank lines — or of blank ones,
 /// on a blank — whole, the newline of the last included; around it, the
 /// blank lines after it, or before it when none follow, or the
@@ -2199,9 +2232,7 @@ pub fn install(ed: &mut Editor) {
             -n,
         );
     });
-    ed.register_kind("match_bracket", Kind::Motion(Inclusive), |ed, ctx| {
-        motion(ed, ctx, |b, o, _| m::matching_bracket(b, o).unwrap_or(o));
-    });
+    ed.register_kind("match_bracket", Kind::Motion(Inclusive), match_pair);
     for (name, forward, till) in [
         ("find char", true, false),
         ("find char back", false, false),
@@ -3300,7 +3331,7 @@ const DOCS: &[(&str, &str)] = &[
     ("page up", "a screen up"),
     (
         "match_bracket",
-        "the bracket matching the one under the caret",
+        "the bracket matching the one under the caret; on a block's keyword (`if`, `else`, `end`) the block's next",
     ),
     ("find char", "onto the next CHAR in the line"),
     ("find char back", "onto the previous CHAR in the line"),

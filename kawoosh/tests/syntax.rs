@@ -463,3 +463,50 @@ fn comment_runs_and_python_classes() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `%` on a keyword of a block the language closes with a word goes
+/// round the block — `if`, `elseif`, `else`, `end`, `if` — by the tree
+/// (`kawoosh_systems::blocks`); a bracket still matches its bracket,
+/// and under an operator both keywords are taken whole.
+#[test]
+fn percent_goes_round_a_keyword_block() {
+    let src = "local function f(a)\n  if a then\n    g(function() end)\n  elseif b then\n    h()\n  else\n    k()\n  end\nend\n";
+    let (mut app, mut d, dir) = parsed("b.lua", src);
+    let v = app.focused_view().unwrap();
+    let at = |app: &Kawoosh| {
+        let head = app.ed.views[v].sels.primary().head;
+        let buf = app.ed.buffer_of(v);
+        let ln = buf.line_of(head);
+        (ln + 1, head - buf.line_range(ln).start)
+    };
+    // The `if`, from inside the word, round its clauses and back.
+    d.press(&mut app, "2G^l%");
+    assert_eq!(at(&app), (4, 2), "elseif");
+    d.press(&mut app, "%");
+    assert_eq!(at(&app), (6, 2), "else");
+    d.press(&mut app, "%");
+    assert_eq!(at(&app), (8, 2), "end");
+    d.press(&mut app, "%");
+    assert_eq!(at(&app), (2, 2), "if");
+    // The function's two ends; a bracket is a bracket's.
+    d.press(&mut app, "gg%");
+    assert_eq!(at(&app), (9, 0));
+    d.press(&mut app, "%");
+    assert_eq!(at(&app), (1, 0));
+    d.press(&mut app, "f(%");
+    assert_eq!(at(&app), (1, 18));
+    // Nothing to match under the caret: it stays.
+    d.press(&mut app, "5G^%");
+    assert_eq!(at(&app), (5, 4));
+    // `v%` extends to the keyword's start; `d%` takes both keywords,
+    // from either end, and right after an edit.
+    d.press(&mut app, "3Gffv%");
+    assert_eq!(selected_text(&app), "function() e");
+    d.press(&mut app, "<Esc>3Gffd%");
+    assert_eq!(text_of(&app), src.replace("function() end", ""));
+    d.press(&mut app, "u3G$hhd%");
+    assert_eq!(text_of(&app), src.replace("function() end", ""));
+    d.press(&mut app, "u");
+    assert_eq!(text_of(&app), src);
+    std::fs::remove_dir_all(&dir).ok();
+}
