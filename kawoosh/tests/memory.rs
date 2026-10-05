@@ -1053,7 +1053,7 @@ fn runs_are_remembered_as_tools_and_locations() {
     let mut done = false;
     for _ in 0..300 {
         d.frame(&mut app);
-        if !app.compile.running && app.compile.buffer.is_some() {
+        if !app.compile.running() && app.compile.buffer().is_some() {
             done = true;
             break;
         }

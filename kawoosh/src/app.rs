@@ -1478,6 +1478,7 @@ impl Kawoosh {
             self.discard(id);
         }
         self.ed.remove_buffer(id);
+        self.compile.forget(id);
         self.release_waiters(id);
         self.last_pos.remove(&id);
         self.ts_sent.remove(&id);

@@ -326,7 +326,11 @@ impl Kawoosh {
                     _ => false,
                 },
             ),
-            ("compiling", self.compile.running),
+            // The run `<C-c>` would stop: the pane's, else the last.
+            (
+                "compiling",
+                self.compile_here().is_some_and(|r| r.running()),
+            ),
             (
                 "exited",
                 matches!(content, Some(Content::Terminal(t)) if self.terms.done.contains_key(&t)),

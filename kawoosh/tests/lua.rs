@@ -276,14 +276,14 @@ fn compile_mode_streams_and_jumps_to_locations() {
     let mut done = false;
     for _ in 0..300 {
         d.frame(&mut app);
-        if !app.compile.running && app.compile.buffer.is_some() {
+        if !app.compile.running() && app.compile.buffer().is_some() {
             done = true;
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(done);
-    let text = app.ed.buffers[app.compile.buffer.unwrap()].text();
+    let text = app.ed.buffers[app.compile.buffer().unwrap()].text();
     assert!(
         text.contains("error at src/a.rs:3:1") && text.contains("[exited with 1]"),
         "{text}"
@@ -355,7 +355,7 @@ fn a_bare_compile_runs_what_the_project_offers() {
     let wait = |d: &mut Drive, app: &mut Kawoosh| {
         for _ in 0..300 {
             d.frame(app);
-            if !app.compile.running {
+            if !app.compile.running() {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -372,11 +372,11 @@ fn a_bare_compile_runs_what_the_project_offers() {
     );
     wait(&mut d, &mut app);
     assert_eq!(
-        app.compile.cwd.as_deref(),
+        app.compile.cwd().as_deref(),
         Some(dir.as_path()),
         "beside the Makefile"
     );
-    let text = app.ed.buffers[app.compile.buffer.unwrap()].text();
+    let text = app.ed.buffers[app.compile.buffer().unwrap()].text();
     assert!(text.contains("src/a.rs(2,1): error here"), "{text}");
     d.keys(&mut app, "]q");
     let v = app.focused_view().unwrap();
@@ -410,7 +410,7 @@ fn a_bare_compile_runs_what_the_project_offers() {
     d.frame(&mut app);
     ex(&mut d, &mut app, "compile pick 3");
     wait(&mut d, &mut app);
-    let text = app.ed.buffers[app.compile.buffer.unwrap()].text();
+    let text = app.ed.buffers[app.compile.buffer().unwrap()].text();
     assert!(text.contains("$ make other"), "{text}");
     // Bare again: the last one, not the first offered.
     ex(&mut d, &mut app, "compile?");
@@ -467,22 +467,22 @@ fn a_build_nu_command_wanting_arguments_goes_to_the_prompt() {
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     d.frame(&mut app);
-    assert!(!app.compile.running, "not run bare");
+    assert!(!app.compile.running(), "not run bare");
     d.keys(&mut app, "box");
     d.key(&mut app, "enter", KeyMods::default());
     for _ in 0..500 {
         d.frame(&mut app);
-        if !app.compile.running && app.compile.buffer.is_some() {
+        if !app.compile.running() && app.compile.buffer().is_some() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let text = app.ed.buffers[app.compile.buffer.expect("it ran")].text();
+    let text = app.ed.buffers[app.compile.buffer().expect("it ran")].text();
     assert!(
         text.contains("$ nu -c 'use build.nu; build deploy box'") && text.contains("to box"),
         "{text}"
     );
-    assert_eq!(app.compile.cwd.as_deref(), Some(dir.as_path()));
+    assert_eq!(app.compile.cwd().as_deref(), Some(dir.as_path()));
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -515,7 +515,7 @@ fn ctrl_c_in_the_compile_buffer_kills_the_compile() {
     );
     let started = |app: &Kawoosh| {
         app.compile
-            .buffer
+            .buffer()
             .is_some_and(|b| app.ed.buffers[b].text().contains("\nstarted\n"))
     };
     for _ in 0..300 {
@@ -526,9 +526,9 @@ fn ctrl_c_in_the_compile_buffer_kills_the_compile() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(
-        app.compile.running && started(&app),
+        app.compile.running() && started(&app),
         "{}",
-        app.ed.buffers[app.compile.buffer.unwrap()].text()
+        app.ed.buffers[app.compile.buffer().unwrap()].text()
     );
     // The keys went to `*compile*`; back in the code pane, `<C-c>` is
     // still `normal`'s.
@@ -536,19 +536,19 @@ fn ctrl_c_in_the_compile_buffer_kills_the_compile() {
     assert_ne!(pane, code);
     app.layout.focus(code);
     d.press(&mut app, "<C-c>");
-    assert!(app.compile.running);
-    let buffer = app.compile.buffer.unwrap();
+    assert!(app.compile.running());
+    let buffer = app.compile.buffer().unwrap();
     assert!(
         matches!(app.layout.content(pane), Some(Content::Editor(v)) if app.ed.views[v].buffer == buffer)
     );
     app.layout.focus(pane);
     d.press(&mut app, "<C-c>");
     let t0 = std::time::Instant::now();
-    while app.compile.running && t0.elapsed() < std::time::Duration::from_secs(5) {
+    while app.compile.running() && t0.elapsed() < std::time::Duration::from_secs(5) {
         d.frame(&mut app);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(!app.compile.running, "still running after the kill");
+    assert!(!app.compile.running(), "still running after the kill");
     let text = app.ed.buffers[buffer].text();
     assert!(
         text.contains("[killed]") && !text.contains("\nlate"),

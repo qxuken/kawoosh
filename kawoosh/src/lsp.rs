@@ -1418,6 +1418,13 @@ impl Kawoosh {
         if let Some(l) = language {
             self.ed.buffers[id].language = l.into();
         }
+        self.show_buffer_in_pane(id, focus, place);
+    }
+
+    /// Buffer `id` on show: the pane showing it already, its caret back
+    /// at the top, else one made at `place`; the keyboard there with
+    /// `focus`.
+    pub(crate) fn show_buffer_in_pane(&mut self, id: BufferId, focus: bool, place: Place) {
         let shown = self
             .layout
             .visible_panes()

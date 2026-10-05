@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use kawoosh_doc::BufferId;
+use kawoosh_doc::{Buffer, BufferId};
 use kawoosh_editor::{ArgKind, Args, Editor, Selection, Setting, Spec, ViewId};
 use kawoosh_lua::CompileOfferSnap;
 use kawoosh_systems::io::{IoMsg, ProcHandle};
@@ -19,28 +19,30 @@ use crate::layout::PaneId;
 use crate::links::location_at;
 use crate::notify::{Level, Note};
 
-/// The compile buffer's kind: what its maps and a `when` name it by
-/// (`buffer:*compile*`), and its name before it has run anything. Run,
-/// it is named for its command ([`buffer_name`]).
+/// A compile buffer's kind: what its maps and a `when` name it by
+/// (`buffer:*compile*`). Each is named for its command, and its
+/// directory ([`buffer_name`]).
 pub const COMPILE_BUFFER: &str = "*compile*";
 
 /// How much of a command the buffer's name says.
 const NAME_CHARS: usize = 60;
 
-/// The compile buffer's name while it shows `cmd`'s run: `*compile:
-/// cargo build*`, so a list of buffers says which build it is. The
-/// command on one line, cut at [`NAME_CHARS`].
-pub fn buffer_name(cmd: &str) -> String {
+/// The name of the buffer showing `cmd`'s run: `*compile: cargo
+/// build*`, so a list of buffers says which build it is — and, run
+/// somewhere other than the working directory, where (`dir`):
+/// `*compile: yarn build in apps/web*`. The command on one line, cut at
+/// [`NAME_CHARS`].
+pub fn buffer_name(cmd: &str, dir: Option<&str>) -> String {
     let line = cmd.split_whitespace().collect::<Vec<_>>().join(" ");
-    if line.is_empty() {
-        return COMPILE_BUFFER.into();
-    }
     let said: String = if line.chars().count() > NAME_CHARS {
         line.chars().take(NAME_CHARS - 1).chain(['…']).collect()
     } else {
         line
     };
-    format!("*compile: {said}*")
+    match dir {
+        Some(dir) => format!("*compile: {said} in {dir}*"),
+        None => format!("*compile: {said}*"),
+    }
 }
 
 /// A bare `:compile` with nothing to run.
@@ -51,23 +53,79 @@ const NOTHING: &str =
 /// Decision 7).
 pub const RECENT: usize = 10;
 
+/// A command's run in a directory, and the buffer showing it. The two
+/// are what a run is: the same command in the same directory runs into
+/// the same buffer again; another command, or the same one somewhere
+/// else, has a buffer of its own (compile.md Decision 10).
+pub struct Run {
+    pub buffer: BufferId,
+    pub cmd: String,
+    pub cwd: PathBuf,
+    /// The file the run was asked from: what `%` names in a line asked
+    /// from its buffer, where the keys are once it runs.
+    pub file: Option<PathBuf>,
+    /// The io thread's id of its process: the last started for it.
+    pub proc_id: u64,
+    /// The command's, while it runs: for `compile kill` (`<C-c>` in its
+    /// buffer) and for its next run, which replaces it.
+    pub proc: Option<ProcHandle>,
+}
+
+impl Run {
+    pub fn running(&self) -> bool {
+        self.proc.is_some()
+    }
+}
+
 #[derive(Default)]
 pub struct Compile {
-    pub buffer: Option<BufferId>,
-    pub proc_id: u64,
-    /// What `*compile*` shows the run of, for `compile again`.
-    pub cmd: Option<String>,
-    pub cwd: Option<PathBuf>,
-    /// The file the run `*compile*` shows was asked from: what `%`
-    /// names in a line asked from `*compile*`, where the keys are once
-    /// it runs.
-    pub file: Option<PathBuf>,
-    pub running: bool,
-    /// The running command's, for `compile kill` (`<C-c>` in
-    /// `*compile*`) and for the next `:compile`, which replaces it.
-    pub proc: Option<ProcHandle>,
+    /// The runs whose buffers are open, the last started last.
+    pub runs: Vec<Run>,
+    /// How many commands were started: the last one's process id.
+    pub started: u64,
     /// The rows `compile pick` offered, in the picker's order.
     pub offer: Vec<Offer>,
+}
+
+impl Compile {
+    /// The run started last: what `]q` walks, and what `r` and `<C-c>`
+    /// mean asked from outside a compile buffer.
+    pub fn last(&self) -> Option<&Run> {
+        self.runs.last()
+    }
+
+    /// The run `buffer` shows.
+    pub fn of(&self, buffer: BufferId) -> Option<&Run> {
+        self.runs.iter().find(|r| r.buffer == buffer)
+    }
+
+    /// The buffer of the run started last.
+    pub fn buffer(&self) -> Option<BufferId> {
+        self.last().map(|r| r.buffer)
+    }
+
+    /// Where the run started last ran.
+    pub fn cwd(&self) -> Option<PathBuf> {
+        self.last().map(|r| r.cwd.clone())
+    }
+
+    /// Whether any command is running.
+    pub fn running(&self) -> bool {
+        self.runs.iter().any(Run::running)
+    }
+
+    /// `buffer` is gone: its run with it, stopped if it still ran.
+    pub(crate) fn forget(&mut self, buffer: BufferId) {
+        self.runs.retain_mut(|r| {
+            if r.buffer != buffer {
+                return true;
+            }
+            if let Some(p) = r.proc.take() {
+                p.kill();
+            }
+            false
+        });
+    }
 }
 
 /// A command the settings name (`compile.commands.NAME`, compile.md
@@ -197,6 +255,18 @@ pub struct Locations {
 }
 
 impl Kawoosh {
+    /// The run the focused pane shows, in a compile buffer.
+    fn compile_shown(&self) -> Option<&Run> {
+        let v = self.focused_view()?;
+        self.compile.of(self.ed.views.get(v)?.buffer)
+    }
+
+    /// The run `compile again` and `compile kill` mean from here: the
+    /// one the focused pane shows, else the one started last.
+    pub fn compile_here(&self) -> Option<&Run> {
+        self.compile_shown().or_else(|| self.compile.last())
+    }
+
     /// Where a compile asked from here starts looking: the caret's
     /// file's directory, else the working directory — and the file's
     /// language.
@@ -211,13 +281,12 @@ impl Kawoosh {
                 kawoosh_systems::fs::parent(&path).unwrap_or_else(|| self.cwd.clone()),
                 Some(language),
             ),
-            // In `*compile*`, where its command ran: `<leader>cc` there
-            // compiles the same project again.
-            None if view.is_some_and(|v| Some(self.ed.views[v].buffer) == self.compile.buffer) => (
-                self.compile.cwd.clone().unwrap_or_else(|| self.cwd.clone()),
-                None,
-            ),
-            None => (self.cwd.clone(), None),
+            // In a compile buffer, where its command ran: `<leader>cc`
+            // there compiles the same project again.
+            None => match self.compile_shown() {
+                Some(run) => (run.cwd.clone(), None),
+                None => (self.cwd.clone(), None),
+            },
         }
     }
 
@@ -356,11 +425,10 @@ impl Kawoosh {
     /// The file `%` names in a line asked from here: the caret's; in
     /// `*compile*`, the one its run was asked from.
     fn compile_file(&self) -> Option<PathBuf> {
-        let v = self.focused_view()?;
-        if Some(self.ed.views[v].buffer) == self.compile.buffer {
-            return self.compile.file.clone();
+        if let Some(run) = self.compile_shown() {
+            return run.file.clone();
         }
-        self.ed.percent_path(v).ok()
+        self.ed.percent_path(self.focused_view()?).ok()
     }
 
     /// Where a `:compile` line runs: a name's `cwd`, else where the
@@ -483,10 +551,10 @@ impl Kawoosh {
             .unwrap_or_else(|| self.cwd.clone())
     }
 
-    /// `cmd` run in `cwd` into `*compile*`, exactly, and remembered at
-    /// the head of the memory's list for this workspace. The keys go to
-    /// `*compile*` — its pane made, or the one showing it already — and
-    /// `q` there gives them back to the pane they were in
+    /// `cmd` run in `cwd` into the buffer of that command there, exactly,
+    /// and remembered at the head of the memory's list for this
+    /// workspace. The keys go to the buffer ([`Self::compile_show`]),
+    /// and `q` there gives them back to the pane they were in
     /// (`Layout::close`).
     pub fn compile_in(&mut self, cmd: &str, cwd: PathBuf) {
         let mut recent: Vec<serde_json::Value> = self
@@ -504,57 +572,103 @@ impl Kawoosh {
             "compile",
             serde_json::json!({ "cmd": cmd, "cwd": cwd.display().to_string(), "recent": recent }),
         );
-        let cwd = Some(cwd);
-        // One compile at a time: the one before, still running, is
-        // stopped rather than left to finish unseen.
-        if let Some(p) = self.compile.proc.take() {
-            p.kill();
-        }
-        self.compile.proc_id += 1;
-        let id = self.compile.proc_id;
-        // Before the keys move: `r` in `*compile*` keeps the file.
-        self.compile.file = self.compile_file();
-        let header = format!("$ {cmd}\n");
-        // One buffer, named for what it shows the run of: the one the
-        // last run was in takes this command's name.
-        let name = buffer_name(cmd);
-        if let Some(b) = self.compile.buffer.and_then(|b| self.ed.buffers.get_mut(b)) {
-            b.name = name.clone();
-        }
-        self.show_in_pane(&name, &header);
-        let buffer = self
-            .ed
-            .buffers
+        // Before the keys move: `r` in its buffer keeps the file.
+        let file = self.compile_file();
+        let name = buffer_name(cmd, self.compile_where(&cwd).as_deref());
+        // A run is its command and its directory: this one's buffer
+        // again, its last run stopped if it has not ended — else a
+        // buffer of its own, beside the other commands'.
+        let before = self
+            .compile
+            .runs
             .iter()
-            .find(|(_, b)| b.name == name)
-            .map(|(id, _)| id);
+            .position(|r| r.cmd == cmd && r.cwd == cwd)
+            .map(|i| self.compile.runs.remove(i));
+        let buffer = match before {
+            Some(mut run) => {
+                if let Some(p) = run.proc.take() {
+                    p.kill();
+                }
+                run.buffer
+            }
+            None => {
+                let mut b = Buffer::new(&name, "");
+                b.read_only = true;
+                self.ed.add_buffer(b)
+            }
+        };
+        let b = &mut self.ed.buffers[buffer];
+        b.name = name;
+        b.set_text(&format!("$ {cmd}\n"));
+        b.mark_saved();
+        self.compile_show(buffer);
         // Its views start at the end, and follow the output from there
         // (`compile_append`).
-        if let Some(b) = buffer {
-            let end = self.ed.buffers[b].len();
-            for v in self.ed.views.values_mut() {
-                if v.buffer == b {
-                    v.sels = kawoosh_editor::Selections::single(Selection::point(end));
-                }
+        let end = self.ed.buffers[buffer].len();
+        for v in self.ed.views.values_mut() {
+            if v.buffer == buffer {
+                v.sels = kawoosh_editor::Selections::single(Selection::point(end));
             }
         }
-        self.compile.buffer = buffer;
-        self.compile.cmd = Some(cmd.to_string());
-        self.compile.cwd = cwd.clone();
-        self.locations = Locations {
+        self.compile.started += 1;
+        let proc_id = self.compile.started;
+        let (proc, failed) = match self.io.run_process(proc_id, cmd, Some(&cwd)) {
+            Ok(p) => (Some(p), None),
+            Err(e) => (None, Some(e)),
+        };
+        self.compile.runs.push(Run {
             buffer,
+            cmd: cmd.to_string(),
+            cwd,
+            file,
+            proc_id,
+            proc,
+        });
+        self.locations = Locations {
+            buffer: Some(buffer),
             ..Default::default()
         };
-        match self.io.run_process(id, cmd, cwd.as_deref()) {
-            Ok(p) => {
-                self.compile.proc = Some(p);
-                self.compile.running = true;
-            }
-            Err(e) => {
-                self.compile_append(&format!("cannot run: {e}\n"));
-                self.compile.running = false;
+        if let Some(e) = failed {
+            self.compile_append(buffer, &format!("cannot run: {e}\n"));
+        }
+    }
+
+    /// Where a run in `cwd` is, as its buffer's name says it: nothing in
+    /// the working directory, else the path from it, else from home.
+    fn compile_where(&self, cwd: &Path) -> Option<String> {
+        if cwd == self.cwd {
+            return None;
+        }
+        Some(
+            kawoosh_systems::fs::relative(cwd, &self.cwd)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| kawoosh_systems::fs::abbreviate_home(cwd)),
+        )
+    }
+
+    /// `buffer`, a run's, on show with the keys: the pane showing it
+    /// already; else one showing a run that has ended, which gives its
+    /// place — one pane of output, not one a command; else a column of
+    /// its own, a run still going left to be watched.
+    fn compile_show(&mut self, buffer: BufferId) {
+        let views: Vec<ViewId> = self
+            .layout
+            .visible_panes()
+            .into_iter()
+            .filter_map(|p| self.view_of(p))
+            .collect();
+        let shows = |k: &Self, v: &ViewId| k.ed.views[*v].buffer;
+        if !views.iter().any(|v| shows(self, v) == buffer) {
+            let ended = views.iter().copied().find(|v| {
+                self.compile
+                    .of(shows(self, v))
+                    .is_some_and(|r| !r.running())
+            });
+            if let Some(v) = ended {
+                self.show_buffer(v, buffer);
             }
         }
+        self.show_buffer_in_pane(buffer, true, crate::layout::Place::Column);
     }
 
     /// A project file as a picker row names it: from the working
@@ -682,19 +796,16 @@ impl Kawoosh {
         }
     }
 
-    /// `compile kill`: stops the running command, and everything it
-    /// started. Its exit reports it (`[killed]`), as any exit does.
+    /// `compile kill`: stops the command running here
+    /// ([`Self::compile_here`]), and everything it started. Its exit reports it (`[killed]`), as any exit does.
     pub fn compile_kill(&mut self) {
-        match self.compile.proc.as_ref().filter(|_| self.compile.running) {
+        match self.compile_here().and_then(|r| r.proc.as_ref()) {
             Some(p) => p.kill(),
             None => self.ed.message = "nothing compiling".into(),
         }
     }
 
-    pub(crate) fn compile_append(&mut self, text: &str) {
-        let Some(id) = self.compile.buffer else {
-            return;
-        };
+    pub(crate) fn compile_append(&mut self, id: BufferId, text: &str) {
         let Some(b) = self.ed.buffers.get_mut(id) else {
             return;
         };
@@ -711,27 +822,44 @@ impl Kawoosh {
         }
     }
 
+    /// The run process `id` is the current one of: a line of one
+    /// replaced since is nobody's.
+    fn compile_run(&self, id: u64) -> Option<&Run> {
+        self.compile.runs.iter().find(|r| r.proc_id == id)
+    }
+
     pub(crate) fn on_proc_msg(&mut self, msg: IoMsg) {
         match msg {
-            IoMsg::ProcLine { id, line } if id == self.compile.proc_id => {
-                self.compile_append(&format!("{line}\n"));
+            IoMsg::ProcLine { id, line } => {
+                if let Some(b) = self.compile_run(id).map(|r| r.buffer) {
+                    self.compile_append(b, &format!("{line}\n"));
+                }
             }
-            IoMsg::ProcExit { id, code } if id == self.compile.proc_id => {
-                self.compile.running = false;
-                self.compile.proc = None;
+            IoMsg::ProcExit { id, code } => {
+                let Some(run) = self.compile.runs.iter_mut().find(|r| r.proc_id == id) else {
+                    return;
+                };
+                run.proc = None;
+                let (buffer, cmd) = (run.buffer, run.cmd.clone());
                 let status = match code {
                     Some(0) => "finished".to_string(),
                     Some(c) => format!("exited with {c}"),
                     None => "killed".into(),
                 };
-                self.compile_append(&format!("\n[{status}]\n"));
-                // Asynchronous: the corner, not the command line.
+                self.compile_append(buffer, &format!("\n[{status}]\n"));
+                // Asynchronous: the corner, not the command line. Which
+                // one, when another still runs.
                 let level = if code == Some(0) {
                     Level::Info
                 } else {
                     Level::Warn
                 };
-                self.notify_with(Note::new(level, status).source("compile"));
+                let text = if self.compile.running() {
+                    format!("{status}: {cmd}")
+                } else {
+                    status
+                };
+                self.notify_with(Note::new(level, text).source("compile"));
             }
             _ => {}
         }
@@ -746,20 +874,22 @@ impl Kawoosh {
         let b = self.ed.buffers.get(buffer)?;
         let text = b.line_text(ln);
         // The command echo names its own arguments; not a location.
-        if Some(buffer) == self.compile.buffer && text.starts_with("$ ") {
+        let run = self.compile.of(buffer);
+        if run.is_some() && text.starts_with("$ ") {
             return None;
         }
         // The first path-looking token on the line.
         let mut at = 0;
         while at < text.len() {
             if let Some((path, line, col)) = location_at(&text, at) {
-                let base = if Some(buffer) == self.compile.buffer {
-                    self.compile.cwd.clone()
-                } else {
-                    b.path.as_deref().and_then(kawoosh_systems::fs::parent)
-                }
-                .or_else(|| Some(self.cwd.clone()))
-                .unwrap_or_default();
+                let base = match run {
+                    Some(run) => run.cwd.clone(),
+                    None => b
+                        .path
+                        .as_deref()
+                        .and_then(kawoosh_systems::fs::parent)
+                        .unwrap_or_else(|| self.cwd.clone()),
+                };
                 let full = if kawoosh_systems::fs::is_absolute(Path::new(&path)) {
                     PathBuf::from(&path)
                 } else {
@@ -908,7 +1038,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .alias(&["c", "make"])
                 .args(Args::rest(&[ArgKind::Text]))
                 .query("say what a bare :compile would run")
-                .doc("run NAME [ARGS] (compile.commands) or CMD, `%` the file — bare, compile.default, the last run here, what the project's files offer — into the *compile* buffer, the keys there"),
+                .doc("run NAME [ARGS] (compile.commands) or CMD, `%` the file — bare, compile.default, the last run here, what the project's files offer — into its *compile* buffer (one a command and directory), the keys there"),
             |k, ctx| {
                 if !ctx.args.is_empty() {
                     k.compile(&ctx.args.join(" "));
@@ -971,10 +1101,10 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         // shows run again, stopped first if it still runs.
         cmd(
             Spec::new("compile again")
-                .doc("the command *compile* shows, run again where it ran (`r` there)"),
-            |k, _| match (k.compile.cmd.clone(), k.compile.cwd.clone()) {
-                (Some(cmd), Some(cwd)) => k.compile_in(&cmd, cwd),
-                _ => k.ed.message = "compile again: nothing compiled yet".into(),
+                .doc("the command a *compile* buffer shows — else the last started — run again where it ran (`r` there)"),
+            |k, _| match k.compile_here().map(|r| (r.cmd.clone(), r.cwd.clone())) {
+                Some((cmd, cwd)) => k.compile_in(&cmd, cwd),
+                None => k.ed.message = "compile again: nothing compiled yet".into(),
             },
         ),
         // `<C-c>` in `*compile*` while it runs (emacs's `C-c C-k`);
@@ -982,7 +1112,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("compile kill")
                 .when(&["compiling"])
-                .doc("stop the running compile, and what it started"),
+                .doc("stop the compile running here — else the last started — and what it started"),
             |k, _| k.compile_kill(),
         ),
         cmd(

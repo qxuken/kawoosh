@@ -129,7 +129,7 @@ impl Kawoosh {
                 run: Some("dock".into()),
             });
         }
-        if self.compile.running {
+        if self.compile.running() {
             blocks.push(Block {
                 parts: vec![("compiling…".into(), pal.command)],
                 run: None,

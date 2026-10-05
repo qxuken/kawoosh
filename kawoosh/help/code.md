@@ -510,22 +510,28 @@ A formatter written in Lua is in [lua](lua.md#formatters).
 
 ## Compile commands
 
-`:compile CMD` (also `:c` and `:make`) runs a command into the
-`*compile*` buffer, and the keys go there — to the pane it opens, or
-to the one showing it already. The caret follows the output while it
-is at the end; move it up to read a line and it stays there. The paths
-with line numbers in the output are locations: `<CR>` on one opens it
-in an editor pane beside, and `]q` `[q` (`:cnext`, `:cprev`) walk
-them from anywhere. `<C-c>` in `*compile*` stops the command and what
-it started (`:compile kill`), `r` runs it again where it ran
-(`:compile again`), and `q` closes it, the keys going back to the pane
-you were in. A `%` in a line run from `*compile*` is the file the run
-there was started from.
+`:compile CMD` (also `:c` and `:make`) runs a command into a
+`*compile*` buffer, and the keys go there. The caret follows the
+output while it is at the end; move it up to read a line and it stays
+there. The paths with line numbers in the output are locations: `<CR>`
+on one opens it in an editor pane beside, and `]q` `[q` (`:cnext`,
+`:cprev`) walk those of the command started last from anywhere.
+`<C-c>` in the buffer stops its command and what it started (`:compile
+kill`), `r` runs it again where it ran (`:compile again`), and `q`
+closes the pane, the keys going back to the pane you were in — the
+buffer stays; `:bd` closes it, stopping the command if it still runs.
+A `%` in a line run from the buffer is the file its run was started
+from.
 
-The buffer is named for the command it shows — `*compile: cargo
-build*` — so a list of buffers says which build it is; the next
-command renames it. A map or a `when` knows it as `*compile*` whatever
-it runs (`buffer = "*compile*"`).
+Each command has a buffer of its own, in each directory it is run in,
+named for both: `*compile: cargo build*`, and `*compile: yarn build in
+apps/web*` when it runs somewhere other than the working directory.
+The same command in the same place runs into its buffer again; another
+leaves the first's output, and the first itself if it still runs,
+alone. A command that has ended gives its pane to the next one; one
+still running keeps it, and the next opens beside it. A map or a
+`when` knows every one of them as `*compile*`
+(`buffer = "*compile*"`).
 
 `<leader>cc` is a bare `:compile`. It runs, in order of preference:
 
