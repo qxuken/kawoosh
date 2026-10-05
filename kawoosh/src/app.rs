@@ -2751,9 +2751,6 @@ impl kui_native::App for Kawoosh {
             .and_then(kui_native::OptionAsAlt::from_name)
             .unwrap_or(kui_native::OptionAsAlt::Left);
         ui.option_as_alt(option);
-        // The wheel with ⌘ or Ctrl held is the font's size, over every
-        // pane and list alike (kui F122): no scroller takes it first.
-        ui.core().set_wheel_zoom(true);
         if self.awaiting_paste {
             ui.request_paste();
         }
@@ -2769,7 +2766,15 @@ impl kui_native::App for Kawoosh {
         let body_h = self.body_h;
         t = self.perf.lap(Chrome, "window", t);
         self.legends.borrow_mut().roll();
-        ui.with(NodeSpec::column().fill().bg(pal.bg), |ui| {
+        // The wheel with ⌘ or Ctrl held is the font's size, and the
+        // window's to hear (kui F122, `scroll_mods`): ahead of every pane,
+        // list and strip under the pointer, none of which scrolls for it.
+        let window = NodeSpec::column()
+            .fill()
+            .bg(pal.bg)
+            .on_scroll(Value::map([("kind", "zoom".into())]))
+            .scroll_mods(KeyMods::NONE.with_ctrl().with_super());
+        ui.with(window, |ui| {
             self.title_bar(ui);
             t = self.perf.lap(Chrome, "title bar", t);
             self.tab_strip(ui);
@@ -2951,11 +2956,12 @@ impl Kawoosh {
             }
             return;
         }
-        if let Some(z) = ev.zoom() {
-            self.on_zoom(z.delta.y);
-            return;
-        }
         if let Some(s) = ev.scroll() {
+            // The window's own, for the wheel with ⌘ or Ctrl held.
+            if tag_kind == Some("zoom") {
+                self.on_zoom(s.delta.y);
+                return;
+            }
             match pane {
                 Some(pane) => self.on_scroll(pane, s, tag),
                 // A Lua view's own `on_scroll`: its handler ran, what it

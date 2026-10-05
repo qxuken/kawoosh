@@ -294,10 +294,15 @@ for as many of a trackpad's pixels, the rest carried (`look.rs`,
 `on_zoom`). It is the window's, not a pane's: kui's scrollers take a
 wheel before any app hears it, so a handler on the editor's panes would
 have left the pickers, the lists and every Lua view scrolling under the
-same gesture. kui's F122 (`Core::set_wheel_zoom`) makes such a wheel a
-`zoom` event on the root, a swipe's glide staying what the swipe began
-as. What it costs: a terminal program that reports the mouse no longer
-hears a Ctrl-wheel.
+same gesture. kui's F122 lets an `on_scroll` node say which modifiers
+it is for (`scroll_mods`): the window's root names Ctrl and ⌘, and a
+wheel turned with either held is its event ahead of whatever scrolls
+under the pointer, a swipe's glide staying what the swipe began as. (A
+first build was a flag on kui's core and a `zoom` event; "it looks too
+specific" — the keys, the meaning and the one listener were kui's to
+say, and are the node's now. A pane that zooms something of its own,
+the picture pane say, can name the same keys inside.) What it costs: a
+terminal program that reports the mouse no longer hears a Ctrl-wheel.
 
 ### 6. Nerd Fonts' symbols ship as the icons' fallback
 

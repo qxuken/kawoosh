@@ -875,8 +875,8 @@ impl Kawoosh {
         self.ed.message = format!("font {next}");
     }
 
-    /// The wheel with ⌘ or Ctrl held, anywhere in the window (kui F122,
-    /// `set_wheel_zoom`): up is bigger, a pixel a notch, what a notch
+    /// The wheel with ⌘ or Ctrl held, anywhere in the window (the root's
+    /// `scroll_mods`, kui F122): up is bigger, a pixel a notch, what a notch
     /// did not cover carried to the next — a trackpad's swipe comes in
     /// pixels. A turn the other way starts from nothing.
     pub(crate) fn on_zoom(&mut self, dy: f32) {
