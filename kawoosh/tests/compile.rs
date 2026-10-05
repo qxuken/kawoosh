@@ -51,7 +51,7 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
 fn finished(d: &mut Drive, app: &mut Kawoosh) -> String {
     for _ in 0..300 {
         d.frame(app);
-        if let Some(b) = app.compile.buffer.filter(|_| !app.compile.running) {
+        if let Some(b) = app.compile.buffer().filter(|_| !app.compile.running()) {
             return app.ed.buffers[b].text();
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -96,12 +96,12 @@ fn named_commands_the_default_and_the_recent_lines() {
     ex(&mut d, &mut app, "compile where");
     let out = finished(&mut d, &mut app);
     let deeper = dir.join("sub/deeper");
-    assert_eq!(app.compile.cwd.as_deref(), Some(deeper.as_path()));
+    assert_eq!(app.compile.cwd().as_deref(), Some(deeper.as_path()));
     assert!(out.contains("sub/deeper"), "{out}");
 
     // `args = true`, called bare: the prompt, to finish.
     ex(&mut d, &mut app, "compile ask");
-    assert!(!app.compile.running);
+    assert!(!app.compile.running());
     d.keys(&mut app, "yes");
     d.key(&mut app, "enter", KeyMods::default());
     let out = finished(&mut d, &mut app);
@@ -175,7 +175,7 @@ kawoosh.opt("compile.commands.here", { cmd = "pwd", cwd = kawoosh.fs.join(root, 
     ex(&mut d, &mut app, "compile here");
     finished(&mut d, &mut app);
     let deeper = dir.join("sub").join("deeper");
-    assert_eq!(app.compile.cwd.as_deref(), Some(deeper.as_path()));
+    assert_eq!(app.compile.cwd().as_deref(), Some(deeper.as_path()));
     app.run_lua_source("t", "kawoosh.echo(tostring(kawoosh.project))");
     assert_eq!(app.ed.message, "nil");
     std::fs::remove_dir_all(&dir).ok();
@@ -196,7 +196,7 @@ fn r_in_the_compile_buffer_runs_it_again() {
     );
     let out = finished(&mut d, &mut app);
     assert!(out.contains("RUN 1"), "{out}");
-    let buffer = app.compile.buffer.unwrap();
+    let buffer = app.compile.buffer().unwrap();
     let pane = app
         .layout
         .all_panes()
@@ -210,7 +210,7 @@ fn r_in_the_compile_buffer_runs_it_again() {
     d.frame(&mut app);
     d.keys(&mut app, "r");
     assert!(
-        app.compile.running || app.compile.proc_id > 1,
+        app.compile.running() || app.compile.started > 1,
         "started again"
     );
     let out = finished(&mut d, &mut app);
@@ -218,9 +218,8 @@ fn r_in_the_compile_buffer_runs_it_again() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The buffer is named for the command it shows the run of, the one
-/// buffer renamed by the next command; its maps are `*compile*`'s
-/// whatever it is called.
+/// A buffer is named for the command it shows the run of; its maps are
+/// `*compile*`'s whatever it is called.
 #[cfg(unix)]
 #[test]
 fn the_compile_buffer_is_named_for_its_command() {
@@ -229,40 +228,165 @@ fn the_compile_buffer_is_named_for_its_command() {
     let mut app = open(&mut d, &dir);
     ex(&mut d, &mut app, "compile echo  one");
     finished(&mut d, &mut app);
-    let buffer = app.compile.buffer.unwrap();
+    let buffer = app.compile.buffer().unwrap();
     assert_eq!(app.ed.buffers[buffer].name, "*compile: echo one*");
     assert!(keys_in_compile(&app));
     assert!(app.ed.holds(app.focused_view(), "buffer:*compile*"));
     assert!(!app.ed.holds(app.focused_view(), "buffer:*comp*"));
 
-    ex(&mut d, &mut app, "compile echo two");
-    finished(&mut d, &mut app);
-    assert_eq!(app.compile.buffer, Some(buffer), "the same buffer");
-    assert_eq!(app.ed.buffers[buffer].name, "*compile: echo two*");
-    assert_eq!(
-        app.ed
-            .buffers
-            .values()
-            .filter(|b| b.name.starts_with("*compile"))
-            .count(),
-        1
-    );
-    // `r` there is `compile again` still.
-    d.keys(&mut app, "r");
-    assert!(app.compile.running || app.compile.proc_id > 2, "again");
-    finished(&mut d, &mut app);
-
     let long = format!("echo {}", "x".repeat(100));
     assert_eq!(
-        kawoosh::compile::buffer_name(&long).chars().count(),
+        kawoosh::compile::buffer_name(&long, None).chars().count(),
         "*compile: *".len() + 60
     );
+    assert_eq!(
+        kawoosh::compile::buffer_name("yarn build", Some("apps/web")),
+        "*compile: yarn build in apps/web*"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The buffers of the compile's runs, by name.
+fn compile_buffers(app: &Kawoosh) -> Vec<String> {
+    let mut names: Vec<String> = app
+        .ed
+        .buffers
+        .values()
+        .filter(|b| b.name.starts_with("*compile"))
+        .map(|b| b.name.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+/// A run is its command and its directory (compile.md Decision 10):
+/// another command has a buffer of its own, the one before keeping its
+/// output; the same command somewhere else is another too; the same
+/// one in the same place runs into its buffer again. One pane shows
+/// them, a run that has ended giving its place.
+#[cfg(unix)]
+#[test]
+fn a_run_is_its_command_and_its_directory() {
+    let dir = project(
+        "runs",
+        r#"return { compile = { commands = {
+  deep = { cmd = "echo one", cwd = "sub/deeper" },
+} } }"#,
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    ex(&mut d, &mut app, "compile echo one");
+    finished(&mut d, &mut app);
+    let one = app.compile.buffer().unwrap();
+    let pane = compile_pane(&app).expect("on show");
+
+    // Another command: its own buffer, in the pane the first was in.
+    ex(&mut d, &mut app, "compile echo two");
+    let out = finished(&mut d, &mut app);
+    let two = app.compile.buffer().unwrap();
+    assert_ne!(one, two);
+    assert!(out.contains("$ echo two\ntwo"), "{out}");
+    assert!(
+        app.ed.buffers[one].text().contains("$ echo one\none"),
+        "the first's output kept"
+    );
+    assert_eq!(compile_pane(&app), Some(pane), "one pane of output");
+    assert_eq!(
+        compile_buffers(&app),
+        ["*compile: echo one*", "*compile: echo two*"]
+    );
+
+    // The same command, another directory: another run, named for it.
+    ex(&mut d, &mut app, "compile deep");
+    finished(&mut d, &mut app);
+    let deep = app.compile.buffer().unwrap();
+    assert!(deep != one && deep != two);
+    assert_eq!(
+        app.ed.buffers[deep].name,
+        "*compile: echo one in sub/deeper*"
+    );
+
+    // The same command in the same place: its buffer again.
+    ex(&mut d, &mut app, "compile echo one");
+    finished(&mut d, &mut app);
+    assert_eq!(app.compile.buffer(), Some(one));
+    assert_eq!(app.compile.runs.len(), 3);
+    assert_eq!(compile_buffers(&app).len(), 3);
+
+    // `r` is the run's the pane shows, not the last started.
+    app.show_buffer(app.focused_view().unwrap(), two);
+    d.frame(&mut app);
+    let before = app.compile.started;
+    d.keys(&mut app, "r");
+    assert!(app.compile.started > before, "ran again");
+    finished(&mut d, &mut app);
+    assert_eq!(app.compile.buffer(), Some(two));
+    assert_eq!(app.compile.runs.len(), 3);
+
+    // A buffer closed is a run forgotten.
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(app.compile.runs.len(), 2);
+    assert!(app.compile.of(two).is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Two commands run at once: the one still going keeps its pane and
+/// its process, the next has a column of its own, and each stops by
+/// its own `<C-c>`.
+#[cfg(unix)]
+#[test]
+fn two_commands_run_side_by_side() {
+    let dir = project("side", "return {}");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    ex(&mut d, &mut app, "compile echo slow; sleep 30");
+    let slow = app.compile.buffer().unwrap();
+    let slow_pane = compile_pane(&app).expect("on show");
+    ex(&mut d, &mut app, "compile echo quick; sleep 30");
+    let quick = app.compile.buffer().unwrap();
+    assert_ne!(slow, quick);
+    let quick_pane = compile_pane(&app).expect("on show");
+    assert_ne!(slow_pane, quick_pane, "a column of its own");
+    assert!(app.compile.runs.iter().all(|r| r.running()), "both run");
+    for _ in 0..300 {
+        d.frame(&mut app);
+        let said = |b, w| app.ed.buffers[b].text().contains(w);
+        if said(slow, "\nslow") && said(quick, "\nquick") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(app.ed.buffers[slow].text().contains("\nslow"));
+    assert!(!app.ed.buffers[slow].text().contains("quick"));
+
+    // `<C-c>` where the keys are stops that one, and only it.
+    d.press(&mut app, "<C-c>");
+    for _ in 0..500 {
+        d.frame(&mut app);
+        if !app.compile.of(quick).unwrap().running() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!app.compile.of(quick).unwrap().running(), "stopped");
+    assert!(app.compile.of(slow).unwrap().running(), "left alone");
+    app.layout.focus(slow_pane);
+    d.frame(&mut app);
+    d.press(&mut app, "<C-c>");
+    for _ in 0..500 {
+        d.frame(&mut app);
+        if !app.compile.running() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!app.compile.running());
     std::fs::remove_dir_all(&dir).ok();
 }
 
 /// The pane showing `*compile*`, wherever it is.
 fn compile_pane(app: &Kawoosh) -> Option<kawoosh::layout::PaneId> {
-    let buffer = app.compile.buffer?;
+    let buffer = app.compile.buffer()?;
     app.layout.all_panes().into_iter().find(|p| {
         matches!(app.layout.content(*p), Some(kawoosh::layout::Content::Editor(v))
             if app.ed.views[v].buffer == buffer)
@@ -272,7 +396,7 @@ fn compile_pane(app: &Kawoosh) -> Option<kawoosh::layout::PaneId> {
 /// Whether the keys are in `*compile*`.
 fn keys_in_compile(app: &Kawoosh) -> bool {
     app.focused_view()
-        .is_some_and(|v| Some(app.ed.views[v].buffer) == app.compile.buffer)
+        .is_some_and(|v| Some(app.ed.views[v].buffer) == app.compile.buffer())
 }
 
 /// A way to start a compile, by name.
@@ -323,14 +447,14 @@ fn every_compile_gives_the_keys_to_its_pane_and_q_gives_them_back() {
     for (door, run) in doors {
         app.layout.focus(editor);
         d.frame(&mut app);
-        let before = app.compile.proc_id;
+        let before = app.compile.started;
         run(&mut d, &mut app);
         finished(&mut d, &mut app);
-        assert!(app.compile.proc_id > before, "{door}: it ran");
+        assert!(app.compile.started > before, "{door}: it ran");
         assert_eq!(app.layout.focused(), pane, "{door}: the keys in *compile*");
         assert_eq!(app.layout.all_panes().len(), panes, "{door}: no pane more");
     }
-    let out = app.ed.buffers[app.compile.buffer.unwrap()].text();
+    let out = app.ed.buffers[app.compile.buffer().unwrap()].text();
     assert!(out.contains("$ echo lua"), "{out}");
     // `:c ` completes as `:compile ` does: the names first.
     d.keys(&mut app, ":c h");
@@ -362,11 +486,11 @@ fn a_percent_asked_from_the_compile_pane_is_the_file_it_ran_from() {
     let out = finished(&mut d, &mut app);
     assert!(out.contains("$ echo 'src/a.rs'"), "{out}");
     assert!(keys_in_compile(&app));
-    let before = app.compile.proc_id;
+    let before = app.compile.started;
     d.press(&mut app, "<leader>cc");
     assert!(!app.ed.message.contains("no file"), "{}", app.ed.message);
     let out = finished(&mut d, &mut app);
-    assert!(app.compile.proc_id > before, "ran again");
+    assert!(app.compile.started > before, "ran again");
     assert!(out.contains("$ echo 'src/a.rs'\nsrc/a.rs"), "{out}");
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -388,7 +512,7 @@ fn a_caret_moved_up_in_the_compile_pane_stays_as_output_comes() {
             go.display()
         ),
     );
-    let b = app.compile.buffer.expect("the compile started");
+    let b = app.compile.buffer().expect("the compile started");
     for _ in 0..300 {
         d.frame(&mut app);
         if app.ed.buffers[b].text().contains("two\n") {

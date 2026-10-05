@@ -9,7 +9,9 @@ from "propose a way to pass arguments. i often use `yarn pw
 ...some-project-path`" and "we probably need custom compile commands
 that i can call", shaped over three exchanges (Decision 7); the keys
 in `*compile*` and `:c` 2026-10-02 (Decision 8); a monorepo's
-packages in the picker 2026-10-05 (Decision 9). The calls
+packages in the picker 2026-10-05 (Decision 9); the buffer named
+for its command, then a buffer a command and directory, the same day
+(Decisions 10 and 11). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -339,8 +341,8 @@ workspace's already.
 it points to so i could find it more easily. Something like `*compile:
 cargo build*`". The buffer a run is shown in is named `*compile: CMD*`
 (`compile::buffer_name`): the command on one line, cut at 60
-characters. Still one buffer — the next command renames it, and it is
-found by `Compile::buffer`, not by its name.
+characters. One buffer then, the next command renaming it — Decision
+11 gives each its own.
 
 Its maps and every `when` knew it as `buffer:*compile*`, a user's
 `buffer = "*compile*"` too, and a name that changes with each run
@@ -350,6 +352,54 @@ name's kind is what a place is, its subject what it shows. Beaten: a
 `compile` fact of its own beside the name — every map written against
 the name would have to move to it — and a title apart from the name,
 which the buffer picker and `:b` would then not match on.
+
+### 11. A run is its command and its directory
+
+*Added 2026-10-05, asked:* "We already give compile different names.
+let's separate them by directory and command. Now new command just
+replaces previous one". There was one buffer and one process: `:compile
+cargo test` over a `cargo build` stopped the build if it still ran and
+wrote over its output either way.
+
+`Compile` holds runs now (`compile::Run`), a run its command, the
+directory it runs in, its buffer and its process. **The same command in
+the same directory is the same run**: it goes into its buffer again,
+its last process stopped if it has not ended — `r`, a bare `:compile`
+again. **Another command, or the same one somewhere else, is another
+run**: a buffer of its own, the others' output and processes as they
+were. Two builds run side by side; `yarn build` in `apps/web` and in
+`apps/api` are two.
+
+- **The name says where when it has to.** `*compile: CMD*` in the
+  working directory, `*compile: CMD in DIR*` elsewhere — `DIR` from the
+  working directory, else from home. A buffer is found by its run, not
+  its name, so a `:cd` between two runs cannot make two one.
+- **The pane.** A run on show already is run there. Else a pane showing
+  a run that has *ended* gives its place: one pane of output across
+  commands, as before, the older buffers a `:b` away. A run still going
+  is left on show and the new one takes a column of its own. The keys
+  go to the run started, by every door (Decision 8).
+- **`r`, `<C-c>`, `%` and the project are the pane's run's**: in a
+  compile buffer they mean the run it shows; from anywhere else `:compile
+  again` and `:compile kill` mean the run started last. `compiling` (the
+  fact `<C-c>` is bound under) is that run still going.
+- **`]q` `[q` walk the run started last**, as they walked the one
+  buffer; a location's path is read from its own run's directory.
+- **A run ends with its buffer.** `q` closes the pane and keeps the
+  buffer, as it did; `:bd` on it stops the command if it runs and
+  forgets the run (`Compile::forget`, from `drop_buffer`). Nothing is
+  swept: there are as many buffers as commands run, not as times run.
+- The corner's `finished` names its command while another still runs;
+  the title bar says `compiling…` while any does.
+
+The memory is as it was (Decision 7): the lines run, by workspace — a
+record of what was asked, not of what is open.
+
+Beaten: a buffer per *time* run (history piling up for a `r`); the
+directory always in the name (most runs are the workspace's, and the
+name is what is read in a list); a pane per command (a row of columns
+after a morning's commands); closing the buffer on `q` (the output of
+a build just read is what `]q` walks next).
 
 ## Not built
 

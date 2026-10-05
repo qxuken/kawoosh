@@ -111,12 +111,12 @@ fn compile_output_is_a_column_with_the_keys() {
     ex(&mut d, &mut app, "compile echo hi");
     for _ in 0..300 {
         d.frame(&mut app);
-        if app.compile.buffer.is_some() && !app.compile.running {
+        if app.compile.buffer().is_some() && !app.compile.running() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let b = app.compile.buffer.expect("the compile ran");
+    let b = app.compile.buffer().expect("the compile ran");
     assert!(app.ed.buffers[b].text().contains("hi"));
     let pane = app
         .layout
