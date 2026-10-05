@@ -1542,7 +1542,6 @@ impl Kawoosh {
                             }
                         },
                     );
-                    ui.text(&head, small(pal.dim));
                     ui.leaf(NodeSpec::row().grow_width());
                     for v in View::ALL {
                         let on = v == view;
@@ -1561,6 +1560,17 @@ impl Kawoosh {
                             small(if on { pal.accent } else { pal.faint }),
                         );
                     }
+                });
+                // The count and its notes on a line of their own, cut
+                // with an ellipsis: in the strip, a long one (a
+                // workspace's path, `40 evicted`) wrapped the views
+                // onto other rows, so they moved from view to view.
+                ui.with_keyed("head", tm.caption(&pal).on_click(tag.clone()), |ui| {
+                    ui.text_in(
+                        NodeSpec::row().grow_width().clip(),
+                        &head,
+                        small(pal.dim).ellipsis(),
+                    );
                 });
                 // The filter's line, while one is set: `/` and the
                 // field, the caret on it while it has the keys.
