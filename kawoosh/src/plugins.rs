@@ -6,6 +6,9 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:dir", include_str!("../lua/dir.lua")),
     // After dir: it deletes through `kawoosh.dir.remove`.
     ("kawoosh:du", include_str!("../lua/du.lua")),
+    // After dir: a directory is the file manager's before a file is
+    // asked whether it is text.
+    ("kawoosh:hex", include_str!("../lua/hex.lua")),
     ("kawoosh:picker", include_str!("../lua/picker.lua")),
     ("kawoosh:search", include_str!("../lua/search.lua")),
     ("kawoosh:lists", include_str!("../lua/lists.lua")),

@@ -1871,6 +1871,7 @@ impl Runtime {
         };
         let t = self.lua.create_table().unwrap();
         let _ = t.set("count", ctx.count);
+        let _ = t.set("counted", ctx.has_count);
         let _ = t.set("args", ctx.args.clone());
         let _ = t.set("form", ctx.form.name());
         let _ = t.set("bang", ctx.bang());
@@ -6286,6 +6287,47 @@ fn seed(
                 out
             };
             Ok(String::from_utf8_lossy(&out).into_owned())
+        })?,
+    )?;
+    // `kawoosh.fs.bytes(path, offset, len)`: `len` of a file's bytes
+    // from `offset` (0-based), as they are — a Lua string that need not
+    // be text — fewer at its end, none past it; and `kawoosh.fs.find(
+    // path, needle, from[, back])`: the offset `needle` (bytes) next
+    // starts at, the first at or after `from`, or with `back` the last
+    // before it, nil when there is none. Neither reads the file whole:
+    // what the bytes pane (`hex.lua`) shows a file of any size through.
+    fs.set(
+        "bytes",
+        lua.create_function(|lua, (p, offset, len): (String, u64, usize)| {
+            let bytes = kfs::read_at(&expand(&p), offset, len).map_err(io_err)?;
+            lua.create_string(&bytes)
+        })?,
+    )?;
+    fs.set(
+        "find",
+        lua.create_function(
+            |_, (p, needle, from, back): (String, mlua::LuaString, u64, Option<bool>)| {
+                kfs::find_bytes(&expand(&p), &needle.as_bytes(), from, back.unwrap_or(false))
+                    .map_err(io_err)
+            },
+        )?,
+    )?;
+    // `kawoosh.fs.patch(path, { { offset, bytes }, … })`: each run of
+    // bytes written over the file's own at its offset (0-based), in
+    // place — the file as long as it was, nothing else of it read or
+    // written; a run past its end refuses them all. What `:hex write`
+    // saves a few changed bytes of a file of any size by.
+    fs.set(
+        "patch",
+        lua.create_function(|_, (p, runs): (String, Table)| {
+            let mut out = Vec::new();
+            for run in runs.sequence_values::<Table>() {
+                let run = run?;
+                let at: u64 = run.get(1)?;
+                let bytes: mlua::LuaString = run.get(2)?;
+                out.push((at, bytes.as_bytes().to_vec()));
+            }
+            kfs::patch(&expand(&p), &out).map_err(io_err)
         })?,
     )?;
     fs.set(

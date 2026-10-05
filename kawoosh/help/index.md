@@ -19,7 +19,7 @@ buffers you have open, the pages among them.
 | [start](start.md) | opening files, the command line, the leader and the which-key, saving, undo |
 | [editing](editing.md) | modes, motions, several selections, helix's selections, surround and the rest |
 | [panes](panes.md) | splits, tabs, the strip of columns, the dock, workspaces |
-| [files](files.md) | the file manager, the pickers, directory jumps, links, disk usage |
+| [files](files.md) | the file manager, the pickers, directory jumps, links, a file's bytes, disk usage |
 | [search](search.md) | `/` and `*`, the project search, multibuffers, lists, marks |
 | [code](code.md) | syntax, language servers, diagnostics, compile commands |
 | [vcs](vcs.md) | hunks in the gutter, staging them, reviewing a branch, blame, history, worktrees |

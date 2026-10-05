@@ -603,6 +603,131 @@ pub fn read_bytes(path: &Path) -> io::Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| named(path, e))
 }
 
+/// `len` bytes of a file from `offset`, fewer at its end and none past
+/// it: what a pane over a file's bytes (`kawoosh/lua/hex.lua`) reads a
+/// screenful of each frame, the file never read whole. A host's file
+/// is read whole through its domain and cut here.
+pub fn read_at(path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    if on_host(path).is_some() {
+        let all = read_bytes(path)?;
+        let from = (offset.min(all.len() as u64)) as usize;
+        let to = from.saturating_add(len).min(all.len());
+        return Ok(all[from..to].to_vec());
+    }
+    let mut f = std::fs::File::open(path).map_err(|e| named(path, e))?;
+    f.seek(SeekFrom::Start(offset))
+        .map_err(|e| named(path, e))?;
+    let mut out = Vec::with_capacity(len.min(1 << 16));
+    f.take(len as u64)
+        .read_to_end(&mut out)
+        .map_err(|e| named(path, e))?;
+    Ok(out)
+}
+
+/// Where `needle` next starts in a file's bytes: the first at or after
+/// `from`, or with `back` the last that starts before it. Read a
+/// megabyte at a time, each piece overlapping the last by the needle
+/// less one, so the file is never held whole; an empty needle is found
+/// nowhere.
+pub fn find_bytes(path: &Path, needle: &[u8], from: u64, back: bool) -> io::Result<Option<u64>> {
+    const PIECE: u64 = 1 << 20;
+    if needle.is_empty() {
+        return Ok(None);
+    }
+    let size = stat(path)?.size;
+    let n = needle.len() as u64;
+    if on_host(path).is_some() {
+        let all = read_bytes(path)?;
+        let from = from.min(all.len() as u64) as usize;
+        return Ok(if back {
+            let end = (from + needle.len() - 1).min(all.len());
+            memchr::memmem::rfind(&all[..end], needle).map(|i| i as u64)
+        } else {
+            memchr::memmem::find(&all[from..], needle).map(|i| (from + i) as u64)
+        });
+    }
+    if back {
+        // The bytes a match starting before `from` can reach.
+        let mut end = from.saturating_add(n - 1).min(size);
+        while end >= n {
+            let start = end.saturating_sub(PIECE.max(n));
+            let piece = read_at(path, start, (end - start) as usize)?;
+            if let Some(i) = memchr::memmem::rfind(&piece, needle) {
+                return Ok(Some(start + i as u64));
+            }
+            if start == 0 {
+                break;
+            }
+            end = start + n - 1;
+        }
+        return Ok(None);
+    }
+    let mut start = from;
+    while start + n <= size {
+        let piece = read_at(path, start, (PIECE.max(n)) as usize)?;
+        if piece.len() < needle.len() {
+            break;
+        }
+        if let Some(i) = memchr::memmem::find(&piece, needle) {
+            return Ok(Some(start + i as u64));
+        }
+        start += piece.len() as u64 - (n - 1);
+    }
+    Ok(None)
+}
+
+/// Writes each of `runs` — an offset and the bytes that go there —
+/// over a file's own bytes, in place: nothing before, between or after
+/// them is read or written, and the file is as long as it was. A run
+/// that would reach past the file's end refuses the whole before
+/// anything is written. What the bytes pane's `:hex write` saves by:
+/// a few changed bytes of a file of any size. Not atomic — a failure
+/// between runs leaves the earlier ones written. A host's file is read
+/// whole, changed and written back through its domain.
+pub fn patch(path: &Path, runs: &[(u64, Vec<u8>)]) -> io::Result<()> {
+    use std::io::{Seek, SeekFrom, Write};
+    let size = stat(path)?.size;
+    for (at, bytes) in runs {
+        if at.saturating_add(bytes.len() as u64) > size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{}: {} bytes at {at} are past its end ({size})",
+                    path.display(),
+                    bytes.len()
+                ),
+            ));
+        }
+    }
+    if on_host(path).is_some() {
+        let mut all = read_bytes(path)?;
+        for (at, bytes) in runs {
+            let at = *at as usize;
+            match all.get_mut(at..at + bytes.len()) {
+                Some(there) => there.copy_from_slice(bytes),
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("{}: shorter than it said", path.display()),
+                    ));
+                }
+            }
+        }
+        return write(path, all);
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|e| named(path, e))?;
+    for (at, bytes) in runs {
+        f.seek(SeekFrom::Start(*at))
+            .and_then(|_| f.write_all(bytes))
+            .map_err(|e| named(path, e))?;
+    }
+    f.sync_data().map_err(|e| named(path, e))
+}
+
 /// Writes `text`, creating the file's directory when it is missing.
 pub fn write(path: &Path, text: impl AsRef<[u8]>) -> io::Result<()> {
     if let Some(h) = on_host(path) {
@@ -895,6 +1020,56 @@ mod tests {
             remove(&dir.join("link")).unwrap();
             assert!(dir.join("sub").is_dir());
         }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+    /// A screenful of a file's bytes from anywhere in it, and a needle
+    /// found forward and back across the pieces it is read in.
+    #[test]
+    fn bytes_are_read_and_found_without_the_whole() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-fs-bytes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("blob");
+        // Three megabytes of zeros, a mark across the first megabyte's
+        // end, one at the start and one at the very end.
+        let mut bytes = vec![0u8; 3 << 20];
+        let cut = (1 << 20) - 2;
+        bytes[..4].copy_from_slice(b"MARK");
+        bytes[cut..cut + 4].copy_from_slice(b"MARK");
+        let last = bytes.len() - 4;
+        bytes[last..].copy_from_slice(b"MARK");
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(read_at(&path, cut as u64, 4).unwrap(), b"MARK");
+        assert_eq!(read_at(&path, last as u64 + 2, 16).unwrap(), b"RK");
+        assert!(read_at(&path, 1 << 30, 16).unwrap().is_empty());
+        let find = |from, back| find_bytes(&path, b"MARK", from, back).unwrap();
+        assert_eq!(find(0, false), Some(0));
+        assert_eq!(find(1, false), Some(cut as u64), "across two pieces");
+        assert_eq!(find(cut as u64 + 1, false), Some(last as u64));
+        assert_eq!(find(last as u64 + 1, false), None);
+        assert_eq!(find(u64::MAX, true), Some(last as u64));
+        assert_eq!(find(last as u64, true), Some(cut as u64), "before, not at");
+        assert_eq!(find(cut as u64, true), Some(0));
+        assert_eq!(find(0, true), None);
+        assert_eq!(find_bytes(&path, b"", 0, false).unwrap(), None);
+        assert_eq!(find_bytes(&path, b"NOPE", 0, false).unwrap(), None);
+        // Runs written over its own bytes, the rest and its length as
+        // they were; one past the end refuses them all.
+        patch(
+            &path,
+            &[(1, b"ade".to_vec()), (last as u64, b"DONE".to_vec())],
+        )
+        .unwrap();
+        assert_eq!(read_at(&path, 0, 5).unwrap(), b"Made\0");
+        assert_eq!(read_at(&path, last as u64 - 1, 16).unwrap(), b"\0DONE");
+        assert_eq!(stat(&path).unwrap().size, 3 << 20);
+        assert_eq!(read_at(&path, cut as u64, 4).unwrap(), b"MARK");
+        let err = patch(
+            &path,
+            &[(0, b"x".to_vec()), (last as u64 + 1, b"long".to_vec())],
+        );
+        assert!(err.unwrap_err().to_string().contains("past its end"));
+        assert_eq!(read_at(&path, 0, 1).unwrap(), b"M", "nothing written");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -180,6 +180,58 @@ listing they copy the entry under the caret (the listed directory's on
 | `<leader>yn` | the file name |
 | `<leader>yN` | the file name without its extension |
 
+## A file's bytes
+
+`:hex [PATH]` opens a column over a file's bytes as they are on the
+disk — PATH's, or the focused buffer's file's: rows of sixteen (eight
+or four in a narrow pane, or `hex.columns`), each its offset, its bytes
+in hex and what they say as text. A file that is not text — a NUL in
+its first eight thousand bytes — opens here by itself, rather than as
+a buffer of repaired text (`hex.binary = false` for the buffer; `t` in
+the pane opens this one as text). A file of any size costs a screenful,
+read again each time it is drawn.
+
+The cursor is one byte, lit in both halves; a click puts it, a drag
+selects. The foot says its offset and what starts there: the byte in
+binary, the integers and floats of each width, the character.
+
+| keys | what |
+|---|---|
+| `h` `j` `k` `l`, the arrows | a byte, a row; a count before any |
+| `w` `b` | the next group of four bytes, the one before |
+| `0` `$` | the row's first byte, its last |
+| `gg` `G` | the file's first byte, its last |
+| `<C-d>` `<C-u>`, `<C-f>` `<C-b>` | half a screen, a whole one |
+| `Ngo` | to byte N |
+| `go`, `:hex goto OFFSET` | asks for an offset: `0x1F0`, `496`, `+16` or `-0x10` from the cursor, `50%` |
+| `/`, `:hex find BYTES` | finds from the cursor on: text as it is, or `0x` and hex digits (`0xDEADBEEF`, `0x de ad`) |
+| `n` `N` | the next one, the one before, round the file's ends |
+| `v` | starts a selection the moves stretch; `<Esc>` drops it |
+| `y` `Y` | copies the selection, or the byte, as hex, as text |
+| `e` | the byte order the foot reads numbers in |
+| `t` | opens the file as text after all |
+| `q` | closes |
+
+Bytes are written over, never put in or taken out, so the file stays
+as long as it is. They are typed into the half the cursor is in: two
+hex digits make a byte in the hex half, a character is its bytes in
+the text half. A changed byte is drawn in the warning colour and is not
+on the disk until it is written; the write puts the changed bytes
+alone into the file, in place, and is refused when the file changed on
+disk since the first of them. What is not written is kept by the
+file's path — closing the pane or quitting loses none of it, and
+`:hex` on the file shows it again.
+
+| keys | what |
+|---|---|
+| `r` | takes one byte over the cursor's |
+| `R` | takes bytes from the cursor on until `<Esc>`; `<BS>` takes the last back |
+| `<Tab>`, a click | the keys into the other half |
+| `u` `<C-r>` | undo, redo |
+| `]c` `[c` | the next changed byte, the one before |
+| `<C-s>`, `:hex write` | writes the changes; `:hex write!` over a file that changed on disk |
+| `:hex revert` | drops every change not written |
+
 ## Disk usage
 
 `:du [PATH]` (`<leader>wu` for the working directory) opens a column
