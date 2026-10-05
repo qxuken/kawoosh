@@ -765,6 +765,18 @@ impl Kawoosh {
             .and_then(|(p, x, y)| self.layout.drop_at(x, y).filter(|(t, _)| *t != p))
             .filter(|(t, _)| *t == pane)
             .map(|(_, d)| d);
+        // The close button, at the bar's very end, drawn while the pointer
+        // is on the bar and no other time, the focused pane's as any
+        // other's; its room is kept, so nothing in the bar moves when it
+        // comes. The bar, its crumbs, its legend hint and the button are
+        // one hover group: the pointer is on one of them at a time, and
+        // the button must stay while the pointer goes to it. None on the
+        // launcher alone, which does not close, nor under a pane's drag.
+        let group = title_group(pane);
+        let closable = self.layout.visible_panes().len() > 1 || self.launcher_pane() != Some(pane);
+        let close_shown = closable
+            && self.pane_drag.is_none()
+            && ui.is_group_hovered(NodeSpec::hover_group_id(&group));
         ui.with_key(
             ui.child_key("pane").index(pane),
             NodeSpec::column()
@@ -815,6 +827,7 @@ impl Kawoosh {
                         ("title", Value::Bool(true)),
                     ]))
                     .keep_focus()
+                    .hover_group(&group)
                     .label(name.as_str());
                 title = title
                     .on_drag(Value::map([
@@ -847,6 +860,9 @@ impl Kawoosh {
                         let word = if full { "hide keys" } else { "keys" };
                         ui.measure_text(word, &hint_style, None).width + 48.0
                     });
+                    let side = (self.chrome.small * 1.3).round();
+                    let close = if closable { side + 6.0 } else { 0.0 };
+                    let hint = hint + close;
                     let name_room = width - 16.0 - dot - reserve - hint;
                     let name = fit_title(&name, |s| {
                         ui.measure_text(s, &style, None).width <= name_room
@@ -861,8 +877,10 @@ impl Kawoosh {
                             width - 16.0 - ui.measure_text(&name, &style, None).width - dot - hint;
                         self.breadcrumbs(ui, pane, &crumbs, room, focused);
                     }
-                    if let Some(full) = legend {
+                    if legend.is_some() || closable {
                         ui.leaf(NodeSpec::row().grow_width());
+                    }
+                    if let Some(full) = legend {
                         crate::legends::toggle(
                             ui,
                             &self.icons.borrow(),
@@ -877,6 +895,35 @@ impl Kawoosh {
                                 hover: pal.hover,
                             },
                         );
+                    }
+                    if close_shown {
+                        // Its own colour under the pointer alone: a
+                        // group's hover lights every member.
+                        let on = ui.is_hovered(ui.child_key("close"));
+                        let mut close = crate::icons::icon_box(side)
+                            .radius(3.0)
+                            .hover_group(&group)
+                            .cursor(kui_native::CursorShape::Default)
+                            .on_click(Value::map([
+                                ("kind", "pane close".into()),
+                                ("pane", Value::Int(pane as i64)),
+                            ]))
+                            .label("close pane");
+                        if on {
+                            close = close.bg(pal.hover);
+                        }
+                        ui.with_keyed("close", close, |ui| {
+                            crate::icons::icon(
+                                ui,
+                                &self.icons.borrow(),
+                                "close",
+                                self.chrome.small.round(),
+                                if on { pal.fg } else { pal.dim },
+                            );
+                        });
+                    } else if closable {
+                        // Its room, kept.
+                        ui.leaf(NodeSpec::row().size(side, side));
                     }
                 });
                 // Where the dragged pane would land here: the whole pane
@@ -2608,6 +2655,12 @@ pub(crate) fn fit_title(name: &str, mut fits: impl FnMut(&str) -> bool) -> Strin
     let (head, rest) = name.split_at(lead);
     let (dirs, last) = crate::statusline::fit_path(head, rest, &mut fits);
     format!("{dirs}{last}")
+}
+
+/// The hover group of pane `pane`'s title bar: the bar and what is in
+/// it, whose hover shows the pane's close button.
+pub(crate) fn title_group(pane: PaneId) -> String {
+    format!("pane-title{pane}")
 }
 
 #[cfg(test)]

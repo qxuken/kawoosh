@@ -1449,3 +1449,65 @@ fn title_bar_and_rows_sit_inside_the_frame() {
         );
     }
 }
+
+/// A pane's title bar ends in a close button while the pointer is on
+/// the bar, the focused pane's as any other's, and at no other time;
+/// a click on it closes that pane and leaves the keys where they were.
+#[test]
+fn a_title_bar_under_the_pointer_has_a_close_button() {
+    let mut app = Kawoosh::new("t", "alpha\nbeta");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "v");
+    for _ in 0..12 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
+    assert_eq!(app.layout.visible_panes(), [1, 2]);
+    assert_eq!(app.layout.focused(), 2);
+    let closes = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| n.label.as_deref() == Some("close"))
+            .map(|n| n.rect)
+            .collect::<Vec<_>>()
+    };
+    let hover = |d: &mut Drive, app: &mut Kawoosh, at: Vec2| {
+        d.input(app, kui_native::InputEvent::CursorMoved(at));
+        // The hover is known after the frame that lays it out.
+        d.frame(app);
+        d.frame(app);
+    };
+    let title = |app: &Kawoosh, p: u64| {
+        let r = app.layout.rects[&p];
+        Vec2::new(r.x + r.w / 2.0, r.y + 8.0)
+    };
+    // On the focused pane's rows: no button, on either pane.
+    let r2 = app.layout.rects[&2];
+    hover(
+        &mut d,
+        &mut app,
+        Vec2::new(r2.x + r2.w / 2.0, r2.y + r2.h / 2.0),
+    );
+    assert_eq!(closes(&d), [], "none until the pointer is on a bar");
+    // On the focused pane's bar: its button alone, at the bar's end.
+    let at = title(&app, 2);
+    hover(&mut d, &mut app, at);
+    let shown = closes(&d);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(shown[0].x > r2.x + r2.w - 40.0, "{shown:?} in {r2:?}");
+    // On the other's: that one's, and it stays while the pointer goes
+    // to it. The click closes that pane; the keys stay on the focused.
+    hover(&mut d, &mut app, Vec2::new(r2.x / 2.0, r2.y + 8.0));
+    let shown = closes(&d);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(shown[0].x < r2.x, "{shown:?} left of {r2:?}");
+    let on = Vec2::new(shown[0].x + shown[0].w / 2.0, shown[0].y + shown[0].h / 2.0);
+    hover(&mut d, &mut app, on);
+    assert_eq!(closes(&d).len(), 1, "kept under the pointer");
+    d.click(&mut app, on.x, on.y);
+    assert_eq!(app.layout.visible_panes(), [2]);
+    assert_eq!(app.layout.focused(), 2);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

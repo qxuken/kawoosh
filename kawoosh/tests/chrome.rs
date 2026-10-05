@@ -143,8 +143,34 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
     let Rect { x: x1, .. } = d.rect("tab0").unwrap();
     assert!(x1 >= 0.0, "back in view: {x1}");
 
-    // The close button on the active tab closes that tab.
-    let Rect { x, y, w, h } = d.rect("close").expect("the active tab's close");
+    // No close button on a tab the pointer is not on, the active one
+    // as any other; under the pointer it has one, which closes it.
+    let closes = |d: &Drive, tab: Rect| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| n.label.as_deref() == Some("close"))
+            .map(|n| n.rect)
+            .find(|r| r.x >= tab.x && r.x < tab.x + tab.w && r.y < tab.y + tab.h)
+    };
+    d.input(
+        &mut app,
+        kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(450.0, 300.0)),
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let tab = d.rect("tab0").expect("the active tab");
+    assert!(closes(&d, tab).is_none(), "none until the pointer comes");
+    d.input(
+        &mut app,
+        kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(
+            tab.x + tab.w / 2.0,
+            tab.y + tab.h / 2.0,
+        )),
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let Rect { x, y, w, h } = closes(&d, tab).expect("the active tab's close, hovered");
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     assert_eq!(app.layout.tabs.len(), 11);
     // One on a tab behind, under the pointer, closes that one and
