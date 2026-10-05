@@ -16,8 +16,8 @@
 //! a floor; a label longer than its share is cut with an ellipsis. Past
 //! the floor the row scrolls, and the active tab is revealed on the
 //! frame it changes, the offset easing there as the strip's ribbon does
-//! (kui F80). The active tab and the one under the pointer carry a
-//! close button, when there is another tab to go to. When the tabs are
+//! (kui F80). The tab under the pointer carries a close button, the
+//! active one as any other, when there is another tab to go to. When the tabs are
 //! in more than one directory each label leads with its own. A tab is
 //! dragged along the row to another place (`Kawoosh::on_tab_drag`), and
 //! tabs whose order changed — by that or by `]T` — glide to their places
@@ -444,7 +444,7 @@ impl Kawoosh {
                                                 icons::icon(ui, &icon_set, "dot", font.size, fg);
                                             }
                                         });
-                                        if n > 1 && (is_active || (hovered && !dragging)) {
+                                        if n > 1 && hovered && !dragging {
                                             // Its own colour under the pointer
                                             // alone: a group's hover lights
                                             // every member.

@@ -131,13 +131,19 @@ pub fn legend(
 /// The way to a legend and back: `⌥/ keys`, or `⌥/ hide keys` when it
 /// is shown; a click flips pane `pane`'s.
 pub fn toggle(ui: &mut Ui<'_>, icons: &Icons, pane: PaneId, full: bool, style: &LegendStyle) {
+    // In the title bar's hover group, which keeps the pane's close
+    // button while the pointer is here; its own colour under the pointer
+    // alone, where a group's hover lights every member.
+    let mut node = NodeSpec::row();
+    if ui.is_hovered(ui.child_key("legend toggle")) {
+        node = node.bg(style.hover);
+    }
     ui.with_keyed(
         "legend toggle",
-        NodeSpec::row()
-            .gap(crate::icons::CAP.word_gap)
+        node.gap(crate::icons::CAP.word_gap)
             .pad_xy(4.0, 0.0)
             .radius(4.0)
-            .hover_bg(style.hover)
+            .hover_group(&crate::panes::title_group(pane))
             .cross_align(Align::Center)
             .on_click(Value::map([
                 ("kind", "legend".into()),

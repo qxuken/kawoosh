@@ -62,6 +62,9 @@ its edges and the pane moves to that side of it. A pane dragged from the
 tab into the dock, or out of it, moves there. The spot it would land on
 is highlighted while you drag.
 
+With the pointer on a title bar, the bar ends in a `×` that closes that
+pane, whichever pane has the keys; they stay where they were.
+
 ### Right-click menus
 
 Right-click a pane for its menu. In an editor the caret moves to where
@@ -81,7 +84,7 @@ the bar's unless you map them yourself.}}
 ## Tabs
 
 A tab is a layout of its own, shown in the strip at the top of the
-window. A click on a tab goes to it; its `×` closes it. Drag a tab
+window. A click on a tab goes to it; the `×` it shows under the pointer closes it. Drag a tab
 along the strip to move it: it follows the pointer, the others gliding
 aside to make room.
 

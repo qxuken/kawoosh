@@ -247,6 +247,7 @@ impl Kawoosh {
                     ("character", Value::Int(c.character as i64)),
                 ]))
                 .keep_focus()
+                .hover_group(&crate::panes::title_group(pane))
                 .cursor(CursorShape::Pointer)
                 .label(c.name.as_str());
             if i == last {

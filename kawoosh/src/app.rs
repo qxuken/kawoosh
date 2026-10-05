@@ -3058,6 +3058,15 @@ impl Kawoosh {
                     self.layout.focus(pane as PaneId);
                 }
             }
+            // A pane's close button: that pane, as `:close` closes the
+            // focused one, the keys staying where they were.
+            Some("pane close") => {
+                if let Some(pane) = p.get_int("pane")
+                    && !self.close_pane_at(pane as PaneId)
+                {
+                    self.ed.message = "cannot close the last pane".into();
+                }
+            }
             Some("toast") => self.on_toast(p),
             // A right-click a pane asked to answer (`menus.rs`), and a
             // row chosen from any of kawoosh's menus, a pane's or the
