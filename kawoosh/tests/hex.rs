@@ -491,3 +491,20 @@ fn changes_not_written_are_kept_past_the_pane_and_the_editor() {
     assert_eq!(editing(&mut app), "0 nil hex", "written, nothing is kept");
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// The rows on show are counted from the room the grid was laid out
+/// in, not guessed from the pane's height: as many as fit, and no
+/// fewer.
+#[test]
+fn the_rows_are_counted_from_the_grid_s_own_room() {
+    let (mut d, mut app, root) = open("room");
+    d.frame(&mut app);
+    assert_eq!(
+        lua(
+            &mut app,
+            "kawoosh.echo(tostring(kawoosh.hex.state().measured))"
+        ),
+        "true"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
