@@ -1622,6 +1622,73 @@ fn the_strip_breaks_onto_a_second_line_rather_than_cutting_its_words() {
     assert!(lines(&narrow) > 1, "{narrow:?}");
 }
 
+/// The views stand where they stood, whatever the view. Asked
+/// 2026-10-05: "Tabs in memory jumps based on content in a titlebar" —
+/// the count and its notes (`29 searches · in /a/long/workspace · 40
+/// evicted`, `100 jumps · this tab's`) stood in the strip between the
+/// scope and the views, and the strip wraps: a long head took a line and
+/// sent the views to a third, a short one left some beside the scope, so
+/// a `<Tab>` moved every word. The head has a line of its own under the
+/// strip now, one line cut with an ellipsis, and the strip holds words
+/// whose widths no view changes.
+#[test]
+fn the_views_stand_still_from_view_to_view() {
+    use kawoosh::memory::View;
+    // A workspace whose path is long, in a pane the head does not fit.
+    let dir = tmp("views-still").join("a-workspace-with-a-long-name-of-its-own");
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("state.db");
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "aaa\n").unwrap();
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::from_file(&a);
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    let at = |d: &Drive| {
+        let nodes = d.core.nodes();
+        View::ALL
+            .iter()
+            .map(|v| {
+                let r = nodes
+                    .iter()
+                    .find(|n| n.label.as_deref() == Some(v.name()))
+                    .unwrap_or_else(|| panic!("no {} in the strip", v.name()))
+                    .rect;
+                (v.name(), r.x.round() as i32, r.y.round() as i32)
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut first = None;
+    for v in View::ALL {
+        ex(&mut d, &mut app, &format!("memory {}", v.name()));
+        for _ in 0..3 {
+            d.frame(&mut app);
+        }
+        assert_eq!(app.memory_pane.view, v);
+        let now = at(&d);
+        let first = first.get_or_insert_with(|| now.clone());
+        assert_eq!(&now, first, "the views moved in `{}`", v.name());
+        // The head is one line, inside the pane.
+        let nodes = d.core.nodes();
+        let head = nodes
+            .iter()
+            .find(|n| n.label.as_deref() == Some("head"))
+            .expect("the head's line");
+        let pane = nodes
+            .iter()
+            .find(|n| n.label.as_deref() == Some("memory"))
+            .unwrap();
+        assert!(head.rect.x + head.rect.w <= pane.rect.x + pane.rect.w + 0.5);
+        assert!(head.rect.y > first[0].2 as f32, "the head under the strip");
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
+
 /// The scope stands apart from the views. Asked 2026-10-02: "memory
 /// scope needs to stand out from the strip of tabs": `workspace` and
 /// `global`, after the views and a `·`, read as two more of them. The

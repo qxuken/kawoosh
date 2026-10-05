@@ -522,8 +522,10 @@ it for the session, as the buffers picker's `<C-a>` flips
 [workspace|global]` is the command, bare flipping it; `:memory
 workspace` and `:memory global` open the pane on one, focused, and
 never close it as a bare `:memory` on a focused pane does. The pane's
-strip shows the scope at its left, ahead of the head and apart from
-the views at its right: `@workspace` `@global`, spelt as the settings
+strip shows the scope at its left, apart from the views at its right
+(the head on a line of its own under it, cut with an ellipsis, since
+2026-10-05: in the strip its length wrapped the views to another place
+in each view): `@workspace` `@global`, spelt as the settings
 pane spells its layers (`@user`, `@project`), each a chip, the one on
 filled with the accent, and a click on either sets it (`:memory scope`
 takes the `@` word too); the head says whose the rows are (`in
