@@ -1022,8 +1022,11 @@ root's `queries/` in a directory of the grammar's path, which the
 builder now reads between the grammar's own `queries/` and the root's.
 Its `injections.scm` (a `<style>` is css, a `<script>` javascript, as
 text or in CDATA) and `indents.scm` are written in the repository.
-Nothing changed in kawoosh: the files are the manifest's, and an svg
-opens as text already (image.lua). Seen in a window: `:grammar install
+In kawoosh, the built-in copy of the manifest
+(`kawoosh/grammars/manifest.json`, the two hosts' `r6` the same bytes)
+is what names an svg `xml` and offers the install at a launch that has
+fetched nothing yet; an svg opens as text already (image.lua), and
+help/code.md names XML. Seen in a window: `:grammar install
 xml` from the release painted an open `picture.svg` where it stood,
 the script's javascript with it; the style's css checked by its tokens
 (a property, a number, a unit — none for the same text in another
