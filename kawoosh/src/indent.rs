@@ -39,9 +39,13 @@ struct Kept {
 #[derive(Default)]
 struct Inner {
     kept: HashMap<BufferId, Kept>,
-    /// Each language's grammar with an indent or a text-object query,
-    /// by its name.
+    /// Each language's grammar with an indent, text-object or
+    /// injection query, by its name.
     grammars: HashMap<String, Arc<Grammar>>,
+    /// Every name a language goes by — its own, its aliases — to its
+    /// own, as the registry has them ([`Trees::set_names`]): what an
+    /// injection query says (`js`, `sh`) read as the language it means.
+    names: HashMap<String, String>,
 }
 
 /// The kept trees, shared between the shell (which files the thread's
@@ -82,6 +86,62 @@ impl Trees {
                 inner.kept.remove(&id);
             }
         }
+    }
+
+    /// The registry's names, each to the language it means: called
+    /// when the registry is built and whenever it gains a language.
+    pub fn set_names(&self, names: impl IntoIterator<Item = (String, String)>) {
+        let mut inner = self.0.borrow_mut();
+        inner.names = names.into_iter().collect();
+    }
+
+    /// The language of the injection holding byte `at` of buffer `id`
+    /// — a `<script>`'s javascript, a fence's rust — the innermost
+    /// the grammars at hand can read, named as the registry names it
+    /// (an alias the query used resolved; one the registry has no
+    /// language for kept as said). `None` where there is no tree, no
+    /// injection query, or no injection there: the buffer's own
+    /// language, then.
+    fn language_at(
+        &self,
+        parser: &mut Parser,
+        id: BufferId,
+        buf: &Buffer,
+        at: usize,
+    ) -> Option<String> {
+        let (tree, text, g) = self.current(parser, id, buf)?;
+        let inner = self.0.borrow();
+        let canonical = |name: &str| {
+            inner
+                .names
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.to_string())
+        };
+        let mut found: Option<String> = None;
+        let (mut tree, mut g) = (tree, g);
+        for _ in 0..ts::INJECTION_DEPTH {
+            let Some(inj) = &g.injections else { break };
+            let Some((name, range)) = ts::injection_at(inj, tree.root_node(), &text, at) else {
+                break;
+            };
+            let name = canonical(&name);
+            found = Some(name.clone());
+            // Deeper only where this language's grammar has been seen
+            // and injects in turn.
+            let Some(next) = inner.grammars.get(&name).cloned() else {
+                break;
+            };
+            if next.injections.is_none() {
+                break;
+            }
+            let Some(sub) = ts::parse_range(parser, &next, &text, range) else {
+                break;
+            };
+            tree = sub;
+            g = next;
+        }
+        found
     }
 
     /// Only the buffers `live` says are.
@@ -129,7 +189,7 @@ impl Trees {
         buf: &Buffer,
     ) -> Option<(Tree, text_buffer::Buffer, Arc<Grammar>)> {
         let mut inner = self.0.borrow_mut();
-        let Inner { kept, grammars } = &mut *inner;
+        let Inner { kept, grammars, .. } = &mut *inner;
         let language = &*buf.language;
         // None kept, or kept in another language: parsed whole, when
         // the language's grammar is known.
@@ -210,6 +270,10 @@ impl kawoosh_editor::SyntaxObjects for Objects {
     ) -> Option<(Range<usize>, Range<usize>)> {
         let (tree, _, _) = self.trees.current(&mut self.parser, id, buf)?;
         blocks::partner(&tree, at)
+    }
+
+    fn language_at(&mut self, id: BufferId, buf: &Buffer, at: usize) -> Option<String> {
+        self.trees.language_at(&mut self.parser, id, buf, at)
     }
 }
 

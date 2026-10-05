@@ -233,7 +233,9 @@ Uncommenting takes the token and one space. The token is the language's
 there is one; a language with only the pair (CSS, HTML, markdown) wraps
 each line: `/* color: red; */`. `:set comment=#` changes a buffer's for
 the session, `language.NAME.comment` in your settings for good, and
-`kawoosh.buf.comment_tokens()` reads them from Lua. `:comment lines` is
+`kawoosh.buf.comment_tokens()` reads them from Lua. Where the syntax
+says a line is another language's — a `<script>` in HTML, a fenced
+block in markdown — the token is that language's. `:comment lines` is
 `gcc` by name. `.` repeats, so `gcc` `j.` `j.` walks down a file.
 
 ## Node actions

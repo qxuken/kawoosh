@@ -574,9 +574,22 @@ pub(crate) fn apply_operator(
         // one already is (docs/design/comments.md Decision 2); each
         // selection judged alone, a line two share edited once.
         "comment" => {
-            let tokens = ed.comment_tokens_in(id);
+            // The tokens are the layer's at the first non-blank line's
+            // first character (Decision 4): one language per `gc`.
+            let at = {
+                let buf = &ed.buffers[id];
+                ranges
+                    .iter()
+                    .flat_map(|(r, lw)| {
+                        let (a, b) = op_lines(buf, r, *lw);
+                        a..=b
+                    })
+                    .find(|&ln| !buf.line_text(ln).trim().is_empty())
+                    .map(|ln| m::first_nonblank(buf, ln))
+                    .unwrap_or_else(|| ranges.first().map_or(0, |(r, _)| r.start))
+            };
+            let (lang, tokens) = ed.comment_tokens_at(id, at);
             if tokens.line.is_none() && tokens.block.is_none() {
-                let lang = ed.buffers[id].language.to_string();
                 ed.message = format!("no comment token for {lang}");
                 return;
             }
