@@ -37,6 +37,9 @@ const STRIP_SETTLING: u8 = 1;
 /// than over their last row, and a swipe or a press there is the
 /// ribbon's.
 const STRIP_BAR: f32 = 10.0;
+/// The room kui's `reveal` keeps between a node and its scroller's
+/// edge.
+const REVEAL_MARGIN: f32 = 4.0;
 
 /// Where `zs` / `ze` / `zz` (`strip left` / `right` / `center`) put
 /// the focused column in the viewport.
@@ -625,6 +628,18 @@ impl Kawoosh {
                 match align {
                     Some(a) => {
                         let x = lead + lefts[i] - edge(a, i);
+                        ui.set_scroll(row, Vec2::new(x.max(0.0), 0.0));
+                    }
+                    // A column the viewport has no room around — a
+                    // full one — is put where it fits, and stays: kui's
+                    // reveal wants `REVEAL_MARGIN` clear at both of a
+                    // node's edges, which such a column has at one or
+                    // the other, so every reveal took it to the edge
+                    // the last one left — the ribbon a little to the
+                    // side each time the keyboard moved inside the
+                    // column.
+                    None if widths[i] + 2.0 * REVEAL_MARGIN > vw => {
+                        let x = lead + lefts[i] - edge(StripAlign::Center, i);
                         ui.set_scroll(row, Vec2::new(x.max(0.0), 0.0));
                     }
                     None => ui.reveal(key),
