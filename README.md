@@ -138,3 +138,10 @@ The tests include the Lua plugin tests in `kawoosh/lua/tests/`, which `cargo tes
 - [roadmap.md](docs/design/roadmap.md): what was built, in what order, and what is left.
 
 The rest cover one feature each: search, marks, lists, themes, fonts, domains (remote editing), memory, secrets and more.
+
+## License
+
+MIT; see [LICENSE](LICENSE). That covers kawoosh's own code and its icons. Two things in the tree keep their own licences:
+
+- The fonts under `assets/fonts`: each family's folder carries its licence, the SIL Open Font License for most, MIT for Hack and the Nerd Fonts symbols.
+- The indent and text-object queries under `languages/queries` taken from [helix](https://github.com/helix-editor/helix): MPL-2.0, as the first lines of each such file say.
