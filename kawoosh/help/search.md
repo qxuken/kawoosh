@@ -226,10 +226,14 @@ mark's letter is drawn in the gutter. Marks are kept in the
 
 `grs` lists the buffer's symbols. With an empty query it is a
 tree in the file's order; type to filter, and each match shows the
-symbols it is inside. The cursor starts on the symbol the caret is in,
-and the pane follows the cursor as you move, so the file itself is
-the preview. `<CR>` stays there; `<Esc>` or `<C-c>` puts the caret
-back.
+symbols it is inside. A row reads as its line does, in the syntax's
+colours: `pub fn window_icon`, `impl Marks`, `struct S`, `## Heading`
+— what stands before the name on its line, then the name. A name with
+nothing before it (a method with no keyword, a key) shows its kind
+faintly instead, and a server's detail — a signature, a trait — rides
+after. The cursor starts on the symbol the caret is in, and the pane
+follows the cursor as you move, so the file itself is the preview.
+`<CR>` stays there; `<Esc>` or `<C-c>` puts the caret back.
 
 Symbols come from the language server and from the syntax tree, which
 adds locals and markdown headings. Files with no server still have an

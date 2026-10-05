@@ -438,7 +438,12 @@ end
 -- a preview, and a cell past its column is cut; without either it
 -- sits at its widest cell; or it `grow`s into the rest; the match
 -- is lit where it falls (`picker.search`), and `item.can` ends the
--- last cell. With `opts.wrap` a text folds to its width — every
+-- last cell. A column's `lead = FIELD` names what the cell shows
+-- before its field — a string, or a list of spans with colours of
+-- their own (a symbol's `pub fn` in the syntax's colours) — which the
+-- match is not looked for in; its `color = FIELD` names the colour
+-- the field's own text takes where the match does not light it (the
+-- name's token). With `opts.wrap` a text folds to its width — every
 -- cell's, so the whole of a long path or name shows — and
 -- `opts.lines(i)` says how many lines row `i` takes (one, when not
 -- given). With `opts.indent(item)` a number, the first cell (or the
@@ -499,17 +504,34 @@ function picker.rows(ctx, hits, opts)
     local off = it.can ~= nil and it.can ~= true
     local color = off and t.muted or t.fg
     local indent = opts.indent and opts.indent(it) or nil
-    local lead = indent and indent > 0 and string.rep("  ", indent) or nil
+    local step = indent and indent > 0 and string.rep("  ", indent) or nil
     if columns then
       local ps = pieces_of(it, columns)
       for j, c in ipairs(columns) do
         local spans = {}
-        if j == 1 and lead then spans[1] = { lead } end
+        if j == 1 and step then spans[1] = { step } end
+        -- The column's own colour for its field: the item's, when the
+        -- column names one and the row is not off.
+        local own = c.color and not off and it[c.color] or nil
         for _, p in ipairs(ps) do
           if p.col == j and p.text ~= "" and not (indent and c.path) then
-            if #spans > (lead and j == 1 and 1 or 0) then spans[#spans + 1] = { "  " } end
+            if #spans > (step and j == 1 and 1 or 0) then spans[#spans + 1] = { "  " } end
+            local lead = not p.dim and c.lead and it[c.lead] or nil
+            if lead then
+              if type(lead) == "string" then
+                spans[#spans + 1] = { lead, color = c.muted and t.muted or color }
+              else
+                for _, sp in ipairs(lead) do
+                  spans[#spans + 1] = { sp[1], color = sp.color or (c.muted and t.muted or color),
+                                        bold = sp.bold, italic = sp.italic }
+                end
+              end
+              spans[#spans + 1] = { " " }
+            end
             for _, sp in ipairs(picker.spans(p.text, lit_in(h.positions, p), t)) do
-              if not sp.color then sp.color = p.dim and t.faint or (c.muted and t.muted or color) end
+              if not sp.color then
+                sp.color = p.dim and t.faint or (c.muted and t.muted or (not p.dim and own) or color)
+              end
               spans[#spans + 1] = sp
             end
           end
@@ -529,7 +551,7 @@ function picker.rows(ctx, hits, opts)
       local ps = pieces_of(it, nil, text_of)
       local spans = picker.spans(text_of, lit_in(h.positions, ps[1]), t)
       for _, sp in ipairs(spans) do if not sp.color then sp.color = color end end
-      if lead then table.insert(spans, 1, { lead }) end
+      if step then table.insert(spans, 1, { step }) end
       if ps[2] then
         spans[#spans + 1] = { "  ", color = t.muted }
         for _, sp in ipairs(picker.spans(ps[2].text, lit_in(h.positions, ps[2]), t)) do
@@ -1099,12 +1121,12 @@ picker._keys = {}
 function picker.state()
   if not P then return nil end
   local hit = P.hits[P.cursor]
-  local rows = {}
-  for i, h in ipairs(P.hits) do rows[i] = h.item.text end
+  local rows, items = {}, {}
+  for i, h in ipairs(P.hits) do rows[i], items[i] = h.item.text, h.item end
   return { source = P.name, query = P.query or "", cursor = P.cursor, top = P.top, count = #P.hits,
            text = hit and hit.item.text or nil, item = hit and hit.item or nil,
            positions = hit and hit.positions or nil, loading = P.loading,
-           preview = P.preview, rows = rows, root = P.ctx.root }
+           preview = P.preview, rows = rows, items = items, root = P.ctx.root }
 end
 
 -- picker.resume(): the last picker again, its query and cursor as
@@ -1771,7 +1793,15 @@ kawoosh.setting("symbols.source", {
 -- `impl`'s trait, a method's receiver), where it sits — the symbols it is
 -- inside, `a › b`, or its file — `⏎` going there. A buffer's are in
 -- the file's order, each with its `depth`, the tree the picker draws.
-local function symbol_rows(items, root)
+--
+-- With the buffer's `lines`, a row reads as its line does: its `head`
+-- is what stands before the name on the name's line — `pub fn`,
+-- `impl`, `struct`, `##`, a C field's type — when the name is found
+-- there at its column, and the kind is left to it; a bare name (a
+-- method with no keyword, a key) keeps the kind faint as its `tag`.
+-- `at` is where the head and the name lie (bytes from 1 in the line),
+-- for the syntax's colours (`colour_symbols`).
+local function symbol_rows(items, root, lines)
   local rows = {}
   local path = {}
   for i, s in ipairs(items or {}) do
@@ -1786,12 +1816,81 @@ local function symbol_rows(items, root)
     -- A short detail rides faint beside the kind: a server's signature,
     -- an `impl`'s trait.
     local short = s.detail and s.detail ~= "" and not s.detail:find("\n") and #s.detail <= 40 and s.detail or nil
+    local head, at
+    local l = lines and s.line and s.col and lines[s.line]
+    if l then
+      local b = utf8.offset(l, s.col)
+      if b and l:sub(b, b + #s.name - 1) == s.name then
+        local from = l:find("%S") or b
+        head = l:sub(from, b - 1):match("^(.-)%s*$")
+        if head == "" then head = nil end
+        at = { line = s.line, from = from, name = b, to = b + #s.name - 1 }
+      end
+    end
     rows[i] = {
       text = s.name, kind = s.kind, short = short, sub = where, detail = s.detail,
+      head = head, at = at, tag = not head and not s.name:find(" ", 1, true) and s.kind or nil,
       path = s.path, line = s.line, col = s.col, depth = depth, end_line = s.end_line,
     }
   end
   return rows
+end
+
+-- The most text the syntax's colours are read for: a file past it
+-- lists plain.
+local SYMBOLS_COLOUR_MAX = 1024 * 1024
+
+-- The rows coloured as the pane paints them: the buffer's text
+-- highlighted once (`kawoosh.highlight`, on the ts thread), and each
+-- row's `head` turned into spans in the tokens' colours, its name's
+-- `color` the token's it starts in. The rows are in the file's order
+-- and the runs in the text's, so one walk over the runs serves every
+-- row; the next frame paints what came.
+local function colour_symbols(rows, lines, path, language)
+  local text = table.concat(lines, "\n")
+  if #text == 0 or #text > SYMBOLS_COLOUR_MAX then return end
+  local starts, off = {}, 1
+  for i, l in ipairs(lines) do
+    starts[i] = off
+    off = off + #l + 1
+  end
+  kawoosh.highlight(text, { path = path, language = language }, function(runs)
+    if not runs then return end
+    local targets = {}
+    for _, r in ipairs(rows) do
+      if r.at then targets[#targets + 1] = r end
+    end
+    table.sort(targets, function(a, b) return starts[a.at.line] + a.at.from < starts[b.at.line] + b.at.from end)
+    local k = 1
+    for _, r in ipairs(targets) do
+      local base = starts[r.at.line]
+      local from, name, to = base + r.at.from - 1, base + r.at.name - 1, base + r.at.to - 1
+      while k <= #runs and runs[k].to < from do k = k + 1 end
+      -- The head's spans: the runs reaching into it, the rest uncoloured.
+      if r.head then
+        local spans, at, j = {}, from, k
+        while j <= #runs and runs[j].from < name do
+          local run = runs[j]
+          local a, b = math.max(run.from, at), math.min(run.to, name - 1)
+          if b >= a then
+            if a > at then spans[#spans + 1] = { text:sub(at, a - 1) } end
+            spans[#spans + 1] = { text:sub(a, b), color = run.color, bold = run.bold, italic = run.italic }
+            at = b + 1
+          end
+          j = j + 1
+        end
+        if at < name then spans[#spans + 1] = { text:sub(at, name - 1) } end
+        -- The space before the name is the row's own.
+        local last = spans[#spans]
+        if last then last[1] = last[1]:match("^(.-)%s*$") if last[1] == "" then spans[#spans] = nil end end
+        if #spans > 0 then r.head = spans end
+      end
+      local j = k
+      while j <= #runs and runs[j].to < name do j = j + 1 end
+      local run = runs[j]
+      if run and run.from <= to and run.to >= name then r.color = run.color end
+    end
+  end)
 end
 
 -- picker.symbol_at(items, line): the innermost row whose symbol holds
@@ -1866,19 +1965,31 @@ local function buffer_symbols(buffer, done)
   kawoosh.lsp.symbols({ buffer = buffer, source = "syntax" }, back("syntax"))
 end
 
--- The buffer's symbols (`grs`): a tree in the file's order, the
--- cursor on the one the caret is in, the pane following the cursor.
+-- The buffer's symbols (`grs`): a tree in the file's order, each row
+-- reading as its line does in the syntax's colours (`pub fn name`,
+-- `impl S`, `## Heading`), the cursor on the one the caret is in, the
+-- pane following the cursor.
 picker.source("symbols", {
   title = "symbols", placeholder = "a symbol in this buffer",
   tree = true, follow = true,
   columns = {
-    { "text", grow = true },
-    { "kind", dim = "short", muted = true, min = 70, max = 200, share = 0.25 },
+    { "text", grow = true, family = "mono", lead = "head", color = "color" },
+    { "tag", dim = "short", muted = true, min = 70, max = 200, share = 0.25 },
     { "sub", muted = true, min = 60, max = 260, share = 0.3, path = true },
   },
   load = function(ctx, done)
-    buffer_symbols(ctx.buffer, function(items, err)
-      done(items and symbol_rows(items) or nil, err)
+    local h = ctx.buffer
+    -- A private buffer's lines as a list shows them (the heads read
+    -- from them, and the colours).
+    local lines = h and shown_lines(h, kawoosh.buf.lines(h)) or nil
+    buffer_symbols(h, function(items, err)
+      if not items then return done(nil, err) end
+      local rows = symbol_rows(items, nil, lines)
+      done(rows)
+      if lines then
+        local ok, path = pcall(kawoosh.buf.path, h)
+        colour_symbols(rows, lines, ok and path or nil, kawoosh.buf.language(h))
+      end
     end)
   end,
   cursor = function(items, ctx)
