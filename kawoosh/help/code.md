@@ -523,6 +523,17 @@ buffer stays; `:bd` closes it, stopping the command if it still runs.
 A `%` in a line run from the buffer is the file its run was started
 from.
 
+The buffer opens on a line saying where the command runs and when it
+was started, then the command; its last line says how it ended and how
+long it took: `[finished in 8.2s]`, `[exited with 1 in 0.34s]`,
+`[killed after 2m 03s]`. The output keeps its programs' colours: they
+are asked for them (`FORCE_COLOR`, `CLICOLOR_FORCE`,
+`CARGO_TERM_COLOR`, each only where your environment does not set it),
+since a program that is not on a terminal prints plain otherwise, and
+the sixteen ANSI colours are the theme's. A line printed plain has its
+`error:` and `warning:` coloured for it. `compile.color = false` asks
+for none, as does a `NO_COLOR` in the environment.
+
 Each command has a buffer of its own, in each directory it is run in,
 named for both: `*compile: cargo build*`, and `*compile: yarn build in
 apps/web*` when it runs somewhere other than the working directory.

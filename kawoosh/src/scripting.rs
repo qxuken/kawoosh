@@ -84,7 +84,7 @@ pub struct Scripting {
     pub next_pick: u64,
 }
 
-/// Ranges each with a colour: what [`Kawoosh::paints_of`] answers.
+/// Ranges each with a colour: what [`Kawoosh::paints_in`] answers.
 pub type Paints = Vec<(std::ops::Range<usize>, Color)>;
 
 /// One plugin's paint on a buffer: its ranges and colour names, at the
@@ -936,6 +936,7 @@ impl Kawoosh {
                     stdin,
                     whole,
                     split_err,
+                    env: Vec::new(),
                 };
                 match self.io.run_command(id, spec) {
                     Ok(handle) => {
@@ -1513,21 +1514,18 @@ impl Kawoosh {
         }
     }
 
-    /// Buffer `id`'s painted ranges now, each with its colour, carried
-    /// through the edits since each set was given, and apart from them
-    /// the washes behind the text (a `bg:ALPHA:NAME` paint, the colour
-    /// at that strength); a name no colour answers to is left out.
-    pub(crate) fn paints_of(&mut self, id: BufferId) -> (Paints, Paints) {
+    /// Buffer `id`'s paints carried through the edits since each set
+    /// was given, to where its text is now: once a frame, before
+    /// [`Self::paints_in`] reads them.
+    pub(crate) fn settle_paints(&mut self, id: BufferId) {
         let Some(buf) = self.ed.buffers.get(id) else {
-            return Default::default();
+            return;
         };
         let Some(sets) = self.scripting.paints.get_mut(&id) else {
-            return Default::default();
+            return;
         };
         let version = buf.version();
         let journal = buf.journal();
-        let mut out = Vec::new();
-        let mut names = Vec::new();
         for p in sets.values_mut() {
             if p.version != version {
                 p.spans = p
@@ -1545,18 +1543,39 @@ impl Kawoosh {
                     .collect();
                 p.version = version;
             }
-            names.extend(p.spans.iter().cloned());
         }
+    }
+
+    /// Buffer `id`'s painted ranges that reach into `window` (bytes of
+    /// it: the lines a pane draws — a compile's output has a paint a
+    /// word, and a frame is not to resolve them all), each with its
+    /// colour, and apart from them the washes behind the text (a
+    /// `bg:ALPHA:NAME` paint, the colour at that strength); a name no
+    /// colour answers to is left out.
+    pub(crate) fn paints_in(
+        &self,
+        id: BufferId,
+        window: std::ops::Range<usize>,
+    ) -> (Paints, Paints) {
+        let Some(sets) = self.scripting.paints.get(&id) else {
+            return Default::default();
+        };
+        let names = sets
+            .values()
+            .flat_map(|p| p.spans.iter())
+            .filter(|(r, _)| r.start < window.end && r.end > window.start);
         let dark = self.dark;
+        let mut out = Vec::new();
         let mut washes = Vec::new();
         for (r, name) in names {
+            let r = r.clone();
             if let Some(wash) = name.strip_prefix("bg:") {
                 let (alpha, name) = wash.split_once(':').unwrap_or(("0.25", wash));
                 let alpha = alpha.parse::<f32>().unwrap_or(0.25);
                 if let Some(c) = self.paint_color(name, dark) {
                     washes.push((r, c.with_alpha(alpha)));
                 }
-            } else if let Some(c) = self.paint_color(&name, dark) {
+            } else if let Some(c) = self.paint_color(name, dark) {
                 out.push((r, c));
             }
         }
@@ -1564,11 +1583,18 @@ impl Kawoosh {
     }
 
     /// The colour a paint names: a role of the palette, a version
-    /// control state, a syntax token, or itself as `#rrggbb` — what
-    /// copy mode paints a terminal's colours with.
+    /// control state, a syntax token, one of the terminal's sixteen
+    /// (`ansi:N`), or itself as `#rrggbb` — what copy mode paints a
+    /// terminal's colours with.
     pub(crate) fn paint_color(&self, name: &str, dark: bool) -> Option<Color> {
         if name.starts_with('#') {
             return crate::look::parse_color(name);
+        }
+        // One of the terminal's sixteen, as the theme has them: what a
+        // compile's output was printed in (compile.md Decision 12).
+        if let Some(n) = name.strip_prefix("ansi:") {
+            let c = *self.ansi_for(dark).get(n.parse::<usize>().ok()?)?;
+            return crate::look::parse_color(&format!("#{:06x}", c >> 8));
         }
         let p = &self.pal;
         Some(match name {

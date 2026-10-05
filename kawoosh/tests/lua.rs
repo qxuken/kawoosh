@@ -285,7 +285,7 @@ fn compile_mode_streams_and_jumps_to_locations() {
     assert!(done);
     let text = app.ed.buffers[app.compile.buffer().unwrap()].text();
     assert!(
-        text.contains("error at src/a.rs:3:1") && text.contains("[exited with 1]"),
+        text.contains("error at src/a.rs:3:1") && text.contains("[exited with 1 in "),
         "{text}"
     );
     assert_eq!(app.layout.visible_panes().len(), 2, "shown in a split");
@@ -551,7 +551,7 @@ fn ctrl_c_in_the_compile_buffer_kills_the_compile() {
     assert!(!app.compile.running(), "still running after the kill");
     let text = app.ed.buffers[buffer].text();
     assert!(
-        text.contains("[killed]") && !text.contains("\nlate"),
+        text.contains("[killed after ") && !text.contains("\nlate"),
         "{text}"
     );
     // Done: the key is `normal`'s again, and `:compile kill` says so.

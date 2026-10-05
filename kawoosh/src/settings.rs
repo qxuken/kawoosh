@@ -202,6 +202,11 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
             "offer what the project's files say it runs (`Cargo.toml`, `package.json`, …); on unless false",
         ),
         (
+            "compile.color",
+            K::Bool,
+            "ask a compile's programs for colours (`FORCE_COLOR`, `CLICOLOR_FORCE`, `CARGO_TERM_COLOR`), which a pipe would not get; on unless false, or `NO_COLOR` is set",
+        ),
+        (
             "theme",
             K::Open,
             "a palette and kui's theme roles by name (look.rs)",

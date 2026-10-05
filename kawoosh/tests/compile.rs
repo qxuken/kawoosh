@@ -539,3 +539,87 @@ fn a_caret_moved_up_in_the_compile_pane_stays_as_output_comes() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// compile.md Decision 12: the buffer opens on where and when, the
+/// program's colours are paints over text with no escapes in it, a
+/// plain line's `error` is painted for it, and the last line says how
+/// long it took.
+#[cfg(unix)]
+#[test]
+fn the_head_the_colours_and_how_long_it_took() {
+    let dir = project("colours", "return {}");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    ex(
+        &mut d,
+        &mut app,
+        r"compile printf '\033[1;31merror\033[0m: red\nsrc/a.rs:1: error: plain\n'; echo $FORCE_COLOR$CARGO_TERM_COLOR",
+    );
+    let out = finished(&mut d, &mut app);
+    let lines: Vec<&str> = out.lines().collect();
+    let (place, when) = lines[0].split_once(" · ").expect(lines[0]);
+    assert!(
+        place.ends_with(dir.file_name().unwrap().to_str().unwrap()),
+        "{out}"
+    );
+    let shape: String = when
+        .chars()
+        .map(|c| if c.is_ascii_digit() { '0' } else { c })
+        .collect();
+    assert_eq!(shape, "0000-00-00 00:00:00", "{out}");
+    assert!(lines[1].starts_with("$ printf "), "{out}");
+    assert_eq!(
+        lines[2..5],
+        ["error: red", "src/a.rs:1: error: plain", "1always"],
+        "{out}"
+    );
+    let last = lines.last().unwrap();
+    assert!(
+        last.starts_with("[finished in 0.") && last.ends_with("s]"),
+        "{out}"
+    );
+
+    let buffer = app.compile.buffer().unwrap();
+    let painted = &app.scripting.paints[&buffer]["compile"];
+    assert_eq!(painted.version, app.ed.buffers[buffer].version());
+    let said: Vec<(&str, &str)> = painted
+        .spans
+        .iter()
+        .map(|(r, c)| (&out[r.clone()], c.as_str()))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            (lines[0], "dim"),
+            ("error", "ansi:1"),
+            ("error", "error"),
+            (&last[..], "added"),
+        ]
+    );
+    // The head is not a location; the output's is the first.
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    assert!(
+        app.ed
+            .buffer_of(v)
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("src/a.rs")
+    );
+
+    // Run again: the paints are the new text's alone.
+    ex(&mut d, &mut app, "compile again");
+    finished(&mut d, &mut app);
+    assert_eq!(app.scripting.paints[&buffer]["compile"].spans.len(), 4);
+
+    // `compile.color` off: the programs are not asked.
+    ex(&mut d, &mut app, "set compile.color false");
+    ex(
+        &mut d,
+        &mut app,
+        "compile echo c=$FORCE_COLOR$CLICOLOR_FORCE",
+    );
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("\nc=\n"), "{out}");
+}
