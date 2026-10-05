@@ -1041,6 +1041,16 @@ pub struct IndentUnit {
 /// The indentation a buffer's syntax says (docs/design/indent.md
 /// Decision 3), asked by `<CR>`, `o`, `O` and `=`. `None` is no answer:
 /// no grammar, no indent query — the engine's bracket rule stands.
+/// A language's comment tokens as the settings say
+/// ([`Editor::comment_tokens_in`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommentTokens {
+    /// The line token, without its trailing space: `//`, `#`, `--`.
+    pub line: Option<String>,
+    /// The block pair: `/*` and `*/`.
+    pub block: Option<(String, String)>,
+}
+
 pub trait Indenter {
     /// The indent for a line break inserted at byte `at` of `buf`, the
     /// new line holding what was after it.
@@ -1611,6 +1621,30 @@ impl Editor {
         } else {
             "\t".into()
         }
+    }
+
+    /// The comment tokens of buffer `id` as its scope says
+    /// (docs/design/comments.md Decision 3): the line token
+    /// (`comment`, `//`) and the block pair (`comment_block`,
+    /// `{ "/*", "*/" }`), each when the language has one. An empty
+    /// string set is none: `language.x.comment = ""` takes a token away.
+    pub fn comment_tokens_in(&self, id: BufferId) -> CommentTokens {
+        let line = self
+            .setting_in(id, "comment")
+            .and_then(Setting::as_str)
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+        let block = self
+            .setting_in(id, "comment_block")
+            .and_then(Setting::as_list)
+            .and_then(|l| match l {
+                [a, b] => Some((a.as_str()?.trim(), b.as_str()?.trim())),
+                _ => None,
+            })
+            .filter(|(a, b)| !a.is_empty() && !b.is_empty())
+            .map(|(a, b)| (a.to_string(), b.to_string()));
+        CommentTokens { line, block }
     }
 
     /// What `<Tab>` puts at screen column `col` of buffer `id`: a tab,
