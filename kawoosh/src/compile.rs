@@ -19,7 +19,7 @@ use crate::commands::{ShellCommand, cmd};
 use crate::deduce::{self, Deduced, Project};
 use crate::layout::PaneId;
 use crate::links::location_at;
-use crate::notify::{Level, Note};
+use crate::notify::{Level, Note, Show};
 use crate::scripting::Painted;
 
 /// A compile buffer's kind: what its maps and a `when` name it by
@@ -997,7 +997,15 @@ impl Kawoosh {
                 } else {
                     status
                 };
-                self.notify_with(Note::new(level, text).source("compile"));
+                // The pane with the keys shows the run: its last line
+                // says the same, under the eyes — the log only
+                // (compile.md Decision 13).
+                let watched = self.compile_shown().is_some_and(|r| r.buffer == buffer);
+                let mut note = Note::new(level, text).source("compile");
+                if watched {
+                    note = note.show(Show::Log);
+                }
+                self.notify_with(note);
             }
             _ => {}
         }
@@ -1087,13 +1095,26 @@ impl Kawoosh {
         self.note_location(path, line, &source, &message);
         let from = from.map(|(b, _)| b);
         let editor_elsewhere = |k: &Self, p: PaneId| matches!(k.view_of(p), Some(v) if Some(k.ed.views[v].buffer) != from);
-        // The pane the list was opened from, when the list has the keys
-        // (`grr`, then `<CR>`); else the first other editor pane.
+        // The pane showing the file already, if one does: the place
+        // asked for is in it, and no other pane loses what it shows
+        // (compile.md Decision 13). Else the pane the list was opened
+        // from, when the list has the keys (`grr`, then `<CR>`); else
+        // the first other editor pane.
         let visible = self.layout.visible_panes();
-        let other = self
-            .layout
-            .came_from(self.layout.focused())
-            .filter(|p| visible.contains(p) && editor_elsewhere(self, *p))
+        let open = self
+            .ed
+            .buffer_at(&self.resolve(path))
+            .filter(|b| Some(*b) != from);
+        let showing = |k: &Self, p: PaneId| matches!(k.view_of(p), Some(v) if Some(k.ed.views[v].buffer) == open);
+        let other = visible
+            .iter()
+            .copied()
+            .find(|p| showing(self, *p))
+            .or_else(|| {
+                self.layout
+                    .came_from(self.layout.focused())
+                    .filter(|p| visible.contains(p) && editor_elsewhere(self, *p))
+            })
             .or_else(|| visible.iter().copied().find(|p| editor_elsewhere(self, *p)));
         if let Some(p) = other {
             self.layout.focus(p);

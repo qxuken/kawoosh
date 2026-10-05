@@ -377,3 +377,57 @@ fn a_restore_from_inside_keeps_what_the_old_panes_showed() {
     assert_eq!(names, ["*listing*", "*quiet*", "*scrollback t*", "a.txt"]);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A compile's output is not kept by a session: its process is gone,
+/// and the line it ran is the memory's to offer again. The pane goes
+/// as a `:term CMD` pane does — not as a blank scratch in its place.
+#[cfg(unix)]
+#[test]
+fn a_compile_pane_is_not_restored() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-compile-session-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "1\n2\n").unwrap();
+    let db = dir.join("state.db");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&a);
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "compile echo hi");
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if app.compile.buffer().is_some() && !app.compile.running() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!app.compile.running(), "the compile ended");
+    assert_eq!(
+        app.layout.visible_panes().len(),
+        2,
+        "the file and its output"
+    );
+    ex(&mut d, &mut app, "qa");
+    d.frame(&mut app);
+    assert!(app.quit);
+    drop(app);
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "the greeting");
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 1);
+    assert_eq!(app.layout.visible_panes().len(), 1, "the file alone");
+    let names: Vec<String> = app
+        .ed
+        .listed_buffers()
+        .into_iter()
+        .map(|id| app.ed.buffers[id].name.clone())
+        .collect();
+    assert_eq!(names, vec!["a.txt".to_string()]);
+    std::fs::remove_dir_all(&dir).ok();
+}
