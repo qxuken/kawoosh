@@ -319,3 +319,31 @@ don't see marks in memory".
 - **The gutter's letter had been cut** by the pane's edge (drawn in
   the padding). A buffer with marks has a gutter a cell wider, and the
   letter is in that cell; the click's column reads the same width.
+
+**Round four, 2026-10-06**, from "we have very basic symbol picker.
+Let's do something more like zed does" (a screenshot of each):
+
+- **A row reads as its line does.** Zed's outline shows `pub fn
+  window_icon`, `const USAGE`, `mod tests` in the syntax's colours and
+  nothing else; ours showed the name, a muted kind and a path. Now a
+  row's `head` is what stands before the name on the name's line, read
+  from the buffer's lines at the symbol's column — `pub fn`, `impl`,
+  `struct`, `##`, a C field's type — in front of the name, and the
+  kind column is left to it: only a bare name (a method with no
+  keyword, a key) keeps the kind faint as its `tag`, and a server's
+  short detail rides after as before. Whoever made the symbol — the
+  server or the grammar — the head is read the same way, from the
+  line, so the merged list reads as one; a name not found at its
+  column stays bare. The column is the mono family, as the file is.
+- **The colours are the buffer's.** The buffer's text is highlighted
+  once per open (`kawoosh.highlight`, on the ts thread, a file up to a
+  megabyte), the rows listed first and painted the frame the runs
+  come: the head's spans in their tokens' colours, the name in the
+  colour of the token it starts in, the match lit over it as any
+  row's. Beaten: a keyword per kind (`fn` for `function`) — a table
+  per language that the line already holds; and a Rust job reading the
+  runs off the buffer's kept tree — exact and parse-free, but a new
+  message across three crates for a parse that takes a moment.
+- `picker.rows` columns learned `lead = FIELD` (a string or spans drawn
+  before the field, not matched) and `color = FIELD` (the field's own
+  colour), data as the rest; `picker.state()` lists the hits' `items`.

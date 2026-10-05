@@ -47,6 +47,28 @@ eq(table.concat(st.rows, " "), "S a S new get main", "every definition, in the f
 eq(st.text, "get", "the cursor on the symbol the caret is in")
 eq(st.item.depth, 1, "a method inside its impl")
 eq(st.item.kind, "method")
+-- A row reads as its line does: what stands before the name is its
+-- head, and once the syntax answers, in the tokens' colours.
+local function head_text(it)
+  if type(it.head) ~= "table" then return it.head end
+  local parts = {}
+  for _, sp in ipairs(it.head) do parts[#parts + 1] = sp[1] end
+  return table.concat(parts)
+end
+eq(head_text(st.item), "fn", "`fn get`")
+eq(st.item.tag, nil, "the head says the kind")
+local heads = {}
+for i, it in ipairs(st.items) do heads[i] = head_text(it) or "·" end
+eq(table.concat(heads, " "), "struct · impl fn fn fn", "each row's head from its line; a bare field has none")
+eq(st.items[2].tag, "field", "and keeps its kind faint")
+kawoosh.wait(function()
+  local s = kawoosh.picker.state()
+  return s and type(s.item.head) == "table"
+end, nil, "the syntax's colours")
+st = kawoosh.picker.state()
+eq(st.item.head[1][1], "fn")
+eq(st.item.head[1].color ~= nil, true, "`fn` in the keyword's colour")
+eq(st.item.color ~= nil, true, "the name in its token's colour")
 kawoosh.frame()
 eq(kawoosh.buf.cursor(h).line, 10, "the pane follows: the caret on `get`'s name")
 
