@@ -204,7 +204,10 @@ fn layers_merge_in_order_and_a_cd_swaps_the_project() {
     // `:compile` bare runs the project's default.
     ex(&mut d, &mut app, "compile");
     assert!(
-        app.ed.buffers.values().any(|b| b.name == "*compile*"),
+        app.ed
+            .buffers
+            .values()
+            .any(|b| b.name.starts_with("*compile: ")),
         "compile.default ran"
     );
 

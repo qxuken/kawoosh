@@ -342,7 +342,7 @@ impl Facts<'_> {
             return id.parse() == Ok(b.id);
         }
         match fact.split_once(':') {
-            Some(("buffer", n)) => b.name == n,
+            Some(("buffer", n)) => named(b.name, n),
             Some(("language", l)) => b.language == l,
             None => match fact {
                 "modified" => b.modified,
@@ -353,6 +353,17 @@ impl Facts<'_> {
             _ => false,
         }
     }
+}
+
+/// Whether a buffer called `name` answers to `asked`: its name, or the
+/// kind a name with a subject is of — `*compile: cargo build*` is
+/// `*compile*` to a map or a `when`, whatever it compiles.
+pub fn named(name: &str, asked: &str) -> bool {
+    name == asked
+        || asked
+            .strip_suffix('*')
+            .and_then(|kind| name.strip_prefix(kind))
+            .is_some_and(|rest| rest.starts_with(": ") && rest.ends_with('*'))
 }
 
 /// Why `what` — a command, a binding's line — does not run here: the

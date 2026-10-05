@@ -37,7 +37,7 @@ A binding is global, or local to a **scope**: a fact, spelled as a
 | `field:NAME` | a field — `field:lua:picker/q`, `field:memory/q`, `field:cmdline` |
 | `prompt` | the command line and the search prompt |
 | `buffer#ID` | one buffer, by its handle — vim's `<buffer>` |
-| `buffer:NAME` | a buffer by its name — `*compile*`, `*references*` |
+| `buffer:NAME` | a buffer by its name — `*compile*`, `*references*`; a name with a subject by its kind (`*compile: cargo build*` is `*compile*`, compile.md Decision 10) |
 | `language:LANG` | a buffer of a language — `dir`, `multibuffer`, `scrollback` |
 | `lua:VIEW` | a Lua view's pane, its field or not |
 | any other fact | `terminal`, `exited`, `memory`, `undo`, `readonly`, `field`, a plugin's own |
