@@ -264,6 +264,22 @@ watched as new and churn does not use up the 50 000 folders.
 (`git init`); a folder a folder-only line names (`/gen/`) is read as
 ignored when it is gone too.
 
+*"Made" on FSEvents* (found 2026-10-05, the watch's tests failing on a
+Mac): an FSEvents event carries all that happened to its path of late,
+so a file made a moment ago is "made" again in each event after — when
+it is written, when it is removed. The first word of a path being what
+is kept, a change was said as a creation and a removal as nothing
+("made and gone"). There (`Tree::stale_made`) a made file is new only
+if it was not said to be there already (`Tree::known`, the files said
+made or changed and not deleted since, 16 384 of them at most) and was
+born under the watch (its birth time against when its root was
+watched); else it is changed. One heard of as made and not found is
+said deleted — it may have been made and gone within the batch, but a
+deletion of what nobody heard of costs nothing, and one unsaid leaves
+its file believed in. And a root's real path (`/private/var/…` for
+`/var/…`) is asked when the root is watched, not when it is named: a
+root not made yet had none, and nothing under it was heard once made.
+
 **What a server is sent**, path by path:
 
 - *A file `load_all` sent it* (the pool's document) is read again: its
