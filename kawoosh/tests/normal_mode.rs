@@ -257,6 +257,37 @@ fn an_inner_object_in_visual_mode_ends_inside() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A quote object reaches over lines where its line leaves the string
+/// open — a terminal's output wrapped mid-string: from the first line,
+/// the last, one between, and on the opening quote; a line whose
+/// quotes pair is read as it was.
+#[test]
+fn a_quote_object_reaches_over_lines() {
+    let src = "echo 'one\ntwo\nthree' and 'four'\nplain";
+    let inner = "one\ntwo\nthree";
+    for keys in ["fnyi'", "jyi'", "jjyi'", "f'yi'"] {
+        let mut app = Kawoosh::new("t", src);
+        let mut d = Drive::new(800.0, 400.0);
+        d.frame(&mut app);
+        d.keys(&mut app, keys);
+        assert_eq!(app.ed.memory.head().unwrap().text, inner, "{keys}");
+    }
+    let mut app = Kawoosh::new("t", src);
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "jjfoya'");
+    assert_eq!(app.ed.memory.head().unwrap().text, "'four'");
+    d.keys(&mut app, "ggjda'");
+    assert_eq!(text(&app), "echo  and 'four'\nplain");
+    // A line of whole strings, the cursor before them: the next one,
+    // not a reach upward.
+    let mut app = Kawoosh::new("t", "it's\nsay 'a' or 'b'");
+    d.frame(&mut app);
+    d.keys(&mut app, "jyi'");
+    assert_eq!(app.ed.memory.head().unwrap().text, "a");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `<A-j>` / `<A-k>`: every selection's lines a line down or up, the
 /// selection riding along, in every mode; selections on touching lines
 /// are one block, blocks never pass each other, and the edge holds.

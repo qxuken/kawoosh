@@ -1055,6 +1055,10 @@ fn bracket_object(
     }
 }
 
+/// How many lines up or down a quote object looks for the other end of
+/// a string its line leaves open.
+const QUOTE_REACH_LINES: usize = 100;
+
 /// `i"` `a"` and the other quotes, vim's rule, on the cursor's line:
 /// off a quote, the nearest one before the cursor opens — the next
 /// after it when there is none — and the next after that closes; on a
@@ -1063,37 +1067,65 @@ fn bracket_object(
 /// quote earlier on the line — in a regex, a comment — turn every
 /// string after it inside out. A quote after an odd run of backslashes
 /// is escaped and neither opens nor closes.
+///
+/// Where the line leaves the string open — a terminal's output wrapped
+/// mid-string, a string written over several lines — the other end is
+/// looked for on the lines around, `QUOTE_REACH_LINES` either way: a
+/// quote before the cursor with none after it closes on the first quote
+/// below; an odd count of quotes all after the cursor means the first
+/// of them closes what the last quote above opened; a line with no
+/// quote is between the last above and the first below.
 fn quote_object(buf: &Buffer, o: usize, q: char, around: bool) -> Option<Range<usize>> {
     let ln = buf.line_of(o);
-    let range = buf.line_range(ln);
-    let text = buf.slice(range.clone());
-    let rel = o - range.start;
-    let bytes = text.as_bytes();
-    let escaped = |i: usize| bytes[..i].iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 1;
-    let quotes: Vec<usize> = text
-        .match_indices(q)
-        .map(|(i, _)| i)
-        .filter(|&i| !escaped(i))
-        .collect();
-    let (a, b) = if quotes.contains(&rel) {
-        quotes
-            .chunks(2)
-            .filter(|c| c.len() == 2)
-            .find(|c| c[0] <= rel && rel <= c[1])
-            .map(|c| (c[0], c[1]))?
-    } else {
-        let a = quotes
-            .iter()
+    let quotes_on = |ln: usize| -> Vec<usize> {
+        let range = buf.line_range(ln);
+        let text = buf.slice(range.clone());
+        let bytes = text.as_bytes();
+        let escaped =
+            |i: usize| bytes[..i].iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 1;
+        text.match_indices(q)
+            .map(|(i, _)| i)
+            .filter(|&i| !escaped(i))
+            .map(|i| range.start + i)
+            .collect()
+    };
+    let above = || {
+        (ln.saturating_sub(QUOTE_REACH_LINES)..ln)
             .rev()
-            .find(|&&i| i < rel)
-            .or_else(|| quotes.iter().find(|&&i| i > rel))
-            .copied()?;
-        let b = quotes.iter().find(|&&i| i > a).copied()?;
-        (a, b)
+            .find_map(|l| quotes_on(l).last().copied())
+    };
+    let below = || {
+        let end = buf.line_count().min(ln + 1 + QUOTE_REACH_LINES);
+        (ln + 1..end).find_map(|l| quotes_on(l).first().copied())
+    };
+    let quotes = quotes_on(ln);
+    let (a, b) = if quotes.contains(&o) {
+        match quotes
+            .chunks(2)
+            .find(|c| c[0] <= o && o <= *c.last().unwrap())?
+        {
+            [a, b] => (*a, *b),
+            _ => (o, below()?),
+        }
+    } else {
+        let before = quotes.iter().rev().find(|&&i| i < o).copied();
+        let mut after = quotes.iter().filter(|&&i| i > o).copied();
+        match (before, after.next()) {
+            (Some(a), Some(b)) => (a, b),
+            (Some(a), None) => (a, below()?),
+            (None, Some(b)) => match (quotes.len() % 2 == 1).then(above).flatten() {
+                Some(a) => (a, b),
+                None => (b, after.next()?),
+            },
+            (None, None) => (above()?, below()?),
+        }
     };
     let n = q.len_utf8();
-    let (s, e) = if around { (a, b + n) } else { (a + n, b) };
-    Some(range.start + s..range.start + e)
+    if around {
+        Some(a..b + n)
+    } else {
+        Some(a + n..b)
+    }
 }
 
 /// Past this many bytes the match count is not taken on the frame: the
