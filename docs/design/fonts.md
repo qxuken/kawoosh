@@ -383,6 +383,35 @@ folder — it calls a family the machine's whenever it is installed too.
 *Beat:* a heading between the groups: the list is `uniform_list`, every
 row a card's height; the note on each card says the group.
 
+### 9. What stands in for a missing glyph is kawoosh's list
+
+Found 2026-10-05, a screenshot of Russian in a terminal under Berkeley
+Mono (no Cyrillic): `Ю` across the `з` after it, `ж` and `ш` over their
+neighbours. The character went to the platform's fallback list, whose
+first name on a Mac is the system's proportional face, and the grid
+drew it at its own width from the cell's corner. Two halves:
+
+- kui's F120: a cell is a cell — a grid asks a monospaced face before
+  the platform's list, shapes a glyph still too wide at the size it
+  fits at, and centres it.
+- The user's, on hearing the cause: "if it's a font selection problem
+  maybe we should give a fallback set from kawoosh as well … like
+  userFont -> iconsFont -> shipedFont (or known monospaced)". kui's
+  F121 lets an app name the list (`Core::set_fallback_fonts`), and
+  `fonts::set_fallbacks` names it at start: `Symbols Nerd Font Mono`
+  (Decision 6 — a list now, where it was the font database's luck), the
+  shipped face (Iosevka: Latin, Greek, Cyrillic), then the machine's
+  monospaced — Menlo, Monaco; Cascadia Mono, Consolas, Courier New;
+  DejaVu Sans Mono, Noto Sans Mono, Liberation Mono — and after them the
+  platform's own, for CJK and the rest. The face on show is always
+  asked first, so the user's font is the head of it without being
+  named. For every text, an editor's rows as a terminal's cells.
+
+*Beat:* a list a family — kui shapes a run in one family through one
+list (cosmic-text's), and kawoosh draws nothing a second list would
+serve. *Open:* `font.fallback`, the user's own families ahead of
+kawoosh's (a CJK monospaced one) — not asked for.
+
 ## Built
 
 As decided. kui F97 (`Core::system_fonts`); the symbols in

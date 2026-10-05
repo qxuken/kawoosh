@@ -203,6 +203,34 @@ pub fn load_shipped(core: &mut kui_native::Core, dir: &Path) -> HashSet<String> 
     shipped
 }
 
+/// A monospaced family a machine of each kind has, for what neither the
+/// user's face nor a shipped one draws.
+#[cfg(target_os = "macos")]
+const KNOWN_MONO: &[&str] = &["Menlo", "Monaco"];
+#[cfg(target_os = "windows")]
+const KNOWN_MONO: &[&str] = &["Cascadia Mono", "Consolas", "Courier New"];
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const KNOWN_MONO: &[&str] = &["DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono"];
+
+/// What stands in for a character the face on show has no glyph for, in
+/// the order asked (kui F121): Nerd Fonts' symbols, the face kawoosh
+/// ships (`bundled`: Latin, Greek, Cyrillic), then the machine's own
+/// monospaced ones — and only after them the platform's list, whose first
+/// choice on a Mac is the system's proportional face: Russian in a
+/// terminal under a Latin-only family was set in it, the wide letters
+/// over their neighbours. Set once, after the shipped files are loaded.
+pub fn set_fallbacks(core: &mut kui_native::Core, bundled: Option<FontId>) {
+    let mut chain = Vec::new();
+    chain.extend(core.add_system_font("Symbols Nerd Font Mono"));
+    chain.extend(bundled);
+    chain.extend(
+        KNOWN_MONO
+            .iter()
+            .filter_map(|name| core.add_system_font(name)),
+    );
+    core.set_fallback_fonts(&chain);
+}
+
 /// Whether `path` is a Git LFS pointer — the text LFS leaves in a
 /// checkout until the file is pulled — rather than the file.
 fn lfs_pointer(path: &Path) -> bool {

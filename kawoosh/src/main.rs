@@ -46,10 +46,11 @@ fn fonts_dir() -> std::path::PathBuf {
 /// which every mono run names by `FontId`, so a machine with no Iosevka
 /// installed draws the same glyphs; the families shipped to pick from
 /// (Intel One Mono, fonts.md Decision 6); and Nerd Fonts' symbols
-/// (`Symbols Nerd Font Mono`, a cell wide), which no run names — in the
-/// font database, it is the fallback a face without an icon's code point
-/// finds it in, so a prompt's or a listing's icons draw on a machine
-/// with no Nerd Font installed. The user's own folder is `fonts.rs`'s.
+/// (`Symbols Nerd Font Mono`, a cell wide), which no run names — first of
+/// the fallbacks (`fonts::set_fallbacks`), it is where a face without an
+/// icon's code point finds it, so a prompt's or a listing's icons draw on
+/// a machine with no Nerd Font installed. The user's own folder is
+/// `fonts.rs`'s.
 /// The shipped families come back too (`fonts::load_shipped`), for the
 /// fonts pane's order.
 fn load_fonts(core: &mut Core) -> (Option<kui_native::FontId>, HashSet<String>) {
@@ -59,6 +60,7 @@ fn load_fonts(core: &mut Core) -> (Option<kui_native::FontId>, HashSet<String>) 
         .into_iter()
         .find(|f| f.contains("Iosevka"))
         .and_then(|family| core.add_system_font(&family));
+    kawoosh::fonts::set_fallbacks(core, bundled);
     (bundled, shipped)
 }
 
