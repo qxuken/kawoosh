@@ -8,7 +8,9 @@
 //! restored as a buffer without a pane. A terminal's process is gone;
 //! a shell, or a tool that says `restore`, is started again in the
 //! directory it was left in — not its scrollback — and any other
-//! terminal is dropped, a tab that held only those with it.
+//! terminal is dropped, a tab that held only those with it. A compile's
+//! output goes the same way: its process is gone, and the line it ran
+//! is the memory's to offer again.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -186,6 +188,13 @@ impl Kawoosh {
                         col: 0,
                         top: 0,
                     };
+                }
+                // Nor a compile's output: its process is gone, and
+                // the memory keeps the line for `<leader>cc` to run
+                // again (compile.md Decision 13). The pane goes as a
+                // `:term CMD` pane does.
+                if self.compile.of(view.buffer).is_some() {
+                    return PaneData::Gone;
                 }
                 if (buf.private && buf.path.is_none()) || self.ed.is_multi(view.buffer) {
                     return PaneData::Editor {

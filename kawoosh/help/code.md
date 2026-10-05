@@ -521,7 +521,13 @@ kill`), `r` runs it again where it ran (`:compile again`), and `q`
 closes the pane, the keys going back to the pane you were in — the
 buffer stays; `:bd` closes it, stopping the command if it still runs.
 A `%` in a line run from the buffer is the file its run was started
-from.
+from. A location whose file is on show already opens in that pane.
+
+How a run ended is said in the corner, or as a toast when it failed,
+unless the keys are in its buffer as it ends: its last line says the
+same there. The log (`:messages`) has it either way. A session keeps
+no compile pane: the output is gone with its process at a restart,
+and `<leader>cc` runs the last line again.
 
 The buffer opens on a line saying where the command runs and when it
 was started, then the command; its last line says how it ended and how
