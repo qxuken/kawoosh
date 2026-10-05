@@ -63,6 +63,17 @@ impl Kawoosh {
     /// told, the ts thread told with the grammar, and the buffers
     /// looked at again: one of the language is sent whole at the next
     /// frame, and a file nothing had claimed may be the language's.
+    /// Every name the registry's languages go by, to the trees that
+    /// answer the layer's language (`Trees::set_names`): after the
+    /// registry is built, and each time it gains a language.
+    pub(crate) fn sync_language_names(&mut self) {
+        self.indent_trees
+            .set_names(self.languages.iter().flat_map(|d| {
+                std::iter::once((d.name.clone(), d.name.clone()))
+                    .chain(d.aliases.iter().map(|a| (a.clone(), d.name.clone())))
+            }));
+    }
+
     pub fn add_language(&mut self, def: LanguageDef) {
         self.put_language(def, true);
     }
@@ -94,6 +105,7 @@ impl Kawoosh {
             }
         };
         let replaced = self.languages.add(def.clone()).is_some();
+        self.sync_language_names();
         let said = format!(
             "language {}: {}{}",
             def.name,

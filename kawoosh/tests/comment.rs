@@ -33,6 +33,8 @@ fn open(name: &str, src: &str) -> (Kawoosh, Drive, PathBuf) {
     let mut app = Kawoosh::from_file(&file);
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
+    app.wait_for_syntax();
+    d.frame(&mut app);
     (app, d, dir)
 }
 
@@ -154,5 +156,55 @@ fn carets_share_a_line_and_the_command_line_spelling() {
         "// a\n// b\n// c\n# // d\n",
         "the session's token"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Round 2 (comments.md Decision 4): the token is the layer's. A rust
+/// fence in markdown takes `//`, the prose around it the `<!-- -->`
+/// pair; a `js` fence is javascript's by its alias.
+#[test]
+fn a_fence_takes_its_languages_token() {
+    let (mut app, mut d, dir) = open(
+        "a.md",
+        "# head\n\n```rust\nlet x = 1;\n```\n\nprose\n\n```js\nlet y;\n```\n",
+    );
+    d.press(&mut app, "4Ggcc");
+    assert_eq!(
+        text(&app),
+        "# head\n\n```rust\n// let x = 1;\n```\n\nprose\n\n```js\nlet y;\n```\n"
+    );
+    d.press(&mut app, "7Ggcc");
+    assert_eq!(
+        text(&app),
+        "# head\n\n```rust\n// let x = 1;\n```\n\n<!-- prose -->\n\n```js\nlet y;\n```\n"
+    );
+    d.press(&mut app, "10Ggcc");
+    assert_eq!(
+        text(&app),
+        "# head\n\n```rust\n// let x = 1;\n```\n\n<!-- prose -->\n\n```js\n// let y;\n```\n"
+    );
+    // A range starting in the fence is the fence's, past its end too.
+    d.press(&mut app, "4Ggc3j");
+    assert_eq!(
+        text(&app),
+        "# head\n\n```rust\n// // let x = 1;\n// ```\n\n// <!-- prose -->\n\n```js\n// let y;\n```\n"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A layer whose language has no token — JSDoc inside a JavaScript
+/// comment — falls back to the host's; a C declaration in Lua's
+/// `ffi.cdef` string takes C's.
+#[test]
+fn a_layer_without_a_token_is_the_hosts() {
+    let (mut app, mut d, dir) = open("a.js", "/**\n * @param x\n */\nf();\n");
+    d.press(&mut app, "2Ggcc");
+    assert_eq!(text(&app), "/**\n // * @param x\n */\nf();\n");
+    std::fs::remove_dir_all(&dir).ok();
+    let (mut app, mut d, dir) = open("a.lua", "ffi.cdef[[\nint f(void);\n]]\nlocal x\n");
+    d.press(&mut app, "2Ggcc");
+    assert_eq!(text(&app), "ffi.cdef[[\n// int f(void);\n]]\nlocal x\n");
+    d.press(&mut app, "4Ggcc");
+    assert_eq!(text(&app), "ffi.cdef[[\n// int f(void);\n]]\n-- local x\n");
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -521,6 +521,7 @@ impl Kawoosh {
         crate::settings::declare_shell_settings(&mut app.ed.settings);
         app.ed.indenter = Some(Box::new(app.indent_trees.indenter()));
         app.ed.syntax_objects = Some(Box::new(app.indent_trees.objects()));
+        app.sync_language_names();
         app
     }
 

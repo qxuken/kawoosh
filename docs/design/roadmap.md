@@ -3141,10 +3141,11 @@ frame.
 90. **Comments**: `gc` + motion, `gcc` the line, a toggle
     ([comments.md](comments.md)). Planned 2026-10-06, asked the same
     day ("Let's plan comment movements. I used often `gcc` to comment
-    out a block of code or a line"); round 1 built the same day
+    out a block of code or a line"); rounds 1 and 2 built the same day
     (`comment` and `comment lines` in `commands.rs`, `c` in
-    operator-pending mode for `gcc`, `kawoosh/tests/comment.rs`),
-    rounds 2–4 open. An operator beside `indent`: all
+    operator-pending mode for `gcc`; `SyntaxObjects::language_at` over
+    the kept tree's injections, the layer's tokens with the host's as
+    the fallback; `kawoosh/tests/comment.rs`), rounds 3–4 open. An operator beside `indent`: all
     the range's lines commented or all uncommented, decided at once,
     the token at their least indent with a space after it, blank lines
     skipped; a block-only language wraps each line. The tokens are

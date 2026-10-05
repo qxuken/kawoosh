@@ -1,8 +1,9 @@
 # Comments: `gc` + motion, `gcc` the line
 
 Status: planned 2026-10-06 from the ask "Let's plan comment movements.
-I used often `gcc` to comment out a block of code or a line", round 1
-built the same day ("allright let's build it"). The calls below are
+I used often `gcc` to comment out a block of code or a line", rounds 1
+and 2 built the same day ("allright let's build it", "let's do round
+2"). The calls below are
 taken here, each the user's to overturn; where the build moved one,
 the section says so. Roadmap step 90.
 Companion to [editorconfig.md](editorconfig.md) (where a language's
@@ -200,6 +201,16 @@ what the first line says it is.
 This is round 2 (Decision 7); round 1 takes the buffer's language and
 is right in every file of one language.
 
+*Built 2026-10-06, with two calls the build added.* A layer whose
+language has no token falls back to the buffer's: a JSDoc comment's
+lines in a JavaScript file take `//`, not a refusal for `jsdoc`. The
+layer's name is the registry's — an injection query's `js` or `sh` is
+read as the language it is an alias of, so `language.javascript.comment`
+answers for a `js` fence; a name the registry has no language for is
+kept as said and, having no tokens, falls back. The lookup nests only
+as deep as the grammars the trees have seen: the first layer's name
+needs no grammar, a layer inside it the injected grammar at hand.
+
 Beaten: **the language per line**: a range straddling an injection
 would then write two kinds of token, and uncommenting it would have to
 decide per line again — neovim's `gc` reads the layer at the cursor,
@@ -221,8 +232,9 @@ nothing) — and what Lua and the socket have (`kawoosh ex comment
 lines`). There is no `!`: the toggle has no force.
 `kawoosh.buf.comment_tokens(buf?)` returns `{ line = "//", block = {
 "/*", "*/" } }` as the scope reads them for the buffer, each absent
-where the language has none; `{ at = }` for a byte's layer comes with
-round 2.
+where the language has none. `{ at = }` for a byte's layer is not
+built: Lua's `kawoosh.buf` reads a published snapshot, with no door to
+the trees — the node API's door would serve, when a plugin asks.
 
 *Built 2026-10-06 as written here; the note had said `:comment`.*
 
@@ -271,4 +283,23 @@ a count and a motion over mixed indents with a tab, one space taken
 on the way back, a block-only language, no token and only blank lines,
 `.` with `cc` and `dc` unchanged, two carets sharing a line, the
 command-line spelling, the session's token),
-`kawoosh/lua/tests/buf_comment_tokens.lua`. Rounds 2–4 open.
+`kawoosh/lua/tests/buf_comment_tokens.lua`.
+
+Round 2, 2026-10-06. `SyntaxObjects::language_at` (default `None`),
+answered by `Trees::language_at` in `kawoosh/src/indent.rs` over the
+kept tree: `ts::injection_at` (the innermost `@injection.content`
+holding the byte, its language from the `#set!` or the capture's
+text, `injection.combined` passed over as the painter does), then
+`ts::parse_range` into the injected grammar where the trees have it,
+`INJECTION_DEPTH` deep. The ts thread now keeps a tree for a grammar
+with an injection query too (markdown's, javascript's), not only one
+with indents or text objects. `Trees::set_names` holds the registry's
+names and aliases, synced at start and on every language added
+(`sync_language_names`). `Editor::comment_tokens_at` reads the layer's
+`comment` and `comment_block` through a scope with the layer's
+language and the buffer's own sources, falling back to the buffer's
+(Decision 4's build note); the operator asks at the first non-blank
+line's first character. Tests in `kawoosh/tests/comment.rs`: a rust
+and a `js` fence in markdown against the prose's pair, a range
+starting in the fence, JSDoc's fallback, C in `ffi.cdef`. Rounds 3–4
+open.

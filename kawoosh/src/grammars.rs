@@ -379,6 +379,7 @@ impl Kawoosh {
             }
             let def = self.installed_def(&i);
             self.languages.add(def.clone());
+            self.sync_language_names();
             self.ts.add_language(def, None);
             self.grammars.installed.insert(i.row.name.clone(), i);
         }

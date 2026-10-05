@@ -49,7 +49,7 @@ pub const STRUCT_LAYER: &str = "structure";
 
 /// How deep injections nest: markdown's inline in its blocks, and one
 /// more under that.
-const INJECTION_DEPTH: usize = 3;
+pub const INJECTION_DEPTH: usize = 3;
 
 pub struct Job {
     pub buffer: BufferId,
@@ -644,7 +644,11 @@ fn highlight(
                         block_spans = Some(lines);
                     }
                     let handle = tree.clone();
-                    if stood_in.is_none() && (g.indents.is_some() || g.textobjects.is_some()) {
+                    if stood_in.is_none()
+                        && (g.indents.is_some()
+                            || g.textobjects.is_some()
+                            || g.injections.is_some())
+                    {
                         parse = Some(Parse {
                             text: text.clone(),
                             grammar: g.clone(),
@@ -1018,6 +1022,58 @@ fn paint_captures(
     }
 }
 
+/// The injection holding byte `at` under `root`, the innermost when
+/// they nest: its language as the query names it (the `#set!`, or the
+/// `@injection.language` capture's text, its first word — `rust` of
+/// `rust,ignore`) and its content's bytes. A `#set! injection.combined`
+/// pattern is not followed, as the painter does not. What `gc` asks
+/// for the layer's comment token (docs/design/comments.md Decision 4).
+pub fn injection_at(
+    inj: &kawoosh_languages::Injections,
+    root: Node,
+    text: &text_buffer::Buffer,
+    at: usize,
+) -> Option<(String, Range<usize>)> {
+    let mut best: Option<(String, Range<usize>)> = None;
+    let mut cursor = QueryCursor::new();
+    cursor.set_byte_range(at..at + 1);
+    let mut node_text = |n: Node| std::iter::once(text.collect_range(n.byte_range()));
+    let mut it = cursor.matches(&inj.query, root, &mut node_text);
+    while let Some(m) = it.next() {
+        let settings = inj.query.property_settings(m.pattern_index);
+        if settings.iter().any(|p| &*p.key == "injection.combined") {
+            continue;
+        }
+        let name = settings
+            .iter()
+            .find(|p| &*p.key == "injection.language")
+            .and_then(|p| p.value.as_deref().map(str::to_owned))
+            .or_else(|| {
+                let n = m.nodes_for_capture_index(inj.language?).next()?;
+                let word = text.collect_range(n.byte_range());
+                Some(String::from_utf8_lossy(&word).into_owned())
+            });
+        let Some(name) = name else {
+            continue;
+        };
+        let word = name
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if word.is_empty() {
+            continue;
+        }
+        for n in m.nodes_for_capture_index(inj.content) {
+            let r = n.byte_range();
+            if r.start <= at && at < r.end && best.as_ref().is_none_or(|(_, b)| r.len() < b.len()) {
+                best = Some((word.clone(), r));
+            }
+        }
+    }
+    best
+}
+
 /// Paints the languages inside `span` over the host's paint: each
 /// `@injection.content` node of `g`'s injections query that reaches
 /// into the span, whose language — a `#set!` on the pattern, or the
@@ -1107,7 +1163,7 @@ fn paint_injections(
 /// Parses `range` of the text alone with `g` — tree-sitter's included
 /// ranges, reset after — for an injection. Its nodes' positions are
 /// the document's.
-fn parse_range(
+pub fn parse_range(
     parser: &mut Parser,
     g: &Grammar,
     text: &text_buffer::Buffer,
