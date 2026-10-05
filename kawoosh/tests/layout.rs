@@ -774,6 +774,41 @@ fn the_ribbon_glides_to_a_key_and_a_width_lands_at_once() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A full column in the middle of a ribbon stays where it is while
+/// the keyboard moves between its panes: kui's reveal keeps a margin at
+/// both of a node's edges, which a column as wide as the viewport has
+/// at neither, so each move took the ribbon a few pixels to the side.
+#[test]
+fn a_full_column_keeps_its_place_as_the_keyboard_moves_inside_it() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    for _ in 0..2 {
+        ctrl_w(&mut d, &mut app, "v");
+        settle(&mut d, &mut app);
+    }
+    d.press(&mut app, "<D-2>");
+    for _ in 0..4 {
+        if columns(&app)[1].1 == Width::Full {
+            break;
+        }
+        d.press(&mut app, "<A-S-l>");
+    }
+    assert_eq!(columns(&app)[1].1, Width::Full);
+    ctrl_w(&mut d, &mut app, "s");
+    settle(&mut d, &mut app);
+    assert_eq!(columns(&app)[1].0.len(), 2, "two panes in the column");
+    for to in ["k", "j", "k", "j"] {
+        ctrl_w(&mut d, &mut app, to);
+        settle(&mut d, &mut app);
+        let (x, w) = drawn_columns(&d)[1];
+        assert_eq!((x, w), (0.0, vw), "the column is the viewport after {to}");
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn a_pane_leaves_its_stack_for_a_column_of_its_own() {
     let vw = 900.0;
