@@ -50,6 +50,10 @@ const BURST: usize = 128;
 /// again — or first made — is watched again.
 const CHECK: Duration = Duration::from_secs(2);
 
+/// How many files said to be there are remembered where a made file is
+/// not surely new ([`Tree::known`]); past it the oldest go.
+const KNOWN_MAX: usize = 16384;
+
 /// How long "no repository here" is believed before it is asked again.
 const NO_REPO_FOR: Duration = Duration::from_secs(10);
 
@@ -202,8 +206,20 @@ struct Tree {
     /// The folders asked for, the outermost of them.
     roots: Vec<PathBuf>,
     /// Each root's real path where it is another — FSEvents speaks of
-    /// `/private/var/…` for a root asked for as `/var/…` — and the root.
+    /// `/private/var/…` for a root asked for as `/var/…` — and the root;
+    /// asked when the root is watched, since one not made yet has none.
     real: Vec<(PathBuf, PathBuf)>,
+    /// Whether "made" may be said of a file that was there (FSEvents:
+    /// an event's flags are all that happened to the path of late, so
+    /// a file made a moment ago and written since is made again in
+    /// each). Then a made file is new only if it was not said to be
+    /// there ([`Tree::known`]) and was born under the watch.
+    stale_made: bool,
+    /// The files said made or changed and not deleted since, and when;
+    /// kept only where `stale_made`.
+    known: HashMap<PathBuf, Instant>,
+    /// When each root's watch was set.
+    watched_at: HashMap<PathBuf, std::time::SystemTime>,
     /// [`Mode::PerFolder`]'s: every folder it watches — in path order,
     /// so a folder's own are the run after it.
     folders: BTreeSet<PathBuf>,
@@ -261,6 +277,9 @@ impl Tree {
             watcher: None,
             roots: Vec::new(),
             real: Vec::new(),
+            stale_made: cfg!(target_os = "macos"),
+            known: HashMap::new(),
+            watched_at: HashMap::new(),
             folders: BTreeSet::new(),
             dormant: HashSet::new(),
             identity: HashMap::new(),
@@ -318,14 +337,10 @@ impl Tree {
             self.identity.remove(r);
             self.heard.remove(r);
             self.bursting.remove(r);
+            self.watched_at.remove(r);
+            self.real.retain(|(_, root)| root != r);
+            self.known.retain(|p, _| !p.starts_with(r));
         }
-        self.real = outer
-            .iter()
-            .filter_map(|r| {
-                let real = std::fs::canonicalize(r).ok()?;
-                (real != *r).then(|| (real, r.clone()))
-            })
-            .collect();
         self.roots = outer;
         for r in &new {
             self.watch_root(r);
@@ -354,6 +369,14 @@ impl Tree {
         };
         self.dormant.remove(root);
         self.identity.insert(root.to_path_buf(), id);
+        self.real.retain(|(_, r)| r != root);
+        if let Ok(real) = std::fs::canonicalize(root)
+            && real != root
+        {
+            self.real.push((real, root.to_path_buf()));
+        }
+        self.watched_at
+            .insert(root.to_path_buf(), std::time::SystemTime::now());
         match self.mode {
             Mode::Recursive => {
                 let Some(w) = self.watcher.as_mut() else {
@@ -599,18 +622,63 @@ impl Tree {
             }
         }
         let mut pending = std::mem::take(&mut self.pending);
-        let changes = std::mem::take(&mut self.order)
-            .into_iter()
-            .filter_map(|path| {
-                let seen = pending.remove(&path)?;
-                let now = std::fs::symlink_metadata(&path).ok();
-                let change = settled(seen, now.as_ref().map(|m| m.is_dir()))?;
-                Some((path, change))
-            })
-            .collect();
+        let mut changes = Vec::new();
+        for path in std::mem::take(&mut self.order) {
+            let Some(mut seen) = pending.remove(&path) else {
+                continue;
+            };
+            let now = std::fs::symlink_metadata(&path).ok();
+            // Where "made" may be said of what was there: a file found
+            // that was is changed, and one not found is gone — said so
+            // though it may have been made and gone in the batch, a
+            // deletion of what nobody heard of costing nothing and one
+            // unsaid leaving its file believed in.
+            if seen == Seen::Made
+                && self.stale_made
+                && now.as_ref().is_none_or(|m| self.was_there(&path, m))
+            {
+                seen = Seen::Touched;
+            }
+            let Some(change) = settled(seen, now.as_ref().map(|m| m.is_dir())) else {
+                continue;
+            };
+            if self.stale_made {
+                match change {
+                    Change::Deleted => {
+                        self.known.remove(&path);
+                    }
+                    _ => {
+                        self.known.insert(path.clone(), Instant::now());
+                    }
+                }
+            }
+            changes.push((path, change));
+        }
+        if self.known.len() > KNOWN_MAX {
+            let mut ages: Vec<Instant> = self.known.values().copied().collect();
+            ages.sort_unstable();
+            let keep = ages[ages.len() - KNOWN_MAX / 2];
+            self.known.retain(|_, t| *t >= keep);
+        }
         Batch {
             changes,
             lost: std::mem::take(&mut self.lost).into_iter().collect(),
+        }
+    }
+
+    /// Whether the file at `path`, heard of as made, was there before:
+    /// said to be so already, or born before its root was watched.
+    fn was_there(&self, path: &Path, now: &std::fs::Metadata) -> bool {
+        if now.is_dir() {
+            return false;
+        }
+        if self.known.contains_key(path) {
+            return true;
+        }
+        let watched = self.root_of(path).and_then(|r| self.watched_at.get(r));
+        match (now.created(), watched) {
+            (Ok(born), Some(watched)) => born < *watched,
+            _ => false,
         }
     }
 
@@ -926,6 +994,7 @@ mod tests {
         let dir = scratch("settled");
         let (tx, _rx) = unbounded();
         let mut tree = Tree::new(Mode::Recursive, tx);
+        tree.stale_made = false;
         tree.roots = vec![dir.clone()];
         let kept = dir.join("kept.rs");
         let gone = dir.join("gone.rs");
@@ -938,6 +1007,55 @@ mod tests {
         let batch = tree.flush();
         assert_eq!(batch.changes, [(kept, Change::Changed)]);
         assert_eq!(tree.due(), None, "nothing waits after the batch");
+        remove(&dir);
+    }
+
+    /// Where "made" is said of a file that was there (FSEvents), a made
+    /// file is new once: one born before the watch, or said to be there
+    /// already, is changed, and one not found is deleted.
+    #[test]
+    fn a_stale_made_is_read_by_what_is_known() {
+        use Seen::*;
+        let dir = scratch("stale");
+        let (tx, _rx) = unbounded();
+        let mut tree = Tree::new(Mode::Recursive, tx);
+        tree.stale_made = true;
+        tree.roots = vec![dir.clone()];
+        let (old, new, gone) = (dir.join("old.rs"), dir.join("new.rs"), dir.join("gone.rs"));
+        std::fs::write(&old, "x").unwrap();
+        let born = std::fs::metadata(&old).unwrap().created();
+        std::thread::sleep(Duration::from_millis(20));
+        tree.watched_at
+            .insert(dir.clone(), std::time::SystemTime::now());
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&new, "x").unwrap();
+        for p in [&old, &new, &gone] {
+            tree.record(p.clone(), Made);
+        }
+        let batch = tree.flush();
+        // A file system with no birth times says the old one made.
+        let was = if born.is_ok() {
+            Change::Changed
+        } else {
+            Change::Created
+        };
+        assert_eq!(
+            batch.changes,
+            [
+                (old.clone(), was),
+                (new.clone(), Change::Created),
+                (gone.clone(), Change::Deleted)
+            ]
+        );
+        // Said to be there: made again is a change, until it is gone.
+        tree.record(new.clone(), Made);
+        assert_eq!(tree.flush().changes, [(new.clone(), Change::Changed)]);
+        std::fs::remove_file(&new).unwrap();
+        tree.record(new.clone(), Made);
+        assert_eq!(tree.flush().changes, [(new.clone(), Change::Deleted)]);
+        std::fs::write(&new, "x").unwrap();
+        tree.record(new.clone(), Made);
+        assert_eq!(tree.flush().changes, [(new, Change::Created)]);
         remove(&dir);
     }
 

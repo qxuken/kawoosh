@@ -377,6 +377,54 @@ answer `kawoosh.node.objects("function")` from the same reader);
 injected languages' objects (§6); `]F` `[F` to the ends, and walks of
 the other objects.
 
+### 10. `%` on a block's keyword, by the tree and no query
+
+Asked 2026-10-05: "Let's implement `%` movement for blocks like lua or
+ruby". `%` matched brackets only, by the text; a language that closes a
+block with a word had nothing. Now, off a bracket, the keyword under
+the caret is asked of the tree (`kawoosh_systems::blocks`, through
+`SyntaxObjects::partner`, the door `af` uses, so the tree is the text
+as it is):
+
+- **A block is a node a keyword starts and a closing word ends** —
+  `end`, any word starting with `end` (`endif`), `fi`, `done`, `esac`,
+  `od`. Where the closer ends a node that is the `body` field of one a
+  keyword starts — Ruby's `while c` … `end`, whose `do` is not written,
+  a shell's `for` … `do` … `done` — the block is the loop.
+- **Its stops are the opener, the closer, and its own clause words
+  between** (`else` `elseif` `elsif` `elif` `when` `case` `rescue`
+  `ensure` `catch` `finally` `after` `except`): a clause word is the
+  block's when the closest block around it is that one, so a nested
+  `if`'s `else` is the nested one's. `%` goes to the next stop, from
+  the closer round to the opener — vim's matchit.
+- **Another keyword that is the block's own child, or a clause's**
+  (`then`, `do`, the `function` of `local function`) is no stop and
+  goes to the next after it. A keyword that is neither (`return`,
+  `break`) stays.
+- **Under an operator both keywords are taken whole**, as both
+  brackets of a pair are: `d%` on `if` deletes through `end`, and on
+  `end` back through `if`. In visual mode the head goes to the
+  keyword's start, as the caret does.
+
+Beaten: **a query per grammar** (`matchup.scm`, as vim-matchup's): the
+sound answer for a grammar this misreads, and sixty-nine files for what
+two word lists and the tree's shape say for Lua, Ruby, bash, fish — the
+four it was read against — and by the same shape Elixir, Julia,
+Crystal. **A pattern per language**, matchit's own: it reads a string's
+`end` as one. **Every keyword pair of a node** (first and last token):
+C's `unsigned long` is such a node, and SQL's `ORDER BY`; hence the
+closers' list.
+
+Not built: `repeat` … `until`, which ends with no word of its own; a
+grammar whose keywords are named nodes; an injected language's blocks
+(§6); a bracket found forward on the line when the caret is on none,
+which vim's `%` does and this one never did.
+
+Tests: `blocks::tests` (`lua`, `bash`, `none_in_braces`),
+`percent_goes_round_a_keyword_block` (`kawoosh/tests/syntax.rs`). Ruby
+and fish were read once against nvim-treesitter's parsers by hand, the
+grammars not being in the build.
+
 ## What it is for
 
 ts-node-action's two examples, against this API — a command each, every

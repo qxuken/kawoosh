@@ -1014,6 +1014,19 @@ pub trait SyntaxObjects {
         object: &str,
         within: std::ops::Range<usize>,
     ) -> Result<Vec<SyntaxObject>, String>;
+
+    /// `%` off a bracket: the keyword over byte `at` and the one of its
+    /// block to go to — `if` to `else` to `end` and round, in a language
+    /// that closes a block with a word — each its bytes. `None` where
+    /// `at` is on no such keyword, or there is no tree to read.
+    fn partner(
+        &mut self,
+        _id: BufferId,
+        _buf: &Buffer,
+        _at: usize,
+    ) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+        None
+    }
 }
 
 /// One level of a buffer's indentation: `text` (a tab, or `width`
