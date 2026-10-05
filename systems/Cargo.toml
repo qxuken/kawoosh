@@ -32,9 +32,12 @@ memchr = "2"
 # Decision 6): the platform's own events — ReadDirectoryChangesW,
 # FSEvents, inotify — where a poll would walk the tree at every beat.
 notify = "8"
-# The markdown buffer's images; already in the tree through kui's
+# The pictures the panes draw (`picture.rs`): the markdown buffer's, a
+# preview's, the image pane's. Already in the tree through kui's
 # clipboard (arboard), so the formats are all this adds.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+# An SVG drawn to pixels at the size it is shown at (`picture.rs`).
+resvg = "0.48"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

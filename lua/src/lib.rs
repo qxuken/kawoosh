@@ -316,6 +316,16 @@ pub enum Msg {
     Pass,
     /// `kawoosh.image(path)` named a path not asked for before: read it.
     LoadImage(PathBuf),
+    /// `kawoosh.image(path, { play = true })`, each frame a view draws
+    /// a picture that moves: it goes on moving.
+    ImagePlay(PathBuf),
+    /// `kawoosh.image(path, { frame = n })`: the frame shown, from 0.
+    ImageFrame(PathBuf, usize),
+    /// `kawoosh.image(path, { width = px })`: a drawing drawn again,
+    /// that many pixels wide.
+    ImageWidth(PathBuf, u32),
+    /// `kawoosh.image(path, { reload = true })`: the file read again.
+    ImageReload(PathBuf),
     /// `kawoosh.fs.watch(name, paths, fn)`: plugin set `name` watched
     /// (none: stopped).
     Watch {
@@ -717,7 +727,25 @@ pub struct FieldSnap {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ImageSnap {
     Loading,
-    Ready { id: i64, width: u32, height: u32 },
+    Ready {
+        id: i64,
+        /// The picture's own size: what it is laid out by.
+        width: u32,
+        height: u32,
+        /// The pixels kui has: a drawing's as last drawn, a still's
+        /// scaled down when it was past what a texture takes.
+        pixels: (u32, u32),
+        /// How many frames it has (1: a still), which is shown (from
+        /// 0), and how long they all take, in ms.
+        frames: usize,
+        frame: usize,
+        duration_ms: u64,
+        /// Frames were left out: too many to keep.
+        more: bool,
+        format: &'static str,
+        /// A drawing: sharp at any width asked for.
+        vector: bool,
+    },
     Failed(String),
 }
 
@@ -3485,26 +3513,84 @@ fn seed(
             Ok(out)
         })?,
     )?;
-    // `kawoosh.image(path)`: the image file at `path` for a view's
-    // `image { id = }` — `{ id, width, height }` once it is read and
-    // registered, `nil` while it is on its way (asked for the first
-    // time it is named; the frame it lands draws the view again), or
-    // `nil, why` when it cannot be (not an image, too big).
+    // `kawoosh.image(path[, opts])`: the picture file at `path` for a
+    // view's `image { id = }` — `{ id, width, height, … }` once it is
+    // read and registered, `nil` while it is on its way (asked for the
+    // first time it is named; the frame it lands draws the view
+    // again), or `nil, why` when it cannot be (not a picture, too
+    // big). `width` and `height` are the picture's own size; beside
+    // them `format` (`png`, `jpeg`, `gif`, `webp`, `bmp`, `svg`),
+    // `pixel_width` and `pixel_height` (what was decoded), `frames`,
+    // `frame` (the one shown, from 1), `duration` (all of them, ms),
+    // `more` (frames left out) and `vector` (a drawing). `opts`, each
+    // asked of the one picture every view of the file shares:
+    // `play = true`, said each frame it is drawn, keeps a picture that
+    // moves moving; `frame = n` shows that frame; `width = px` draws a
+    // drawing again that many pixels wide; `reload = true` reads the
+    // file again, the picture shown until then the one there was.
     let (qq, pp) = (q(queue), published.clone());
     k.set(
         "image",
-        lua.create_function(move |lua, path: String| {
+        lua.create_function(move |lua, (path, opts): (String, Option<Table>)| {
             let path = expand(&path);
             let mut p = pp.borrow_mut();
             let (a, b) = match p.images.get(&path) {
-                Some(ImageSnap::Ready { id, width, height }) => {
+                Some(ImageSnap::Ready {
+                    id,
+                    width,
+                    height,
+                    pixels,
+                    frames,
+                    frame,
+                    duration_ms,
+                    more,
+                    format,
+                    vector,
+                }) => {
                     let t = lua.create_table()?;
                     t.set("id", *id)?;
                     t.set("width", *width)?;
                     t.set("height", *height)?;
+                    t.set("pixel_width", pixels.0)?;
+                    t.set("pixel_height", pixels.1)?;
+                    t.set("frames", *frames)?;
+                    t.set("frame", *frame + 1)?;
+                    t.set("duration", *duration_ms)?;
+                    t.set("more", *more)?;
+                    t.set("format", *format)?;
+                    t.set("vector", *vector)?;
+                    if let Some(o) = &opts {
+                        let mut q = qq.borrow_mut();
+                        if o.get::<Option<bool>>("reload")?.unwrap_or(false) {
+                            q.push(Msg::ImageReload(path.clone()));
+                        }
+                        if let Some(n) = o.get::<Option<f64>>("frame")? {
+                            let n = (n.max(1.0) as usize - 1).min(frames.saturating_sub(1));
+                            if n != *frame {
+                                q.push(Msg::ImageFrame(path.clone(), n));
+                            }
+                        }
+                        if *frames > 1 && o.get::<Option<bool>>("play")?.unwrap_or(false) {
+                            q.push(Msg::ImagePlay(path.clone()));
+                        }
+                        if let Some(w) = o.get::<Option<f64>>("width")? {
+                            let w = w.clamp(1.0, 65536.0).round() as u32;
+                            if *vector && w != pixels.0 {
+                                q.push(Msg::ImageWidth(path.clone(), w));
+                            }
+                        }
+                    }
                     (LV::Table(t), LV::Nil)
                 }
-                Some(ImageSnap::Failed(why)) => (LV::Nil, LV::String(lua.create_string(why)?)),
+                Some(ImageSnap::Failed(why)) => {
+                    // What could not be read may be readable now.
+                    if let Some(o) = &opts
+                        && o.get::<Option<bool>>("reload")?.unwrap_or(false)
+                    {
+                        qq.borrow_mut().push(Msg::ImageReload(path.clone()));
+                    }
+                    (LV::Nil, LV::String(lua.create_string(why)?))
+                }
                 Some(ImageSnap::Loading) => (LV::Nil, LV::Nil),
                 None => {
                     p.images.insert(path.clone(), ImageSnap::Loading);

@@ -64,6 +64,7 @@ pub mod notify;
 pub mod palette;
 pub mod panes;
 pub mod perf;
+pub mod pictures;
 pub mod plugins;
 pub mod rows;
 pub mod scripting;

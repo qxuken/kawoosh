@@ -144,7 +144,8 @@ end
 
 -- The files the preview draws as a picture, by extension: what the
 -- engine decodes (`kawoosh.image`).
-picker.images = { png = true, jpg = true, jpeg = true, gif = true }
+picker.images = { png = true, apng = true, jpg = true, jpeg = true, gif = true, webp = true, bmp = true,
+                  svg = true, svgz = true }
 
 -- A file that is not text, by its extension: fonts, images, sound,
 -- archives, what a build left — ranked under the rest, since a query

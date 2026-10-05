@@ -13,7 +13,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
 
 use kawoosh_editor::Spec;
 use kawoosh_languages::{Block, Token};
@@ -21,6 +20,7 @@ use kui_native::{Color, TextWrap};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
+pub use crate::pictures::{Image, Images};
 use crate::rows::{Drawn, Mark};
 
 /// A line as the rendered buffer draws it.
@@ -631,7 +631,7 @@ pub fn is_table_line(buf: &kawoosh_doc::Buffer, ln: usize) -> bool {
             .any(|(_, b)| matches!(b, Block::Table | Block::TableHeader | Block::TableDelimiter))
 }
 
-fn hash_of(s: &str) -> u64 {
+pub(crate) fn hash_of(s: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut h);
@@ -640,7 +640,7 @@ fn hash_of(s: &str) -> u64 {
 
 /// Standard base64 decoded, whitespace skipped; None on a character
 /// outside the alphabet.
-fn base64(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn base64(s: &str) -> Option<Vec<u8>> {
     let val = |c: u8| -> Option<u32> {
         Some(match c {
             b'A'..=b'Z' => (c - b'A') as u32,
@@ -665,33 +665,12 @@ fn base64(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// An image read: its width, height and RGBA8 pixels.
-pub type Pixels = (u32, u32, Vec<u8>);
-
 /// A rendered row worked out ahead of the frame, and each image it
 /// shows: kui's id and its size in px once read, else its alt.
 pub type Ahead = (
     Rendered,
     Vec<Result<(kui_native::ImageId, f32, f32), String>>,
 );
-
-/// An image a markdown buffer shows: being read, ready (kui's id and its
-/// size in px), or why not.
-pub enum Image {
-    Loading,
-    Ready {
-        id: kui_native::ImageId,
-        w: u32,
-        h: u32,
-    },
-    Failed(String),
-}
-
-/// The images the rendered buffers have asked for, by path.
-#[derive(Default)]
-pub struct Images {
-    pub by_path: HashMap<PathBuf, Image>,
-}
 
 /// Line `ln` of `buf` rendered, `reveal` what of it is source: its syntax
 /// and structure runs read line-relative — the structure's reaching the
@@ -1246,92 +1225,6 @@ impl Kawoosh {
             dim: self.pal.dim,
             code_bg: self.pal.strip,
             heading_color: self.syntax_color_for(Token::Heading, dark),
-        }
-    }
-
-    /// The image at `dest` (relative to the buffer's directory), asked
-    /// for once and read on the io thread; what is known of it now.
-    pub(crate) fn markdown_image(&mut self, dir: Option<&Path>, dest: &str) -> Option<&Image> {
-        // `data:image/png;base64,…`: the pixels in the text, decoded
-        // here, once — kept under a name of their own.
-        if let Some(data) = dest.strip_prefix("data:") {
-            let key = PathBuf::from(format!("data:{:016x}", hash_of(data)));
-            if !self.md_images.by_path.contains_key(&key) {
-                let r = data
-                    .split_once(";base64,")
-                    .ok_or_else(|| "not base64".to_string())
-                    .and_then(|(_, b64)| base64(b64).ok_or_else(|| "bad base64".into()))
-                    .and_then(|bytes| kawoosh_systems::io::decode_image_bytes(&bytes));
-                self.md_images.by_path.insert(key.clone(), Image::Loading);
-                self.image_decoded(key.clone(), r);
-            }
-            return self.md_images.by_path.get(&key);
-        }
-        if dest.contains("://") {
-            return None;
-        }
-        let path = match dir {
-            Some(d) => kawoosh_systems::fs::expand(Path::new(dest), d),
-            None => PathBuf::from(dest),
-        };
-        if !self.md_images.by_path.contains_key(&path) {
-            let max = self
-                .ed
-                .settings
-                .int("markdown.image_max_mb")
-                .map_or(16, |n| n.max(0) as u64)
-                << 20;
-            self.md_images.by_path.insert(path.clone(), Image::Loading);
-            if self.jobs_inline {
-                let r = kawoosh_systems::io::decode_image(&path, max);
-                self.image_decoded(path.clone(), r);
-            } else {
-                let p = path.clone();
-                self.pending_jobs += 1;
-                self.io
-                    .run("image", move || kawoosh_systems::io::IoMsg::Image {
-                        result: kawoosh_systems::io::decode_image(&p, max),
-                        path: p,
-                    });
-            }
-        }
-        self.md_images.by_path.get(&path)
-    }
-
-    /// An image read: registered with kui when the next frame has the
-    /// core (`md_pending`), or why it could not be.
-    pub(crate) fn image_decoded(&mut self, path: PathBuf, r: Result<(u32, u32, Vec<u8>), String>) {
-        match r {
-            Ok(img) => {
-                self.md_pending.push((path, img));
-            }
-            Err(e) => {
-                if let Some(rt) = &self.scripting.rt {
-                    rt.set_image(path.clone(), kawoosh_lua::ImageSnap::Failed(e.clone()));
-                }
-                self.md_images.by_path.insert(path, Image::Failed(e));
-            }
-        }
-    }
-
-    /// The images read since the last frame, into kui.
-    pub(crate) fn register_images(&mut self, ui: &mut kui_native::Ui<'_>) {
-        for (path, (w, h, rgba)) in std::mem::take(&mut self.md_pending) {
-            let id = ui.core().resources.add_image(w, h, rgba);
-            // What a Lua view asked for by path (`kawoosh.image`) too.
-            if let Some(rt) = &self.scripting.rt {
-                rt.set_image(
-                    path.clone(),
-                    kawoosh_lua::ImageSnap::Ready {
-                        id: id.to_ffi() as i64,
-                        width: w,
-                        height: h,
-                    },
-                );
-            }
-            self.md_images
-                .by_path
-                .insert(path, Image::Ready { id, w, h });
         }
     }
 

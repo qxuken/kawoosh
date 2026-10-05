@@ -987,26 +987,12 @@ impl Kawoosh {
                     .watch(all);
             }
             // Read as the markdown buffer's images are, and said to Lua
-            // when it lands (`image_decoded`, `register_images`).
-            Msg::LoadImage(path) => {
-                let dest = path.display().to_string();
-                let known = match self.markdown_image(None, &dest) {
-                    Some(crate::markdown::Image::Ready { id, w, h }) => {
-                        Some(kawoosh_lua::ImageSnap::Ready {
-                            id: id.to_ffi() as i64,
-                            width: *w,
-                            height: *h,
-                        })
-                    }
-                    Some(crate::markdown::Image::Failed(e)) => {
-                        Some(kawoosh_lua::ImageSnap::Failed(e.clone()))
-                    }
-                    _ => None,
-                };
-                if let Some(snap) = known {
-                    rt.set_image(path, snap);
-                }
-            }
+            // when it lands (`pictures.rs`).
+            Msg::LoadImage(path) => self.lua_picture(&path),
+            Msg::ImagePlay(path) => self.picture_play(&path),
+            Msg::ImageFrame(path, n) => self.picture_frame(&path, n),
+            Msg::ImageWidth(path, width) => self.picture_width(&path, width),
+            Msg::ImageReload(path) => self.picture_reload(&path),
             Msg::Kill(token) => {
                 if let Some(p) = self.scripting.procs.values().find(|p| p.token == token) {
                     p.handle.kill();

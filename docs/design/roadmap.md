@@ -3098,6 +3098,46 @@ frame.
     (`bytes_are_written_over_undone_and_saved_in_place`,
     `changes_not_written_are_kept_past_the_pane_and_the_editor`).
 
+89. ~~**A picture's pane**: stills, the ones that move, drawings.~~
+    Built 2026-10-05, asked the same day ("lets add an image/gif/svg
+    panels"): `:image [PATH]`, `kawoosh/lua/image.lua`, a Lua pane like
+    `:hex`. A picture fitted to the pane, zoomed (`+` `-` `0` `f`,
+    `:image zoom N`) and moved over (`hjkl`, the wheel, a drag); a GIF,
+    an APNG or an animated WebP played, held (`p`) and stepped (`.`
+    `,`); an SVG drawn at the size it is shown; `b` a light or dark
+    ground, `n` `N` the folder's pictures in turn, `t` the file as
+    text or bytes. What was decided:
+    - *One picture a file* (`kawoosh/src/pictures.rs`, the markdown
+      buffer's cache made everyone's): read once on a thread of its
+      own (`systems/src/picture.rs`), one image in kui however many
+      panes show it, behind `kawoosh.image(path, opts)` — so the file
+      manager's preview, the picker's and a markdown buffer draw an
+      SVG, a WebP and a BMP too.
+    - *The engine steps, a view asks.* A moving picture's frames are
+      kept in memory and written over its one image; it steps while a
+      view that drew it last frame said `play = true`, the window
+      woken when the frame's time is up — not every frame — and holds
+      still when nothing draws it. Lua keeps no clock. Every pane of
+      one file is on the same frame.
+    - *A drawing is text first.* An `.svg` opens as a buffer, and
+      `:image` draws it beside its source; its tree is kept, and it is
+      drawn again (resvg) at the pixels the pane shows it at, up to
+      4096 a side, one drawing at a time.
+    - *A file that changed is read again*: the pane stamps the file
+      each frame it is drawn and watches it (`kawoosh.fs.watch`); the
+      picture there was stays until the new one lands.
+    - *Caps, said*: `image.max_mb` on disk (64); a still past 8192
+      pixels a side scaled down, its own size still said; 256 MB of
+      frames, the rest left out.
+    - *In the flow, not a float*: the picture sits in a scroller whose
+      offset the view sets — a float drew over a dialog.
+    - Not built: zoom by the wheel or a pinch (a scroll event says no
+      modifier, and kui has no pinch); a checkered ground; a picture
+      that moves in a markdown buffer (its first frame is drawn);
+      a session bringing the pane back; tiles for a drawing past the
+      cap; EXIF's turn; a stamp finer than a second.
+    `kawoosh/tests/image.rs`; `systems` `picture::tests`.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
