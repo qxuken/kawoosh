@@ -124,6 +124,7 @@ const SWEEP: &[&str] = &[
     "diagnostics",
     "diagnostics buffer",
     "du",
+    "hex",
     "dir",
     "vcs",
     "vcs log",

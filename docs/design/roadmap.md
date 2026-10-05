@@ -3031,6 +3031,42 @@ frame.
     `kawoosh/lua/tests/plugin_diagnostics.lua`, `on_tree.lua`,
     `kawoosh/tests/lsp.rs`.
 
+88. ~~**A file's bytes**: a binary viewer, its cursor a cell.~~ Built
+    2026-10-05, asked the same day ("Let's add binary viewer probably
+    with cell navigation", beside a picture of a hex editor's rows):
+    `:hex [PATH]`, `kawoosh/lua/hex.lua`, a Lua pane like `:du`. Rows
+    of offset, sixteen bytes in hex (eight or four where the pane is
+    narrow, `hex.columns`) and the same bytes as text; the cursor one
+    byte, lit in both halves, walked by `hjkl`, `w` `b` (fours), `0`
+    `$`, `gg` `G`, the page keys, `Ngo` and `:hex goto OFFSET` (`0x…`,
+    decimal, `+`/`-` from the cursor, `N%`); `/` and `:hex find` for
+    text or `0x` hex digits, `n` `N` round the ends; `v` and a drag
+    select, `y` `Y` copy hex or text; a foot reading the integers and
+    floats that start at the cursor, `e` the byte order. A file with a
+    NUL in its first 8000 bytes opens there instead of as repaired
+    text (`hex.binary`; `t` opens it as text). What was decided:
+    - *A viewer.* Nothing is written; editing bytes wants an undo and
+      a save of its own and nothing asked for it.
+    - *Never the whole file.* `kawoosh.fs.bytes(path, offset, len)`
+      reads the screenful each frame it is drawn and
+      `kawoosh.fs.find(path, needle, from, back)` searches a megabyte
+      at a time (`systems/src/fs.rs`), so no map is held over a file
+      another program may cut short, a 4 GB file costs what a 4 KB one
+      does, and what is shown is what is there now. A find is on the
+      frame's thread: a gigabyte without the bytes is the wait. A
+      host's file (ssh) is read whole each time — slow, not wrong.
+    - *One `cells` node.* The grid is kui's terminal grid, a row of
+      the file a row of cells: a click and a drag say their cell, the
+      wheel its whole lines, and the rows scroll by whole rows from a
+      first row the pane keeps itself — a scroller's pixel offset is
+      an `f32`, coarser than a row past some hundred megabytes. The
+      thumb at the side is the pane's own.
+    - Not built: editing; a session bringing the pane back; a find
+      off the frame's thread; other encodings in the text half.
+    `kawoosh/tests/hex.rs`; `systems` `fs::tests::bytes_are_read_and_found_without_the_whole`.
+    A command's `ctx.counted` (a count was typed) came with it, for
+    `Ngo` against `go`.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision

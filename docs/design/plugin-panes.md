@@ -146,6 +146,15 @@ list p`, remapped by a user, counted (`3j`) and shown by the which-key,
 and a handler is none of those. A click on a field node focuses it
 before the handler sees anything.
 
+A node's `on_drag` and `on_scroll` come back under kui's own kinds —
+`ev.kind == "drag"` (with `phase`, `x`, `y`, `parent`) and `"scroll"`
+(with `dx`, `dy`) — the payload the node declared under `ev.tag`,
+where a click's payload is the event itself. On a `cells` grid each
+carries what the grid knows: a click and a drag their `cell = { row,
+col }`, the wheel its whole `lines` (positive toward later rows).
+`hex.lua` is the example: one grid, a cursor put by `cell`, rows
+scrolled by `lines`.
+
 ## Fields: a line of the editor in the pane
 
 `ctx.field { name = "q", placeholder = "find", size = 13 }` returns the

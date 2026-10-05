@@ -44,7 +44,8 @@ end
 -- kawoosh.command(name, fn[, opts]): a named command, callable from a
 -- keymap, the command line, or Rust. A name of two words is a
 -- subcommand (`"dir cd"` runs as `:dir cd`, completes under `:dir`).
--- `fn(ctx)` gets { count = n, args = {...}, form = "run" | "bang" |
+-- `fn(ctx)` gets { count = n, counted = (a count was typed: `1j` and
+-- not `j`), args = {...}, form = "run" | "bang" |
 -- "query", bang = bool, query = bool, pane = the id of the pane the
 -- keyboard is in — a view's `ctx.pane` when it is one }. `opts`:
 --   args    what the arguments are, one kind per position — "path",
