@@ -1009,3 +1009,22 @@ repository is not changed here; to ship them it would need:
 - a sample per grammar with a function in it, if the check should say
   more than that it compiles (`each_shipped_query_finds_its_objects` is
   the builtins' model).
+
+**xml, 2026-10-06**: release `r6`, seventy grammars (kawoosh-grammars
+7a64702). Asked: "Let's set syntax for svg … idk is it a tree-sitter
+or we can just add svg extension to html". A grammar of its own —
+tree-sitter-grammars/tree-sitter-xml, its `xml` directory — with `svg`
+among its extensions (`xsd`, `xsl`, `plist`, `csproj`, `xaml`, `rss`
+and the like beside it), since html's parser has no `<?xml ?>`, no
+CDATA section and no internal DTD subset. Round 5 left it out for "no
+highlights in the repository": they are in `queries/xml`, under the
+root's `queries/` in a directory of the grammar's path, which the
+builder now reads between the grammar's own `queries/` and the root's.
+Its `injections.scm` (a `<style>` is css, a `<script>` javascript, as
+text or in CDATA) and `indents.scm` are written in the repository.
+Nothing changed in kawoosh: the files are the manifest's, and an svg
+opens as text already (image.lua). Seen in a window: `:grammar install
+xml` from the release painted an open `picture.svg` where it stood,
+the script's javascript with it; the style's css checked by its tokens
+(a property, a number, a unit — none for the same text in another
+element).
