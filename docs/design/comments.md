@@ -1,8 +1,10 @@
 # Comments: `gc` + motion, `gcc` the line
 
 Status: planned 2026-10-06 from the ask "Let's plan comment movements.
-I used often `gcc` to comment out a block of code or a line". The calls
-below are taken here, each the user's to overturn. Roadmap step 90.
+I used often `gcc` to comment out a block of code or a line", round 1
+built the same day ("allright let's build it"). The calls below are
+taken here, each the user's to overturn; where the build moved one,
+the section says so. Roadmap step 90.
 Companion to [editorconfig.md](editorconfig.md) (where a language's
 ways live), [nodes.md](nodes.md) (the syntax's door) and
 [keys.md](keys.md) (the letters).
@@ -206,15 +208,23 @@ keeps the painted layers, but behind an answer that lags the text; the
 indenter's `Trees` are caught up to the buffer before they are read,
 and the injections query runs over the same kept tree in microseconds.
 
-### 5. `:comment` is the command's spelling
+### 5. `:comment lines` is the command's spelling
 
-`:comment` toggles the selection's lines (the caret's line with none),
-what `gc` runs; `:comment!` is not a thing — the toggle has no force.
-It is what Lua and the socket have (`kawoosh ex comment`), and the
-command palette's entry. `kawoosh.buf.comment_tokens(buf?)` returns
-`{ line = "//", block = { "/*", "*/" } }` as the scope reads them for
-the buffer, or at a byte with `{ at = }`, so a node action that wants
-to comment what it replaced has the tokens without a second table.
+`comment` is the operator (`gc`), and a command run from the command
+line cannot be told from one a key ran — `:comment` alone leaves the
+operator pending, as `:align` does. The lines' form has a name of its
+own, `comment lines`: COUNT lines at the caret, or the selection's in
+visual mode, at once. It is what `gcc` runs — `c` in operator-pending
+mode is bound to it, and completes a pending `comment`; after any
+other operator it does what `c` did there (`cc` changes the line, `dc`
+nothing) — and what Lua and the socket have (`kawoosh ex comment
+lines`). There is no `!`: the toggle has no force.
+`kawoosh.buf.comment_tokens(buf?)` returns `{ line = "//", block = {
+"/*", "*/" } }` as the scope reads them for the buffer, each absent
+where the language has none; `{ at = }` for a byte's layer comes with
+round 2.
+
+*Built 2026-10-06 as written here; the note had said `:comment`.*
 
 ### 6. Each selection its own range, a line never twice
 
@@ -242,3 +252,23 @@ the two that wait for a character.
    built-in manifest copy following, `kawoosh.language` taking the
    keys.
 4. **`gb`**, a block comment over the range as one pair, when use asks.
+
+## Built
+
+Round 1, 2026-10-06. `comment` is the operator and `comment lines` the
+line form (`editor/src/commands.rs`: `comment_lines` plans the edits,
+`apply_operator`'s `"comment"` branch runs them through `edit_keeping`
+so a caret rides its text, then puts an extended selection on its
+first line's first non-blank); `gc` in normal and visual mode, `c` in
+operator-pending mode. `comment` and `comment_block` are declared bare
+(`:set comment=#`, `undeclared` names a typo) and defaulted per
+language in `settings.rs`; `Editor::comment_tokens_in` reads them
+through the scope, an empty string taking a token away.
+`kawoosh.buf.comment_tokens()` in `lua/src/lib.rs`. Help: `editing.md`
+(a Comments section), `settings.md` (the profiles' table), keys.md.
+Tests: `kawoosh/tests/comment.rs` (the toggle both ways and the caret,
+a count and a motion over mixed indents with a tab, one space taken
+on the way back, a block-only language, no token and only blank lines,
+`.` with `cc` and `dc` unchanged, two carets sharing a line, the
+command-line spelling, the session's token),
+`kawoosh/lua/tests/buf_comment_tokens.lua`. Rounds 2–4 open.

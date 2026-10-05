@@ -775,6 +775,8 @@ pub struct BufSnap {
     /// `.editorconfig`'s (docs/design/editorconfig.md): the tab's
     /// columns, an indent's, and whether an indent is spaces.
     pub indent: (usize, usize, bool),
+    /// Its comment tokens as its settings say (`kawoosh.buf.comment_tokens`).
+    pub comment: kawoosh_editor::CommentTokens,
     /// What it is read against, and the hunks as last diffed
     /// (docs/design/vcs.md): shared, so a publish copies nothing.
     pub base: Option<kawoosh_editor::Base>,
@@ -1643,6 +1645,7 @@ impl Runtime {
                     borrowed: ed.borrowed.contains(&id),
                     in_tab: ed.tab_buffers.as_ref().is_none_or(|s| s.contains(&id)),
                     indent: (ed.tabstop_in(id), ed.shiftwidth_in(id), ed.expandtab_in(id)),
+                    comment: ed.comment_tokens_in(id),
                     base: ed.base(id).cloned(),
                     blame: ed.blame(id).cloned(),
                 },
@@ -4866,6 +4869,25 @@ fn seed(
                     "\t".into()
                 },
             )?;
+            Ok(t)
+        })?,
+    )?;
+    // `kawoosh.buf.comment_tokens(buffer)`: its comment tokens as its
+    // settings say (docs/design/comments.md Decision 5) — `{ line =
+    // "//", block = { "/*", "*/" } }`, either absent where the language
+    // has none.
+    let pp = published.clone();
+    buf.set(
+        "comment_tokens",
+        lua.create_function(move |lua, h: Option<u64>| {
+            let tokens = with_buf(&pp, h, |b| b.comment.clone())?;
+            let t = lua.create_table()?;
+            if let Some(line) = tokens.line {
+                t.set("line", line)?;
+            }
+            if let Some((o, c)) = tokens.block {
+                t.set("block", vec![o, c])?;
+            }
             Ok(t)
         })?,
     )?;

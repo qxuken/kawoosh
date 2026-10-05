@@ -12,10 +12,10 @@ where yanked text goes.
 | insert | `i` `a` `I` `A` `o` `O`, `s` `S` `C`, `c` + motion | keys type text |
 | visual | `v` | motions extend the selection |
 | visual line | `V` | the same, by whole lines |
-| operator-pending | `d` `c` `y` `>` `<` `=` `gu` `gU` `g~` `gsa` `ga` | waiting for a motion or a text object |
+| operator-pending | `d` `c` `y` `>` `<` `=` `gu` `gU` `g~` `gc` `gsa` `ga` | waiting for a motion or a text object |
 
 An operator doubled works on lines, as in vim: `dd`, `yy`, `cc`, `>>`,
-`==`, `guu`, `gUU`, `g~~`, with a count for more lines. `<Esc>` in
+`==`, `guu`, `gUU`, `g~~`, `gcc`, with a count for more lines. `<Esc>` in
 normal mode backs out of whatever is open, one step a press: a pending
 operator, then the extra cursors, then the search highlight.
 
@@ -207,6 +207,34 @@ back. `P` keeps the register, to paste one text over many places.
 
 Either bracket of a pair names it (`(` or `)`), `b` and `B` are round and
 curly, and any other character wraps with itself on both sides.
+
+## Comments
+
+| keys | what |
+|---|---|
+| `gc` + motion | comment the lines it covers out, or back in when every one is a comment: `gcip`, `gc3j`, `gca/` |
+| `gcc` | the line; `3gcc` three |
+| `gc` in visual | the selection's lines, whole |
+
+One rule for the whole range: if every line (blank ones aside) already
+starts with the token, all are uncommented; otherwise all are commented,
+blank lines skipped. The token goes at the lines' least indent with a
+space after it, so a block reads as a block and comes back as it was:
+
+```rust
+    if a {          // gcc on each, or gc2j once:
+        b();        //     // if a {
+    }               //     //     b();
+                    //     // }
+```
+
+Uncommenting takes the token and one space. The token is the language's
+`comment` setting (`//`, `#`, `--`), with `comment_block` the pair where
+there is one; a language with only the pair (CSS, HTML, markdown) wraps
+each line: `/* color: red; */`. `:set comment=#` changes a buffer's for
+the session, `language.NAME.comment` in your settings for good, and
+`kawoosh.buf.comment_tokens()` reads them from Lua. `:comment lines` is
+`gcc` by name. `.` repeats, so `gcc` `j.` `j.` walks down a file.
 
 ## Node actions
 

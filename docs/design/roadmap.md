@@ -3141,7 +3141,10 @@ frame.
 90. **Comments**: `gc` + motion, `gcc` the line, a toggle
     ([comments.md](comments.md)). Planned 2026-10-06, asked the same
     day ("Let's plan comment movements. I used often `gcc` to comment
-    out a block of code or a line"). An operator beside `indent`: all
+    out a block of code or a line"); round 1 built the same day
+    (`comment` and `comment lines` in `commands.rs`, `c` in
+    operator-pending mode for `gcc`, `kawoosh/tests/comment.rs`),
+    rounds 2–4 open. An operator beside `indent`: all
     the range's lines commented or all uncommented, decided at once,
     the token at their least indent with a space after it, blank lines
     skipped; a block-only language wraps each line. The tokens are
@@ -3149,7 +3152,7 @@ frame.
     buffer's scope, defaulted for the built-ins, carried by
     kawoosh-grammars' `grammar.toml` for the rest (`r7`); the layer's
     language where the tree has layers (`<script>`, a fence), by a
-    `language_at` on the syntax's door. `:comment`,
+    `language_at` on the syntax's door. `:comment lines`,
     `kawoosh.buf.comment_tokens`. Four rounds: the operator, the
     injections, the grammars' tokens, `gb` when use asks.
 
