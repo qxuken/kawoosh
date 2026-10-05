@@ -242,6 +242,38 @@ file's path — closing the pane or quitting loses none of it, and
 | `<C-s>`, `:hex write` | writes the changes; `:hex write!` over a file that changed on disk |
 | `:hex revert` | drops every change not written |
 
+## A picture
+
+`:image [PATH]` opens a column over a picture: a still (PNG, JPEG,
+WebP, BMP), one that moves (GIF, APNG, animated WebP), or a drawing
+(SVG). A file named as a still or a moving one opens here by itself
+(`image.open = false` for its bytes); an SVG is text and opens as
+text, and `:image` from it draws it beside its source, again at each
+save. The picture is fitted to the pane — never larger than it is, but
+for a drawing, which is drawn at whatever size it is shown.
+
+| key | |
+|---|---|
+| `+` `-` | zooms in, out, about the pane's middle |
+| `0` | its own size |
+| `f` | fits it to the pane again |
+| `:image zoom N` | a percent of its own size (`250`, `50%`), or `fit` |
+| `h` `j` `k` `l`, the wheel, a drag | move over what does not fit |
+| `<C-d>` `<C-u>` | half a pane down, up |
+| `p` | holds a picture that moves, and lets it go |
+| `.` `,` | a frame on, a frame back |
+| `b` | the ground under it: light, dark, the pane's own (`image.backdrop`) |
+| `n` `N` | the next picture of the folder, the one before |
+| `r` | reads the file again (one that changed is read by itself) |
+| `t` | opens it as what it is under the picture: text, or bytes |
+| `q` | closes |
+
+Past twice its size a picture's pixels are drawn as squares. A file
+past `image.max_mb` (64) is not read; a still past 8192 pixels a side
+is shown scaled down, and a moving one keeps the frames that fit in
+256 MB. The file manager's preview and the picker's draw the same
+pictures.
+
 ## Disk usage
 
 `:du [PATH]` (`<leader>wu` for the working directory) opens a column

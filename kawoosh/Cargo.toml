@@ -66,6 +66,8 @@ path = "src/bin/gen.rs"
 
 [dev-dependencies]
 png = "0.18"
+# The pictures `tests/image.rs` draws: in the tree through the systems.
+image = { version = "0.25", default-features = false, features = ["png", "gif"] }
 base64 = "0.23"
 criterion.workspace = true
 rusqlite.workspace = true

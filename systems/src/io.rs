@@ -61,6 +61,8 @@ pub enum IoMsg {
     /// A wake the app asked for at a time (`Io::tick_at`): a status
     /// segment that changes with the clock (docs/design/status.md).
     Tick,
+    /// A wake at a time and nothing else: a picture's next frame is due.
+    Wake,
     /// A change `kawoosh.fs.remove(path, fn)` or `fs.copy(a, b, fn)`
     /// made on a thread of its own: the job's token, and why not.
     FsDone {
@@ -95,11 +97,12 @@ pub enum IoMsg {
         root: PathBuf,
         result: Result<crate::search::Found, String>,
     },
-    /// An image read and decoded for the markdown buffer: its pixels as
-    /// RGBA8 and its size, or why not.
+    /// A picture read for a pane (`picture.rs`), or why not; `drawn`
+    /// for a drawing the panes have, drawn again at another width.
     Image {
         path: PathBuf,
-        result: Result<(u32, u32, Vec<u8>), String>,
+        result: Result<crate::picture::Picture, String>,
+        drawn: bool,
     },
     /// A file being opened ([`Io::open_file`]): the bytes indexed so far.
     Opening {
@@ -1358,30 +1361,6 @@ pub fn edit(sock: &std::path::Path, args: &[String], mut wait: bool) -> anyhow::
         )?;
     }
     Ok(())
-}
-
-/// An image file read and decoded to RGBA8 — PNG, JPEG, GIF's first
-/// frame — refused past `max` bytes on disk.
-pub fn decode_image(path: &std::path::Path, max: u64) -> Result<(u32, u32, Vec<u8>), String> {
-    // A host's too, through the file system layer.
-    let size = crate::fs::stat(path).map_err(|e| e.to_string())?.size;
-    if size > max {
-        return Err(format!("{} MB, past the cap", size >> 20));
-    }
-    let bytes = crate::fs::read_bytes(path).map_err(|e| e.to_string())?;
-    decode_image_bytes(&bytes)
-}
-
-/// [`decode_image`] of bytes in hand — a `data:` URI's.
-pub fn decode_image_bytes(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
-    let img = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|e| e.to_string())?
-        .decode()
-        .map_err(|e| e.to_string())?
-        .to_rgba8();
-    let (w, h) = img.dimensions();
-    Ok((w, h, img.into_raw()))
 }
 
 #[cfg(test)]

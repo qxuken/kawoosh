@@ -1314,7 +1314,8 @@ local PREVIEW_LINES = 400
 
 -- The files the preview draws as a picture (`kawoosh.image`, what the
 -- engine decodes), by extension.
-dir.images = { png = true, jpg = true, jpeg = true, gif = true }
+dir.images = { png = true, apng = true, jpg = true, jpeg = true, gif = true, webp = true, bmp = true,
+  svg = true, svgz = true }
 
 function dir.is_image(path)
   local ext = path:match("%.([%w]+)$")

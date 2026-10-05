@@ -225,4 +225,6 @@ One thing the editor's: a Lua pane has no `session` record of its own
 beyond being reopened by name, so a plugin that wants its state back
 keeps it in `kawoosh.store`. (The two that were kui's are here: a view's
 nodes take `enter`, `exit` and `keyframes` as any binding's do, and an
-image is `kawoosh.image(path)`'s handle in kui's `image { id = }`.)
+image is `kawoosh.image(path)`'s handle in kui's `image { id = }` —
+`image.lua` is the example: a picture zoomed and moved over, one that
+moves played by `{ play = true }`, a drawing drawn at `{ width = }`.)

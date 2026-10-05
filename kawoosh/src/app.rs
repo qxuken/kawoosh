@@ -168,10 +168,9 @@ pub struct Kawoosh {
     /// The pane being made, while a launcher asks what it is for
     /// (`launcher.rs`).
     pub launcher: Option<crate::launcher::Launcher>,
-    /// The markdown buffer's images, by path, and the ones read since
-    /// the last frame, for kui to register (`markdown.rs`).
-    pub(crate) md_images: crate::markdown::Images,
-    pub(crate) md_pending: Vec<(PathBuf, crate::markdown::Pixels)>,
+    /// The pictures the panes draw, by path, and the ones read since
+    /// the last frame, for kui to register (`pictures.rs`).
+    pub(crate) md_images: crate::pictures::Images,
     /// Each rendered row's height as kui laid it out, by view and line:
     /// what the rendered pane scrolls by, a row being as tall as its
     /// text wraps to — and what they are heights of.
@@ -442,7 +441,6 @@ impl Kawoosh {
             header_last: HashMap::new(),
             launcher: None,
             md_images: Default::default(),
-            md_pending: Vec::new(),
             md_heights: HashMap::new(),
             md_shown: HashMap::new(),
             md_anchor: HashMap::new(),
@@ -897,10 +895,15 @@ impl Kawoosh {
                     self.filtered(token, result);
                 }
                 IoMsg::Diffed { token, hunks } => self.diffed(token, hunks),
-                IoMsg::Image { path, result } => {
+                IoMsg::Image {
+                    path,
+                    result,
+                    drawn,
+                } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
-                    self.image_decoded(path, result);
+                    self.image_decoded(path, result, drawn);
                 }
+                IoMsg::Wake => {}
                 IoMsg::Searched {
                     token,
                     root,

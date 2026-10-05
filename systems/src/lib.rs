@@ -11,6 +11,7 @@ pub mod indent;
 pub mod io;
 pub mod job;
 pub mod lsp;
+pub mod picture;
 pub mod search;
 pub mod servers;
 pub mod sftp;

@@ -652,6 +652,7 @@ kawoosh.view(VIEW, function(ctx)
   local box = env.layout_of(key)
   local room_w = box and box.w or math.max(0, (ctx.width or 0) - 2 * 12)
   local room_h = box and box.h or math.max(0, (ctx.height or 0) - 120)
+  S.measured = box ~= nil
   local digits = digits_for(S.size)
   local n = math.tointeger(kawoosh.opt("hex.columns") or 0) or 0
   if n < 1 then
@@ -849,7 +850,9 @@ kawoosh.view(VIEW, function(ctx)
   return column { width = "grow", height = "grow", bg = t.bg, gap = 8, clip = true,
     head,
     row { width = "grow", height = "grow", min_height = 0, pad = { x = 12 }, gap = 4,
-      column { key = key, width = "grow", height = "grow", min_width = 0, min_height = 0, clip = true, grid },
+      -- Asked for its layout: what `layout_of` answers by.
+      column { key = key, width = "grow", height = "grow", min_width = 0, min_height = 0, clip = true,
+               on_layout = { kind = "laid" }, grid },
       bar },
     foot }
 end, function(ev)
@@ -926,7 +929,9 @@ end
 -- (`"hex"`, `"text"`: the half the keys are in), `mode` (`"one"`,
 -- `"replace"` while bytes are taken), `changed` (bytes not written), `order`
 -- (`"little"`, `"big"`), `needle`, `lines` (the grid's rows as drawn,
--- the columns' names first) — or nil when it is not open: the pane
+-- the columns' names first), `measured` (the rows were counted from
+-- the grid's own box, not guessed from the pane's) — or nil when it
+-- is not open: the pane
 -- last drawn with the keyboard when none is named.
 -- hex.changes(path): a file's changes not written yet, `{ { at =,
 -- new =, disk = }, … }` in the file's order.
@@ -949,7 +954,8 @@ function hex.state(pane)
   if not st then return nil end
   return { path = st.path, size = st.size, cursor = st.cursor, top = st.top, columns = st.n, rows = st.rows,
            anchor = st.anchor, order = st.order == "<" and "little" or "big", needle = st.needle,
-           lines = st.lines, side = st.side or "hex", mode = st.mode, changed = changes(st.path).count }
+           lines = st.lines, side = st.side or "hex", mode = st.mode, changed = changes(st.path).count,
+           measured = st.measured == true }
 end
 
 kawoosh.command("hex", function(ctx)
