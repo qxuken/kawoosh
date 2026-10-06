@@ -161,14 +161,12 @@ fn a_font_installed_while_running_is_a_family() {
 fn the_fallbacks_are_the_symbols_the_shipped_face_and_a_known_mono() {
     let mut d = Drive::new(900.0, 500.0);
     let fonts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts");
-    kawoosh::fonts::load_shipped(&mut d.core, &fonts.join("IosevkaNavcon"));
-    kawoosh::fonts::load_shipped(&mut d.core, &fonts.join("NerdFontsSymbolsOnly"));
-    let family = d
-        .core
-        .system_font_families()
-        .into_iter()
-        .find(|f| f.contains("Iosevka"));
-    let Some(family) = family else {
+    // The families the shipped files gave, not the machine's: an Iosevka
+    // installed system-wide is no shipped face.
+    let shipped = kawoosh::fonts::load_shipped(&mut d.core, &fonts.join("IosevkaNavcon"));
+    let symbols = kawoosh::fonts::load_shipped(&mut d.core, &fonts.join("NerdFontsSymbolsOnly"));
+    let family = shipped.into_iter().find(|f| f.contains("Iosevka"));
+    let (Some(family), false) = (family, symbols.is_empty()) else {
         // A checkout Git LFS has not filled: no shipped face to name.
         return;
     };
