@@ -754,3 +754,78 @@ def "main build" [target: string@targets, --jobs (-j): int, file?: string@files]
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// compile.md Decision 17: a plugin's kind of build (`kawoosh.compile_kind`)
+/// is found and ranked as the builtin ones are — its markers at their
+/// nearest, its commands a list or a function of the file's text, its
+/// programs run where its file is — a builtin's name puts it in that
+/// kind's place, and `false` turns a kind off.
+#[cfg(unix)]
+#[test]
+fn a_plugin_s_kind_of_build_is_read_as_the_builtin_ones() {
+    let dir = project("kinds", "return {}");
+    std::fs::write(dir.join("sub/mix.exs"), "# deps: phoenix\n").unwrap();
+    std::fs::write(dir.join("sub/deeper/b.ex"), "x\n").unwrap();
+    std::fs::write(dir.join("Makefile"), "all:\n\techo\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&dir.join("sub/deeper/b.ex"));
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"
+kawoosh.compile_kind("mix", {
+  markers = { "mix.exs" },
+  runner = true,
+  programs = { "mix" },
+  commands = function(ctx)
+    local rows = { "mix compile", { cmd = "mix test", why = "the tests" } }
+    if ctx.text:find("phoenix") then rows[#rows + 1] = "mix phx.server" end
+    return rows
+  end,
+})
+"#,
+    );
+    d.frame(&mut app);
+    let cmds = |app: &Kawoosh| -> Vec<(String, PathBuf)> {
+        app.deduce_compile()
+            .commands
+            .into_iter()
+            .map(|c| (c.cmd, c.cwd))
+            .collect()
+    };
+    let sub = dir.join("sub");
+    assert_eq!(
+        cmds(&app)[..4],
+        [
+            ("mix compile".to_string(), sub.clone()),
+            ("mix test".to_string(), sub.clone()),
+            ("mix phx.server".to_string(), sub.clone()),
+            ("make".to_string(), dir.clone()),
+        ],
+        "the nearer runner first"
+    );
+    assert_eq!(app.deduce_compile().commands[1].why, "the tests");
+    assert_eq!(
+        app.compile_dir_of("mix deps.get"),
+        sub,
+        "its program runs where its file is"
+    );
+    // A builtin's name: in its place, a list for its commands.
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.compile_kind("make", { markers = { "Makefile" }, commands = { "make -j8" } })"#,
+    );
+    d.frame(&mut app);
+    let all = cmds(&app);
+    assert!(all.iter().any(|(c, _)| c == "make -j8"), "{all:?}");
+    assert!(!all.iter().any(|(c, _)| c == "make all"), "{all:?}");
+    // Off.
+    app.run_lua_source("t", r#"kawoosh.compile_kind("make", false)"#);
+    d.frame(&mut app);
+    assert!(!cmds(&app).iter().any(|(c, _)| c.starts_with("make")));
+    std::fs::remove_dir_all(&dir).ok();
+}

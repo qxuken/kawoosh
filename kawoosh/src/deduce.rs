@@ -3,7 +3,9 @@
 //! files that say what a project builds with — a `Cargo.toml`, a
 //! `package.json`, a justfile, a Makefile, … — read into the commands
 //! they offer, each with the directory it runs in and why it is there,
-//! ranked by the language server's root markers.
+//! ranked by the language server's root markers. A plugin's kinds
+//! (`kawoosh.compile_kind`, Decision 17) are found and ranked as the
+//! builtin ones are.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -20,6 +22,8 @@ pub enum Kind {
     Go,
     Python,
     Zig,
+    /// A plugin's, the Nth of [`Kinds::plugins`].
+    Plugin(usize),
 }
 
 impl Kind {
@@ -35,6 +39,22 @@ impl Kind {
         Kind::Zig,
     ];
 
+    /// The name a plugin replaces it by (`kawoosh.compile_kind`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Cargo => "cargo",
+            Kind::Node => "node",
+            Kind::Just => "just",
+            Kind::Nu => "nu",
+            Kind::Make => "make",
+            Kind::CMake => "cmake",
+            Kind::Go => "go",
+            Kind::Python => "python",
+            Kind::Zig => "zig",
+            Kind::Plugin(_) => "",
+        }
+    }
+
     /// The files that say a directory is this kind's, the one a tool
     /// reads first first.
     fn markers(self) -> &'static [&'static str] {
@@ -49,6 +69,7 @@ impl Kind {
             Kind::Go => &["go.mod"],
             Kind::Python => &["pyproject.toml"],
             Kind::Zig => &["build.zig"],
+            Kind::Plugin(_) => &[],
         }
     }
 
@@ -77,6 +98,54 @@ impl Kind {
             Kind::Go => &["go"],
             Kind::Python => &["uv", "pytest", "mypy", "ruff", "python", "python3"],
             Kind::Zig => &["zig"],
+            Kind::Plugin(_) => &[],
+        }
+    }
+}
+
+/// A kind of build a plugin says (`kawoosh.compile_kind`, compile.md
+/// Decision 17), found as the builtin ones are; `off`, a builtin's name
+/// with nothing in its place. Its commands are the shell's to read
+/// ([`Kinds::rows`]): a list, or a Lua function's answer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PluginKind {
+    pub name: String,
+    pub off: bool,
+    pub markers: Vec<String>,
+    pub outermost: bool,
+    pub runner: bool,
+    pub programs: Vec<String>,
+}
+
+/// What [`deduce`] reads beside the builtin kinds' fixed files.
+pub struct Kinds<'a> {
+    /// The nushell files (`compile.nushell`, Decision 16), each at its
+    /// nearest: names, or paths from a directory.
+    pub nu_files: &'a [String],
+    /// The plugins' kinds; one with a builtin's name is in its place.
+    pub plugins: &'a [PluginKind],
+    /// Plugin kind N's commands for the file found.
+    pub rows: &'a dyn Fn(usize, &Found) -> Vec<Deduced>,
+}
+
+/// How a kind is found and ranked: a builtin's, or a plugin's.
+struct Spec {
+    kind: Kind,
+    markers: Vec<String>,
+    outermost: bool,
+    runner: bool,
+    programs: Vec<String>,
+}
+
+impl Spec {
+    fn of(kind: Kind) -> Spec {
+        let owned = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
+        Spec {
+            kind,
+            markers: owned(kind.markers()),
+            outermost: kind.outermost(),
+            runner: kind.runner(),
+            programs: owned(kind.programs()),
         }
     }
 }
@@ -87,6 +156,8 @@ pub struct Found {
     pub kind: Kind,
     pub file: PathBuf,
     pub dir: PathBuf,
+    /// The programs whose commands are its kind's (Decision 4).
+    pub programs: Vec<String>,
 }
 
 /// A command deduced: what runs, where, the file that said so, and why.
@@ -134,7 +205,7 @@ pub enum Completion {
 }
 
 impl Deduced {
-    fn new(cmd: String, f: &Found, why: &str) -> Self {
+    pub fn new(cmd: String, f: &Found, why: &str) -> Self {
         Deduced {
             args_at: cmd.len(),
             cmd,
@@ -165,7 +236,7 @@ impl Project {
         let program = program.rsplit(['/', '\\']).next().unwrap_or(program);
         self.found
             .iter()
-            .find(|f| f.kind.programs().contains(&program))
+            .find(|f| f.programs.iter().any(|p| p == program))
             .map(|f| f.dir.as_path())
     }
 }
@@ -177,9 +248,8 @@ impl Project {
 /// `markers`, the caret buffer's language server's root markers, then
 /// the task runners, then the rest by nearness. A host's path is not
 /// read (each look would be a round trip): nothing is deduced there.
-/// `nu_files` are the nushell files read (`compile.nushell`, Decision
-/// 16), each at its nearest: names, or paths from a directory.
-pub fn deduce(start: &Path, markers: &[String], nu_files: &[String]) -> Project {
+/// `kinds` are the nushell files and the plugins' kinds.
+pub fn deduce(start: &Path, markers: &[String], kinds: &Kinds) -> Project {
     if kawoosh_systems::fs::domain_of(start).is_some() {
         return Project::default();
     }
@@ -200,82 +270,94 @@ pub fn deduce(start: &Path, markers: &[String], nu_files: &[String]) -> Project 
                 .unwrap_or_default()
         })
         .collect();
+    // The kinds looked for: the builtin ones no plugin replaced, then
+    // the plugins', in the order they were said.
+    let specs: Vec<Spec> = Kind::ALL
+        .iter()
+        .filter(|k| !kinds.plugins.iter().any(|p| p.name == k.name()))
+        .map(|k| Spec::of(*k))
+        .chain(
+            kinds
+                .plugins
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| !p.off)
+                .map(|(i, p)| Spec {
+                    kind: Kind::Plugin(i),
+                    markers: p.markers.clone(),
+                    outermost: p.outermost,
+                    runner: p.runner,
+                    programs: p.programs.clone(),
+                }),
+        )
+        .collect();
+    // A file at directory `i`: a name matched exactly, as listed; a
+    // path looked for.
+    let at = |i: usize, m: &str| {
+        let named = m.contains(['/', '\\']) || names[i].contains(m);
+        Some(dirs[i].join(m)).filter(|p| named && p.is_file())
+    };
     // Each kind: its file and directory, and how near it is.
-    let mut found: Vec<(Found, usize)> = Vec::new();
-    for kind in Kind::ALL {
-        if kind == Kind::Nu {
-            for m in nu_files {
-                let at = |i: usize| {
-                    let p = dirs[i].join(m);
-                    // A name is matched exactly, as a marker is; a path
-                    // is looked for.
-                    let named = m.contains(['/', '\\']) || names[i].contains(m.as_str());
-                    (named && p.is_file()).then_some(p)
-                };
-                let hit = dirs
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, d)| Some((i, d, at(i)?)));
-                if let Some((i, d, file)) = hit
-                    && !found.iter().any(|(f, _)| f.file == file)
+    let mut found: Vec<(Found, usize, usize)> = Vec::new();
+    for (order, spec) in specs.iter().enumerate() {
+        let made = |i: usize, file: PathBuf| {
+            (
+                Found {
+                    kind: spec.kind,
+                    file,
+                    dir: dirs[i].clone(),
+                    programs: spec.programs.clone(),
+                },
+                i,
+                order,
+            )
+        };
+        if spec.kind == Kind::Nu {
+            // Each file a set of rows of its own, at its nearest.
+            for m in kinds.nu_files {
+                let hit = (0..dirs.len()).find_map(|i| Some((i, at(i, m)?)));
+                if let Some((i, file)) = hit
+                    && !found.iter().any(|(f, _, _)| f.file == file)
                 {
-                    found.push((
-                        Found {
-                            kind,
-                            file,
-                            dir: d.clone(),
-                        },
-                        i,
-                    ));
+                    found.push(made(i, file));
                 }
             }
             continue;
         }
-        let at = |i: usize| {
-            kind.markers()
-                .iter()
-                .find(|m| names[i].contains(**m))
-                .map(|m| dirs[i].join(m))
-                .filter(|p| p.is_file())
-        };
-        let mut hits = dirs
-            .iter()
-            .enumerate()
-            .filter_map(|(i, d)| Some((i, d, at(i)?)));
-        let hit = if kind.outermost() {
+        let mut hits =
+            (0..dirs.len()).filter_map(|i| Some((i, spec.markers.iter().find_map(|m| at(i, m))?)));
+        let hit = if spec.outermost {
             hits.next_back()
         } else {
             hits.next()
         };
-        if let Some((i, d, file)) = hit {
-            found.push((
-                Found {
-                    kind,
-                    file,
-                    dir: d.clone(),
-                },
-                i,
-            ));
+        if let Some((i, file)) = hit {
+            found.push(made(i, file));
         }
     }
-    let rank = |f: &Found, near: usize| {
-        let by_server = f
-            .kind
-            .markers()
+    let rank = |near: usize, order: usize| {
+        let spec = &specs[order];
+        let by_server = spec
+            .markers
             .iter()
             .filter_map(|m| markers.iter().position(|s| s == m))
             .min();
         let group = match by_server {
             Some(_) => 0,
-            None if f.kind.runner() => 1,
+            None if spec.runner => 1,
             None => 2,
         };
-        let kind = Kind::ALL.iter().position(|k| *k == f.kind).unwrap_or(0);
-        (group, by_server.unwrap_or(0), near, kind)
+        (group, by_server.unwrap_or(0), near, order)
     };
-    found.sort_by_key(|(f, near)| rank(f, *near));
-    let found: Vec<Found> = found.into_iter().map(|(f, _)| f).collect();
-    let commands = found.iter().flat_map(|f| commands_of(f, &dirs)).collect();
+    found.sort_by_key(|(_, near, order)| rank(*near, *order));
+    let found: Vec<Found> = found.into_iter().map(|(f, _, _)| f).collect();
+    let commands = found
+        .iter()
+        .flat_map(|f| match f.kind {
+            Kind::Plugin(i) => (kinds.rows)(i, f),
+            _ => commands_of(f, &dirs),
+        })
+        .collect();
     Project { found, commands }
 }
 
@@ -325,6 +407,11 @@ pub fn packages(start: &Path, open: &[PathBuf]) -> Vec<Deduced> {
                 kind: Kind::Node,
                 file,
                 dir,
+                programs: Kind::Node
+                    .programs()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
             })
         })
         .flat_map(|f| commands_of(&f, &walked(&f.dir)))
@@ -435,6 +522,8 @@ fn commands_of(f: &Found, dirs: &[PathBuf]) -> Vec<Deduced> {
             row("zig build".into(), ""),
             row("zig build test".into(), ""),
         ],
+        // The shell's to read (`Kinds::rows`).
+        Kind::Plugin(_) => Vec::new(),
     }
 }
 
@@ -1132,6 +1221,19 @@ mod tests {
 
     fn nu_files() -> Vec<String> {
         NU_FILES.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// `deduce` with the default nushell files and no plugin's kinds.
+    fn deduce(start: &Path, markers: &[String], nu_files: &[String]) -> Project {
+        super::deduce(
+            start,
+            markers,
+            &Kinds {
+                nu_files,
+                plugins: &[],
+                rows: &|_, _| Vec::new(),
+            },
+        )
     }
 
     fn cmds(p: &Project) -> Vec<&str> {

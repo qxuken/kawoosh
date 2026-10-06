@@ -569,6 +569,13 @@ pub enum Msg {
         name: Option<String>,
         rows: Option<BlameRows>,
     },
+    /// `kawoosh.compile_kind(name, def)`: a kind of build the compile
+    /// picker reads a project's files for (compile.md Decision 17) — or,
+    /// `def` false, a builtin's name turned off.
+    CompileKind {
+        name: String,
+        def: Option<CompileKindDef>,
+    },
     Tool {
         name: String,
         cmd: String,
@@ -1018,6 +1025,63 @@ pub struct CompileOfferSnap {
     pub detail: Vec<String>,
 }
 
+/// A plugin's kind of build (`kawoosh.compile_kind`, compile.md Decision
+/// 17): the files that say a directory is its, where it runs, whether
+/// it is a task runner, the programs whose commands are its, and its
+/// commands — the list given, or, `dynamic`, what its `commands`
+/// function answers for the file found ([`Runtime::compile_kind_rows`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CompileKindDef {
+    pub markers: Vec<String>,
+    pub outermost: bool,
+    pub runner: bool,
+    pub programs: Vec<String>,
+    pub rows: Vec<CompileKindRow>,
+    pub dynamic: bool,
+}
+
+/// One command a plugin's kind offers: a string is its `cmd`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CompileKindRow {
+    pub cmd: String,
+    pub why: String,
+    /// It wants arguments: taken, it goes to the prompt to finish.
+    pub needs: bool,
+    /// How it is declared, for the preview.
+    pub detail: Vec<String>,
+}
+
+/// A kind's commands as Lua gave them: a list of strings or `{ cmd,
+/// why, needs, detail }` tables.
+fn compile_kind_rows(v: &LV) -> mlua::Result<Vec<CompileKindRow>> {
+    let LV::Table(t) = v else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for v in t.sequence_values::<LV>() {
+        match v? {
+            LV::String(s) => out.push(CompileKindRow {
+                cmd: s.to_string_lossy(),
+                ..Default::default()
+            }),
+            LV::Table(r) => out.push(CompileKindRow {
+                cmd: r.get::<String>("cmd").map_err(|_| {
+                    mlua::Error::runtime("compile_kind: a command is a string or has a `cmd`")
+                })?,
+                why: r.get::<Option<String>>("why")?.unwrap_or_default(),
+                needs: r.get::<Option<bool>>("needs")?.unwrap_or(false),
+                detail: r.get::<Option<Vec<String>>>("detail")?.unwrap_or_default(),
+            }),
+            _ => {
+                return Err(mlua::Error::runtime(
+                    "compile_kind: a command is a string or a table",
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// One run of a `kawoosh.highlight` answer: its bytes (`to` past the
 /// last), the token's name, its colour and its style as the theme sets
 /// them.
@@ -1182,6 +1246,8 @@ struct Jobs {
     waiting: HashMap<u64, mlua::RegistryKey>,
     /// The `run` functions of `kawoosh.formatter`, by name.
     formatters: HashMap<String, mlua::RegistryKey>,
+    /// The `commands` functions of `kawoosh.compile_kind`, by name.
+    compile_kinds: HashMap<String, mlua::RegistryKey>,
     procs: HashMap<u64, ProcKeys>,
     next: u64,
 }
@@ -2409,6 +2475,38 @@ impl Runtime {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// What kind `name`'s `commands` function answers for `file`, found
+    /// in `dir` with `text` (compile.md Decision 17): its rows, or why
+    /// there are none.
+    pub fn compile_kind_rows(
+        &self,
+        name: &str,
+        file: &str,
+        dir: &str,
+        text: &str,
+    ) -> Result<Vec<CompileKindRow>, String> {
+        let f: Function = {
+            let jobs = self.jobs.borrow();
+            let key = jobs
+                .compile_kinds
+                .get(name)
+                .ok_or_else(|| format!("compile kind {name}: no `commands` function"))?;
+            self.lua.registry_value(key).map_err(|e| e.to_string())?
+        };
+        let ctx = (|| {
+            let t = self.lua.create_table()?;
+            t.set("file", file)?;
+            t.set("dir", dir)?;
+            t.set("text", text)?;
+            Ok::<_, mlua::Error>(t)
+        })()
+        .map_err(|e| e.to_string())?;
+        let got = self
+            .timed(&f, || f.call::<LV>(ctx))
+            .map_err(|e| e.to_string())?;
+        compile_kind_rows(&got).map_err(|e| e.to_string())
     }
 
     /// Runs formatter `name`'s `run` for the shell's job `token` over
@@ -4326,6 +4424,65 @@ fn seed(
         "compile",
         lua.create_function(move |_, cmd: String| {
             qq.borrow_mut().push(Msg::Compile(cmd));
+            Ok(())
+        })?,
+    )?;
+    // ---- kawoosh.compile_kind(name, def): a kind of build the compile
+    // picker and a bare `:compile` read a project's files for (compile.md
+    // Decision 17): `markers` the files that say a directory is its,
+    // `outermost` to run at the outermost of them in the repository
+    // rather than the nearest, `runner` for a task runner (ranked after
+    // the language server's kinds, before the rest), `programs` whose
+    // commands run where its file is, and `commands` — a list of strings
+    // or `{ cmd, why, needs, detail }`, or a function of `{ file, dir,
+    // text }` answering one. A builtin's name (`cargo`, `node`, `just`,
+    // `nu`, `make`, `cmake`, `go`, `python`, `zig`) puts it in that
+    // kind's place; `false` turns that kind off.
+    let (qq, jj) = (q(queue), jobs.clone());
+    k.set(
+        "compile_kind",
+        lua.create_function(move |lua, (name, def): (String, LV)| {
+            let t = match def {
+                LV::Boolean(false) | LV::Nil => {
+                    jj.borrow_mut().compile_kinds.remove(&name);
+                    qq.borrow_mut().push(Msg::CompileKind { name, def: None });
+                    return Ok(());
+                }
+                LV::Table(t) => t,
+                _ => return Err(mlua::Error::runtime("compile_kind: a table, or false")),
+            };
+            let markers: Vec<String> = t.get::<Option<Vec<String>>>("markers")?.unwrap_or_default();
+            if markers.is_empty() {
+                return Err(mlua::Error::runtime(
+                    "compile_kind: `markers`, the files it is found by",
+                ));
+            }
+            let commands: LV = t.get("commands")?;
+            let dynamic = matches!(commands, LV::Function(_));
+            match &commands {
+                LV::Function(f) => {
+                    jj.borrow_mut()
+                        .compile_kinds
+                        .insert(name.clone(), lua.create_registry_value(f.clone())?);
+                }
+                _ => {
+                    jj.borrow_mut().compile_kinds.remove(&name);
+                }
+            }
+            let def = CompileKindDef {
+                markers,
+                outermost: t.get::<Option<bool>>("outermost")?.unwrap_or(false),
+                runner: t.get::<Option<bool>>("runner")?.unwrap_or(false),
+                programs: t
+                    .get::<Option<Vec<String>>>("programs")?
+                    .unwrap_or_default(),
+                rows: compile_kind_rows(&commands)?,
+                dynamic,
+            };
+            qq.borrow_mut().push(Msg::CompileKind {
+                name,
+                def: Some(def),
+            });
             Ok(())
         })?,
     )?;

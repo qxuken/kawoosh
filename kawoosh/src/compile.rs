@@ -539,7 +539,74 @@ impl Kawoosh {
                     .map(|d| d.roots.clone())
             })
             .unwrap_or_default();
-        deduce::deduce(&dir, &markers, &self.compile_nushell())
+        let plugins: Vec<deduce::PluginKind> = self
+            .scripting
+            .compile_kinds
+            .iter()
+            .map(|(name, def)| match def {
+                Some(d) => deduce::PluginKind {
+                    name: name.clone(),
+                    off: false,
+                    markers: d.markers.clone(),
+                    outermost: d.outermost,
+                    runner: d.runner,
+                    programs: d.programs.clone(),
+                },
+                None => deduce::PluginKind {
+                    name: name.clone(),
+                    off: true,
+                    ..Default::default()
+                },
+            })
+            .collect();
+        let rows = |i: usize, f: &deduce::Found| self.compile_kind_rows(i, f);
+        deduce::deduce(
+            &dir,
+            &markers,
+            &deduce::Kinds {
+                nu_files: &self.compile_nushell(),
+                plugins: &plugins,
+                rows: &rows,
+            },
+        )
+    }
+
+    /// Plugin kind `i`'s commands for the file found (compile.md Decision
+    /// 17): its list, or what its function answers for the file's text —
+    /// an error said in the log, the kind offering nothing then.
+    fn compile_kind_rows(&self, i: usize, f: &deduce::Found) -> Vec<Deduced> {
+        let Some((name, Some(def))) = self.scripting.compile_kinds.get(i) else {
+            return Vec::new();
+        };
+        let rows = if def.dynamic {
+            let text = kawoosh_systems::fs::read(&f.file).unwrap_or_default();
+            let answer = self.scripting.rt.as_ref().map(|rt| {
+                rt.compile_kind_rows(
+                    name,
+                    &f.file.display().to_string(),
+                    &f.dir.display().to_string(),
+                    &text,
+                )
+            });
+            match answer {
+                Some(Ok(rows)) => rows,
+                Some(Err(e)) => {
+                    log::warn!("compile kind {name}: {e}");
+                    return Vec::new();
+                }
+                None => return Vec::new(),
+            }
+        } else {
+            def.rows.clone()
+        };
+        rows.into_iter()
+            .map(|r| {
+                let mut d = Deduced::new(r.cmd, f, &r.why);
+                d.needs = r.needs;
+                d.detail = r.detail;
+                d
+            })
+            .collect()
     }
 
     /// The nushell files a project's commands are read from
@@ -633,7 +700,14 @@ impl Kawoosh {
     /// open buffers' `package.json`s, then every one in the caret's
     /// repository. Nothing when `compile.deduce` is off.
     fn compile_packages(&self) -> Vec<Deduced> {
-        if self.ed.settings.bool("compile.deduce") == Some(false) {
+        // A plugin's `node` in the builtin's place reads what it reads.
+        if self.ed.settings.bool("compile.deduce") == Some(false)
+            || self
+                .scripting
+                .compile_kinds
+                .iter()
+                .any(|(n, _)| n == "node")
+        {
             return Vec::new();
         }
         let (dir, _) = self.compile_start();

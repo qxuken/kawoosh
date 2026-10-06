@@ -85,6 +85,10 @@ pub struct Scripting {
     /// The bundled plugins are loading: what they declare is part of
     /// every launch, not news (a language they register is no log line).
     pub bundled: bool,
+    /// The plugins' kinds of build (`kawoosh.compile_kind`, compile.md
+    /// Decision 17), in the order first said, a name said again in its
+    /// place; `None` a builtin's name turned off.
+    pub compile_kinds: Vec<(String, Option<kawoosh_lua::CompileKindDef>)>,
 }
 
 /// Ranges each with a colour: what [`Kawoosh::paints_in`] answers.
@@ -1171,6 +1175,17 @@ impl Kawoosh {
                     return;
                 };
                 rt.annotate(id, notes, align);
+            }
+            Msg::CompileKind { name, def } => {
+                match self
+                    .scripting
+                    .compile_kinds
+                    .iter_mut()
+                    .find(|(n, _)| *n == name)
+                {
+                    Some((_, d)) => *d = def,
+                    None => self.scripting.compile_kinds.push((name, def)),
+                }
             }
             Msg::Tool {
                 name,

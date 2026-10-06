@@ -193,6 +193,24 @@ kawoosh.formatter("pg_format", {
 
 `kawoosh.format(buffer, { with = "name" })` formats a buffer (the current one when `buffer` is nil) with its formatter or the one named.
 
+## Compile commands
+
+`kawoosh.compile_kind(name, def)` teaches the compile picker and a bare `:compile` ([code](code.md#compile-commands)) a kind of project, as `Cargo.toml` and `package.json` are taught already. `markers` are the files that say a directory is that kind's, found at the nearest one above the current file (`outermost = true` for the outermost in the repository); `runner = true` ranks it with `just` and `make`, ahead of the rest; a command typed with one of its `programs` runs where its file is. `commands` is a list — strings, or `{ cmd, why, needs, detail }` — or a function of `{ file, dir, text }` that answers one, called each time the project is read:
+
+```lua
+kawoosh.compile_kind("mix", {
+  markers = { "mix.exs" },
+  programs = { "mix" },
+  commands = function(ctx)
+    local rows = { "mix compile", { cmd = "mix test", why = "the tests" } }
+    if ctx.text:find(":phoenix") then rows[#rows + 1] = "mix phx.server" end
+    return rows
+  end,
+})
+```
+
+A builtin kind's name — `cargo`, `node`, `just`, `nu`, `make`, `cmake`, `go`, `python`, `zig` — puts yours in its place, and `kawoosh.compile_kind("make", false)` turns that kind off.
+
 ## Version control
 
 A buffer's hunks ([vcs](vcs.md)) are the difference between its text and a *base* — the editor diffs them; a backend only says what the base is. `kawoosh.buf.base(text, label[, buffer[, { head = }]])` gives a buffer its base (`kawoosh.buf.base(nil)` takes it away; `head`, the text the base is itself read against — HEAD's under the index — makes what is staged), `kawoosh.buf.hunks([buffer])` reads the hunks back once diffed — each `{ kind = "added" | "modified" | "deleted", line, end_line, old_line, old_end, old = { … } }`, lines from 1, ends exclusive — and `kawoosh.diff(old, new)` diffs two texts at once, the same shape. `kawoosh.buf.blame(rows[, buffer])` puts the blame column on from rows `{ line, count, label, rev, summary }`; `kawoosh.buf.blame_at(line)` reads one back.

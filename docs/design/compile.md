@@ -79,7 +79,8 @@ asking a server — rust-analyzer's `experimental/runnables` is the one
 that answers, and only for Rust, asynchronously; it can join as a kind
 later. A plugin API of deducers: the list reaches Lua as data
 (`kawoosh.compile_offer()` while the picker is open) and `kawoosh.compile`
-runs anything; a deducer registry waits for a second use.
+runs anything; a deducer registry waits for a second use (Decision 17
+since).
 
 ### 2. A bare `:compile` runs the project's word, else again, else the first
 
@@ -616,6 +617,55 @@ completer asked as the prompt opens, ahead of the key (it is asked
 rarely, and the cache makes a second `<Tab>` free); a nushell grammar
 for the file (the signature's shape is small and the text says it).
 
+### 17. A plugin's kind of build, found as the builtin ones are
+
+*Added 2026-10-07*, from "Not built": "a deducer registry for plugins
+(Decision 1's beaten)". Decision 1 waited for a second use; the ask is
+the use.
+
+A kind was an enum with its facts in `match`es — its files, nearest or
+outermost, a task runner or not, its programs — and its commands read
+from its file in Rust. The facts are data now (`deduce::Spec`), so a
+plugin says them as data:
+
+```lua
+kawoosh.compile_kind("mix", {
+  markers = { "mix.exs" },      -- the files that say a directory is its
+  outermost = false,            -- nearest (the default), or outermost
+  runner = false,               -- ranked with just and make
+  programs = { "mix" },         -- `:compile mix test` runs where mix.exs is
+  commands = { "mix compile", { cmd = "mix test", why = "the tests" } },
+})
+```
+
+`commands` is a list — strings, or `{ cmd, why, needs, detail }` as a
+row has them — or a function of `{ file, dir, text }` answering one,
+for a kind whose commands are in its file (a `mix.exs`'s aliases).
+The walk finds a plugin's kind as it finds a builtin one, and Decision
+1's ranking holds for it — the language server's markers, then the
+runners, then nearness, then the order the kinds were said in — so a
+bare `:compile`, the picker and Decision 4's directory read it with
+the rest. A function's error is said in the log and its kind offers
+nothing; it is called each time the project is read (a picker opened,
+a bare `:compile`, the prompt's `<Tab>`), so it reads `text` rather
+than the disk.
+
+**A builtin's name puts it in that kind's place**: `cargo`, `node`,
+`just`, `nu`, `make`, `cmake`, `go`, `python`, `zig`.
+`kawoosh.compile_kind("make", { markers = { "Makefile" }, commands = {
+"make -j8" } })` is the user's make; `kawoosh.compile_kind("make",
+false)` no make at all. A `node` of a plugin's also takes the monorepo's
+walk (Decision 9) with it: that walk reads `package.json`s the builtin
+way.
+
+Beaten: a function per kind that does the finding too (`deduce(dir)`)
+— every plugin would walk the directories again and rank itself
+outside the ranking; the builtin kinds rewritten in Lua (their readers
+are tested Rust, and a reader is not where a user's change is: the
+commands are); a kind only adding commands to a builtin one (a
+replacement whose function calls nothing back is simpler, and the
+builtin's commands are a picker away).
+
 ## Not built
 
 - ~~A program that colours only on a terminal and reads none of the
@@ -623,7 +673,7 @@ for the file (the signature's shape is small and the text says it).
   but for `error:` and `warning:`.~~ Decision 15.
 
 - rust-analyzer's runnables as a kind (the test at the caret).
-- A deducer registry for plugins (Decision 1's beaten).
+- ~~A deducer registry for plugins (Decision 1's beaten).~~ Decision 17.
 - ~~Other nushell files than `build.nu` (a `toolkit.nu`, nushell's own
   habit), and a parameter's completer offered in the prompt.~~ Decision
   16.
