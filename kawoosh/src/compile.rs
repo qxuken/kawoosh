@@ -53,27 +53,116 @@ pub fn took(d: Duration) -> String {
     }
 }
 
-/// `error` and `warning` where a line of output says one as compilers
-/// do — before a `:` or a code (`error[E0308]`, `error TS2322`) — for a
-/// line its program printed plain.
-fn severities(line: &str) -> Vec<(Range<usize>, String)> {
+/// A line its program printed plain, painted as the compilers that
+/// colour paint theirs (compile.md Decisions 12 and 15) — clang's and
+/// gcc's palette, which neither prints on a pipe whatever the
+/// environment says: the location heading the line bold, `error` and
+/// `warning` before a `:` or a code (`error[E0308]`, `error TS2322`) in
+/// the diagnostics' colours with the message after them bold, `note`,
+/// `help` and `remark` cyan, the caret line under a quoted source line
+/// (`^~~~`) green; and a test runner's verdict heading a line — go's
+/// `--- FAIL`, `FAIL`, `--- PASS`, `PASS`, `ok`, `--- SKIP` — red, green
+/// or yellow.
+fn plain_paints(line: &str) -> Vec<(Range<usize>, String)> {
+    if let Some(p) = verdict(line) {
+        return vec![p];
+    }
+    if let Some(r) = carets(line) {
+        return vec![(r, "bold ansi:2".into())];
+    }
     let mut out = Vec::new();
+    let lead = line.len() - line.trim_start().len();
+    if let Some(span) = crate::links::location_span(line, lead).filter(|s| s.start == lead)
+        && crate::links::location_at(line, lead).is_some_and(|(_, l, _)| l.is_some())
+    {
+        // tsc's `(3,5)` after the path is the place's too.
+        let paren = line[span.end..]
+            .strip_prefix('(')
+            .and_then(|r| r.find(')'))
+            .filter(|&c| line[span.end + 1..span.end + 1 + c].chars().all(|c| c.is_ascii_digit() || c == ','))
+            .map_or(0, |c| c + 2);
+        out.push((span.start..span.end + paren, "bold".into()));
+    }
     let lower = line.to_ascii_lowercase();
-    for (word, paint) in [("error", "error"), ("warning", "warning")] {
+    for (word, paint) in [
+        ("error", "bold error"),
+        ("warning", "bold warning"),
+        ("note", "bold ansi:6"),
+        ("help", "bold ansi:6"),
+        ("remark", "bold ansi:6"),
+    ] {
         let mut from = 0;
         while let Some(i) = lower[from..].find(word) {
             let (start, end) = (from + i, from + i + word.len());
             from = end;
             let before = lower[..start].chars().next_back();
             let after = &lower[end..];
-            if before.is_none_or(|c| !c.is_alphanumeric())
-                && (after.starts_with([':', '[']) || after.starts_with(" ts"))
-            {
+            let severity = paint.ends_with("error") || paint.ends_with("warning");
+            let coded = severity && (after.starts_with('[') || after.starts_with(" ts"));
+            if before.is_none_or(|c| !c.is_alphanumeric()) && (after.starts_with(':') || coded) {
                 out.push((start..end, paint.to_string()));
+                // The message after an error or a warning, bold as the
+                // compilers print it.
+                if severity
+                    && let Some(colon) = after.find(": ").map(|c| end + c + 2)
+                    && line[colon..].trim_end().len() > 0
+                {
+                    out.push((colon..line.trim_end().len(), "bold".into()));
+                }
             }
         }
     }
+    out.sort_by_key(|(r, _)| r.start);
     out
+}
+
+/// A test runner's verdict heading `line`, and its colour.
+fn verdict(line: &str) -> Option<(Range<usize>, String)> {
+    let lead = line.len() - line.trim_start().len();
+    let rest = &line[lead..];
+    for (word, paint) in [
+        ("--- FAIL", "error"),
+        ("--- PASS", "added"),
+        ("--- SKIP", "warning"),
+        ("FAIL", "error"),
+        ("PASS", "added"),
+        ("ok", "added"),
+    ] {
+        let Some(after) = rest.strip_prefix(word) else {
+            continue;
+        };
+        // A word of its own: the line's end, a tab, a space, or `:`.
+        if after.is_empty() || after.starts_with(['\t', ' ', ':']) {
+            // go's `ok  \tpkg` and `FAIL\tpkg` are its package lines;
+            // a word heading prose (`ok, so…`) is not a verdict.
+            if (word == "ok" || word == "FAIL" || word == "PASS")
+                && !(after.is_empty() || after.trim_start_matches(' ').starts_with('\t'))
+            {
+                continue;
+            }
+            return Some((lead..lead + word.len(), paint.into()));
+        }
+    }
+    None
+}
+
+/// The marks under a quoted source line — clang's and gcc's `^~~~`,
+/// after a `  3 | ` gutter or none — as the range from the first mark
+/// to the last.
+fn carets(line: &str) -> Option<Range<usize>> {
+    let body = match line.find('|') {
+        Some(bar) if line[..bar].trim().chars().all(|c| c.is_ascii_digit()) => bar + 1,
+        _ => 0,
+    };
+    let marks = &line[body..];
+    if !marks.contains(['^', '~'])
+        || !marks.chars().all(|c| matches!(c, '^' | '~' | '-' | '+' | ' '))
+    {
+        return None;
+    }
+    let start = body + marks.find(|c: char| c != ' ')?;
+    let end = body + marks.trim_end().len();
+    Some(start..end)
 }
 
 /// How much of a command the buffer's name says.
@@ -958,7 +1047,7 @@ impl Kawoosh {
                 use kawoosh_term::plain::Paint;
                 let (text, printed) = run.plain.read(&line);
                 let paints = if printed.is_empty() {
-                    severities(&text)
+                    plain_paints(&text)
                 } else {
                     let name = |p| match p {
                         Paint::Ansi(n) => format!("ansi:{n}"),
@@ -1301,6 +1390,67 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn painted(line: &str) -> Vec<(&str, String)> {
+        plain_paints(line)
+            .into_iter()
+            .map(|(r, p)| (&line[r], p))
+            .collect()
+    }
+
+    #[test]
+    fn a_plain_line_is_painted_as_the_compilers_paint_theirs() {
+        let s = |v: &[(&'static str, &str)]| -> Vec<(&'static str, String)> {
+            v.iter().map(|(a, b)| (*a, b.to_string())).collect()
+        };
+        // clang's and gcc's, which print plain on a pipe.
+        assert_eq!(
+            painted("b.c:3:22: error: use of undeclared identifier 'x'"),
+            s(&[
+                ("b.c:3:22", "bold"),
+                ("error", "bold error"),
+                ("use of undeclared identifier 'x'", "bold"),
+            ])
+        );
+        assert_eq!(
+            painted("b.c:2:11: note: passing argument to parameter 'a' here"),
+            s(&[("b.c:2:11", "bold"), ("note", "bold ansi:6")])
+        );
+        assert_eq!(
+            painted("      |                     ^~~"),
+            s(&[("^~~", "bold ansi:2")])
+        );
+        assert_eq!(painted("    ^~~~~ ~~~"), s(&[("^~~~~ ~~~", "bold ansi:2")]));
+        assert_eq!(painted("    3 | int main(){ return x; }"), s(&[]));
+        assert_eq!(painted("  |  ----- a table"), s(&[]), "no caret, no marks");
+        // rustc's and tsc's codes, as before.
+        assert_eq!(
+            painted("error[E0308]: mismatched types"),
+            s(&[("error", "bold error"), ("mismatched types", "bold")])
+        );
+        assert_eq!(
+            painted("src/a.ts(3,5): error TS2322: Type"),
+            s(&[
+                ("src/a.ts(3,5)", "bold"),
+                ("error", "bold error"),
+                ("Type", "bold")
+            ])
+        );
+        // go: its locations, and its tests' verdicts.
+        assert_eq!(
+            painted("./main.go:3:30: undefined: x"),
+            s(&[("./main.go:3:30", "bold")])
+        );
+        assert_eq!(painted("--- FAIL: TestA (0.00s)"), s(&[("--- FAIL", "error")]));
+        assert_eq!(painted("    --- PASS: TestB (0.00s)"), s(&[("--- PASS", "added")]));
+        assert_eq!(painted("FAIL"), s(&[("FAIL", "error")]));
+        assert_eq!(painted("FAIL\tex\t0.217s"), s(&[("FAIL", "error")]));
+        assert_eq!(painted("ok  \tex\t0.2s"), s(&[("ok", "added")]));
+        // Prose is not a verdict, nor a word inside another one.
+        assert_eq!(painted("ok, so the errors: none"), s(&[]));
+        assert_eq!(painted("no warnings: 3 terrors:"), s(&[]));
+        assert_eq!(painted("see src/a.rs for more"), s(&[]));
+    }
 
     #[test]
     fn npm_s_scripts_take_their_arguments_past_dashes() {

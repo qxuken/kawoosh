@@ -526,11 +526,46 @@ Beaten: `run.command` kept as an alias (two ways to say it, one of them
 undocumented); a `run` beside `compile`'s default (`compile.run`) —
 running a program is not compile mode's, which reads its output.
 
+### 15. A plain line painted as the compilers paint theirs
+
+*Added 2026-10-07*, from "Not built": "a program that colours only on a
+terminal and reads none of the variables (gcc and clang without
+`-fdiagnostics-color`, `go`)". Tried first: Apple clang 21 (and the
+`gcc` that is it) on a pipe with `CLICOLOR_FORCE`, `FORCE_COLOR` and
+`GCC_COLORS` set prints plain — nothing in the environment turns it on,
+and go has no colours at all. So the line is painted for them, as they
+would have (`plain_paints`), where Decision 12 painted only `error` and
+`warning`:
+
+- the **location heading the line** (`b.c:3:22`, `./main.go:3:30`,
+  tsc's `src/a.ts(3,5)`) bold — clang's and gcc's locus, and what `]q`
+  goes to;
+- **`error` and `warning`** in the diagnostics' colours, bold, and the
+  **message** after them bold;
+- **`note`, `help` and `remark`** before a `:` bold cyan (`ansi:6`, the
+  theme's, as clang prints a note);
+- the **caret line** under a quoted source line — `^~~~` after a `  3 |
+  ` gutter, or alone — bold green, from its first mark to its last; a
+  gutter line with no `^` or `~` (a table's `-----`) is not one;
+- a **test runner's verdict** heading a line — go's `--- FAIL`, `FAIL`,
+  `--- PASS`, `PASS`, `ok`, `--- SKIP` — red, green or yellow; the
+  bare words only as go prints them, alone or before a tab, so prose
+  (`ok, so…`) is not one.
+
+A line its program coloured is left as printed, as before.
+
+Beaten: a pty for the command (Decision 12's beaten still holds);
+`CCC_OVERRIDE_OPTIONS=+-fcolor-diagnostics` for clang — it works, and
+prints a `### Adding argument` line into the output each time; adding
+`-fdiagnostics-color` to `CFLAGS` — a Makefile that sets its own wins,
+and a build that does not read the variable never sees it; a grammar
+per tool (Decision 12's beaten).
+
 ## Not built
 
-- A program that colours only on a terminal and reads none of the
+- ~~A program that colours only on a terminal and reads none of the
   variables (gcc and clang without `-fdiagnostics-color`, `go`): plain,
-  but for `error:` and `warning:`.
+  but for `error:` and `warning:`.~~ Decision 15.
 
 - rust-analyzer's runnables as a kind (the test at the caret).
 - A deducer registry for plugins (Decision 1's beaten).

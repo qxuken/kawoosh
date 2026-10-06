@@ -542,8 +542,8 @@ fn a_caret_moved_up_in_the_compile_pane_stays_as_output_comes() {
 
 /// compile.md Decision 12: the buffer opens on where and when, the
 /// program's colours are paints over text with no escapes in it, a
-/// plain line's `error` is painted for it, and the last line says how
-/// long it took.
+/// plain line's place and `error` are painted for it as a compiler
+/// would (Decision 15), and the last line says how long it took.
 #[cfg(unix)]
 #[test]
 fn the_head_the_colours_and_how_long_it_took() {
@@ -592,7 +592,9 @@ fn the_head_the_colours_and_how_long_it_took() {
         [
             (lines[0], "dim"),
             ("error", "ansi:1"),
-            ("error", "error"),
+            ("src/a.rs:1", "bold"),
+            ("error", "bold error"),
+            ("plain", "bold"),
             (&last[..], "added"),
         ]
     );
@@ -611,7 +613,7 @@ fn the_head_the_colours_and_how_long_it_took() {
     // Run again: the paints are the new text's alone.
     ex(&mut d, &mut app, "compile again");
     finished(&mut d, &mut app);
-    assert_eq!(app.scripting.paints[&buffer]["compile"].spans.len(), 4);
+    assert_eq!(app.scripting.paints[&buffer]["compile"].spans.len(), 6);
 
     // `compile.color` off: the programs are not asked.
     ex(&mut d, &mut app, "set compile.color false");
