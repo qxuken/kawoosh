@@ -1303,7 +1303,8 @@ fn bracket_object(
         }
         p = buf.prev_char(p);
     };
-    let end = m::matching_bracket(buf, start)?;
+    // The pair is this object's, not `%`'s: `i<` pairs `<` with `>`.
+    let end = m::matching_pair(buf, start, open, close, true)?;
     if around {
         Some(start..buf.next_char(end))
     } else {

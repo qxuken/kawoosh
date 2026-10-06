@@ -479,7 +479,9 @@ pub fn closes_block(text: &str) -> bool {
     matches!(text.trim_start().chars().next(), Some(')' | ']' | '}'))
 }
 
-/// The bracket matching the one at `o`, if `o` is on a bracket.
+/// The bracket matching the one at `o`, if `o` is on a bracket: the
+/// round, square and curly pairs, vim's `matchpairs`, so `%` leaves
+/// `<` alone — a less-than far more often than an angle bracket.
 pub fn matching_bracket(buf: &Buffer, o: usize) -> Option<usize> {
     let c = char_at(buf, o)?;
     let (open, close, forward) = match c {
@@ -491,6 +493,20 @@ pub fn matching_bracket(buf: &Buffer, o: usize) -> Option<usize> {
         '}' => ('{', '}', false),
         _ => return None,
     };
+    matching_pair(buf, o, open, close, forward)
+}
+
+/// The partner of the `open`/`close` pair's bracket at `o`, nesting
+/// counted: forward from an opener, back from a closer. The pair is
+/// the caller's, so a text object may pair `<` with `>` where `%` does
+/// not.
+pub fn matching_pair(
+    buf: &Buffer,
+    o: usize,
+    open: char,
+    close: char,
+    forward: bool,
+) -> Option<usize> {
     let mut depth = 0i32;
     let mut p = o;
     loop {
@@ -540,6 +556,11 @@ mod tests {
         assert_eq!(word_at(&b, 9), (8, 11));
         assert_eq!(matching_bracket(&Buffer::new("t", "(a[b]c)"), 0), Some(6));
         assert_eq!(matching_bracket(&Buffer::new("t", "(a[b]c)"), 4), Some(2));
+        // `<` is no bracket to `%`, but a pair when asked for.
+        let b = Buffer::new("t", "a<b<c>d>e");
+        assert_eq!(matching_bracket(&b, 1), None);
+        assert_eq!(matching_pair(&b, 1, '<', '>', true), Some(7));
+        assert_eq!(matching_pair(&b, 7, '<', '>', false), Some(1));
     }
 
     #[test]

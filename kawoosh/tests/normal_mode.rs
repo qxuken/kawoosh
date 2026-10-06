@@ -257,6 +257,40 @@ fn an_inner_object_in_visual_mode_ends_inside() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// `i<` `a<` (`i>` `a>`) pair angle brackets, nested ones counted, in
+/// visual mode and under an operator, as the help says — `%` still
+/// skips `<`, vim's `matchpairs`. 2026-10-06: "can we `vi>` or `vi<`?"
+#[test]
+fn an_angle_bracket_object_pairs_its_brackets() {
+    let mut app = Kawoosh::new("t", "Vec<Box<dyn Fn()>> x\nfoo");
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "fdvi<");
+    assert_eq!(sels(&app), [(8, 15)], "the pair around `d`: `dyn Fn()`");
+    esc(&mut d, &mut app);
+    d.keys(&mut app, "0fBvi>");
+    assert_eq!(
+        sels(&app),
+        [(4, 16)],
+        "`>` names the same pair, nested counted"
+    );
+    esc(&mut d, &mut app);
+    d.keys(&mut app, "0fBya<");
+    assert_eq!(app.ed.memory.head().unwrap().text, "<Box<dyn Fn()>>");
+    d.keys(&mut app, "0fddi<");
+    assert_eq!(text(&app), "Vec<Box<>> x\nfoo", "under an operator");
+    d.keys(&mut app, "0f<%");
+    assert_eq!(sels(&app), [(3, 3)], "`%` leaves `<` where it is");
+    d.keys(&mut app, "j0vi<");
+    assert_eq!(
+        app.focused_mode(),
+        Mode::Visual,
+        "none here: nothing to select"
+    );
+    assert_eq!(sels(&app), [(13, 13)]);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// A quote object reaches over lines where its line leaves the string
 /// open — a terminal's output wrapped mid-string: from the first line,
 /// the last, one between, and on the opening quote; a line whose
