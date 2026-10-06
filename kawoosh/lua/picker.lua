@@ -1011,7 +1011,12 @@ local function pick(how)
   if item.buffer then
     kawoosh.buf.show(item.buffer, { split = how })
     -- A pick is a jump however near (docs/design/jumps.md Decision 2).
-    if item.offset then kawoosh.buf.set_cursor(item.offset, item.buffer, { jump = true }) end
+    local at = item.offset
+    if not at and item.line then
+      local ok, o = pcall(kawoosh.buf.offset, item.line, item.col or 1, item.buffer)
+      at = ok and o or nil
+    end
+    if at then kawoosh.buf.set_cursor(at, item.buffer, { jump = true }) end
   elseif item.path then
     kawoosh.open(item.path, { line = item.line, col = item.col, split = how })
   elseif item.run then
@@ -2061,20 +2066,19 @@ picker.source("workspace_symbols", {
 })
 
 -- The buffer's lines, the caret put on the one taken and on the
--- cursor's as it moves.
+-- cursor's as it moves — by its number, the buffer finding the byte:
+-- `kawoosh.buf.lines` drops a `\r\n` whole, so a count of the lines'
+-- lengths would fall a byte short a line in a CRLF file.
 picker.source("lines", {
   title = "lines", placeholder = "find a line", follow = true,
   items = function(ctx)
     local h = ctx.buffer
     if not h then return {} end
-    local raw = kawoosh.buf.lines(h)
-    local lines = shown_lines(h, raw)
-    local items, off = {}, 0
+    local lines = shown_lines(h, kawoosh.buf.lines(h))
+    local items = {}
     local width = #tostring(#lines)
     for i, l in ipairs(lines) do
-      items[i] = { text = string.format("%" .. width .. "d  %s", i, l), buffer = h, line = i, offset = off,
-                   lines = lines }
-      off = off + #raw[i] + 1
+      items[i] = { text = string.format("%" .. width .. "d  %s", i, l), buffer = h, line = i, lines = lines }
     end
     return items
   end,

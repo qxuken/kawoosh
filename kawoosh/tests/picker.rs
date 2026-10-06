@@ -1451,3 +1451,48 @@ fn the_pointer_over_a_row_takes_the_cursor() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `<leader>/` in a CRLF file: the pane follows the cursor's row and
+/// the pick lands on it, not a byte a line short of it — the lines
+/// `kawoosh.buf.lines` gives have lost their `\r`.
+#[test]
+fn lines_land_on_their_line_in_a_crlf_file() {
+    let _cwd = serial();
+    let dir = std::env::temp_dir().join(format!("kawoosh-crlf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("c.txt");
+    let text: String = (1..=40).map(|i| format!("line {i}\r\n")).collect();
+    std::fs::write(&file, text).unwrap();
+    let mut d = Drive::new(900.0, 600.0);
+    let mut app = app_with_lua(&mut d, &file);
+    d.frame(&mut app);
+    app.wait_for_open();
+    d.frame(&mut app);
+    d.keys(&mut app, " /");
+    d.frame(&mut app);
+    d.keys(&mut app, "line 37");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "37  line 37");
+    let caret = |app: &Kawoosh| {
+        let v = app
+            .ed
+            .views
+            .iter()
+            .find(|(_, v)| app.ed.buffers[v.buffer].name == "c.txt")
+            .map(|(id, _)| id)
+            .unwrap();
+        let b = &app.ed.buffers[app.ed.views[v].buffer];
+        let head = app.ed.views[v].sels.primary().head;
+        (b.line_of(head), head)
+    };
+    assert_eq!(caret(&app).0, 36, "the pane followed to line 37");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    let (line, head) = caret(&app);
+    assert_eq!(line, 36, "the pick on line 37");
+    let start: usize = (1..37).map(|i| format!("line {i}\r\n").len()).sum();
+    assert_eq!(head, start, "at the line's start");
+    std::fs::remove_dir_all(&dir).ok();
+}
