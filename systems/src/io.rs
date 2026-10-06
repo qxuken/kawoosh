@@ -83,6 +83,18 @@ pub enum IoMsg {
         token: u64,
         result: Result<Vec<String>, String>,
     },
+    /// A query run for the database pane (`kawoosh.sqlite.query`,
+    /// docs/design/sqlite.md): the job's token, and its rows or
+    /// SQLite's words.
+    Sqlite {
+        token: u64,
+        result: Result<crate::sqlite::Rows, String>,
+    },
+    /// A database's tables read for the pane (`kawoosh.sqlite.schema`).
+    SqliteSchema {
+        token: u64,
+        result: Result<crate::sqlite::Schema, String>,
+    },
     /// A sizing walk's news (`du::walk`, the disk-usage pane): the walk's
     /// number and what it found since it last spoke.
     Sized {

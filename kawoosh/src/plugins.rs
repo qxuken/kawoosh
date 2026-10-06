@@ -10,6 +10,9 @@ pub const BUNDLED: &[(&str, &str)] = &[
     // asked what it is. Before hex: a picture is the picture pane's
     // before it is bytes.
     ("kawoosh:image", include_str!("../lua/image.lua")),
+    // Before hex: a database is the database pane's before it is
+    // bytes (docs/design/sqlite.md Decision 1).
+    ("kawoosh:sqlite", include_str!("../lua/sqlite.lua")),
     ("kawoosh:hex", include_str!("../lua/hex.lua")),
     ("kawoosh:picker", include_str!("../lua/picker.lua")),
     ("kawoosh:search", include_str!("../lua/search.lua")),

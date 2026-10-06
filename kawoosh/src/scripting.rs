@@ -915,6 +915,39 @@ impl Kawoosh {
                     });
                 }
             }
+            Msg::Sqlite {
+                token,
+                path,
+                sql,
+                params,
+                cap,
+            } => {
+                let job = move || kawoosh_systems::sqlite::query(&path, &sql, &params, cap);
+                if self.jobs_inline {
+                    let result = job();
+                    rt.publish(&self.ed, self.focused_view());
+                    rt.sqlite_rows(token, result);
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("sqlite", move || IoMsg::Sqlite {
+                        token,
+                        result: job(),
+                    });
+                }
+            }
+            Msg::SqliteSchema { token, path } => {
+                if self.jobs_inline {
+                    let result = kawoosh_systems::sqlite::schema(&path);
+                    rt.publish(&self.ed, self.focused_view());
+                    rt.sqlite_schema(token, result);
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("sqlite", move || IoMsg::SqliteSchema {
+                        token,
+                        result: kawoosh_systems::sqlite::schema(&path),
+                    });
+                }
+            }
             Msg::Spawn {
                 token,
                 cmd,
