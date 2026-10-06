@@ -325,6 +325,9 @@ pub enum Msg {
         whole: bool,
         /// stderr wanted apart (`on_stderr`), not with stdout's lines.
         split_err: bool,
+        /// Variables the process has over the ones it inherits
+        /// (`kawoosh.spawn`'s `env`).
+        env: Vec<(String, String)>,
     },
     /// `kawoosh.kill(token)`: the process stopped early.
     Kill(u64),
@@ -871,6 +874,17 @@ pub fn size_problem(v: &kawoosh_editor::Setting) -> Option<String> {
     }
 }
 
+/// An editor pane's size as last drawn: its text column in logical px
+/// and in cells of the editor's font — what a page rendered to fit it
+/// is asked for (`man.lua`'s `MANWIDTH`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PaneGeom {
+    pub width: f32,
+    pub height: f32,
+    pub cols: usize,
+    pub rows: usize,
+}
+
 #[derive(Clone, Debug)]
 
 pub struct Published {
@@ -932,6 +946,12 @@ pub struct Published {
     pub actions: Option<Rc<Vec<ActionSnap>>>,
     /// The compile commands `compile pick` last offered.
     pub compile_offer: Option<Rc<Vec<CompileOfferSnap>>>,
+    /// Each editor pane's size as last drawn (`kawoosh.pane_size`),
+    /// by pane id.
+    pub panes: HashMap<u64, PaneGeom>,
+    /// The pane the keyboard is in, as the shell last said it
+    /// (`kawoosh.pane()`; a command's `ctx.pane`).
+    pub pane: u64,
     /// Every diagnostic (`kawoosh.lsp.diagnostics`), shared with the
     /// runtime's cache while none moved.
     pub diagnostics: Rc<Vec<kawoosh_editor::diagnostics::Listed>>,
@@ -1087,6 +1107,8 @@ impl Default for Published {
             candidate: 0,
             actions: None,
             compile_offer: None,
+            panes: HashMap::new(),
+            pane: 0,
             diagnostics: Rc::new(Vec::new()),
             trees: HashMap::new(),
             jumps: Rc::new(Vec::new()),
@@ -1925,6 +1947,20 @@ impl Runtime {
     /// The pane the keyboard is in now: what a command's `ctx.pane` says.
     pub fn set_pane(&self, pane: u64) {
         self.pane.set(pane);
+        self.published.borrow_mut().pane = pane;
+    }
+
+    /// An editor pane's size as the frame drew it (`kawoosh.pane_size`).
+    pub fn note_pane(&self, pane: u64, geom: PaneGeom) {
+        let mut p = self.published.borrow_mut();
+        if p.panes.get(&pane) != Some(&geom) {
+            p.panes.insert(pane, geom);
+        }
+    }
+
+    /// A pane closed: its size forgotten.
+    pub fn forget_pane(&self, pane: u64) {
+        self.published.borrow_mut().panes.remove(&pane);
     }
 
     pub fn run_command(&self, name: &str, ctx: &Ctx) {
@@ -3559,6 +3595,35 @@ fn seed(
     // whole at the end through `on_done` (a trailing newline kept);
     // stderr with the lines, or apart through `on_stderr`; the token it
     // answers to, for `kawoosh.kill(token)`.
+    // ---- `kawoosh.pane()`: the pane the keyboard is in, as the shell
+    // last said it before running a command — what `ctx.pane` is, for
+    // code that has no `ctx` at hand (a picker's source, a hook).
+    let pp = published.clone();
+    k.set(
+        "pane",
+        lua.create_function(move |_, ()| Ok(pp.borrow().pane))?,
+    )?;
+    // ---- `kawoosh.pane_size(pane)`: an editor pane's size as the last
+    // frame drew it — `width` and `height` of its text in logical px,
+    // `cols` and `rows` in cells of the editor's font — or nil for a
+    // pane that is not an editor pane, or not drawn yet. A command's
+    // `ctx.pane` names the one the keyboard is in.
+    let pp = published.clone();
+    k.set(
+        "pane_size",
+        lua.create_function(move |lua, pane: Option<u64>| {
+            let p = pp.borrow();
+            let Some(g) = pane.and_then(|id| p.panes.get(&id)) else {
+                return Ok(None);
+            };
+            let t = lua.create_table()?;
+            t.set("width", g.width as f64)?;
+            t.set("height", g.height as f64)?;
+            t.set("cols", g.cols)?;
+            t.set("rows", g.rows)?;
+            Ok(Some(t))
+        })?,
+    )?;
     let qq = q(queue);
     let jj = jobs.clone();
     k.set(
@@ -3606,6 +3671,29 @@ fn seed(
             let stdin = opts
                 .as_ref()
                 .and_then(|t| t.get::<Option<String>>("stdin").ok().flatten());
+            // `env = { NAME = "value", … }`: over the inherited ones.
+            let mut env = Vec::new();
+            if let Some(t) = opts
+                .as_ref()
+                .and_then(|t| t.get::<Option<Table>>("env").ok().flatten())
+            {
+                for pair in t.pairs::<String, LV>() {
+                    let (k, v) = pair?;
+                    let v = match v {
+                        LV::String(s) => s.to_str()?.to_string(),
+                        LV::Integer(i) => i.to_string(),
+                        LV::Number(n) => n.to_string(),
+                        LV::Boolean(b) => b.to_string(),
+                        _ => {
+                            return Err(mlua::Error::runtime(format!(
+                                "spawn: env.{k} is not a string"
+                            )));
+                        }
+                    };
+                    env.push((k, v));
+                }
+                env.sort();
+            }
             qq.borrow_mut().push(Msg::Spawn {
                 token,
                 cmd,
@@ -3613,6 +3701,7 @@ fn seed(
                 stdin,
                 whole,
                 split_err,
+                env,
             });
             Ok(token)
         })?,

@@ -522,8 +522,11 @@ end
 -- A colour is a role — `fg` `dim` `faint` `accent` `danger`, `added`
 -- `modified` `ignored` `conflict` — or a syntax token's name
 -- (`comment`, `keyword`, …) — or `ansi:N`, one of the terminal's
--- sixteen as the theme has them, or `#rrggbb` itself. `dir.lua`'s
--- version control marks paint.
+-- sixteen as the theme has them, or `#rrggbb` itself; a style before
+-- it — `bold`, `italic`, `underline`, `strike`, any of them — sets the
+-- text so (`"bold keyword"`), or alone leaves the colour as it was
+-- (`"underline"`; `man.lua`'s pages). `dir.lua`'s version control
+-- marks paint.
 -- kawoosh.buf.header({ view =, height =, field = }[, buffer]): the
 -- Lua view `view` drawn over the buffer's text, `height` logical px
 -- tall (as tall as the view draws without one), in every pane that
@@ -664,12 +667,14 @@ end
 -- kawoosh.fs.form(path, form): the path as `path copy` copies it —
 -- "relative" (to the working directory, whole when outside it),
 -- "absolute", "dir", "dir absolute", "name", "stem".
--- kawoosh.spawn(cmd, { cwd =, stdin =, on_lines = fn(lines), on_stderr =
+-- kawoosh.spawn(cmd, { cwd =, stdin =, env =, on_lines = fn(lines), on_stderr =
 -- fn(lines), on_done = fn(text, code), on_exit = fn(code) }) runs `cmd`
 -- — a line through the shell, or a list `{ "git", "status" }`, the
 -- program and its arguments with no shell between (nothing quoted,
 -- nothing for nushell to refuse) — `stdin` written to it and closed,
--- for text that must not be on a command line — and hands its output
+-- for text that must not be on a command line, `env` a table of
+-- variables it has over the ones it inherits (`{ MANWIDTH = "80" }`)
+-- — and hands its output
 -- over in lines as they come, once a frame, or whole when it ends
 -- through `on_done` (a trailing newline kept, as a base text needs);
 -- stderr comes with the lines unless `on_stderr` takes it apart. It
@@ -683,6 +688,13 @@ end
 -- `file` rows), newest first, `{ path =, line = }` each. kawoosh.holds(fact): whether a fact holds
 -- where the keyboard is. kawoosh.buf.lines_in(from, to[, buffer]): a
 -- window of a buffer's lines.
+-- kawoosh.pane(): the pane the keyboard was in when the command at
+-- hand was run — a command's `ctx.pane`, for code with no `ctx` (a
+-- picker's source). kawoosh.pane_size(pane): an editor pane's text
+-- column as the last frame drew it — `width`, `height` in logical px,
+-- `cols`, `rows` in cells of the editor's font — or nil for a pane
+-- that is not an editor pane or is not drawn yet; what a page
+-- rendered to fit the pane asks (`man.lua`).
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   if t.on_change then kawoosh._changers[t.name] = t.on_change end
