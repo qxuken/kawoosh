@@ -62,6 +62,13 @@ pub struct Row {
     pub shebangs: Vec<String>,
     #[serde(default)]
     pub aliases: Vec<String>,
+    /// The line comment token and the block pair, as the repository's
+    /// `grammar.toml` says them (docs/design/comments.md Decision 3);
+    /// absent for a language that has none, or a manifest before `r7`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_block: Option<Vec<String>>,
     #[serde(default)]
     pub repo: String,
     #[serde(default)]
@@ -1388,6 +1395,8 @@ mod tests {
             filenames: Vec::new(),
             shebangs: Vec::new(),
             aliases: Vec::new(),
+            comment: None,
+            comment_block: None,
             repo: repo.clone(),
             // A branch is a revision too; the commit is what is kept.
             rev: "main".into(),

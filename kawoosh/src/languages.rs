@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use kawoosh_editor::Setting;
 use kawoosh_languages::{FALLBACK, Grammar, LanguageDef, Library, Locate, Source};
 
 use kawoosh_editor::{ArgKind, Args, Spec};
@@ -33,6 +34,8 @@ impl Kawoosh {
         symbol: Option<String>,
         highlights: Option<String>,
         injections: Option<String>,
+        comment: Option<String>,
+        comment_block: Option<Vec<String>>,
     ) {
         let said = Locate {
             path: path.map(PathBuf::from),
@@ -55,6 +58,13 @@ impl Kawoosh {
             filenames,
             shebangs,
             grammar,
+            comment: comment.filter(|t| !t.trim().is_empty()),
+            comment_block: match comment_block.as_deref() {
+                Some([a, b]) if !a.trim().is_empty() && !b.trim().is_empty() => {
+                    Some((a.clone(), b.clone()))
+                }
+                _ => None,
+            },
         });
     }
 
@@ -106,6 +116,23 @@ impl Kawoosh {
         };
         let replaced = self.languages.add(def.clone()).is_some();
         self.sync_language_names();
+        // Its comment tokens are the language's defaults, under a
+        // user's `language.NAME.comment` as a builtin's are
+        // (docs/design/comments.md Decision 3).
+        if let Some(t) = &def.comment {
+            self.ed.settings.set(
+                kawoosh_editor::Layer::Default,
+                &format!("language.{}.comment", def.name),
+                Setting::Str(t.clone()),
+            );
+        }
+        if let Some((a, b)) = &def.comment_block {
+            self.ed.settings.set(
+                kawoosh_editor::Layer::Default,
+                &format!("language.{}.comment_block", def.name),
+                Setting::List(vec![Setting::Str(a.clone()), Setting::Str(b.clone())]),
+            );
+        }
         let said = format!(
             "language {}: {}{}",
             def.name,

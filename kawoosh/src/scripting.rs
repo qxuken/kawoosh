@@ -1205,9 +1205,20 @@ impl Kawoosh {
                 symbol,
                 highlights,
                 injections,
+                comment,
+                comment_block,
             } => self.language_from_lua(
-                name, aliases, extensions, filenames, shebangs, path, symbol, highlights,
+                name,
+                aliases,
+                extensions,
+                filenames,
+                shebangs,
+                path,
+                symbol,
+                highlights,
                 injections,
+                comment,
+                comment_block,
             ),
             Msg::Colors(list) => {
                 for (name, hex) in list {
