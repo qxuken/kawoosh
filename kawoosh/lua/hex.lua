@@ -6,8 +6,8 @@
 -- repaired text (`hex.binary`).
 --
 -- The cursor is a cell, one byte, lit in both halves. `h` `j` `k` `l`
--- walk a byte or a row; `w` `b` a group of four; `0` `$` the row's
--- ends; `gg` `G` the file's; `<C-d>` `<C-u>` half a screen, `<C-f>`
+-- walk a byte or a row; `w` `b` a group of four; `0` `$` (`gh` `gl`)
+-- the row's ends; `gg` `G` the file's; `<C-d>` `<C-u>` half a screen, `<C-f>`
 -- `<C-b>` a whole one; `Ngo` goes to byte N and `go` asks for an offset
 -- (`:hex goto 0x1F0`, `4096`, `+16`, `-0x10`, `50%`); `/` asks for
 -- bytes to find (`:hex find TEXT`, or `0x` and hex digits) and `n` `N`
@@ -1084,6 +1084,7 @@ for k, c in pairs {
   h = "left", l = "right", j = "down", k = "up",
   ["<Left>"] = "left", ["<Right>"] = "right", ["<Down>"] = "down", ["<Up>"] = "up",
   w = "word", b = "back", ["0"] = "row start", ["^"] = "row start", ["$"] = "row end",
+  gh = "row start", gl = "row end",
   ["<Home>"] = "row start", ["<End>"] = "row end",
   gg = "first", G = "last", go = "goto",
   ["<C-d>"] = "half down", ["<C-u>"] = "half up", ["<C-f>"] = "page down", ["<C-b>"] = "page up",

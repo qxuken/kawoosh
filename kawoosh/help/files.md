@@ -209,7 +209,7 @@ binary, the integers and floats of each width, the character.
 |---|---|
 | `h` `j` `k` `l`, the arrows | a byte, a row; a count before any |
 | `w` `b` | the next group of four bytes, the one before |
-| `0` `$` | the row's first byte, its last |
+| `0` `$`, `gh` `gl` | the row's first byte, its last |
 | `gg` `G` | the file's first byte, its last |
 | `<C-d>` `<C-u>`, `<C-f>` `<C-b>` | half a screen, a whole one |
 | `Ngo` | to byte N |
@@ -295,3 +295,61 @@ its own: `:du` in another tab walks there without touching the first.
 | `<C-w>.` | a terminal in the directory (`:terminal here`) |
 | `r` | count again |
 | `q` `<Esc>` | close |
+
+## A database
+
+`:sqlite [PATH]` opens a column over a SQLite file — PATH's, or the
+focused buffer's file's: its tables and views on the left, each with
+its row count; a query line over a grid of rows on the right. A file
+whose first bytes say `SQLite format 3` opens here by itself
+(`sqlite.open = false` for its bytes; `t` in the pane opens them).
+The first table is browsed at once, a page of rows at a time
+(`sqlite.rows`, 1000), the next page read as the cursor reaches the
+last. Nothing is held open between frames: `r` reads the file again,
+and what is shown is what the file says now.
+
+The grid's cursor is one cell; the foot says its row, its column with
+the declared type, and its value whole. A column is as wide as its
+widest value, up to `sqlite.cell_width` (40) characters. Numbers sit to
+the right, `NULL` is faint, a blob shows its first bytes and its size.
+
+| keys | what |
+|---|---|
+| `<Tab>` | the keys to the other half: the tables, the grid |
+| `j` `k`, the arrows | a row; a count before any |
+| `<CR>` `l` in the tables | browse the table under the cursor |
+| `h` `l` | a column |
+| `0` `$`, `gh` `gl` | the row's first column, its last |
+| `gg` `G` | the first row, the last one read |
+| `<C-d>` `<C-u>`, `<C-f>` `<C-b>` | half a screen, a whole one |
+| `o`, a click on the header | sort the browsed table by the column; again, the other way |
+| `y` `Y` | copy the cell; the row, tab-separated |
+| `i` | the keys into the query line |
+| `r` | read the file again |
+| `t` | open the file as bytes after all |
+| `q` | close |
+
+The query line is a line of the editor: `<CR>` runs what it says and
+hands the keys back to the grid, `<Esc>` is its normal mode and `<Esc>`
+again the grid; `<C-p>` `<C-n>` walk the lines run before on this
+file, kept across runs. `:sqlite query SQL` runs from the command
+line, `:sqlite browse TABLE` browses one. A query's rows replace the
+grid's; several statements run in turn, and one without rows says how
+many it changed and reads the tables again, counts and all. An error
+is SQLite's words, in the foot.
+
+A cell of a browsed table is changed in place: `c` (or `<CR>` in the
+grid) puts its value in the line, `<CR>` writes one `UPDATE` by the
+row's rowid — or its primary key, for a table `WITHOUT ROWID` — and
+reads the row again; SQLite types the text as the column says, so `42`
+in an INTEGER column is an integer. `x` sets the cell NULL. `u` writes
+the last change's old value back; each change this run is one step. A
+view's cell, or a query's, refuses: browse the table. A blob is set by
+`x` or a query, not typed.
+
+| keys | what |
+|---|---|
+| `c`, `<CR>` | the cell's value into the line, to change; `<CR>` writes it |
+| `x` | NULL |
+| `u` | the last change put back |
+| `<Esc>` | an edit not written dropped; the status cleared |

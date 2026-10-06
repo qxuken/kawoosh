@@ -224,6 +224,23 @@ pub enum Msg {
         token: u64,
         root: PathBuf,
     },
+    /// `kawoosh.sqlite.query(path, sql, params, opts, fn)`: the SQL run
+    /// against the database on a thread of its own, the answer to
+    /// `Runtime::sqlite_rows` under `token` (`IoMsg::Sqlite`,
+    /// docs/design/sqlite.md Decision 2).
+    Sqlite {
+        token: u64,
+        path: PathBuf,
+        sql: String,
+        params: Vec<kawoosh_systems::sqlite::Value>,
+        cap: usize,
+    },
+    /// `kawoosh.sqlite.schema(path, fn)`: the database's tables read on
+    /// a thread of its own, the answer to `Runtime::sqlite_schema`.
+    SqliteSchema {
+        token: u64,
+        path: PathBuf,
+    },
     /// `kawoosh.search(query, fn)`: the project searched on a thread of
     /// its own (docs/design/search.md Decision 6), the answer to
     /// `Runtime::searched` under `token` (`IoMsg::Searched`).
@@ -2570,6 +2587,39 @@ impl Runtime {
         self.answer(token, result, "fs.walk");
     }
 
+    /// The `kawoosh.sqlite.null` table: what a NULL comes back as, and
+    /// binds as.
+    fn sqlite_null(&self) -> mlua::Result<Table> {
+        self.lua
+            .globals()
+            .get::<Table>("kawoosh")?
+            .get::<Table>("sqlite")?
+            .get::<Table>("null")
+    }
+
+    /// A query's rows for `kawoosh.sqlite.query(…, fn)`: the callback
+    /// called with `{ columns =, rows =, truncated =, changes =, ms = }`
+    /// — each value as it is (docs/design/sqlite.md Decision 2) — or
+    /// with nil and SQLite's words.
+    pub fn sqlite_rows(&self, token: u64, result: Result<kawoosh_systems::sqlite::Rows, String>) {
+        let result = result.and_then(|rows| {
+            let null = self.sqlite_null().map_err(|e| e.to_string())?;
+            sqlite_rows_table(&self.lua, rows, &null).map_err(|e| e.to_string())
+        });
+        self.answer(token, result, "sqlite.query");
+    }
+
+    /// A database's tables for `kawoosh.sqlite.schema(path, fn)`.
+    pub fn sqlite_schema(
+        &self,
+        token: u64,
+        result: Result<kawoosh_systems::sqlite::Schema, String>,
+    ) {
+        let result = result
+            .and_then(|schema| sqlite_schema_table(&self.lua, schema).map_err(|e| e.to_string()));
+        self.answer(token, result, "sqlite.schema");
+    }
+
     /// A change `fs.remove` or `fs.copy` made on a thread of its own:
     /// its callback called with `true`, or `nil` and why not.
     pub fn fs_done(&self, token: u64, result: Result<(), String>) {
@@ -3229,6 +3279,107 @@ fn hits_table(lua: &Lua, hits: &[Hit]) -> mlua::Result<Table> {
 
 /// A listing's entries as Lua sees them: `{ name, is_dir, is_symlink,
 /// size, modified }` each.
+/// A SQLite value as Lua holds it: an integer, a float, a string, the
+/// `null` table, or `{ blob = bytes }`.
+fn sqlite_value_to_lua(
+    lua: &Lua,
+    v: kawoosh_systems::sqlite::Value,
+    null: &Table,
+) -> mlua::Result<LV> {
+    use kawoosh_systems::sqlite::Value as V;
+    Ok(match v {
+        V::Null => LV::Table(null.clone()),
+        V::Integer(i) => LV::Integer(i),
+        V::Real(r) => LV::Number(r),
+        V::Text(t) => LV::String(lua.create_string(t)?),
+        V::Blob(b) => {
+            let t = lua.create_table()?;
+            t.set("blob", lua.create_string(b)?)?;
+            LV::Table(t)
+        }
+    })
+}
+
+/// A Lua value as SQLite binds it, the same shapes the other way; a
+/// boolean is 1 or 0, anything else is refused.
+fn sqlite_value_from_lua(v: LV, null: &Table) -> mlua::Result<kawoosh_systems::sqlite::Value> {
+    use kawoosh_systems::sqlite::Value as V;
+    Ok(match v {
+        LV::Nil => V::Null,
+        LV::Integer(i) => V::Integer(i),
+        LV::Number(n) => V::Real(n),
+        LV::Boolean(b) => V::Integer(i64::from(b)),
+        LV::String(s) => match s.to_str() {
+            Ok(s) => V::Text(s.to_string()),
+            Err(_) => V::Blob(s.as_bytes().to_vec()),
+        },
+        LV::Table(t) if t.to_pointer() == null.to_pointer() => V::Null,
+        LV::Table(t) => match t.get::<Option<mlua::LuaString>>("blob")? {
+            Some(b) => V::Blob(b.as_bytes().to_vec()),
+            None => {
+                return Err(mlua::Error::runtime(
+                    "a parameter is a table that is neither sqlite.null nor { blob = }",
+                ));
+            }
+        },
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "a parameter cannot be a {}",
+                other.type_name()
+            )));
+        }
+    })
+}
+
+fn sqlite_rows_table(
+    lua: &Lua,
+    rows: kawoosh_systems::sqlite::Rows,
+    null: &Table,
+) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set("columns", lua.create_sequence_from(rows.columns)?)?;
+    let list = lua.create_table_with_capacity(rows.rows.len(), 0)?;
+    for (i, row) in rows.rows.into_iter().enumerate() {
+        let r = lua.create_table_with_capacity(row.len(), 0)?;
+        for (j, v) in row.into_iter().enumerate() {
+            r.set(j + 1, sqlite_value_to_lua(lua, v, null)?)?;
+        }
+        list.set(i + 1, r)?;
+    }
+    t.set("rows", list)?;
+    t.set("truncated", rows.truncated)?;
+    t.set("changes", rows.changes)?;
+    t.set("ms", rows.ms)?;
+    Ok(t)
+}
+
+fn sqlite_schema_table(lua: &Lua, schema: kawoosh_systems::sqlite::Schema) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    let tables = lua.create_table()?;
+    for (i, table) in schema.tables.into_iter().enumerate() {
+        let tt = lua.create_table()?;
+        tt.set("name", table.name)?;
+        tt.set("kind", table.kind)?;
+        tt.set("rows", table.rows)?;
+        tt.set("without_rowid", table.without_rowid)?;
+        let cols = lua.create_table()?;
+        for (j, c) in table.columns.into_iter().enumerate() {
+            let ct = lua.create_table()?;
+            ct.set("name", c.name)?;
+            ct.set("type", c.kind)?;
+            ct.set("notnull", c.notnull)?;
+            ct.set("pk", c.pk)?;
+            ct.set("default", c.default)?;
+            cols.set(j + 1, ct)?;
+        }
+        tt.set("columns", cols)?;
+        tables.set(i + 1, tt)?;
+    }
+    t.set("tables", tables)?;
+    t.set("bytes", schema.bytes)?;
+    Ok(t)
+}
+
 fn entries_table(lua: &Lua, entries: Vec<kawoosh_systems::fs::Entry>) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     for (i, e) in entries.into_iter().enumerate() {
@@ -6528,6 +6679,98 @@ fn seed(
         })?,
     )?;
     k.set("fs", fs)?;
+    // ---- `kawoosh.sqlite`: a database read and written for the pane
+    // (docs/design/sqlite.md Decision 2). `query(path, sql[, params][,
+    // opts], fn)` runs the SQL on the io thread, `fn(result, err)` on a
+    // frame after — `result` `{ columns =, rows = { {…} }, truncated =,
+    // changes =, ms = }`, a NULL `kawoosh.sqlite.null`, a blob `{ blob =
+    // }`; `params` bind by position; `opts.cap` the rows kept (1000).
+    // `schema(path, fn)` gives `{ tables = { { name =, kind =, rows =,
+    // without_rowid =, columns = { { name =, type =, notnull =, pk =,
+    // default = } } } }, bytes = }`. `is(path)` whether the file's head
+    // says SQLite; `quote(name)` an identifier quoted.
+    let sqlite = lua.create_table()?;
+    let null = lua.create_table()?;
+    null.set("__sqlite_null", true)?;
+    sqlite.set("null", null.clone())?;
+    let qq = q(queue);
+    let jj = jobs.clone();
+    let nn = null.clone();
+    sqlite.set(
+        "query",
+        lua.create_function(
+            move |lua, (path, sql, rest): (String, String, mlua::MultiValue)| {
+                let mut rest: Vec<LV> = rest.into_iter().collect();
+                let Some(LV::Function(cb)) = rest.pop() else {
+                    return Err(mlua::Error::runtime(
+                        "sqlite.query(path, sql[, params][, opts], fn): the last argument is the callback",
+                    ));
+                };
+                let mut params = Vec::new();
+                let mut cap = 1000usize;
+                let mut tables = rest.into_iter().filter_map(|v| match v {
+                    LV::Table(t) => Some(t),
+                    _ => None,
+                });
+                if let Some(p) = tables.next() {
+                    // A table with `cap` and no sequence is the options.
+                    if p.raw_len() == 0 && p.contains_key("cap")? {
+                        cap = p.get::<Option<usize>>("cap")?.unwrap_or(cap);
+                    } else {
+                        for v in p.sequence_values::<LV>() {
+                            params.push(sqlite_value_from_lua(v?, &nn)?);
+                        }
+                        if let Some(o) = tables.next() {
+                            cap = o.get::<Option<usize>>("cap")?.unwrap_or(cap);
+                        }
+                    }
+                }
+                let token = {
+                    let mut j = jj.borrow_mut();
+                    let token = j.token();
+                    j.waiting.insert(token, lua.create_registry_value(cb)?);
+                    token
+                };
+                qq.borrow_mut().push(Msg::Sqlite {
+                    token,
+                    path: expand(&path),
+                    sql,
+                    params,
+                    cap: cap.max(1),
+                });
+                Ok(token)
+            },
+        )?,
+    )?;
+    let qq = q(queue);
+    let jj = jobs.clone();
+    sqlite.set(
+        "schema",
+        lua.create_function(move |lua, (path, cb): (String, mlua::Function)| {
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::SqliteSchema {
+                token,
+                path: expand(&path),
+            });
+            Ok(token)
+        })?,
+    )?;
+    sqlite.set(
+        "is",
+        lua.create_function(move |_, path: String| {
+            Ok(kawoosh_systems::sqlite::is_sqlite(&expand(&path)))
+        })?,
+    )?;
+    sqlite.set(
+        "quote",
+        lua.create_function(move |_, name: String| Ok(kawoosh_systems::sqlite::quote(&name)))?,
+    )?;
+    k.set("sqlite", sqlite)?;
     // ---- `kawoosh.term`: the terminal pane with the keys.
     let term = lua.create_table()?;
     let qq = q(queue);

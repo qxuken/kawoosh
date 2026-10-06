@@ -926,6 +926,22 @@ impl Kawoosh {
                         self.drain_lua();
                     }
                 }
+                IoMsg::Sqlite { token, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.publish(&self.ed, self.focused_view());
+                        rt.sqlite_rows(token, result);
+                        self.drain_lua();
+                    }
+                }
+                IoMsg::SqliteSchema { token, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.publish(&self.ed, self.focused_view());
+                        rt.sqlite_schema(token, result);
+                        self.drain_lua();
+                    }
+                }
                 // A process a plugin spawned: its lines are gathered
                 // for one call after the drain (`flush_proc_lines`).
                 IoMsg::ProcLine { id, line } if self.scripting.procs.contains_key(&id) => {

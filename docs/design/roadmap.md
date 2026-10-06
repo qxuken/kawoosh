@@ -3161,6 +3161,24 @@ frame.
     `kawoosh.buf.comment_tokens`. Four rounds: the operator, the
     injections, the grammars' tokens, `gb`.
 
+91. ~~**A database's pane**: tables, rows, queries, a cell changed~~
+    ([sqlite.md](sqlite.md)). Asked 2026-10-06 ("How about we make
+    sqlite db inspector panel? i want to see tables, run queries.
+    Maybe edit fields."), planned and built the same day: `:sqlite
+    [PATH]`, `kawoosh/lua/sqlite.lua`, a Lua pane like `:hex` over the
+    door `kawoosh.sqlite` (`systems/src/sqlite.rs`, a job on the io
+    thread per call, the connection opened and closed with it). The
+    tables and views on the left with their counts, a query line over
+    a `cells` grid on the right; the first table browsed at once, a
+    page at a time; `<Tab>` between the halves, the cursor a cell,
+    `o` sorts by a column; `i` the line, `<CR>` runs, `<C-p>` the lines
+    run before, kept in the store; `c` edits a cell by one UPDATE by
+    rowid or primary key, `x` NULL, `u` back; a file whose head says
+    `SQLite format 3` opens here before the bytes pane asks, `t` the
+    bytes after all. Not built: a multi-line query buffer, rows
+    inserted or deleted from the grid, a session bringing the pane
+    back. `kawoosh/tests/sqlite.rs`; `systems` `sqlite::tests`.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
