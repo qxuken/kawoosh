@@ -8,8 +8,8 @@
 -- `<Tab>` moves the keys between the tables and the grid. In the
 -- tables `j` `k` walk and `<CR>` or `l` browses one, a page of rows at
 -- a time, the next page read as the cursor reaches the last. In the
--- grid the cursor is a cell: `h` `j` `k` `l` walk, `0` `$` the row's
--- ends, `gg` `G` the first and last row, `<C-d>` `<C-u>` `<C-f>`
+-- grid the cursor is a cell: `h` `j` `k` `l` walk, `0` `$` (`gh` `gl`)
+-- the row's ends, `gg` `G` the first and last row, `<C-d>` `<C-u>` `<C-f>`
 -- `<C-b>` pages; a click puts it, the wheel scrolls; `o` (or a click
 -- on the header) sorts the browsed table by the column, again the
 -- other way; `y` copies the cell, `Y` the row tab-separated. `i` puts
@@ -1029,6 +1029,7 @@ for k, c in pairs {
   h = "left", l = "right", j = "down", k = "up",
   ["<Left>"] = "left", ["<Right>"] = "right", ["<Down>"] = "down", ["<Up>"] = "up",
   ["0"] = "row start", ["^"] = "row start", ["$"] = "row end", ["<Home>"] = "row start", ["<End>"] = "row end",
+  gh = "row start", gl = "row end",
   gg = "first", G = "last",
   ["<C-d>"] = "half down", ["<C-u>"] = "half up", ["<C-f>"] = "page down", ["<C-b>"] = "page up",
   ["<PageDown>"] = "page down", ["<PageUp>"] = "page up",

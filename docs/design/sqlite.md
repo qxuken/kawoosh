@@ -112,7 +112,7 @@ shown value, bounded by `sqlite.cell_width` (40) with `…` past it,
 NULL a faint `NULL`, a blob `x'…' 12 B`; a newline or a control
 character in a cell is drawn as a space. The cursor is one cell, lit
 in the accent colour (the warning colour while a change is pending);
-`h` `j` `k` `l` walk, `0` `$` the row's ends, `gg` `G` the first and
+`h` `j` `k` `l` walk, `0` `$` (helix's `gh` `gl` too) the row's ends, `gg` `G` the first and
 last row, `<C-d>` `<C-u>` `<C-f>` `<C-b>` pages; a click puts it, the
 wheel scrolls the rows. Columns scroll sideways by whole columns when
 the cursor walks past the edge. The foot says `row 3 of 1,204 · name

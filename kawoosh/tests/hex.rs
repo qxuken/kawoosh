@@ -118,6 +118,10 @@ fn the_bytes_pane_shows_rows_and_the_keys_walk_cells() {
     assert_eq!(cursor(&mut app), 16);
     d.press(&mut app, "$");
     assert_eq!(cursor(&mut app), 31);
+    d.press(&mut app, "gh");
+    assert_eq!(cursor(&mut app), 16, "helix's `gh`");
+    d.press(&mut app, "gl");
+    assert_eq!(cursor(&mut app), 31, "helix's `gl`");
     d.press(&mut app, "l");
     assert_eq!(cursor(&mut app), 32, "past a row's end is the next row");
     d.press(&mut app, "3j2l");

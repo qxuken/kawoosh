@@ -148,6 +148,10 @@ fn the_tables_are_listed_and_the_first_is_browsed_as_a_grid_the_keys_walk() {
     assert_eq!(shown(&mut app), "grid items 3 5");
     d.press(&mut app, "0");
     assert_eq!(shown(&mut app), "grid items 3 1");
+    d.press(&mut app, "gl");
+    assert_eq!(shown(&mut app), "grid items 3 5", "helix's `gl`");
+    d.press(&mut app, "gh");
+    assert_eq!(shown(&mut app), "grid items 3 1", "helix's `gh`");
     d.press(&mut app, "gg");
     assert_eq!(shown(&mut app), "grid items 1 1");
     d.press(&mut app, "G");

@@ -209,7 +209,7 @@ binary, the integers and floats of each width, the character.
 |---|---|
 | `h` `j` `k` `l`, the arrows | a byte, a row; a count before any |
 | `w` `b` | the next group of four bytes, the one before |
-| `0` `$` | the row's first byte, its last |
+| `0` `$`, `gh` `gl` | the row's first byte, its last |
 | `gg` `G` | the file's first byte, its last |
 | `<C-d>` `<C-u>`, `<C-f>` `<C-b>` | half a screen, a whole one |
 | `Ngo` | to byte N |
@@ -319,7 +319,7 @@ the right, `NULL` is faint, a blob shows its first bytes and its size.
 | `j` `k`, the arrows | a row; a count before any |
 | `<CR>` `l` in the tables | browse the table under the cursor |
 | `h` `l` | a column |
-| `0` `$` | the row's first column, its last |
+| `0` `$`, `gh` `gl` | the row's first column, its last |
 | `gg` `G` | the first row, the last one read |
 | `<C-d>` `<C-u>`, `<C-f>` `<C-b>` | half a screen, a whole one |
 | `o`, a click on the header | sort the browsed table by the column; again, the other way |
