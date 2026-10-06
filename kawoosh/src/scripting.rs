@@ -82,6 +82,9 @@ pub struct Scripting {
     /// `kawoosh pick` callers waiting on the picker, by token.
     pub picks: HashMap<u64, crossbeam_channel::Sender<String>>,
     pub next_pick: u64,
+    /// The bundled plugins are loading: what they declare is part of
+    /// every launch, not news (a language they register is no log line).
+    pub bundled: bool,
 }
 
 /// Ranges each with a colour: what [`Kawoosh::paints_in`] answers.
@@ -162,6 +165,7 @@ impl Kawoosh {
         if let Err(e) = crate::legends::lua_door(rt.lua(), self.legends.clone()) {
             log::error!("kawoosh.legends: {e}");
         }
+        self.scripting.bundled = true;
         for (name, src) in crate::plugins::BUNDLED {
             if let Err(e) = rt.load_source(name, src) {
                 log::error!("{name}: {e}");
@@ -169,6 +173,7 @@ impl Kawoosh {
             }
         }
         self.drain_lua();
+        self.scripting.bundled = false;
         // The plugins have declared theirs: a settings file's key no one
         // declared can be named now without naming theirs.
         self.note_undeclared();

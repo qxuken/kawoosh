@@ -226,7 +226,9 @@ fn a_listed_language_is_one_of_files_until_installed() {
 
 /// Listing the languages at launch is no news: with the `log` macros
 /// hooked as the app has them, the corner stays empty — a line a
-/// language was what the first window showed.
+/// language was what the first window showed. The bundled plugins load
+/// as at launch: `man.lua`'s `man` language said "language man: no
+/// grammar" every time (2026-10-07).
 #[test]
 fn the_languages_are_listed_without_a_word() {
     let t = temp("quiet");
@@ -237,6 +239,8 @@ fn the_languages_are_listed_without_a_word() {
         app.log_sink.is_some(),
         "the test's own process, so its own logger"
     );
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
     app.load_grammars(&t.join("grammars"));
     d.frame(&mut app);
     d.frame(&mut app);
