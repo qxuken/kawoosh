@@ -330,6 +330,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
             "close",
             "copy",
             "enter",
+            "here",
             "hidden",
             "join",
             "preview",

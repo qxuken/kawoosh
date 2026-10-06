@@ -14,6 +14,7 @@ hides what it showed: buffers and terminals live on and come back with
 | keys | what |
 |---|---|
 | `<C-w>v` `<C-w>s` | split beside, below (`:vsplit`, `:split`) — the new pane opens on [the launcher](#the-launcher) |
+| `<C-w>/` | the directory you are in — the file's, the listed one, a terminal's — listed in a pane beside (`:dir here`); `<C-w>.` is a terminal there ([files](files.md#the-file-manager)) |
 | `<C-w>q` `<C-w>c` | close the pane (`:close`) |
 | `<C-w>o` | close every other pane (`:only`) |
 | `<C-w>h` `<C-w>j` `<C-w>k` `<C-w>l` | focus the pane left, below, above, right (also `<C-w>` + arrows) |

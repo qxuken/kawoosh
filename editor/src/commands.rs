@@ -5222,6 +5222,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>!", "terminal"),
         // `.` for here: where the pane in front is.
         ("<C-w>.", "terminal here"),
+        // `/` for the directory here, listed beside: `-` lists it in
+        // the pane, and `<C-w>-` is vim's shorter.
+        ("<C-w>/", "dir here"),
         ("<C-w>n", "toast"),
         ("gt", "tab next"),
         ("gT", "tab prev"),

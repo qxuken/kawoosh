@@ -72,6 +72,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<D-=>` `<D-+>` / `<D-->` `<D-_>` / `<D-0>` (Ctrl where there is no ⌘) | `font bigger` / `smaller` by a pixel for the session, `font reset` back to the settings' size; from every mode and pane. The wheel with ⌘ or Ctrl held steps it too, up for bigger, a pixel a notch, over whatever the pointer is on (the window's `scroll_mods`, kui F122: no scroller and no terminal's program hears that wheel) |
 | `<C-w>!` | a terminal (`:!` runs a shell, so does this), in the working directory or, from a terminal, its shell's |
 | `<C-w>.` | a terminal here (`:terminal here`): the file's directory, the one a listing or `:du` is on, a terminal's shell's — `.` as in the current directory |
+| `<C-w>/` | the directory here, listed in a pane beside (`:dir here`): the same places `<C-w>.` reads — `-` lists it in the pane, `<C-w>-` is vim's shorter, so `/`, the path's own mark. A listing split this way is one buffer a directory, and a move in either pane leaves the other where it was |
 | `<C-w>n` | the keyboard onto the toasts |
 | `<C-w>:` | the command line, from a pane without one |
 | `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, in the colours it was printed in, full modal editing, the status saying `COPY`, the caret where the terminal's cursor was (scrolled back past it, on the top row the pane showed); `q`, `<C-S-x>` again, or `<Esc>` once nothing is left to clear gives the pane back |
