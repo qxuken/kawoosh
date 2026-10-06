@@ -281,6 +281,44 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A line the terminal wrapped at its width is one line of the
+/// scrollback buffer: `yy` on it yanks it whole, no newline where the
+/// pane's edge was, and the caret lands on the terminal's cursor
+/// counted over the joined rows.
+#[test]
+fn a_wrapped_row_is_one_line_in_copy_mode() {
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    let cols = app.terms.map[&t].size().cols as usize;
+    let hex: String = (0..cols * 3 + 5)
+        .map(|i| b"0123456789ABCDEF"[i % 16] as char)
+        .collect();
+    app.feed_terminal(
+        t,
+        format!("$ ./a.out\r\nRandom bytes: {hex}\r\n$ ").as_bytes(),
+    );
+    d.frame(&mut app);
+    d.key(&mut app, "X", KeyMods::NONE.with_shift().with_ctrl());
+    let v = app.focused_view().expect("the scrollback buffer");
+    let buf = app.ed.buffer_of(v);
+    assert_eq!(buf.line_text(1).trim_end(), format!("Random bytes: {hex}"));
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(
+        (buf.line_of(head), head - buf.line_start(2)),
+        (2, 0),
+        "the caret on the prompt after the wrapped line"
+    );
+    d.keys(&mut app, "kyy");
+    assert_eq!(
+        app.ed.memory.head().unwrap().text,
+        format!("Random bytes: {hex}\n"),
+        "yanked whole"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// A BEL (roadmap step 29): a chime by default, at most one in
 /// `BELL_GAP`; a terminal not on screen marks its tab until the tab is
 /// visited; `terminal.bell = "off"` does neither, `visual` marks without
