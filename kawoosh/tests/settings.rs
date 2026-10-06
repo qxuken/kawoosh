@@ -1375,6 +1375,14 @@ return {
             )),
         "and the search's legend, every pane's now"
     );
+    assert!(
+        app.notes.shown.iter().any(|n| n.text
+            == format!(
+                "`run.command` is now `tools.run` ({})",
+                rel(".kawoosh/settings.lua")
+            )),
+        "and the run tool, a tool like the rest"
+    );
     // Again, a reload later: not said twice.
     app.reload_project_settings();
     d.frame(&mut app);

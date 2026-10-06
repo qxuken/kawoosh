@@ -13,7 +13,8 @@ packages in the picker 2026-10-05 (Decision 9); the buffer named
 for its command, then a buffer a command and directory, the same day
 (Decisions 10 and 11); the colours, the head and how long it took
 2026-10-06 (Decision 12); the end said once, a location's pane and
-the session the same day (Decision 13). The calls
+the session the same day (Decision 13); the note's "Not built"
+2026-10-07 (Decisions 14–18). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -506,6 +507,25 @@ text and its paints in the session (a long build's are megabytes
 written at every quit), with a run to make for `r`, or a stub saying
 the output was not kept — a scratch by another name.
 
+### 14. `run` is a tool like the rest
+
+*Added 2026-10-07*, from this note's "Not built" ("let's do the compile
+ones"). `run.command` was a setting of its own that made a `run` tool
+(`tools.lua`), beside a `tools` table that makes tools by name: two
+spellings of one thing, as `compile.command` and `compile.commands`
+were. `tools.run` is the one now — `run = { cmd = "cargo run", cwd =
+"root" }` — and `run.command` is gone, not aliased: a file still setting
+it is told `run.command is now tools.run`, as Decision 7 moved
+`compile.command`. A string is its `cmd`, as for every tool, so it runs
+in the file's directory unless it says `cwd = "root"`, where
+`run.command` always ran at the root: the one tool that did not read
+like the others. `compile` stays made from `compile.default`: it is
+compile mode's line in a terminal, not a tool the user names.
+
+Beaten: `run.command` kept as an alias (two ways to say it, one of them
+undocumented); a `run` beside `compile`'s default (`compile.run`) —
+running a program is not compile mode's, which reads its output.
+
 ## Not built
 
 - A program that colours only on a terminal and reads none of the
@@ -516,5 +536,5 @@ the output was not kept — a scratch by another name.
 - A deducer registry for plugins (Decision 1's beaten).
 - Other nushell files than `build.nu` (a `toolkit.nu`, nushell's own
   habit), and a parameter's completer offered in the prompt.
-- `run.command` as a `tools` entry: the same shape question as
-  `compile.command`, left for its own round.
+- ~~`run.command` as a `tools` entry: the same shape question as
+  `compile.command`, left for its own round.~~ Decision 14.

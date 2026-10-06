@@ -172,8 +172,10 @@ impl Config {
 
 /// Settings that were renamed: a file still setting the old one is told
 /// where it went rather than that it is nobody's.
-const MOVED: [(&str, &str); 3] = [
+const MOVED: [(&str, &str); 4] = [
     ("compile.command", "compile.default"),
+    // A tool like the rest (compile.md Decision 14).
+    ("run.command", "tools.run"),
     ("grammars.url", "grammars.urls"),
     // Every pane's legend now, `compact` or `full`.
     ("search.legend", "keys.legend"),

@@ -11,13 +11,14 @@
 --
 -- The defaults: `git` (lazygit at the working directory), `top`,
 -- `shell` (`$SHELL` at the working directory), and — while the
--- settings name them — `compile` (`compile.default` in a terminal, for
--- an interactive run of what `:compile` streams into a buffer) and
--- `run` (`run.command`, `cargo run` say). `settings.lua`'s `tools`
--- table adds or replaces by name:
+-- settings name one — `compile` (`compile.default` in a terminal, for
+-- an interactive run of what `:compile` streams into a buffer).
+-- `settings.lua`'s `tools` table adds or replaces by name — a project's
+-- `run` is one of them (it was `run.command`):
 --
 --   tools = {
 --     git = { cmd = "gitui" },                 -- another git
+--     run = { cmd = "cargo run", cwd = "root" },
 --     serve = { cmd = "npm run dev", cwd = "root", dock = true, key = "v" },
 --     logs = "tail -f /var/log/system.log",  -- a string is its cmd
 --   }
@@ -33,7 +34,6 @@ local DEFAULTS = {
 }
 
 kawoosh.setting("tools", { type = "table", doc = "launch targets by name: a command, or `{ cmd, cwd, place, dock, restore, key }` — `place` a `column` of its own, `under` the pane, or the `dock`" })
-kawoosh.setting("run.command", { type = "string", doc = "what the `run` tool runs" })
 
 -- A tool's letter in the launcher (`key = "g"`), by name.
 kawoosh.tool_keys = kawoosh.tool_keys or {}
@@ -61,15 +61,12 @@ function kawoosh.compile_default()
 end
 
 -- kawoosh.tools_sync(): the tools as the settings have them now — the
--- defaults, the two the settings name, and the `tools` table.
+-- defaults, `compile` while `compile.default` says one, and the
+-- `tools` table.
 function kawoosh.tools_sync()
   for name, def in pairs(DEFAULTS) do register(name, def) end
   local compile = kawoosh.compile_default()
   if compile then register("compile", { cmd = compile, cwd = "root" }) end
-  local run = kawoosh.opt("run.command")
-  if type(run) == "string" and run ~= "" then
-    register("run", { cmd = run, cwd = "root" })
-  end
   local mine = kawoosh.opt("tools")
   if type(mine) == "table" then
     for name, def in pairs(mine) do register(tostring(name), def) end
