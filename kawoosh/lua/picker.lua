@@ -1738,11 +1738,9 @@ picker.source("smart", {
 -- `rg` on the query, as it is typed: `path:line:col: text` a row each,
 -- the file at the line on `<CR>`. The rows are what rg found — not
 -- fuzzy-filtered again — and a search past `GREP_MAX` lines is
--- stopped where it is.
-local function shell_quote(s)
-  return "'" .. s:gsub("'", "'\\''") .. "'"
-end
-
+-- stopped where it is. The query goes to rg as one argument, no shell
+-- between: `cmd.exe`, Windows' shell when `SHELL` is unset, reads no
+-- single quotes, and searched `'fn` in a file `helper'`.
 picker.source("grep", {
   title = "grep", placeholder = "a pattern for rg",
   search = function(q, job)
@@ -1750,7 +1748,7 @@ picker.source("grep", {
     local n, odd = 0, {}
     local token
     token = kawoosh.spawn(
-      "rg --vimgrep --color never --smart-case --max-columns 300 -- " .. shell_quote(q) .. " .",
+      { "rg", "--vimgrep", "--color", "never", "--smart-case", "--max-columns", "300", "--", q, "." },
       {
         cwd = root,
         on_lines = function(lines)
@@ -1778,6 +1776,8 @@ picker.source("grep", {
         end,
         on_exit = function(code)
           local note
+          -- No code and not killed here: it never started.
+          if code == nil and token then note = "rg did not start (is it installed?)" end
           if code == 2 and odd[1] then note = odd[1] end
           if n >= GREP_MAX then note = "stopped at " .. GREP_MAX .. " lines" end
           job.done(note)
