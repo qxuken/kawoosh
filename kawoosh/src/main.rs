@@ -189,6 +189,8 @@ From a terminal inside kawoosh (through $KAWOOSH_SOCKET):
 Options:
   -h, --help                     print this and exit
   -V, --version                  print the version and exit
+  --languages                    print the languages this build knows and
+                                 their extensions, as JSON
   --after PID                    open once process PID has exited: what
                                  :relaunch starts
 
@@ -230,6 +232,12 @@ fn main() -> anyhow::Result<()> {
         }
         Some("-V" | "--version") => {
             println!("kawoosh {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        // What Info.plist's document types are compiled from
+        // (scripts/macos-app.nu).
+        Some("--languages") => {
+            println!("{}", kawoosh::grammars::languages_json());
             return Ok(());
         }
         // `--after PID`: started by that Kawoosh's `:relaunch`, to open

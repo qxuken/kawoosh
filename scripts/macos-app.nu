@@ -9,7 +9,8 @@
 #                                     assets/icons
 #   Contents/Resources/fonts/         the bundled faces, found from the
 #                                     binary (left out with --no-fonts)
-#   Contents/Info.plist
+#   Contents/Info.plist               its document types compiled from
+#                                     `kawoosh --languages`
 #
 # The binary is the same one `cargo run` builds; the CLI half works from
 # inside the app too:
@@ -65,6 +66,45 @@ def main [
     try { ^/bin/cp -Rc $fonts $resources e> /dev/null } catch { ^/bin/cp -R $fonts $resources }
   }
 
+  # The documents Finder offers Kawoosh for — Open With, a file dropped
+  # on the Dock icon, `open -a Kawoosh FILE` — which reach the running
+  # app as kui's `open` event (app.rs): a type for each language the
+  # build knows, by its extensions (`kawoosh --languages`), then any
+  # file at all and a folder, which is listed. All `Alternate`: Kawoosh
+  # is in the menu for every file and opens what no other app claims,
+  # but takes no file from the app that is its default.
+  let languages = ^($contents | path join MacOS kawoosh) --languages | from json
+  let document_types = $languages | each {|l|
+    let exts = $l.extensions | each {|e| $'        <string>($e)</string>' } | str join "\n"
+    $'    <dict>
+      <key>CFBundleTypeName</key>        <string>($l.name)</string>
+      <key>CFBundleTypeRole</key>        <string>Editor</string>
+      <key>LSHandlerRank</key>           <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+($exts)
+      </array>
+    </dict>'
+  } | append $'    <dict>
+      <key>CFBundleTypeName</key>        <string>Document</string>
+      <key>CFBundleTypeRole</key>        <string>Editor</string>
+      <key>LSHandlerRank</key>           <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.text</string>
+        <string>public.data</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>        <string>Folder</string>
+      <key>CFBundleTypeRole</key>        <string>Viewer</string>
+      <key>LSHandlerRank</key>           <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.folder</string>
+      </array>
+    </dict>' | str join "\n"
+
   let plist = $contents | path join Info.plist
   $'<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -82,6 +122,10 @@ def main [
   <key>LSApplicationCategoryType</key>       <string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key>         <true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key> <true/>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+($document_types)
+  </array>
 </dict>
 </plist>
 ' | save -f $plist
