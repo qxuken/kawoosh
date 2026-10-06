@@ -3192,6 +3192,24 @@ frame.
     inserted or deleted from the grid, a session bringing the pane
     back. `kawoosh/tests/sqlite.rs`; `systems` `sqlite::tests`.
 
+92. ~~**Manual pages**: `:man` into a buffer~~ ([man.md](man.md)).
+    Asked 2026-10-06 ("Let's build man plugin to read man pages
+    inside kawoosh"), planned and built the same day: `:man PAGE`,
+    `:man SECTION PAGE`, `:man PAGE(SECTION)` run the system's `man`
+    with the formatting kept and read it into a read-only scratch,
+    `*man ls(1)*`, in the focused pane, rendered to that pane's width
+    (`kawoosh.pane_size`, new; `man.width`), the overstrikes read into
+    paints — section heads `bold keyword`, bold and underline as they
+    were, references in the `link` colour, header and footer dim — on
+    `kawoosh.buf.paint`, which learnt style words before a colour.
+    `:man` alone takes the word under the caret, else the picker over
+    every page (`man -k .`, once a session); `<leader>ik`. In a page
+    `K` `<CR>` follow the reference under the caret, `<C-o>` back,
+    `]]` `[[` the section heads, `q` closes. `kawoosh.spawn` takes
+    `env`. `kawoosh/lua/man.lua`, `kawoosh/lua/tests/man.lua` on a
+    reader of the test's own. Not built: `K` in a shell buffer, a page
+    re-rendered on resize, the heads in `grs`.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision

@@ -1048,9 +1048,10 @@ function picker.open(what, opts)
   if P and P.job and P.job.cancel then pcall(P.job.cancel) end
   if P and P.answer then P.answer(nil) end
   unfollow()
-  -- `terminal`: opened from a terminal pane, where a pick goes back to.
+  -- `terminal`: opened from a terminal pane, where a pick goes back to;
+  -- `pane`, that pane's id, for a source that renders to its size.
   local ctx = { buffer = kawoosh.buf.current(), cwd = fs.cwd(), root = opts.root or fs.cwd(),
-                terminal = kawoosh.holds("terminal") == true }
+                terminal = kawoosh.holds("terminal") == true, pane = kawoosh.pane() }
   if ctx.buffer and not ctx.terminal then
     local ok, c = pcall(kawoosh.buf.cursor, ctx.buffer)
     if ok then ctx.caret = c end

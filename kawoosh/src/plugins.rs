@@ -15,6 +15,8 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:sqlite", include_str!("../lua/sqlite.lua")),
     ("kawoosh:hex", include_str!("../lua/hex.lua")),
     ("kawoosh:picker", include_str!("../lua/picker.lua")),
+    // After picker: its pages are a source.
+    ("kawoosh:man", include_str!("../lua/man.lua")),
     ("kawoosh:search", include_str!("../lua/search.lua")),
     ("kawoosh:lists", include_str!("../lua/lists.lua")),
     ("kawoosh:dirs", include_str!("../lua/dirs.lua")),

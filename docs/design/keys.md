@@ -217,6 +217,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `]'` `['` | the next, previous marked line of the file, COUNT marks ([marks.md](marks.md)) |
 | `]f` `[f` | the start of the next, previous function by the syntax, COUNT on — nested ones too; a motion, so `d]f` `v]f` ([nodes.md](nodes.md) Decision 9). `]c` `[c` stay vim's |
 | `]<Space>` `[<Space>` | COUNT empty lines below / above the caret's line — once a line, whatever carets are on it — the carets staying on their text (unimpaired's) |
+| `]]` `[[` | in a manual page: the next, previous section head, COUNT on, the head at the pane's top ([man.md](man.md)); nothing elsewhere yet |
 
 ### Going somewhere: `g`
 
@@ -244,7 +245,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `grf` | format the buffer through its server |
 | `grs` | the buffer's symbols in the picker: its server's with what its grammar's outline adds — locals, headings — (`symbols.source`), a tree in the file's order while nothing is typed and the matches with the symbols they are inside after; the cursor starts on the one the caret is in, and the pane follows the cursor, or the pointer over a row, the place washed — closed untaken, the caret goes back ([marks.md](marks.md)) |
 | `grS` | the workspace's symbols matching the query, in the picker, asked as it is typed |
-| `K` | hover (vim's, not `g`, but the same family); in the hover, the hover of a symbol it names, from where that is defined |
+| `K` | hover (vim's, not `g`, but the same family); in the hover, the hover of a symbol it names, from where that is defined; in a manual page, the page the reference under the caret names ([man.md](man.md)) |
 | `<C-e>` | every diagnostic under the caret, whole — every line of it — headed by where it came from (`error  ts(2322)`), in a pane; in a multibuffer, the excerpt's file's |
 | `gt` `gT` | tabs |
 | `g-` `g+` | undo by time |
@@ -443,6 +444,7 @@ objects, or any other character on both sides.
 | `<leader>ih` | the help (`:help [TOPIC]`: a page, a command, a key), read-only, `gx` following its links; `:tutor` a tutorial to try the keys on |
 | `<leader>im` | the messages |
 | `<leader>ic` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
+| `<leader>ik` | the manual page of the word under the caret (`:man`; `:man ls`, `:man 3 printf`, `:man printf(3)`), read into a read-only buffer in this pane, rendered to its width, bold and underline kept; on nothing, the picker over every page `man -k` knows (`:man pick`). In a page `K` and `<CR>` follow the reference under the caret, `<C-o>` is the way back, `]]` `[[` the next and previous section head, `q` closes it ([man.md](man.md)) |
 | `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>,` | the settings pane (`:settings`, `<D-,>`), a column beside the focused one ([settings.md](settings.md)) |
 | `<leader>ot` `<leader>os` | the other base, dark for light and light for dark (`theme toggle`); the base the OS's again (`theme system`) — the session's `theme.appearance` ([themes.md](themes.md)) |

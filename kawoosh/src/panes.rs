@@ -1636,7 +1636,7 @@ impl Kawoosh {
         } else {
             buf.len()
         };
-        let (painted, behind) = self.paints_in(buf_id, drawn);
+        let (painted, behind, paint_marks) = self.paints_in(buf_id, drawn);
         washes.splice(0..0, behind);
         let sels = &v.sels;
         let primary = sels.primary();
@@ -1811,6 +1811,24 @@ impl Kawoosh {
             - gutter
             - 2.0)
             .max(0.0);
+        // The pane's size in the editor's cells, for a plugin that
+        // renders to fit it (`kawoosh.pane_size`; `man.lua`'s width).
+        if let Some(rt) = &self.scripting.rt {
+            let height = self
+                .layout
+                .rects
+                .get(&pane)
+                .map_or(0.0, |r| (r.h - self.chrome.pane_title_h).max(0.0));
+            rt.note_pane(
+                pane,
+                kawoosh_lua::PaneGeom {
+                    width,
+                    height,
+                    cols: (width / cell_w.max(1.0)).floor() as usize,
+                    rows: rows_n,
+                },
+            );
+        }
         // Scroll the caret into view sideways, a few columns of margin,
         // the way `top` follows it down — before the rows, which are
         // sliced to the window this lands on. A long line's caret is
@@ -2187,8 +2205,9 @@ impl Kawoosh {
                                     },
                                 ))
                                 .collect();
-                            // The styled tokens' runs as marks.
-                            let syntax_marks: Vec<(Range<usize>, rows::Mark)> = if any_styled {
+                            // The styled tokens' runs as marks, and the
+                            // styles the paints set (`bold`, `underline`…).
+                            let mut syntax_marks: Vec<(Range<usize>, rows::Mark)> = if any_styled {
                                 runs_buf
                                     .runs(SYNTAX_LAYER, there(&src))
                                     .iter()
@@ -2203,6 +2222,19 @@ impl Kawoosh {
                             } else {
                                 Vec::new()
                             };
+                            syntax_marks.extend(
+                                paint_marks
+                                    .iter()
+                                    .filter(|(r, _)| r.start < range.end && r.end > range.start)
+                                    .map(|(r, m)| {
+                                        (
+                                            clip(r.start.max(range.start))
+                                                ..clip(r.end.min(range.end)),
+                                            *m,
+                                        )
+                                    })
+                                    .filter(|(r, _)| r.start < r.end),
+                            );
                             let washed: Vec<(Range<usize>, kui_native::Color)> = washes
                                 .iter()
                                 .filter(|(r, _)| r.start < range.end && r.end > range.start)

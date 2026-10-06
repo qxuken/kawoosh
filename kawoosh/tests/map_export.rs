@@ -135,6 +135,7 @@ fn the_keys_are_grouped_by_module() {
         ("<leader>ih", "help"),
         ("<leader>im", "messages"),
         ("<leader>ic", "commands"),
+        ("<leader>ik", "man"),
         ("<leader>,", "settings"),
         ("<C-w>C", "tab close"),
         ("<C-w>m", "layout"),
@@ -197,7 +198,7 @@ fn the_keys_are_grouped_by_module() {
         ("<leader>b", &["buffer"][..]),
         ("<leader>c", &["compile"]),
         ("<leader>h", &["hunk", "vcs", "conflict"]),
-        ("<leader>i", &["help", "messages", "commands"]),
+        ("<leader>i", &["help", "messages", "commands", "man"]),
         ("<leader>m", &["memory"]),
         (
             "<leader>o",

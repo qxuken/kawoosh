@@ -45,3 +45,12 @@ kawoosh.spawn({ "kawoosh-no-such-program-here" }, {
 kawoosh.wait(function() return exited end, nil, "missing program")
 kawoosh.test.eq(code, nil)
 kawoosh.test.ok(kawoosh.message():find("spawn:", 1, true), kawoosh.message())
+
+-- `env`: variables the process has over the inherited ones.
+got = nil
+kawoosh.spawn({ "sh", "-c", 'printf "%s|%s" "$KAWOOSH_SPAWN_A" "$KAWOOSH_SPAWN_B"' }, {
+  env = { KAWOOSH_SPAWN_A = "one", KAWOOSH_SPAWN_B = 2 },
+  on_done = function(text) got = text end,
+})
+kawoosh.wait(function() return got ~= nil end, nil, "sh done")
+kawoosh.test.eq(got, "one|2", "the env reached the process")

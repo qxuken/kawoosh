@@ -86,6 +86,34 @@ pub struct Scripting {
 
 /// Ranges each with a colour: what [`Kawoosh::paints_in`] answers.
 pub type Paints = Vec<(std::ops::Range<usize>, Color)>;
+/// Ranges each with the style a paint set on them, beside its colour.
+pub type PaintMarks = Vec<(std::ops::Range<usize>, crate::rows::Mark)>;
+
+/// A paint's name read apart: the style words before the colour —
+/// `bold`, `italic`, `underline`, `strike` (`strikethrough`), any of
+/// them, in any order — as a row's mark, and the colour's name, each
+/// `None` when the paint says nothing of it. `"bold"` is the text's own
+/// colour set bold; `"bold keyword"` the keyword's colour too;
+/// `"accent"` as it always was.
+pub(crate) fn paint_style(name: &str) -> (Option<crate::rows::Mark>, Option<&str>) {
+    let mut mark = crate::rows::Mark::default();
+    let mut styled = false;
+    let mut color = None;
+    for word in name.split_whitespace() {
+        match word {
+            "bold" => mark.bold = true,
+            "italic" => mark.italic = true,
+            "underline" => mark.underline = true,
+            "strike" | "strikethrough" => mark.strike = true,
+            other => {
+                color = Some(other);
+                continue;
+            }
+        }
+        styled = true;
+    }
+    (styled.then_some(mark), color)
+}
 
 /// One plugin's paint on a buffer: its ranges and colour names, at the
 /// version they were given.
@@ -955,6 +983,7 @@ impl Kawoosh {
                 stdin,
                 whole,
                 split_err,
+                env,
             } => {
                 use kawoosh_systems::io::{ProcCmd, ProcSpec};
                 self.scripting.next_proc += 1;
@@ -969,7 +998,7 @@ impl Kawoosh {
                     stdin,
                     whole,
                     split_err,
-                    env: Vec::new(),
+                    env,
                 };
                 match self.io.run_command(id, spec) {
                     Ok(handle) => {
@@ -1593,14 +1622,16 @@ impl Kawoosh {
     /// Buffer `id`'s painted ranges that reach into `window` (bytes of
     /// it: the lines a pane draws — a compile's output has a paint a
     /// word, and a frame is not to resolve them all), each with its
-    /// colour, and apart from them the washes behind the text (a
-    /// `bg:ALPHA:NAME` paint, the colour at that strength); a name no
+    /// colour, apart from them the washes behind the text (a
+    /// `bg:ALPHA:NAME` paint, the colour at that strength), and apart
+    /// from both the styles a paint sets (`bold`, `italic`,
+    /// `underline`, `strike` before its colour, or alone); a name no
     /// colour answers to is left out.
     pub(crate) fn paints_in(
         &self,
         id: BufferId,
         window: std::ops::Range<usize>,
-    ) -> (Paints, Paints) {
+    ) -> (Paints, Paints, PaintMarks) {
         let Some(sets) = self.scripting.paints.get(&id) else {
             return Default::default();
         };
@@ -1611,6 +1642,7 @@ impl Kawoosh {
         let dark = self.dark;
         let mut out = Vec::new();
         let mut washes = Vec::new();
+        let mut marks = Vec::new();
         for (r, name) in names {
             let r = r.clone();
             if let Some(wash) = name.strip_prefix("bg:") {
@@ -1619,11 +1651,17 @@ impl Kawoosh {
                 if let Some(c) = self.paint_color(name, dark) {
                     washes.push((r, c.with_alpha(alpha)));
                 }
-            } else if let Some(c) = self.paint_color(name, dark) {
+                continue;
+            }
+            let (style, color) = paint_style(name);
+            if let Some(m) = style {
+                marks.push((r.clone(), m));
+            }
+            if let Some(c) = color.and_then(|n| self.paint_color(n, dark)) {
                 out.push((r, c));
             }
         }
-        (out, washes)
+        (out, washes, marks)
     }
 
     /// The colour a paint names: a role of the palette, a version
@@ -2028,4 +2066,38 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::paint_style;
+    use crate::rows::Mark;
+
+    #[test]
+    fn a_paint_names_its_style_before_its_colour() {
+        assert_eq!(paint_style("accent"), (None, Some("accent")));
+        let bold = Mark {
+            bold: true,
+            ..Mark::default()
+        };
+        assert_eq!(paint_style("bold"), (Some(bold), None));
+        assert_eq!(paint_style("bold keyword"), (Some(bold), Some("keyword")));
+        assert_eq!(paint_style("keyword bold"), (Some(bold), Some("keyword")));
+        let both = Mark {
+            bold: true,
+            underline: true,
+            ..Mark::default()
+        };
+        assert_eq!(paint_style("bold underline"), (Some(both), None));
+        let struck = Mark {
+            strike: true,
+            italic: true,
+            ..Mark::default()
+        };
+        assert_eq!(
+            paint_style("italic strikethrough dim"),
+            (Some(struck), Some("dim"))
+        );
+        assert_eq!(paint_style("#ff0000"), (None, Some("#ff0000")));
+    }
 }

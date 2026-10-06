@@ -66,7 +66,7 @@ door.sections = {
   { name = "Layout", paths = { "layout.", "launcher.", "tabs.", "buffers." } },
   { name = "Status line", paths = { "statusline.", "status.", "timed." } },
   { name = "Code", paths = { "formatter", "format_on_save", "format", "lsp.", "lsp", "compile.",
-    "symbols.", "language" } },
+    "symbols.", "language", "man." } },
   { name = "Version control", paths = { "vcs." } },
   { name = "Search & lists", paths = { "picker.", "search.", "places." } },
   { name = "Files & tools", paths = { "dir.", "dirs.", "tools", "run." } },
