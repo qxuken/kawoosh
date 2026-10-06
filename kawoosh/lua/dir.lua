@@ -716,36 +716,6 @@ end
 
 -- ---------------------------------------------------------- the write
 
--- Runs every rename and move as two steps: each source to a temporary
--- name beside its destination, then each to its name — so a swap (`a`
--- to `b` and `b` to `a`; two files of one name each way between two
--- listings) never writes one over the other, whatever the order — and
--- a destination that is still taken is refused, the file put back
--- where it was. A file that went has any buffer open on it follow.
--- `each(op, ok, err)` takes the outcomes.
-local function rename_all(steps, each)
-  for i, r in ipairs(steps) do
-    r.tmp = r.to .. ".~" .. i .. "~"
-    local ok, err = pcall(fs.rename, r.from, r.tmp)
-    if not ok then
-      r.tmp = nil
-      each(r.op, false, err)
-    end
-  end
-  for _, r in ipairs(steps) do
-    if r.tmp then
-      if fs.exists(r.to) then
-        local back = not fs.exists(r.from) and pcall(fs.rename, r.tmp, r.from)
-        each(r.op, false, r.to .. ": exists" .. (back and "" or (", left at " .. r.tmp)))
-      else
-        local ok, err = pcall(fs.rename, r.tmp, r.to)
-        if ok then kawoosh.buf.retarget(r.from, r.to) end
-        each(r.op, ok, err)
-      end
-    end
-  end
-end
-
 -- Every directory touched listed again — and every listing with edits,
 -- whose edits came to nothing too: the listing `here` in its pane, the
 -- caret on `from`, the others where they are.
@@ -760,170 +730,96 @@ local function relist_all(touched, here, from)
   if here then dir.open(here, from, false, true) end
 end
 
--- A name to put a deleted entry aside under, beside it, that no entry
--- has: `.~goneN~` after its name, which a listing never shows.
-local gone = 0
-local function aside_name(path)
-  repeat
-    gone = gone + 1
-  until not fs.exists(path .. ".~gone" .. gone .. "~")
-  return path .. ".~gone" .. gone .. "~"
-end
-
--- Applies every group's ops and the ops between listings. The order is
--- what keeps a file from being lost: every delete vacates first, its
--- entry put aside under a temporary name beside it (a rename, so a tree
--- of fifty gigabytes goes at once); then the copies (their sources may
--- be renamed or moved by the rest), the renames and moves as two steps,
--- the creates; then a delete that made way for a copy or a move comes
--- back when nothing arrived in its place, and what was put aside is
--- removed. The copies and the removal run on threads of their own
--- (`fs.copy(a, b, fn)`, `fs.remove(path, fn)`), so the window never
--- waits on the disk: the listings are read again once the renames are
--- done, the summary said when the last removal is. `applied()`, when
--- given, runs as the listings are read again.
+-- Applies every group's ops and the ops between listings, as one
+-- `kawoosh.fs.apply`: the engine keeps the order that loses no file
+-- (every delete put aside first, then the copies, the renames and moves
+-- in two steps, the creates; a delete that made way for what did not
+-- come put back), on a thread of its own, so the window never waits on
+-- the disk. The listings are read again once only the removals of what
+-- was deleted are left, and a file renamed or moved has any buffer open
+-- on it follow; the summary is said when the last removal is back.
+-- `applied()`, when given, runs as the listings are read again.
 local function apply(groups, between, edited, here, from, applied)
-  -- An error's first line, without the runtime's prefix and traceback.
-  local function reason(err)
-    return (tostring(err):gsub("^runtime error: ", ""):match("^[^\n]*"))
+  local touched, changes, ops = {}, {}, {}
+  local function add(op, change)
+    changes[#changes + 1] = change
+    ops[#changes] = op
   end
-  local done, total, failed, touched = 0, 0, {}, {}
-  local function outcome(op, ok, err)
-    total = total + 1
-    if ok then done = done + 1 else failed[#failed + 1] = describe(op) .. ": " .. reason(err) end
-  end
-  local function try(op, f, ...)
-    local ok, err = pcall(f, ...)
-    outcome(op, ok, err)
-  end
-  -- What the plan writes to, and the deletes that make way for it.
-  local targets, steps, aside, gone_now = {}, {}, {}, {}
   for _, d in ipairs(edited) do touched[d] = true end
-  for _, g in ipairs(groups) do
-    touched[g.dir] = true
-    for _, op in ipairs(g.ops) do
-      if op.kind == "rename" then
-        steps[#steps + 1] = { op = op, from = at(g.dir, op.name), to = at(g.dir, op.to) }
-        targets[at(g.dir, op.to)] = true
-      elseif op.kind == "copy" or op.kind == "create" then
-        targets[at(g.dir, op.to or op.name)] = true
-      end
-    end
-  end
+  for _, g in ipairs(groups) do touched[g.dir] = true end
   for _, op in ipairs(between) do
     touched[op.dir] = true
-    targets[at(op.dir, op.to)] = true
-    if op.kind == "move" then
-      touched[op.from] = true
-      steps[#steps + 1] = { op = op, from = at(op.from, op.name), to = at(op.dir, op.to) }
-    end
+    if op.kind == "move" then touched[op.from] = true end
   end
-  -- Every delete put aside now. One that cannot be (the rename refused)
-  -- is removed where it is, on a thread of its own all the same.
   for _, g in ipairs(groups) do
     for _, op in ipairs(g.ops) do
-      if op.kind == "delete" then
-        local path = at(g.dir, op.name)
-        local tmp = aside_name(path)
-        if pcall(fs.rename, path, tmp) then
-          aside[#aside + 1] = { op = op, path = path, tmp = tmp, makes_way = targets[path] }
-        else
-          gone_now[#gone_now + 1] = { op = op, path = path }
-        end
-      end
+      if op.kind == "delete" then add(op, { kind = "delete", path = at(g.dir, op.name) }) end
     end
   end
-
-  local function finish()
-    relist_all(touched, nil, nil)
-    if #failed > 0 then
-      for _, f in ipairs(failed) do
-        kawoosh.notify(f, { level = "error", source = "dir", show = "log" })
-      end
-      kawoosh.notify(#failed .. " of " .. total .. " failed: " .. failed[1],
-        { level = "error", source = "dir" })
-    else
-      kawoosh.notify(done .. " change(s) applied", { source = "dir" })
-    end
-  end
-
-  -- The last: what was put aside removed, off the frame; the summary
-  -- when the last removal is back.
-  local function remove_all()
-    local removals = {}
-    for _, a in ipairs(aside) do
-      if a.makes_way and not fs.exists(a.path) then
-        local back, err = pcall(fs.rename, a.tmp, a.path)
-        outcome(a.op, false, back and "kept, nothing came in its place" or err)
-      else
-        removals[#removals + 1] = { op = a.op, path = a.tmp, from = a.path, dir = a.op.name:sub(-1) == "/" }
-      end
-    end
-    for _, g in ipairs(gone_now) do
-      removals[#removals + 1] = { op = g.op, path = g.path, dir = g.op.name:sub(-1) == "/" }
-    end
-    relist_all(touched, here, from)
-    if applied then applied() end
-    local left = #removals
-    if left == 0 then return finish() end
-    local dirs = 0
-    for _, r in ipairs(removals) do if r.dir then dirs = dirs + 1 end end
-    if dirs > 0 then
-      kawoosh.notify("removing " .. left .. " in the background", { source = "dir", show = "log" })
-    end
-    for _, r in ipairs(removals) do
-      fs.remove(r.path, function(ok, err)
-        -- Not all of it went (a running program's file, one another
-        -- holds): what is left goes back under its own name, where the
-        -- listing shows it, for the user to free and delete again; the
-        -- name taken since, it stays put aside, and the error says where.
-        if not ok and r.from and fs.exists(r.path) then
-          err = reason(err)
-          if not fs.exists(r.from) and pcall(fs.rename, r.path, r.from) then
-            err = err:gsub(r.path:gsub("%p", "%%%0"), (r.from:gsub("%%", "%%%%")))
-            err = err .. " — what is left is back as " .. fs.basename(r.from)
-              .. "; free it and delete again"
-          else
-            err = err .. " — what is left is in " .. r.path
-          end
-        end
-        outcome(r.op, ok, err)
-        left = left - 1
-        if left == 0 then finish() end
-      end)
-    end
-  end
-
-  -- The renames and the creates, once every copy is back.
-  local function rest()
-    rename_all(steps, outcome)
-    for _, g in ipairs(groups) do
-      for _, op in ipairs(g.ops) do
-        if op.kind == "create" then try(op, fs.create, at(g.dir, op.name), op.name:sub(-1) == "/") end
-      end
-    end
-    remove_all()
-  end
-
-  -- The copies, each on a thread of its own; the rest when all are in.
-  local copies = {}
   for _, g in ipairs(groups) do
     for _, op in ipairs(g.ops) do
-      if op.kind == "copy" then copies[#copies + 1] = { op, at(g.dir, op.name), at(g.dir, op.to) } end
+      if op.kind == "copy" then add(op, { kind = "copy", from = at(g.dir, op.name), to = at(g.dir, op.to) }) end
     end
   end
   for _, op in ipairs(between) do
-    if op.kind == "copy" then copies[#copies + 1] = { op, at(op.from, op.name), at(op.dir, op.to) } end
+    if op.kind == "copy" then add(op, { kind = "copy", from = at(op.from, op.name), to = at(op.dir, op.to) }) end
   end
-  local waiting = #copies
-  if waiting == 0 then return rest() end
-  for _, c in ipairs(copies) do
-    fs.copy(c[2], c[3], function(ok, err)
-      outcome(c[1], ok, err)
-      waiting = waiting - 1
-      if waiting == 0 then rest() end
-    end)
+  for _, g in ipairs(groups) do
+    for _, op in ipairs(g.ops) do
+      if op.kind == "rename" then add(op, { kind = "rename", from = at(g.dir, op.name), to = at(g.dir, op.to) }) end
+    end
   end
+  for _, op in ipairs(between) do
+    if op.kind == "move" then add(op, { kind = "move", from = at(op.from, op.name), to = at(op.dir, op.to) }) end
+  end
+  for _, g in ipairs(groups) do
+    for _, op in ipairs(g.ops) do
+      if op.kind == "create" then
+        add(op, { kind = "create", path = at(g.dir, op.name), dir = op.name:sub(-1) == "/" })
+      end
+    end
+  end
+
+  kawoosh.fs.apply(changes, {
+    settled = function(outcomes)
+      for i, c in ipairs(changes) do
+        if (c.kind == "rename" or c.kind == "move") and outcomes[i] == true then
+          kawoosh.buf.retarget(c.from, c.to)
+        end
+      end
+      relist_all(touched, here, from)
+      if applied then applied() end
+      local dirs = 0
+      for i, c in ipairs(changes) do
+        if outcomes[i] == false and ops[i].name:sub(-1) == "/" then dirs = dirs + 1 end
+      end
+      if dirs > 0 then
+        local left = 0
+        for i in ipairs(changes) do if outcomes[i] == false then left = left + 1 end end
+        kawoosh.notify("removing " .. left .. " in the background", { source = "dir", show = "log" })
+      end
+    end,
+    done = function(outcomes)
+      local failed = {}
+      for i, op in ipairs(ops) do
+        local o = outcomes[i]
+        if o ~= true then
+          -- Its first line: a reason is one line of the engine's.
+          failed[#failed + 1] = describe(op) .. ": " .. (tostring(o):match("^[^\n]*"))
+        end
+      end
+      relist_all(touched, nil, nil)
+      if #failed > 0 then
+        for _, f in ipairs(failed) do
+          kawoosh.notify(f, { level = "error", source = "dir", show = "log" })
+        end
+        kawoosh.notify(#failed .. " of " .. #ops .. " failed: " .. failed[1],
+          { level = "error", source = "dir" })
+      else
+        kawoosh.notify(#ops .. " change(s) applied", { source = "dir" })
+      end
+    end,
+  })
 end
 
 -- The write: every listing's changes as one confirm — one listing's

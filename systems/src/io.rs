@@ -69,6 +69,15 @@ pub enum IoMsg {
         token: u64,
         result: Result<(), String>,
     },
+    /// How `kawoosh.fs.apply(changes, …)` went (`fs::apply`): every
+    /// change's outcome by its index, `None` while it is under way —
+    /// the answer once the changes are settled and only the removals
+    /// are left (`last` false), and again at the end.
+    FsApplied {
+        token: u64,
+        outcomes: crate::fs::Outcomes,
+        last: bool,
+    },
     /// A directory listed on a thread of its own for a plugin
     /// (`kawoosh.fs.list(path, fn)`): the job's token, and the entries
     /// or why not.

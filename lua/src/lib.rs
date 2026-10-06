@@ -217,6 +217,14 @@ pub enum Msg {
         token: u64,
         op: FsOp,
     },
+    /// `kawoosh.fs.apply(changes, { settled =, done = })`: a write's
+    /// changes applied on a thread of their own in the order that loses
+    /// nothing (`fs::apply`), the answers to `Runtime::fs_applied` under
+    /// `token` (`IoMsg::FsApplied`).
+    FsApply {
+        token: u64,
+        changes: Vec<kawoosh_systems::fs::Change>,
+    },
     /// `kawoosh.fs.walk(root, fn)`: every file under the root as git
     /// sees it, walked on a thread of its own, the answer to
     /// `Runtime::walked` under `token` (`IoMsg::Walked`).
@@ -1249,6 +1257,8 @@ struct Jobs {
     /// The `commands` functions of `kawoosh.compile_kind`, by name.
     compile_kinds: HashMap<String, mlua::RegistryKey>,
     procs: HashMap<u64, ProcKeys>,
+    /// `kawoosh.fs.apply`'s `settled` and `done`, by token.
+    applying: HashMap<u64, (Option<mlua::RegistryKey>, Option<mlua::RegistryKey>)>,
     next: u64,
 }
 
@@ -2756,6 +2766,44 @@ impl Runtime {
 
     /// A change `fs.remove` or `fs.copy` made on a thread of its own:
     /// its callback called with `true`, or `nil` and why not.
+    /// How `kawoosh.fs.apply` went: `settled` called with the outcomes
+    /// so far, or `done` with all of them when it is the `last` answer
+    /// — each `true`, why it failed, or `false` while under way.
+    pub fn fs_applied(&self, token: u64, outcomes: &kawoosh_systems::fs::Outcomes, last: bool) {
+        let key = {
+            let mut j = self.jobs.borrow_mut();
+            let Some(hooks) = j.applying.get_mut(&token) else {
+                return;
+            };
+            let key = if last { hooks.1.take() } else { hooks.0.take() };
+            if last && let Some((Some(settled), _)) = j.applying.remove(&token) {
+                let _ = self.lua.remove_registry_value(settled);
+            }
+            key
+        };
+        let Some(key) = key else { return };
+        let Ok(f) = self.lua.registry_value::<mlua::Function>(&key) else {
+            return;
+        };
+        let _ = self.lua.remove_registry_value(key);
+        let call = || -> mlua::Result<()> {
+            let t = self.lua.create_table()?;
+            for (i, o) in outcomes.iter().enumerate() {
+                match o {
+                    Some(Ok(())) => t.set(i + 1, true)?,
+                    Some(Err(why)) => t.set(i + 1, why.as_str())?,
+                    None => t.set(i + 1, false)?,
+                }
+            }
+            f.call::<()>(t)
+        };
+        if let Err(e) = self.timed(&f, call) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("fs.apply: {e}")));
+        }
+    }
+
     pub fn fs_done(&self, token: u64, result: Result<(), String>) {
         let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
             return;
@@ -6769,6 +6817,75 @@ fn seed(
                 Ok(())
             },
         )?,
+    )?;
+    // `fs.apply(changes, { settled = fn(outcomes), done = fn(outcomes) })`:
+    // a write's changes — each `{ kind = "rename", from =, to = }` (a
+    // move too), `{ kind = "copy", from =, to = }`, `{ kind = "create",
+    // path =, dir = }`, `{ kind = "delete", path = }` — applied on a
+    // thread of their own, in the order that keeps a file from being
+    // lost whatever they are (`fs::apply`): deletes put aside, copies,
+    // renames in two steps, creates, a delete that made way for what
+    // did not come put back. `settled` is called when only the removals
+    // of what was deleted are left — the directories can be read again
+    // — and `done` at the end; each with every change's outcome by its
+    // index: `true`, why it failed, or `false` while under way.
+    let qq = q(queue);
+    let jj = jobs.clone();
+    fs.set(
+        "apply",
+        lua.create_function(move |lua, (list, opts): (Table, Option<Table>)| {
+            use kawoosh_systems::fs::Change;
+            let mut changes = Vec::new();
+            for (i, c) in list.sequence_values::<Table>().enumerate() {
+                let c = c?;
+                let path = |key: &str| -> mlua::Result<PathBuf> {
+                    let p: Option<String> = c.get(key)?;
+                    p.map(|p| expand(&p)).ok_or_else(|| {
+                        mlua::Error::runtime(format!("fs.apply: change {} has no `{key}`", i + 1))
+                    })
+                };
+                let kind: String = c.get("kind")?;
+                changes.push(match kind.as_str() {
+                    "rename" | "move" => Change::Rename {
+                        from: path("from")?,
+                        to: path("to")?,
+                    },
+                    "copy" => Change::Copy {
+                        from: path("from")?,
+                        to: path("to")?,
+                    },
+                    "create" => Change::Create {
+                        path: path("path")?,
+                        dir: c.get::<Option<bool>>("dir")?.unwrap_or(false),
+                    },
+                    "delete" => Change::Delete {
+                        path: path("path")?,
+                    },
+                    k => {
+                        return Err(mlua::Error::runtime(format!(
+                            "fs.apply: change {} is a `{k}`: rename, move, copy, create or delete",
+                            i + 1
+                        )));
+                    }
+                });
+            }
+            let hook = |key: &str| -> mlua::Result<Option<mlua::RegistryKey>> {
+                let f = match &opts {
+                    Some(o) => o.get::<Option<mlua::Function>>(key)?,
+                    None => None,
+                };
+                f.map(|f| lua.create_registry_value(f)).transpose()
+            };
+            let (settled, done) = (hook("settled")?, hook("done")?);
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.applying.insert(token, (settled, done));
+                token
+            };
+            qq.borrow_mut().push(Msg::FsApply { token, changes });
+            Ok(())
+        })?,
     )?;
     let qq = q(queue);
     let jj = jobs.clone();

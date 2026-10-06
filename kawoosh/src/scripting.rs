@@ -789,6 +789,32 @@ impl Kawoosh {
                     });
                 }
             }
+            Msg::FsApply { token, changes } => {
+                if self.jobs_inline {
+                    let mut settled = None;
+                    let all = kawoosh_systems::fs::apply(&changes, |o| settled = Some(o.clone()));
+                    if let Some(o) = settled {
+                        rt.fs_applied(token, &o, false);
+                    }
+                    rt.fs_applied(token, &all.into_iter().map(Some).collect(), true);
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.stream("fs apply", move |send| {
+                        let all = kawoosh_systems::fs::apply(&changes, |o| {
+                            send(IoMsg::FsApplied {
+                                token,
+                                outcomes: o.clone(),
+                                last: false,
+                            });
+                        });
+                        send(IoMsg::FsApplied {
+                            token,
+                            outcomes: all.into_iter().map(Some).collect(),
+                            last: true,
+                        });
+                    });
+                }
+            }
             Msg::Recall(i) => {
                 let n = self.ed.memory.len();
                 if i == 0 || i > n || !self.ed.memory.recall(n - i) {
