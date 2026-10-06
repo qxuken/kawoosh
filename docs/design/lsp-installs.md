@@ -172,7 +172,8 @@ detect whether to run it. for example eslint if eslint config exists."
   asked for a document's (`textDocument/diagnostic`) after each sync,
   again for all of its documents on `workspace/diagnostic/refresh`, and
   the answer joins the others as a push would. lists.md's "pull model"
-  is built this far; `workspace/diagnostic` is not.
+  is built this far; `workspace/diagnostic` since 2026-10-07
+  ([lists.md](lists.md) Decision 8).
 - **A code action's diagnostics go back as they came**: `source` and
   `code` with them (a number as a number) — eslint finds its fixes by
   the rule's code, and offered none without.

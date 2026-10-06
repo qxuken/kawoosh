@@ -59,7 +59,12 @@ test named for the position's line (`tests::at_line_N`), `cargo check
 -p fake` (its label the command), a `shell` runnable `make 'it all'`,
 and one of a kind nobody runs — each in the root. The
 `initializationOptions` it was started with, if any, are a note:
-`init: JSON`, keys sorted (lsp-servers.md Decision 8)."""
+`init: JSON`, keys sorted (lsp-servers.md Decision 8). With
+`--workspace-pull` it declares workspace diagnostics, and each
+`workspace/diagnostic` answers a full report for `src/pulled.rs` — a
+warning "pulled (N)", or "had ID (N)" when the request carried ID as
+that file's previous result — with result `rN`, and an unchanged one for
+`src/same.rs` (lists.md Decision 8)."""
 import json
 import re, sys
 
@@ -116,6 +121,7 @@ for i, a in enumerate(sys.argv):
 root_uri = None
 first_uri = None
 notes = []
+pulls = 0
 # Unregistrations asked, by request id: the registration's ID.
 unwatching = {}
 
@@ -210,7 +216,9 @@ while True:
             "typeDefinitionProvider": True, "implementationProvider": True,
             "declarationProvider": True, "documentSymbolProvider": True,
             "workspaceSymbolProvider": True, "inlayHintProvider": True,
-            "experimental": {"runnables": {"kinds": ["cargo"]}}}}})
+            "experimental": {"runnables": {"kinds": ["cargo"]}},
+            **({"diagnosticProvider": {"interFileDependencies": True, "workspaceDiagnostics": True}}
+               if "--workspace-pull" in sys.argv else {})}}})
     elif method == "initialized":
         if WATCHES:
             send({"jsonrpc": "2.0", "id": 5000, "method": "client/registerCapability", "params": {
@@ -324,6 +332,18 @@ while True:
         found = [{"name": "Widget", "kind": 23, "location": loc(1, 0), "containerName": "crate"},
                  {"name": "widget_fn", "kind": 12, "location": loc(0, 3)}]
         send({"jsonrpc": "2.0", "id": mid, "result": [s for s in found if q in s["name"].lower()]})
+    elif method == "workspace/diagnostic":
+        pulls += 1
+        uri = root_uri.rstrip("/") + "/src/pulled.rs"
+        had = {p["uri"]: p["value"] for p in m["params"].get("previousResultIds", [])}
+        said = ("had " + had[uri]) if uri in had else "pulled"
+        send({"jsonrpc": "2.0", "id": mid, "result": {"items": [
+            {"kind": "full", "uri": uri, "resultId": "r%d" % pulls, "items": [
+                {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 2}},
+                 "severity": 2, "message": "%s (%d)" % (said, pulls)}]},
+            {"kind": "unchanged", "uri": uri.replace("pulled", "same"), "resultId": "s"}]}})
+    elif method == "textDocument/diagnostic":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"kind": "full", "items": []}})
     elif method == "experimental/runnables":
         root = path_of(root_uri) if root_uri else "/"
         line = m["params"].get("position", {}).get("line", 0)

@@ -403,10 +403,10 @@ as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
   `lsp`'s `a_loose_glob_stays_in_its_workspace` and
   `a_folder_above_the_home_is_not_watched`, and a folder made and moved
   away in `a_loaded_file_changed_on_disk_reaches_the_server`.
-- **The pull model, workspace-wide** (`workspace/diagnostic`) —
+- ~~**The pull model, workspace-wide** (`workspace/diagnostic`) —
   lists.md's; with it a server that answers would need no `load_all`.
   A document's own pull is built ([lsp-installs.md](lsp-installs.md)
-  Decision 7).
+  Decision 7).~~ Built 2026-10-07, [lists.md](lists.md) Decision 8.
 - ~~**Rules a plugin defines**: the table is open, but only the shell
   reads its rules.~~ Built 2026-10-03 (Decision 6):
   `kawoosh.lsp.rule` and `kawoosh.lsp.rules` (`lua/src/lib.rs`),

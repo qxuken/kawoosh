@@ -604,6 +604,9 @@ pub struct Caps {
     /// It lists what can run at a place (`experimental/runnables`,
     /// rust-analyzer's), as its `experimental.runnables` says.
     pub runnables: bool,
+    /// It gives a whole workspace's diagnostics when asked
+    /// (`diagnosticProvider.workspaceDiagnostics`, lists.md Decision 8).
+    pub workspace_pull: bool,
 }
 
 impl Caps {
@@ -641,6 +644,7 @@ impl Caps {
             definition: self.definition || other.definition,
             pull: self.pull || other.pull,
             runnables: self.runnables || other.runnables,
+            workspace_pull: self.workspace_pull || other.workspace_pull,
             hover: self.hover || other.hover,
             completion: self.completion || other.completion,
             commands,
@@ -1476,6 +1480,13 @@ struct Server {
     /// The files it asked to hear of, by registration
     /// (`client/registerCapability` for `workspace/didChangeWatchedFiles`).
     watches: BTreeMap<String, Vec<FileWatch>>,
+    /// The workspace pull (lists.md Decision 8): the result each file's
+    /// report last carried, sent back so an unchanged one is said in a
+    /// word; whether a request is out; and whether another was wanted
+    /// while it was.
+    results: HashMap<String, String>,
+    pulling: bool,
+    pull_again: bool,
 }
 
 impl Server {
@@ -1607,6 +1618,9 @@ impl Server {
             last_stderr: None,
             caps: None,
             watches: BTreeMap::new(),
+            results: HashMap::new(),
+            pulling: false,
+            pull_again: false,
         })
     }
 
@@ -2831,6 +2845,75 @@ impl Pool {
         );
     }
 
+    /// The workspace pull (`workspace/diagnostic`, lists.md Decision 8): a
+    /// server that gives a whole workspace's diagnostics is asked for
+    /// them — once up, when it asks to be (`refresh`), after a document is
+    /// sent — with the results it gave before. One request is out at a
+    /// time; one wanted meanwhile is made when it is answered, so a
+    /// server holding the request open until something changes is left
+    /// to.
+    fn pull_workspace(&mut self, key: usize) {
+        let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+            return;
+        };
+        if !server.caps.as_ref().is_some_and(|c| c.workspace_pull) {
+            return;
+        }
+        if server.pulling {
+            server.pull_again = true;
+            return;
+        }
+        server.pulling = true;
+        let previous: Vec<Value> = server
+            .results
+            .iter()
+            .map(|(uri, id)| json!({ "uri": uri, "value": id }))
+            .collect();
+        server.request(
+            "workspace/diagnostic",
+            json!({ "previousResultIds": previous }),
+            (BufferId::default(), Version::INITIAL, 0),
+        );
+    }
+
+    /// A workspace pull answered (`result`, or none for a refusal): each
+    /// file's full report joins what its servers said of it, the files a
+    /// buffer holds left to their own pull; each report's result kept.
+    /// Then the pull wanted while it was out, if one was.
+    fn workspace_pulled(&mut self, key: usize, result: Option<&Value>) {
+        let items = result
+            .and_then(|r| r.get("items"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for item in items {
+            let Some(uri) = item.get("uri").and_then(Value::as_str).map(canonical_uri) else {
+                continue;
+            };
+            let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+                return;
+            };
+            if let Some(id) = item.get("resultId").and_then(Value::as_str) {
+                server.results.insert(uri.clone(), id.to_string());
+            }
+            let held = server
+                .documents
+                .get(&uri)
+                .is_some_and(|d| d.buffer.is_some());
+            if item.get("kind").and_then(Value::as_str) == Some("full") && !held {
+                let diagnostics = item.get("items").cloned().unwrap_or(Value::Null);
+                self.diagnostics_from(key, &uri, diagnostics);
+            }
+        }
+        let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+            return;
+        };
+        server.pulling = false;
+        if std::mem::take(&mut server.pull_again) {
+            self.pull_workspace(key);
+        }
+    }
+
     /// Every document server `key` holds for a buffer, pulled again: it
     /// came up, or asked (`workspace/diagnostic/refresh`).
     fn pull_all(&mut self, key: usize) {
@@ -2848,6 +2931,7 @@ impl Pool {
         for (uri, buffer) in docs {
             self.pull_diagnostics(key, &uri, buffer);
         }
+        self.pull_workspace(key);
     }
 
     /// Buffer `buffer`'s text sent to server `key`: `didOpen` the first
@@ -2892,6 +2976,7 @@ impl Pool {
                     self.status();
                 }
                 self.pull_diagnostics(key, &uri, buffer);
+                self.pull_workspace(key);
             }
             None => {
                 server.notify(
@@ -2915,6 +3000,7 @@ impl Pool {
                 );
                 self.status();
                 self.pull_diagnostics(key, &uri, buffer);
+                self.pull_workspace(key);
             }
         }
     }
@@ -3256,6 +3342,9 @@ impl Pool {
                     // Hints are asked for as the view moves; one refused
                     // is nothing to say.
                     "textDocument/inlayHint" | "textDocument/diagnostic" => {}
+                    // Refused (or cancelled, to be asked again): what was
+                    // wanted meanwhile is asked.
+                    "workspace/diagnostic" => self.workspace_pulled(key, None),
                     _ => self.emit_from(
                         key,
                         Event::Failed {
@@ -3304,6 +3393,7 @@ impl Pool {
                     self.reconcile_loads(key);
                     self.pull_all(key);
                 }
+                "workspace/diagnostic" => self.workspace_pulled(key, result),
                 "textDocument/diagnostic" => {
                     // `full`: the items; `unchanged`: as it was.
                     if result.and_then(|r| r.get("kind")).and_then(Value::as_str) == Some("full")
@@ -3727,6 +3817,10 @@ fn capabilities(result: Option<&Value>) -> Caps {
         inlay_hint: provides("inlayHintProvider"),
         definition: provides("definitionProvider"),
         pull: provides("diagnosticProvider"),
+        workspace_pull: caps
+            .and_then(|c| c.pointer("/diagnosticProvider/workspaceDiagnostics"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         runnables: caps
             .and_then(|c| c.pointer("/experimental/runnables"))
             .is_some_and(|v| v.as_bool().unwrap_or(v.is_object())),

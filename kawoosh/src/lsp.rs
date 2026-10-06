@@ -1551,6 +1551,7 @@ impl Kawoosh {
                 // Asked only of a server that said so: an answer it
                 // does not give would leave nothing to wait for.
                 runnables: false,
+                workspace_pull: false,
                 triggers: Vec::new(),
             })
     }

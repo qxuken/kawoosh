@@ -3215,3 +3215,49 @@ fn a_servers_init_is_its_initialization_options() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// lists.md Decision 8: a server that gives a workspace's diagnostics
+/// when asked (`workspaceDiagnostics`) is asked once it is up — a file
+/// never opened gets what it reported — and again after a document is
+/// sent, with the results it gave, so it can say a file is unchanged.
+#[test]
+fn a_workspace_s_diagnostics_are_pulled() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-wpull-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let pulled = dir.join("src/pulled.rs");
+    std::fs::write(&pulled, "fn f() {}\n").unwrap();
+    let mut def = fake_server();
+    def.args.push("--workspace-pull".into());
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    let said = |a: &Kawoosh| -> Vec<String> {
+        a.ed.diagnostics
+            .file(&pulled)
+            .iter()
+            .map(|p| p.diagnostic.message.clone())
+            .collect()
+    };
+    assert!(
+        until(&mut d, &mut app, |a| said(a)
+            .first()
+            .is_some_and(|m| m.starts_with("pulled"))),
+        "a file never opened, from the workspace pull: {:?}",
+        said(&app)
+    );
+    // A change sent: asked again, with the result it gave for the file.
+    d.keys(&mut app, "ix");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(
+        until(&mut d, &mut app, |a| said(a)
+            .first()
+            .is_some_and(|m| m.starts_with("had r"))),
+        "the previous result sent back: {:?}",
+        said(&app)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -76,8 +76,8 @@ server said them last — a server that clears a closed file's
 This is as much of "the workspace's diagnostics" as a server offers
 unasked. TypeScript's server only reports files it was sent; a whole
 project's errors there are `tsc --noEmit`, which `:compile` runs and
-`]q` walks. LSP 3.17's pull model (`workspace/diagnostic`) would ask
-for them; not built — see the end.
+`]q` walks. LSP 3.17's pull model (`workspace/diagnostic`) asks for
+them of a server that answers (Decision 8).
 
 ### 3. A list of places is a multibuffer
 
@@ -288,14 +288,47 @@ Departed from the note as written: the keys are `<leader>ce`
 `<leader>sD` — `<leader>sd` is the directory jumps. `:di` completes to
 `diagnostics` now, before `dir`.
 
+### 8. A workspace's diagnostics, pulled from a server that gives them
+
+*Added 2026-10-07*, from "Not built" ("then do the lsp ones"). A server
+that declares `diagnosticProvider.workspaceDiagnostics` (vtsls does; the
+builtin table's servers do not yet) gives a project's diagnostics when
+asked, files never opened among them — what `load_all` sends files to
+get out of a server that only reports what it was sent.
+
+- **When it is asked**: once it is up (with the documents' own pull,
+  lsp-installs.md Decision 7), when it asks to be
+  (`workspace/diagnostic/refresh`), and after a document is sent to it.
+  One request is out at a time; one wanted while it is out is made once
+  it is answered, so typing asks at the server's pace, not the keys',
+  and a server that holds the request open until something changes —
+  the protocol lets it — is simply left to.
+- **What it is sent**: the result each file's last report carried
+  (`previousResultIds`), so a file that has not moved comes back as one
+  word, `unchanged`, and keeps what it had.
+- **What its answer does**: a `full` report is that server's word on
+  the file, joined with its other servers' as a push is (Decision 1),
+  kept by path for a file no buffer holds (Decision 2) — so it is in
+  `:diagnostics`, `]q` and the gutter once opened. A file a buffer
+  holds is left to the document's own pull, which is asked as the
+  buffer is sent: two answers for one document would race. A refused
+  pull (or a cancelled one) asks again only if something wanted it.
+- No partial results: the request carries no `partialResultToken`, so
+  the answer is whole.
+
+Beaten: a timer (the server's refresh and the edits are the events
+that move a workspace's diagnostics); turning `load_all` off for a
+server that pulls — it is the user's rule, and sending the files still
+gives such a server their symbols.
+
 ## Not built
 
-- **The pull model, workspace-wide.** `workspace/diagnostic` for a
+- ~~**The pull model, workspace-wide.** `workspace/diagnostic` for a
   server that declares `diagnosticProvider.workspaceDiagnostics` — a
   project's errors without opening its files. vtsls answers it; the
   servers used here do not. A document's own pull
   (`textDocument/diagnostic`) is built ([lsp-installs.md](lsp-installs.md)
-  Decision 7, 2026-10-03).
+  Decision 7, 2026-10-03).~~ Decision 8.
 - ~~**More than one server per file.**~~ Built 2026-10-03
   ([lsp-installs.md](lsp-installs.md) Decision 7): a buffer has a list
   of servers, and diagnostics are every server's together, per
