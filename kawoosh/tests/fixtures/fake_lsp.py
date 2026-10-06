@@ -53,7 +53,11 @@ gets is noted, a change at a time, as "watched: created NAME" (changed,
 deleted; NAME the file's); a text changed to have `@unwatch ID` in it
 unregisters ID, noted "unregistered ID" once answered. The notes so far
 are published on the first document it was sent, as information beside
-its "boom"."""
+its "boom". Runnables (compile.md Decision 18): it declares
+`experimental.runnables`, and `experimental/runnables` answers a cargo
+test named for the position's line (`tests::at_line_N`), `cargo check
+-p fake` (its label the command), a `shell` runnable `make 'it all'`,
+and one of a kind nobody runs — each in the root."""
 import json
 import re, sys
 
@@ -61,6 +65,12 @@ docs = {}
 ended = False
 last_uri = None
 print("fake server starting", file=sys.stderr, flush=True)
+
+def path_of(uri):
+    from urllib.parse import unquote, urlparse
+    path = unquote(urlparse(uri).path)
+    # `file:///C:/x` on Windows: the drive, not a root above it.
+    return path[1:] if re.match(r"^/[A-Za-z]:", path) else path
 
 def char_before(uri, pos):
     lines = docs.get(uri, "").split("\n")
@@ -195,7 +205,8 @@ while True:
             "documentFormattingProvider": "--no-format" not in sys.argv,
             "typeDefinitionProvider": True, "implementationProvider": True,
             "declarationProvider": True, "documentSymbolProvider": True,
-            "workspaceSymbolProvider": True, "inlayHintProvider": True}}})
+            "workspaceSymbolProvider": True, "inlayHintProvider": True,
+            "experimental": {"runnables": {"kinds": ["cargo"]}}}}})
     elif method == "initialized":
         if WATCHES:
             send({"jsonrpc": "2.0", "id": 5000, "method": "client/registerCapability", "params": {
@@ -309,6 +320,19 @@ while True:
         found = [{"name": "Widget", "kind": 23, "location": loc(1, 0), "containerName": "crate"},
                  {"name": "widget_fn", "kind": 12, "location": loc(0, 3)}]
         send({"jsonrpc": "2.0", "id": mid, "result": [s for s in found if q in s["name"].lower()]})
+    elif method == "experimental/runnables":
+        root = path_of(root_uri) if root_uri else "/"
+        line = m["params"].get("position", {}).get("line", 0)
+        cargo = lambda label, args, exe: {"label": label, "kind": "cargo", "args": {
+            "cwd": root, "workspaceRoot": root, "overrideCargo": None,
+            "cargoArgs": args, "executableArgs": exe, "environment": {}}}
+        send({"jsonrpc": "2.0", "id": mid, "result": [
+            cargo("test tests::at_line_%d" % line, ["test", "--package", "fake", "--lib"],
+                  ["tests::at_line_%d" % line, "--exact"]),
+            cargo("cargo check -p fake", ["check", "-p", "fake"], []),
+            {"label": "a shell one", "kind": "shell",
+             "args": {"program": "make", "args": ["it all"], "cwd": root}},
+            {"label": "unknown", "kind": "other", "args": {}}]})
     elif method == "textDocument/inlayHint":
         send({"jsonrpc": "2.0", "id": mid, "result": [
             {"position": {"line": 0, "character": 7}, "label": ": i32", "paddingLeft": False},

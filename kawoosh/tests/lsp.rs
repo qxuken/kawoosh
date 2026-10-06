@@ -3090,3 +3090,97 @@ fn a_loaded_file_changed_on_disk_reaches_the_server() {
     drop(app);
     remove_soon(&dir);
 }
+
+/// compile.md Decision 18: the compile picker asks the caret's server
+/// what can run there — a server that says it answers runnables — and
+/// adds its answer as it comes: each a row under the server's name, its
+/// label the why, a cargo one as `cargo ARGS -- EXE` in its workspace, a
+/// shell one its program and quoted arguments; shown after the lines run
+/// and before the files' rows, the indices of the rows there already
+/// unmoved.
+#[test]
+fn the_compile_picker_adds_what_the_server_says_can_run() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-runnables-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"fake\"\n").unwrap();
+    let file = dir.join("src").join("main.rs");
+    std::fs::write(&file, "fn main() {\n    hello()\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .lsp
+            .caps
+            .get("rust")
+            .is_some_and(|c| c.runnables)),
+        "the server says it answers runnables"
+    );
+    d.keys(&mut app, "j");
+    ex(&mut d, &mut app, "compile pick");
+    let before: Vec<String> = app.compile.offer.iter().map(|o| o.cmd.clone()).collect();
+    assert_eq!(before[0], "cargo check", "the files' rows at once");
+    let test = "cargo test --package fake --lib -- tests::at_line_1 --exact";
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .compile
+            .offer
+            .iter()
+            .any(|o| o.cmd == test)),
+        "the server's rows added: {:?}",
+        app.compile.offer.iter().map(|o| &o.cmd).collect::<Vec<_>>()
+    );
+    let offer = &app.compile.offer;
+    assert_eq!(
+        offer[..before.len()]
+            .iter()
+            .map(|o| o.cmd.clone())
+            .collect::<Vec<_>>(),
+        before,
+        "the rows there before keep their indices"
+    );
+    let row = offer.iter().find(|o| o.cmd == test).unwrap();
+    assert_eq!(row.why, "test tests::at_line_1");
+    assert_eq!(row.cwd, dir);
+    assert!(
+        row.from.contains("python") || row.from.contains("fake"),
+        "{}",
+        row.from
+    );
+    let check = offer
+        .iter()
+        .find(|o| o.cmd == "cargo check -p fake")
+        .unwrap();
+    assert_eq!(
+        check.why, "",
+        "a label that is the command says nothing more"
+    );
+    assert!(
+        offer.iter().any(|o| o.cmd == "make 'it all'"),
+        "a shell one, quoted"
+    );
+    assert!(
+        !offer.iter().any(|o| o.why == "unknown"),
+        "a kind nobody runs is left out"
+    );
+    // Shown before the files' rows; picked by the index it was given.
+    let rows = |app: &mut Kawoosh| -> Vec<String> {
+        app.run_lua_source(
+            "t",
+            "kawoosh.echo(table.concat(kawoosh.picker.state().rows, '|'))",
+        );
+        app.ed.message.split('|').map(str::to_string).collect()
+    };
+    assert!(
+        frames_until(&mut d, &mut app, |_, a| rows(a)[0] == test),
+        "{:?}",
+        rows(&mut app)
+    );
+    assert!(rows(&mut app).iter().any(|r| r == "cargo check"));
+    std::fs::remove_dir_all(&dir).ok();
+}

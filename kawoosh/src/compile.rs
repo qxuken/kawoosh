@@ -311,6 +311,11 @@ pub struct Compile {
     pub started: u64,
     /// The rows `compile pick` offered, in the picker's order.
     pub offer: Vec<Offer>,
+    /// The runnables asked of the caret's server as the picker opened
+    /// (compile.md Decision 18): the token, and the server's name for the
+    /// rows; and the tokens handed out.
+    pub asked: Option<(u64, String)>,
+    pub tokens: u64,
     /// Nushell completers' answers (compile.md Decision 16), by file and
     /// completer, with the file's stamp they were asked at.
     pub completions:
@@ -392,6 +397,10 @@ pub struct Offer {
     pub args_at: usize,
     /// How it is declared, for the preview.
     pub detail: Vec<String>,
+    /// A language server's runnable (Decision 18): shown after the
+    /// settings' rows and the lines run, before the files' — wherever it
+    /// was added.
+    pub server: bool,
 }
 
 impl Offer {
@@ -406,6 +415,7 @@ impl Offer {
             needs: false,
             args_at: cmd.len(),
             detail: Vec::new(),
+            server: false,
         }
     }
 
@@ -1181,31 +1191,161 @@ impl Kawoosh {
             o.detail = d.detail;
             add(&mut rows, o);
         }
-        if rows.is_empty() {
+        // What the caret's server says can run there, asked now and
+        // added as it answers.
+        let ask = self.runnables_at();
+        if rows.is_empty() && ask.is_none() {
             self.ed.message = NOTHING.into();
             return;
         }
-        let Some(rt) = self.scripting.rt.clone() else {
+        if self.scripting.rt.is_none() {
             self.ed.message = "the compile picker needs lua".into();
             return;
+        }
+        self.compile.offer = rows;
+        self.publish_offer();
+        self.run_lua_source("compile", "kawoosh.picker.open(\"compile\")");
+        self.compile.asked = None;
+        if let Some((buffer, offset, server)) = ask {
+            self.compile.tokens += 1;
+            let token = self.compile.tokens;
+            self.compile.asked = Some((token, server));
+            self.positional_cmd(kawoosh_systems::lsp::Cmd::Runnables {
+                buffer,
+                offset,
+                token,
+            });
+        }
+    }
+
+    /// The offer as `kawoosh.compile_offer()` reads it: each row its
+    /// index in [`Compile::offer`], which a row added later never moves,
+    /// in the order shown — the settings' and the lines run, then a
+    /// server's runnables, then the files'.
+    fn publish_offer(&self) {
+        let Some(rt) = &self.scripting.rt else {
+            return;
         };
-        let snap: Vec<CompileOfferSnap> = rows
-            .iter()
-            .enumerate()
-            .map(|(i, o)| CompileOfferSnap {
-                index: i + 1,
-                cmd: o.cmd.clone(),
-                name: o.name.clone(),
-                from: o.from.clone(),
-                cwd: kawoosh_systems::fs::abbreviate_home(&o.cwd),
-                why: o.why.clone(),
-                needs: o.needs,
-                detail: o.detail.clone(),
+        let settled = |o: &Offer| {
+            [
+                "compile.default",
+                "compile.commands",
+                "last run here",
+                "recent",
+            ]
+            .contains(&o.from.as_str())
+        };
+        let mut order: Vec<usize> = (0..self.compile.offer.len()).collect();
+        order.sort_by_key(|&i| {
+            let o = &self.compile.offer[i];
+            match (settled(o), o.server) {
+                (true, _) => 0,
+                (_, true) => 1,
+                _ => 2,
+            }
+        });
+        let snap: Vec<CompileOfferSnap> = order
+            .into_iter()
+            .map(|i| {
+                let o = &self.compile.offer[i];
+                CompileOfferSnap {
+                    index: i + 1,
+                    cmd: o.cmd.clone(),
+                    name: o.name.clone(),
+                    from: o.from.clone(),
+                    cwd: kawoosh_systems::fs::abbreviate_home(&o.cwd),
+                    why: o.why.clone(),
+                    needs: o.needs,
+                    detail: o.detail.clone(),
+                }
             })
             .collect();
         rt.set_compile_offer(Some(Rc::new(snap)));
-        self.compile.offer = rows;
-        self.run_lua_source("compile", "kawoosh.picker.open(\"compile\")");
+    }
+
+    /// Where to ask the caret's server what can run (compile.md Decision
+    /// 18): its buffer, the caret, and the server's name — when it is a
+    /// file here whose server says it answers.
+    fn runnables_at(&self) -> Option<(BufferId, usize, String)> {
+        let v = self.focused_view()?;
+        let buffer = self.ed.views[v].buffer;
+        let path = self.ed.buffers[buffer].path.as_deref()?;
+        if kawoosh_systems::fs::domain_of(path).is_some()
+            || self.ed.settings.bool("compile.deduce") == Some(false)
+            || !self.lsp_answers(buffer)
+            || !self.caps_of(buffer).runnables
+        {
+            return None;
+        }
+        let server = self
+            .lsp
+            .holders
+            .get(&buffer)
+            .and_then(|c| c.first())
+            .map(|c| kawoosh_systems::fs::basename(Path::new(c)).unwrap_or_else(|| c.clone()))
+            .unwrap_or_else(|| "language server".into());
+        Some((buffer, self.ed.views[v].sels.primary().head, server))
+    }
+
+    /// The server's runnables for the picker opened last (compile.md
+    /// Decision 18): each a row under the server's name, its label the
+    /// why, run where it says; added to the offer, and the picker read
+    /// again if it is still the compile one. A row there already, where
+    /// it runs, is not made twice.
+    pub(crate) fn compile_runnables(
+        &mut self,
+        token: u64,
+        result: Result<Vec<kawoosh_systems::lsp::Runnable>, String>,
+    ) {
+        let Some((asked, server)) = self.compile.asked.clone() else {
+            return;
+        };
+        if asked != token {
+            return;
+        }
+        self.compile.asked = None;
+        let list = match result {
+            Ok(list) => list,
+            Err(e) => {
+                log::debug!("runnables: {e}");
+                return;
+            }
+        };
+        let fallback = self.compile_dir();
+        let mut added = false;
+        for r in list {
+            let cmd = std::iter::once(r.program.as_str())
+                .chain(r.args.iter().map(String::as_str))
+                .map(kawoosh_systems::io::shell_quote)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let cwd = r.cwd.unwrap_or_else(|| fallback.clone());
+            if self
+                .compile
+                .offer
+                .iter()
+                .any(|o| o.cmd == cmd && o.cwd == cwd)
+            {
+                continue;
+            }
+            let why = if r.label == cmd {
+                String::new()
+            } else {
+                r.label
+            };
+            let mut o = Offer::of(&cmd, cwd, &server, &why);
+            o.server = true;
+            self.compile.offer.push(o);
+            added = true;
+        }
+        if !added {
+            return;
+        }
+        self.publish_offer();
+        self.run_lua_source(
+            "compile",
+            "local s = kawoosh.picker.state(); if s and s.source == \"compile\" then kawoosh.picker.reload() end",
+        );
     }
 
     /// Row `n` (from 1) of the last `compile pick`, run where it said —

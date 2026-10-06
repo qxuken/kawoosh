@@ -608,7 +608,11 @@ your named commands, the last lines run here, and every command the
 project's files offer, each with where it came from. In a monorepo it
 also lists the scripts of every other `package.json` in the repository
 (the open files' packages first), each run in its own package; type
-part of the path to narrow them (`api build`). `<CR>` runs it;
+part of the path to narrow them (`api build`). A language server that
+lists what can run — rust-analyzer does — adds its rows as it answers,
+after your named commands and recent lines: the test under the caret
+(`cargo test --package app --lib -- tests::adds --exact`), its module's,
+and the package's check and test. `<CR>` runs it;
 `<C-e>` puts it in the prompt so you can add arguments first. A
 command that needs arguments always opens the prompt.
 

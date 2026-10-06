@@ -407,6 +407,14 @@ pub enum Cmd {
         query: String,
         token: u64,
     },
+    /// What can run at `offset` of `buffer` (`experimental/runnables`,
+    /// compile.md Decision 18), answered as `Event::Runnables` with
+    /// `token`.
+    Runnables {
+        buffer: BufferId,
+        offset: usize,
+        token: u64,
+    },
     /// The inlay hints between `start` and `end` of `buffer`'s text at
     /// `version`.
     InlayHints {
@@ -541,6 +549,18 @@ pub fn symbol_kind_name(kind: u64) -> &'static str {
 
 /// An inlay hint: text the server would draw at a position that is not
 /// the document's — a type, a parameter's name.
+/// Something a server says can run (rust-analyzer's runnables): its
+/// label, and the program, arguments and directory to run it with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Runnable {
+    pub label: String,
+    pub program: String,
+    pub args: Vec<String>,
+    /// Where it runs: a cargo runnable's workspace, where cargo prints
+    /// its paths from; else its own `cwd`.
+    pub cwd: Option<PathBuf>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InlayHint {
     pub line: u32,
@@ -574,6 +594,9 @@ pub struct Caps {
     /// It gives diagnostics when asked (`diagnosticProvider`), not only
     /// as it publishes them.
     pub pull: bool,
+    /// It lists what can run at a place (`experimental/runnables`,
+    /// rust-analyzer's), as its `experimental.runnables` says.
+    pub runnables: bool,
 }
 
 impl Caps {
@@ -610,6 +633,7 @@ impl Caps {
             inlay_hint: self.inlay_hint || other.inlay_hint,
             definition: self.definition || other.definition,
             pull: self.pull || other.pull,
+            runnables: self.runnables || other.runnables,
             hover: self.hover || other.hover,
             completion: self.completion || other.completion,
             commands,
@@ -632,6 +656,7 @@ impl Caps {
             "textDocument/documentSymbol" => self.document_symbol,
             "workspace/symbol" => self.workspace_symbol,
             "textDocument/inlayHint" => self.inlay_hint,
+            "experimental/runnables" => self.runnables,
             _ => true,
         }
     }
@@ -742,6 +767,12 @@ pub enum Event {
         version: Version,
         hints: Vec<InlayHint>,
     },
+    /// What can run, asked for with `token`: the list, or why there is
+    /// none.
+    Runnables {
+        token: u64,
+        result: Result<Vec<Runnable>, String>,
+    },
     /// A formatting answer, for the text at `version`.
     Formatted {
         buffer: BufferId,
@@ -827,6 +858,7 @@ impl Event {
             Event::Locations { .. } => "lsp locations",
             Event::CodeActions { .. } => "lsp code actions",
             Event::Symbols { .. } => "lsp symbols",
+            Event::Runnables { .. } => "lsp runnables",
             Event::InlayHints { .. } => "lsp inlay hints",
             Event::Formatted { .. } => "lsp formatted",
             Event::Failed { .. } => "lsp failed",
@@ -2581,6 +2613,31 @@ impl Pool {
                     token as usize,
                 );
             }
+            Cmd::Runnables {
+                buffer,
+                offset,
+                token,
+            } => {
+                let Some((uri, text)) = self.doc_text(buffer) else {
+                    self.emit(Event::Runnables {
+                        token,
+                        result: Err("no server holds this buffer".into()),
+                    });
+                    return;
+                };
+                let (line, character) = position_of_offset(&text, offset);
+                let params = json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character }
+                });
+                self.request_for(
+                    buffer,
+                    "experimental/runnables",
+                    params,
+                    Version::INITIAL,
+                    token as usize,
+                );
+            }
             Cmd::InlayHints {
                 buffer,
                 version,
@@ -3059,6 +3116,10 @@ impl Pool {
                     token: offset as u64,
                     result: Err(format!("the server exited ({why})")),
                 }),
+                "experimental/runnables" => self.emit(Event::Runnables {
+                    token: offset as u64,
+                    result: Err(format!("the server exited ({why})")),
+                }),
                 "textDocument/formatting" => self.emit(Event::Failed {
                     what: method,
                     message: format!("the server exited ({why})"),
@@ -3170,6 +3231,13 @@ impl Pool {
                     "textDocument/documentSymbol" | "workspace/symbol" => self.emit_from(
                         key,
                         Event::Symbols {
+                            token: offset as u64,
+                            result: Err(text),
+                        },
+                    ),
+                    "experimental/runnables" => self.emit_from(
+                        key,
+                        Event::Runnables {
                             token: offset as u64,
                             result: Err(text),
                         },
@@ -3337,6 +3405,15 @@ impl Pool {
                         Event::Symbols {
                             token: offset as u64,
                             result: Ok(workspace_symbols(result)),
+                        },
+                    );
+                }
+                "experimental/runnables" => {
+                    self.emit_from(
+                        key,
+                        Event::Runnables {
+                            token: offset as u64,
+                            result: Ok(runnables(result)),
                         },
                     );
                 }
@@ -3639,6 +3716,9 @@ fn capabilities(result: Option<&Value>) -> Caps {
         inlay_hint: provides("inlayHintProvider"),
         definition: provides("definitionProvider"),
         pull: provides("diagnosticProvider"),
+        runnables: caps
+            .and_then(|c| c.pointer("/experimental/runnables"))
+            .is_some_and(|v| v.as_bool().unwrap_or(v.is_object())),
         hover: provides("hoverProvider"),
         completion: caps
             .and_then(|c| c.get("completionProvider"))
@@ -3654,6 +3734,61 @@ fn capabilities(result: Option<&Value>) -> Caps {
             })
             .unwrap_or_default(),
     }
+}
+
+/// An `experimental/runnables` answer: a `cargo` runnable as `cargo`
+/// (or its `overrideCargo`) with its `cargoArgs`, then `--` and its
+/// `executableArgs` when it has any, in its workspace; a `shell` one as
+/// its `program` and `args` in its `cwd`. Other kinds are left out.
+pub fn runnables(result: Option<&Value>) -> Vec<Runnable> {
+    let strings = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let path = |v: Option<&Value>| v.and_then(Value::as_str).map(PathBuf::from);
+    let Some(list) = result.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|r| {
+            let label = r.get("label")?.as_str()?.to_string();
+            let args = r.get("args")?;
+            match r.get("kind")?.as_str()? {
+                "cargo" => {
+                    let mut out = strings(args.get("cargoArgs"));
+                    out.extend(strings(args.get("cargoExtraArgs")));
+                    let exe = strings(args.get("executableArgs"));
+                    if !exe.is_empty() {
+                        out.push("--".into());
+                        out.extend(exe);
+                    }
+                    Some(Runnable {
+                        label,
+                        program: args
+                            .get("overrideCargo")
+                            .and_then(Value::as_str)
+                            .unwrap_or("cargo")
+                            .to_string(),
+                        args: out,
+                        cwd: path(args.get("workspaceRoot")).or_else(|| path(args.get("cwd"))),
+                    })
+                }
+                "shell" => Some(Runnable {
+                    label,
+                    program: args.get("program")?.as_str()?.to_string(),
+                    args: strings(args.get("args")),
+                    cwd: path(args.get("cwd")),
+                }),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 /// A `documentSymbol` answer, flattened: hierarchical `DocumentSymbol`s
@@ -4081,6 +4216,64 @@ fn placed_diagnostics(params: &Value) -> Vec<Placed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// rust-analyzer's answer as it gives it (2026-10-07): a cargo
+    /// runnable is its cargo arguments, `--` and the test's, in its
+    /// workspace; `cargoExtraArgs` (older servers) and `overrideCargo`
+    /// read too; a `shell` one its program in its `cwd`.
+    #[test]
+    fn runnables_are_commands_in_their_workspace() {
+        let answer = json!([
+            { "label": "test tests::adds", "kind": "cargo", "location": {},
+              "args": { "environment": { "RUSTC_TOOLCHAIN": "/x" }, "cwd": "/w/rap",
+                        "overrideCargo": null, "workspaceRoot": "/w",
+                        "cargoArgs": ["test", "--package", "rap", "--lib"],
+                        "executableArgs": ["tests::adds", "--exact", "--nocapture"] } },
+            { "label": "cargo check -p rap", "kind": "cargo",
+              "args": { "cwd": "/w/rap", "overrideCargo": "cross",
+                        "cargoArgs": ["check"], "cargoExtraArgs": ["-p", "rap"],
+                        "executableArgs": [] } },
+            { "label": "run it", "kind": "shell",
+              "args": { "program": "buck2", "args": ["run", "//a"], "cwd": "/b" } },
+            { "label": "odd", "kind": "unknown", "args": {} }
+        ]);
+        let got = runnables(Some(&answer));
+        assert_eq!(
+            got,
+            [
+                Runnable {
+                    label: "test tests::adds".into(),
+                    program: "cargo".into(),
+                    args: [
+                        "test",
+                        "--package",
+                        "rap",
+                        "--lib",
+                        "--",
+                        "tests::adds",
+                        "--exact",
+                        "--nocapture"
+                    ]
+                    .map(String::from)
+                    .to_vec(),
+                    cwd: Some(PathBuf::from("/w")),
+                },
+                Runnable {
+                    label: "cargo check -p rap".into(),
+                    program: "cross".into(),
+                    args: ["check", "-p", "rap"].map(String::from).to_vec(),
+                    cwd: Some(PathBuf::from("/w/rap")),
+                },
+                Runnable {
+                    label: "run it".into(),
+                    program: "buck2".into(),
+                    args: ["run", "//a"].map(String::from).to_vec(),
+                    cwd: Some(PathBuf::from("/b")),
+                },
+            ]
+        );
+        assert!(runnables(Some(&json!(null))).is_empty());
+    }
 
     /// A paced wake comes at most once an interval: at once after a
     /// quiet spell, else at the interval's end, which brings every

@@ -77,7 +77,7 @@ Beaten: a language → toolchain table in the shell (the server's markers
 already say it, and a user's `lsp.NAME.roots` moves it with them);
 asking a server — rust-analyzer's `experimental/runnables` is the one
 that answers, and only for Rust, asynchronously; it can join as a kind
-later. A plugin API of deducers: the list reaches Lua as data
+later (it joined the picker, Decision 18). A plugin API of deducers: the list reaches Lua as data
 (`kawoosh.compile_offer()` while the picker is open) and `kawoosh.compile`
 runs anything; a deducer registry waits for a second use (Decision 17
 since).
@@ -666,13 +666,64 @@ commands are); a kind only adding commands to a builtin one (a
 replacement whose function calls nothing back is simpler, and the
 builtin's commands are a picker away).
 
+### 18. What the language server says can run, in the picker
+
+*Added 2026-10-07*, from "Not built": "rust-analyzer's runnables as a
+kind (the test at the caret)". Decision 1 beat it for being one
+server's and asynchronous; both stay true, so it is the picker's alone,
+and the picker takes rows that come late.
+
+**Who is asked.** A server that says it answers — `experimental.
+runnables` in its `initialize` capabilities, as rust-analyzer's does
+(`{ "kinds": ["cargo"] }`; `Caps::runnables`) — for a file here (not a
+host's), while `compile.deduce` is on. A server not up yet is not
+asked: an answer that may never come is nothing to wait for. Asked as
+`compile pick` opens, with the caret (`Cmd::Runnables`), and answered as
+`Event::Runnables` with the token the picker holds; an answer for a
+picker since closed or opened again is dropped.
+
+**What it answers.** At a position rust-analyzer lists what holds it —
+the test at the caret (`test tests::adds`), its module (`test-mod
+tests`), a binary's `run` — and the package's `cargo check -p NAME
+--all-targets` and `cargo test -p NAME`. Each is a row: a `cargo` kind
+as `cargo` (or its `overrideCargo`), its `cargoArgs`, then `--` and its
+`executableArgs` when there are any — `cargo test --package rap --lib
+-- tests::adds --exact --nocapture --include-ignored` — run in its
+`workspaceRoot`, where cargo prints its paths from, so `]q` reads them;
+a `shell` kind its `program` and `args`; another kind left out. Words
+quoted for the shell (`shell_quote`). The row says the server's name
+beside it, and its label as the why when the label is not the command.
+The `environment` (rust-analyzer sends `RUSTC_TOOLCHAIN`) is left out:
+a run is its command and directory (Decision 11), and `r` and the
+memory's lines would lose it.
+
+**Where it shows.** After the settings' rows and the lines run, before
+the files' (`publish_offer`): the test at the caret is the most
+particular thing on offer, and a named command or the line just run is
+still the user's. The rows go to the end of `Compile::offer`, so a row's
+index — what `compile pick N` and `<CR>` take — never moves under a key
+pressed as the answer lands; only the order shown changes, and the
+picker reads its rows again (`picker.reload()`), query and cursor kept.
+A row the files gave already, where it runs, is not made twice.
+
+Not a bare `:compile`'s (Decision 2's order holds): it runs at once, and
+waiting on a server would make it slow exactly when the server is busy.
+
+Beaten: waiting for the answer before the picker opens (rust-analyzer
+indexing answers late, and the files' rows are already known); a kind
+in `deduce` (the walk is synchronous and the server is not); the
+environment as `VAR=value` before the command (a shell's spelling,
+`cmd.exe` has none, and `RUSTC_TOOLCHAIN` is what the rustup proxy finds
+anyway).
+
 ## Not built
 
 - ~~A program that colours only on a terminal and reads none of the
   variables (gcc and clang without `-fdiagnostics-color`, `go`): plain,
   but for `error:` and `warning:`.~~ Decision 15.
 
-- rust-analyzer's runnables as a kind (the test at the caret).
+- ~~rust-analyzer's runnables as a kind (the test at the caret).~~
+  Decision 18.
 - ~~A deducer registry for plugins (Decision 1's beaten).~~ Decision 17.
 - ~~Other nushell files than `build.nu` (a `toolkit.nu`, nushell's own
   habit), and a parameter's completer offered in the prompt.~~ Decision

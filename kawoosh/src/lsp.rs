@@ -454,6 +454,7 @@ impl Kawoosh {
                     }
                 }
                 Event::CodeActions { buffer, actions } => self.offer_actions(buffer, actions),
+                Event::Runnables { token, result } => self.compile_runnables(token, result),
                 Event::Symbols { token, result } => {
                     if let Some((name, then)) = self.lsp.symbol_asks.remove(&token) {
                         self.hover_symbol_found(&name, then, result);
@@ -1547,6 +1548,9 @@ impl Kawoosh {
                 completion: true,
                 commands: Vec::new(),
                 pull: false,
+                // Asked only of a server that said so: an answer it
+                // does not give would leave nothing to wait for.
+                runnables: false,
                 triggers: Vec::new(),
             })
     }
@@ -2069,7 +2073,7 @@ impl Kawoosh {
     /// of the last frame — a completion asked at the keystroke would
     /// otherwise be answered for the position before the key, with the
     /// candidates of the wrong word, until the next key asked again.
-    fn positional_cmd(&mut self, cmd: Cmd) {
+    pub(crate) fn positional_cmd(&mut self, cmd: Cmd) {
         self.push_documents();
         self.lsp.lsp.send(cmd);
     }
