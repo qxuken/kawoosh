@@ -1875,6 +1875,15 @@ follow the theme every frame (`panes.rs`).
   over the old — `scripts/macos-app.nu` makes the app beside and
   renames it in, whole — and the running one, watching its own
   executable, offers the relaunch when that is another file.
+  Since 2026-10-06 Kawoosh.app opens documents: Info.plist's
+  `CFBundleDocumentTypes` are compiled from `kawoosh --languages` (a
+  type a language, by its extensions; then `public.text` and
+  `public.data`, any file; then `public.folder`), all `Alternate`, so
+  Kawoosh is in every file's Open With and opens what no app claims,
+  but takes no default from TextEdit or a browser; what Finder hands
+  it — Open With, the Dock icon, `open -a` — reaches the window as
+  kui's `open` event (kui F124: `application:openURLs:` on winit's
+  app delegate) and opens as `kawoosh edit` opens a path.
 - **An image for kawoosh** — done 2026-09-25, the bundles' and the
   window's at runtime (kui F86) [todo]; step 35. Neither bundle had
   an icon: the Dock, Explorer and the window's title showed the

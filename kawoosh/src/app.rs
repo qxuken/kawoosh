@@ -2929,6 +2929,18 @@ impl Kawoosh {
             self.look.fonts.borrow_mut().rescan = true;
             return;
         }
+        // Documents the OS asked the app to open — Finder's Open With, a
+        // file dropped on the Dock icon, `open -a Kawoosh FILE` — at
+        // launch or since: each opened as `kawoosh edit` opens it, a
+        // directory listed, the last one in front.
+        if ev.kind() == Some("open") {
+            for path in p.get("paths").and_then(Value::as_list).unwrap_or_default() {
+                if let Some(path) = path.as_str() {
+                    self.open_in_editor(Path::new(path), None, None);
+                }
+            }
+            return;
+        }
         if let Some(m) = ev.modifiers() {
             self.mods = m;
             return;

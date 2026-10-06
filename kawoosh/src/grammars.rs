@@ -213,6 +213,42 @@ fn linked_in(name: &str) -> bool {
         .any(|l| l.name == name && l.grammar.is_some())
 }
 
+/// `kawoosh --languages`: every language this build knows from launch —
+/// the linked ones, then the built-in manifest's — with the extensions
+/// that are its, as JSON. An extension two languages name is the
+/// first's, as detection has it; a language left with none is not
+/// listed. What `scripts/macos-app.nu` writes into Info.plist as the
+/// document types Finder offers Kawoosh for.
+pub fn languages_json() -> String {
+    let manifest = Manifest::parse(BUILT_IN).unwrap_or_default();
+    let all = LANGUAGES
+        .iter()
+        .map(|l| {
+            let exts = l.extensions.iter().map(|e| e.to_string()).collect();
+            (l.name.to_string(), exts)
+        })
+        .chain(
+            manifest
+                .grammars
+                .into_iter()
+                .filter(|(name, _)| !linked_in(name))
+                .map(|(name, row)| (name, row.extensions)),
+        );
+    let mut seen = HashSet::new();
+    let mut names = HashSet::new();
+    let rows: Vec<serde_json::Value> = all
+        .filter_map(|(name, exts): (String, Vec<String>)| {
+            let exts: Vec<String> = exts
+                .into_iter()
+                .filter(|e| seen.insert(e.to_ascii_lowercase()))
+                .collect();
+            (!exts.is_empty() && names.insert(name.clone()))
+                .then(|| serde_json::json!({ "name": name, "extensions": exts }))
+        })
+        .collect();
+    serde_json::to_string_pretty(&rows).unwrap_or_default()
+}
+
 fn def_of(row: &Row, grammar: Option<Source>) -> LanguageDef {
     LanguageDef {
         name: row.name.clone(),
