@@ -574,6 +574,98 @@ fn ga_aligns_lines_on_a_pattern() {
     assert!(d.warnings().is_empty());
 }
 
+/// `ga` lines up inside what is covered, not the whole line (asked
+/// 2026-10-06: a selection on each line of a settings table and `ga=`
+/// "still aligned only first `=` outside of a selection"): a caret on
+/// each line, `vi{` on each, and `ga=` moves the first `=` inside each
+/// brace pair, the one before the brace left alone; `*` before the
+/// character lines up every `=`, each a column in turn, a count the
+/// Nth; the same through the prompt and `:align`; `.` repeats the `*`.
+#[test]
+fn ga_lines_up_inside_the_selections_every_or_nth() {
+    let src = "\
+font = { family = \"Berkeley Mono Variable\", size = 15 },
+theme = { dark = \"ayu-dark\", appearance = \"system\" },
+layout = { dock = \"scroll\" },
+markdown = { reveal = \"span\" },
+";
+    let mut app = Kawoosh::new("t.lua", src);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    // Whole lines: the first `=` of each, as before.
+    d.keys(&mut app, "VGga=");
+    let first = "\
+font     = { family = \"Berkeley Mono Variable\", size = 15 },
+theme    = { dark = \"ayu-dark\", appearance = \"system\" },
+layout   = { dock = \"scroll\" },
+markdown = { reveal = \"span\" },
+";
+    assert_eq!(text(&app), first);
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), src);
+    // A selection inside each pair: the `=` inside it, the line's
+    // first one outside it untouched.
+    d.keys(&mut app, "gg");
+    d.press(&mut app, "<C-j><C-j><C-j>");
+    assert_eq!(sels(&app).len(), 4, "a caret a line");
+    d.keys(&mut app, "f{vi{");
+    d.keys(&mut app, "ga=");
+    let inside = "\
+font = { family     = \"Berkeley Mono Variable\", size = 15 },
+theme = { dark      = \"ayu-dark\", appearance = \"system\" },
+layout = { dock     = \"scroll\" },
+markdown = { reveal = \"span\" },
+";
+    assert_eq!(text(&app), inside);
+    assert_eq!(app.ed.message, "aligned on =");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), src, "one undo step");
+    // `*`: every `=`, column by column; the text after a delimiter is
+    // the next column's "before", padded before the next `=`.
+    d.keys(&mut app, "ggVGga*=");
+    let every = "\
+font     = { family = \"Berkeley Mono Variable\", size = 15 },
+theme    = { dark   = \"ayu-dark\", appearance         = \"system\" },
+layout   = { dock   = \"scroll\" },
+markdown = { reveal = \"span\" },
+";
+    assert_eq!(text(&app), every);
+    assert_eq!(app.ed.message, "aligned on every =");
+    d.keys(&mut app, "ggVGga*=");
+    assert_eq!(text(&app), every, "again: the same");
+    d.keys(&mut app, "uu");
+    assert_eq!(text(&app), src);
+    // A count: the Nth alone — the second `=` of each line.
+    d.keys(&mut app, "ggVGga2=");
+    assert_eq!(text(&app), inside);
+    assert_eq!(app.ed.message, "aligned on the 2nd =");
+    d.keys(&mut app, "u");
+    // `.` repeats the `*` with its character.
+    d.keys(&mut app, "gggaip*=");
+    assert_eq!(text(&app), every);
+    d.keys(&mut app, "u");
+    d.keys(&mut app, "gg.");
+    assert_eq!(text(&app), every, "`.` keeps the `*`");
+    d.keys(&mut app, "u");
+    // Through the prompt: `*` before `<CR>` goes with the pattern, and
+    // the command line takes it in front of the pattern.
+    d.press(&mut app, "ggVGga*<CR>=<CR>");
+    assert_eq!(text(&app), every);
+    d.keys(&mut app, "u");
+    d.press(&mut app, "ggVG:align * =<CR>");
+    assert_eq!(text(&app), every);
+    d.keys(&mut app, "u");
+    d.press(&mut app, "ggVG:align 2 =<CR>");
+    assert_eq!(text(&app), inside);
+    d.keys(&mut app, "u");
+    // A lone number is a pattern: the `1` of `15`.
+    d.press(&mut app, "ggVG:align 1<CR>");
+    assert_eq!(app.ed.message, "aligned on 1");
+    assert!(text(&app).starts_with("font = { family = \"Berkeley Mono Variable\", size = 15 },\n"));
+    assert!(d.warnings().is_empty());
+}
+
 /// `<C-S-u>` in insert mode deletes the caret's whole line — `dd`
 /// without leaving insert mode, the line in the register (roadmap step
 /// 21; `<C-u>` still kills to the line's start).

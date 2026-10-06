@@ -490,18 +490,14 @@ pub(crate) fn apply_operator(
             ed.surround.ranges = Some(ranges);
             ed.await_char("surround wrap");
         }
-        // `ga` + a motion: the lines it touches wait for the character
-        // to line up on (`align on`).
+        // `ga` + a motion: what it covers on each line waits for the
+        // character to line up on (`align on`).
         "align" => {
-            let buf = &ed.buffers[id];
-            let mut lines: Vec<usize> = Vec::new();
-            for (r, _) in &ranges {
-                let last = buf.line_of(r.end.saturating_sub(1).max(r.start));
-                lines.extend(buf.line_of(r.start)..=last);
-            }
-            lines.sort_unstable();
-            lines.dedup();
-            ed.surround.align = Some(lines);
+            let regions = align_regions(&ed.buffers[id], &ranges);
+            ed.surround.align = Some(Align {
+                regions,
+                which: String::new(),
+            });
             ed.await_char("align on");
         }
         // `=`: each line of the ranges at the indent the syntax says,
@@ -3174,9 +3170,11 @@ pub fn install(ed: &mut Editor) {
         operator(ed, ctx, "surround add")
     });
     ed.register_with_key("surround wrap", surround_wrap);
-    // Align (`ga`, easy-align's): an operator over lines that then
-    // takes the character to line them up on, or `<CR>` and a pattern.
-    // With a pattern (`:align PAT`) the selections' lines, at once.
+    // Align (`ga`, easy-align's): an operator over what a motion or the
+    // selections cover that then takes the character to line it up on
+    // — `*` or a count before it for every occurrence or the Nth — or
+    // `<CR>` and a pattern. With a pattern (`:align PAT`, `:align *
+    // PAT`) the selections' regions, at once.
     ed.register_spec(
         Spec::new("align")
             .kind(Kind::Operator)
@@ -3196,11 +3194,19 @@ pub fn install(ed: &mut Editor) {
         align_on,
     );
     // The prompt is the character's answer: a replay, which runs this
-    // step rather than pressing `<CR>`, is left waiting on no key.
-    ed.register("align ask", |ed, ctx| {
-        ed.awaiting_char = None;
-        ed.open_prompt(ctx.view, Prompt::Align);
-    });
+    // step rather than pressing `<CR>`, is left waiting on no key. The
+    // `*` or count typed before `<CR>` comes as the argument, kept for
+    // the answer.
+    ed.register_spec(
+        Spec::new("align ask").args(Args::rest(&[ArgKind::Text])),
+        |ed, ctx| {
+            ed.awaiting_char = None;
+            if let Some(a) = &mut ed.surround.align {
+                a.which = ctx.args.join(" ");
+            }
+            ed.open_prompt(ctx.view, Prompt::Align);
+        },
+    );
     ed.register_with_key("surround delete", surround_delete);
     ed.register_with_key("surround replace", surround_replace);
     ed.register_with_key("surround replace with", surround_replace_with);
@@ -3952,11 +3958,11 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "align",
-        "line up what a motion or object covers, or the selection, on the character CHAR names (`ga`), or on a pattern: `<CR>` for CHAR, or `:align PATTERN` over the selection",
+        "line up what a motion or object covers, or the selections, on the character CHAR names (`ga`) — on each line only inside what is covered — or on a pattern: `<CR>` for CHAR, or `:align PATTERN` over the selections; `*` before CHAR or PATTERN lines up every occurrence, a count the Nth",
     ),
     (
         "align on",
-        "the character, or the pattern, `align` lines the lines up on",
+        "the character, or the pattern, `align` lines the lines up on; `*` or a count before it for every occurrence or the Nth",
     ),
     (
         "align ask",
@@ -4524,26 +4530,136 @@ pub struct Surround {
     pub ranges: Option<Vec<Range<usize>>>,
     /// The pair `surround replace` will swap, waiting for the new one.
     pub from: Option<char>,
-    /// The lines `align` collected, waiting for the character to line
+    /// The regions `align` collected, waiting for the character to line
     /// them up on.
-    pub align: Option<Vec<usize>>,
+    pub align: Option<Align>,
+}
+
+/// An `align` under way: what its character or pattern will line up.
+#[derive(Default, Debug)]
+pub struct Align {
+    /// On each line the motion or selections touched, the part they
+    /// covered — the whole line under a linewise one — in order, one a
+    /// line ([`align_regions`]).
+    pub regions: Vec<Range<usize>>,
+    /// The `*` or count typed before `<CR>` asked for a pattern, put
+    /// before the pattern the prompt answers with ([`align_which`]).
+    pub which: String,
+}
+
+/// What `align` works over: on each line a range touches, the part of
+/// it the range covers — the whole line under a linewise one — so a
+/// selection on each line of several (`<C-j>`, then `vi{`) lines up
+/// what is inside it, as easy-align does in a visual block, and the
+/// first `=` of the line, outside it, stays. One region a line, in
+/// order; ranges on one line make one region, from the first's start to
+/// the last's end.
+fn align_regions(buf: &Buffer, ranges: &[(Range<usize>, bool)]) -> Vec<Range<usize>> {
+    let mut by_line: std::collections::BTreeMap<usize, Range<usize>> = Default::default();
+    for (r, linewise) in ranges {
+        let (first, last) = if *linewise {
+            op_lines(buf, r, true)
+        } else {
+            (
+                buf.line_of(r.start),
+                buf.line_of(r.end.saturating_sub(1).max(r.start)),
+            )
+        };
+        for ln in first..=last {
+            let line = buf.line_range(ln);
+            let part = if *linewise {
+                line
+            } else {
+                let start = r.start.max(line.start).min(line.end);
+                start..r.end.min(line.end).max(start)
+            };
+            by_line
+                .entry(ln)
+                .and_modify(|have| {
+                    have.start = have.start.min(part.start);
+                    have.end = have.end.max(part.end);
+                })
+                .or_insert(part);
+        }
+    }
+    by_line.into_values().collect()
+}
+
+/// Which of a region's matches `align` lines up: the first, every one —
+/// each a column in turn, easy-align's `ga*=` — or the Nth (`ga2=`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Which {
+    First,
+    Every,
+    Nth(usize),
+}
+
+impl Which {
+    /// How the message names it: `every =`, `the 2nd =`, or just `=`.
+    fn label(self, pattern: &str) -> String {
+        match self {
+            Which::First => pattern.to_string(),
+            Which::Every => format!("every {pattern}"),
+            Which::Nth(n) => {
+                let suffix = match (n % 10, n % 100) {
+                    (1, 11) | (2, 12) | (3, 13) => "th",
+                    (1, _) => "st",
+                    (2, _) => "nd",
+                    (3, _) => "rd",
+                    _ => "th",
+                };
+                format!("the {n}{suffix} {pattern}")
+            }
+        }
+    }
+}
+
+/// `align on`'s arguments read: `* PATTERN`, `N PATTERN`, or a pattern
+/// whole — with a character for the pattern, the arguments are the
+/// modifier alone, or nothing. A lone `*` or number with no character
+/// is a pattern, so `:align 2` lines up on a `2`; a literal `*` is
+/// `\*`.
+fn align_which(args: &str, has_char: bool) -> (Which, String) {
+    let args = args.trim();
+    let (head, rest) = if has_char {
+        (args, "")
+    } else {
+        match args.split_once(char::is_whitespace) {
+            Some((h, r)) => (h, r.trim_start()),
+            None => ("", args),
+        }
+    };
+    let which = if head == "*" {
+        Some(Which::Every)
+    } else if !head.is_empty() && head.bytes().all(|b| b.is_ascii_digit()) {
+        Some(Which::Nth(head.parse::<usize>().unwrap_or(1).max(1)))
+    } else {
+        None
+    };
+    match which {
+        Some(w) => (w, rest.to_string()),
+        None => (Which::First, args.to_string()),
+    }
 }
 
 /// The character after `ga` and its motion, or the pattern its
 /// prompt asked for (`ga` + motion + `<CR>`, `:align PAT`): every
-/// collected line that holds it has its first one moved to the same
-/// column — the text before it trimmed of trailing space, then padded
-/// — with one space before it when any of them had space there, so `a
-/// = 1` and `bbb = 2` line up as `a   = 1`, and aligning again changes
-/// nothing. One edit per line, one undo step; the lines without it
-/// stay. Without lines collected, the lines the selections touch.
+/// collected region that holds it has its first one moved to the same
+/// column — the text before it, back to the region's start, trimmed of
+/// trailing space, then padded — with one space before it when any of
+/// them had space there, so `a = 1` and `bbb = 2` line up as `a   =
+/// 1`, and aligning again changes nothing. With `*` every occurrence,
+/// each a column in turn, the text between two of them the next
+/// column's "before"; with a count the Nth alone. One edit a column a
+/// line, one undo step; the regions without it stay. Without regions
+/// collected, what the selections cover ([`sel_regions`]).
 fn align_on(ed: &mut Editor, ctx: &Ctx) {
-    let lines = match ed.surround.align.take() {
-        Some(lines) => lines,
-        None => sel_lines(ed, ctx),
+    let regions = match ed.surround.align.take() {
+        Some(a) => a.regions,
+        None => sel_regions(ed, ctx),
     };
-    let pattern = ctx.args.join(" ");
-    let (label, re) = match ctx.arg_char {
+    let (which, pattern) = align_which(&ctx.args.join(" "), ctx.arg_char.is_some());
+    let (name, re) = match ctx.arg_char {
         Some(c) => (c.to_string(), None),
         None if pattern.is_empty() => return,
         None => match regex::Regex::new(&pattern) {
@@ -4554,43 +4670,91 @@ fn align_on(ed: &mut Editor, ctx: &Ctx) {
             }
         },
     };
-    let find = |text: &str| match (&re, ctx.arg_char) {
-        (Some(re), _) => re.find(text).map(|m| m.start()),
-        (None, Some(c)) => text.find(c),
-        (None, None) => None,
+    let label = which.label(&name);
+    // The matches to line up in a region's text, as byte ranges of it.
+    let matches = |text: &str| -> Vec<Range<usize>> {
+        let all: Vec<Range<usize>> = match (&re, ctx.arg_char) {
+            (Some(re), _) => re.find_iter(text).map(|m| m.range()).collect(),
+            (None, Some(c)) => text.match_indices(c).map(|(i, m)| i..i + m.len()).collect(),
+            (None, None) => Vec::new(),
+        };
+        match which {
+            Which::First => all.into_iter().take(1).collect(),
+            Which::Every => all,
+            Which::Nth(n) => all.into_iter().nth(n - 1).into_iter().collect(),
+        }
     };
     let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
     // The caret goes to the first line's first non-blank, as after any
     // operator over lines.
-    let first = lines.first().copied().unwrap_or(0);
-    let buf = &ed.buffers[id];
-    // Each line with a match: where its text before it ends, where the
-    // match is, and how wide the text before it is.
-    let mut found: Vec<(Range<usize>, String, usize)> = Vec::new();
-    let mut spaced = false;
-    for ln in lines {
-        let range = buf.line_range(ln);
-        let text = buf.slice(range.clone());
-        let Some(at) = find(&text) else { continue };
-        let before = text[..at].trim_end();
-        spaced |= before.len() < at;
-        let width = before.chars().count();
-        found.push((
-            range.start + before.len()..range.start + at,
-            before.to_string(),
-            width,
-        ));
+    let first = regions.first().map_or(0, |r| buf.line_of(r.start));
+    // Each region with a match: its line's text and where the line
+    // starts, the matches in the text, and — as the columns go by — the
+    // column the last one placed ends at (in characters, so a wide or a
+    // multibyte one counts once) and the byte after it, where the next
+    // column's text begins; before any, the region's start.
+    struct Row {
+        line: usize,
+        text: String,
+        matches: Vec<Range<usize>>,
+        landed: usize,
+        from: usize,
     }
-    if found.is_empty() {
+    let mut rows: Vec<Row> = Vec::new();
+    for r in regions {
+        let line = buf.line_range(buf.line_of(r.start));
+        let text = buf.slice(line.clone());
+        let at = r.start - line.start;
+        let matches: Vec<Range<usize>> = matches(&text[at..r.end - line.start])
+            .into_iter()
+            .map(|m| at + m.start..at + m.end)
+            .collect();
+        if matches.is_empty() {
+            continue;
+        }
+        rows.push(Row {
+            line: line.start,
+            landed: text[..at].chars().count(),
+            from: at,
+            text,
+            matches,
+        });
+    }
+    if rows.is_empty() {
         ed.message = format!("no {label} in the lines");
         return;
     }
-    let target = found.iter().map(|f| f.2).max().unwrap_or(0) + usize::from(spaced);
-    let edits: Vec<(Range<usize>, String)> = found
-        .into_iter()
-        .map(|(gap, _, width)| (gap, " ".repeat(target - width)))
-        .filter(|(gap, pad)| buf.slice(gap.clone()) != *pad)
-        .collect();
+    let columns = rows.iter().map(|r| r.matches.len()).max().unwrap_or(0);
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    for k in 0..columns {
+        // Each row with a k-th match: the text from the last match
+        // placed to it, trimmed of trailing space, and the column that
+        // puts the match at; the gap trimmed, to pad.
+        let mut cols: Vec<(usize, usize, Range<usize>)> = Vec::new();
+        let mut spaced = false;
+        for (i, row) in rows.iter().enumerate() {
+            let Some(m) = row.matches.get(k) else {
+                continue;
+            };
+            let segment = &row.text[row.from..m.start];
+            let trimmed = segment.trim_end();
+            spaced |= trimmed.len() < segment.len();
+            let col = row.landed + trimmed.chars().count();
+            cols.push((i, col, row.from + trimmed.len()..m.start));
+        }
+        let target = cols.iter().map(|c| c.1).max().unwrap_or(0) + usize::from(spaced);
+        for (i, col, gap) in cols {
+            let row = &mut rows[i];
+            let pad = " ".repeat(target - col);
+            if row.text[gap.clone()] != pad {
+                edits.push((row.line + gap.start..row.line + gap.end, pad));
+            }
+            let m = row.matches[k].clone();
+            row.landed = target + row.text[m.clone()].chars().count();
+            row.from = m.end;
+        }
+    }
     if edits.is_empty() || ed.apply_edits(id, &edits) {
         ed.message = format!("aligned on {label}");
     }
@@ -4600,18 +4764,16 @@ fn align_on(ed: &mut Editor, ctx: &Ctx) {
     ed.set_mode(ctx.view, Mode::Normal);
 }
 
-/// The lines the selections of `ctx`'s view touch — as visual mode
-/// shows them, the head's character in — in order, once each.
-fn sel_lines(ed: &Editor, ctx: &Ctx) -> Vec<usize> {
+/// What the selections of `ctx`'s view cover, as regions for `align`
+/// ([`align_regions`]) — under `V` their lines whole, else the selected
+/// characters, the head's in, on each line they touch.
+fn sel_regions(ed: &Editor, ctx: &Ctx) -> Vec<Range<usize>> {
     let buf = &ed.buffers[view(ed, ctx).buffer];
-    let mut lines: Vec<usize> = Vec::new();
-    for r in sel_ranges(ed, ctx.view) {
-        let last = buf.line_of(r.end.saturating_sub(1).max(r.start));
-        lines.extend(buf.line_of(r.start)..=last);
-    }
-    lines.sort_unstable();
-    lines.dedup();
-    lines
+    let ranges: Vec<(Range<usize>, bool)> = sel_ranges(ed, ctx.view)
+        .into_iter()
+        .map(|r| (r, false))
+        .collect();
+    align_regions(buf, &ranges)
 }
 
 /// The pair a surround character stands for: a bracket either way
@@ -5743,6 +5905,24 @@ pub fn default_keymap(km: &mut Keymap) {
 mod tests {
     use super::*;
     use crate::SyntaxObject;
+
+    /// `align on`'s arguments: a `*` or a count before a pattern, or
+    /// before the character; alone with no character, a pattern.
+    #[test]
+    fn align_which_reads_the_modifier() {
+        assert_eq!(align_which("=", false), (Which::First, "=".into()));
+        assert_eq!(align_which("* =", false), (Which::Every, "=".into()));
+        assert_eq!(
+            align_which("2 \\bor_\\w+", false),
+            (Which::Nth(2), "\\bor_\\w+".into())
+        );
+        assert_eq!(align_which("2", false), (Which::First, "2".into()));
+        assert_eq!(align_which("*", false), (Which::First, "*".into()));
+        assert_eq!(align_which("*", true), (Which::Every, String::new()));
+        assert_eq!(align_which("12", true), (Which::Nth(12), String::new()));
+        assert_eq!(align_which("", true), (Which::First, String::new()));
+        assert_eq!(align_which("0", true), (Which::Nth(1), String::new()));
+    }
 
     fn obj(around: Option<Range<usize>>, inside: Option<Range<usize>>) -> SyntaxObject {
         SyntaxObject { around, inside }

@@ -203,7 +203,10 @@ back. `P` keeps the register, to paste one text over many places.
 | `gsa` + char in visual | wrap the selection: `viwgsa"` |
 | `gsd` + char | take the pair off from around the caret: `gsd"` |
 | `gsr` + char + char | swap one pair for another: `gsr)]` |
-| `ga` + motion + char | line the lines up on their first char: `gaip=`, `Vjga:` |
+| `ga` + motion + char | line the lines up on their first char: `gaip=`, `Vjga:` — on each line only inside what is covered, so a selection on each line (`<C-j>`, then `vi{`) lines up what is inside the braces |
+| `ga` + motion + `*` + char | every one of the char, each a column in turn: `ga*=` on lines of `a = { b = 1 }` |
+| `ga` + motion + count + char | the Nth alone: `ga2=` |
+| `ga` + motion + `<CR>` | a pattern instead, asked for: `gaip<CR>or_else<CR>`; `:align PATTERN`, `:align * PATTERN`, `:align 2 PATTERN` over the selection |
 
 Either bracket of a pair names it (`(` or `)`), `b` and `B` are round and
 curly, and any other character wraps with itself on both sides.

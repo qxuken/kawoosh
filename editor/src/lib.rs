@@ -1428,13 +1428,18 @@ impl Editor {
                     commands::select_by(self, view, how, &line);
                 }
             }
-            // On the lines `align` collected; an empty line aligns
-            // nothing and lets them go.
+            // On the regions `align` collected, with the `*` or count
+            // typed before `<CR>` put before the pattern; an empty line
+            // aligns nothing and lets them go.
             Prompt::Align => {
                 if !self.views.contains_key(view) || line.is_empty() {
                     self.surround.align = None;
                     return;
                 }
+                let line = match self.surround.align.as_ref().map(|a| a.which.trim()) {
+                    Some(which) if !which.is_empty() => format!("{which} {line}"),
+                    _ => line,
+                };
                 self.run(view, "align on", &[line], None);
             }
         }
@@ -3073,15 +3078,16 @@ impl Editor {
             }
             // `<CR>` where `align` waits for its character asks for a
             // pattern instead: a step of the change, so `.` asks again
-            // with the same line.
+            // with the same line; the `*` or count typed before it
+            // goes along.
             if stroke.code == "enter" && binding.command == "align on" {
                 self.step_begin();
-                self.run(view, "align ask", &[], None);
+                self.run(view, "align ask", &binding.args, None);
                 self.step_end(
                     view,
                     Step::Command {
                         name: "align ask".into(),
-                        args: Vec::new(),
+                        args: binding.args,
                         count: None,
                         arg_char: None,
                     },
@@ -3120,6 +3126,23 @@ impl Editor {
             let Some(c) = c else {
                 return true;
             };
+            // `*` or a count where `align` waits for its character:
+            // every occurrence, the Nth — easy-align's `ga*=`, `ga2=` —
+            // kept as the command's argument while the character is
+            // still to come. A literal `*` or digit goes through the
+            // pattern prompt (`<CR>\*<CR>`).
+            if binding.command == "align on" && (c == '*' || c.is_ascii_digit()) {
+                let mut binding = binding;
+                let mut which = binding.args.pop().unwrap_or_default();
+                if c == '*' || which == "*" {
+                    which = c.to_string();
+                } else {
+                    which.push(c);
+                }
+                binding.args = vec![which];
+                self.awaiting_char = Some((binding, count));
+                return true;
+            }
             self.step_begin();
             self.run_with(view, &binding.command, &binding.args, count, Some(c));
             self.step_end(

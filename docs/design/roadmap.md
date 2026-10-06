@@ -573,7 +573,20 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   character would be asks for one (`align ask`, an `align on ` prompt,
   a regex, case as typed), matched first on each line as the character
   is; `.` asks again with the same line; `:align PATTERN` lines up the
-  selection's lines (`align` with arguments, or `align on`).
+  selection's lines (`align` with arguments, or `align on`). Regions
+  and occurrences — done 2026-10-06, asked that day ("`ga=` only align
+  first `=`", and a `vi{` on each line "still aligned only first `=`
+  outside of a selection"): on each line only the part the motion or
+  selection covers is searched (`align_regions`: a linewise one the
+  whole line, a `v` selection or charwise motion what it spans, several
+  selections on a line one span), so a selection on each line is
+  easy-align's visual block; `*` before the character lines up every
+  occurrence, each a column in turn, the text after one the next
+  column's "before", and a count the Nth (`ga*=`, `ga2=`, `align_which`,
+  the modifier the `align on` step's argument so `.` keeps it; before
+  `<CR>` it rides to the prompt's answer); `:align * PATTERN`, `:align
+  N PATTERN` the same from the command line, a lone `*` or number a
+  pattern. A literal `*` or digit goes through the prompt.
 - **Delete the line in insert mode** — done 2026-09-23 [todo]; step 21.
   `<C-S-u>` (`delete line`): the caret's whole line, into the register
   as `dd` puts it, staying in insert mode — a stronger `<C-u>`, which
