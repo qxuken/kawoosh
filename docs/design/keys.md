@@ -329,6 +329,7 @@ the panes table.
 | `<C-a>` `<C-x>` | add, subtract COUNT to the number under or after the caret, per selection — a column of numbers under a multicursor is the point; a `-` before it is its sign, leading zeros keep their width |
 | `<Esc>` (normal mode) | a ladder, the top rung that has something to do: a pending operator, the extra cursors (what `,` does), the search highlight (the pattern stays for `n`), nothing — so one key backs out of whatever is open |
 | `ip` `ap` | a paragraph: its lines, or with the blank lines after it — linewise in visual mode |
+| `i<` `a<` `i>` `a>` | the angle pair, nesting counted, as the other brackets' objects — the pair is the object's own, not `%`'s, which skips `<` (vim's `matchpairs`: a less-than far more often than a bracket). 2026-10-06: "can we `vi>` or `vi<`?" — the object found its `<` and then asked `%`'s matcher, which knew no `<`, so it quietly did nothing |
 | `if` `af` `ic` `ac` `ia` `aa` `i/` `a/` `iT` `aT` `ie` `ae` | the syntax's text objects, from the grammar's `textobjects.scm`: function, class (the type: a struct, an impl, an interface), argument, comment, test, entry — the body or the whole; COUNT the one further out; one with its lines to itself taken as lines; `aa` with its comma ([nodes.md](nodes.md) Decision 9) |
 | `;` | the last `f` / `t` again, **across lines**; a till skips the character it already sits before |
 | `gsa` + motion + char | wrap what the motion covers in the pair (`gsaiw)`, `viwgsa"`) |
