@@ -53,6 +53,20 @@ outcome by index, once when only the removals are left (the listings
 are read again) and once at the end. The plan — which line is which
 entry, what became of it — stays in `dir.lua`; so do the messages.
 
+### 4. Carets placed by the engine: `kawoosh.buf.edits(…, { carets })`
+
+`pairs.lua` and `node_actions.lua` each computed where every caret goes
+after a multi-caret edit — a running shift per edit, a rule for an
+offset inside a replaced range — and set the selections after the
+edits. Now `kawoosh.buf.edits(edits, buffer, { carets = … })` takes the
+carets with the edits: `{ edit = i, at = k }` `k` bytes into edit `i`'s
+text, `{ at = o }` an offset of the text before, moved by the edits —
+before an insertion at its own byte, kept its distance into a replaced
+range (its last character at most), one rule for both plugins.
+`Editor::apply_edits_at` answers where each edit's text starts; an
+edit that changes nothing is none, and edits with carets but no text
+change move the carets only.
+
 ## Rounds
 
 **Round 1, 2026-10-07: the cheap batch** (d290f9f). `ctx.title_h`
@@ -71,6 +85,13 @@ live, to save microseconds), and the grammars pane's install-or-build
 rename; a delete kept when nothing came, a rename onto a taken name
 refused) and the listing tests in `kawoosh/tests/lua.rs`, unchanged.
 
+**Round 3, 2026-10-07: carets placed by the engine** (Decision 4).
+Verified by `kawoosh/lua/tests/buf_edits_carets.lua` (into edits,
+offsets before an insertion and inside a replaced range, carets with no
+edits) and the pairs and node-action scripts unchanged. The listing
+test that asserted `big/` aside on the frame of the confirm waits for
+it now: the aside is `fs::apply`'s, on its thread.
+
 ## Open
 
 - Entries carried by the engine: a listing's `ids` (journal id →
@@ -78,9 +99,6 @@ refused) and the listing tests in `kawoosh/tests/lua.rs`, unchanged.
   `keep_register` work around the register outliving the listing it
   was yanked in. A payload per tracked line, carried by the register,
   would end both.
-- One "edits, then carets" primitive: `pairs.lua` and
-  `node_actions.lua` each carry carets across a multi-caret edit by
-  hand.
 - `field_node`, `keys_node`, `legend_node` out of `boot.lua`.
 - To profile, then move or leave: the vcs statusline segment copying
   every hunk's old lines to count them; the picker's walk built as

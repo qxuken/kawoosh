@@ -3565,12 +3565,17 @@ fn a_write_deletes_and_copies_off_the_frame() {
         d.confirm_texts()
     );
     d.key(&mut app, "enter", KeyMods::default());
-    // At once: `big` is no longer where it was, and no listing shows
-    // what it was put aside as.
-    assert!(
-        !dir.join("dir1/big").exists(),
-        "put aside by the write itself"
-    );
+    // `big` put aside first, the copy and the rename after it — all off
+    // the frame (`fs::apply`) — and no listing shows what it was put
+    // aside as (below).
+    for _ in 0..40 {
+        if !dir.join("dir1/big").exists() {
+            break;
+        }
+        app.wait_for_jobs();
+        d.frame(&mut app);
+    }
+    assert!(!dir.join("dir1/big").exists(), "put aside by the write");
     for _ in 0..40 {
         app.wait_for_jobs();
         d.frame(&mut app);

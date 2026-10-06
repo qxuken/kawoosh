@@ -712,10 +712,13 @@ pub enum Msg {
     /// Text typed at every caret of the view, as insert mode types it.
     Type(String),
     /// Edits to a buffer as one step, ascending and disjoint in the text
-    /// as it is (`Editor::apply_edits`).
+    /// as it is (`Editor::apply_edits`) — and, when `carets` names any,
+    /// the selections after them, `primary` the index of the primary.
     Edits {
         buffer: u64,
         edits: Vec<(std::ops::Range<usize>, String)>,
+        carets: Vec<Caret>,
+        primary: usize,
     },
     /// Every selection of the buffer's view at once, `primary` the
     /// index of the primary.
@@ -3111,52 +3114,41 @@ impl Runtime {
                         });
                     }
                 }
-                Msg::Edits { buffer, edits } => {
-                    ed.apply_edits(id_of(buffer), &edits);
+                Msg::Edits {
+                    buffer,
+                    edits,
+                    carets,
+                    primary,
+                } => {
+                    let id = id_of(buffer);
+                    let starts = if edits.is_empty() {
+                        Vec::new()
+                    } else {
+                        let Some(starts) = ed.apply_edits_at(id, &edits) else {
+                            continue;
+                        };
+                        starts
+                    };
+                    if !carets.is_empty() {
+                        let sels: Vec<(usize, usize)> = carets
+                            .iter()
+                            .map(|c| {
+                                let at = match *c {
+                                    Caret::Into(i, k) => starts[i] + k.min(edits[i].1.len()),
+                                    Caret::At(o) => carried(o, &edits, &starts),
+                                };
+                                (at, at)
+                            })
+                            .collect();
+                        set_selections(ed, view, id, &sels, primary, false);
+                    }
                 }
                 Msg::SetSelections {
                     buffer,
                     sels,
                     primary,
                     visual,
-                } => {
-                    let id = id_of(buffer);
-                    let Some(b) = ed.buffers.get(id) else {
-                        continue;
-                    };
-                    if sels.is_empty() {
-                        continue;
-                    }
-                    // On a character's start, as every caret is: an
-                    // offset inside one is snapped back to it.
-                    let at = |o: usize| b.floor_char(o.min(b.len()));
-                    let mut out = kawoosh_editor::Selections {
-                        items: sels
-                            .iter()
-                            .map(|(a, h)| kawoosh_editor::Selection::new(at(*a), at(*h)))
-                            .collect(),
-                        primary: primary.min(sels.len() - 1),
-                    };
-                    out.normalize();
-                    // The command's view when it shows the buffer, else
-                    // every view on it.
-                    let views: Vec<ViewId> = if ed.views.get(view).is_some_and(|v| v.buffer == id) {
-                        vec![view]
-                    } else {
-                        ed.views
-                            .iter()
-                            .filter(|(_, v)| v.buffer == id)
-                            .map(|(k, _)| k)
-                            .collect()
-                    };
-                    for v in views {
-                        ed.views[v].sels = out.clone();
-                        ed.views[v].goal_col = None;
-                        if visual {
-                            ed.set_mode(v, kawoosh_editor::Mode::Visual);
-                        }
-                    }
-                }
+                } => set_selections(ed, view, id_of(buffer), &sels, primary, visual),
                 Msg::Echo(s) => ed.message = s,
                 Msg::Copy(text) => {
                     let from = ed
@@ -3176,6 +3168,84 @@ impl Runtime {
         // A plugin's edit of a file a multibuffer shows is in it at once.
         ed.sync_multis();
         rest
+    }
+}
+
+/// Where a caret goes after `kawoosh.buf.edits`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Caret {
+    /// So many bytes into an edit's text (by its index), bounded by it.
+    Into(usize, usize),
+    /// An offset in the text before the edits, as they move it ([`carried`]).
+    At(usize),
+}
+
+/// Where `o`, an offset in the text before `edits`, lands after them —
+/// `starts` where each edit's text starts after them all: moved by the
+/// edits before it, before an insertion at its own byte (the caret
+/// beside another's typing stays where it was typed), and inside a
+/// replaced range kept its distance into the new text, on its last
+/// character at most (a node rewritten under a second caret).
+fn carried(o: usize, edits: &[(std::ops::Range<usize>, String)], starts: &[usize]) -> usize {
+    let mut order: Vec<usize> = (0..edits.len()).collect();
+    order.sort_by_key(|&i| (edits[i].0.start, edits[i].0.end));
+    let mut shift: isize = 0;
+    for i in order {
+        let (r, text) = &edits[i];
+        if o >= r.end && !(o == r.start && r.is_empty()) {
+            shift += text.len() as isize - r.len() as isize;
+        } else if o >= r.start {
+            return starts[i] + (o - r.start).min(text.len().saturating_sub(1));
+        } else {
+            break;
+        }
+    }
+    (o as isize + shift).max(0) as usize
+}
+
+/// The selections of buffer `id` as given — `primary` the index of the
+/// primary — each on a character's start, in the command's view when it
+/// shows the buffer, else every view on it; visual mode when `visual`.
+fn set_selections(
+    ed: &mut kawoosh_editor::Editor,
+    view: ViewId,
+    id: kawoosh_doc::BufferId,
+    sels: &[(usize, usize)],
+    primary: usize,
+    visual: bool,
+) {
+    let Some(b) = ed.buffers.get(id) else {
+        return;
+    };
+    if sels.is_empty() {
+        return;
+    }
+    // On a character's start, as every caret is: an offset inside one
+    // is snapped back to it.
+    let at = |o: usize| b.floor_char(o.min(b.len()));
+    let mut out = kawoosh_editor::Selections {
+        items: sels
+            .iter()
+            .map(|(a, h)| kawoosh_editor::Selection::new(at(*a), at(*h)))
+            .collect(),
+        primary: primary.min(sels.len() - 1),
+    };
+    out.normalize();
+    let views: Vec<ViewId> = if ed.views.get(view).is_some_and(|v| v.buffer == id) {
+        vec![view]
+    } else {
+        ed.views
+            .iter()
+            .filter(|(_, v)| v.buffer == id)
+            .map(|(k, _)| k)
+            .collect()
+    };
+    for v in views {
+        ed.views[v].sels = out.clone();
+        ed.views[v].goal_col = None;
+        if visual {
+            ed.set_mode(v, kawoosh_editor::Mode::Visual);
+        }
     }
 }
 
@@ -5829,43 +5899,84 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // `kawoosh.buf.edits({ { from, to, text }, … }[, buffer])`: several
-    // edits as one step — offsets from 0 in the text as it is, `to`
-    // exclusive, disjoint — every view's selections carried through
-    // them (`Editor::apply_edits`). A range backwards, or two that
-    // overlap, is an error: applied one after another they would each
-    // land in a text the one before had moved.
+    // `kawoosh.buf.edits({ { from, to, text }, … }[, buffer][, { carets
+    // = { … } }])`: several edits as one step — offsets from 0 in the
+    // text as it is, `to` exclusive, disjoint — every view's selections
+    // carried through them (`Editor::apply_edits`); an edit that changes
+    // nothing (`from == to`, no text) is none. With `carets`, the
+    // selections after are those carets instead, in their order, the
+    // one marked `primary = true` the primary, else the first: `{ edit =
+    // i, at = k }` `k` bytes into edit `i`'s text (from 1, as the list
+    // counts; `k` 0 its start, `#text` its end), `{ at = o }` an offset
+    // of the text as it is, where the edits move it — before an
+    // insertion at its own byte, and inside a replaced range kept its
+    // distance into the new text, on its last character at most. What
+    // `pairs` and node actions place a caret per caret with. A range
+    // backwards, or two that overlap, is an error: applied one after
+    // another they would each land in a text the one before had moved.
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
         "edits",
-        lua.create_function(move |_, (list, h): (Vec<Table>, Option<u64>)| {
-            let h = h
-                .or(pp.borrow().current)
-                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
-            let mut edits = Vec::with_capacity(list.len());
-            for e in list {
-                let from: usize = e.get(1)?;
-                let to: usize = e.get(2)?;
-                let text: String = e.get(3)?;
-                if to < from {
+        lua.create_function(
+            move |_, (list, h, opts): (Vec<Table>, Option<u64>, Option<Table>)| {
+                let h = h
+                    .or(pp.borrow().current)
+                    .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+                let mut edits = Vec::with_capacity(list.len());
+                for e in list {
+                    let from: usize = e.get(1)?;
+                    let to: usize = e.get(2)?;
+                    let text: String = e.get(3)?;
+                    if to < from {
+                        return Err(mlua::Error::runtime(format!(
+                            "edits: {from}..{to} ends before it starts"
+                        )));
+                    }
+                    edits.push((from..to, text));
+                }
+                let (mut carets, mut primary) = (Vec::new(), 0);
+                let list = match &opts {
+                    Some(o) => o.get::<Option<Vec<Table>>>("carets")?,
+                    None => None,
+                };
+                for c in list.unwrap_or_default() {
+                    let at: usize = c.get("at")?;
+                    if c.get::<Option<bool>>("primary")? == Some(true) {
+                        primary = carets.len();
+                    }
+                    carets.push(match c.get::<Option<usize>>("edit")? {
+                        Some(i) if i >= 1 && i <= edits.len() => Caret::Into(i - 1, at),
+                        Some(i) => {
+                            return Err(mlua::Error::runtime(format!(
+                                "edits: a caret in edit {i} of {}",
+                                edits.len()
+                            )));
+                        }
+                        None => Caret::At(at),
+                    });
+                }
+                let mut by_start: Vec<&std::ops::Range<usize>> = edits
+                    .iter()
+                    .filter(|(r, t)| !(r.is_empty() && t.is_empty()))
+                    .map(|(r, _)| r)
+                    .collect();
+                by_start.sort_by_key(|r| (r.start, r.end));
+                if let Some(w) = by_start.windows(2).find(|w| w[1].start < w[0].end) {
                     return Err(mlua::Error::runtime(format!(
-                        "edits: {from}..{to} ends before it starts"
+                        "edits: {:?} and {:?} overlap",
+                        w[0], w[1]
                     )));
                 }
-                edits.push((from..to, text));
-            }
-            let mut by_start: Vec<&std::ops::Range<usize>> = edits.iter().map(|(r, _)| r).collect();
-            by_start.sort_by_key(|r| (r.start, r.end));
-            if let Some(w) = by_start.windows(2).find(|w| w[1].start < w[0].end) {
-                return Err(mlua::Error::runtime(format!(
-                    "edits: {:?} and {:?} overlap",
-                    w[0], w[1]
-                )));
-            }
-            qq.borrow_mut().push(Msg::Edits { buffer: h, edits });
-            Ok(())
-        })?,
+                qq.borrow_mut().push(Msg::Edits {
+                    buffer: h,
+                    edits,
+                    carets,
+                    primary,
+                });
+                Ok(())
+            },
+        )?,
     )?;
     // `kawoosh.buf.set_selections({ { anchor, head[, primary] }, … }[,
     // buffer])`: the selections as given — the one marked `primary`
