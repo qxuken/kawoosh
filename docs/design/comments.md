@@ -1,9 +1,9 @@
 # Comments: `gc` + motion, `gcc` the line
 
 Status: planned 2026-10-06 from the ask "Let's plan comment movements.
-I used often `gcc` to comment out a block of code or a line", rounds 1
-to 3 built the same day ("allright let's build it", "let's do round
-2", "let's do round 3"). The calls below are
+I used often `gcc` to comment out a block of code or a line", all four
+rounds built the same day ("allright let's build it", "let's do round
+2", "let's do round 3", "let's do round 4"). The calls below are
 taken here, each the user's to overturn; where the build moved one,
 the section says so. Roadmap step 90.
 Companion to [editorconfig.md](editorconfig.md) (where a language's
@@ -64,10 +64,10 @@ interrupt in the one pane that has a shell. **A text object `gc` in
 operator-pending mode** (neovim's `dgc`): `a/` `i/` are the
 grammar's, found from the tree rather than by scanning for tokens, and
 work in every language with a query; `dgc` would be a second spelling
-of `da/`. **`gb` for a block comment** (Comment.nvim): not now — a
+of `da/`. **`gb` for a block comment** (Comment.nvim): not in round 1 — a
 block-only language gets its lines wrapped one by one (Decision 2),
-which is what `gc` on a CSS rule should do, and a whole-range `/* */`
-is a round of its own when use asks (Decision 7).
+which is what `gc` on a CSS rule should do; the whole-range `/* */`
+came as round 4 (Decision 8).
 
 ### 2. A toggle over the range's lines, decided for all of them at once
 
@@ -247,6 +247,30 @@ selections share is edited once (the first's say), as `indent` dedups
 its lines. Visual mode ends on the operator, as for every operator but
 the two that wait for a character.
 
+### 8. `gb` wraps the range in one pair *(round 4, built 2026-10-06)*
+
+`gb` + motion or text object, `gb` over a visual selection, `gbc` the
+line (COUNT lines): the range in the block pair as one — the opener
+and a space before its first non-blank character, a space and the
+closer after its last, blank lines at a linewise range's edges left
+outside — or, when the range already begins with the opener and ends
+with the closer, those taken off with their spaces. A word: `gbiw`
+gives `/* x */`. The pair is the layer's `comment_block` (Decision 4's
+lookup, the same fallback to the buffer's); a language with none says
+`no block comment pair for python`. Comment.nvim's letters, `gbc` for
+the line as its own, since `b` after an operator is the word-back
+motion and `gbb` would be that. The operator is `comment block`, the
+line form `comment block lines` (`:comment block lines`); `c` in
+operator-pending mode completes whichever of `comment` and `comment
+block` is pending. Each selection is wrapped on its own.
+
+Beaten: **falling back to line tokens where there is no pair**: `gc`
+is a key away and the message says which to press; a `gb` that
+quietly did `gc` would mislead on the way back. **A pair on lines of
+its own** (`/*` above, `*/` below): what C programmers write by hand,
+but a toggle has to find it again, and the inline pair round-trips
+through `gbc` exactly.
+
 ### 7. Rounds
 
 1. **The operator**: `comment` in `commands.rs` (`apply_operator`'s
@@ -263,7 +287,7 @@ the two that wait for a character.
    manifest, kawoosh-grammars `r7` with the seventy filled in, the
    built-in manifest copy following, `kawoosh.language` taking the
    keys.
-4. **`gb`**, a block comment over the range as one pair, when use asks.
+4. **`gb`**, a block comment over the range as one pair (Decision 8).
 
 ## Built
 
@@ -315,5 +339,12 @@ a language is listed, installed or added from Lua — under a user's
 own, as a builtin's defaults are. The built-in manifest copy is r7's.
 Tests: `kawoosh/lua/tests/language_comment.lua` (`kawoosh.language`
 with a token, with a pair, `gcc` writing each), the listing test in
-`kawoosh/tests/grammars.rs` reading zig's `//` from the copy. Round 4
-open.
+`kawoosh/tests/grammars.rs` reading zig's `//` from the copy.
+
+Round 4, 2026-10-06 ("let's do round 4"): Decision 8 as written —
+`comment block` beside `comment` in `apply_operator`, `gb`, `gbc`
+through the shared `comment_lines_cmd`, `comment block lines`; the
+test `gb_wraps_the_range_in_one_pair` in `kawoosh/tests/comment.rs`
+(the line and back with the caret riding, lines whole with blank
+edges outside, a motion, a word, `.`, the command-line spelling,
+python's refusal). All four rounds built.

@@ -229,6 +229,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `ge` `gE` | the end of the previous word, WORD |
 | `gu` `gU` `g~` + motion | lower-case, upper-case, turn the case of what it covers; `guu` `gUU` `g~~` the line |
 | `gc` + motion | comment the lines it covers out, or back in when every one is a comment; `gcc` the line, COUNT lines; the selection's in visual ([comments.md](comments.md)) |
+| `gb` + motion | the range in the block pair as one, or out of it; `gbc` the line (Comment.nvim's letters: `b` after an operator is a motion) |
 | `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
 | `gd` | definition; in the hover, the symbol it names — looked up in the workspace, opened in the pane the hover came from |
 | `gD` | declaration: one is gone to, several are a list as `grr`'s |
@@ -333,6 +334,7 @@ the panes table.
 | `gsd` + char | take the pair off from around the caret |
 | `gsr` + char + char | swap the pair for another (`gsr)]`) |
 | `ga` + motion + char | line up the lines it covers on their first CHAR (`gaip=`, `Vjga:`): the text before it trimmed and padded, a space kept where any line had one; vim-easy-align's letters |
+| `gb` + motion, `gbc` | the range wrapped in the language's block pair as one (`/* … */`), unwrapped when it is one; a word with `gbiw`; a language with no pair says so ([comments.md](comments.md) Decision 8) |
 | `gc` + motion, `gcc` | the lines commented with the language's token (`language.NAME.comment`, `comment_block` for a pair) at their least indent, or uncommented when every one is; blank lines skipped; `:comment lines` by name ([comments.md](comments.md)) |
 | `g.` | a node action: what the syntax node under the caret means — a boolean flipped, an operator mirrored, a list split onto its lines or joined, a string's quotes, a number's digits grouped; the innermost node one answers for, up to the body the caret is in ([node-actions.md](node-actions.md)); `:node actions` lists them all |
 | `ga` + motion + `<CR>` | line them up on a pattern's first match instead, asked for at an `align on ` prompt (`gaip<CR>or_else<CR>`); `:align PATTERN` over the selection's lines |
