@@ -561,6 +561,61 @@ prints a `### Adding argument` line into the output each time; adding
 and a build that does not read the variable never sees it; a grammar
 per tool (Decision 12's beaten).
 
+### 16. The nushell files a project names, and its parameters' completions
+
+*Added 2026-10-07*, from "Not built": "other nushell files than
+`build.nu` (a `toolkit.nu`, nushell's own habit), and a parameter's
+completer offered in the prompt".
+
+**Which files.** `compile.nushell` lists them — names, or paths from a
+directory — each read at its nearest above the caret, as the other
+kinds' files are; `{ "build.nu", "toolkit.nu" }` unless it is set. Two
+found are two sets of rows, `build.nu`'s and `toolkit.nu`'s, ranked
+together as the task runners they are. A path is spelled from the
+directory it was found in: `compile.nushell = { "scripts/verify.nu" }`
+offers `nu scripts/verify.nu`, run there.
+
+**Script or module, as nushell reads it.** Decision 6 took a file with
+any `main` for a script. nushell's own `toolkit.nu` has an `export def
+main` beside its other exports, and is used as a module — `use
+toolkit.nu`, then `toolkit` and `toolkit fmt` — so a script now is a
+file with a `def "main SUB"` (or an `alias "main SUB"`), a `main` that
+is not exported, or a `main` and nothing else exported; anything else a
+module, its exported `main` the module's own name (`nu -c 'use
+toolkit.nu; toolkit'`). A `def` inside another's body is not the
+file's: bodies are passed over, brace to brace, outside strings.
+
+**A parameter's completions in the prompt.** The signature already read
+for `needs` (Decision 6) is read for each parameter whole now — its
+type, its default, and a completion: `string@[debug release]` is those
+values; `string@targets` is what `targets` answers. `<Tab>` after a
+nushell row's command, at a positional parameter with one, offers them
+before the paths, a flag with a type (`--jobs (-j): int`) passing over
+its value as it is counted. Answers come in order of cost:
+
+1. **From the file**, when the completer's body is a list of plain
+   values (`def targets [] { ["debug", "release"] }`): no process.
+2. **Else nu**: `nu --no-config-file -c "source FILE; NAME | to json
+   -r"` in the file's directory — `source` defines the file's commands
+   and does not run its `main` — read from the last line (the file's
+   own top level may print before it), as a list of values, of `{
+   value }` records, or a record of `completions`. Kept by file and
+   completer while the file's stamp holds, so it is once per change; a
+   second at most, a completer that hangs costing that once. The
+   prompt's candidates are made on every key, so a process per key
+   was not an option.
+
+A value with a space or a shell's character is double-quoted — inside
+a `nu -c '…'` too, where a single quote would end the line's — and one
+asked before a `nu -c` row's closing quote keeps the quote.
+
+Beaten: every `*.nu` in the project (a deploy script is a `.nu` too,
+and a bare `:compile` would run the first that runs as it is); nu's
+own `scope commands` to read the signatures (Decision 6's beaten); the
+completer asked as the prompt opens, ahead of the key (it is asked
+rarely, and the cache makes a second `<Tab>` free); a nushell grammar
+for the file (the signature's shape is small and the text says it).
+
 ## Not built
 
 - ~~A program that colours only on a terminal and reads none of the
@@ -569,7 +624,8 @@ per tool (Decision 12's beaten).
 
 - rust-analyzer's runnables as a kind (the test at the caret).
 - A deducer registry for plugins (Decision 1's beaten).
-- Other nushell files than `build.nu` (a `toolkit.nu`, nushell's own
-  habit), and a parameter's completer offered in the prompt.
+- ~~Other nushell files than `build.nu` (a `toolkit.nu`, nushell's own
+  habit), and a parameter's completer offered in the prompt.~~ Decision
+  16.
 - ~~`run.command` as a `tools` entry: the same shape question as
   `compile.command`, left for its own round.~~ Decision 14.

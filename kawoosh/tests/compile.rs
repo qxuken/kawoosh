@@ -710,3 +710,47 @@ fn a_location_opens_in_the_pane_showing_its_file() {
     assert_eq!(app.layout.visible_panes().len(), panes, "no pane more");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// compile.md Decision 16: `<Tab>` after a nushell command the project
+/// offers completes its positional parameters — a completer's list read
+/// from the file, an inline list, a completer run in nu — a flag's value
+/// passed over; and `toolkit.nu` is read as a module.
+#[cfg(unix)]
+#[test]
+fn a_nushell_parameter_completes_from_its_completer() {
+    let dir = project("nu-tab", "return {}");
+    std::fs::write(
+        dir.join("build.nu"),
+        r#"
+def targets [] { ["debug", "release"] }
+def files [] { ["alpha.txt", "beta.txt"] | each {|f| $f } }
+def "main build" [target: string@targets, --jobs (-j): int, file?: string@files] { }
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("toolkit.nu"),
+        "export def deploy [where: string@[staging prod]] { }\nexport def fmt [] { }\n",
+    )
+    .unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    d.keys(&mut app, ":compile nu build.nu build r");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("elease"));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(
+        &mut app,
+        ":compile nu -c 'use toolkit.nu; toolkit deploy st",
+    );
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("aging"));
+    d.key(&mut app, "escape", KeyMods::default());
+    let nu = kawoosh_systems::spawn::output(std::process::Command::new("nu").arg("--version"));
+    if nu.is_ok_and(|o| o.status.success()) {
+        // The second positional, past `--jobs 4`: its completer is code,
+        // so nu answers it.
+        d.keys(&mut app, ":compile nu build.nu build --jobs 4 release al");
+        assert_eq!(app.cmdline_ghost().as_deref(), Some("pha.txt"));
+        d.key(&mut app, "escape", KeyMods::default());
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

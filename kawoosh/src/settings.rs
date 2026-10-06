@@ -204,6 +204,11 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
             "offer what the project's files say it runs (`Cargo.toml`, `package.json`, …); on unless false",
         ),
         (
+            "compile.nushell",
+            K::List,
+            "the nushell files a project's commands are read from, each at its nearest: names, or paths from a directory; `{ \"build.nu\", \"toolkit.nu\" }` unless set",
+        ),
+        (
             "compile.color",
             K::Bool,
             "ask a compile's programs for colours (`FORCE_COLOR`, `CLICOLOR_FORCE`, `CARGO_TERM_COLOR`), which a pipe would not get; on unless false, or `NO_COLOR` is set",

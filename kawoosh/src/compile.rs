@@ -79,7 +79,11 @@ fn plain_paints(line: &str) -> Vec<(Range<usize>, String)> {
         let paren = line[span.end..]
             .strip_prefix('(')
             .and_then(|r| r.find(')'))
-            .filter(|&c| line[span.end + 1..span.end + 1 + c].chars().all(|c| c.is_ascii_digit() || c == ','))
+            .filter(|&c| {
+                line[span.end + 1..span.end + 1 + c]
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == ',')
+            })
             .map_or(0, |c| c + 2);
         out.push((span.start..span.end + paren, "bold".into()));
     }
@@ -105,7 +109,7 @@ fn plain_paints(line: &str) -> Vec<(Range<usize>, String)> {
                 // compilers print it.
                 if severity
                     && let Some(colon) = after.find(": ").map(|c| end + c + 2)
-                    && line[colon..].trim_end().len() > 0
+                    && !line[colon..].trim_end().is_empty()
                 {
                     out.push((colon..line.trim_end().len(), "bold".into()));
                 }
@@ -156,13 +160,89 @@ fn carets(line: &str) -> Option<Range<usize>> {
     };
     let marks = &line[body..];
     if !marks.contains(['^', '~'])
-        || !marks.chars().all(|c| matches!(c, '^' | '~' | '-' | '+' | ' '))
+        || !marks
+            .chars()
+            .all(|c| matches!(c, '^' | '~' | '-' | '+' | ' '))
     {
         return None;
     }
     let start = body + marks.find(|c: char| c != ' ')?;
     let end = body + marks.trim_end().len();
     Some(start..end)
+}
+
+/// A completion as a word of the command line: double-quoted when it
+/// has what a shell would split or read — inside a `nu -c '…'` too,
+/// where a single quote would end the line's.
+fn quote_arg(v: &str) -> String {
+    if !v.is_empty() && !v.contains(|c: char| c.is_whitespace() || "\"'$`\\;|&<>()*?#".contains(c))
+    {
+        return v.to_string();
+    }
+    let mut out = String::from("\"");
+    for c in v.chars() {
+        if matches!(c, '"' | '\\' | '$' | '`') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
+/// What nushell completer `name` of `file` answers: a list of values,
+/// of `{ value }` records, or a record of `completions`; read from the
+/// last line printed, the file's own top level printing before it.
+fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
+    use std::io::Read;
+    let dir = file.parent()?;
+    let script = format!(
+        "source '{}'; {name} | to json -r",
+        file.file_name()?.to_string_lossy().replace('\'', "")
+    );
+    let mut command = std::process::Command::new("nu");
+    command
+        .args(["--no-config-file", "-c", &script])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = kawoosh_systems::spawn::spawn(&mut command).ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut out = String::new();
+        stdout.read_to_string(&mut out).ok();
+        out
+    });
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            _ => {
+                child.kill().ok();
+                child.wait().ok();
+                return None;
+            }
+        }
+    }
+    let out = reader.join().ok()?;
+    let json: serde_json::Value =
+        serde_json::from_str(out.lines().rev().find(|l| !l.trim().is_empty())?).ok()?;
+    let list = json
+        .get("completions")
+        .and_then(|c| c.as_array())
+        .or_else(|| json.as_array())?;
+    Some(
+        list.iter()
+            .filter_map(|v| match v {
+                serde_json::Value::String(s) => Some(s.clone()),
+                v => v
+                    .get("value")
+                    .map(|x| x.as_str().map_or_else(|| x.to_string(), str::to_string)),
+            })
+            .collect(),
+    )
 }
 
 /// How much of a command the buffer's name says.
@@ -231,6 +311,10 @@ pub struct Compile {
     pub started: u64,
     /// The rows `compile pick` offered, in the picker's order.
     pub offer: Vec<Offer>,
+    /// Nushell completers' answers (compile.md Decision 16), by file and
+    /// completer, with the file's stamp they were asked at.
+    pub completions:
+        std::collections::HashMap<(PathBuf, String), (Option<SystemTime>, Vec<String>)>,
 }
 
 impl Compile {
@@ -455,7 +539,94 @@ impl Kawoosh {
                     .map(|d| d.roots.clone())
             })
             .unwrap_or_default();
-        deduce::deduce(&dir, &markers)
+        deduce::deduce(&dir, &markers, &self.compile_nushell())
+    }
+
+    /// The nushell files a project's commands are read from
+    /// (`compile.nushell`, compile.md Decision 16).
+    fn compile_nushell(&self) -> Vec<String> {
+        match self
+            .ed
+            .settings
+            .get("compile.nushell")
+            .and_then(Setting::as_list)
+        {
+            Some(list) => list
+                .iter()
+                .filter_map(Setting::as_str)
+                .map(str::to_string)
+                .collect(),
+            None => deduce::NU_FILES.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// What `<Tab>` offers for the word `token` after `:compile WORDS`
+    /// when the words are a nushell command the project offers and the
+    /// token one of its positional parameters with a completion
+    /// (compile.md Decision 16): the values the file says, else its
+    /// completer's answer. A value with a space is quoted; one asked
+    /// inside a `nu -c '…'`, before its closing quote, keeps the quote.
+    pub(crate) fn compile_arg_candidates(&mut self, words: &[String], token: &str) -> Vec<String> {
+        let rows = self.deduce_compile().commands;
+        for row in rows {
+            let Some(nu) = &row.nu else { continue };
+            let head: Vec<&str> = row.cmd[..row.args_at].split_whitespace().collect();
+            if words.len() < head.len()
+                || words[..head.len()].iter().zip(&head).any(|(w, h)| w != h)
+            {
+                continue;
+            }
+            // Which positional the token is: the words after the
+            // command, a flag's value passed over.
+            let mut index = 0;
+            let mut after = words[head.len()..].iter();
+            while let Some(w) = after.next() {
+                if w.starts_with('-') && w.len() > 1 {
+                    if !w.contains('=') && nu.valued.iter().any(|v| v == w) {
+                        after.next();
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+            let Some(Some(completion)) = nu.positional.get(index).cloned() else {
+                return Vec::new();
+            };
+            let quoted = row.args_at < row.cmd.len();
+            let (typed, close) = match token.strip_suffix('\'') {
+                Some(t) if quoted => (t, "'"),
+                _ => (token, ""),
+            };
+            let values = match completion {
+                deduce::Completion::Values(v) => v,
+                deduce::Completion::Command(name) => self.nu_completions(&nu.file, &name),
+            };
+            return values
+                .into_iter()
+                .filter(|v| v.starts_with(typed))
+                .map(|v| format!("{}{close}", quote_arg(&v)))
+                .collect();
+        }
+        Vec::new()
+    }
+
+    /// Completer `name`'s answer in nushell file `file`, run there —
+    /// `source` defines the file's commands and does not run its `main`
+    /// — and kept while the file is unchanged; a second at most, so a
+    /// completer that hangs costs that once.
+    fn nu_completions(&mut self, file: &Path, name: &str) -> Vec<String> {
+        let stamp = std::fs::metadata(file).and_then(|m| m.modified()).ok();
+        let key = (file.to_path_buf(), name.to_string());
+        if let Some((at, values)) = self.compile.completions.get(&key)
+            && *at == stamp
+        {
+            return values.clone();
+        }
+        let values = nu_answer(file, name).unwrap_or_default();
+        self.compile
+            .completions
+            .insert(key, (stamp, values.clone()));
+        values
     }
 
     /// The scripts of the packages around (compile.md Decision 9): the
@@ -1441,8 +1612,14 @@ mod tests {
             painted("./main.go:3:30: undefined: x"),
             s(&[("./main.go:3:30", "bold")])
         );
-        assert_eq!(painted("--- FAIL: TestA (0.00s)"), s(&[("--- FAIL", "error")]));
-        assert_eq!(painted("    --- PASS: TestB (0.00s)"), s(&[("--- PASS", "added")]));
+        assert_eq!(
+            painted("--- FAIL: TestA (0.00s)"),
+            s(&[("--- FAIL", "error")])
+        );
+        assert_eq!(
+            painted("    --- PASS: TestB (0.00s)"),
+            s(&[("--- PASS", "added")])
+        );
         assert_eq!(painted("FAIL"), s(&[("FAIL", "error")]));
         assert_eq!(painted("FAIL\tex\t0.217s"), s(&[("FAIL", "error")]));
         assert_eq!(painted("ok  \tex\t0.2s"), s(&[("ok", "added")]));
