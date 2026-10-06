@@ -12,7 +12,7 @@ where yanked text goes.
 | insert | `i` `a` `I` `A` `o` `O`, `s` `S` `C`, `c` + motion | keys type text |
 | visual | `v` | motions extend the selection |
 | visual line | `V` | the same, by whole lines |
-| operator-pending | `d` `c` `y` `>` `<` `=` `gu` `gU` `g~` `gc` `gsa` `ga` | waiting for a motion or a text object |
+| operator-pending | `d` `c` `y` `>` `<` `=` `gu` `gU` `g~` `gc` `gb` `gsa` `ga` | waiting for a motion or a text object |
 
 An operator doubled works on lines, as in vim: `dd`, `yy`, `cc`, `>>`,
 `==`, `guu`, `gUU`, `g~~`, `gcc`, with a count for more lines. `<Esc>` in
@@ -215,6 +215,7 @@ curly, and any other character wraps with itself on both sides.
 | `gc` + motion | comment the lines it covers out, or back in when every one is a comment: `gcip`, `gc3j`, `gca/` |
 | `gcc` | the line; `3gcc` three |
 | `gc` in visual | the selection's lines, whole |
+| `gb` + motion, `gbc`, `gb` in visual | the same with the block pair as one: `/* … */` around the whole range, taken off again when it is one; `gbiw` a word |
 
 One rule for the whole range: if every line (blank ones aside) already
 starts with the token, all are uncommented; otherwise all are commented,
@@ -231,7 +232,8 @@ space after it, so a block reads as a block and comes back as it was:
 Uncommenting takes the token and one space. The token is the language's
 `comment` setting (`//`, `#`, `--`), with `comment_block` the pair where
 there is one; a language with only the pair (CSS, HTML, markdown) wraps
-each line: `/* color: red; */`. `:set comment=#` changes a buffer's for
+each line: `/* color: red; */`, and `gb` needs the pair (`gb` in Python
+says so). `:set comment=#` changes a buffer's for
 the session, `language.NAME.comment` in your settings for good, and
 `kawoosh.buf.comment_tokens()` reads them from Lua. Where the syntax
 says a line is another language's — a `<script>` in HTML, a fenced

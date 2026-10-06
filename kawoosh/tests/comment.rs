@@ -208,3 +208,46 @@ fn a_layer_without_a_token_is_the_hosts() {
     assert_eq!(text(&app), "ffi.cdef[[\n// int f(void);\n]]\n-- local x\n");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Round 4 (comments.md Decision 8): `gb` wraps the range in the block
+/// pair as one and unwraps one that is; `gbc` the line, a selection's
+/// lines whole, `gbiw` the word alone; a language with no pair says so.
+#[test]
+fn gb_wraps_the_range_in_one_pair() {
+    let (mut app, mut d, dir) = open("a.rs", "  let x = 1;\n  f(x);\n\n  g();\n");
+    d.press(&mut app, "fxgbc");
+    assert_eq!(text(&app), "  /* let x = 1; */\n  f(x);\n\n  g();\n");
+    assert_eq!(head(&app), 9, "the caret rode its text");
+    d.press(&mut app, "gbc");
+    assert_eq!(text(&app), "  let x = 1;\n  f(x);\n\n  g();\n");
+    assert_eq!(head(&app), 6);
+    // Lines, whole: blank lines at the edges left outside the pair.
+    d.press(&mut app, "ggVjjjgb");
+    assert_eq!(text(&app), "  /* let x = 1;\n  f(x);\n\n  g(); */\n");
+    d.press(&mut app, "ggVjjjgb");
+    assert_eq!(text(&app), "  let x = 1;\n  f(x);\n\n  g();\n");
+    // A motion over a line and the blank one under it: the blank edge
+    // stays outside; the caret on the first line's first non-blank.
+    d.press(&mut app, "jgbj");
+    assert_eq!(text(&app), "  let x = 1;\n  /* f(x); */\n\n  g();\n");
+    assert_eq!(head(&app), 15);
+    d.press(&mut app, "gbj");
+    assert_eq!(text(&app), "  let x = 1;\n  f(x);\n\n  g();\n");
+    // A word alone, and `.`.
+    d.press(&mut app, "ggwgbiw");
+    assert_eq!(text(&app), "  let /* x */ = 1;\n  f(x);\n\n  g();\n");
+    d.press(&mut app, "j.");
+    assert_eq!(text(&app), "  let /* x */ = 1;\n  /* f */(x);\n\n  g();\n");
+    let v = app.focused_view().unwrap();
+    app.ed.execute(v, "comment block lines");
+    assert_eq!(
+        text(&app),
+        "  let /* x */ = 1;\n  /* /* f */(x); */\n\n  g();\n"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    let (mut app, mut d, dir) = open("a.py", "x = 1\n");
+    d.press(&mut app, "gbc");
+    assert_eq!(text(&app), "x = 1\n");
+    assert_eq!(app.ed.message, "no block comment pair for python");
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -120,6 +120,21 @@ fn whole_lines_of_sel(buf: &Buffer, s: &Selection, extra_lines: usize) -> Range<
 /// An edit and the line it is on.
 pub(crate) type LineEdit = (usize, (Range<usize>, String));
 
+/// The first non-blank character the ranges' lines have, where a
+/// comment operator asks which language it is in; the first range's
+/// start when every line is blank.
+fn first_text_at(buf: &Buffer, ranges: &[(Range<usize>, bool)]) -> usize {
+    ranges
+        .iter()
+        .flat_map(|(r, lw)| {
+            let (a, b) = op_lines(buf, r, *lw);
+            a..=b
+        })
+        .find(|&ln| !buf.line_text(ln).trim().is_empty())
+        .map(|ln| m::first_nonblank(buf, ln))
+        .unwrap_or_else(|| ranges.first().map_or(0, |(r, _)| r.start))
+}
+
 /// The edits that toggle `lines` as comments (docs/design/comments.md
 /// Decision 2), each with its line: blank lines set aside, the rest
 /// uncommented when every one starts with the token after its indent
@@ -576,18 +591,7 @@ pub(crate) fn apply_operator(
         "comment" => {
             // The tokens are the layer's at the first non-blank line's
             // first character (Decision 4): one language per `gc`.
-            let at = {
-                let buf = &ed.buffers[id];
-                ranges
-                    .iter()
-                    .flat_map(|(r, lw)| {
-                        let (a, b) = op_lines(buf, r, *lw);
-                        a..=b
-                    })
-                    .find(|&ln| !buf.line_text(ln).trim().is_empty())
-                    .map(|ln| m::first_nonblank(buf, ln))
-                    .unwrap_or_else(|| ranges.first().map_or(0, |(r, _)| r.start))
-            };
+            let at = first_text_at(&ed.buffers[id], &ranges);
             let (lang, tokens) = ed.comment_tokens_at(id, at);
             if tokens.line.is_none() && tokens.block.is_none() {
                 ed.message = format!("no comment token for {lang}");
@@ -638,6 +642,79 @@ pub(crate) fn apply_operator(
                 }
             });
         }
+        // `gb`: each range wrapped in the block pair as one — the
+        // opener before its first non-blank character, the closer
+        // after its last — or unwrapped when it is one already
+        // (docs/design/comments.md Decision 8).
+        "comment block" => {
+            let at = first_text_at(&ed.buffers[id], &ranges);
+            let (lang, tokens) = ed.comment_tokens_at(id, at);
+            let Some((open, close)) = tokens.block else {
+                ed.message = format!("no block comment pair for {lang}");
+                return;
+            };
+            let buf = &ed.buffers[id];
+            let mut edits = Vec::new();
+            for (r, lw) in &ranges {
+                let span = if *lw {
+                    let (a, b) = op_lines(buf, r, *lw);
+                    let lines: Vec<usize> = (a..=b)
+                        .filter(|&ln| !buf.line_text(ln).trim().is_empty())
+                        .collect();
+                    let (Some(&first), Some(&last)) = (lines.first(), lines.last()) else {
+                        continue;
+                    };
+                    let end = buf.line_range(last);
+                    m::first_nonblank(buf, first)..end.start + buf.slice(end).trim_end().len()
+                } else {
+                    r.start.min(buf.len())..r.end.min(buf.len())
+                };
+                if span.start >= span.end {
+                    continue;
+                }
+                let t = buf.slice(span.clone());
+                if t.len() >= open.len() + close.len()
+                    && t.starts_with(&open)
+                    && t.ends_with(&close)
+                {
+                    let mut a = open.len();
+                    if t[a..].starts_with(' ') {
+                        a += 1;
+                    }
+                    let mut b = t.len() - close.len();
+                    if b > a && t[..b].ends_with(' ') {
+                        b -= 1;
+                    }
+                    edits.push((span.start..span.start + a, String::new()));
+                    edits.push((span.start + b..span.end, String::new()));
+                } else {
+                    edits.push((span.start..span.start, format!("{open} ")));
+                    edits.push((span.end..span.end, format!(" {close}")));
+                }
+            }
+            if edits.is_empty() {
+                ed.message = "nothing to comment".into();
+                return;
+            }
+            let extended: Vec<bool> = ed.views[view]
+                .sels
+                .iter()
+                .map(|s| s.anchor != s.head)
+                .collect();
+            edit_keeping(ed, view, edits);
+            let buf = &ed.buffers[id];
+            let v = &mut ed.views[view];
+            let mut i = 0;
+            v.sels.map(|s| {
+                let ext = extended[i.min(extended.len() - 1)];
+                i += 1;
+                if ext {
+                    Selection::point(m::first_nonblank(buf, buf.line_of(s.start())))
+                } else {
+                    s
+                }
+            });
+        }
         "join" => {
             let buf = &ed.buffers[id];
             let mut edits = Vec::new();
@@ -665,6 +742,32 @@ pub(crate) fn apply_operator(
         _ => ed.message = format!("unknown operator {op}"),
     }
     clamp_sels(ed, view);
+}
+
+/// `comment lines` and `comment block lines`: a pending `comment` or
+/// `comment block` doubled (`gcc`, `gbc`, whichever is pending), `c`
+/// as it was after any other operator, and with none pending `op` over
+/// COUNT lines at the caret, or the selection's.
+fn comment_lines_cmd(ed: &mut Editor, ctx: &Ctx, op: &'static str) {
+    match ed.pending_op {
+        Some((pending @ ("comment" | "comment block"), _)) => operator(ed, ctx, pending),
+        Some(_) => operator(ed, ctx, "change"),
+        None => {
+            if ed.mode(ctx.view) == Mode::Visual {
+                operator(ed, ctx, op);
+                return;
+            }
+            let id = view(ed, ctx).buffer;
+            let buf = &ed.buffers[id];
+            let n = ctx.count.max(1);
+            let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
+                .sels
+                .iter()
+                .map(|s| (line_range_of_sel(buf, s, n - 1), true))
+                .collect();
+            apply_operator(ed, ctx.view, op, ranges);
+        }
+    }
 }
 
 fn operator(ed: &mut Editor, ctx: &Ctx, op: &'static str) {
@@ -2551,6 +2654,7 @@ pub fn install(ed: &mut Editor) {
         "case upper",
         "case toggle",
         "comment",
+        "comment block",
     ] {
         ed.register_kind(op, Kind::Operator, move |ed, ctx| operator(ed, ctx, op));
     }
@@ -2559,24 +2663,13 @@ pub fn install(ed: &mut Editor) {
     // was there (`cc` changes the line, `dc` nothing). With no operator
     // pending (`:comment lines`, Lua, the socket) the selections' lines
     // at once, COUNT lines each (docs/design/comments.md Decision 5).
-    ed.register("comment lines", |ed, ctx| match ed.pending_op {
-        Some(("comment", _)) => operator(ed, ctx, "comment"),
-        Some(_) => operator(ed, ctx, "change"),
-        None => {
-            if ed.mode(ctx.view) == Mode::Visual {
-                operator(ed, ctx, "comment");
-                return;
-            }
-            let id = view(ed, ctx).buffer;
-            let buf = &ed.buffers[id];
-            let n = ctx.count.max(1);
-            let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
-                .sels
-                .iter()
-                .map(|s| (line_range_of_sel(buf, s, n - 1), true))
-                .collect();
-            apply_operator(ed, ctx.view, "comment", ranges);
-        }
+    // `gbc` the same for the block pair (Comment.nvim's letters: `b`
+    // after an operator is the word-back motion, so no `gbb`).
+    ed.register("comment lines", |ed, ctx| {
+        comment_lines_cmd(ed, ctx, "comment")
+    });
+    ed.register("comment block lines", |ed, ctx| {
+        comment_lines_cmd(ed, ctx, "comment block")
     });
     // `~`: COUNT characters from the caret their case turned, the caret
     // past them, as vim's (`notildeop`).
@@ -3636,6 +3729,14 @@ const DOCS: &[(&str, &str)] = &[
     (
         "comment lines",
         "comment or uncomment COUNT lines at the caret, or the selection's (`gcc`; `:comment lines`)",
+    ),
+    (
+        "comment block",
+        "wrap what a motion or object covers, or the selection, in the block comment pair as one, or unwrap it when it is one (`gb`)",
+    ),
+    (
+        "comment block lines",
+        "wrap COUNT lines at the caret, or the selection's, in the block pair as one, or unwrap them (`gbc`; `:comment block lines`)",
     ),
     (
         "move line down",
@@ -4986,6 +5087,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("gU", "case upper"),
         ("g~", "case toggle"),
         ("gc", "comment"),
+        ("gb", "comment block"),
         ("~", "case toggle char"),
         ("J", "join"),
         ("x", "delete char"),
