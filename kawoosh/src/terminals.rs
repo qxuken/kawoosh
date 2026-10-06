@@ -1293,6 +1293,27 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 }
             },
         ),
+        // `<C-w>/`: the same directory, listed beside — `.` is a
+        // terminal here, `/` a listing here. The new pane is a view
+        // as the one in front (`same_view`, what a split starts on),
+        // and `:dir PATH` in it: a listing of that directory already
+        // open is shown there (one buffer a directory, as oil has it;
+        // a move in either pane leaves the other — `open_scratch`
+        // keeps a buffer another pane shows), else one is read.
+        cmd(
+            Spec::new("dir here")
+                .doc("the directory the pane in front is on, listed in a pane beside (`<C-w>/`): the file's, the listing's, the shell's"),
+            |k, _| {
+                let here = k.here_dir().display().to_string();
+                let from = k.focused_view().map(|v| k.ed.views[v].clone());
+                let v = k.same_view(from);
+                k.fill_or_open(Place::Column, Content::Editor(v));
+                // As one argument: a command line splits a path with a
+                // space in it.
+                k.shell_command("dir", &[here], None);
+                k.drain_lua();
+            },
+        ),
         cmd(
             Spec::new("shell")
                 .args(Args::rest(&[ArgKind::Text]))

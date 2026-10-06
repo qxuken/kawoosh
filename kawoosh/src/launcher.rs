@@ -208,7 +208,7 @@ impl Kawoosh {
 
     /// A new view as `from` was — the buffer, the caret, the scroll —
     /// else on the first listed buffer, else a scratch.
-    fn same_view(&mut self, from: Option<View>) -> ViewId {
+    pub(crate) fn same_view(&mut self, from: Option<View>) -> ViewId {
         let from = from.filter(|f| self.ed.buffers.contains_key(f.buffer));
         let buffer = match &from {
             Some(f) => f.buffer,

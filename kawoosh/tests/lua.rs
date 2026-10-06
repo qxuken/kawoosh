@@ -1580,6 +1580,63 @@ fn a_split_listing_moves_on_alone() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `<C-w>/` (`:dir here`) lists the directory the pane in front is
+/// on in a pane beside: a listing's own, a file's — the pane in front
+/// left as it was, the new one a listing that moves on alone.
+#[test]
+fn a_directory_here_is_listed_beside() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dirhere-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    std::fs::write(dir.join("sub/f.txt"), "x").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    let names = |app: &Kawoosh| -> Vec<String> {
+        app.layout
+            .visible_panes()
+            .into_iter()
+            .map(|p| match app.layout.content(p) {
+                Some(Content::Editor(v)) => app.ed.buffer_of(v).name.clone(),
+                _ => String::new(),
+            })
+            .collect()
+    };
+    let top = format!("dir: {}", dir.display());
+    let sub = format!("dir: {}", dir.join("sub").display());
+
+    // From a file: its directory beside, the file still in front.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("sub/f.txt").display()),
+    );
+    d.press(&mut app, "<C-w>/");
+    assert_eq!(names(&app), ["f.txt".to_string(), sub.clone()]);
+    let listing = app.layout.focused();
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).name,
+        sub,
+        "the keyboard on the listing"
+    );
+    ex(&mut d, &mut app, "only");
+
+    // From a listing: the same listing beside, one buffer a directory;
+    // a move in the new pane leaves the first where it was.
+    assert_eq!(app.layout.focused(), listing);
+    d.press(&mut app, "<C-w>/");
+    assert_eq!(names(&app), [sub.clone(), sub.clone()]);
+    d.keys(&mut app, "gg");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(
+        names(&app),
+        [sub.clone(), top.clone()],
+        "up in the new pane alone"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A line yanked in one listing and pasted in another is that entry
 /// copied — a file, or a directory with everything in it — from the
 /// listing that still has it, which need not have changes of its own;

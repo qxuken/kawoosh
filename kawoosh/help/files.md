@@ -64,6 +64,7 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `gS` | size the directories, or stop (`:dir sizes`, the `dir.sizes` setting) |
 | `~` | make the listed directory the working directory (`:dir cd`) |
 | `<C-w>.` | a terminal in the listed directory (`:terminal here`) |
+| `<C-w>/` | the listed directory again, in a pane beside (`:dir here`) — two listings to browse side by side, each moving on alone |
 | `gz` | jump to a directory you use often ([directory jumps](#directory-jumps), zoxide's): the pick is listed here |
 
 Directories are always listed before files, and the sort is remembered
@@ -79,7 +80,9 @@ unless you have edits in it. Entries are coloured by their git status.
 file); `:dir %` lists the current file's. Moving around reuses the same
 buffer, so browsing leaves no trail of buffers behind. `:dir! PATH`
 opens a new listing instead, so you can keep several open side by side
-in [panes](panes.md). `:w` in any of them plans the changes of all of
+in [panes](panes.md). `<C-w>/` (`:dir here`) is the quick way there:
+the directory you are in — listed, or the file's — in a pane beside,
+ready to browse on its own. `:w` in any of them plans the changes of all of
 them in one confirm, which is how you move files between directories:
 cut in one listing, paste in another, `:w`.
 
@@ -293,6 +296,7 @@ its own: `:du` in another tab walks there without touching the first.
 | `d` | delete the marked entries, or the one under the cursor, after the same confirm `dir` uses |
 | `o` | list the directory in `dir` |
 | `<C-w>.` | a terminal in the directory (`:terminal here`) |
+| `<C-w>/` | the directory listed in `dir`, in a pane beside (`:dir here`) |
 | `r` | count again |
 | `q` `<Esc>` | close |
 
