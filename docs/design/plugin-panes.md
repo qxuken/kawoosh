@@ -35,7 +35,8 @@ Four verbs, all in `boot.lua` over the Rust half:
 ## Drawing: `fn(ctx)`
 
 `ctx` carries what the slot knows: `pane` (its id), `focused`, `width`
-and `height` in logical px, `share` (its fraction of the split it is in,
+and `height` in logical px (the height counting the pane's title bar,
+`title_h` tall at the chrome's font), `share` (its fraction of the split it is in,
 `nil` when it is the whole window), `env` (kui's env reading — the
 theme under `env.theme`, the tokens, the viewport), and `name`. The
 function returns a node:

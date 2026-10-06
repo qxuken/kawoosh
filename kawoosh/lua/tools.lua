@@ -35,14 +35,11 @@ local DEFAULTS = {
 
 kawoosh.setting("tools", { type = "table", doc = "launch targets by name: a command, or `{ cmd, cwd, place, dock, restore, key }` — `place` a `column` of its own, `under` the pane, or the `dock`" })
 
--- A tool's letter in the launcher (`key = "g"`), by name.
-kawoosh.tool_keys = kawoosh.tool_keys or {}
-
 local function register(name, def)
   if type(def) == "string" then def = { cmd = def } end
   if type(def) ~= "table" or type(def.cmd) ~= "string" then return end
-  kawoosh.tool_keys[name] = type(def.key) == "string" and def.key or nil
-  kawoosh.tool(name, { cmd = def.cmd, cwd = def.cwd, place = def.place, dock = def.dock, restore = def.restore })
+  kawoosh.tool(name, { cmd = def.cmd, cwd = def.cwd, place = def.place, dock = def.dock, restore = def.restore,
+                       key = type(def.key) == "string" and def.key or nil })
 end
 
 -- kawoosh.compile_default(): `compile.default` as a command line — a

@@ -163,7 +163,8 @@ fn the_undo_history_is_under_the_buffer() {
 
 /// A tool opens where its `place` says — a column unless `under` or
 /// `dock` — and `dock = true` is still the dock. `kawoosh.tools()`
-/// reports both spellings.
+/// reports both spellings, and `below`/`beside` as the editor reads
+/// them (`Place::parse`): `under` and `column`.
 #[test]
 fn a_tool_opens_where_its_place_says() {
     let mut d = Drive::new(900.0, 500.0);
@@ -175,16 +176,19 @@ fn a_tool_opens_where_its_place_says() {
            kawoosh.tool("und", { cmd = "sleep 30", place = "under" })
            kawoosh.tool("dk", { cmd = "sleep 30", dock = true })
            kawoosh.tool("dk2", { cmd = "sleep 30", place = "dock" })
+           kawoosh.tool("bel", { cmd = "sleep 30", place = "below" })
+           kawoosh.tool("bes", { cmd = "sleep 30", place = "beside" })
+           local mine = { col = true, und = true, dk = true, dk2 = true, bel = true, bes = true }
            local out = {}
            for _, t in ipairs(kawoosh.tools()) do
-             if t.name == "col" or t.name == "und" or t.name == "dk" or t.name == "dk2" then out[#out + 1] = t.name .. "=" .. t.place .. (t.dock and "+dock" or "") end
+             if mine[t.name] then out[#out + 1] = t.name .. "=" .. t.place .. (t.dock and "+dock" or "") end
            end
            kawoosh.echo(table.concat(out, " "))"#,
     );
     d.frame(&mut app);
     assert_eq!(
         app.ed.message,
-        "col=column dk=dock+dock dk2=dock+dock und=under"
+        "bel=under bes=column col=column dk=dock+dock dk2=dock+dock und=under"
     );
 
     app.shell_command("tool", &["col".into()], None);

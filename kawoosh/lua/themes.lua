@@ -32,8 +32,6 @@ local themes = kawoosh.themes
 
 local VIEW = "themes"
 local PANE_FACT = "lua:" .. VIEW
--- The pane's title bar, which `ctx.height` counts (`app::TITLE_H`).
-local TITLE_H = 22
 -- The panes' one scale (`kawoosh.metrics`: the text, a step under it,
 -- two), read each frame as the picker's is; a card's least width
 -- follows it, and the cards of a row
@@ -95,14 +93,10 @@ end
 
 -- The line that keeps what is shown in `settings.lua`.
 local function keep_line(cur)
-  local parts = {}
-  for _, k in ipairs { "dark", "light" } do
-    parts[#parts + 1] = string.format("%s = %q", k, cur[k])
-  end
-  if cur.appearance ~= "system" then
-    parts[#parts + 1] = string.format("appearance = %q", cur.appearance)
-  end
-  return "theme = { " .. table.concat(parts, ", ") .. " }"
+  return kawoosh.settings.line("theme", {
+    dark = cur.dark, light = cur.light,
+    appearance = cur.appearance ~= "system" and cur.appearance or nil,
+  })
 end
 
 -- ------------------------------------------------------------ the card

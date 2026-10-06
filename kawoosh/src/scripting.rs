@@ -1948,6 +1948,9 @@ impl Kawoosh {
                 "height",
                 Value::Float(rect.map(|r| r.h as f64).unwrap_or(0.0)),
             ),
+            // The pane's title bar, which `height` counts: the chrome's
+            // font sets it.
+            ("title_h", Value::Float(self.chrome.pane_title_h as f64)),
             // The pane's share of the split it sits in, as
             // `view_open`'s `share` gave it, so a view can keep what a
             // divider drag made it.

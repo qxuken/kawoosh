@@ -359,5 +359,14 @@ mod tests {
         );
         assert!(meta.contains("function kawoosh.lsp.rule(name, opts) end"));
         assert!(meta.contains("function kawoosh.lsp.rules(where) end"));
+        // A boot function's doc is its own paragraph, not the notes on
+        // the Rust half's functions the boot script keeps above it.
+        let scratch = meta
+            .find("function kawoosh.buf.open_scratch(")
+            .expect("open_scratch declared");
+        let doc_start = meta[..scratch].rfind("\n\n").unwrap_or(0);
+        let doc = &meta[doc_start..scratch];
+        assert!(doc.contains("a buffer that is not a file"), "{doc}");
+        assert!(!doc.contains("kawoosh.spawn("), "{doc}");
     }
 }
