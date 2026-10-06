@@ -2484,7 +2484,9 @@ fn renames_and_moves_swap_without_writing_over_anything() {
 /// name the mono font has no glyphs for is drawn in another font at its
 /// own widths, and the spaces a count of characters padded it with put
 /// its size left or right of the rest (2026-10-05, a folder of
-/// `Grafana: Календарь релизов.yaml`).
+/// `Grafana: Календарь релизов.yaml`). The names here have no `:`,
+/// which Windows reads as a stream of a file `Grafana` — two of them
+/// one file there.
 #[test]
 fn a_listing_s_notes_are_a_column_in_any_script() {
     let dir = std::env::temp_dir().join(format!("kawoosh-dircol-{}", std::process::id()));
@@ -2493,8 +2495,8 @@ fn a_listing_s_notes_are_a_column_in_any_script() {
     let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     for name in [
         "a.txt",
-        "Grafana: job monitoring.yaml",
-        "Grafana: Календарь релизов.yaml",
+        "Grafana - job monitoring.yaml",
+        "Grafana - Календарь релизов.yaml",
         "Метрики воронки заявочной формы.yaml",
         "日本語のファイル名.txt",
         "mixed ОП КК 文件 Webview 🎉.yaml",

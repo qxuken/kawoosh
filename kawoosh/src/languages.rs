@@ -21,7 +21,9 @@ impl Kawoosh {
     /// grammar becomes a [`Library`] by convention — nothing said and
     /// nothing under the config directory is a language of files alone
     /// — and the language is added. A path that leads nowhere is a
-    /// warning, and the language is added without its grammar.
+    /// warning, and the language is added without its grammar. One a
+    /// bundled plugin registers (`man`) is every launch's, said only at
+    /// debug, as the manifest's are.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn language_from_lua(
         &mut self,
@@ -51,7 +53,7 @@ impl Kawoosh {
                 None
             }
         };
-        self.add_language(LanguageDef {
+        let def = LanguageDef {
             name,
             aliases,
             extensions,
@@ -65,7 +67,9 @@ impl Kawoosh {
                 }
                 _ => None,
             },
-        });
+        };
+        let say = !self.scripting.bundled;
+        self.put_language(def, say);
     }
 
     /// Adds a language: its grammar loaded here — a load that fails is

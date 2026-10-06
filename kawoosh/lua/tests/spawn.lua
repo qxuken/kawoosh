@@ -1,9 +1,10 @@
 -- `kawoosh.spawn` with a list (docs/design/vcs.md Decision 5): the
 -- program and its arguments, no shell between; `on_done` with stdout
 -- whole, its trailing newline (or the lack of one) kept; `on_stderr`
--- apart from the lines.
+-- apart from the lines. `printf` through `sh`: Windows has an `sh`
+-- where Git is installed, and no `printf` of its own on the PATH.
 local got
-kawoosh.spawn({ "printf", "a\\nb" }, {
+kawoosh.spawn({ "sh", "-c", "printf 'a\\nb'" }, {
   on_done = function(text, code) got = { text = text, code = code } end,
 })
 kawoosh.wait(function() return got ~= nil end, nil, "printf done")
@@ -11,15 +12,16 @@ kawoosh.test.eq(got.text, "a\nb", "whole, no newline added")
 kawoosh.test.eq(got.code, 0)
 
 got = nil
-kawoosh.spawn({ "printf", "one\\ntwo\\n" }, {
+kawoosh.spawn({ "sh", "-c", "printf 'one\\ntwo\\n'" }, {
   on_done = function(text, code) got = { text = text, code = code } end,
 })
 kawoosh.wait(function() return got ~= nil end, nil, "printf done")
 kawoosh.test.eq(got.text, "one\ntwo\n", "the trailing newline kept")
 
--- An argument with a space or a quote is one argument, as given.
+-- An argument with a space or a quote is one argument, as given: the
+-- shell's `$@` is what the list gave it.
 got = nil
-kawoosh.spawn({ "printf", "%s|", "it's a", "b" }, {
+kawoosh.spawn({ "sh", "-c", 'printf "%s|" "$@"', "sh", "it's a", "b" }, {
   on_done = function(text) got = text end,
 })
 kawoosh.wait(function() return got ~= nil end, nil, "printf done")
