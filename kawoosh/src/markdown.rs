@@ -1189,7 +1189,14 @@ impl Kawoosh {
             if head < top + so {
                 top = head.saturating_sub(so);
             }
-            let want = (head + so).min(count - 1);
+            // `scrolloff` lines below the caret's in view, as far as
+            // they can be: a line taller than the pane is left under
+            // (vim does the same), rather than the caret's line pushed
+            // to the top for a row that would not fit anyway.
+            let mut want = (head + so).min(count - 1);
+            while want > head && (head..=want).map(h).sum::<f32>() > avail {
+                want -= 1;
+            }
             while top < head && (top..=want).map(h).sum::<f32>() > avail {
                 top += 1;
             }

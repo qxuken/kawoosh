@@ -46,6 +46,14 @@ const DIM_ESCAPES_MAX: usize = 32;
 /// otherwise: the text cloned, its escapes expanded, its grapheme
 /// boundaries found.
 pub const LONG_LINE_BYTES: usize = 4096;
+/// In a wrapping pane a line up to this long (bytes) still wraps — kui
+/// shapes a wrapped long line in chunks as it does an unwrapped one, and
+/// kawoosh's own per-row work on 64 KiB is a fraction of a frame — and a
+/// longer one is drawn from its window as an unwrapped pane draws it,
+/// one row tall, clipped, its number kept (wrap.md Decision 3): a
+/// minified bundle with wrapping on would otherwise be laid out a
+/// megabyte a frame.
+pub const WRAP_LINE_BYTES: usize = 64 * 1024;
 /// Columns emitted past either edge of the window on a sliced line, so
 /// a scroll of a few columns lands on text already shaped.
 const OVERSCAN_COLS: usize = 64;
