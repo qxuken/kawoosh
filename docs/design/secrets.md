@@ -267,8 +267,9 @@ shape. Where it departed:
   kawoosh's working directory, found no `ansible.cfg`, and asked for a
   password on the terminal kawoosh was started from. The tool now runs
   where the nearest `ansible.cfg` above the vault is, and every process
-  a plugin spawns is in a session of its own (`setsid`), with no
-  controlling terminal to ask on, so a prompt fails at once. What it
+  a plugin spawns is in a session of its own (`spawn::session`:
+  `posix_spawn` with `POSIX_SPAWN_SETSID`), with no controlling terminal
+  to ask on, so a prompt fails at once. What it
   said is a toast that stays, with *Retry*; the ciphertext opens in
   the pane. The hang had a second half in the engine: `kawoosh.open`
   asked the openers twice, so the fallback's own open was taken by the

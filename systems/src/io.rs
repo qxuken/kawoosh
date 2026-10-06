@@ -694,7 +694,7 @@ impl PtyShared {
 
 #[derive(Clone)]
 pub struct ProcHandle {
-    child: Arc<Mutex<Option<std::process::Child>>>,
+    child: Arc<Mutex<Option<crate::spawn::Session>>>,
     #[cfg(windows)]
     tree: Arc<crate::job::Tree>,
 }
@@ -704,23 +704,16 @@ impl ProcHandle {
     /// the command need not `exec` it (nushell does not, cmd cannot),
     /// and a `cargo` left behind would hold the pipes open and the exit
     /// back until it finished. On unix the process leads a session of
-    /// its own (`run_process_with`), so its group is the command's; on
+    /// its own (`spawn::session`), so its group is the command's; on
     /// Windows it is in a job of its own (`job::Tree`).
     pub fn kill(&self) {
         if let Ok(mut c) = self.child.lock()
             && let Some(child) = c.as_mut()
         {
             #[cfg(windows)]
-            self.tree.kill(child);
+            self.tree.kill(child.child_mut());
             // Not yet waited on, so the pid is still this process's.
-            #[cfg(unix)]
-            if let Ok(pid) = libc::pid_t::try_from(child.id()) {
-                // SAFETY: a signal to a process group; no memory involved.
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            }
-            let _ = child.kill();
+            child.kill();
         }
     }
 }
@@ -965,7 +958,6 @@ impl Io {
     /// not UTF-8 are replaced, never a stop.
     pub fn run_command(&self, id: u64, spec: ProcSpec) -> std::io::Result<ProcHandle> {
         use std::io::{BufRead, BufReader, Write};
-        use std::process::Stdio;
         let ProcSpec {
             cmd,
             cwd,
@@ -1017,14 +1009,6 @@ impl Io {
                 }
             },
         };
-        command
-            .stdin(if stdin.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
         if let Some(d) = &cwd
             && host.is_none()
         {
@@ -1037,31 +1021,20 @@ impl Io {
         // would ask on `/dev/tty` — `ansible-vault` with no password
         // file, `git` wanting credentials, `sudo` — fails at once
         // instead of waiting on a terminal no one is looking at (or
-        // being stopped for reading it from the background).
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            // SAFETY: `setsid` is async-signal-safe, the one call made
-            // between the fork and the exec.
-            unsafe {
-                command.pre_exec(|| {
-                    libc::setsid();
-                    Ok(())
-                });
-            }
-        }
-        let mut child = crate::spawn::spawn(&mut command)?;
+        // being stopped for reading it from the background). Started by
+        // `posix_spawn`, not a fork of this process (`spawn.rs`).
+        let mut child = crate::spawn::session(&mut command, stdin.is_some())?;
         #[cfg(windows)]
-        let tree = Arc::new(crate::job::Tree::of(&child));
-        if let (Some(mut text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        let tree = Arc::new(crate::job::Tree::of(child.child_mut()));
+        if let (Some(mut text), Some(mut pipe)) = (stdin, child.take_stdin()) {
             thread::spawn(move || {
                 let _ = pipe.write_all(text.as_bytes());
                 drop(pipe);
                 text_buffer::wipe_string(&mut text);
             });
         }
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = child.take_stdout().unwrap();
+        let stderr = child.take_stderr().unwrap();
         let child = Arc::new(Mutex::new(Some(child)));
         let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
         // Lines as they come, each made a string whatever its bytes —
@@ -1109,9 +1082,9 @@ impl Io {
                 }
             })
         } else {
-            pump(Box::new(stdout), tx.clone(), wake.clone(), false)
+            pump(stdout, tx.clone(), wake.clone(), false)
         };
-        let b = pump(Box::new(stderr), tx.clone(), wake.clone(), split_err);
+        let b = pump(stderr, tx.clone(), wake.clone(), split_err);
         let handle = ProcHandle {
             child: child.clone(),
             #[cfg(windows)]
@@ -1128,7 +1101,7 @@ impl Io {
                 .ok()
                 .and_then(|mut c| c.take())
                 .and_then(|mut c| c.wait().ok())
-                .and_then(|s| s.code());
+                .flatten();
             // Windows has no signal to die by: a killed process exits
             // with the code the kill gave it.
             #[cfg(windows)]
