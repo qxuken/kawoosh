@@ -221,6 +221,13 @@ fn def_of(row: &Row, grammar: Option<Source>) -> LanguageDef {
         filenames: row.filenames.clone(),
         shebangs: row.shebangs.clone(),
         grammar,
+        comment: row.comment.clone().filter(|t| !t.trim().is_empty()),
+        comment_block: match row.comment_block.as_deref() {
+            Some([a, b]) if !a.trim().is_empty() && !b.trim().is_empty() => {
+                Some((a.clone(), b.clone()))
+            }
+            _ => None,
+        },
     }
 }
 
@@ -228,8 +235,9 @@ fn def_of(row: &Row, grammar: Option<Source>) -> LanguageDef {
 /// and `rev` (a hash, a tag, a branch; the repository's head when not
 /// said) — or its `dir`, a directory on this machine read as it lies,
 /// `~` the home — the `path` its `src/` is under, its `symbol`, and its
-/// files: `extensions`, `filenames`, `shebangs`, `aliases`. One with
-/// neither a `repo` nor a `dir` is none; with both, the `dir` is it.
+/// files: `extensions`, `filenames`, `shebangs`, `aliases`, and its
+/// comment tokens `comment`, `comment_block`. One with neither a
+/// `repo` nor a `dir` is none; with both, the `dir` is it.
 fn source_row(name: &str, def: &kawoosh_editor::Setting) -> Option<Row> {
     let word = |key: &str| def.get(key).and_then(|v| v.as_str()).map(str::to_string);
     let words = |key: &str| -> Vec<String> {
@@ -262,6 +270,8 @@ fn source_row(name: &str, def: &kawoosh_editor::Setting) -> Option<Row> {
         filenames: words("filenames"),
         shebangs: words("shebangs"),
         aliases: words("aliases"),
+        comment: word("comment").filter(|t| !t.is_empty()),
+        comment_block: Some(words("comment_block")).filter(|l| l.len() == 2),
         repo: repo.unwrap_or_default(),
         rev: word("rev").unwrap_or_else(|| "HEAD".into()),
         path: word("path").unwrap_or_else(|| ".".into()),

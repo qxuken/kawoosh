@@ -16,6 +16,10 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment_block": [
+        "<!--",
+        "-->"
+      ],
       "repo": "https://github.com/virchau13/tree-sitter-astro",
       "rev": "213f6e6973d9b456c6e50e86f19f66877e7ef0ee",
       "path": ".",
@@ -40,6 +44,7 @@
         "gawk"
       ],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/Beaglefoot/tree-sitter-awk",
       "rev": "34bbdc7cce8e803096f47b625979e34c1be38127",
       "path": ".",
@@ -62,6 +67,7 @@
       "aliases": [
         "bib"
       ],
+      "comment": "%",
       "repo": "https://github.com/latex-lsp/tree-sitter-bibtex",
       "rev": "8d04ed27b3bc7929f14b7df9236797dab9f3fa66",
       "path": ".",
@@ -82,6 +88,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-bicep",
       "rev": "bff59884307c0ab009bd5e81afd9324b46a6c0f9",
       "path": ".",
@@ -104,6 +115,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter/tree-sitter-c",
       "rev": "b780e47fc780ddc8da13afa35a3f4ed5c157823d",
       "path": ".",
@@ -131,6 +147,7 @@
       "aliases": [
         "clj"
       ],
+      "comment": ";",
       "repo": "https://github.com/sogaiu/tree-sitter-clojure",
       "rev": "e43eff80d17cf34852dcd92ca5e6986d23a7040f",
       "path": ".",
@@ -153,6 +170,11 @@
       ],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
+      "comment_block": [
+        "#[[",
+        "]]"
+      ],
       "repo": "https://github.com/uyha/tree-sitter-cmake",
       "rev": "ca627bb5828616b6246aafdc3c3222789e728e37",
       "path": ".",
@@ -177,6 +199,11 @@
       "shebangs": [],
       "aliases": [
         "cs"
+      ],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
       ],
       "repo": "https://github.com/tree-sitter/tree-sitter-c-sharp",
       "rev": "9150f7d56bb47f1a809fa23623f1ba1413e93fa9",
@@ -221,6 +248,11 @@
       "aliases": [
         "dlang"
       ],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/gdamore/tree-sitter-d",
       "rev": "64f27931b4e6fdd75af1102c79bacbca68a8dacc",
       "path": ".",
@@ -244,6 +276,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/UserNobody14/tree-sitter-dart",
       "rev": "be07cf7118d3dba06236a3f19541685a68209934",
       "path": ".",
@@ -267,6 +304,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/joelspadin/tree-sitter-devicetree",
       "rev": "e78bf56f206cb47bee28a217423acb651e076848",
       "path": ".",
@@ -292,6 +334,7 @@
       "aliases": [
         "docker"
       ],
+      "comment": "#",
       "repo": "https://github.com/camdencheek/tree-sitter-dockerfile",
       "rev": "971acdd908568b4531b0ba28a445bf0bb720aba5",
       "path": ".",
@@ -314,6 +357,11 @@
       "shebangs": [],
       "aliases": [
         "graphviz"
+      ],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
       ],
       "repo": "https://github.com/rydesun/tree-sitter-dot",
       "rev": "80327abbba6f47530edeb0df9f11bd5d5c93c14d",
@@ -340,6 +388,7 @@
       ],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/pnx/tree-sitter-dotenv",
       "rev": "a16f203ba05f8efedc780690cac217c095946c06",
       "path": ".",
@@ -362,6 +411,7 @@
       "aliases": [
         "emacs-lisp"
       ],
+      "comment": ";",
       "repo": "https://github.com/Wilfred/tree-sitter-elisp",
       "rev": "0cbf0906d9ee707c8c109422fba9cdd17ae13dcf",
       "path": ".",
@@ -386,6 +436,7 @@
         "elixir"
       ],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/elixir-lang/tree-sitter-elixir",
       "rev": "4b0c7118760af58a2e7081bbc8396e136f820b37",
       "path": ".",
@@ -409,6 +460,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "--",
+      "comment_block": [
+        "{-",
+        "-}"
+      ],
       "repo": "https://github.com/razzeee/tree-sitter-elm",
       "rev": "e1e8fea161a1e66f3997855d316be2a43e4e956f",
       "path": ".",
@@ -431,6 +487,10 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment_block": [
+        "<%#",
+        "%>"
+      ],
       "repo": "https://github.com/tree-sitter/tree-sitter-embedded-template",
       "rev": "3499d85f0a0d937c507a4a65368f2f63772786e1",
       "path": ".",
@@ -456,6 +516,7 @@
       "aliases": [
         "erl"
       ],
+      "comment": "%",
       "repo": "https://github.com/WhatsApp/tree-sitter-erlang",
       "rev": "6ba4c762eb3065495e3db85697ffeecdf364ce35",
       "path": ".",
@@ -479,6 +540,7 @@
         "fish"
       ],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/ram02z/tree-sitter-fish",
       "rev": "b7f1d682941e0c62dfcd6bf9ef481638351bab16",
       "path": ".",
@@ -503,6 +565,7 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "!",
       "repo": "https://github.com/stadelmanma/tree-sitter-fortran",
       "rev": "7edacd2b21aa80057d9725384a1304a1c758e0f8",
       "path": ".",
@@ -526,6 +589,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "(*",
+        "*)"
+      ],
       "repo": "https://github.com/ionide/tree-sitter-fsharp",
       "rev": "0d3ccbb0573e29364cf91f7e68ed1fb2ae8a2b6f",
       "path": "fsharp",
@@ -551,6 +619,7 @@
       "aliases": [
         "gitconfig"
       ],
+      "comment": "#",
       "repo": "https://github.com/the-mikedavis/tree-sitter-git-config",
       "rev": "3a61756a81a86291a0f48e3eeeaa0692b9981aa9",
       "path": ".",
@@ -571,6 +640,7 @@
       ],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/the-mikedavis/tree-sitter-git-rebase",
       "rev": "32686d6b72980b36f876ae2d07719c9c3ed154e2",
       "path": ".",
@@ -591,6 +661,7 @@
       ],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/ObserverOfTime/tree-sitter-gitattributes",
       "rev": "1b7af09d45b579f9f288453b95ad555f1f431645",
       "path": ".",
@@ -611,6 +682,7 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
       "repo": "https://github.com/gleam-lang/tree-sitter-gleam",
       "rev": "cefbd6863983b4df3214b7934bde5e9ca63d5b7f",
       "path": ".",
@@ -637,6 +709,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/theHamsta/tree-sitter-glsl",
       "rev": "24a6c8ef698e4480fecf8340d771fbcb5de8fbb4",
       "path": ".",
@@ -660,6 +737,11 @@
       "shebangs": [],
       "aliases": [
         "hs"
+      ],
+      "comment": "--",
+      "comment_block": [
+        "{-",
+        "-}"
       ],
       "repo": "https://github.com/tree-sitter/tree-sitter-haskell",
       "rev": "0975ef72fc3c47b530309ca93937d7d143523628",
@@ -685,6 +767,10 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment_block": [
+        "<!--",
+        "-->"
+      ],
       "repo": "https://github.com/tree-sitter/tree-sitter-html",
       "rev": "73a3947324f6efddf9e17c0ea58d454843590cc0",
       "path": ".",
@@ -706,6 +792,7 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/rest-nvim/tree-sitter-http",
       "rev": "db8b4398de90b6d0b6c780aba96aaa2cd8e9202c",
       "path": ".",
@@ -728,6 +815,7 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": ";",
       "repo": "https://github.com/justinmk/tree-sitter-ini",
       "rev": "e4018b5176132b4f3c5d6e61cea383f42288d0f5",
       "path": ".",
@@ -748,6 +836,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter/tree-sitter-java",
       "rev": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
       "path": ".",
@@ -770,6 +863,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/Joakker/tree-sitter-json5",
       "rev": "248b8564567087d7866be76569b182f6dd7e14e9",
       "path": ".",
@@ -794,6 +892,11 @@
       "aliases": [
         "jl"
       ],
+      "comment": "#",
+      "comment_block": [
+        "#=",
+        "=#"
+      ],
       "repo": "https://github.com/tree-sitter/tree-sitter-julia",
       "rev": "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3",
       "path": ".",
@@ -816,6 +919,7 @@
       ],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-kconfig",
       "rev": "9ac99fe4c0c27a35dc6f757cef534c646e944881",
       "path": ".",
@@ -837,6 +941,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-kdl",
       "rev": "e8ff98a113e175b84b92ec2096820517c1e10a66",
       "path": ".",
@@ -862,6 +971,11 @@
       "aliases": [
         "kt"
       ],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/fwcd/tree-sitter-kotlin",
       "rev": "1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1",
       "path": ".",
@@ -884,6 +998,7 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": ";",
       "repo": "https://github.com/benwilliamgraham/tree-sitter-llvm",
       "rev": "2914786ae6774d4c4e25a230f4afe16aa68fe1c1",
       "path": ".",
@@ -905,6 +1020,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "--",
+      "comment_block": [
+        "--[[",
+        "]]"
+      ],
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-luau",
       "rev": "a8914d6c1fc5131f8e1c13f769fa704c9f5eb02f",
       "path": ".",
@@ -934,6 +1054,7 @@
       "aliases": [
         "makefile"
       ],
+      "comment": "#",
       "repo": "https://github.com/alemuller/tree-sitter-make",
       "rev": "a4b9187417d6be349ee5fd4b6e77b4172c6827dd",
       "path": ".",
@@ -957,6 +1078,7 @@
       ],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/Decodetalkers/tree-sitter-meson",
       "rev": "aa8d472034956f94f51f2ef2cbfec4cc07efbfde",
       "path": ".",
@@ -980,6 +1102,7 @@
       ],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/opa-oz/tree-sitter-nginx",
       "rev": "7cdf006ed1addef698fc680ae31721950f85e5e9",
       "path": ".",
@@ -1001,6 +1124,7 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/alemuller/tree-sitter-ninja",
       "rev": "0a95cfdc0745b6ae82f60d3a339b37f19b7b9267",
       "path": ".",
@@ -1021,6 +1145,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/nix-community/tree-sitter-nix",
       "rev": "5a64e75fc1ee54f9e14e3a23918e057d43b2de2b",
       "path": ".",
@@ -1046,6 +1175,11 @@
       "aliases": [
         "objective-c"
       ],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-objc",
       "rev": "181a81b8f23a2d593e7ab4259981f50122909fda",
       "path": ".",
@@ -1068,6 +1202,10 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment_block": [
+        "(*",
+        "*)"
+      ],
       "repo": "https://github.com/tree-sitter/tree-sitter-ocaml",
       "rev": "a4ce49a6c17e88e7ca8350cfb666749d9a5c6630",
       "path": "grammars/ocaml",
@@ -1090,6 +1228,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-odin",
       "rev": "d2ca8efb4487e156a60d5bd6db2598b872629403",
       "path": ".",
@@ -1113,6 +1256,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "{",
+        "}"
+      ],
       "repo": "https://github.com/Isopod/tree-sitter-pascal",
       "rev": "042119eca2e18a60e56317fb06ee3ba5c32cb447",
       "path": ".",
@@ -1156,6 +1304,7 @@
         "perl"
       ],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/tree-sitter-perl/tree-sitter-perl",
       "rev": "aa5600c8df1eb9ed111db72e20c741dd73ec336a",
       "path": ".",
@@ -1180,6 +1329,11 @@
         "php"
       ],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter/tree-sitter-php",
       "rev": "3fda2fb9577166c6399834917f9844f30370beea",
       "path": "php",
@@ -1209,6 +1363,11 @@
       "aliases": [
         "pwsh"
       ],
+      "comment": "#",
+      "comment_block": [
+        "<#",
+        "#>"
+      ],
       "repo": "https://github.com/airbus-cert/tree-sitter-powershell",
       "rev": "e7bd348c49fdfd5c853a146a670965ba516a6239",
       "path": ".",
@@ -1229,6 +1388,7 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
       "repo": "https://github.com/LumaKernel/tree-sitter-prisma",
       "rev": "f1c30d82a5bf0b70ce33ef431f4acd7fd69968a3",
       "path": ".",
@@ -1249,6 +1409,7 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-properties",
       "rev": "6310671b24d4e04b803577b1c675d765cbd5773b",
       "path": ".",
@@ -1272,6 +1433,11 @@
       "aliases": [
         "protobuf"
       ],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/coder3101/tree-sitter-proto",
       "rev": "6c878d18628ebbff3474479d2fdd6d8ba1954c3e",
       "path": ".",
@@ -1294,6 +1460,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "--",
+      "comment_block": [
+        "{-",
+        "-}"
+      ],
       "repo": "https://github.com/postsolar/tree-sitter-purescript",
       "rev": "f541f95ffd6852fbbe88636317c613285bc105af",
       "path": ".",
@@ -1317,6 +1488,7 @@
         "Rscript"
       ],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/r-lib/tree-sitter-r",
       "rev": "58a22794466c0fc15b0d3b40531db751593721e8",
       "path": ".",
@@ -1340,6 +1512,11 @@
         "racket"
       ],
       "aliases": [],
+      "comment": ";",
+      "comment_block": [
+        "#|",
+        "|#"
+      ],
       "repo": "https://github.com/6cdh/tree-sitter-racket",
       "rev": "b3cbbde75ce2de3079e33c7fe90bd41b1d45be48",
       "path": ".",
@@ -1361,6 +1538,7 @@
       ],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-requirements",
       "rev": "2c3bb291f497258ba417d052faa14a2dfee6d401",
       "path": ".",
@@ -1381,6 +1559,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-ron",
       "rev": "78938553b93075e638035f624973083451b29055",
       "path": ".",
@@ -1411,6 +1594,7 @@
       "aliases": [
         "rb"
       ],
+      "comment": "#",
       "repo": "https://github.com/tree-sitter/tree-sitter-ruby",
       "rev": "ad907a69da0c8a4f7a943a7fe012712208da6dee",
       "path": ".",
@@ -1435,6 +1619,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter/tree-sitter-scala",
       "rev": "db390f312a54b04b13790e1767bfac32665c17ac",
       "path": ".",
@@ -1457,6 +1646,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-scss",
       "rev": "2ef6d42e3ad7a8208900f9346f4529806ae0f9f9",
       "path": ".",
@@ -1478,6 +1672,7 @@
       ],
       "shebangs": [],
       "aliases": [],
+      "comment": "#",
       "repo": "https://github.com/ObserverOfTime/tree-sitter-ssh-config",
       "rev": "0c35b243392268f48fd096607da192d76c843398",
       "path": ".",
@@ -1507,6 +1702,7 @@
       "aliases": [
         "bazel"
       ],
+      "comment": "#",
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-starlark",
       "rev": "a453dbf3ba433db0e5ec621a38a7e59d72e4dc69",
       "path": ".",
@@ -1528,6 +1724,10 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment_block": [
+        "<!--",
+        "-->"
+      ],
       "repo": "https://github.com/Himujjal/tree-sitter-svelte",
       "rev": "60ea1d673a1a3eeeb597e098d9ada9ed0c79ef4b",
       "path": ".",
@@ -1550,6 +1750,11 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
       "repo": "https://github.com/szebniok/tree-sitter-wgsl",
       "rev": "40259f3c77ea856841a4e0c4c807705f3e4a2b65",
       "path": ".",
@@ -1601,6 +1806,10 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment_block": [
+        "<!--",
+        "-->"
+      ],
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-xml",
       "rev": "5000ae8f22d11fbe93939b05c1e37cf21117162d",
       "path": "xml",
@@ -1624,6 +1833,7 @@
       "filenames": [],
       "shebangs": [],
       "aliases": [],
+      "comment": "//",
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-zig",
       "rev": "6479aa13f32f701c383083d8b28360ebd682fb7d",
       "path": ".",

@@ -145,6 +145,7 @@ extensions = ["zig", "zon"]
 filenames = []
 shebangs = []
 aliases = []
+comment = "//"                   # since r7; comment_block = ["/*", "*/"] where there is a pair
 
 [source]
 repo = "https://github.com/tree-sitter-grammars/tree-sitter-zig"
@@ -223,7 +224,12 @@ everything**: the language pack's 21 MB again.
 
 `manifest.json` beside the archives: for each grammar its name, its
 `extensions`, `filenames`, `shebangs` and `aliases`, its `repo`, `rev`
-and `path`, its `abi`, and the archive's `size` and `blake3`.
+and `path`, its `abi`, and the archive's `size` and `blake3`. Since
+`r7`, its comment tokens too — `comment` (the line token) and
+`comment_block` (the opener and the closer), each left out where the
+language has none — which become the language's `language.NAME.comment`
+and `comment_block` defaults when it is listed or installed
+([comments.md](comments.md) Decision 3).
 
 Kawoosh is built with a copy of it, so a file's language is known with
 no network, and a kawoosh never updated still names archives by hash.
@@ -1031,3 +1037,10 @@ xml` from the release painted an open `picture.svg` where it stood,
 the script's javascript with it; the style's css checked by its tokens
 (a property, a number, a unit — none for the same text in another
 element).
+
+2026-10-06, `r7` (kawoosh-grammars 0325387): every `grammar.toml` says
+its `comment` and `comment_block`, the builder checks them (one word,
+a pair of two), the manifest carries them, and kawoosh reads them into
+the language's defaults on listing and on install (`def_of`,
+`put_loaded`), and from `kawoosh.language(name, t)` and a
+`grammars.sources.NAME` table as well. The built-in copy is r7's.

@@ -2,8 +2,8 @@
 
 Status: planned 2026-10-06 from the ask "Let's plan comment movements.
 I used often `gcc` to comment out a block of code or a line", rounds 1
-and 2 built the same day ("allright let's build it", "let's do round
-2"). The calls below are
+to 3 built the same day ("allright let's build it", "let's do round
+2", "let's do round 3"). The calls below are
 taken here, each the user's to overturn; where the build moved one,
 the section says so. Roadmap step 90.
 Companion to [editorconfig.md](editorconfig.md) (where a language's
@@ -301,5 +301,19 @@ language and the buffer's own sources, falling back to the buffer's
 (Decision 4's build note); the operator asks at the first non-blank
 line's first character. Tests in `kawoosh/tests/comment.rs`: a rust
 and a `js` fence in markdown against the prose's pair, a range
-starting in the fence, JSDoc's fallback, C in `ffi.cdef`. Rounds 3–4
+starting in the fence, JSDoc's fallback, C in `ffi.cdef`.
+
+Round 3, 2026-10-06. kawoosh-grammars 0325387, released as `r7`:
+`comment` and `comment_block` in every `grammar.toml` (sixty-eight of
+the seventy; csv and pem have none), the builder checking a token is
+one word and a pair two, the manifest carrying them as two optional
+fields. In kawoosh: `Row` reads them, `LanguageDef` carries them
+(`def_of`, `language_from_lua`, a `grammars.sources.NAME` table's
+`comment =` and `comment_block =`), and `put_loaded` sets
+`language.NAME.comment` and `comment_block` in the defaults layer when
+a language is listed, installed or added from Lua — under a user's
+own, as a builtin's defaults are. The built-in manifest copy is r7's.
+Tests: `kawoosh/lua/tests/language_comment.lua` (`kawoosh.language`
+with a token, with a pair, `gcc` writing each), the listing test in
+`kawoosh/tests/grammars.rs` reading zig's `//` from the copy. Round 4
 open.

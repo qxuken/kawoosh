@@ -1261,7 +1261,7 @@ impl Settings {
         s.declare(
             "grammars.sources",
             SettingKind::Open,
-            "grammars of your own, built here by `:grammar build NAME`: `grammars.sources.NAME = { repo =, rev =, path =, symbol =, extensions =, filenames =, shebangs =, aliases = }`, or `dir =` for a directory on this machine in the repository's place; a project's is passed over",
+            "grammars of your own, built here by `:grammar build NAME`: `grammars.sources.NAME = { repo =, rev =, path =, symbol =, extensions =, filenames =, shebangs =, aliases =, comment =, comment_block = }`, or `dir =` for a directory on this machine in the repository's place; a project's is passed over",
         );
         s.declare(
             "language",

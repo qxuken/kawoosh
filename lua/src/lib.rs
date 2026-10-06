@@ -626,6 +626,10 @@ pub enum Msg {
         symbol: Option<String>,
         highlights: Option<String>,
         injections: Option<String>,
+        /// `comment = "//"`, `comment_block = { "/*", "*/" }`: its
+        /// comment tokens (docs/design/comments.md Decision 3).
+        comment: Option<String>,
+        comment_block: Option<Vec<String>>,
     },
     Colors(Vec<(String, String)>),
     /// `kawoosh.opt(path, value)`: a setting by dotted path, `None` to
@@ -4610,6 +4614,8 @@ fn seed(
                 symbol: t.get("symbol")?,
                 highlights: t.get("highlights")?,
                 injections: t.get("injections")?,
+                comment: t.get("comment")?,
+                comment_block: t.get("comment_block")?,
                 name,
             });
             Ok(())

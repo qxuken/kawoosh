@@ -675,6 +675,12 @@ pub struct LanguageDef {
     pub filenames: Vec<String>,
     pub shebangs: Vec<String>,
     pub grammar: Option<Source>,
+    /// Its line comment token (`//`), when the definition says one:
+    /// the language's `comment` default (docs/design/comments.md
+    /// Decision 3). A builtin's is in the engine's defaults already.
+    pub comment: Option<String>,
+    /// Its block comment pair (`/*`, `*/`), likewise.
+    pub comment_block: Option<(String, String)>,
 }
 
 /// Where a grammar comes from.
@@ -696,6 +702,8 @@ impl From<&Language> for LanguageDef {
             filenames: own(l.filenames),
             shebangs: own(l.shebangs),
             grammar: l.grammar.map(Source::Builtin),
+            comment: None,
+            comment_block: None,
         }
     }
 }
@@ -710,6 +718,8 @@ impl LanguageDef {
             filenames: Vec::new(),
             shebangs: Vec::new(),
             grammar: None,
+            comment: None,
+            comment_block: None,
         }
     }
 
