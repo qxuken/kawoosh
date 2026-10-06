@@ -100,6 +100,11 @@ Kawoosh ships these, and yours override them a key at a time:
 | javascript, typescript, tsx, json, jsonc, css, yaml, markdown, lua, scheme | `tabstop = 2` |
 | go, gomod | tabs (`expandtab = false`), 4 wide |
 | markdown, diff, gitcommit | keep trailing spaces |
+| c, cpp, go, gomod, javascript, typescript, tsx, rust, jsonc | `comment = "//"`, and `comment_block = { "/*", "*/" }` (not gomod) |
+| bash, nu, python, toml, yaml, gitcommit | `comment = "#"` |
+| lua, sql | `comment = "--"`; lua's `comment_block = { "--[[", "]]" }` |
+| scheme | `comment = ";"` |
+| css, markdown | a block pair only: `/* */`, `<!-- -->` |
 
 A language's key wins over a plain one from any file, so your `tabstop = 2` does not make Go's tabs two wide; `language.go.tabstop` does.
 

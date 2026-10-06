@@ -117,6 +117,91 @@ fn whole_lines_of_sel(buf: &Buffer, s: &Selection, extra_lines: usize) -> Range<
 /// above's: its first line is the one after that break. The range is
 /// then a break and a line with none after it — an empty last line
 /// the break alone.
+/// An edit and the line it is on.
+pub(crate) type LineEdit = (usize, (Range<usize>, String));
+
+/// The edits that toggle `lines` as comments (docs/design/comments.md
+/// Decision 2), each with its line: blank lines set aside, the rest
+/// uncommented when every one starts with the token after its indent
+/// (and ends with the closer, for a block pair), else commented, the
+/// opener put at their least indent — the longest common prefix of
+/// their leading whitespace, bytes not columns — with a space after
+/// it, the closer with a space before it at the line's end. `None`
+/// when there is no line but blank ones.
+pub(crate) fn comment_lines(
+    buf: &Buffer,
+    lines: &[usize],
+    tokens: &crate::CommentTokens,
+) -> Option<Vec<LineEdit>> {
+    let (open, close): (&str, &str) = match (&tokens.line, &tokens.block) {
+        (Some(t), _) => (t, ""),
+        (None, Some((o, c))) => (o, c),
+        (None, None) => return None,
+    };
+    let rows: Vec<(usize, Range<usize>, String)> = lines
+        .iter()
+        .map(|&ln| {
+            let r = buf.line_range(ln);
+            (ln, r.clone(), buf.slice(r))
+        })
+        .filter(|(_, _, t)| !t.trim().is_empty())
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let commented = rows.iter().all(|(_, _, t)| {
+        let s = t.trim_start();
+        s.starts_with(open) && (close.is_empty() || s.trim_end().ends_with(close))
+    });
+    let mut out = Vec::new();
+    if commented {
+        for (ln, r, t) in &rows {
+            let ws = t.len() - t.trim_start().len();
+            let mut end = ws + open.len();
+            if t[end..].starts_with(' ') {
+                end += 1;
+            }
+            out.push((*ln, (r.start + ws..r.start + end, String::new())));
+            if !close.is_empty() {
+                let trimmed = t.trim_end().len();
+                let mut start = trimmed - close.len();
+                if start > end && t[..start].ends_with(' ') {
+                    start -= 1;
+                }
+                out.push((*ln, (r.start + start..r.start + trimmed, String::new())));
+            }
+        }
+    } else {
+        let mut prefix: Option<&str> = None;
+        for (_, _, t) in &rows {
+            let ws = &t[..t.len() - t.trim_start().len()];
+            prefix = Some(match prefix {
+                None => ws,
+                Some(p) => {
+                    let n = p
+                        .bytes()
+                        .zip(ws.bytes())
+                        .take_while(|(a, b)| a == b)
+                        .count();
+                    &p[..n]
+                }
+            });
+        }
+        let at = prefix.map_or(0, str::len);
+        for (ln, r, t) in &rows {
+            out.push((*ln, (r.start + at..r.start + at, format!("{open} "))));
+            if !close.is_empty() {
+                let trimmed = t.trim_end().len();
+                out.push((
+                    *ln,
+                    (r.start + trimmed..r.start + trimmed, format!(" {close}")),
+                ));
+            }
+        }
+    }
+    Some(out)
+}
+
 fn op_lines(buf: &Buffer, r: &Range<usize>, linewise: bool) -> (usize, usize) {
     let brk = match (buf.byte_at(r.start), buf.byte_at(r.start + 1)) {
         (Some(b'\n'), _) => 1,
@@ -484,6 +569,74 @@ pub(crate) fn apply_operator(
             }
             ed.edit_each(view, edits, |start, _| Selection::point(start));
             to_first_lines(ed, view, &firsts);
+        }
+        // `gc`: the ranges' lines commented, or uncommented when every
+        // one already is (docs/design/comments.md Decision 2); each
+        // selection judged alone, a line two share edited once.
+        "comment" => {
+            // The tokens are the layer's at the first non-blank line's
+            // first character (Decision 4): one language per `gc`.
+            let at = {
+                let buf = &ed.buffers[id];
+                ranges
+                    .iter()
+                    .flat_map(|(r, lw)| {
+                        let (a, b) = op_lines(buf, r, *lw);
+                        a..=b
+                    })
+                    .find(|&ln| !buf.line_text(ln).trim().is_empty())
+                    .map(|ln| m::first_nonblank(buf, ln))
+                    .unwrap_or_else(|| ranges.first().map_or(0, |(r, _)| r.start))
+            };
+            let (lang, tokens) = ed.comment_tokens_at(id, at);
+            if tokens.line.is_none() && tokens.block.is_none() {
+                ed.message = format!("no comment token for {lang}");
+                return;
+            }
+            let buf = &ed.buffers[id];
+            let mut edits = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            let mut any = false;
+            for (r, lw) in &ranges {
+                let (a, b) = op_lines(buf, r, *lw);
+                let lines: Vec<usize> = (a..=b).collect();
+                let Some(plan) = comment_lines(buf, &lines, &tokens) else {
+                    continue;
+                };
+                any = true;
+                // A line an earlier selection had is its; a line may
+                // take two edits (a block pair's), both kept.
+                for (ln, edit) in plan {
+                    if !seen.contains(&ln) {
+                        edits.push(edit);
+                    }
+                }
+                seen.extend(lines);
+            }
+            if !any {
+                ed.message = "nothing to comment".into();
+                return;
+            }
+            // The caret stays where it stood on its line (`gcc`); after
+            // a motion it goes to the first line's first non-blank.
+            let extended: Vec<bool> = ed.views[view]
+                .sels
+                .iter()
+                .map(|s| s.anchor != s.head)
+                .collect();
+            edit_keeping(ed, view, edits);
+            let buf = &ed.buffers[id];
+            let v = &mut ed.views[view];
+            let mut i = 0;
+            v.sels.map(|s| {
+                let ext = extended[i.min(extended.len() - 1)];
+                i += 1;
+                if ext {
+                    Selection::point(m::first_nonblank(buf, buf.line_of(s.start())))
+                } else {
+                    s
+                }
+            });
         }
         "join" => {
             let buf = &ed.buffers[id];
@@ -2397,9 +2550,34 @@ pub fn install(ed: &mut Editor) {
         "case lower",
         "case upper",
         "case toggle",
+        "comment",
     ] {
         ed.register_kind(op, Kind::Operator, move |ed, ctx| operator(ed, ctx, op));
     }
+    // `gcc`: `c` after a pending `comment` is the operator doubled —
+    // its line, COUNT lines — and after any other operator what `c`
+    // was there (`cc` changes the line, `dc` nothing). With no operator
+    // pending (`:comment lines`, Lua, the socket) the selections' lines
+    // at once, COUNT lines each (docs/design/comments.md Decision 5).
+    ed.register("comment lines", |ed, ctx| match ed.pending_op {
+        Some(("comment", _)) => operator(ed, ctx, "comment"),
+        Some(_) => operator(ed, ctx, "change"),
+        None => {
+            if ed.mode(ctx.view) == Mode::Visual {
+                operator(ed, ctx, "comment");
+                return;
+            }
+            let id = view(ed, ctx).buffer;
+            let buf = &ed.buffers[id];
+            let n = ctx.count.max(1);
+            let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
+                .sels
+                .iter()
+                .map(|s| (line_range_of_sel(buf, s, n - 1), true))
+                .collect();
+            apply_operator(ed, ctx.view, "comment", ranges);
+        }
+    });
     // `~`: COUNT characters from the caret their case turned, the caret
     // past them, as vim's (`notildeop`).
     ed.register("case toggle char", |ed, ctx| {
@@ -3450,6 +3628,14 @@ const DOCS: &[(&str, &str)] = &[
     (
         "join",
         "join COUNT lines (the selection's, in visual) with a space between",
+    ),
+    (
+        "comment",
+        "comment the lines a motion or object covers, or the selection's, or uncomment them when every one is (`gc`; docs/design/comments.md)",
+    ),
+    (
+        "comment lines",
+        "comment or uncomment COUNT lines at the caret, or the selection's (`gcc`; `:comment lines`)",
     ),
     (
         "move line down",
@@ -4799,6 +4985,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("gu", "case lower"),
         ("gU", "case upper"),
         ("g~", "case toggle"),
+        ("gc", "comment"),
         ("~", "case toggle char"),
         ("J", "join"),
         ("x", "delete char"),
@@ -5217,6 +5404,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("u", "case lower"),
         ("U", "case upper"),
         ("~", "case toggle"),
+        // `gcc`; after any other operator `c` is what it was.
+        ("c", "comment lines"),
     ];
     for (k, c) in op {
         km.bind(OperatorPending, k, c);

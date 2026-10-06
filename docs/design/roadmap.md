@@ -3138,6 +3138,28 @@ frame.
       cap; EXIF's turn; a stamp finer than a second.
     `kawoosh/tests/image.rs`; `systems` `picture::tests`.
 
+90. **Comments**: `gc` + motion, `gcc` the line, a toggle
+    ([comments.md](comments.md)). Planned 2026-10-06, asked the same
+    day ("Let's plan comment movements. I used often `gcc` to comment
+    out a block of code or a line"); rounds 1–3 built the same day
+    (`comment` and `comment lines` in `commands.rs`, `c` in
+    operator-pending mode for `gcc`; `SyntaxObjects::language_at` over
+    the kept tree's injections, the layer's tokens with the host's as
+    the fallback; kawoosh-grammars `r7` carrying `comment` and
+    `comment_block` for sixty-eight grammars into the language's
+    defaults on listing and install; `kawoosh/tests/comment.rs`),
+    round 4 (`gb`) open. An operator beside `indent`: all
+    the range's lines commented or all uncommented, decided at once,
+    the token at their least indent with a space after it, blank lines
+    skipped; a block-only language wraps each line. The tokens are
+    `language.LANG.comment` and `comment_block` read through the
+    buffer's scope, defaulted for the built-ins, carried by
+    kawoosh-grammars' `grammar.toml` for the rest (`r7`); the layer's
+    language where the tree has layers (`<script>`, a fence), by a
+    `language_at` on the syntax's door. `:comment lines`,
+    `kawoosh.buf.comment_tokens`. Four rounds: the operator, the
+    injections, the grammars' tokens, `gb` when use asks.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision

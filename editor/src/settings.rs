@@ -852,6 +852,51 @@ impl Settings {
                     Setting::Bool(false),
                 );
             }
+            // The comment tokens (docs/design/comments.md Decision 3):
+            // the line token, and the block pair where the language
+            // has one. json has no comment in its standard — jsonc's is
+            // its own — and text, diff, regex, jsdoc and markdown's
+            // inline half have none to write.
+            let slashes = [
+                "c",
+                "cpp",
+                "go",
+                "gomod",
+                "javascript",
+                "typescript",
+                "tsx",
+                "rust",
+                "jsonc",
+            ];
+            let hashes = ["bash", "nu", "python", "toml", "yaml", "gitcommit"];
+            let pair = |a: &str, b: &str| {
+                Setting::List(vec![Setting::Str(a.into()), Setting::Str(b.into())])
+            };
+            for lang in slashes {
+                defaults.set(
+                    &format!("language.{lang}.comment"),
+                    Setting::Str("//".into()),
+                );
+                if lang != "gomod" {
+                    defaults.set(&format!("language.{lang}.comment_block"), pair("/*", "*/"));
+                }
+            }
+            for lang in hashes {
+                defaults.set(
+                    &format!("language.{lang}.comment"),
+                    Setting::Str("#".into()),
+                );
+            }
+            for lang in ["lua", "sql"] {
+                defaults.set(
+                    &format!("language.{lang}.comment"),
+                    Setting::Str("--".into()),
+                );
+            }
+            defaults.set("language.lua.comment_block", pair("--[[", "]]"));
+            defaults.set("language.scheme.comment", Setting::Str(";".into()));
+            defaults.set("language.css.comment_block", pair("/*", "*/"));
+            defaults.set("language.markdown.comment_block", pair("<!--", "-->"));
         }
         defaults.set("scrolloff", Setting::Int(3));
         // Lines an excerpt grows by (search.md Decision 13): Zed's
@@ -1195,6 +1240,19 @@ impl Settings {
         for (path, doc) in DOCS {
             s.describe(path, doc);
         }
+        // The comment tokens are a language's, with no bare default
+        // (plain text has none); declared bare so `language.x.comment`
+        // is a known key and `:set comment=#` a session's.
+        s.declare(
+            "comment",
+            SettingKind::Str,
+            "the line comment token `gc` writes, without its space: `//`, `#`, `--`; empty for none (comments.md)",
+        );
+        s.declare(
+            "comment_block",
+            SettingKind::List,
+            "the block comment pair, opener and closer: `{ \"/*\", \"*/\" }`; `gc` wraps each line in it where there is no line token",
+        );
         s.declare(
             "format",
             SettingKind::Open,
@@ -1203,7 +1261,7 @@ impl Settings {
         s.declare(
             "grammars.sources",
             SettingKind::Open,
-            "grammars of your own, built here by `:grammar build NAME`: `grammars.sources.NAME = { repo =, rev =, path =, symbol =, extensions =, filenames =, shebangs =, aliases = }`, or `dir =` for a directory on this machine in the repository's place; a project's is passed over",
+            "grammars of your own, built here by `:grammar build NAME`: `grammars.sources.NAME = { repo =, rev =, path =, symbol =, extensions =, filenames =, shebangs =, aliases =, comment =, comment_block = }`, or `dir =` for a directory on this machine in the repository's place; a project's is passed over",
         );
         s.declare(
             "language",
@@ -1752,22 +1810,51 @@ mod tests {
                 "insert_final_newline",
                 "keys.legend",
                 "keys.option_as_alt",
+                "language.bash.comment",
+                "language.c.comment",
+                "language.c.comment_block",
+                "language.cpp.comment",
+                "language.cpp.comment_block",
+                "language.css.comment_block",
                 "language.css.tabstop",
                 "language.diff.trim_trailing_whitespace",
+                "language.gitcommit.comment",
                 "language.gitcommit.trim_trailing_whitespace",
+                "language.go.comment",
+                "language.go.comment_block",
                 "language.go.expandtab",
                 "language.go.tabstop",
+                "language.gomod.comment",
                 "language.gomod.expandtab",
                 "language.gomod.tabstop",
+                "language.javascript.comment",
+                "language.javascript.comment_block",
                 "language.javascript.tabstop",
                 "language.json.tabstop",
+                "language.jsonc.comment",
+                "language.jsonc.comment_block",
                 "language.jsonc.tabstop",
+                "language.lua.comment",
+                "language.lua.comment_block",
                 "language.lua.tabstop",
+                "language.markdown.comment_block",
                 "language.markdown.tabstop",
                 "language.markdown.trim_trailing_whitespace",
+                "language.nu.comment",
+                "language.python.comment",
+                "language.rust.comment",
+                "language.rust.comment_block",
+                "language.scheme.comment",
                 "language.scheme.tabstop",
+                "language.sql.comment",
+                "language.toml.comment",
+                "language.tsx.comment",
+                "language.tsx.comment_block",
                 "language.tsx.tabstop",
+                "language.typescript.comment",
+                "language.typescript.comment_block",
                 "language.typescript.tabstop",
+                "language.yaml.comment",
                 "language.yaml.tabstop",
                 "launcher.start",
                 "layout.column_width",

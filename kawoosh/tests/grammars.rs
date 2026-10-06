@@ -199,6 +199,23 @@ fn a_listed_language_is_one_of_files_until_installed() {
             .is_some_and(|l| l.name == "ruby")
     );
     assert!(!app.languages.has_grammar("zig"));
+    // Its comment tokens come with the listing (comments.md round 3):
+    // the built-in manifest is r7's or later.
+    assert_eq!(
+        app.ed
+            .settings
+            .layer_value(Layer::Default, "language.zig.comment"),
+        Some(&Setting::Str("//".into()))
+    );
+    assert_eq!(
+        app.ed
+            .settings
+            .layer_value(Layer::Default, "language.html.comment_block"),
+        Some(&Setting::List(vec![
+            Setting::Str("<!--".into()),
+            Setting::Str("-->".into())
+        ]))
+    );
     // A name the build links is not listed, and keeps its grammar.
     assert!(!app.grammars.listed.contains_key("rust") && app.languages.has_grammar("rust"));
     ex(&mut d, &mut app, "grammar install rust");

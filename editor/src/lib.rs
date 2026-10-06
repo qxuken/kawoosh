@@ -1027,6 +1027,14 @@ pub trait SyntaxObjects {
     ) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
         None
     }
+
+    /// The language of the injection holding byte `at` — a
+    /// `<script>`'s javascript, a fence's rust — the innermost known;
+    /// `None` where there is none, or no tree to read: the buffer's
+    /// own language, then (docs/design/comments.md Decision 4).
+    fn language_at(&mut self, _id: BufferId, _buf: &Buffer, _at: usize) -> Option<String> {
+        None
+    }
 }
 
 /// One level of a buffer's indentation: `text` (a tab, or `width`
@@ -1041,6 +1049,16 @@ pub struct IndentUnit {
 /// The indentation a buffer's syntax says (docs/design/indent.md
 /// Decision 3), asked by `<CR>`, `o`, `O` and `=`. `None` is no answer:
 /// no grammar, no indent query — the engine's bracket rule stands.
+/// A language's comment tokens as the settings say
+/// ([`Editor::comment_tokens_in`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommentTokens {
+    /// The line token, without its trailing space: `//`, `#`, `--`.
+    pub line: Option<String>,
+    /// The block pair: `/*` and `*/`.
+    pub block: Option<(String, String)>,
+}
+
 pub trait Indenter {
     /// The indent for a line break inserted at byte `at` of `buf`, the
     /// new line holding what was after it.
@@ -1611,6 +1629,78 @@ impl Editor {
         } else {
             "\t".into()
         }
+    }
+
+    /// The comment tokens of buffer `id` as its scope says
+    /// (docs/design/comments.md Decision 3): the line token
+    /// (`comment`, `//`) and the block pair (`comment_block`,
+    /// `{ "/*", "*/" }`), each when the language has one. An empty
+    /// string set is none: `language.x.comment = ""` takes a token away.
+    pub fn comment_tokens_in(&self, id: BufferId) -> CommentTokens {
+        let line = self
+            .setting_in(id, "comment")
+            .and_then(Setting::as_str)
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+        let block = self
+            .setting_in(id, "comment_block")
+            .and_then(Setting::as_list)
+            .and_then(|l| match l {
+                [a, b] => Some((a.as_str()?.trim(), b.as_str()?.trim())),
+                _ => None,
+            })
+            .filter(|(a, b)| !a.is_empty() && !b.is_empty())
+            .map(|(a, b)| (a.to_string(), b.to_string()));
+        CommentTokens { line, block }
+    }
+
+    /// [`Editor::comment_tokens_in`] for the layer at byte `at`: the
+    /// injected language's tokens where the syntax says `at` is in one
+    /// and that language has any — a `<script>`'s `//` in an HTML file
+    /// — else the buffer's own (a JSDoc comment's lines are the
+    /// JavaScript's). The language the tokens are for comes with them.
+    pub fn comment_tokens_at(&mut self, id: BufferId, at: usize) -> (String, CommentTokens) {
+        let mut objects = self.syntax_objects.take();
+        let layer = objects
+            .as_mut()
+            .and_then(|o| o.language_at(id, &self.buffers[id], at));
+        self.syntax_objects = objects;
+        let own = |ed: &Self| {
+            (
+                ed.buffers[id].language.to_string(),
+                ed.comment_tokens_in(id),
+            )
+        };
+        let Some(layer) = layer else {
+            return own(self);
+        };
+        if layer == *self.buffers[id].language {
+            return own(self);
+        }
+        let scope_of = self.scope_of(id);
+        let scope = crate::settings::Scope {
+            language: &layer,
+            local: scope_of.local,
+        };
+        let read = |path: &str| self.settings.scoped(path, scope);
+        let line = read("comment")
+            .and_then(Setting::as_str)
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+        let block = read("comment_block")
+            .and_then(Setting::as_list)
+            .and_then(|l| match l {
+                [a, b] => Some((a.as_str()?.trim(), b.as_str()?.trim())),
+                _ => None,
+            })
+            .filter(|(a, b)| !a.is_empty() && !b.is_empty())
+            .map(|(a, b)| (a.to_string(), b.to_string()));
+        if line.is_none() && block.is_none() {
+            return own(self);
+        }
+        (layer, CommentTokens { line, block })
     }
 
     /// What `<Tab>` puts at screen column `col` of buffer `id`: a tab,
