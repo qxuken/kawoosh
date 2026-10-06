@@ -80,6 +80,12 @@ pub struct ServerDef {
     /// looked up before the pool's own answers — an integration a
     /// server's row declares, not code.
     pub answers: BTreeMap<String, Value>,
+    /// What `initialize` sends as its `initializationOptions`
+    /// (docs/design/lsp-servers.md Decision 8): astro-ls's TypeScript.
+    /// A string in it saying `{root}` is the server's root, and
+    /// `{typescript}` a TypeScript's `lib` ([`init_options`]). `Null`
+    /// for none.
+    pub init: Value,
 }
 
 /// A language's files: by extension (no dot, any case) or whole name.
@@ -111,6 +117,7 @@ impl Default for ServerDef {
             package: None,
             when: Vec::new(),
             answers: BTreeMap::new(),
+            init: Value::Null,
         }
     }
 }
@@ -2380,6 +2387,10 @@ impl Pool {
                 }
             }
         });
+        if !def.init.is_null() {
+            initialize["params"]["initializationOptions"] =
+                init_options(&def.init, &root, server.domain.is_some());
+        }
         // A server here is told of the files it asks to hear of
         // (`handle_files`); one on a host is not offered it and keeps
         // watching on its own, as rust-analyzer and tsserver do for a
@@ -3736,6 +3747,60 @@ fn capabilities(result: Option<&Value>) -> Caps {
     }
 }
 
+/// A server's `init` as `initialize` sends it (docs/design/lsp-servers.md
+/// Decision 8): each string with `{root}` in it the server's root, and
+/// `{typescript}` a TypeScript's `lib` — the nearest
+/// `node_modules/typescript/lib` at or above the root, else one kawoosh
+/// installed beside a server (typescript-language-server's), else the
+/// word left as it is for the server to say what it misses. On a host
+/// only `{root}` is said: its disk is not looked at from here.
+pub fn init_options(init: &Value, root: &Path, on_host: bool) -> Value {
+    let root_text = match crate::fs::domain_of(root) {
+        Some((_, dir)) => dir.display().to_string(),
+        None => root.display().to_string(),
+    };
+    let typescript = (!on_host)
+        .then(|| typescript_lib(root))
+        .flatten()
+        .map(|p| p.display().to_string());
+    fn walk(v: &Value, root: &str, ts: Option<&str>) -> Value {
+        match v {
+            Value::String(s) => {
+                let mut s = s.replace("{root}", root);
+                if let Some(ts) = ts {
+                    s = s.replace("{typescript}", ts);
+                }
+                Value::String(s)
+            }
+            Value::Array(a) => Value::Array(a.iter().map(|v| walk(v, root, ts)).collect()),
+            Value::Object(o) => Value::Object(
+                o.iter()
+                    .map(|(k, v)| (k.clone(), walk(v, root, ts)))
+                    .collect(),
+            ),
+            v => v.clone(),
+        }
+    }
+    walk(init, &root_text, typescript.as_deref())
+}
+
+/// The TypeScript a project builds with, else one kawoosh installed.
+fn typescript_lib(root: &Path) -> Option<PathBuf> {
+    let lib = |d: &Path| {
+        Some(d.join("node_modules/typescript/lib")).filter(|p| p.join("typescript.js").is_file())
+    };
+    root.ancestors().find_map(lib).or_else(|| {
+        let servers = crate::servers::root()?;
+        let npm = std::fs::read_dir(servers.join("npm")).ok()?;
+        let mut dirs: Vec<PathBuf> = npm.flatten().map(|e| e.path()).collect();
+        dirs.sort();
+        // typescript-language-server's own first: it is installed with
+        // the TypeScript it runs.
+        dirs.sort_by_key(|d| !d.ends_with("typescript-language-server"));
+        dirs.iter().find_map(|d| lib(d))
+    })
+}
+
 /// An `experimental/runnables` answer: a `cargo` runnable as `cargo`
 /// (or its `overrideCargo`) with its `cargoArgs`, then `--` and its
 /// `executableArgs` when it has any, in its workspace; a `shell` one as
@@ -4216,6 +4281,35 @@ fn placed_diagnostics(params: &Value) -> Vec<Placed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `{root}` is the server's root and `{typescript}` the nearest
+    /// TypeScript's lib at or above it; on a host only `{root}` is said,
+    /// as the host's path.
+    #[test]
+    fn init_options_say_the_root_and_a_typescript() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-lsp-init-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let lib = dir.join("node_modules/typescript/lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join("typescript.js"), "").unwrap();
+        let root = dir.join("apps/site");
+        std::fs::create_dir_all(&root).unwrap();
+        let init = json!({ "typescript": { "tsdk": "{typescript}" }, "at": ["{root}/x", 3, null] });
+        assert_eq!(
+            init_options(&init, &root, false),
+            json!({
+                "typescript": { "tsdk": lib.display().to_string() },
+                "at": [format!("{}/x", root.display()), 3, null]
+            })
+        );
+        let host = PathBuf::from("box:/srv/app");
+        assert_eq!(
+            init_options(&init, &host, true)["at"][0],
+            json!("/srv/app/x"),
+            "a host's root as the host has it"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// rust-analyzer's answer as it gives it (2026-10-07): a cargo
     /// runnable is its cargo arguments, `--` and the test's, in its

@@ -3184,3 +3184,34 @@ fn the_compile_picker_adds_what_the_server_says_can_run() {
     assert!(rows(&mut app).iter().any(|r| r == "cargo check"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// lsp-servers.md Decision 8: `lsp.NAME.init` is what `initialize` sends
+/// as `initializationOptions`, `{root}` in a string the server's root; a
+/// change to it starts the server again, it being said only then.
+#[test]
+fn a_servers_init_is_its_initialization_options() {
+    use kawoosh_editor::{Layer, Setting};
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-init-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut init = Setting::table();
+    init.set("where", Setting::Str("{root}".into()));
+    init.set("n", Setting::Int(2));
+    app.ed.settings.set(Layer::Session, "lsp.rust.init", init);
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.views[v].buffer;
+    let said =
+        format!("init: {{\"n\": 2, \"where\": \"{}\"}}", dir.display()).replace('\\', "\\\\");
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, buf).contains(&said)),
+        "{:?}",
+        msgs(&app, buf)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

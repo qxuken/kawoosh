@@ -24,6 +24,10 @@
 --   answers    requests of its own and the result each is answered
 --              with, before kawoosh's own answers:
 --              { ["eslint/confirmESLintExecution"] = 4 }
+--   init       what `initialize` sends as its `initializationOptions`,
+--              a string saying `{root}` the server's root and
+--              `{typescript}` a TypeScript's lib (the project's, else
+--              the one installed with typescript-language-server)
 --
 -- The order is the asking order: a language's servers, when
 -- `lsp.languages` does not say, are asked first to last — typescript's
@@ -192,6 +196,15 @@ return {
     args = { "--stdio" },
     roots = { "svelte.config.js", "package.json" },
     install = { npm = "svelte-language-server" },
+  },
+  {
+    name = "astro",
+    cmd = "astro-ls",
+    args = { "--stdio" },
+    roots = { "astro.config.mjs", "astro.config.ts", "astro.config.js", "package.json" },
+    install = { npm = { "@astrojs/language-server", "typescript@5" } },
+    -- It will not start without a TypeScript to run.
+    init = { typescript = { tsdk = "{typescript}" } },
   },
   {
     name = "php",

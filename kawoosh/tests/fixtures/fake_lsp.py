@@ -57,7 +57,9 @@ its "boom". Runnables (compile.md Decision 18): it declares
 `experimental.runnables`, and `experimental/runnables` answers a cargo
 test named for the position's line (`tests::at_line_N`), `cargo check
 -p fake` (its label the command), a `shell` runnable `make 'it all'`,
-and one of a kind nobody runs — each in the root."""
+and one of a kind nobody runs — each in the root. The
+`initializationOptions` it was started with, if any, are a note:
+`init: JSON`, keys sorted (lsp-servers.md Decision 8)."""
 import json
 import re, sys
 
@@ -197,6 +199,8 @@ while True:
         break
     if method == "initialize":
         root_uri = m["params"].get("rootUri")
+        if "initializationOptions" in m["params"]:
+            notes.append("init: " + json.dumps(m["params"]["initializationOptions"], sort_keys=True))
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
             "completionProvider": {"triggerCharacters": ["."]},
             "hoverProvider": True, "definitionProvider": True,

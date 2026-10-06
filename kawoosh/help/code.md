@@ -175,6 +175,7 @@ of its marker files.
 | `lsp.markdown` | `marksman` | Markdown |
 | `lsp.dockerfile` | `docker-langserver` | Dockerfile |
 | `lsp.svelte` | `svelteserver` | Svelte |
+| `lsp.astro` | `astro-ls` | Astro |
 | `lsp.php` | `intelephense` | PHP |
 | `lsp.ruby` | `ruby-lsp` | Ruby |
 | `lsp.java` | `jdtls` | Java |
@@ -337,6 +338,7 @@ return {
 | `when` | files one of which must be at or above a file for the server to run for it |
 | `settings` | the configuration sent to the server |
 | `answers` | requests of the server's own and the result each is answered with: `{ ["eslint/confirmESLintExecution"] = 4 }` |
+| `init` | what the server is started with (its `initializationOptions`); in a string, `{root}` is the server's root and `{typescript}` a TypeScript's `lib` folder — the project's, else the one installed with typescript-language-server: astro's is `{ typescript = { tsdk = "{typescript}" } }`. A change starts the server again |
 | `install` | how `:lsp install` installs the program: a package (`{ npm = "name" }`; `pip`, `cargo`, `go`, `dotnet`) into kawoosh's folder, a shell line, or a line for each platform (`{ mac = "brew install x", windows = "winget install x" }`; `linux` too) |
 
 The servers kawoosh knows are rows of these same keys (`servers.lua` in
