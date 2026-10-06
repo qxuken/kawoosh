@@ -346,6 +346,19 @@ written, with the pane saying so in its row, as a draft past
 unheld text goes, as any kind's rows do past `memory.max_mb`. A
 `command` line past 4 KiB is not remembered at all.
 
+How the caps are looked at (2026-10-06): by their sums first — a
+count a kind off the index, the texts' bytes, the store's bytes — and
+only when one is over are the rows read and scored to choose what
+goes. The histories' bytes are summed again only once a history was
+saved since the last sum. And the look is taken only after a flush
+that could have crossed a cap — a row made (the store says how many a
+flush made), a text written, a history saved since the last look —
+and at a launch, after the ageing: a flush of dwell and visits to
+rows the store has crosses none. Before, every flush read every row
+and weighed every history, four to ten milliseconds on a store of ten
+megabytes, paid once a second while the keyboard moved and shown in
+the Perf tab as `moments`.
+
 ### 5. Pinned is a flag on a moment, and harpoon is the memory made explicit
 
 The roadmap's pinned files (`<leader>e`, `<leader>e1`…`9`, `<A-1>`…`9`)
