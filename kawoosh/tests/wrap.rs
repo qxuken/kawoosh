@@ -1,7 +1,8 @@
 //! Soft wrap in the editor (roadmap step 63, docs/design/wrap.md): a
 //! pane wrapped at its width by `editor.wrap`, a language's by
 //! `editor.wrap_languages`, one pane by `:wrap`; `gj` `gk` a row on
-//! screen, `j` `k` a line; a line too long to draw whole left unwrapped.
+//! screen, `j` `k` a line; a line too long to draw whole (64 KiB) left
+//! unwrapped in its window, its number kept.
 
 mod drive;
 
@@ -42,7 +43,13 @@ fn settle(d: &mut Drive, app: &mut Kawoosh) {
 #[test]
 fn a_wrapped_pane_and_its_rows() {
     let long = "word ".repeat(80);
-    let text = format!("{long}\nshort\n{}", "x".repeat(5000));
+    // The 70 000-byte line before the 5000-byte one: wrapped, the
+    // latter is a screenful of rows on its own.
+    let text = format!(
+        "{long}\nshort\n{}\n{}",
+        "y".repeat(70_000),
+        "x".repeat(5000)
+    );
     let mut app = Kawoosh::new("t", &text);
     let mut d = Drive::new(600.0, 500.0);
     settle(&mut d, &mut app);
@@ -59,7 +66,42 @@ fn a_wrapped_pane_and_its_rows() {
         (row_h(&d, 1).unwrap() - lh).abs() < 1.0,
         "a short line one row"
     );
-    assert_eq!(row_h(&d, 2), None, "a line past 4096 bytes is not wrapped");
+    // Past 64 KiB the line is its window, one row, numbered like the rest.
+    assert!(
+        (row_h(&d, 2).unwrap() - lh).abs() < 1.0,
+        "a line past 64 KiB is one row: {:?}",
+        row_h(&d, 2)
+    );
+    assert!(
+        row_h(&d, 3).unwrap() > 10.0 * lh,
+        "5000 bytes wrap too: {:?} vs {lh}",
+        row_h(&d, 3)
+    );
+    // A wrapping pane's numbers are in its rows: the first text of each.
+    let number = |d: &Drive, ln: usize| -> String {
+        let nodes = d.core.nodes();
+        let label = format!("md{ln}");
+        let at = nodes
+            .iter()
+            .position(|n| n.label.as_deref() == Some(label.as_str()))
+            .expect("the row");
+        nodes[at + 1..]
+            .iter()
+            .take_while(|n| n.depth > nodes[at].depth)
+            .find_map(|n| n.text.clone())
+            .expect("a text in the row")
+    };
+    assert_eq!(number(&d, 2), "3", "the window's row keeps its number");
+    assert_eq!(number(&d, 3), "4");
+    let before = std::time::Instant::now();
+    for _ in 0..10 {
+        d.frame(&mut app);
+    }
+    let per_frame = before.elapsed() / 10;
+    assert!(
+        per_frame < std::time::Duration::from_millis(16),
+        "a 5000-byte wrapped line and a 70 KB window: {per_frame:?} a frame"
+    );
     // `gj` a row down inside the line, `gk` back; `j` the next line.
     d.keys(&mut app, "gg0");
     d.keys(&mut app, "gj");

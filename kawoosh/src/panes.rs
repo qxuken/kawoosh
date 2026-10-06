@@ -1336,6 +1336,14 @@ impl Kawoosh {
         if wrap.is_some() {
             self.ed.views[view].left = 0.0;
         }
+        // The length from which a line is drawn from its window alone
+        // rather than whole: kui's own chunk threshold, or wrapping, the
+        // cap a line still wraps under (`rows::WRAP_LINE_BYTES`).
+        let long_at = if wrap.is_some() {
+            rows::WRAP_LINE_BYTES
+        } else {
+            rows::LONG_LINE_BYTES
+        };
         // Whether the view scrolls to its caret this frame: when its
         // caret moved since it was last drawn — a jump sent to it — and
         // in the pane the keys are in, after a key typed there unless
@@ -2000,8 +2008,9 @@ impl Kawoosh {
                                     (drawn, Some((marks, scale, code, rule, wrap, img)))
                                 }
                                 None => {
-                                    let index = (range.len() >= rows::LONG_LINE_BYTES)
-                                        .then(|| cells.get(buf_id, buf, &range, tabstop));
+                                    let long = range.len() >= long_at;
+                                    let index =
+                                        long.then(|| cells.get(buf_id, buf, &range, tabstop));
                                     let (drawn, _) = crate::secrets::masked_line(
                                         buf,
                                         range.clone(),
@@ -2014,7 +2023,7 @@ impl Kawoosh {
                                             buf,
                                             range.clone(),
                                             tabstop,
-                                            Some(window),
+                                            long.then_some(window),
                                             0,
                                             index,
                                         )
@@ -2328,38 +2337,39 @@ impl Kawoosh {
                                 // A code row wrapped (wrap.md): the
                                 // plain row's text at the face's size,
                                 // wrapped at the column's width less its
-                                // number — but a line too long to draw
-                                // whole, drawn in its window as before.
-                                None => {
-                                    match wrap.filter(|_| range.len() < rows::LONG_LINE_BYTES) {
-                                        Some(w) => {
-                                            md_seen.push((
-                                                ln,
-                                                crate::markdown::Heights::stamp(&drawn.text, ()),
-                                                ui.layout_of(ui.child_key(&label)).map(|r| r.h),
-                                            ));
-                                            let form = rows::RowForm {
-                                                key: label.clone(),
-                                                scale: 1.0,
-                                                wrap: Some(w),
-                                                bg: None,
-                                                gutter: Some((
-                                                    gutter,
-                                                    numbers.label(ln),
-                                                    ln == cur_line,
-                                                )),
-                                                sign: signs.get(&ln).copied(),
-                                                blame: blames.get(&ln).cloned(),
-                                                rule: false,
-                                                images: Vec::new(),
-                                                fit: false,
-                                                table: None,
-                                            };
-                                            (&[][..], Some(form))
-                                        }
-                                        None => (&[][..], None),
+                                // number — a line too long to draw whole
+                                // (`long_at`) in its window instead, one
+                                // row tall, its number still in the row:
+                                // a wrapping pane has no gutter column.
+                                None => match wrap {
+                                    Some(w) => {
+                                        md_seen.push((
+                                            ln,
+                                            crate::markdown::Heights::stamp(&drawn.text, ()),
+                                            ui.layout_of(ui.child_key(&label)).map(|r| r.h),
+                                        ));
+                                        let long = range.len() >= long_at;
+                                        let form = rows::RowForm {
+                                            key: label.clone(),
+                                            scale: 1.0,
+                                            wrap: (!long).then_some(w),
+                                            bg: None,
+                                            gutter: Some((
+                                                gutter,
+                                                numbers.label(ln),
+                                                ln == cur_line,
+                                            )),
+                                            sign: signs.get(&ln).copied(),
+                                            blame: blames.get(&ln).cloned(),
+                                            rule: false,
+                                            images: Vec::new(),
+                                            fit: false,
+                                            table: None,
+                                        };
+                                        (&[][..], Some(form))
                                     }
-                                }
+                                    None => (&[][..], None),
+                                },
                             };
                             let text_key = std::cell::Cell::new(None);
                             // A rendered row's marks and the syntax's, both.

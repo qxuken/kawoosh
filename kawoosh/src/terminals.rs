@@ -1046,14 +1046,15 @@ impl Kawoosh {
         };
         let (text, runs) = t.scrollback_styled();
         // The view's top row as a line of the text: the view starts at
-        // what the pane showed (roadmap step 31).
-        let top_line = t.history_size().saturating_sub(t.display_offset());
+        // what the pane showed (roadmap step 31). A line the terminal
+        // wrapped is one line of the text, so the rows are not its
+        // lines: the terminal counts.
+        let top_line = t.scrollback_top_line();
         // The caret at the terminal's cursor when the pane shows it, as
         // wezterm's copy mode starts; scrolled back past it, at the top
         // row shown, where the eye was.
-        let (cursor_line, cursor_col) = t.scrollback_cursor();
-        let caret = if cursor_line < top_line + t.size().rows as usize {
-            (cursor_line, cursor_col)
+        let caret = if t.cursor_on_screen() {
+            t.scrollback_cursor()
         } else {
             (top_line, 0)
         };

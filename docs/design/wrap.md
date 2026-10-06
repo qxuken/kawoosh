@@ -68,10 +68,26 @@ is `j`.
 
 A wrapping pane's text column clips instead of scrolling (its `left`
 is 0), and the caret is never followed sideways. A line longer than
-`rows::LONG_LINE_BYTES` (4096) is not wrapped: it is drawn as today, a
-window of it at a time — a minified file with wrapping on would
-otherwise lay out a megabyte a frame. Such a line's row is one row
-tall, clipped.
+`rows::WRAP_LINE_BYTES` (64 KiB) is not wrapped: it is drawn as an
+unwrapped pane draws it, a window of it at a time — a minified file
+with wrapping on would otherwise lay out a megabyte a frame. Such a
+line's row is one row tall, clipped, its number in the row like any
+other's.
+
+*Amended 2026-10-06.* The cap was `rows::LONG_LINE_BYTES` (4096), kui's
+threshold for shaping an unwrapped line in chunks, and the unwrapped
+row of such a line had no number: a wrapping pane keeps its numbers in
+its rows, not a gutter column, and the line fell back to the plain row.
+A compile's 4 KB hex dump (`Random bytes: 1F0B…`) ran off the pane's
+edge from its left border. kui shapes a wrapped long line in chunks as
+it does an unwrapped one, and kawoosh's own work a row — the text
+cloned, its escapes expanded, its graphemes found — is a fraction of a
+frame at 64 KiB, so a line wraps up to there; past it the window, now
+with its number. Found with it: the tall pane's `scrolloff` (the lines
+under the caret's kept in view) pushed the caret's line to the pane's
+top when a line taller than the pane was among them, since no `top`
+could fit it; the lines that cannot fit are left under, as vim leaves
+them (`md_follow`).
 
 ### 4. What stays as it is
 
@@ -101,11 +117,14 @@ event's core: `caret_rect` and `text_hit` on the rows recorded as they
 were drawn (`LineDraw::text_key`, `Kawoosh::wrap_rows`). `panes.rs`: a
 wrapping pane is `tall` — `md_follow`'s scroll by measured heights,
 the numbers in the rows, a clipping column with `left` 0 — and a code
-row under 4096 bytes gets a `RowForm` with the wrap; the markdown
-rows themselves are still worked out for the markdown buffer only.
+row under 64 KiB gets a `RowForm` with the wrap, a longer one the same
+form without it, its window for text (since 2026-10-06; 4096 before,
+and without the form); the markdown rows themselves are still worked
+out for the markdown buffer only.
 The settings in `editor/src/settings.rs`. Seen in a window: a comment
 and a long `vec!` wrapped, the numbers on their first rows, `3gj`
 from the top one row at a time. Tests: `kawoosh/tests/wrap.rs` — a
-wrapped row's height, a short line one row, a 5000-byte line not
-wrapped, `gj` `gk` inside a line and onto the next line's rows, `j` a
-line, `:wrap` for one pane, a language in the list.
+wrapped row's height, a short line one row, a 5000-byte line wrapped
+and a 70 000-byte one a numbered row, `gj` `gk` inside a line and onto
+the next line's rows, `j` a line, `:wrap` for one pane, a language in
+the list.

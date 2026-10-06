@@ -1373,16 +1373,22 @@ impl Terminal {
     /// (roadmap step 31): each run of text whose foreground is not the
     /// palette's own, as a byte range of the text and an RGBA colour —
     /// resolved as the screen draws it, inverse and dim included — so
-    /// copy mode's buffer reads as the pane did.
+    /// copy mode's buffer reads as the pane did. A line the terminal
+    /// wrapped at its edge is one line of the text, its rows joined
+    /// where the last cell says it went on (`WRAPLINE`): the breaks are
+    /// the width's, not the program's, and a yank of the line should
+    /// read as it was printed.
     pub fn scrollback_styled(&self) -> (String, Vec<(std::ops::Range<usize>, u32)>) {
         let pal = &self.palette;
         let grid = self.term.grid();
         let history = grid.history_size() as i32;
+        let last = grid.screen_lines() as i32 - 1;
         let mut out = String::new();
         let mut runs: Vec<(std::ops::Range<usize>, u32)> = Vec::new();
-        for line in -history..grid.screen_lines() as i32 {
-            let start = out.len();
-            let mut row_runs: Vec<(std::ops::Range<usize>, u32)> = Vec::new();
+        // Where the line being built starts in `out`, and its runs so far.
+        let mut start = 0;
+        let mut row_runs: Vec<(std::ops::Range<usize>, u32)> = Vec::new();
+        for line in -history..=last {
             for col in 0..grid.columns() {
                 let cell = &grid[Line(line)][Column(col)];
                 if cell
@@ -1411,15 +1417,22 @@ impl Terminal {
                     _ => row_runs.push((at..out.len(), fg)),
                 }
             }
+            // A row that wrapped goes on in the next: the line is not
+            // over, and its cells past the edge are its text, not blanks
+            // to trim.
+            if line < last && self.row_wraps(Line(line)) {
+                continue;
+            }
             let kept = out[start..].trim_end().len();
             out.truncate(start + kept);
             runs.extend(
                 row_runs
-                    .into_iter()
+                    .drain(..)
                     .filter(|(r, _)| r.start < start + kept)
                     .map(|(r, c)| (r.start..r.end.min(start + kept), c)),
             );
             out.push('\n');
+            start = out.len();
         }
         while out.ends_with("\n\n") {
             out.pop();
@@ -1427,23 +1440,65 @@ impl Terminal {
         (out, runs)
     }
 
+    /// Whether grid row `line`'s last cell says the line went on in the
+    /// next row (`WRAPLINE`): the terminal broke it at its width.
+    fn row_wraps(&self, line: Line) -> bool {
+        let grid = self.term.grid();
+        let cols = grid.columns();
+        cols > 0 && grid[line][Column(cols - 1)].flags.contains(Flags::WRAPLINE)
+    }
+
+    /// Which line of [`Self::scrollback_styled`]'s text grid row `line`
+    /// is part of: the rows above it, less each one joined to the next.
+    fn scrollback_line_of(&self, line: Line) -> usize {
+        let grid = self.term.grid();
+        let history = grid.history_size() as i32;
+        (-history..line.0)
+            .filter(|l| !self.row_wraps(Line(*l)))
+            .count()
+    }
+
     /// Where the cursor is in [`Self::scrollback_styled`]'s text: its
     /// line, and its column as the characters that line has before it
     /// — a wide character's spacer and a hidden cell not counted, as
-    /// the text leaves them out. The column can be past the line's end,
-    /// where trailing blanks were trimmed.
+    /// the text leaves them out, the rows a wrapped line came on in
+    /// before the cursor's counted whole. The column can be past the
+    /// line's end, where trailing blanks were trimmed.
     pub fn scrollback_cursor(&self) -> (usize, usize) {
         let grid = self.term.grid();
         let point = grid.cursor.point;
-        let row = &grid[point.line];
-        let col = (0..point.column.0.min(grid.columns()))
-            .filter(|c| {
-                !row[Column(*c)]
-                    .flags
-                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::HIDDEN)
-            })
-            .count();
-        (grid.history_size() + point.line.0 as usize, col)
+        let history = grid.history_size() as i32;
+        let counted = |row: Line, cols: usize| {
+            (0..cols)
+                .filter(|c| {
+                    !grid[row][Column(*c)]
+                        .flags
+                        .intersects(Flags::WIDE_CHAR_SPACER | Flags::HIDDEN)
+                })
+                .count()
+        };
+        let mut first = point.line;
+        while first.0 > -history && self.row_wraps(first - 1) {
+            first -= 1;
+        }
+        let col = (first.0..point.line.0)
+            .map(|l| counted(Line(l), grid.columns()))
+            .sum::<usize>()
+            + counted(point.line, point.column.0.min(grid.columns()));
+        (self.scrollback_line_of(point.line), col)
+    }
+
+    /// The line of [`Self::scrollback_styled`]'s text the pane's top row
+    /// shows — scrolled back, a row of the history.
+    pub fn scrollback_top_line(&self) -> usize {
+        self.scrollback_line_of(Line(-(self.term.grid().display_offset() as i32)))
+    }
+
+    /// Whether the cursor's row is among the ones the pane shows: it is
+    /// not once the pane is scrolled back past it.
+    pub fn cursor_on_screen(&self) -> bool {
+        let grid = self.term.grid();
+        grid.cursor.point.line.0 + (grid.display_offset() as i32) < grid.screen_lines() as i32
     }
 
     /// The link a program printed on purpose (OSC 8) at `(row, col)` of
@@ -2594,6 +2649,47 @@ mod tests {
         );
     }
 
+    /// A line the terminal wrapped at its width is one line of the
+    /// scrollback text — the rows joined where `WRAPLINE` says the line
+    /// went on, the cursor's line and column counted over the joined
+    /// rows — and a line that ends exactly at the edge is not joined to
+    /// the next.
+    #[test]
+    fn a_wrapped_line_is_one_line_of_the_scrollback() {
+        let mut t = Terminal::headless(TermSize { rows: 4, cols: 10 });
+        t.feed(b"abcdefghijklmnopqrstuvwxy\r\n");
+        assert_eq!(t.scrollback_text(), "abcdefghijklmnopqrstuvwxy\n");
+        assert_eq!(t.scrollback_cursor(), (1, 0));
+        t.feed(b"0123456789abc");
+        assert_eq!(
+            t.scrollback_text(),
+            "abcdefghijklmnopqrstuvwxy\n0123456789abc\n"
+        );
+        assert_eq!(t.scrollback_cursor(), (1, 13), "over the row it came on in");
+        assert_eq!(
+            t.history_size(),
+            1,
+            "three rows of the first line and two of the second"
+        );
+        assert_eq!(t.scrollback_top_line(), 0);
+        t.scroll(1);
+        assert_eq!(
+            t.scrollback_top_line(),
+            0,
+            "the history row is the first line's"
+        );
+        assert!(!t.cursor_on_screen(), "the cursor's row scrolled off");
+        t.scroll_to_bottom();
+        // Exactly the width: the cursor waits at the edge, no wrap yet,
+        // and a newline there starts a line of its own.
+        t.feed(b"\r\n0123456789\r\nnext");
+        assert!(
+            t.scrollback_text().ends_with("0123456789\nnext\n"),
+            "{:?}",
+            t.scrollback_text()
+        );
+    }
+
     #[test]
     fn alt_screen_and_scrollback() {
         let mut t = Terminal::headless(TermSize { rows: 3, cols: 10 });
@@ -2604,6 +2700,7 @@ mod tests {
         assert!(t.scrollback_text().starts_with("l0\nl1\n"));
         t.feed("日本$ ".as_bytes());
         assert_eq!(t.scrollback_cursor(), (6, 4), "the spacers not counted");
+        assert!(t.cursor_on_screen());
         t.scroll(2);
         let s = t.screen();
         assert_eq!(s.origin_line, 2);
