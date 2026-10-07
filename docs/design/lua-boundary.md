@@ -115,6 +115,29 @@ while it is the same fill (an entry the plan gave a line since is the
 line's) and from the payloads otherwise; `keep_register` and `dir.kept`
 are gone.
 
+### 8. A Lua view's field is the engine's line
+
+`boot.lua` drew a Lua view's field itself: 140 lines of spans, carets,
+a lifted block, sideways scrolling and a `measure_text` a frame — a
+second, smaller copy of `Kawoosh::field_line` (one caret, no tabs or
+escapes drawn, no extra carets). kui already holds what it takes to
+draw the engine's instead (no kui round): a Lua tree may declare a
+`fill`, and a guest extension fills it (ADR 0014's amendment of
+2026-09-08, "a Lua view wanting a native panel inside it is the day").
+`ctx.field` is a `fill { name = "field/…", params = { field, size,
+placeholder, focused, width } }`; `fields::FieldDraw`, an extension
+under the `field` namespace with a wildcard slot, draws it with
+`panes::draw_field` — `field_line`'s drawing, split from what it
+gathers (`Kawoosh::field_scene`) — from the scenes the app gathers
+before a Lua pane or a header is drawn (`publish_field_scenes`). The
+Lua host (`fields::LuaHost`, what `attach_lua` returns) loads it the
+first frame it draws (`Ui::add_extension`), so whoever registers `lua`
+has the fields. A click is a reply to the view that declared the
+field, `{ kind = "field", field = }`, handled before `boot.lua` reads
+a slot off it — kui-lua names a reply's slot only for slots the script
+fills itself. A fill is a position, so a field's width is an option
+(`width = "grow"`), not a prop set on the node after.
+
 ## Rounds
 
 **Round 1, 2026-10-07: the cheap batch** (d290f9f). `ctx.title_h`
@@ -197,12 +220,22 @@ listing buffer refilled three times, the line a copy each time) and
 listing closed, the paste in another a copy — `← new` before), both red
 without the payloads, and the listing suites.
 
+**Round 12, 2026-10-07: the field drawn by the engine** (Decision 8).
+Asked "open the kui round for the field but ensure we don't have this
+in kui already" — kui had it. Verified by the field tests as they were,
+three of them reading the drawn tree now rather than the Lua node
+tables (`n[1].caret` → the caret kui anchors the input method at, the
+line one level down under the scroller), the overflow sweep, and a
+test window driven over its socket (the picker's query, the search
+bar's four fields and their placeholders).
+
 ## Open
 
 - A listing's `ids` still mirror its tracked lines in Lua (the plan
   reassigns an entry to a line, Decision 7): the payloads could be the
   only record once the engine takes a payload changed on a tracked line.
-- `field_node`, `keys_node`, `legend_node` out of `boot.lua`.
+- `keys_node`, `legend_node` out of `boot.lua`: key caps and legends,
+  the same fill as the field would serve them.
 - The picker's 108 ms frame as a 100k-file walk lands (Round 8): what is
   left is the rows as Lua tables and the matcher's copy of their text —
   a list kept in the engine and lent to Lua as rows are shown would end

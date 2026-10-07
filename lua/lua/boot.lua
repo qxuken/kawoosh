@@ -713,20 +713,6 @@ end
 
 -- ---------------------------------------------------------------- fields
 
--- The byte length of the character at byte `i` (1-based) of `s`.
-local function char_len(s, i)
-  local c = s:byte(i)
-  if not c then return 0 end
-  if c < 0x80 then return 1 elseif c < 0xE0 then return 2 elseif c < 0xF0 then return 3 else return 4 end
-end
-
--- A view's field, drawn from the engine's: the text, the selection in
--- visual mode, the caret — a bar on kui's blink in insert mode, a block
--- in normal — and a placeholder while it is empty and off the keys.
--- `full` names the engine field (`lua:<view>/<name>`); one that is not
--- open yet is asked for and drawn empty this frame. The field has the
--- keys when its view's keys are on it and `pane_focused` — the pane the
--- view is drawn in has the keyboard — so one caret is on the screen.
 -- kawoosh.metrics(env): the panes' one scale (plugin-panes.md,
 -- "Sizes"), read off the length tokens the editor declares
 -- (`look::Chrome`) — the chrome's text size, `font.chrome_size` or
@@ -746,142 +732,28 @@ function kawoosh.metrics(env)
            row = l.chrome_row or 20, font = l.font or 13 }
 end
 
-local function field_node(view_name, env, opts, pane_focused)
+-- A view's field: the engine's own line, as the app's fields are drawn
+-- (`fields.rs`, docs/design/lua-boundary.md Decision 8) — tabs and
+-- escapes drawn, every selection, a caret per selection on kui's blink,
+-- scrolled sideways under the caret — and a placeholder while it is
+-- empty and off the keys. The view's tree holds the place, a `fill`
+-- the field extension draws: `full` names the engine field
+-- (`lua:<view>/<name>`), one not open yet asked for and drawn empty
+-- this frame. The field has the keys when its view's keys are on it
+-- and `pane_focused` — the pane the view is drawn in has the keyboard
+-- — so one caret is on the screen. A click on it is the view's
+-- `{ kind = "field", field = }`, as before.
+local function field_node(view_name, pane, env, opts, pane_focused)
   local full = "lua:" .. view_name .. "/" .. opts.name
-  local st = kawoosh._field(full)
-  if not st then
-    kawoosh._field_open(full)
-    st = { text = "", mode = "normal", caret = 0, anchor = 0, focused = false }
-  end
-  local t = env.theme
-  local size = opts.size or kawoosh.metrics(env).text
-  -- One line, whatever its length: never wrapped, so no second row is
-  -- drawn over what is under the field.
-  local style = { family = "mono", size = size, wrap = "none" }
-  local line = st.text
-  local focused = st.focused and pane_focused
-  local insert = st.mode == "insert"
-  -- Byte ranges (0-based, end exclusive) of the selection and the block
-  -- caret's character, in visual and normal mode.
-  local sel_lo, sel_hi
-  if focused and st.mode == "visual" then
-    sel_lo = math.min(st.anchor, st.caret)
-    sel_hi = math.max(st.anchor, st.caret)
-    sel_hi = sel_hi + math.max(char_len(line, sel_hi + 1), 1)
-  end
-  local block_lo, block_hi
-  if focused and not insert then
-    block_lo = st.caret
-    block_hi = st.caret + math.max(char_len(line, st.caret + 1), 1)
-  end
-  -- A rounded selection (`editor.selection_radius`): the spans' own
-  -- backgrounds, which kui joins into one shape (its F101), as a pane's.
-  local radius = sel_lo and kawoosh._selection_radius() or nil
-  -- A block caret inside a rounded selection: its character keeps the
-  -- selection's background, so the shape has no hole there, and the
-  -- caret is drawn over it on its own.
-  local lifted = radius and block_lo and block_lo < #line
-    and block_lo >= sel_lo and block_hi <= sel_hi
-  -- The text as spans, cut at every edge, each styled by what it is in.
-  local cuts = { 0, #line }
-  local function cut(b) if b and b > 0 and b < #line then cuts[#cuts + 1] = b end end
-  cut(sel_lo) cut(sel_hi) cut(block_lo) cut(block_hi)
-  if insert and focused then cut(st.caret) end
-  table.sort(cuts)
-  local function spans_between(from, to)
-    local out = {}
-    for i = 1, #cuts - 1 do
-      local a, b = cuts[i], cuts[i + 1]
-      if a >= from and b <= to and b > a then
-        local piece = line:sub(a + 1, b)
-        local span = { piece }
-        if sel_lo and a >= sel_lo and b <= sel_hi then
-          span.bg = t.selection
-          span.bg_radius = radius
-        end
-        if block_lo and not lifted and a >= block_lo and b <= block_hi then
-          span.bg = t.accent
-          span.color = t.bg
-          span.bg_radius = nil
-        end
-        out[#out + 1] = span
-      end
-    end
-    return out
-  end
-  local row_h = size + 6
-  -- A line wider than the field scrolls sideways under it, as little
-  -- as keeps the caret in view — the bar, or the block's character (a
-  -- space past the end) — from where the last frame left it.
-  local label = "field:" .. full
-  local g = env.scroll_geometry(label)
-  -- A field's first frame has no geometry to follow the caret by: one
-  -- more frame (`animate`, for this one), or a line set before it — a
-  -- picker opened on a query — waits for a key to scroll.
-  local again = focused and not g
-  if focused and g then
-    local off = g.offset.x
-    local x = env.measure_text(line:sub(1, st.caret), style).width
-    local w = 2
-    if not insert then
-      local glyph = line:sub(st.caret + 1, st.caret + char_len(line, st.caret + 1))
-      w = env.measure_text(glyph ~= "" and glyph or " ", style).width
-    end
-    local want = off
-    if x < off then want = x elseif x + w > off + g.w then want = x + w - g.w end
-    if want ~= off then env.set_scroll(label, want, 0) end
-  end
-  local children = {}
-  local function push(node) children[#children + 1] = node end
-  if insert and focused then
-    -- Two texts around a bar that keeps its place on the blink's off
-    -- phase, so the line does not shift.
-    local before, after = spans_between(0, st.caret), spans_between(st.caret, #line)
-    if #before > 0 then push(text(before, style)) end
-    push(row { width = 2, height = size + 2, bg = env.caret_visible and t.accent or nil })
-    if #after > 0 then push(text(after, style)) end
-  else
-    local all = spans_between(0, #line)
-    if #all > 0 then push(text(all, style)) end
-    -- A block caret past the end sits on a space of its own, and so
-    -- does a selection that takes the line's end.
-    if block_lo and block_lo >= #line then
-      push(text({ { " ", bg = t.accent, color = t.bg } }, style))
-    elseif sel_hi and sel_hi > #line then
-      push(text({ { " ", bg = t.selection, bg_radius = radius } }, style))
-    end
-    if lifted then
-      local glyph = line:sub(block_lo + 1, block_hi)
-      local h = env.measure_text(glyph, style).height
-      push(row {
-        float = { dx = env.measure_text(line:sub(1, block_lo), style).width, dy = (row_h - h) / 2,
-                  clip = true },
-        text({ { glyph, bg = t.accent, color = t.bg } }, style),
-      })
-    end
-  end
-  if #line == 0 and not focused and opts.placeholder then
-    push(text(opts.placeholder, { family = "mono", size = size, color = t.muted, wrap = "none" }))
-  end
-  -- The line at its own width, however wide, in a row that scrolls it
-  -- (with no bar: the caret says where it is).
-  local line_row = row {
-    min_width = "fit",
-    height = row_h,
-    cross_align = "center",
-    role = "line",
-    caret = focused and st.caret or nil,
-    label = opts.label or opts.name,
-  }
-  for _, c in ipairs(children) do line_row[#line_row + 1] = c end
-  return row {
-    key = label,
-    height = row_h,
-    scroll_x = true,
-    scrollbar = "hidden",
-    animate = again or nil,
-    on_click = { kind = "field", field = full },
-    line_row,
+  if not kawoosh._field(full) then kawoosh._field_open(full) end
+  -- A slot's name has no `/`, and one view drawn in two panes is two.
+  -- A fill is a position, not a box: the field's width is an option —
+  -- `"grow"`, the room its row has; pixels; or, by default, as wide as
+  -- its line.
+  return fill {
+    name = "field/" .. full:gsub("/", ":") .. "@" .. tostring(pane),
+    params = { field = full, size = opts.size or kawoosh.metrics(env).text,
+               placeholder = opts.placeholder, focused = pane_focused, width = opts.width },
   }
 end
 
@@ -1007,7 +879,7 @@ function view(env, slot)
   -- A field draws its caret while its pane has the keys — not while
   -- the command line over it does: one caret on the screen.
   ctx.field = function(opts)
-    return field_node(name, env, opts, params.focused ~= false and not params.prompt)
+    return field_node(name, pane, env, opts, params.focused ~= false and not params.prompt)
   end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
   -- `ctx.icon(name, { size =, color = })`: `kawoosh.icon` in the view's
@@ -1041,16 +913,19 @@ function view(env, slot)
 end
 
 function on_event(ev)
+  -- A click on a field, answered by the field extension: a reply from
+  -- the field's slot, not the view's (no `slot` on it), naming the
+  -- field — the keys go to it, in its view.
+  if ev.kind == "field" and type(ev.field) == "string" then
+    local view = ev.field:match("^lua:(.*)/[^/]*$")
+    if view then kawoosh._field_focus(view, ev.field) end
+    return
+  end
   if not ev.slot then return end
   local name, pane = split_slot(ev.slot)
   -- A legend's `⌥/ keys`: the pane's whole, or compact again.
   if ev.kind == "legend" then
     kawoosh._legend(pane, not legend_full(pane))
-    return
-  end
-  -- A click on a field: the keys go to it.
-  if ev.kind == "field" and type(ev.field) == "string" then
-    kawoosh._field_focus(name, ev.field)
     return
   end
   local h = kawoosh._handlers[name]

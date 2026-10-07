@@ -307,8 +307,7 @@ kawoosh.view(VIEW, function(ctx)
     row { width = "grow", gap = 8, cross_align = "center",
       text("/", { family = "mono", size = SIZE, color = t.accent }),
       (function()
-        local f = ctx.field { name = FIELD, placeholder = "search by name", size = SIZE }
-        f.width = "grow"
+        local f = ctx.field { name = FIELD, placeholder = "search by name", size = SIZE, width = "grow" }
         return f
       end)(),
       (function()

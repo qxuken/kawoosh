@@ -477,8 +477,7 @@ local function control(r, ctx, t)
   local v = scoped(r)
   local mono = { family = "mono", size = SMALL, color = t.fg, wrap = "none" }
   if S.editing == r.path then
-    local f = ctx.field { name = EDIT, size = SMALL }
-    f.width = "grow"
+    local f = ctx.field { name = EDIT, size = SMALL, width = "grow" }
     return row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow", pad = { x = 6, y = 2 }, radius = 4, bg = t.sunken,
             border = { w = 1, color = t.accent }, f },
@@ -716,8 +715,7 @@ kawoosh.view(VIEW, function(ctx)
   S.files = files
   local target = S.scope ~= "session" and files[S.scope] or nil
 
-  local search = ctx.field { name = FIELD, placeholder = "search settings, or @modified", size = SIZE }
-  search.width = "grow"
+  local search = ctx.field { name = FIELD, placeholder = "search settings, or @modified", size = SIZE, width = "grow" }
   local count = (#S.shown == #S.rows) and (#S.rows .. " settings")
     or (#S.shown .. " of " .. #S.rows)
   local head = column { width = "grow", gap = 8, pad = { x = PAD, top = PAD, bottom = 12 },

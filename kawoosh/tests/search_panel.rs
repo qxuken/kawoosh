@@ -51,30 +51,29 @@ fn shows(app: &Kawoosh, p: PaneId) -> String {
     }
 }
 
-/// Whether the bar's `find` field drew its caret last frame: the
-/// view's `ctx.field` wrapped to note the caret its line declares.
+/// Whether the bar's `find` field draws its caret: the caret the frame
+/// declared — what anchors the input method — inside the field's row,
+/// the strip given the time to scroll the panel into view.
 fn find_caret(d: &mut Drive, app: &mut Kawoosh) -> bool {
-    app.run_lua_source(
-        "probe",
-        r#"
-        if not kawoosh._probed then
-          kawoosh._probed = true
-          local view = kawoosh._views.search
-          kawoosh._views.search = function(ctx)
-            local field = ctx.field
-            ctx.field = function(o)
-              local n = field(o)
-              if o.name == "find" then kawoosh._find_caret = n[1].caret ~= nil end
-              return n
-            end
-            return view(ctx)
-          end
-        end
-        "#,
-    );
-    d.frame(app);
-    app.run_lua_source("probe", "kawoosh.echo(tostring(kawoosh._find_caret))");
-    app.ed.message == "true"
+    for _ in 0..10 {
+        d.advance(0.1);
+        d.frame(app);
+    }
+    let Some(field) = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.label.as_deref() == Some("field:lua:search/find"))
+    else {
+        return false;
+    };
+    let f = field.rect;
+    d.core.ime_rect().is_some_and(|r| {
+        r.x >= f.x - 0.5
+            && r.y >= f.y - 0.5
+            && r.x + r.w <= f.x + f.w + 0.5
+            && r.y + r.h <= f.y + f.h + 0.5
+    })
 }
 
 /// Frames until the results say a file, the search being on a thread.

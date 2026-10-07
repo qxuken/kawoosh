@@ -652,9 +652,8 @@ kawoosh.view(VIEW, function(ctx)
   end
 
   -- The query line.
-  local field = ctx.field { name = FIELD, size = m.text,
+  local field = ctx.field { name = FIELD, size = m.text, width = "grow",
     placeholder = S.editing and ("a value for " .. S.editing.name .. " · Enter writes") or "a query · Enter runs · i edits" }
-  field.width = "grow"
   local line = row { width = "grow", height = row_h + 4, gap = 6, cross_align = "center",
     text(S.editing and "set" or "sql", { size = m.text, color = S.editing and t.warning or t.accent, wrap = "none" }),
     field,
