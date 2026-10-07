@@ -55,6 +55,11 @@ closed pane was opened from: open git from a file, look at the
 terminal, go back to git and quit it, and you are in the terminal. In
 the dock it is the dock's pane you were in last.
 
+The last pane of the window is not closed but asked anew: `<C-w>c`, a
+shell that exits, a tool quit there leave [the launcher](#the-launcher)
+in it, made from what it showed, so `<CR>` brings a buffer back with
+its caret where it was. `:q` on the last pane still quits.
+
 ### Dragging panes
 
 Every pane has a title bar, and dragging it moves the pane. Let go over

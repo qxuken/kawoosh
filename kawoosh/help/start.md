@@ -23,6 +23,11 @@ From a shell:
 | `kawoosh` | no path: the last session comes back — its tabs, panes and unsaved text |
 | `kawoosh edit +LINE FILE` | from a terminal inside kawoosh, open FILE in the running window |
 
+On macOS, Kawoosh.app is in every file's Open With menu: what Finder
+hands it — Open With, a file dropped on the Dock icon, `open -a Kawoosh
+FILE` — opens in the running window as `kawoosh edit` opens it, a
+directory as a listing.
+
 Inside the editor:
 
 | keys | what |
@@ -84,14 +89,18 @@ The leader is Space. Most daily commands live under it, grouped by noun:
 | prefix | group |
 |---|---|
 | `<leader>b` | buffers |
-| `<leader>t` | tabs |
 | `<leader>s` | search and lists |
 | `<leader>w` | the workspace |
-| `<leader>c` | code |
+| `<leader>c` | compile commands |
+| `<leader>h` | hunks and version control ([vcs](vcs.md)) |
+| `<leader>m` | the memory, pinned files, jumps ([memory](memory.md)) |
+| `<leader>i` | help: `<leader>ih` these pages, `<leader>ic` the commands, `<leader>im` the messages |
 | `<leader>y` | copy the file's path |
-| `<leader>o` | the look: themes, fonts |
+| `<leader>o` | the look: themes, fonts, wrapping, breadcrumbs |
 | `<leader>v` | selections (from visual mode) |
-| `<leader>e` | pinned files |
+
+The language server's keys are under `gr`, as in neovim, and the panes'
+under `<C-w>`; `<leader>t` alone is the tools picker.
 
 Press any prefix — `<leader>`, `g`, `]`, `<C-w>` — and a small card in the
 bottom-right corner lists what can follow, gone the moment the key
@@ -116,6 +125,28 @@ your settings turns the card off, and `leader = ","` moves the leader.
 Quitting never loses work. `:q` keeps what is unsaved — scratch buffers
 too — and the next bare `kawoosh` brings it back with the session; only
 `:q!` and `ZQ` discard.
+
+`:relaunch` quits as `:qa` does and starts kawoosh again on the
+session, so a kawoosh installed over the running one is the one that
+starts; `:relaunch!` discards unsaved changes first, as `:qa!` does.
+When a new kawoosh is installed while one runs, a toast offers
+**Relaunch**; `:relaunch?` says whether one is waiting.
+
+### When a file changes on disk
+
+Every open buffer's file is watched, and checked again when the window
+comes back to the front. When another program changes it — a checkout,
+a formatter, a generator — a buffer with no unsaved changes takes the
+new text as one change (`u` brings yours back) and the corner says so.
+A buffer with unsaved changes asks instead, with a toast: **Reload**
+(the disk's text; `u` still has yours), **Keep mine** (`:w` then writes
+over the disk), or **Diff** (the buffer against the disk, beside). A
+file deleted on disk is said, and the buffer keeps its text: `:w`
+writes it again.
+
+`:w` over a file that changed since it was read asks first — write
+over it, load the disk, or see the diff. `:file` (`:checktime`) checks
+every buffer now.
 
 ## Undo
 

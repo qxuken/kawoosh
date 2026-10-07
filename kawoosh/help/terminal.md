@@ -1,6 +1,6 @@
 # Terminals
 
-A terminal pane runs your shell, or any program, inside kawoosh, beside your buffers. This page covers opening one, which keys reach the shell, scrollback and copy mode, opening paths from the output, shell integration, and `$EDITOR`.
+A terminal pane runs your shell, or any program, inside kawoosh, beside your buffers. This page covers opening one, which keys reach the shell, scrollback and copy mode, tools, opening paths from the output, shell integration, and `$EDITOR`.
 
 ## Opening a terminal
 
@@ -66,6 +66,32 @@ The `Shift` page keys go to the program instead while it has the whole screen (a
 `<C-S-x>` (or `:scrollback`) turns the terminal's whole scrollback into a buffer in the same pane, in the colours it was printed in, with the caret where the terminal's cursor was. The status line says `COPY`. Every editor motion, search, selection and yank works in it. `<C-\><C-n>` does the same, for vim hands.
 
 To go back to the terminal: `q`, `<C-S-x>` again, or `<Esc>` once there is nothing left for it to clear (extra carets, a search's highlight). The shell keeps running meanwhile.
+
+A line the program printed wider than the pane, which the terminal wrapped onto more rows, is one line in the buffer, so a yank of it has no line breaks the program did not print.
+
+## Tools
+
+A tool is a program you launch by name into a terminal pane: `:tool NAME`, the tools picker (`<leader>t`), or its letter in the [launcher](panes.md#the-launcher). `:tool NAME` goes to the tool's terminal in this tab, or starts one here: each tab runs its own. Kawoosh has `git` (lazygit, in the working directory), `top` and `shell`, and `compile` while `compile.default` names a command — the same line in a terminal, for a run you type into. Your settings add more, or replace these by name:
+
+```lua
+tools = {
+  git = { cmd = "gitui" },                                    -- another git
+  run = { cmd = "cargo run", cwd = "root" },
+  serve = { cmd = "npm run dev", cwd = "root", dock = true, key = "v" },
+  logs = "tail -f /var/log/system.log",                       -- a string is its cmd
+}
+```
+
+| key | what |
+|---|---|
+| `cmd` | the command line it runs |
+| `cwd` | `"root"` for the working directory, or a path; unset, the current file's directory |
+| `place` | where it opens: `column` (a column of its own, the default), `under` the focused pane, or `dock` ([panes](panes.md#where-a-pane-opens)) |
+| `dock` | `true` is `place = "dock"`: one terminal for every tab, which `:tool NAME` shows and hides |
+| `restore` | a session starts it again where it was left, as it does `git`, `top` and `shell` |
+| `key` | its letter in the launcher |
+
+A project's `run` goes here too; `run.command` was the setting until 2026-10-07, and a settings file that still says it is told so. Saving the settings reaches the picker at once.
 
 ## Opening paths and links
 

@@ -16,18 +16,18 @@ buffers you have open, the pages among them.
 
 | page | what it covers |
 |---|---|
-| [start](start.md) | opening files, the command line, the leader and the which-key, saving, undo |
+| [start](start.md) | opening files, the command line, the leader and the which-key, saving, files changed on disk, undo |
 | [editing](editing.md) | modes, motions, several selections, helix's selections, surround and the rest |
 | [panes](panes.md) | splits, tabs, the strip of columns, the dock, workspaces |
-| [files](files.md) | the file manager, the pickers, directory jumps, links, a file's bytes, disk usage |
+| [files](files.md) | the file manager, the pickers, directory jumps, links, a file's bytes, pictures, disk usage, SQLite databases |
 | [search](search.md) | `/` and `*`, the project search, multibuffers, lists, marks |
 | [code](code.md) | syntax, language servers, diagnostics, compile commands, manual pages |
 | [vcs](vcs.md) | hunks in the gutter, staging them, reviewing a branch, blame, history, worktrees |
-| [terminal](terminal.md) | terminal panes, scrollback, copy mode, `$EDITOR` |
+| [terminal](terminal.md) | terminal panes, scrollback, copy mode, tools, `$EDITOR` |
 | [memory](memory.md) | everything yanked and deleted, the undo tree, secrets |
 | [look](look.md) | themes, fonts, the markdown buffer |
 | [settings](settings.md) | where settings live, how they layer, the ones worth knowing |
-| [lua](lua.md) | extending kawoosh: commands, keys, hooks, panes of your own |
+| [lua](lua.md) | extending kawoosh: commands, keys, hooks, panes of your own, where a frame's time goes |
 | [remote](remote.md) | editing on another machine over ssh |
 | [commands](commands.md) | every command there is now, with what it does |
 | [keys](keys.md) | every key bound now, by mode |
