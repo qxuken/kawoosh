@@ -1289,91 +1289,55 @@ impl Kawoosh {
         size
     }
 
-    /// Closes buffer `id` as `:bd` does: its unsaved changes kept
-    /// unless `force` (the reason is the error), the panes on it moved
-    /// to another listed buffer, each tab's to one of its own — a new
-    /// scratch when it was the last.
+    /// Closes buffer `id` as `:bd` does: the tab in front lets it go,
+    /// its panes on it moved to another of the tab's — a new scratch
+    /// when it was the last — and it closes when nobody else holds it
+    /// (workspaces.md Decision 7, amended 2026-10-07), its unsaved
+    /// changes kept unless `force` (the reason is the error). Another
+    /// tab's, or the dock's, it stays open there, unsaved or not.
     /// A field's buffer is the field's, closed with it, never here.
     pub(crate) fn close_buffer(&mut self, id: BufferId, force: bool) -> Result<(), &'static str> {
         if self.ed.is_field_buffer(id) {
             return Err("a field's buffer closes with its field");
         }
-        if self.ed.buffers[id].modified {
+        let shared = self.held_past_front(id);
+        if !shared && self.ed.buffers[id].modified {
             if !force {
                 return Err("unsaved changes (:bd! to discard)");
             }
             self.discard(id);
         }
         let next = self.back_from(id);
-        self.leave_in_other_tabs(id);
-        self.delete_buffer(id, next);
-        Ok(())
-    }
-
-    /// The panes on buffer `id` in the tabs not in front, each moved to
-    /// a buffer its own tab claims — the one it came from, else the
-    /// tab's first listed, else a new scratch — so a `:bd` in one
-    /// workspace puts none of its buffers in another's panes.
-    fn leave_in_other_tabs(&mut self, id: BufferId) {
-        for i in 0..self.layout.tabs.len() {
-            if i == self.layout.tab {
-                continue;
-            }
-            let mut panes = Vec::new();
-            self.layout.tabs[i].panes(&mut panes);
-            let on: Vec<ViewId> = panes
-                .into_iter()
-                .filter_map(|p| self.view_of(p))
-                .filter(|v| self.ed.views[*v].buffer == id)
-                .collect();
-            if on.is_empty() {
-                continue;
-            }
-            let claims = self.tab_claims(i);
-            let listed: Vec<BufferId> = self
-                .ed
-                .listed_buffers()
-                .into_iter()
-                .filter(|b| *b != id && claims.contains(b))
-                .collect();
-            let mut first = listed.first().copied();
-            for v in on {
-                let back = self.alternate.get(&v).copied();
-                let next = match back.filter(|b| listed.contains(b)).or(first) {
-                    Some(n) => n,
-                    None => {
-                        let s = self.ed.add_buffer(Buffer::new("*scratch*", ""));
-                        first = Some(s);
-                        s
-                    }
-                };
-                self.layout.tabs[i].seen.insert(next);
-                self.show_buffer(v, next);
-            }
+        if self.let_go(id, next) {
+            self.delete_buffer(id, next);
+        } else {
+            self.ed.message = format!(
+                "{} left to the other tabs that have it",
+                self.ed.buffers[id].name
+            );
         }
+        Ok(())
     }
 
     /// Where the focused pane goes from buffer `id`: the buffer it came
     /// from, where it was left, as vim's `:bd` goes back; else the
-    /// first other one of the tab's listed — never another open
-    /// workspace's, as `:bdo` spares them, even under `buffers.scope =
-    /// "all"`; else a new scratch.
+    /// first other one the tab holds — never another tab's, even under
+    /// `buffers.scope = "all"`; else a new scratch.
     pub(crate) fn back_from(&mut self, id: BufferId) -> BufferId {
         self.note_tab_buffers();
-        let scope = self.tab_buffers();
+        let holds = self.tab_holds(self.layout.tab);
         let listed: Vec<BufferId> = self
             .ed
             .listed_buffers()
             .into_iter()
-            .filter(|b| *b != id && scope.as_ref().is_none_or(|s| s.contains(b)))
+            .filter(|b| *b != id && holds.contains(b))
             .collect();
         let back = self
             .focused_view()
             .filter(|v| self.ed.views[*v].buffer == id)
             .and_then(|v| self.alternate.get(&v).copied())
             .filter(|b| listed.contains(b));
-        let theirs = self.other_workspaces_buffers();
-        match back.or_else(|| listed.into_iter().find(|b| !theirs.contains(b))) {
+        match back.or_else(|| listed.first().copied()) {
             Some(n) => n,
             None => self.ed.add_buffer(Buffer::new("*scratch*", "")),
         }
@@ -1500,7 +1464,7 @@ impl Kawoosh {
     fn hand_back(&mut self, id: BufferId) {
         self.alternate.retain(|_, b| *b != id);
         for t in &mut self.layout.tabs {
-            t.seen.remove(&id);
+            t.holds.remove(&id);
         }
         self.ed.borrowed.insert(id);
         self.release_waiters(id);

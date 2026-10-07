@@ -288,48 +288,33 @@ fn a_tab_lists_its_own_buffers_and_a_picker_starts_here() {
     std::fs::remove_dir_all(&root).ok();
 }
 
-/// `:bdo` closes the tab's other buffers and never another workspace's:
-/// not one a tab in another project has shown, even when this tab
-/// showed it too, nor one under the tab's directory in a repository
-/// nested in it that a tab of its own is in — which the tab's lists
-/// leave out too — and not under `buffers.scope = "all"` either. Only
-/// while that workspace is open: its tabs closed, they are the tab's.
+/// `:bdo` lets go of the tab's other buffers (workspaces.md Decision 7,
+/// amended 2026-10-07): one another tab holds stays open there — two
+/// tabs in one directory included, which the old rule took for one
+/// workspace — a file under the tab's directory that only another tab
+/// opened is not in its list to begin with, and under `buffers.scope =
+/// "all"` the other tabs' stay as well.
 #[test]
-fn bdo_leaves_other_workspaces_buffers_even_nested_ones() {
+fn bdo_closes_only_what_no_other_tab_holds() {
     let root = tmp("bdo");
-    let (outer, inner) = (root.join("outer"), root.join("outer/inner"));
-    let beta = root.join("beta");
-    for dir in [&outer, &inner, &beta] {
-        std::fs::create_dir_all(dir.join(".git")).unwrap();
-    }
-    for (dir, f) in [
-        (&outer, "a.txt"),
-        (&outer, "b.txt"),
-        (&inner, "in.txt"),
-        (&beta, "two.txt"),
-    ] {
-        std::fs::write(dir.join(f), format!("{f}\n")).unwrap();
+    let (a, _) = projects(&root);
+    for f in ["one.txt", "both.txt", "two.txt", "three.txt"] {
+        std::fs::write(a.join(f), format!("{f}\n")).unwrap();
     }
     let (mut d, mut app) = launch();
-    ex(&mut d, &mut app, &format!("cd {}", inner.display()));
-    ex(&mut d, &mut app, "e in.txt");
+    ex(&mut d, &mut app, &format!("cd {}", a.display()));
+    ex(&mut d, &mut app, "e one.txt");
+    ex(&mut d, &mut app, "e both.txt");
     ex(&mut d, &mut app, "tabnew");
-    ex(&mut d, &mut app, &format!("cd {}", beta.display()));
     ex(&mut d, &mut app, "e two.txt");
-    ex(&mut d, &mut app, "tabnew");
-    ex(&mut d, &mut app, &format!("cd {}", outer.display()));
-    // two.txt shown here too: still beta's.
-    ex(
-        &mut d,
-        &mut app,
-        &format!("e {}", beta.join("two.txt").display()),
-    );
-    ex(&mut d, &mut app, "e b.txt");
-    ex(&mut d, &mut app, "e a.txt");
-    // in.txt is under the tab's directory, but the nested repository's.
+    ex(&mut d, &mut app, "e both.txt");
+    ex(&mut d, &mut app, "e three.txt");
     ex(&mut d, &mut app, "ls");
     let ls = app.ed.message.clone();
-    assert!(ls.contains("b.txt") && !ls.contains("in.txt"), "{ls}");
+    assert!(
+        !ls.contains("one.txt"),
+        "under the directory, but the other tab's: {ls}"
+    );
     let names = |app: &Kawoosh| {
         let mut n: Vec<String> = app
             .ed
@@ -343,28 +328,36 @@ fn bdo_leaves_other_workspaces_buffers_even_nested_ones() {
     ex(&mut d, &mut app, "bdo");
     assert_eq!(
         names(&app),
-        ["a.txt", "in.txt", "two.txt"],
+        ["both.txt", "one.txt", "three.txt"],
         "{}",
         app.ed.message
     );
-    assert_eq!(app.ed.message, "1 buffer(s) deleted");
+    assert_eq!(
+        app.ed.message, "1 buffer(s) deleted, 1 left to other tabs",
+        "two.txt goes, both.txt is the first tab's too"
+    );
+    ex(&mut d, &mut app, "ls");
+    assert!(
+        !app.ed.message.contains("both.txt"),
+        "let go: {}",
+        app.ed.message
+    );
     ex(&mut d, &mut app, "set buffers.scope=all");
     ex(&mut d, &mut app, "bdo");
-    assert_eq!(names(&app), ["a.txt", "in.txt", "two.txt"]);
-    // With their tabs closed the workspaces are too, and theirs is
-    // anybody's: in.txt under the tab's directory, two.txt shown here.
+    assert_eq!(names(&app), ["both.txt", "one.txt", "three.txt"]);
     ex(&mut d, &mut app, "set buffers.scope!");
-    while app.layout.tabs.len() > 1 {
-        let here = app.layout.tabs[app.layout.tab].cwd.as_deref() == Some(outer.as_path());
-        ex(&mut d, &mut app, if here { "tabn" } else { "tabc" });
-    }
-    assert_eq!(
-        names(&app),
-        ["a.txt", "in.txt", "two.txt"],
-        "the outer tab's now, so its tabs' closing kept them"
-    );
+    // The first tab has its own as it left them.
+    d.keys(&mut app, "gt");
+    ex(&mut d, &mut app, "ls");
+    let ls = app.ed.message.clone();
+    assert!(ls.contains("one.txt") && ls.contains("both.txt"), "{ls}");
+    assert!(!ls.contains("three.txt"), "{ls}");
+    // Its tab closed, nobody holds both.txt but the one left.
+    d.keys(&mut app, "gt");
+    ex(&mut d, &mut app, "tabc");
+    d.frame(&mut app);
     ex(&mut d, &mut app, "bdo");
-    assert_eq!(names(&app), ["a.txt"], "{}", app.ed.message);
+    assert_eq!(names(&app), ["both.txt"], "{}", app.ed.message);
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -404,11 +397,12 @@ fn bd_on_a_scratch_stays_in_its_workspace() {
     std::fs::remove_dir_all(&root).ok();
 }
 
-/// `:bd` on a file open in two workspaces' tabs: each tab's pane goes
-/// to a buffer of its own tab's — the one it came from, else a new
-/// scratch — never the closing tab's.
+/// `:bd` on a file open in three tabs: the tab lets it go — its pane
+/// to the one it came from, else a new scratch — and the others keep
+/// it, unsaved changes and all; the last to let go closes it, and is
+/// asked about unsaved changes as a lone `:bd` is.
 #[test]
-fn bd_moves_another_workspaces_pane_to_its_own() {
+fn bd_lets_go_and_the_last_closes() {
     let root = tmp("bdboth");
     let (a, b) = projects(&root);
     std::fs::write(a.join("one.txt"), "one\n").unwrap();
@@ -423,28 +417,47 @@ fn bd_moves_another_workspaces_pane_to_its_own() {
     ex(&mut d, &mut app, &format!("cd {}", b.display()));
     ex(&mut d, &mut app, "e two.txt");
     ex(&mut d, &mut app, &format!("e {}", both.display()));
+    d.keys(&mut app, "ix");
+    d.key(&mut app, "escape", KeyMods::default());
     // A tab where nothing else is its own.
     ex(&mut d, &mut app, "tabnew");
-    ex(&mut d, &mut app, &format!("cd {}", b.join("sub").display()));
     ex(&mut d, &mut app, &format!("e {}", both.display()));
     let shown = |app: &Kawoosh| {
         let v = app.focused_view().unwrap();
         app.ed.buffers[app.ed.views[v].buffer].name.clone()
     };
+    let open = |app: &Kawoosh| {
+        app.ed
+            .listed_buffers()
+            .into_iter()
+            .any(|id| app.ed.buffers[id].name == "both.txt")
+    };
     assert_eq!(shown(&app), "both.txt");
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(shown(&app), "*scratch*", "not another tab's");
+    assert!(
+        open(&app),
+        "unsaved, but the others have it: {}",
+        app.ed.message
+    );
     d.keys(&mut app, "gt");
     ex(&mut d, &mut app, "bd");
     assert_eq!(shown(&app), "one.txt", "alpha's pane goes back");
+    assert!(open(&app));
     d.keys(&mut app, "gt");
-    assert_eq!(shown(&app), "two.txt", "beta's to where it came from");
-    d.keys(&mut app, "gt");
-    assert_eq!(shown(&app), "*scratch*", "not alpha's one.txt");
+    assert_eq!(shown(&app), "both.txt", "beta's kept it");
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(app.ed.message, "unsaved changes (:bd! to discard)");
+    ex(&mut d, &mut app, "bd!");
+    assert_eq!(shown(&app), "two.txt", "to where it came from");
+    assert!(!open(&app), "the last let go");
     std::fs::remove_dir_all(&root).ok();
 }
 
-/// Closing a tab closes the buffers no tab has now: not one under
-/// another tab's directory, nor one another tab has shown; an unsaved
-/// one is kept, the tab in front's, and said.
+/// Closing a tab lets go of what it holds, and what nobody holds then
+/// closes: not one another tab has shown — but one under another tab's
+/// directory that only the closed tab opened, yes; an unsaved one is
+/// kept, the tab in front's, and said.
 #[test]
 fn closing_a_tab_closes_its_buffers_but_unsaved() {
     let root = tmp("tabc");
@@ -490,8 +503,8 @@ fn closing_a_tab_closes_its_buffers_but_unsaved() {
     assert_eq!(app.layout.tabs.len(), 1);
     assert_eq!(
         names(&app),
-        ["both.txt", "deep.txt", "one.txt", "three.txt"],
-        "two.txt goes; deep.txt is alpha's by its directory, both.txt shown there"
+        ["both.txt", "one.txt", "three.txt"],
+        "two.txt and deep.txt go, though deep.txt is under alpha; both.txt shown there"
     );
     assert!(
         app.ed.message.contains("1 unsaved kept here"),

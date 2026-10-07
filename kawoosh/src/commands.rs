@@ -524,101 +524,115 @@ impl Kawoosh {
     }
 
     /// The buffers the focused tab counts as its own (roadmap step 30):
-    /// under `buffers.scope = "tab"` (the default) its claims
-    /// ([`Self::tab_claims`]) and what the dock shows; `all`, none —
+    /// under `buffers.scope = "tab"` (the default) the ones it holds
+    /// ([`Self::tab_holds`]) and what the dock shows; `all`, none —
     /// every buffer is every tab's.
     pub(crate) fn tab_buffers(&self) -> Option<std::collections::HashSet<BufferId>> {
         if self.ed.settings.str("buffers.scope") == Some("all") {
             return None;
         }
+        let mut set = self.dock_buffers();
+        set.extend(self.tab_holds(self.layout.tab));
+        Some(set)
+    }
+
+    /// What the dock's panes show.
+    fn dock_buffers(&self) -> std::collections::HashSet<BufferId> {
         let mut panes = Vec::new();
         if let Some(dock) = &self.layout.dock {
             dock.panes(&mut panes);
         }
-        let mut set: std::collections::HashSet<BufferId> = panes
+        panes
             .into_iter()
             .filter_map(|p| self.view_of(p))
             .map(|v| self.ed.views[v].buffer)
-            .collect();
-        set.extend(self.tab_claims(self.layout.tab));
-        Some(set)
+            .collect()
     }
 
-    /// Tab `i`'s directory: the editor's for the tab in front.
-    fn tab_cwd(&self, i: usize) -> &Path {
-        match &self.layout.tabs[i].cwd {
-            Some(d) if i != self.layout.tab => d,
-            _ => &self.cwd,
-        }
-    }
-
-    /// What tab `i` counts as its own, the dock aside: a buffer it has
-    /// shown (`Tab::seen`) — a scratch typed in another tab is that
-    /// tab's, a file opened here from elsewhere is this one's — and a
-    /// listed file under its directory, but for one in another open
-    /// workspace nested in it: a repository inside the project, or a
-    /// project under a tab at `~`, is its own tab's.
-    pub(crate) fn tab_claims(&self, i: usize) -> std::collections::HashSet<BufferId> {
-        let cwd = self.tab_cwd(i);
-        let home = self.workspace_root_seen(cwd);
-        let nested: Vec<PathBuf> = (0..self.layout.tabs.len())
-            .map(|t| self.workspace_root_seen(self.tab_cwd(t)))
-            .filter(|w| *w != home)
-            .map(PathBuf::from)
-            .filter(|w| w.starts_with(cwd))
-            .collect();
-        let mut set = self.layout.tabs[i].seen.clone();
-        for id in self.ed.listed_buffers() {
-            if self.ed.buffers[id]
-                .path
-                .as_deref()
-                .is_some_and(|p| p.starts_with(cwd) && !nested.iter().any(|w| p.starts_with(w)))
-            {
-                set.insert(id);
-            }
-        }
+    /// What tab `i` holds (workspaces.md Decision 7, amended
+    /// 2026-10-07): what a pane of it has shown and it has not let go
+    /// — wherever the file is, whatever the tab's directory — and what
+    /// its panes show now.
+    pub(crate) fn tab_holds(&self, i: usize) -> std::collections::HashSet<BufferId> {
+        let mut set = self.layout.tabs[i].holds.clone();
+        let mut panes = Vec::new();
+        self.layout.tabs[i].panes(&mut panes);
+        set.extend(
+            panes
+                .into_iter()
+                .filter_map(|p| self.view_of(p))
+                .map(|v| self.ed.views[v].buffer),
+        );
         set
     }
 
-    /// The buffers of the tabs closed since last frame that no tab has
-    /// now — none claims it ([`Self::tab_claims`]) and no pane shows it —
-    /// closed with them; an unsaved one is kept, the tab in front's so
-    /// its lists reach it, and said.
+    /// How many hold buffer `id`: each tab that does, and the dock when
+    /// a pane of it shows it. Open while one does; the last let go, it
+    /// closes.
+    pub(crate) fn holders(&self, id: BufferId) -> usize {
+        let tabs = (0..self.layout.tabs.len())
+            .filter(|i| self.tab_holds(*i).contains(&id))
+            .count();
+        tabs + usize::from(self.dock_buffers().contains(&id))
+    }
+
+    /// Whether buffer `id` stays open once the tab in front lets it go
+    /// ([`Self::let_go`]): another tab holds it, or a dock pane but the
+    /// focused one shows it.
+    pub(crate) fn held_past_front(&self, id: BufferId) -> bool {
+        let front = self.layout.tab;
+        if (0..self.layout.tabs.len()).any(|i| i != front && self.tab_holds(i).contains(&id)) {
+            return true;
+        }
+        let mut panes = Vec::new();
+        if let Some(dock) = &self.layout.dock {
+            dock.panes(&mut panes);
+        }
+        let focused = self.layout.dock_focused.then(|| self.layout.focused());
+        panes
+            .into_iter()
+            .filter(|p| Some(*p) != focused)
+            .filter_map(|p| self.view_of(p))
+            .any(|v| self.ed.views[v].buffer == id)
+    }
+
+    /// The tab in front lets buffer `id` go: its panes on it — and the
+    /// focused one, in the dock too — move to `next`. Whether that was
+    /// the last hold on it; the caller closes it then.
+    pub(crate) fn let_go(&mut self, id: BufferId, next: BufferId) -> bool {
+        let mut panes = Vec::new();
+        self.layout.tab().panes(&mut panes);
+        let mut on: Vec<ViewId> = panes.into_iter().filter_map(|p| self.view_of(p)).collect();
+        on.extend(self.focused_view());
+        for v in on {
+            if self.ed.views.get(v).is_some_and(|w| w.buffer == id) {
+                self.show_buffer(v, next);
+            }
+        }
+        self.layout.tab_mut().holds.insert(next);
+        self.layout.tab_mut().holds.remove(&id);
+        self.holders(id) == 0
+    }
+
+    /// The buffers of the tabs closed since last frame that nobody holds
+    /// now ([`Self::holders`]), closed with them; an unsaved one is kept,
+    /// the tab in front's so its lists reach it, and said.
     pub(crate) fn sweep_closed_tabs(&mut self) {
         let closed = std::mem::take(&mut self.layout.closed_tabs);
         if closed.is_empty() {
             return;
         }
-        let listed = self.ed.listed_buffers();
-        let mut had = std::collections::HashSet::new();
-        for t in &closed {
-            had.extend(t.seen.iter().copied());
-            if let Some(cwd) = &t.cwd {
-                had.extend(listed.iter().copied().filter(|id| {
-                    self.ed.buffers[*id]
-                        .path
-                        .as_deref()
-                        .is_some_and(|p| p.starts_with(cwd))
-                }));
-            }
-        }
-        let mut kept: std::collections::HashSet<BufferId> = (0..self.layout.tabs.len())
-            .flat_map(|i| self.tab_claims(i))
+        let had: std::collections::HashSet<BufferId> = closed
+            .iter()
+            .flat_map(|t| t.holds.iter().copied())
             .collect();
-        kept.extend(
-            self.layout
-                .all_panes()
-                .into_iter()
-                .filter_map(|p| self.view_of(p))
-                .map(|v| self.ed.views[v].buffer),
-        );
         let (mut gone, mut unsaved) = (0, 0);
-        for id in listed {
-            if !had.contains(&id) || kept.contains(&id) {
+        for id in self.ed.listed_buffers() {
+            if !had.contains(&id) || self.holders(id) > 0 {
                 continue;
             }
             if self.ed.buffers[id].modified {
-                self.layout.tab_mut().seen.insert(id);
+                self.layout.tab_mut().holds.insert(id);
                 unsaved += 1;
                 continue;
             }
@@ -632,33 +646,41 @@ impl Kawoosh {
         }
     }
 
-    /// The buffers another open workspace has — one a tab is in
-    /// (workspaces.md Decision 8): what a tab in it claims, and what a
-    /// dock pane of it shows — which `:bdo` leaves be and `:bd` does not
-    /// go to. A closed one's are anybody's, a dock pane it kept
-    /// included.
-    pub(crate) fn other_workspaces_buffers(&self) -> std::collections::HashSet<BufferId> {
-        let front = self.workspace_root_seen(&self.cwd);
-        let mut open = std::collections::HashSet::new();
-        let mut set = std::collections::HashSet::new();
+    /// A listed buffer nobody holds — a session's unsaved one put back
+    /// hidden, one a plugin loaded without a pane — taken by the tab
+    /// whose directory has its file, the deepest, else the tab in
+    /// front, so every open buffer is in some tab's lists. A closed
+    /// tab's are left to [`Self::sweep_closed_tabs`].
+    fn hold_strays(&mut self) {
+        let mut held = self.dock_buffers();
         for i in 0..self.layout.tabs.len() {
-            let ws = self.workspace_root_seen(self.tab_cwd(i));
-            if ws != front {
-                set.extend(self.tab_claims(i));
-                open.insert(ws);
-            }
+            held.extend(self.tab_holds(i));
         }
-        for (p, owner) in &self.layout.dock_owner {
-            if open.contains(owner)
-                && let Some(v) = self.view_of(*p)
-            {
-                set.insert(self.ed.views[v].buffer);
-            }
+        for t in &self.layout.closed_tabs {
+            held.extend(t.holds.iter().copied());
         }
-        set
+        for id in self.ed.listed_buffers() {
+            if held.contains(&id) {
+                continue;
+            }
+            let path = self.ed.buffers[id].path.as_deref();
+            let home = (0..self.layout.tabs.len())
+                .filter_map(|i| {
+                    let cwd = match &self.layout.tabs[i].cwd {
+                        Some(d) if i != self.layout.tab => d,
+                        _ => &self.cwd,
+                    };
+                    path.filter(|p| p.starts_with(cwd))
+                        .map(|_| (cwd.components().count(), i))
+                })
+                .max()
+                .map_or(self.layout.tab, |(_, i)| i);
+            self.layout.tabs[home].holds.insert(id);
+        }
     }
 
-    /// What the focused tab's panes show now, into its `seen`.
+    /// What the focused tab's panes show now, into what it holds; and
+    /// what nobody holds, to a tab ([`Self::hold_strays`]).
     pub(crate) fn note_tab_buffers(&mut self) {
         let mut panes = Vec::new();
         self.layout.tab().panes(&mut panes);
@@ -667,7 +689,8 @@ impl Kawoosh {
             .filter_map(|p| self.view_of(p))
             .map(|v| self.ed.views[v].buffer)
             .collect();
-        self.layout.tab_mut().seen.extend(shown);
+        self.layout.tab_mut().holds.extend(shown);
+        self.hold_strays();
     }
 
     /// The listed buffers the lists show: the tab's, or all.
@@ -1176,45 +1199,53 @@ fn buffers() -> Vec<ShellCommand> {
                 }
             },
         ),
-        // `:bdo`: every buffer of the tab's but the current one goes —
-        // what the lists show it, never another workspace's, even under
-        // `buffers.scope = "all"`; a modified one stays unless `!`, and
-        // the message says how many.
+        // `:bdo`: the tab lets go of every buffer of its list but the
+        // current one (workspaces.md Decision 7, amended 2026-10-07);
+        // one another tab or the dock still holds stays open there, the
+        // rest close — a modified one stays unless `!` — and the
+        // message says how many of each.
         cmd(
             Spec::new("buffer delete others")
                 .alias(&["bdo", "bdother", "bdothers"])
                 .bang("discard unsaved changes")
-                .doc("close every other buffer"),
+                .doc("close every other buffer of the tab's"),
             |k, ctx| {
                 let Some(v) = k.view_arg(ctx) else { return };
                 let keep = k.ed.views[v].buffer;
                 k.note_tab_buffers();
                 let scope = k.tab_buffers();
-                let theirs = k.other_workspaces_buffers();
                 let others: Vec<BufferId> =
                     k.ed.listed_buffers()
                         .into_iter()
-                        .filter(|b| *b != keep && !theirs.contains(b))
+                        .filter(|b| *b != keep)
                         .filter(|b| scope.as_ref().is_none_or(|s| s.contains(b)))
                         .collect();
-                let (mut gone, mut kept) = (0, 0);
+                let (mut gone, mut kept, mut theirs) = (0, 0, 0);
                 for id in others {
+                    let ours = k.tab_holds(k.layout.tab).contains(&id);
+                    let last = !k.held_past_front(id);
+                    if last && k.ed.buffers[id].modified && !ctx.bang() {
+                        kept += 1;
+                        continue;
+                    }
+                    if !k.let_go(id, keep) {
+                        theirs += usize::from(ours);
+                        continue;
+                    }
                     if k.ed.buffers[id].modified {
-                        if !ctx.bang() {
-                            kept += 1;
-                            continue;
-                        }
                         k.discard(id);
                     }
                     k.delete_buffer(id, keep);
                     gone += 1;
                 }
-                k.ed.message = match kept {
-                    0 => format!("{gone} buffer(s) deleted"),
-                    _ => {
-                        format!("{gone} buffer(s) deleted, {kept} unsaved kept (:bdo! to discard)")
-                    }
-                };
+                let mut said = format!("{gone} buffer(s) deleted");
+                if theirs > 0 {
+                    said += &format!(", {theirs} left to other tabs");
+                }
+                if kept > 0 {
+                    said += &format!(", {kept} unsaved kept (:bdo! to discard)");
+                }
+                k.ed.message = said;
             },
         ),
     ]

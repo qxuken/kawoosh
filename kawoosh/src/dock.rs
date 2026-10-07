@@ -51,15 +51,6 @@ impl Kawoosh {
         w
     }
 
-    /// [`Self::workspace_root`] where it cannot be kept: from what the
-    /// dock asked last frame — every tab's directory — else the disk.
-    pub(crate) fn workspace_root_seen(&self, dir: &Path) -> String {
-        match self.dock_state.roots.get(dir) {
-            Some(w) => w.clone(),
-            None => workspace_root_of(dir),
-        }
-    }
-
     /// Once a frame: the dock's kind from `layout.dock`, its new panes
     /// stamped with the workspace in front, a strip reordered when the
     /// workspace in front changes, and the workspaces no tab is in any
