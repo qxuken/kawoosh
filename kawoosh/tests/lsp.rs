@@ -3147,8 +3147,11 @@ fn the_compile_picker_adds_what_the_server_says_can_run() {
     let row = offer.iter().find(|o| o.cmd == test).unwrap();
     assert_eq!(row.why, "test tests::at_line_1");
     assert_eq!(row.cwd, dir);
+    // The server's command: `python3` or `python`, or `uv` (Windows
+    // asks it first).
+    let (python, _) = drive::python();
     assert!(
-        row.from.contains("python") || row.from.contains("fake"),
+        row.from.contains(&python) || row.from.contains("fake"),
         "{}",
         row.from
     );
