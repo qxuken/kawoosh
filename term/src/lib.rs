@@ -5,6 +5,8 @@
 
 #[cfg(windows)]
 mod console_host;
+#[cfg(windows)]
+mod front;
 mod graphics;
 #[cfg(windows)]
 mod job;
@@ -350,7 +352,7 @@ pub struct Terminal {
     /// The job the child runs in, ending what it started as this is
     /// dropped (`job`).
     #[cfg(windows)]
-    _job: Option<job::Job>,
+    job: Option<job::Job>,
     events: Receiver<Event>,
     size: TermSize,
     pub title: String,
@@ -484,7 +486,7 @@ impl Terminal {
                 writer: Some(writer),
                 child: Some(child),
                 #[cfg(windows)]
-                _job: job,
+                job,
                 events,
                 size,
                 title: String::new(),
@@ -520,7 +522,7 @@ impl Terminal {
             writer: None,
             child: None,
             #[cfg(windows)]
-            _job: None,
+            job: None,
             events,
             size,
             title: String::new(),
@@ -997,7 +999,16 @@ impl Terminal {
         Some((pgid, pid_name(pgid as u32)?))
     }
 
-    #[cfg(not(unix))]
+    /// The program in front — the shell's newest child, else the shell
+    /// (`front`, a pseudo console having no foreground group) — and its
+    /// name, lowercase with no `.exe`.
+    #[cfg(windows)]
+    pub fn foreground(&self) -> Option<(i32, String)> {
+        let root = self.child.as_ref()?.process_id()?;
+        front::front(root, self.job.as_ref()).map(|(pid, name)| (pid as i32, name))
+    }
+
+    #[cfg(not(any(unix, windows)))]
     pub fn foreground(&self) -> Option<(i32, String)> {
         None
     }

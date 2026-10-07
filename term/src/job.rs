@@ -22,9 +22,21 @@ use std::os::windows::io::RawHandle;
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    SetInformationJobObject,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicProcessIdList,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
 };
+
+/// The most processes [`Job::pids`] lists; a job with more is listed by
+/// a snapshot of every process instead.
+const LISTED: usize = 256;
+
+/// `JOBOBJECT_BASIC_PROCESS_ID_LIST` with room for [`LISTED`] numbers.
+#[repr(C)]
+struct IdList {
+    assigned: u32,
+    listed: u32,
+    ids: [usize; LISTED],
+}
 
 /// The job a terminal's shell runs in; closed, it ends them all.
 pub(crate) struct Job {
@@ -54,6 +66,29 @@ impl Job {
                 return None;
             }
             Some(Self { job: h as usize })
+        }
+    }
+
+    /// The processes in the job: the shell and what it started, a few
+    /// numbers where a snapshot is every process there is. None when
+    /// the system will not say, or there are more than [`LISTED`].
+    pub(crate) fn pids(&self) -> Option<Vec<u32>> {
+        // SAFETY: the job's handle is open while `self` is; the list is
+        // plain data, its size the one given.
+        unsafe {
+            let mut list: Box<IdList> = Box::new(std::mem::zeroed());
+            let ok = QueryInformationJobObject(
+                self.job as HANDLE,
+                JobObjectBasicProcessIdList,
+                (&raw mut *list).cast(),
+                size_of::<IdList>() as u32,
+                std::ptr::null_mut(),
+            );
+            if ok == 0 || list.listed < list.assigned {
+                return None;
+            }
+            let n = (list.listed as usize).min(LISTED);
+            Some(list.ids[..n].iter().map(|&id| id as u32).collect())
         }
     }
 }

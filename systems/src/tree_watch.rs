@@ -1245,4 +1245,87 @@ mod tests {
         drop(w);
         remove(&dir);
     }
+
+    /// A probe, not a check (`cargo test -p kawoosh-systems -- --ignored
+    /// overflow_probe --nocapture`): bursts of files with long names
+    /// written under a watched root, every core kept busy, and for each
+    /// burst whether every file was said or its root said as lost — what
+    /// a silent overflow (fewer than [`BURST`] heard) would break.
+    #[test]
+    #[ignore]
+    fn overflow_probe() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = scratch("overflow");
+        let w = TreeWatch::spawn(Mode::native());
+        w.watch(vec![dir.clone()]);
+        wait_up(&w, &dir.join("probe.txt"));
+        let busy = std::env::var("PROBE_BUSY").map_or(true, |v| v != "0");
+        let stop = Arc::new(AtomicBool::new(false));
+        let spinners: Vec<_> = (0..if busy {
+            std::thread::available_parallelism().map_or(8, |n| n.get() * 2)
+        } else {
+            0
+        })
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    let mut x = 0u64;
+                    while !stop.load(Ordering::Relaxed) {
+                        x = x.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    }
+                    x
+                })
+            })
+            .collect();
+        let deep = [
+            "components",
+            "settings",
+            "notifications",
+            "preferences",
+            "appearance",
+        ]
+        .iter()
+        .collect::<PathBuf>();
+        let mut silent = 0;
+        for (round, n) in [16, 32, 48, 64, 96, 127, 200, 1000].into_iter().enumerate() {
+            let sub = dir.join(format!("r{round}")).join(&deep);
+            std::fs::create_dir_all(&sub).unwrap();
+            // Drain what the folders' making said.
+            while w.batches.recv_timeout(QUIET * 3).is_ok() {}
+            let names: Vec<PathBuf> = (0..n)
+                .map(|i| {
+                    sub.join(format!(
+                        "{i:04}-a-rather-long-file-name-as-a-generated-component-has-it.tsx"
+                    ))
+                })
+                .collect();
+            for p in &names {
+                std::fs::write(p, "x").unwrap();
+            }
+            let mut said: HashSet<PathBuf> = HashSet::new();
+            let mut lost = false;
+            while let Ok(b) = w.batches.recv_timeout(MOST * 2) {
+                lost |= b.lost.contains(&dir);
+                said.extend(b.changes.into_iter().map(|(p, _)| p));
+            }
+            let missed = names.iter().filter(|p| !said.contains(*p)).count();
+            let verdict = match (missed, lost) {
+                (0, _) => "all said",
+                (_, true) => "missed, root said as lost",
+                (_, false) => {
+                    silent += 1;
+                    "MISSED SILENTLY"
+                }
+            };
+            eprintln!("{n:5} files: {missed:5} missed, lost={lost}: {verdict}");
+        }
+        stop.store(true, Ordering::Relaxed);
+        for s in spinners {
+            let _ = s.join();
+        }
+        drop(w);
+        remove(&dir);
+        assert_eq!(silent, 0, "bursts missed with no word");
+    }
 }
