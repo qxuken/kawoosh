@@ -362,10 +362,12 @@ After a day's use (2026-09-23), five more:
   syntax and structure layers hold (`markdown::TableCache`; a layer
   counts its changes, `Buffer::layer_changes`): a keystroke beside a
   500-row table 0.5ms, not 6. An edit reads the table again, and the
-  parse's answer after it again — about 4ms each for 500 rows; a frame
-  that spends more than `markdown::SLOW_TABLES` on it while the buffer
-  is edited offers once a buffer, in a toast, to draw markdown as its
-  source (`markdown toggle`). A cell is inline like a
+  parse's answer after it again — about 3ms each for 500 rows. An edit
+  whose reads come to more than `markdown::SLOW_TABLES` (4ms) is a slow
+  one, and three slow edits of the last five offer once a buffer, in a
+  toast, to draw markdown as its source (`markdown toggle`): one slow
+  edit is a busy CPU as likely as a big table. On the machine it was
+  measured on, a 500-row table offers and a 300-row one does not. A cell is inline like a
   paragraph: the grammar injects `markdown_inline` into
   `pipe_table_cell` too, which tree-sitter-md's own query does not, and
   a cell's `**bold**` had kept its stars. An image is a cell, at most its column's share of the pane,

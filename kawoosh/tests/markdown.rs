@@ -498,9 +498,10 @@ fn a_table_scrolled_half_out_keeps_its_columns() {
     assert!(x(&d, "v2") < top, "narrower: {} < {top}", x(&d, "v2"));
 }
 
-/// A table an edit reads again for too long offers, once a buffer, to
-/// draw markdown as its source — its button `:markdown toggle`; reading
-/// the buffer, however slow its tables, offers nothing.
+/// Tables that edits read again for too long offer, once a buffer, to
+/// draw markdown as its source — its button `:markdown toggle` — after
+/// three slow edits of the last five, not one, which a busy CPU makes as
+/// well; reading the buffer, however slow its tables, offers nothing.
 #[test]
 fn a_table_slow_to_edit_offers_the_source() {
     let dir = fixture("slowtable");
@@ -526,12 +527,17 @@ fn a_table_slow_to_edit_offers_the_source() {
     assert_eq!(offers(&app), vec![], "read, not edited");
     d.keys(&mut app, "/alpha");
     d.key(&mut app, "enter", KeyMods::default());
+    for (i, k) in ["x", "u"].into_iter().enumerate() {
+        d.press(&mut app, k);
+        settle(&mut d, &mut app);
+        assert_eq!(offers(&app), vec![], "{} slow edits are not enough", i + 1);
+    }
     d.press(&mut app, "x");
     settle(&mut d, &mut app);
     assert_eq!(
         offers(&app),
         vec![(true, vec!["markdown toggle".to_string()])],
-        "a toast with its button"
+        "the third: a toast with its button"
     );
     d.press(&mut app, "ux");
     settle(&mut d, &mut app);

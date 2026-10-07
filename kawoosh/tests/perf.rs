@@ -446,8 +446,13 @@ fn table_frame_cost() {
                 worst = worst.max(e);
             }
         }
+        let offered = app
+            .notes
+            .shown
+            .iter()
+            .any(|s| s.text.contains("is read again on each edit"));
         eprintln!(
-            "{n:>5}  {:<28} {:>6}  {:>8.3} {:>8.3}   (the parse's frame {:.3})",
+            "{n:>5}  {:<28} {:>6}  {:>8.3} {:>8.3}   (the parse's frame {:.3}; source offered: {offered})",
             "x/u mid-table: edit's frame",
             "",
             edit / (2 * steps) as f64,

@@ -191,9 +191,10 @@ pub struct Kawoosh {
     /// Each rendered buffer's tables: their lines, columns and widest
     /// cells, kept while its text and its layers stay as they were.
     pub(crate) md_table_cache: HashMap<BufferId, crate::markdown::TableCache>,
-    /// A frame's tables read again past this, while a buffer is edited,
-    /// offers once a buffer to draw markdown as its source (a test's
-    /// zero offers at any table).
+    /// An edit whose tables take longer to read again is a slow one, and
+    /// enough slow edits in a row offer once a buffer to draw markdown as
+    /// its source (`markdown::TableCache::slow`; a test's zero counts any
+    /// edit that read a table).
     pub md_slow_tables: std::time::Duration,
     /// The buffers offered so.
     pub(crate) md_slow_offered: HashSet<BufferId>,

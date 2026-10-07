@@ -956,11 +956,16 @@ pub struct Tables {
 /// The most rows a table is walked back and read for its columns.
 const TABLE_MAX: usize = 500;
 
-/// Half a 120Hz frame: a frame that reads its tables again for longer,
-/// while the buffer is edited, offers to draw markdown as its source
-/// (`Kawoosh::md_slow_tables`). An edit and the parse's answer after it
-/// each read a table whole — about 4ms each for 500 rows (2026-10-08).
+/// Half a 120Hz frame: an edit whose tables take longer to read again —
+/// its own frame's read and the parse's answer's after it, about 3ms
+/// each for 500 rows and 1.8ms for 300 (2026-10-08) — is a slow one,
+/// and [`SLOW_EDITS`] of the last [`EDITS_KEPT`] offer to draw markdown
+/// as its source (`Kawoosh::md_slow_tables`).
 pub const SLOW_TABLES: std::time::Duration = std::time::Duration::from_millis(4);
+/// How many of the last [`EDITS_KEPT`] edits must be slow: one is a
+/// busy CPU as likely as a big table.
+const SLOW_EDITS: usize = 3;
+const EDITS_KEPT: usize = 5;
 
 /// A table as the whole of it is drawn, for its columns to be as wide
 /// in a frame that draws a few of its rows: a kui table is as wide as
@@ -986,13 +991,10 @@ pub struct TableWidths {
 pub struct TableCache {
     stamp: Option<(kawoosh_doc::Version, u64, u64, usize)>,
     tables: HashMap<usize, TableWidths>,
-    /// Whether the text changed since the cache first read it: the
-    /// buffer is being edited, not only read.
-    edited: bool,
-    /// What reading tables cost this frame, and the most rows of one
-    /// read.
-    spent: std::time::Duration,
-    rows: usize,
+    /// The last edits, newest last: what reading tables again cost
+    /// each, its frames' reads summed until the next edit, and the most
+    /// rows of one read. None while the buffer is only read.
+    edits: std::collections::VecDeque<(std::time::Duration, usize)>,
 }
 
 impl TableCache {
@@ -1007,12 +1009,15 @@ impl TableCache {
             tabstop,
         ));
         if self.stamp != stamp {
-            self.edited |= self.stamp.is_some_and(|s| s.0 != buf.version());
+            if self.stamp.is_some_and(|s| s.0 != buf.version()) {
+                if self.edits.len() == EDITS_KEPT {
+                    self.edits.pop_front();
+                }
+                self.edits.push_back(Default::default());
+            }
             self.stamp = stamp;
             self.tables.clear();
         }
-        self.spent = std::time::Duration::ZERO;
-        self.rows = 0;
         Tables {
             known: self
                 .tables
@@ -1032,7 +1037,7 @@ impl TableCache {
         style: &Style,
         tabstop: usize,
     ) -> &TableWidths {
-        let (spent, most) = (&mut self.spent, &mut self.rows);
+        let edit = self.edits.back_mut();
         self.tables.entry(first).or_insert_with(|| {
             let t = std::time::Instant::now();
             let mut end = first;
@@ -1069,8 +1074,10 @@ impl TableCache {
                     }
                 }
             }
-            *spent += t.elapsed();
-            *most = (*most).max(end - first);
+            if let Some((spent, rows)) = edit {
+                *spent += t.elapsed();
+                *rows = (*rows).max(end - first);
+            }
             TableWidths {
                 lines: first..end,
                 columns,
@@ -1080,10 +1087,17 @@ impl TableCache {
         })
     }
 
-    /// While the buffer is edited, a frame whose tables took `budget`
-    /// or more to read again: the most rows of one, and the time.
+    /// Whether [`SLOW_EDITS`] of the last [`EDITS_KEPT`] edits read
+    /// their tables again for over `budget`: the most rows of one read,
+    /// and the slow edits' middle time.
     pub fn slow(&self, budget: std::time::Duration) -> Option<(usize, std::time::Duration)> {
-        (self.edited && self.rows > 0 && self.spent >= budget).then_some((self.rows, self.spent))
+        let mut slow: Vec<_> = self.edits.iter().filter(|(t, _)| *t > budget).collect();
+        if slow.len() < SLOW_EDITS {
+            return None;
+        }
+        slow.sort_by_key(|(t, _)| *t);
+        let rows = slow.iter().map(|(_, r)| *r).max().unwrap_or(0);
+        Some((rows, slow[slow.len() / 2].0))
     }
 }
 
