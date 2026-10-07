@@ -62,9 +62,10 @@ pub struct Scripting {
     /// The processes plugins spawned, by the io thread's process id —
     /// numbered from a high mark so compile mode's never coincide.
     pub procs: HashMap<u64, Proc>,
-    /// The Lua views' fields as the engine has them, gathered before a
-    /// Lua pane is drawn, for the field extension to draw (`fields.rs`).
-    pub field_scenes: crate::fields::Scenes,
+    /// What the engine draws into Lua views — their fields as the engine
+    /// has them, the palette, the icons — gathered before a Lua pane is
+    /// drawn (`fields.rs`).
+    pub drawing: crate::fields::Shared,
     /// The processes asked for past [`LUA_PROCS_AT_ONCE`], by token, in
     /// the order asked: each started as one running ends.
     pub queued: std::collections::VecDeque<(u64, kawoosh_systems::io::ProcSpec)>,
@@ -192,11 +193,12 @@ impl Kawoosh {
         // The plugins have declared theirs: a settings file's key no one
         // declared can be named now without naming theirs.
         self.note_undeclared();
-        // With the field extension it loads, which draws its views'
-        // fields (`fields.rs`).
+        // With the engine's drawing it loads, which draws its views'
+        // fields, caps and legends (`fields.rs`).
+        self.scripting.drawing.borrow_mut().icons = self.icons.clone();
         Ok(crate::fields::LuaHost::new(
             ext,
-            self.scripting.field_scenes.clone(),
+            self.scripting.drawing.clone(),
         ))
     }
 
@@ -2010,18 +2012,20 @@ impl Kawoosh {
         }
     }
 
-    /// The fields of Lua view `owner` (`lua:OWNER/NAME`) as the engine
-    /// has them, for the field extension to draw while the view draws —
-    /// each with whether the keyboard is on it.
-    pub(crate) fn publish_field_scenes(&self, owner: &str) {
+    /// What the engine draws into Lua view `owner` as the frame has it:
+    /// the chrome's face, the palette, and the view's fields (`lua:OWNER/
+    /// NAME`) as the engine has them, each with whether the keyboard is on
+    /// it — for the engine's drawing to read while the view draws.
+    pub(crate) fn publish_drawing(&self, owner: &str) {
         let keyed = self
             .scripting
             .rt
             .as_ref()
             .and_then(|rt| rt.field_focus(owner));
         let prefix = format!("lua:{owner}/");
-        let mut scenes = self.scripting.field_scenes.borrow_mut();
+        let mut scenes = self.scripting.drawing.borrow_mut();
         scenes.face = self.chrome.face;
+        scenes.pal = self.pal;
         scenes.fields.retain(|n, _| !n.starts_with(&prefix));
         for (v, f) in self.ed.fields() {
             if f.name.starts_with(&prefix)
@@ -2089,7 +2093,7 @@ impl Kawoosh {
                 // pane.
                 .on_click(tag),
             |ui| {
-                self.publish_field_scenes(name);
+                self.publish_drawing(name);
                 ui.slot_with(&format!("lua/{name}@{pane}"), &params);
             },
         );

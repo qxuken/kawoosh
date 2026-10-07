@@ -207,7 +207,7 @@ impl Kawoosh {
                 .on_focus(tag.clone())
                 .on_click(tag),
             |ui| {
-                self.publish_field_scenes(&header.view);
+                self.publish_drawing(&header.view);
                 ui.slot_with(&format!("lua/{}@{pane}", header.view), &params);
             },
         );

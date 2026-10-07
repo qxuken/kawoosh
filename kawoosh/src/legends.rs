@@ -129,14 +129,26 @@ pub fn legend(
 }
 
 /// The way to a legend and back: `⌥/ keys`, or `⌥/ hide keys` when it
-/// is shown; a click flips pane `pane`'s.
-pub fn toggle(ui: &mut Ui<'_>, icons: &Icons, pane: PaneId, full: bool, style: &LegendStyle) {
-    // In the title bar's hover group, which keeps the pane's close
-    // button while the pointer is here; its own colour under the pointer
-    // alone, where a group's hover lights every member.
+/// is shown; a click flips pane `pane`'s. `group`, the hover group it is
+/// in: the title bar's, which keeps the pane's close button while the
+/// pointer is here; none in a view's own row (a Lua view's
+/// `ctx.legend_toggle`, `fields.rs`).
+pub fn toggle(
+    ui: &mut Ui<'_>,
+    icons: &Icons,
+    pane: PaneId,
+    full: bool,
+    style: &LegendStyle,
+    group: Option<&str>,
+) {
+    // Its own colour under the pointer alone, where a group's hover
+    // lights every member.
     let mut node = NodeSpec::row();
     if ui.is_hovered(ui.child_key("legend toggle")) {
         node = node.bg(style.hover);
+    }
+    if let Some(g) = group {
+        node = node.hover_group(g);
     }
     ui.with_keyed(
         "legend toggle",
@@ -147,7 +159,6 @@ pub fn toggle(ui: &mut Ui<'_>, icons: &Icons, pane: PaneId, full: bool, style: &
             // the hint and the close button's room, the name is what
             // is cut, where a hint squeezed put `keys` under its cap.
             .min_width(kui_native::Min::FIT)
-            .hover_group(&crate::panes::title_group(pane))
             .cross_align(Align::Center)
             .on_click(Value::map([
                 ("kind", "legend".into()),

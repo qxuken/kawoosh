@@ -825,35 +825,6 @@ pub(crate) fn lua_door(lua: &mlua::Lua, icons: Shared) -> mlua::Result<()> {
     )?;
     proxy.set_metatable(Some(meta))?;
     k.set("icons", proxy)?;
-    k.set(
-        "_key_caps",
-        lua.create_function(|lua, notation: String| {
-            let out = lua.create_table()?;
-            for (i, c) in caps(&notation).iter().enumerate() {
-                let cap = lua.create_table()?;
-                for (j, p) in c.iter().enumerate() {
-                    let t = lua.create_table()?;
-                    match p {
-                        CapPart::Icon(n) => t.set("icon", *n)?,
-                        CapPart::Text(s) => t.set("text", s.as_str())?,
-                    }
-                    cap.set(j + 1, t)?;
-                }
-                out.set(i + 1, cap)?;
-            }
-            Ok(out)
-        })?,
-    )?;
-    let m = lua.create_table()?;
-    m.set("pad", CAP.pad)?;
-    m.set("radius", CAP.radius)?;
-    m.set("border", CAP.border)?;
-    m.set("gap", CAP.gap)?;
-    m.set("part_gap", CAP.part_gap)?;
-    m.set("alt_gap", CAP.alt_gap)?;
-    m.set("word_gap", CAP.word_gap)?;
-    m.set("item_gap", CAP.item_gap)?;
-    k.set("_cap", m)?;
     Ok(())
 }
 

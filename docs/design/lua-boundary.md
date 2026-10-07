@@ -138,6 +138,23 @@ a slot off it — kui-lua names a reply's slot only for slots the script
 fills itself. A fill is a position, so a field's width is an option
 (`width = "grow"`), not a prop set on the node after.
 
+### 9. Caps, legends and the way to a legend are the engine's too
+
+`boot.lua` composed a view's key caps, legends and `⌥/ keys` toggle
+itself over the Rust half's reading of a notation (`kawoosh._key_caps`)
+and its measures (`kawoosh._cap`) — the third drawing of a cap beside
+`icons::keys` and `legends::toggle`. They are fills now, as the field
+(Decision 8): the extension is `engine` (`fields::EngineDraw`), a
+slot's `kind` saying what — `field`, `keys`, `legend`, `toggle` — and
+it draws them with `icons::keys`, `icons::legend_items` and
+`legends::toggle` (a hover group given only in the title bar now). A
+view's fills are named by the view, its pane and a count of what it drew
+this frame, since a slot's name is the frame's. Whether a legend is
+whole stays the view's to say: `ctx.legend` gives nil while it is
+compact, and tells the title bar it drew one. A toggle's click is a
+reply carrying its pane. `_key_caps` and `_cap` are gone with their one
+user.
+
 ## Rounds
 
 **Round 1, 2026-10-07: the cheap batch** (d290f9f). `ctx.title_h`
@@ -229,13 +246,18 @@ line one level down under the scroller), the overflow sweep, and a
 test window driven over its socket (the picker's query, the search
 bar's four fields and their placeholders).
 
+**Round 13, 2026-10-07: caps and legends drawn by the engine**
+(Decision 9). Verified by the legend and caps suites as they were
+(`icons`, `legends`, the panes with legends), `nu scripts/verify.nu`
+1138 of 1138, and a test window over its socket: the search bar's
+`⌥/ hide keys` and its legend, caps with their icons, wrapped between
+items.
+
 ## Open
 
 - A listing's `ids` still mirror its tracked lines in Lua (the plan
   reassigns an entry to a line, Decision 7): the payloads could be the
   only record once the engine takes a payload changed on a tracked line.
-- `keys_node`, `legend_node` out of `boot.lua`: key caps and legends,
-  the same fill as the field would serve them.
 - The picker's 108 ms frame as a 100k-file walk lands (Round 8): what is
   left is the rows as Lua tables and the matcher's copy of their text —
   a list kept in the engine and lent to Lua as rows are shown would end

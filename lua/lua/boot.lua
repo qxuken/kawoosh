@@ -751,8 +751,8 @@ local function field_node(view_name, pane, env, opts, pane_focused)
   -- `"grow"`, the room its row has; pixels; or, by default, as wide as
   -- its line.
   return fill {
-    name = "field/" .. full:gsub("/", ":") .. "@" .. tostring(pane),
-    params = { field = full, size = opts.size or kawoosh.metrics(env).text,
+    name = "engine/field:" .. full:gsub("/", ":") .. "@" .. tostring(pane),
+    params = { kind = "field", field = full, size = opts.size or kawoosh.metrics(env).text,
                placeholder = opts.placeholder, focused = pane_focused, width = opts.width },
   }
 end
@@ -778,28 +778,25 @@ end
 
 -- ---------------------------------------------------------------- keys
 
+-- The caps, legends and the way to a legend are the engine's to draw
+-- (`fields.rs`, docs/design/lua-boundary.md Decision 9): each a `fill`
+-- the engine draws as it draws its own panes' — `icons::keys`,
+-- `icons::legend_items`, `legends::toggle` — named by the view, its pane
+-- and a count of what it drew this frame (`at`), since a slot's name is
+-- the frame's and a view draws caps more than once.
+local function engine_fill(kind, view_name, pane, at, params)
+  params.kind = kind
+  return fill { name = "engine/" .. kind .. ":" .. view_name .. "@" .. tostring(pane) .. "#" .. at,
+                params = params }
+end
+
 -- A notation as caps (docs/design/icons.md Decision 4): one outlined
 -- cap a key, a chord's modifiers in it before its key as icons, as
--- tall as the text's line so a row is no taller for it. The reading is
--- the Rust half's (`kawoosh._key_caps`), the measures too (`kawoosh._cap`).
-local function keys_node(env, notation, opts)
+-- tall as the text's line so a row is no taller for it.
+local function keys_node(view_name, pane, at, env, notation, opts)
   opts = opts or {}
-  local t = env.theme
-  local C = kawoosh._cap
-  local size = opts.size or kawoosh.metrics(env).note
-  local style = { family = "mono", size = size, color = opts.color or t.muted, wrap = "none" }
-  local line_h = env.measure_text("Mg", style).height
-  local out = row { gap = C.gap, cross_align = "center" }
-  for _, cap in ipairs(kawoosh._key_caps(notation)) do
-    local box = row { min_height = line_h, pad = { x = C.pad }, gap = C.part_gap, radius = C.radius,
-      border = { w = C.border, color = opts.border or t.border }, cross_align = "center" }
-    for _, p in ipairs(cap) do
-      box[#box + 1] = p.icon and kawoosh.icon(p.icon, { size = size, color = style.color })
-        or text(p.text, style)
-    end
-    out[#out + 1] = box
-  end
-  return out
+  return engine_fill("keys", view_name, pane, at, { notation = notation,
+    size = opts.size or kawoosh.metrics(env).note, color = opts.color, border = opts.border })
 end
 
 -- Whether pane `pane`'s legends are whole (docs/design/icons.md
@@ -812,15 +809,10 @@ end
 
 -- The way to a legend and back: `⌥/ keys`, `⌥/ hide keys` while it is
 -- whole; a click flips the pane's (`on_event` below).
-local function legend_toggle(env, pane, opts)
+local function legend_toggle(view_name, pane, at, env, opts)
   opts = opts or {}
-  local t = env.theme
-  local C = kawoosh._cap
-  local size = opts.size or kawoosh.metrics(env).note
-  return row { key = "legend toggle", label = "legend", pad = { x = 4 }, radius = 4, gap = C.word_gap,
-    cross_align = "center", hover_bg = t.sunken, on_click = { kind = "legend" },
-    keys_node(env, "<A-/>", opts),
-    text(legend_full(pane) and "hide keys" or "keys", { size = size, color = opts.word or t.faint, wrap = "none" }) }
+  return engine_fill("toggle", view_name, pane, at, { pane = pane, full = legend_full(pane),
+    size = opts.size or kawoosh.metrics(env).note, color = opts.color, border = opts.border, word = opts.word })
 end
 
 -- A legend: `{ { "<CR>", "installs" }, { { "j", "k" }, "walk" } }`, each
@@ -832,24 +824,19 @@ end
 -- a closed legend takes no row of the view's. `full = true` for one
 -- always whole (a prompt's two keys), no hint for it; `toggle = false`
 -- for one whose way to it the view draws itself (`ctx.legend_toggle`,
--- the search bar's), no hint in the title bar either.
-local function legend_node(env, pane, items, opts)
+-- the search bar's), no hint in the title bar either. `width` as wide
+-- as its row (the default), `"fit"`, or pixels.
+local function legend_node(view_name, pane, at, env, items, opts)
   opts = opts or {}
-  local t = env.theme
-  local C = kawoosh._cap
-  local size = opts.size or kawoosh.metrics(env).note
   if not opts.full and opts.toggle ~= false then kawoosh._legend_drawn(pane) end
   if not (opts.full or legend_full(pane)) then return nil end
-  local out = row { width = opts.width or "grow", gap = C.item_gap, cross_gap = 2,
-    wrap_children = true, cross_align = "center" }
-  for _, it in ipairs(items) do
-    local alts = type(it[1]) == "table" and it[1] or { it[1] }
-    local ks = row { gap = C.alt_gap, cross_align = "center" }
-    for _, k in ipairs(alts) do ks[#ks + 1] = keys_node(env, k, opts) end
-    out[#out + 1] = row { gap = C.word_gap, cross_align = "center", ks,
-      text(it[2], { size = size, color = opts.word or t.faint, wrap = "none" }) }
+  local list = {}
+  for i, it in ipairs(items) do
+    list[i] = { keys = type(it[1]) == "table" and it[1] or { it[1] }, words = it[2] }
   end
-  return out
+  return engine_fill("legend", view_name, pane, at, { items = list,
+    size = opts.size or kawoosh.metrics(env).note, color = opts.color, border = opts.border,
+    word = opts.word, width = opts.width })
 end
 
 -- ---------------------------------------------------------------- kui's doors
@@ -896,9 +883,13 @@ function view(env, slot)
     if opts.size == nil then opts.size = ctx.metrics.text end
     return kawoosh.icon(icon, opts)
   end
-  ctx.keys = function(notation, opts) return keys_node(env, notation, opts) end
-  ctx.legend = function(items, opts) return legend_node(env, pane, items, opts) end
-  ctx.legend_toggle = function(opts) return legend_toggle(env, pane, opts) end
+  -- What the view asked the engine to draw this frame, counted: each a
+  -- slot name of its own.
+  local drawn = 0
+  local function at() drawn = drawn + 1 return drawn end
+  ctx.keys = function(notation, opts) return keys_node(name, pane, at(), env, notation, opts) end
+  ctx.legend = function(items, opts) return legend_node(name, pane, at(), env, items, opts) end
+  ctx.legend_toggle = function(opts) return legend_toggle(name, pane, at(), env, opts) end
   ctx.legend_full = function() return legend_full(pane) end
   local ok, tree = timed(fn, ctx)
   if not ok then
@@ -919,6 +910,12 @@ function on_event(ev)
   if ev.kind == "field" and type(ev.field) == "string" then
     local view = ev.field:match("^lua:(.*)/[^/]*$")
     if view then kawoosh._field_focus(view, ev.field) end
+    return
+  end
+  -- A click on a legend's way, answered by the engine's drawing: the
+  -- pane's legend whole, or compact again.
+  if ev.kind == "legend" and ev.pane then
+    kawoosh._legend(ev.pane, not legend_full(ev.pane))
     return
   end
   if not ev.slot then return end
