@@ -26,6 +26,7 @@ pub mod domains;
 pub mod dotfiles;
 pub mod du;
 pub mod editorconfig;
+pub mod fields;
 pub mod fonts;
 pub mod format;
 pub mod frames;

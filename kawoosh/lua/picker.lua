@@ -1218,8 +1218,7 @@ kawoosh.view(VIEW, function(ctx)
          { size = SIZE, color = t.muted }),
     text(">", { family = "mono", size = SIZE, color = t.accent }),
   }
-  local field = ctx.field { name = FIELD, placeholder = P.src.placeholder or "type to filter", size = SIZE }
-  field.width = "grow"
+  local field = ctx.field { name = FIELD, placeholder = P.src.placeholder or "type to filter", size = SIZE, width = "grow" }
   head[#head + 1] = field
   head[#head + 1] = text(count, { size = SMALL, color = t.faint, wrap = "none" })
   local indent = P.src.tree and (P.query or "") == "" and function(it) return it.depth or 0 end or nil

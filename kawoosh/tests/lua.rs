@@ -3386,8 +3386,7 @@ fn a_lua_fields_long_line_scrolls_sideways_under_the_caret() {
         "init",
         r#"
         kawoosh.view("finder", function(ctx)
-          local f = ctx.field { name = "q", size = 13 }
-          f.width = "grow"
+          local f = ctx.field { name = "q", size = 13, width = "grow" }
           return column { pad = 8, gap = 4, width = 240, f, text("under") }
         end, function(ev)
           if ev.kind == "key" and ev.key == "i" then kawoosh.field_focus("finder", "q") end
@@ -3413,13 +3412,18 @@ fn a_lua_fields_long_line_scrolls_sideways_under_the_caret() {
     let f = field(&d);
     assert_eq!(f.rect.h, 19.0, "one row high: {:?}", f.rect);
     // The pieces of the line — its texts, the bar — in the row the
-    // field scrolls.
+    // field scrolls (the field's row, the scroller in it, the line).
     let inside = |d: &Drive| -> Vec<kui_native::Rect> {
         let f = field(d);
         let nodes = d.core.nodes();
-        let line = nodes
+        let scroller = nodes
             .iter()
             .find(|n| n.parent == Some(f.key))
+            .expect("the scroller")
+            .key;
+        let line = nodes
+            .iter()
+            .find(|n| n.parent == Some(scroller))
             .expect("the line")
             .key;
         nodes

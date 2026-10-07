@@ -660,11 +660,10 @@ local function prompt(node, R)
   if label ~= false then head[#head + 1] = text(tostring(label or ""), { size = SIZE, color = t.muted }) end
   head[#head + 1] = text(">", { family = "mono", size = SIZE, color = t.accent })
   local typing = kawoosh.opt("launcher.start") == "insert"
-  local field = R.ctx.field { name = FIELD, size = SIZE,
+  local field = R.ctx.field { name = FIELD, size = SIZE, width = "grow",
                               placeholder = node.def.placeholder
                                 or (typing and "a buffer, a file, a tool · ⏎ the same · esc a scratch"
                                   or "a letter launches · / searches · ⏎ the same · esc a scratch") }
-  field.width = "grow"
   head[#head + 1] = field
   return head
 end

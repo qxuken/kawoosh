@@ -78,6 +78,109 @@ pub(crate) struct StripShape {
 /// The most completion candidates the command line's strip draws.
 const CANDIDATES_SHOWN: usize = 200;
 
+/// A field's line as the engine has it, ready to draw ([`draw_field`]):
+/// the line as drawn and, in drawn bytes, its selections and a caret
+/// per selection — the primary's head `head`.
+#[derive(Clone, Debug)]
+pub struct FieldScene {
+    pub text: String,
+    pub escapes: Vec<Range<usize>>,
+    pub selected: Vec<Range<usize>>,
+    pub carets: Vec<(Range<usize>, Caret)>,
+    pub access: (Option<u32>, Option<u32>),
+    pub head: usize,
+    /// Insert mode: a bar on kui's blink; else a block.
+    pub insert: bool,
+    pub ghost: Option<String>,
+    pub sel_radius: f32,
+    pub pal: crate::Pal,
+}
+
+/// A field's line drawn: its selections, and when `keyed` its carets;
+/// scrolled sideways under the field as little as keeps the primary
+/// caret in view, from where the last frame left it (`Kawoosh::
+/// field_line`'s drawing, for the app's fields and a Lua view's alike).
+pub(crate) fn draw_field(ui: &mut Ui<'_>, s: &FieldScene, keyed: bool, font: crate::look::Face) {
+    let pal = s.pal;
+    let scroller = ui.child_key("field");
+    let geometry = ui.scroll_geometry(scroller);
+    // A field's first frame has no geometry to follow the caret by: one
+    // more frame, or a line typed before it (a paste, keys faster than
+    // frames) waits for the next key to scroll.
+    if keyed && geometry.is_none() {
+        crate::frames::request(ui, "field geometry");
+    }
+    let want = geometry.filter(|_| keyed).map(|g| {
+        let style = rows::mono(font, &pal);
+        let head = s.head;
+        let x0 = ui.measure_text(&s.text[..head], &style, None).width;
+        // The bar, or the block's character — a cell past the end.
+        let x1 = if s.insert {
+            x0 + 2.0
+        } else if head < s.text.len() {
+            let next = rows::next_char(&s.text, head);
+            ui.measure_text(&s.text[..next], &style, None).width
+        } else {
+            x0 + ui.measure_text(" ", &style, None).width
+        };
+        let off = g.offset.x;
+        if x0 < off {
+            x0
+        } else if x1 > off + g.rect.w {
+            x1 - g.rect.w
+        } else {
+            off
+        }
+    });
+    let (carets, access): (&[(Range<usize>, Caret)], _) = if keyed {
+        (&s.carets, s.access)
+    } else {
+        (&[], (None, None))
+    };
+    ui.with_keyed(
+        "field",
+        NodeSpec::row()
+            .grow_width()
+            .cross_align(Align::Center)
+            .scroll_x()
+            .scrollbar(kui_native::ScrollbarMode::Hidden),
+        |ui| {
+            let _ = rows::emit_line(
+                ui,
+                font,
+                &pal,
+                &LineDraw {
+                    text: &s.text,
+                    selected: &s.selected,
+                    hits: &[],
+                    flashed: &[],
+                    washed: &[],
+                    styled: &[],
+                    carets,
+                    escapes: &s.escapes,
+                    caret_on: ui.caret_visible() || !s.insert,
+                    access,
+                    underlined: &[],
+                    trailing: None,
+                    trailing_at: None,
+                    ghost: s.ghost.as_deref().map(|g| (s.head, g)),
+                    hints: &[],
+                    before: 0.0,
+                    after: 0.0,
+                    marks: &[],
+                    form: None,
+                    band: None,
+                    sel_radius: s.sel_radius,
+                    text_key: None,
+                },
+            );
+        },
+    );
+    if let Some(x) = want {
+        ui.set_scroll(scroller, Vec2::new(x, 0.0));
+    }
+}
+
 impl Kawoosh {
     // ------------------------------------------------------------ view
 
@@ -110,10 +213,17 @@ impl Kawoosh {
         ghost: Option<&str>,
         font: crate::look::Face,
     ) {
-        let pal = self.pal;
-        let Some(v) = self.ed.views.get(view) else {
-            return;
-        };
+        if let Some(scene) = self.field_scene(view, ghost) {
+            draw_field(ui, &scene, keyed, font);
+        }
+    }
+
+    /// What `field_line` draws of `view`'s field, gathered from the
+    /// engine: its line as drawn (tabs, escapes), its selections, a
+    /// caret per selection. What a Lua view's field is drawn from too
+    /// (`fields::FieldDraw`), which draws without the app at hand.
+    pub(crate) fn field_scene(&self, view: ViewId, ghost: Option<&str>) -> Option<FieldScene> {
+        let v = self.ed.views.get(view)?;
         let buf = &self.ed.buffers[v.buffer];
         let text = buf.text();
         let drawn = Drawn::new(&text, self.ed.tabstop_in(v.buffer));
@@ -142,9 +252,6 @@ impl Kawoosh {
                 };
                 selected.push(clip(rs)..b);
             }
-            if !keyed {
-                continue;
-            }
             let end = if caret_kind == Caret::Block {
                 clip(buf.next_char(s.head))
             } else {
@@ -163,78 +270,18 @@ impl Kawoosh {
                 }
             }
         }
-        let scroller = ui.child_key("field");
-        let geometry = ui.scroll_geometry(scroller);
-        // A field's first frame has no geometry to follow the caret by:
-        // one more frame, or a line typed before it (a paste, keys
-        // faster than frames) waits for the next key to scroll.
-        if keyed && geometry.is_none() {
-            crate::frames::request(ui, "field geometry");
-        }
-        let want = geometry.filter(|_| keyed).map(|g| {
-            let style = rows::mono(font, &pal);
-            let head = clip(primary.head);
-            let x0 = ui.measure_text(&drawn.text[..head], &style, None).width;
-            // The bar, or the block's character — a cell past the end.
-            let x1 = if caret_kind == Caret::Bar {
-                x0 + 2.0
-            } else if head < drawn.text.len() {
-                let next = rows::next_char(&drawn.text, head);
-                ui.measure_text(&drawn.text[..next], &style, None).width
-            } else {
-                x0 + ui.measure_text(" ", &style, None).width
-            };
-            let off = g.offset.x;
-            if x0 < off {
-                x0
-            } else if x1 > off + g.rect.w {
-                x1 - g.rect.w
-            } else {
-                off
-            }
-        });
-        ui.with_keyed(
-            "field",
-            NodeSpec::row()
-                .grow_width()
-                .cross_align(Align::Center)
-                .scroll_x()
-                .scrollbar(kui_native::ScrollbarMode::Hidden),
-            |ui| {
-                let _ = rows::emit_line(
-                    ui,
-                    font,
-                    &pal,
-                    &LineDraw {
-                        text: &drawn.text,
-                        selected: &selected,
-                        hits: &[],
-                        flashed: &[],
-                        washed: &[],
-                        styled: &[],
-                        carets: &carets,
-                        escapes: &drawn.escapes,
-                        caret_on: ui.caret_visible() || v.mode != Mode::Insert,
-                        access,
-                        underlined: &[],
-                        trailing: None,
-                        trailing_at: None,
-                        ghost: ghost.map(|g| (clip(primary.head), g)),
-                        hints: &[],
-                        before: 0.0,
-                        after: 0.0,
-                        marks: &[],
-                        form: None,
-                        band: None,
-                        sel_radius: self.selection_radius(),
-                        text_key: None,
-                    },
-                );
-            },
-        );
-        if let Some(x) = want {
-            ui.set_scroll(scroller, Vec2::new(x, 0.0));
-        }
+        Some(FieldScene {
+            head: clip(primary.head),
+            text: drawn.text,
+            escapes: drawn.escapes,
+            selected,
+            carets,
+            access,
+            insert: v.mode == Mode::Insert,
+            ghost: ghost.map(str::to_string),
+            sel_radius: self.selection_radius(),
+            pal: self.pal,
+        })
     }
 
     pub(crate) fn command_line(&self, ui: &mut Ui<'_>) {

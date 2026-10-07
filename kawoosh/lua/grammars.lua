@@ -289,8 +289,7 @@ kawoosh.view(VIEW, function(ctx)
   end
 
   local shown = #S.rows
-  local field = ctx.field { name = FIELD, placeholder = "filter by name or file", size = SIZE }
-  field.width = "grow"
+  local field = ctx.field { name = FIELD, placeholder = "filter by name or file", size = SIZE, width = "grow" }
   -- The title bar names the pane: the head is what is in it, then the
   -- filter's line as the other list panes draw theirs — `/`, the
   -- field, how many — and the keys.

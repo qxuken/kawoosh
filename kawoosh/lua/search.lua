@@ -581,14 +581,10 @@ kawoosh.view(VIEW, function(ctx)
   local st = search.stages[search.cur]
   search.live = true
   local kind = search.kinds[st.kind]
-  local find = ctx.field { name = "find", placeholder = "search", size = SIZE }
-  find.width = "grow"
-  local replace = ctx.field { name = "replace", placeholder = "e.g. new_name, $1 with .*", size = SIZE }
-  replace.width = "grow"
-  local include = ctx.field { name = "include", placeholder = "e.g. src/*.[ts,tsx], tests/", size = SIZE }
-  include.width = "grow"
-  local exclude = ctx.field { name = "exclude", placeholder = "e.g. *__test__*, vendor", size = SIZE }
-  exclude.width = "grow"
+  local find = ctx.field { name = "find", placeholder = "search", size = SIZE, width = "grow" }
+  local replace = ctx.field { name = "replace", placeholder = "e.g. new_name, $1 with .*", size = SIZE, width = "grow" }
+  local include = ctx.field { name = "include", placeholder = "e.g. src/*.[ts,tsx], tests/", size = SIZE, width = "grow" }
+  local exclude = ctx.field { name = "exclude", placeholder = "e.g. *__test__*, vendor", size = SIZE, width = "grow" }
   -- Two rows, the fewest that hold the fields: the pattern with its
   -- toggles, the replacement and the count, the globs with the way to
   -- the keys — two fields a row, one over the other; the stages'
