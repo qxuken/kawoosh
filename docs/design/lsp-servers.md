@@ -253,9 +253,9 @@ on the machine; `kawoosh lsp` opens no state, and the scratch
 | biome | npm | @biomejs/biome 2.5.15 | yes (`lsp-proxy`) |
 | ruff | pip (uv) | ruff 0.16.10 | yes |
 | ruby, scala, haskell, ocaml, racket, r | gem, cs, ghcup, opam, raco, R | not tried (none here); ruby-lsp 0.26.11, metals, hls, ocaml-lsp-server, racket-langserver and languageserver are where the lines look | — |
-| markdown, java, kotlin, dart, zig, elixir, erlang, gleam, clojure | brew; none on Windows | not tried; each formula is there | — |
+| markdown, java, kotlin, dart, zig, elixir, erlang, gleam, clojure, odin | brew; none on Windows | not tried; each formula is there | — |
 | nix | `nix profile install` | not tried (no Nix on Windows) | — |
-| glsl, odin, luau | none known | — | — |
+| glsl, luau | none known | — | — |
 
 Twenty-five packages, every one kawoosh drives: all installed (awk
 given a Python), and all but fish-lsp answered.

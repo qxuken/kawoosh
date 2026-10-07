@@ -18,9 +18,10 @@
 --
 -- From each caret the dispatch starts at the leaf and climbs: the first
 -- node, innermost first, that an action takes and answers is the one
--- changed. The climb stops at a node filling a `body` field, so a caret
--- in a closure never splits the call around it. `node_actions.NAME =
--- false` in the settings turns one off.
+-- changed. The climb stops at a node filling a `body` field, or at a
+-- `block` (odin's procedures name none), so a caret in a closure never
+-- splits the call around it. `node_actions.NAME = false` in the
+-- settings turns one off.
 
 local M = { list = {} }
 kawoosh.node_actions = M
@@ -105,7 +106,7 @@ function M.answers(where, caret, buffer)
         end
       end
     end
-    if n.field == "body" then break end
+    if n.field == "body" or n.type == "block" then break end
     n = n:parent()
   end
   return out
@@ -305,10 +306,17 @@ M.lists = {
   c = { argument_list = N, parameter_list = N, initializer_list = T },
   cpp = { argument_list = N, parameter_list = N, initializer_list = T },
   toml = { array = T },
+  -- A call, a literal and a declaration hold their brackets beside what
+  -- comes before them: `f(…)`, `Point{…}`, `[3]int{…}`, `struct {…}`.
+  odin = {
+    parameters = T, call_expression = T, struct = T, map = T,
+    struct_declaration = T, enum_declaration = T, union_declaration = T,
+    overloaded_procedure_declaration = T,
+  },
 }
 
-local OPEN = { ["("] = true, ["["] = true, ["{"] = true }
-local CLOSE = { [")"] = true, ["]"] = true, ["}"] = true }
+-- The opener of each closer.
+local PAIR = { [")"] = "(", ["]"] = "[", ["}"] = "{" }
 
 do
   kawoosh.node.action("split", {
@@ -324,11 +332,21 @@ do
       local spec = (M.lists[ctx.language] or {})[n.type]
       if not spec then return nil end
       local kids = n:children({ anonymous = true })
-      local open, close = kids[1], kids[#kids]
-      if #kids < 2 or open.named or close.named
-          or not OPEN[open:text()] or not CLOSE[close:text()] then
-        return nil
+      -- The list is the node's last child, a closer, back to its first
+      -- opener: the node's own first child, or after what heads it (a
+      -- callee, a type, `struct`), which stays as it is.
+      local close = kids[#kids]
+      if #kids < 2 or close.named or not PAIR[close:text()] then return nil end
+      local first
+      for i = 1, #kids - 1 do
+        if not kids[i].named and kids[i]:text() == PAIR[close:text()] then
+          first = i
+          break
+        end
       end
+      if not first then return nil end
+      local open = kids[first]
+      local head = kawoosh.buf.slice(n.from, open.from, n.buffer)
       -- The items: the text between the commas, whatever nodes it is
       -- (an attribute and its field, a `*`).
       local items, from, to, comment = {}, nil, nil, false
@@ -336,7 +354,7 @@ do
         if from then items[#items + 1] = kawoosh.buf.slice(from, to, n.buffer) end
         from, to = nil, nil
       end
-      for i = 2, #kids - 1 do
+      for i = first + 1, #kids - 1 do
         local k = kids[i]
         if not k.named and k.type == "," then
           done()
@@ -349,19 +367,24 @@ do
       done()
       if #items == 0 then return nil end
       local o, c = open:text(), close:text()
-      if n.line == n.end_line then
+      -- From the opener: what heads it may sit on lines above (odin's
+      -- `@(private)` over a declaration).
+      if open.line == n.end_line then
         local inner = ctx.indent .. ctx.unit
         return {
-          text = o .. "\n" .. inner .. table.concat(items, ",\n" .. inner)
+          text = head .. o .. "\n" .. inner .. table.concat(items, ",\n" .. inner)
             .. (spec.trailing and "," or "") .. "\n" .. ctx.indent .. c,
-          cursor = 0,
+          cursor = #head,
         }
       end
       -- A line comment would swallow what followed it on one line.
       if comment then return nil end
       local pad = spec.pad and " " or ""
       local one = (#items == 1 and spec.single) and "," or ""
-      return { text = o .. pad .. table.concat(items, ", ") .. one .. pad .. c, cursor = 0 }
+      return {
+        text = head .. o .. pad .. table.concat(items, ", ") .. one .. pad .. c,
+        cursor = #head,
+      }
     end,
   })
 end
@@ -369,11 +392,13 @@ end
 local QUOTES = {
   javascript = { '"', "'", "`" }, typescript = { '"', "'", "`" }, tsx = { '"', "'", "`" },
   python = { '"', "'" }, lua = { '"', "'" },
+  -- `'c'` is a rune; a backquote quotes a raw string.
+  odin = { '"', "`" },
 }
 
 kawoosh.node.action("quotes", {
   doc = "\"…\" → '…' → `…`",
-  languages = { "javascript", "typescript", "tsx", "python", "lua" },
+  languages = { "javascript", "typescript", "tsx", "python", "lua", "odin" },
   types = { "string", "template_string" },
   run = function(n, ctx)
     local cycle = QUOTES[ctx.language]
@@ -399,7 +424,7 @@ kawoosh.node.action("quotes", {
 
 kawoosh.node.action("digits", {
   doc = "1000000 ↔ 1_000_000",
-  languages = { "rust", "python", "javascript", "typescript", "tsx", "go" },
+  languages = { "rust", "python", "javascript", "typescript", "tsx", "go", "odin" },
   types = { "integer_literal", "float_literal", "integer", "float", "number", "int_literal" },
   run = function(n)
     local text = n:text()

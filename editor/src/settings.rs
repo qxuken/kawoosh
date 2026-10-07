@@ -846,7 +846,8 @@ impl Settings {
             for lang in two {
                 defaults.set(&format!("language.{lang}.tabstop"), Setting::Int(2));
             }
-            for lang in ["go", "gomod"] {
+            // odinfmt's tabs too.
+            for lang in ["go", "gomod", "odin"] {
                 defaults.set(&format!("language.{lang}.expandtab"), Setting::Bool(false));
                 defaults.set(&format!("language.{lang}.tabstop"), Setting::Int(4));
             }
@@ -1850,6 +1851,8 @@ mod tests {
                 "language.markdown.tabstop",
                 "language.markdown.trim_trailing_whitespace",
                 "language.nu.comment",
+                "language.odin.expandtab",
+                "language.odin.tabstop",
                 "language.python.comment",
                 "language.rust.comment",
                 "language.rust.comment_block",

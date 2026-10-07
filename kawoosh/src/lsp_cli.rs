@@ -188,7 +188,7 @@ fn package_of(defs: &[ServerDef], name: &str) -> Result<Package, String> {
 fn install_line(d: &ServerDef) -> Result<(), String> {
     if d.install.is_empty() {
         return Err(format!(
-            "no way to install `{}` is known; install it and put it on the PATH",
+            "kawoosh has no install command for `{}`; install it yourself and put it on the PATH",
             d.command
         ));
     }
