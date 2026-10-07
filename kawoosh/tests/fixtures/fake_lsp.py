@@ -53,7 +53,25 @@ gets is noted, a change at a time, as "watched: created NAME" (changed,
 deleted; NAME the file's); a text changed to have `@unwatch ID` in it
 unregisters ID, noted "unregistered ID" once answered. The notes so far
 are published on the first document it was sent, as information beside
-its "boom"."""
+its "boom". Runnables (compile.md Decision 18): it declares
+`experimental.runnables`, and `experimental/runnables` answers a cargo
+test named for the position's line (`tests::at_line_N`), `cargo check
+-p fake` (its label the command), a `shell` runnable `make 'it all'`,
+and one of a kind nobody runs — each in the root. The
+`initializationOptions` it was started with, if any, are a note:
+`init: JSON`, keys sorted (lsp-servers.md Decision 8). With
+`--workspace-pull` it declares workspace diagnostics, and each
+`workspace/diagnostic` answers a full report for `src/pulled.rs` — a
+warning "pulled (N)", or "had ID (N)" when the request carried ID as
+that file's previous result — with result `rN`, and an unchanged one for
+`src/same.rs` (lists.md Decision 8). With `--incremental` it declares
+incremental sync and applies each ranged change to the text it holds; a
+text with `@echo` in it gets an information diagnostic at 0:0, "ranged
+N: TEXT", N the ranged changes it has had and TEXT the text it holds as
+JSON (lsp-rules.md Decision 8). With `--save` it asks to hear of saves,
+with `--save-text` with the text; a `didSave` is an information
+diagnostic at 0:0, "saved with TEXT" (as JSON) or "saved without its
+text" (lsp-rules.md Decision 9)."""
 import json
 import re, sys
 
@@ -61,6 +79,24 @@ docs = {}
 ended = False
 last_uri = None
 print("fake server starting", file=sys.stderr, flush=True)
+
+def path_of(uri):
+    from urllib.parse import unquote, urlparse
+    path = unquote(urlparse(uri).path)
+    # `file:///C:/x` on Windows: the drive, not a root above it.
+    return path[1:] if re.match(r"^/[A-Za-z]:", path) else path
+
+def offset_of(text, pos):
+    """A protocol position (line, UTF-16 character) as an index into `text`."""
+    lines = text.split("\n")
+    at = sum(len(l) + 1 for l in lines[:pos["line"]])
+    line = lines[pos["line"]] if pos["line"] < len(lines) else ""
+    units = 0
+    for i, ch in enumerate(line):
+        if units >= pos["character"]:
+            return at + i
+        units += len(ch.encode("utf-16-le")) // 2
+    return at + len(line)
 
 def char_before(uri, pos):
     lines = docs.get(uri, "").split("\n")
@@ -104,6 +140,8 @@ for i, a in enumerate(sys.argv):
 root_uri = None
 first_uri = None
 notes = []
+pulls = 0
+ranged = 0
 # Unregistrations asked, by request id: the registration's ID.
 unwatching = {}
 
@@ -187,6 +225,8 @@ while True:
         break
     if method == "initialize":
         root_uri = m["params"].get("rootUri")
+        if "initializationOptions" in m["params"]:
+            notes.append("init: " + json.dumps(m["params"]["initializationOptions"], sort_keys=True))
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
             "completionProvider": {"triggerCharacters": ["."]},
             "hoverProvider": True, "definitionProvider": True,
@@ -195,7 +235,15 @@ while True:
             "documentFormattingProvider": "--no-format" not in sys.argv,
             "typeDefinitionProvider": True, "implementationProvider": True,
             "declarationProvider": True, "documentSymbolProvider": True,
-            "workspaceSymbolProvider": True, "inlayHintProvider": True}}})
+            "workspaceSymbolProvider": True, "inlayHintProvider": True,
+            "experimental": {"runnables": {"kinds": ["cargo"]}},
+            **({"textDocumentSync": dict(
+                   {"openClose": True, "change": 2 if "--incremental" in sys.argv else 1},
+                   **({"save": {"includeText": True}} if "--save-text" in sys.argv else
+                      {"save": True} if "--save" in sys.argv else {}))}
+               if {"--incremental", "--save", "--save-text"} & set(sys.argv) else {}),
+            **({"diagnosticProvider": {"interFileDependencies": True, "workspaceDiagnostics": True}}
+               if "--workspace-pull" in sys.argv else {})}}})
     elif method == "initialized":
         if WATCHES:
             send({"jsonrpc": "2.0", "id": 5000, "method": "client/registerCapability", "params": {
@@ -210,8 +258,22 @@ while True:
             "kind": "report", "message": "3/12", "percentage": 50}}})
     elif method == "textDocument/didChange":
         uri = m["params"]["textDocument"]["uri"]
-        text = m["params"]["contentChanges"][0]["text"]
+        text = docs.get(uri, "")
+        for change in m["params"]["contentChanges"]:
+            if "range" in change:
+                ranged += 1
+                r = change["range"]
+                a, b = offset_of(text, r["start"]), offset_of(text, r["end"])
+                text = text[:a] + change["text"] + text[b:]
+            else:
+                text = change["text"]
         docs[uri] = text
+        if "@echo" in text:
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+                "uri": uri, "diagnostics": [{"range": {"start": {"line": 0, "character": 0},
+                                                       "end": {"line": 0, "character": 1}},
+                                             "severity": 3,
+                                             "message": "ranged %d: %s" % (ranged, json.dumps(text))}]}})
         if "@crash" in text:
             print("fake server crashing", file=sys.stderr, flush=True)
             sys.exit(3)
@@ -309,6 +371,39 @@ while True:
         found = [{"name": "Widget", "kind": 23, "location": loc(1, 0), "containerName": "crate"},
                  {"name": "widget_fn", "kind": 12, "location": loc(0, 3)}]
         send({"jsonrpc": "2.0", "id": mid, "result": [s for s in found if q in s["name"].lower()]})
+    elif method == "textDocument/didSave":
+        p = m["params"]
+        said = "saved with %s" % json.dumps(p["text"]) if "text" in p else "saved without its text"
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+            "uri": p["textDocument"]["uri"],
+            "diagnostics": [{"range": {"start": {"line": 0, "character": 0},
+                                       "end": {"line": 0, "character": 1}},
+                             "severity": 3, "message": said}]}})
+    elif method == "workspace/diagnostic":
+        pulls += 1
+        uri = root_uri.rstrip("/") + "/src/pulled.rs"
+        had = {p["uri"]: p["value"] for p in m["params"].get("previousResultIds", [])}
+        said = ("had " + had[uri]) if uri in had else "pulled"
+        send({"jsonrpc": "2.0", "id": mid, "result": {"items": [
+            {"kind": "full", "uri": uri, "resultId": "r%d" % pulls, "items": [
+                {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 2}},
+                 "severity": 2, "message": "%s (%d)" % (said, pulls)}]},
+            {"kind": "unchanged", "uri": uri.replace("pulled", "same"), "resultId": "s"}]}})
+    elif method == "textDocument/diagnostic":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"kind": "full", "items": []}})
+    elif method == "experimental/runnables":
+        root = path_of(root_uri) if root_uri else "/"
+        line = m["params"].get("position", {}).get("line", 0)
+        cargo = lambda label, args, exe: {"label": label, "kind": "cargo", "args": {
+            "cwd": root, "workspaceRoot": root, "overrideCargo": None,
+            "cargoArgs": args, "executableArgs": exe, "environment": {}}}
+        send({"jsonrpc": "2.0", "id": mid, "result": [
+            cargo("test tests::at_line_%d" % line, ["test", "--package", "fake", "--lib"],
+                  ["tests::at_line_%d" % line, "--exact"]),
+            cargo("cargo check -p fake", ["check", "-p", "fake"], []),
+            {"label": "a shell one", "kind": "shell",
+             "args": {"program": "make", "args": ["it all"], "cwd": root}},
+            {"label": "unknown", "kind": "other", "args": {}}]})
     elif method == "textDocument/inlayHint":
         send({"jsonrpc": "2.0", "id": mid, "result": [
             {"position": {"line": 0, "character": 7}, "label": ": i32", "paddingLeft": False},

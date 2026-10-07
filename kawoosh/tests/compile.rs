@@ -542,8 +542,8 @@ fn a_caret_moved_up_in_the_compile_pane_stays_as_output_comes() {
 
 /// compile.md Decision 12: the buffer opens on where and when, the
 /// program's colours are paints over text with no escapes in it, a
-/// plain line's `error` is painted for it, and the last line says how
-/// long it took.
+/// plain line's place and `error` are painted for it as a compiler
+/// would (Decision 15), and the last line says how long it took.
 #[cfg(unix)]
 #[test]
 fn the_head_the_colours_and_how_long_it_took() {
@@ -592,7 +592,9 @@ fn the_head_the_colours_and_how_long_it_took() {
         [
             (lines[0], "dim"),
             ("error", "ansi:1"),
-            ("error", "error"),
+            ("src/a.rs:1", "bold"),
+            ("error", "bold error"),
+            ("plain", "bold"),
             (&last[..], "added"),
         ]
     );
@@ -611,7 +613,7 @@ fn the_head_the_colours_and_how_long_it_took() {
     // Run again: the paints are the new text's alone.
     ex(&mut d, &mut app, "compile again");
     finished(&mut d, &mut app);
-    assert_eq!(app.scripting.paints[&buffer]["compile"].spans.len(), 4);
+    assert_eq!(app.scripting.paints[&buffer]["compile"].spans.len(), 6);
 
     // `compile.color` off: the programs are not asked.
     ex(&mut d, &mut app, "set compile.color false");
@@ -706,5 +708,124 @@ fn a_location_opens_in_the_pane_showing_its_file() {
     assert_eq!(shows(&app, a), Some(a_buf));
     assert_eq!(shows(&app, b), Some(b_buf), "b.rs stays on show");
     assert_eq!(app.layout.visible_panes().len(), panes, "no pane more");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// compile.md Decision 16: `<Tab>` after a nushell command the project
+/// offers completes its positional parameters — a completer's list read
+/// from the file, an inline list, a completer run in nu — a flag's value
+/// passed over; and `toolkit.nu` is read as a module.
+#[cfg(unix)]
+#[test]
+fn a_nushell_parameter_completes_from_its_completer() {
+    let dir = project("nu-tab", "return {}");
+    std::fs::write(
+        dir.join("build.nu"),
+        r#"
+def targets [] { ["debug", "release"] }
+def files [] { ["alpha.txt", "beta.txt"] | each {|f| $f } }
+def "main build" [target: string@targets, --jobs (-j): int, file?: string@files] { }
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("toolkit.nu"),
+        "export def deploy [where: string@[staging prod]] { }\nexport def fmt [] { }\n",
+    )
+    .unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    d.keys(&mut app, ":compile nu build.nu build r");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("elease"));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(
+        &mut app,
+        ":compile nu -c 'use toolkit.nu; toolkit deploy st",
+    );
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("aging"));
+    d.key(&mut app, "escape", KeyMods::default());
+    let nu = kawoosh_systems::spawn::output(std::process::Command::new("nu").arg("--version"));
+    if nu.is_ok_and(|o| o.status.success()) {
+        // The second positional, past `--jobs 4`: its completer is code,
+        // so nu answers it.
+        d.keys(&mut app, ":compile nu build.nu build --jobs 4 release al");
+        assert_eq!(app.cmdline_ghost().as_deref(), Some("pha.txt"));
+        d.key(&mut app, "escape", KeyMods::default());
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// compile.md Decision 17: a plugin's kind of build (`kawoosh.compile_kind`)
+/// is found and ranked as the builtin ones are — its markers at their
+/// nearest, its commands a list or a function of the file's text, its
+/// programs run where its file is — a builtin's name puts it in that
+/// kind's place, and `false` turns a kind off.
+#[cfg(unix)]
+#[test]
+fn a_plugin_s_kind_of_build_is_read_as_the_builtin_ones() {
+    let dir = project("kinds", "return {}");
+    std::fs::write(dir.join("sub/mix.exs"), "# deps: phoenix\n").unwrap();
+    std::fs::write(dir.join("sub/deeper/b.ex"), "x\n").unwrap();
+    std::fs::write(dir.join("Makefile"), "all:\n\techo\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&dir.join("sub/deeper/b.ex"));
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"
+kawoosh.compile_kind("mix", {
+  markers = { "mix.exs" },
+  runner = true,
+  programs = { "mix" },
+  commands = function(ctx)
+    local rows = { "mix compile", { cmd = "mix test", why = "the tests" } }
+    if ctx.text:find("phoenix") then rows[#rows + 1] = "mix phx.server" end
+    return rows
+  end,
+})
+"#,
+    );
+    d.frame(&mut app);
+    let cmds = |app: &Kawoosh| -> Vec<(String, PathBuf)> {
+        app.deduce_compile()
+            .commands
+            .into_iter()
+            .map(|c| (c.cmd, c.cwd))
+            .collect()
+    };
+    let sub = dir.join("sub");
+    assert_eq!(
+        cmds(&app)[..4],
+        [
+            ("mix compile".to_string(), sub.clone()),
+            ("mix test".to_string(), sub.clone()),
+            ("mix phx.server".to_string(), sub.clone()),
+            ("make".to_string(), dir.clone()),
+        ],
+        "the nearer runner first"
+    );
+    assert_eq!(app.deduce_compile().commands[1].why, "the tests");
+    assert_eq!(
+        app.compile_dir_of("mix deps.get"),
+        sub,
+        "its program runs where its file is"
+    );
+    // A builtin's name: in its place, a list for its commands.
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.compile_kind("make", { markers = { "Makefile" }, commands = { "make -j8" } })"#,
+    );
+    d.frame(&mut app);
+    let all = cmds(&app);
+    assert!(all.iter().any(|(c, _)| c == "make -j8"), "{all:?}");
+    assert!(!all.iter().any(|(c, _)| c == "make all"), "{all:?}");
+    // Off.
+    app.run_lua_source("t", r#"kawoosh.compile_kind("make", false)"#);
+    d.frame(&mut app);
+    assert!(!cmds(&app).iter().any(|(c, _)| c.starts_with("make")));
     std::fs::remove_dir_all(&dir).ok();
 }

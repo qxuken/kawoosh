@@ -53,27 +53,196 @@ pub fn took(d: Duration) -> String {
     }
 }
 
-/// `error` and `warning` where a line of output says one as compilers
-/// do — before a `:` or a code (`error[E0308]`, `error TS2322`) — for a
-/// line its program printed plain.
-fn severities(line: &str) -> Vec<(Range<usize>, String)> {
+/// A line its program printed plain, painted as the compilers that
+/// colour paint theirs (compile.md Decisions 12 and 15) — clang's and
+/// gcc's palette, which neither prints on a pipe whatever the
+/// environment says: the location heading the line bold, `error` and
+/// `warning` before a `:` or a code (`error[E0308]`, `error TS2322`) in
+/// the diagnostics' colours with the message after them bold, `note`,
+/// `help` and `remark` cyan, the caret line under a quoted source line
+/// (`^~~~`) green; and a test runner's verdict heading a line — go's
+/// `--- FAIL`, `FAIL`, `--- PASS`, `PASS`, `ok`, `--- SKIP` — red, green
+/// or yellow.
+fn plain_paints(line: &str) -> Vec<(Range<usize>, String)> {
+    if let Some(p) = verdict(line) {
+        return vec![p];
+    }
+    if let Some(r) = carets(line) {
+        return vec![(r, "bold ansi:2".into())];
+    }
     let mut out = Vec::new();
+    let lead = line.len() - line.trim_start().len();
+    if let Some(span) = crate::links::location_span(line, lead).filter(|s| s.start == lead)
+        && crate::links::location_at(line, lead).is_some_and(|(_, l, _)| l.is_some())
+    {
+        // tsc's `(3,5)` after the path is the place's too.
+        let paren = line[span.end..]
+            .strip_prefix('(')
+            .and_then(|r| r.find(')'))
+            .filter(|&c| {
+                line[span.end + 1..span.end + 1 + c]
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == ',')
+            })
+            .map_or(0, |c| c + 2);
+        out.push((span.start..span.end + paren, "bold".into()));
+    }
     let lower = line.to_ascii_lowercase();
-    for (word, paint) in [("error", "error"), ("warning", "warning")] {
+    for (word, paint) in [
+        ("error", "bold error"),
+        ("warning", "bold warning"),
+        ("note", "bold ansi:6"),
+        ("help", "bold ansi:6"),
+        ("remark", "bold ansi:6"),
+    ] {
         let mut from = 0;
         while let Some(i) = lower[from..].find(word) {
             let (start, end) = (from + i, from + i + word.len());
             from = end;
             let before = lower[..start].chars().next_back();
             let after = &lower[end..];
-            if before.is_none_or(|c| !c.is_alphanumeric())
-                && (after.starts_with([':', '[']) || after.starts_with(" ts"))
-            {
+            let severity = paint.ends_with("error") || paint.ends_with("warning");
+            let coded = severity && (after.starts_with('[') || after.starts_with(" ts"));
+            if before.is_none_or(|c| !c.is_alphanumeric()) && (after.starts_with(':') || coded) {
                 out.push((start..end, paint.to_string()));
+                // The message after an error or a warning, bold as the
+                // compilers print it.
+                if severity
+                    && let Some(colon) = after.find(": ").map(|c| end + c + 2)
+                    && !line[colon..].trim_end().is_empty()
+                {
+                    out.push((colon..line.trim_end().len(), "bold".into()));
+                }
             }
         }
     }
+    out.sort_by_key(|(r, _)| r.start);
     out
+}
+
+/// A test runner's verdict heading `line`, and its colour.
+fn verdict(line: &str) -> Option<(Range<usize>, String)> {
+    let lead = line.len() - line.trim_start().len();
+    let rest = &line[lead..];
+    for (word, paint) in [
+        ("--- FAIL", "error"),
+        ("--- PASS", "added"),
+        ("--- SKIP", "warning"),
+        ("FAIL", "error"),
+        ("PASS", "added"),
+        ("ok", "added"),
+    ] {
+        let Some(after) = rest.strip_prefix(word) else {
+            continue;
+        };
+        // A word of its own: the line's end, a tab, a space, or `:`.
+        if after.is_empty() || after.starts_with(['\t', ' ', ':']) {
+            // go's `ok  \tpkg` and `FAIL\tpkg` are its package lines;
+            // a word heading prose (`ok, so…`) is not a verdict.
+            if (word == "ok" || word == "FAIL" || word == "PASS")
+                && !(after.is_empty() || after.trim_start_matches(' ').starts_with('\t'))
+            {
+                continue;
+            }
+            return Some((lead..lead + word.len(), paint.into()));
+        }
+    }
+    None
+}
+
+/// The marks under a quoted source line — clang's and gcc's `^~~~`,
+/// after a `  3 | ` gutter or none — as the range from the first mark
+/// to the last.
+fn carets(line: &str) -> Option<Range<usize>> {
+    let body = match line.find('|') {
+        Some(bar) if line[..bar].trim().chars().all(|c| c.is_ascii_digit()) => bar + 1,
+        _ => 0,
+    };
+    let marks = &line[body..];
+    if !marks.contains(['^', '~'])
+        || !marks
+            .chars()
+            .all(|c| matches!(c, '^' | '~' | '-' | '+' | ' '))
+    {
+        return None;
+    }
+    let start = body + marks.find(|c: char| c != ' ')?;
+    let end = body + marks.trim_end().len();
+    Some(start..end)
+}
+
+/// A completion as a word of the command line: double-quoted when it
+/// has what a shell would split or read — inside a `nu -c '…'` too,
+/// where a single quote would end the line's.
+fn quote_arg(v: &str) -> String {
+    if !v.is_empty() && !v.contains(|c: char| c.is_whitespace() || "\"'$`\\;|&<>()*?#".contains(c))
+    {
+        return v.to_string();
+    }
+    let mut out = String::from("\"");
+    for c in v.chars() {
+        if matches!(c, '"' | '\\' | '$' | '`') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
+/// What nushell completer `name` of `file` answers: a list of values,
+/// of `{ value }` records, or a record of `completions`; read from the
+/// last line printed, the file's own top level printing before it.
+fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
+    use std::io::Read;
+    let dir = file.parent()?;
+    let script = format!(
+        "source '{}'; {name} | to json -r",
+        file.file_name()?.to_string_lossy().replace('\'', "")
+    );
+    let mut command = std::process::Command::new("nu");
+    command
+        .args(["--no-config-file", "-c", &script])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = kawoosh_systems::spawn::spawn(&mut command).ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut out = String::new();
+        stdout.read_to_string(&mut out).ok();
+        out
+    });
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            _ => {
+                child.kill().ok();
+                child.wait().ok();
+                return None;
+            }
+        }
+    }
+    let out = reader.join().ok()?;
+    let json: serde_json::Value =
+        serde_json::from_str(out.lines().rev().find(|l| !l.trim().is_empty())?).ok()?;
+    let list = json
+        .get("completions")
+        .and_then(|c| c.as_array())
+        .or_else(|| json.as_array())?;
+    Some(
+        list.iter()
+            .filter_map(|v| match v {
+                serde_json::Value::String(s) => Some(s.clone()),
+                v => v
+                    .get("value")
+                    .map(|x| x.as_str().map_or_else(|| x.to_string(), str::to_string)),
+            })
+            .collect(),
+    )
 }
 
 /// How much of a command the buffer's name says.
@@ -142,6 +311,15 @@ pub struct Compile {
     pub started: u64,
     /// The rows `compile pick` offered, in the picker's order.
     pub offer: Vec<Offer>,
+    /// The runnables asked of the caret's server as the picker opened
+    /// (compile.md Decision 18): the token, and the server's name for the
+    /// rows; and the tokens handed out.
+    pub asked: Option<(u64, String)>,
+    pub tokens: u64,
+    /// Nushell completers' answers (compile.md Decision 16), by file and
+    /// completer, with the file's stamp they were asked at.
+    pub completions:
+        std::collections::HashMap<(PathBuf, String), (Option<SystemTime>, Vec<String>)>,
 }
 
 impl Compile {
@@ -219,6 +397,10 @@ pub struct Offer {
     pub args_at: usize,
     /// How it is declared, for the preview.
     pub detail: Vec<String>,
+    /// A language server's runnable (Decision 18): shown after the
+    /// settings' rows and the lines run, before the files' — wherever it
+    /// was added.
+    pub server: bool,
 }
 
 impl Offer {
@@ -233,6 +415,7 @@ impl Offer {
             needs: false,
             args_at: cmd.len(),
             detail: Vec::new(),
+            server: false,
         }
     }
 
@@ -366,14 +549,175 @@ impl Kawoosh {
                     .map(|d| d.roots.clone())
             })
             .unwrap_or_default();
-        deduce::deduce(&dir, &markers)
+        let plugins: Vec<deduce::PluginKind> = self
+            .scripting
+            .compile_kinds
+            .iter()
+            .map(|(name, def)| match def {
+                Some(d) => deduce::PluginKind {
+                    name: name.clone(),
+                    off: false,
+                    markers: d.markers.clone(),
+                    outermost: d.outermost,
+                    runner: d.runner,
+                    programs: d.programs.clone(),
+                },
+                None => deduce::PluginKind {
+                    name: name.clone(),
+                    off: true,
+                    ..Default::default()
+                },
+            })
+            .collect();
+        let rows = |i: usize, f: &deduce::Found| self.compile_kind_rows(i, f);
+        deduce::deduce(
+            &dir,
+            &markers,
+            &deduce::Kinds {
+                nu_files: &self.compile_nushell(),
+                plugins: &plugins,
+                rows: &rows,
+            },
+        )
+    }
+
+    /// Plugin kind `i`'s commands for the file found (compile.md Decision
+    /// 17): its list, or what its function answers for the file's text —
+    /// an error said in the log, the kind offering nothing then.
+    fn compile_kind_rows(&self, i: usize, f: &deduce::Found) -> Vec<Deduced> {
+        let Some((name, Some(def))) = self.scripting.compile_kinds.get(i) else {
+            return Vec::new();
+        };
+        let rows = if def.dynamic {
+            let text = kawoosh_systems::fs::read(&f.file).unwrap_or_default();
+            let answer = self.scripting.rt.as_ref().map(|rt| {
+                rt.compile_kind_rows(
+                    name,
+                    &f.file.display().to_string(),
+                    &f.dir.display().to_string(),
+                    &text,
+                )
+            });
+            match answer {
+                Some(Ok(rows)) => rows,
+                Some(Err(e)) => {
+                    log::warn!("compile kind {name}: {e}");
+                    return Vec::new();
+                }
+                None => return Vec::new(),
+            }
+        } else {
+            def.rows.clone()
+        };
+        rows.into_iter()
+            .map(|r| {
+                let mut d = Deduced::new(r.cmd, f, &r.why);
+                d.needs = r.needs;
+                d.detail = r.detail;
+                d
+            })
+            .collect()
+    }
+
+    /// The nushell files a project's commands are read from
+    /// (`compile.nushell`, compile.md Decision 16).
+    fn compile_nushell(&self) -> Vec<String> {
+        match self
+            .ed
+            .settings
+            .get("compile.nushell")
+            .and_then(Setting::as_list)
+        {
+            Some(list) => list
+                .iter()
+                .filter_map(Setting::as_str)
+                .map(str::to_string)
+                .collect(),
+            None => deduce::NU_FILES.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// What `<Tab>` offers for the word `token` after `:compile WORDS`
+    /// when the words are a nushell command the project offers and the
+    /// token one of its positional parameters with a completion
+    /// (compile.md Decision 16): the values the file says, else its
+    /// completer's answer. A value with a space is quoted; one asked
+    /// inside a `nu -c '…'`, before its closing quote, keeps the quote.
+    pub(crate) fn compile_arg_candidates(&mut self, words: &[String], token: &str) -> Vec<String> {
+        let rows = self.deduce_compile().commands;
+        for row in rows {
+            let Some(nu) = &row.nu else { continue };
+            let head: Vec<&str> = row.cmd[..row.args_at].split_whitespace().collect();
+            if words.len() < head.len()
+                || words[..head.len()].iter().zip(&head).any(|(w, h)| w != h)
+            {
+                continue;
+            }
+            // Which positional the token is: the words after the
+            // command, a flag's value passed over.
+            let mut index = 0;
+            let mut after = words[head.len()..].iter();
+            while let Some(w) = after.next() {
+                if w.starts_with('-') && w.len() > 1 {
+                    if !w.contains('=') && nu.valued.iter().any(|v| v == w) {
+                        after.next();
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+            let Some(Some(completion)) = nu.positional.get(index).cloned() else {
+                return Vec::new();
+            };
+            let quoted = row.args_at < row.cmd.len();
+            let (typed, close) = match token.strip_suffix('\'') {
+                Some(t) if quoted => (t, "'"),
+                _ => (token, ""),
+            };
+            let values = match completion {
+                deduce::Completion::Values(v) => v,
+                deduce::Completion::Command(name) => self.nu_completions(&nu.file, &name),
+            };
+            return values
+                .into_iter()
+                .filter(|v| v.starts_with(typed))
+                .map(|v| format!("{}{close}", quote_arg(&v)))
+                .collect();
+        }
+        Vec::new()
+    }
+
+    /// Completer `name`'s answer in nushell file `file`, run there —
+    /// `source` defines the file's commands and does not run its `main`
+    /// — and kept while the file is unchanged; a second at most, so a
+    /// completer that hangs costs that once.
+    fn nu_completions(&mut self, file: &Path, name: &str) -> Vec<String> {
+        let stamp = std::fs::metadata(file).and_then(|m| m.modified()).ok();
+        let key = (file.to_path_buf(), name.to_string());
+        if let Some((at, values)) = self.compile.completions.get(&key)
+            && *at == stamp
+        {
+            return values.clone();
+        }
+        let values = nu_answer(file, name).unwrap_or_default();
+        self.compile
+            .completions
+            .insert(key, (stamp, values.clone()));
+        values
     }
 
     /// The scripts of the packages around (compile.md Decision 9): the
     /// open buffers' `package.json`s, then every one in the caret's
     /// repository. Nothing when `compile.deduce` is off.
     fn compile_packages(&self) -> Vec<Deduced> {
-        if self.ed.settings.bool("compile.deduce") == Some(false) {
+        // A plugin's `node` in the builtin's place reads what it reads.
+        if self.ed.settings.bool("compile.deduce") == Some(false)
+            || self
+                .scripting
+                .compile_kinds
+                .iter()
+                .any(|(n, _)| n == "node")
+        {
             return Vec::new();
         }
         let (dir, _) = self.compile_start();
@@ -847,31 +1191,161 @@ impl Kawoosh {
             o.detail = d.detail;
             add(&mut rows, o);
         }
-        if rows.is_empty() {
+        // What the caret's server says can run there, asked now and
+        // added as it answers.
+        let ask = self.runnables_at();
+        if rows.is_empty() && ask.is_none() {
             self.ed.message = NOTHING.into();
             return;
         }
-        let Some(rt) = self.scripting.rt.clone() else {
+        if self.scripting.rt.is_none() {
             self.ed.message = "the compile picker needs lua".into();
             return;
+        }
+        self.compile.offer = rows;
+        self.publish_offer();
+        self.run_lua_source("compile", "kawoosh.picker.open(\"compile\")");
+        self.compile.asked = None;
+        if let Some((buffer, offset, server)) = ask {
+            self.compile.tokens += 1;
+            let token = self.compile.tokens;
+            self.compile.asked = Some((token, server));
+            self.positional_cmd(kawoosh_systems::lsp::Cmd::Runnables {
+                buffer,
+                offset,
+                token,
+            });
+        }
+    }
+
+    /// The offer as `kawoosh.compile_offer()` reads it: each row its
+    /// index in [`Compile::offer`], which a row added later never moves,
+    /// in the order shown — the settings' and the lines run, then a
+    /// server's runnables, then the files'.
+    fn publish_offer(&self) {
+        let Some(rt) = &self.scripting.rt else {
+            return;
         };
-        let snap: Vec<CompileOfferSnap> = rows
-            .iter()
-            .enumerate()
-            .map(|(i, o)| CompileOfferSnap {
-                index: i + 1,
-                cmd: o.cmd.clone(),
-                name: o.name.clone(),
-                from: o.from.clone(),
-                cwd: kawoosh_systems::fs::abbreviate_home(&o.cwd),
-                why: o.why.clone(),
-                needs: o.needs,
-                detail: o.detail.clone(),
+        let settled = |o: &Offer| {
+            [
+                "compile.default",
+                "compile.commands",
+                "last run here",
+                "recent",
+            ]
+            .contains(&o.from.as_str())
+        };
+        let mut order: Vec<usize> = (0..self.compile.offer.len()).collect();
+        order.sort_by_key(|&i| {
+            let o = &self.compile.offer[i];
+            match (settled(o), o.server) {
+                (true, _) => 0,
+                (_, true) => 1,
+                _ => 2,
+            }
+        });
+        let snap: Vec<CompileOfferSnap> = order
+            .into_iter()
+            .map(|i| {
+                let o = &self.compile.offer[i];
+                CompileOfferSnap {
+                    index: i + 1,
+                    cmd: o.cmd.clone(),
+                    name: o.name.clone(),
+                    from: o.from.clone(),
+                    cwd: kawoosh_systems::fs::abbreviate_home(&o.cwd),
+                    why: o.why.clone(),
+                    needs: o.needs,
+                    detail: o.detail.clone(),
+                }
             })
             .collect();
         rt.set_compile_offer(Some(Rc::new(snap)));
-        self.compile.offer = rows;
-        self.run_lua_source("compile", "kawoosh.picker.open(\"compile\")");
+    }
+
+    /// Where to ask the caret's server what can run (compile.md Decision
+    /// 18): its buffer, the caret, and the server's name — when it is a
+    /// file here whose server says it answers.
+    fn runnables_at(&self) -> Option<(BufferId, usize, String)> {
+        let v = self.focused_view()?;
+        let buffer = self.ed.views[v].buffer;
+        let path = self.ed.buffers[buffer].path.as_deref()?;
+        if kawoosh_systems::fs::domain_of(path).is_some()
+            || self.ed.settings.bool("compile.deduce") == Some(false)
+            || !self.lsp_answers(buffer)
+            || !self.caps_of(buffer).runnables
+        {
+            return None;
+        }
+        let server = self
+            .lsp
+            .holders
+            .get(&buffer)
+            .and_then(|c| c.first())
+            .map(|c| kawoosh_systems::fs::basename(Path::new(c)).unwrap_or_else(|| c.clone()))
+            .unwrap_or_else(|| "language server".into());
+        Some((buffer, self.ed.views[v].sels.primary().head, server))
+    }
+
+    /// The server's runnables for the picker opened last (compile.md
+    /// Decision 18): each a row under the server's name, its label the
+    /// why, run where it says; added to the offer, and the picker read
+    /// again if it is still the compile one. A row there already, where
+    /// it runs, is not made twice.
+    pub(crate) fn compile_runnables(
+        &mut self,
+        token: u64,
+        result: Result<Vec<kawoosh_systems::lsp::Runnable>, String>,
+    ) {
+        let Some((asked, server)) = self.compile.asked.clone() else {
+            return;
+        };
+        if asked != token {
+            return;
+        }
+        self.compile.asked = None;
+        let list = match result {
+            Ok(list) => list,
+            Err(e) => {
+                log::debug!("runnables: {e}");
+                return;
+            }
+        };
+        let fallback = self.compile_dir();
+        let mut added = false;
+        for r in list {
+            let cmd = std::iter::once(r.program.as_str())
+                .chain(r.args.iter().map(String::as_str))
+                .map(kawoosh_systems::io::shell_quote)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let cwd = r.cwd.unwrap_or_else(|| fallback.clone());
+            if self
+                .compile
+                .offer
+                .iter()
+                .any(|o| o.cmd == cmd && o.cwd == cwd)
+            {
+                continue;
+            }
+            let why = if r.label == cmd {
+                String::new()
+            } else {
+                r.label
+            };
+            let mut o = Offer::of(&cmd, cwd, &server, &why);
+            o.server = true;
+            self.compile.offer.push(o);
+            added = true;
+        }
+        if !added {
+            return;
+        }
+        self.publish_offer();
+        self.run_lua_source(
+            "compile",
+            "local s = kawoosh.picker.state(); if s and s.source == \"compile\" then kawoosh.picker.reload() end",
+        );
     }
 
     /// Row `n` (from 1) of the last `compile pick`, run where it said —
@@ -958,7 +1432,7 @@ impl Kawoosh {
                 use kawoosh_term::plain::Paint;
                 let (text, printed) = run.plain.read(&line);
                 let paints = if printed.is_empty() {
-                    severities(&text)
+                    plain_paints(&text)
                 } else {
                     let name = |p| match p {
                         Paint::Ansi(n) => format!("ansi:{n}"),
@@ -1301,6 +1775,73 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn painted(line: &str) -> Vec<(&str, String)> {
+        plain_paints(line)
+            .into_iter()
+            .map(|(r, p)| (&line[r], p))
+            .collect()
+    }
+
+    #[test]
+    fn a_plain_line_is_painted_as_the_compilers_paint_theirs() {
+        let s = |v: &[(&'static str, &str)]| -> Vec<(&'static str, String)> {
+            v.iter().map(|(a, b)| (*a, b.to_string())).collect()
+        };
+        // clang's and gcc's, which print plain on a pipe.
+        assert_eq!(
+            painted("b.c:3:22: error: use of undeclared identifier 'x'"),
+            s(&[
+                ("b.c:3:22", "bold"),
+                ("error", "bold error"),
+                ("use of undeclared identifier 'x'", "bold"),
+            ])
+        );
+        assert_eq!(
+            painted("b.c:2:11: note: passing argument to parameter 'a' here"),
+            s(&[("b.c:2:11", "bold"), ("note", "bold ansi:6")])
+        );
+        assert_eq!(
+            painted("      |                     ^~~"),
+            s(&[("^~~", "bold ansi:2")])
+        );
+        assert_eq!(painted("    ^~~~~ ~~~"), s(&[("^~~~~ ~~~", "bold ansi:2")]));
+        assert_eq!(painted("    3 | int main(){ return x; }"), s(&[]));
+        assert_eq!(painted("  |  ----- a table"), s(&[]), "no caret, no marks");
+        // rustc's and tsc's codes, as before.
+        assert_eq!(
+            painted("error[E0308]: mismatched types"),
+            s(&[("error", "bold error"), ("mismatched types", "bold")])
+        );
+        assert_eq!(
+            painted("src/a.ts(3,5): error TS2322: Type"),
+            s(&[
+                ("src/a.ts(3,5)", "bold"),
+                ("error", "bold error"),
+                ("Type", "bold")
+            ])
+        );
+        // go: its locations, and its tests' verdicts.
+        assert_eq!(
+            painted("./main.go:3:30: undefined: x"),
+            s(&[("./main.go:3:30", "bold")])
+        );
+        assert_eq!(
+            painted("--- FAIL: TestA (0.00s)"),
+            s(&[("--- FAIL", "error")])
+        );
+        assert_eq!(
+            painted("    --- PASS: TestB (0.00s)"),
+            s(&[("--- PASS", "added")])
+        );
+        assert_eq!(painted("FAIL"), s(&[("FAIL", "error")]));
+        assert_eq!(painted("FAIL\tex\t0.217s"), s(&[("FAIL", "error")]));
+        assert_eq!(painted("ok  \tex\t0.2s"), s(&[("ok", "added")]));
+        // Prose is not a verdict, nor a word inside another one.
+        assert_eq!(painted("ok, so the errors: none"), s(&[]));
+        assert_eq!(painted("no warnings: 3 terrors:"), s(&[]));
+        assert_eq!(painted("see src/a.rs for more"), s(&[]));
+    }
 
     #[test]
     fn npm_s_scripts_take_their_arguments_past_dashes() {

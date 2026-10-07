@@ -80,6 +80,12 @@ pub struct ServerDef {
     /// looked up before the pool's own answers — an integration a
     /// server's row declares, not code.
     pub answers: BTreeMap<String, Value>,
+    /// What `initialize` sends as its `initializationOptions`
+    /// (docs/design/lsp-servers.md Decision 8): astro-ls's TypeScript.
+    /// A string in it saying `{root}` is the server's root, and
+    /// `{typescript}` a TypeScript's `lib` ([`init_options`]). `Null`
+    /// for none.
+    pub init: Value,
 }
 
 /// A language's files: by extension (no dot, any case) or whole name.
@@ -111,6 +117,7 @@ impl Default for ServerDef {
             package: None,
             when: Vec::new(),
             answers: BTreeMap::new(),
+            init: Value::Null,
         }
     }
 }
@@ -330,6 +337,21 @@ fn marked(dir: &Path, files: &[String]) -> bool {
     false
 }
 
+/// What a sync carries (lsp-rules.md Decision 8): the buffer's whole
+/// text, or what changed since the version the pool holds — the bytes
+/// `start..old_end` of that text, now `text`. A span the pool's copy
+/// does not fit is answered [`Event::SyncLost`], and the whole is sent.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SyncText {
+    Whole(String),
+    Span {
+        from: Version,
+        start: usize,
+        old_end: usize,
+        text: String,
+    },
+}
+
 pub enum Cmd {
     /// The buffer's text at `version` — didOpen the first time, then
     /// didChange.
@@ -338,9 +360,15 @@ pub enum Cmd {
         path: PathBuf,
         language: String,
         version: Version,
-        text: String,
+        text: SyncText,
     },
     Close {
+        buffer: BufferId,
+    },
+    /// The buffer was written: its servers that hear of saves told
+    /// (`textDocument/didSave`, lsp-rules.md Decision 9), with the text
+    /// they hold when they ask for it.
+    Saved {
         buffer: BufferId,
     },
     Definition {
@@ -405,6 +433,14 @@ pub enum Cmd {
     WorkspaceSymbols {
         buffer: BufferId,
         query: String,
+        token: u64,
+    },
+    /// What can run at `offset` of `buffer` (`experimental/runnables`,
+    /// compile.md Decision 18), answered as `Event::Runnables` with
+    /// `token`.
+    Runnables {
+        buffer: BufferId,
+        offset: usize,
         token: u64,
     },
     /// The inlay hints between `start` and `end` of `buffer`'s text at
@@ -541,6 +577,18 @@ pub fn symbol_kind_name(kind: u64) -> &'static str {
 
 /// An inlay hint: text the server would draw at a position that is not
 /// the document's — a type, a parameter's name.
+/// Something a server says can run (rust-analyzer's runnables): its
+/// label, and the program, arguments and directory to run it with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Runnable {
+    pub label: String,
+    pub program: String,
+    pub args: Vec<String>,
+    /// Where it runs: a cargo runnable's workspace, where cargo prints
+    /// its paths from; else its own `cwd`.
+    pub cwd: Option<PathBuf>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InlayHint {
     pub line: u32,
@@ -574,6 +622,19 @@ pub struct Caps {
     /// It gives diagnostics when asked (`diagnosticProvider`), not only
     /// as it publishes them.
     pub pull: bool,
+    /// It lists what can run at a place (`experimental/runnables`,
+    /// rust-analyzer's), as its `experimental.runnables` says.
+    pub runnables: bool,
+    /// It gives a whole workspace's diagnostics when asked
+    /// (`diagnosticProvider.workspaceDiagnostics`, lists.md Decision 8).
+    pub workspace_pull: bool,
+    /// It takes a change as a range and its text (`textDocumentSync`'s
+    /// `change` 2), not the whole document each time.
+    pub incremental: bool,
+    /// It hears of a save (`textDocument/didSave`, lsp-rules.md Decision
+    /// 9): `Some(include_text)` — with the text when `true` — or `None`,
+    /// not.
+    pub save: Option<bool>,
 }
 
 impl Caps {
@@ -610,6 +671,10 @@ impl Caps {
             inlay_hint: self.inlay_hint || other.inlay_hint,
             definition: self.definition || other.definition,
             pull: self.pull || other.pull,
+            runnables: self.runnables || other.runnables,
+            workspace_pull: self.workspace_pull || other.workspace_pull,
+            incremental: self.incremental && other.incremental,
+            save: self.save.or(other.save),
             hover: self.hover || other.hover,
             completion: self.completion || other.completion,
             commands,
@@ -632,6 +697,7 @@ impl Caps {
             "textDocument/documentSymbol" => self.document_symbol,
             "workspace/symbol" => self.workspace_symbol,
             "textDocument/inlayHint" => self.inlay_hint,
+            "experimental/runnables" => self.runnables,
             _ => true,
         }
     }
@@ -742,6 +808,12 @@ pub enum Event {
         version: Version,
         hints: Vec<InlayHint>,
     },
+    /// What can run, asked for with `token`: the list, or why there is
+    /// none.
+    Runnables {
+        token: u64,
+        result: Result<Vec<Runnable>, String>,
+    },
     /// A formatting answer, for the text at `version`.
     Formatted {
         buffer: BufferId,
@@ -776,6 +848,11 @@ pub enum Event {
         again: bool,
         /// The project it served.
         root: PathBuf,
+    },
+    /// A sync's span did not fit the text the pool holds for `buffer`
+    /// (lsp-rules.md Decision 8): the next sync is to be the whole text.
+    SyncLost {
+        buffer: BufferId,
     },
     /// A [`Cmd::Restart`] done: the PATH asked for again, the commands'
     /// failures forgotten.
@@ -827,6 +904,8 @@ impl Event {
             Event::Locations { .. } => "lsp locations",
             Event::CodeActions { .. } => "lsp code actions",
             Event::Symbols { .. } => "lsp symbols",
+            Event::Runnables { .. } => "lsp runnables",
+            Event::SyncLost { .. } => "lsp sync lost",
             Event::InlayHints { .. } => "lsp inlay hints",
             Event::Formatted { .. } => "lsp formatted",
             Event::Failed { .. } => "lsp failed",
@@ -922,6 +1001,44 @@ pub fn offsets_of_positions(text: &str, positions: &[(u32, u32)]) -> Vec<usize> 
         out[i] = at;
     }
     out
+}
+
+/// One buffer's sync, as each of its servers is told it: the whole text
+/// the pool holds now, and the span that changed, if one did.
+struct Synced<'a> {
+    buffer: BufferId,
+    path: &'a Path,
+    language: &'a str,
+    version: Version,
+    text: &'a str,
+    span: Option<&'a Span>,
+}
+
+/// A sync's span, as the pool applies it.
+struct Span {
+    from: Version,
+    start: usize,
+    old_end: usize,
+    text: String,
+}
+
+/// The position of byte `end` of `text`, from `start`'s, already known:
+/// only the bytes between are read.
+fn position_after(text: &str, start: usize, at: (u32, u32), end: usize) -> (u32, u32) {
+    let between = &text[start..end];
+    match between.rfind('\n') {
+        Some(nl) => (
+            at.0 + between.bytes().filter(|&b| b == b'\n').count() as u32,
+            between[nl + 1..]
+                .chars()
+                .map(|c| c.len_utf16() as u32)
+                .sum(),
+        ),
+        None => (
+            at.0,
+            at.1 + between.chars().map(|c| c.len_utf16() as u32).sum::<u32>(),
+        ),
+    }
 }
 
 pub fn position_of_offset(text: &str, offset: usize) -> (u32, u32) {
@@ -1437,6 +1554,13 @@ struct Server {
     /// The files it asked to hear of, by registration
     /// (`client/registerCapability` for `workspace/didChangeWatchedFiles`).
     watches: BTreeMap<String, Vec<FileWatch>>,
+    /// The workspace pull (lists.md Decision 8): the result each file's
+    /// report last carried, sent back so an unchanged one is said in a
+    /// word; whether a request is out; and whether another was wanted
+    /// while it was.
+    results: HashMap<String, String>,
+    pulling: bool,
+    pull_again: bool,
 }
 
 impl Server {
@@ -1568,6 +1692,9 @@ impl Server {
             last_stderr: None,
             caps: None,
             watches: BTreeMap::new(),
+            results: HashMap::new(),
+            pulling: false,
+            pull_again: false,
         })
     }
 
@@ -1709,6 +1836,10 @@ struct Pool {
     servers: Vec<Option<Server>>,
     /// Each buffer's servers, the first asked first.
     homes: HashMap<BufferId, Vec<usize>>,
+    /// Each synced buffer's text, at the version it is: what a span is
+    /// applied to, and a server opening the buffer is sent (lsp-rules.md
+    /// Decision 8).
+    texts: HashMap<BufferId, (Version, String)>,
     /// `Cmd::Order`'s.
     order: BTreeMap<String, Vec<String>>,
     /// Whether a server's `when` files are at or above a directory, by
@@ -1775,6 +1906,7 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         keys: HashMap::new(),
         servers: Vec::new(),
         homes: HashMap::new(),
+        texts: HashMap::new(),
         order: BTreeMap::new(),
         when_seen: HashMap::new(),
         published: HashMap::new(),
@@ -2348,6 +2480,10 @@ impl Pool {
                 }
             }
         });
+        if !def.init.is_null() {
+            initialize["params"]["initializationOptions"] =
+                init_options(&def.init, &root, server.domain.is_some());
+        }
         // A server here is told of the files it asks to hear of
         // (`handle_files`); one on a host is not offered it and keeps
         // watching on its own, as rust-analyzer and tsserver do for a
@@ -2471,11 +2607,83 @@ impl Pool {
                         .collect();
                     self.emit(Event::Holders { buffer, commands });
                 }
+                // The pool's copy brought to `version`: the whole as
+                // given, or a span applied where it fits.
+                let span = match text {
+                    SyncText::Whole(text) => {
+                        self.texts.insert(buffer, (version, text));
+                        None
+                    }
+                    SyncText::Span {
+                        from,
+                        start,
+                        old_end,
+                        text,
+                    } => {
+                        let fits = self.texts.get(&buffer).is_some_and(|(v, t)| {
+                            *v == from
+                                && start <= old_end
+                                && old_end <= t.len()
+                                && t.is_char_boundary(start)
+                                && t.is_char_boundary(old_end)
+                        });
+                        if !fits {
+                            self.texts.remove(&buffer);
+                            self.emit(Event::SyncLost { buffer });
+                            return;
+                        }
+                        let (v, t) = self.texts.get_mut(&buffer).expect("fits");
+                        t.replace_range(start..old_end, &text);
+                        *v = version;
+                        Some(Span {
+                            from,
+                            start,
+                            old_end,
+                            text,
+                        })
+                    }
+                };
+                // Lent to the servers' syncs, not copied for them.
+                let Some((v, whole)) = self.texts.remove(&buffer) else {
+                    return;
+                };
+                let sync = Synced {
+                    buffer,
+                    path: &path,
+                    language: &language,
+                    version,
+                    text: &whole,
+                    span: span.as_ref(),
+                };
                 for key in keys {
-                    self.sync_to(key, buffer, &path, &language, version, &text);
+                    self.sync_to(key, &sync);
+                }
+                self.texts.insert(buffer, (v, whole));
+            }
+            Cmd::Saved { buffer } => {
+                for key in self.homes.get(&buffer).cloned().unwrap_or_default() {
+                    let Some(server) = self.servers[key].as_mut() else {
+                        continue;
+                    };
+                    let Some(text) = server.caps.as_ref().and_then(|c| c.save) else {
+                        continue;
+                    };
+                    let Some((uri, doc)) = server
+                        .documents
+                        .iter()
+                        .find(|(_, d)| d.buffer == Some(buffer))
+                    else {
+                        continue;
+                    };
+                    let mut params = json!({ "textDocument": { "uri": uri } });
+                    if text {
+                        params["text"] = json!(doc.text);
+                    }
+                    server.notify("textDocument/didSave", params);
                 }
             }
             Cmd::Close { buffer } => {
+                self.texts.remove(&buffer);
                 for key in self.homes.remove(&buffer).unwrap_or_default() {
                     self.close_on(key, buffer);
                 }
@@ -2576,6 +2784,31 @@ impl Pool {
                 self.request_for(
                     buffer,
                     "workspace/symbol",
+                    params,
+                    Version::INITIAL,
+                    token as usize,
+                );
+            }
+            Cmd::Runnables {
+                buffer,
+                offset,
+                token,
+            } => {
+                let Some((uri, text)) = self.doc_text(buffer) else {
+                    self.emit(Event::Runnables {
+                        token,
+                        result: Err("no server holds this buffer".into()),
+                    });
+                    return;
+                };
+                let (line, character) = position_of_offset(&text, offset);
+                let params = json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character }
+                });
+                self.request_for(
+                    buffer,
+                    "experimental/runnables",
                     params,
                     Version::INITIAL,
                     token as usize,
@@ -2763,6 +2996,75 @@ impl Pool {
         );
     }
 
+    /// The workspace pull (`workspace/diagnostic`, lists.md Decision 8): a
+    /// server that gives a whole workspace's diagnostics is asked for
+    /// them — once up, when it asks to be (`refresh`), after a document is
+    /// sent — with the results it gave before. One request is out at a
+    /// time; one wanted meanwhile is made when it is answered, so a
+    /// server holding the request open until something changes is left
+    /// to.
+    fn pull_workspace(&mut self, key: usize) {
+        let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+            return;
+        };
+        if !server.caps.as_ref().is_some_and(|c| c.workspace_pull) {
+            return;
+        }
+        if server.pulling {
+            server.pull_again = true;
+            return;
+        }
+        server.pulling = true;
+        let previous: Vec<Value> = server
+            .results
+            .iter()
+            .map(|(uri, id)| json!({ "uri": uri, "value": id }))
+            .collect();
+        server.request(
+            "workspace/diagnostic",
+            json!({ "previousResultIds": previous }),
+            (BufferId::default(), Version::INITIAL, 0),
+        );
+    }
+
+    /// A workspace pull answered (`result`, or none for a refusal): each
+    /// file's full report joins what its servers said of it, the files a
+    /// buffer holds left to their own pull; each report's result kept.
+    /// Then the pull wanted while it was out, if one was.
+    fn workspace_pulled(&mut self, key: usize, result: Option<&Value>) {
+        let items = result
+            .and_then(|r| r.get("items"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for item in items {
+            let Some(uri) = item.get("uri").and_then(Value::as_str).map(canonical_uri) else {
+                continue;
+            };
+            let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+                return;
+            };
+            if let Some(id) = item.get("resultId").and_then(Value::as_str) {
+                server.results.insert(uri.clone(), id.to_string());
+            }
+            let held = server
+                .documents
+                .get(&uri)
+                .is_some_and(|d| d.buffer.is_some());
+            if item.get("kind").and_then(Value::as_str) == Some("full") && !held {
+                let diagnostics = item.get("items").cloned().unwrap_or(Value::Null);
+                self.diagnostics_from(key, &uri, diagnostics);
+            }
+        }
+        let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+            return;
+        };
+        server.pulling = false;
+        if std::mem::take(&mut server.pull_again) {
+            self.pull_workspace(key);
+        }
+    }
+
     /// Every document server `key` holds for a buffer, pulled again: it
     /// came up, or asked (`workspace/diagnostic/refresh`).
     fn pull_all(&mut self, key: usize) {
@@ -2780,24 +3082,65 @@ impl Pool {
         for (uri, buffer) in docs {
             self.pull_diagnostics(key, &uri, buffer);
         }
+        self.pull_workspace(key);
     }
 
     /// Buffer `buffer`'s text sent to server `key`: `didOpen` the first
     /// time, `didChange` after.
-    fn sync_to(
-        &mut self,
-        key: usize,
-        buffer: BufferId,
-        path: &Path,
-        language: &str,
-        version: Version,
-        text: &str,
-    ) {
+    fn sync_to(&mut self, key: usize, sync: &Synced) {
+        let Synced {
+            buffer,
+            path,
+            language,
+            version,
+            text,
+            span,
+        } = *sync;
         let Some(server) = self.servers[key].as_mut() else {
             return;
         };
+        let incremental = server.caps.as_ref().is_some_and(|c| c.incremental);
         let uri = uri_of(path);
         match server.documents.get_mut(&uri) {
+            // What changed since the document was last told, as a range
+            // to a server that takes one (lsp-rules.md Decision 8); the
+            // whole, from the pool's copy, to one that does not.
+            Some(doc)
+                if doc.buffer == Some(buffer)
+                    && let Some(span) = span.filter(|s| {
+                        doc.version == s.from
+                            && s.old_end <= doc.text.len()
+                            && doc.text.is_char_boundary(s.start)
+                            && doc.text.is_char_boundary(s.old_end)
+                    }) =>
+            {
+                let (l0, c0) = position_of_offset(&doc.text, span.start);
+                let (l1, c1) = position_after(&doc.text, span.start, (l0, c0), span.old_end);
+                doc.text.replace_range(span.start..span.old_end, &span.text);
+                doc.version = version;
+                doc.lsp_version += 1;
+                let v = doc.lsp_version;
+                let change = if incremental {
+                    json!({
+                        "range": {
+                            "start": { "line": l0, "character": c0 },
+                            "end": { "line": l1, "character": c1 }
+                        },
+                        "text": span.text
+                    })
+                } else {
+                    json!({ "text": doc.text })
+                };
+                server.notify(
+                    "textDocument/didChange",
+                    json!({
+                        "textDocument": { "uri": uri, "version": v },
+                        "contentChanges": [change]
+                    }),
+                );
+                self.pull_diagnostics(key, &uri, buffer);
+                self.pull_workspace(key);
+            }
             Some(doc) => {
                 // A file `load_all` sent is the buffer's now: the
                 // server holds it open already.
@@ -2824,6 +3167,7 @@ impl Pool {
                     self.status();
                 }
                 self.pull_diagnostics(key, &uri, buffer);
+                self.pull_workspace(key);
             }
             None => {
                 server.notify(
@@ -2847,6 +3191,7 @@ impl Pool {
                 );
                 self.status();
                 self.pull_diagnostics(key, &uri, buffer);
+                self.pull_workspace(key);
             }
         }
     }
@@ -3059,6 +3404,10 @@ impl Pool {
                     token: offset as u64,
                     result: Err(format!("the server exited ({why})")),
                 }),
+                "experimental/runnables" => self.emit(Event::Runnables {
+                    token: offset as u64,
+                    result: Err(format!("the server exited ({why})")),
+                }),
                 "textDocument/formatting" => self.emit(Event::Failed {
                     what: method,
                     message: format!("the server exited ({why})"),
@@ -3174,9 +3523,19 @@ impl Pool {
                             result: Err(text),
                         },
                     ),
+                    "experimental/runnables" => self.emit_from(
+                        key,
+                        Event::Runnables {
+                            token: offset as u64,
+                            result: Err(text),
+                        },
+                    ),
                     // Hints are asked for as the view moves; one refused
                     // is nothing to say.
                     "textDocument/inlayHint" | "textDocument/diagnostic" => {}
+                    // Refused (or cancelled, to be asked again): what was
+                    // wanted meanwhile is asked.
+                    "workspace/diagnostic" => self.workspace_pulled(key, None),
                     _ => self.emit_from(
                         key,
                         Event::Failed {
@@ -3225,6 +3584,7 @@ impl Pool {
                     self.reconcile_loads(key);
                     self.pull_all(key);
                 }
+                "workspace/diagnostic" => self.workspace_pulled(key, result),
                 "textDocument/diagnostic" => {
                     // `full`: the items; `unchanged`: as it was.
                     if result.and_then(|r| r.get("kind")).and_then(Value::as_str) == Some("full")
@@ -3337,6 +3697,15 @@ impl Pool {
                         Event::Symbols {
                             token: offset as u64,
                             result: Ok(workspace_symbols(result)),
+                        },
+                    );
+                }
+                "experimental/runnables" => {
+                    self.emit_from(
+                        key,
+                        Event::Runnables {
+                            token: offset as u64,
+                            result: Ok(runnables(result)),
                         },
                     );
                 }
@@ -3639,6 +4008,33 @@ fn capabilities(result: Option<&Value>) -> Caps {
         inlay_hint: provides("inlayHintProvider"),
         definition: provides("definitionProvider"),
         pull: provides("diagnosticProvider"),
+        // A kind alone is sync with no options: a save said without
+        // the text, as other clients read it. Options without `save` ask
+        // for none.
+        save: match caps.and_then(|c| c.get("textDocumentSync")) {
+            Some(Value::Number(_)) => Some(false),
+            Some(o) => match o.get("save") {
+                Some(Value::Bool(true)) => Some(false),
+                Some(Value::Object(s)) => Some(
+                    s.get("includeText")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                ),
+                _ => None,
+            },
+            None => None,
+        },
+        incremental: caps.and_then(|c| c.get("textDocumentSync")).and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.get("change").and_then(Value::as_u64))
+        }) == Some(2),
+        workspace_pull: caps
+            .and_then(|c| c.pointer("/diagnosticProvider/workspaceDiagnostics"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        runnables: caps
+            .and_then(|c| c.pointer("/experimental/runnables"))
+            .is_some_and(|v| v.as_bool().unwrap_or(v.is_object())),
         hover: provides("hoverProvider"),
         completion: caps
             .and_then(|c| c.get("completionProvider"))
@@ -3654,6 +4050,115 @@ fn capabilities(result: Option<&Value>) -> Caps {
             })
             .unwrap_or_default(),
     }
+}
+
+/// A server's `init` as `initialize` sends it (docs/design/lsp-servers.md
+/// Decision 8): each string with `{root}` in it the server's root, and
+/// `{typescript}` a TypeScript's `lib` — the nearest
+/// `node_modules/typescript/lib` at or above the root, else one kawoosh
+/// installed beside a server (typescript-language-server's), else the
+/// word left as it is for the server to say what it misses. On a host
+/// only `{root}` is said: its disk is not looked at from here.
+pub fn init_options(init: &Value, root: &Path, on_host: bool) -> Value {
+    let root_text = match crate::fs::domain_of(root) {
+        Some((_, dir)) => dir.display().to_string(),
+        None => root.display().to_string(),
+    };
+    let typescript = (!on_host)
+        .then(|| typescript_lib(root))
+        .flatten()
+        .map(|p| p.display().to_string());
+    fn walk(v: &Value, root: &str, ts: Option<&str>) -> Value {
+        match v {
+            Value::String(s) => {
+                let mut s = s.replace("{root}", root);
+                if let Some(ts) = ts {
+                    s = s.replace("{typescript}", ts);
+                }
+                Value::String(s)
+            }
+            Value::Array(a) => Value::Array(a.iter().map(|v| walk(v, root, ts)).collect()),
+            Value::Object(o) => Value::Object(
+                o.iter()
+                    .map(|(k, v)| (k.clone(), walk(v, root, ts)))
+                    .collect(),
+            ),
+            v => v.clone(),
+        }
+    }
+    walk(init, &root_text, typescript.as_deref())
+}
+
+/// The TypeScript a project builds with, else one kawoosh installed.
+fn typescript_lib(root: &Path) -> Option<PathBuf> {
+    let lib = |d: &Path| {
+        Some(d.join("node_modules/typescript/lib")).filter(|p| p.join("typescript.js").is_file())
+    };
+    root.ancestors().find_map(lib).or_else(|| {
+        let servers = crate::servers::root()?;
+        let npm = std::fs::read_dir(servers.join("npm")).ok()?;
+        let mut dirs: Vec<PathBuf> = npm.flatten().map(|e| e.path()).collect();
+        dirs.sort();
+        // typescript-language-server's own first: it is installed with
+        // the TypeScript it runs.
+        dirs.sort_by_key(|d| !d.ends_with("typescript-language-server"));
+        dirs.iter().find_map(|d| lib(d))
+    })
+}
+
+/// An `experimental/runnables` answer: a `cargo` runnable as `cargo`
+/// (or its `overrideCargo`) with its `cargoArgs`, then `--` and its
+/// `executableArgs` when it has any, in its workspace; a `shell` one as
+/// its `program` and `args` in its `cwd`. Other kinds are left out.
+pub fn runnables(result: Option<&Value>) -> Vec<Runnable> {
+    let strings = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let path = |v: Option<&Value>| v.and_then(Value::as_str).map(PathBuf::from);
+    let Some(list) = result.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|r| {
+            let label = r.get("label")?.as_str()?.to_string();
+            let args = r.get("args")?;
+            match r.get("kind")?.as_str()? {
+                "cargo" => {
+                    let mut out = strings(args.get("cargoArgs"));
+                    out.extend(strings(args.get("cargoExtraArgs")));
+                    let exe = strings(args.get("executableArgs"));
+                    if !exe.is_empty() {
+                        out.push("--".into());
+                        out.extend(exe);
+                    }
+                    Some(Runnable {
+                        label,
+                        program: args
+                            .get("overrideCargo")
+                            .and_then(Value::as_str)
+                            .unwrap_or("cargo")
+                            .to_string(),
+                        args: out,
+                        cwd: path(args.get("workspaceRoot")).or_else(|| path(args.get("cwd"))),
+                    })
+                }
+                "shell" => Some(Runnable {
+                    label,
+                    program: args.get("program")?.as_str()?.to_string(),
+                    args: strings(args.get("args")),
+                    cwd: path(args.get("cwd")),
+                }),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 /// A `documentSymbol` answer, flattened: hierarchical `DocumentSymbol`s
@@ -4081,6 +4586,140 @@ fn placed_diagnostics(params: &Value) -> Vec<Placed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a server asks of a save, by its `textDocumentSync`: a kind
+    /// alone is a save without the text; options say it, or ask none.
+    #[test]
+    fn a_save_is_asked_for_as_the_sync_options_say() {
+        let save = |sync: Value| {
+            capabilities(Some(
+                &json!({ "capabilities": { "textDocumentSync": sync } }),
+            ))
+            .save
+        };
+        assert_eq!(save(json!(2)), Some(false));
+        assert_eq!(save(json!({ "change": 2, "save": true })), Some(false));
+        assert_eq!(
+            save(json!({ "change": 2, "save": {} })),
+            Some(false),
+            "rust-analyzer's"
+        );
+        assert_eq!(save(json!({ "save": { "includeText": true } })), Some(true));
+        assert_eq!(save(json!({ "change": 1 })), None);
+        assert_eq!(save(json!({ "save": false })), None);
+        assert_eq!(
+            capabilities(Some(&json!({ "capabilities": {} }))).save,
+            None
+        );
+    }
+
+    /// A span's end, worked out from its start's position over the bytes
+    /// between, is what reading the whole text from the top gives — lines
+    /// crossed, a character past the BMP two UTF-16 units.
+    #[test]
+    fn a_span_s_end_is_read_from_its_start() {
+        let text = "ab\ncd😀ef\n\nxyz";
+        for start in [0, 3, 5, 9] {
+            for end in start..=text.len() {
+                if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+                    continue;
+                }
+                let at = position_of_offset(text, start);
+                assert_eq!(
+                    position_after(text, start, at, end),
+                    position_of_offset(text, end),
+                    "{start}..{end}"
+                );
+            }
+        }
+    }
+
+    /// `{root}` is the server's root and `{typescript}` the nearest
+    /// TypeScript's lib at or above it; on a host only `{root}` is said,
+    /// as the host's path.
+    #[test]
+    fn init_options_say_the_root_and_a_typescript() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-lsp-init-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let lib = dir.join("node_modules/typescript/lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join("typescript.js"), "").unwrap();
+        let root = dir.join("apps/site");
+        std::fs::create_dir_all(&root).unwrap();
+        let init = json!({ "typescript": { "tsdk": "{typescript}" }, "at": ["{root}/x", 3, null] });
+        assert_eq!(
+            init_options(&init, &root, false),
+            json!({
+                "typescript": { "tsdk": lib.display().to_string() },
+                "at": [format!("{}/x", root.display()), 3, null]
+            })
+        );
+        let host = PathBuf::from("box:/srv/app");
+        assert_eq!(
+            init_options(&init, &host, true)["at"][0],
+            json!("/srv/app/x"),
+            "a host's root as the host has it"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// rust-analyzer's answer as it gives it (2026-10-07): a cargo
+    /// runnable is its cargo arguments, `--` and the test's, in its
+    /// workspace; `cargoExtraArgs` (older servers) and `overrideCargo`
+    /// read too; a `shell` one its program in its `cwd`.
+    #[test]
+    fn runnables_are_commands_in_their_workspace() {
+        let answer = json!([
+            { "label": "test tests::adds", "kind": "cargo", "location": {},
+              "args": { "environment": { "RUSTC_TOOLCHAIN": "/x" }, "cwd": "/w/rap",
+                        "overrideCargo": null, "workspaceRoot": "/w",
+                        "cargoArgs": ["test", "--package", "rap", "--lib"],
+                        "executableArgs": ["tests::adds", "--exact", "--nocapture"] } },
+            { "label": "cargo check -p rap", "kind": "cargo",
+              "args": { "cwd": "/w/rap", "overrideCargo": "cross",
+                        "cargoArgs": ["check"], "cargoExtraArgs": ["-p", "rap"],
+                        "executableArgs": [] } },
+            { "label": "run it", "kind": "shell",
+              "args": { "program": "buck2", "args": ["run", "//a"], "cwd": "/b" } },
+            { "label": "odd", "kind": "unknown", "args": {} }
+        ]);
+        let got = runnables(Some(&answer));
+        assert_eq!(
+            got,
+            [
+                Runnable {
+                    label: "test tests::adds".into(),
+                    program: "cargo".into(),
+                    args: [
+                        "test",
+                        "--package",
+                        "rap",
+                        "--lib",
+                        "--",
+                        "tests::adds",
+                        "--exact",
+                        "--nocapture"
+                    ]
+                    .map(String::from)
+                    .to_vec(),
+                    cwd: Some(PathBuf::from("/w")),
+                },
+                Runnable {
+                    label: "cargo check -p rap".into(),
+                    program: "cross".into(),
+                    args: ["check", "-p", "rap"].map(String::from).to_vec(),
+                    cwd: Some(PathBuf::from("/w/rap")),
+                },
+                Runnable {
+                    label: "run it".into(),
+                    program: "buck2".into(),
+                    args: ["run", "//a"].map(String::from).to_vec(),
+                    cwd: Some(PathBuf::from("/b")),
+                },
+            ]
+        );
+        assert!(runnables(Some(&json!(null))).is_empty());
+    }
 
     /// A paced wake comes at most once an interval: at once after a
     /// quiet spell, else at the interval's end, which brings every

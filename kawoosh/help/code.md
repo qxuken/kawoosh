@@ -175,6 +175,7 @@ of its marker files.
 | `lsp.markdown` | `marksman` | Markdown |
 | `lsp.dockerfile` | `docker-langserver` | Dockerfile |
 | `lsp.svelte` | `svelteserver` | Svelte |
+| `lsp.astro` | `astro-ls` | Astro |
 | `lsp.php` | `intelephense` | PHP |
 | `lsp.ruby` | `ruby-lsp` | Ruby |
 | `lsp.java` | `jdtls` | Java |
@@ -337,6 +338,7 @@ return {
 | `when` | files one of which must be at or above a file for the server to run for it |
 | `settings` | the configuration sent to the server |
 | `answers` | requests of the server's own and the result each is answered with: `{ ["eslint/confirmESLintExecution"] = 4 }` |
+| `init` | what the server is started with (its `initializationOptions`); in a string, `{root}` is the server's root and `{typescript}` a TypeScript's `lib` folder — the project's, else the one installed with typescript-language-server: astro's is `{ typescript = { tsdk = "{typescript}" } }`. A change starts the server again |
 | `install` | how `:lsp install` installs the program: a package (`{ npm = "name" }`; `pip`, `cargo`, `go`, `dotnet`) into kawoosh's folder, a shell line, or a line for each platform (`{ mac = "brew install x", windows = "winget install x" }`; `linux` too) |
 
 The servers kawoosh knows are rows of these same keys (`servers.lua` in
@@ -536,8 +538,12 @@ long it took: `[finished in 8.2s]`, `[exited with 1 in 0.34s]`,
 are asked for them (`FORCE_COLOR`, `CLICOLOR_FORCE`,
 `CARGO_TERM_COLOR`, each only where your environment does not set it),
 since a program that is not on a terminal prints plain otherwise, and
-the sixteen ANSI colours are the theme's. A line printed plain has its
-`error:` and `warning:` coloured for it. `compile.color = false` asks
+the sixteen ANSI colours are the theme's. A line printed plain is
+coloured the way clang and gcc colour theirs on a terminal (neither does
+on a pipe, whatever the environment says): the location starting the
+line bold, `error:` and `warning:` in their colours with the message
+bold, `note:` and `help:` cyan, the `^~~~` under a quoted line green;
+and go's test verdicts (`--- FAIL`, `ok`) red or green. `compile.color = false` asks
 for none, as does a `NO_COLOR` in the environment.
 
 Each command has a buffer of its own, in each directory it is run in,
@@ -578,16 +584,24 @@ compile = {
 `:compile NAME ARGS` runs a named command with ARGS after it. One with
 `args = true`, called with nothing after it, opens the prompt for you
 to finish instead of running. `cwd` sets where it runs. `<Tab>` after
-`:compile ` completes the names, then paths.
+`:compile ` completes the names, then paths; after a nushell command
+your project offers, a parameter's completions first — `target:
+string@targets` offers what `targets` answers (read from the file when
+its body is a list, else asked of `nu` once while the file is
+unchanged), `string@[debug release]` those two.
 
 ### Commands your project offers
 
 kawoosh reads the project's files, from the current file up to the
 repository root, for what they can run: `Cargo.toml` (cargo check,
 build, test, clippy, run), `package.json` scripts (with the package
-manager its lockfile says), justfile recipes, `build.nu`, Makefile
-targets, `CMakeLists.txt`, `go.mod`, `pyproject.toml` and
-`build.zig`. The ones matching the current file's language server come
+manager its lockfile says), justfile recipes, nushell files
+(`build.nu` and `toolkit.nu`, or the names and paths `compile.nushell`
+lists), Makefile targets, `CMakeLists.txt`, `go.mod`, `pyproject.toml`
+and `build.zig`. A nushell file with a `main` is run as a script (`nu
+build.nu`, `nu build.nu SUB` for each `def "main SUB"`); one without,
+or whose exported `main` sits beside other exports, as a module (`nu -c
+'use toolkit.nu; toolkit fmt'`). The ones matching the current file's language server come
 first, so a Rust file offers `cargo check` and a TypeScript file its
 package's scripts. `compile.deduce = false` turns this off.
 
@@ -596,7 +610,11 @@ your named commands, the last lines run here, and every command the
 project's files offer, each with where it came from. In a monorepo it
 also lists the scripts of every other `package.json` in the repository
 (the open files' packages first), each run in its own package; type
-part of the path to narrow them (`api build`). `<CR>` runs it;
+part of the path to narrow them (`api build`). A language server that
+lists what can run — rust-analyzer does — adds its rows as it answers,
+after your named commands and recent lines: the test under the caret
+(`cargo test --package app --lib -- tests::adds --exact`), its module's,
+and the package's check and test. `<CR>` runs it;
 `<C-e>` puts it in the prompt so you can add arguments first. A
 command that needs arguments always opens the prompt.
 

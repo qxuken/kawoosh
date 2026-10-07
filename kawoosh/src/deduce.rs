@@ -3,7 +3,9 @@
 //! files that say what a project builds with — a `Cargo.toml`, a
 //! `package.json`, a justfile, a Makefile, … — read into the commands
 //! they offer, each with the directory it runs in and why it is there,
-//! ranked by the language server's root markers.
+//! ranked by the language server's root markers. A plugin's kinds
+//! (`kawoosh.compile_kind`, Decision 17) are found and ranked as the
+//! builtin ones are.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -20,6 +22,8 @@ pub enum Kind {
     Go,
     Python,
     Zig,
+    /// A plugin's, the Nth of [`Kinds::plugins`].
+    Plugin(usize),
 }
 
 impl Kind {
@@ -35,6 +39,22 @@ impl Kind {
         Kind::Zig,
     ];
 
+    /// The name a plugin replaces it by (`kawoosh.compile_kind`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Cargo => "cargo",
+            Kind::Node => "node",
+            Kind::Just => "just",
+            Kind::Nu => "nu",
+            Kind::Make => "make",
+            Kind::CMake => "cmake",
+            Kind::Go => "go",
+            Kind::Python => "python",
+            Kind::Zig => "zig",
+            Kind::Plugin(_) => "",
+        }
+    }
+
     /// The files that say a directory is this kind's, the one a tool
     /// reads first first.
     fn markers(self) -> &'static [&'static str] {
@@ -42,12 +62,14 @@ impl Kind {
             Kind::Cargo => &["Cargo.toml"],
             Kind::Node => &["package.json"],
             Kind::Just => &["justfile", "Justfile", ".justfile"],
-            Kind::Nu => &["build.nu"],
+            // The files are the settings' (Decision 16): [`NU_FILES`].
+            Kind::Nu => &[],
             Kind::Make => &["GNUmakefile", "makefile", "Makefile"],
             Kind::CMake => &["CMakeLists.txt"],
             Kind::Go => &["go.mod"],
             Kind::Python => &["pyproject.toml"],
             Kind::Zig => &["build.zig"],
+            Kind::Plugin(_) => &[],
         }
     }
 
@@ -76,6 +98,54 @@ impl Kind {
             Kind::Go => &["go"],
             Kind::Python => &["uv", "pytest", "mypy", "ruff", "python", "python3"],
             Kind::Zig => &["zig"],
+            Kind::Plugin(_) => &[],
+        }
+    }
+}
+
+/// A kind of build a plugin says (`kawoosh.compile_kind`, compile.md
+/// Decision 17), found as the builtin ones are; `off`, a builtin's name
+/// with nothing in its place. Its commands are the shell's to read
+/// ([`Kinds::rows`]): a list, or a Lua function's answer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PluginKind {
+    pub name: String,
+    pub off: bool,
+    pub markers: Vec<String>,
+    pub outermost: bool,
+    pub runner: bool,
+    pub programs: Vec<String>,
+}
+
+/// What [`deduce`] reads beside the builtin kinds' fixed files.
+pub struct Kinds<'a> {
+    /// The nushell files (`compile.nushell`, Decision 16), each at its
+    /// nearest: names, or paths from a directory.
+    pub nu_files: &'a [String],
+    /// The plugins' kinds; one with a builtin's name is in its place.
+    pub plugins: &'a [PluginKind],
+    /// Plugin kind N's commands for the file found.
+    pub rows: &'a dyn Fn(usize, &Found) -> Vec<Deduced>,
+}
+
+/// How a kind is found and ranked: a builtin's, or a plugin's.
+struct Spec {
+    kind: Kind,
+    markers: Vec<String>,
+    outermost: bool,
+    runner: bool,
+    programs: Vec<String>,
+}
+
+impl Spec {
+    fn of(kind: Kind) -> Spec {
+        let owned = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
+        Spec {
+            kind,
+            markers: owned(kind.markers()),
+            outermost: kind.outermost(),
+            runner: kind.runner(),
+            programs: owned(kind.programs()),
         }
     }
 }
@@ -86,6 +156,8 @@ pub struct Found {
     pub kind: Kind,
     pub file: PathBuf,
     pub dir: PathBuf,
+    /// The programs whose commands are its kind's (Decision 4).
+    pub programs: Vec<String>,
 }
 
 /// A command deduced: what runs, where, the file that said so, and why.
@@ -106,10 +178,34 @@ pub struct Deduced {
     /// How it is declared — a `def`'s signature, a recipe's header — for
     /// the preview, or empty.
     pub detail: Vec<String>,
+    /// A nushell command's parameters, for the prompt's `<Tab>`
+    /// (Decision 16).
+    pub nu: Option<NuArgs>,
+}
+
+/// What a nushell command takes after it, as its signature says: what
+/// completes each positional parameter, and the flags that take a
+/// value (so the word after one is not a positional).
+#[derive(Clone, Debug, PartialEq)]
+pub struct NuArgs {
+    /// The file it is declared in: where a completer is run.
+    pub file: PathBuf,
+    pub positional: Vec<Option<Completion>>,
+    /// `--name` and `-n` of each flag with a type.
+    pub valued: Vec<String>,
+}
+
+/// A parameter's completions (`entry: string@examples`): the values,
+/// when the file says them — an inline `@[a b]`, or a completer whose
+/// body is a list — else the command that answers them.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Completion {
+    Values(Vec<String>),
+    Command(String),
 }
 
 impl Deduced {
-    fn new(cmd: String, f: &Found, why: &str) -> Self {
+    pub fn new(cmd: String, f: &Found, why: &str) -> Self {
         Deduced {
             args_at: cmd.len(),
             cmd,
@@ -118,6 +214,7 @@ impl Deduced {
             why: why.to_string(),
             needs: false,
             detail: Vec::new(),
+            nu: None,
         }
     }
 }
@@ -139,7 +236,7 @@ impl Project {
         let program = program.rsplit(['/', '\\']).next().unwrap_or(program);
         self.found
             .iter()
-            .find(|f| f.kind.programs().contains(&program))
+            .find(|f| f.programs.iter().any(|p| p == program))
             .map(|f| f.dir.as_path())
     }
 }
@@ -151,7 +248,8 @@ impl Project {
 /// `markers`, the caret buffer's language server's root markers, then
 /// the task runners, then the rest by nearness. A host's path is not
 /// read (each look would be a round trip): nothing is deduced there.
-pub fn deduce(start: &Path, markers: &[String]) -> Project {
+/// `kinds` are the nushell files and the plugins' kinds.
+pub fn deduce(start: &Path, markers: &[String], kinds: &Kinds) -> Project {
     if kawoosh_systems::fs::domain_of(start).is_some() {
         return Project::default();
     }
@@ -172,56 +270,100 @@ pub fn deduce(start: &Path, markers: &[String]) -> Project {
                 .unwrap_or_default()
         })
         .collect();
-    // Each kind: its file and directory, and how near it is.
-    let mut found: Vec<(Found, usize)> = Vec::new();
-    for kind in Kind::ALL {
-        let at = |i: usize| {
-            kind.markers()
+    // The kinds looked for: the builtin ones no plugin replaced, then
+    // the plugins', in the order they were said.
+    let specs: Vec<Spec> = Kind::ALL
+        .iter()
+        .filter(|k| !kinds.plugins.iter().any(|p| p.name == k.name()))
+        .map(|k| Spec::of(*k))
+        .chain(
+            kinds
+                .plugins
                 .iter()
-                .find(|m| names[i].contains(**m))
-                .map(|m| dirs[i].join(m))
-                .filter(|p| p.is_file())
+                .enumerate()
+                .filter(|(_, p)| !p.off)
+                .map(|(i, p)| Spec {
+                    kind: Kind::Plugin(i),
+                    markers: p.markers.clone(),
+                    outermost: p.outermost,
+                    runner: p.runner,
+                    programs: p.programs.clone(),
+                }),
+        )
+        .collect();
+    // A file at directory `i`: a name matched exactly, as listed; a
+    // path looked for.
+    let at = |i: usize, m: &str| {
+        let named = m.contains(['/', '\\']) || names[i].contains(m);
+        Some(dirs[i].join(m)).filter(|p| named && p.is_file())
+    };
+    // Each kind: its file and directory, and how near it is.
+    let mut found: Vec<(Found, usize, usize)> = Vec::new();
+    for (order, spec) in specs.iter().enumerate() {
+        let made = |i: usize, file: PathBuf| {
+            (
+                Found {
+                    kind: spec.kind,
+                    file,
+                    dir: dirs[i].clone(),
+                    programs: spec.programs.clone(),
+                },
+                i,
+                order,
+            )
         };
-        let mut hits = dirs
-            .iter()
-            .enumerate()
-            .filter_map(|(i, d)| Some((i, d, at(i)?)));
-        let hit = if kind.outermost() {
+        if spec.kind == Kind::Nu {
+            // Each file a set of rows of its own, at its nearest.
+            for m in kinds.nu_files {
+                let hit = (0..dirs.len()).find_map(|i| Some((i, at(i, m)?)));
+                if let Some((i, file)) = hit
+                    && !found.iter().any(|(f, _, _)| f.file == file)
+                {
+                    found.push(made(i, file));
+                }
+            }
+            continue;
+        }
+        let mut hits =
+            (0..dirs.len()).filter_map(|i| Some((i, spec.markers.iter().find_map(|m| at(i, m))?)));
+        let hit = if spec.outermost {
             hits.next_back()
         } else {
             hits.next()
         };
-        if let Some((i, d, file)) = hit {
-            found.push((
-                Found {
-                    kind,
-                    file,
-                    dir: d.clone(),
-                },
-                i,
-            ));
+        if let Some((i, file)) = hit {
+            found.push(made(i, file));
         }
     }
-    let rank = |f: &Found, near: usize| {
-        let by_server = f
-            .kind
-            .markers()
+    let rank = |near: usize, order: usize| {
+        let spec = &specs[order];
+        let by_server = spec
+            .markers
             .iter()
             .filter_map(|m| markers.iter().position(|s| s == m))
             .min();
         let group = match by_server {
             Some(_) => 0,
-            None if f.kind.runner() => 1,
+            None if spec.runner => 1,
             None => 2,
         };
-        let kind = Kind::ALL.iter().position(|k| *k == f.kind).unwrap_or(0);
-        (group, by_server.unwrap_or(0), near, kind)
+        (group, by_server.unwrap_or(0), near, order)
     };
-    found.sort_by_key(|(f, near)| rank(f, *near));
-    let found: Vec<Found> = found.into_iter().map(|(f, _)| f).collect();
-    let commands = found.iter().flat_map(|f| commands_of(f, &dirs)).collect();
+    found.sort_by_key(|(_, near, order)| rank(*near, *order));
+    let found: Vec<Found> = found.into_iter().map(|(f, _, _)| f).collect();
+    let commands = found
+        .iter()
+        .flat_map(|f| match f.kind {
+            Kind::Plugin(i) => (kinds.rows)(i, f),
+            _ => commands_of(f, &dirs),
+        })
+        .collect();
     Project { found, commands }
 }
+
+/// The nushell files read when the settings name none (Decision 16):
+/// a project's build script, and nushell's own habit.
+pub const NU_FILES: [&str; 2] = ["build.nu", "toolkit.nu"];
 
 /// The most `package.json` files [`packages`] reads, and the most
 /// entries it looks at for them.
@@ -265,6 +407,11 @@ pub fn packages(start: &Path, open: &[PathBuf]) -> Vec<Deduced> {
                 kind: Kind::Node,
                 file,
                 dir,
+                programs: Kind::Node
+                    .programs()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
             })
         })
         .flat_map(|f| commands_of(&f, &walked(&f.dir)))
@@ -375,6 +522,8 @@ fn commands_of(f: &Found, dirs: &[PathBuf]) -> Vec<Deduced> {
             row("zig build".into(), ""),
             row("zig build test".into(), ""),
         ],
+        // The shell's to read (`Kinds::rows`).
+        Kind::Plugin(_) => Vec::new(),
     }
 }
 
@@ -579,11 +728,13 @@ fn just_recipes(text: &str) -> Recipes {
     out
 }
 
-/// A `build.nu`'s commands (Decision 6). Run as a script when it has a
-/// `main` — `def main`, `def "main SUB"`, `alias "main SUB" = …` are
-/// `nu build.nu` and `nu build.nu SUB` — else used as a module, each
-/// `export def NAME` `nu -c 'use build.nu; build NAME'`. Each with the
-/// comment above it and its signature.
+/// A nushell file's commands (Decisions 6 and 16). Run as a script when
+/// it has one — a `def "main SUB"` (or `alias "main SUB" = …`), a
+/// `main` that is not exported, or a `main` and nothing else exported:
+/// `nu FILE` and `nu FILE SUB`. Else used as a module, as `use FILE`
+/// takes it: each `export def NAME` is `nu -c 'use FILE; MODULE NAME'`,
+/// an `export def main` the module's own name. Each with the comment
+/// above it, its signature, and its parameters' completions.
 fn nu(f: &Found, text: &str) -> Vec<Deduced> {
     let (defs, aliases) = nu_defs(text);
     let file = f
@@ -591,12 +742,41 @@ fn nu(f: &Found, text: &str) -> Vec<Deduced> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "build.nu".into());
+    let shown = f
+        .file
+        .strip_prefix(&f.dir)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| file.clone());
     let module = file.trim_end_matches(".nu").to_string();
+    let completion = |c: &Completion| match c {
+        // A completer whose body is a list is its values.
+        Completion::Command(name) => defs
+            .iter()
+            .find(|d| d.name == *name)
+            .and_then(|d| d.list.clone())
+            .map_or_else(|| c.clone(), Completion::Values),
+        values => values.clone(),
+    };
     let row = |cmd: String, args_at: usize, d: &NuDef| {
         let mut out = Deduced::new(cmd, f, &d.doc);
         out.args_at = args_at;
-        out.needs = d.needs;
+        out.needs = d.params.iter().any(|p| p.required());
         out.detail = d.sig.clone();
+        out.nu = Some(NuArgs {
+            file: f.file.clone(),
+            positional: d
+                .params
+                .iter()
+                .filter(|p| p.positional())
+                .map(|p| p.completion.as_ref().map(completion))
+                .collect(),
+            valued: d
+                .params
+                .iter()
+                .filter(|p| p.flag && p.typed)
+                .flat_map(|p| p.names.iter().cloned())
+                .collect(),
+        });
         out
     };
     let sub = |name: &str| {
@@ -606,13 +786,18 @@ fn nu(f: &Found, text: &str) -> Vec<Deduced> {
             name.strip_prefix("main ").map(|s| format!(" {}", s.trim()))
         }
     };
+    let subs = defs.iter().any(|d| d.name.starts_with("main "))
+        || aliases.iter().any(|a| a.name.starts_with("main "));
+    let main = defs.iter().find(|d| d.name == "main");
+    let others = defs.iter().any(|d| d.exported && d.name != "main");
+    let script = subs || main.is_some_and(|m| !m.exported || !others);
     let mut out: Vec<Deduced> = Vec::new();
-    if defs.iter().any(|d| sub(&d.name).is_some()) {
+    if script {
         // `main` first: what the file runs bare.
         let mains = defs.iter().filter(|d| d.name == "main");
         for d in mains.chain(defs.iter().filter(|d| d.name != "main")) {
             if let Some(s) = sub(&d.name) {
-                let cmd = format!("nu {file}{s}");
+                let cmd = format!("nu {shown}{s}");
                 out.push(row(cmd.clone(), cmd.len(), d));
             }
         }
@@ -621,14 +806,21 @@ fn nu(f: &Found, text: &str) -> Vec<Deduced> {
             else {
                 continue;
             };
-            let cmd = format!("nu {file}{s}");
+            let cmd = format!("nu {shown}{s}");
             if !out.iter().any(|o| o.cmd == cmd) {
                 out.push(row(cmd.clone(), cmd.len(), d));
             }
         }
     } else {
-        for d in defs.iter().filter(|d| d.exported) {
-            let cmd = format!("nu -c 'use {file}; {module} {}'", d.name);
+        let mains = defs.iter().filter(|d| d.exported && d.name == "main");
+        let rest = defs.iter().filter(|d| d.exported && d.name != "main");
+        for d in mains.chain(rest) {
+            let called = if d.name == "main" {
+                module.clone()
+            } else {
+                format!("{module} {}", d.name)
+            };
+            let cmd = format!("nu -c 'use {shown}; {called}'");
             out.push(row(cmd.clone(), cmd.len() - 1, d));
         }
     }
@@ -644,8 +836,35 @@ struct NuDef {
     doc: String,
     /// Its lines from `def` to the signature's `]`.
     sig: Vec<String>,
-    /// A positional parameter with no default.
-    needs: bool,
+    params: Vec<NuParam>,
+    /// Its body, when that is a list of plain values — a completer's
+    /// answer, read without running it.
+    list: Option<Vec<String>>,
+}
+
+/// One parameter of a signature.
+#[derive(Debug, Default, PartialEq)]
+struct NuParam {
+    /// A flag: `--name`, and `-n` with it.
+    flag: bool,
+    names: Vec<String>,
+    /// Has a `: type`: a flag with one takes a value.
+    typed: bool,
+    /// `name?`, `name = value`, `...rest`.
+    optional: bool,
+    rest: bool,
+    completion: Option<Completion>,
+}
+
+impl NuParam {
+    fn positional(&self) -> bool {
+        !self.flag && !self.rest
+    }
+
+    /// A positional parameter with no default: one a bare call refuses.
+    fn required(&self) -> bool {
+        self.positional() && !self.optional
+    }
 }
 
 /// `alias NAME = TARGET`.
@@ -729,8 +948,10 @@ fn nu_defs(text: &str) -> (Vec<NuDef>, Vec<NuAlias>) {
         let mut depth = 0i32;
         let mut started = false;
         let mut code = nu_code(after).0.to_string();
+        let mut after_sig = String::new();
         loop {
-            for c in code.chars() {
+            let mut closed = None;
+            for (at, c) in code.char_indices() {
                 match c {
                     '[' if !started => {
                         started = true;
@@ -741,6 +962,7 @@ fn nu_defs(text: &str) -> (Vec<NuDef>, Vec<NuAlias>) {
                     ']' if started => {
                         depth -= 1;
                         if depth == 0 {
+                            closed = Some(at + 1);
                             break;
                         }
                     }
@@ -751,10 +973,51 @@ fn nu_defs(text: &str) -> (Vec<NuDef>, Vec<NuAlias>) {
                 }
             }
             params.push('\n');
-            if (started && depth == 0) || i >= lines.len() {
+            if let Some(at) = closed {
+                after_sig = code[at..].to_string();
+                break;
+            }
+            if i >= lines.len() {
                 break;
             }
             sig.push(lines[i].trim_end().to_string());
+            code = nu_code(lines[i]).0.to_string();
+            i += 1;
+        }
+        // The body, from its `{` to the `}` that closes it: read for a
+        // list, and passed over — a `def` inside it is not the file's.
+        let mut body = String::new();
+        let (mut depth, mut quote, mut opened, mut closed) = (0i32, None, false, false);
+        let mut code = after_sig;
+        loop {
+            for c in code.chars() {
+                if closed {
+                    break;
+                }
+                match quote {
+                    Some(q) if c == q => quote = None,
+                    Some(_) => {}
+                    None if "'\"`".contains(c) => quote = Some(c),
+                    None if c == '{' => {
+                        depth += 1;
+                        opened = true;
+                    }
+                    None if c == '}' => {
+                        depth -= 1;
+                        closed = opened && depth == 0;
+                    }
+                    None => {}
+                }
+                if opened {
+                    body.push(c);
+                }
+            }
+            body.push('\n');
+            // Closed, the file's end, or no body begun on the def's line
+            // or the next.
+            if closed || i >= lines.len() || !opened && !lines[i].trim_start().starts_with('{') {
+                break;
+            }
             code = nu_code(lines[i]).0.to_string();
             i += 1;
         }
@@ -763,19 +1026,53 @@ fn nu_defs(text: &str) -> (Vec<NuDef>, Vec<NuAlias>) {
             exported,
             doc: doc.first().cloned().unwrap_or_default(),
             sig,
-            needs: nu_needs(&params),
+            params: nu_params(&params),
+            list: body
+                .trim()
+                .strip_prefix('{')
+                .and_then(|b| b.strip_suffix('}'))
+                .and_then(nu_list),
         });
         doc.clear();
     }
     (defs, aliases)
 }
 
-/// Whether a signature's parameters have a positional one with no
-/// default: not a `--flag` or its `(-f)`, not `...rest`, not `name?`,
-/// not `name = value`; a type after `:` and a value after `=` skipped.
-fn nu_needs(params: &str) -> bool {
-    // Words, with `:` and `=` their own, at depth 0 of brackets and
-    // outside strings: `list<string>` and `'a b'` are one.
+/// `[a "b c" 'd', e]` as its values, when it is that and nothing else:
+/// no call, no variable, no pipe.
+fn nu_list(text: &str) -> Option<Vec<String>> {
+    let inner = text.trim().strip_prefix('[')?.strip_suffix(']')?;
+    let mut out = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut quoted = false;
+    for c in inner.chars().chain([' ']) {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => word.push(c),
+            None if "'\"`".contains(c) => {
+                quote = Some(c);
+                quoted = true;
+            }
+            None if c.is_whitespace() || c == ',' => {
+                if !word.is_empty() || quoted {
+                    out.push(std::mem::take(&mut word));
+                }
+                quoted = false;
+            }
+            None if "()[]{}$|".contains(c) => return None,
+            None => word.push(c),
+        }
+    }
+    (quote.is_none() && !out.is_empty()).then_some(out)
+}
+
+/// A signature's parameters: positional ones (`name`, `name?`, `name:
+/// type = value`, `...rest`) and flags (`--name (-n): type`), each with
+/// a completion from `type@completer` or `type@[values]`. Words split
+/// at depth 0 of brackets and outside strings, `:` and `=` their own:
+/// `list<string>` and `'a b'` are one.
+fn nu_params(params: &str) -> Vec<NuParam> {
     let mut words: Vec<String> = Vec::new();
     let mut word = String::new();
     let (mut depth, mut quote) = (0i32, None);
@@ -814,30 +1111,51 @@ fn nu_needs(params: &str) -> bool {
         }
     }
     end(&mut word, &mut words);
-    let mut required: Vec<bool> = Vec::new();
-    let mut last: Option<usize> = None;
-    let mut skip = false;
-    for w in &words {
-        if skip {
-            skip = false;
-            continue;
-        }
+    let mut out: Vec<NuParam> = Vec::new();
+    let mut words = words.into_iter();
+    while let Some(w) = words.next() {
         match w.as_str() {
-            ":" => skip = true,
-            "=" => {
-                skip = true;
-                if let Some(p) = last {
-                    required[p] = false;
+            ":" => {
+                let Some(ty) = words.next() else { break };
+                if let Some(p) = out.last_mut() {
+                    p.typed = true;
+                    p.completion = ty.split_once('@').map(|(_, c)| match nu_list(c) {
+                        Some(values) => Completion::Values(values),
+                        None => Completion::Command(c.trim_matches(['\'', '"', '`']).to_string()),
+                    });
                 }
             }
-            w if w.starts_with('-') || w.starts_with('(') || w.starts_with("...") => last = None,
-            w => {
-                required.push(!w.ends_with('?'));
-                last = Some(required.len() - 1);
+            "=" => {
+                words.next();
+                if let Some(p) = out.last_mut() {
+                    p.optional = true;
+                }
             }
+            w if w.starts_with("(-") => {
+                if let Some(p) = out.last_mut().filter(|p| p.flag) {
+                    p.names.push(w.trim_matches(['(', ')']).to_string());
+                }
+            }
+            w if w.starts_with('-') => out.push(NuParam {
+                flag: true,
+                names: vec![w.to_string()],
+                optional: true,
+                ..Default::default()
+            }),
+            w if w.starts_with("...") => out.push(NuParam {
+                names: vec![w[3..].to_string()],
+                optional: true,
+                rest: true,
+                ..Default::default()
+            }),
+            w => out.push(NuParam {
+                optional: w.ends_with('?'),
+                names: vec![w.trim_end_matches('?').to_string()],
+                ..Default::default()
+            }),
         }
     }
-    required.contains(&true)
+    out
 }
 
 /// A Makefile's plain targets, in the file's order, each with its `##`
@@ -901,6 +1219,23 @@ mod tests {
         dir
     }
 
+    fn nu_files() -> Vec<String> {
+        NU_FILES.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// `deduce` with the default nushell files and no plugin's kinds.
+    fn deduce(start: &Path, markers: &[String], nu_files: &[String]) -> Project {
+        super::deduce(
+            start,
+            markers,
+            &Kinds {
+                nu_files,
+                plugins: &[],
+                rows: &|_, _| Vec::new(),
+            },
+        )
+    }
+
     fn cmds(p: &Project) -> Vec<&str> {
         p.commands.iter().map(|d| d.cmd.as_str()).collect()
     }
@@ -923,7 +1258,7 @@ mod tests {
             ],
         );
         let rust = ["Cargo.toml".to_string()];
-        let p = deduce(&dir.join("app/src"), &rust);
+        let p = deduce(&dir.join("app/src"), &rust, &nu_files());
         assert_eq!(p.commands[0].cmd, "cargo check");
         assert_eq!(p.commands[0].cwd, dir, "the workspace, not the member");
         assert!(
@@ -938,7 +1273,7 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let p = deduce(&dir.join("web"), &ts);
+        let p = deduce(&dir.join("web"), &ts, &nu_files());
         assert_eq!(
             cmds(&p)[..5],
             [
@@ -957,7 +1292,7 @@ mod tests {
         assert_eq!(p.dir_for("echo hi"), None);
 
         // No server: nearness, the runner first among equals.
-        let p = deduce(&dir, &[]);
+        let p = deduce(&dir, &[], &nu_files());
         assert_eq!(p.found[0].kind, Kind::Just);
         assert_eq!(cmds(&p)[..2], ["just", "just all"]);
         assert_eq!(p.commands[1].why, "everything");
@@ -1046,7 +1381,7 @@ export alias "main install" = install
 export def main [target: string, --debug (-d)] { }
 "#;
         let dir = tree("nu-script", &[("build.nu", script)]);
-        let p = deduce(&dir, &[]);
+        let p = deduce(&dir, &[], &nu_files());
         let rows: Vec<(&str, bool)> = p
             .commands
             .iter()
@@ -1078,7 +1413,7 @@ export def test [] { }
 export def pick [name: string, extra?: int, ...rest: string] { }
 "#;
         let dir = tree("nu-module", &[("build.nu", module)]);
-        let p = deduce(&dir, &[]);
+        let p = deduce(&dir, &[], &nu_files());
         let rows: Vec<(&str, bool)> = p
             .commands
             .iter()
@@ -1095,6 +1430,91 @@ export def pick [name: string, extra?: int, ...rest: string] { }
         let d = &p.commands[0];
         assert_eq!(&d.cmd[d.args_at..], "'", "arguments go inside the quote");
         assert_eq!(p.commands[1].why, "Runs the unit tests.");
+        // Its parameters, for `<Tab>`: the completer's list read from its
+        // body, the flag with a type taking a value.
+        let nu = d.nu.as_ref().unwrap();
+        assert_eq!(nu.file, dir.join("build.nu"));
+        assert_eq!(
+            nu.positional,
+            [Some(Completion::Command("examples".into()))],
+            "no def `examples` in the file: asked of nu"
+        );
+        assert_eq!(nu.valued, ["--flags", "-F"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_parameter_s_completions_are_read_from_the_file() {
+        let script = r#"
+def targets [] {
+  [
+    "debug",   # the default
+    'release'
+  ]
+}
+def files [] { ls | get name }
+def "main build" [target: string@targets, --jobs (-j): int, extra?: string@[one "two three"]] { }
+def "main nested" [] {
+  def "main inner" [] { }
+}
+"#;
+        let dir = tree("nu-complete", &[("build.nu", script)]);
+        let p = deduce(&dir, &[], &nu_files());
+        assert_eq!(
+            cmds(&p),
+            ["nu build.nu build", "nu build.nu nested"],
+            "a def inside a body is not the file's"
+        );
+        let nu = p.commands[0].nu.as_ref().unwrap();
+        assert_eq!(
+            nu.positional,
+            [
+                Some(Completion::Values(vec!["debug".into(), "release".into()])),
+                Some(Completion::Values(vec!["one".into(), "two three".into()])),
+            ]
+        );
+        assert_eq!(nu.valued, ["--jobs", "-j"]);
+        assert!(p.commands[0].needs);
+        assert_eq!(
+            nu_list("[a, 'b c' \"d\"]"),
+            Some(vec!["a".into(), "b c".into(), "d".into()])
+        );
+        assert_eq!(nu_list("[(date now)]"), None);
+        assert_eq!(nu_list("ls | get name"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_toolkit_is_a_module_and_the_settings_name_more_files() {
+        let toolkit = r#"
+# Checks the lot.
+export def main [] { help toolkit }
+# Formats it.
+export def fmt [--check] { }
+def helper [] { }
+"#;
+        let dir = tree(
+            "nu-toolkit",
+            &[
+                ("toolkit.nu", toolkit),
+                ("scripts/verify.nu", "def main [] { }\n"),
+            ],
+        );
+        let p = deduce(&dir, &[], &nu_files());
+        assert_eq!(
+            cmds(&p),
+            [
+                "nu -c 'use toolkit.nu; toolkit'",
+                "nu -c 'use toolkit.nu; toolkit fmt'"
+            ],
+            "an exported main beside other exports: a module, main its name"
+        );
+        assert_eq!(p.commands[1].why, "Formats it.");
+        // A path from a directory, named in the settings.
+        let mine = vec!["toolkit.nu".to_string(), "scripts/verify.nu".to_string()];
+        let p = deduce(&dir.join("scripts"), &[], &mine);
+        assert_eq!(cmds(&p)[2], "nu scripts/verify.nu", "{:?}", cmds(&p));
+        assert_eq!(p.commands[2].cwd, dir);
         std::fs::remove_dir_all(&dir).ok();
     }
 

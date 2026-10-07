@@ -13,7 +13,8 @@ packages in the picker 2026-10-05 (Decision 9); the buffer named
 for its command, then a buffer a command and directory, the same day
 (Decisions 10 and 11); the colours, the head and how long it took
 2026-10-06 (Decision 12); the end said once, a location's pane and
-the session the same day (Decision 13). The calls
+the session the same day (Decision 13); the note's "Not built"
+2026-10-07 (Decisions 14–18). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -76,9 +77,10 @@ Beaten: a language → toolchain table in the shell (the server's markers
 already say it, and a user's `lsp.NAME.roots` moves it with them);
 asking a server — rust-analyzer's `experimental/runnables` is the one
 that answers, and only for Rust, asynchronously; it can join as a kind
-later. A plugin API of deducers: the list reaches Lua as data
+later (it joined the picker, Decision 18). A plugin API of deducers: the list reaches Lua as data
 (`kawoosh.compile_offer()` while the picker is open) and `kawoosh.compile`
-runs anything; a deducer registry waits for a second use.
+runs anything; a deducer registry waits for a second use (Decision 17
+since).
 
 ### 2. A bare `:compile` runs the project's word, else again, else the first
 
@@ -506,15 +508,225 @@ text and its paints in the session (a long build's are megabytes
 written at every quit), with a run to make for `r`, or a stub saying
 the output was not kept — a scratch by another name.
 
+### 14. `run` is a tool like the rest
+
+*Added 2026-10-07*, from this note's "Not built" ("let's do the compile
+ones"). `run.command` was a setting of its own that made a `run` tool
+(`tools.lua`), beside a `tools` table that makes tools by name: two
+spellings of one thing, as `compile.command` and `compile.commands`
+were. `tools.run` is the one now — `run = { cmd = "cargo run", cwd =
+"root" }` — and `run.command` is gone, not aliased: a file still setting
+it is told `run.command is now tools.run`, as Decision 7 moved
+`compile.command`. A string is its `cmd`, as for every tool, so it runs
+in the file's directory unless it says `cwd = "root"`, where
+`run.command` always ran at the root: the one tool that did not read
+like the others. `compile` stays made from `compile.default`: it is
+compile mode's line in a terminal, not a tool the user names.
+
+Beaten: `run.command` kept as an alias (two ways to say it, one of them
+undocumented); a `run` beside `compile`'s default (`compile.run`) —
+running a program is not compile mode's, which reads its output.
+
+### 15. A plain line painted as the compilers paint theirs
+
+*Added 2026-10-07*, from "Not built": "a program that colours only on a
+terminal and reads none of the variables (gcc and clang without
+`-fdiagnostics-color`, `go`)". Tried first: Apple clang 21 (and the
+`gcc` that is it) on a pipe with `CLICOLOR_FORCE`, `FORCE_COLOR` and
+`GCC_COLORS` set prints plain — nothing in the environment turns it on,
+and go has no colours at all. So the line is painted for them, as they
+would have (`plain_paints`), where Decision 12 painted only `error` and
+`warning`:
+
+- the **location heading the line** (`b.c:3:22`, `./main.go:3:30`,
+  tsc's `src/a.ts(3,5)`) bold — clang's and gcc's locus, and what `]q`
+  goes to;
+- **`error` and `warning`** in the diagnostics' colours, bold, and the
+  **message** after them bold;
+- **`note`, `help` and `remark`** before a `:` bold cyan (`ansi:6`, the
+  theme's, as clang prints a note);
+- the **caret line** under a quoted source line — `^~~~` after a `  3 |
+  ` gutter, or alone — bold green, from its first mark to its last; a
+  gutter line with no `^` or `~` (a table's `-----`) is not one;
+- a **test runner's verdict** heading a line — go's `--- FAIL`, `FAIL`,
+  `--- PASS`, `PASS`, `ok`, `--- SKIP` — red, green or yellow; the
+  bare words only as go prints them, alone or before a tab, so prose
+  (`ok, so…`) is not one.
+
+A line its program coloured is left as printed, as before.
+
+Beaten: a pty for the command (Decision 12's beaten still holds);
+`CCC_OVERRIDE_OPTIONS=+-fcolor-diagnostics` for clang — it works, and
+prints a `### Adding argument` line into the output each time; adding
+`-fdiagnostics-color` to `CFLAGS` — a Makefile that sets its own wins,
+and a build that does not read the variable never sees it; a grammar
+per tool (Decision 12's beaten).
+
+### 16. The nushell files a project names, and its parameters' completions
+
+*Added 2026-10-07*, from "Not built": "other nushell files than
+`build.nu` (a `toolkit.nu`, nushell's own habit), and a parameter's
+completer offered in the prompt".
+
+**Which files.** `compile.nushell` lists them — names, or paths from a
+directory — each read at its nearest above the caret, as the other
+kinds' files are; `{ "build.nu", "toolkit.nu" }` unless it is set. Two
+found are two sets of rows, `build.nu`'s and `toolkit.nu`'s, ranked
+together as the task runners they are. A path is spelled from the
+directory it was found in: `compile.nushell = { "scripts/verify.nu" }`
+offers `nu scripts/verify.nu`, run there.
+
+**Script or module, as nushell reads it.** Decision 6 took a file with
+any `main` for a script. nushell's own `toolkit.nu` has an `export def
+main` beside its other exports, and is used as a module — `use
+toolkit.nu`, then `toolkit` and `toolkit fmt` — so a script now is a
+file with a `def "main SUB"` (or an `alias "main SUB"`), a `main` that
+is not exported, or a `main` and nothing else exported; anything else a
+module, its exported `main` the module's own name (`nu -c 'use
+toolkit.nu; toolkit'`). A `def` inside another's body is not the
+file's: bodies are passed over, brace to brace, outside strings.
+
+**A parameter's completions in the prompt.** The signature already read
+for `needs` (Decision 6) is read for each parameter whole now — its
+type, its default, and a completion: `string@[debug release]` is those
+values; `string@targets` is what `targets` answers. `<Tab>` after a
+nushell row's command, at a positional parameter with one, offers them
+before the paths, a flag with a type (`--jobs (-j): int`) passing over
+its value as it is counted. Answers come in order of cost:
+
+1. **From the file**, when the completer's body is a list of plain
+   values (`def targets [] { ["debug", "release"] }`): no process.
+2. **Else nu**: `nu --no-config-file -c "source FILE; NAME | to json
+   -r"` in the file's directory — `source` defines the file's commands
+   and does not run its `main` — read from the last line (the file's
+   own top level may print before it), as a list of values, of `{
+   value }` records, or a record of `completions`. Kept by file and
+   completer while the file's stamp holds, so it is once per change; a
+   second at most, a completer that hangs costing that once. The
+   prompt's candidates are made on every key, so a process per key
+   was not an option.
+
+A value with a space or a shell's character is double-quoted — inside
+a `nu -c '…'` too, where a single quote would end the line's — and one
+asked before a `nu -c` row's closing quote keeps the quote.
+
+Beaten: every `*.nu` in the project (a deploy script is a `.nu` too,
+and a bare `:compile` would run the first that runs as it is); nu's
+own `scope commands` to read the signatures (Decision 6's beaten); the
+completer asked as the prompt opens, ahead of the key (it is asked
+rarely, and the cache makes a second `<Tab>` free); a nushell grammar
+for the file (the signature's shape is small and the text says it).
+
+### 17. A plugin's kind of build, found as the builtin ones are
+
+*Added 2026-10-07*, from "Not built": "a deducer registry for plugins
+(Decision 1's beaten)". Decision 1 waited for a second use; the ask is
+the use.
+
+A kind was an enum with its facts in `match`es — its files, nearest or
+outermost, a task runner or not, its programs — and its commands read
+from its file in Rust. The facts are data now (`deduce::Spec`), so a
+plugin says them as data:
+
+```lua
+kawoosh.compile_kind("mix", {
+  markers = { "mix.exs" },      -- the files that say a directory is its
+  outermost = false,            -- nearest (the default), or outermost
+  runner = false,               -- ranked with just and make
+  programs = { "mix" },         -- `:compile mix test` runs where mix.exs is
+  commands = { "mix compile", { cmd = "mix test", why = "the tests" } },
+})
+```
+
+`commands` is a list — strings, or `{ cmd, why, needs, detail }` as a
+row has them — or a function of `{ file, dir, text }` answering one,
+for a kind whose commands are in its file (a `mix.exs`'s aliases).
+The walk finds a plugin's kind as it finds a builtin one, and Decision
+1's ranking holds for it — the language server's markers, then the
+runners, then nearness, then the order the kinds were said in — so a
+bare `:compile`, the picker and Decision 4's directory read it with
+the rest. A function's error is said in the log and its kind offers
+nothing; it is called each time the project is read (a picker opened,
+a bare `:compile`, the prompt's `<Tab>`), so it reads `text` rather
+than the disk.
+
+**A builtin's name puts it in that kind's place**: `cargo`, `node`,
+`just`, `nu`, `make`, `cmake`, `go`, `python`, `zig`.
+`kawoosh.compile_kind("make", { markers = { "Makefile" }, commands = {
+"make -j8" } })` is the user's make; `kawoosh.compile_kind("make",
+false)` no make at all. A `node` of a plugin's also takes the monorepo's
+walk (Decision 9) with it: that walk reads `package.json`s the builtin
+way.
+
+Beaten: a function per kind that does the finding too (`deduce(dir)`)
+— every plugin would walk the directories again and rank itself
+outside the ranking; the builtin kinds rewritten in Lua (their readers
+are tested Rust, and a reader is not where a user's change is: the
+commands are); a kind only adding commands to a builtin one (a
+replacement whose function calls nothing back is simpler, and the
+builtin's commands are a picker away).
+
+### 18. What the language server says can run, in the picker
+
+*Added 2026-10-07*, from "Not built": "rust-analyzer's runnables as a
+kind (the test at the caret)". Decision 1 beat it for being one
+server's and asynchronous; both stay true, so it is the picker's alone,
+and the picker takes rows that come late.
+
+**Who is asked.** A server that says it answers — `experimental.
+runnables` in its `initialize` capabilities, as rust-analyzer's does
+(`{ "kinds": ["cargo"] }`; `Caps::runnables`) — for a file here (not a
+host's), while `compile.deduce` is on. A server not up yet is not
+asked: an answer that may never come is nothing to wait for. Asked as
+`compile pick` opens, with the caret (`Cmd::Runnables`), and answered as
+`Event::Runnables` with the token the picker holds; an answer for a
+picker since closed or opened again is dropped.
+
+**What it answers.** At a position rust-analyzer lists what holds it —
+the test at the caret (`test tests::adds`), its module (`test-mod
+tests`), a binary's `run` — and the package's `cargo check -p NAME
+--all-targets` and `cargo test -p NAME`. Each is a row: a `cargo` kind
+as `cargo` (or its `overrideCargo`), its `cargoArgs`, then `--` and its
+`executableArgs` when there are any — `cargo test --package rap --lib
+-- tests::adds --exact --nocapture --include-ignored` — run in its
+`workspaceRoot`, where cargo prints its paths from, so `]q` reads them;
+a `shell` kind its `program` and `args`; another kind left out. Words
+quoted for the shell (`shell_quote`). The row says the server's name
+beside it, and its label as the why when the label is not the command.
+The `environment` (rust-analyzer sends `RUSTC_TOOLCHAIN`) is left out:
+a run is its command and directory (Decision 11), and `r` and the
+memory's lines would lose it.
+
+**Where it shows.** After the settings' rows and the lines run, before
+the files' (`publish_offer`): the test at the caret is the most
+particular thing on offer, and a named command or the line just run is
+still the user's. The rows go to the end of `Compile::offer`, so a row's
+index — what `compile pick N` and `<CR>` take — never moves under a key
+pressed as the answer lands; only the order shown changes, and the
+picker reads its rows again (`picker.reload()`), query and cursor kept.
+A row the files gave already, where it runs, is not made twice.
+
+Not a bare `:compile`'s (Decision 2's order holds): it runs at once, and
+waiting on a server would make it slow exactly when the server is busy.
+
+Beaten: waiting for the answer before the picker opens (rust-analyzer
+indexing answers late, and the files' rows are already known); a kind
+in `deduce` (the walk is synchronous and the server is not); the
+environment as `VAR=value` before the command (a shell's spelling,
+`cmd.exe` has none, and `RUSTC_TOOLCHAIN` is what the rustup proxy finds
+anyway).
+
 ## Not built
 
-- A program that colours only on a terminal and reads none of the
+- ~~A program that colours only on a terminal and reads none of the
   variables (gcc and clang without `-fdiagnostics-color`, `go`): plain,
-  but for `error:` and `warning:`.
+  but for `error:` and `warning:`.~~ Decision 15.
 
-- rust-analyzer's runnables as a kind (the test at the caret).
-- A deducer registry for plugins (Decision 1's beaten).
-- Other nushell files than `build.nu` (a `toolkit.nu`, nushell's own
-  habit), and a parameter's completer offered in the prompt.
-- `run.command` as a `tools` entry: the same shape question as
-  `compile.command`, left for its own round.
+- ~~rust-analyzer's runnables as a kind (the test at the caret).~~
+  Decision 18.
+- ~~A deducer registry for plugins (Decision 1's beaten).~~ Decision 17.
+- ~~Other nushell files than `build.nu` (a `toolkit.nu`, nushell's own
+  habit), and a parameter's completer offered in the prompt.~~ Decision
+  16.
+- ~~`run.command` as a `tools` entry: the same shape question as
+  `compile.command`, left for its own round.~~ Decision 14.

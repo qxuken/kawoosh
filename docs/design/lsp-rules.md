@@ -374,6 +374,79 @@ sent again, and one no pane showed was not; a reset now keeps them in
 what a server said — stderr included, which the notification log drops
 as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
 
+### 8. A change is sent as its span
+
+*Added 2026-10-07*, from the roadmap's "incremental sync from the
+journal — open; measure before doing it" ("then do the lsp ones").
+Measured first (release build, a character typed mid-file): the sync
+copied the buffer's whole text on the UI thread — 0.7 ms at 1 MB, 4.7
+ms at 10 MB, 23 ms at 50 MB — and the pool encoded it whole as JSON —
+0.9, 5.1 and 46 ms — at every keystroke a server was attached. A
+minified bundle with tsls on it (format-of-a-minified-bundle) is the
+case that pays it.
+
+- **The shell sends what moved.** After the open, a sync is the span
+  the journal says changed since the version last sent
+  (`Journal::changed_since`): the edits folded into one replacement —
+  from the first byte any touched to the last, the head and tail no
+  edit reached as they were — and only its bytes copied
+  (`SyncText::Span`). The whole goes the first time, and when the
+  journal cannot say (pruned past it, or `set_text` reset it). 150 ns
+  at 10 MB and at 50 MB, where it was 4.7 and 23 ms.
+- **The pool holds the text.** Each synced buffer's text is kept in the
+  pool (`Pool::texts`) at its version, and a span is applied to it there;
+  a server opening the buffer later — eslint joining, one restarted — is
+  sent the whole from that copy, not asked for it. A span that does not
+  fit the copy (its version is not the one held, or its bytes are out
+  of it) is answered `Event::SyncLost`, and the shell's next sync is the
+  whole: the pool never guesses.
+- **A server is told the way it takes it.** One whose `initialize` says
+  `textDocumentSync.change` 2 (`Caps::incremental`) gets the span as a
+  range and its text, the range's end worked out from its start over the
+  bytes between (`position_after`); any other gets the whole document
+  from the pool's copy — the encoding off the UI thread, where it was
+  already, but no copy made on it.
+
+A test compares the text a server holds with the buffer's after typing
+past a character outside the BMP, a line opened and joined, one deleted
+and an undo, with an incremental server and a full one
+(`a_change_is_sent_as_its_span`). It found a bug on the way: an answer
+held while typing was put over a newer one (fixed apart, 66104c2).
+
+Beaten: the edits one by one as `contentChanges` (each change's own
+text is gone once a later edit overwrites it — the journal keeps
+lengths, not texts); a diff of the old and new texts in the pool (the
+UI thread would still copy the whole to send it); the copy kept in each
+server's document alone (a server joining has no text to be opened
+with).
+
+### 9. A write is said to the servers that ask
+
+*Added 2026-10-07*, found while building Decision 8 and asked for the
+same day ("let's do save issue here as well"). `initialize` has always
+declared `synchronization.didSave`, and nothing sent it: a server that
+works on save — rust-analyzer's `checkOnSave` cargo check, a linter
+that reads the file — never heard of one, and checked only as it was
+sent changes.
+
+- **When.** A buffer written (`Effect::Wrote` — `:w`, `:wa`, a write
+  through a multibuffer) whose text a server was sent: its text is
+  pushed first, so the server has what was written — a format on save
+  changed it — and then `Cmd::Saved` goes to each server holding it.
+- **To whom, and with what**, as each server's `textDocumentSync` says
+  (`Caps::save`): options with `save` — `true` or `{}` (rust-analyzer's)
+  — a `didSave` without the text, `{ includeText: true }` with the text
+  the pool holds for it, which is the text written; options without
+  `save`, none; a kind alone (a bare `1` or `2`, no options), a save
+  without the text, as Neovim and VS Code read it. A private buffer is
+  never sent, so its write is no one's news.
+
+Beaten: `willSave` and `willSaveWaitUntil` (a server's edits before the
+write would race the format on save, which is the editor's; no server
+used here asks for them); the text read back from the disk for
+`includeText` (the pool's copy is what was written, and a read is a
+round trip on a host).
+
 ## Not built
 
 - ~~**A loaded file changed on disk by another program** is not read
@@ -393,7 +466,18 @@ as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
   `files_changed_outside_reach_the_servers_that_watch_them` and
   `a_loaded_file_changed_on_disk_reaches_the_server` against the fake
   server's `--watch`, `--watch-rel` and `@unwatch`. A server on a host
-  is still not told. The review's fixes (2026-10-03: Windows' unsaid
+  is still not told — looked at 2026-10-07 ("then do the lsp ones") and
+  left for the agent: such a server is not offered
+  `didChangeWatchedFiles` and watches on its own (rust-analyzer, gopls
+  and tsserver fall back to their own watchers for a client that does
+  not), so what another program changes there reaches it. What does not
+  is a file `load_all` sent it from the host: the client holds it open,
+  and a server reads an open document from the client, not the disk.
+  Telling it means something watching on the host — `inotifywait` or
+  `fswatch` where one is installed (neither is, on a stock host), or
+  domains.md's agent — and SFTP's stat of up to `load_max` files a
+  poll is the cost the agent is there to save. Until then, `load_all`
+  on a host is a snapshot as of the walk, `:lsp restart` takes another. The review's fixes (2026-10-03: Windows' unsaid
   overflow, folders and roots made again, loose globs kept to their
   workspace, the made-file walk's cost, the home's ancestors, "no
   repository" forgotten, `load_max` kept with made files) are tested by
@@ -403,10 +487,10 @@ as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
   `lsp`'s `a_loose_glob_stays_in_its_workspace` and
   `a_folder_above_the_home_is_not_watched`, and a folder made and moved
   away in `a_loaded_file_changed_on_disk_reaches_the_server`.
-- **The pull model, workspace-wide** (`workspace/diagnostic`) —
+- ~~**The pull model, workspace-wide** (`workspace/diagnostic`) —
   lists.md's; with it a server that answers would need no `load_all`.
   A document's own pull is built ([lsp-installs.md](lsp-installs.md)
-  Decision 7).
+  Decision 7).~~ Built 2026-10-07, [lists.md](lists.md) Decision 8.
 - ~~**Rules a plugin defines**: the table is open, but only the shell
   reads its rules.~~ Built 2026-10-03 (Decision 6):
   `kawoosh.lsp.rule` and `kawoosh.lsp.rules` (`lua/src/lib.rs`),

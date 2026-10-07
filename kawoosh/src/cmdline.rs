@@ -146,6 +146,9 @@ impl Kawoosh {
                 names.sort();
                 out.extend(names);
             } else {
+                // A nushell command's parameter: what completes it, then
+                // paths (Decision 16).
+                out.extend(self.compile_arg_candidates(&inv.args, token));
                 let dir = self.compile_dir_of(&inv.args.join(" "));
                 out.extend(self.path_candidates_in(token, &dir));
             }

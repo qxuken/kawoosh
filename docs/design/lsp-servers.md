@@ -43,8 +43,8 @@ Racket, Nix, CMake, Fortran, R, Prisma, protobuf, Graphviz, AWK, WGSL,
 GLSL, Odin, Luau, fish, Objective-C through clangd. A test holds every
 row's languages to ones the registry or the grammar manifest names.
 
-Left out: a server that needs `initializationOptions` kawoosh does not
-send (astro-ls wants its TypeScript's path), one with no settled
+Left out: a server that needs `initializationOptions` kawoosh did not
+send (astro-ls wants its TypeScript's path; Decision 8 since), one with no settled
 stdio command (SQL, Julia, Perl, PowerShell, Bicep), and languages
 whose files are data (CSV, INI, `.env`).
 
@@ -295,14 +295,62 @@ Not tried: the pip fallback without uv (on Windows `python` is often
 the Store's alias, which `on_path` finds and which runs nothing); a
 global line run for real.
 
+### 8. What a server is started with: `init`
+
+*Added 2026-10-07*, from "Not built" ("then do the lsp ones"): "a
+server's `initializationOptions`, which would bring astro-ls and
+Volar". `settings` is what a server reads when it asks
+(`workspace/configuration`) and is told again as it changes; some
+servers read nothing but what `initialize` carried —
+`initializationOptions` — and astro-ls will not start without
+`typescript.tsdk` there, the TypeScript it runs.
+
+`init` is that, on a row and in `lsp.NAME`, as data like the rest:
+
+```lua
+lsp = { astro = { init = { typescript = { tsdk = "{typescript}" } } } }
+```
+
+- **Said once.** It goes with `initialize` and nowhere else, so a change
+  to it is a new server: `sync_lsp_rules` restarts one that runs, as it
+  does for a new command or arguments.
+- **What a row cannot know, said in words.** A path depends on the
+  project, so two words in a string are put in as the server starts
+  (`init_options`): `{root}`, the server's root, and `{typescript}`, a
+  TypeScript's `lib` — the nearest `node_modules/typescript/lib` at or
+  above the root (the project's own, what its build type-checks with),
+  else one kawoosh installed beside a server
+  (typescript-language-server's, installed with `typescript@5`), else
+  the word as written, for the server to say what it misses. On a host
+  only `{root}` is said, as the host spells it: the host's disk is not
+  looked at from here.
+- **astro-ls is a row** (`astro`, installed as
+  `@astrojs/language-server` with `typescript@5`, so `{typescript}`
+  has its own when the project has none). Not tried against astro-ls
+  itself: none on the machine it was built on.
+
+Volar is not a row. `@vue/language-server` 3 runs only beside a
+TypeScript server carrying its plugin, the two passing `tsserver/request`
+between them — a protocol of its own, not an option; 2.x's
+`vue.hybridMode = false` would be an `init` away, but there is no Vue
+grammar in the manifest for its files to be a language.
+
+Beaten: a Lua function for a row's `init` (a row is data, read before
+any other Lua runs, and by `kawoosh lsp` on the command line); `settings`
+sent as `initializationOptions` too (a server reading both would read
+its configuration twice, and some refuse an unknown key in one);
+`{typescript}` asked of `node` (`require.resolve`) — a process per
+start where a walk up the directories finds what node would.
+
 ## Not built
 
 - ~~**Install lines checked against the package managers.**~~ Tried
   2026-10-03 on Windows 11, above: every package kawoosh installs, and
   the lines' packages looked up. Not on macOS or Linux, and not the
   lines whose managers this machine has not.
-- **A server's `initializationOptions`**, which would bring astro-ls
-  and Volar.
+- ~~**A server's `initializationOptions`**, which would bring astro-ls
+  and Volar.~~ Decision 8: astro-ls; Volar waits for a Vue grammar and
+  its TypeScript plugin's protocol.
 - ~~**More than one server for a language**~~ (a linter beside the
   language's server, ruff beside pyright). Built 2026-10-03:
   [lsp-installs.md](lsp-installs.md) Decision 7, `when` files.

@@ -708,11 +708,19 @@ fn the_syntax_indents_as_a_last_resort() {
     let a = open(&mut d, &mut app, &dir, "a.json");
     app.wait_for_syntax();
     d.frame(&mut app);
-    ex(&mut d, &mut app, "format?");
-    assert_eq!(
-        app.ed.message,
-        "indent: the syntax's, nothing else formats json"
-    );
+    // The pool says json's server is not installed once it has tried to
+    // start it; asked before, `auto` would still count on it. Under the
+    // whole suite's load that word came after the first ask.
+    let said = "indent: the syntax's, nothing else formats json";
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        ex(&mut d, &mut app, "format?");
+        if app.ed.message == said || std::time::Instant::now() > end {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(app.ed.message, said);
     ex(&mut d, &mut app, "format");
     // At json's own width, two.
     assert_eq!(text(&app, a), "{\n  \"a\": [\n    1\n  ]\n}\n");

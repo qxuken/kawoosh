@@ -86,6 +86,8 @@ impl Kawoosh {
                 d.args.clone(),
                 d.roots.clone(),
                 d.served().join(" "),
+                // Said once, at `initialize`.
+                d.init.to_string(),
             )
         };
         let mut gone = HashSet::new();
@@ -576,6 +578,9 @@ pub(crate) fn fold(def: &mut ServerDef, t: &Setting) -> Vec<(String, String)> {
     }
     if let Some(s) = field("settings") {
         def.settings = setting_json(s);
+    }
+    if let Some(s) = field("init") {
+        def.init = setting_json(s);
     }
     match field("answers") {
         Some(Setting::Table(t)) => {

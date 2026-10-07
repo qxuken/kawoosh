@@ -1177,9 +1177,11 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   rest, opened in the pane the hover was opened from (`came_from`);
   `K` asks its hover there, into the same pane. A link is `gx`, which
   the hover had as a markdown buffer; the pane was already reused.
-- **Incremental sync from the journal** — open [kui.md]. Whole-text per
-  change today. Correct, and fine until a big file is edited with a
-  server attached; measure before doing it (the perf tab exists).
+- **Incremental sync from the journal** — done 2026-10-07 [kui.md],
+  [lsp-rules.md](lsp-rules.md) Decision 8. Measured first: the whole
+  text copied per keystroke was 4.7 ms on the UI thread at 10 MB, 23 ms
+  at 50 MB; the span the journal says moved is 150 ns, the pool holding
+  the text and telling each server the way it takes it.
 - **Server definitions** — done 2026-09-21 [kui.md].
   `ServerDef::builtin` is the table: rust-analyzer,
   typescript-language-server (typescript, tsx, javascript — one
@@ -3219,8 +3221,9 @@ frame.
     reader of the test's own. Not built: `K` in a shell buffer, a page
     re-rendered on resize, the heads in `grs`.
 
-Scheduled nowhere, on purpose: incremental sync (measure first),
-the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
+Scheduled nowhere, on purpose: ~~incremental sync (measure first)~~
+(measured and built 2026-10-07, lsp-rules.md Decision 8), the
+press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
 3's after — when the walk's cap or the poll hurt).
 
