@@ -705,22 +705,21 @@ fn the_syntax_indents_as_a_last_resort() {
     );
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_in(&mut d, &dir);
+    // json's server off: the syntax is the last resort when nothing else
+    // formats json. On, `auto` counts on the server until the pool says
+    // it is not installed — a word that came after the first ask under
+    // the whole suite's load — and on a machine that has it, it answers.
+    app.ed
+        .settings
+        .set(Layer::User, "lsp.json.enabled", Setting::Bool(false));
     let a = open(&mut d, &mut app, &dir, "a.json");
     app.wait_for_syntax();
     d.frame(&mut app);
-    // The pool says json's server is not installed once it has tried to
-    // start it; asked before, `auto` would still count on it. Under the
-    // whole suite's load that word came after the first ask.
-    let said = "indent: the syntax's, nothing else formats json";
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        ex(&mut d, &mut app, "format?");
-        if app.ed.message == said || std::time::Instant::now() > end {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    assert_eq!(app.ed.message, said);
+    ex(&mut d, &mut app, "format?");
+    assert_eq!(
+        app.ed.message,
+        "indent: the syntax's, nothing else formats json"
+    );
     ex(&mut d, &mut app, "format");
     // At json's own width, two.
     assert_eq!(text(&app, a), "{\n  \"a\": [\n    1\n  ]\n}\n");

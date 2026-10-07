@@ -34,7 +34,8 @@
 -- setting in the first section naming it — for a config to reorder or
 -- add to; `kawoosh.settings.state()` is what the pane shows, for a
 -- test. The data is `kawoosh.settings.list()`, `layers(path)`,
--- `files()`, for a pane of your own.
+-- `files()`, and `line(path, value)` the line a settings file keeps it
+-- by, for a pane of your own.
 
 local door = kawoosh.settings
 
@@ -126,42 +127,6 @@ local function spell(v, kind)
     return "{ " .. table.concat(parts, ", ") .. " }"
   end
   return tostring(v)
-end
-
--- The value as Lua spells it, for a settings file's line.
-local function lua_value(v)
-  local t = type(v)
-  if t == "string" then return (string.format("%q", v):gsub("\\\n", "\\n")) end
-  if t == "number" and math.type(v) == "float" then
-    local s = string.format("%.10g", v)
-    return s:find("[%.eEn]") and s or (s .. ".0")
-  end
-  if t == "table" then
-    local parts, n = {}, #v
-    if n > 0 or next(v) == nil then
-      for i = 1, n do parts[i] = lua_value(v[i]) end
-      return n > 0 and ("{ " .. table.concat(parts, ", ") .. " }") or "{}"
-    end
-    local keys = {}
-    for k in pairs(v) do keys[#keys + 1] = k end
-    table.sort(keys)
-    for _, k in ipairs(keys) do
-      local key = k:match("^[%a_][%w_]*$") and k or ("[" .. string.format("%q", k) .. "]")
-      parts[#parts + 1] = key .. " = " .. lua_value(v[k])
-    end
-    return "{ " .. table.concat(parts, ", ") .. " }"
-  end
-  return tostring(v)
-end
-
--- `path = value` nested as a settings file writes it:
--- `font = { size = 14 }`.
-local function keep_line(path, v)
-  local parts = {}
-  for p in path:gmatch("[^.]+") do parts[#parts + 1] = p end
-  local s = lua_value(v)
-  for i = #parts, 2, -1 do s = "{ " .. parts[i] .. " = " .. s .. " }" end
-  return parts[1] .. " = " .. s
 end
 
 -- The value the scope gives: its own, else the layers' below it — what
@@ -409,7 +374,7 @@ end
 
 local function copy(r)
   if not r then return end
-  local line = keep_line(r.path, scoped(r))
+  local line = door.line(r.path, scoped(r))
   kawoosh.copy(line)
   kawoosh.echo("copied " .. line)
 end

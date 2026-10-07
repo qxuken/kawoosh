@@ -72,12 +72,12 @@ local function colours()
   return look.subject
 end
 
+-- The line that keeps the face in `settings.lua`.
 local function keep_line(cur)
-  local family = cur.family ~= "" and cur.family or nil
-  local parts = {}
-  if family then parts[#parts + 1] = string.format("family = %q", family) end
-  parts[#parts + 1] = string.format("size = %g", cur.size)
-  return "font = { " .. table.concat(parts, ", ") .. " }"
+  return kawoosh.settings.line("font", {
+    family = cur.family ~= "" and cur.family or nil,
+    size = math.tointeger(cur.size) or cur.size,
+  })
 end
 
 -- The families the pane lists, for the mode; the cursor kept on its

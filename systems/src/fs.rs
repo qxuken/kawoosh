@@ -306,6 +306,214 @@ pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+/// One change of a listing's write ([`apply`]): paths whole, a
+/// directory's with `dir` (a create makes one, a delete names one).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Change {
+    /// A rename in one directory, or a move to another.
+    Rename {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    Copy {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    Create {
+        path: PathBuf,
+        dir: bool,
+    },
+    Delete {
+        path: PathBuf,
+    },
+}
+
+/// What came of each change, by its index: `None` while it is under
+/// way, `Some(Err(why))` when it failed.
+pub type Outcomes = Vec<Option<Result<(), String>>>;
+
+/// Applies a write's changes in the order that keeps a file from being
+/// lost, whatever the changes are: every delete vacates first, its entry
+/// put aside under a name beside it no entry has (`NAME.~goneN~`, a
+/// rename, so a tree of fifty gigabytes goes at once); then the copies,
+/// each on a thread of its own (their sources may be renamed or moved by
+/// the rest); then the renames as two steps — each source to a name
+/// beside its destination, then each to its name, so a swap never
+/// writes one over the other, and a destination still taken is refused,
+/// the file put back where it was; then the creates. A delete that made
+/// way for a copy, a rename or a create comes back when nothing arrived
+/// in its place. `settled` is told what came of them then — the
+/// directories can be read again — with the deletes still under way;
+/// last, what was put aside is removed, each on a thread of its own, and
+/// what a removal could not take goes back under its own name for the
+/// user to free and delete again. The answer is every change's outcome.
+pub fn apply(changes: &[Change], settled: impl FnOnce(&Outcomes)) -> Vec<Result<(), String>> {
+    let mut out: Outcomes = vec![None; changes.len()];
+    let mut targets = std::collections::HashSet::new();
+    for c in changes {
+        match c {
+            Change::Rename { to, .. } | Change::Copy { to, .. } => {
+                targets.insert(to.clone());
+            }
+            Change::Create { path, .. } => {
+                targets.insert(path.clone());
+            }
+            Change::Delete { .. } => {}
+        }
+    }
+
+    // Every delete put aside now; one that cannot be (the rename
+    // refused) is removed where it is, at the end all the same.
+    struct Aside {
+        i: usize,
+        path: PathBuf,
+        tmp: Option<PathBuf>,
+    }
+    let mut aside = Vec::new();
+    for (i, c) in changes.iter().enumerate() {
+        if let Change::Delete { path } = c {
+            let tmp = aside_name(path);
+            let tmp = rename(path, &tmp).is_ok().then_some(tmp);
+            aside.push(Aside {
+                i,
+                path: path.clone(),
+                tmp,
+            });
+        }
+    }
+
+    // The copies, on threads of their own.
+    std::thread::scope(|s| {
+        let running: Vec<_> = changes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| match c {
+                Change::Copy { from, to } => Some((i, s.spawn(move || copy(from, to)))),
+                _ => None,
+            })
+            .collect();
+        for (i, h) in running {
+            out[i] = Some(joined(h.join()));
+        }
+    });
+
+    // The renames as two steps.
+    let mut steps: Vec<(usize, &Path, &Path, Option<PathBuf>)> = Vec::new();
+    for (i, c) in changes.iter().enumerate() {
+        if let Change::Rename { from, to } = c {
+            let tmp = suffixed(to, &format!(".~{}~", steps.len() + 1));
+            match rename(from, &tmp) {
+                Ok(()) => steps.push((i, from, to, Some(tmp))),
+                Err(e) => {
+                    out[i] = Some(Err(e.to_string()));
+                    steps.push((i, from, to, None));
+                }
+            }
+        }
+    }
+    for (i, from, to, tmp) in steps {
+        let Some(tmp) = tmp else { continue };
+        out[i] = Some(if exists(to) {
+            let back = !exists(from) && rename(&tmp, from).is_ok();
+            Err(if back {
+                format!("{}: exists", to.display())
+            } else {
+                format!("{}: exists, left at {}", to.display(), tmp.display())
+            })
+        } else {
+            rename(&tmp, to).map_err(|e| e.to_string())
+        });
+    }
+
+    for (i, c) in changes.iter().enumerate() {
+        if let Change::Create { path, dir } = c {
+            out[i] = Some(create(path, *dir).map_err(|e| e.to_string()));
+        }
+    }
+
+    // A delete that made way for what did not come: back as it was.
+    let mut removals = Vec::new();
+    for a in aside {
+        match &a.tmp {
+            Some(tmp) if targets.contains(&a.path) && !exists(&a.path) => {
+                out[a.i] = Some(Err(match rename(tmp, &a.path) {
+                    Ok(()) => "kept, nothing came in its place".into(),
+                    Err(e) => e.to_string(),
+                }));
+            }
+            _ => removals.push(a),
+        }
+    }
+    settled(&out);
+
+    std::thread::scope(|s| {
+        let running: Vec<_> = removals
+            .iter()
+            .map(|a| {
+                let at = a.tmp.clone().unwrap_or_else(|| a.path.clone());
+                (a, s.spawn(move || remove(&at)))
+            })
+            .collect();
+        for (a, h) in running {
+            out[a.i] = Some(joined(h.join()).map_err(|why| match &a.tmp {
+                Some(tmp) => put_back(&a.path, tmp, why),
+                None => why,
+            }));
+        }
+    });
+    out.into_iter()
+        .map(|o| o.unwrap_or_else(|| Err("not applied".into())))
+        .collect()
+}
+
+/// A thread's answer: its result, or the panic it ended in.
+fn joined(r: std::thread::Result<io::Result<()>>) -> Result<(), String> {
+    match r {
+        Ok(r) => r.map_err(|e| e.to_string()),
+        Err(_) => Err("the operation panicked".into()),
+    }
+}
+
+/// What a removal left of `path`, put aside at `tmp`: back under its
+/// own name, where a listing shows it, when the name is free — the
+/// error saying so in that name — else where it is, the error saying
+/// where.
+fn put_back(path: &Path, tmp: &Path, why: String) -> String {
+    if !exists(tmp) {
+        return why;
+    }
+    if !exists(path) && rename(tmp, path).is_ok() {
+        let name = basename(path).unwrap_or_else(|| path.display().to_string());
+        format!(
+            "{} — what is left is back as {name}; free it and delete again",
+            why.replace(&tmp.display().to_string(), &path.display().to_string())
+        )
+    } else {
+        format!("{why} — what is left is in {}", tmp.display())
+    }
+}
+
+/// A name to put `path` aside under, beside it, that nothing has:
+/// `.~goneN~` after its name, which a listing never shows.
+fn aside_name(path: &Path) -> PathBuf {
+    static GONE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    loop {
+        let n = GONE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let p = suffixed(path, &format!(".~gone{n}~"));
+        if !exists(&p) {
+            return p;
+        }
+    }
+}
+
+/// `path` with `tail` after its last part's name, its bytes kept as
+/// they are.
+fn suffixed(path: &Path, tail: &str) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(tail);
+    PathBuf::from(s)
+}
+
 /// A copy with a host at either end, through this module's own
 /// operations: a file's bytes read and written, a directory made and
 /// its entries copied into it.
@@ -862,6 +1070,136 @@ pub(crate) mod fake_host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A directory of its own under the temp folder, with `files` in it
+    /// (a trailing `/` a directory), emptied first.
+    fn scratch(name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kawoosh-apply-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        for (f, text) in files {
+            if let Some(dir) = f.strip_suffix('/') {
+                std::fs::create_dir_all(d.join(dir)).unwrap();
+            } else {
+                std::fs::write(d.join(f), text).unwrap();
+            }
+        }
+        d
+    }
+
+    /// What `d` holds: each name and a file's text, `/` after a
+    /// directory's.
+    fn holds(d: &Path) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = std::fs::read_dir(d)
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                let name = e.file_name().to_string_lossy().into_owned();
+                if e.path().is_dir() {
+                    (name + "/", String::new())
+                } else {
+                    (name, std::fs::read_to_string(e.path()).unwrap())
+                }
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn own(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    /// Two names swapped: two steps each, so neither is written over;
+    /// a copy and a create beside them; everything said done.
+    #[test]
+    fn a_swap_a_copy_and_a_create_are_applied() {
+        let d = scratch("swap", &[("a", "A"), ("b", "B")]);
+        let settled = std::cell::Cell::new(false);
+        let out = apply(
+            &[
+                Change::Copy {
+                    from: d.join("a"),
+                    to: d.join("c"),
+                },
+                Change::Rename {
+                    from: d.join("a"),
+                    to: d.join("b"),
+                },
+                Change::Rename {
+                    from: d.join("b"),
+                    to: d.join("a"),
+                },
+                Change::Create {
+                    path: d.join("sub"),
+                    dir: true,
+                },
+            ],
+            |o| {
+                assert!(o.iter().all(|x| x == &Some(Ok(()))), "{o:?}");
+                settled.set(true);
+            },
+        );
+        assert!(settled.get());
+        assert_eq!(out, vec![Ok(()); 4]);
+        assert_eq!(
+            holds(&d),
+            own(&[("a", "B"), ("b", "A"), ("c", "A"), ("sub/", "")])
+        );
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A deleted name taken by a rename: the delete vacates first, and
+    /// nothing put aside is left over.
+    #[test]
+    fn a_delete_makes_way_for_a_rename() {
+        let d = scratch("way", &[("a", "old"), ("b", "new"), ("gone/", "")]);
+        let out = apply(
+            &[
+                Change::Delete { path: d.join("a") },
+                Change::Rename {
+                    from: d.join("b"),
+                    to: d.join("a"),
+                },
+                Change::Delete {
+                    path: d.join("gone"),
+                },
+            ],
+            |_| {},
+        );
+        assert_eq!(out, vec![Ok(()); 3]);
+        assert_eq!(holds(&d), own(&[("a", "new")]));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A delete that made way for what did not come is the entry as it
+    /// was, and says so; a rename onto a name still taken is refused,
+    /// the file back where it was.
+    #[test]
+    fn what_did_not_come_leaves_things_as_they_were() {
+        let d = scratch("kept", &[("a", "A"), ("b", "B"), ("c", "C")]);
+        let out = apply(
+            &[
+                Change::Delete { path: d.join("a") },
+                Change::Rename {
+                    from: d.join("missing"),
+                    to: d.join("a"),
+                },
+                Change::Rename {
+                    from: d.join("b"),
+                    to: d.join("c"),
+                },
+            ],
+            |_| {},
+        );
+        assert_eq!(out[0], Err("kept, nothing came in its place".into()));
+        assert!(out[1].is_err());
+        assert_eq!(out[2], Err(format!("{}: exists", d.join("c").display())));
+        assert_eq!(holds(&d), own(&[("a", "A"), ("b", "B"), ("c", "C")]));
+        std::fs::remove_dir_all(&d).ok();
+    }
 
     /// On a host the separator is `/` on every platform: its paths are
     /// asserted as text, since a `PathBuf` compares `\` and `/` alike on

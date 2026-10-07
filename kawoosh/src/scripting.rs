@@ -25,6 +25,11 @@ use crate::notify::{Level, Note, Show, Ttl};
 const WALK_MAX: usize = 200_000;
 /// Where plugin processes' ids start, above compile mode's.
 const LUA_PROC_BASE: u64 = 1 << 32;
+/// The most processes plugins run at once (`kawoosh.spawn`); the rest
+/// wait their turn, in order. A review of two thousand changed files
+/// asks for a `git show` each, and as many children at once would
+/// spend the descriptors every pipe needs (macOS allows 256).
+const LUA_PROCS_AT_ONCE: usize = 32;
 
 #[derive(Clone, Debug)]
 pub struct ToolDef {
@@ -57,6 +62,9 @@ pub struct Scripting {
     /// The processes plugins spawned, by the io thread's process id —
     /// numbered from a high mark so compile mode's never coincide.
     pub procs: HashMap<u64, Proc>,
+    /// The processes asked for past [`LUA_PROCS_AT_ONCE`], by token, in
+    /// the order asked: each started as one running ends.
+    pub queued: std::collections::VecDeque<(u64, kawoosh_systems::io::ProcSpec)>,
     pub next_proc: u64,
     /// The settings version `kawoosh.on_settings` was last told of.
     pub settings_seen: u64,
@@ -789,6 +797,32 @@ impl Kawoosh {
                     });
                 }
             }
+            Msg::FsApply { token, changes } => {
+                if self.jobs_inline {
+                    let mut settled = None;
+                    let all = kawoosh_systems::fs::apply(&changes, |o| settled = Some(o.clone()));
+                    if let Some(o) = settled {
+                        rt.fs_applied(token, &o, false);
+                    }
+                    rt.fs_applied(token, &all.into_iter().map(Some).collect(), true);
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.stream("fs apply", move |send| {
+                        let all = kawoosh_systems::fs::apply(&changes, |o| {
+                            send(IoMsg::FsApplied {
+                                token,
+                                outcomes: o.clone(),
+                                last: false,
+                            });
+                        });
+                        send(IoMsg::FsApplied {
+                            token,
+                            outcomes: all.into_iter().map(Some).collect(),
+                            last: true,
+                        });
+                    });
+                }
+            }
             Msg::Recall(i) => {
                 let n = self.ed.memory.len();
                 if i == 0 || i > n || !self.ed.memory.recall(n - i) {
@@ -995,8 +1029,6 @@ impl Kawoosh {
                 env,
             } => {
                 use kawoosh_systems::io::{ProcCmd, ProcSpec};
-                self.scripting.next_proc += 1;
-                let id = LUA_PROC_BASE + self.scripting.next_proc;
                 let cwd = cwd.or_else(|| Some(self.cwd.clone()));
                 let spec = ProcSpec {
                     cmd: match cmd {
@@ -1009,24 +1041,12 @@ impl Kawoosh {
                     split_err,
                     env,
                 };
-                match self.io.run_command(id, spec) {
-                    Ok(handle) => {
-                        self.pending_jobs += 1;
-                        self.scripting.procs.insert(
-                            id,
-                            Proc {
-                                token,
-                                handle,
-                                lines: Vec::new(),
-                                err: Vec::new(),
-                                out: None,
-                            },
-                        );
-                    }
-                    Err(e) => {
-                        self.ed.message = format!("spawn: {e}");
-                        rt.proc_exit(token, None, None);
-                    }
+                if self.scripting.procs.len() >= LUA_PROCS_AT_ONCE {
+                    // Its turn comes as one running ends; a job until then.
+                    self.pending_jobs += 1;
+                    self.scripting.queued.push_back((token, spec));
+                } else {
+                    self.start_lua_proc(rt, token, spec);
                 }
             }
             Msg::Symbols {
@@ -1068,6 +1088,12 @@ impl Kawoosh {
             Msg::Kill(token) => {
                 if let Some(p) = self.scripting.procs.values().find(|p| p.token == token) {
                     p.handle.kill();
+                } else if let Some(i) = self.scripting.queued.iter().position(|(t, _)| *t == token)
+                {
+                    // Never started: ended as a killed one ends, with no code.
+                    self.scripting.queued.remove(i);
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    rt.proc_exit(token, None, None);
                 }
             }
             Msg::Confirm {
@@ -1926,6 +1952,53 @@ impl Kawoosh {
         }
     }
 
+    /// Starts a plugin's process (`kawoosh.spawn`), its callbacks under
+    /// `token`; one that cannot start ends at once, with no code.
+    fn start_lua_proc(&mut self, rt: &Runtime, token: u64, spec: kawoosh_systems::io::ProcSpec) {
+        self.scripting.next_proc += 1;
+        let id = LUA_PROC_BASE + self.scripting.next_proc;
+        match self.io.run_command(id, spec) {
+            Ok(handle) => {
+                self.pending_jobs += 1;
+                self.scripting.procs.insert(
+                    id,
+                    Proc {
+                        token,
+                        handle,
+                        lines: Vec::new(),
+                        err: Vec::new(),
+                        out: None,
+                    },
+                );
+            }
+            Err(e) => {
+                self.ed.message = format!("spawn: {e}");
+                rt.proc_exit(token, None, None);
+            }
+        }
+    }
+
+    /// The processes waiting their turn started, as many as there is
+    /// room for now that one has ended.
+    pub(crate) fn start_queued_procs(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        let mut started = false;
+        while self.scripting.procs.len() < LUA_PROCS_AT_ONCE
+            && let Some((token, spec)) = self.scripting.queued.pop_front()
+        {
+            self.pending_jobs = self.pending_jobs.saturating_sub(1);
+            self.start_lua_proc(&rt, token, spec);
+            started = true;
+        }
+        // One that could not start told its plugin so, which may have
+        // asked for more.
+        if started {
+            self.drain_lua();
+        }
+    }
+
     pub(crate) fn render_lua_pane(
         &mut self,
         ui: &mut Ui<'_>,
@@ -1948,6 +2021,9 @@ impl Kawoosh {
                 "height",
                 Value::Float(rect.map(|r| r.h as f64).unwrap_or(0.0)),
             ),
+            // The pane's title bar, which `height` counts: the chrome's
+            // font sets it.
+            ("title_h", Value::Float(self.chrome.pane_title_h as f64)),
             // The pane's share of the split it sits in, as
             // `view_open`'s `share` gave it, so a view can keep what a
             // divider drag made it.

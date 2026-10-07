@@ -397,3 +397,39 @@ fn a_database_opens_here_rather_than_as_bytes_and_t_opens_the_bytes() {
         db.display().to_string()
     );
 }
+
+/// A table longer than a page pages in as the cursor nears its last
+/// row fetched, and a page that is the table's last says so: the page
+/// asked for one row past itself, which the cap leaves out. Before, a
+/// page of `sqlite.rows` asked with that cap was never cut, so the grid
+/// stopped at its first page.
+#[test]
+fn a_table_longer_than_a_page_pages_in_to_its_last_row() {
+    let (mut d, mut app, _root, db) = open("pages");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE many (n INTEGER);
+         WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 25)
+         INSERT INTO many SELECT n FROM c;",
+    )
+    .unwrap();
+    drop(conn);
+    ex(&mut d, &mut app, "set sqlite.rows=10");
+    d.press(&mut app, "r");
+    settle(&mut d, &mut app);
+    lua(&mut app, "kawoosh.sqlite_pane.browse('many')");
+    settle(&mut d, &mut app);
+    assert_eq!(field(&mut app, "rows"), "10", "a page");
+    assert_eq!(field(&mut app, "more"), "true", "and more past it");
+    if shown(&mut app).starts_with("tables") {
+        d.press(&mut app, "<Tab>");
+    }
+    assert!(shown(&mut app).starts_with("grid many"));
+    for _ in 0..6 {
+        d.press(&mut app, "G");
+        settle(&mut d, &mut app);
+    }
+    assert_eq!(field(&mut app, "rows"), "25", "every row, a page at a time");
+    assert_eq!(field(&mut app, "more"), "false", "the last page says so");
+    assert_eq!(field(&mut app, "value"), "25");
+}

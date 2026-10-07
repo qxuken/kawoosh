@@ -79,6 +79,11 @@ impl LineHunk {
 #[derive(Clone, Debug)]
 pub struct Base {
     pub text: Arc<str>,
+    /// Where each of `text`'s lines starts, and its end after the last:
+    /// read once a text (`Base::set_text`), not once a hunk — a
+    /// statusline that counted five thousand hunks of a 10k-line base
+    /// read the whole base five thousand times a frame.
+    starts: Arc<[usize]>,
     pub label: String,
     pub hunks: Arc<[LineHunk]>,
     pub version: Option<Version>,
@@ -151,8 +156,14 @@ impl Base {
 
     /// Where each line of the base starts, and the text's end after
     /// the last — the boundaries the diff cut it at.
-    pub fn line_starts(&self) -> Vec<usize> {
-        line_starts(&self.text)
+    pub fn line_starts(&self) -> &[usize] {
+        &self.starts
+    }
+
+    /// `text` the base's, its line starts with it.
+    fn set_text(&mut self, text: Arc<str>) {
+        self.starts = Arc::from(line_starts(&text));
+        self.text = text;
     }
 
     /// The base's lines `lines`, each without its newline.
@@ -339,7 +350,7 @@ impl Editor {
                 b.label = label;
                 return;
             }
-            b.text = text;
+            b.set_text(text);
             b.given = given;
             b.crlf = crlf;
             b.label = label;
@@ -351,6 +362,7 @@ impl Editor {
         self.bases.insert(
             id,
             Base {
+                starts: Arc::from(line_starts(&text)),
                 text,
                 given,
                 label,
@@ -376,7 +388,7 @@ impl Editor {
         }
         let (text, crlf) = read_line_ends(&b.given, buffer);
         if crlf != b.crlf {
-            b.text = text;
+            b.set_text(text);
             b.crlf = crlf;
         }
     }

@@ -524,6 +524,18 @@ pub fn spell(value: &Setting) -> String {
     }
 }
 
+/// `path = value` as a settings file keeps it, on one line, the path's
+/// later parts nested: `font = { size = 14 }` — what a pane offers to
+/// copy into `settings.lua`.
+pub fn line(path: &str, value: &Setting) -> String {
+    let parts: Vec<&str> = path.split('.').collect();
+    format!(
+        "{} = {}",
+        key_spelling(parts[0]),
+        spell(&nest(&parts[1..], value))
+    )
+}
+
 /// The widest a value is written on one line before it is written a
 /// field to a line.
 const ONE_LINE: usize = 72;
@@ -576,6 +588,21 @@ return {
   theme = { dark = \"ayu\" },
 }
 ";
+
+    /// The line a pane copies: the path nested, a key Lua cannot read
+    /// bare (a keyword, a dash) in brackets, as the file's own writes.
+    #[test]
+    fn a_line_nests_the_path_and_spells_keys_as_the_file_does() {
+        assert_eq!(line("font.size", &int(14)), "font = { size = 14 }");
+        assert_eq!(line("tabstop", &int(2)), "tabstop = 2");
+        let mut t = std::collections::BTreeMap::new();
+        t.insert("end".to_string(), s("x"));
+        t.insert("a-b".to_string(), Setting::Bool(true));
+        assert_eq!(
+            line("lsp.rules", &Setting::Table(t)),
+            "lsp = { rules = { [\"a-b\"] = true, [\"end\"] = \"x\" } }"
+        );
+    }
 
     #[test]
     fn a_value_there_is_replaced_and_nothing_else_moves() {

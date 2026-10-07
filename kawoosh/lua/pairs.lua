@@ -21,8 +21,8 @@
 -- — a language's list adds pairs and `[char] = false` removes one; the
 -- defaults are `()` `[]` `{}` `""` `''` and backticks, and rust leaves
 -- `'` out. Every caret is read on its own, and what each does is one
--- edit of one `kawoosh.buf.edits`, the carets put back after with
--- `set_selections`. `.` replays a pairing as it was typed, and an undo
+-- edit of one `kawoosh.buf.edits`, its caret put into that edit's text
+-- (`carets`). `.` replays a pairing as it was typed, and an undo
 -- takes it with the rest of the insert.
 --
 -- The keys are insert mode's, gated on the `pairs` fact (set while
@@ -105,11 +105,11 @@ end
 -- One action per caret, applied: `{ text =, del_before =, del_after =,
 -- caret = }` — bytes deleted either side, text put in their place,
 -- the caret that many bytes into it. Done as one step whatever they
--- are, the carets placed after, the primary kept. A caret's deletion
+-- are, the engine placing the carets, the primary kept. A caret's deletion
 -- reaching into the one before it (`(|)|` and `<BS>`: the pair and
 -- the `)` after it) starts where that one ends: edits are disjoint.
 local function apply(heads, actions)
-  local edits, sels, shift, reached = {}, {}, 0, 0
+  local edits, carets, reached = {}, {}, 0
   for i, at in ipairs(heads) do
     local a = actions[i]
     local text = a.text or ""
@@ -117,14 +117,17 @@ local function apply(heads, actions)
     from = math.max(from, reached)
     to = math.max(to, from)
     reached = to
-    -- A step over edits nothing: the caret moves on.
-    if to > from or text ~= "" then edits[#edits + 1] = { from, to, text } end
-    local caret = from + shift + (a.caret or #text)
-    sels[#sels + 1] = { caret, caret, primary = i == heads.primary }
-    shift = shift + #text - (to - from)
+    local primary = i == heads.primary
+    if to > from or text ~= "" then
+      edits[#edits + 1] = { from, to, text }
+      carets[#carets + 1] = { edit = #edits, at = a.caret or #text, primary = primary }
+    else
+      -- A step over edits nothing: the caret moves on, where the others'
+      -- edits move it.
+      carets[#carets + 1] = { at = from + (a.caret or 0), primary = primary }
+    end
   end
-  if #edits > 0 then kawoosh.buf.edits(edits) end
-  kawoosh.buf.set_selections(sels)
+  kawoosh.buf.edits(edits, nil, { carets = carets })
 end
 
 -- A typed character `ch` at each caret: pairs, steps over, or itself.

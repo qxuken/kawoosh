@@ -636,6 +636,15 @@ pub(crate) fn lua_door(lua: &Lua, door: SharedDoor) -> mlua::Result<()> {
             Ok(check(&kind, v).err())
         })?,
     )?;
+    // line(path, value): `path = value` as a settings file keeps it,
+    // on one line — `font = { size = 14 }` — for a pane's copy.
+    t.set(
+        "line",
+        lua.create_function(|_, (path, value): (String, LV)| {
+            let v = kawoosh_lua::from_lua(&value, &path).map_err(mlua::Error::runtime)?;
+            Ok(settings_edit::line(&path, &v))
+        })?,
+    )?;
     let scope_of = |opts: &Option<Table>| -> mlua::Result<Scope> {
         Ok(Scope::parse(
             opts.as_ref()

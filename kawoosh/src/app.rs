@@ -887,6 +887,19 @@ impl Kawoosh {
                         self.drain_lua();
                     }
                 }
+                IoMsg::FsApplied {
+                    token,
+                    outcomes,
+                    last,
+                } => {
+                    if last {
+                        self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    }
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.fs_applied(token, &outcomes, last);
+                        self.drain_lua();
+                    }
+                }
                 IoMsg::Listed { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {
@@ -969,6 +982,7 @@ impl Kawoosh {
                         rt.proc_exit(p.token, code, p.out);
                         self.drain_lua();
                     }
+                    self.start_queued_procs();
                 }
                 other @ (IoMsg::ProcLine { .. }
                 | IoMsg::ProcExit { .. }

@@ -72,86 +72,6 @@ local function env_for(width)
   }
 end
 
--- The byte length of the UTF-8 character starting at byte `i`.
-local function char_len(s, i)
-  local c = s:byte(i)
-  if not c then return 0 end
-  if c < 0x80 then return 1 elseif c < 0xE0 then return 2 elseif c < 0xF0 then return 3 else return 4 end
-end
-
-local BOLD, UNDER = 1, 2
-
--- One line's text with its overstrikes (`c\bc` bold, `_\bc` underline)
--- and SGR sequences (`ESC[1m`, `ESC[4m`) read off: the characters and a
--- style a character, as bits.
-local function read_line(line)
-  local chars, styles = {}, {}
-  local bold, under = false, false
-  local i, n = 1, #line
-  while i <= n do
-    local b = line:byte(i)
-    if b == 27 then
-      -- An escape sequence: a CSI ending in `m` sets the style, any
-      -- other is dropped.
-      local j = i + 1
-      if line:byte(j) == 91 then -- `[`
-        j = j + 1
-        local from = j
-        while j <= n and (line:byte(j) == 59 or (line:byte(j) >= 48 and line:byte(j) <= 57)) do j = j + 1 end
-        if line:byte(j) == 109 then -- `m`
-          local params = line:sub(from, j - 1)
-          if params == "" then bold, under = false, false end
-          for word in params:gmatch("%d+") do
-            local code = tonumber(word)
-            if code == 0 then bold, under = false, false
-            elseif code == 1 then bold = true
-            elseif code == 4 then under = true
-            elseif code == 22 then bold = false
-            elseif code == 24 then under = false
-            end
-          end
-        end
-        i = j + 1
-      else
-        -- `ESC ( B` and the like: the escape, its intermediate and its
-        -- final dropped; a two-byte escape otherwise.
-        local c = line:byte(j)
-        i = (c == 40 or c == 41) and j + 2 or j + 1
-      end
-    elseif b == 8 then
-      -- A backspace with nothing before it: dropped.
-      i = i + 1
-    else
-      local len = char_len(line, i)
-      local ch = line:sub(i, i + len - 1)
-      i = i + len
-      local style = (bold and BOLD or 0) | (under and UNDER or 0)
-      -- Overstrikes: the character struck over by the next, any number
-      -- of times.
-      while line:byte(i) == 8 and i < n do
-        local len2 = char_len(line, i + 1)
-        local over = line:sub(i + 1, i + len2)
-        i = i + 1 + len2
-        if over == ch then
-          style = style | BOLD
-        elseif ch == "_" then
-          style = style | UNDER
-          ch = over
-        elseif over == "_" then
-          style = style | UNDER
-        else
-          -- `+\bo`: groff's bullet; anything else, the last wins, bold.
-          ch = (ch == "+" and over == "o") and "•" or over
-          style = style | BOLD
-        end
-      end
-      chars[#chars + 1] = ch
-      styles[#styles + 1] = style
-    end
-  end
-  return chars, styles
-end
-
 -- man.render(raw): the page as `man` printed it, read into the text a
 -- buffer holds — no backspace, no escape in it — and what was styled:
 -- `spans`, `{ from, to, style }` each (bytes from 0, end exclusive;
@@ -162,55 +82,27 @@ end
 -- `header`/`footer`, the byte ranges of the page's first and last
 -- lines when they name it (`LS(1) … LS(1)`).
 function man.render(raw)
-  local out = {}
-  local spans, heads, subheads, refs = {}, {}, {}, {}
-  local offset = 0
-  local lines = {}
-  for line in (raw .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = line end
-  -- A trailing empty line from the final newline: not a line.
-  if lines[#lines] == "" then lines[#lines] = nil end
+  -- The overstrikes and SGR read off by the engine (`kawoosh.overstrike`):
+  -- the text, its styled runs, and its all-bold lines.
+  local text, spans, bold = kawoosh.overstrike(raw)
+  local heads, subheads, refs = {}, {}, {}
   local plain_lines = {}
-  for ln, line in ipairs(lines) do
-    local chars, styles = read_line(line)
-    local text = table.concat(chars)
-    -- Trailing spaces are the formatter's, not the page's.
-    local trimmed = text:gsub("%s+$", "")
-    plain_lines[ln] = trimmed
-    -- The spans: runs of one style, in bytes of the trimmed line.
-    local at = 0
-    local run_from, run_style = nil, 0
-    local function close(upto)
-      if run_style ~= 0 and run_from and upto > run_from then
-        local style = run_style == BOLD and "bold" or run_style == UNDER and "underline" or "bold underline"
-        spans[#spans + 1] = { offset + run_from, offset + upto, style }
-      end
-    end
-    local all_bold, any = true, false
-    local first_nonspace
-    for i, ch in ipairs(chars) do
-      if at >= #trimmed then break end
-      local st = styles[i]
-      if ch:match("^%s$") == nil then
-        any = true
-        first_nonspace = first_nonspace or i
-        if st & BOLD == 0 then all_bold = false end
-      end
-      if st ~= run_style then
-        close(at)
-        run_from, run_style = at, st
-      end
-      at = at + #ch
-    end
-    close(at)
-    if any and all_bold then
+  local offset = 0
+  for line in (text .. "\n"):gmatch("(.-)\n") do
+    local ln = #plain_lines + 1
+    plain_lines[ln] = line
+    -- A line all bold is a head: from its first column a section's, an
+    -- indented one a subsection's.
+    if bold[ln] then
       local head = { line = ln, offset = offset }
-      if first_nonspace == 1 then heads[#heads + 1] = head else subheads[#subheads + 1] = head end
+      if line:match("^%S") then heads[#heads + 1] = head else subheads[#subheads + 1] = head end
     end
     -- References: `name(1)`, `name(3p)`, `name(n)` — a word and a
-    -- section in brackets, right after it.
-    local pos = 1
+    -- section in brackets, right after it; looked for on a line that has
+    -- a `(` before a digit, the pattern's backtracking spared the rest.
+    local pos = line:find("%(%d") and 1 or #line + 1
     while true do
-      local a, b, page, section = trimmed:find("([%w_%-%.:+]+)%((%d[%w]*)%)", pos)
+      local a, b, page, section = line:find("([%w_%-%.:+]+)%((%d[%w]*)%)", pos)
       if not a then break end
       -- `foo(...)` is a call, not a page: sections are short.
       if #section <= 4 then
@@ -218,10 +110,9 @@ function man.render(raw)
       end
       pos = b + 1
     end
-    out[#out + 1] = trimmed
-    offset = offset + #trimmed + 1
+    offset = offset + #line + 1
   end
-  local text = table.concat(out, "\n")
+  if text == "" then plain_lines = {} end
   local header, footer
   if plain_lines[1] and plain_lines[1]:match("^%S+%(%S+%)") then
     header = { 0, #plain_lines[1] }

@@ -93,9 +93,6 @@ local LIMIT = 200
 local GREP_MAX = 2000
 local PREVIEW_MAX = 256 * 1024
 local PREVIEW_LINES = 200
--- The pane's title bar, which `ctx.height` counts and the rows cannot
--- use (`app::TITLE_H`).
-local TITLE_H = 22
 
 -- The open picker: its source, items, the hits for the query, the
 -- cursor and the window onto them.
@@ -158,9 +155,23 @@ picker.binary = {
   pdf = true, o = true, a = true, so = true, dylib = true, dll = true, exe = true, wasm = true, class = true,
   pyc = true, db = true, sqlite = true, bin = true, dat = true,
 }
+-- Read from the path's end, a few bytes at most: a pattern anchored
+-- at the end is tried from every byte, and the picker asks a hundred
+-- thousand paths.
 local function is_binary(path)
-  local ext = path:match("%.([%w]+)$")
-  return ext ~= nil and picker.binary[ext:lower()] == true
+  local n = #path
+  for i = n, math.max(1, n - 8), -1 do
+    local b = path:byte(i)
+    if b == 46 then -- `.`
+      local ext = path:sub(i + 1)
+      if ext == "" or ext:find("%W") then return false end
+      local hit = picker.binary[ext]
+      if hit == nil and ext:find("%u") then hit = picker.binary[ext:lower()] end
+      return hit == true
+    end
+    if b == 47 or b == 92 then return false end -- `/` `\`
+  end
+  return false
 end
 
 -- The items boosted, and the boosted ones first — the best boost
@@ -170,17 +181,21 @@ end
 local function boosted(items)
   local by = boosts()
   local first, rest, last = {}, {}, {}
+  -- Where each boosted one was, for a sort that keeps their order: only
+  -- they are sorted, and an index on every item grew every item's table.
+  local at = {}
   for i, it in ipairs(items) do
     if it.boost == nil and it.path and by[it.path] then it.boost = by[it.path] end
     if it.boost == nil and it.path and is_binary(it.path) then it.boost = -0.5 end
-    it._i = i
-    if it.boost and it.boost > 0 then first[#first + 1] = it
+    if it.boost and it.boost > 0 then
+      first[#first + 1] = it
+      at[it] = i
     elseif it.boost and it.boost < 0 then last[#last + 1] = it
     else rest[#rest + 1] = it end
   end
   table.sort(first, function(a, b)
     if a.boost ~= b.boost then return a.boost > b.boost end
-    return a._i < b._i
+    return at[a] < at[b]
   end)
   for _, it in ipairs(rest) do first[#first + 1] = it end
   for _, it in ipairs(last) do first[#first + 1] = it end
@@ -1182,7 +1197,7 @@ kawoosh.view(VIEW, function(ctx)
   -- whole of it without; and in characters, for the wrap estimate.
   P.list_w = preview_on and math.floor((w - DIVIDER) * P.split) or w
   P.cols = math.floor((P.list_w - 16) / (SIZE * 0.6))
-  local rows = math.max(math.floor((h - TITLE_H - ROW_H - 4) / ROW_H), 1)
+  local rows = math.max(math.floor((h - ctx.title_h - ROW_H - 4) / ROW_H), 1)
   P.rows = rows
   if P.top > math.max(#P.hits, 1) then P.top = math.max(#P.hits, 1) end
   if P.top < 1 then P.top = 1 end
@@ -1239,7 +1254,7 @@ kawoosh.view(VIEW, function(ctx)
     else
       P.preview_for, P.preview = nil, nil
     end
-    local prows = math.max(math.floor((h - TITLE_H - ROW_H - 4 - 16 - 2 * PREVIEW_ROW) / PREVIEW_ROW), 1)
+    local prows = math.max(math.floor((h - ctx.title_h - ROW_H - 4 - 16 - 2 * PREVIEW_ROW) / PREVIEW_ROW), 1)
     P.prows = prows
     -- The divider: dragged, the list's share follows the pointer.
     body[#body + 1] = splitter(ctx.env, { key = "picker divider", thickness = DIVIDER,
@@ -1530,10 +1545,10 @@ end
 -- `here` said), relative to it.
 local function walk_items(ctx, done)
   local root = ctx.root or ctx.cwd
-  fs.walk(root, function(paths, err)
+  fs.walk(root, function(paths, err, whole)
     if not paths then return done(nil, err) end
     local items = {}
-    for i, p in ipairs(paths) do items[i] = { text = p, path = fs.join(root, p) } end
+    for i, p in ipairs(paths) do items[i] = { text = p, path = whole[i] } end
     done(items)
   end)
 end
@@ -2176,13 +2191,14 @@ end, {
 })
 
 -- The tools the config registered (`kawoosh.tool`), run on `<CR>`.
+local WHERE = { column = "in a column of its own", under = "under the pane", dock = "in the dock" }
 picker.source("tools", {
   title = "tools", placeholder = "find a tool",
   items = function()
     local items = {}
     for _, t in ipairs(kawoosh.tools()) do
       items[#items + 1] = { text = t.name, sub = t.cmd .. (t.cwd and ("  in " .. t.cwd) or ""), run = "tool " .. t.name,
-                            preview = { title = t.name, lines = { t.cmd, t.cwd and ("in " .. t.cwd) or "in the file's directory", t.dock and "in the dock" or "in a split" } } }
+                            preview = { title = t.name, lines = { t.cmd, t.cwd and ("in " .. t.cwd) or "in the file's directory", WHERE[t.place] } } }
     end
     return items
   end,

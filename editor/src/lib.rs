@@ -2652,17 +2652,37 @@ impl Editor {
     /// selections carried through them. False for a read-only buffer,
     /// one that is not there, or nothing to apply.
     pub fn apply_edits(&mut self, id: BufferId, edits: &[(Range<usize>, String)]) -> bool {
-        let Some(buf) = self.buffers.get(id) else {
-            return false;
-        };
+        self.apply_edits_at(id, edits).is_some()
+    }
+
+    /// [`Editor::apply_edits`], answering where each edit's text starts
+    /// in the text they leave, in the order given — what a caret put
+    /// into an edit's text is placed by. An edit that changes nothing
+    /// (an empty range, no text) is no change, though it has its place.
+    /// None when nothing was applied: a read-only buffer, one that is
+    /// not there, a refusal; edits that all change nothing apply nothing
+    /// and still answer.
+    pub fn apply_edits_at(
+        &mut self,
+        id: BufferId,
+        edits: &[(Range<usize>, String)],
+    ) -> Option<Vec<usize>> {
+        let buf = self.buffers.get(id)?;
         if buf.read_only || edits.is_empty() {
-            return false;
+            return None;
         }
-        let refs: Vec<(Range<usize>, &str)> =
-            edits.iter().map(|(r, t)| (r.clone(), t.as_str())).collect();
+        let changes = |e: &&(Range<usize>, String)| !(e.0.is_empty() && e.1.is_empty());
+        if !edits.iter().any(|e| changes(&e)) {
+            return Some(edits.iter().map(|(r, _)| buf.floor_byte(r.start)).collect());
+        }
+        let refs: Vec<(Range<usize>, &str)> = edits
+            .iter()
+            .filter(changes)
+            .map(|(r, t)| (r.clone(), t.as_str()))
+            .collect();
         if let Some(why) = self.multi_refuses(id, &refs) {
             self.message = why;
-            return false;
+            return None;
         }
         let view = self
             .views
@@ -2678,31 +2698,42 @@ impl Editor {
         // says to the character — a grapheme is a caret's unit — and
         // finding a cluster's start reads its line's window, which for a
         // format's quarter of a million edits was seven seconds.
-        let mut sorted: Vec<(Range<usize>, String)> = edits
+        // Each edit with its index in `edits`, sorted where it lands.
+        let mut sorted: Vec<(usize, Range<usize>, String)> = edits
             .iter()
-            .map(|(r, t)| {
+            .enumerate()
+            .map(|(i, (r, t))| {
                 let start = buf.floor_byte(r.start);
                 let end = buf.floor_byte(r.end).max(start);
-                (start..end, t.clone())
+                (i, start..end, t.clone())
             })
             .collect();
-        sorted.sort_by_key(|(r, _)| (r.start, r.end));
+        sorted.sort_by_key(|(_, r, _)| (r.start, r.end));
         // Disjoint, whatever came: an edit reaching into the one before
         // starts where it ends — applied in turn, an overlap would land
         // in a text the earlier edit had moved, and cut a character.
         let mut reached = 0;
-        for (r, _) in &mut sorted {
+        for (_, r, _) in &mut sorted {
             r.start = r.start.max(reached);
             r.end = r.end.max(r.start);
             reached = r.end;
         }
+        let mut starts = vec![0; edits.len()];
+        let mut delta: isize = 0;
+        for (i, r, t) in &sorted {
+            starts[*i] = (r.start as isize + delta) as usize;
+            delta += t.len() as isize - r.len() as isize;
+        }
+        sorted.retain(|(_, r, t)| !(r.is_empty() && t.is_empty()));
         let refs: Vec<(Range<usize>, &str)> = sorted
             .iter()
-            .map(|(r, t)| (r.clone(), t.as_str()))
+            .map(|(_, r, t)| (r.clone(), t.as_str()))
             .collect();
         buf.replace_many(&refs);
-        let shape: Vec<(Range<usize>, usize)> =
-            sorted.iter().map(|(r, t)| (r.clone(), t.len())).collect();
+        let shape: Vec<(Range<usize>, usize)> = sorted
+            .iter()
+            .map(|(_, r, t)| (r.clone(), t.len()))
+            .collect();
         for v in self.views.values_mut().filter(|v| v.buffer == id) {
             v.sels.map(|s| {
                 Selection::new(
@@ -2718,7 +2749,7 @@ impl Editor {
         }
         self.edited = true;
         self.sync_multis();
-        true
+        Some(starts)
     }
 
     /// Back to the parent state; false at the root.

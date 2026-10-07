@@ -396,15 +396,11 @@ kawoosh.status("vcs", function()
     parts[#parts + 1] = { text = " " .. (head.branch or (head.rev or ""):sub(1, 8)), color = "dim" }
   end
   local h = kawoosh.buf.current()
-  local hunks = h and kawoosh.buf.hunks(h)
-  if hunks and #hunks > 0 then
-    local a, m, d = 0, 0, 0
-    for _, hk in ipairs(hunks) do
-      if hk.kind == "added" then a = a + 1 elseif hk.kind == "modified" then m = m + 1 else d = d + 1 end
-    end
-    if a > 0 then parts[#parts + 1] = { text = " +" .. a, color = "ok" } end
-    if m > 0 then parts[#parts + 1] = { text = " ~" .. m, color = "warning" } end
-    if d > 0 then parts[#parts + 1] = { text = " −" .. d, color = "danger" } end
+  local n = h and kawoosh.buf.hunk_counts(h)
+  if n then
+    if n.added > 0 then parts[#parts + 1] = { text = " +" .. n.added, color = "ok" } end
+    if n.modified > 0 then parts[#parts + 1] = { text = " ~" .. n.modified, color = "warning" } end
+    if n.deleted > 0 then parts[#parts + 1] = { text = " −" .. n.deleted, color = "danger" } end
   end
   return #parts > 0 and parts or nil
 end, { place = "statusline", order = 5 })

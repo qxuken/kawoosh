@@ -36,8 +36,9 @@ kawoosh.dirs = dirs
 
 local KIND = "dirs.dir"
 
--- A path quoted for a shell's command line: single quotes, which
--- every shell reads the same, unless the path holds one.
+-- A path quoted for the terminal's command line: single quotes, which
+-- every shell reads the same, unless the path holds one. zoxide itself
+-- runs from a list, no shell between.
 local function quoted(path)
   if not path:find("'", 1, true) then return "'" .. path .. "'" end
   return "'" .. path:gsub("'", "'\\''") .. "'"
@@ -50,7 +51,7 @@ local function zoxide() return kawoosh.opt("dirs.zoxide") or "zoxide" end
 dirs.backends.zoxide = {
   list = function(done)
     local rows = {}
-    kawoosh.spawn(zoxide() .. " query --list --score", {
+    kawoosh.spawn({ zoxide(), "query", "--list", "--score" }, {
       on_lines = function(lines)
         for _, l in ipairs(lines) do
           local score, path = l:match("^%s*([%d%.]+)%s+(.+)$")
@@ -66,7 +67,7 @@ dirs.backends.zoxide = {
     })
   end,
   add = function(path)
-    kawoosh.spawn(zoxide() .. " add " .. quoted(path), {})
+    kawoosh.spawn({ zoxide(), "add", path }, {})
   end,
 }
 
@@ -91,7 +92,7 @@ dirs.backends.memory = {
 
 kawoosh.setting("dirs.backend", { type = { "auto", "zoxide", "memory" },
                                   doc = "where the directory jumps come from" })
-kawoosh.setting("dirs.zoxide", { type = "string", doc = "the zoxide binary" })
+kawoosh.setting("dirs.zoxide", { type = "string", doc = "the zoxide binary, run with no shell between" })
 
 -- The backend the setting names. `auto` is zoxide while it is on the
 -- PATH and kawoosh keeps a state db: a run that keeps nothing (no store

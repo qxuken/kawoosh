@@ -35,13 +35,11 @@ kawoosh.secrets_plugin = M
 local fs = kawoosh.fs
 local PREFIX = "*secret "
 
-local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
-
-kawoosh.setting("secrets.vault_command", { type = "string", doc = "the vault tool, `ansible-vault` by default" })
+kawoosh.setting("secrets.vault_command", { type = "string", doc = "the vault tool, a program run with no shell between; `ansible-vault` by default" })
 kawoosh.setting("secrets.vault_password_file", { type = "string", doc = "the vault's password file, when it has one" })
 
--- The tool: `ansible-vault`, or what `secrets.vault_command` names (a
--- wrapper, a test's stand-in).
+-- The tool: `ansible-vault`, or the program `secrets.vault_command`
+-- names (a wrapper, a test's stand-in).
 local function vault_command()
   local c = kawoosh.opt("secrets.vault_command")
   return (type(c) == "string" and c ~= "") and c or "ansible-vault"
@@ -50,16 +48,21 @@ end
 -- `path` as the tool is given it, run in `cwd`: from `cwd` when under
 -- it — on a host, the host's own spelling, not `box:/…` — else whole.
 local function arg(path, cwd)
-  return quote(fs.relative(path, cwd) or path)
+  return fs.relative(path, cwd) or path
 end
 
--- The vault's password file flag, when the settings name one.
-local function password_flag(cwd)
+-- The tool's command as a list — no shell between, so a path is one
+-- argument however it is spelled: `verb`, the password file when the
+-- settings name one, then `rest`.
+local function vault_argv(verb, cwd, rest)
+  local argv = { vault_command(), verb }
   local f = kawoosh.opt("secrets.vault_password_file")
   if type(f) == "string" and f ~= "" then
-    return " --vault-password-file " .. arg(fs.expand(f), cwd)
+    argv[#argv + 1] = "--vault-password-file"
+    argv[#argv + 1] = arg(fs.expand(f), cwd)
   end
-  return ""
+  for _, a in ipairs(rest) do argv[#argv + 1] = a end
+  return argv
 end
 
 -- ------------------------------------------------------------ :secret
@@ -139,7 +142,7 @@ local function write_back(path)
     local text = table.concat(lines, "\n") .. "\n"
     local out = {}
     local cwd = M.config_dir(path)
-    kawoosh.spawn(vault_command() .. " encrypt" .. password_flag(cwd) .. " --output " .. arg(path, cwd) .. " -", {
+    kawoosh.spawn(vault_argv("encrypt", cwd, { "--output", arg(path, cwd), "-" }), {
       cwd = cwd,
       stdin = text,
       on_lines = function(ls) for _, l in ipairs(ls) do out[#out + 1] = l end end,
@@ -168,7 +171,7 @@ function M.open_vault(path)
   kawoosh.echo("decrypting " .. path .. "…")
   local lines, err = {}, {}
   local cwd = M.config_dir(path)
-  kawoosh.spawn(vault_command() .. " view" .. password_flag(cwd) .. " " .. arg(path, cwd), {
+  kawoosh.spawn(vault_argv("view", cwd, { arg(path, cwd) }), {
     cwd = cwd,
     on_lines = function(ls) for _, l in ipairs(ls) do lines[#lines + 1] = l end end,
     on_exit = function(code)

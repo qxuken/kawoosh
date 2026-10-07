@@ -460,51 +460,35 @@ function kawoosh.view(name, fn, on_event, opts)
   kawoosh._here[name] = opts and opts.here or nil
 end
 
--- kawoosh.tool(name, { cmd =, cwd =, place =, dock =, restore = }): a
--- launch target for `:tool NAME` and the tools picker — `place` is
--- where it opens, `"column"` (a column of its own, the default),
--- `"under"` (under the focused pane, in its column) or `"dock"`, and
--- `dock = true` spells the last; `restore` has a session start it
--- again in the directory it was left in (a shell, a git UI; not a
--- build); `kawoosh.tools()` lists them, by name, each with what was
--- registered.
+-- kawoosh.tool(name, { cmd =, cwd =, place =, dock =, restore =, key = }):
+-- a launch target for `:tool NAME` and the tools picker — `place` is
+-- where it opens, `"column"` (a column of its own, the default; also
+-- `"beside"`), `"under"` (under the focused pane, in its column; also
+-- `"below"`) or `"dock"`, and `dock = true` spells the last; `restore`
+-- has a session start it again in the directory it was left in (a
+-- shell, a git UI; not a build); `key` its letter in the launcher.
+-- `kawoosh.tools()` lists them, by name, each with what was registered,
+-- `place` in the first spelling — as the editor reads it
+-- (`layout::Place::parse`), which takes the message after this returns.
 local register_tool = kawoosh.tool
+local PLACES = { under = "under", below = "under", column = "column", beside = "column", dock = "dock" }
 function kawoosh.tool(name, t)
-  local place = t.place
-  if place ~= "under" and place ~= "column" and place ~= "dock" then
-    place = t.dock and "dock" or "column"
-  end
+  local place = PLACES[t.place] or (t.dock and "dock" or "column")
   kawoosh._tools[name] = { cmd = t.cmd, cwd = t.cwd, place = place, dock = place == "dock",
-                           restore = t.restore or false }
+                           restore = t.restore or false, key = t.key }
   register_tool(name, t)
 end
 
 function kawoosh.tools()
   local out = {}
   for name, t in pairs(kawoosh._tools) do
-    out[#out + 1] = { name = name, cmd = t.cmd, cwd = t.cwd, place = t.place, dock = t.dock, restore = t.restore }
+    out[#out + 1] = { name = name, cmd = t.cmd, cwd = t.cwd, place = t.place, dock = t.dock,
+                      restore = t.restore, key = t.key }
   end
   table.sort(out, function(a, b) return a.name < b.name end)
   return out
 end
 
--- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, on_change=fn,
--- read_only=bool, language=, reuse=handle, line=n, private=bool,
--- about=path }: a buffer that is not a file; `private` keeps it out of
--- the store, the memory, the session and the clipboard
--- (docs/design/secrets.md); `about` is the file it stands for, which
--- `%` names in a command line (`:!ansible-vault edit %`). `on_write(lines)` handles :w; it returns `false` when
--- the write is not done yet (a `kawoosh.confirm` is up), and the
--- buffer stays modified until it is. `on_change(name)` is told, once
--- a frame, that the text changed — an edit, an undo — so what a
--- plugin draws from it (annotations) can follow. A buffer named `name` already open is
--- refilled; else `reuse`, a scratch buffer's handle, is renamed and
--- refilled instead of a new buffer being made beside it — unless it
--- is shown in another pane too, which keeps it; `line` is where the
--- caret goes (from 1); `show = false` fills the buffer where it is —
--- another pane, the background — without putting it in the focused
--- pane, or makes it in the background.
---
 -- Secrets (docs/design/secrets.md), the buffer as `annotate` takes it:
 -- kawoosh.buf.set_private([private = true][, buffer]): no history row,
 -- no memory, not in a session, not sent to a server, a yank from it a
@@ -663,7 +647,8 @@ end
 --
 -- kawoosh.fs.walk(root, fn): every file under `root` as git sees it —
 -- `.gitignore`d, hidden and `.git` left out — relative to it, read on
--- a thread of its own; `fn(paths)` when done, or `fn(nil, why)`.
+-- a thread of its own; `fn(paths, nil, whole)` when done — `whole`
+-- each path joined to the root as `fs.join` joins — or `fn(nil, why)`.
 -- kawoosh.fs.form(path, form): the path as `path copy` copies it —
 -- "relative" (to the working directory, whole when outside it),
 -- "absolute", "dir", "dir absolute", "name", "stem".
@@ -695,6 +680,23 @@ end
 -- `cols`, `rows` in cells of the editor's font — or nil for a pane
 -- that is not an editor pane or is not drawn yet; what a page
 -- rendered to fit the pane asks (`man.lua`).
+
+-- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, on_change=fn,
+-- read_only=bool, language=, reuse=handle, line=n, private=bool,
+-- about=path }: a buffer that is not a file; `private` keeps it out of
+-- the store, the memory, the session and the clipboard
+-- (docs/design/secrets.md); `about` is the file it stands for, which
+-- `%` names in a command line (`:!ansible-vault edit %`). `on_write(lines)` handles :w; it returns `false` when
+-- the write is not done yet (a `kawoosh.confirm` is up), and the
+-- buffer stays modified until it is. `on_change(name)` is told, once
+-- a frame, that the text changed — an edit, an undo — so what a
+-- plugin draws from it (annotations) can follow. A buffer named `name` already open is
+-- refilled; else `reuse`, a scratch buffer's handle, is renamed and
+-- refilled instead of a new buffer being made beside it — unless it
+-- is shown in another pane too, which keeps it; `line` is where the
+-- caret goes (from 1); `show = false` fills the buffer where it is —
+-- another pane, the background — without putting it in the focused
+-- pane, or makes it in the background.
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   if t.on_change then kawoosh._changers[t.name] = t.on_change end
@@ -993,7 +995,7 @@ function view(env, slot)
   -- one-line input drawn through the editor (kui.md Decision 12), the
   -- node to put in the tree; `ctx.field_text("q")` is its line.
   local ctx = { pane = pane, focused = params.focused, width = params.width,
-                height = params.height, share = params.share, origin = params.origin, env = env,
+                height = params.height, title_h = params.title_h or 0, share = params.share, origin = params.origin, env = env,
                 name = name, metrics = kawoosh.metrics(env) }
   -- A field draws its caret while its pane has the keys — not while
   -- the command line over it does: one caret on the screen.

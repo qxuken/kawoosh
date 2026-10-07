@@ -76,8 +76,6 @@ local LIMIT = 50
 -- How wide the layout is by default: a column down the middle of a
 -- wide pane reads as a list, where rows the pane's width do not.
 local WIDTH = 720
--- The pane's title bar, which the height counts (`app::TITLE_H`).
-local TITLE_H = 22
 -- The scroller's label, for `set_scroll`.
 local LIST = "list"
 
@@ -169,8 +167,7 @@ launcher.module("plugins", {
   items = function()
     local items = {}
     for _, t in ipairs(kawoosh.tools()) do
-      items[#items + 1] = { text = t.name, sub = t.cmd, run = "tool " .. t.name,
-                            key = kawoosh.tool_keys and kawoosh.tool_keys[t.name] or nil }
+      items[#items + 1] = { text = t.name, sub = t.cmd, run = "tool " .. t.name, key = t.key }
     end
     return items
   end,
@@ -773,7 +770,7 @@ kawoosh.view(VIEW, function(ctx)
     if keep and takes(keep) then L.cursor = keep end
   end
   local h = (ctx.height or 0) > 0 and ctx.height or 400
-  L.budget = math.max(math.floor((h - TITLE_H - ROW_H - 10) / ROW_H), 1)
+  L.budget = math.max(math.floor((h - ctx.title_h - ROW_H - 10) / ROW_H), 1)
 
   L.blocks = {}
   local R = { t = t, ctx = ctx, focused = ctx.focused,

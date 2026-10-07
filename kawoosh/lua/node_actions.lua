@@ -111,21 +111,6 @@ function M.answers(where, caret, buffer)
   return out
 end
 
--- Where `o` lands after `edits` (sorted, disjoint): moved by those
--- before it, held inside one it lay in.
-local function carried(edits, o)
-  local shift = 0
-  for _, e in ipairs(edits) do
-    local from, to, text = e[1], e[2], e[3]
-    if o >= to and not (o == from and to == from) then
-      shift = shift + #text - (to - from)
-    elseif o >= from then
-      return from + shift + math.min(o - from, math.max(#text - 1, 0))
-    end
-  end
-  return o + shift
-end
-
 -- Runs, from every caret, the answer `pick` takes of its list (the
 -- first, by default); one batch of edits, the carets after. `target`
 -- is `{ buffer, sels, primary_only }` — the picker's, which acts on the
@@ -178,28 +163,24 @@ function M.run(pick, target)
     end
   end
   -- The carets: an acting one at its distance into the node, or where
-  -- the answer said; any other carried through the edits.
-  local shift_before, shift = {}, 0
-  for i, e in ipairs(edits) do
-    shift_before[i] = shift
-    shift = shift + #e[3] - (e[2] - e[1])
-  end
+  -- the answer said; any other where the edits move it (kept its
+  -- distance into a node rewritten under it).
   local placed = {}
   for _, c in ipairs(chosen) do
     if c.edit then
-      local e, a = edits[c.edit], c.answer
-      local into = a.cursor or math.min(c.caret - a.node.from, math.max(#a.text - 1, 0))
-      placed[c.index] = e[1] + shift_before[c.edit] + into
+      local a = c.answer
+      placed[c.index] = { edit = c.edit,
+                          at = a.cursor or math.min(c.caret - a.node.from, math.max(#a.text - 1, 0)) }
     end
   end
-  local out = {}
+  local carets = {}
   for i, s in ipairs(sels) do
-    local at = placed[i] or carried(edits, s.head)
-    out[#out + 1] = { at, at, primary = s.primary }
+    local c = placed[i] or { at = s.head }
+    c.primary = s.primary
+    carets[#carets + 1] = c
   end
   if visual then kawoosh.cmd("normal") end
-  kawoosh.buf.edits(edits, h)
-  kawoosh.buf.set_selections(out, h)
+  kawoosh.buf.edits(edits, h, { carets = carets })
   local first = kept[1].answer
   local msg = first.action.name .. " · " .. first.node.type
   if #edits > 1 then msg = msg .. " ×" .. #edits end

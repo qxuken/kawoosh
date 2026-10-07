@@ -217,6 +217,14 @@ pub enum Msg {
         token: u64,
         op: FsOp,
     },
+    /// `kawoosh.fs.apply(changes, { settled =, done = })`: a write's
+    /// changes applied on a thread of their own in the order that loses
+    /// nothing (`fs::apply`), the answers to `Runtime::fs_applied` under
+    /// `token` (`IoMsg::FsApplied`).
+    FsApply {
+        token: u64,
+        changes: Vec<kawoosh_systems::fs::Change>,
+    },
     /// `kawoosh.fs.walk(root, fn)`: every file under the root as git
     /// sees it, walked on a thread of its own, the answer to
     /// `Runtime::walked` under `token` (`IoMsg::Walked`).
@@ -704,10 +712,13 @@ pub enum Msg {
     /// Text typed at every caret of the view, as insert mode types it.
     Type(String),
     /// Edits to a buffer as one step, ascending and disjoint in the text
-    /// as it is (`Editor::apply_edits`).
+    /// as it is (`Editor::apply_edits`) — and, when `carets` names any,
+    /// the selections after them, `primary` the index of the primary.
     Edits {
         buffer: u64,
         edits: Vec<(std::ops::Range<usize>, String)>,
+        carets: Vec<Caret>,
+        primary: usize,
     },
     /// Every selection of the buffer's view at once, `primary` the
     /// index of the primary.
@@ -1249,6 +1260,11 @@ struct Jobs {
     /// The `commands` functions of `kawoosh.compile_kind`, by name.
     compile_kinds: HashMap<String, mlua::RegistryKey>,
     procs: HashMap<u64, ProcKeys>,
+    /// The roots of the walks under way (`kawoosh.fs.walk`), by token:
+    /// what each answer's paths are joined to.
+    walking: HashMap<u64, PathBuf>,
+    /// `kawoosh.fs.apply`'s `settled` and `done`, by token.
+    applying: HashMap<u64, (Option<mlua::RegistryKey>, Option<mlua::RegistryKey>)>,
     next: u64,
 }
 
@@ -2713,12 +2729,49 @@ impl Runtime {
     }
 
     pub fn walked(&self, token: u64, result: Result<Vec<String>, String>) {
-        let result = result.and_then(|paths| {
-            self.lua
-                .create_sequence_from(paths)
-                .map_err(|e| e.to_string())
+        let root = self.jobs.borrow_mut().walking.remove(&token);
+        let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
+            return;
+        };
+        let Ok(f) = self.lua.registry_value::<mlua::Function>(&key) else {
+            return;
+        };
+        let _ = self.lua.remove_registry_value(key);
+        // The paths as they are, and each joined to the root as
+        // `fs.join` joins: a picker's hundred thousand rows need both,
+        // and a join a row from Lua was a call into the engine each.
+        let args = result.and_then(|paths| {
+            let whole = match &root {
+                Some(root) => self
+                    .lua
+                    .create_sequence_from(paths.iter().map(|p| {
+                        kawoosh_systems::fs::display(&kawoosh_systems::fs::join(
+                            root,
+                            std::path::Path::new(p),
+                        ))
+                    }))
+                    .map(LV::Table),
+                None => Ok(LV::Nil),
+            };
+            let paths = self.lua.create_sequence_from(paths);
+            match (paths, whole) {
+                (Ok(p), Ok(w)) => Ok((LV::Table(p), LV::Nil, w)),
+                (Err(e), _) | (_, Err(e)) => Err(e.to_string()),
+            }
         });
-        self.answer(token, result, "fs.walk");
+        let args = match args {
+            Ok(a) => a,
+            Err(e) => (
+                LV::Nil,
+                LV::String(self.lua.create_string(e).unwrap()),
+                LV::Nil,
+            ),
+        };
+        if let Err(e) = self.timed(&f, || f.call::<()>(args)) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("fs.walk: {e}")));
+        }
     }
 
     /// The `kawoosh.sqlite.null` table: what a NULL comes back as, and
@@ -2756,6 +2809,44 @@ impl Runtime {
 
     /// A change `fs.remove` or `fs.copy` made on a thread of its own:
     /// its callback called with `true`, or `nil` and why not.
+    /// How `kawoosh.fs.apply` went: `settled` called with the outcomes
+    /// so far, or `done` with all of them when it is the `last` answer
+    /// — each `true`, why it failed, or `false` while under way.
+    pub fn fs_applied(&self, token: u64, outcomes: &kawoosh_systems::fs::Outcomes, last: bool) {
+        let key = {
+            let mut j = self.jobs.borrow_mut();
+            let Some(hooks) = j.applying.get_mut(&token) else {
+                return;
+            };
+            let key = if last { hooks.1.take() } else { hooks.0.take() };
+            if last && let Some((Some(settled), _)) = j.applying.remove(&token) {
+                let _ = self.lua.remove_registry_value(settled);
+            }
+            key
+        };
+        let Some(key) = key else { return };
+        let Ok(f) = self.lua.registry_value::<mlua::Function>(&key) else {
+            return;
+        };
+        let _ = self.lua.remove_registry_value(key);
+        let call = || -> mlua::Result<()> {
+            let t = self.lua.create_table()?;
+            for (i, o) in outcomes.iter().enumerate() {
+                match o {
+                    Some(Ok(())) => t.set(i + 1, true)?,
+                    Some(Err(why)) => t.set(i + 1, why.as_str())?,
+                    None => t.set(i + 1, false)?,
+                }
+            }
+            f.call::<()>(t)
+        };
+        if let Err(e) = self.timed(&f, call) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("fs.apply: {e}")));
+        }
+    }
+
     pub fn fs_done(&self, token: u64, result: Result<(), String>) {
         let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
             return;
@@ -3063,52 +3154,41 @@ impl Runtime {
                         });
                     }
                 }
-                Msg::Edits { buffer, edits } => {
-                    ed.apply_edits(id_of(buffer), &edits);
+                Msg::Edits {
+                    buffer,
+                    edits,
+                    carets,
+                    primary,
+                } => {
+                    let id = id_of(buffer);
+                    let starts = if edits.is_empty() {
+                        Vec::new()
+                    } else {
+                        let Some(starts) = ed.apply_edits_at(id, &edits) else {
+                            continue;
+                        };
+                        starts
+                    };
+                    if !carets.is_empty() {
+                        let sels: Vec<(usize, usize)> = carets
+                            .iter()
+                            .map(|c| {
+                                let at = match *c {
+                                    Caret::Into(i, k) => starts[i] + k.min(edits[i].1.len()),
+                                    Caret::At(o) => carried(o, &edits, &starts),
+                                };
+                                (at, at)
+                            })
+                            .collect();
+                        set_selections(ed, view, id, &sels, primary, false);
+                    }
                 }
                 Msg::SetSelections {
                     buffer,
                     sels,
                     primary,
                     visual,
-                } => {
-                    let id = id_of(buffer);
-                    let Some(b) = ed.buffers.get(id) else {
-                        continue;
-                    };
-                    if sels.is_empty() {
-                        continue;
-                    }
-                    // On a character's start, as every caret is: an
-                    // offset inside one is snapped back to it.
-                    let at = |o: usize| b.floor_char(o.min(b.len()));
-                    let mut out = kawoosh_editor::Selections {
-                        items: sels
-                            .iter()
-                            .map(|(a, h)| kawoosh_editor::Selection::new(at(*a), at(*h)))
-                            .collect(),
-                        primary: primary.min(sels.len() - 1),
-                    };
-                    out.normalize();
-                    // The command's view when it shows the buffer, else
-                    // every view on it.
-                    let views: Vec<ViewId> = if ed.views.get(view).is_some_and(|v| v.buffer == id) {
-                        vec![view]
-                    } else {
-                        ed.views
-                            .iter()
-                            .filter(|(_, v)| v.buffer == id)
-                            .map(|(k, _)| k)
-                            .collect()
-                    };
-                    for v in views {
-                        ed.views[v].sels = out.clone();
-                        ed.views[v].goal_col = None;
-                        if visual {
-                            ed.set_mode(v, kawoosh_editor::Mode::Visual);
-                        }
-                    }
-                }
+                } => set_selections(ed, view, id_of(buffer), &sels, primary, visual),
                 Msg::Echo(s) => ed.message = s,
                 Msg::Copy(text) => {
                     let from = ed
@@ -3128,6 +3208,84 @@ impl Runtime {
         // A plugin's edit of a file a multibuffer shows is in it at once.
         ed.sync_multis();
         rest
+    }
+}
+
+/// Where a caret goes after `kawoosh.buf.edits`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Caret {
+    /// So many bytes into an edit's text (by its index), bounded by it.
+    Into(usize, usize),
+    /// An offset in the text before the edits, as they move it ([`carried`]).
+    At(usize),
+}
+
+/// Where `o`, an offset in the text before `edits`, lands after them —
+/// `starts` where each edit's text starts after them all: moved by the
+/// edits before it, before an insertion at its own byte (the caret
+/// beside another's typing stays where it was typed), and inside a
+/// replaced range kept its distance into the new text, on its last
+/// character at most (a node rewritten under a second caret).
+fn carried(o: usize, edits: &[(std::ops::Range<usize>, String)], starts: &[usize]) -> usize {
+    let mut order: Vec<usize> = (0..edits.len()).collect();
+    order.sort_by_key(|&i| (edits[i].0.start, edits[i].0.end));
+    let mut shift: isize = 0;
+    for i in order {
+        let (r, text) = &edits[i];
+        if o >= r.end && !(o == r.start && r.is_empty()) {
+            shift += text.len() as isize - r.len() as isize;
+        } else if o >= r.start {
+            return starts[i] + (o - r.start).min(text.len().saturating_sub(1));
+        } else {
+            break;
+        }
+    }
+    (o as isize + shift).max(0) as usize
+}
+
+/// The selections of buffer `id` as given — `primary` the index of the
+/// primary — each on a character's start, in the command's view when it
+/// shows the buffer, else every view on it; visual mode when `visual`.
+fn set_selections(
+    ed: &mut kawoosh_editor::Editor,
+    view: ViewId,
+    id: kawoosh_doc::BufferId,
+    sels: &[(usize, usize)],
+    primary: usize,
+    visual: bool,
+) {
+    let Some(b) = ed.buffers.get(id) else {
+        return;
+    };
+    if sels.is_empty() {
+        return;
+    }
+    // On a character's start, as every caret is: an offset inside one
+    // is snapped back to it.
+    let at = |o: usize| b.floor_char(o.min(b.len()));
+    let mut out = kawoosh_editor::Selections {
+        items: sels
+            .iter()
+            .map(|(a, h)| kawoosh_editor::Selection::new(at(*a), at(*h)))
+            .collect(),
+        primary: primary.min(sels.len() - 1),
+    };
+    out.normalize();
+    let views: Vec<ViewId> = if ed.views.get(view).is_some_and(|v| v.buffer == id) {
+        vec![view]
+    } else {
+        ed.views
+            .iter()
+            .filter(|(_, v)| v.buffer == id)
+            .map(|(k, _)| k)
+            .collect()
+    };
+    for v in views {
+        ed.views[v].sels = out.clone();
+        ed.views[v].goal_col = None;
+        if visual {
+            ed.set_mode(v, kawoosh_editor::Mode::Visual);
+        }
     }
 }
 
@@ -5212,6 +5370,35 @@ fn seed(
             with_buf(&pp, h, |b| b.base.as_ref().map(|b| b.label.clone()))
         })?,
     )?;
+    // `kawoosh.buf.hunk_counts([buffer])`: how many of the buffer's
+    // hunks against its base are `added`, `modified` and `deleted`, as
+    // last diffed — `{ added =, modified =, deleted = }` — or nil
+    // without a base: what a statusline shows each frame, without the
+    // hunks themselves.
+    let pp = published.clone();
+    buf.set(
+        "hunk_counts",
+        lua.create_function(move |lua, h: Option<u64>| {
+            with_buf(&pp, h, |b| -> mlua::Result<LV> {
+                let Some(base) = &b.base else {
+                    return Ok(LV::Nil);
+                };
+                let (mut a, mut m, mut d) = (0, 0, 0);
+                for h in base.hunks.iter() {
+                    match h.kind() {
+                        kawoosh_editor::Sign::Added => a += 1,
+                        kawoosh_editor::Sign::Modified => m += 1,
+                        _ => d += 1,
+                    }
+                }
+                let t = lua.create_table()?;
+                t.set("added", a)?;
+                t.set("modified", m)?;
+                t.set("deleted", d)?;
+                Ok(LV::Table(t))
+            })?
+        })?,
+    )?;
     // `kawoosh.buf.hunks([buffer])`: the buffer's hunks against its
     // base as last diffed, in order — each `{ kind = "added" |
     // "modified" | "deleted", line =, end_line =, old_line =, old_end =,
@@ -5781,43 +5968,84 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // `kawoosh.buf.edits({ { from, to, text }, … }[, buffer])`: several
-    // edits as one step — offsets from 0 in the text as it is, `to`
-    // exclusive, disjoint — every view's selections carried through
-    // them (`Editor::apply_edits`). A range backwards, or two that
-    // overlap, is an error: applied one after another they would each
-    // land in a text the one before had moved.
+    // `kawoosh.buf.edits({ { from, to, text }, … }[, buffer][, { carets
+    // = { … } }])`: several edits as one step — offsets from 0 in the
+    // text as it is, `to` exclusive, disjoint — every view's selections
+    // carried through them (`Editor::apply_edits`); an edit that changes
+    // nothing (`from == to`, no text) is none. With `carets`, the
+    // selections after are those carets instead, in their order, the
+    // one marked `primary = true` the primary, else the first: `{ edit =
+    // i, at = k }` `k` bytes into edit `i`'s text (from 1, as the list
+    // counts; `k` 0 its start, `#text` its end), `{ at = o }` an offset
+    // of the text as it is, where the edits move it — before an
+    // insertion at its own byte, and inside a replaced range kept its
+    // distance into the new text, on its last character at most. What
+    // `pairs` and node actions place a caret per caret with. A range
+    // backwards, or two that overlap, is an error: applied one after
+    // another they would each land in a text the one before had moved.
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
         "edits",
-        lua.create_function(move |_, (list, h): (Vec<Table>, Option<u64>)| {
-            let h = h
-                .or(pp.borrow().current)
-                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
-            let mut edits = Vec::with_capacity(list.len());
-            for e in list {
-                let from: usize = e.get(1)?;
-                let to: usize = e.get(2)?;
-                let text: String = e.get(3)?;
-                if to < from {
+        lua.create_function(
+            move |_, (list, h, opts): (Vec<Table>, Option<u64>, Option<Table>)| {
+                let h = h
+                    .or(pp.borrow().current)
+                    .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+                let mut edits = Vec::with_capacity(list.len());
+                for e in list {
+                    let from: usize = e.get(1)?;
+                    let to: usize = e.get(2)?;
+                    let text: String = e.get(3)?;
+                    if to < from {
+                        return Err(mlua::Error::runtime(format!(
+                            "edits: {from}..{to} ends before it starts"
+                        )));
+                    }
+                    edits.push((from..to, text));
+                }
+                let (mut carets, mut primary) = (Vec::new(), 0);
+                let list = match &opts {
+                    Some(o) => o.get::<Option<Vec<Table>>>("carets")?,
+                    None => None,
+                };
+                for c in list.unwrap_or_default() {
+                    let at: usize = c.get("at")?;
+                    if c.get::<Option<bool>>("primary")? == Some(true) {
+                        primary = carets.len();
+                    }
+                    carets.push(match c.get::<Option<usize>>("edit")? {
+                        Some(i) if i >= 1 && i <= edits.len() => Caret::Into(i - 1, at),
+                        Some(i) => {
+                            return Err(mlua::Error::runtime(format!(
+                                "edits: a caret in edit {i} of {}",
+                                edits.len()
+                            )));
+                        }
+                        None => Caret::At(at),
+                    });
+                }
+                let mut by_start: Vec<&std::ops::Range<usize>> = edits
+                    .iter()
+                    .filter(|(r, t)| !(r.is_empty() && t.is_empty()))
+                    .map(|(r, _)| r)
+                    .collect();
+                by_start.sort_by_key(|r| (r.start, r.end));
+                if let Some(w) = by_start.windows(2).find(|w| w[1].start < w[0].end) {
                     return Err(mlua::Error::runtime(format!(
-                        "edits: {from}..{to} ends before it starts"
+                        "edits: {:?} and {:?} overlap",
+                        w[0], w[1]
                     )));
                 }
-                edits.push((from..to, text));
-            }
-            let mut by_start: Vec<&std::ops::Range<usize>> = edits.iter().map(|(r, _)| r).collect();
-            by_start.sort_by_key(|r| (r.start, r.end));
-            if let Some(w) = by_start.windows(2).find(|w| w[1].start < w[0].end) {
-                return Err(mlua::Error::runtime(format!(
-                    "edits: {:?} and {:?} overlap",
-                    w[0], w[1]
-                )));
-            }
-            qq.borrow_mut().push(Msg::Edits { buffer: h, edits });
-            Ok(())
-        })?,
+                qq.borrow_mut().push(Msg::Edits {
+                    buffer: h,
+                    edits,
+                    carets,
+                    primary,
+                });
+                Ok(())
+            },
+        )?,
     )?;
     // `kawoosh.buf.set_selections({ { anchor, head[, primary] }, … }[,
     // buffer])`: the selections as given — the one marked `primary`
@@ -6409,7 +6637,8 @@ fn seed(
     )?;
     // `fs.walk(root, fn)`: every file under `root` as git sees it —
     // ignored, hidden and `.git` left out — relative to it, walked on
-    // a thread of its own and handed to `fn(paths)`, or `fn(nil, why)`.
+    // a thread of its own and handed to `fn(paths, nil, whole)`, `whole`
+    // each path joined to the root as `fs.join` joins; or `fn(nil, why)`.
     let qq = q(queue);
     let jj = jobs.clone();
     fs.set(
@@ -6421,6 +6650,7 @@ fn seed(
                 j.waiting.insert(token, lua.create_registry_value(cb)?);
                 token
             };
+            jj.borrow_mut().walking.insert(token, PathBuf::from(&root));
             qq.borrow_mut().push(Msg::Walk {
                 token,
                 root: expand(&root),
@@ -6583,6 +6813,39 @@ fn seed(
                 token,
             });
             Ok(())
+        })?,
+    )?;
+    // `kawoosh.overstrike(raw)`: text as a pager would show it — the
+    // overstrikes `man` prints (`c\bc` bold, `_\bc` underline) and SGR
+    // (`ESC[1m`, `ESC[4m`) read off — answered as `text, spans, bold`:
+    // the plain text, each line's trailing whitespace off and no line
+    // after the last newline; `{ from, to, style }` runs (bytes from 0,
+    // end exclusive; "bold", "underline" or "bold underline"); and the
+    // lines (from 1, as keys) whose every character but spaces is bold.
+    // What `man.lua` reads a page through.
+    k.set(
+        "overstrike",
+        lua.create_function(|lua, raw: mlua::LuaString| {
+            use kawoosh_systems::overstrike as o;
+            let read = o::read(&raw.as_bytes());
+            let spans = lua.create_table_with_capacity(read.spans.len(), 0)?;
+            for (from, to, style) in read.spans {
+                let word = match style {
+                    o::BOLD => "bold",
+                    o::UNDERLINE => "underline",
+                    _ => "bold underline",
+                };
+                spans.push(lua.create_sequence_from([
+                    LV::Integer(from as i64),
+                    LV::Integer(to as i64),
+                    LV::String(lua.create_string(word)?),
+                ])?)?;
+            }
+            let bold = lua.create_table()?;
+            for ln in read.bold_lines {
+                bold.set(ln + 1, true)?;
+            }
+            Ok((lua.create_string(&read.text)?, spans, bold))
         })?,
     )?;
     // `kawoosh.search_wants({ include =, exclude = }, rels)`: for each
@@ -6769,6 +7032,75 @@ fn seed(
                 Ok(())
             },
         )?,
+    )?;
+    // `fs.apply(changes, { settled = fn(outcomes), done = fn(outcomes) })`:
+    // a write's changes — each `{ kind = "rename", from =, to = }` (a
+    // move too), `{ kind = "copy", from =, to = }`, `{ kind = "create",
+    // path =, dir = }`, `{ kind = "delete", path = }` — applied on a
+    // thread of their own, in the order that keeps a file from being
+    // lost whatever they are (`fs::apply`): deletes put aside, copies,
+    // renames in two steps, creates, a delete that made way for what
+    // did not come put back. `settled` is called when only the removals
+    // of what was deleted are left — the directories can be read again
+    // — and `done` at the end; each with every change's outcome by its
+    // index: `true`, why it failed, or `false` while under way.
+    let qq = q(queue);
+    let jj = jobs.clone();
+    fs.set(
+        "apply",
+        lua.create_function(move |lua, (list, opts): (Table, Option<Table>)| {
+            use kawoosh_systems::fs::Change;
+            let mut changes = Vec::new();
+            for (i, c) in list.sequence_values::<Table>().enumerate() {
+                let c = c?;
+                let path = |key: &str| -> mlua::Result<PathBuf> {
+                    let p: Option<String> = c.get(key)?;
+                    p.map(|p| expand(&p)).ok_or_else(|| {
+                        mlua::Error::runtime(format!("fs.apply: change {} has no `{key}`", i + 1))
+                    })
+                };
+                let kind: String = c.get("kind")?;
+                changes.push(match kind.as_str() {
+                    "rename" | "move" => Change::Rename {
+                        from: path("from")?,
+                        to: path("to")?,
+                    },
+                    "copy" => Change::Copy {
+                        from: path("from")?,
+                        to: path("to")?,
+                    },
+                    "create" => Change::Create {
+                        path: path("path")?,
+                        dir: c.get::<Option<bool>>("dir")?.unwrap_or(false),
+                    },
+                    "delete" => Change::Delete {
+                        path: path("path")?,
+                    },
+                    k => {
+                        return Err(mlua::Error::runtime(format!(
+                            "fs.apply: change {} is a `{k}`: rename, move, copy, create or delete",
+                            i + 1
+                        )));
+                    }
+                });
+            }
+            let hook = |key: &str| -> mlua::Result<Option<mlua::RegistryKey>> {
+                let f = match &opts {
+                    Some(o) => o.get::<Option<mlua::Function>>(key)?,
+                    None => None,
+                };
+                f.map(|f| lua.create_registry_value(f)).transpose()
+            };
+            let (settled, done) = (hook("settled")?, hook("done")?);
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.applying.insert(token, (settled, done));
+                token
+            };
+            qq.borrow_mut().push(Msg::FsApply { token, changes });
+            Ok(())
+        })?,
     )?;
     let qq = q(queue);
     let jj = jobs.clone();
