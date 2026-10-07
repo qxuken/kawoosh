@@ -1743,6 +1743,58 @@
       "size": 179200,
       "blake3": "a05a71a728ed89d9d75ca34f7e93fe77c7d86a55037d12ab872e8697eba56576"
     },
+    "templ": {
+      "extensions": [
+        "templ"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "comment": "//",
+      "comment_block": [
+        "/*",
+        "*/"
+      ],
+      "repo": "https://github.com/vrischmann/tree-sitter-templ",
+      "rev": "2c0a72e907d2a95a7b6dd29703e38c95818e956a",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_templ",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm",
+        "tags.scm"
+      ],
+      "archive": "templ.sqlar",
+      "size": 505856,
+      "blake3": "8d8dd2acace27c27af4fb8d57e7a1ff0f83a356541592f4f404130d2b2ebc9a9"
+    },
+    "vue": {
+      "extensions": [
+        "vue"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "comment_block": [
+        "<!--",
+        "-->"
+      ],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-vue",
+      "rev": "ce8011a414fdf8091f4e4071752efc376f4afb08",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_vue",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "vue.sqlar",
+      "size": 118784,
+      "blake3": "7b5bb0cf488197f705493432f71a2b37f39efb67e5841d3239c1596a2ffb03fc"
+    },
     "wgsl": {
       "extensions": [
         "wgsl"

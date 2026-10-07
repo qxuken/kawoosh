@@ -789,6 +789,15 @@ mod tests {
         assert!(eslint.when.contains(&"eslint.config.js".to_string()));
         assert_eq!(eslint.settings["workspaceFolder"], "root");
         assert_eq!(eslint.answers["eslint/confirmESLintExecution"], 4);
+        // Vue's beside TypeScript's, its requests carried there, and
+        // TypeScript's carrying Vue's plugin (lsp-servers.md Decision 9).
+        let vue = &defs[at("vue")];
+        assert_eq!(vue.with, ["typescript"]);
+        assert_eq!(vue.args, ["--stdio", "--tsdk={typescript}"]);
+        assert_eq!(vue.relay[0].method, "tsserver/request");
+        assert_eq!(vue.relay[0].to, "typescript");
+        assert_eq!(ts.init["plugins"][0]["location"], "{package:vue}");
+        assert_eq!(defs[at("templ")].args, ["lsp"]);
         let taplo = defs[at("toml")].package.as_ref().unwrap();
         assert_eq!(taplo.args, ["--locked", "--features", "lsp"]);
         let lua = &defs[at("lua")];

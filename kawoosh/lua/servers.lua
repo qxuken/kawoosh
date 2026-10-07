@@ -10,7 +10,7 @@
 -- field:
 --
 --   cmd        the program, found on the PATH or in kawoosh's servers
---   args       its arguments
+--   args       its arguments, saying the words `init` does
 --   roots      files that mark a workspace root
 --   languages  every language it serves; none for its name alone
 --   when       files one of which must be at or above a file for it to
@@ -25,9 +25,16 @@
 --              with, before kawoosh's own answers:
 --              { ["eslint/confirmESLintExecution"] = 4 }
 --   init       what `initialize` sends as its `initializationOptions`,
---              a string saying `{root}` the server's root and
+--              a string saying `{root}` the server's root,
 --              `{typescript}` a TypeScript's lib (the project's, else
---              the one installed with typescript-language-server)
+--              the one installed with typescript-language-server) and
+--              `{package:NAME}` the folder server NAME's package is in;
+--              a list's item naming one not installed is left out
+--   relay      notifications of its own carried to another server as
+--              its command, the answer back: { { method =, to =,
+--              command =, reply = } }, tsserver's shape (Vue's)
+--   with       the servers its languages' files have beside it, after
+--              it, unless `lsp.languages` says: { "typescript" }
 --
 -- The order is the asking order: a language's servers, when
 -- `lsp.languages` does not say, are asked first to last — typescript's
@@ -95,6 +102,9 @@ return {
     args = { "--stdio" },
     roots = { "tsconfig.json", "jsconfig.json", "package.json" },
     install = { npm = { "typescript-language-server", "typescript@5" } },
+    -- Vue's plugin, where Vue's server is installed: a `.vue` file's
+    -- script is TypeScript's to read (the vue row's `with`).
+    init = { plugins = { { name = "@vue/typescript-plugin", location = "{package:vue}", languages = { "vue" } } } },
   },
   {
     name = "lua",
@@ -205,6 +215,32 @@ return {
     install = { npm = { "@astrojs/language-server", "typescript@5" } },
     -- It will not start without a TypeScript to run.
     init = { typescript = { tsdk = "{typescript}" } },
+  },
+  {
+    name = "vue",
+    cmd = "vue-language-server",
+    -- Its TypeScript is an argument, not an option: the project's, else
+    -- the one installed with it. Left to itself it requires the newest,
+    -- and TypeScript 7 has no JavaScript API for it to run on.
+    args = { "--stdio", "--tsdk={typescript}" },
+    roots = { "package.json" },
+    install = { npm = { "@vue/language-server", "typescript@5" } },
+    -- A `.vue` file's script is TypeScript's server's, with Vue's plugin
+    -- (the typescript row's `init`); what Vue's asks of it is carried.
+    with = { "typescript" },
+    relay = { {
+      method = "tsserver/request",
+      to = "typescript",
+      command = "typescript.tsserverRequest",
+      reply = "tsserver/response",
+    } },
+  },
+  {
+    name = "templ",
+    cmd = "templ",
+    args = { "lsp" },
+    roots = { "go.mod" },
+    install = { go = "github.com/a-h/templ/cmd/templ" },
   },
   {
     name = "php",

@@ -23,7 +23,7 @@ language of your own is added from Lua with `kawoosh.language`; see
 Kawoosh knows more languages than it carries grammars for — some
 seventy: C#, PHP, Java, Kotlin, Scala, Dart, Zig, Haskell, OCaml,
 F#, Elixir, Erlang, Clojure, Ruby, Perl, R, Julia, Nix, HTML, XML
-(SVG with it), Svelte, Astro, SCSS, Makefiles, CMake, Dockerfiles,
+(SVG with it), Svelte, Astro, Vue, templ, SCSS, Makefiles, CMake, Dockerfiles,
 protobuf, GLSL and WGSL among them; `:grammars` lists them all. A
 file of one is recognised, and its language server starts, but it has
 no colours until its grammar is installed:
@@ -176,6 +176,8 @@ of its marker files.
 | `lsp.dockerfile` | `docker-langserver` | Dockerfile |
 | `lsp.svelte` | `svelteserver` | Svelte |
 | `lsp.astro` | `astro-ls` | Astro |
+| `lsp.vue` | `vue-language-server` | Vue, beside `lsp.typescript` |
+| `lsp.templ` | `templ lsp` | templ |
 | `lsp.php` | `intelephense` | PHP |
 | `lsp.ruby` | `ruby-lsp` | Ruby |
 | `lsp.java` | `jdtls` | Java |
@@ -332,13 +334,15 @@ return {
 | `load_all` | send the server every file of its languages in the project, so diagnostics, references and renames cover files you have not opened |
 | `load_max` | the most files `load_all` sends (2000) |
 | `inlay_hints` | inlay hints for this server's languages; unset, `lsp.inlay_hints` decides |
-| `cmd` `args` | the program and its arguments; a change restarts the server |
+| `cmd` `args` | the program and its arguments, saying the words `init` does (`--tsdk={typescript}`); a change restarts the server |
 | `roots` | the marker files that find the project root |
 | `languages` | the languages this server serves |
 | `when` | files one of which must be at or above a file for the server to run for it |
 | `settings` | the configuration sent to the server |
 | `answers` | requests of the server's own and the result each is answered with: `{ ["eslint/confirmESLintExecution"] = 4 }` |
-| `init` | what the server is started with (its `initializationOptions`); in a string, `{root}` is the server's root and `{typescript}` a TypeScript's `lib` folder — the project's, else the one installed with typescript-language-server: astro's is `{ typescript = { tsdk = "{typescript}" } }`. A change starts the server again |
+| `init` | what the server is started with (its `initializationOptions`); in a string, `{root}` is the server's root, `{typescript}` a TypeScript's `lib` folder — the project's, else the one installed with typescript-language-server — and `{package:NAME}` the folder server NAME's package is in: astro's is `{ typescript = { tsdk = "{typescript}" } }`. An item of a list naming what is not there is left out. A change starts the server again |
+| `with` | the servers a file of its languages has beside it, after it, unless `lsp.languages` says: vue's is `{ "typescript" }` |
+| `relay` | notifications of the server's own carried to another server as a command, the answer sent back: vue's `tsserver/request` to typescript's `typescript.tsserverRequest`, answered as `tsserver/response` |
 | `install` | how `:lsp install` installs the program: a package (`{ npm = "name" }`; `pip`, `cargo`, `go`, `dotnet`) into kawoosh's folder, a shell line, or a line for each platform (`{ mac = "brew install x", windows = "winget install x" }`; `linux` too) |
 
 The servers kawoosh knows are rows of these same keys (`servers.lua` in
