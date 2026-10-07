@@ -705,6 +705,12 @@ fn the_syntax_indents_as_a_last_resort() {
     );
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_in(&mut d, &dir);
+    // Whatever json server the machine has installed stays out: the
+    // syntax is the last resort when nothing else formats json, and a
+    // server that attached first would be asked instead.
+    app.ed
+        .settings
+        .set(Layer::User, "lsp.json.enabled", Setting::Bool(false));
     let a = open(&mut d, &mut app, &dir, "a.json");
     app.wait_for_syntax();
     d.frame(&mut app);
