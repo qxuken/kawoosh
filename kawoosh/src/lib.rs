@@ -68,6 +68,7 @@ pub mod perf;
 pub mod pictures;
 pub mod plugins;
 pub mod rows;
+pub mod running;
 pub mod scripting;
 pub mod scroll_probe;
 pub mod secrets;

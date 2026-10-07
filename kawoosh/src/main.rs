@@ -66,7 +66,8 @@ fn load_fonts(core: &mut Core) -> (Option<kui_native::FontId>, HashSet<String>) 
 
 /// `kawoosh edit [--wait] [+LINE] PATH…`, `kawoosh ex LINE`, `kawoosh
 /// theme` and `kawoosh pick SOURCE [QUERY]`: the CLI shim, talking to
-/// the running instance over `$KAWOOSH_SOCKET` (mvp.md Decision 3b).
+/// the running instance over `$KAWOOSH_SOCKET` (mvp.md Decision 3b) —
+/// or, from a terminal not Kawoosh's, to the Kawoosh started last.
 /// `edit --wait` is what every pty's `$EDITOR` runs (as
 /// `kawoosh-edit`, `app::shipped_editor`), `theme`
 /// answers `dark` or `light` — what a shell's prompt hook reads to pick
@@ -82,10 +83,16 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
         return Ok(false);
     }
     attach_console();
-    let Some(sock) = std::env::var_os("KAWOOSH_SOCKET") else {
-        anyhow::bail!("{verb}: no running kawoosh (KAWOOSH_SOCKET is not set)");
+    let Some((sock, outside)) = kawoosh::running::socket() else {
+        anyhow::bail!("{verb}: no running kawoosh");
     };
-    let sock = std::path::PathBuf::from(sock);
+    // From some other program's terminal: the window that opens the
+    // file, or shows the picker, comes to the front.
+    if let Some(pid) = outside
+        && matches!(verb, "edit" | "pick")
+    {
+        kawoosh::running::raise(pid);
+    }
     if verb == "theme" {
         println!("{}", send_request(&sock, &Request::Theme)?);
         return Ok(true);
@@ -134,67 +141,19 @@ const REUSE: &str = "--reuse";
 /// to the front, as Finder hands a document to the running app. True
 /// when one took it; false, and this one opens a window of its own.
 fn hand_over(path: Option<&String>) -> bool {
-    use kawoosh_systems::io::{Request, edit, running_sockets, send_request};
-    for (pid, sock) in running_sockets() {
-        if kawoosh::update::gone_within(pid, std::time::Duration::ZERO) {
-            continue;
-        }
+    use kawoosh_systems::io::{Request, edit, send_request};
+    for (pid, sock) in kawoosh::running::sockets() {
         let taken = match path {
             Some(p) => edit(&sock, std::slice::from_ref(p), false).is_ok(),
             // Nothing to open: asked whether it answers, to be raised.
             None => send_request(&sock, &Request::Theme).is_ok(),
         };
         if taken {
-            raise(pid);
+            kawoosh::running::raise(pid);
             return true;
         }
     }
     false
-}
-
-/// Process `pid`'s window to the front, restored if it was minimized.
-/// Windows lets the process the user just started take the foreground,
-/// so it is this one that raises the other's window. Elsewhere nothing:
-/// macOS hands documents over itself, and an X11 or Wayland window
-/// manager decides.
-fn raise(pid: u32) {
-    #[cfg(windows)]
-    // SAFETY: `found` outlives the enumeration that writes it, and the
-    // handle it ends with is one EnumWindows just handed over.
-    unsafe {
-        use windows_sys::Win32::Foundation::{HWND, LPARAM};
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            EnumWindows, GW_OWNER, GetWindow, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-            SW_RESTORE, SetForegroundWindow, ShowWindow,
-        };
-        // The process's own visible top-level window: no owner, so not
-        // a popup of it.
-        unsafe extern "system" fn each(hwnd: HWND, found: LPARAM) -> windows_sys::core::BOOL {
-            // SAFETY: `found` is the pointer `raise` passed in.
-            let found = unsafe { &mut *(found as *mut (u32, HWND)) };
-            let mut owner = 0;
-            unsafe { GetWindowThreadProcessId(hwnd, &mut owner) };
-            if owner == found.0
-                && unsafe { IsWindowVisible(hwnd) } != 0
-                && unsafe { GetWindow(hwnd, GW_OWNER) }.is_null()
-            {
-                found.1 = hwnd;
-                return 0;
-            }
-            1
-        }
-        let mut found: (u32, HWND) = (pid, std::ptr::null_mut());
-        EnumWindows(Some(each), &mut found as *mut _ as LPARAM);
-        if found.1.is_null() {
-            return;
-        }
-        if IsIconic(found.1) != 0 {
-            ShowWindow(found.1, SW_RESTORE);
-        }
-        SetForegroundWindow(found.1);
-    }
-    #[cfg(not(windows))]
-    let _ = pid;
 }
 
 /// On Windows, the console `kawoosh` was run from, for what the CLI
@@ -245,7 +204,8 @@ Usage:
   kawoosh test SCRIPT.lua...     run Lua tests against a headless editor;
                                  exits 0 when every one passes
 
-From a terminal inside kawoosh (through $KAWOOSH_SOCKET):
+From a terminal inside kawoosh (through $KAWOOSH_SOCKET), or from any
+other to the kawoosh started last:
   kawoosh edit [--wait|-w] [+LINE] PATH...
                                  open the paths in the running instance;
                                  --wait returns when the buffer is closed

@@ -8,6 +8,8 @@
 //! `$EDITOR` returning at once is a commit with an empty message. It
 //! talks to the running instance over `$KAWOOSH_SOCKET`, as the shim
 //! verbs do (mvp.md Decision 3b), and returns when the buffer closes.
+//! From a terminal not Kawoosh's — Windows Terminal, another editor's —
+//! it is the Kawoosh started last, its window brought to the front.
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -17,11 +19,14 @@ fn main() {
         );
         return;
     }
-    let Some(sock) = std::env::var_os("KAWOOSH_SOCKET") else {
-        eprintln!("kawoosh-edit: no running kawoosh (KAWOOSH_SOCKET is not set)");
+    let Some((sock, outside)) = kawoosh::running::socket() else {
+        eprintln!("kawoosh-edit: no running kawoosh");
         std::process::exit(1);
     };
-    if let Err(e) = kawoosh_systems::io::edit(std::path::Path::new(&sock), &args, true) {
+    if let Some(pid) = outside {
+        kawoosh::running::raise(pid);
+    }
+    if let Err(e) = kawoosh_systems::io::edit(&sock, &args, true) {
         eprintln!("kawoosh-edit: {e}");
         std::process::exit(1);
     }
