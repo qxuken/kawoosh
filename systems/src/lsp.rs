@@ -337,6 +337,21 @@ fn marked(dir: &Path, files: &[String]) -> bool {
     false
 }
 
+/// What a sync carries (lsp-rules.md Decision 8): the buffer's whole
+/// text, or what changed since the version the pool holds — the bytes
+/// `start..old_end` of that text, now `text`. A span the pool's copy
+/// does not fit is answered [`Event::SyncLost`], and the whole is sent.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SyncText {
+    Whole(String),
+    Span {
+        from: Version,
+        start: usize,
+        old_end: usize,
+        text: String,
+    },
+}
+
 pub enum Cmd {
     /// The buffer's text at `version` — didOpen the first time, then
     /// didChange.
@@ -345,7 +360,7 @@ pub enum Cmd {
         path: PathBuf,
         language: String,
         version: Version,
-        text: String,
+        text: SyncText,
     },
     Close {
         buffer: BufferId,
@@ -607,6 +622,9 @@ pub struct Caps {
     /// It gives a whole workspace's diagnostics when asked
     /// (`diagnosticProvider.workspaceDiagnostics`, lists.md Decision 8).
     pub workspace_pull: bool,
+    /// It takes a change as a range and its text (`textDocumentSync`'s
+    /// `change` 2), not the whole document each time.
+    pub incremental: bool,
 }
 
 impl Caps {
@@ -645,6 +663,7 @@ impl Caps {
             pull: self.pull || other.pull,
             runnables: self.runnables || other.runnables,
             workspace_pull: self.workspace_pull || other.workspace_pull,
+            incremental: self.incremental && other.incremental,
             hover: self.hover || other.hover,
             completion: self.completion || other.completion,
             commands,
@@ -819,6 +838,11 @@ pub enum Event {
         /// The project it served.
         root: PathBuf,
     },
+    /// A sync's span did not fit the text the pool holds for `buffer`
+    /// (lsp-rules.md Decision 8): the next sync is to be the whole text.
+    SyncLost {
+        buffer: BufferId,
+    },
     /// A [`Cmd::Restart`] done: the PATH asked for again, the commands'
     /// failures forgotten.
     Restarted {
@@ -870,6 +894,7 @@ impl Event {
             Event::CodeActions { .. } => "lsp code actions",
             Event::Symbols { .. } => "lsp symbols",
             Event::Runnables { .. } => "lsp runnables",
+            Event::SyncLost { .. } => "lsp sync lost",
             Event::InlayHints { .. } => "lsp inlay hints",
             Event::Formatted { .. } => "lsp formatted",
             Event::Failed { .. } => "lsp failed",
@@ -965,6 +990,44 @@ pub fn offsets_of_positions(text: &str, positions: &[(u32, u32)]) -> Vec<usize> 
         out[i] = at;
     }
     out
+}
+
+/// One buffer's sync, as each of its servers is told it: the whole text
+/// the pool holds now, and the span that changed, if one did.
+struct Synced<'a> {
+    buffer: BufferId,
+    path: &'a Path,
+    language: &'a str,
+    version: Version,
+    text: &'a str,
+    span: Option<&'a Span>,
+}
+
+/// A sync's span, as the pool applies it.
+struct Span {
+    from: Version,
+    start: usize,
+    old_end: usize,
+    text: String,
+}
+
+/// The position of byte `end` of `text`, from `start`'s, already known:
+/// only the bytes between are read.
+fn position_after(text: &str, start: usize, at: (u32, u32), end: usize) -> (u32, u32) {
+    let between = &text[start..end];
+    match between.rfind('\n') {
+        Some(nl) => (
+            at.0 + between.bytes().filter(|&b| b == b'\n').count() as u32,
+            between[nl + 1..]
+                .chars()
+                .map(|c| c.len_utf16() as u32)
+                .sum(),
+        ),
+        None => (
+            at.0,
+            at.1 + between.chars().map(|c| c.len_utf16() as u32).sum::<u32>(),
+        ),
+    }
 }
 
 pub fn position_of_offset(text: &str, offset: usize) -> (u32, u32) {
@@ -1762,6 +1825,10 @@ struct Pool {
     servers: Vec<Option<Server>>,
     /// Each buffer's servers, the first asked first.
     homes: HashMap<BufferId, Vec<usize>>,
+    /// Each synced buffer's text, at the version it is: what a span is
+    /// applied to, and a server opening the buffer is sent (lsp-rules.md
+    /// Decision 8).
+    texts: HashMap<BufferId, (Version, String)>,
     /// `Cmd::Order`'s.
     order: BTreeMap<String, Vec<String>>,
     /// Whether a server's `when` files are at or above a directory, by
@@ -1828,6 +1895,7 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         keys: HashMap::new(),
         servers: Vec::new(),
         homes: HashMap::new(),
+        texts: HashMap::new(),
         order: BTreeMap::new(),
         when_seen: HashMap::new(),
         published: HashMap::new(),
@@ -2528,11 +2596,61 @@ impl Pool {
                         .collect();
                     self.emit(Event::Holders { buffer, commands });
                 }
+                // The pool's copy brought to `version`: the whole as
+                // given, or a span applied where it fits.
+                let span = match text {
+                    SyncText::Whole(text) => {
+                        self.texts.insert(buffer, (version, text));
+                        None
+                    }
+                    SyncText::Span {
+                        from,
+                        start,
+                        old_end,
+                        text,
+                    } => {
+                        let fits = self.texts.get(&buffer).is_some_and(|(v, t)| {
+                            *v == from
+                                && start <= old_end
+                                && old_end <= t.len()
+                                && t.is_char_boundary(start)
+                                && t.is_char_boundary(old_end)
+                        });
+                        if !fits {
+                            self.texts.remove(&buffer);
+                            self.emit(Event::SyncLost { buffer });
+                            return;
+                        }
+                        let (v, t) = self.texts.get_mut(&buffer).expect("fits");
+                        t.replace_range(start..old_end, &text);
+                        *v = version;
+                        Some(Span {
+                            from,
+                            start,
+                            old_end,
+                            text,
+                        })
+                    }
+                };
+                // Lent to the servers' syncs, not copied for them.
+                let Some((v, whole)) = self.texts.remove(&buffer) else {
+                    return;
+                };
+                let sync = Synced {
+                    buffer,
+                    path: &path,
+                    language: &language,
+                    version,
+                    text: &whole,
+                    span: span.as_ref(),
+                };
                 for key in keys {
-                    self.sync_to(key, buffer, &path, &language, version, &text);
+                    self.sync_to(key, &sync);
                 }
+                self.texts.insert(buffer, (v, whole));
             }
             Cmd::Close { buffer } => {
+                self.texts.remove(&buffer);
                 for key in self.homes.remove(&buffer).unwrap_or_default() {
                     self.close_on(key, buffer);
                 }
@@ -2936,20 +3054,60 @@ impl Pool {
 
     /// Buffer `buffer`'s text sent to server `key`: `didOpen` the first
     /// time, `didChange` after.
-    fn sync_to(
-        &mut self,
-        key: usize,
-        buffer: BufferId,
-        path: &Path,
-        language: &str,
-        version: Version,
-        text: &str,
-    ) {
+    fn sync_to(&mut self, key: usize, sync: &Synced) {
+        let Synced {
+            buffer,
+            path,
+            language,
+            version,
+            text,
+            span,
+        } = *sync;
         let Some(server) = self.servers[key].as_mut() else {
             return;
         };
+        let incremental = server.caps.as_ref().is_some_and(|c| c.incremental);
         let uri = uri_of(path);
         match server.documents.get_mut(&uri) {
+            // What changed since the document was last told, as a range
+            // to a server that takes one (lsp-rules.md Decision 8); the
+            // whole, from the pool's copy, to one that does not.
+            Some(doc)
+                if doc.buffer == Some(buffer)
+                    && let Some(span) = span.filter(|s| {
+                        doc.version == s.from
+                            && s.old_end <= doc.text.len()
+                            && doc.text.is_char_boundary(s.start)
+                            && doc.text.is_char_boundary(s.old_end)
+                    }) =>
+            {
+                let (l0, c0) = position_of_offset(&doc.text, span.start);
+                let (l1, c1) = position_after(&doc.text, span.start, (l0, c0), span.old_end);
+                doc.text.replace_range(span.start..span.old_end, &span.text);
+                doc.version = version;
+                doc.lsp_version += 1;
+                let v = doc.lsp_version;
+                let change = if incremental {
+                    json!({
+                        "range": {
+                            "start": { "line": l0, "character": c0 },
+                            "end": { "line": l1, "character": c1 }
+                        },
+                        "text": span.text
+                    })
+                } else {
+                    json!({ "text": doc.text })
+                };
+                server.notify(
+                    "textDocument/didChange",
+                    json!({
+                        "textDocument": { "uri": uri, "version": v },
+                        "contentChanges": [change]
+                    }),
+                );
+                self.pull_diagnostics(key, &uri, buffer);
+                self.pull_workspace(key);
+            }
             Some(doc) => {
                 // A file `load_all` sent is the buffer's now: the
                 // server holds it open already.
@@ -3817,6 +3975,10 @@ fn capabilities(result: Option<&Value>) -> Caps {
         inlay_hint: provides("inlayHintProvider"),
         definition: provides("definitionProvider"),
         pull: provides("diagnosticProvider"),
+        incremental: caps.and_then(|c| c.get("textDocumentSync")).and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.get("change").and_then(Value::as_u64))
+        }) == Some(2),
         workspace_pull: caps
             .and_then(|c| c.pointer("/diagnosticProvider/workspaceDiagnostics"))
             .and_then(Value::as_bool)
@@ -4375,6 +4537,27 @@ fn placed_diagnostics(params: &Value) -> Vec<Placed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A span's end, worked out from its start's position over the bytes
+    /// between, is what reading the whole text from the top gives — lines
+    /// crossed, a character past the BMP two UTF-16 units.
+    #[test]
+    fn a_span_s_end_is_read_from_its_start() {
+        let text = "ab\ncd😀ef\n\nxyz";
+        for start in [0, 3, 5, 9] {
+            for end in start..=text.len() {
+                if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+                    continue;
+                }
+                let at = position_of_offset(text, start);
+                assert_eq!(
+                    position_after(text, start, at, end),
+                    position_of_offset(text, end),
+                    "{start}..{end}"
+                );
+            }
+        }
+    }
 
     /// `{root}` is the server's root and `{typescript}` the nearest
     /// TypeScript's lib at or above it; on a host only `{root}` is said,

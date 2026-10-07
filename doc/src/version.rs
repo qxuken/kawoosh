@@ -30,6 +30,17 @@ impl Version {
     }
 }
 
+/// Edits folded into one replacement ([`Journal::changed_since`]): the
+/// text then, `len_then` long, had `start..old_end` where the text now has
+/// `start..new_end`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Changed {
+    pub start: usize,
+    pub old_end: usize,
+    pub new_end: usize,
+    pub len_then: usize,
+}
+
 /// Which side an offset falls to when an edit lands exactly on it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Bias {
@@ -189,6 +200,45 @@ impl Journal {
         Ok(self.after(from).map(|(_, edit)| edit))
     }
 
+    /// What changed since `from`, as one replacement: the bytes
+    /// `start..old_end` of the text then became `start..new_end` of the
+    /// text now, `len_now` long — the edits' reach, from the first byte
+    /// any touched to the last, everything outside it as it was. `None`
+    /// when nothing was edited. What a language server is sent in place
+    /// of the whole text (lsp-rules.md Decision 8).
+    pub fn changed_since(&self, from: Version, len_now: usize) -> Result<Option<Changed>, Stale> {
+        let edits: Vec<&Edit> = self.edits_since(from)?.collect();
+        if edits.is_empty() {
+            return Ok(None);
+        }
+        // The text's length before each edit, worked back from now.
+        let mut len = len_now;
+        let mut before = vec![0; edits.len()];
+        for (i, e) in edits.iter().enumerate().rev() {
+            len = (len + e.removed())
+                .checked_sub(e.new_len)
+                .ok_or(Stale::HistoryPruned)?;
+            before[i] = len;
+        }
+        let len_then = len;
+        // What no edit reached: a head, the same bytes at the same
+        // offsets in every version, and a tail, the same bytes the same
+        // distance from the end.
+        let start = edits.iter().map(|e| e.range.start).min().unwrap_or(0);
+        let tail = edits
+            .iter()
+            .zip(&before)
+            .map(|(e, len)| len.saturating_sub(e.range.end))
+            .min()
+            .unwrap_or(0);
+        Ok(Some(Changed {
+            start,
+            old_end: len_then - tail,
+            new_end: len_now - tail,
+            len_then,
+        }))
+    }
+
     /// The entries after version `from`, oldest first — found by
     /// binary search, since the versions run up: a caller carrying a
     /// line through a recent edit does not walk the whole log for it.
@@ -285,6 +335,40 @@ impl Journal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Edits since a version folded into the one replacement that turns
+    /// the text then into the text now, checked by applying it.
+    #[test]
+    fn edits_fold_into_one_replacement() {
+        let cases: &[&[(std::ops::Range<usize>, &str)]] = &[
+            &[(5..5, "x")],
+            &[(5..5, "x"), (6..6, "y"), (7..7, "z")],
+            &[(2..4, ""), (10..12, "long text"), (0..1, "A")],
+            &[(8..8, "abc"), (8..11, "")],
+            &[(3..9, "q"), (3..4, "")],
+            &[(15..20, ""), (0..0, "front ")],
+        ];
+        for edits in cases {
+            let mut text = String::from("0123456789abcdefghij");
+            let then = text.clone();
+            let mut j = Journal::new();
+            let from = j.version();
+            for (r, ins) in edits.iter() {
+                text.replace_range(r.clone(), ins);
+                j.record(Edit {
+                    range: r.clone(),
+                    new_len: ins.len(),
+                });
+            }
+            let c = j.changed_since(from, text.len()).unwrap().unwrap();
+            assert_eq!(c.len_then, then.len(), "{edits:?}");
+            let mut applied = then.clone();
+            applied.replace_range(c.start..c.old_end, &text[c.start..c.new_end]);
+            assert_eq!(applied, text, "{edits:?}: {c:?}");
+        }
+        let j = Journal::new();
+        assert_eq!(j.changed_since(j.version(), 3), Ok(None));
+    }
 
     #[test]
     fn insertion_before_a_range_shifts_it() {

@@ -374,6 +374,52 @@ sent again, and one no pane showed was not; a reset now keeps them in
 what a server said — stderr included, which the notification log drops
 as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
 
+### 8. A change is sent as its span
+
+*Added 2026-10-07*, from the roadmap's "incremental sync from the
+journal — open; measure before doing it" ("then do the lsp ones").
+Measured first (release build, a character typed mid-file): the sync
+copied the buffer's whole text on the UI thread — 0.7 ms at 1 MB, 4.7
+ms at 10 MB, 23 ms at 50 MB — and the pool encoded it whole as JSON —
+0.9, 5.1 and 46 ms — at every keystroke a server was attached. A
+minified bundle with tsls on it (format-of-a-minified-bundle) is the
+case that pays it.
+
+- **The shell sends what moved.** After the open, a sync is the span
+  the journal says changed since the version last sent
+  (`Journal::changed_since`): the edits folded into one replacement —
+  from the first byte any touched to the last, the head and tail no
+  edit reached as they were — and only its bytes copied
+  (`SyncText::Span`). The whole goes the first time, and when the
+  journal cannot say (pruned past it, or `set_text` reset it). 150 ns
+  at 10 MB and at 50 MB, where it was 4.7 and 23 ms.
+- **The pool holds the text.** Each synced buffer's text is kept in the
+  pool (`Pool::texts`) at its version, and a span is applied to it there;
+  a server opening the buffer later — eslint joining, one restarted — is
+  sent the whole from that copy, not asked for it. A span that does not
+  fit the copy (its version is not the one held, or its bytes are out
+  of it) is answered `Event::SyncLost`, and the shell's next sync is the
+  whole: the pool never guesses.
+- **A server is told the way it takes it.** One whose `initialize` says
+  `textDocumentSync.change` 2 (`Caps::incremental`) gets the span as a
+  range and its text, the range's end worked out from its start over the
+  bytes between (`position_after`); any other gets the whole document
+  from the pool's copy — the encoding off the UI thread, where it was
+  already, but no copy made on it.
+
+A test compares the text a server holds with the buffer's after typing
+past a character outside the BMP, a line opened and joined, one deleted
+and an undo, with an incremental server and a full one
+(`a_change_is_sent_as_its_span`). It found a bug on the way: an answer
+held while typing was put over a newer one (fixed apart, 66104c2).
+
+Beaten: the edits one by one as `contentChanges` (each change's own
+text is gone once a later edit overwrites it — the journal keeps
+lengths, not texts); a diff of the old and new texts in the pool (the
+UI thread would still copy the whole to send it); the copy kept in each
+server's document alone (a server joining has no text to be opened
+with).
+
 ## Not built
 
 - ~~**A loaded file changed on disk by another program** is not read

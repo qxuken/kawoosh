@@ -3262,6 +3262,72 @@ fn a_workspace_s_diagnostics_are_pulled() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// lsp-rules.md Decision 8: after the open, a change goes as the span
+/// the journal says moved — a range and its text to a server that takes
+/// ranges, the whole from the pool's copy to one that does not — and the
+/// server's text is the buffer's either way: lines made and joined, a
+/// character past the BMP (two UTF-16 units), an undo.
+#[test]
+fn a_change_is_sent_as_its_span() {
+    for incremental in [false, true] {
+        let dir = std::env::temp_dir().join(format!(
+            "kawoosh-lsp-span-{incremental}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        let file = dir.join("src/main.rs");
+        std::fs::write(&file, "fn main() {\n    let 😀 = 1;\n}\n// @echo\n").unwrap();
+        let mut def = fake_server();
+        if incremental {
+            def.args.push("--incremental".into());
+        }
+        let mut app = Kawoosh::from_file(&file);
+        app.add_lsp_server(def);
+        let mut d = Drive::new(900.0, 500.0);
+        let v = app.focused_view().unwrap();
+        let buf = app.ed.views[v].buffer;
+        assert!(until(&mut d, &mut app, |a| a.lsp.caps.contains_key("rust")));
+        let echoed = |a: &Kawoosh| -> Option<(usize, String)> {
+            let m = msgs(a, buf)
+                .into_iter()
+                .find(|m| m.starts_with("ranged "))?;
+            let (n, text) = m.strip_prefix("ranged ")?.split_once(": ")?;
+            Some((n.parse().ok()?, serde_json::from_str(text).ok()?))
+        };
+        let agree = |d: &mut Drive, app: &mut Kawoosh, what: &str| {
+            let want = app.ed.buffers[buf].text();
+            assert!(
+                until(d, app, |a| echoed(a).is_some_and(|(_, t)| t == want)),
+                "{what} ({incremental}): the server holds {:?}, the buffer {want:?}; all {:?}",
+                echoed(app),
+                msgs(app, buf)
+            );
+        };
+        // Past the emoji on its line, then a line opened, one joined.
+        d.keys(&mut app, "jA x");
+        d.key(&mut app, "escape", KeyMods::default());
+        agree(&mut d, &mut app, "typed after a surrogate pair");
+        d.keys(&mut app, "otwo");
+        d.key(&mut app, "escape", KeyMods::default());
+        agree(&mut d, &mut app, "a line opened");
+        d.keys(&mut app, "kJ");
+        agree(&mut d, &mut app, "a line joined");
+        d.keys(&mut app, "ggdd");
+        agree(&mut d, &mut app, "the first line deleted");
+        d.keys(&mut app, "u");
+        agree(&mut d, &mut app, "undone");
+        let (n, _) = echoed(&app).unwrap();
+        assert_eq!(
+            n > 0,
+            incremental,
+            "ranges only to a server that takes them"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
 /// An answer held while typing (`DIAG_QUIET`) is older than one that
 /// lands after the typing stopped: it is dropped, not put over the newer
 /// one as the hold ends in the same frame — which left the server's word

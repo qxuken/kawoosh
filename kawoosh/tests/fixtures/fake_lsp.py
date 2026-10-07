@@ -64,10 +64,11 @@ and one of a kind nobody runs — each in the root. The
 `workspace/diagnostic` answers a full report for `src/pulled.rs` — a
 warning "pulled (N)", or "had ID (N)" when the request carried ID as
 that file's previous result — with result `rN`, and an unchanged one for
-`src/same.rs` (lists.md Decision 8). A ranged change is applied to the
-text it holds; a text with `@echo` in it gets an information diagnostic
-at 0:0, "ranged N: TEXT", N the ranged changes it has had and TEXT the
-text it holds as JSON."""
+`src/same.rs` (lists.md Decision 8). With `--incremental` it declares
+incremental sync and applies each ranged change to the text it holds; a
+text with `@echo` in it gets an information diagnostic at 0:0, "ranged
+N: TEXT", N the ranged changes it has had and TEXT the text it holds as
+JSON (lsp-rules.md Decision 8)."""
 import json
 import re, sys
 
@@ -233,6 +234,8 @@ while True:
             "declarationProvider": True, "documentSymbolProvider": True,
             "workspaceSymbolProvider": True, "inlayHintProvider": True,
             "experimental": {"runnables": {"kinds": ["cargo"]}},
+            **({"textDocumentSync": {"openClose": True, "change": 2}}
+               if "--incremental" in sys.argv else {}),
             **({"diagnosticProvider": {"interFileDependencies": True, "workspaceDiagnostics": True}}
                if "--workspace-pull" in sys.argv else {})}}})
     elif method == "initialized":

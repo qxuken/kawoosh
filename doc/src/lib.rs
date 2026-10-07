@@ -26,7 +26,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 pub use diagnostic::Diagnostic;
 use slotmap::new_key_type;
-pub use version::{Bias, Edit, Journal, Stale, Version};
+pub use version::{Bias, Changed, Edit, Journal, Stale, Version};
 
 new_key_type! {
     /// A buffer's identity in the editor's table.

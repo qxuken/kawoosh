@@ -30,8 +30,8 @@ use kawoosh_doc::{Buffer, BufferId, Diagnostic, Update, Version};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Mode, Prompt, Selection, Spec, ViewId};
 use kawoosh_lua::{ActionSnap, CandidateSnap};
 use kawoosh_systems::lsp::{
-    Caps, Cmd, CodeAction, CompletionItem, DIAG_LAYER, Event, Location, Lsp, ServerDef, TextEdit,
-    WorkspaceEdit, completion_kind_name, offsets_of_positions,
+    Caps, Cmd, CodeAction, CompletionItem, DIAG_LAYER, Event, Location, Lsp, ServerDef, SyncText,
+    TextEdit, WorkspaceEdit, completion_kind_name, offsets_of_positions,
 };
 use kawoosh_systems::{Alarm, WakeHandle};
 use std::rc::Rc;
@@ -458,6 +458,10 @@ impl Kawoosh {
                 }
                 Event::CodeActions { buffer, actions } => self.offer_actions(buffer, actions),
                 Event::Runnables { token, result } => self.compile_runnables(token, result),
+                // The pool's copy and the span disagreed: the whole next.
+                Event::SyncLost { buffer } => {
+                    self.lsp.sent.remove(&buffer);
+                }
                 Event::Symbols { token, result } => {
                     if let Some((name, then)) = self.lsp.symbol_asks.remove(&token) {
                         self.hover_symbol_found(&name, then, result);
@@ -948,10 +952,11 @@ impl Kawoosh {
     /// (`positional_cmd`), so the position is in the text the server
     /// has.
     fn push_documents(&mut self) {
-        // Only a language with a server to send to: the sync is the whole
-        // text, a copy of the buffer per keystroke — ten milliseconds on
-        // a ten-megabyte file — and a language nobody serves (or whose
-        // server is not installed) paid it for nothing. Not marked sent,
+        // Only a language with a server to send to: the first sync is the
+        // whole text, a copy of the buffer — five milliseconds on a
+        // ten-megabyte file — and a language nobody serves (or whose
+        // server is not installed) paid it for nothing; after it, the
+        // span the journal says moved (lsp-rules.md Decision 8). Not marked sent,
         // so a server registered later gets the buffer at once — and one
         // being restarted, once it is (`lsp_restart`).
         // What a pane shows, what the server was sent before (it holds
@@ -995,18 +1000,33 @@ impl Kawoosh {
                 continue;
             }
             // A change, not the open: the open's diagnostics land at once.
-            if self.lsp.sent.insert(id, b.version()).is_some() {
+            let before = self.lsp.sent.insert(id, b.version());
+            if before.is_some() {
                 self.lsp.moved.insert(id, Instant::now());
                 if self.lsp.held.contains_key(&id) {
                     self.lsp.alarm.set(Instant::now() + self.lsp.quiet);
                 }
             }
+            // What changed since it was sent, as the journal has it: the
+            // span's bytes, not the buffer's (lsp-rules.md Decision 8) —
+            // the whole the first time, or past what the journal keeps.
+            let span = before
+                .and_then(|from| Some((from, b.journal().changed_since(from, b.len()).ok()??)));
+            let text = match span {
+                Some((from, c)) => SyncText::Span {
+                    from,
+                    start: c.start,
+                    old_end: c.old_end,
+                    text: b.slice(c.start..c.new_end),
+                },
+                None => SyncText::Whole(b.text()),
+            };
             self.lsp.lsp.send(Cmd::Sync {
                 buffer: id,
                 path,
                 language: b.language.to_string(),
                 version: b.version(),
-                text: b.text(),
+                text,
             });
         }
     }
@@ -1555,6 +1575,7 @@ impl Kawoosh {
                 // does not give would leave nothing to wait for.
                 runnables: false,
                 workspace_pull: false,
+                incremental: false,
                 triggers: Vec::new(),
             })
     }
