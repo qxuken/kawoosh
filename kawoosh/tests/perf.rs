@@ -334,6 +334,135 @@ fn keystroke_cost() {
     let _ = d.warnings();
 }
 
+/// What a keystroke's frame costs in a markdown pane with a table in
+/// sight, as the table grows: `cargo test --test perf -- --ignored
+/// --nocapture table`. A table's columns are the whole table's widest
+/// cells, drawn in a row 0px tall (`panes.rs`), worked out once while
+/// the text and its layers hold (`markdown::TableCache`) — up to 500
+/// rows of it. Each place: 40 × `j` then `k`, a frame each; then 20 ×
+/// `x` and `u` mid-table, each edit's frame and the parse's after it.
+///
+/// Measured 2026-10-08, avg ms a key at 20 / 100 / 300 / 500 / 1000
+/// rows. The tail in sight: 0.30, 0.47, 0.51, 0.54, 1.84 (past 500
+/// rows a table is not cached, and its rows are walked and counted as
+/// before); no table in sight 0.3–0.6. Before the columns were the
+/// whole table's: 0.38, 0.66, 1.28, 1.92, 1.94; with every row out of
+/// sight a ghost each frame: 0.42, 1.26, 3.71, 6.11, 7.67. An edit's
+/// frame, the parse's frame: 0.98/0.68, 1.48/1.17, 3.48/2.89,
+/// 5.31/4.45, 6.25/4.94 — each reads the whole table again, against
+/// 0.92/0.61, 1.11/0.78, 1.92/1.38, 2.41/1.67, 3.31/2.14 before.
+#[test]
+#[ignore]
+fn table_frame_cost() {
+    let prose: String = (0..300)
+        .map(|i| format!("Line {i} of prose after the table, a sentence or so long.\n"))
+        .collect();
+    eprintln!(
+        "{:>5}  {:<28} {:>6}  {:>8} {:>8}",
+        "rows", "where", "top", "avg ms", "worst ms"
+    );
+    for n in [20usize, 100, 300, 500, 1000] {
+        let dir =
+            std::env::temp_dir().join(format!("kawoosh-perf-table-{n}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        // Line 0 the heading, 2 the header, 3 the delimiter, 4.. the rows.
+        let mut doc = String::from(
+            "# Tables\n\n| name | kind | good at | the catch |\n| --- | --- | --- | --- |\n",
+        );
+        for i in 0..n {
+            doc.push_str(&format!(
+                "| row {i} | **kind** {} | {} | {} |\n",
+                i % 7,
+                "word ".repeat(1 + i % 5),
+                "a longer cell of text ".repeat(1 + i % 3)
+            ));
+        }
+        doc.push('\n');
+        doc.push_str(&prose);
+        std::fs::write(dir.join("doc.md"), doc).unwrap();
+        let mut app = Kawoosh::from_file(&dir.join("doc.md"));
+        app.jobs_inline = true;
+        let mut d = Drive::new(1100.0, 760.0);
+        load_fonts(&mut d, &mut app);
+        d.frame(&mut app);
+        app.wait_for_syntax();
+        for _ in 0..4 {
+            d.frame(&mut app);
+        }
+        let end = n + 4;
+        for (label, line) in [
+            ("no table in sight", end + 200),
+            ("tail in sight, caret below", end + 12),
+            ("caret mid-table", 4 + n / 2),
+            ("head in sight, caret above", 0),
+        ] {
+            d.keys(&mut app, &format!("{}G", line + 1));
+            app.wait_for_syntax();
+            for _ in 0..4 {
+                d.frame(&mut app);
+            }
+            let v = app.focused_view().unwrap();
+            let top = app.ed.views[v].top;
+            let (mut total, mut worst) = (0.0f64, 0.0f64);
+            let steps = 40;
+            for _ in 0..steps {
+                for k in ["j", "k"] {
+                    let t = Instant::now();
+                    d.keys(&mut app, k);
+                    let e = ms(t);
+                    total += e;
+                    worst = worst.max(e);
+                }
+            }
+            eprintln!(
+                "{n:>5}  {label:<28} {top:>6}  {:>8.3} {:>8.3}",
+                total / (2 * steps) as f64,
+                worst
+            );
+        }
+        // An edit in the table, a frame, then the parse's answer applied
+        // on the frame it arrives: each a new text or new runs, so the
+        // whole table is read again.
+        d.keys(&mut app, &format!("{}G5l", 4 + n / 2 + 1));
+        app.wait_for_syntax();
+        for _ in 0..4 {
+            d.frame(&mut app);
+        }
+        let (mut edit, mut parse, mut worst) = (0.0f64, 0.0f64, 0.0f64);
+        let steps = 20;
+        for _ in 0..steps {
+            for k in ["x", "u"] {
+                let t = Instant::now();
+                d.keys(&mut app, k);
+                let e = ms(t);
+                edit += e;
+                worst = worst.max(e);
+                app.wait_for_syntax();
+                let t = Instant::now();
+                d.frame(&mut app);
+                let e = ms(t);
+                parse += e;
+                worst = worst.max(e);
+            }
+        }
+        let offered = app
+            .notes
+            .shown
+            .iter()
+            .any(|s| s.text.contains("is read again on each edit"));
+        eprintln!(
+            "{n:>5}  {:<28} {:>6}  {:>8.3} {:>8.3}   (the parse's frame {:.3}; source offered: {offered})",
+            "x/u mid-table: edit's frame",
+            "",
+            edit / (2 * steps) as f64,
+            worst,
+            parse / (2 * steps) as f64
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
 /// What a frame costs as a scrolling tab's ribbon grows (roadmap step
 /// 11): `cargo test --release --test perf -- --ignored --nocapture
 /// ribbon`. A column off the viewport draws its chrome and no rows

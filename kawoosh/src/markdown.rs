@@ -719,6 +719,13 @@ fn line_with(
         .any(|(_, b)| matches!(b, Block::Table | Block::TableHeader | Block::TableDelimiter));
     let mut first_line = None;
     let columns = table.then(|| {
+        // A table the cache has: its first line and columns kept.
+        if let Some((lines, columns)) = tables.known.iter().find(|(r, _)| r.contains(&ln)) {
+            tables.first_of.insert(ln, lines.start);
+            tables.columns.insert(lines.start, *columns);
+            first_line = Some(lines.start);
+            return *columns;
+        }
         let is_table = |l: usize| is_table_line(buf, l);
         // The row above's table, when it was read this frame — the rows
         // come top down, so a table is walked back once, from its first
@@ -936,15 +943,163 @@ impl Carets {
 }
 
 /// What a frame has read of its tables: each table row's first line,
-/// and each table's columns by its first line.
+/// and each table's columns by its first line; `known`, the tables the
+/// buffer's [`TableCache`] has, their lines and columns, which a row of
+/// is not walked back and counted for.
 #[derive(Default)]
 pub struct Tables {
     pub first_of: HashMap<usize, usize>,
     pub columns: HashMap<usize, usize>,
+    pub known: Vec<(Range<usize>, usize)>,
 }
 
 /// The most rows a table is walked back and read for its columns.
 const TABLE_MAX: usize = 500;
+
+/// Half a 120Hz frame: an edit whose tables take longer to read again —
+/// its own frame's read and the parse's answer's after it, about 3ms
+/// each for 500 rows and 1.8ms for 300 (2026-10-08) — is a slow one,
+/// and [`SLOW_EDITS`] of the last [`EDITS_KEPT`] offer to draw markdown
+/// as its source (`Kawoosh::md_slow_tables`).
+pub const SLOW_TABLES: std::time::Duration = std::time::Duration::from_millis(4);
+/// How many of the last [`EDITS_KEPT`] edits must be slow: one is a
+/// busy CPU as likely as a big table.
+const SLOW_EDITS: usize = 3;
+const EDITS_KEPT: usize = 5;
+
+/// A table as the whole of it is drawn, for its columns to be as wide
+/// in a frame that draws a few of its rows: a kui table is as wide as
+/// the rows in it, and with only the rows in sight its columns jumped
+/// as the pane scrolled through it (2026-10-08).
+#[derive(Clone, Debug)]
+pub struct TableWidths {
+    /// Its lines, from its first.
+    pub lines: Range<usize>,
+    pub columns: usize,
+    /// Each column's widest text cell folded, by its terminal width —
+    /// drawn in one row, they are the columns' widths.
+    pub widest: Vec<String>,
+    /// Each image cell: its column, its destination as written, its alt.
+    pub images: Vec<(usize, String, String)>,
+}
+
+/// A buffer's tables' [`TableWidths`] by their first lines, worked out
+/// once while the text, its syntax and its structure stay as they were:
+/// each row of a table read and rendered for them was the frame's work
+/// whenever any of it was in sight, 6ms a keystroke for 500 rows.
+#[derive(Default)]
+pub struct TableCache {
+    stamp: Option<(kawoosh_doc::Version, u64, u64, usize)>,
+    tables: HashMap<usize, TableWidths>,
+    /// The last edits, newest last: what reading tables again cost
+    /// each, its frames' reads summed until the next edit, and the most
+    /// rows of one read. None while the buffer is only read.
+    edits: std::collections::VecDeque<(std::time::Duration, usize)>,
+}
+
+impl TableCache {
+    /// Forgets what `buf` no longer says — after an edit, a parse's
+    /// answer, a change of `tabstop` — and gives the frame's [`Tables`]
+    /// what it keeps.
+    pub fn tables(&mut self, buf: &kawoosh_doc::Buffer, tabstop: usize) -> Tables {
+        let stamp = Some((
+            buf.version(),
+            buf.layer_changes(kawoosh_systems::ts::SYNTAX_LAYER),
+            buf.layer_changes(kawoosh_systems::ts::STRUCT_LAYER),
+            tabstop,
+        ));
+        if self.stamp != stamp {
+            if self.stamp.is_some_and(|s| s.0 != buf.version()) {
+                if self.edits.len() == EDITS_KEPT {
+                    self.edits.pop_front();
+                }
+                self.edits.push_back(Default::default());
+            }
+            self.stamp = stamp;
+            self.tables.clear();
+        }
+        Tables {
+            known: self
+                .tables
+                .values()
+                .map(|t| (t.lines.clone(), t.columns))
+                .collect(),
+            ..Tables::default()
+        }
+    }
+
+    /// The table whose first line is `first`, each of its rows rendered
+    /// folded once while the cache holds.
+    pub fn widths(
+        &mut self,
+        buf: &kawoosh_doc::Buffer,
+        first: usize,
+        style: &Style,
+        tabstop: usize,
+    ) -> &TableWidths {
+        let edit = self.edits.back_mut();
+        self.tables.entry(first).or_insert_with(|| {
+            let t = std::time::Instant::now();
+            let mut end = first;
+            while end < buf.line_count() && end - first < TABLE_MAX && is_table_line(buf, end) {
+                end += 1;
+            }
+            let mut tables = Tables::default();
+            let mut columns = 0;
+            let mut widest: Vec<(usize, String)> = Vec::new();
+            let mut images = Vec::new();
+            for ln in first..end {
+                let r = line(buf, ln, Reveal::Folded, style, tabstop, &mut tables);
+                columns = columns.max(r.columns);
+                if !r.grid() || r.delimiter {
+                    continue;
+                }
+                for (j, cell) in r.cells.iter().enumerate() {
+                    match cell {
+                        Cell::Text(range) => {
+                            let text = &r.drawn.text[range.clone()];
+                            let w = unicode_width::UnicodeWidthStr::width(text);
+                            if widest.len() <= j {
+                                widest.resize(j + 1, (0, String::new()));
+                            }
+                            if w > widest[j].0 {
+                                widest[j] = (w, text.to_string());
+                            }
+                        }
+                        Cell::Image(i) => {
+                            if let Some((dest, alt)) = r.images.get(*i) {
+                                images.push((j, dest.clone(), alt.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some((spent, rows)) = edit {
+                *spent += t.elapsed();
+                *rows = (*rows).max(end - first);
+            }
+            TableWidths {
+                lines: first..end,
+                columns,
+                widest: widest.into_iter().map(|(_, s)| s).collect(),
+                images,
+            }
+        })
+    }
+
+    /// Whether [`SLOW_EDITS`] of the last [`EDITS_KEPT`] edits read
+    /// their tables again for over `budget`: the most rows of one read,
+    /// and the slow edits' middle time.
+    pub fn slow(&self, budget: std::time::Duration) -> Option<(usize, std::time::Duration)> {
+        let mut slow: Vec<_> = self.edits.iter().filter(|(t, _)| *t > budget).collect();
+        if slow.len() < SLOW_EDITS {
+            return None;
+        }
+        slow.sort_by_key(|(t, _)| *t);
+        let rows = slow.iter().map(|(_, r)| *r).max().unwrap_or(0);
+        Some((rows, slow[slow.len() / 2].0))
+    }
+}
 
 /// Line `ln`'s structure runs, line-relative, its newline included.
 fn blocks_of(buf: &kawoosh_doc::Buffer, ln: usize) -> Vec<(Range<usize>, Block)> {

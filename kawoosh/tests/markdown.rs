@@ -309,11 +309,23 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
         para_x,
         "and nothing else did"
     );
-    let images: Vec<(f32, f32)> = d
-        .core
-        .nodes()
+    // The images in sight, not a table's ghost's in a row 0px tall.
+    let nodes = d.core.nodes();
+    let by_key: std::collections::HashMap<_, _> = nodes.iter().map(|n| (n.key, n)).collect();
+    let shown = |n: &&kui_native::NodeInfo| {
+        let mut p = n.parent;
+        while let Some(a) = p.and_then(|k| by_key.get(&k)) {
+            if a.rect.h <= 0.0 {
+                return false;
+            }
+            p = a.parent;
+        }
+        true
+    };
+    let images: Vec<(f32, f32)> = nodes
         .iter()
         .filter(|n| n.kind == kui_native::NodeKind::Image)
+        .filter(shown)
         .map(|n| (n.rect.x, n.rect.y))
         .collect();
     assert_eq!(
@@ -331,10 +343,9 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
     );
     // The left rule of each of its rows, 1px wide: they meet, from the
     // top edge's row to the bottom's.
-    let mut rules: Vec<kui_native::Rect> = d
-        .core
-        .nodes()
+    let mut rules: Vec<kui_native::Rect> = nodes
         .iter()
+        .filter(shown)
         .map(|n| n.rect)
         .filter(|r| r.w == 1.0 && r.x < light.0 && r.x > light.0 - 30.0 && r.y >= light.1 - 40.0)
         .filter(|r| r.y < images[3].1 + 80.0)
@@ -348,10 +359,9 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
         );
     }
     // A click on a row in the table's block lands on its line.
-    let row = d
-        .core
-        .nodes()
+    let row = nodes
         .iter()
+        .filter(shown)
         .find(|n| n.text.as_deref() == Some("alpha"))
         .map(|n| n.rect)
         .unwrap();
@@ -429,6 +439,112 @@ fn the_caret_row_keeps_the_columns() {
             .any(|n| n.text.as_deref() == Some("beta")),
         "`**beta**`'s stars folded"
     );
+}
+
+/// A table's columns are its rows' widest, in sight or not: scrolled
+/// past its widest cell, the columns stayed where they were. They were
+/// the widest of the rows in sight, and moved as the pane scrolled
+/// through the table (2026-10-08).
+#[test]
+fn a_table_scrolled_half_out_keeps_its_columns() {
+    let dir = fixture("tallcolumns");
+    let mut doc = String::from("| name | value |\n| --- | --- |\n");
+    doc.push_str("| a much wider name than the rest | v0 |\n");
+    for i in 1..300 {
+        doc.push_str(&format!("| r{i} | v{i} |\n"));
+    }
+    std::fs::write(dir.join("doc.md"), doc).unwrap();
+    let (mut d, mut app) = launch(&dir, 900.0);
+    // A cell in sight, not a ghost's in a row 0px tall.
+    let seen = |d: &Drive, text: &str| {
+        let nodes = d.core.nodes();
+        let by_key: std::collections::HashMap<_, _> = nodes.iter().map(|n| (n.key, n)).collect();
+        nodes
+            .iter()
+            .filter(|n| n.text.as_deref() == Some(text))
+            .find(|n| {
+                let mut p = n.parent;
+                while let Some(k) = p {
+                    match by_key.get(&k) {
+                        Some(a) if a.rect.h <= 0.0 => return false,
+                        Some(a) => p = a.parent,
+                        None => break,
+                    }
+                }
+                true
+            })
+            .map(|n| n.rect.x)
+    };
+    let x = |d: &Drive, text: &str| seen(d, text).unwrap_or_else(|| panic!("{text}"));
+    let top = x(&d, "v1");
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    assert!(seen(&d, "v0").is_none(), "the widest row out of sight");
+    assert_eq!(x(&d, "v290"), top, "the column where it was");
+    // The caret's row cuts the block in two (the rows above it stack
+    // up from it): both are the whole table's columns.
+    d.keys(&mut app, "?v270 ");
+    d.key(&mut app, "enter", KeyMods::default());
+    settle(&mut d, &mut app);
+    assert!(seen(&d, "v270").is_none(), "the caret's row is its source");
+    assert_eq!(x(&d, "v271"), top, "below the caret");
+    assert_eq!(x(&d, "v269"), top, "above the caret");
+    // The widest row deleted, the columns narrow: what is kept of the
+    // table goes with the text it was worked out from.
+    d.keys(&mut app, "gg/wider");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.press(&mut app, "dd");
+    settle(&mut d, &mut app);
+    assert!(x(&d, "v2") < top, "narrower: {} < {top}", x(&d, "v2"));
+}
+
+/// Tables that edits read again for too long offer, once a buffer, to
+/// draw markdown as its source — its button `:markdown toggle` — after
+/// three slow edits of the last five, not one, which a busy CPU makes as
+/// well; reading the buffer, however slow its tables, offers nothing.
+#[test]
+fn a_table_slow_to_edit_offers_the_source() {
+    let dir = fixture("slowtable");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    app.md_slow_tables = std::time::Duration::ZERO;
+    let offers = |app: &Kawoosh| {
+        app.notes
+            .shown
+            .iter()
+            .filter(|s| s.text.contains("is read again on each edit"))
+            .map(|s| {
+                (
+                    s.toast,
+                    s.actions.iter().map(|a| a.command.clone()).collect(),
+                )
+            })
+            .collect::<Vec<(bool, Vec<String>)>>()
+    };
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    d.press(&mut app, "gg");
+    settle(&mut d, &mut app);
+    assert_eq!(offers(&app), vec![], "read, not edited");
+    d.keys(&mut app, "/alpha");
+    d.key(&mut app, "enter", KeyMods::default());
+    for (i, k) in ["x", "u"].into_iter().enumerate() {
+        d.press(&mut app, k);
+        settle(&mut d, &mut app);
+        assert_eq!(offers(&app), vec![], "{} slow edits are not enough", i + 1);
+    }
+    d.press(&mut app, "x");
+    settle(&mut d, &mut app);
+    assert_eq!(
+        offers(&app),
+        vec![(true, vec!["markdown toggle".to_string()])],
+        "the third: a toast with its button"
+    );
+    d.press(&mut app, "ux");
+    settle(&mut d, &mut app);
+    assert_eq!(offers(&app).len(), 1, "once a buffer");
+    ex(&mut d, &mut app, "markdown toggle");
+    let v = app.focused_view().unwrap();
+    assert!(!app.markdown_rendered(app.ed.views[v].buffer), "its source");
 }
 
 /// A rendered paragraph draws no completion ghost — its text wraps as
