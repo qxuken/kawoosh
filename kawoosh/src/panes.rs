@@ -1457,6 +1457,12 @@ impl Kawoosh {
         // cells keep the columns' widths while its source is drawn
         // (`rows::table_ghost`): the cells and their drawn text.
         let mut md_ghosts: HashMap<usize, (rows::TableRow, String)> = HashMap::new();
+        // Each table's lines, by its first line, and every row of it
+        // as cells away from the caret: a block of the table holds the
+        // rows it does not draw as ghosts, so its columns are the
+        // whole table's whatever of it is in sight.
+        let mut md_spans: HashMap<usize, Range<usize>> = HashMap::new();
+        let mut md_widths: HashMap<usize, (rows::TableRow, String)> = HashMap::new();
         // A pane not drawn before has no rect: the window's width, which
         // the next frame corrects, rather than none.
         let width_guess = (self
@@ -1526,6 +1532,32 @@ impl Kawoosh {
                     &mut tables,
                 );
                 ghosts.insert(ln, (r, Vec::new()));
+            }
+            // Each table's rows out of sight, above the pane's top or
+            // below its bottom, as ghosts too: a kui table is as wide as
+            // the rows in it, and with only those in sight its columns
+            // jumped as the pane scrolled through it (2026-10-08).
+            let firsts: std::collections::HashSet<usize> = md_tables.values().copied().collect();
+            for first in firsts {
+                let mut end = first;
+                while end < buf.line_count()
+                    && end - first < crate::markdown::TABLE_MAX
+                    && crate::markdown::is_table_line(buf, end)
+                {
+                    end += 1;
+                }
+                for ln in (first..end).filter(|l| !md_rows.contains_key(l)) {
+                    let r = crate::markdown::line(
+                        buf,
+                        ln,
+                        crate::markdown::Reveal::Folded,
+                        &style,
+                        tabstop,
+                        &mut tables,
+                    );
+                    ghosts.insert(ln, (r, Vec::new()));
+                }
+                md_spans.insert(first, first..end);
             }
             // A table the caret is in slides sideways to show it.
             let head = v.sels.primary().head;
@@ -1625,12 +1657,20 @@ impl Kawoosh {
                 };
             for (ln, (r, img)) in &md_rows {
                 if r.grid() {
-                    md_cells.insert(*ln, table_row(r, img));
+                    let t = table_row(r, img);
+                    md_widths.insert(*ln, (t.clone(), r.drawn.text.clone()));
+                    md_cells.insert(*ln, t);
                 }
             }
             for (ln, (r, img)) in &ghosts {
                 if r.grid() {
-                    md_ghosts.insert(*ln, (table_row(r, img), r.drawn.text.clone()));
+                    let ghost = (table_row(r, img), r.drawn.text.clone());
+                    // Only the caret's own: the rows out of sight are
+                    // drawn from `md_widths`.
+                    if raw.contains(ln) {
+                        md_ghosts.insert(*ln, ghost.clone());
+                    }
+                    md_widths.insert(*ln, ghost);
                 }
             }
             md_columns = tables.columns;
@@ -2570,6 +2610,26 @@ impl Kawoosh {
                                                         .height(Sizing::Fit)
                                                         .min_height(kui_native::Min::FIT),
                                                     |ui| {
+                                                        // The table's rows not in
+                                                        // this block, 0px tall: its
+                                                        // columns are the whole
+                                                        // table's, not the rows' in
+                                                        // sight, and the same in
+                                                        // each of its blocks.
+                                                        let hidden = md_spans
+                                                            .get(&table)
+                                                            .cloned()
+                                                            .unwrap_or_default()
+                                                            .filter(|l| !(first..ln).contains(l));
+                                                        for l in hidden {
+                                                            if let Some((t, drawn)) =
+                                                                md_widths.get(&l)
+                                                            {
+                                                                rows::table_ghost(
+                                                                    ui, font, &pal, t, drawn,
+                                                                );
+                                                            }
+                                                        }
                                                         if top {
                                                             rows::table_edge(ui, columns, pal.dim);
                                                         }

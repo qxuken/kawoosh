@@ -431,6 +431,56 @@ fn the_caret_row_keeps_the_columns() {
     );
 }
 
+/// A table's columns are its rows' widest, in sight or not: scrolled
+/// past its widest cell, the columns stayed where they were. They were
+/// the widest of the rows in sight, and moved as the pane scrolled
+/// through the table (2026-10-08).
+#[test]
+fn a_table_scrolled_half_out_keeps_its_columns() {
+    let dir = fixture("tallcolumns");
+    let mut doc = String::from("| name | value |\n| --- | --- |\n");
+    doc.push_str("| a much wider name than the rest | v0 |\n");
+    for i in 1..300 {
+        doc.push_str(&format!("| r{i} | v{i} |\n"));
+    }
+    std::fs::write(dir.join("doc.md"), doc).unwrap();
+    let (mut d, mut app) = launch(&dir, 900.0);
+    // A cell in sight, not a ghost's in a row 0px tall.
+    let seen = |d: &Drive, text: &str| {
+        let nodes = d.core.nodes();
+        let by_key: std::collections::HashMap<_, _> = nodes.iter().map(|n| (n.key, n)).collect();
+        nodes
+            .iter()
+            .filter(|n| n.text.as_deref() == Some(text))
+            .find(|n| {
+                let mut p = n.parent;
+                while let Some(k) = p {
+                    match by_key.get(&k) {
+                        Some(a) if a.rect.h <= 0.0 => return false,
+                        Some(a) => p = a.parent,
+                        None => break,
+                    }
+                }
+                true
+            })
+            .map(|n| n.rect.x)
+    };
+    let x = |d: &Drive, text: &str| seen(d, text).unwrap_or_else(|| panic!("{text}"));
+    let top = x(&d, "v1");
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    assert!(seen(&d, "v0").is_none(), "the widest row out of sight");
+    assert_eq!(x(&d, "v290"), top, "the column where it was");
+    // The caret's row cuts the block in two (the rows above it stack
+    // up from it): both are the whole table's columns.
+    d.keys(&mut app, "?v270 ");
+    d.key(&mut app, "enter", KeyMods::default());
+    settle(&mut d, &mut app);
+    assert!(seen(&d, "v270").is_none(), "the caret's row is its source");
+    assert_eq!(x(&d, "v271"), top, "below the caret");
+    assert_eq!(x(&d, "v269"), top, "above the caret");
+}
+
 /// A rendered paragraph draws no completion ghost — its text wraps as
 /// one paragraph — so `<CR>` after a word's start is a newline, not the
 /// word finished by a completion no one saw.

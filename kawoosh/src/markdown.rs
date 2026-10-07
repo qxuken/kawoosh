@@ -944,7 +944,7 @@ pub struct Tables {
 }
 
 /// The most rows a table is walked back and read for its columns.
-const TABLE_MAX: usize = 500;
+pub const TABLE_MAX: usize = 500;
 
 /// Line `ln`'s structure runs, line-relative, its newline included.
 fn blocks_of(buf: &kawoosh_doc::Buffer, ln: usize) -> Vec<(Range<usize>, Block)> {
