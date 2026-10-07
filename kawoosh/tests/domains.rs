@@ -844,7 +844,11 @@ fn a_language_server_runs_in_the_distro() {
         .iter()
         .map(|s| s.0.display().to_string())
         .collect();
-    assert_eq!(roots, std::slice::from_ref(&proj), "its root, spelled on the domain");
+    assert_eq!(
+        roots,
+        std::slice::from_ref(&proj),
+        "its root, spelled on the domain"
+    );
     d.keys(&mut app, "gd");
     until(
         &mut d,

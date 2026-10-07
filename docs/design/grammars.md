@@ -146,6 +146,8 @@ filenames = []
 shebangs = []
 aliases = []
 comment = "//"                   # since r7; comment_block = ["/*", "*/"] where there is a pair
+# indent_style = "tab"           # since r9, where the language's tools insist (make, odin):
+# indent_size = 4                # `.editorconfig`'s words, `language.NAME.expandtab`/`tabstop`
 
 [source]
 repo = "https://github.com/tree-sitter-grammars/tree-sitter-zig"

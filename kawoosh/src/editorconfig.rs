@@ -23,10 +23,6 @@ use crate::commands::{ShellCommand, cmd};
 /// project has.
 const INIT_WALK_MAX: usize = 20_000;
 
-/// Files a make reads, whose recipes must be tabs whatever the
-/// language's way — no language of the editor's, so named here.
-const MAKEFILES: [&str; 3] = ["Makefile", "makefile", "GNUmakefile"];
-
 /// The `.editorconfig` files read, and which are watched.
 #[derive(Default)]
 pub struct Files {
@@ -254,17 +250,11 @@ impl Kawoosh {
     /// The text `:editorconfig init` starts from, for a project of
     /// `files` (paths from the working directory).
     pub fn editorconfig_template(&self, files: &[String]) -> String {
-        // The languages the project has files of, and whether a make
-        // reads any.
+        // The languages the project has files of — make's tabs among
+        // them, from its grammar's row.
         let mut present: BTreeMap<String, ()> = BTreeMap::new();
-        let mut make = false;
         for f in files {
             let p = Path::new(f);
-            let base = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if MAKEFILES.contains(&base) || base.ends_with(".mk") {
-                make = true;
-                continue;
-            }
             let lang = self.languages.detect(p, "");
             if lang != kawoosh_languages::FALLBACK {
                 present.insert(lang.to_string(), ());
@@ -314,14 +304,6 @@ impl Kawoosh {
             if let Some(glob) = editorconfig::glob_for(&exts, &names) {
                 profiles.push(Profile { glob, props });
             }
-        }
-        if make {
-            let mut names: Vec<String> = MAKEFILES.iter().map(|s| s.to_string()).collect();
-            names.push("*.mk".into());
-            profiles.push(Profile {
-                glob: format!("{{{}}}", names.join(",")),
-                props: vec![("indent_style", "tab".into())],
-            });
         }
         editorconfig::write(&profiles)
     }

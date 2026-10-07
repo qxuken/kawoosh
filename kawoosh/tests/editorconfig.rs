@@ -80,7 +80,7 @@ fn until(d: &mut Drive, app: &mut Kawoosh, what: &str, done: impl Fn(&Kawoosh) -
 }
 
 /// With no `.editorconfig`, a buffer is its language's way: gofmt's
-/// tabs, prettier's two spaces, the bare four for the rest.
+/// and make's tabs, prettier's two spaces, the bare four for the rest.
 #[test]
 fn a_language_has_its_own_way() {
     let dir = project(
@@ -89,12 +89,19 @@ fn a_language_has_its_own_way() {
             ("main.go", "package main\n"),
             ("a.ts", "x\n"),
             ("lib.rs", "fn f() {}\n"),
+            ("Makefile", "all:\n"),
         ],
     );
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_in(&mut d, &dir);
     let go = open(&mut d, &mut app, &dir, "main.go");
     assert!(!app.ed.expandtab_in(go));
+    assert_eq!(tab(&mut d, &mut app), "\t");
+    // A recipe line starts with a tab or make refuses it; make is a
+    // language the grammars' manifest lists, installed or not.
+    app.load_grammars(&dir.join("grammars"));
+    let make = open(&mut d, &mut app, &dir, "Makefile");
+    assert!(!app.ed.expandtab_in(make));
     assert_eq!(tab(&mut d, &mut app), "\t");
     let ts = open(&mut d, &mut app, &dir, "a.ts");
     assert_eq!(app.ed.tabstop_in(ts), 2);
@@ -198,7 +205,7 @@ fn a_buffer_reads_the_editorconfig_above_it() {
 
 /// `:editorconfig init` opens a template for the working directory —
 /// `[*]` from the bare settings, a section per way of the languages the
-/// project has files of, Makefiles' tabs — unsaved; `:w` keeps it, and
+/// project has files of, make's tabs among them — unsaved; `:w` keeps it, and
 /// the buffers read it.
 #[test]
 fn init_starts_one_from_the_projects_languages() {
@@ -215,6 +222,8 @@ fn init_starts_one_from_the_projects_languages() {
     );
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_in(&mut d, &dir);
+    // Make is a language of the grammars' manifest, its tabs its row's.
+    app.load_grammars(&dir.join("grammars"));
     ex(&mut d, &mut app, "editorconfig init");
     let v = app.focused_view().unwrap();
     let id = app.ed.views[v].buffer;
@@ -230,18 +239,20 @@ fn init_starts_one_from_the_projects_languages() {
         sections,
         [
             "[*]",
-            "[*.go]",
+            "[{*.go,*.mk,*.mak,Makefile,makefile,GNUmakefile}]",
             "[*.{md,markdown,mdown,mkd}]",
             "[*.{tsx,ts,mts,cts}]",
-            "[{Makefile,makefile,GNUmakefile,*.mk}]",
         ],
         "{text}"
     );
     assert!(text.starts_with("# EditorConfig"), "{text}");
     assert!(text.contains("root = true\n"));
     assert!(text.contains("[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\nindent_style = space\nindent_size = 4\n"), "{text}");
+    // Go's tabs and make's are one way, so one section.
     assert!(
-        text.contains("[*.go]\nindent_style = tab\ntab_width = 4\n"),
+        text.contains(
+            "[{*.go,*.mk,*.mak,Makefile,makefile,GNUmakefile}]\nindent_style = tab\ntab_width = 4\n"
+        ),
         "{text}"
     );
     assert!(

@@ -673,6 +673,10 @@ pub enum Msg {
         /// comment tokens (docs/design/comments.md Decision 3).
         comment: Option<String>,
         comment_block: Option<Vec<String>>,
+        /// `indent_style = "tab"`, `indent_size = 4`: how its files
+        /// indent, in `.editorconfig`'s words.
+        indent_style: Option<String>,
+        indent_size: Option<i64>,
     },
     Colors(Vec<(String, String)>),
     /// `kawoosh.opt(path, value)`: a setting by dotted path, `None` to
@@ -5319,6 +5323,8 @@ fn seed(
                 injections: t.get("injections")?,
                 comment: t.get("comment")?,
                 comment_block: t.get("comment_block")?,
+                indent_style: t.get("indent_style")?,
+                indent_size: t.get("indent_size")?,
                 name,
             });
             Ok(())
