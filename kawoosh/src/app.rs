@@ -2618,6 +2618,12 @@ impl kui_native::App for Kawoosh {
         if let Some(dir) = self.editor_link_dir.take() {
             let _ = std::fs::remove_dir_all(dir);
         }
+        // The socket's file, so `kawoosh-edit` from another terminal
+        // finds no Kawoosh that has gone (`running.rs`), and the temp
+        // directory keeps no file a run.
+        if let Some(sock) = self.socket.take() {
+            let _ = std::fs::remove_file(sock);
+        }
         if !self.session_saved {
             self.save_session();
             self.session_saved = true;

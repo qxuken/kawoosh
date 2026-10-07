@@ -134,6 +134,14 @@ The same socket serves the `kawoosh` command inside a terminal:
 | `kawoosh theme` | print `dark` or `light`, for a prompt hook to follow the theme |
 | `kawoosh pick SOURCE [QUERY]` | the picker on SOURCE (`dirs`, `files`…); prints the pick, or exits 1 |
 
+## $EDITOR outside kawoosh
+
+`kawoosh-edit` and the commands above work from a terminal that is not kawoosh's too — Windows Terminal, another editor's — where there is no `KAWOOSH_SOCKET`: they reach the kawoosh started last, and `kawoosh-edit`, `kawoosh edit` and `kawoosh pick` bring its window to the front. With none running, `kawoosh-edit` and `kawoosh edit` start one — on your last session, the file joining it — and the other commands say so and exit 1. To have `git commit` open in kawoosh from anywhere, set the editor to it, with kawoosh's folder on the `PATH`:
+
+```
+git config --global core.editor kawoosh-edit
+```
+
 ## Bells
 
 `terminal.bell` says what a program's bell does: `sound` (the default) plays a short chime, at most one every quarter second; `visual` plays nothing; `off` ignores it. Unless it is `off`, a terminal that rings while its tab is not in front marks that tab until you visit it. `editor.bell` (off by default) makes the editor ring for its own failures, such as a search with no match.

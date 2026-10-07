@@ -21,7 +21,7 @@ From a shell:
 |---|---|
 | `kawoosh FILE` | open FILE; a directory opens as a listing |
 | `kawoosh` | no path: the last session comes back — its tabs, panes and unsaved text |
-| `kawoosh edit +LINE FILE` | from a terminal inside kawoosh, open FILE in the running window |
+| `kawoosh edit +LINE FILE` | open FILE in the running window: this terminal's kawoosh, or from any other the kawoosh started last |
 
 On macOS, Kawoosh.app is in every file's Open With menu: what Finder
 hands it — Open With, a file dropped on the Dock icon, `open -a Kawoosh

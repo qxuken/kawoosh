@@ -66,7 +66,9 @@ fn load_fonts(core: &mut Core) -> (Option<kui_native::FontId>, HashSet<String>) 
 
 /// `kawoosh edit [--wait] [+LINE] PATH…`, `kawoosh ex LINE`, `kawoosh
 /// theme` and `kawoosh pick SOURCE [QUERY]`: the CLI shim, talking to
-/// the running instance over `$KAWOOSH_SOCKET` (mvp.md Decision 3b).
+/// the running instance over `$KAWOOSH_SOCKET` (mvp.md Decision 3b) —
+/// or, from a terminal not Kawoosh's, to the Kawoosh started last; for
+/// `edit`, one started when none runs.
 /// `edit --wait` is what every pty's `$EDITOR` runs (as
 /// `kawoosh-edit`, `app::shipped_editor`), `theme`
 /// answers `dark` or `light` — what a shell's prompt hook reads to pick
@@ -82,10 +84,23 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
         return Ok(false);
     }
     attach_console();
-    let Some(sock) = std::env::var_os("KAWOOSH_SOCKET") else {
-        anyhow::bail!("{verb}: no running kawoosh (KAWOOSH_SOCKET is not set)");
+    // A file to edit starts a Kawoosh when none runs; the other verbs
+    // ask one that is there — a prompt hook's `kawoosh theme` opens no
+    // window.
+    let found = if verb == "edit" && args.len() > 1 {
+        kawoosh::running::socket_or_start()
+            .map_err(|e| anyhow::anyhow!("{verb}: no running kawoosh, and none started: {e}"))?
+    } else {
+        kawoosh::running::socket().ok_or_else(|| anyhow::anyhow!("{verb}: no running kawoosh"))?
     };
-    let sock = std::path::PathBuf::from(sock);
+    let (sock, outside) = found;
+    // From some other program's terminal: the window that opens the
+    // file, or shows the picker, comes to the front.
+    if let Some(pid) = outside
+        && matches!(verb, "edit" | "pick")
+    {
+        kawoosh::running::raise(pid);
+    }
     if verb == "theme" {
         println!("{}", send_request(&sock, &Request::Theme)?);
         return Ok(true);
@@ -124,6 +139,29 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
     }
     kawoosh_systems::io::edit(&sock, &args[1..], false)?;
     Ok(true)
+}
+
+const REUSE: &str = "--reuse";
+
+/// `kawoosh --reuse [PATH]`: what Explorer's Open with and a folder's
+/// "Open in Kawoosh" run (`scripts/windows-app.nu`). PATH goes to the
+/// Kawoosh running already, the one started last, and its window comes
+/// to the front, as Finder hands a document to the running app. True
+/// when one took it; false, and this one opens a window of its own.
+fn hand_over(path: Option<&String>) -> bool {
+    use kawoosh_systems::io::{Request, edit, send_request};
+    for (pid, sock) in kawoosh::running::sockets() {
+        let taken = match path {
+            Some(p) => edit(&sock, std::slice::from_ref(p), false).is_ok(),
+            // Nothing to open: asked whether it answers, to be raised.
+            None => send_request(&sock, &Request::Theme).is_ok(),
+        };
+        if taken {
+            kawoosh::running::raise(pid);
+            return true;
+        }
+    }
+    false
 }
 
 /// On Windows, the console `kawoosh` was run from, for what the CLI
@@ -174,7 +212,8 @@ Usage:
   kawoosh test SCRIPT.lua...     run Lua tests against a headless editor;
                                  exits 0 when every one passes
 
-From a terminal inside kawoosh (through $KAWOOSH_SOCKET):
+From a terminal inside kawoosh (through $KAWOOSH_SOCKET), or from any
+other to the kawoosh started last:
   kawoosh edit [--wait|-w] [+LINE] PATH...
                                  open the paths in the running instance;
                                  --wait returns when the buffer is closed
@@ -193,6 +232,9 @@ Options:
                                  their extensions, as JSON
   --after PID                    open once process PID has exited: what
                                  :relaunch starts
+  --reuse [PATH]                 open PATH in the kawoosh running already,
+                                 its window raised; with none running, as
+                                 `kawoosh PATH`: what Explorer runs
 
 Environment:
   RUST_LOG           stderr log level (trace, debug, info, warn, error, off)
@@ -216,9 +258,11 @@ fn main() -> anyhow::Result<()> {
         args.splice(0..0, ["edit".to_string(), "--wait".to_string()]);
     }
     let after_dashes = args.first().is_some_and(|a| a == "--");
+    let reuse = args.first().is_some_and(|a| a == REUSE);
     // A flag, or `test`: the CLI half, whose output wants a console —
-    // but for `--after`, which is the window.
+    // but for `--after` and `--reuse`, which are the window.
     if !after_dashes
+        && !reuse
         && args.first().is_some_and(|a| {
             (a.starts_with('-') && a != "-" && a != kawoosh::update::AFTER) || a == "test"
         })
@@ -259,6 +303,13 @@ fn main() -> anyhow::Result<()> {
             attach_console();
             std::process::exit(kawoosh::lsp_cli::run(&args[1..]));
         }
+        // What follows is a path, dash or not, as after `--`.
+        Some(REUSE) => {
+            args.remove(0);
+            if hand_over(args.first()) {
+                return Ok(());
+            }
+        }
         // Everything after is a path, dash or not.
         Some("--") => {
             args.remove(0);
@@ -276,7 +327,7 @@ fn main() -> anyhow::Result<()> {
     }
     // `kawoosh test PATH…`: Lua test scripts against a headless editor
     // (`harness.rs`), no window, the exit code the verdict.
-    if args.first().map(String::as_str) == Some("test") && !after_dashes {
+    if args.first().map(String::as_str) == Some("test") && !after_dashes && !reuse {
         std::process::exit(kawoosh::harness::run_files(&args[1..]));
     }
     let path = args.first().cloned();
