@@ -24,6 +24,7 @@ pub mod textobjects;
 pub mod tree_watch;
 pub mod ts;
 pub mod watch;
+pub mod wsl;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};

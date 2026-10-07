@@ -477,17 +477,58 @@ pub fn program_path(program: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// How a domain is reached (docs/design/domains.md Decision 3): the
-/// `ssh` binary, the host as `~/.ssh/config` or `user@host` names it,
-/// and the master's control socket.
+/// How a domain's processes are started: through its ssh master, or
+/// through `wsl.exe` (docs/design/domains.md Decision 7 and W6).
 #[derive(Clone, Debug)]
-pub struct Transport {
+pub enum Transport {
+    Ssh(Ssh),
+    Wsl(crate::wsl::Wsl),
+}
+
+impl Transport {
+    /// The argv that runs `script` — POSIX sh — there; `pty` and
+    /// `forward` are ssh's ([`Ssh::remote_argv`]), a distro needing
+    /// neither.
+    pub fn remote_argv(
+        &self,
+        script: &str,
+        pty: bool,
+        forward: Option<(u16, &std::path::Path)>,
+    ) -> Vec<String> {
+        match self {
+            Transport::Ssh(s) => s.remote_argv(script, pty, forward),
+            Transport::Wsl(w) => w.remote_argv(script),
+        }
+    }
+
+    /// [`Transport::remote_argv`] with no terminal, as a command to run.
+    pub fn remote_command(&self, script: &str) -> std::process::Command {
+        match self {
+            Transport::Ssh(s) => s.remote_command(script),
+            Transport::Wsl(w) => w.remote_command(script),
+        }
+    }
+
+    /// The connection let go: an ssh master told to go; a distro left
+    /// running, as it was found.
+    pub fn exit(&self) {
+        if let Transport::Ssh(s) = self {
+            s.exit();
+        }
+    }
+}
+
+/// How an ssh domain is reached (docs/design/domains.md Decision 3):
+/// the `ssh` binary, the host as `~/.ssh/config` or `user@host` names
+/// it, and the master's control socket.
+#[derive(Clone, Debug)]
+pub struct Ssh {
     pub ssh: String,
     pub host: String,
     pub ctl: std::path::PathBuf,
 }
 
-impl Transport {
+impl Ssh {
     /// `ssh -S CTL ARGS… HOST`, as a command to run.
     pub fn command(&self, args: &[&str]) -> std::process::Command {
         let mut c = command(&self.ssh);
@@ -531,7 +572,7 @@ impl Transport {
     }
 }
 
-impl Transport {
+impl Ssh {
     /// The argv of an `ssh` that runs `script` — POSIX sh — on the host.
     /// What the host's own login shell is handed is one line every
     /// shell reads alike, bash, zsh, fish or nushell: `sh -c 'eval
@@ -564,7 +605,7 @@ impl Transport {
         v
     }
 
-    /// [`Transport::remote_argv`] with no terminal, as a command to run.
+    /// [`Ssh::remote_argv`] with no terminal, as a command to run.
     pub fn remote_command(&self, script: &str) -> std::process::Command {
         let argv = self.remote_argv(script, false, None);
         let mut c = command(&argv[0]);
@@ -608,7 +649,7 @@ pub fn remote_script(
 }
 
 /// Standard base64, with padding.
-fn base64(bytes: &[u8]) -> String {
+pub(crate) fn base64(bytes: &[u8]) -> String {
     const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for c in bytes.chunks(3) {
@@ -1313,12 +1354,21 @@ pub fn running_sockets() -> Vec<(u32, std::path::PathBuf)> {
 /// The CLI written to the host (`~/.cache/kawoosh`), executable; a
 /// host that refuses keeps its `$EDITOR`, which is the host's then.
 fn install_host_shim(s: &dyn kawoosh_doc::fs::Fs) {
+    install_shim(s, HOST_SHIM);
+}
+
+/// A distro's CLI: the Windows kawoosh through interop (W7).
+fn install_wsl_shim(s: &dyn kawoosh_doc::fs::Fs) {
+    install_shim(s, crate::wsl::SHIM);
+}
+
+fn install_shim(s: &dyn kawoosh_doc::fs::Fs, shim: &str) {
     use std::path::Path;
     let dir = Path::new("~/.cache/kawoosh");
     if s.create(dir, true).is_err() {
         return;
     }
-    for (name, text) in [("kawoosh", HOST_SHIM), ("kawoosh-edit", HOST_EDITOR)] {
+    for (name, text) in [("kawoosh", shim), ("kawoosh-edit", HOST_EDITOR)] {
         // The host's `/`, whatever this platform's separator is.
         let p = kawoosh_doc::paths::host_join(dir, Path::new(name));
         if s.write(&p, text.as_bytes()).is_ok() {
@@ -1336,7 +1386,7 @@ impl Io {
     pub fn connect_domain(
         &self,
         name: String,
-        transport: Transport,
+        transport: Ssh,
         patience: std::time::Duration,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) {
@@ -1362,7 +1412,7 @@ impl Io {
                             Ok(s) => {
                                 install_host_shim(&s);
                                 kawoosh_doc::fs::register(&name, std::sync::Arc::new(s));
-                                register_transport(&name, transport.clone());
+                                register_transport(&name, Transport::Ssh(transport.clone()));
                                 IoMsg::DomainUp { name: name.clone() }
                             }
                             Err(e) => failed(format!("sftp: {e}")),
@@ -1372,6 +1422,31 @@ impl Io {
                         break failed("the master did not come up".into());
                     }
                     thread::sleep(std::time::Duration::from_millis(200));
+                };
+                let _ = tx.send(msg);
+                wake.wake();
+            })
+            .expect("spawning a domain's connect thread");
+    }
+
+    /// A distro connected on a thread (docs/design/domains.md W5): the
+    /// probe — the distro started, if it was not — then its share
+    /// registered as `name`'s files and the CLI written there:
+    /// [`IoMsg::DomainUp`], or [`IoMsg::DomainFailed`] saying why not.
+    pub fn connect_wsl(&self, name: String, wsl: crate::wsl::Wsl) {
+        let tx = self.tx.clone();
+        let wake = self.wake.named("domain");
+        thread::Builder::new()
+            .name(format!("domain-{name}"))
+            .spawn(move || {
+                let msg = match wsl.connect() {
+                    Ok((wsl, fs)) => {
+                        install_wsl_shim(&fs);
+                        kawoosh_doc::fs::register(&name, std::sync::Arc::new(fs));
+                        register_transport(&name, Transport::Wsl(wsl));
+                        IoMsg::DomainUp { name }
+                    }
+                    Err(error) => IoMsg::DomainFailed { name, error },
                 };
                 let _ = tx.send(msg);
                 wake.wake();
@@ -1730,7 +1805,7 @@ mod tests {
             false,
         );
         assert!(s.starts_with("cd \"$HOME\"'/a b' || exit 1\n"), "{s}");
-        let t = Transport {
+        let t = Ssh {
             ssh: "ssh".into(),
             host: "h".into(),
             ctl: "/c".into(),
