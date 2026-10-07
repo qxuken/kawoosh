@@ -6773,6 +6773,39 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh.overstrike(raw)`: text as a pager would show it — the
+    // overstrikes `man` prints (`c\bc` bold, `_\bc` underline) and SGR
+    // (`ESC[1m`, `ESC[4m`) read off — answered as `text, spans, bold`:
+    // the plain text, each line's trailing whitespace off and no line
+    // after the last newline; `{ from, to, style }` runs (bytes from 0,
+    // end exclusive; "bold", "underline" or "bold underline"); and the
+    // lines (from 1, as keys) whose every character but spaces is bold.
+    // What `man.lua` reads a page through.
+    k.set(
+        "overstrike",
+        lua.create_function(|lua, raw: mlua::LuaString| {
+            use kawoosh_systems::overstrike as o;
+            let read = o::read(&raw.as_bytes());
+            let spans = lua.create_table_with_capacity(read.spans.len(), 0)?;
+            for (from, to, style) in read.spans {
+                let word = match style {
+                    o::BOLD => "bold",
+                    o::UNDERLINE => "underline",
+                    _ => "bold underline",
+                };
+                spans.push(lua.create_sequence_from([
+                    LV::Integer(from as i64),
+                    LV::Integer(to as i64),
+                    LV::String(lua.create_string(word)?),
+                ])?)?;
+            }
+            let bold = lua.create_table()?;
+            for ln in read.bold_lines {
+                bold.set(ln + 1, true)?;
+            }
+            Ok((lua.create_string(&read.text)?, spans, bold))
+        })?,
+    )?;
     // `kawoosh.search_wants({ include =, exclude = }, rels)`: for each
     // path (relative to the root), whether the globs want it — as a
     // search would read them; or nil and why a glob does not parse.
