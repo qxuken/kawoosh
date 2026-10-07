@@ -3,7 +3,8 @@
 Status: decided 2026-09-21 (roadmap step 9); built 2026-09-24 as
 roadmap step 27 (see "Built" at the end for where the build departed);
 ssh alone, as the roadmap's terminal track recommended, with wsl the
-note after.
+note after — decided 2026-10-07 with the domains' picker ("WSL, and
+the picker", after "Built").
 Systemic: it touches the io system, `fs`, the pty spawn, the LSP pool,
 compile, the `$EDITOR` shim, sessions and the picker, so it is four
 rounds rather than one (Build order). Each decision keeps the
@@ -363,8 +364,150 @@ host: its diagnostic, its root spelled on the domain, `gd` in the host's
 buffer and no local twin opened) and
 `a_session_on_a_host_restores_lazily_and_a_drop_reconnects`.
 
-Not built, still: WSL (the note after); an agent on the host (Decision
+Not built, still: WSL (the note after, decided below); an agent on the host (Decision
 3's after — the walk's cap and the poll are where it would pay); a
 reconnect that reopens the master's pane by itself; the git
 colours of a `dir` listing on a host, which run `git` there through
 `kawoosh.spawn` and so work, at a round trip each.
+
+## WSL, and the picker
+
+Status: decided 2026-10-07, Windows; not built. The note after, with
+what a picker over the domains needs: every machine within reach
+offered without a line in the settings. Measured on Windows 11 /
+WSL 2.6 / Ubuntu 24.04 (login shell nushell) before deciding: a stock
+distro has no `sftp-server`; `\\wsl.localhost\DISTRO\…` reads and
+lists with nothing installed, a walk ten times slower than a local
+disk's (17,849 entries in 2.7 s against 0.24 s); `wsl.exe -e true` in
+95 ms with the distro up; no change notification through the share,
+made on either side; interop on (`WSLInterop-late`), the networking
+NAT's by default (mirrored here, not to be counted on).
+
+### W1. `wsl` is a second kind, and `wsl:` is built in
+
+```lua
+domains = {
+  box = { ssh = "box" },
+  deb = { wsl = "Debian" },   -- a distro by its WSL name
+}
+```
+
+`wsl:/home/me/x.rs` is the default distro's with no settings at all,
+on Windows with `wsl.exe` on it; `domains.wsl = { wsl = "Debian" }`
+moves it. `kawoosh.domains()` gains the kind beside the target.
+
+*Beat:* the settings only (ssh's way — but the default distro is
+there on every machine that has WSL, and naming it is busywork); each
+distro by its own name (`ubuntu-24.04:/…`, which nobody types — still
+offered by discovery, W2, for the others).
+
+### W2. Discovery: the machines within reach are domains already
+
+A name the settings do not give is looked for, in order: a `Host` of
+`~/.ssh/config` (its `Include`s followed; a pattern with `*`, `?` or
+`!` is not a host) is `{ ssh = NAME }`; a WSL distro (`wsl.exe -l -v`,
+`WSL_UTF8=1` for its output) is `{ wsl = DISTRO }` under its name in
+lower case, the default one also `wsl`. So `:e cdvn1.qxuken.dev:/etc/hosts`
+connects with no settings, as `ssh cdvn1.qxuken.dev` would. The
+settings win a clash, then ssh, then WSL; a name the domain spelling
+cannot carry (a space, a character past letters, digits, `_`, `-`,
+`.`) is not discovered. The distros are asked once a session, on the
+io thread, the first time the picker or a name wants them.
+
+*Beat:* discovery for the picker only (then a picked host's path
+would mean nothing typed again); `known_hosts` (hashed, mostly, and a
+list of every host ever reached, not the ones named).
+
+### W3. The picker opens a tab on the machine
+
+`picker domains` (`<leader>wh`, a launcher section): each domain, its
+kind and target, where it came from (settings, `~/.ssh/config`, WSL)
+and how it stands. `<CR>` opens a new tab on `NAME:~` — its working
+directory the machine's home, listed in `dir` — connecting first when
+it is down: the tab is there at once, its listing when the domain is
+up (the session's lazy open). `<C-o>` connects without a tab.
+
+*Beat:* the pick making the current tab's directory the machine's (the
+`dirs` picker's `<CR>`; a machine is a project of its own, the tab is
+the gesture for one — workspaces.md Decision 6); a terminal tab on the
+host (one `:term` away in the tab, and the listing is what every pane
+the tab opens next starts from).
+
+### W4. A distro's files are the share's
+
+The files go through `\\wsl.localhost\DISTRO` (`\\wsl$\DISTRO` before
+Windows 11) with the standard library — `WslFs`, the third `Fs`; the
+host's `~` its home, learned at connect. An existing file is written
+in place, so its mode, owner and links are the file's still (a
+sibling renamed over loses the mode the share cannot set); a new one
+through a sibling. `set_mode` is a `chmod` through the transport.
+`Fs::local` gives a host path's local twin, and the walk — every
+file under a directory on the domain, the picker's — goes through the
+local walker on it: `.gitignore` read, no cap (`HOST_WALK_MAX` is
+SFTP's), the rows spelled back on the domain.
+
+*Beat:* SFTP through `wsl.exe -e sftp-server` (the ssh code whole, and
+nothing installed to run it); the share's paths as local ones (a
+buffer at `\\wsl.localhost\…` — no process would run there, no language
+server would see its path).
+
+### W5. Connecting is a probe; there is no master
+
+`wsl.exe [-d DISTRO] -e sh -c SCRIPT` on the io thread prints the
+distro's name, its home, the mount root (`wslpath -u 'C:\'`) and the
+login shell's `PATH` (`"$SHELL" -l -c env`: bash, zsh, fish and
+nushell alike); the domain is up when it answers. No pane: there is no
+password to type. A distro stopped meanwhile is started again by the
+next use of the share or of `wsl.exe`, so a WSL domain does not drop;
+`:domain disconnect` forgets it, and stops nothing.
+
+### W6. A process runs through `wsl.exe -e`, with the login `PATH`
+
+`wsl.exe [-d DISTRO] -e sh -c 'eval "$(echo B64 | base64 -d)"'`, the
+same `remote_script` as ssh's, with `PATH` the probe's exported first —
+a language server installed through the login shell's profile
+(linuxbrew, cargo, fnm) found as a terminal there finds it. A terminal
+execs the login shell, as on ssh. `Transport` becomes an enum, `Ssh`
+and `Wsl`, behind the same `remote_argv` / `remote_command`.
+
+*Beat:* `wsl.exe -- CMD`, through the default shell as ssh does it —
+Windows's quoting reaches that shell's `-c` mangled (seen: the line
+arrived as one word); the `PATH` of `-e` alone (no profile read:
+rust-analyzer from cargo not found).
+
+### W7. `$EDITOR` in a distro is the Windows kawoosh
+
+The shim written at connect (`~/.cache/kawoosh/kawoosh`, POSIX sh, so
+a busybox distro runs it) turns each path into Windows's
+(`wslpath -w` on its directory, the name after it) and runs
+`kawoosh.exe` itself through interop — `KAWOOSH_EXE` and
+`KAWOOSH_SOCKET` exported to the terminal, `WSLENV` naming the socket
+for the way back. The Windows CLI speaks the socket as it does from
+any local shell; `kawoosh-edit` beside it is `$EDITOR`.
+
+*Beat:* the host shim's `/dev/tcp/127.0.0.1/PORT` (Windows's loopback
+is WSL's only with mirrored networking); a listener on the WSL
+adapter's address (the firewall asks, and the address moves).
+
+### W8. Two spellings, one file
+
+A distro's `/mnt/c/x` is the local `C:\x`, and the share's
+`\\wsl.localhost\DISTRO\x` (or `\\wsl$\…`) is `NAME:/x`. Each is put
+back the one way wherever a path comes in — `:e`, `:cd`, an open from
+a shell, a terminal's OSC 7, a language server's location — so a file
+is one buffer however it was named.
+
+### W9. Watching is the poll
+
+As on ssh (Decision 5): the share announces nothing. `ssh.poll_secs`
+is the beat of both.
+
+### Build order
+
+1. **Kinds and files.** `Transport` an enum; `domains.NAME.wsl` and
+   the built-in `wsl`; the probe; `WslFs`; W8's spellings; `:domain`
+   showing the kind. Tests on Windows with WSL, skipped without it.
+2. **Processes and terminals.** W6, W7; compile and tools there.
+3. **Discovery and the picker.** W2, W3 — for ssh and WSL both.
+4. **Servers, the walk, sessions, help.** The LSP through `wsl.exe`,
+   `Fs::local` and the walk, a session's WSL tab, `help/remote.md`.
