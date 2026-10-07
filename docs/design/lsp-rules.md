@@ -439,7 +439,18 @@ with).
   `files_changed_outside_reach_the_servers_that_watch_them` and
   `a_loaded_file_changed_on_disk_reaches_the_server` against the fake
   server's `--watch`, `--watch-rel` and `@unwatch`. A server on a host
-  is still not told. The review's fixes (2026-10-03: Windows' unsaid
+  is still not told — looked at 2026-10-07 ("then do the lsp ones") and
+  left for the agent: such a server is not offered
+  `didChangeWatchedFiles` and watches on its own (rust-analyzer, gopls
+  and tsserver fall back to their own watchers for a client that does
+  not), so what another program changes there reaches it. What does not
+  is a file `load_all` sent it from the host: the client holds it open,
+  and a server reads an open document from the client, not the disk.
+  Telling it means something watching on the host — `inotifywait` or
+  `fswatch` where one is installed (neither is, on a stock host), or
+  domains.md's agent — and SFTP's stat of up to `load_max` files a
+  poll is the cost the agent is there to save. Until then, `load_all`
+  on a host is a snapshot as of the walk, `:lsp restart` takes another. The review's fixes (2026-10-03: Windows' unsaid
   overflow, folders and roots made again, loose globs kept to their
   workspace, the made-file walk's cost, the home's ancestors, "no
   repository" forgotten, `load_max` kept with made files) are tested by
