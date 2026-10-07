@@ -846,8 +846,9 @@ impl Settings {
             for lang in two {
                 defaults.set(&format!("language.{lang}.tabstop"), Setting::Int(2));
             }
-            // odinfmt's tabs too.
-            for lang in ["go", "gomod", "odin"] {
+            // odinfmt's tabs too, and make's: a recipe line starts with
+            // a tab or is not one.
+            for lang in ["go", "gomod", "odin", "make"] {
                 defaults.set(&format!("language.{lang}.expandtab"), Setting::Bool(false));
                 defaults.set(&format!("language.{lang}.tabstop"), Setting::Int(4));
             }
@@ -1847,6 +1848,8 @@ mod tests {
                 "language.lua.comment",
                 "language.lua.comment_block",
                 "language.lua.tabstop",
+                "language.make.expandtab",
+                "language.make.tabstop",
                 "language.markdown.comment_block",
                 "language.markdown.tabstop",
                 "language.markdown.trim_trailing_whitespace",

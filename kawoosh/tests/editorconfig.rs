@@ -80,7 +80,7 @@ fn until(d: &mut Drive, app: &mut Kawoosh, what: &str, done: impl Fn(&Kawoosh) -
 }
 
 /// With no `.editorconfig`, a buffer is its language's way: gofmt's
-/// tabs, prettier's two spaces, the bare four for the rest.
+/// and make's tabs, prettier's two spaces, the bare four for the rest.
 #[test]
 fn a_language_has_its_own_way() {
     let dir = project(
@@ -89,12 +89,19 @@ fn a_language_has_its_own_way() {
             ("main.go", "package main\n"),
             ("a.ts", "x\n"),
             ("lib.rs", "fn f() {}\n"),
+            ("Makefile", "all:\n"),
         ],
     );
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_in(&mut d, &dir);
     let go = open(&mut d, &mut app, &dir, "main.go");
     assert!(!app.ed.expandtab_in(go));
+    assert_eq!(tab(&mut d, &mut app), "\t");
+    // A recipe line starts with a tab or make refuses it; make is a
+    // language the grammars' manifest lists, installed or not.
+    app.load_grammars(&dir.join("grammars"));
+    let make = open(&mut d, &mut app, &dir, "Makefile");
+    assert!(!app.ed.expandtab_in(make));
     assert_eq!(tab(&mut d, &mut app), "\t");
     let ts = open(&mut d, &mut app, &dir, "a.ts");
     assert_eq!(app.ed.tabstop_in(ts), 2);

@@ -64,7 +64,7 @@ spaces — ships as `language.NAME` tables in the engine's layer, where
 | language | ships |
 |---|---|
 | javascript, typescript, tsx, json, jsonc, css, yaml, markdown, lua | `tabstop = 2` |
-| go, gomod, odin | `expandtab = false`, `tabstop = 4` |
+| go, gomod, odin, make | `expandtab = false`, `tabstop = 4` |
 | markdown, diff, gitcommit | `trim_trailing_whitespace = false` |
 
 Every other language takes the bare keys (four spaces). `language` is
