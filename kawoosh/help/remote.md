@@ -1,10 +1,19 @@
 # Remote editing
 
-How to edit on another machine over ssh: naming a host, the paths that point at it, what works there, and how `$EDITOR` in a terminal on the host opens files back in kawoosh. Nothing needs to be installed on the host; kawoosh uses your own `ssh` and its configuration.
+How to edit on another machine over ssh, or in a WSL distro on Windows: naming a machine, the paths that point at it, what works there, and how `$EDITOR` in a terminal there opens files back in kawoosh. Nothing needs to be installed on the other side; kawoosh uses your own `ssh` and its configuration, or `wsl.exe`.
+
+## The machines kawoosh knows
+
+A remote machine is a *domain*. Kawoosh finds them on its own:
+
+- every `Host` in `~/.ssh/config` (and the files it `Include`s) that is a name rather than a pattern: `Host box` makes `box` a domain;
+- on Windows, `wsl` is your default WSL distro, and every other distro is a domain under its name in lower case (`debian`).
+
+`<leader>wh` (`:domain pick`) lists them all, how each one stands, and where each was found. Pick one and kawoosh opens a new tab on it: its working directory your home there, listed in the file manager. It connects first when it has to. `<C-o>` in the picker connects without opening a tab.
 
 ## Naming a host
 
-A remote machine is a *domain*: a name you give it in your settings, and the ssh host it connects to.
+You can also name a machine yourself in your settings, which wins over a machine found with the same name.
 
 ```lua
 -- settings.lua
@@ -12,6 +21,7 @@ return {
   domains = {
     box = { ssh = "box" },            -- a Host from ~/.ssh/config
     lab = { ssh = "me@lab.local" },   -- or user@host
+    deb = { wsl = "Debian" },         -- a WSL distro, by its WSL name
   },
 }
 ```
@@ -34,6 +44,7 @@ The first time you use a path on a host that is not connected, kawoosh connects 
 - `:domain connect box` connects.
 - `:domain disconnect box` disconnects.
 - `:domain` lists your domains, how each one stands, and how many of its files are open.
+- `:domain tab box` opens a new tab on `box`, as the picker does.
 
 Connecting opens a terminal in the dock running ssh, so a password, a passphrase or a second factor is asked for where you can answer it. Once ssh is in, the dock steps aside and every later connection to that host (files, terminals, processes) reuses it without asking again. Files travel over SFTP, which your ssh server almost certainly already provides.
 
@@ -60,6 +71,16 @@ When kawoosh connects, it copies a small `kawoosh` command (a bash script) and a
 - `$EDITOR notes.txt` opens the host's `notes.txt` in kawoosh.
 - `"$KAWOOSH_BIN" edit FILE` and `"$KAWOOSH_BIN" theme` work as the local `kawoosh edit` and `kawoosh theme` do.
 
-This needs `bash` on the host, and the host's ssh server must allow port forwarding (`AllowTcpForwarding`).
+This needs `bash` on the host, and the host's ssh server must allow port forwarding (`AllowTcpForwarding`). If your shell's own configuration sets `EDITOR` (nushell's `env.nu`, a `.bashrc`), yours wins; `"$KAWOOSH_BIN" edit --wait` still opens here.
+
+## WSL distros
+
+On Windows, `wsl:~/proj/main.rs` is a file in your default distro, with nothing in your settings. Everything above works there the same way, with a few differences:
+
+- **No password, no pane.** Connecting starts the distro if it is stopped and asks it where your home is; that takes a second or two the first time.
+- **Files** go through Windows' own share of the distro (`\\wsl.localhost\Ubuntu\…`). A file kawoosh saves keeps its permissions. The file picker walks the distro like a local folder: no limit, and `.gitignore` is read.
+- **Programs** (terminals, tools, `:compile`, language servers) run through `wsl.exe` with the `PATH` your login shell sets up, so a language server you installed in the distro with brew, cargo or npm is found.
+- **One file, one buffer.** `\\wsl.localhost\Ubuntu\home\me\x` opens as `wsl:/home/me/x`, and `wsl:/mnt/c/Users/me/x` opens as `C:\Users\me\x`.
+- **`$EDITOR`** in a distro's terminal runs the Windows kawoosh through WSL's interop, so it works whatever WSL's networking mode is.
 
 See also: [files](files.md), [terminal](terminal.md), [settings](settings.md).

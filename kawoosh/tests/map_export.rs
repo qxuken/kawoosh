@@ -213,7 +213,9 @@ fn the_keys_are_grouped_by_module() {
             ],
         ),
         ("<leader>s", &["search", "picker"]),
-        ("<leader>w", &["session", "du", "picker"]),
+        // The machines a tab can be on are the workspace's too
+        // (`<leader>wh`, domains.md W3).
+        ("<leader>w", &["session", "du", "picker", "domain"]),
         ("<leader>y", &["path", "dir"]),
     ] {
         for (k, l) in normal.iter().filter(|(k, _)| k.starts_with(group)) {

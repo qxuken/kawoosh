@@ -372,7 +372,8 @@ colours of a `dir` listing on a host, which run `git` there through
 
 ## WSL, and the picker
 
-Status: decided 2026-10-07, Windows; not built. The note after, with
+Status: decided 2026-10-07, Windows; built the same day (see "Built,
+WSL" at the end). The note after, with
 what a picker over the domains needs: every machine within reach
 offered without a line in the settings. Measured on Windows 11 /
 WSL 2.6 / Ubuntu 24.04 (login shell nushell) before deciding: a stock
@@ -420,7 +421,7 @@ list of every host ever reached, not the ones named).
 
 ### W3. The picker opens a tab on the machine
 
-`picker domains` (`<leader>wh`, a launcher section): each domain, its
+`picker domains` (`<leader>wh`): each domain, its
 kind and target, where it came from (settings, `~/.ssh/config`, WSL)
 and how it stands. `<CR>` opens a new tab on `NAME:~` — its working
 directory the machine's home, listed in `dir` — connecting first when
@@ -511,3 +512,34 @@ is the beat of both.
 3. **Discovery and the picker.** W2, W3 — for ssh and WSL both.
 4. **Servers, the walk, sessions, help.** The LSP through `wsl.exe`,
    `Fs::local` and the walk, a session's WSL tab, `help/remote.md`.
+
+## Built, WSL
+
+**2026-10-07, all four rounds of W's build order in a day.** As
+decided, with these departures. The default distro is the built-in
+`wsl` only; the others are their names in lower case, and a share's
+path is put back on the settings' name for its distro first, `wsl`
+for the default, else that lower-case name (`Kawoosh::one_spelling`,
+called by `resolve`, which every open, `cd` and request goes
+through). `expand` was found joining a drive's or a share's path onto
+a cwd on a host — `:e C:\x` in an ssh tab went to `box:/…/C:\x` — and
+keeps it local now, on Windows, where only a prefix makes a path
+absolute. The picker is not a launcher section: a module's rows are
+asked without `domain pick` having published them. `Fs::local` is
+the trait's ninth method, and `files_named` (the walk for a marker
+file) takes it too. In-place writes are the share's, so W4's "through
+a sibling" for a new file is just the write. Tests, against the real
+distro and skipped without one: `wsl.rs`'s
+`a_distro_is_reached_through_its_share` (a script written, made
+executable, written again and run with its mode kept),
+`ssh_config.rs`'s parse, and domains.rs's `a_wsl_distro_is_a_domain`
+(open, `:w`, both spellings one buffer, a process in the tab's
+directory, a terminal's `kawoosh edit --wait` answered),
+`the_domains_picker_opens_a_tab_on_a_machine` and
+`a_language_server_runs_in_the_distro`. The registry of connected
+domains is the process's, so each test that connects takes a name of
+its own.
+
+Found while testing: a login shell whose own config sets `EDITOR`
+(nushell's `env.nu` here) wins over the one the terminal exports, on
+ssh as in WSL; `$KAWOOSH_BIN edit --wait` is kawoosh's either way.

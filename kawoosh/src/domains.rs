@@ -104,11 +104,48 @@ fn spellable(name: &str) -> bool {
     kawoosh_systems::fs::domain_of(Path::new(&format!("{name}:/"))).is_some_and(|(n, _)| n == name)
 }
 
+/// Where a domain was found (W2), as the picker says it.
+const FROM_SETTINGS: &str = "settings";
+const FROM_SSH: &str = "~/.ssh/config";
+const FROM_WSL: &str = "WSL";
+
 impl Kawoosh {
     /// What a domain is: what the settings say (`domains.NAME.ssh`,
-    /// `domains.NAME.wsl`), else `wsl` the default distro, else a
-    /// distro under its name in lower case.
+    /// `domains.NAME.wsl`), else a `Host` of `~/.ssh/config`, else `wsl`
+    /// the default distro, else a distro under its name in lower case.
     pub(crate) fn domain_kind(&self, name: &str) -> Option<Kind> {
+        if let Some(k) = self.configured_kind(name) {
+            return Some(k);
+        }
+        if kawoosh_systems::ssh_config::hosts()
+            .iter()
+            .any(|h| h == name)
+        {
+            return Some(Kind::Ssh(name.to_string()));
+        }
+        if name == "wsl" && kawoosh_systems::wsl::exe().is_some() {
+            return Some(Kind::Wsl(None));
+        }
+        self.distros()
+            .iter()
+            .find(|(d, default)| !default && d.to_lowercase() == name)
+            .map(|(d, _)| Kind::Wsl(Some(d.clone())))
+    }
+
+    /// Whether a domain not connected is a distro — asked without
+    /// reading `~/.ssh/config` unless the name could be one, since every
+    /// `resolve` of a path on it asks.
+    fn is_wsl(&self, name: &str) -> bool {
+        if let Some(k) = self.configured_kind(name) {
+            return matches!(k, Kind::Wsl(_));
+        }
+        let distro_like = (name == "wsl" && kawoosh_systems::wsl::exe().is_some())
+            || self.distros().iter().any(|(d, _)| d.to_lowercase() == name);
+        distro_like && matches!(self.domain_kind(name), Some(Kind::Wsl(_)))
+    }
+
+    /// What `domains.NAME` in the settings says a domain is.
+    fn configured_kind(&self, name: &str) -> Option<Kind> {
         let str_of = |s: Option<&Setting>| match s {
             Some(Setting::Str(h)) if !h.is_empty() => Some(h.clone()),
             _ => None,
@@ -125,13 +162,7 @@ impl Kawoosh {
             Some(Setting::Str(h)) if !h.is_empty() => return Some(Kind::Ssh(h.clone())),
             _ => {}
         }
-        if name == "wsl" && kawoosh_systems::wsl::exe().is_some() {
-            return Some(Kind::Wsl(None));
-        }
-        self.distros()
-            .iter()
-            .find(|(d, default)| !default && d.to_lowercase() == name)
-            .map(|(d, _)| Kind::Wsl(Some(d.clone())))
+        None
     }
 
     /// WSL's distros, asked once a session.
@@ -144,27 +175,36 @@ impl Kawoosh {
         })
     }
 
-    /// Every domain there is: the settings' first, then `wsl` and the
-    /// other distros under their names.
-    fn all_domains(&self) -> Vec<(String, Kind)> {
-        let mut out: Vec<(String, Kind)> = match self.ed.settings.get("domains") {
+    /// Every domain there is, with where it was found: the settings'
+    /// first, then the hosts of `~/.ssh/config`, then `wsl` and the other
+    /// distros under their names — a name once, the first's.
+    fn all_domains(&self) -> Vec<(String, Kind, &'static str)> {
+        let mut out: Vec<(String, Kind, &'static str)> = match self.ed.settings.get("domains") {
             Some(Setting::Table(t)) => t
                 .keys()
-                .filter_map(|n| Some((n.clone(), self.domain_kind(n)?)))
+                .filter_map(|n| Some((n.clone(), self.configured_kind(n)?, FROM_SETTINGS)))
                 .collect(),
             _ => Vec::new(),
         };
-        let add = |out: &mut Vec<(String, Kind)>, name: String, kind: Kind| {
-            if spellable(&name) && !out.iter().any(|(n, _)| *n == name) {
-                out.push((name, kind));
+        let add = |out: &mut Vec<(String, Kind, &'static str)>, name: String, kind, from| {
+            if spellable(&name) && !out.iter().any(|(n, _, _)| *n == name) {
+                out.push((name, kind, from));
             }
         };
+        for h in kawoosh_systems::ssh_config::hosts() {
+            add(&mut out, h.clone(), Kind::Ssh(h), FROM_SSH);
+        }
         if kawoosh_systems::wsl::exe().is_some() && !self.distros().is_empty() {
-            add(&mut out, "wsl".into(), Kind::Wsl(None));
+            add(&mut out, "wsl".into(), Kind::Wsl(None), FROM_WSL);
         }
         for (d, default) in self.distros() {
             if !default {
-                add(&mut out, d.to_lowercase(), Kind::Wsl(Some(d.clone())));
+                add(
+                    &mut out,
+                    d.to_lowercase(),
+                    Kind::Wsl(Some(d.clone())),
+                    FROM_WSL,
+                );
             }
         }
         out
@@ -176,7 +216,7 @@ impl Kawoosh {
     fn distro_domain(&self, distro: &str) -> Option<String> {
         if let Some(Setting::Table(t)) = self.ed.settings.get("domains") {
             for n in t.keys() {
-                if let Some(Kind::Wsl(Some(d))) = self.domain_kind(n)
+                if let Some(Kind::Wsl(Some(d))) = self.configured_kind(n)
                     && d.eq_ignore_ascii_case(distro)
                 {
                     return Some(n.clone());
@@ -216,7 +256,7 @@ impl Kawoosh {
         let mount = match kawoosh_systems::io::transport_of(name) {
             Some(Transport::Ssh(_)) => return path,
             Some(Transport::Wsl(w)) => w.probe.map(|p| p.mount),
-            None if matches!(self.domain_kind(name), Some(Kind::Wsl(_))) => None,
+            None if self.is_wsl(name) => None,
             None => return path,
         };
         let mount = mount.unwrap_or_else(|| "/mnt/".into());
@@ -448,8 +488,8 @@ impl Kawoosh {
         self.domains.pending = later;
         for (_, p) in now {
             match p {
-                Pending::Open(path) => self.open(&path),
-                Pending::Cd(dir) => self.set_cwd(&dir),
+                Pending::Open(path) => self.open(&from_home(path)),
+                Pending::Cd(dir) => self.set_cwd(&from_home(dir)),
             }
         }
     }
@@ -509,30 +549,102 @@ impl Kawoosh {
             );
             return out;
         }
-        for (name, kind) in all {
-            let state = match self.domains.state.get(&name) {
-                None => "down".to_string(),
-                Some(State::Connecting { .. }) => "connecting".into(),
-                Some(State::Up { .. }) => "up".into(),
-                Some(State::Failed(e)) => format!("failed: {e}"),
+        for (name, kind, _) in all {
+            let state = match self.domain_state(&name) {
+                (s, Some(e)) => format!("{s}: {e}"),
+                (s, None) => s.to_string(),
             };
-            let open = self
-                .ed
-                .buffers
-                .values()
-                .filter(|b| {
-                    b.path
-                        .as_deref()
-                        .and_then(kawoosh_systems::fs::domain_of)
-                        .is_some_and(|(d, _)| d == name)
-                })
-                .count();
             out.push_str(&format!(
-                "{name}\t{}\t{state}\t{open} open\n",
-                kind.describe()
+                "{name}\t{}\t{state}\t{} open\n",
+                kind.describe(),
+                self.domain_open(&name)
             ));
         }
         out
+    }
+
+    /// How a domain stands — `down`, `connecting`, `up`, `failed` — and
+    /// why it failed.
+    fn domain_state(&self, name: &str) -> (&'static str, Option<String>) {
+        match self.domains.state.get(name) {
+            None => ("down", None),
+            Some(State::Connecting { .. }) => ("connecting", None),
+            Some(State::Up { .. }) if kawoosh_doc::fs::is_registered(name) => ("up", None),
+            Some(State::Up { .. }) => ("down", None),
+            Some(State::Failed(e)) => ("failed", Some(e.clone())),
+        }
+    }
+
+    /// How many buffers are open on a domain.
+    fn domain_open(&self, name: &str) -> usize {
+        self.ed
+            .buffers
+            .values()
+            .filter(|b| {
+                b.path
+                    .as_deref()
+                    .and_then(kawoosh_systems::fs::domain_of)
+                    .is_some_and(|(d, _)| d == name)
+            })
+            .count()
+    }
+
+    /// `:domain pick` (W3): every domain there is — the settings', the
+    /// ssh config's hosts, WSL's distros — and how each stands, in the
+    /// picker, whose pick opens a tab on one.
+    pub(crate) fn domain_pick(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            self.ed.message = "the domains' picker needs lua".into();
+            return;
+        };
+        let snap: Vec<kawoosh_lua::DomainSnap> = self
+            .all_domains()
+            .into_iter()
+            .map(|(name, kind, from)| {
+                let (state, error) = self.domain_state(&name);
+                let (kind, target) = match kind {
+                    Kind::Ssh(h) => ("ssh", h),
+                    Kind::Wsl(d) => ("wsl", d.unwrap_or_default()),
+                };
+                kawoosh_lua::DomainSnap {
+                    open: self.domain_open(&name),
+                    name,
+                    kind: kind.into(),
+                    target,
+                    from: from.into(),
+                    state: state.into(),
+                    error,
+                }
+            })
+            .collect();
+        rt.set_domains(Some(std::rc::Rc::new(snap)));
+        self.run_lua_source("domains", "kawoosh.picker.open(\"domains\")");
+    }
+
+    /// `:domain tab NAME` (W3): a new tab on the machine, its working
+    /// directory the home there and listed — connected first when it is
+    /// down, the tab there at once and its directory once it is up.
+    pub(crate) fn domain_tab(&mut self, name: &str) {
+        if self.domain_kind(name).is_none() {
+            self.ed.message = format!("no domain named {name}");
+            return;
+        }
+        let home = from_home(kawoosh_systems::fs::on_domain(name, Path::new("~")));
+        self.shell_command("tab new", &[], None);
+        self.set_cwd(&home);
+        self.open(&home);
+    }
+}
+
+/// A directory on a domain spelled from its home (`box:~/p`) as the
+/// host says it (`box:/home/me/p`), once the domain is up: a tab's
+/// directory, which a terminal's reports compare with.
+fn from_home(dir: PathBuf) -> PathBuf {
+    match kawoosh_systems::fs::domain_of(&dir) {
+        Some((_, rest)) if rest.starts_with("~") => {
+            kawoosh_systems::fs::canonicalize(&dir).unwrap_or(dir)
+        }
+        _ => dir,
     }
 }
 
@@ -543,6 +655,21 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             |k, _| {
                 let text = k.domain_listing();
                 k.show_in_pane("*domains*", &text);
+            },
+        ),
+        cmd(
+            Spec::new("domain pick").doc(
+                "every domain — the settings', ~/.ssh/config's hosts, WSL's distros — in a picker; a pick opens a tab on it",
+            ),
+            |k, _| k.domain_pick(),
+        ),
+        cmd(
+            Spec::new("domain tab")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("a new tab on domain NAME, its home listed: connected first when it is down"),
+            |k, ctx| match ctx.args.first() {
+                Some(n) => k.domain_tab(n),
+                None => k.ed.message = "a tab on which domain?".into(),
             },
         ),
         cmd(

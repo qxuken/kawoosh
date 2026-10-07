@@ -69,9 +69,9 @@ Designed or obvious, and nothing in daily use has wanted it yet.
   users without a compiler ask; MSVC `cl` as a compiler, whose flags
   are another compiler's (not tried; mingw `cc`, `clang` and `zig cc`
   are). ([grammars.md](design/grammars.md) Decision 9)
-- **Windows, not built there** (run 2026-10-07): WSL as a domain
-  (domains.md, "the note after"); a tray, for the glyph `assets/icons`
-  has. (`terminal.raw` by program, found missing the same day, was
+- **Windows, not built there** (run 2026-10-07): a tray, for the glyph
+  `assets/icons` has. (WSL as a domain was built the same day:
+  domains.md, "WSL, and the picker".) (`terminal.raw` by program, found missing the same day, was
   built then: terminal-keys.md Decision 2.)
 - **Keys reserved, nothing behind them**: `]e` `[e` (pins), `gsf`
   `gsh`, `<leader>R` (rename the file), `<leader>E`. ([keys.md](design/keys.md),

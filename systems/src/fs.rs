@@ -562,7 +562,13 @@ pub fn drives() -> Vec<PathBuf> {
 /// Stops at `max` paths, so a walk started in `/` costs a bounded
 /// amount rather than the disk.
 pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
-    if on_host(root).is_some() {
+    if let Some(h) = on_host(root) {
+        // A host whose files are reached here too (a WSL distro's
+        // share): the local walk, its rows the host's, cut on `/`.
+        if let Some(local) = h?.0.local(domain_of(root).expect("on a host").1) {
+            let rows = walk(&local, max)?;
+            return Ok(rows.into_iter().map(|r| r.replace('\\', "/")).collect());
+        }
         return walk_host_cached(root, max.min(HOST_WALK_MAX));
     }
     if !root.is_dir() {
@@ -602,11 +608,28 @@ pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
 /// The files named `name` under `root`, as [`walk`] sees it — nothing
 /// git ignores, so no `node_modules` — in the walk's order. Stops at
 /// `max` found, and after `look` entries seen, so a vast tree costs a
-/// bounded amount. A host's tree is not walked for it: nothing is found
-/// there.
+/// bounded amount. A host's tree is not walked for it — nothing is found
+/// there — unless it is reached here too (a WSL distro's share), where
+/// what is found is spelled on its domain.
 pub fn files_named(root: &Path, name: &str, max: usize, look: usize) -> Vec<PathBuf> {
-    if on_host(root).is_some() {
-        return Vec::new();
+    if let Some(h) = on_host(root) {
+        let Some((domain, rest)) = domain_of(root) else {
+            return Vec::new();
+        };
+        let Some(local) = h.ok().and_then(|(fs, _)| fs.local(rest)) else {
+            return Vec::new();
+        };
+        return files_named(&local, name, max, look)
+            .into_iter()
+            .filter_map(|p| {
+                let under = p
+                    .strip_prefix(&local)
+                    .ok()?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                Some(on_domain(domain, &host_join(rest, Path::new(&under))))
+            })
+            .collect();
     }
     let mut out = Vec::new();
     let walk = ignore::WalkBuilder::new(root)

@@ -630,7 +630,12 @@ impl Kawoosh {
                         envs.push(("KAWOOSH_EXE".into(), exe));
                     }
                     envs.push(("KAWOOSH_SOCKET".into(), sock.display().to_string()));
-                    envs.push(("WSLENV".into(), "KAWOOSH_SOCKET".into()));
+                    // Ahead of what this side's `WSLENV` passes already.
+                    let wslenv = match std::env::var("WSLENV") {
+                        Ok(v) if !v.is_empty() => format!("KAWOOSH_SOCKET:{v}"),
+                        _ => "KAWOOSH_SOCKET".into(),
+                    };
+                    envs.push(("WSLENV".into(), wslenv));
                 }
             }
             envs.push(("KAWOOSH_BIN".into(), format!("{shim}/kawoosh")));

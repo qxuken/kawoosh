@@ -721,3 +721,150 @@ fn a_wsl_distro_is_a_domain() {
     std::fs::remove_dir_all(local(&dir)).ok();
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// The domains' picker (domains.md W3): every domain there is — the
+/// settings' first, how each stands — and a pick a new tab on the
+/// machine, its home listed and its working directory, connected first.
+#[test]
+fn the_domains_picker_opens_a_tab_on_a_machine() {
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "set domains.zbox.ssh=nowhere.invalid");
+    ex(&mut d, &mut app, "domain pick");
+    app.run_lua_source(
+        "t",
+        r#"local d = kawoosh.domains()[1]; kawoosh.echo(d.name .. "|" .. d.kind .. "|" .. d.target .. "|" .. d.from .. "|" .. d.state)"#,
+    );
+    assert_eq!(app.ed.message, "zbox|ssh|nowhere.invalid|settings|down");
+    let Some(probe) = kawoosh_systems::wsl::Wsl::new(None).and_then(|w| w.probe().ok()) else {
+        eprintln!("no WSL distro here: the tab skipped");
+        return;
+    };
+    app.run_lua_source(
+        "t",
+        r#"for _, d in ipairs(kawoosh.domains()) do if d.name == "wsl" then kawoosh.echo(d.from .. "|" .. d.target) end end"#,
+    );
+    assert_eq!(app.ed.message, "WSL|", "the default distro, found");
+    // The distro under a name of this test's: the registry of connected
+    // domains is the process's, and another test has `wsl`.
+    d.key(&mut app, "escape", KeyMods::default());
+    let name = format!("w{}", std::process::id());
+    ex(
+        &mut d,
+        &mut app,
+        &format!("set domains.{name}.wsl={}", probe.distro),
+    );
+    ex(&mut d, &mut app, "domain pick");
+    let tabs = app.layout.tabs.len();
+    d.keys(&mut app, &name);
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(app.layout.tabs.len(), tabs + 1, "a tab, at once");
+    let home = format!("{name}:{}", probe.home);
+    until(&mut d, &mut app, "the home listed in the tab", |a| {
+        focused_name(a) == format!("dir: {home}")
+    });
+    assert_eq!(app.ed.cwd, Path::new(&home), "the tab's directory");
+    app.shell_command("domain disconnect", &[name], None);
+}
+
+/// A language server for a distro's file runs in the distro, through
+/// `wsl.exe` with the login shell's PATH, in the project's root there;
+/// what it says of its own paths comes back on the domain. A walk of
+/// the distro's directory is the local walker's over the share, cut on
+/// `/`, hidden entries left out.
+#[test]
+fn a_language_server_runs_in_the_distro() {
+    let Some(probe) = kawoosh_systems::wsl::Wsl::new(None).and_then(|w| w.probe().ok()) else {
+        eprintln!("no WSL distro here: skipped");
+        return;
+    };
+    let share = kawoosh_systems::wsl::share(&probe.distro).expect("the distro's share");
+    let dir = format!("/tmp/kawoosh-wsl-lsp-{}", std::process::id());
+    let local = |p: &str| share.join(p.trim_start_matches('/').replace('/', "\\"));
+    std::fs::create_dir_all(local(&format!("{dir}/proj/src"))).unwrap();
+    std::fs::create_dir_all(local(&format!("{dir}/proj/.hidden"))).unwrap();
+    std::fs::write(
+        local(&format!("{dir}/proj/Cargo.toml")),
+        "[package]\nname = \"x\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        local(&format!("{dir}/proj/src/main.rs")),
+        "fn main() {\n    hel\n}\n",
+    )
+    .unwrap();
+    std::fs::write(local(&format!("{dir}/proj/.hidden/x")), "").unwrap();
+
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    // A name of this test's: the registry of connected domains is the
+    // process's, and another test has `wsl`.
+    let name = format!("l{}w", std::process::id());
+    ex(
+        &mut d,
+        &mut app,
+        &format!("set domains.{name}.wsl={}", probe.distro),
+    );
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_lsp.py");
+    let script = kawoosh_systems::fs::canonicalize(&script).unwrap();
+    app.add_lsp_server(kawoosh_systems::lsp::ServerDef {
+        language: "rust".into(),
+        command: "python3".into(),
+        args: vec![kawoosh_systems::wsl::mounted(&script, &probe.mount).unwrap()],
+        roots: vec!["Cargo.toml".into()],
+        ..Default::default()
+    });
+    let proj = format!("{name}:{dir}/proj");
+    let file = format!("{proj}/src/main.rs");
+    ex(&mut d, &mut app, &format!("e {file}"));
+    until(&mut d, &mut app, "the distro's file open", |a| {
+        a.focused_view()
+            .is_some_and(|v| a.ed.buffer_of(v).path.as_deref() == Some(Path::new(&file)))
+    });
+    let v = app.focused_view().unwrap();
+    let id = app.ed.views[v].buffer;
+    until(&mut d, &mut app, "the server's diagnostic", |a| {
+        a.ed.diagnostics
+            .of(id)
+            .iter()
+            .map(|d| d.message.as_str())
+            .eq(["boom"])
+    });
+    let roots: Vec<String> = app
+        .lsp
+        .status
+        .iter()
+        .map(|s| s.0.display().to_string())
+        .collect();
+    assert_eq!(roots, std::slice::from_ref(&proj), "its root, spelled on the domain");
+    d.keys(&mut app, "gd");
+    until(
+        &mut d,
+        &mut app,
+        "the definition, in the distro's buffer",
+        |a| {
+            let v = a.focused_view().unwrap();
+            a.ed.views[v].buffer == id
+                && a.ed.buffer_of(v).line_of(a.ed.views[v].sels.primary().head) == 1
+        },
+    );
+    assert_eq!(
+        app.ed.buffers.values().filter(|b| b.path.is_some()).count(),
+        1,
+        "no twin opened"
+    );
+    assert_eq!(
+        kawoosh_systems::fs::walk(Path::new(&proj), 100).unwrap(),
+        ["Cargo.toml", "src/main.rs"]
+    );
+    app.shell_command("domain disconnect", &[name], None);
+    std::fs::remove_dir_all(local(&dir)).ok();
+}

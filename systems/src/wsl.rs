@@ -333,7 +333,7 @@ impl WslFs {
     }
 
     /// Where the share serves the distro's path.
-    pub fn local(&self, path: &Path) -> PathBuf {
+    pub fn on_share(&self, path: &Path) -> PathBuf {
         let mut p = self.root.clone();
         for c in self.host(path).split('/').filter(|c| !c.is_empty()) {
             p.push(c);
@@ -352,7 +352,7 @@ fn modified(m: &std::fs::Metadata) -> Option<u64> {
 
 impl Fs for WslFs {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        std::fs::read(self.local(path))
+        std::fs::read(self.on_share(path))
     }
 
     /// In place for a file that is there — its mode, owner and links
@@ -360,7 +360,7 @@ impl Fs for WslFs {
     /// would lose — and created for one that is not.
     fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
         use std::io::Write;
-        let p = self.local(path);
+        let p = self.on_share(path);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -371,7 +371,7 @@ impl Fs for WslFs {
     }
 
     fn stat(&self, path: &Path) -> io::Result<Stat> {
-        let p = self.local(path);
+        let p = self.on_share(path);
         let link = std::fs::symlink_metadata(&p)?;
         let m = std::fs::metadata(&p).unwrap_or_else(|_| link.clone());
         Ok(Stat {
@@ -385,7 +385,7 @@ impl Fs for WslFs {
 
     fn list(&self, dir: &Path) -> io::Result<Vec<Entry>> {
         let mut out = Vec::new();
-        for e in std::fs::read_dir(self.local(dir))? {
+        for e in std::fs::read_dir(self.on_share(dir))? {
             let e = e?;
             let name = e.file_name().to_string_lossy().into_owned();
             let is_symlink = e.file_type().is_ok_and(|t| t.is_symlink());
@@ -402,15 +402,15 @@ impl Fs for WslFs {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        let to = self.local(to);
+        let to = self.on_share(to);
         if let Some(parent) = to.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::rename(self.local(from), to)
+        std::fs::rename(self.on_share(from), to)
     }
 
     fn remove(&self, path: &Path) -> io::Result<()> {
-        let p = self.local(path);
+        let p = self.on_share(path);
         if std::fs::symlink_metadata(&p)?.is_dir() {
             std::fs::remove_dir_all(p)
         } else {
@@ -419,7 +419,7 @@ impl Fs for WslFs {
     }
 
     fn create(&self, path: &Path, is_dir: bool) -> io::Result<()> {
-        let p = self.local(path);
+        let p = self.on_share(path);
         if is_dir {
             return std::fs::create_dir_all(p);
         }
@@ -434,17 +434,21 @@ impl Fs for WslFs {
         let host = self.host(path);
         // Through the share, a link resolves as Windows reads it; where
         // that fails the path folded is the answer.
-        let real = std::fs::canonicalize(self.local(Path::new(&host)))
+        let real = std::fs::canonicalize(self.on_share(Path::new(&host)))
             .ok()
             .and_then(|p| on_share(&p))
             .map(|(_, p)| p);
-        if self.local(Path::new(&host)).exists() || real.is_some() {
+        if self.on_share(Path::new(&host)).exists() || real.is_some() {
             return Ok(PathBuf::from(real.unwrap_or(host)));
         }
         Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!("{host}: no such file or directory"),
         ))
+    }
+
+    fn local(&self, path: &Path) -> Option<PathBuf> {
+        Some(self.on_share(path))
     }
 
     fn set_mode(&self, path: &Path, mode: u32) -> io::Result<()> {
