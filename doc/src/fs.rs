@@ -68,6 +68,12 @@ pub trait Fs: Send + Sync {
     fn is_alive(&self) -> bool {
         true
     }
+    /// Where this machine reaches the host's `path` itself, when it does
+    /// — a WSL distro's share — so a walk goes through the local walker,
+    /// `.gitignore` and all. None over SFTP.
+    fn local(&self, _path: &Path) -> Option<PathBuf> {
+        None
+    }
 }
 
 type Domains = RwLock<HashMap<String, Arc<dyn Fs>>>;

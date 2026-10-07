@@ -608,9 +608,36 @@ impl Kawoosh {
             ("KAWOOSH_DOMAIN".to_string(), name.to_string()),
         ];
         let port = remote_port();
-        if self.socket.is_some() {
+        if let Some(sock) = &self.socket {
             let shim = "$HOME/.cache/kawoosh".to_string();
-            envs.push(("KAWOOSH_PORT".into(), port.to_string()));
+            match &t {
+                kawoosh_systems::io::Transport::Ssh(_) => {
+                    envs.push(("KAWOOSH_PORT".into(), port.to_string()));
+                }
+                // In a distro the shim runs this very binary through
+                // interop (W7): its path as the distro sees it, and the
+                // socket's handed back to it through `WSLENV`.
+                kawoosh_systems::io::Transport::Wsl(w) => {
+                    let mount = w.probe.as_ref().map_or("/mnt/", |p| p.mount.as_str());
+                    let exe = self
+                        .cli_exe
+                        .clone()
+                        .or_else(|| std::env::current_exe().ok());
+                    if let Some(exe) = exe
+                        .map(|e| kawoosh_systems::fs::canonicalize(&e).unwrap_or(e))
+                        .and_then(|e| kawoosh_systems::wsl::mounted(&e, mount))
+                    {
+                        envs.push(("KAWOOSH_EXE".into(), exe));
+                    }
+                    envs.push(("KAWOOSH_SOCKET".into(), sock.display().to_string()));
+                    // Ahead of what this side's `WSLENV` passes already.
+                    let wslenv = match std::env::var("WSLENV") {
+                        Ok(v) if !v.is_empty() => format!("KAWOOSH_SOCKET:{v}"),
+                        _ => "KAWOOSH_SOCKET".into(),
+                    };
+                    envs.push(("WSLENV".into(), wslenv));
+                }
+            }
             envs.push(("KAWOOSH_BIN".into(), format!("{shim}/kawoosh")));
             for k in ["EDITOR", "VISUAL", "GIT_EDITOR"] {
                 envs.push((k.into(), format!("{shim}/kawoosh-edit")));
@@ -621,7 +648,11 @@ impl Kawoosh {
             None => "exec \"${SHELL:-/bin/sh}\" -l".to_string(),
         };
         let script = remote_script(dir, &envs, &exec, cmd.is_none());
-        let forward = self.socket.as_deref().map(|s| (port, s));
+        let forward = self
+            .socket
+            .as_deref()
+            .filter(|_| matches!(t, kawoosh_systems::io::Transport::Ssh(_)))
+            .map(|s| (port, s));
         Some(t.remote_argv(&script, true, forward))
     }
 

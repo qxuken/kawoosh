@@ -972,6 +972,8 @@ pub struct Published {
     pub actions: Option<Rc<Vec<ActionSnap>>>,
     /// The compile commands `compile pick` last offered.
     pub compile_offer: Option<Rc<Vec<CompileOfferSnap>>>,
+    /// The domains `domain pick` last offered.
+    pub domains: Option<Rc<Vec<DomainSnap>>>,
     /// Each editor pane's size as last drawn (`kawoosh.pane_size`),
     /// by pane id.
     pub panes: HashMap<u64, PaneGeom>,
@@ -1042,6 +1044,25 @@ pub struct CompileOfferSnap {
     pub needs: bool,
     /// How it is declared (a `def`'s signature, a recipe's line).
     pub detail: Vec<String>,
+}
+
+/// One domain as `kawoosh.domains()` reads it (the picker's `domains`
+/// source, docs/design/domains.md W3).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DomainSnap {
+    pub name: String,
+    /// `ssh` or `wsl`.
+    pub kind: String,
+    /// The host, the distro, or empty for the default distro.
+    pub target: String,
+    /// What made it one: `settings`, `~/.ssh/config`, `WSL`.
+    pub from: String,
+    /// `down`, `connecting`, `up` or `failed`.
+    pub state: String,
+    /// Why it failed, the last time.
+    pub error: Option<String>,
+    /// Its buffers open.
+    pub open: usize,
 }
 
 /// A plugin's kind of build (`kawoosh.compile_kind`, compile.md Decision
@@ -1193,6 +1214,7 @@ impl Default for Published {
             candidate: 0,
             actions: None,
             compile_offer: None,
+            domains: None,
             panes: HashMap::new(),
             pane: 0,
             diagnostics: Rc::new(Vec::new()),
@@ -1537,6 +1559,11 @@ impl Runtime {
     /// The compile commands for `kawoosh.compile_offer()`.
     pub fn set_compile_offer(&self, offer: Option<Rc<Vec<CompileOfferSnap>>>) {
         self.published.borrow_mut().compile_offer = offer;
+    }
+
+    /// The domains for `kawoosh.domains()`.
+    pub fn set_domains(&self, domains: Option<Rc<Vec<DomainSnap>>>) {
+        self.published.borrow_mut().domains = domains;
     }
 
     /// What the memory has not flushed yet (memory.md Decision 3):
@@ -4765,6 +4792,31 @@ fn seed(
                     "detail",
                     lua.create_sequence_from(o.detail.iter().map(String::as_str))?,
                 )?;
+                t.set(i + 1, e)?;
+            }
+            Ok(LV::Table(t))
+        })?,
+    )?;
+    // ---- kawoosh.domains(): what `domain pick` last offered — `{ name,
+    // kind, target, from, state, error, open }` each — or nil before.
+    let pp = published.clone();
+    k.set(
+        "domains",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let Some(domains) = &p.domains else {
+                return Ok(LV::Nil);
+            };
+            let t = lua.create_table()?;
+            for (i, d) in domains.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("name", d.name.as_str())?;
+                e.set("kind", d.kind.as_str())?;
+                e.set("target", d.target.as_str())?;
+                e.set("from", d.from.as_str())?;
+                e.set("state", d.state.as_str())?;
+                e.set("error", d.error.as_deref())?;
+                e.set("open", d.open)?;
                 t.set(i + 1, e)?;
             }
             Ok(LV::Table(t))

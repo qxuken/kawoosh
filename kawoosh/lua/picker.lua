@@ -1522,7 +1522,7 @@ picker.source("compile", {
 -- `:picker [SOURCE]`: bare, the smart one.
 kawoosh.command("picker", function(ctx)
   picker.open(ctx.args[1] or "smart")
-end, { args = { "text" }, doc = "the picker on SOURCE (files, buffers, recent, smart, grep, lines, symbols, workspace_symbols, marks, pins, workspaces, dirs, commands, tools, compile)" })
+end, { args = { "text" }, doc = "the picker on SOURCE (files, buffers, recent, smart, grep, lines, symbols, workspace_symbols, marks, pins, workspaces, dirs, commands, tools, compile, domains)" })
 kawoosh.command("picker resume", function() picker.resume() end, { doc = "the last picker again, where it was left" })
 
 -- -------------------------------------------------------- the sources
@@ -2204,6 +2204,43 @@ picker.source("tools", {
   empty = "no tools registered (kawoosh.tool in init.lua)",
 })
 
+-- The machines within reach (docs/design/domains.md W3): the settings'
+-- domains, `~/.ssh/config`'s hosts, WSL's distros, as `domain pick`
+-- last published them (`kawoosh.domains()`). `<CR>` opens a tab on one,
+-- its home listed — connected first when it is down; `<C-o>` connects it
+-- and stays.
+picker.source("domains", {
+  title = "domains", placeholder = "a machine · <C-o> connects without a tab",
+  columns = {
+    { "text", grow = true },
+    { "what", muted = true, min = 120, max = 320, share = 0.4 },
+    { "state", muted = true, min = 60, max = 160, share = 0.2 },
+  },
+  items = function()
+    local items = {}
+    for _, d in ipairs(kawoosh.domains() or {}) do
+      local target = d.target ~= "" and d.target or "the default distro"
+      local state = d.state .. (d.open > 0 and (" · " .. d.open .. " open") or "")
+      items[#items + 1] = {
+        text = d.name, what = d.kind .. " " .. target, state = state, name = d.name,
+        boost = d.state == "up" and 0.5 or 0,
+        preview = { title = d.name, lines = {
+          d.kind .. " " .. target, "from " .. d.from, d.state .. (d.error and (": " .. d.error) or ""),
+          "", d.name .. ":~ in a new tab",
+        } },
+      }
+    end
+    return items
+  end,
+  keys = { ["<C-o>"] = function(item)
+    if not item then return end
+    picker.close()
+    kawoosh.run("domain connect " .. item.name)
+  end },
+  pick = function(item) if item then kawoosh.run("domain tab " .. item.name) end end,
+  empty = "no domain: none in the settings, no host in ~/.ssh/config, no WSL distro",
+})
+
 -- The keys keys.md keeps for these (keymap-regroup.md): the daily
 -- finders one stroke each, their directory's twins in upper case.
 kawoosh.map("n", "<leader>f", "picker files")
@@ -2217,4 +2254,5 @@ kawoosh.map("n", "<leader><leader>", "picker buffers")
 kawoosh.map("n", "<leader>so", "picker recent")
 kawoosh.map("n", "<leader>sr", "picker resume")
 kawoosh.map("n", "<leader>ww", "picker workspaces")
+kawoosh.map("n", "<leader>wh", "domain pick")
 kawoosh.map("n", "<leader>t", "picker tools")

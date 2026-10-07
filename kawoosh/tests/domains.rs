@@ -569,3 +569,302 @@ fn a_session_on_a_host_restores_lazily_and_a_drop_reconnects() {
     ex(&mut d, &mut app, &format!("domain disconnect {name}"));
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// WSL (domains.md, "WSL, and the picker"), against the real default
+/// distro where there is one: `wsl:` connects with no settings and no
+/// pane; a file of the distro's is opened, written and read back through
+/// the share; the share's own spelling of it is the same buffer, and the
+/// distro's `/mnt/c` is the local disk; a process runs in the distro in
+/// the tab's directory; a terminal's `$EDITOR` is this window, through
+/// the Windows binary run by interop.
+#[test]
+fn a_wsl_distro_is_a_domain() {
+    let Some(probe) = kawoosh_systems::wsl::Wsl::new(None).and_then(|w| w.probe().ok()) else {
+        eprintln!("no WSL distro here: skipped");
+        return;
+    };
+    let share = kawoosh_systems::wsl::share(&probe.distro).expect("the distro's share");
+    let dir = format!("/tmp/kawoosh-wsl-{}", std::process::id());
+    let local = |p: &str| share.join(p.trim_start_matches('/').replace('/', "\\"));
+    std::fs::create_dir_all(local(&dir)).unwrap();
+    std::fs::write(local(&format!("{dir}/a.txt")), "in the distro\n").unwrap();
+
+    let root = std::env::temp_dir().join(format!("kawoosh-wsl-local-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(&root).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    std::fs::write(root.join("here.txt"), "on windows\n").unwrap();
+
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    let sock = root.join("k.sock");
+    app.io.listen(&sock).unwrap();
+    app.socket = Some(sock.clone());
+    app.cli_exe = Some(env!("CARGO_BIN_EXE_kawoosh").into());
+
+    let file = format!("wsl:{dir}/a.txt");
+    ex(&mut d, &mut app, &format!("e {file}"));
+    assert!(app.ed.message.contains("starting"), "{}", app.ed.message);
+    assert!(!app.layout.dock_open, "no pane: nothing to type");
+    until(&mut d, &mut app, "connected and opened", |a| {
+        a.focused_view().is_some_and(|v| {
+            let b = a.ed.buffer_of(v);
+            b.path.as_deref() == Some(Path::new(&file)) && b.text() == "in the distro\n"
+        })
+    });
+    d.keys(&mut app, "Ahere ");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    assert_eq!(
+        std::fs::read_to_string(local(&format!("{dir}/a.txt"))).unwrap(),
+        "in the distrohere \n",
+        "{}",
+        app.ed.message
+    );
+    // One file, one buffer: the share's spelling is the domain's, the
+    // distro's drive the local disk.
+    let buffers = app.ed.buffers.len();
+    let unc = format!(
+        "\\\\wsl.localhost\\{}{}",
+        probe.distro,
+        dir.replace('/', "\\")
+    );
+    ex(&mut d, &mut app, &format!("e {unc}\\a.txt"));
+    assert_eq!(focused_name(&app), "a.txt");
+    assert_eq!(app.ed.buffers.len(), buffers, "the same buffer");
+    let here = root.join("here.txt");
+    let mounted = kawoosh_systems::wsl::mounted(&here, &probe.mount).unwrap();
+    ex(&mut d, &mut app, &format!("e wsl:{mounted}"));
+    until(&mut d, &mut app, "the local file", |a| {
+        a.focused_view()
+            .is_some_and(|v| a.ed.buffer_of(v).text() == "on windows\n")
+    });
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).path.as_deref(), Some(here.as_path()));
+    ex(&mut d, &mut app, "domain");
+    let v = app.focused_view().unwrap();
+    let listing = app.ed.buffer_of(v).text();
+    assert!(
+        listing.contains("wsl\twsl (the default distro)\tup\t1 open"),
+        "{listing}"
+    );
+    d.keys(&mut app, "q");
+
+    // A process in the distro, in the tab's directory, its home the
+    // distro's; the login shell's PATH with it.
+    let there = format!("wsl:{dir}");
+    ex(&mut d, &mut app, &format!("cd {there}"));
+    assert_eq!(app.ed.cwd, Path::new(&there));
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.spawn({ "sh", "-c", 'echo "$PWD|$HOME"' }, { on_lines = function(l) kawoosh.echo('ran ' .. l[1]) end })"#,
+    );
+    until(&mut d, &mut app, "the process's line", |a| {
+        a.ed.message.starts_with("ran ")
+    });
+    assert_eq!(app.ed.message, format!("ran {dir}|{}", probe.home));
+
+    // A terminal whose `$EDITOR` opens the distro's file here, and
+    // waits for it. `sh -c`, whatever the login shell reads.
+    ex(
+        &mut d,
+        &mut app,
+        "term sh -c '\"$KAWOOSH_BIN\" edit --wait note.txt && echo edited > done.txt'",
+    );
+    let note = format!("wsl:{dir}/note.txt");
+    let t = app.terms.map.keys().copied().max().expect("the terminal");
+    for _ in 0..1000 {
+        if app
+            .focused_view()
+            .is_some_and(|v| app.ed.buffer_of(v).path.as_deref() == Some(Path::new(&note)))
+        {
+            break;
+        }
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let rows = app.terms.map.get(&t).map_or(0, |t| t.size().rows as usize);
+    let screen: Vec<String> = (0..rows)
+        .filter_map(|r| app.terms.map.get(&t).map(|t| t.row_text(r)))
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    assert_eq!(
+        app.focused_view()
+            .and_then(|v| app.ed.buffer_of(v).path.clone()),
+        Some(PathBuf::from(&note)),
+        "the distro's $EDITOR opening here; the terminal: {screen:#?} ({})",
+        app.ed.message
+    );
+    d.keys(&mut app, "ihello");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "wq");
+    assert_eq!(
+        std::fs::read_to_string(local(&format!("{dir}/note.txt"))).unwrap(),
+        "hello"
+    );
+    let done = local(&format!("{dir}/done.txt"));
+    for _ in 0..500 {
+        if done.exists() {
+            break;
+        }
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(done.exists(), "the distro's $EDITOR returned");
+    // The keys are the terminal's again: the command called, not typed.
+    app.shell_command("domain disconnect", &["wsl".to_string()], None);
+    assert!(!kawoosh_doc::fs::is_registered("wsl"));
+    std::fs::remove_dir_all(local(&dir)).ok();
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// The domains' picker (domains.md W3): every domain there is — the
+/// settings' first, how each stands — and a pick a new tab on the
+/// machine, its home listed and its working directory, connected first.
+#[test]
+fn the_domains_picker_opens_a_tab_on_a_machine() {
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "set domains.zbox.ssh=nowhere.invalid");
+    ex(&mut d, &mut app, "domain pick");
+    app.run_lua_source(
+        "t",
+        r#"local d = kawoosh.domains()[1]; kawoosh.echo(d.name .. "|" .. d.kind .. "|" .. d.target .. "|" .. d.from .. "|" .. d.state)"#,
+    );
+    assert_eq!(app.ed.message, "zbox|ssh|nowhere.invalid|settings|down");
+    let Some(probe) = kawoosh_systems::wsl::Wsl::new(None).and_then(|w| w.probe().ok()) else {
+        eprintln!("no WSL distro here: the tab skipped");
+        return;
+    };
+    app.run_lua_source(
+        "t",
+        r#"for _, d in ipairs(kawoosh.domains()) do if d.name == "wsl" then kawoosh.echo(d.from .. "|" .. d.target) end end"#,
+    );
+    assert_eq!(app.ed.message, "WSL|", "the default distro, found");
+    // The distro under a name of this test's: the registry of connected
+    // domains is the process's, and another test has `wsl`.
+    d.key(&mut app, "escape", KeyMods::default());
+    let name = format!("w{}", std::process::id());
+    ex(
+        &mut d,
+        &mut app,
+        &format!("set domains.{name}.wsl={}", probe.distro),
+    );
+    ex(&mut d, &mut app, "domain pick");
+    let tabs = app.layout.tabs.len();
+    d.keys(&mut app, &name);
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(app.layout.tabs.len(), tabs + 1, "a tab, at once");
+    let home = format!("{name}:{}", probe.home);
+    until(&mut d, &mut app, "the home listed in the tab", |a| {
+        focused_name(a) == format!("dir: {home}")
+    });
+    assert_eq!(app.ed.cwd, Path::new(&home), "the tab's directory");
+    app.shell_command("domain disconnect", &[name], None);
+}
+
+/// A language server for a distro's file runs in the distro, through
+/// `wsl.exe` with the login shell's PATH, in the project's root there;
+/// what it says of its own paths comes back on the domain. A walk of
+/// the distro's directory is the local walker's over the share, cut on
+/// `/`, hidden entries left out.
+#[test]
+fn a_language_server_runs_in_the_distro() {
+    let Some(probe) = kawoosh_systems::wsl::Wsl::new(None).and_then(|w| w.probe().ok()) else {
+        eprintln!("no WSL distro here: skipped");
+        return;
+    };
+    let share = kawoosh_systems::wsl::share(&probe.distro).expect("the distro's share");
+    let dir = format!("/tmp/kawoosh-wsl-lsp-{}", std::process::id());
+    let local = |p: &str| share.join(p.trim_start_matches('/').replace('/', "\\"));
+    std::fs::create_dir_all(local(&format!("{dir}/proj/src"))).unwrap();
+    std::fs::create_dir_all(local(&format!("{dir}/proj/.hidden"))).unwrap();
+    std::fs::write(
+        local(&format!("{dir}/proj/Cargo.toml")),
+        "[package]\nname = \"x\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        local(&format!("{dir}/proj/src/main.rs")),
+        "fn main() {\n    hel\n}\n",
+    )
+    .unwrap();
+    std::fs::write(local(&format!("{dir}/proj/.hidden/x")), "").unwrap();
+
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    // A name of this test's: the registry of connected domains is the
+    // process's, and another test has `wsl`.
+    let name = format!("l{}w", std::process::id());
+    ex(
+        &mut d,
+        &mut app,
+        &format!("set domains.{name}.wsl={}", probe.distro),
+    );
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_lsp.py");
+    let script = kawoosh_systems::fs::canonicalize(&script).unwrap();
+    app.add_lsp_server(kawoosh_systems::lsp::ServerDef {
+        language: "rust".into(),
+        command: "python3".into(),
+        args: vec![kawoosh_systems::wsl::mounted(&script, &probe.mount).unwrap()],
+        roots: vec!["Cargo.toml".into()],
+        ..Default::default()
+    });
+    let proj = format!("{name}:{dir}/proj");
+    let file = format!("{proj}/src/main.rs");
+    ex(&mut d, &mut app, &format!("e {file}"));
+    until(&mut d, &mut app, "the distro's file open", |a| {
+        a.focused_view()
+            .is_some_and(|v| a.ed.buffer_of(v).path.as_deref() == Some(Path::new(&file)))
+    });
+    let v = app.focused_view().unwrap();
+    let id = app.ed.views[v].buffer;
+    until(&mut d, &mut app, "the server's diagnostic", |a| {
+        a.ed.diagnostics
+            .of(id)
+            .iter()
+            .map(|d| d.message.as_str())
+            .eq(["boom"])
+    });
+    let roots: Vec<String> = app
+        .lsp
+        .status
+        .iter()
+        .map(|s| s.0.display().to_string())
+        .collect();
+    assert_eq!(roots, std::slice::from_ref(&proj), "its root, spelled on the domain");
+    d.keys(&mut app, "gd");
+    until(
+        &mut d,
+        &mut app,
+        "the definition, in the distro's buffer",
+        |a| {
+            let v = a.focused_view().unwrap();
+            a.ed.views[v].buffer == id
+                && a.ed.buffer_of(v).line_of(a.ed.views[v].sels.primary().head) == 1
+        },
+    );
+    assert_eq!(
+        app.ed.buffers.values().filter(|b| b.path.is_some()).count(),
+        1,
+        "no twin opened"
+    );
+    assert_eq!(
+        kawoosh_systems::fs::walk(Path::new(&proj), 100).unwrap(),
+        ["Cargo.toml", "src/main.rs"]
+    );
+    app.shell_command("domain disconnect", &[name], None);
+    std::fs::remove_dir_all(local(&dir)).ok();
+}

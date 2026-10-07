@@ -198,6 +198,12 @@ pub fn expand(path: &Path, cwd: &Path) -> PathBuf {
     if let Some((domain, rest)) = domain_of(path) {
         return on_domain(domain, &normalize_remote(rest));
     }
+    // A drive's or a share's path is this machine's, whatever the cwd:
+    // on Windows only a prefix makes a path absolute, and a host's `/x`
+    // has none.
+    if cfg!(windows) && path.is_absolute() {
+        return normalize(path);
+    }
     if let Some((domain, dir)) = domain_of(cwd) {
         return on_domain(domain, &normalize_remote(&host_join(dir, path)));
     }
@@ -346,6 +352,16 @@ mod tests {
         // The host's home against a cwd on it: the host's, not under the cwd.
         assert_eq!(s("~/p", "box:/home/me"), "box:~/p");
         assert_eq!(s("~", "box:/home/me"), "box:~");
+        // A host's `/x` is the host's; on Windows a drive's or a share's
+        // path is this machine's, whatever the cwd.
+        assert_eq!(s("/etc/x", "box:/home/me"), "box:/etc/x");
+        if cfg!(windows) {
+            assert_eq!(s(r"C:\a\..\b", "box:/home/me"), r"C:\b");
+            assert_eq!(
+                s(r"\\wsl.localhost\U\x", "box:/home/me"),
+                r"\\wsl.localhost\U\x"
+            );
+        }
     }
 
     #[test]

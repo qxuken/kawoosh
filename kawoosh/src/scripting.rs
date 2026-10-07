@@ -982,8 +982,13 @@ impl Kawoosh {
                 restore,
             ),
             Msg::Walk { token, root } => {
-                // A host's walk is capped and kept: said once.
+                // A host's walk is capped and kept: said once. A
+                // distro's share is walked as a local disk is.
                 if let Some((d, _)) = kawoosh_systems::fs::domain_of(&root)
+                    && !matches!(
+                        kawoosh_systems::io::transport_of(d),
+                        Some(kawoosh_systems::io::Transport::Wsl(_))
+                    )
                     && !kawoosh_systems::fs::walk_is_kept(&root)
                     && self.domains.walk_told.insert(d.to_string())
                 {

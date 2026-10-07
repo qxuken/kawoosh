@@ -1695,7 +1695,8 @@ follow the theme every frame (`panes.rs`).
   shell reads alike (`sh -c 'eval "$(echo B64 | base64 -d)"'`); the
   host's `$EDITOR` back over `-R`; the poll, the walk's cap, a drop
   reconnected on the next use, sessions restored without asking for a
-  password. WSL is still the note after. What the entry said before:
+  password. WSL, the note after, built 2026-10-07 with a picker over
+  every machine within reach (domains.md "WSL, and the picker"). What the entry said before:
   later, design first; systemic, as the todo
   says. A domain is *where a pty spawns*, and the cheap form exists
   today as a tool whose `cmd` is `ssh host` — nothing to build. The
@@ -3233,8 +3234,9 @@ frame.
 Scheduled nowhere, on purpose: ~~incremental sync (measure first)~~
 (measured and built 2026-10-07, lsp-rules.md Decision 8), the
 ~~press-and-hold toggle (kui's)~~ (kui F125 in alpha.41, built 2026-10-07 as
-`keys.input_method`, settings.md), native extensions (deferred), WSL (domains.md's
-note after, Windows only) and an agent on a host (domains.md Decision
+`keys.input_method`, settings.md), native extensions (deferred), ~~WSL (domains.md's
+note after, Windows only)~~ (built 2026-10-07 with the domains' picker,
+domains.md "WSL, and the picker") and an agent on a host (domains.md Decision
 3's after — when the walk's cap or the poll hurt).
 
 Not on this list on purpose: everything mvp.md and kui.md call

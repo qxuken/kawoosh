@@ -255,6 +255,9 @@ pub struct Kawoosh {
     pub(crate) editor_shim: Option<PathBuf>,
     /// The directory `editor_link` made for this run, removed at its end.
     pub(crate) editor_link_dir: Option<PathBuf>,
+    /// The kawoosh a WSL distro's shim runs through interop: this
+    /// binary, unless a test names the one cargo built.
+    pub cli_exe: Option<PathBuf>,
     /// `$EDITOR --wait` callers, answered when their buffer closes.
     pub(crate) waiters: HashMap<BufferId, Vec<Sender<String>>>,
     pub quit: bool,
@@ -474,6 +477,7 @@ impl Kawoosh {
             ts_sent: HashMap::new(),
             socket: None,
             editor_shim: None,
+            cli_exe: None,
             editor_link_dir: None,
             waiters: HashMap::new(),
             quit: false,
@@ -542,9 +546,11 @@ impl Kawoosh {
     }
 
     /// `path` as the user wrote it — `~/x`, `../y` — against the working
-    /// directory (`kawoosh_systems::fs::expand`).
+    /// directory (`kawoosh_systems::fs::expand`), in the one spelling a
+    /// file has (a WSL share's path on its domain, a distro's drive the
+    /// local one: `Kawoosh::one_spelling`).
     pub fn resolve(&self, path: &Path) -> PathBuf {
-        kawoosh_systems::fs::expand(path, &self.cwd)
+        self.one_spelling(kawoosh_systems::fs::expand(path, &self.cwd))
     }
 
     /// `:cd`: the focused tab's working directory moved, and with it

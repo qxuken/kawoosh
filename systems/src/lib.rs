@@ -19,11 +19,13 @@ pub mod sftp;
 pub mod shell_env;
 pub mod spawn;
 pub mod sqlite;
+pub mod ssh_config;
 pub mod store;
 pub mod textobjects;
 pub mod tree_watch;
 pub mod ts;
 pub mod watch;
+pub mod wsl;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
