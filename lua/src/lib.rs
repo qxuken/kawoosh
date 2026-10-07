@@ -5330,6 +5330,35 @@ fn seed(
             with_buf(&pp, h, |b| b.base.as_ref().map(|b| b.label.clone()))
         })?,
     )?;
+    // `kawoosh.buf.hunk_counts([buffer])`: how many of the buffer's
+    // hunks against its base are `added`, `modified` and `deleted`, as
+    // last diffed — `{ added =, modified =, deleted = }` — or nil
+    // without a base: what a statusline shows each frame, without the
+    // hunks themselves.
+    let pp = published.clone();
+    buf.set(
+        "hunk_counts",
+        lua.create_function(move |lua, h: Option<u64>| {
+            with_buf(&pp, h, |b| -> mlua::Result<LV> {
+                let Some(base) = &b.base else {
+                    return Ok(LV::Nil);
+                };
+                let (mut a, mut m, mut d) = (0, 0, 0);
+                for h in base.hunks.iter() {
+                    match h.kind() {
+                        kawoosh_editor::Sign::Added => a += 1,
+                        kawoosh_editor::Sign::Modified => m += 1,
+                        _ => d += 1,
+                    }
+                }
+                let t = lua.create_table()?;
+                t.set("added", a)?;
+                t.set("modified", m)?;
+                t.set("deleted", d)?;
+                Ok(LV::Table(t))
+            })?
+        })?,
+    )?;
     // `kawoosh.buf.hunks([buffer])`: the buffer's hunks against its
     // base as last diffed, in order — each `{ kind = "added" |
     // "modified" | "deleted", line =, end_line =, old_line =, old_end =,

@@ -1,6 +1,6 @@
 -- A buffer's base and its hunks through the doors (docs/design/vcs.md
 -- Decisions 1, 3 and 10): `kawoosh.buf.base` given, `kawoosh.buf.hunks`
--- read back once the diff answered, `]h` walking them, a reset putting
+-- (and `hunk_counts`) read back once the diff answered, `]h` walking them, a reset putting
 -- the base's lines back, the base taken away.
 local dir = os.tmpname()
 os.remove(dir)
@@ -28,6 +28,9 @@ kawoosh.test.eq(hs[2].old[1], "gone")
 kawoosh.test.eq(hs[3].kind, "added")
 kawoosh.test.eq(hs[3].line, 5)
 kawoosh.test.eq(#hs[3].old, 0)
+-- Counted without the hunks, as a statusline asks each frame.
+local n = kawoosh.buf.hunk_counts()
+kawoosh.test.eq(n.added .. " " .. n.modified .. " " .. n.deleted, "1 1 1", "one of each")
 
 -- `]h` `[h` walk the hunks' lines.
 kawoosh.press("gg")
@@ -67,6 +70,7 @@ kawoosh.test.eq(kawoosh.buf.hunks()[1].kind, "added")
 kawoosh.buf.base(nil)
 kawoosh.frame()
 kawoosh.test.eq(kawoosh.buf.hunks(), nil)
+kawoosh.test.eq(kawoosh.buf.hunk_counts(), nil, "no base, no counts")
 kawoosh.press("gg]h")
 kawoosh.frame()
 kawoosh.test.eq(kawoosh.message(), "no base to diff against")

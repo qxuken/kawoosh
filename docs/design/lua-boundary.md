@@ -78,6 +78,25 @@ wait their turn in order, each a job until it starts (`wait_for_jobs`
 counts it); a waiting one killed ends with no code, as a running one
 does. A plugin keeps writing the fan-out it means.
 
+### 6. The profile decides: `kawoosh/tests/lua_costs.rs`
+
+The suspected hot spots measured before any moved (an ignored harness,
+`cargo test -p kawoosh --release --test lua_costs -- --ignored
+--nocapture --test-threads=1`; Apple Silicon, release, 2026-10-07):
+
+| case | measured | verdict |
+|---|---|---|
+| vcs statusline, 10k lines, 5000 hunks | 306 ms every idle frame | moved (Round 5) |
+| picker, 100k files | one 171 ms frame as the load lands; keys 2–6 ms | open |
+| du, 16k entries | worst 35 ms frame during the walk; re-sort 10.5 ms | left |
+| sqlite, 200k rows | the grid never pages past its first 1000 | a bug (Round 6) |
+| `:man bash` | an 80–100 ms frame as the page lands | open |
+| hex find, 50 MB, absent | 11.4 ms | left |
+
+The vcs cost was Rust's, not Lua's: `Base::lines` read the whole base
+for its line starts once a hunk, and the statusline asked for every
+hunk's old lines to count them.
+
 ## Rounds
 
 **Round 1, 2026-10-07: the cheap batch** (d290f9f). `ctx.title_h`
@@ -109,6 +128,11 @@ running, the rest waiting, the last killed before it started, the 39
 others run) and the suites that spawn (lua, vcs, git, fossil, dirs, qd,
 secrets).
 
+**Round 5, 2026-10-07: the vcs statusline**. `Base` keeps its line
+starts, read once a text; `kawoosh.buf.hunk_counts` counts the hunks
+by kind, which the statusline segment reads instead of the hunks. 306
+ms an idle frame with 5000 hunks is 0.43 ms, `j` 0.5 ms.
+
 ## Open
 
 - Entries carried by the engine: a listing's `ids` (journal id →
@@ -117,9 +141,7 @@ secrets).
   was yanked in. A payload per tracked line, carried by the register,
   would end both.
 - `field_node`, `keys_node`, `legend_node` out of `boot.lua`.
-- To profile, then move or leave: the vcs statusline segment copying
-  every hunk's old lines to count them; the picker's walk built as
-  100k Lua tables and copied back to the matcher; `du.lua`'s `shown()`
-  re-sorting per update; sqlite's width pass over every fetched row,
-  `OFFSET` paging, uncapped blobs; `man.lua`'s overstrike parse; hex's
-  find on the frame and the store written per byte.
+- The picker's 171 ms frame as a 100k-file walk lands, and `man.lua`'s
+  80–100 ms frame as a page lands (Decision 6).
+- sqlite's blobs come back whole (a copy of a cell wants the whole), and
+  its width pass runs over every fetched row once paging works.
