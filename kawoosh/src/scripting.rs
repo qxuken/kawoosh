@@ -1342,6 +1342,8 @@ impl Kawoosh {
                 injections,
                 comment,
                 comment_block,
+                indent_style,
+                indent_size,
             } => self.language_from_lua(
                 name,
                 aliases,
@@ -1354,6 +1356,8 @@ impl Kawoosh {
                 injections,
                 comment,
                 comment_block,
+                indent_style,
+                indent_size,
             ),
             Msg::Colors(list) => {
                 for (name, hex) in list {

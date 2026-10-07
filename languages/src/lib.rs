@@ -681,6 +681,11 @@ pub struct LanguageDef {
     pub comment: Option<String>,
     /// Its block comment pair (`/*`, `*/`), likewise.
     pub comment_block: Option<(String, String)>,
+    /// How its files indent where its tools insist — make's recipes
+    /// start with a tab: the language's `expandtab` and `tabstop`
+    /// defaults, likewise.
+    pub expandtab: Option<bool>,
+    pub tabstop: Option<i64>,
 }
 
 /// Where a grammar comes from.
@@ -704,6 +709,8 @@ impl From<&Language> for LanguageDef {
             grammar: l.grammar.map(Source::Builtin),
             comment: None,
             comment_block: None,
+            expandtab: None,
+            tabstop: None,
         }
     }
 }
@@ -720,6 +727,8 @@ impl LanguageDef {
             grammar: None,
             comment: None,
             comment_block: None,
+            expandtab: None,
+            tabstop: None,
         }
     }
 

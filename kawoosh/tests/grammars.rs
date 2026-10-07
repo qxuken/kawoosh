@@ -216,6 +216,26 @@ fn a_listed_language_is_one_of_files_until_installed() {
             Setting::Str("-->".into())
         ]))
     );
+    // And how its files indent, where its tools insist: r9's or later.
+    for lang in ["make", "odin"] {
+        assert_eq!(
+            app.ed
+                .settings
+                .layer_value(Layer::Default, &format!("language.{lang}.expandtab")),
+            Some(&Setting::Bool(false)),
+            "{lang}'s tabs"
+        );
+        assert_eq!(
+            app.ed
+                .settings
+                .layer_value(Layer::Default, &format!("language.{lang}.tabstop")),
+            Some(&Setting::Int(4))
+        );
+    }
+    assert_eq!(
+        app.languages.detect(Path::new("sub/GNUmakefile"), ""),
+        "make"
+    );
     // A name the build links is not listed, and keeps its grammar.
     assert!(!app.grammars.listed.contains_key("rust") && app.languages.has_grammar("rust"));
     ex(&mut d, &mut app, "grammar install rust");

@@ -38,6 +38,8 @@ impl Kawoosh {
         injections: Option<String>,
         comment: Option<String>,
         comment_block: Option<Vec<String>>,
+        indent_style: Option<String>,
+        indent_size: Option<i64>,
     ) {
         let said = Locate {
             path: path.map(PathBuf::from),
@@ -67,6 +69,8 @@ impl Kawoosh {
                 }
                 _ => None,
             },
+            expandtab: expandtab_of(indent_style.as_deref()),
+            tabstop: indent_size.and_then(|n| tabstop_of(u32::try_from(n).ok())),
         };
         let say = !self.scripting.bundled;
         self.put_language(def, say);
@@ -135,6 +139,21 @@ impl Kawoosh {
                 kawoosh_editor::Layer::Default,
                 &format!("language.{}.comment_block", def.name),
                 Setting::List(vec![Setting::Str(a.clone()), Setting::Str(b.clone())]),
+            );
+        }
+        // And how its files indent, likewise.
+        if let Some(b) = def.expandtab {
+            self.ed.settings.set(
+                kawoosh_editor::Layer::Default,
+                &format!("language.{}.expandtab", def.name),
+                Setting::Bool(b),
+            );
+        }
+        if let Some(n) = def.tabstop {
+            self.ed.settings.set(
+                kawoosh_editor::Layer::Default,
+                &format!("language.{}.tabstop", def.name),
+                Setting::Int(n),
             );
         }
         let said = format!(
@@ -225,4 +244,19 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             .doc("read the buffer as language NAME (`text` for none); bare, say which it is"),
         |k, ctx| k.set_syntax(ctx.args.first().map(String::as_str)),
     )]
+}
+
+/// `.editorconfig`'s `indent_style` as `expandtab`: `"tab"` is false,
+/// `"space"` true, any other word unsaid.
+pub(crate) fn expandtab_of(style: Option<&str>) -> Option<bool> {
+    match style? {
+        "tab" => Some(false),
+        "space" => Some(true),
+        _ => None,
+    }
+}
+
+/// `.editorconfig`'s `indent_size` as `tabstop`: a width, 0 unsaid.
+pub(crate) fn tabstop_of(size: Option<u32>) -> Option<i64> {
+    size.filter(|n| *n > 0).map(i64::from)
 }

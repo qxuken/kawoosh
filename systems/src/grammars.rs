@@ -69,6 +69,13 @@ pub struct Row {
     pub comment: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment_block: Option<Vec<String>>,
+    /// How its files indent, in `.editorconfig`'s words: `"tab"` or
+    /// `"space"`, and the width; absent where the editor's own way
+    /// does, or a manifest before `r9`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indent_style: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indent_size: Option<u32>,
     #[serde(default)]
     pub repo: String,
     #[serde(default)]
@@ -1397,6 +1404,8 @@ mod tests {
             aliases: Vec::new(),
             comment: None,
             comment_block: None,
+            indent_style: None,
+            indent_size: None,
             repo: repo.clone(),
             // A branch is a revision too; the commit is what is kept.
             rev: "main".into(),

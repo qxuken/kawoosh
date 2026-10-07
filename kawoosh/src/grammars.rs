@@ -264,6 +264,8 @@ fn def_of(row: &Row, grammar: Option<Source>) -> LanguageDef {
             }
             _ => None,
         },
+        expandtab: crate::languages::expandtab_of(row.indent_style.as_deref()),
+        tabstop: crate::languages::tabstop_of(row.indent_size),
     }
 }
 
@@ -271,8 +273,9 @@ fn def_of(row: &Row, grammar: Option<Source>) -> LanguageDef {
 /// and `rev` (a hash, a tag, a branch; the repository's head when not
 /// said) — or its `dir`, a directory on this machine read as it lies,
 /// `~` the home — the `path` its `src/` is under, its `symbol`, and its
-/// files: `extensions`, `filenames`, `shebangs`, `aliases`, and its
-/// comment tokens `comment`, `comment_block`. One with neither a
+/// files: `extensions`, `filenames`, `shebangs`, `aliases`, its
+/// comment tokens `comment`, `comment_block`, and how it indents,
+/// `indent_style` and `indent_size`. One with neither a
 /// `repo` nor a `dir` is none; with both, the `dir` is it.
 fn source_row(name: &str, def: &kawoosh_editor::Setting) -> Option<Row> {
     let word = |key: &str| def.get(key).and_then(|v| v.as_str()).map(str::to_string);
@@ -308,6 +311,11 @@ fn source_row(name: &str, def: &kawoosh_editor::Setting) -> Option<Row> {
         aliases: words("aliases"),
         comment: word("comment").filter(|t| !t.is_empty()),
         comment_block: Some(words("comment_block")).filter(|l| l.len() == 2),
+        indent_style: word("indent_style").filter(|s| !s.is_empty()),
+        indent_size: def
+            .get("indent_size")
+            .and_then(kawoosh_editor::Setting::as_int)
+            .and_then(|n| u32::try_from(n).ok()),
         repo: repo.unwrap_or_default(),
         rev: word("rev").unwrap_or_else(|| "HEAD".into()),
         path: word("path").unwrap_or_else(|| ".".into()),

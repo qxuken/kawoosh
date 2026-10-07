@@ -846,9 +846,8 @@ impl Settings {
             for lang in two {
                 defaults.set(&format!("language.{lang}.tabstop"), Setting::Int(2));
             }
-            // odinfmt's tabs too, and make's: a recipe line starts with
-            // a tab or is not one.
-            for lang in ["go", "gomod", "odin", "make"] {
+            // A grammar of kawoosh-grammars says its own (odin's, make's).
+            for lang in ["go", "gomod"] {
                 defaults.set(&format!("language.{lang}.expandtab"), Setting::Bool(false));
                 defaults.set(&format!("language.{lang}.tabstop"), Setting::Int(4));
             }
@@ -1271,7 +1270,7 @@ impl Settings {
         s.declare(
             "grammars.sources",
             SettingKind::Open,
-            "grammars of your own, built here by `:grammar build NAME`: `grammars.sources.NAME = { repo =, rev =, path =, symbol =, extensions =, filenames =, shebangs =, aliases =, comment =, comment_block = }`, or `dir =` for a directory on this machine in the repository's place; a project's is passed over",
+            "grammars of your own, built here by `:grammar build NAME`: `grammars.sources.NAME = { repo =, rev =, path =, symbol =, extensions =, filenames =, shebangs =, aliases =, comment =, comment_block =, indent_style =, indent_size = }`, or `dir =` for a directory on this machine in the repository's place; a project's is passed over",
         );
         s.declare(
             "language",
@@ -1848,14 +1847,10 @@ mod tests {
                 "language.lua.comment",
                 "language.lua.comment_block",
                 "language.lua.tabstop",
-                "language.make.expandtab",
-                "language.make.tabstop",
                 "language.markdown.comment_block",
                 "language.markdown.tabstop",
                 "language.markdown.trim_trailing_whitespace",
                 "language.nu.comment",
-                "language.odin.expandtab",
-                "language.odin.tabstop",
                 "language.python.comment",
                 "language.rust.comment",
                 "language.rust.comment_block",

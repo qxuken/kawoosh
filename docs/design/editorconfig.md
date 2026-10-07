@@ -64,8 +64,15 @@ spaces — ships as `language.NAME` tables in the engine's layer, where
 | language | ships |
 |---|---|
 | javascript, typescript, tsx, json, jsonc, css, yaml, markdown, lua | `tabstop = 2` |
-| go, gomod, odin, make | `expandtab = false`, `tabstop = 4` |
+| go, gomod | `expandtab = false`, `tabstop = 4` |
 | markdown, diff, gitcommit | `trim_trailing_whitespace = false` |
+
+A language of kawoosh-grammars says its own in its `grammar.toml`, in
+`.editorconfig`'s words — `indent_style = "tab"`, `indent_size = 4` for
+make (a recipe starts with a tab or is not one) and odin, since `r9` —
+and the manifest's row sets the same defaults when it is listed,
+installed or not; `kawoosh.language` and `grammars.sources.NAME` take
+the two words too.
 
 Every other language takes the bare keys (four spaces). `language` is
 declared an open table, and a key under a language is checked as the
@@ -135,8 +142,8 @@ a buffer — a template, unsaved, `:w` keeps it, as the settings tab's
   walk of up to 20 000, as git sees them), where it differs from `[*]`;
   languages with the same way share one (`[*.{tsx,ts,mts,cts}]`), the
   globs from the registry's extensions and names;
-- `[{Makefile,makefile,GNUmakefile,*.mk}]` tabs, when there is one — a
-  make needs tabs and kawoosh has no language for it.
+- make's tabs among them, from its grammar's row:
+  `[{*.mk,*.mak,Makefile,makefile,GNUmakefile}]`.
 
 An `.editorconfig` already there is opened as it is. `:editorconfig`
 says what applies to the focused buffer: each property, the files, and

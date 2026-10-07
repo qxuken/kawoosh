@@ -1055,6 +1055,8 @@
         "makefile"
       ],
       "comment": "#",
+      "indent_style": "tab",
+      "indent_size": 4,
       "repo": "https://github.com/alemuller/tree-sitter-make",
       "rev": "a4b9187417d6be349ee5fd4b6e77b4172c6827dd",
       "path": ".",
@@ -1233,6 +1235,8 @@
         "/*",
         "*/"
       ],
+      "indent_style": "tab",
+      "indent_size": 4,
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-odin",
       "rev": "d2ca8efb4487e156a60d5bd6db2598b872629403",
       "path": ".",
