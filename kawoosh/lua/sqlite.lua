@@ -105,6 +105,13 @@ end
 
 local function is_null(v) return v == door.null end
 local function is_blob(v) return type(v) == "table" and v ~= door.null and v.blob ~= nil end
+-- A blob longer than `BLOB_CAP`, come back cut: its first bytes and its
+-- `size`. Shown; copied or put back only once read whole (`whole_row`).
+local function is_cut(v) return is_blob(v) and v.cut == true end
+
+-- The bytes a blob is read to for the grid: a page of rows with a
+-- megabyte in each is not held for eight bytes of hex a cell.
+local BLOB_CAP = 4096
 local function is_number(v) return type(v) == "number" end
 
 -- A value as the grid shows it: text as it is, a newline or a control
@@ -116,7 +123,8 @@ local function fmt(v)
   if math.type(v) == "float" then return string.format("%.15g", v) end
   if is_blob(v) then
     local head = v.blob:sub(1, 8):gsub(".", function(c) return string.format("%02x", c:byte()) end)
-    return string.format("x'%s%s' %s", head, #v.blob > 8 and "…" or "", human(#v.blob))
+    local size = v.size or #v.blob
+    return string.format("x'%s%s' %s", head, size > 8 and "…" or "", human(size))
   end
   return tostring(v)
 end
@@ -258,7 +266,7 @@ function pane.browse(name, st, keep)
   st.loading = true
   if not keep then set_status(st, nil) end
   local asked = st.source
-  door.query(st.path, browse_sql(st, 0), {}, { cap = page_size() }, function(res, err)
+  door.query(st.path, browse_sql(st, 0), {}, { cap = page_size(), blob_cap = BLOB_CAP }, function(res, err)
     if not still(st) or st.source ~= asked then return end
     st.loading = false
     if not res then return set_status(st, err, "error") end
@@ -274,7 +282,7 @@ local function more(st)
   st.loading = true
   local asked = st.source
   local from = #st.res.rows
-  door.query(st.path, browse_sql(st, from), {}, { cap = page_size() }, function(res, err)
+  door.query(st.path, browse_sql(st, from), {}, { cap = page_size(), blob_cap = BLOB_CAP }, function(res, err)
     if not still(st) or st.source ~= asked then return end
     st.loading = false
     if not res then return set_status(st, err, "error") end
@@ -351,7 +359,7 @@ function pane.run(sql, st)
   set_status(st, "running…")
   local asked = { sql = sql }
   st.source = asked
-  door.query(st.path, sql, {}, { cap = page_size() }, function(res, err)
+  door.query(st.path, sql, {}, { cap = page_size(), blob_cap = BLOB_CAP }, function(res, err)
     if not still(st) or st.source ~= asked then return end
     st.loading = false
     if not res then return set_status(st, err, "error") end
@@ -436,20 +444,54 @@ local function key_of(st, row)
   return table.concat(parts, " AND "), params
 end
 
+-- The SELECT that reads one row of the browsed table again by its key
+-- (`key_of`'s `where`, its numbers one less with no value before them):
+-- the browse's columns.
+local function row_sql(st, where)
+  return "SELECT " .. (st.res.rowid and "rowid AS _rowid_, " or "") .. "* FROM " .. door.quote(st.source.table)
+      .. " WHERE " .. (where:gsub("%?(%d+)", function(n) return "?" .. (tonumber(n) - 1) end))
+end
+
+-- `done(row)` with `row` whole: as it is when no blob of it is cut, else
+-- read again by its key with nothing cut; `done(nil, why)` when it
+-- cannot be — a query's rows have no key.
+local function whole_row(st, row, done)
+  local any = false
+  for _, v in ipairs(row) do if is_cut(v) then any = true end end
+  if not any then return done(row) end
+  local where, params = key_of(st, row)
+  if not where then
+    return done(nil, "a blob is cut for showing here (" .. BLOB_CAP .. " bytes): browse its table to read it whole")
+  end
+  door.query(st.path, row_sql(st, where), params, { cap = 1 }, function(got, err)
+    if not still(st) then return end
+    if not (got and got.rows[1]) then return done(nil, err or "the row is gone") end
+    done(got.rows[1])
+  end)
+end
+
 -- `row`'s `column` set to `value` with one UPDATE, the row read again
--- into place `r`; `old` for `u`.
-local function write(st, r, ci, value, undo)
+-- into place `r`; `old` for `u` — read whole first when it is a blob
+-- cut for showing, so `u` puts back all of it.
+local function write(st, r, ci, value, undo, whole_old)
   local rows = rows_of(st)
   local row = rows[r]
   if not row then return end
   local where, params = key_of(st, row)
   if not where then return set_status(st, params, "error") end
+  if not undo and not whole_old and is_cut(row[ci]) then
+    return whole_row(st, row, function(full, why)
+      if not full then return set_status(st, why, "error") end
+      if rows_of(st)[r] ~= row then return end
+      write(st, r, ci, value, undo, full[ci])
+    end)
+  end
   local src = st.source
   local column = st.res.columns[ci]
   local sql = "UPDATE " .. door.quote(src.table) .. " SET " .. door.quote(column) .. " = ?1 WHERE " .. where
   local bound = { value }
   for _, p in ipairs(params) do bound[#bound + 1] = p end
-  local old = row[ci]
+  local old = whole_old or row[ci]
   st.loading = true
   door.query(st.path, sql, bound, { cap = 1 }, function(res, err)
     if not still(st) then return end
@@ -460,9 +502,7 @@ local function write(st, r, ci, value, undo)
     end
     set_status(st, string.format("%s.%s %s", src.table, column, undo and "put back" or "changed"))
     -- The row as it is now, in place.
-    local again = "SELECT " .. (st.res.rowid and "rowid AS _rowid_, " or "") .. "* FROM " .. door.quote(src.table)
-        .. " WHERE " .. (where:gsub("%?(%d+)", function(n) return "?" .. (tonumber(n) - 1) end))
-    door.query(st.path, again, params, { cap = 1 }, function(got)
+    door.query(st.path, row_sql(st, where), params, { cap = 1, blob_cap = BLOB_CAP }, function(got)
       if not still(st) or not got or not got.rows[1] then return end
       if not (st.res and st.res.rows[r]) then return end
       st.res.rows[r] = got.rows[1]
@@ -998,16 +1038,24 @@ on("sort", function() pane.sort() end, "the browsed table sorted by the cursor's
 on("copy", function()
   local row, ci = at_cursor(S)
   if not row then return end
-  kawoosh.copy(raw(row[ci]))
-  kawoosh.echo("the cell copied")
+  local st = S
+  whole_row(st, row, function(full, why)
+    if not full then return set_status(st, why, "error") end
+    kawoosh.copy(raw(full[ci]))
+    kawoosh.echo("the cell copied")
+  end)
 end, "copy the cursor's cell")
 on("copy row", function()
   local row = rows_of(S)[S.cur.r]
   if not row then return end
-  local parts = {}
-  for _, ci in ipairs(cols_of(S)) do parts[#parts + 1] = raw(row[ci]) end
-  kawoosh.copy(table.concat(parts, "\t"))
-  kawoosh.echo("the row copied, tab-separated")
+  local st = S
+  whole_row(st, row, function(full, why)
+    if not full then return set_status(st, why, "error") end
+    local parts = {}
+    for _, ci in ipairs(cols_of(st)) do parts[#parts + 1] = raw(full[ci]) end
+    kawoosh.copy(table.concat(parts, "\t"))
+    kawoosh.echo("the row copied, tab-separated")
+  end)
 end, "copy the cursor's row, tab-separated")
 on("refresh", function() pane.refresh(S) end, "read the file again")
 on("bytes", function()

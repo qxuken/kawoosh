@@ -155,6 +155,23 @@ the boosted rows it sorts (an index on every row grew every row's
 table); `is_binary` reads the extension from the path's end. The frame
 the load lands in from 244 ms to 108 ms, open to rows from 389 to 215.
 
+**Round 9, 2026-10-07: a file's base is its newest ask's**. Staging
+writes the index more than once, and `vcs.moved` reads every open
+file's base again each time: two `git show`s of one file in flight
+answered in either order, the older sometimes last. `fetch_base`
+numbers its asks by path and puts only the newest's answer — a number,
+not one ask in flight at a time, so a backend that never answers holds
+nothing up.
+
+**Round 10, 2026-10-07: sqlite blobs cut for showing**.
+`kawoosh.sqlite.query`'s `opts.blob_cap` keeps a blob to that many
+bytes; a longer one is `{ blob = its head, size =, cut = true }`
+(`Value::Cut`), and binding one is an error in Rust and in the binding,
+so a cut blob is never written back short. The pane reads blobs to 4 KiB
+and shows the real size; `y`, `Y` and the change `u` puts back read the
+row whole again by its key first. A page of rows with a megabyte blob
+each was that many megabytes in Lua.
+
 ## Open
 
 - Entries carried by the engine: a listing's `ids` (journal id →
@@ -167,4 +184,3 @@ the load lands in from 244 ms to 108 ms, open to rows from 389 to 215.
   left is the rows as Lua tables and the matcher's copy of their text —
   a list kept in the engine and lent to Lua as rows are shown would end
   it, and change every source.
-- sqlite's blobs come back whole (a copy of a cell wants the whole).

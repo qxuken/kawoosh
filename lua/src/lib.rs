@@ -242,6 +242,8 @@ pub enum Msg {
         sql: String,
         params: Vec<kawoosh_systems::sqlite::Value>,
         cap: usize,
+        /// A blob longer than this comes back cut (`{ blob, size, cut }`).
+        blob_cap: Option<usize>,
     },
     /// `kawoosh.sqlite.schema(path, fn)`: the database's tables read on
     /// a thread of its own, the answer to `Runtime::sqlite_schema`.
@@ -3589,6 +3591,13 @@ fn sqlite_value_to_lua(
             t.set("blob", lua.create_string(b)?)?;
             LV::Table(t)
         }
+        V::Cut { head, size } => {
+            let t = lua.create_table()?;
+            t.set("blob", lua.create_string(head)?)?;
+            t.set("size", size)?;
+            t.set("cut", true)?;
+            LV::Table(t)
+        }
     })
 }
 
@@ -3606,6 +3615,11 @@ fn sqlite_value_from_lua(v: LV, null: &Table) -> mlua::Result<kawoosh_systems::s
             Err(_) => V::Blob(s.as_bytes().to_vec()),
         },
         LV::Table(t) if t.to_pointer() == null.to_pointer() => V::Null,
+        LV::Table(t) if t.get::<Option<bool>>("cut")? == Some(true) => {
+            return Err(mlua::Error::runtime(
+                "a blob cut for showing is not bound: its whole is not here",
+            ));
+        }
         LV::Table(t) => match t.get::<Option<mlua::LuaString>>("blob")? {
             Some(b) => V::Blob(b.as_bytes().to_vec()),
             None => {
@@ -7262,7 +7276,9 @@ fn seed(
     // opts], fn)` runs the SQL on the io thread, `fn(result, err)` on a
     // frame after — `result` `{ columns =, rows = { {…} }, truncated =,
     // changes =, ms = }`, a NULL `kawoosh.sqlite.null`, a blob `{ blob =
-    // }`; `params` bind by position; `opts.cap` the rows kept (1000).
+    // }`; `params` bind by position; `opts.cap` the rows kept (1000);
+    // `opts.blob_cap` the bytes a blob is kept to, a longer one `{ blob
+    // = its first bytes, size =, cut = true }` — shown, never bound.
     // `schema(path, fn)` gives `{ tables = { { name =, kind =, rows =,
     // without_rowid =, columns = { { name =, type =, notnull =, pk =,
     // default = } } } }, bytes = }`. `is(path)` whether the file's head
@@ -7285,21 +7301,26 @@ fn seed(
                     ));
                 };
                 let mut params = Vec::new();
-                let mut cap = 1000usize;
+                let (mut cap, mut blob_cap) = (1000usize, None);
                 let mut tables = rest.into_iter().filter_map(|v| match v {
                     LV::Table(t) => Some(t),
                     _ => None,
                 });
+                let mut opts = |o: &Table| -> mlua::Result<()> {
+                    cap = o.get::<Option<usize>>("cap")?.unwrap_or(cap);
+                    blob_cap = o.get::<Option<usize>>("blob_cap")?.or(blob_cap);
+                    Ok(())
+                };
                 if let Some(p) = tables.next() {
-                    // A table with `cap` and no sequence is the options.
-                    if p.raw_len() == 0 && p.contains_key("cap")? {
-                        cap = p.get::<Option<usize>>("cap")?.unwrap_or(cap);
+                    // A table with options and no sequence is the options.
+                    if p.raw_len() == 0 && (p.contains_key("cap")? || p.contains_key("blob_cap")?) {
+                        opts(&p)?;
                     } else {
                         for v in p.sequence_values::<LV>() {
                             params.push(sqlite_value_from_lua(v?, &nn)?);
                         }
                         if let Some(o) = tables.next() {
-                            cap = o.get::<Option<usize>>("cap")?.unwrap_or(cap);
+                            opts(&o)?;
                         }
                     }
                 }
@@ -7315,6 +7336,7 @@ fn seed(
                     sql,
                     params,
                     cap: cap.max(1),
+                    blob_cap,
                 });
                 Ok(token)
             },

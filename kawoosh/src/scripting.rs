@@ -992,8 +992,10 @@ impl Kawoosh {
                 sql,
                 params,
                 cap,
+                blob_cap,
             } => {
-                let job = move || kawoosh_systems::sqlite::query(&path, &sql, &params, cap);
+                let job =
+                    move || kawoosh_systems::sqlite::query(&path, &sql, &params, cap, blob_cap);
                 if self.jobs_inline {
                     let result = job();
                     rt.publish(&self.ed, self.focused_view());

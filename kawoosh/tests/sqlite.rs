@@ -433,3 +433,48 @@ fn a_table_longer_than_a_page_pages_in_to_its_last_row() {
     assert_eq!(field(&mut app, "more"), "false", "the last page says so");
     assert_eq!(field(&mut app, "value"), "25");
 }
+
+/// A blob past 4 KiB comes to the grid cut — its first bytes and its
+/// size, not a megabyte a cell — and is read whole again where all of
+/// it is wanted: `y` copies every byte, and `x` then `u` puts back the
+/// whole blob, never the cut one.
+#[test]
+fn a_long_blob_is_shown_cut_and_copied_and_put_back_whole() {
+    let (mut d, mut app, _root, db) = open("blob");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB);
+         INSERT INTO files (data) VALUES (zeroblob(10000));",
+    )
+    .unwrap();
+    drop(conn);
+    d.press(&mut app, "r");
+    settle(&mut d, &mut app);
+    lua(&mut app, "kawoosh.sqlite_pane.browse('files')");
+    settle(&mut d, &mut app);
+    if shown(&mut app).starts_with("tables") {
+        d.press(&mut app, "<Tab>");
+    }
+    d.press(&mut app, "l");
+    assert_eq!(shown(&mut app), "grid files 1 2");
+    assert_eq!(field(&mut app, "value"), "x'0000000000000000…' 9.8 KB");
+    d.press(&mut app, "y");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, "the cell copied");
+    assert_eq!(
+        app.ed.memory.head().unwrap().text,
+        "0".repeat(20000),
+        "every byte, in hex"
+    );
+    d.press(&mut app, "x");
+    settle(&mut d, &mut app);
+    assert_eq!(value(&db, "SELECT data FROM files"), "NULL");
+    d.press(&mut app, "u");
+    settle(&mut d, &mut app);
+    assert_eq!(
+        value(&db, "SELECT data FROM files"),
+        "blob 10000",
+        "the whole blob put back"
+    );
+}
