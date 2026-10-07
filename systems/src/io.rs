@@ -1195,10 +1195,15 @@ pub struct Incoming {
 /// file holding the loopback port the editor listens on, since only unix
 /// has domain sockets in `std`.
 pub fn socket_path() -> std::path::PathBuf {
+    socket_path_of(std::process::id())
+}
+
+/// Where process `pid`'s socket lives, were it a Kawoosh.
+pub fn socket_path_of(pid: u32) -> std::path::PathBuf {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    dir.join(format!("kawoosh-{}.sock", std::process::id()))
+    dir.join(format!("kawoosh-{pid}.sock"))
 }
 
 /// The other Kawooshes' sockets beside this one's, each with its

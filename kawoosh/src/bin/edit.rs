@@ -9,7 +9,8 @@
 //! talks to the running instance over `$KAWOOSH_SOCKET`, as the shim
 //! verbs do (mvp.md Decision 3b), and returns when the buffer closes.
 //! From a terminal not Kawoosh's — Windows Terminal, another editor's —
-//! it is the Kawoosh started last, its window brought to the front.
+//! it is the Kawoosh started last, its window brought to the front, or
+//! with none running one started for it.
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -19,9 +20,17 @@ fn main() {
         );
         return;
     }
-    let Some((sock, outside)) = kawoosh::running::socket() else {
-        eprintln!("kawoosh-edit: no running kawoosh");
+    // No window started for nothing to open.
+    if args.is_empty() {
+        eprintln!("kawoosh-edit: edit: no path given");
         std::process::exit(1);
+    }
+    let (sock, outside) = match kawoosh::running::socket_or_start() {
+        Ok(found) => found,
+        Err(e) => {
+            eprintln!("kawoosh-edit: no running kawoosh, and none started: {e}");
+            std::process::exit(1);
+        }
     };
     if let Some(pid) = outside {
         kawoosh::running::raise(pid);

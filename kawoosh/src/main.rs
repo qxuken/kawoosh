@@ -67,7 +67,8 @@ fn load_fonts(core: &mut Core) -> (Option<kui_native::FontId>, HashSet<String>) 
 /// `kawoosh edit [--wait] [+LINE] PATH…`, `kawoosh ex LINE`, `kawoosh
 /// theme` and `kawoosh pick SOURCE [QUERY]`: the CLI shim, talking to
 /// the running instance over `$KAWOOSH_SOCKET` (mvp.md Decision 3b) —
-/// or, from a terminal not Kawoosh's, to the Kawoosh started last.
+/// or, from a terminal not Kawoosh's, to the Kawoosh started last; for
+/// `edit`, one started when none runs.
 /// `edit --wait` is what every pty's `$EDITOR` runs (as
 /// `kawoosh-edit`, `app::shipped_editor`), `theme`
 /// answers `dark` or `light` — what a shell's prompt hook reads to pick
@@ -83,9 +84,16 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
         return Ok(false);
     }
     attach_console();
-    let Some((sock, outside)) = kawoosh::running::socket() else {
-        anyhow::bail!("{verb}: no running kawoosh");
+    // A file to edit starts a Kawoosh when none runs; the other verbs
+    // ask one that is there — a prompt hook's `kawoosh theme` opens no
+    // window.
+    let found = if verb == "edit" && args.len() > 1 {
+        kawoosh::running::socket_or_start()
+            .map_err(|e| anyhow::anyhow!("{verb}: no running kawoosh, and none started: {e}"))?
+    } else {
+        kawoosh::running::socket().ok_or_else(|| anyhow::anyhow!("{verb}: no running kawoosh"))?
     };
+    let (sock, outside) = found;
     // From some other program's terminal: the window that opens the
     // file, or shows the picker, comes to the front.
     if let Some(pid) = outside

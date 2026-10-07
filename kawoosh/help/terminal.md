@@ -136,7 +136,7 @@ The same socket serves the `kawoosh` command inside a terminal:
 
 ## $EDITOR outside kawoosh
 
-`kawoosh-edit` and the commands above work from a terminal that is not kawoosh's too — Windows Terminal, another editor's — where there is no `KAWOOSH_SOCKET`: they reach the kawoosh started last, and `kawoosh-edit`, `kawoosh edit` and `kawoosh pick` bring its window to the front. With none running they say so and exit 1. To have `git commit` open in kawoosh from anywhere, set the editor to it, with kawoosh's folder on the `PATH`:
+`kawoosh-edit` and the commands above work from a terminal that is not kawoosh's too — Windows Terminal, another editor's — where there is no `KAWOOSH_SOCKET`: they reach the kawoosh started last, and `kawoosh-edit`, `kawoosh edit` and `kawoosh pick` bring its window to the front. With none running, `kawoosh-edit` and `kawoosh edit` start one — on your last session, the file joining it — and the other commands say so and exit 1. To have `git commit` open in kawoosh from anywhere, set the editor to it, with kawoosh's folder on the `PATH`:
 
 ```
 git config --global core.editor kawoosh-edit
