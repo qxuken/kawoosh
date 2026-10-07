@@ -11,6 +11,20 @@
 #   Kawoosh\fonts\             the bundled faces, found from the binary
 #                              (left out with --no-fonts)
 #
+# With --install, Kawoosh is also registered as an editor, all of it
+# under HKCU (`register-editor` below):
+#
+#   Classes\Applications\kawoosh.exe   Explorer's Open with, a type for each
+#                                      extension `kawoosh --languages` lists
+#   Classes\*\OpenWithList\kawoosh.exe then any file at all
+#   Classes\Kawoosh.File, RegisteredApplications, Software\Kawoosh
+#                                      Settings' Default apps, where a type
+#                                      can be given to Kawoosh
+#   Classes\Directory\shell\Kawoosh    "Open in Kawoosh" on a folder and in
+#   Classes\Directory\Background\…     one, which lists it
+#   …\CurrentVersion\App Paths\kawoosh.exe
+#                                      `kawoosh` in Run and `start kawoosh`
+#
 # The console host is Microsoft's own, newer than the one in Windows:
 # `portable-pty` takes a `conpty.dll` beside the executable before the
 # system's. Windows' renders a program's output in frames of its own, so
@@ -47,7 +61,7 @@
 def main [
   out_dir?: path  # where the Kawoosh folder goes (default: target\release, or %LOCALAPPDATA%\Programs with --install)
   --no-fonts      # leave the 252 MB of faces out
-  --install       # into %LOCALAPPDATA%\Programs, with a Start menu shortcut
+  --install       # into %LOCALAPPDATA%\Programs, with a Start menu shortcut, registered as an editor
 ] {
   let root = $env.FILE_PWD | path dirname
   let target = $env.CARGO_TARGET_DIR? | default ($root | path join target)
@@ -140,9 +154,87 @@ One built before it cannot: quit it and run this again."
         $s.Save()
       '
     }
+    # The types from the binary just built: the one in place may be the
+    # old one, waiting on its relaunch.
+    register-editor ($app | path join kawoosh.exe) ($target | path join release kawoosh.exe)
   }
 
   $app
+}
+
+# Kawoosh as an editor for this user: in Open with for every type the
+# build knows and then any file, in Default apps, on a folder's menu,
+# and in Run. None takes a type from the app that is its default — as
+# on macOS, `Alternate` — until one is given to Kawoosh in Settings.
+# What an install before wrote goes first, so a type the build no
+# longer knows is no longer offered.
+def register-editor [exe: path, built: path] {
+  # `d.ts` would be a key Windows never looks up: it matches by the
+  # last extension only.
+  let extensions = ^$built --languages | from json | get extensions | flatten
+    | where {|e| $e =~ '^[A-Za-z0-9_+-]+$' } | uniq
+  with-env {
+    KAWOOSH_EXE: $exe
+    KAWOOSH_EXTS: ($extensions | str join ' ')
+  } {
+    ^powershell -NoProfile -NonInteractive -Command r#'
+      $hkcu = [Microsoft.Win32.Registry]::CurrentUser
+      function Put($path, $name, $value) {
+        $k = $hkcu.CreateSubKey($path); $k.SetValue($name, $value); $k.Close()
+      }
+      function Types($path, $value) {
+        $k = $hkcu.CreateSubKey($path)
+        foreach ($e in $env:KAWOOSH_EXTS -split ' ') { $k.SetValue(".$e", $value) }
+        $k.Close()
+      }
+      $exe = $env:KAWOOSH_EXE
+      $icon = "`"$exe`",0"
+      $open = "`"$exe`" `"%1`""
+      $folder = "`"$exe`" `"%V`""
+      $classes = 'Software\Classes'
+      $app = "$classes\Applications\kawoosh.exe"
+      $progid = "$classes\Kawoosh.File"
+      $caps = 'Software\Kawoosh\Capabilities'
+      $paths = 'Software\Microsoft\Windows\CurrentVersion\App Paths\kawoosh.exe'
+      foreach ($k in $app, $progid, 'Software\Kawoosh', $paths,
+          "$classes\*\OpenWithList\kawoosh.exe",
+          "$classes\Directory\shell\Kawoosh",
+          "$classes\Directory\Background\shell\Kawoosh") {
+        $hkcu.DeleteSubKeyTree($k, $false)
+      }
+
+      Put $paths '' $exe
+      Put $paths 'Path' (Split-Path $exe)
+
+      Put $app 'FriendlyAppName' 'Kawoosh'
+      Put "$app\DefaultIcon" '' $icon
+      Put "$app\shell\open\command" '' $open
+      Types "$app\SupportedTypes" ''
+      $hkcu.CreateSubKey("$classes\*\OpenWithList\kawoosh.exe").Close()
+
+      Put $progid '' 'Kawoosh document'
+      Put "$progid\DefaultIcon" '' $icon
+      Put "$progid\shell\open\command" '' $open
+      Put $caps 'ApplicationName' 'Kawoosh'
+      Put $caps 'ApplicationDescription' 'A modal editor with terminals'
+      Put $caps 'ApplicationIcon' $icon
+      Types "$caps\FileAssociations" 'Kawoosh.File'
+      Put 'Software\RegisteredApplications' 'Kawoosh' $caps
+
+      foreach ($k in "$classes\Directory\shell\Kawoosh", "$classes\Directory\Background\shell\Kawoosh") {
+        Put $k '' 'Open in Kawoosh'
+        Put $k 'Icon' $icon
+        Put "$k\command" '' $folder
+      }
+
+      # SHCNE_ASSOCCHANGED: Explorer reads the associations again.
+      Add-Type -Namespace Kawoosh -Name Shell -MemberDefinition '
+        [DllImport("shell32.dll")]
+        public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);
+      '
+      [Kawoosh.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+    '#
+  }
 }
 
 # Microsoft.Windows.Console.ConPTY (MIT), the version shipped and its
