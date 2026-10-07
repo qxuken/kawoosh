@@ -25,6 +25,32 @@ pub enum Value {
     Real(f64),
     Text(String),
     Blob(Vec<u8>),
+    /// A blob longer than the query's `blob_cap`: its first bytes and
+    /// its whole length. Shown, never bound: a cut blob written back
+    /// would lose the rest, so binding one is an error.
+    Cut {
+        head: Vec<u8>,
+        size: usize,
+    },
+}
+
+impl Value {
+    /// A blob — or text that is not UTF-8, kept as bytes — `cap` bytes
+    /// at most: a longer one [`Value::Cut`].
+    fn of(v: ValueRef<'_>, cap: Option<usize>) -> Value {
+        let bytes = match v {
+            ValueRef::Blob(b) => b,
+            ValueRef::Text(t) if std::str::from_utf8(t).is_err() => t,
+            v => return Value::from(v),
+        };
+        match cap {
+            Some(cap) if bytes.len() > cap => Value::Cut {
+                head: bytes[..cap].to_vec(),
+                size: bytes.len(),
+            },
+            _ => Value::Blob(bytes.to_vec()),
+        }
+    }
 }
 
 impl From<ValueRef<'_>> for Value {
@@ -52,6 +78,14 @@ impl rusqlite::ToSql for Value {
             Value::Real(r) => ToSqlOutput::Borrowed(ValueRef::Real(*r)),
             Value::Text(t) => ToSqlOutput::Borrowed(ValueRef::Text(t.as_bytes())),
             Value::Blob(b) => ToSqlOutput::Borrowed(ValueRef::Blob(b)),
+            Value::Cut { size, .. } => {
+                return Err(rusqlite::Error::ToSqlConversionFailure(
+                    format!(
+                        "a blob of {size} bytes cut for showing is not bound: its whole is not here"
+                    )
+                    .into(),
+                ));
+            }
         })
     }
 }
@@ -131,8 +165,15 @@ fn open(path: &Path) -> Result<Connection, String> {
 /// `sql` run against the database at `path`: every statement in it in
 /// turn, `params` bound by position to each, the rows of the last
 /// statement with columns kept up to `cap` of them (`truncated` when
-/// there were more), the changes summed. An error is SQLite's words.
-pub fn query(path: &Path, sql: &str, params: &[Value], cap: usize) -> Result<Rows, String> {
+/// there were more), a blob longer than `blob_cap` cut ([`Value::Cut`]),
+/// the changes summed. An error is SQLite's words.
+pub fn query(
+    path: &Path,
+    sql: &str,
+    params: &[Value],
+    cap: usize,
+    blob_cap: Option<usize>,
+) -> Result<Rows, String> {
     let started = Instant::now();
     let conn = open(path)?;
     let mut out = Rows::default();
@@ -161,7 +202,10 @@ pub fn query(path: &Path, sql: &str, params: &[Value], cap: usize) -> Result<Row
             }
             let mut vals = Vec::with_capacity(n);
             for i in 0..n {
-                vals.push(Value::from(row.get_ref(i).map_err(|e| e.to_string())?));
+                vals.push(Value::of(
+                    row.get_ref(i).map_err(|e| e.to_string())?,
+                    blob_cap,
+                ));
             }
             rows.push(vals);
         }
@@ -314,6 +358,7 @@ mod tests {
             "SELECT id, name, age, note FROM people ORDER BY id",
             &[],
             10,
+            None,
         )
         .unwrap();
         assert_eq!(r.columns, vec!["id", "name", "age", "note"]);
@@ -330,7 +375,7 @@ mod tests {
         assert!(!r.truncated);
         assert_eq!(r.changes, 0);
         // The cap.
-        let r = query(&path, "SELECT * FROM people", &[], 1).unwrap();
+        let r = query(&path, "SELECT * FROM people", &[], 1, None).unwrap();
         assert_eq!(r.rows.len(), 1);
         assert!(r.truncated);
         // Several statements: the rows are the last one's with columns,
@@ -340,6 +385,7 @@ mod tests {
             "UPDATE people SET age = age + 1; SELECT age FROM people ORDER BY id; INSERT INTO people (name) VALUES ('cy')",
             &[],
             10,
+            None,
         )
         .unwrap();
         assert_eq!(r.changes, 3);
@@ -353,18 +399,70 @@ mod tests {
             "UPDATE people SET age = ?1 WHERE rowid = ?2",
             &[Value::Text("50".into()), Value::Integer(1)],
             10,
+            None,
         )
         .unwrap();
         assert_eq!(r.changes, 1);
-        let r = query(&path, "SELECT age FROM people WHERE id = 1", &[], 10).unwrap();
+        let r = query(&path, "SELECT age FROM people WHERE id = 1", &[], 10, None).unwrap();
         assert_eq!(r.rows[0][0], Value::Integer(50));
         // An error is SQLite's words; nothing to run is said.
-        let e = query(&path, "SELEC 1", &[], 10).unwrap_err();
+        let e = query(&path, "SELEC 1", &[], 10, None).unwrap_err();
         assert!(e.contains("syntax error"), "{e}");
-        assert_eq!(query(&path, "  ", &[], 10).unwrap_err(), "nothing to run");
+        assert_eq!(
+            query(&path, "  ", &[], 10, None).unwrap_err(),
+            "nothing to run"
+        );
         // A path that is not there is not made.
         let gone = path.with_file_name("none.db");
-        assert!(query(&gone, "SELECT 1", &[], 1).is_err());
+        assert!(query(&gone, "SELECT 1", &[], 1, None).is_err());
         assert!(!gone.exists());
+    }
+
+    /// A blob past `blob_cap` comes back cut — its first bytes and its
+    /// length — one within it whole; and a cut one is never bound, so
+    /// it cannot be written back short.
+    #[test]
+    fn a_long_blob_is_cut_and_a_cut_one_is_not_bound() {
+        let path = fixture("cut");
+        query(
+            &path,
+            "UPDATE people SET note = zeroblob(10000) WHERE id = 1",
+            &[],
+            1,
+            None,
+        )
+        .unwrap();
+        let r = query(
+            &path,
+            "SELECT note FROM people ORDER BY id",
+            &[],
+            10,
+            Some(4096),
+        )
+        .unwrap();
+        assert_eq!(
+            r.rows[0][0],
+            Value::Cut {
+                head: vec![0; 4096],
+                size: 10000
+            }
+        );
+        assert_eq!(
+            r.rows[1][0],
+            Value::Blob(vec![1, 2]),
+            "within the cap, whole"
+        );
+        let cut = r.rows[0][0].clone();
+        let e = query(
+            &path,
+            "UPDATE people SET note = ?1 WHERE id = 2",
+            &[cut],
+            1,
+            None,
+        )
+        .unwrap_err();
+        assert!(e.contains("not bound"), "{e}");
+        let r = query(&path, "SELECT note FROM people WHERE id = 2", &[], 1, None).unwrap();
+        assert_eq!(r.rows[0][0], Value::Blob(vec![1, 2]), "nothing written");
     }
 }

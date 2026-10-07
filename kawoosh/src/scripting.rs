@@ -605,6 +605,7 @@ impl Kawoosh {
                 watched,
                 private,
                 about,
+                payloads,
             } => {
                 let existing = self
                     .ed
@@ -677,7 +678,7 @@ impl Kawoosh {
                     self.ed.buffers[id].about = Some(p);
                 }
                 if hooked {
-                    rt.track_lines(&self.ed, id);
+                    rt.track_lines(&self.ed, id, &payloads);
                 }
                 // A watched buffer starts from this fill: the plugin that
                 // filled it annotated it itself.
@@ -992,8 +993,10 @@ impl Kawoosh {
                 sql,
                 params,
                 cap,
+                blob_cap,
             } => {
-                let job = move || kawoosh_systems::sqlite::query(&path, &sql, &params, cap);
+                let job =
+                    move || kawoosh_systems::sqlite::query(&path, &sql, &params, cap, blob_cap);
                 if self.jobs_inline {
                     let result = job();
                     rt.publish(&self.ed, self.focused_view());

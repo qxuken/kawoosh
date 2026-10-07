@@ -3856,3 +3856,62 @@ fn a_plugins_processes_wait_their_turn() {
         "every other one ran; the waiting one killed"
     );
 }
+
+/// A line yanked in a listing that is then closed outright pastes as
+/// its entry all the same: the register carries what each tracked line
+/// is (its payload), not only which line of which listing it was — so
+/// the paste in another listing is a copy, not a new empty file.
+#[test]
+fn a_line_yanked_in_a_listing_since_closed_is_still_its_entry() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-yankclose-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    std::fs::write(dir.join("a/f.txt"), "text").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("a").display()),
+    );
+    assert_eq!(d.line_rows(), ["../", "f.txt"]);
+    d.keys(&mut app, "jyy");
+    d.frame(&mut app);
+    // b in a buffer of its own, and a's listing closed.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir! {}", dir.join("b").display()),
+    );
+    app.run_lua_source(
+        "t",
+        &format!(
+            r#"for _, h in ipairs(kawoosh.buf.list()) do
+                 if kawoosh.buf.name(h) == "dir: {}" then kawoosh.buf.close(h, {{ force = true }}) end
+               end"#,
+            dir.join("a").display()
+        ),
+    );
+    d.frame(&mut app);
+    assert!(
+        !app.ed.buffers.iter().any(|(_, b)| b.name.ends_with("/a")),
+        "a's listing closed"
+    );
+    d.keys(&mut app, "p");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "f.txt"]);
+    let e: Vec<String> = d.row_extras();
+    assert!(e[1].contains("← copy from "), "{e:?}");
+    ex(&mut d, &mut app, "w");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b/f.txt")).unwrap(),
+        "text"
+    );
+    assert!(dir.join("a/f.txt").is_file(), "a copy, the source kept");
+    std::fs::remove_dir_all(&dir).ok();
+}

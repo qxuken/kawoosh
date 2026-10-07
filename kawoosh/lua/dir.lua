@@ -44,8 +44,9 @@
 -- — the register says which tracked line its text was
 -- (`kawoosh.buf.register`), and the pasted line is given the entry's
 -- identity — the listing it was yanked in gone on to another directory
--- meanwhile too, the entries kept as they were before its buffer was
--- filled anew (`keep_register`). The plan is one rule over where each
+-- meanwhile too, or closed: each tracked line carries its entry as its
+-- payload (`{ dir, name, meta }`, NUL between), which the register keeps
+-- through its buffer being filled anew. The plan is one rule over where each
 -- entry's lines are: an entry still on a line of its own listing stays
 -- (renamed when the line reads otherwise), and every other line of it
 -- is a copy of it; an entry whose own line is gone is moved to the
@@ -324,37 +325,44 @@ local function offset_of(lines, ln)
   return off
 end
 
--- The entries the register `reg` holds, read through the listing it
--- was taken from as that listing is now: for each of its lines a
--- tracked line of the listing stands behind, `{ text, who }`; nil when
--- none does.
+-- An entry as a tracked line's payload, and back: what the register
+-- carries of a line yanked in a listing (`kawoosh.buf.register()`'s
+-- `payloads`), the listing gone on to another directory or closed
+-- since. The `../` line and a new one have none.
+local function payload_of(who)
+  if not who or who.up or who.new then return nil end
+  return who.dir .. "\0" .. who.name .. "\0" .. (who.meta or "")
+end
+local function who_of(payload)
+  if type(payload) ~= "string" then return nil end
+  local d, name, meta = payload:match("^(.-)%z(.-)%z(.*)$")
+  return d and { dir = d, name = name, meta = meta } or nil
+end
+
+-- A listing's payloads as `open_scratch` takes them, by line.
+local function payloads_of(st)
+  local out = {}
+  for i, who in pairs(st.ids) do out[i] = payload_of(who) end
+  return out
+end
+
+-- The entries the register `reg` holds: for each of its lines a
+-- tracked line of a listing stands behind, `{ text, who }` — read
+-- through the listing it was taken from while that is the same fill
+-- (an entry the plan gave a line since is the line's), else from the
+-- line's payload; nil when none is an entry.
 local function entries_of(reg)
-  if not reg.linewise or not reg.buffer then return nil end
-  local src = lists(reg.buffer)
+  if not reg.linewise then return nil end
+  local src = reg.buffer and lists(reg.buffer)
   local sst = src and dir.state[PREFIX .. src]
-  if not sst then return nil end
   local held, k = {}, 0
   for t in (reg.text .. "\n"):gmatch("(.-)\n") do
     k = k + 1
-    local who = reg.entries[k] and sst.ids[reg.entries[k]]
+    local id = reg.entries[k]
+    local who = (id and sst and sst.ids[id]) or who_of(reg.payloads and reg.payloads[k])
     if who and not who.up and not who.new then held[#held + 1] = { text = t, who = who } end
   end
   return #held > 0 and held or nil
-end
-
--- A listing about to be filled anew — the next directory in its
--- buffer, or its own read again — tracks new lines, and the register's
--- word on which of its lines a yank was no longer reaches them: the
--- register's entries, if they are this listing's, are kept as they
--- read now (`dir.kept`), each `{ dir, name, meta }` and so wherever
--- the listing goes. A line yanked in `a/`, the listing gone on to `b/`
--- in the same pane, pastes as `a/`'s entry.
-local function keep_register(h)
-  if not h then return end
-  local reg = kawoosh.buf.register()
-  if not reg or reg.buffer ~= h then return end
-  local held = entries_of(reg)
-  if held then dir.kept = { buffer = h, text = reg.text, held = held } end
 end
 
 -- The drives, on Windows, as a listing above the roots: `C:\`, `D:\`,
@@ -364,7 +372,6 @@ local function open_drives(fresh)
   local name = PREFIX .. DRIVES
   dir.state[name] = { dir = DRIVES, ids = {} }
   local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
-  keep_register(buffer_of(DRIVES) or reuse)
   kawoosh.buf.open_scratch {
     name = name, text = table.concat(drives, "\n"), language = "dir",
     read_only = true, reuse = reuse,
@@ -410,7 +417,6 @@ function dir.open(path, from, fresh, reread)
     if reuse and (not lists(reuse) or kawoosh.buf.modified(reuse)) then reuse = nil end
     -- The buffer filled: the listing's own, if it is open, else the
     -- one reused.
-    keep_register(buffer_of(path) or reuse)
     dir.state[name] = state_of(path, lines, meta, waits)
     kawoosh.buf.open_scratch {
       name = name,
@@ -420,6 +426,7 @@ function dir.open(path, from, fresh, reread)
       on_change = dir.changed,
       reuse = reuse,
       line = line_of(lines, from),
+      payloads = payloads_of(dir.state[name]),
     }
     kawoosh.buf.annotate(meta, name, COLUMN)
     -- A directory attended, for the jumps (`dirs.lua`); a listing read
@@ -438,12 +445,12 @@ local function relist(d, h)
   listing(d, function(lines, meta, waits)
     if not lines or lists(h) ~= d then return end
     local name = PREFIX .. d
-    keep_register(h)
     dir.state[name] = state_of(d, lines, meta, waits)
     kawoosh.buf.open_scratch {
       name = name, text = table.concat(lines, "\n"), language = "dir",
       on_write = dir.write, on_change = dir.changed, show = false,
       line = line_of(lines, under_caret(h)),
+      payloads = payloads_of(dir.state[name]),
     }
     kawoosh.buf.annotate(meta, name, COLUMN)
     if dir.watch_sync then dir.watch_sync() end
@@ -458,18 +465,14 @@ local function at(base, entry) return fs.join(base, (entry:gsub("/$", ""))) end
 -- ----------------------------------------------------------- the plan
 
 -- The entries the `"` register holds, when one yank or delete in a
--- listing filled it — read through that listing, or, filled anew
--- since, as kept before it was: `take(text)` gives the entry of the
+-- listing filled it — read through that listing, or, filled anew or
+-- closed since, from the lines' payloads: `take(text)` gives the entry of the
 -- first of its lines reading `text` not given out yet — what a line
 -- pasted in is.
 local function register_entries()
   local reg = kawoosh.buf.register()
   if not reg then return nil end
   local held = entries_of(reg)
-  local kept = dir.kept
-  if not held and kept and reg.linewise and kept.buffer == reg.buffer and kept.text == reg.text then
-    held = kept.held
-  end
   if not held then return nil end
   local taken = {}
   return function(text)
@@ -503,9 +506,10 @@ local function read(L, take)
   end
   table.sort(lns)
   for _, ln in ipairs(lns) do
-    local id = kawoosh.buf.track(ln, h)
+    local who = (take and take(ch.untracked[ln])) or NEW
+    local id = kawoosh.buf.track(ln, h, payload_of(who))
     if id then
-      st.ids[id] = (take and take(ch.untracked[ln])) or NEW
+      st.ids[id] = who
       st.odd[id] = true
       L.fresh[id] = true
     end

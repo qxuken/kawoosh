@@ -97,6 +97,24 @@ The vcs cost was Rust's, not Lua's: `Base::lines` read the whole base
 for its line starts once a hunk, and the statusline asked for every
 hunk's old lines to count them.
 
+### 7. A tracked line carries what it is: payloads
+
+A listing tracked its lines through the engine (by id) and kept what
+each was in Lua (`ids`: id → `{ dir, name, meta }`). The register said
+which tracked line of which buffer each of its lines was — an id, good
+only while that buffer held the same fill — so `dir.lua` kept the
+register's entries itself before every fill (`keep_register`,
+`dir.kept`, three call sites), and a listing closed outright took its
+entries with it. A tracked line has a payload now, a string the plugin
+gives (`open_scratch { payloads = { [line] = … } }`, `kawoosh.buf.
+track(line, buffer, payload)`), and the register answers each line's
+(`kawoosh.buf.register().payloads`), keeping them by the take once read
+— every call into Lua comes after a publish — so they outlive the fill
+and the buffer. `dir.lua` reads the register through the live listing
+while it is the same fill (an entry the plan gave a line since is the
+line's) and from the payloads otherwise; `keep_register` and `dir.kept`
+are gone.
+
 ## Rounds
 
 **Round 1, 2026-10-07: the cheap batch** (d290f9f). `ctx.title_h`
@@ -155,16 +173,37 @@ the boosted rows it sorts (an index on every row grew every row's
 table); `is_binary` reads the extension from the path's end. The frame
 the load lands in from 244 ms to 108 ms, open to rows from 389 to 215.
 
+**Round 9, 2026-10-07: a file's base is its newest ask's**. Staging
+writes the index more than once, and `vcs.moved` reads every open
+file's base again each time: two `git show`s of one file in flight
+answered in either order, the older sometimes last. `fetch_base`
+numbers its asks by path and puts only the newest's answer — a number,
+not one ask in flight at a time, so a backend that never answers holds
+nothing up.
+
+**Round 10, 2026-10-07: sqlite blobs cut for showing**.
+`kawoosh.sqlite.query`'s `opts.blob_cap` keeps a blob to that many
+bytes; a longer one is `{ blob = its head, size =, cut = true }`
+(`Value::Cut`), and binding one is an error in Rust and in the binding,
+so a cut blob is never written back short. The pane reads blobs to 4 KiB
+and shows the real size; `y`, `Y` and the change `u` puts back read the
+row whole again by its key first. A page of rows with a megabyte blob
+each was that many megabytes in Lua.
+
+**Round 11, 2026-10-07: payloads** (Decision 7). Verified by
+`a_line_yanked_before_its_listing_moved_on_is_still_its_entry` (the
+listing buffer refilled three times, the line a copy each time) and
+`a_line_yanked_in_a_listing_since_closed_is_still_its_entry` (the
+listing closed, the paste in another a copy — `← new` before), both red
+without the payloads, and the listing suites.
+
 ## Open
 
-- Entries carried by the engine: a listing's `ids` (journal id →
-  entry) mirror the engine's tracked lines, and `entries_of` /
-  `keep_register` work around the register outliving the listing it
-  was yanked in. A payload per tracked line, carried by the register,
-  would end both.
+- A listing's `ids` still mirror its tracked lines in Lua (the plan
+  reassigns an entry to a line, Decision 7): the payloads could be the
+  only record once the engine takes a payload changed on a tracked line.
 - `field_node`, `keys_node`, `legend_node` out of `boot.lua`.
 - The picker's 108 ms frame as a 100k-file walk lands (Round 8): what is
   left is the rows as Lua tables and the matcher's copy of their text —
   a list kept in the engine and lent to Lua as rows are shown would end
   it, and change every source.
-- sqlite's blobs come back whole (a copy of a cell wants the whole).

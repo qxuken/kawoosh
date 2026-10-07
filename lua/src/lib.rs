@@ -242,6 +242,8 @@ pub enum Msg {
         sql: String,
         params: Vec<kawoosh_systems::sqlite::Value>,
         cap: usize,
+        /// A blob longer than this comes back cut (`{ blob, size, cut }`).
+        blob_cap: Option<usize>,
     },
     /// `kawoosh.sqlite.schema(path, fn)`: the database's tables read on
     /// a thread of its own, the answer to `Runtime::sqlite_schema`.
@@ -467,6 +469,8 @@ pub enum Msg {
         private: bool,
         /// The file it stands for, which `%` names (`Buffer::about`).
         about: Option<PathBuf>,
+        /// Each line's payload as it is tracked, line 1 first.
+        payloads: Vec<Option<String>>,
     },
     /// `kawoosh.buf.set_private(private[, buffer])`.
     SetPrivate {
@@ -1151,6 +1155,9 @@ pub struct RegisterSnap {
     pub linewise: bool,
     pub buffer: Option<u64>,
     pub entries: Vec<Option<usize>>,
+    /// Each line's tracked line's payload, kept through the buffer it
+    /// came from being filled anew (`Runtime::track_lines`).
+    pub payloads: Vec<Option<String>>,
 }
 
 impl Default for Published {
@@ -1228,6 +1235,10 @@ struct Followed {
     at: kawoosh_doc::Version,
     now: Option<std::ops::Range<usize>>,
     note: Option<String>,
+    /// What the plugin that tracked the line says it is (`kawoosh.buf.
+    /// track`'s `payload`, `open_scratch`'s `payloads`): carried with
+    /// the line, and by the register when the line is yanked.
+    payload: Option<String>,
 }
 
 /// A buffer's tracked lines — the lines it was tracked with, then
@@ -1289,6 +1300,8 @@ type JobsCell = Rc<RefCell<Jobs>>;
 /// The register's provenance, computed once per register: the origin
 /// it was read against, and the tracking it was read in — the version
 /// that tracking began at and how many lines it had then.
+type KeptKey = (BufferId, kawoosh_doc::Version, std::ops::Range<usize>);
+
 type RegisterKey = (
     BufferId,
     kawoosh_doc::Version,
@@ -1316,6 +1329,12 @@ pub struct Runtime {
     /// Which tracked lines the `"` register's lines were, for the
     /// register that was last looked at.
     register_map: RefCell<Option<(RegisterKey, Vec<Option<usize>>)>>,
+    /// The register's payloads as last read from its tracked lines, by
+    /// where they were taken (buffer, version, range): what it answers
+    /// once its buffer is filled anew, so a line yanked in a listing
+    /// pastes as its entry after the listing has gone on to another
+    /// directory.
+    register_kept: RefCell<Option<(KeptKey, Vec<Option<String>>)>>,
     /// The jobs out, waiting for their answer.
     jobs: JobsCell,
     /// The memory as last published, by the memory's version.
@@ -1377,6 +1396,7 @@ impl Runtime {
                 pending,
                 tracked,
                 register_map: RefCell::new(None),
+                register_kept: RefCell::new(None),
                 jobs,
                 memory_snap: RefCell::new(None),
                 diag_snap: RefCell::new(None),
@@ -1584,7 +1604,9 @@ impl Runtime {
     /// Remembers every line of `id` at its current version, so a later
     /// `kawoosh.buf.tracked()` says what each became — renamed, deleted,
     /// or unchanged — however the text was edited in between.
-    pub fn track_lines(&self, ed: &Editor, id: BufferId) {
+    ///
+    /// `payloads` are the lines' payloads in order, line 1 first.
+    pub fn track_lines(&self, ed: &Editor, id: BufferId, payloads: &[Option<String>]) {
         let Some(b) = ed.buffers.get(id) else { return };
         let v = b.version();
         let starts = b.line_starts();
@@ -1597,6 +1619,7 @@ impl Runtime {
                     at: v,
                     now: Some(r),
                     note: None,
+                    payload: payloads.get(ln).cloned().flatten(),
                 }
             })
             .collect();
@@ -1799,34 +1822,10 @@ impl Runtime {
                     match &*cached {
                         Some((k, e)) if *k == key => e.clone(),
                         _ => {
-                            let mut entries = vec![None; text.lines().count()];
-                            if let Some(b) = ed.buffers.get(o.buffer)
-                                && let Some(t) = tracked.get(&o.buffer)
-                            {
-                                for (i, f) in t.lines.iter().enumerate() {
-                                    let (version, r) = &f.origin;
-                                    if *version > o.version {
-                                        continue;
-                                    }
-                                    let Some(then) = b.line_carried(r.clone(), *version, o.version)
-                                    else {
-                                        continue;
-                                    };
-                                    if then.is_empty()
-                                        || then.start < o.range.start
-                                        || then.start >= o.range.end
-                                    {
-                                        continue;
-                                    }
-                                    let k = text
-                                        .get(..then.start - o.range.start)
-                                        .map(|t| t.matches('\n').count())
-                                        .unwrap_or(usize::MAX);
-                                    if let Some(slot) = entries.get_mut(k) {
-                                        *slot = Some(i + 1);
-                                    }
-                                }
-                            }
+                            let entries = match (ed.buffers.get(o.buffer), tracked.get(&o.buffer)) {
+                                (Some(b), Some(t)) => register_lines(b, t, text, o),
+                                _ => vec![None; text.lines().count()],
+                            };
                             *cached = Some((key, entries.clone()));
                             entries
                         }
@@ -1834,11 +1833,39 @@ impl Runtime {
                 }
                 None => vec![None; text.lines().count()],
             };
+            // The payloads: the tracked lines' while they are the take's
+            // — kept then, by the take, since every call into Lua comes
+            // after a publish — and once the buffer is filled anew and
+            // they are not, those kept.
+            let payloads = match origin {
+                Some(o) => {
+                    let key = (o.buffer, o.version, o.range.clone());
+                    let now: Vec<Option<String>> = entries
+                        .iter()
+                        .map(|e| {
+                            let t = tracked.get(&o.buffer)?;
+                            t.lines.get((*e)? - 1)?.payload.clone()
+                        })
+                        .collect();
+                    let mut kept = self.register_kept.borrow_mut();
+                    if now.iter().any(Option::is_some) {
+                        *kept = Some((key, now.clone()));
+                        now
+                    } else {
+                        match &*kept {
+                            Some((k, p)) if *k == key => p.clone(),
+                            _ => now,
+                        }
+                    }
+                }
+                None => vec![None; entries.len()],
+            };
             RegisterSnap {
                 text: text.clone(),
                 linewise: head.linewise,
                 buffer,
                 entries,
+                payloads,
             }
         });
         p.diagnostics = {
@@ -3211,6 +3238,39 @@ impl Runtime {
     }
 }
 
+/// Which of `t`'s tracked lines the lines of `text`, taken from `b` at
+/// `o`, were — by its id (from 1), or none: each tracked line carried to
+/// the version the text was taken at, and, lying in the taken bytes,
+/// its line among them. A line tracked after the take is none of them.
+fn register_lines(
+    b: &kawoosh_doc::Buffer,
+    t: &Tracked,
+    text: &str,
+    o: &kawoosh_editor::RegisterOrigin,
+) -> Vec<Option<usize>> {
+    let mut entries = vec![None; text.lines().count()];
+    for (i, f) in t.lines.iter().enumerate() {
+        let (version, r) = &f.origin;
+        if *version > o.version {
+            continue;
+        }
+        let Some(then) = b.line_carried(r.clone(), *version, o.version) else {
+            continue;
+        };
+        if then.is_empty() || then.start < o.range.start || then.start >= o.range.end {
+            continue;
+        }
+        let k = text
+            .get(..then.start - o.range.start)
+            .map(|t| t.matches('\n').count())
+            .unwrap_or(usize::MAX);
+        if let Some(slot) = entries.get_mut(k) {
+            *slot = Some(i + 1);
+        }
+    }
+    entries
+}
+
 /// Where a caret goes after `kawoosh.buf.edits`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Caret {
@@ -3589,6 +3649,13 @@ fn sqlite_value_to_lua(
             t.set("blob", lua.create_string(b)?)?;
             LV::Table(t)
         }
+        V::Cut { head, size } => {
+            let t = lua.create_table()?;
+            t.set("blob", lua.create_string(head)?)?;
+            t.set("size", size)?;
+            t.set("cut", true)?;
+            LV::Table(t)
+        }
     })
 }
 
@@ -3606,6 +3673,11 @@ fn sqlite_value_from_lua(v: LV, null: &Table) -> mlua::Result<kawoosh_systems::s
             Err(_) => V::Blob(s.as_bytes().to_vec()),
         },
         LV::Table(t) if t.to_pointer() == null.to_pointer() => V::Null,
+        LV::Table(t) if t.get::<Option<bool>>("cut")? == Some(true) => {
+            return Err(mlua::Error::runtime(
+                "a blob cut for showing is not bound: its whole is not here",
+            ));
+        }
         LV::Table(t) => match t.get::<Option<mlua::LuaString>>("blob")? {
             Some(b) => V::Blob(b.as_bytes().to_vec()),
             None => {
@@ -4532,6 +4604,7 @@ fn seed(
                 watched,
                 private,
                 about,
+                payloads,
             ): (
                 String,
                 String,
@@ -4544,7 +4617,22 @@ fn seed(
                 Option<bool>,
                 Option<bool>,
                 Option<String>,
+                Option<Table>,
             )| {
+                // `{ [line] = payload }`, holes and all: a line with none.
+                let mut lines: Vec<Option<String>> = Vec::new();
+                if let Some(t) = payloads {
+                    for pair in t.pairs::<usize, String>() {
+                        let (ln, p) = pair?;
+                        if ln == 0 {
+                            continue;
+                        }
+                        if lines.len() < ln {
+                            lines.resize(ln, None);
+                        }
+                        lines[ln - 1] = Some(p);
+                    }
+                }
                 qq.borrow_mut().push(Msg::OpenScratch {
                     name,
                     text,
@@ -4557,6 +4645,7 @@ fn seed(
                     watched: watched.unwrap_or(false),
                     private: private.unwrap_or(false),
                     about: about.map(|a| expand(&a)),
+                    payloads: lines,
                 });
                 Ok(())
             },
@@ -5778,6 +5867,14 @@ fn seed(
                 }
             }
             t.set("entries", e)?;
+            let pl = lua.create_table()?;
+            for (i, x) in r.payloads.iter().enumerate() {
+                match x {
+                    Some(s) => pl.set(i + 1, s.as_str())?,
+                    None => pl.set(i + 1, false)?,
+                }
+            }
+            t.set("payloads", pl)?;
             Ok(LV::Table(t))
         })?,
     )?;
@@ -5837,47 +5934,50 @@ fn seed(
     let pp = published.clone();
     buf.set(
         "track",
-        lua.create_function(move |_, (line, h): (usize, Option<u64>)| {
-            let (h, version, range, text) = {
-                let p = pp.borrow();
-                let h = h
-                    .or(p.current)
-                    .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
-                let b = p
-                    .buffers
-                    .get(&h)
-                    .ok_or_else(|| mlua::Error::runtime(format!("no buffer {h}")))?;
-                let ln = line.saturating_sub(1);
-                let Some(mut r) = b.snapshot.text.get_line_range(ln) else {
-                    return Ok(LV::Nil);
-                };
-                for nl in *b"\n\r" {
-                    if r.end > r.start && b.snapshot.text.byte_at(r.end - 1) == Some(nl) {
-                        r.end -= 1;
+        lua.create_function(
+            move |_, (line, h, payload): (usize, Option<u64>, Option<String>)| {
+                let (h, version, range, text) = {
+                    let p = pp.borrow();
+                    let h = h
+                        .or(p.current)
+                        .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+                    let b = p
+                        .buffers
+                        .get(&h)
+                        .ok_or_else(|| mlua::Error::runtime(format!("no buffer {h}")))?;
+                    let ln = line.saturating_sub(1);
+                    let Some(mut r) = b.snapshot.text.get_line_range(ln) else {
+                        return Ok(LV::Nil);
+                    };
+                    for nl in *b"\n\r" {
+                        if r.end > r.start && b.snapshot.text.byte_at(r.end - 1) == Some(nl) {
+                            r.end -= 1;
+                        }
                     }
+                    (h, b.snapshot.version, r.clone(), b.snapshot.slice(r))
+                };
+                let mut tr = tr.borrow_mut();
+                let t = tr.entry(id_of(h)).or_default();
+                t.lines.push(Followed {
+                    origin: (version, range.clone()),
+                    text: text.clone(),
+                    at: version,
+                    now: Some(range),
+                    note: None,
+                    payload,
+                });
+                let id = t.lines.len();
+                if let Some((sv, snap)) = &mut t.snap
+                    && *sv == version
+                {
+                    let s = Rc::make_mut(snap);
+                    s.texts.push(Some(text));
+                    s.at.push(Some(line));
+                    pp.borrow_mut().tracked.insert(h, snap.clone());
                 }
-                (h, b.snapshot.version, r.clone(), b.snapshot.slice(r))
-            };
-            let mut tr = tr.borrow_mut();
-            let t = tr.entry(id_of(h)).or_default();
-            t.lines.push(Followed {
-                origin: (version, range.clone()),
-                text: text.clone(),
-                at: version,
-                now: Some(range),
-                note: None,
-            });
-            let id = t.lines.len();
-            if let Some((sv, snap)) = &mut t.snap
-                && *sv == version
-            {
-                let s = Rc::make_mut(snap);
-                s.texts.push(Some(text));
-                s.at.push(Some(line));
-                pp.borrow_mut().tracked.insert(h, snap.clone());
-            }
-            Ok(LV::Integer(id as i64))
-        })?,
+                Ok(LV::Integer(id as i64))
+            },
+        )?,
     )?;
     let qq = q(queue);
     let pp = published.clone();
@@ -7262,7 +7362,9 @@ fn seed(
     // opts], fn)` runs the SQL on the io thread, `fn(result, err)` on a
     // frame after — `result` `{ columns =, rows = { {…} }, truncated =,
     // changes =, ms = }`, a NULL `kawoosh.sqlite.null`, a blob `{ blob =
-    // }`; `params` bind by position; `opts.cap` the rows kept (1000).
+    // }`; `params` bind by position; `opts.cap` the rows kept (1000);
+    // `opts.blob_cap` the bytes a blob is kept to, a longer one `{ blob
+    // = its first bytes, size =, cut = true }` — shown, never bound.
     // `schema(path, fn)` gives `{ tables = { { name =, kind =, rows =,
     // without_rowid =, columns = { { name =, type =, notnull =, pk =,
     // default = } } } }, bytes = }`. `is(path)` whether the file's head
@@ -7285,21 +7387,26 @@ fn seed(
                     ));
                 };
                 let mut params = Vec::new();
-                let mut cap = 1000usize;
+                let (mut cap, mut blob_cap) = (1000usize, None);
                 let mut tables = rest.into_iter().filter_map(|v| match v {
                     LV::Table(t) => Some(t),
                     _ => None,
                 });
+                let mut opts = |o: &Table| -> mlua::Result<()> {
+                    cap = o.get::<Option<usize>>("cap")?.unwrap_or(cap);
+                    blob_cap = o.get::<Option<usize>>("blob_cap")?.or(blob_cap);
+                    Ok(())
+                };
                 if let Some(p) = tables.next() {
-                    // A table with `cap` and no sequence is the options.
-                    if p.raw_len() == 0 && p.contains_key("cap")? {
-                        cap = p.get::<Option<usize>>("cap")?.unwrap_or(cap);
+                    // A table with options and no sequence is the options.
+                    if p.raw_len() == 0 && (p.contains_key("cap")? || p.contains_key("blob_cap")?) {
+                        opts(&p)?;
                     } else {
                         for v in p.sequence_values::<LV>() {
                             params.push(sqlite_value_from_lua(v?, &nn)?);
                         }
                         if let Some(o) = tables.next() {
-                            cap = o.get::<Option<usize>>("cap")?.unwrap_or(cap);
+                            opts(&o)?;
                         }
                     }
                 }
@@ -7315,6 +7422,7 @@ fn seed(
                     sql,
                     params,
                     cap: cap.max(1),
+                    blob_cap,
                 });
                 Ok(token)
             },

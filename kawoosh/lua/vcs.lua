@@ -286,8 +286,16 @@ end
 -- `holder()` is the buffer the base goes to once the backend answers:
 -- the one asked for, or — for a review's file not open — the one the
 -- review made for it since.
+-- The newest ask for each path's base, by number: an answer to an older
+-- one is not put over it. The index written twice while staging asks
+-- twice, and the two answers come back in either order — the older
+-- one last left the gutter a step behind.
+local asked = {}
+
 local function fetch_base(path, holder)
   if not enabled() then return end
+  local mine = (asked[path] or 0) + 1
+  asked[path] = mine
   vcs.root(fs.parent(path), function(r)
     if not r or not r.backend.base then return end
     local rev = kawoosh.opt("vcs.base") == "head" and "HEAD" or nil
@@ -295,7 +303,7 @@ local function fetch_base(path, holder)
     local text, head, left = nil, nil, staging and 2 or 1
     local function give()
       left = left - 1
-      if left > 0 then return end
+      if left > 0 or asked[path] ~= mine then return end
       local h = holder()
       if not has_buffer(h) or kawoosh.buf.path(h) ~= path then return end
       fetched[h] = true
