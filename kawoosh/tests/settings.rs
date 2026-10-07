@@ -1403,6 +1403,40 @@ return {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The input method is off where the keys are commands and on where
+/// text is typed (kui F125, `keys.input_method`): normal mode off,
+/// insert mode, `r`'s character and the prompt on; `always` keeps it on.
+#[test]
+fn the_input_method_is_on_only_where_text_is_typed() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d);
+    d.frame(&mut app);
+    assert!(d.core.ime_off(), "normal mode");
+    d.press(&mut app, "i");
+    d.frame(&mut app);
+    assert!(!d.core.ime_off(), "insert mode");
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
+    assert!(d.core.ime_off(), "back in normal mode");
+    d.press(&mut app, "r");
+    d.frame(&mut app);
+    assert!(!d.core.ime_off(), "`r` waits for a typed character");
+    d.press(&mut app, "x");
+    d.frame(&mut app);
+    assert!(d.core.ime_off(), "the character typed");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "xello\n"
+    );
+    d.press(&mut app, ":");
+    d.frame(&mut app);
+    assert!(!d.core.ime_off(), "the prompt");
+    d.press(&mut app, "<Esc>");
+    ex(&mut d, &mut app, "set keys.input_method=always");
+    d.frame(&mut app);
+    assert!(!d.core.ime_off(), "`always`");
+}
+
 /// `keys.option_as_alt` reaches kui every frame (kui F113): the left ⌥
 /// is Alt unless the settings say otherwise, so a dead key such as ⌥u
 /// is a chord rather than the start of `ü`.

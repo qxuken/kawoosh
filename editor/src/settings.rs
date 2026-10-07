@@ -510,6 +510,10 @@ const DOCS: &[(&str, &str)] = &[
         "how a pane's key legend starts: `compact`, one `⌥/ keys` that `<A-/>` opens, or `full`",
     ),
     (
+        "keys.input_method",
+        "where the platform's input method (accents, dead keys, press-and-hold, an IME) works: `text` — insert mode, prompts, fields, `r`'s and `f`'s character, terminals — or `always`, normal mode too",
+    ),
+    (
         "keys.option_as_alt",
         "macOS: which {{mac:⌥}}{{pc:Option key}} is Alt for key chords (`<A-u>`) rather than typing accents (`ü`): `left`, `right`, `both`, `none`",
     ),
@@ -913,6 +917,9 @@ impl Settings {
         // ⌥u a chord, not the start of `ü` — so the left by default,
         // and the right left for accents.
         defaults.set("keys.option_as_alt", Setting::Str("left".into()));
+        // The input method only where text is typed (kui F125): in
+        // normal mode a held `j` repeats, and `j` is no IME's syllable.
+        defaults.set("keys.input_method", Setting::Str("text".into()));
         // A pane's key legend: one `⌥/ keys` until `<A-/>` opens it
         // (docs/design/icons.md Decision 6), or every key at once.
         defaults.set("keys.legend", Setting::Str("compact".into()));
@@ -1225,6 +1232,7 @@ impl Settings {
             ("markdown.reveal", words(&["line", "span", "none"])),
             ("markdown.navigation", words(&["line", "row"])),
             ("keys.legend", words(&["compact", "full"])),
+            ("keys.input_method", words(&["text", "always"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
             ("end_of_line", words(&["", "lf", "crlf", "cr"])),
             (
@@ -1808,6 +1816,7 @@ mod tests {
                 "grammars.install",
                 "grammars.urls",
                 "insert_final_newline",
+                "keys.input_method",
                 "keys.legend",
                 "keys.option_as_alt",
                 "language.bash.comment",

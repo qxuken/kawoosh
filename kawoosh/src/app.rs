@@ -2783,6 +2783,9 @@ impl kui_native::App for Kawoosh {
             .and_then(kui_native::OptionAsAlt::from_name)
             .unwrap_or(kui_native::OptionAsAlt::Left);
         ui.option_as_alt(option);
+        // The input method off where the keys are commands (kui F125;
+        // per frame, so a mode change carries it).
+        ui.ime_off(self.ime_off());
         if self.awaiting_paste {
             ui.request_paste();
         }

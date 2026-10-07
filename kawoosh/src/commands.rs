@@ -276,6 +276,23 @@ impl Kawoosh {
         }
     }
 
+    /// Whether the window takes the keyboard with the platform's input
+    /// method off (kui F125, `keys.input_method`): where the keys are
+    /// commands — normal, visual, an operator's motion, a pane's keys,
+    /// the launcher — so a held `j` repeats, `⌥e` waits for nothing and
+    /// an IME composes no `j`. Text is typed with it on: insert mode,
+    /// the prompt and every field, `r`'s and `f`'s character, a
+    /// terminal's pty.
+    pub(crate) fn ime_off(&self) -> bool {
+        if self.ed.settings.str("keys.input_method") == Some("always") {
+            return false;
+        }
+        if self.keyed_view().is_none() && self.term_of(self.layout.focused()).is_some() {
+            return false;
+        }
+        self.focused_mode() != Mode::Insert && !self.ed.awaiting_typed_char()
+    }
+
     /// Opens the `:` prompt over the keyboard's view, or over the
     /// resident pane view when the keyboard is on a pane without one
     /// — a terminal's, the memory pane's `:` — so the line runs with
