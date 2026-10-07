@@ -309,11 +309,23 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
         para_x,
         "and nothing else did"
     );
-    let images: Vec<(f32, f32)> = d
-        .core
-        .nodes()
+    // The images in sight, not a table's ghost's in a row 0px tall.
+    let nodes = d.core.nodes();
+    let by_key: std::collections::HashMap<_, _> = nodes.iter().map(|n| (n.key, n)).collect();
+    let shown = |n: &&kui_native::NodeInfo| {
+        let mut p = n.parent;
+        while let Some(a) = p.and_then(|k| by_key.get(&k)) {
+            if a.rect.h <= 0.0 {
+                return false;
+            }
+            p = a.parent;
+        }
+        true
+    };
+    let images: Vec<(f32, f32)> = nodes
         .iter()
         .filter(|n| n.kind == kui_native::NodeKind::Image)
+        .filter(shown)
         .map(|n| (n.rect.x, n.rect.y))
         .collect();
     assert_eq!(
@@ -331,10 +343,9 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
     );
     // The left rule of each of its rows, 1px wide: they meet, from the
     // top edge's row to the bottom's.
-    let mut rules: Vec<kui_native::Rect> = d
-        .core
-        .nodes()
+    let mut rules: Vec<kui_native::Rect> = nodes
         .iter()
+        .filter(shown)
         .map(|n| n.rect)
         .filter(|r| r.w == 1.0 && r.x < light.0 && r.x > light.0 - 30.0 && r.y >= light.1 - 40.0)
         .filter(|r| r.y < images[3].1 + 80.0)
@@ -348,10 +359,9 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
         );
     }
     // A click on a row in the table's block lands on its line.
-    let row = d
-        .core
-        .nodes()
+    let row = nodes
         .iter()
+        .filter(shown)
         .find(|n| n.text.as_deref() == Some("alpha"))
         .map(|n| n.rect)
         .unwrap();
@@ -479,6 +489,13 @@ fn a_table_scrolled_half_out_keeps_its_columns() {
     assert!(seen(&d, "v270").is_none(), "the caret's row is its source");
     assert_eq!(x(&d, "v271"), top, "below the caret");
     assert_eq!(x(&d, "v269"), top, "above the caret");
+    // The widest row deleted, the columns narrow: what is kept of the
+    // table goes with the text it was worked out from.
+    d.keys(&mut app, "gg/wider");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.press(&mut app, "dd");
+    settle(&mut d, &mut app);
+    assert!(x(&d, "v2") < top, "narrower: {} < {top}", x(&d, "v2"));
 }
 
 /// A rendered paragraph draws no completion ghost — its text wraps as

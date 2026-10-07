@@ -188,6 +188,9 @@ pub struct Kawoosh {
     /// Each rendered table's sideways offset, by view and its first
     /// line: a table wider than the pane scrolls on its own.
     pub(crate) md_table_left: HashMap<(ViewId, usize), f32>,
+    /// Each rendered buffer's tables: their lines, columns and widest
+    /// cells, kept while its text and its layers stay as they were.
+    pub(crate) md_table_cache: HashMap<BufferId, crate::markdown::TableCache>,
     /// A devtools tab to show on the next frame — `:syntax_tree` asks
     /// for the syntax tab. Once, not every frame: kui's
     /// `set_devtools_tab` is edge-triggered, so a standing request would
@@ -452,6 +455,7 @@ impl Kawoosh {
             md_anchor: HashMap::new(),
             drawn_top: HashMap::new(),
             md_table_left: HashMap::new(),
+            md_table_cache: HashMap::new(),
             show_tab: None,
             tab_shown: None,
             settings_door: Default::default(),

@@ -921,10 +921,10 @@ pub fn table_cells(
     rule(ui);
 }
 
-/// The caret's row of a table as it is drawn away from the caret, 0px
-/// tall: its source is drawn instead, and these cells keep the columns
-/// as wide as they are when the caret is elsewhere — without them `j`
-/// and `k` through a table moved every column its widest cell was on.
+/// A row of a table's widest cells, 0px tall: the columns as wide as
+/// the whole table's, though the caret's row is drawn as its source and
+/// only the rows in sight are drawn as cells — without it `j` and `k`
+/// through a table moved every column its widest cell was on.
 pub fn table_ghost(ui: &mut Ui<'_>, face: Face, pal: &Pal, t: &TableRow, drawn: &str) {
     let style = mono(face, pal);
     ui.with(NodeSpec::row().height(0.0).clip().role(Role::None), |ui| {

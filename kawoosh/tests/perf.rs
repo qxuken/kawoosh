@@ -336,15 +336,21 @@ fn keystroke_cost() {
 
 /// What a keystroke's frame costs in a markdown pane with a table in
 /// sight, as the table grows: `cargo test --test perf -- --ignored
-/// --nocapture table`. A table's rows out of sight are drawn 0px tall
-/// so its columns are the whole table's (`panes.rs`), so a frame pays
-/// for the whole table — up to `markdown::TABLE_MAX` rows — when any
-/// of it shows. Each place: 40 × `j` then `k`, a frame each. Measured
-/// 2026-10-08, the table's tail in sight, avg a key: 20 rows 0.4ms,
-/// 100 1.3ms, 300 3.7ms, 500 6.1ms, 1000 7.7ms (capped at 500); no
-/// table in sight 0.3–0.6ms. Before the ghosts: 0.4, 0.7, 1.3, 1.9,
-/// 1.9ms. Of the 4.2ms they add at 500 rows, rendering the rows out of
-/// sight is 2.3ms and kui laying out their ghosts 1.9ms.
+/// --nocapture table`. A table's columns are the whole table's widest
+/// cells, drawn in a row 0px tall (`panes.rs`), worked out once while
+/// the text and its layers hold (`markdown::TableCache`) — up to 500
+/// rows of it. Each place: 40 × `j` then `k`, a frame each; then 20 ×
+/// `x` and `u` mid-table, each edit's frame and the parse's after it.
+///
+/// Measured 2026-10-08, avg ms a key at 20 / 100 / 300 / 500 / 1000
+/// rows. The tail in sight: 0.30, 0.47, 0.51, 0.54, 1.84 (past 500
+/// rows a table is not cached, and its rows are walked and counted as
+/// before); no table in sight 0.3–0.6. Before the columns were the
+/// whole table's: 0.38, 0.66, 1.28, 1.92, 1.94; with every row out of
+/// sight a ghost each frame: 0.42, 1.26, 3.71, 6.11, 7.67. An edit's
+/// frame, the parse's frame: 0.98/0.68, 1.48/1.17, 3.48/2.89,
+/// 5.31/4.45, 6.25/4.94 — each reads the whole table again, against
+/// 0.92/0.61, 1.11/0.78, 1.92/1.38, 2.41/1.67, 3.31/2.14 before.
 #[test]
 #[ignore]
 fn table_frame_cost() {
@@ -415,6 +421,39 @@ fn table_frame_cost() {
                 worst
             );
         }
+        // An edit in the table, a frame, then the parse's answer applied
+        // on the frame it arrives: each a new text or new runs, so the
+        // whole table is read again.
+        d.keys(&mut app, &format!("{}G5l", 4 + n / 2 + 1));
+        app.wait_for_syntax();
+        for _ in 0..4 {
+            d.frame(&mut app);
+        }
+        let (mut edit, mut parse, mut worst) = (0.0f64, 0.0f64, 0.0f64);
+        let steps = 20;
+        for _ in 0..steps {
+            for k in ["x", "u"] {
+                let t = Instant::now();
+                d.keys(&mut app, k);
+                let e = ms(t);
+                edit += e;
+                worst = worst.max(e);
+                app.wait_for_syntax();
+                let t = Instant::now();
+                d.frame(&mut app);
+                let e = ms(t);
+                parse += e;
+                worst = worst.max(e);
+            }
+        }
+        eprintln!(
+            "{n:>5}  {:<28} {:>6}  {:>8.3} {:>8.3}   (the parse's frame {:.3})",
+            "x/u mid-table: edit's frame",
+            "",
+            edit / (2 * steps) as f64,
+            worst,
+            parse / (2 * steps) as f64
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

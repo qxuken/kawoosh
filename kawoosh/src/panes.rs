@@ -1453,16 +1453,14 @@ impl Kawoosh {
         let mut md_cells: HashMap<usize, rows::TableRow> = HashMap::new();
         // How many columns each table has, by its first line.
         let mut md_columns: HashMap<usize, usize> = HashMap::new();
-        // A table's caret row as it is drawn away from the caret, whose
-        // cells keep the columns' widths while its source is drawn
-        // (`rows::table_ghost`): the cells and their drawn text.
-        let mut md_ghosts: HashMap<usize, (rows::TableRow, String)> = HashMap::new();
-        // Each table's lines, by its first line, and every row of it
-        // as cells away from the caret: a block of the table holds the
-        // rows it does not draw as ghosts, so its columns are the
-        // whole table's whatever of it is in sight.
-        let mut md_spans: HashMap<usize, Range<usize>> = HashMap::new();
-        let mut md_widths: HashMap<usize, (rows::TableRow, String)> = HashMap::new();
+        // Each table's widest cells, by its first line, as rows drawn
+        // 0px tall in each block of it (`rows::table_ghost`): its columns
+        // are the whole table's, whatever of it is in sight and whichever
+        // row the caret has as its source — without them `j` and `k`
+        // through a table moved every column its widest cell was on, and
+        // a scroll through it every column (2026-10-08). Each: the cells
+        // and their drawn text.
+        let mut md_ghosts: HashMap<usize, Vec<(rows::TableRow, String)>> = HashMap::new();
         // A pane not drawn before has no rect: the window's width, which
         // the next frame corrects, rather than none.
         let width_guess = (self
@@ -1487,13 +1485,13 @@ impl Kawoosh {
             // Where the carets are, and what of the lines around them is
             // their source (`markdown.reveal`).
             let carets = crate::markdown::Carets::of(&self.ed, view, self.md_shown.get(&view));
-            let mut raw: std::collections::HashSet<usize> = Default::default();
-            let mut tables = crate::markdown::Tables::default();
+            let buffers = &self.ed.buffers;
+            self.md_table_cache
+                .retain(|id, _| buffers.contains_key(*id));
+            let cache = self.md_table_cache.entry(buf_id).or_default();
+            let mut tables = cache.tables(buf, tabstop);
             for ln in md_anchored.map_or(v.top, |a| a.from)..last {
-                let (r, source) = carets.line(buf, ln, &style, tabstop, &mut tables);
-                if source {
-                    raw.insert(ln);
-                }
+                let (r, _) = carets.line(buf, ln, &style, tabstop, &mut tables);
                 if let Some(first) = r.table_first {
                     md_tables.insert(ln, first);
                 }
@@ -1521,44 +1519,13 @@ impl Kawoosh {
                     },
                 );
             }
-            let mut ghosts: HashMap<usize, crate::markdown::Ahead> = HashMap::new();
-            for ln in raw.iter().copied().filter(|l| md_tables.contains_key(l)) {
-                let r = crate::markdown::line(
-                    buf,
-                    ln,
-                    crate::markdown::Reveal::Folded,
-                    &style,
-                    tabstop,
-                    &mut tables,
-                );
-                ghosts.insert(ln, (r, Vec::new()));
-            }
-            // Each table's rows out of sight, above the pane's top or
-            // below its bottom, as ghosts too: a kui table is as wide as
-            // the rows in it, and with only those in sight its columns
-            // jumped as the pane scrolled through it (2026-10-08).
+            // Each table in sight, the whole of it: worked out once while
+            // the buffer holds (`markdown::TableCache`).
             let firsts: std::collections::HashSet<usize> = md_tables.values().copied().collect();
-            for first in firsts {
-                let mut end = first;
-                while end < buf.line_count()
-                    && end - first < crate::markdown::TABLE_MAX
-                    && crate::markdown::is_table_line(buf, end)
-                {
-                    end += 1;
-                }
-                for ln in (first..end).filter(|l| !md_rows.contains_key(l)) {
-                    let r = crate::markdown::line(
-                        buf,
-                        ln,
-                        crate::markdown::Reveal::Folded,
-                        &style,
-                        tabstop,
-                        &mut tables,
-                    );
-                    ghosts.insert(ln, (r, Vec::new()));
-                }
-                md_spans.insert(first, first..end);
-            }
+            let table_widths: Vec<(usize, crate::markdown::TableWidths)> = firsts
+                .into_iter()
+                .map(|first| (first, cache.widths(buf, first, &style, tabstop).clone()))
+                .collect();
             // A table the caret is in slides sideways to show it.
             let head = v.sels.primary().head;
             let head_line = buf.line_of(head);
@@ -1582,44 +1549,92 @@ impl Kawoosh {
                 self.md_table_left.insert((view, first), off);
             }
             let dir = buf.path.as_deref().and_then(kawoosh_systems::fs::parent);
-            // Each row's images, `true` for a ghost's.
-            type Wanted = (bool, usize, Vec<(String, String)>);
-            let wanted: Vec<Wanted> = md_rows
-                .iter()
-                .map(|(ln, e)| (false, ln, e))
-                .chain(ghosts.iter().map(|(ln, e)| (true, ln, e)))
-                .filter(|(_, _, (r, _))| !r.images.is_empty())
-                .map(|(ghost, ln, (r, _))| (ghost, *ln, r.images.clone()))
-                .collect();
-            for (ghost, ln, images) in wanted {
-                let mut got = Vec::new();
-                for (dest, alt) in images {
-                    let name = if alt.is_empty() {
-                        dest.clone()
-                    } else {
-                        alt.clone()
-                    };
-                    got.push(match self.markdown_image(dir.as_deref(), &dest) {
-                        Some(crate::markdown::Image::Ready { id, w, h }) => {
-                            Ok((*id, *w as f32, *h as f32))
-                        }
-                        Some(crate::markdown::Image::Failed(why)) => Err(format!("{name} ({why})")),
-                        _ => Err(name),
-                    });
+            // An image as read: kui's id and its size, else its alt (and
+            // why it failed) — asked for if it was not.
+            let image = |k: &mut Self, dest: &str, alt: &str| {
+                let name = if alt.is_empty() { dest } else { alt };
+                match k.markdown_image(dir.as_deref(), dest) {
+                    Some(crate::markdown::Image::Ready { id, w, h }) => {
+                        Ok((*id, *w as f32, *h as f32))
+                    }
+                    Some(crate::markdown::Image::Failed(why)) => Err(format!("{name} ({why})")),
+                    _ => Err(name.to_string()),
                 }
-                let rows = if ghost { &mut ghosts } else { &mut md_rows };
-                if let Some(e) = rows.get_mut(&ln) {
+            };
+            // Each row's images.
+            let wanted: Vec<(usize, Vec<(String, String)>)> = md_rows
+                .iter()
+                .filter(|(_, (r, _))| !r.images.is_empty())
+                .map(|(ln, (r, _))| (*ln, r.images.clone()))
+                .collect();
+            for (ln, images) in wanted {
+                let got = images
+                    .iter()
+                    .map(|(dest, alt)| image(self, dest, alt))
+                    .collect();
+                if let Some(e) = md_rows.get_mut(&ln) {
                     e.1 = got;
                 }
             }
-            // A table's rows as cells, an image at most its column's
-            // share of the pane.
+            // An image at most its column's share of the pane.
             let cell_w = self.cell.0;
+            let max_w = |columns: usize| {
+                let n = columns.max(1) as f32;
+                ((width_guess - 16.0 - n * 2.0 * cell_w - (n + 1.0)) / n).max(40.0)
+            };
+            // Each table's ghosts: its widest texts in a row, and its
+            // widest images in another when it has any.
+            for (first, w) in table_widths {
+                let mut drawn = String::new();
+                let cells = w
+                    .widest
+                    .iter()
+                    .map(|s| {
+                        let at = drawn.len();
+                        drawn.push_str(s);
+                        rows::TableCell::Text(at..drawn.len())
+                    })
+                    .collect();
+                let row = |cells| rows::TableRow {
+                    columns: w.columns,
+                    cells,
+                    delimiter: false,
+                    height: font.line_height,
+                    pad: cell_w,
+                    rule: pal.dim,
+                };
+                let mut ghosts = vec![(row(cells), drawn)];
+                if !w.images.is_empty() {
+                    let max_w = max_w(w.columns);
+                    let mut cells: Vec<rows::TableCell> =
+                        vec![rows::TableCell::Text(0..0); w.columns];
+                    // An image read over an alt, the wider either way.
+                    let width = |c: &rows::TableCell| match c {
+                        rows::TableCell::Image(Ok((_, w, _))) => (2, *w),
+                        rows::TableCell::Image(Err(alt)) => (1, alt.chars().count() as f32),
+                        rows::TableCell::Text(_) => (0, 0.0),
+                    };
+                    for (j, dest, alt) in &w.images {
+                        let got =
+                            rows::TableCell::Image(image(self, dest, alt).map(|(id, w, h)| {
+                                let s = (max_w / w).min(1.0);
+                                (id, w * s, h * s)
+                            }));
+                        if let Some(c) = cells.get_mut(*j)
+                            && width(&got) > width(c)
+                        {
+                            *c = got;
+                        }
+                    }
+                    ghosts.push((row(cells), String::new()));
+                }
+                md_ghosts.insert(first, ghosts);
+            }
+            // A table's rows as cells.
             let table_row =
                 |r: &crate::markdown::Rendered,
                  img: &[Result<(kui_native::ImageId, f32, f32), String>]| {
-                    let n = r.columns.max(1) as f32;
-                    let max_w = ((width_guess - 16.0 - n * 2.0 * cell_w - (n + 1.0)) / n).max(40.0);
+                    let max_w = max_w(r.columns);
                     let cells: Vec<rows::TableCell> = r
                         .cells
                         .iter()
@@ -1657,20 +1672,7 @@ impl Kawoosh {
                 };
             for (ln, (r, img)) in &md_rows {
                 if r.grid() {
-                    let t = table_row(r, img);
-                    md_widths.insert(*ln, (t.clone(), r.drawn.text.clone()));
-                    md_cells.insert(*ln, t);
-                }
-            }
-            for (ln, (r, img)) in &ghosts {
-                if r.grid() {
-                    let ghost = (table_row(r, img), r.drawn.text.clone());
-                    // Only the caret's own: the rows out of sight are
-                    // drawn from `md_widths`.
-                    if raw.contains(ln) {
-                        md_ghosts.insert(*ln, ghost.clone());
-                    }
-                    md_widths.insert(*ln, ghost);
+                    md_cells.insert(*ln, table_row(r, img));
                 }
             }
             md_columns = tables.columns;
@@ -2610,25 +2612,16 @@ impl Kawoosh {
                                                         .height(Sizing::Fit)
                                                         .min_height(kui_native::Min::FIT),
                                                     |ui| {
-                                                        // The table's rows not in
-                                                        // this block, 0px tall: its
-                                                        // columns are the whole
-                                                        // table's, not the rows' in
-                                                        // sight, and the same in
-                                                        // each of its blocks.
-                                                        let hidden = md_spans
+                                                        // The whole table's widest
+                                                        // cells, 0px tall.
+                                                        for (t, drawn) in md_ghosts
                                                             .get(&table)
-                                                            .cloned()
-                                                            .unwrap_or_default()
-                                                            .filter(|l| !(first..ln).contains(l));
-                                                        for l in hidden {
-                                                            if let Some((t, drawn)) =
-                                                                md_widths.get(&l)
-                                                            {
-                                                                rows::table_ghost(
-                                                                    ui, font, &pal, t, drawn,
-                                                                );
-                                                            }
+                                                            .into_iter()
+                                                            .flatten()
+                                                        {
+                                                            rows::table_ghost(
+                                                                ui, font, &pal, t, drawn,
+                                                            );
                                                         }
                                                         if top {
                                                             rows::table_edge(ui, columns, pal.dim);
@@ -2640,13 +2633,6 @@ impl Kawoosh {
                                                             }
                                                             if l + 1 == ln && bottom {
                                                                 edges += 1.0;
-                                                            }
-                                                            if let Some((t, drawn)) =
-                                                                md_ghosts.get(&l)
-                                                            {
-                                                                rows::table_ghost(
-                                                                    ui, font, &pal, t, drawn,
-                                                                );
                                                             }
                                                             if *cells {
                                                                 emit(ui, l, true, edges);

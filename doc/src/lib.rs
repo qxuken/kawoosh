@@ -102,6 +102,8 @@ pub struct Update {
 struct Layer {
     /// Ascending, non-overlapping, none empty.
     chunks: Vec<Chunk>,
+    /// How many times a producer replaced runs ([`Buffer::layer_changes`]).
+    changes: u64,
 }
 
 const CHUNK_RUNS: usize = 512;
@@ -948,7 +950,19 @@ impl Buffer {
     pub fn clear_layer(&mut self, name: &'static str) {
         if let Some((_, l)) = self.layers.iter_mut().find(|(n, _)| *n == name) {
             l.clear();
+            l.changes += 1;
         }
+    }
+
+    /// How many times layer `name`'s runs were replaced or cleared — an
+    /// edit carries them along and changes the version instead. What is
+    /// worked out from a layer and kept across frames is stale when this
+    /// or the version moved on.
+    pub fn layer_changes(&self, name: &str) -> u64 {
+        self.layers
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map_or(0, |(_, l)| l.changes)
     }
 
     /// The runs of `name` overlapping `range`, in order — a line's few,
@@ -984,13 +998,18 @@ impl Buffer {
         self.layers.iter().map(|(n, _)| *n)
     }
 
+    /// Layer `name` for its runs to be replaced, counted as a change.
     fn layer_mut(&mut self, name: &'static str) -> &mut Layer {
-        if let Some(i) = self.layers.iter().position(|(n, _)| *n == name) {
-            &mut self.layers[i].1
-        } else {
-            self.layers.push((name, Layer::default()));
-            &mut self.layers.last_mut().unwrap().1
-        }
+        let i = match self.layers.iter().position(|(n, _)| *n == name) {
+            Some(i) => i,
+            None => {
+                self.layers.push((name, Layer::default()));
+                self.layers.len() - 1
+            }
+        };
+        let layer = &mut self.layers[i].1;
+        layer.changes += 1;
+        layer
     }
 }
 
