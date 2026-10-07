@@ -982,6 +982,7 @@ impl Kawoosh {
                         rt.proc_exit(p.token, code, p.out);
                         self.drain_lua();
                     }
+                    self.start_queued_procs();
                 }
                 other @ (IoMsg::ProcLine { .. }
                 | IoMsg::ProcExit { .. }

@@ -3786,3 +3786,73 @@ fn a_lua_server_is_an_lsp_table() {
         "the builtin beside"
     );
 }
+
+/// A plugin's processes run 32 at a time, the rest waiting their turn
+/// in order: a review of two thousand files asks for a `git show` each,
+/// and as many children at once would spend the pipes' descriptors. A
+/// waiting one killed ends with no code, as a running one does; every
+/// other one runs.
+#[test]
+#[cfg(unix)]
+fn a_plugins_processes_wait_their_turn() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    app.jobs_inline = false;
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"done, killed = 0, nil
+           local tokens = {}
+           for i = 1, 40 do
+             tokens[i] = kawoosh.spawn({ "sh", "-c", "sleep 0.2" }, {
+               on_exit = function(code)
+                 if code == nil then killed = i else done = done + 1 end
+               end,
+             })
+           end
+           last = tokens[40]
+           kawoosh.echo(table.concat(tokens, " "))"#,
+    );
+    // The test's own processes, whatever the bundled plugins run beside.
+    let mine: std::collections::HashSet<u64> = app
+        .ed
+        .message
+        .split(' ')
+        .map(|t| t.parse().unwrap())
+        .collect();
+    d.frame(&mut app);
+    let running = |app: &Kawoosh| {
+        app.scripting
+            .procs
+            .values()
+            .filter(|p| mine.contains(&p.token))
+            .count()
+    };
+    let waiting = |app: &Kawoosh| {
+        app.scripting
+            .queued
+            .iter()
+            .filter(|(t, _)| mine.contains(t))
+            .count()
+    };
+    assert!(app.scripting.procs.len() <= 32, "32 at once at most");
+    assert_eq!(running(&app) + waiting(&app), 40);
+    assert!(waiting(&app) >= 8, "the rest waiting");
+    let before = waiting(&app);
+    app.run_lua_source("t", "kawoosh.kill(last)");
+    d.frame(&mut app);
+    assert_eq!(waiting(&app), before - 1, "the last one, never started");
+    for _ in 0..200 {
+        app.wait_for_jobs();
+        d.frame(&mut app);
+        if running(&app) + waiting(&app) == 0 {
+            break;
+        }
+    }
+    app.run_lua_source("t", "kawoosh.echo(done .. ' ' .. tostring(killed))");
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed.message, "39 40",
+        "every other one ran; the waiting one killed"
+    );
+}

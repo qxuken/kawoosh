@@ -67,6 +67,17 @@ range (its last character at most), one rule for both plugins.
 edit that changes nothing is none, and edits with carets but no text
 change move the carets only.
 
+### 5. A plugin's processes run 32 at a time
+
+`vcs.lua`'s working-tree review asks for a `git show` per changed file,
+and a review of two revisions two per file, all at once: two thousand
+changed files were two thousand children and their pipes, past the
+descriptors macOS allows a process (256). The bound is the engine's,
+for every plugin: `kawoosh.spawn` runs at most 32 at once and the rest
+wait their turn in order, each a job until it starts (`wait_for_jobs`
+counts it); a waiting one killed ends with no code, as a running one
+does. A plugin keeps writing the fan-out it means.
+
 ## Rounds
 
 **Round 1, 2026-10-07: the cheap batch** (d290f9f). `ctx.title_h`
@@ -91,6 +102,12 @@ offsets before an insertion and inside a replaced range, carets with no
 edits) and the pairs and node-action scripts unchanged. The listing
 test that asserted `big/` aside on the frame of the confirm waits for
 it now: the aside is `fs::apply`'s, on its thread.
+
+**Round 4, 2026-10-07: spawns bounded** (Decision 5). Verified by
+`a_plugins_processes_wait_their_turn` (forty processes: 32 at most
+running, the rest waiting, the last killed before it started, the 39
+others run) and the suites that spawn (lua, vcs, git, fossil, dirs, qd,
+secrets).
 
 ## Open
 
