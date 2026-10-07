@@ -155,6 +155,8 @@ a session.
 *Beat:* a buffer owned by one tab, moved out of the others' reach —
 a file open in two tabs is both tabs', and `:b NAME` still reaches
 any buffer, since hiding is a list's business, not the buffer's.
+(Still beaten after the 2026-10-07 amendment below, which counts the
+tabs instead of choosing one.)
 
 *Amended 2026-09-29:* a listed file under the tab's directory is not
 the tab's when it is in another open workspace nested there — a
@@ -175,6 +177,50 @@ one is kept and becomes the tab in front's, so its lists reach it, and
 the message says so (`1 buffer(s) closed with the tab, 1 unsaved kept
 here`). Before, a closed tab's buffers stayed loaded and in no tab's
 list.
+
+*Amended 2026-10-07:* **a buffer counts the tabs that hold it.** The
+user's complaint: a `:bdo` in one tab closed what another tab had open.
+Two tabs in one project are one workspace, so neither spared the
+other's, and a tab's list took in every listed file under its
+directory, so it reached files only the other tab had opened. Asked
+first as "a tab is a workspace, every buffer under it exclusively
+owned by it", then narrowed by the user to "refcount the buffer".
+
+- A tab holds a buffer once a pane of it shows it (`Tab::holds`, which
+  was `seen`), wherever the file is, until the tab lets it go. A
+  buffer's count is the tabs holding it, and the dock while a pane of it
+  shows it; it is open while the count is above zero.
+- The path claim is gone: a file under a tab's directory is in its
+  lists only if the tab opened it. The nested-workspace exception and
+  `other_workspaces_buffers` went with it.
+- `:bd` lets go from the tab in front: its panes on the buffer go
+  where they came from, else to another of the tab's, else a new
+  scratch. If another tab still holds the buffer it stays open there,
+  unsaved changes and all, so there is nothing to refuse or discard;
+  the message says so. The last `:bd` closes it as before, unsaved
+  changes refused without `!`. Another tab's panes are never touched.
+  `leave_in_other_tabs` is gone.
+- `:bdo` lets go of the tab's list but the current buffer. Those whose
+  count reaches zero close; the rest are counted in the message
+  (`1 buffer(s) deleted, 1 left to other tabs`). Under
+  `buffers.scope = "all"` the list is every buffer, but another tab's
+  are its own, so they stay too.
+- Closing a tab lets go of what it held; what nobody holds then closes,
+  unsaved ones kept and held by the tab in front, as before.
+- A listed buffer nobody holds goes, on the next sync, to the tab whose
+  directory has its file (the deepest), else the tab in front. That
+  covers a session's unsaved buffer put back hidden, or one a plugin
+  loaded without a pane. So every open buffer is in some tab's lists.
+
+Help, man, `*compile*` and other tool buffers are counted like files.
+Under a count that only changes when the last holder lets go, so each
+tab can `:bd` its help page without closing another tab's.
+
+*Beat:* **exclusive ownership**: one owner per buffer, and reaching
+another tab's file switches to that tab. Asked, and set aside by the
+user for the count, which fixes the complaint (`:bdo` closing another
+tab's buffer) without moving anyone between tabs. The workspace stays
+the project root for the memory and the dock (Decisions 4, 8 to 10).
 
 ## Round two: a lifecycle, and the dock
 

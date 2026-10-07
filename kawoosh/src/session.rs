@@ -427,7 +427,7 @@ impl Kawoosh {
                 focused: 0,
                 cwd,
                 bell: false,
-                seen: Default::default(),
+                holds: Default::default(),
                 jumps: Default::default(),
                 recent: Vec::new(),
             };

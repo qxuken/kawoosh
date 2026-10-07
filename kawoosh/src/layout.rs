@@ -435,10 +435,13 @@ pub struct Tab {
     /// A terminal in it rang while it was not the tab in front
     /// (`terminal.bell`): its label is marked until it is visited.
     pub bell: bool,
-    /// Every buffer a pane of the tab has shown (roadmap step 30): the
-    /// tab's own under `buffers.scope = "tab"`, wherever its file is.
-    /// Not kept by a session.
-    pub seen: std::collections::HashSet<kawoosh_doc::BufferId>,
+    /// The buffers the tab holds (workspaces.md Decision 7, amended
+    /// 2026-10-07): each one a pane of it has shown, wherever its file
+    /// is, until the tab lets it go — a `:bd` or `:bdo` in it, the tab
+    /// closed. A buffer is open while a tab holds it; it is the tab's
+    /// list under `buffers.scope = "tab"`. Not kept by a session: what
+    /// its panes show is held again on restore.
+    pub holds: std::collections::HashSet<kawoosh_doc::BufferId>,
     /// The places left in its panes (docs/design/jumps.md Decision 3).
     pub jumps: crate::jumps::Jumps,
     /// The panes the keyboard settled in, the latest last
@@ -456,7 +459,7 @@ impl Tab {
             cwd: None,
             focused,
             bell: false,
-            seen: Default::default(),
+            holds: Default::default(),
             jumps: Default::default(),
             recent: Vec::new(),
         }
@@ -1107,7 +1110,7 @@ impl Layout {
             focused: p,
             cwd,
             bell: false,
-            seen: Default::default(),
+            holds: Default::default(),
             jumps: Default::default(),
             recent: Vec::new(),
         });

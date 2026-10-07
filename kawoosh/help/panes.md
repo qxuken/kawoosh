@@ -196,9 +196,15 @@ A **workspace** is the project a directory belongs to: the outermost
 directory above it with a `.kawoosh` folder, else the root of its git
 (or jj, hg) repository. Pinned files, recent files and the memory are
 kept per workspace, and a project's `.kawoosh/settings.lua` applies while
-a tab in it is in front. With `buffers.scope = "tab"` (the default) the
-buffer lists show the focused tab's buffers; `<C-a>` in the buffer
-picker shows every tab's.
+a tab in it is in front.
+
+A tab **holds** every buffer it has shown, wherever the file is. With
+`buffers.scope = "tab"` (the default) the buffer lists show the focused
+tab's buffers; `<C-a>` in the buffer picker shows every tab's. A buffer
+stays open while some tab holds it: `:bd` and `:bdo` let it go from the
+tab you are in, and it closes only when no other tab (or a dock pane)
+still has it. Closing a tab lets go of everything it holds; an unsaved
+buffer nobody else has comes to the tab in front.
 
 | keys | what |
 |---|---|
