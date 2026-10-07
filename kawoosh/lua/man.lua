@@ -265,7 +265,8 @@ local function fill(raw, page, section, width, opts)
   local text, info = man.render(raw)
   page, section = header_of(text, page, section)
   local name = buffer_name(page, section)
-  kawoosh.buf.open_scratch { name = name, text = text, read_only = true, language = LANG, show = opts.show ~= false }
+  kawoosh.buf.open_scratch { name = name, text = text, read_only = true, language = LANG, show = opts.show ~= false,
+                             restore = true }
   kawoosh.buf.paint(SET, paints_of(text, info), name)
   open[name] = { page = page, section = section, width = width, heads = info.heads }
   return name

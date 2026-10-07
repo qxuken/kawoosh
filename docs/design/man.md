@@ -150,6 +150,14 @@ test's own (a shell script: `-k .` lists, else a page with overstrikes
 and the width it was asked); `spawn.lua`'s `env` case; a unit test on
 `paint_style`.
 
+A page came back from a session as a blank scratch until 2026-10-07:
+the session keeps a plugin's scratch by name only when it has an
+`on_write` (`Buffer::hook`), and a page has none, nor a scratch row
+(nothing is typed in it). `open_scratch`'s `restore = true` keeps it
+by name as a restorable multibuffer is (`Multis::restored`), and the
+stand-in it comes back as is the page again once refilled: read-only,
+no hook, `:w` refused as before. `a_man_page_comes_back_with_a_session`.
+
 ## Not built
 
 - `K` in a shell or C buffer as the manual's: the hover's key stays

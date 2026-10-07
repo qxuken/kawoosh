@@ -616,6 +616,7 @@ impl Kawoosh {
                 private,
                 about,
                 payloads,
+                restore,
             } => {
                 let existing = self
                     .ed
@@ -644,6 +645,12 @@ impl Kawoosh {
                         // are put on it as on a new one.
                         if hooked {
                             b.hook = Some(name.clone());
+                        } else if restore {
+                            // The session's stand-in had the hook for
+                            // its name alone, and none of the page's
+                            // ways: this one writes nothing.
+                            b.hook = None;
+                            b.read_only = read_only;
                         }
                         if let Some(l) = &language {
                             b.language = l.as_str().into();
@@ -671,6 +678,8 @@ impl Kawoosh {
                 };
                 if private {
                     self.set_private(id, true);
+                } else if restore {
+                    self.multis.restored.insert(id);
                 }
                 if let Some(p) = about {
                     // A scratch standing for a file reads as the file

@@ -178,8 +178,9 @@ impl Kawoosh {
                 // Nor does a multibuffer: its text is its files', and the
                 // search that made it is asked for again — but one made
                 // to be restored comes back by its name, empty, for its
-                // plugin to fill (`kawoosh.on_restore`).
-                if self.ed.is_multi(view.buffer) && self.multis.restored.contains(&view.buffer) {
+                // plugin to fill (`kawoosh.on_restore`), as does a
+                // plugin's page made so (`open_scratch`'s `restore`).
+                if self.multis.restored.contains(&view.buffer) && !buf.private {
                     return PaneData::Editor {
                         path: None,
                         scratch: None,

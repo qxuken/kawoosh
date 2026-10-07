@@ -703,12 +703,16 @@ end
 -- tracks a buffer with `on_write` from the fill with a payload on each
 -- line given: what the line is, to the plugin — carried with the line
 -- and by the register when it is yanked (`kawoosh.buf.register().
--- payloads`), the buffer filled anew since or not.
+-- payloads`), the buffer filled anew since or not. `restore = true`:
+-- a session brings its pane back, empty under its name, for
+-- `kawoosh.on_restore` to fill — what `on_write` does already for a
+-- buffer that writes (a man page has none).
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   if t.on_change then kawoosh._changers[t.name] = t.on_change end
   kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
-    t.reuse, t.line, t.show ~= false, t.on_change ~= nil, t.private or false, t.about, t.payloads)
+    t.reuse, t.line, t.show ~= false, t.on_change ~= nil, t.private or false, t.about, t.payloads,
+    t.restore or false)
 end
 
 -- ---------------------------------------------------------------- fields
