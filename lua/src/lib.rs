@@ -471,6 +471,10 @@ pub enum Msg {
         about: Option<PathBuf>,
         /// Each line's payload as it is tracked, line 1 first.
         payloads: Vec<Option<String>>,
+        /// A session brings its pane back, empty under its name, for
+        /// the plugin that made it to fill (`kawoosh.on_restore`) — a
+        /// page with no `on_write`, which is kept by name otherwise.
+        restore: bool,
     },
     /// `kawoosh.buf.set_private(private[, buffer])`.
     SetPrivate {
@@ -4605,6 +4609,7 @@ fn seed(
                 private,
                 about,
                 payloads,
+                restore,
             ): (
                 String,
                 String,
@@ -4618,6 +4623,7 @@ fn seed(
                 Option<bool>,
                 Option<String>,
                 Option<Table>,
+                Option<bool>,
             )| {
                 // `{ [line] = payload }`, holes and all: a line with none.
                 let mut lines: Vec<Option<String>> = Vec::new();
@@ -4646,6 +4652,7 @@ fn seed(
                     private: private.unwrap_or(false),
                     about: about.map(|a| expand(&a)),
                     payloads: lines,
+                    restore: restore.unwrap_or(false),
                 });
                 Ok(())
             },

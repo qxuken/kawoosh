@@ -29,8 +29,9 @@ pub struct Multis {
     /// served as a shown buffer is, so an excerpt has its file's colours
     /// and diagnostics without every file a search found being parsed.
     pub visible: HashSet<BufferId>,
-    /// The multibuffers a session brings back (`restore = true`): kept
-    /// by name for their plugin to fill again.
+    /// The multibuffers, and the plugins' scratch pages, a session
+    /// brings back (`restore = true`): kept by name for their plugin to
+    /// fill again.
     pub restored: HashSet<BufferId>,
 }
 

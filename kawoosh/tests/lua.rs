@@ -2280,6 +2280,99 @@ fn a_listing_comes_back_with_a_session() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// A man page comes back with a session (man.md): kept by its name
+/// (`open_scratch`'s `restore`), read again by the man plugin's
+/// `on_restore` — read-only, rendered again, `:w` refused as before,
+/// one buffer of its name. It came back a blank scratch: a
+/// page has no `on_write`, so the session kept nothing of it.
+#[test]
+fn a_man_page_comes_back_with_a_session() {
+    let root = std::env::temp_dir().join(format!("kawoosh-mansession-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let reader = root.join("man.sh");
+    std::fs::write(
+        &reader,
+        "printf 'LS(1)    General Commands Manual    LS(1)\\n\\nN\\bNA\\bAM\\bME\\bE\\n     ls - list directory contents\\n'\n",
+    )
+    .unwrap();
+    // sh reads `/` on Windows too.
+    let command = format!("sh {}", reader.display().to_string().replace('\\', "/"));
+    let db = root.join("state.db");
+    let launch = || {
+        let mut d = Drive::new(900.0, 500.0);
+        let mut app = app_with_lua(&mut d, "*scratch*", "");
+        app.ed.settings.set(
+            kawoosh_editor::Layer::User,
+            "man.command",
+            kawoosh_editor::Setting::Str(command.clone()),
+        );
+        app.open_store(Some(&db));
+        (d, app)
+    };
+    let page = "*man ls(1)*";
+    let filled = |d: &mut Drive, app: &mut Kawoosh| {
+        for _ in 0..500 {
+            d.frame(app);
+            if app
+                .ed
+                .buffers
+                .values()
+                .any(|b| b.name == page && b.text().contains("list directory"))
+            {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        false
+    };
+    let (mut d, mut app) = launch();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "man ls");
+    assert!(
+        filled(&mut d, &mut app),
+        "the page read: {}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "qa");
+    d.frame(&mut app);
+    assert!(app.quit);
+    drop(app);
+
+    let (mut d, mut app) = launch();
+    assert!(app.restore_session());
+    assert!(
+        filled(&mut d, &mut app),
+        "the page read again: {}",
+        app.ed.message
+    );
+    let v = app.focused_view().unwrap();
+    let b = app.ed.buffer_of(v);
+    assert_eq!(b.name, page, "back in its pane");
+    assert!(b.read_only, "read-only, as it was");
+    assert_eq!(&*b.language, "man");
+    assert!(b.hook.is_none(), "it writes nothing");
+    assert_eq!(
+        app.ed.buffers.values().filter(|b| b.name == page).count(),
+        1
+    );
+    assert!(
+        b.text().lines().any(|l| l == "NAME"),
+        "rendered, its overstrikes read off: {:?}",
+        b.text()
+    );
+    // As a page never restored: no writer to hand the lines to.
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert!(
+        app.ed.message.starts_with("no file name"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// A line pasted into a listing and yanked from there again is still
 /// the entry it was — `yy`, `p`, `k`, `dd`, `yy` leaves the listing's
 /// own copy standing in for the entry — and pasted into another
