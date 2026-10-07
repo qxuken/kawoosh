@@ -221,7 +221,7 @@ impl Kawoosh {
     /// What `field_line` draws of `view`'s field, gathered from the
     /// engine: its line as drawn (tabs, escapes), its selections, a
     /// caret per selection. What a Lua view's field is drawn from too
-    /// (`fields::FieldDraw`), which draws without the app at hand.
+    /// (`fields::EngineDraw`), which draws without the app at hand.
     pub(crate) fn field_scene(&self, view: ViewId, ghost: Option<&str>) -> Option<FieldScene> {
         let v = self.ed.views.get(view)?;
         let buf = &self.ed.buffers[v.buffer];
@@ -957,6 +957,7 @@ impl Kawoosh {
                                 words: hint_style,
                                 hover: pal.hover,
                             },
+                            Some(&title_group(pane)),
                         );
                     }
                     if close_shown {

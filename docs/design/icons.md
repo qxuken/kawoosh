@@ -163,9 +163,10 @@ A **legend** is data: `{ { "jk", "walk" }, { "/", "filters" }, {
 wrapped between items and never inside one — what the search legend's
 no-break spaces did by hand.
 
-The Rust half (`icons::keys`, `icons::legend_items`) and the Lua half
-(`ctx.keys`, `ctx.legend`) share the notation's reading
-(`icons::caps`, `kawoosh._key_caps`) and the cap's measures.
+The Rust half (`icons::keys`, `icons::legend_items`) draws the Lua
+half too: `ctx.keys` and `ctx.legend` are fills the engine draws with
+them (lua-boundary.md Decision 9), so a cap is one drawing wherever it
+is.
 
 *Beat:* the symbols written into strings, as now (`⌥/`, `⌃⇧J`, `⏎`):
 they are glyphs (Decision 1), and a legend in a string is a key map
@@ -337,8 +338,9 @@ into what is drawn, `icon` / `draw` / `icon_box` for the chrome;
 `caps` reading a notation through the keymap's `parse_notation`,
 `keys`, `keys_width` and `legend_items`, `CAP` the measures; and
 `lua_door`: `kawoosh.icon`, the `kawoosh.icons` table (a metatable
-over the set), `kawoosh.icon_names`, `kawoosh._key_caps`,
-`kawoosh._cap`. boot.lua's `ctx.icon`, `ctx.keys`, `ctx.legend`.
+over the set), `kawoosh.icon_names`. boot.lua's `ctx.icon`, and
+`ctx.keys`, `ctx.legend` as fills `fields.rs` draws (lua-boundary.md
+Decision 9).
 The which-key keeps its words in the title and folds a numbered run
 as the first key's caps and `…9`. Tests: `icons.rs`'s unit tests
 (every shape centred in its box, notations as caps, an override and
