@@ -334,6 +334,91 @@ fn keystroke_cost() {
     let _ = d.warnings();
 }
 
+/// What a keystroke's frame costs in a markdown pane with a table in
+/// sight, as the table grows: `cargo test --test perf -- --ignored
+/// --nocapture table`. A table's rows out of sight are drawn 0px tall
+/// so its columns are the whole table's (`panes.rs`), so a frame pays
+/// for the whole table — up to `markdown::TABLE_MAX` rows — when any
+/// of it shows. Each place: 40 × `j` then `k`, a frame each. Measured
+/// 2026-10-08, the table's tail in sight, avg a key: 20 rows 0.4ms,
+/// 100 1.3ms, 300 3.7ms, 500 6.1ms, 1000 7.7ms (capped at 500); no
+/// table in sight 0.3–0.6ms. Before the ghosts: 0.4, 0.7, 1.3, 1.9,
+/// 1.9ms. Of the 4.2ms they add at 500 rows, rendering the rows out of
+/// sight is 2.3ms and kui laying out their ghosts 1.9ms.
+#[test]
+#[ignore]
+fn table_frame_cost() {
+    let prose: String = (0..300)
+        .map(|i| format!("Line {i} of prose after the table, a sentence or so long.\n"))
+        .collect();
+    eprintln!(
+        "{:>5}  {:<28} {:>6}  {:>8} {:>8}",
+        "rows", "where", "top", "avg ms", "worst ms"
+    );
+    for n in [20usize, 100, 300, 500, 1000] {
+        let dir =
+            std::env::temp_dir().join(format!("kawoosh-perf-table-{n}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        // Line 0 the heading, 2 the header, 3 the delimiter, 4.. the rows.
+        let mut doc = String::from(
+            "# Tables\n\n| name | kind | good at | the catch |\n| --- | --- | --- | --- |\n",
+        );
+        for i in 0..n {
+            doc.push_str(&format!(
+                "| row {i} | **kind** {} | {} | {} |\n",
+                i % 7,
+                "word ".repeat(1 + i % 5),
+                "a longer cell of text ".repeat(1 + i % 3)
+            ));
+        }
+        doc.push('\n');
+        doc.push_str(&prose);
+        std::fs::write(dir.join("doc.md"), doc).unwrap();
+        let mut app = Kawoosh::from_file(&dir.join("doc.md"));
+        app.jobs_inline = true;
+        let mut d = Drive::new(1100.0, 760.0);
+        load_fonts(&mut d, &mut app);
+        d.frame(&mut app);
+        app.wait_for_syntax();
+        for _ in 0..4 {
+            d.frame(&mut app);
+        }
+        let end = n + 4;
+        for (label, line) in [
+            ("no table in sight", end + 200),
+            ("tail in sight, caret below", end + 12),
+            ("caret mid-table", 4 + n / 2),
+            ("head in sight, caret above", 0),
+        ] {
+            d.keys(&mut app, &format!("{}G", line + 1));
+            app.wait_for_syntax();
+            for _ in 0..4 {
+                d.frame(&mut app);
+            }
+            let v = app.focused_view().unwrap();
+            let top = app.ed.views[v].top;
+            let (mut total, mut worst) = (0.0f64, 0.0f64);
+            let steps = 40;
+            for _ in 0..steps {
+                for k in ["j", "k"] {
+                    let t = Instant::now();
+                    d.keys(&mut app, k);
+                    let e = ms(t);
+                    total += e;
+                    worst = worst.max(e);
+                }
+            }
+            eprintln!(
+                "{n:>5}  {label:<28} {top:>6}  {:>8.3} {:>8.3}",
+                total / (2 * steps) as f64,
+                worst
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
 /// What a frame costs as a scrolling tab's ribbon grows (roadmap step
 /// 11): `cargo test --release --test perf -- --ignored --nocapture
 /// ribbon`. A column off the viewport draws its chrome and no rows
