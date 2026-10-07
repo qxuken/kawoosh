@@ -648,7 +648,8 @@ session brings it back. In it:
 
 `man.width` renders every page at a width of your own instead of the
 pane's; `man.command` names the reader when it is not `man` on your
-path (`env MANPATH=/opt/man man`).
+path (`env MANPATH=/opt/man man`). Windows has no `man`; `wsl man`
+reads WSL's.
 
 ## The syntax tree
 

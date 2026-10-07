@@ -4,6 +4,7 @@
 -- that pane's width (`man.width` for one of your own), its bold and
 -- underline kept as the buffer's paints: section heads in the keyword
 -- colour, a reference to another page (`chmod(1)`) in the link colour.
+-- Windows has no `man`; `man.command = "wsl man"` reads WSL's.
 -- `:man` alone takes the word under the caret, and with none the
 -- picker over every page `man -k` knows (`:man pick`, `picker man`).
 --
@@ -64,11 +65,13 @@ end
 
 -- The environment a page is rendered under: no pager, the overstrikes
 -- kept (groff's `MAN_KEEP_FORMATTING`, and no SGR in their place), the
--- width asked for.
+-- width asked for. `WSLENV` names them all, or `wsl man` hears none of
+-- them and prints 80 columns with no bold.
 local function env_for(width)
   return {
     MANPAGER = "cat", PAGER = "cat", MAN_KEEP_FORMATTING = "1", GROFF_NO_SGR = "1",
     MANWIDTH = tostring(width), COLUMNS = tostring(width),
+    WSLENV = "MANPAGER:PAGER:MAN_KEEP_FORMATTING:GROFF_NO_SGR:MANWIDTH:COLUMNS",
   }
 end
 

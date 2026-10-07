@@ -160,4 +160,9 @@ and the width it was asked); `spawn.lua`'s `env` case; a unit test on
   the grammar; the heads are in `man.pages`' hand, not the tree's).
 - `apropos` as a query (`:man -k PATTERN`): the picker's filter over
   every page is that.
-- Windows: no `man`; the plugin says `man: not found`.
+- Windows: no `man`; the plugin says `man: not found` (seen
+  2026-10-07). `man.command = "wsl man"` reads WSL's: the environment
+  is named in `WSLENV`, without which `wsl` passes none of it and the
+  page came back at 80 columns with no overstrikes — no bold, no
+  heads. With it, seen on Windows 11 / Ubuntu 24.04: `:man ls` at
+  `man.width = 50`, its heads and references painted.
