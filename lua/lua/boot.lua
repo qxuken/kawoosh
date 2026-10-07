@@ -537,10 +537,11 @@ end
 -- buffer opened with is now (a line number from 1, or false), beside
 -- `tracked()`'s what it became, both by the line's id — its index;
 -- `kawoosh.buf.tracked_line(id[, buffer])` is one line's text and line
--- number (nil once deleted); `kawoosh.buf.track(line[, buffer])`
--- follows one more line from now on — a line pasted in — and returns
--- its id, which all of them know at once (nil for a line the buffer
--- does not have). A buffer's lines are tracked again, from 1, whenever
+-- number (nil once deleted); `kawoosh.buf.track(line[, buffer][,
+-- payload])` follows one more line from now on — a line pasted in —
+-- with `payload` (a string, what the line is to the plugin) on it, and
+-- returns its id, which all of them know at once (nil for a line the
+-- buffer does not have). A buffer's lines are tracked again, from 1, whenever
 -- `open_scratch` fills it, its notes going with the old ones.
 --
 -- kawoosh.buf.changes([buffer]): what differs from the buffer's lines
@@ -605,10 +606,12 @@ end
 -- when one yank or delete filled it, `buffer` (the handle it came
 -- from) and `entries`, for each line of the text the tracked line of
 -- that buffer it was (an index of `tracked()`, or false): how a line
--- pasted into one listing is known to be an entry of another. Filled
+-- pasted into one listing is known to be an entry of another; and
+-- `payloads`, each line's tracked line's payload (or false). Filled
 -- anew since (`open_scratch`), the buffer is tracked anew and none of
--- its lines is the register's: every entry false — a plugin keeps
--- what they were before it fills the buffer again.
+-- its lines is the register's — every entry false — but the payloads
+-- are kept as they were read before the fill: what a line yanked in a
+-- listing was, after the listing has gone on to another directory.
 --
 -- kawoosh.view_open(name[, { focus = false, below = true, share = 0.5 }])
 -- puts a Lua view in a split — beside, or below with `below`, taking
@@ -696,12 +699,16 @@ end
 -- is shown in another pane too, which keeps it; `line` is where the
 -- caret goes (from 1); `show = false` fills the buffer where it is —
 -- another pane, the background — without putting it in the focused
--- pane, or makes it in the background.
+-- pane, or makes it in the background. `payloads = { [line] = string }`
+-- tracks a buffer with `on_write` from the fill with a payload on each
+-- line given: what the line is, to the plugin — carried with the line
+-- and by the register when it is yanked (`kawoosh.buf.register().
+-- payloads`), the buffer filled anew since or not.
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   if t.on_change then kawoosh._changers[t.name] = t.on_change end
   kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
-    t.reuse, t.line, t.show ~= false, t.on_change ~= nil, t.private or false, t.about)
+    t.reuse, t.line, t.show ~= false, t.on_change ~= nil, t.private or false, t.about, t.payloads)
 end
 
 -- ---------------------------------------------------------------- fields

@@ -605,6 +605,7 @@ impl Kawoosh {
                 watched,
                 private,
                 about,
+                payloads,
             } => {
                 let existing = self
                     .ed
@@ -677,7 +678,7 @@ impl Kawoosh {
                     self.ed.buffers[id].about = Some(p);
                 }
                 if hooked {
-                    rt.track_lines(&self.ed, id);
+                    rt.track_lines(&self.ed, id, &payloads);
                 }
                 // A watched buffer starts from this fill: the plugin that
                 // filled it annotated it itself.
