@@ -3261,3 +3261,35 @@ fn a_workspace_s_diagnostics_are_pulled() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// An answer held while typing (`DIAG_QUIET`) is older than one that
+/// lands after the typing stopped: it is dropped, not put over the newer
+/// one as the hold ends in the same frame — which left the server's word
+/// on the text before the last key until the next change.
+#[test]
+fn an_answer_held_while_typing_is_not_put_over_a_newer_one() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-held-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n    let a = 1;\n}\n// @echo\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.views[v].buffer;
+    assert!(until(&mut d, &mut app, |a| a.lsp.caps.contains_key("rust")));
+    d.keys(&mut app, "jA x");
+    d.key(&mut app, "escape", KeyMods::default());
+    let want = format!(
+        "ranged 0: {}",
+        serde_json::to_string(&app.ed.buffers[buf].text()).unwrap()
+    );
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, buf) == [want.clone()]),
+        "the last answer stands: {:?}",
+        msgs(&app, buf)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

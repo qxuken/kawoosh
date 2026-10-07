@@ -368,6 +368,9 @@ impl Kawoosh {
                         self.lsp.held.insert(buffer, (update, diagnostics));
                         self.lsp.alarm.set(self.lsp.moved[&buffer] + self.lsp.quiet);
                     } else {
+                        // A word held while typing is older than this one:
+                        // landing after it, it would put the stale back.
+                        self.lsp.held.remove(&buffer);
                         self.apply_diagnostics(buffer, update, diagnostics);
                     }
                 }

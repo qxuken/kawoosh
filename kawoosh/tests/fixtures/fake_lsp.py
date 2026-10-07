@@ -64,7 +64,10 @@ and one of a kind nobody runs — each in the root. The
 `workspace/diagnostic` answers a full report for `src/pulled.rs` — a
 warning "pulled (N)", or "had ID (N)" when the request carried ID as
 that file's previous result — with result `rN`, and an unchanged one for
-`src/same.rs` (lists.md Decision 8)."""
+`src/same.rs` (lists.md Decision 8). A ranged change is applied to the
+text it holds; a text with `@echo` in it gets an information diagnostic
+at 0:0, "ranged N: TEXT", N the ranged changes it has had and TEXT the
+text it holds as JSON."""
 import json
 import re, sys
 
@@ -78,6 +81,18 @@ def path_of(uri):
     path = unquote(urlparse(uri).path)
     # `file:///C:/x` on Windows: the drive, not a root above it.
     return path[1:] if re.match(r"^/[A-Za-z]:", path) else path
+
+def offset_of(text, pos):
+    """A protocol position (line, UTF-16 character) as an index into `text`."""
+    lines = text.split("\n")
+    at = sum(len(l) + 1 for l in lines[:pos["line"]])
+    line = lines[pos["line"]] if pos["line"] < len(lines) else ""
+    units = 0
+    for i, ch in enumerate(line):
+        if units >= pos["character"]:
+            return at + i
+        units += len(ch.encode("utf-16-le")) // 2
+    return at + len(line)
 
 def char_before(uri, pos):
     lines = docs.get(uri, "").split("\n")
@@ -122,6 +137,7 @@ root_uri = None
 first_uri = None
 notes = []
 pulls = 0
+ranged = 0
 # Unregistrations asked, by request id: the registration's ID.
 unwatching = {}
 
@@ -233,8 +249,22 @@ while True:
             "kind": "report", "message": "3/12", "percentage": 50}}})
     elif method == "textDocument/didChange":
         uri = m["params"]["textDocument"]["uri"]
-        text = m["params"]["contentChanges"][0]["text"]
+        text = docs.get(uri, "")
+        for change in m["params"]["contentChanges"]:
+            if "range" in change:
+                ranged += 1
+                r = change["range"]
+                a, b = offset_of(text, r["start"]), offset_of(text, r["end"])
+                text = text[:a] + change["text"] + text[b:]
+            else:
+                text = change["text"]
         docs[uri] = text
+        if "@echo" in text:
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+                "uri": uri, "diagnostics": [{"range": {"start": {"line": 0, "character": 0},
+                                                       "end": {"line": 0, "character": 1}},
+                                             "severity": 3,
+                                             "message": "ranged %d: %s" % (ranged, json.dumps(text))}]}})
         if "@crash" in text:
             print("fake server crashing", file=sys.stderr, flush=True)
             sys.exit(3)
