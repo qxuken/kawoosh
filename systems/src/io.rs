@@ -382,6 +382,30 @@ pub fn on_path(program: &str) -> Option<bool> {
     )
 }
 
+/// Where `program` would be found by [`command`] on the PATH, as
+/// [`on_path`] looks: the file. `None` too while the shell's PATH is
+/// still being asked for.
+pub fn program_path(program: &str) -> Option<PathBuf> {
+    let p = std::path::Path::new(program);
+    if p.components().count() > 1 {
+        return p.is_file().then(|| p.to_path_buf());
+    }
+    let path = crate::shell_env::path_now()?.or_else(|| std::env::var_os("PATH"))?;
+    let names: Vec<String> = if cfg!(windows) {
+        ["exe", "cmd", "bat"]
+            .iter()
+            .map(|e| format!("{program}.{e}"))
+            .chain([program.to_string()])
+            .collect()
+    } else {
+        vec![program.to_string()]
+    };
+    path_dirs(&path)
+        .iter()
+        .flat_map(|d| names.iter().map(move |n| d.join(n)))
+        .find(|p| p.is_file())
+}
+
 /// How a domain is reached (docs/design/domains.md Decision 3): the
 /// `ssh` binary, the host as `~/.ssh/config` or `user@host` names it,
 /// and the master's control socket.

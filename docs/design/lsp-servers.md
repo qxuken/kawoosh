@@ -329,11 +329,8 @@ lsp = { astro = { init = { typescript = { tsdk = "{typescript}" } } } }
   has its own when the project has none). Not tried against astro-ls
   itself: none on the machine it was built on.
 
-Volar is not a row. `@vue/language-server` 3 runs only beside a
-TypeScript server carrying its plugin, the two passing `tsserver/request`
-between them — a protocol of its own, not an option; 2.x's
-`vue.hybridMode = false` would be an `init` away, but there is no Vue
-grammar in the manifest for its files to be a language.
+Volar was not a row then: its TypeScript plugin's protocol and a Vue
+grammar were missing. Decision 9 is both.
 
 Beaten: a Lua function for a row's `init` (a row is data, read before
 any other Lua runs, and by `kawoosh lsp` on the command line); `settings`
@@ -342,6 +339,77 @@ its configuration twice, and some refuse an unknown key in one);
 `{typescript}` asked of `node` (`require.resolve`) — a process per
 start where a walk up the directories finds what node would.
 
+### 9. Two servers on one file: Vue's beside TypeScript's
+
+*Added 2026-10-07*, asked: "What is plugin protocol?", then "Let's do
+that and does templ has any grammar and lsp?". Vue's language server 3
+splits a `.vue` file with TypeScript's: the template is Vue's to read,
+the script — and the template's expressions — TypeScript's, through
+Vue's plugin in tsserver; and Vue's asks TypeScript things (a
+component's props) through the editor, a protocol of its own. Tried
+first against the real servers (`@vue/language-server` 3.3.12,
+typescript-language-server with TypeScript 5.9, a scratch project, a
+script playing the editor): in `{{ cou }}` Vue's server completes
+nothing and TypeScript's offers `count`; a hover on `title` is empty
+from Vue's and TypeScript's says `const title: string`; Vue's sends
+`tsserver/request` `[[id, "_vue:projectInfo", args]]` once a file opens
+and waits on the reply. Five things follow, none of them Vue's alone:
+
+- **A completion is every server's.** Asked of each of the buffer's
+  servers that completes, the answers gathered in their order and
+  handed up as one list (`Pool::complete`, as code actions were
+  already, lsp-installs.md Decision 7): one server answers the
+  template, the other the script, and neither knows which it is.
+- **An empty answer passes the question on.** A hover or a definition
+  a server answers with nothing is asked of the next of the buffer's
+  servers that answers it (`ask_next`), where before the first that
+  declared it was the only one asked.
+- **`relay`**: a server's notification carried to another as its
+  command, and the answer back — `{ method, to, command, reply }` on a
+  row. The shape is tsserver's, as Vue's speaks it: the params `[[id,
+  name, args]]` go as `workspace/executeCommand` `command` with
+  arguments `[name, args]` to the server whose row is named `to` in the
+  same project, and its result's `body` comes back as `reply` `[[id,
+  body]]`; `null` when there is no server to carry it to, it refused,
+  or it went away — Vue's would wait forever otherwise. A request, not
+  code: what the row says.
+- **`with`**: the servers a file of a row's languages has beside it,
+  after it, unless `lsp.languages` says otherwise — vue's is `{
+  "typescript" }`. The table's rule (lsp-installs.md Decision 7) gives a
+  language with a server of its own name to that server alone, which
+  is right for `lsp.javascript` taking JavaScript from TypeScript's and
+  wrong here; `with` is the row saying the order `lsp.languages` would.
+- **Words in `args` and `{package:NAME}`.** Vue's server takes its
+  TypeScript as an argument (`--tsdk=`), not an option — left to itself
+  it requires the newest, TypeScript 7, which has no JavaScript API for
+  it: it crashed so on the first try. So a row's `args` say the words
+  `init` does (`--tsdk={typescript}`), and `{package:NAME}` is the folder
+  server NAME's package is in — kawoosh's install, else the one its
+  program on the PATH is in, above `node_modules` — where TypeScript
+  finds Vue's plugin. An item of a list, or an argument, still saying a
+  word that could not be put in is left out: a plugin of a server not
+  installed is no plugin.
+
+The rows: `vue` (`vue-language-server --stdio --tsdk={typescript}`,
+installed with `typescript@5` beside it, so its own fallback is a
+TypeScript it can run; `with = { "typescript" }`; the relay), and
+`typescript`'s `init` naming Vue's plugin at `{package:vue}` — left out
+where Vue's server is not installed. Vue's grammar is kawoosh-grammars
+`r8` (tree-sitter-grammars/tree-sitter-vue, whose queries are in nvim's
+layout, which the builder now reads). **templ** came with it: its
+grammar in the same release (vrischmann/tree-sitter-templ, go's
+highlights in front of its own), and `templ lsp`, the server built into
+templ's own program, as a row (`templ`, installed with `go install
+github.com/a-h/templ/cmd/templ`).
+
+Beaten: a relay written in Lua (a row is data, read before any Lua and
+by `kawoosh lsp`); every request gathered from every server (a hover
+from two is two hovers to show, a rename from two is two edits of one
+name — the first that has something to say is the answer); Vue's
+TypeScript as an `init` option (it reads none); TypeScript serving
+`vue` in its `languages` (the table's rule takes it back while Vue's
+server exists, and `with` is where the pairing belongs).
+
 ## Not built
 
 - ~~**Install lines checked against the package managers.**~~ Tried
@@ -349,8 +417,7 @@ start where a walk up the directories finds what node would.
   the lines' packages looked up. Not on macOS or Linux, and not the
   lines whose managers this machine has not.
 - ~~**A server's `initializationOptions`**, which would bring astro-ls
-  and Volar.~~ Decision 8: astro-ls; Volar waits for a Vue grammar and
-  its TypeScript plugin's protocol.
+  and Volar.~~ Decision 8: astro-ls; Volar Decision 9.
 - ~~**More than one server for a language**~~ (a linter beside the
   language's server, ruff beside pyright). Built 2026-10-03:
   [lsp-installs.md](lsp-installs.md) Decision 7, `when` files.
