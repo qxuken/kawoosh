@@ -164,6 +164,36 @@ def watcher(relative, kind, glob):
         w["kind"] = kind
     return w
 
+# `--vue NAME`: a template server beside the language's own, as Vue's
+# is beside TypeScript's (lsp-servers.md Decision 9): completion offers
+# `NAME_tag`, a hover it declares and answers empty; a document opened
+# sends `tsserver/request` [[7, "_vue:projectInfo", {"file": PATH}]],
+# and the `tsserver/response` it gets back is published on it as an
+# information diagnostic, "relayed: PARAMS" as JSON.
+VUE = sys.argv[sys.argv.index("--vue") + 1] if "--vue" in sys.argv else None
+
+def vue(method, mid, m):
+    global last_uri
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
+            "completionProvider": {}, "hoverProvider": True}}})
+    elif method == "textDocument/didOpen":
+        last_uri = m["params"]["textDocument"]["uri"]
+        send({"jsonrpc": "2.0", "method": "tsserver/request",
+              "params": [[7, "_vue:projectInfo", {"file": "main.rs"}]]})
+    elif method == "tsserver/response":
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+            "uri": last_uri, "diagnostics": [{"range": {"start": {"line": 0, "character": 0},
+                                                        "end": {"line": 0, "character": 1}},
+                                              "severity": 3,
+                                              "message": "relayed: " + json.dumps(m["params"], sort_keys=True)}]}})
+    elif method == "textDocument/completion":
+        send({"jsonrpc": "2.0", "id": mid, "result": [{"label": VUE + "_tag"}]})
+    elif method == "textDocument/hover":
+        send({"jsonrpc": "2.0", "id": mid, "result": None})
+    elif mid is not None:
+        send({"jsonrpc": "2.0", "id": mid, "result": None})
+
 def lint(method, mid, m):
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
@@ -218,6 +248,9 @@ while True:
         continue
     if LINTER:
         lint(method, mid, m)
+        continue
+    if VUE:
+        vue(method, mid, m)
         continue
     if method == "initialize" and "--refuse" in sys.argv:
         send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32603,
@@ -465,6 +498,9 @@ while True:
                 {"range": {"start": {"line": ln, "character": end}, "end": {"line": ln, "character": end}},
                  "newText": ";"}]}}},
             {"title": "Run the command", "command": "fake.apply", "arguments": [uri]}]})
+    elif method == "workspace/executeCommand" and m["params"]["command"] == "typescript.tsserverRequest":
+        # What Vue's server relays (lsp-servers.md Decision 9): echoed.
+        send({"jsonrpc": "2.0", "id": mid, "result": {"body": {"echo": m["params"]["arguments"]}}})
     elif method == "workspace/executeCommand":
         uri = m["params"]["arguments"][0]
         send({"jsonrpc": "2.0", "id": mid, "result": None})

@@ -86,6 +86,29 @@ pub struct ServerDef {
     /// `{typescript}` a TypeScript's `lib` ([`init_options`]). `Null`
     /// for none.
     pub init: Value,
+    /// Requests of its own carried to another of its project's servers,
+    /// and the answers back (docs/design/lsp-servers.md Decision 9):
+    /// Vue's `tsserver/request` to TypeScript's.
+    pub relay: Vec<Relay>,
+    /// The servers a file of its languages has beside it, after it,
+    /// unless `lsp.languages` says otherwise: Vue's has TypeScript's
+    /// (lsp-servers.md Decision 9).
+    pub with: Vec<String>,
+}
+
+/// What a server's notification `method` asks of another — the server
+/// whose definition is named `to`, in the same project — carried there
+/// as its command `command`, and its answer sent back as `reply`. The
+/// shape is tsserver's, as Vue's language server speaks it: the params
+/// `[[id, name, args]]`, the command's arguments `[name, args]`, the
+/// reply `[[id, body]]` with the answer's `body` (null when there is
+/// none, or no server to carry it to).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Relay {
+    pub method: String,
+    pub to: String,
+    pub command: String,
+    pub reply: String,
 }
 
 /// A language's files: by extension (no dot, any case) or whole name.
@@ -118,6 +141,8 @@ impl Default for ServerDef {
             when: Vec::new(),
             answers: BTreeMap::new(),
             init: Value::Null,
+            relay: Vec::new(),
+            with: Vec::new(),
         }
     }
 }
@@ -1014,6 +1039,26 @@ struct Synced<'a> {
     span: Option<&'a Span>,
 }
 
+/// A relayed request out: the server that asked, the id it asked with,
+/// and the notification its answer goes back as.
+#[derive(Clone)]
+struct Relayed {
+    asker: usize,
+    their: Value,
+    reply: String,
+}
+
+/// A completion asked of several servers: how many answers are still
+/// to come, the items so far in the servers' order, and what it was
+/// asked for.
+struct Gather {
+    left: usize,
+    items: BTreeMap<usize, Vec<CompletionItem>>,
+    buffer: BufferId,
+    version: Version,
+    offset: usize,
+}
+
 /// A sync's span, as the pool applies it.
 struct Span {
     from: Version,
@@ -1539,6 +1584,8 @@ struct Server {
     settings: Value,
     /// Its definition's `answers`.
     answers: BTreeMap<String, Value>,
+    /// Its definition's `relay`.
+    relay: Vec<Relay>,
     /// The domain it runs on: the paths it speaks of are that host's,
     /// spelled `box:/…` on the way out (`Pool::emit_from`).
     domain: Option<String>,
@@ -1686,6 +1733,7 @@ impl Server {
             name: def.command.clone(),
             settings: def.settings.clone(),
             answers: def.answers.clone(),
+            relay: def.relay.clone(),
             domain,
             root: root.to_path_buf(),
             loading: BTreeSet::new(),
@@ -1853,6 +1901,13 @@ struct Pool {
     actions: HashMap<u64, (usize, Vec<CodeAction>, BufferId)>,
     /// Each code action request's group, by server and request id.
     action_of: HashMap<(usize, i64), u64>,
+    /// Completions asked of several servers, by group (lsp-servers.md
+    /// Decision 9), and each request's group.
+    completions: HashMap<u64, Gather>,
+    completion_of: HashMap<(usize, i64), u64>,
+    /// Relayed requests out (`Relay`), by the server carrying one and
+    /// its request id: the server that asked, and its own id.
+    relays: HashMap<(usize, i64), Relayed>,
     next_group: u64,
     from_tx: Sender<(usize, FromServer)>,
     event_tx: Sender<Event>,
@@ -1912,6 +1967,9 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         published: HashMap::new(),
         actions: HashMap::new(),
         action_of: HashMap::new(),
+        completions: HashMap::new(),
+        completion_of: HashMap::new(),
+        relays: HashMap::new(),
         next_group: 0,
         from_tx,
         event_tx,
@@ -2412,7 +2470,7 @@ impl Pool {
     }
 
     fn server_of(&mut self, def: &ServerDef, path: &Path) -> Option<usize> {
-        let def = def.clone();
+        let mut def = def.clone();
         let root = workspace_root(path, &def);
         let k = (root.clone(), def.command.clone(), def.args.clone());
         if let Some(&key) = self.keys.get(&k) {
@@ -2428,6 +2486,22 @@ impl Pool {
             return None;
         }
         let key = self.servers.len();
+        // Its arguments say the words `init` does: Vue's `--tsdk=` its
+        // TypeScript (lsp-servers.md Decision 9); one that cannot be said
+        // is left out.
+        let on_host = crate::fs::domain_of(&root).is_some();
+        if def.args.iter().any(|a| a.contains('{')) {
+            let filled = init_options(&json!(def.args), &root, on_host, &self.defs);
+            def.args = filled
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
         let Some(mut server) = Server::spawn(&def, &root, self.from_tx.clone(), key) else {
             self.failed.insert(failed_as);
             self.emit(Event::Unavailable {
@@ -2482,7 +2556,7 @@ impl Pool {
         });
         if !def.init.is_null() {
             initialize["params"]["initializationOptions"] =
-                init_options(&def.init, &root, server.domain.is_some());
+                init_options(&def.init, &root, server.domain.is_some(), &self.defs);
         }
         // A server here is told of the files it asks to hear of
         // (`handle_files`); one on a host is not offered it and keeps
@@ -2517,6 +2591,7 @@ impl Pool {
                         .find(|d| d.command == server.name && d.language == server.language);
                     if let Some(d) = def {
                         server.answers = d.answers.clone();
+                        server.relay = d.relay.clone();
                     }
                     if let Some(d) = def
                         && d.settings != server.settings
@@ -2703,13 +2778,7 @@ impl Pool {
                 buffer,
                 offset,
                 version,
-            } => self.positional(
-                "textDocument/completion",
-                buffer,
-                offset,
-                version,
-                Some(json!({ "triggerKind": 1 })),
-            ),
+            } => self.complete(buffer, offset, version),
             Cmd::Rename {
                 buffer,
                 offset,
@@ -3267,6 +3336,7 @@ impl Pool {
             self.action_of.remove(&at);
             self.action_answered(group, Vec::new());
         }
+        self.forget_waits(keys);
         // Their workspaces, unless another's.
         self.rewatch();
     }
@@ -3283,6 +3353,202 @@ impl Pool {
             && let Some((_, actions, buffer)) = self.actions.remove(&group)
         {
             self.emit(Event::CodeActions { buffer, actions });
+        }
+    }
+
+    /// A completion at `offset` of `buffer`: asked of each of its servers
+    /// that completes, every answer gathered in their order
+    /// (lsp-servers.md Decision 9) — Vue's template is its server's to
+    /// complete and its script TypeScript's — or of the one alone.
+    fn complete(&mut self, buffer: BufferId, offset: usize, version: Version) {
+        let method = "textDocument/completion";
+        let keys: Vec<usize> = self
+            .homes
+            .get(&buffer)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&k| self.answers(k, method))
+            .collect();
+        let context = json!({ "triggerKind": 1 });
+        if keys.len() < 2 {
+            return self.positional(method, buffer, offset, version, Some(context));
+        }
+        self.next_group += 1;
+        let group = self.next_group;
+        self.completions.insert(
+            group,
+            Gather {
+                left: keys.len(),
+                items: BTreeMap::new(),
+                buffer,
+                version,
+                offset,
+            },
+        );
+        for key in keys {
+            let asked = self.servers[key].as_mut().and_then(|server| {
+                let (uri, doc) = server.doc_of(buffer)?;
+                let (line, character) = position_of_offset(&doc.text, offset);
+                let params = json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character },
+                    "context": context
+                });
+                Some(server.request(method, params, (buffer, version, offset)))
+            });
+            match asked {
+                Some(id) => {
+                    self.completion_of.insert((key, id), group);
+                }
+                None => self.completion_answered(group, key, Vec::new()),
+            }
+        }
+    }
+
+    /// One of a completion group's answers, from server `key`: kept in
+    /// the servers' order, the whole handed up once the last is in.
+    fn completion_answered(&mut self, group: u64, key: usize, items: Vec<CompletionItem>) {
+        let Some(g) = self.completions.get_mut(&group) else {
+            return;
+        };
+        g.left = g.left.saturating_sub(1);
+        let order = self
+            .homes
+            .get(&g.buffer)
+            .and_then(|h| h.iter().position(|k| *k == key))
+            .unwrap_or(key);
+        g.items.entry(order).or_default().extend(items);
+        if g.left == 0
+            && let Some(g) = self.completions.remove(&group)
+        {
+            self.emit(Event::Completion {
+                buffer: g.buffer,
+                version: g.version,
+                offset: g.offset,
+                items: g.items.into_values().flatten().collect(),
+            });
+        }
+    }
+
+    /// `method` at `offset` of `buffer` asked of the next of its servers
+    /// after `key` that answers it, server `key` having nothing to say
+    /// (lsp-servers.md Decision 9): Vue's server has no hover in a
+    /// script, TypeScript's has. Whether one was asked.
+    fn ask_next(
+        &mut self,
+        method: &'static str,
+        buffer: BufferId,
+        offset: usize,
+        version: Version,
+        key: usize,
+    ) -> bool {
+        let homes = self.homes.get(&buffer).cloned().unwrap_or_default();
+        let Some(at) = homes.iter().position(|k| *k == key) else {
+            return false;
+        };
+        let Some(&next) = homes[at + 1..].iter().find(|&&k| self.answers(k, method)) else {
+            return false;
+        };
+        let Some(server) = self.servers[next].as_mut() else {
+            return false;
+        };
+        let Some((uri, doc)) = server.doc_of(buffer) else {
+            return false;
+        };
+        let (line, character) = position_of_offset(&doc.text, offset);
+        let params = json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        });
+        server.request(method, params, (buffer, version, offset));
+        true
+    }
+
+    /// Server `asker`'s notification `params` carried as `r` says: to the
+    /// server named `r.to` in its project (else any running), as its
+    /// command — answered `null` at once when there is none to carry it.
+    fn relay(&mut self, asker: usize, r: &Relay, params: Value) {
+        let Some(Value::Array(call)) = params.as_array().and_then(|a| a.first()).cloned() else {
+            return;
+        };
+        let (Some(their), Some(name)) = (call.first().cloned(), call.get(1).cloned()) else {
+            return;
+        };
+        let args = call.get(2).cloned().unwrap_or(Value::Null);
+        let root = self.servers[asker].as_ref().map(|s| s.root.clone());
+        let named = |s: &Server| s.language == r.to;
+        let to = self
+            .servers
+            .iter()
+            .position(|s| {
+                s.as_ref()
+                    .is_some_and(|s| named(s) && Some(&s.root) == root.as_ref())
+            })
+            .or_else(|| {
+                self.servers
+                    .iter()
+                    .position(|s| s.as_ref().is_some_and(named))
+            });
+        let Some(to) = to else {
+            return self.relay_back(asker, their, &r.reply, Value::Null);
+        };
+        let Some(server) = self.servers[to].as_mut() else {
+            return self.relay_back(asker, their, &r.reply, Value::Null);
+        };
+        let id = server.request(
+            "workspace/executeCommand",
+            json!({ "command": r.command, "arguments": [name, args] }),
+            (BufferId::default(), Version::INITIAL, 0),
+        );
+        self.relays.insert(
+            (to, id),
+            Relayed {
+                asker,
+                their,
+                reply: r.reply.clone(),
+            },
+        );
+    }
+
+    /// A relayed request's `body` sent back to server `asker` as its
+    /// relay's reply, under the id it asked with.
+    fn relay_back(&mut self, asker: usize, their: Value, reply: &str, body: Value) {
+        if let Some(server) = self.servers.get_mut(asker).and_then(Option::as_mut) {
+            server.notify(reply, json!([[their, body]]));
+        }
+    }
+
+    /// Servers `keys` gone: the completions waiting on them have their
+    /// answer, empty, and what was relayed to them is answered `null`.
+    fn forget_waits(&mut self, keys: &[usize]) {
+        let waiting: Vec<((usize, i64), u64)> = self
+            .completion_of
+            .iter()
+            .filter(|((k, _), _)| keys.contains(k))
+            .map(|(k, g)| (*k, *g))
+            .collect();
+        for ((key, id), group) in waiting {
+            self.completion_of.remove(&(key, id));
+            self.completion_answered(group, key, Vec::new());
+        }
+        let relayed: Vec<((usize, i64), Relayed)> = self
+            .relays
+            .iter()
+            .filter(|((k, _), _)| keys.contains(k))
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        for (
+            at,
+            Relayed {
+                asker,
+                their,
+                reply,
+            },
+        ) in relayed
+        {
+            self.relays.remove(&at);
+            self.relay_back(asker, their, &reply, Value::Null);
         }
     }
 
@@ -3415,6 +3681,8 @@ impl Pool {
                 _ => {}
             }
         }
+        // And a completion gathered with it, or a request relayed to it.
+        self.forget_waits(&[key]);
         let crashed_as = (server.domain.clone(), server.name.clone());
         let now = std::time::Instant::now();
         let times = self.crashes.entry(crashed_as.clone()).or_default();
@@ -3504,6 +3772,26 @@ impl Pool {
                     return;
                 }
                 self.action_of.insert((key, id), group);
+            }
+            if message.get("error").is_some()
+                && let Some(group) = self.completion_of.remove(&(key, id))
+            {
+                self.completion_answered(group, key, Vec::new());
+                return;
+            }
+            // A relayed request's answer, carried back to who asked.
+            if let Some(Relayed {
+                asker,
+                their,
+                reply,
+            }) = self.relays.remove(&(key, id))
+            {
+                let body = result
+                    .and_then(|r| r.get("body"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                self.relay_back(asker, their, &reply, body);
+                return;
             }
             let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
                 return;
@@ -3750,6 +4038,11 @@ impl Pool {
                     );
                 }
                 "textDocument/definition" => {
+                    if first_location(result).is_none()
+                        && self.ask_next(method, buffer, offset, version, key)
+                    {
+                        return;
+                    }
                     if let Some((path, line, character)) = first_location(result) {
                         self.emit_from(
                             key,
@@ -3763,10 +4056,19 @@ impl Pool {
                 }
                 "textDocument/hover" => {
                     let text = hover_text(result);
+                    // Nothing to say here: the next server's turn.
+                    if text.trim().is_empty() && self.ask_next(method, buffer, offset, version, key)
+                    {
+                        return;
+                    }
                     self.emit_from(key, Event::Hover { buffer, text });
                 }
                 "textDocument/completion" => {
                     let items = completion_items(result);
+                    if let Some(group) = self.completion_of.remove(&(key, id)) {
+                        self.completion_answered(group, key, items);
+                        return;
+                    }
                     self.emit_from(
                         key,
                         Event::Completion {
@@ -3893,6 +4195,13 @@ impl Pool {
         // A notification.
         let method = message.get("method").and_then(Value::as_str);
         let params = message.get("params");
+        if let Some(r) = method
+            .and_then(|m| server.relay.iter().find(|r| r.method == m))
+            .cloned()
+        {
+            self.relay(key, &r, params.cloned().unwrap_or(Value::Null));
+            return;
+        }
         match method {
             Some("textDocument/publishDiagnostics") => {
                 let Some(params) = params else { return };
@@ -4057,9 +4366,15 @@ fn capabilities(result: Option<&Value>) -> Caps {
 /// `{typescript}` a TypeScript's `lib` — the nearest
 /// `node_modules/typescript/lib` at or above the root, else one kawoosh
 /// installed beside a server (typescript-language-server's), else the
-/// word left as it is for the server to say what it misses. On a host
-/// only `{root}` is said: its disk is not looked at from here.
-pub fn init_options(init: &Value, root: &Path, on_host: bool) -> Value {
+/// word left as it is for the server to say what it misses; and
+/// `{package:NAME}` the folder server NAME's package is in — kawoosh's
+/// install of it, else the one its program on the PATH is in (a node
+/// package's, above `node_modules`) — where TypeScript finds Vue's
+/// plugin (lsp-servers.md Decision 9). A list's item still saying a word
+/// that could not be put in is left out: a plugin of a server not
+/// installed is no plugin. On a host only `{root}` is said: its disk is
+/// not looked at from here.
+pub fn init_options(init: &Value, root: &Path, on_host: bool, defs: &[ServerDef]) -> Value {
     let root_text = match crate::fs::domain_of(root) {
         Some((_, dir)) => dir.display().to_string(),
         None => root.display().to_string(),
@@ -4068,25 +4383,69 @@ pub fn init_options(init: &Value, root: &Path, on_host: bool) -> Value {
         .then(|| typescript_lib(root))
         .flatten()
         .map(|p| p.display().to_string());
-    fn walk(v: &Value, root: &str, ts: Option<&str>) -> Value {
+    let package = |name: &str| -> Option<String> {
+        if on_host {
+            return None;
+        }
+        let def = defs.iter().find(|d| d.language == name)?;
+        let installed = def
+            .package
+            .as_ref()
+            .zip(crate::servers::root())
+            .map(|(p, servers)| p.dir(&servers))
+            .filter(|d| d.is_dir());
+        let found = || {
+            let program = crate::io::program_path(&def.command)?;
+            let program = crate::fs::canonicalize(&program).unwrap_or(program);
+            program
+                .ancestors()
+                .find(|a| a.file_name().is_some_and(|n| n == "node_modules"))?
+                .parent()
+                .map(Path::to_path_buf)
+        };
+        installed.or_else(found).map(|p| p.display().to_string())
+    };
+    let put = |s: &str| -> String {
+        let mut s = s.replace("{root}", &root_text);
+        if let Some(ts) = &typescript {
+            s = s.replace("{typescript}", ts);
+        }
+        while let Some(at) = s.find("{package:") {
+            let Some(end) = s[at..].find('}').map(|e| at + e) else {
+                break;
+            };
+            let Some(dir) = package(&s[at + 9..end]) else {
+                break;
+            };
+            s.replace_range(at..=end, &dir);
+        }
+        s
+    };
+    // Whether a value still says a word not put in.
+    fn unsaid(v: &Value) -> bool {
         match v {
-            Value::String(s) => {
-                let mut s = s.replace("{root}", root);
-                if let Some(ts) = ts {
-                    s = s.replace("{typescript}", ts);
-                }
-                Value::String(s)
-            }
-            Value::Array(a) => Value::Array(a.iter().map(|v| walk(v, root, ts)).collect()),
-            Value::Object(o) => Value::Object(
-                o.iter()
-                    .map(|(k, v)| (k.clone(), walk(v, root, ts)))
+            Value::String(s) => s.contains("{package:") || s.contains("{typescript}"),
+            Value::Array(a) => a.iter().any(unsaid),
+            Value::Object(o) => o.values().any(unsaid),
+            _ => false,
+        }
+    }
+    fn walk(v: &Value, put: &dyn Fn(&str) -> String) -> Value {
+        match v {
+            Value::String(s) => Value::String(put(s)),
+            Value::Array(a) => Value::Array(
+                a.iter()
+                    .map(|v| walk(v, put))
+                    .filter(|v| !unsaid(v))
                     .collect(),
             ),
+            Value::Object(o) => {
+                Value::Object(o.iter().map(|(k, v)| (k.clone(), walk(v, put))).collect())
+            }
             v => v.clone(),
         }
     }
-    walk(init, &root_text, typescript.as_deref())
+    walk(init, &put)
 }
 
 /// The TypeScript a project builds with, else one kawoosh installed.
@@ -4648,7 +5007,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let init = json!({ "typescript": { "tsdk": "{typescript}" }, "at": ["{root}/x", 3, null] });
         assert_eq!(
-            init_options(&init, &root, false),
+            init_options(&init, &root, false, &[]),
             json!({
                 "typescript": { "tsdk": lib.display().to_string() },
                 "at": [format!("{}/x", root.display()), 3, null]
@@ -4656,9 +5015,38 @@ mod tests {
         );
         let host = PathBuf::from("box:/srv/app");
         assert_eq!(
-            init_options(&init, &host, true)["at"][0],
+            init_options(&init, &host, true, &[])["at"][0],
             json!("/srv/app/x"),
             "a host's root as the host has it"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `{package:NAME}` is the folder server NAME's node package is in,
+    /// found from its program; a list's item naming a server that is not
+    /// there is left out.
+    #[test]
+    fn init_options_say_where_a_package_is() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-lsp-pkg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let bin = dir.join("node_modules/@vue/language-server/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("vue-language-server.js"), "").unwrap();
+        let dir = crate::fs::canonicalize(&dir).unwrap();
+        let vue = ServerDef {
+            language: "vue".into(),
+            command: bin.join("vue-language-server.js").display().to_string(),
+            ..Default::default()
+        };
+        let init = json!({ "plugins": [
+            { "name": "@vue/typescript-plugin", "location": "{package:vue}" },
+            { "name": "gone", "location": "{package:svelte}" }
+        ] });
+        assert_eq!(
+            init_options(&init, Path::new("/p"), false, &[vue]),
+            json!({ "plugins": [
+                { "name": "@vue/typescript-plugin", "location": dir.display().to_string() }
+            ] })
         );
         std::fs::remove_dir_all(&dir).ok();
     }

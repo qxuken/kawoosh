@@ -3421,3 +3421,82 @@ fn a_write_is_said_to_the_servers_that_ask() {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+/// lsp-servers.md Decision 9: two servers on one buffer, as Vue's and
+/// TypeScript's are on a `.vue` file — a completion gathers both
+/// servers' items, a hover the first answers empty is asked of the
+/// next, and a server's `tsserver/request` is carried to the other as
+/// its command and the answer brought back as its reply.
+#[test]
+fn a_template_server_beside_the_language_s_own() {
+    use kawoosh_systems::lsp::Relay;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-tpl-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n    hel\n}\n").unwrap();
+    let mut tpl = fake_lsp("tpl");
+    tpl.args.extend(["--vue".to_string(), "tpl".to_string()]);
+    tpl.languages = vec!["rust".into()];
+    tpl.roots = vec!["Cargo.toml".into()];
+    tpl.relay = vec![Relay {
+        method: "tsserver/request".into(),
+        to: "rust".into(),
+        command: "typescript.tsserverRequest".into(),
+        reply: "tsserver/response".into(),
+    }];
+    let mut app = Kawoosh::from_file(&file);
+    // The template server first, as `lsp.languages.vue` has Vue's.
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "lsp.languages.rust",
+        kawoosh_editor::Setting::List(vec![
+            kawoosh_editor::Setting::Str("tpl".into()),
+            kawoosh_editor::Setting::Str("rust".into()),
+        ]),
+    );
+    app.add_lsp_server(tpl);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.views[v].buffer;
+    // The relay: its request carried to the other, the body back.
+    let relayed = r#"relayed: [[7, {"echo": ["_vue:projectInfo", {"file": "main.rs"}]}]]"#;
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, buf)
+            .iter()
+            .any(|m| m == relayed)),
+        "{:?}",
+        msgs(&app, buf)
+    );
+    // Hover: the template server's is empty, the other's said.
+    d.keys(&mut app, "K");
+    assert!(
+        until(&mut d, &mut app, |a| {
+            a.ed.buffers
+                .values()
+                .any(|b| b.name == "*hover*" && b.text().contains("the hover"))
+        }),
+        "the next server's hover"
+    );
+    d.keys(&mut app, "q");
+    // Completion: both servers' items.
+    d.keys(&mut app, "Go");
+    d.keys(&mut app, "hel");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.completion.as_ref().is_some_and(
+            |c| {
+                let labels: Vec<&str> = c.items.iter().map(|i| i.label.as_str()).collect();
+                labels.contains(&"tpl_tag") && labels.contains(&"hello_world")
+            }
+        )),
+        "both servers' completions: {:?}",
+        app.lsp.completion.as_ref().map(|c| c
+            .items
+            .iter()
+            .map(|i| i.label.clone())
+            .collect::<Vec<_>>())
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -70,12 +70,14 @@ impl Kawoosh {
                 self.notify(Level::Warn, text);
             }
         }
-        self.sync_lsp_order();
         if new == self.lsp.defs {
+            self.sync_lsp_order();
             self.tell_lsp_names();
             return;
         }
         let old = std::mem::replace(&mut self.lsp.defs, new);
+        // After the table: a row's `with` is part of the order.
+        self.sync_lsp_order();
         self.tell_lsp_names();
         self.lsp.lsp.send(Cmd::Servers(self.lsp.defs.clone()));
 
@@ -277,7 +279,7 @@ impl Kawoosh {
     /// server's `lsp.NAME` or its command. A language whose list moved
     /// has its buffers sent again, to the servers it has now.
     fn sync_lsp_order(&mut self) {
-        let order: std::collections::BTreeMap<String, Vec<String>> =
+        let mut order: std::collections::BTreeMap<String, Vec<String>> =
             match self.ed.settings.get("lsp.languages") {
                 Some(Setting::Table(t)) => t
                     .iter()
@@ -291,6 +293,21 @@ impl Kawoosh {
                     .collect(),
                 _ => Default::default(),
             };
+        // A row's `with`: its languages' files have those servers beside
+        // it, after it, where `lsp.languages` says nothing of them
+        // (lsp-servers.md Decision 9).
+        for d in &self.lsp.defs {
+            if d.with.is_empty() {
+                continue;
+            }
+            for l in d.served() {
+                order.entry(l.to_string()).or_insert_with(|| {
+                    std::iter::once(d.language.clone())
+                        .chain(d.with.iter().cloned())
+                        .collect()
+                });
+            }
+        }
         if order == self.lsp.order {
             return;
         }
@@ -582,6 +599,37 @@ pub(crate) fn fold(def: &mut ServerDef, t: &Setting) -> Vec<(String, String)> {
     if let Some(s) = field("init") {
         def.init = setting_json(s);
     }
+    if let Some(w) = field("with").and_then(strings) {
+        def.with = w;
+    }
+    match field("relay") {
+        Some(Setting::List(list)) => {
+            let relays: Option<Vec<_>> = list
+                .iter()
+                .map(|r| {
+                    let text = |k: &str| r.get(k).and_then(Setting::as_str).map(str::to_string);
+                    Some(kawoosh_systems::lsp::Relay {
+                        method: text("method")?,
+                        to: text("to")?,
+                        command: text("command")?,
+                        reply: text("reply")?,
+                    })
+                })
+                .collect();
+            match relays {
+                Some(r) => def.relay = r,
+                None => mistakes.push((
+                    format!("{name}.relay"),
+                    format!("lsp.{name}.relay: a list of {{ method, to, command, reply }}"),
+                )),
+            }
+        }
+        Some(_) => mistakes.push((
+            format!("{name}.relay"),
+            format!("lsp.{name}.relay: a list of {{ method, to, command, reply }}"),
+        )),
+        None => {}
+    }
     match field("answers") {
         Some(Setting::Table(t)) => {
             def.answers = t
@@ -741,6 +789,15 @@ mod tests {
         assert!(eslint.when.contains(&"eslint.config.js".to_string()));
         assert_eq!(eslint.settings["workspaceFolder"], "root");
         assert_eq!(eslint.answers["eslint/confirmESLintExecution"], 4);
+        // Vue's beside TypeScript's, its requests carried there, and
+        // TypeScript's carrying Vue's plugin (lsp-servers.md Decision 9).
+        let vue = &defs[at("vue")];
+        assert_eq!(vue.with, ["typescript"]);
+        assert_eq!(vue.args, ["--stdio", "--tsdk={typescript}"]);
+        assert_eq!(vue.relay[0].method, "tsserver/request");
+        assert_eq!(vue.relay[0].to, "typescript");
+        assert_eq!(ts.init["plugins"][0]["location"], "{package:vue}");
+        assert_eq!(defs[at("templ")].args, ["lsp"]);
         let taplo = defs[at("toml")].package.as_ref().unwrap();
         assert_eq!(taplo.args, ["--locked", "--features", "lsp"]);
         let lua = &defs[at("lua")];
