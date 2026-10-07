@@ -2,7 +2,11 @@
 
 Status: implemented, 2026-08-21. This documents why `core` is shaped the way it
 is, so the reasoning survives longer than the memory of the afternoon it was
-written in.
+written in. *Since 2026-09-15* (the rebuild on kui) the crate is `doc`
+(`kawoosh-doc`), and this note is its spec for the framing, the journal and
+versions; what changed is the storage of runs — a layer is a sorted list
+shifted eagerly on every edit, not a `RunTree` treap — so "One run tree"
+and "Possible consolidation" below describe the first build.
 
 `core` is UI-independent on purpose. The frontend question (GPUI or otherwise)
 is deliberately not settled here, and nothing below depends on the answer.

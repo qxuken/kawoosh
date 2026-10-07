@@ -3,7 +3,7 @@
 Status: decided 2026-09-28 (roadmap step 64), the calls taken here.
 Asked in the todo: "configurable tabbar and title? maybe someone likes
 to watch diagnostics numbers. or i like to see a clock on windows with
-hidden taskbar."
+hidden taskbar." *Built 2026-09-28.*
 
 ## What there is
 
@@ -74,8 +74,9 @@ first two users:
 ### 4. Not the window's title
 
 The OS window title (what the taskbar and Mission Control say) stays
-kawoosh's: kui has no call to set it after the window opens, and what
-was asked is what is on screen. A `place = "window"` is the obvious
+kawoosh's: kui had no call to set it after the window opens, and what
+was asked is what is on screen. kui has one since (`Ui::window_title`),
+and kawoosh sets `TITLE — kawoosh` with it each frame. A `place = "window"` is the obvious
 next word if it is asked for.
 
 ## Built

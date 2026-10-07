@@ -12,7 +12,7 @@ happen on file change". Asked after: "the symbol search interactive
 taken here, each the user's to overturn. Companion to
 [core.md](core.md) (anchors and the journal), [memory.md](memory.md)
 (where a mark is kept) and [search.md](search.md), written the same
-evening on another branch (the multibuffer; "Beside the search" says
+evening on another branch, merged since (the multibuffer; "Beside the search" says
 where the two meet). *Rounds one and two built the same evening* (roadmap
 steps 36 and 37; "Built" at the end says where they departed), round
 three the next morning from the first use; folds are step 38.
@@ -288,8 +288,8 @@ departures and details:
   `kawoosh.forget`. The gutter draws a live mark's letter in its left
   padding, accent-coloured, a letter over a capital on one line.
 - Not done: `'a` as a motion for an operator (`d'a`), and a mark in a
-  multibuffer (search.md's, not merged) — `m` there says the buffer is
-  no file.
+  multibuffer (search.md's, merged since) — `m` there still says the
+  buffer is no file.
 
 **Round three, 2026-09-26**, from the first use (a screenshot of each):
 "we should highlight line or symbol", "I want to see more symbols,

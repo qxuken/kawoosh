@@ -3,6 +3,7 @@
 Status: decided 2026-09-27 (roadmap step 51), the keys at the user's
 word. Asked in the todo as "how to multiselect all? it seems like we
 need to review and take helix multiselect movements and commands".
+*Built 2026-09-27.*
 
 ## Where kawoosh stands
 

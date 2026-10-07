@@ -1,7 +1,7 @@
 # Soft wrap in the editor
 
 Status: decided 2026-09-28 (roadmap step 63), the calls taken here.
-Asked in the todo as "editor wraps settings?".
+Asked in the todo as "editor wraps settings?". *Built 2026-09-28.*
 
 ## What there is
 

@@ -10,7 +10,8 @@ and narrowing is **a pipeline**. The rest are calls taken here, each the
 user's to overturn. Companion to [core.md](core.md) (versions and the
 journal, which the multibuffer stands on), [plugin-panes.md](plugin-panes.md)
 (the bar is a Lua view) and roadmap.md's picker entry (the `grep`
-picker, which stays: it is the as-you-type one).
+picker, which stays: it is the as-you-type one). *Built 2026-09-25*
+(roadmap step 36); Decisions 12 and 13 on 2026-10-03 (steps 82, 83).
 
 ## What there is
 

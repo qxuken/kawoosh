@@ -18,7 +18,8 @@ within a second is one visit, as any subject; the resume key is
 the pins live under `<leader>e` as a prefix — `<leader>ee` the list,
 `<leader>ea` pin — since a key cannot be both a binding and a prefix;
 the undo root made with the first edit is not counted as one. Round
-four (`tool` and `location` rows) and the notes after are not built.
+four (`tool` and `location` rows) and the notes after came later, as
+dated below.
 *Corrected 2026-09-22*, after a soundness pass over the build: a
 history is the *path's* where a moment is the path's under a root —
 the migration at init twinned every workspace's `file` row with an

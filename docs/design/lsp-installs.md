@@ -10,7 +10,8 @@ would like the code to be put under our repo so servers could survive
 version managers like `uv`/`fnm`", and "Both" when asked which way the
 plugin faced. The calls below are taken here, each the user's to
 overturn. Follows [lsp-servers.md](lsp-servers.md), whose install
-lines were run as the user would, globally.
+lines were run as the user would, globally. *Built 2026-10-02–03*,
+all four rounds.
 
 ## What there was
 

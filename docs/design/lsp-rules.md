@@ -5,7 +5,8 @@ specific lsp's (load all files in ts for example for a complete
 diagnostics and stuff)". The calls below are taken here, each the
 user's to overturn. Companion to [lists.md](lists.md), whose
 Decision 2 left a TypeScript project's diagnostics at "the files you
-opened" and whose "Not built" is where this came from.
+opened" and whose "Not built" is where this came from. *Built
+2026-09-26* (roadmap step 40), the later decisions as dated.
 
 ## What there was
 

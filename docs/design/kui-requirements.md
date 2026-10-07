@@ -147,7 +147,9 @@ kawoosh's account — these are on the road, in roughly this order:
   beside them); the first consumer is the scrolling tab
   ([scrolling-tab.md](scrolling-tab.md)).
 - **The `edit` widget** for plugin-authored fields inside Lua views only;
-  the editor pane never uses it.
+  the editor pane never uses it. *Superseded 2026-10-07*: a Lua view's
+  field is the engine's own line (lua-boundary.md), so no `edit` is
+  needed.
 - Not on the road: the Node binding, the C runner (`kui_run`). Accessibility
   is not required but comes free from the `Role::Line` rows and is kept.
 
