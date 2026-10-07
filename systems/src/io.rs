@@ -229,7 +229,8 @@ pub enum ProcCmd {
 /// opens no console window — `kawoosh` is a GUI program there, with no
 /// console for a console child to share, and each would get one of its
 /// own. A program that is a `.cmd` there — `npm`, a server npm put on
-/// the PATH — is started by its path ([`shim`]).
+/// the PATH — is started by its path ([`shim`]), and one whose path is
+/// too long for cmd through a short one ([`long_batch`]).
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
     let path = crate::shell_env::path();
     #[cfg(windows)]
@@ -239,10 +240,18 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
         .and_then(|p| shim(program.as_ref(), &p));
     #[cfg(not(windows))]
     let shim: Option<PathBuf> = None;
-    let mut c = match shim {
-        Some(p) => std::process::Command::new(p),
-        None => std::process::Command::new(program),
+    let program: &std::ffi::OsStr = match &shim {
+        Some(p) => p.as_os_str(),
+        None => program.as_ref(),
     };
+    let mut c = std::process::Command::new(program);
+    #[cfg(windows)]
+    if let Some(long) = long_batch(program)
+        && let Some(short) = batch_trampoline()
+    {
+        c = std::process::Command::new(short);
+        c.env(LONG_BATCH, long);
+    }
     if let Some(path) = path {
         c.env("PATH", path);
     }
@@ -347,6 +356,68 @@ fn shim_in(program: &std::ffi::OsStr, path: &std::ffi::OsStr, pathext: &str) -> 
             .find(|(_, f)| f.is_file())
     })?;
     matches!(found.0.as_str(), "bat" | "cmd").then_some(found.1)
+}
+
+/// The variable [`batch_trampoline`] reads the batch file's path from.
+#[cfg(windows)]
+const LONG_BATCH: &str = "KAWOOSH_BAT";
+
+/// The shortest path std hands cmd as `\\?\C:\…` (247 characters):
+/// std makes a program's path verbatim from there, and gives a batch
+/// file's to `cmd.exe /c` as it is — which cmd cannot run, so a server
+/// npm installed under a deep folder said "The system cannot find the
+/// path specified" (found 2026-10-07: a `.cmd` of 246 characters ran,
+/// of 247 did not).
+#[cfg(windows)]
+const VERBATIM_FROM: usize = 247;
+
+/// `program` as an absolute path, when it is a batch file — `.cmd` or
+/// `.bat` — whose path is too long for std to give cmd ([`VERBATIM_FROM`]).
+#[cfg(windows)]
+fn long_batch(program: &std::ffi::OsStr) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStrExt;
+    let p = std::path::Path::new(program);
+    let ext = p.extension()?.to_str()?.to_ascii_lowercase();
+    if ext != "cmd" && ext != "bat" {
+        return None;
+    }
+    let abs = std::path::absolute(p).ok()?;
+    (abs.as_os_str().encode_wide().count() >= VERBATIM_FROM).then_some(abs)
+}
+
+/// A batch file at a short path that runs the one [`LONG_BATCH`] names
+/// with its own arguments: std quotes those for a batch file as it
+/// would have for that one, and cmd is given a path it can run (up to
+/// its own limit of 259 characters). Written once into the temp
+/// folder; none when it cannot be.
+#[cfg(windows)]
+fn batch_trampoline() -> Option<PathBuf> {
+    static AT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    AT.get_or_init(|| {
+        // No `call`: a second `%` expansion of the arguments; the batch
+        // ends in the other, whose exit is cmd's.
+        let text = format!("@\"%{LONG_BATCH}%\" %*\r\n");
+        let at = std::env::temp_dir().join("kawoosh-long-batch.cmd");
+        if std::fs::read_to_string(&at).is_ok_and(|t| t == text) {
+            return Some(at);
+        }
+        // Another Kawoosh may be writing it, or running it: what is
+        // there then is what this one would write.
+        match std::fs::write(&at, &text) {
+            Ok(()) => Some(at),
+            Err(e) => {
+                let same = std::fs::read_to_string(&at).is_ok_and(|t| t == text);
+                if !same {
+                    log::warn!(
+                        "{}: {e}; a batch file at a long path will not run",
+                        at.display()
+                    );
+                }
+                same.then_some(at)
+            }
+        }
+    })
+    .clone()
 }
 
 /// The directories of a PATH, in order, an empty entry — no directory,
@@ -1498,6 +1569,61 @@ mod tests {
         assert_eq!(run("echo one&& echo two"), "one\r\ntwo");
         assert_eq!(run(r#"echo "a b" c"#), r#""a b" c"#);
         assert_eq!(run(r#"cmd /c "echo in""#), "in");
+    }
+
+    /// A batch file whose path is past [`VERBATIM_FROM`] runs, through
+    /// [`batch_trampoline`], as one at a short path does: in its own
+    /// folder (`%~dp0`, what an npm shim finds node by), the same
+    /// arguments — a space, a `&` and a `%` among them — and its exit.
+    #[cfg(windows)]
+    #[test]
+    fn a_batch_file_at_a_long_path_runs() {
+        let root = std::env::temp_dir().join(format!("kawoosh-longbat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let body = "@echo off\r\necho dir=%~dp0\r\n:next\r\nif [%1]==[] goto end\r\n\
+                    echo arg=[%1]\r\nshift\r\ngoto next\r\n:end\r\nexit /b 7\r\n";
+        let made = |dir: PathBuf| {
+            std::fs::create_dir_all(&dir).unwrap();
+            let bat = dir.join("tool.cmd");
+            std::fs::write(&bat, body).unwrap();
+            bat
+        };
+        let short = made(root.join("s"));
+        // Folders until the batch file's path is past the limit, and
+        // under cmd's own (259).
+        let mut deep = root.join("l");
+        while deep.join("tool.cmd").as_os_str().len() < VERBATIM_FROM + 3 {
+            deep = deep.join("deeper");
+        }
+        let long = made(deep.clone());
+        let len = long.as_os_str().len();
+        assert!((VERBATIM_FROM..260).contains(&len), "{len}");
+        assert!(long_batch(long.as_os_str()).is_some());
+        assert!(long_batch(short.as_os_str()).is_none());
+        let run = |bat: &std::path::Path| {
+            let out =
+                crate::spawn::output(command(bat).args(["a b", "c&d", "50%", "--stdio"])).unwrap();
+            (
+                String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
+                String::from_utf8_lossy(&out.stderr).into_owned(),
+                out.status.code(),
+            )
+        };
+        let (s_out, _, s_code) = run(&short);
+        let (l_out, l_err, l_code) = run(&long);
+        // As std quotes them for a batch file.
+        let args = "arg=[\"a b\"]\narg=[\"c&d\"]\narg=[\"50%\"]\narg=[--stdio]\n";
+        assert_eq!(
+            s_out,
+            format!("dir={}\\\n{args}", short.parent().unwrap().display())
+        );
+        assert_eq!(
+            l_out,
+            format!("dir={}\\\n{args}", deep.display()),
+            "stderr: {l_err}"
+        );
+        assert_eq!((s_code, l_code), (Some(7), Some(7)));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The shim lands in `~/.cache/kawoosh/` on the host's `/`, not in a
