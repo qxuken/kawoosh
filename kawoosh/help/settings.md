@@ -240,6 +240,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `leader` | `" "` | the `<leader>` key |
 | `whichkey` | `true` | show the keys that can follow a prefix |
 | `keys.legend` | `"compact"` | a pane's key legend starts as one `⌥/ keys` (`compact`), which `<A-/>` opens, or whole (`full`) ([look](look.md#icons-and-keys)) |
+| `keys.input_method` | `"text"` | where the platform's input method — accents, dead keys, press-and-hold, an IME — works: `text` is insert mode, prompts, fields, `r`'s and `f`'s character and terminals, so a held `j` repeats in normal mode; `always` is normal mode too |
 | `keys.option_as_alt` | `"left"` | macOS: which {{mac:⌥}}{{pc:Option}} key is Alt for chords such as `<A-u>`: `left`, `right`, `both` or `none`; the other one types accents (`ü`) |
 | `pairs.enabled` | `true` | close brackets and quotes as you type; `pairs.rules` per language |
 | `clipboard.system` | `true` | `p` puts what other programs copied ([memory](memory.md)) |

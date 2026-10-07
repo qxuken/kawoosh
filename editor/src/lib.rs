@@ -3078,6 +3078,18 @@ impl Editor {
         taken
     }
 
+    /// True while the next key is a command's character argument read
+    /// as what the layout typed (`r`, `f`, `t`, [`CharArg::Typed`]):
+    /// text, which the platform's input method may compose, not a key.
+    pub fn awaiting_typed_char(&self) -> bool {
+        self.awaiting_char.as_ref().is_some_and(|(binding, _)| {
+            let name = self.commands.resolve(&binding.command, &binding.args).name;
+            self.commands
+                .spec(&name)
+                .is_none_or(|s| s.char_arg == CharArg::Typed)
+        })
+    }
+
     /// Makes the next key the character argument of `command` — how a
     /// command that needs one more character than its binding gave it
     /// (`gsr`'s second pair, `gsa`'s pair after its motion) asks.

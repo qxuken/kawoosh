@@ -3223,7 +3223,8 @@ frame.
 
 Scheduled nowhere, on purpose: ~~incremental sync (measure first)~~
 (measured and built 2026-10-07, lsp-rules.md Decision 8), the
-press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
+~~press-and-hold toggle (kui's)~~ (kui F125 in alpha.41, built 2026-10-07 as
+`keys.input_method`, settings.md), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
 3's after — when the walk's cap or the poll hurt).
 

@@ -362,3 +362,18 @@ project write, the layers).
   `set_option_as_alt`) and `keys.option_as_alt`, `left` by default, so
   the right ⌥ still types `ü`; declared every frame. kawoosh builds
   against kui by path (`../kui-f113`) until a release carries F113.
+
+### From use, 2026-10-07
+
+- **The input method where text is typed.** kui F125 (alpha.41,
+  from kawoosh's wish list) turns a window's input method off:
+  no composition, no dead key waiting, and on a Mac no press-and-hold,
+  so a held `j` repeats and `j` is no IME's syllable. kawoosh declares
+  it every frame where the keys are commands — normal, visual, an
+  operator's motion, a pane's keys, the launcher — and leaves it on
+  where text is typed: insert mode, the prompt and every field, the
+  character `r` `f` `t` wait for (`CharArg::Typed`; `m`'s key is a
+  key), a terminal's pty. `keys.input_method`, `text` by default,
+  `always` for the old way. The roadmap's "press-and-hold toggle
+  (kui's)" is this, and the README needs no `defaults write -g
+  ApplePressAndHoldEnabled`.
