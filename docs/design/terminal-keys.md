@@ -174,7 +174,9 @@ so `<C-\>r` after the escape, shown in its which-key, and vim's `r`
 everywhere else. `Terminals::raw` keeps a hand-set state with the
 foreground process group in front when it was set (`Terminal::foreground`:
 the pty's `tcgetpgrp` and the process's name, `proc_name` on macOS,
-`/proc/PID/comm` on Linux, nothing on Windows); `Kawoosh::term_raw` reads
+`/proc/PID/comm` on Linux; on Windows, since 2026-10-07, the shell's
+newest child or else the shell, from its job's processes, named with
+no `.exe` — `term/src/front.rs`); `Kawoosh::term_raw` reads
 it while that group is in front, else whether `terminal.raw` names the
 program in front. So raw set at the shell's prompt holds through an
 `ls` and comes back after a full-screen program, whose own state is the

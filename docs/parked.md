@@ -66,8 +66,13 @@ Designed or obvious, and nothing in daily use has wanted it yet.
   placeholders and relative placements (answered `ENOTSUP`); sixel;
   `CSI 16 t`. ([kitty-graphics.md](design/kitty-graphics.md))
 - **Grammars**: TinyCC shipped for `:grammar build` on Windows, if
-  users without a compiler ask. ([grammars.md](design/grammars.md)
-  Decision 9)
+  users without a compiler ask; MSVC `cl` as a compiler, whose flags
+  are another compiler's (not tried; mingw `cc`, `clang` and `zig cc`
+  are). ([grammars.md](design/grammars.md) Decision 9)
+- **Windows, not built there** (run 2026-10-07): WSL as a domain
+  (domains.md, "the note after"); a tray, for the glyph `assets/icons`
+  has. (`terminal.raw` by program, found missing the same day, was
+  built then: terminal-keys.md Decision 2.)
 - **Keys reserved, nothing behind them**: `]e` `[e` (pins), `gsf`
   `gsh`, `<leader>R` (rename the file), `<leader>E`. ([keys.md](design/keys.md),
   "Reserved")
@@ -174,12 +179,17 @@ images and ligatures have since been built.
 
 Built, or buildable, and never seen where it runs.
 
-- **Windows**: raw mode by foreground program (`Terminal::foreground`
-  returns nothing there); the Alt-Tab redraw on kui's retry; a tray
-  glyph, the window icon on a real desktop; MSVC `cl` for `:grammar
-  build`; a file watch overflow while notify's thread starved (kawoosh's
-  own ReadDirectoryChangesW buffer would cure it); WSL as a domain;
-  `man`, which Windows has none of.
+- **Windows**: a file watch overflow while notify's thread starved
+  (kawoosh's own ReadDirectoryChangesW buffer would cure it). Not
+  reproduced 2026-10-07 by `tree_watch`'s `overflow_probe` (ignored;
+  bursts of 16 to 1000 long-named files, twice as many busy threads as
+  cores): every file said, or from 48 files on its root said as lost.
+  Seen working the same day, and so off this list: the window drawn at
+  once after Alt-Tab, uncovered or restored from the taskbar, with what
+  changed while it was hidden; kawoosh's drawing as the window's icons
+  (`WM_GETICON`: 48 and 24 px at 150%), what the title bar, Alt-Tab and
+  the taskbar take; `man`, through
+  `man.command = "wsl man"` ([man.md](design/man.md)).
 - **Linux**: a font installed while running (fontconfig announces
   nothing); the pasteboard's concealed marks (kui F84).
 - **macOS**: `secure_input`'s effect, never seen working (another

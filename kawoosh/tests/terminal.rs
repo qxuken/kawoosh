@@ -1579,21 +1579,24 @@ fn raw_gives_the_program_every_key_but_the_escape_and_cmd() {
 }
 
 /// `terminal.raw` names the programs a pane is raw for while one is in
-/// front; `<C-\>r` overrides it for that program.
-#[cfg(unix)]
+/// front; `<C-\>r` overrides it for that program. On Windows the
+/// program is `ping`, named as unix would name it (no `.exe`).
 #[test]
 fn terminal_raw_names_the_programs_that_make_a_pane_raw() {
+    let (program, line) = if cfg!(windows) {
+        ("ping", "ping -n 30 127.0.0.1")
+    } else {
+        ("sleep", "sleep 30")
+    };
     let mut app = Kawoosh::new("t", "editor text");
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     app.ed.settings.set(
         kawoosh_editor::Layer::Session,
         "terminal.raw",
-        kawoosh_editor::Setting::List(vec![kawoosh_editor::Setting::Str("sleep".into())]),
+        kawoosh_editor::Setting::List(vec![kawoosh_editor::Setting::Str(program.into())]),
     );
-    let t = app
-        .spawn_terminal(Some("sleep 30"), None)
-        .expect("a process");
+    let t = app.spawn_terminal(Some(line), None).expect("a process");
     let pane = app
         .layout
         .split(kawoosh::layout::SplitDir::V, Content::Terminal(t));
@@ -1607,7 +1610,7 @@ fn terminal_raw_names_the_programs_that_make_a_pane_raw() {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    assert!(raw, "raw while `sleep` is in front");
+    assert!(raw, "raw while `{program}` is in front");
     d.press(&mut app, "<C-\\>");
     d.keys(&mut app, "r");
     d.frame(&mut app);
