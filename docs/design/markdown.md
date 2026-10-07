@@ -352,10 +352,20 @@ After a day's use (2026-09-23), five more:
   away, a cell's inline marks as prose's — and kui reads a line's text
   from its text nodes in order, so a click through a cell lands on its
   byte. The caret's row is its source, a child of the table and not a
-  row of it — with its cells as they are drawn away from the caret
-  beside it, 0px tall (`rows::table_ghost`), so the columns keep their
-  widths: without them `j` and `k` through a table moved every column
-  whose widest cell was on the caret's row. A cell is inline like a
+  row of it. Each block of a table holds a row of the whole table's
+  widest cells, 0px tall (`rows::table_ghost`), so the columns keep
+  their widths: without it `j` and `k` through a table moved every
+  column whose widest cell was on the caret's row, and a scroll through
+  it every column, as rows wider or narrower came into sight
+  (2026-10-08). The widest cells are worked out once — each row of the
+  table, up to 500, rendered folded — and kept while the text and its
+  syntax and structure layers hold (`markdown::TableCache`; a layer
+  counts its changes, `Buffer::layer_changes`): a keystroke beside a
+  500-row table 0.5ms, not 6. An edit reads the table again, and the
+  parse's answer after it again — about 4ms each for 500 rows; a frame
+  that spends more than `markdown::SLOW_TABLES` on it while the buffer
+  is edited offers once a buffer, in a toast, to draw markdown as its
+  source (`markdown toggle`). A cell is inline like a
   paragraph: the grammar injects `markdown_inline` into
   `pipe_table_cell` too, which tree-sitter-md's own query does not, and
   a cell's `**bold**` had kept its stars. An image is a cell, at most its column's share of the pane,

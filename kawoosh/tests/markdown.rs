@@ -498,6 +498,49 @@ fn a_table_scrolled_half_out_keeps_its_columns() {
     assert!(x(&d, "v2") < top, "narrower: {} < {top}", x(&d, "v2"));
 }
 
+/// A table an edit reads again for too long offers, once a buffer, to
+/// draw markdown as its source — its button `:markdown toggle`; reading
+/// the buffer, however slow its tables, offers nothing.
+#[test]
+fn a_table_slow_to_edit_offers_the_source() {
+    let dir = fixture("slowtable");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    app.md_slow_tables = std::time::Duration::ZERO;
+    let offers = |app: &Kawoosh| {
+        app.notes
+            .shown
+            .iter()
+            .filter(|s| s.text.contains("is read again on each edit"))
+            .map(|s| {
+                (
+                    s.toast,
+                    s.actions.iter().map(|a| a.command.clone()).collect(),
+                )
+            })
+            .collect::<Vec<(bool, Vec<String>)>>()
+    };
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    d.press(&mut app, "gg");
+    settle(&mut d, &mut app);
+    assert_eq!(offers(&app), vec![], "read, not edited");
+    d.keys(&mut app, "/alpha");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.press(&mut app, "x");
+    settle(&mut d, &mut app);
+    assert_eq!(
+        offers(&app),
+        vec![(true, vec!["markdown toggle".to_string()])],
+        "a toast with its button"
+    );
+    d.press(&mut app, "ux");
+    settle(&mut d, &mut app);
+    assert_eq!(offers(&app).len(), 1, "once a buffer");
+    ex(&mut d, &mut app, "markdown toggle");
+    let v = app.focused_view().unwrap();
+    assert!(!app.markdown_rendered(app.ed.views[v].buffer), "its source");
+}
+
 /// A rendered paragraph draws no completion ghost — its text wraps as
 /// one paragraph — so `<CR>` after a word's start is a newline, not the
 /// word finished by a completion no one saw.

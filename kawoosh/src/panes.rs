@@ -1526,6 +1526,7 @@ impl Kawoosh {
                 .into_iter()
                 .map(|first| (first, cache.widths(buf, first, &style, tabstop).clone()))
                 .collect();
+            let slow = cache.slow(self.md_slow_tables);
             // A table the caret is in slides sideways to show it.
             let head = v.sels.primary().head;
             let head_line = buf.line_of(head);
@@ -1674,6 +1675,30 @@ impl Kawoosh {
                 if r.grid() {
                     md_cells.insert(*ln, table_row(r, img));
                 }
+            }
+            // A table each edit reads again for too long: once a buffer,
+            // the way out offered — markdown as its source while it is
+            // edited, `:markdown toggle` again to have it back.
+            if let Some((rows, spent)) = slow
+                && self.md_slow_offered.insert(buf_id)
+            {
+                let name = self.ed.buffers[buf_id].name.clone();
+                self.notify_with(
+                    crate::notify::Note::new(
+                        crate::notify::Level::Info,
+                        format!(
+                            "{name}: a table of {rows} rows is read again on each edit ({:.1} ms) \
+                             — markdown drawn as its source is quicker to edit",
+                            spent.as_secs_f64() * 1e3
+                        ),
+                    )
+                    .source("markdown")
+                    .show(crate::notify::Show::Toast)
+                    .action("Show source", "markdown toggle")
+                    .ttl(crate::notify::Ttl::After(
+                        std::time::Duration::from_secs(15),
+                    )),
+                );
             }
             md_columns = tables.columns;
         }

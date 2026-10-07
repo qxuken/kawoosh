@@ -956,6 +956,12 @@ pub struct Tables {
 /// The most rows a table is walked back and read for its columns.
 const TABLE_MAX: usize = 500;
 
+/// Half a 120Hz frame: a frame that reads its tables again for longer,
+/// while the buffer is edited, offers to draw markdown as its source
+/// (`Kawoosh::md_slow_tables`). An edit and the parse's answer after it
+/// each read a table whole — about 4ms each for 500 rows (2026-10-08).
+pub const SLOW_TABLES: std::time::Duration = std::time::Duration::from_millis(4);
+
 /// A table as the whole of it is drawn, for its columns to be as wide
 /// in a frame that draws a few of its rows: a kui table is as wide as
 /// the rows in it, and with only the rows in sight its columns jumped
@@ -980,6 +986,13 @@ pub struct TableWidths {
 pub struct TableCache {
     stamp: Option<(kawoosh_doc::Version, u64, u64, usize)>,
     tables: HashMap<usize, TableWidths>,
+    /// Whether the text changed since the cache first read it: the
+    /// buffer is being edited, not only read.
+    edited: bool,
+    /// What reading tables cost this frame, and the most rows of one
+    /// read.
+    spent: std::time::Duration,
+    rows: usize,
 }
 
 impl TableCache {
@@ -994,9 +1007,12 @@ impl TableCache {
             tabstop,
         ));
         if self.stamp != stamp {
+            self.edited |= self.stamp.is_some_and(|s| s.0 != buf.version());
             self.stamp = stamp;
             self.tables.clear();
         }
+        self.spent = std::time::Duration::ZERO;
+        self.rows = 0;
         Tables {
             known: self
                 .tables
@@ -1016,7 +1032,9 @@ impl TableCache {
         style: &Style,
         tabstop: usize,
     ) -> &TableWidths {
+        let (spent, most) = (&mut self.spent, &mut self.rows);
         self.tables.entry(first).or_insert_with(|| {
+            let t = std::time::Instant::now();
             let mut end = first;
             while end < buf.line_count() && end - first < TABLE_MAX && is_table_line(buf, end) {
                 end += 1;
@@ -1051,6 +1069,8 @@ impl TableCache {
                     }
                 }
             }
+            *spent += t.elapsed();
+            *most = (*most).max(end - first);
             TableWidths {
                 lines: first..end,
                 columns,
@@ -1058,6 +1078,12 @@ impl TableCache {
                 images,
             }
         })
+    }
+
+    /// While the buffer is edited, a frame whose tables took `budget`
+    /// or more to read again: the most rows of one, and the time.
+    pub fn slow(&self, budget: std::time::Duration) -> Option<(usize, std::time::Duration)> {
+        (self.edited && self.rows > 0 && self.spent >= budget).then_some((self.rows, self.spent))
     }
 }
 
