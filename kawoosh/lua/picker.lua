@@ -155,9 +155,23 @@ picker.binary = {
   pdf = true, o = true, a = true, so = true, dylib = true, dll = true, exe = true, wasm = true, class = true,
   pyc = true, db = true, sqlite = true, bin = true, dat = true,
 }
+-- Read from the path's end, a few bytes at most: a pattern anchored
+-- at the end is tried from every byte, and the picker asks a hundred
+-- thousand paths.
 local function is_binary(path)
-  local ext = path:match("%.([%w]+)$")
-  return ext ~= nil and picker.binary[ext:lower()] == true
+  local n = #path
+  for i = n, math.max(1, n - 8), -1 do
+    local b = path:byte(i)
+    if b == 46 then -- `.`
+      local ext = path:sub(i + 1)
+      if ext == "" or ext:find("%W") then return false end
+      local hit = picker.binary[ext]
+      if hit == nil and ext:find("%u") then hit = picker.binary[ext:lower()] end
+      return hit == true
+    end
+    if b == 47 or b == 92 then return false end -- `/` `\`
+  end
+  return false
 end
 
 -- The items boosted, and the boosted ones first — the best boost
@@ -167,17 +181,21 @@ end
 local function boosted(items)
   local by = boosts()
   local first, rest, last = {}, {}, {}
+  -- Where each boosted one was, for a sort that keeps their order: only
+  -- they are sorted, and an index on every item grew every item's table.
+  local at = {}
   for i, it in ipairs(items) do
     if it.boost == nil and it.path and by[it.path] then it.boost = by[it.path] end
     if it.boost == nil and it.path and is_binary(it.path) then it.boost = -0.5 end
-    it._i = i
-    if it.boost and it.boost > 0 then first[#first + 1] = it
+    if it.boost and it.boost > 0 then
+      first[#first + 1] = it
+      at[it] = i
     elseif it.boost and it.boost < 0 then last[#last + 1] = it
     else rest[#rest + 1] = it end
   end
   table.sort(first, function(a, b)
     if a.boost ~= b.boost then return a.boost > b.boost end
-    return a._i < b._i
+    return at[a] < at[b]
   end)
   for _, it in ipairs(rest) do first[#first + 1] = it end
   for _, it in ipairs(last) do first[#first + 1] = it end
@@ -1527,10 +1545,10 @@ end
 -- `here` said), relative to it.
 local function walk_items(ctx, done)
   local root = ctx.root or ctx.cwd
-  fs.walk(root, function(paths, err)
+  fs.walk(root, function(paths, err, whole)
     if not paths then return done(nil, err) end
     local items = {}
-    for i, p in ipairs(paths) do items[i] = { text = p, path = fs.join(root, p) } end
+    for i, p in ipairs(paths) do items[i] = { text = p, path = whole[i] } end
     done(items)
   end)
 end

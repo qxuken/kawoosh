@@ -1260,6 +1260,9 @@ struct Jobs {
     /// The `commands` functions of `kawoosh.compile_kind`, by name.
     compile_kinds: HashMap<String, mlua::RegistryKey>,
     procs: HashMap<u64, ProcKeys>,
+    /// The roots of the walks under way (`kawoosh.fs.walk`), by token:
+    /// what each answer's paths are joined to.
+    walking: HashMap<u64, PathBuf>,
     /// `kawoosh.fs.apply`'s `settled` and `done`, by token.
     applying: HashMap<u64, (Option<mlua::RegistryKey>, Option<mlua::RegistryKey>)>,
     next: u64,
@@ -2726,12 +2729,49 @@ impl Runtime {
     }
 
     pub fn walked(&self, token: u64, result: Result<Vec<String>, String>) {
-        let result = result.and_then(|paths| {
-            self.lua
-                .create_sequence_from(paths)
-                .map_err(|e| e.to_string())
+        let root = self.jobs.borrow_mut().walking.remove(&token);
+        let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
+            return;
+        };
+        let Ok(f) = self.lua.registry_value::<mlua::Function>(&key) else {
+            return;
+        };
+        let _ = self.lua.remove_registry_value(key);
+        // The paths as they are, and each joined to the root as
+        // `fs.join` joins: a picker's hundred thousand rows need both,
+        // and a join a row from Lua was a call into the engine each.
+        let args = result.and_then(|paths| {
+            let whole = match &root {
+                Some(root) => self
+                    .lua
+                    .create_sequence_from(paths.iter().map(|p| {
+                        kawoosh_systems::fs::display(&kawoosh_systems::fs::join(
+                            root,
+                            std::path::Path::new(p),
+                        ))
+                    }))
+                    .map(LV::Table),
+                None => Ok(LV::Nil),
+            };
+            let paths = self.lua.create_sequence_from(paths);
+            match (paths, whole) {
+                (Ok(p), Ok(w)) => Ok((LV::Table(p), LV::Nil, w)),
+                (Err(e), _) | (_, Err(e)) => Err(e.to_string()),
+            }
         });
-        self.answer(token, result, "fs.walk");
+        let args = match args {
+            Ok(a) => a,
+            Err(e) => (
+                LV::Nil,
+                LV::String(self.lua.create_string(e).unwrap()),
+                LV::Nil,
+            ),
+        };
+        if let Err(e) = self.timed(&f, || f.call::<()>(args)) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("fs.walk: {e}")));
+        }
     }
 
     /// The `kawoosh.sqlite.null` table: what a NULL comes back as, and
@@ -6597,7 +6637,8 @@ fn seed(
     )?;
     // `fs.walk(root, fn)`: every file under `root` as git sees it —
     // ignored, hidden and `.git` left out — relative to it, walked on
-    // a thread of its own and handed to `fn(paths)`, or `fn(nil, why)`.
+    // a thread of its own and handed to `fn(paths, nil, whole)`, `whole`
+    // each path joined to the root as `fs.join` joins; or `fn(nil, why)`.
     let qq = q(queue);
     let jj = jobs.clone();
     fs.set(
@@ -6609,6 +6650,7 @@ fn seed(
                 j.waiting.insert(token, lua.create_registry_value(cb)?);
                 token
             };
+            jj.borrow_mut().walking.insert(token, PathBuf::from(&root));
             qq.borrow_mut().push(Msg::Walk {
                 token,
                 root: expand(&root),

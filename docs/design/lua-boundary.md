@@ -87,7 +87,7 @@ The suspected hot spots measured before any moved (an ignored harness,
 | case | measured | verdict |
 |---|---|---|
 | vcs statusline, 10k lines, 5000 hunks | 306 ms every idle frame | moved (Round 5) |
-| picker, 100k files | one 171 ms frame as the load lands; keys 2–6 ms | open |
+| picker, 100k files | one 171 ms frame as the load lands; keys 2–6 ms | halved (Round 8) |
 | du, 16k entries | worst 35 ms frame during the walk; re-sort 10.5 ms | left |
 | sqlite, 200k rows | the grid never pages past its first 1000 | a bug (Round 6) |
 | `:man bash` | an 80–100 ms frame as the page lands | moved (Round 7) |
@@ -148,6 +148,13 @@ all-bold lines; `man.render` keeps the heads, references, header and
 footer, a line at a time, and looks for references only on a line with
 a `(` before a digit. `man.render` of bash(1) from 80 ms to 7.5 ms.
 
+**Round 8, 2026-10-07: the picker's 100k-file load**. `fs.walk`'s
+answer has each path joined to the root as `fs.join` joins (a join a
+row from Lua was a call into the engine each); `boosted` indexes only
+the boosted rows it sorts (an index on every row grew every row's
+table); `is_binary` reads the extension from the path's end. The frame
+the load lands in from 244 ms to 108 ms, open to rows from 389 to 215.
+
 ## Open
 
 - Entries carried by the engine: a listing's `ids` (journal id →
@@ -156,5 +163,8 @@ a `(` before a digit. `man.render` of bash(1) from 80 ms to 7.5 ms.
   was yanked in. A payload per tracked line, carried by the register,
   would end both.
 - `field_node`, `keys_node`, `legend_node` out of `boot.lua`.
-- The picker's 171 ms frame as a 100k-file walk lands (Decision 6).
+- The picker's 108 ms frame as a 100k-file walk lands (Round 8): what is
+  left is the rows as Lua tables and the matcher's copy of their text —
+  a list kept in the engine and lent to Lua as rows are shown would end
+  it, and change every source.
 - sqlite's blobs come back whole (a copy of a cell wants the whole).

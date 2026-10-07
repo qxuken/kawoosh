@@ -647,7 +647,8 @@ end
 --
 -- kawoosh.fs.walk(root, fn): every file under `root` as git sees it —
 -- `.gitignore`d, hidden and `.git` left out — relative to it, read on
--- a thread of its own; `fn(paths)` when done, or `fn(nil, why)`.
+-- a thread of its own; `fn(paths, nil, whole)` when done — `whole`
+-- each path joined to the root as `fs.join` joins — or `fn(nil, why)`.
 -- kawoosh.fs.form(path, form): the path as `path copy` copies it —
 -- "relative" (to the working directory, whole when outside it),
 -- "absolute", "dir", "dir absolute", "name", "stem".

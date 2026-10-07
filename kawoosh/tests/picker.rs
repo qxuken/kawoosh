@@ -968,8 +968,10 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         )
         .unwrap();
     }
-    // A binary sits under the text files, matched or not.
+    // A binary sits under the text files, matched or not — its
+    // extension read in any case.
     std::fs::write(dir.join("many/f00.png"), "not text").unwrap();
+    std::fs::write(dir.join("many/f00.TTF"), "not text").unwrap();
     let long = native(&format!("aaa/{}.txt", "b".repeat(180)));
     std::fs::create_dir_all(dir.join("aaa")).unwrap();
     std::fs::write(dir.join(&long), "long\n").unwrap();
@@ -990,10 +992,15 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.frame(&mut app);
     let r = rows(&d);
     assert_eq!(r[0], native("many/f00.txt"), "{r:?}");
+    let mut tail: Vec<&str> = r[r.len() - 2..].iter().map(String::as_str).collect();
+    tail.sort();
     assert_eq!(
-        r.last().map(String::as_str),
-        Some(native("many/f00.png").as_str()),
-        "the binary under the text: {r:?}"
+        tail,
+        [
+            native("many/f00.TTF").as_str(),
+            native("many/f00.png").as_str()
+        ],
+        "the binaries under the text: {r:?}"
     );
     d.press(&mut app, "<C-u>");
     d.frame(&mut app);
