@@ -126,6 +126,77 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
     Ok(true)
 }
 
+const REUSE: &str = "--reuse";
+
+/// `kawoosh --reuse [PATH]`: what Explorer's Open with and a folder's
+/// "Open in Kawoosh" run (`scripts/windows-app.nu`). PATH goes to the
+/// Kawoosh running already, the one started last, and its window comes
+/// to the front, as Finder hands a document to the running app. True
+/// when one took it; false, and this one opens a window of its own.
+fn hand_over(path: Option<&String>) -> bool {
+    use kawoosh_systems::io::{Request, edit, running_sockets, send_request};
+    for (pid, sock) in running_sockets() {
+        if kawoosh::update::gone_within(pid, std::time::Duration::ZERO) {
+            continue;
+        }
+        let taken = match path {
+            Some(p) => edit(&sock, std::slice::from_ref(p), false).is_ok(),
+            // Nothing to open: asked whether it answers, to be raised.
+            None => send_request(&sock, &Request::Theme).is_ok(),
+        };
+        if taken {
+            raise(pid);
+            return true;
+        }
+    }
+    false
+}
+
+/// Process `pid`'s window to the front, restored if it was minimized.
+/// Windows lets the process the user just started take the foreground,
+/// so it is this one that raises the other's window. Elsewhere nothing:
+/// macOS hands documents over itself, and an X11 or Wayland window
+/// manager decides.
+fn raise(pid: u32) {
+    #[cfg(windows)]
+    // SAFETY: `found` outlives the enumeration that writes it, and the
+    // handle it ends with is one EnumWindows just handed over.
+    unsafe {
+        use windows_sys::Win32::Foundation::{HWND, LPARAM};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GW_OWNER, GetWindow, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+            SW_RESTORE, SetForegroundWindow, ShowWindow,
+        };
+        // The process's own visible top-level window: no owner, so not
+        // a popup of it.
+        unsafe extern "system" fn each(hwnd: HWND, found: LPARAM) -> windows_sys::core::BOOL {
+            // SAFETY: `found` is the pointer `raise` passed in.
+            let found = unsafe { &mut *(found as *mut (u32, HWND)) };
+            let mut owner = 0;
+            unsafe { GetWindowThreadProcessId(hwnd, &mut owner) };
+            if owner == found.0
+                && unsafe { IsWindowVisible(hwnd) } != 0
+                && unsafe { GetWindow(hwnd, GW_OWNER) }.is_null()
+            {
+                found.1 = hwnd;
+                return 0;
+            }
+            1
+        }
+        let mut found: (u32, HWND) = (pid, std::ptr::null_mut());
+        EnumWindows(Some(each), &mut found as *mut _ as LPARAM);
+        if found.1.is_null() {
+            return;
+        }
+        if IsIconic(found.1) != 0 {
+            ShowWindow(found.1, SW_RESTORE);
+        }
+        SetForegroundWindow(found.1);
+    }
+    #[cfg(not(windows))]
+    let _ = pid;
+}
+
 /// On Windows, the console `kawoosh` was run from, for what the CLI
 /// half prints: a GUI program has none of its own. A pipe it was handed
 /// (`cd (kawoosh pick dirs)`) is already its output and stays so. cmd
@@ -193,6 +264,9 @@ Options:
                                  their extensions, as JSON
   --after PID                    open once process PID has exited: what
                                  :relaunch starts
+  --reuse [PATH]                 open PATH in the kawoosh running already,
+                                 its window raised; with none running, as
+                                 `kawoosh PATH`: what Explorer runs
 
 Environment:
   RUST_LOG           stderr log level (trace, debug, info, warn, error, off)
@@ -216,9 +290,11 @@ fn main() -> anyhow::Result<()> {
         args.splice(0..0, ["edit".to_string(), "--wait".to_string()]);
     }
     let after_dashes = args.first().is_some_and(|a| a == "--");
+    let reuse = args.first().is_some_and(|a| a == REUSE);
     // A flag, or `test`: the CLI half, whose output wants a console —
-    // but for `--after`, which is the window.
+    // but for `--after` and `--reuse`, which are the window.
     if !after_dashes
+        && !reuse
         && args.first().is_some_and(|a| {
             (a.starts_with('-') && a != "-" && a != kawoosh::update::AFTER) || a == "test"
         })
@@ -259,6 +335,13 @@ fn main() -> anyhow::Result<()> {
             attach_console();
             std::process::exit(kawoosh::lsp_cli::run(&args[1..]));
         }
+        // What follows is a path, dash or not, as after `--`.
+        Some(REUSE) => {
+            args.remove(0);
+            if hand_over(args.first()) {
+                return Ok(());
+            }
+        }
         // Everything after is a path, dash or not.
         Some("--") => {
             args.remove(0);
@@ -276,7 +359,7 @@ fn main() -> anyhow::Result<()> {
     }
     // `kawoosh test PATH…`: Lua test scripts against a headless editor
     // (`harness.rs`), no window, the exit code the verdict.
-    if args.first().map(String::as_str) == Some("test") && !after_dashes {
+    if args.first().map(String::as_str) == Some("test") && !after_dashes && !reuse {
         std::process::exit(kawoosh::harness::run_files(&args[1..]));
     }
     let path = args.first().cloned();

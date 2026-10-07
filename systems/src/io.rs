@@ -1201,6 +1201,39 @@ pub fn socket_path() -> std::path::PathBuf {
     dir.join(format!("kawoosh-{}.sock", std::process::id()))
 }
 
+/// The other Kawooshes' sockets beside this one's, each with its
+/// process id, the one started last first: what `kawoosh --reuse` hands
+/// a path to. A Kawoosh that crashed leaves its file behind; the caller
+/// asks whether the process is there.
+pub fn running_sockets() -> Vec<(u32, std::path::PathBuf)> {
+    let own = socket_path();
+    let Some(dir) = own.parent() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<_> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name();
+            let pid = name
+                .to_str()?
+                .strip_prefix("kawoosh-")?
+                .strip_suffix(".sock")?
+                .parse::<u32>()
+                .ok()?;
+            let at = e.metadata().and_then(|m| m.modified()).ok()?;
+            (pid != std::process::id()).then(|| (at, pid, e.path()))
+        })
+        .collect();
+    found.sort_by_key(|f| std::cmp::Reverse(f.0));
+    found
+        .into_iter()
+        .map(|(_, pid, path)| (pid, path))
+        .collect()
+}
+
 /// The CLI written to the host (`~/.cache/kawoosh`), executable; a
 /// host that refuses keeps its `$EDITOR`, which is the host's then.
 fn install_host_shim(s: &dyn kawoosh_doc::fs::Fs) {

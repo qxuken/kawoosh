@@ -164,7 +164,8 @@ One built before it cannot: quit it and run this again."
 
 # Kawoosh as an editor for this user: in Open with for every type the
 # build knows and then any file, in Default apps, on a folder's menu,
-# and in Run. None takes a type from the app that is its default — as
+# and in Run; what Explorer opens goes to the window running already,
+# when there is one. None takes a type from the app that is its default — as
 # on macOS, `Alternate` — until one is given to Kawoosh in Settings.
 # What an install before wrote goes first, so a type the build no
 # longer knows is no longer offered.
@@ -189,8 +190,9 @@ def register-editor [exe: path, built: path] {
       }
       $exe = $env:KAWOOSH_EXE
       $icon = "`"$exe`",0"
-      $open = "`"$exe`" `"%1`""
-      $folder = "`"$exe`" `"%V`""
+      # `--reuse`: into the Kawoosh running already, raised (main.rs).
+      $open = "`"$exe`" --reuse `"%1`""
+      $folder = "`"$exe`" --reuse `"%V`""
       $classes = 'Software\Classes'
       $app = "$classes\Applications\kawoosh.exe"
       $progid = "$classes\Kawoosh.File"
