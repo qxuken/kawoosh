@@ -166,37 +166,52 @@ local function still(st) return st and states[st.pane] == st end
 
 local function set_status(st, text, kind) st.status = text and { text = text, kind = kind or "ok" } or nil end
 
--- A result taken in: the hidden rowid column found, the columns'
--- widths and kinds measured over every row fetched.
-local function take(st, res, append)
-  local rowid = nil
-  for i, c in ipairs(res.columns) do
-    if c == "_rowid_" then rowid = i end
-  end
-  if append and st.res then
-    local old = st.res
-    if res ~= old then
-      for _, r in ipairs(res.rows) do old.rows[#old.rows + 1] = r end
-      old.truncated = res.truncated
-    end
-    res = old
-  else
-    res.rowid = rowid
-    st.res = res
-  end
-  local widths, numeric = {}, {}
-  for i, c in ipairs(res.columns) do
-    widths[i] = math.max(1, ulen(c))
-    numeric[i] = true
-  end
-  for _, r in ipairs(res.rows) do
+-- The columns' widths and kinds widened over rows `from` to `to` of
+-- `res`: a width only grows, a column numeric only while every value
+-- in it is.
+local function measure(res, from, to)
+  local widths, numeric = res.widths, res.numeric
+  for k = from, to do
+    local r = res.rows[k]
     for i = 1, #res.columns do
       local v = r[i]
       widths[i] = math.max(widths[i], ulen(fmt(v)))
       if not is_null(v) and not is_number(v) then numeric[i] = false end
     end
   end
-  res.widths, res.numeric = widths, numeric
+end
+
+-- A result taken in: the hidden rowid column found, the columns'
+-- widths and kinds measured over the rows it brought — a page appended
+-- (`append`) measured on its own over what was there, a row read again
+-- after an edit (`row`, `res` the one shown) on its own too — so a
+-- table scrolled through is measured once a row, not once a row a page.
+local function take(st, res, append, row)
+  if row then
+    measure(res, row, row)
+    return
+  end
+  if append and st.res then
+    local old = st.res
+    local n = #old.rows
+    for _, r in ipairs(res.rows) do old.rows[#old.rows + 1] = r end
+    old.truncated = res.truncated
+    measure(old, n + 1, #old.rows)
+    st.more = old.truncated and st.source and st.source.table ~= nil
+    return
+  end
+  local rowid = nil
+  for i, c in ipairs(res.columns) do
+    if c == "_rowid_" then rowid = i end
+  end
+  res.rowid = rowid
+  st.res = res
+  res.widths, res.numeric = {}, {}
+  for i, c in ipairs(res.columns) do
+    res.widths[i] = math.max(1, ulen(c))
+    res.numeric[i] = true
+  end
+  measure(res, 1, #res.rows)
   -- The columns shown: every one but the rowid's.
   local shown = {}
   for i = 1, #res.columns do
@@ -215,14 +230,16 @@ local function table_named(st, name)
 end
 
 -- The SELECT a browsed table is read by: the rowid first where the
--- table has one, as the order says, a page from `offset`.
+-- table has one, as the order says, a page from `offset` — and the row
+-- past it, which the cap leaves out and `truncated` says is there: a
+-- page that is the table's last says so, and a full one does not.
 local function browse_sql(st, offset)
   local src = st.source
   local t = table_named(st, src.table)
   local keyed = t and t.kind == "table" and not t.without_rowid
   local sql = "SELECT " .. (keyed and "rowid AS _rowid_, " or "") .. "* FROM " .. door.quote(src.table)
   if src.order then sql = sql .. " ORDER BY " .. door.quote(src.order) .. (src.desc and " DESC" or " ASC") end
-  return sql .. string.format(" LIMIT %d OFFSET %d", page_size(), offset)
+  return sql .. string.format(" LIMIT %d OFFSET %d", page_size() + 1, offset)
 end
 
 -- pane.browse(name): the table's rows in the grid, from its first;
@@ -447,8 +464,9 @@ local function write(st, r, ci, value, undo)
         .. " WHERE " .. (where:gsub("%?(%d+)", function(n) return "?" .. (tonumber(n) - 1) end))
     door.query(st.path, again, params, { cap = 1 }, function(got)
       if not still(st) or not got or not got.rows[1] then return end
-      if st.res and st.res.rows[r] then st.res.rows[r] = got.rows[1] end
-      take(st, st.res, true)
+      if not (st.res and st.res.rows[r]) then return end
+      st.res.rows[r] = got.rows[1]
+      take(st, st.res, true, r)
     end)
   end)
 end

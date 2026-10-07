@@ -133,6 +133,14 @@ starts, read once a text; `kawoosh.buf.hunk_counts` counts the hunks
 by kind, which the statusline segment reads instead of the hunks. 306
 ms an idle frame with 5000 hunks is 0.43 ms, `j` 0.5 ms.
 
+**Round 6, 2026-10-07: sqlite pages past its first**. A browsed
+table asks for a page and the row past it, so the cap cuts a full page
+and `truncated` says there is more; before, `LIMIT page` with `cap =
+page` was never cut and `G` stopped at row 1000 of 200 000. A page
+appended is measured on its own over the widths there, and a row read
+again after an edit on its own: a table scrolled through is measured
+once a row, not once a row a page.
+
 ## Open
 
 - Entries carried by the engine: a listing's `ids` (journal id →
@@ -143,5 +151,4 @@ ms an idle frame with 5000 hunks is 0.43 ms, `j` 0.5 ms.
 - `field_node`, `keys_node`, `legend_node` out of `boot.lua`.
 - The picker's 171 ms frame as a 100k-file walk lands, and `man.lua`'s
   80–100 ms frame as a page lands (Decision 6).
-- sqlite's blobs come back whole (a copy of a cell wants the whole), and
-  its width pass runs over every fetched row once paging works.
+- sqlite's blobs come back whole (a copy of a cell wants the whole).
