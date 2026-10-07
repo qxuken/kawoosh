@@ -420,6 +420,33 @@ UI thread would still copy the whole to send it); the copy kept in each
 server's document alone (a server joining has no text to be opened
 with).
 
+### 9. A write is said to the servers that ask
+
+*Added 2026-10-07*, found while building Decision 8 and asked for the
+same day ("let's do save issue here as well"). `initialize` has always
+declared `synchronization.didSave`, and nothing sent it: a server that
+works on save — rust-analyzer's `checkOnSave` cargo check, a linter
+that reads the file — never heard of one, and checked only as it was
+sent changes.
+
+- **When.** A buffer written (`Effect::Wrote` — `:w`, `:wa`, a write
+  through a multibuffer) whose text a server was sent: its text is
+  pushed first, so the server has what was written — a format on save
+  changed it — and then `Cmd::Saved` goes to each server holding it.
+- **To whom, and with what**, as each server's `textDocumentSync` says
+  (`Caps::save`): options with `save` — `true` or `{}` (rust-analyzer's)
+  — a `didSave` without the text, `{ includeText: true }` with the text
+  the pool holds for it, which is the text written; options without
+  `save`, none; a kind alone (a bare `1` or `2`, no options), a save
+  without the text, as Neovim and VS Code read it. A private buffer is
+  never sent, so its write is no one's news.
+
+Beaten: `willSave` and `willSaveWaitUntil` (a server's edits before the
+write would race the format on save, which is the editor's; no server
+used here asks for them); the text read back from the disk for
+`includeText` (the pool's copy is what was written, and a read is a
+round trip on a host).
+
 ## Not built
 
 - ~~**A loaded file changed on disk by another program** is not read

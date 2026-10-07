@@ -2050,6 +2050,7 @@ impl Kawoosh {
                 Effect::Open(p) => self.open(&p),
                 Effect::Wrote(id) => {
                     self.disk_settled(id);
+                    self.lsp_saved(id);
                     // The plugins told (`kawoosh.on_write`): a backend
                     // reads the file's state again.
                     if let Some(rt) = self.scripting.rt.clone()

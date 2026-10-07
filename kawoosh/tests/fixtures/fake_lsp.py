@@ -68,7 +68,10 @@ that file's previous result — with result `rN`, and an unchanged one for
 incremental sync and applies each ranged change to the text it holds; a
 text with `@echo` in it gets an information diagnostic at 0:0, "ranged
 N: TEXT", N the ranged changes it has had and TEXT the text it holds as
-JSON (lsp-rules.md Decision 8)."""
+JSON (lsp-rules.md Decision 8). With `--save` it asks to hear of saves,
+with `--save-text` with the text; a `didSave` is an information
+diagnostic at 0:0, "saved with TEXT" (as JSON) or "saved without its
+text" (lsp-rules.md Decision 9)."""
 import json
 import re, sys
 
@@ -234,8 +237,11 @@ while True:
             "declarationProvider": True, "documentSymbolProvider": True,
             "workspaceSymbolProvider": True, "inlayHintProvider": True,
             "experimental": {"runnables": {"kinds": ["cargo"]}},
-            **({"textDocumentSync": {"openClose": True, "change": 2}}
-               if "--incremental" in sys.argv else {}),
+            **({"textDocumentSync": dict(
+                   {"openClose": True, "change": 2 if "--incremental" in sys.argv else 1},
+                   **({"save": {"includeText": True}} if "--save-text" in sys.argv else
+                      {"save": True} if "--save" in sys.argv else {}))}
+               if {"--incremental", "--save", "--save-text"} & set(sys.argv) else {}),
             **({"diagnosticProvider": {"interFileDependencies": True, "workspaceDiagnostics": True}}
                if "--workspace-pull" in sys.argv else {})}}})
     elif method == "initialized":
@@ -365,6 +371,14 @@ while True:
         found = [{"name": "Widget", "kind": 23, "location": loc(1, 0), "containerName": "crate"},
                  {"name": "widget_fn", "kind": 12, "location": loc(0, 3)}]
         send({"jsonrpc": "2.0", "id": mid, "result": [s for s in found if q in s["name"].lower()]})
+    elif method == "textDocument/didSave":
+        p = m["params"]
+        said = "saved with %s" % json.dumps(p["text"]) if "text" in p else "saved without its text"
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+            "uri": p["textDocument"]["uri"],
+            "diagnostics": [{"range": {"start": {"line": 0, "character": 0},
+                                       "end": {"line": 0, "character": 1}},
+                             "severity": 3, "message": said}]}})
     elif method == "workspace/diagnostic":
         pulls += 1
         uri = root_uri.rstrip("/") + "/src/pulled.rs"

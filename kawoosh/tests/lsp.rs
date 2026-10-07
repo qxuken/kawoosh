@@ -3359,3 +3359,65 @@ fn an_answer_held_while_typing_is_not_put_over_a_newer_one() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// lsp-rules.md Decision 9: a buffer written is a `didSave` to each of
+/// its servers that asks to hear of saves — with the text as written
+/// when it asks for that, after the edits that came before the write —
+/// and nothing to one that does not.
+#[test]
+fn a_write_is_said_to_the_servers_that_ask() {
+    for (flag, want) in [
+        (Some("--save-text"), Some("with")),
+        (Some("--save"), Some("without")),
+        (None, None),
+    ] {
+        let dir = std::env::temp_dir().join(format!(
+            "kawoosh-lsp-save-{}-{}",
+            flag.unwrap_or("none").trim_start_matches('-'),
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        let file = dir.join("src/main.rs");
+        std::fs::write(&file, "fn main() {}\n").unwrap();
+        let mut def = fake_server();
+        def.args.extend(flag.map(String::from));
+        let mut app = Kawoosh::from_file(&file);
+        app.add_lsp_server(def);
+        let mut d = Drive::new(900.0, 500.0);
+        let v = app.focused_view().unwrap();
+        let buf = app.ed.views[v].buffer;
+        assert!(until(&mut d, &mut app, |a| msgs(a, buf) == ["boom"]));
+        d.keys(&mut app, "Ox");
+        d.key(&mut app, "escape", KeyMods::default());
+        ex(&mut d, &mut app, "w");
+        let written = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(written, "x\nfn main() {}\n");
+        let saved = |a: &Kawoosh| msgs(a, buf).into_iter().find(|m| m.starts_with("saved"));
+        match want {
+            Some("with") => {
+                let said = format!("saved with {}", serde_json::to_string(&written).unwrap());
+                assert!(
+                    until(&mut d, &mut app, |a| saved(a).as_deref() == Some(&said)),
+                    "{:?}",
+                    msgs(&app, buf)
+                );
+            }
+            Some(_) => assert!(
+                until(&mut d, &mut app, |a| saved(a).as_deref()
+                    == Some("saved without its text")),
+                "{:?}",
+                msgs(&app, buf)
+            ),
+            None => {
+                for _ in 0..30 {
+                    d.frame(&mut app);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                assert_eq!(saved(&app), None, "a server that did not ask hears nothing");
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

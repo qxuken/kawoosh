@@ -1393,6 +1393,19 @@ impl Kawoosh {
         self.lsp.said_unavailable.insert(command, why);
     }
 
+    /// Buffer `id` was written: the servers holding it told
+    /// (`textDocument/didSave`, lsp-rules.md Decision 9), after the text
+    /// as written — a format on save changed it — so a server reading it
+    /// with the save reads what is on disk. A buffer no server was sent
+    /// (a private one, a language nobody serves) is nobody's news.
+    pub(crate) fn lsp_saved(&mut self, id: BufferId) {
+        if !self.lsp.sent.contains_key(&id) {
+            return;
+        }
+        self.push_documents();
+        self.lsp.lsp.send(Cmd::Saved { buffer: id });
+    }
+
     /// Tells the server holding buffer `id` it closed, and forgets it
     /// was sent: a buffer made private.
     pub(crate) fn lsp_close_buffer(&mut self, id: BufferId) {
@@ -1576,6 +1589,7 @@ impl Kawoosh {
                 runnables: false,
                 workspace_pull: false,
                 incremental: false,
+                save: None,
                 triggers: Vec::new(),
             })
     }

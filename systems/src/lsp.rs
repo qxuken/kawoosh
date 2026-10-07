@@ -365,6 +365,12 @@ pub enum Cmd {
     Close {
         buffer: BufferId,
     },
+    /// The buffer was written: its servers that hear of saves told
+    /// (`textDocument/didSave`, lsp-rules.md Decision 9), with the text
+    /// they hold when they ask for it.
+    Saved {
+        buffer: BufferId,
+    },
     Definition {
         buffer: BufferId,
         offset: usize,
@@ -625,6 +631,10 @@ pub struct Caps {
     /// It takes a change as a range and its text (`textDocumentSync`'s
     /// `change` 2), not the whole document each time.
     pub incremental: bool,
+    /// It hears of a save (`textDocument/didSave`, lsp-rules.md Decision
+    /// 9): `Some(include_text)` — with the text when `true` — or `None`,
+    /// not.
+    pub save: Option<bool>,
 }
 
 impl Caps {
@@ -664,6 +674,7 @@ impl Caps {
             runnables: self.runnables || other.runnables,
             workspace_pull: self.workspace_pull || other.workspace_pull,
             incremental: self.incremental && other.incremental,
+            save: self.save.or(other.save),
             hover: self.hover || other.hover,
             completion: self.completion || other.completion,
             commands,
@@ -2649,6 +2660,28 @@ impl Pool {
                 }
                 self.texts.insert(buffer, (v, whole));
             }
+            Cmd::Saved { buffer } => {
+                for key in self.homes.get(&buffer).cloned().unwrap_or_default() {
+                    let Some(server) = self.servers[key].as_mut() else {
+                        continue;
+                    };
+                    let Some(text) = server.caps.as_ref().and_then(|c| c.save) else {
+                        continue;
+                    };
+                    let Some((uri, doc)) = server
+                        .documents
+                        .iter()
+                        .find(|(_, d)| d.buffer == Some(buffer))
+                    else {
+                        continue;
+                    };
+                    let mut params = json!({ "textDocument": { "uri": uri } });
+                    if text {
+                        params["text"] = json!(doc.text);
+                    }
+                    server.notify("textDocument/didSave", params);
+                }
+            }
             Cmd::Close { buffer } => {
                 self.texts.remove(&buffer);
                 for key in self.homes.remove(&buffer).unwrap_or_default() {
@@ -3975,6 +4008,22 @@ fn capabilities(result: Option<&Value>) -> Caps {
         inlay_hint: provides("inlayHintProvider"),
         definition: provides("definitionProvider"),
         pull: provides("diagnosticProvider"),
+        // A kind alone is sync with no options: a save said without
+        // the text, as other clients read it. Options without `save` ask
+        // for none.
+        save: match caps.and_then(|c| c.get("textDocumentSync")) {
+            Some(Value::Number(_)) => Some(false),
+            Some(o) => match o.get("save") {
+                Some(Value::Bool(true)) => Some(false),
+                Some(Value::Object(s)) => Some(
+                    s.get("includeText")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                ),
+                _ => None,
+            },
+            None => None,
+        },
         incremental: caps.and_then(|c| c.get("textDocumentSync")).and_then(|v| {
             v.as_u64()
                 .or_else(|| v.get("change").and_then(Value::as_u64))
@@ -4537,6 +4586,32 @@ fn placed_diagnostics(params: &Value) -> Vec<Placed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a server asks of a save, by its `textDocumentSync`: a kind
+    /// alone is a save without the text; options say it, or ask none.
+    #[test]
+    fn a_save_is_asked_for_as_the_sync_options_say() {
+        let save = |sync: Value| {
+            capabilities(Some(
+                &json!({ "capabilities": { "textDocumentSync": sync } }),
+            ))
+            .save
+        };
+        assert_eq!(save(json!(2)), Some(false));
+        assert_eq!(save(json!({ "change": 2, "save": true })), Some(false));
+        assert_eq!(
+            save(json!({ "change": 2, "save": {} })),
+            Some(false),
+            "rust-analyzer's"
+        );
+        assert_eq!(save(json!({ "save": { "includeText": true } })), Some(true));
+        assert_eq!(save(json!({ "change": 1 })), None);
+        assert_eq!(save(json!({ "save": false })), None);
+        assert_eq!(
+            capabilities(Some(&json!({ "capabilities": {} }))).save,
+            None
+        );
+    }
 
     /// A span's end, worked out from its start's position over the bytes
     /// between, is what reading the whole text from the top gives — lines
