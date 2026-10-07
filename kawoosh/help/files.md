@@ -1,8 +1,8 @@
 # Files
 
 Finding and opening files, and changing them on disk: the file manager
-`dir`, the pickers, directory jumps, links, copying paths, and the
-disk-usage pane.
+`dir`, the pickers, directory jumps, links, copying paths, a file's
+bytes, pictures, the disk-usage pane and a SQLite database.
 
 ## The file manager
 
@@ -72,7 +72,11 @@ per directory. Because `m` sorts in a listing, it does not set a
 [mark](search.md#marks) there.
 
 A listing updates by itself when something else changes the directory,
-unless you have edits in it. Entries are coloured by their git status.
+unless you have edits in it. Entries are coloured by their git status:
+untracked and added green, modified in the command colour, a conflict
+red, and what git ignores faint — `.git` too, and a directory git
+ignores as a whole, not one that merely holds ignored files.
+`dir.vcs_enabled = false` leaves the listings plain.
 
 ### Several listings at once
 
@@ -289,11 +293,12 @@ its own: `:du` in another tab walks there without touching the first.
 | keys | what |
 |---|---|
 | `j` `k` `gg` `G` `<C-d>` `<C-u>` | move |
-| `l` `<CR>` | into a directory, or open a file |
-| `h` `-` | up, not past where you started |
+| `l` `<CR>` `<Right>` | into a directory, or open a file |
+| `h` `-` `<Left>` | up, not past where you started |
 | `s` | sort by size, name, or file count |
-| `m` | mark an entry, or unmark it |
-| `d` | delete the marked entries, or the one under the cursor, after the same confirm `dir` uses |
+| `m` | mark an entry, or unmark it; marks stay as you move between directories |
+| `d` | delete this directory's marked entries, or the one under the cursor, after the same confirm `dir` uses; marks elsewhere stay |
+| `D` | delete every marked entry, in whichever directory it is |
 | `o` | list the directory in `dir` |
 | `<C-w>.` | a terminal in the directory (`:terminal here`) |
 | `<C-w>/` | the directory listed in `dir`, in a pane beside (`:dir here`) |

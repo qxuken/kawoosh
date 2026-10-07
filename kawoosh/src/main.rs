@@ -398,46 +398,21 @@ fn icon_rgba() -> anyhow::Result<(Vec<u8>, u32, u32)> {
     Ok((buf, info.width, info.height))
 }
 
+/// The `*scratch*` a launch without a path starts with. It points into
+/// the help rather than listing keys, so it cannot fall behind them.
 const SCRATCH: &str = "\
-kawoosh on kui — milestone 4
+kawoosh
 
-A modal editor over a selection set: h j k l w b e 0 ^ $ gg G, i a o O,
-d c y with motions and text objects (dw, ciw, di(), v / V to select,
-u and ctrl-r, / to search, : for commands (:w path, :q, :e file) —
-ctrl-n / ctrl-p cycle a command's or a path's completions, Tab takes one,
-Up recalls the last command.
-Notifications: :notify warn TEXT is a toast at the top, :notify TEXT a
-dim line in the corner, :messages the log of every one; ctrl-w n puts
-the keyboard on the toasts (j k h l, Enter, x, Esc).
-alt-j / alt-k add cursors; , keeps the primary.
-Buffers: :ls, :b name, :bn, :bd, :bdo (delete the tab's others); :enew is a
-fresh scratch here, :new / :vnew one in a split; - is the file manager
-on the current file's directory.
+A modal editor and a terminal multiplexer in one window. This is a
+scratch: type anything here; it is kept with the session, and :w PATH
+makes it a file.
 
-Panes: ctrl-w v / s split, ctrl-w h j k l move, ctrl-w q close, :tabnew.
-Terminals: :term, ctrl-w d for the dock. In a terminal every key is the
-program's but ctrl-\\ (terminal.escape): normal mode's keys after it,
-ctrl-\\ ctrl-w k a pane up, ctrl-\\ ctrl-n the scrollback as a buffer;
-and ctrl/cmd-click on src/main.rs:42 opens it.
-$EDITOR inside a terminal opens a pane here and waits.
-LSP: gd K, and gr then: r references, n rename, a actions, f format,
-<C-e> and ]d for diagnostics; completion is a ghost as you type — the
-buffer's words when no server answers — and <C-x> lists it in a pane.
-Lua: :lua CODE, <leader>x evaluates the line, :map list shows the keymap;
-`kawoosh test script.lua` runs a plugin's test headless.
-Settings: :set tabstop=2, :set +flag / -flag, :set path? for a value and
-where it is from, :set path! to take the session's value back out,
-:settings for the devtools tab of every layer — ~/.config/kawoosh/
-settings.lua, a project's .kawoosh/settings.lua, :set — reloaded on save;
-font.family / font.size / theme.appearance / tokens.colors are settings
-too. A project's .kawoosh/init.lua runs once :trust says so.
-kui's instruments: :kui_debugger (F12) and :kui_framerate_hud;
-:syntax_tree opens it on the buffer's tree-sitter tree, :perf on what
-a frame and the systems cost and what the process holds, :frames on why
-each frame was drawn and the runs of them no input asked for
-(KAWOOSH_FRAME_LOG=PATH keeps every frame of those).
-
-Every visible line is a row holding one rich text of spans; the row is the layout.
+:tutor      a hands-on tour of the keys
+:help       the pages: editing, panes, files, search, code, terminals,
+            settings, Lua; :help TOPIC for a command or a key
+Space ?     every key you can press first (Space is the leader)
+Space f     find a file; - lists the folder; :term opens a terminal
+:q          quit; what is unsaved comes back with the session
 ";
 
 #[cfg(test)]

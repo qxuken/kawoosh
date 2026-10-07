@@ -20,7 +20,8 @@ are records rather than surprises:
   Lua runtime (all four verbs; callbacks read a published snapshot and queue
   effect messages — the data boundary applied to the embedding), SQLite
   state + session restore.
-- **Thinner than designed, still open**: splits and docks (the view list is
+- **Thinner than designed, still open** (*all built since*, through
+  kui.md's milestones and the roadmap's steps): splits and docks (the view list is
   flat; one pane); completion/hover UX (Decision 5) untouched — no completion
   yet; compile mode and the locations table (5c) not built; the oil file
   manager (5b) not built — it is still the extension API's acceptance test;

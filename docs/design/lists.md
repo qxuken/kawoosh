@@ -8,7 +8,8 @@ through multi, like searching references and stuff". The calls below
 are taken here, each the user's to overturn. Companion to
 [search.md](search.md) (the multibuffer these lists are made of; its
 "Not built" named them) and [core.md](core.md) (layers and the
-journal, which carry every place named here).
+journal, which carry every place named here). *Built 2026-09-26*
+(roadmap step 39); "Built" at the end says where it departed.
 
 ## What there was
 

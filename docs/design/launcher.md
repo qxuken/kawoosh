@@ -5,7 +5,8 @@ a layout) 2026-09-29, with the four questions
 the roadmap left answered by the user the same day — `<Esc>` opens a
 scratch, the vim habit is a setting with more answers than two, no
 launcher on an existing pane, and a session keeps nothing. Each
-decision keeps the alternative it beat.
+decision keeps the alternative it beat. *Built 2026-09-23* (roadmap
+step 14), *Decision 8 on 2026-09-29.*
 
 ## The thesis
 

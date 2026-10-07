@@ -34,7 +34,10 @@ gaps are records rather than surprises:
   on one pane, fzy's matching in Rust, the ranking in Lua, the wheel
   and `<A-p>` `<A-w>` for the preview and a wrapped row; the bundled
   tools (`tools.lua`) from the settings, through `kawoosh.on_settings`.
-- **Thinner than designed, still open**: mouse reporting covers the
+- **Thinner than designed, still open** (*2026-10-07: what is still
+  true is hover motion without a button and the journal's pruning, in
+  [../backlog.md](../backlog.md); the other buttons, incremental sync,
+  the server table and the close button are built*): mouse reporting covers the
   primary button, drags and the wheel (kui routes the other buttons
   nowhere, and hover motion without a button is not sent); document sync to LSP is whole-text per change, not
   incremental from the journal; the journal is never pruned (bounded by

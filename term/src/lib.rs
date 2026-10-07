@@ -2011,9 +2011,8 @@ pub const ANSI_LIGHT: [u32; 16] = [
 
 /// alacritty's `Term` with the hooks kawoosh adds in front of it: every
 /// `Handler` method is the term's, and the few the term does not know
-/// — mode 2031 set, reset and reported, the `? 996` colour-scheme
-/// query — are answered here (the replies in [`Modes`], written after
-/// the parser's pass).
+/// — mode 2031 set, reset and reported — are answered here (the
+/// replies in [`Modes`], written after the parser's pass).
 struct Hooked<'a> {
     term: &'a mut Term<Proxy>,
     modes: &'a mut Modes,

@@ -83,6 +83,8 @@ The fonts pane lists every family as a card drawn in that font, with two lines o
 
 **Your own fonts.** Drop `.ttf`, `.otf`, `.ttc` or `.otc` files into `fonts/` in your config directory (`~/.config/kawoosh/fonts`, or `$KAWOOSH_FONTS`); subfolders are fine. The folder is watched, so a new file is usable within a second, without a restart. Icons from Nerd Fonts draw with any font; kawoosh ships the symbols.
 
+A character the family lacks is drawn from kawoosh's list, in order: the Nerd Font symbols, the shipped face (Latin, Greek, Cyrillic), the machine's monospaced faces (Menlo, Cascadia Mono, Consolas, DejaVu Sans Mono and their kin), then the system's own for the rest, such as CJK. In a terminal such a glyph stays inside its cell.
+
 | setting | default | what |
 |---|---|---|
 | `font.family` | `""` | the family; empty for the face kawoosh ships |
@@ -95,7 +97,7 @@ The fonts pane lists every family as a card drawn in that font, with two lines o
 
 Long lines run past the pane's edge unless you wrap them. `editor.wrap = "word"` wraps every editor pane at its width, breaking between words; `"glyph"` breaks anywhere. `editor.wrap_languages = { "text", "gitcommit" }` wraps those languages' buffers only. `:wrap` (`<leader>ow`) turns wrapping on or off for the pane you are in, until you quit.
 
-A wrapped line keeps its number on its first row only. `j` and `k` still move a whole line at a time, as in vim; `gj` and `gk` (or `g` with an arrow) move one row on screen, keeping the caret's position across. A line longer than 4096 bytes is not wrapped, so a minified file stays fast.
+A wrapped line keeps its number on its first row only. `j` and `k` still move a whole line at a time, as in vim; `gj` and `gk` (or `g` with an arrow) move one row on screen, keeping the caret's position across. A line longer than 64 KiB is not wrapped, so a minified file stays fast: it is drawn on one row, clipped at the pane's edge, with its number in the row as the others have.
 
 ## Markdown
 

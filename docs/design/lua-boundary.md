@@ -5,7 +5,8 @@ we rewrite some in rust?", then "start with the cheap correctness batch
 then move to rust building blocks". The calls below are taken here,
 each the user's to overturn. Companion to
 [plugin-panes.md](plugin-panes.md) (what a Lua plugin can do) and
-mvp.md Decision 8 (the bundled plugins dogfood the API).
+mvp.md Decision 8 (the bundled plugins dogfood the API). *Rounds 1–13
+built 2026-10-07*; "Open" at the end is what is left.
 
 ## What there was
 

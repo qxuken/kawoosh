@@ -1,4 +1,12 @@
-# Roadmap: what is left, in the order it pays
+# Roadmap: what was built, step by step
+
+*Since 2026-10-07 this file is the history, closed: what is open is
+[../backlog.md](../backlog.md), what is set aside on purpose is
+[../parked.md](../parked.md), and [../README.md](../README.md) says
+where things stand. The steps below keep their numbers, which code and
+notes cite as "roadmap step N"; a "not built", "later" or "Scheduled
+nowhere" in them was true when it was written, and each one still true
+is in the backlog or parked.md.*
 
 Status: written 2026-09-20 from the personal todo (`~/projects/todo.md`),
 the open items recorded in [kui.md](kui.md)'s implementation notes,
@@ -608,7 +616,8 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   `kawoosh.buf.edits` (over `Editor::apply_edits`) when they do not;
   the three engine doors it needs are `buf.type`, `buf.edits` and
   `buf.set_selections`.
-- **Press-and-hold toggle** — later [todo]. `press_and_hold` was removed
+- **Press-and-hold toggle** — done 2026-10-07 [todo], as kui F125 and
+  `keys.input_method` (settings.md). Before: `press_and_hold` was removed
   (a946b61); the idea of switching macOS's accent popup on in insert
   mode and off in normal is a per-mode `NSUserDefaults` flip. Cheap if
   kui exposes it; a kui backlog item, not a kawoosh one.

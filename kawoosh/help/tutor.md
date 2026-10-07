@@ -101,8 +101,16 @@ Press `<C-w>v`, then `<CR>`. Edit this line in one pane and watch the other foll
 Both panes show the same buffer.
 Close the new pane with `<C-w>q`.
 
+## Lesson 11: jumping back
+
+A big move — `gg`, `G`, a search, a file opened from a picker — is a jump, and kawoosh remembers the place it left. `<C-o>` goes back to where you were before the jump, and `<C-i>` forward again. `<leader>f` lists the files under the working directory: type part of a name to filter them, and `<CR>` opens the one under the cursor.
+
+Press `gg` to go to the top, then `<C-o>` to come back to this line, then `<C-i>` to go to the top again and `<C-o>` once more.
+Press `<leader>f`, type a few letters of a file's name and press `<CR>`; then `<C-o>` brings you back to the tutor.
+
 ## Where to go next
 
 - `:help` (or `<leader>ih`) lists every help page; `gx` on a link follows it. [start](start.md) is a good next read, then [editing](editing.md), [panes](panes.md), [files](files.md) and [search](search.md).
 - `<leader>?` shows every key you can press first, and the card at the bottom right shows what can follow a key like `<leader>`, `g` or `<C-w>`.
-- `<leader>f` finds a file, and `-` lists the folder of the file you are in.
+- `<leader>f` finds a file, `<leader><leader>` your open buffers, and `-` lists the folder of the file you are in.
+- In code, `gcc` comments a line out and back in, and `gc` with a motion does the same for lines (`gcip` a paragraph); see [editing](editing.md#comments).

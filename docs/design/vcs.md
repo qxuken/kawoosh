@@ -11,7 +11,9 @@ from it would be cool." The calls below are taken here, each the
 user's to overturn. Companion to [search.md](search.md) and
 [lists.md](lists.md) (the multibuffer a review is made of),
 [marks.md](marks.md) (the gutter's other column) and
-[formatters.md](formatters.md) (a tool as data, probed).
+[formatters.md](formatters.md) (a tool as data, probed). *Built
+2026-09-29* (roadmap step 73); staging, Decision 12, on 2026-10-03
+(step 84).
 
 ## What there was
 
@@ -411,8 +413,9 @@ Departed from the note as written:
   reason (through `kawoosh.run("vsplit")`: a shell command through
   `kawoosh.cmd` lands after the scratch is shown).
 - **Blame is asked again on save**, not after a second of stillness:
-  there is no hook for a file buffer's edits yet, and the column
-  follows the text meanwhile by the journal.
+  there was no hook for a file buffer's edits, and the column
+  follows the text meanwhile by the journal. `kawoosh.on_tree`
+  (step 87) is that hook now; the backlog has the change.
 - **`vcs status`'s preview** is built from `kawoosh.diff` of the base
   and the file, coloured as a `.diff`; `vcs log`'s preview is the
   commit's author, time and subject — the patch is `<CR>`'s

@@ -43,6 +43,10 @@ deeper after an opening bracket, and `=` says it has none. A language
 added with `kawoosh.language` takes an `indents.scm` beside its other
 queries, in helix's dialect.
 
+`<Tab>` in insert mode puts a tab, or under `expandtab` the spaces to
+the next `shiftwidth` stop, each caret from its own column, so text
+typed after a word lines up as it does after a tab.
+
 ## What differs from vim
 
 Most of vim's letters mean what they always did. The exceptions:
@@ -142,6 +146,25 @@ drops the places that were ahead, as a browser does. `<leader>mj`
 | `guu` `gUU` `g~~` | the same for the line |
 | `~` | flip the case of COUNT characters and step past them |
 | `u` `U` `~` in visual mode | lower, upper, flip the selection (`u` is not undo there) |
+
+## Replacing characters
+
+`r` and a character replace the one under the caret, at every caret,
+without leaving normal mode; a count replaces that many (`3rx`), and
+nothing when the line has fewer. `r<CR>` breaks the line there, as
+neovim's does: the character goes, the blanks after it too, and the
+new line starts at the indent the syntax says. `r<Tab>` puts what
+insert's `<Tab>` would, a tab or the spaces to the next stop.
+
+## Timed lines
+
+`:timed` stamps every new line of a buffer with the time it was
+started, for notes taken during a call or a deploy: `<CR>`, `o` and `O`
+begin the line they open with `14:02 `, and the caret's line gets one at
+once if it is empty. `:timed relative` stamps `T+01:41 ` from the
+buffer's first stamp, which carries the date, so a file opened again
+tomorrow counts on; `:timed off` stops. A stamp is text, saved with the
+file. `timed.clock` is the clock stamp's `os.date` format (`%H:%M`).
 
 ## Multiple selections
 

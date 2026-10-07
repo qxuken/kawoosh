@@ -117,7 +117,7 @@ Inside kawoosh, `:help` opens the help pages and `:help TOPIC` goes to a page, a
 | `kawoosh/help/` | the in-app help pages |
 | `assets/` | the shipped fonts (Git LFS) and the icons |
 | `scripts/` | the app builds and the checks |
-| `docs/design/` | the design notes |
+| `docs/` | the backlog, what is parked, and the design notes (`docs/design/`) |
 
 ## Checks
 
@@ -128,16 +128,14 @@ nu scripts/verify.nu --fix  # format the tree instead of failing on it
 
 The tests include the Lua plugin tests in `kawoosh/lua/tests/`, which `cargo test` runs through the headless harness.
 
-## Design notes
+## Design notes and the backlog
 
-`docs/design/` records why kawoosh is shaped the way it is, one note per subject:
+[docs/README.md](docs/README.md) is the map. In short:
 
-- [mvp.md](docs/design/mvp.md): the original design and its decisions.
-- [kui.md](docs/design/kui.md): the rebuild on kui, which replaces parts of mvp.md.
-- [keys.md](docs/design/keys.md): the default keymap and the rules behind it.
-- [roadmap.md](docs/design/roadmap.md): what was built, in what order, and what is left.
-
-The rest cover one feature each: search, marks, lists, themes, fonts, domains (remote editing), memory, secrets and more.
+- [docs/backlog.md](docs/backlog.md): what is wanted and not built.
+- [docs/parked.md](docs/parked.md): what is set aside on purpose, and why.
+- `docs/design/` records why kawoosh is shaped the way it is, one note per subject: [mvp.md](docs/design/mvp.md) the original design, [kui.md](docs/design/kui.md) the rebuild on kui, [keys.md](docs/design/keys.md) the default keymap, and one note for each feature since (search, marks, lists, themes, fonts, domains, memory, secrets, version control and more).
+- [roadmap.md](docs/design/roadmap.md): the history, the steps in the order they were built.
 
 ## License
 
