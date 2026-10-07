@@ -74,7 +74,9 @@ The climb stops at a node that fills a `body` field — a function's, a
 loop's, a closure's: the field most grammars name the same (rust has
 sixteen such kinds, javascript twenty-one, python thirteen). So a caret
 in a closure passed to a call does not split the call it is in, however
-far out the call's parenthesis is.
+far out the call's parenthesis is. It stops at a `block` too
+(2026-10-07): odin's procedure and `if` blocks fill no field, and a
+caret in `foo(proc() { … })` split `foo`'s arguments.
 
 Beaten: **the node under the caret only**, ts-node-action's. A list is
 split from its parenthesis and nowhere else, and the caret is always on
@@ -84,8 +86,9 @@ an item. **The outermost**: the file's first list.
 
 It keeps its distance from the node's start, held to the new text's last
 character: a flip leaves it where it was. `cursor` in the answer says
-otherwise — `split` answers `cursor = 0`, the opener, since a kept
-distance lands in the new indentation. From visual mode the
+otherwise — `split` answers the opener (`cursor = 0`, or past what
+heads it: `Point{` in odin), since a kept distance lands in the new
+indentation. From visual mode the
 selection's bytes pick the node (as `<A-o>` reads them) and the action
 leaves normal mode.
 
@@ -154,16 +157,25 @@ change:
   | json, jsonc | `array` `object` | no | `object` |
   | c, cpp | `argument_list` `parameter_list` `initializer_list` | the initializer's only | — |
   | toml | `array` | yes | — |
+  | odin | `parameters` `call_expression` `struct` (a literal) `map` `struct_declaration` `enum_declaration` `union_declaration` `overloaded_procedure_declaration` | yes | — |
+
+  The list is the node's last child, a closer, back to the first
+  opener of its kind among the node's own children: the node's first
+  child in most grammars, after what heads it in odin's (`f(`,
+  `[3]int{`, `Point :: struct {`, which is kept as it is). Whether the
+  list is on one line is read from its opener, so an `@(private)` line
+  over a declaration does not count.
 
   A join declines over a comment among the items: a line comment would
   swallow what followed it.
 - **quotes**: `"…"` → `'…'` → `` `…` `` (javascript's family) → `"…"`,
-  in javascript, typescript, tsx, python and lua; a prefix (python's
+  in javascript, typescript, tsx, python and lua; `"…"` ↔ `` `…` ``
+  in odin (`'c'` is a rune); a prefix (python's
   `f`, `r`, `b`) kept. It declines when the text holds the quote it
   would change to, holds an escape, is python's triple-quoted, or is a
   template with a `${`.
 - **digits**: `1000000` ↔ `1_000_000`, a decimal literal of five digits
-  or more, in rust, python, javascript, typescript and go — a suffix
+  or more, in rust, python, javascript, typescript, go and odin — a suffix
   (`1000000u64`) kept, a hex, octal or binary literal declined.
 
 `node_actions.NAME = false` in the settings turns a shipped one off.
@@ -198,6 +210,13 @@ closure's body, the type's `<`, a join refused over a comment, a
 one-item tuple and a padded struct literal, two carets and a node
 inside another's, `.`, one `u`, visual mode, the setting, a plugin's
 action first, the picker's second pick, a list added to the table.
+
+Odin, 2026-10-07: `split`'s opener looked for rather than taken to be
+the first child, the climb stopped at a `block`, odin's lists, quotes
+and digits; flip and operator needed nothing. Odin's grammar is an
+install, not linked in, so the Lua tests cannot load it: checked by
+hand against the installed grammar (each list, quotes both ways,
+digits, a call around a `proc` literal left alone).
 
 ## Left
 

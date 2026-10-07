@@ -425,6 +425,7 @@ return {
     name = "odin",
     cmd = "ols",
     roots = { "ols.json", "odinfmt.json" },
+    install = brew("ols"),
   },
   {
     name = "luau",

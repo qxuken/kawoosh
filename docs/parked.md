@@ -202,8 +202,9 @@ Built, or buildable, and never seen where it runs.
 - **Grammars the builder refuses**: hcl, terraform, vim, typst, just,
   swift, latex, nim, solidity — no highlights, no committed `parser.c`,
   or a C++ scanner. ([grammars.md](design/grammars.md), "Risks")
-- **Servers**: fish-lsp on Windows (it runs `fish`); glsl, odin and
-  luau have no known install line; builtin servers declaring no
+- **Servers**: fish-lsp on Windows (it runs `fish`); glsl and luau
+  have no known install line (odin's is brew's, since `ols` is a
+  formula; none on Windows); builtin servers declaring no
   `workspaceDiagnostics`. ([lsp-servers.md](design/lsp-servers.md),
   [lists.md](design/lists.md))
 - **A jj backend**: "a morning's work" once jj is installed to test

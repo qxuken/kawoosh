@@ -274,14 +274,14 @@ block in markdown — the token is that language's. `:comment lines` is
 |---|---|
 | `true`, `false` | flips it |
 | `==`, `&&`, `<`, `and`, … | its counterpart: `!=`, `\|\|`, `>`, `or` (lua's `~=`) |
-| anywhere in a list — arguments, parameters, an array, an object, a table | one item a line if it is on one line, back on one line if not, with the trailing comma the language's formatter writes |
-| a string | its quotes: `"` → `'` → `` ` `` in javascript and typescript, `"` ↔ `'` in python and lua |
+| anywhere in a list — arguments, parameters, an array, an object, a table, an odin literal or `struct`/`enum`/`union` | one item a line if it is on one line, back on one line if not, with the trailing comma the language's formatter writes |
+| a string | its quotes: `"` → `'` → `` ` `` in javascript and typescript, `"` ↔ `'` in python and lua, `"` ↔ `` ` `` in odin |
 | a number of five digits or more | `1000000` ↔ `1_000_000` |
 
 The innermost node one of them changes is the one changed, so on `true`
 inside a call's arguments it flips, and on any other argument it splits
 the list; it does not reach past the body of the function, loop or
-closure the caret is in. It works at every caret as one change, `u`
+closure the caret is in, nor past a block. It works at every caret as one change, `u`
 undoes it at once and `.` does it again. `:node actions` lists every
 one there is from the caret up in a picker, the outer lists too;
 `:node action split 2` runs the second list up's split. Turn one off

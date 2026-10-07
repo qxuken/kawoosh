@@ -1182,7 +1182,7 @@ impl Kawoosh {
             self.spawn_bang(&def.install, &cwd)
         } else {
             self.ed.message = format!(
-                "lsp install: no way to install `{}` is known; say one as lsp.{}.install",
+                "lsp install: kawoosh has no install command for `{}`; install it yourself, or set lsp.{}.install to one",
                 def.command, def.language
             );
             return;
