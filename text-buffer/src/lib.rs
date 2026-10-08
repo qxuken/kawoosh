@@ -939,6 +939,29 @@ impl Buffer {
         same_root || (self.len() == other.len() && self.common_prefix(other) == self.len())
     }
 
+    /// Whether the text is exactly `bytes`: read piece by piece against
+    /// the slice, no tree built for the question — what a buffer asks
+    /// of the file just read under it.
+    pub fn eq_bytes(&self, bytes: &[u8]) -> bool {
+        self.len() == bytes.len() && self.eq_bytes_at(0, bytes)
+    }
+
+    /// Whether the text at `offset` begins with `bytes`.
+    pub fn eq_bytes_at(&self, offset: usize, bytes: &[u8]) -> bool {
+        if offset + bytes.len() > self.len() {
+            return false;
+        }
+        let mut at = 0;
+        let mut same = true;
+        self.visit_range(offset..offset + bytes.len(), |chunk| {
+            if same {
+                same = bytes[at..at + chunk.len()] == *chunk;
+                at += chunk.len();
+            }
+        });
+        same
+    }
+
     /// The longest common prefix of `self` and `other`, in bytes. Pieces
     /// both hold from one block at one offset are equal without a byte
     /// read, which is most of what an undo's snapshot and the text it

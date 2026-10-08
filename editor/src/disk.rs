@@ -29,6 +29,74 @@ pub enum Disk {
     Gone,
 }
 
+/// A file read against a text: the window it is read through.
+const WINDOW: usize = 1 << 20;
+
+/// How a file stands against a text, read through a window of
+/// [`WINDOW`] bytes rather than whole: a log followed under its buffer
+/// is read once a change, and a fresh 20 MB vector a change — never
+/// the same size twice, so never reused — was 20 MB the process kept
+/// each time. A host's file is read whole, its domain having no
+/// window to read through.
+#[derive(Debug)]
+pub enum Against {
+    /// The file is the text.
+    Same,
+    /// The file is the text and then these bytes.
+    Grew(Vec<u8>),
+    /// The file differs within the text's length, or is shorter.
+    Other,
+}
+
+/// `path` against `text`.
+pub fn file_against(
+    path: &std::path::Path,
+    text: &text_buffer::Buffer,
+) -> std::io::Result<Against> {
+    use std::io::Read;
+    let len = text.len();
+    if kawoosh_doc::fs::remote(path).is_some() {
+        let (_, bytes) = Buffer::read_file(path)?;
+        return Ok(
+            if bytes.len() < len || !text.eq_bytes_at(0, &bytes[..len]) {
+                Against::Other
+            } else if bytes.len() == len {
+                Against::Same
+            } else {
+                Against::Grew(bytes[len..].to_vec())
+            },
+        );
+    }
+    let mut file = std::fs::File::open(path)?;
+    let mut window = vec![0u8; WINDOW.min(len.max(1))];
+    let mut at = 0;
+    while at < len {
+        let want = (len - at).min(window.len());
+        let got = file.read(&mut window[..want])?;
+        if got == 0 || !text.eq_bytes_at(at, &window[..got]) {
+            return Ok(Against::Other);
+        }
+        at += got;
+    }
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail)?;
+    Ok(if tail.is_empty() {
+        Against::Same
+    } else {
+        Against::Grew(tail)
+    })
+}
+
+/// What [`Editor::reload_from_disk`] did.
+#[derive(Debug)]
+pub struct Reloaded {
+    /// The message line's account.
+    pub message: String,
+    /// The bytes the file grew by, when its text up to there was the
+    /// buffer's own: taken as an append, the text before shared.
+    pub appended: Option<usize>,
+}
+
 /// What [`Editor::write_all`] did.
 #[derive(Debug, Default)]
 pub struct Written {
@@ -138,12 +206,28 @@ impl Editor {
         if stamp.len > COMPARE_MAX {
             return Disk::Changed;
         }
-        match Buffer::from_file(&path) {
-            Ok(disk) if b.is_saved_text(&disk.text_root()) => {
-                self.buffers[id].disk = disk.disk;
+        // The file against the saved text through a window, no tree
+        // built for the question — and when they differ, a file that
+        // is not UTF-8 is read as the buffer was, repaired, to compare.
+        match file_against(&path, b.saved_text()) {
+            Ok(Against::Same) => {
+                self.buffers[id].disk = now;
                 Disk::Same
             }
-            Ok(_) => Disk::Changed,
+            Ok(Against::Grew(_)) => Disk::Changed,
+            Ok(Against::Other) => match Buffer::read_file(&path) {
+                Ok((_, bytes)) if std::str::from_utf8(&bytes).is_ok() => Disk::Changed,
+                Ok((disk, bytes)) => {
+                    let repaired = Buffer::from_read(&path, disk, bytes);
+                    if b.is_saved_text(&repaired.text_root()) {
+                        self.buffers[id].disk = repaired.disk;
+                        Disk::Same
+                    } else {
+                        Disk::Changed
+                    }
+                }
+                Err(_) => Disk::Same,
+            },
             // Unreadable for now (mid-write, permissions): nothing to
             // say until it can be read.
             Err(_) => Disk::Same,
@@ -153,8 +237,14 @@ impl Editor {
     /// The file's text put into buffer `id` as one journaled edit — `u`
     /// brings back what was there — and the buffer clean on it, with
     /// the file's stamp. Every view on it keeps its carets inside the
-    /// text. The message line's account, or why not.
-    pub fn reload_from_disk(&mut self, id: BufferId) -> Result<String, String> {
+    /// text. A file that grew, its text up to the buffer's end the
+    /// buffer's own — a log written under it — is followed: the new
+    /// bytes go in as an append, so the text before them is the same
+    /// pieces still (a fresh tree a reload held 20 MB more each time
+    /// the file grew, in the undo history, until the machine swapped)
+    /// and the layers over it stay. The message line's account, or why
+    /// not.
+    pub fn reload_from_disk(&mut self, id: BufferId) -> Result<Reloaded, String> {
         let Some(buf) = self.buffers.get(id) else {
             return Err("no such buffer".into());
         };
@@ -164,9 +254,28 @@ impl Editor {
         if buf.loading.is_some() {
             return Err("still opening".into());
         }
-        let disk =
-            Buffer::from_file(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let len = disk.len();
+        let cannot = |e: std::io::Error| format!("cannot read {}: {e}", path.display());
+        // The stamp before the read, as `Buffer::from_file` takes it.
+        let stamp = Stamp::of(&path);
+        let had = buf.len();
+        // The file's tail past the text when the text is its head and
+        // the tail is UTF-8; else the whole file, read again.
+        let (tail, whole) = match file_against(&path, &buf.text_root()).map_err(cannot)? {
+            Against::Grew(bytes) => match String::from_utf8(bytes) {
+                Ok(tail) => (Some(tail), None),
+                Err(_) => (None, Some(Buffer::read_file(&path).map_err(cannot)?)),
+            },
+            Against::Same if !buf.modified => {
+                self.buffers[id].disk = stamp;
+                return Ok(Reloaded {
+                    message: format!("\"{}\" is as on disk", path.display()),
+                    appended: None,
+                });
+            }
+            Against::Same | Against::Other => {
+                (None, Some(Buffer::read_file(&path).map_err(cannot)?))
+            }
+        };
         // One undo node, as `apply_edits` makes one: a checkpoint around
         // the edit unless a typing session is already open on it.
         let view = self
@@ -179,10 +288,23 @@ impl Editor {
             self.open_checkpoint(v);
         }
         let b = &mut self.buffers[id];
-        b.restore(disk.text_root());
-        b.mark_saved();
-        b.disk = disk.disk;
-        let lines = b.line_count();
+        let appended = match (tail, whole) {
+            (Some(tail), _) => {
+                b.replace(had..had, &tail);
+                b.mark_saved();
+                b.disk = stamp;
+                Some(tail.len())
+            }
+            (None, Some((stamp, bytes))) => {
+                let disk = Buffer::from_read(&path, stamp, bytes);
+                b.restore(disk.text_root());
+                b.mark_saved();
+                b.disk = disk.disk;
+                None
+            }
+            (None, None) => unreachable!("a reload has a tail or the whole"),
+        };
+        let (len, lines) = (b.len(), b.line_count());
         if !had_open {
             self.settle_checkpoint(id);
         }
@@ -190,10 +312,14 @@ impl Editor {
             v.sels
                 .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
         }
-        Ok(format!(
-            "\"{}\" {lines}L, {len}B loaded from disk (u brings the changes back)",
-            path.display(),
-        ))
+        let p = path.display();
+        let message = match appended {
+            Some(n) => format!("\"{p}\" grew by {n}B on disk: {lines}L, {len}B (u takes it back)"),
+            None => {
+                format!("\"{p}\" {lines}L, {len}B loaded from disk (u brings the changes back)")
+            }
+        };
+        Ok(Reloaded { message, appended })
     }
 
     /// Writes buffer `id` to its file and records the file's new stamp.
@@ -325,7 +451,124 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use super::tidy_edits;
+    use super::{Against, Buffer, file_against, tidy_edits};
+    use crate::Editor;
+
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("kawoosh-editor-disk-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A file against a text: the same, grown, shrunk, changed within
+    /// the text — read through the window, so a text longer than it
+    /// crosses a seam — and an empty text against anything.
+    #[test]
+    fn a_file_stands_against_a_text() {
+        let dir = tmp("against");
+        let f = dir.join("a.txt");
+        let long: String = (0..200_000).map(|i| format!("line {i}\n")).collect();
+        assert!(long.len() > super::WINDOW, "crosses the window");
+        let text = text_buffer::Buffer::with_text(long.as_bytes());
+        std::fs::write(&f, &long).unwrap();
+        assert!(matches!(file_against(&f, &text).unwrap(), Against::Same));
+        std::fs::write(&f, format!("{long}more\n")).unwrap();
+        match file_against(&f, &text).unwrap() {
+            Against::Grew(t) => assert_eq!(t, b"more\n"),
+            o => panic!("{o:?}"),
+        }
+        std::fs::write(&f, &long[..long.len() - 1]).unwrap();
+        assert!(
+            matches!(file_against(&f, &text).unwrap(), Against::Other),
+            "shrank"
+        );
+        let mut changed = long.clone();
+        changed.replace_range(5..6, "X");
+        std::fs::write(&f, &changed).unwrap();
+        assert!(
+            matches!(file_against(&f, &text).unwrap(), Against::Other),
+            "changed within"
+        );
+        let empty = text_buffer::Buffer::new();
+        match file_against(&f, &empty).unwrap() {
+            Against::Grew(t) => assert_eq!(t.len(), changed.len()),
+            o => panic!("{o:?}"),
+        }
+        std::fs::write(&f, "").unwrap();
+        assert!(matches!(file_against(&f, &empty).unwrap(), Against::Same));
+        assert!(file_against(&dir.join("none"), &empty).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The reload: a grown file is an append sharing the text before,
+    /// a tail that is not UTF-8 or a file changed within is the whole
+    /// file again (repaired), and a file that is not UTF-8 and did not
+    /// change is no change.
+    #[test]
+    fn a_reload_follows_or_loads_whole() {
+        use crate::disk::Disk;
+        let dir = tmp("reload");
+        let f = dir.join("a.txt");
+        std::fs::write(&f, "one\n").unwrap();
+        let mut ed = Editor::new();
+        let id = ed.add_buffer(Buffer::from_file(&f).unwrap());
+        let v = ed.add_view(id);
+        let pieces = ed.buffers[id].piece_count();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, "one\ntwo\n").unwrap();
+        assert_eq!(ed.disk_state(id), Disk::Changed);
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, Some(4));
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\n");
+        assert_eq!(ed.buffers[id].piece_count(), pieces + 1);
+        assert!(!ed.buffers[id].modified);
+        assert_eq!(ed.disk_state(id), Disk::Same);
+        // A tail that is not UTF-8: the whole file, repaired.
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, b"one\ntwo\n\xff\n").unwrap();
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, None);
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\n\u{fffd}\n");
+        assert!(!ed.buffers[id].modified);
+        // The same bytes, a new stamp: not a change, though the text
+        // is not the bytes.
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, b"one\ntwo\n\xff\n").unwrap();
+        assert_eq!(ed.disk_state(id), Disk::Same);
+        // Changed within: whole.
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, "ONE\ntwo\n").unwrap();
+        assert_eq!(ed.disk_state(id), Disk::Changed);
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, None);
+        assert_eq!(ed.buffers[id].text(), "ONE\ntwo\n");
+        // Each a node: undo walks them back.
+        assert!(ed.undo(v));
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\n\u{fffd}\n");
+        assert!(ed.undo(v));
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\n");
+        assert!(ed.undo(v));
+        assert_eq!(ed.buffers[id].text(), "one\n");
+        // A modified buffer whose text is a head of the file: the
+        // reload appends and the buffer is clean on the file's text.
+        assert!(ed.apply_edits(id, &[(4..4, "two\n".into())]));
+        assert!(ed.buffers[id].modified);
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, "one\ntwo\nthree\n").unwrap();
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, Some(6));
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\nthree\n");
+        assert!(!ed.buffers[id].modified);
+        // A modified buffer whose file is its saved text: `:e!` loads
+        // the disk back, whole.
+        assert!(ed.apply_edits(id, &[(0..4, String::new())]));
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, None);
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\nthree\n");
+        assert!(!ed.buffers[id].modified);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     fn tidied(text: &str, trim: bool, nl: bool, eol: Option<&str>) -> String {
         let mut out = text.to_string();

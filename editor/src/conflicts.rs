@@ -72,48 +72,135 @@ impl Conflict {
     }
 }
 
+/// A marker as a line begins with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mark {
+    /// `<<<<<<<`
+    Start,
+    /// `|||||||`
+    Base,
+    /// `=======`
+    Mid,
+    /// `>>>>>>>`
+    End,
+}
+
+const MARKS: [(&[u8; 7], Mark); 4] = [
+    (b"<<<<<<<", Mark::Start),
+    (b"|||||||", Mark::Base),
+    (b"=======", Mark::Mid),
+    (b">>>>>>>", Mark::End),
+];
+
+/// Where `needle` occurs in `buf` from `from` on, ascending: a search
+/// over the text's pieces, the last bytes of each kept so a needle
+/// across two is found.
+fn occurrences(buf: &Buffer, needle: &[u8], from: usize) -> Vec<usize> {
+    let finder = memchr::memmem::Finder::new(needle);
+    let keep = needle.len() - 1;
+    let mut out = Vec::new();
+    let mut at = from;
+    let mut carry: Vec<u8> = Vec::with_capacity(keep * 2);
+    buf.text_root().visit_range(from..buf.len(), |chunk| {
+        if !carry.is_empty() {
+            let head = &chunk[..chunk.len().min(keep)];
+            let seam: Vec<u8> = carry.iter().chain(head).copied().collect();
+            // A hit starting in the carry: a needle the seam held whole.
+            // One starting in the chunk is the chunk's own find.
+            for pos in finder.find_iter(&seam) {
+                if pos < carry.len() {
+                    out.push(at - carry.len() + pos);
+                }
+            }
+        }
+        out.extend(finder.find_iter(chunk).map(|pos| at + pos));
+        at += chunk.len();
+        if chunk.len() >= keep {
+            carry.clear();
+            carry.extend_from_slice(&chunk[chunk.len() - keep..]);
+        } else {
+            carry.extend_from_slice(chunk);
+            let drop = carry.len().saturating_sub(keep);
+            carry.drain(..drop);
+        }
+    });
+    out
+}
+
+/// The lines `buf` has beginning with marker `mark`, from byte `from`
+/// on, as the offset of each: a marker at the text's start, or after a
+/// newline.
+fn marker_lines(buf: &Buffer, mark: Mark, from: usize) -> Vec<usize> {
+    let (needle, _) = MARKS.iter().find(|(_, m)| *m == mark).unwrap();
+    let mut with_newline = [b'\n'; 8];
+    with_newline[1..].copy_from_slice(*needle);
+    let mut out: Vec<usize> = occurrences(buf, &with_newline, from.saturating_sub(1))
+        .into_iter()
+        .map(|o| o + 1)
+        .collect();
+    if from == 0 && buf.len() >= 7 && buf.text_root().eq_bytes_at(0, *needle) {
+        out.insert(0, 0);
+    }
+    out
+}
+
 /// The conflicts in `buf`, in order: a `<<<<<<<` line, then the first
 /// `=======` and `>>>>>>>` after it (a `|||||||` between them noted); a
 /// `<<<<<<<` with no end is not one. Nothing when the text has no
-/// marker at all, at the cost of one scan.
+/// `<<<<<<<` line at all, at the cost of one search for it through the
+/// text's bytes — not a walk of its lines, which over a 20 MB log read
+/// under its buffer cost 150 ms every time the file grew. The other
+/// markers are looked for only past the first `<<<<<<<`.
 pub fn conflicts_in(buf: &Buffer) -> Vec<Conflict> {
+    let starts = marker_lines(buf, Mark::Start, 0);
+    let Some(&first) = starts.first() else {
+        return Vec::new();
+    };
+    // Every marker line from the first `<<<<<<<` on, in text order.
+    let mut marks: Vec<(usize, Mark)> = starts.into_iter().map(|o| (o, Mark::Start)).collect();
+    for mark in [Mark::Base, Mark::Mid, Mark::End] {
+        marks.extend(
+            marker_lines(buf, mark, first)
+                .into_iter()
+                .map(|o| (o, mark)),
+        );
+    }
+    marks.sort_unstable_by_key(|(o, _)| *o);
+    let line_of = |offset: usize| buf.line_of(offset);
+    let label = |offset: usize| buf.line_text(line_of(offset))[7..].trim().to_string();
     let mut out = Vec::new();
-    let count = buf.line_count();
-    let mut ln = 0;
-    while ln < count {
-        let text = buf.line_text(ln);
-        if let Some(label) = text.strip_prefix("<<<<<<<") {
-            let ours_label = label.trim().to_string();
-            let mut base = None;
-            let mut mid = None;
-            let mut k = ln + 1;
-            while k < count {
-                let t = buf.line_text(k);
-                if t.starts_with("<<<<<<<") {
-                    break;
-                }
-                if t.starts_with("|||||||") && mid.is_none() {
-                    base = Some(k);
-                } else if t.starts_with("=======") && mid.is_none() {
-                    mid = Some(k);
-                } else if let Some(rest) = t.strip_prefix(">>>>>>>")
-                    && let Some(m) = mid
-                {
-                    out.push(Conflict {
-                        start: ln,
-                        base,
-                        mid: m,
-                        end: k,
-                        ours_label,
-                        theirs_label: rest.trim().to_string(),
-                    });
-                    ln = k;
-                    break;
-                }
-                k += 1;
-            }
+    let mut i = 0;
+    while i < marks.len() {
+        let (start, mark) = marks[i];
+        i += 1;
+        if mark != Mark::Start {
+            continue;
         }
-        ln += 1;
+        let mut base = None;
+        let mut mid = None;
+        let mut k = i;
+        while k < marks.len() {
+            let (at, m) = marks[k];
+            match m {
+                Mark::Start => break,
+                Mark::Base if mid.is_none() => base = Some(line_of(at)),
+                Mark::Mid if mid.is_none() => mid = Some(line_of(at)),
+                Mark::End if mid.is_some() => {
+                    out.push(Conflict {
+                        start: line_of(start),
+                        base,
+                        mid: mid.unwrap(),
+                        end: line_of(at),
+                        ours_label: label(start),
+                        theirs_label: label(at),
+                    });
+                    i = k + 1;
+                    break;
+                }
+                _ => {}
+            }
+            k += 1;
+        }
     }
     out
 }
@@ -179,6 +266,35 @@ mod tests {
     use super::*;
 
     const TEXT: &str = "a\n<<<<<<< HEAD\nours 1\nours 2\n=======\ntheirs\n>>>>>>> feature\nz\n<<<<<<< HEAD\nx\n||||||| base\nb\n=======\ny\n>>>>>>> feature\n";
+
+    /// The markers are found by a search through the text's pieces: one
+    /// split across two pieces by an edit is found, one at the text's
+    /// very start is, an indented `<<<<<<<` is not a marker line, and a
+    /// `=======` before any `<<<<<<<` — a setext underline — is nothing.
+    #[test]
+    fn markers_are_found_across_pieces_and_only_at_line_starts() {
+        let mut ed = Editor::new();
+        let id = ed.add_buffer(Buffer::new(
+            "m",
+            "title\n=======\na\n<<<< HEAD\nours\n  <<<<<<< not one\n=======\ntheirs\n>>>>>>> feature\n",
+        ));
+        assert!(ed.conflicts_in(id).is_empty(), "`<<<<` is no marker");
+        // `<<<` typed in front of `<<<< HEAD`: the marker now spans the
+        // piece the typing made and the one it split.
+        assert!(ed.apply_edits(id, &[(16..16, "<<<".into())]));
+        assert!(ed.buffers[id].piece_count() > 1);
+        let cs = ed.conflicts_in(id);
+        assert_eq!(cs.len(), 1);
+        assert_eq!((cs[0].start, cs[0].mid, cs[0].end), (3, 6, 8));
+        assert_eq!(cs[0].ours_label, "HEAD");
+        assert_eq!(cs[0].theirs_label, "feature");
+        // At the text's start, with no newline before it.
+        let id = ed.add_buffer(Buffer::new("s", "<<<<<<< a\nx\n=======\ny\n>>>>>>> b"));
+        let cs = ed.conflicts_in(id);
+        assert_eq!(cs.len(), 1);
+        assert_eq!((cs[0].start, cs[0].mid, cs[0].end), (0, 2, 4));
+        assert_eq!(cs[0].theirs_label, "b");
+    }
 
     #[test]
     fn markers_are_read_and_a_side_taken() {

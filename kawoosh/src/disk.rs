@@ -6,7 +6,10 @@
 //! (`Editor::disk_state`):
 //!
 //! - a clean buffer takes the disk's text as one journaled edit, `u`
-//!   bringing its own back, and a corner line says so;
+//!   bringing its own back, and a corner line says so — a file that
+//!   only grew is followed as an append, and one followed again within
+//!   [`FOLLOW_QUIET`] of the last is said in the log alone, so a log
+//!   written under its buffer does not hold the corner;
 //! - a modified one is asked, once per change, with a toast that stays:
 //!   *Reload* (the disk's text; `u` still has yours), *Keep mine* (the
 //!   change acknowledged — `:w` then writes over it without asking),
@@ -19,6 +22,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use kawoosh_doc::{BufferId, Stamp};
 use kawoosh_editor::disk::Disk;
@@ -29,11 +33,17 @@ use kawoosh_systems::watch::{Beat, Watcher};
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::confirm::Confirm;
-use crate::notify::{Level, Note};
+use crate::notify::{Level, Note, Show};
+
+/// A buffer followed again this soon after the last time is said in the
+/// log, not the corner.
+pub const FOLLOW_QUIET: Duration = Duration::from_secs(10);
 
 /// The watch on the buffers' files and what has been said about them.
 pub struct DiskWatch {
     watch: Watcher,
+    /// When each buffer last followed its file's growth.
+    followed: HashMap<BufferId, Instant>,
     /// The set last handed to the watch.
     watched: HashSet<PathBuf>,
     /// The toast asking about a modified buffer, while it is up.
@@ -47,6 +57,7 @@ impl DiskWatch {
     pub fn new(wake: WakeHandle, beat: Beat) -> Self {
         Self {
             watch: Watcher::spawn(wake, beat),
+            followed: HashMap::new(),
             watched: HashSet::new(),
             toasts: HashMap::new(),
             told: HashMap::new(),
@@ -124,11 +135,32 @@ impl Kawoosh {
             }
             Disk::Changed if !self.ed.buffers[id].modified => {
                 match self.ed.reload_from_disk(id) {
-                    Ok(_) => self.notify(
-                        Level::Info,
-                        format!("{name}: reloaded, changed on disk (u brings yours back)"),
-                    ),
-                    Err(e) => self.notify(Level::Warn, format!("{name}: {e}")),
+                    Ok(r) => {
+                        let now = Instant::now();
+                        let again = r.appended.is_some()
+                            && self
+                                .disk
+                                .followed
+                                .insert(id, now)
+                                .is_some_and(|last| now.duration_since(last) < FOLLOW_QUIET);
+                        let text = match r.appended {
+                            Some(n) => format!(
+                                "{name}: grew by {} on disk, followed (u takes it back)",
+                                crate::perf::bytes(n as u64)
+                            ),
+                            None => {
+                                format!("{name}: reloaded, changed on disk (u brings yours back)")
+                            }
+                        };
+                        let mut note = Note::new(Level::Info, text).source("file");
+                        if again {
+                            note = note.show(Show::Log);
+                        }
+                        self.notify_with(note);
+                    }
+                    Err(e) => {
+                        self.notify(Level::Warn, format!("{name}: {e}"));
+                    }
                 };
                 true
             }
@@ -282,9 +314,9 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             |k, ctx| {
                 let Some(id) = k.disk_buffer(ctx) else { return };
                 k.ed.message = match k.ed.reload_from_disk(id) {
-                    Ok(m) => {
+                    Ok(r) => {
                         k.disk_settled(id);
-                        m
+                        r.message
                     }
                     Err(m) => m,
                 };

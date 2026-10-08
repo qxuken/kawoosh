@@ -1921,7 +1921,8 @@ fn write(ed: &mut Editor, ctx: &Ctx, after: crate::AfterWrite) -> bool {
 fn reload(ed: &mut Editor, ctx: &Ctx) {
     let id = view(ed, ctx).buffer;
     ed.message = match ed.reload_from_disk(id) {
-        Ok(m) | Err(m) => m,
+        Ok(r) => r.message,
+        Err(m) => m,
     };
 }
 

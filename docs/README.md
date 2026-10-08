@@ -42,6 +42,8 @@ commits; 70 integration test files and 31 Lua test scripts.
   `doc` crate).
 - [domains.md](design/domains.md): where a process spawns and a path
   lives; ssh as a domain.
+- [disk.md](design/disk.md): a buffer against its file: the watch, a
+  change reloaded or asked about, a growing file followed.
 
 ### Keys and editing
 
