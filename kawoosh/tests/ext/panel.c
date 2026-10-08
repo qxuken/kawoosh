@@ -4,14 +4,60 @@
  * opens it, `cwake` starts a thread that comes back through kw_wake;
  * kui's `kui_ext_view` draws the pane, a row whose clicks come back to
  * `kui_ext_on_event` and are counted on the next frame. */
-#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "kawoosh.h"
+
+/* A thread, started and joined or let go, and a nap: Win32's or
+ * POSIX's, the one difference between the platforms in this file. */
+typedef void *(*Body)(void *);
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+typedef struct {
+    Body body;
+    void *arg;
+    void *out;
+    bool join;
+} Run;
+static DWORD WINAPI run(LPVOID p) {
+    Run *r = p;
+    r->out = r->body(r->arg);
+    if (!r->join) free(r); /* let go: no one reads it after */
+    return 0;
+}
+static void *spawn(Body body, void *arg, bool join) {
+    Run *r = malloc(sizeof *r);
+    *r = (Run){body, arg, NULL, join};
+    HANDLE h = CreateThread(NULL, 0, run, r, 0, NULL);
+    void *out = NULL;
+    if (join) {
+        WaitForSingleObject(h, INFINITE);
+        out = r->out;
+        free(r);
+    }
+    CloseHandle(h);
+    return out;
+}
+static void nap_ms(unsigned ms) { Sleep(ms); }
+#else
+#include <pthread.h>
+#include <unistd.h>
+static void *spawn(Body body, void *arg, bool join) {
+    pthread_t t;
+    void *out = NULL;
+    pthread_create(&t, NULL, body, arg);
+    if (join)
+        pthread_join(t, &out);
+    else
+        pthread_detach(t);
+    return out;
+}
+static void nap_ms(unsigned ms) { usleep(ms * 1000); }
+#endif
 
 /* -- the kawoosh half ------------------------------------------------- */
 
@@ -37,7 +83,7 @@ static KuiValue *woke(void *user, KwCtx *ctx, const KuiValue *args) {
 }
 
 static void *work(void *arg) {
-    usleep(20 * 1000);
+    nap_ms(20);
     kw_wake(woke, arg);
     return NULL;
 }
@@ -55,10 +101,7 @@ static void *misuse(void *arg) {
 static KuiValue *thread_misuse(void *user, KwCtx *ctx, const KuiValue *args) {
     (void)user;
     (void)args;
-    pthread_t t;
-    void *out = NULL;
-    pthread_create(&t, NULL, misuse, ctx);
-    pthread_join(t, &out);
+    void *out = spawn(misuse, ctx, true);
     kw_do(ctx, "echo", kw_str(out ? "off-thread call refused" : "off-thread call answered"));
     return NULL;
 }
@@ -67,9 +110,7 @@ static KuiValue *start_thread(void *user, KwCtx *ctx, const KuiValue *args) {
     (void)user;
     (void)ctx;
     (void)args;
-    pthread_t t;
-    pthread_create(&t, NULL, work, malloc(1));
-    pthread_detach(t);
+    spawn(work, malloc(1), false);
     return NULL;
 }
 

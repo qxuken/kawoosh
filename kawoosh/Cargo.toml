@@ -81,6 +81,8 @@ name = "logger"
 harness = false
 
 # kawoosh.exe's icon (build.rs): rc.exe on Windows, llvm-rc for a build
-# from another host.
+# from another host. serde_json reads `cargo metadata` for kui's header,
+# whose `kui_*` the exe exports on Windows (build.rs, `export_def`).
 [build-dependencies]
 embed-resource = "3"
+serde_json.workspace = true

@@ -1,12 +1,11 @@
 //! Native extensions (docs/design/native.md, round one): a C library
-//! against `kawoosh.h`, built here by the system's `cc`, loaded by
+//! against `kawoosh.h`, built here by the system's `cc` (`clang` on
+//! Windows, `drive::c_compiler`), loaded by
 //! `kawoosh.extension`, its command registered through `kw_call` and
 //! run — and the same plugin in Lua, asserted equal; the refusals, each
-//! with its reason; the door's edges probed; `:extensions`.
-//!
-//! Unix only until native.md's round four: a Windows extension imports
-//! from the app's import library, which the build does not write yet.
-#![cfg(unix)]
+//! with its reason; the door's edges probed; `:extensions`. On Windows
+//! the extension is linked against the test binary's import library
+//! (native.md Decision 8, round four; `drive::build_ext`).
 
 mod drive;
 
@@ -133,12 +132,16 @@ fn an_extension_is_refused_with_the_reason() {
         )),
         "{r}"
     );
-    let r = load(&mut app, "gone", Path::new("/nowhere/at/all.so"));
-    assert!(
-        r.starts_with("`gone`: no extension at /nowhere/at/all.")
-            && r.contains("/nowhere/at/all.so"),
-        "{r}"
-    );
+    // The places looked, each once: the platform's extension, then the
+    // `.so` said.
+    let gone = tmp("refuse-gone").join("at").join("all.so");
+    let r = load(&mut app, "gone", &gone);
+    let mut looked = vec![gone.with_extension(std::env::consts::DLL_EXTENSION)];
+    if std::env::consts::DLL_EXTENSION != "so" {
+        looked.push(gone.clone());
+    }
+    let looked: Vec<String> = looked.iter().map(|p| p.display().to_string()).collect();
+    assert_eq!(r, format!("`gone`: no extension at {}", looked.join(", ")));
     let r = load(&mut app, "a/b", &good);
     assert!(r.contains("a namespace is a word with no `/`"), "{r}");
     assert_eq!(load(&mut app, "dupes", &good), "ok");
@@ -200,7 +203,7 @@ fn extensions_lists_what_is_loaded() {
         )),
         "{t}"
     );
-    assert!(t.ends_with("dupes.so"), "{t}");
+    assert!(t.ends_with(&format!("dupes.{}", drive::EXT)), "{t}");
 }
 
 #[test]
@@ -221,7 +224,8 @@ fn the_library_is_found_by_convention_and_the_path_helpers_name_no_platform() {
     );
     let r = locate("other", None, Some(&config)).unwrap_err();
     assert!(
-        r.starts_with("`other`: no extension at ") && r.contains("ext/other."),
+        r.starts_with("`other`: no extension at ")
+            && r.contains(&Path::new("ext").join("other.").display().to_string()),
         "{r}"
     );
     assert!(
@@ -516,7 +520,7 @@ fn the_header_describes_what_rust_lays_out() {
     let unit = dir.join("parity.c");
     std::fs::write(&unit, &c).unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut cmd = std::process::Command::new("cc");
+    let mut cmd = drive::c_compiler();
     cmd.args(["-fsyntax-only", "-std=c11", "-Wall", "-Wextra", "-Werror"])
         .arg("-I")
         .arg(root.join("include"))

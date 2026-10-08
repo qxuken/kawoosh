@@ -6,7 +6,8 @@ ABI of kawoosh's own) and the third chosen: "option 3 is the way, let's
 design, estimate this". The estimate is at the end. **Rounds one to
 three built 2026-10-08**, "let's get building", "round two: native
 panes and kw_wake", "round three: parity test and typed buffer
-access"; the blocks after the estimate say what the building changed. The calls below are taken here, each the
+access"; **round four, Windows, 2026-10-09**; the blocks after the
+estimate say what the building changed. The calls below are taken here, each the
 user's to overturn. Companion
 to [plugin-panes.md](plugin-panes.md) (what a Lua plugin can do — a
 native one can do the same, by the same names), [lua-boundary.md](lua-boundary.md)
@@ -318,6 +319,13 @@ Built as a kui extension is built, linking against nothing:
 cc -O2 -shared -undefined dynamic_lookup -I kawoosh/include -I kui/include dupes.c -o dupes.so
 ```
 
+— on Windows against the import library the Kawoosh folder ships
+(Decision 8), its headers beside it —
+
+```bash
+clang -O2 -shared -I Kawoosh\include dupes.c Kawoosh\kawoosh.lib -o dupes.dll
+```
+
 and loaded by one line in `init.lua`:
 
 ```lua
@@ -566,6 +574,61 @@ worse confusion. The parity test skips the inline lines, since they
 are no ABI. Typed prototypes for `command`, `map` and `view` — the
 third copy of the API, for three doors — stay declined until the
 shorthand reads badly in a real extension.
+
+**Round four, Windows, 2026-10-09.** Decision 8 built and run there
+(Windows 11, x86_64, the MSVC target): `kawoosh.exe` exports every
+`kw_*` and `kui_*`, `scripts/windows-app.nu` ships `kawoosh.lib` and an
+`include\` with `kawoosh.h` and `kui.h`, and `tests/native.rs` runs on
+Windows, its nine cases green. What the building decided beyond the
+draft:
+
+- **The export list is read from the headers**, as kui-ffi's build
+  reads its sources: every prototype in `kawoosh.h` and in the graph's
+  `kui.h` (found by `cargo metadata`, as the tests find it), the
+  extension's own `*_ext_*` left out — 8 and 272, the same set kui-ffi
+  defines. A name a header declares and nothing defines is link.exe's
+  LNK2001 for the whole exe, never a quiet gap.
+- **The `kawoosh` bin alone takes the `/DEF:`.** The other bins link no
+  `kawoosh-lua`, and neither do three tests a `#![cfg(unix)]` empties on
+  Windows, so a `/DEF:` for every test fails to link them. A test binary
+  exports through `tests/drive.rs` instead: the same names as `/EXPORT:`
+  linker directives in a `.drectve` section (`global_asm!`, the section
+  a C compiler writes for a `dllexport`), so every test that can build
+  an extension exports and one that cannot is untouched — the next
+  `cfg(unix)` test is no trap.
+- **A test's extension links against that test's own import library**
+  (`native-<hash>.lib`, beside the binary): Windows has no
+  `-undefined dynamic_lookup`, and the module an import names is the
+  test binary. The tests build with `clang`, whose default target there
+  is the MSVC ABI; `panel.c` starts its threads with Win32's where it
+  had pthreads, and `costs.c` reads `QueryPerformanceCounter`.
+- **Cargo leaves a bin's name unhashed on MSVC** (`deps/kawoosh.exe`),
+  so the import library names `kawoosh.exe`, which is what runs; the
+  `.lib` stays in `deps/`, where `windows-app.nu` takes it from.
+- **Run there**: the release folder built (fat LTO keeps the exports;
+  the shipped exe's table lists the 280), `dupes.c` built against the
+  folder alone by clang and by a UCRT MinGW gcc, both loaded into the
+  running app — one found by convention from `init.lua` as
+  `ext\dupes.dll`, one by path under a second namespace — `:dupes` in
+  each giving the same scratch, `:extensions` listing both; `panel.c`'s
+  pane drawn in the window and `:cwake` back through `kw_wake`. Once,
+  the first `:cpanel` sent over `kawoosh ex` straight after loading
+  left the pane unopened; neither the same sequence replayed in a
+  fresh app nor the headless drive did it again.
+- **Two fixes the platform showed**: `locate` listed a path said with
+  `.so` twice among the places looked (on every platform; the test
+  asserted a prefix); `kawoosh.h`'s `kw_error_str` used `memcpy` with no
+  `<string.h>`.
+- **Measured on Windows** (`native_buffer_access`, release, a 10 MB
+  buffer, 10,000 edits; the machine slower than the Apple Silicon one,
+  the ratios the same):
+
+  | route | C clock | wall around the command |
+  |---|---|---|
+  | `kw_call("buf.text")`, a read | 24.6 ms | 127 ms for 5 |
+  | `kw_buf_text`, a read | 11.6 ms | 68 ms for 5 |
+  | `kw_call("buf.edits")`, 10,000 edits queued | 27.6 ms | 42.8 ms with the apply |
+  | `kw_buf_edits`, 10,000 edits queued | 0.70 ms | 8.7 ms with the apply |
 
 ## Open
 

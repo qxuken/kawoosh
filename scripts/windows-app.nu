@@ -10,6 +10,19 @@
 #   Kawoosh\OpenConsole.exe    screen is rendered in (`console-host` below)
 #   Kawoosh\fonts\             the bundled faces, found from the binary
 #                              (left out with --no-fonts)
+#   Kawoosh\kawoosh.lib        what a native extension links against, and
+#   Kawoosh\include\           the two headers it is built with (below)
+#
+# A native extension (docs/design/native.md) calls `kw_*` and `kui_*`
+# from kawoosh.exe. Windows resolves a DLL's imports through an import
+# library naming the module they come from, so kawoosh.exe exports both
+# families (kawoosh/build.rs) and link.exe writes `kawoosh.lib` beside it;
+# shipped with `kawoosh.h` and the `kui.h` of the kui it was built with,
+# an extension builds from this folder alone:
+#
+#   clang -O2 -shared -I Kawoosh\include dupes.c Kawoosh\kawoosh.lib -o dupes.dll
+#
+# and loads into this kawoosh.exe — an import library names its module.
 #
 # With --install, Kawoosh is also registered as an editor, all of it
 # under HKCU (`register-editor` below):
@@ -113,6 +126,16 @@ def main [
   for f in $host {
     cp $f $fresh
   }
+  # link.exe writes the import library beside the binary in `deps\`,
+  # where cargo leaves it.
+  let lib = $target | path join release deps kawoosh.lib
+  if not ($lib | path exists) {
+    error make {msg: $"no ($lib): kawoosh.exe exported nothing, so no native extension can link against it. See the build's warnings (kawoosh/build.rs)"}
+  }
+  cp $lib $fresh
+  mkdir ($fresh | path join include)
+  cp ($root | path join kawoosh include kawoosh.h) ($fresh | path join include)
+  cp (kui-header $manifest) ($fresh | path join include)
   if not $no_fonts {
     cp -r $fonts $fresh
   }
@@ -237,6 +260,14 @@ def register-editor [exe: path, built: path] {
       [Kawoosh.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     '#
   }
+}
+
+# `kui.h` of the kui-ffi the build links: the header `kawoosh.h`
+# includes, at the ABI kawoosh.exe was built with.
+def kui-header [manifest: path]: nothing -> path {
+  ^cargo metadata --format-version 1 --offline --manifest-path $manifest
+    | from json | get packages | where name == 'kui-ffi' | first
+    | get manifest_path | path dirname | path join include kui.h
 }
 
 # Microsoft.Windows.Console.ConPTY (MIT), the version shipped and its

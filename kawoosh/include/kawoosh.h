@@ -13,13 +13,21 @@
  *
  * It links against nothing. Every kw_* and kui_* it calls is left
  * undefined and resolved from the kawoosh executable at load, the way a
- * Lua C module resolves lua_* (on Windows, from the import library the
- * app ships; see native.md Decision 8). Build it as a kui extension is
- * built:
+ * Lua C module resolves lua_*. Build it as a kui extension is built:
  *
  *     cc -O2 -shared -undefined dynamic_lookup -I kawoosh/include -I kui/include dupes.c -o dupes.so
  *
  * on macOS; `-shared -fPIC` and no `-undefined` on Linux.
+ *
+ * On Windows a DLL may leave nothing undefined: it names the module each
+ * import comes from, and takes that name from an import library. The
+ * Kawoosh folder ships kawoosh.exe's, kawoosh.lib, with this header and
+ * kui.h in its include folder (native.md Decision 8):
+ *
+ *     clang -O2 -shared -I Kawoosh\include dupes.c Kawoosh\kawoosh.lib -o dupes.dll
+ *
+ * clang-cl and a UCRT MinGW gcc build it the same. Linked so, it loads
+ * into that kawoosh.exe and no other host.
  *
  * YOU define the four kw_ext_* below; kawoosh calls them. Two are
  * required - kw_ext_abi and, in practice, kw_ext_init, since an
@@ -211,6 +219,7 @@ KuiValue *kw_fn(KwCtx *ctx, KwFn fn, void *user);
  * stays kui_value_as_str, kui_value_at and the rest. */
 
 #include <stdarg.h>
+#include <string.h>
 
 static inline KuiValue *kw_null(void) { return kui_value_null(); }
 static inline KuiValue *kw_bool(bool v) { return kui_value_bool(v); }

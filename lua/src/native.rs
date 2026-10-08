@@ -733,7 +733,10 @@ pub fn locate(
             if ext != "so" {
                 c.push(p.with_extension("so"));
             }
-            c.push(p.to_path_buf());
+            // A path said with its extension is one of those already.
+            if !c.iter().any(|q| q == p) {
+                c.push(p.to_path_buf());
+            }
             c
         }
         None => {

@@ -5,16 +5,28 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <time.h>
+#endif
 
 #include "kawoosh.h"
 
 uint32_t kw_ext_abi(void) { return KW_ABI_VERSION; }
 
 static double now_ms(void) {
+#ifdef _WIN32
+    LARGE_INTEGER f, c;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart * 1e3 / (double)f.QuadPart;
+#else
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return t.tv_sec * 1e3 + t.tv_nsec / 1e6;
+#endif
 }
 
 static void echo(KwCtx *ctx, const char *s) { kw_do(ctx, "echo", kw_str(s)); }
