@@ -41,6 +41,9 @@ pub struct Kawoosh {
     pub pal: Pal,
     /// The face every mono run is shaped in, from `font.*` (`look.rs`).
     pub face: crate::look::Face,
+    /// The face a markdown buffer's rendered prose is shaped in, from
+    /// `font.prose` (`look.rs`); none is the editor's.
+    pub prose: Option<kui_native::FontFamily>,
     /// The chrome's face and heights, from the face (`look.rs`).
     pub chrome: crate::look::Chrome,
     /// The face kawoosh ships (`main.rs`), what an empty `font.family` names.
@@ -395,6 +398,7 @@ impl Kawoosh {
         let mut app = Self {
             pal: Pal::default(),
             face: Default::default(),
+            prose: None,
             chrome: Default::default(),
             bundled_font: None,
             look: Default::default(),

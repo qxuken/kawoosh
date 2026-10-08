@@ -1886,6 +1886,7 @@ impl Kawoosh {
                     strike: st.strike,
                     color: None,
                     bg: None,
+                    mono: false,
                 })
             })
             .collect();
@@ -2103,6 +2104,7 @@ impl Kawoosh {
                                         marks,
                                         scale,
                                         code,
+                                        mono,
                                         rule,
                                         images: _,
                                         table: _,
@@ -2113,7 +2115,7 @@ impl Kawoosh {
                                         wrap,
                                         revealed: _,
                                     } = r;
-                                    (drawn, Some((marks, scale, code, rule, wrap, img)))
+                                    (drawn, Some((marks, scale, code, mono, rule, wrap, img)))
                                 }
                                 None => {
                                     let long = range.len() >= long_at;
@@ -2403,12 +2405,23 @@ impl Kawoosh {
                             }
                             let joined: Vec<(Range<usize>, rows::Mark)>;
                             let (marks, form) = match &md_row {
-                                Some((marks, scale, code, rule, wrap, img)) => {
+                                Some((marks, scale, code, mono, rule, wrap, img)) => {
+                                    // A prose row's face, where there is one
+                                    // (`font.prose`): not a code block's, a
+                                    // table's or the caret's source line.
+                                    let family = self.prose.filter(|_| !*mono);
                                     md_seen.push((
                                         ln,
                                         crate::markdown::Heights::stamp(
                                             &drawn.text,
-                                            (scale.to_bits(), *code, *rule, img.len(), in_table),
+                                            (
+                                                scale.to_bits(),
+                                                *code,
+                                                *rule,
+                                                img.len(),
+                                                in_table,
+                                                family.is_some(),
+                                            ),
                                         ),
                                         ui.layout_of(ui.child_key(&label)).map(|r| r.h + edges),
                                     ));
@@ -2420,6 +2433,7 @@ impl Kawoosh {
                                     let form = rows::RowForm {
                                         key: label.clone(),
                                         scale: *scale,
+                                        family,
                                         wrap: (!in_table).then_some(*wrap),
                                         bg: code.then_some(pal.strip),
                                         gutter: (!in_table)
@@ -2460,6 +2474,7 @@ impl Kawoosh {
                                         let form = rows::RowForm {
                                             key: label.clone(),
                                             scale: 1.0,
+                                            family: None,
                                             wrap: (!long).then_some(w),
                                             bg: None,
                                             gutter: Some((

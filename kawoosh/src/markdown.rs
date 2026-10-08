@@ -32,6 +32,9 @@ pub struct Rendered {
     pub scale: f32,
     /// A code block's row: on the panel colour.
     pub code: bool,
+    /// In the editor's face whatever `font.prose` says: a code block's
+    /// row, a table's, or the caret's line shown as source.
+    pub mono: bool,
     /// A thematic break: a rule across the row.
     pub rule: bool,
     /// A line that is only images, or a table's row with images in its
@@ -139,6 +142,7 @@ pub fn render(
         marks: Vec::new(),
         scale,
         code,
+        mono: code || table || reveal == Reveal::Source,
         rule: false,
         images: Vec::new(),
         table,
@@ -529,6 +533,7 @@ fn prose(
             },
             Token::Raw => Mark {
                 bg: Some(style.code_bg),
+                mono: true,
                 ..Mark::default()
             },
             _ => continue,

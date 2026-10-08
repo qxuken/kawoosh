@@ -1479,3 +1479,75 @@ fn a_menu_stays_over_the_rows_above_the_caret() {
         assert_eq!(over, 0, "nothing of the pane is drawn after the menu");
     }
 }
+
+/// `font.prose` draws the rendered prose in a face of its own and keeps
+/// the editor's for what is code: a code span inside a paragraph (kui
+/// F130, a span in its own face), a code block's rows, and the caret's
+/// line, which is its source. Carets on a prose row are placed where
+/// kui laid the bytes out, so `l` over a code span crosses it a cell a
+/// step.
+#[test]
+fn prose_takes_its_face_and_code_keeps_the_editors() {
+    let dir = fixture("prose");
+    let (mut d, mut app) = launch(&dir, 900.0);
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    let body = rect_of_text(&d, "fn main() {").expect("the code block's row");
+    let cw = body.2 / 11.0;
+    let para = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| {
+                n.text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("Some strong"))
+            })
+            .map(|n| (n.key, n.rect))
+            .expect("the paragraph")
+    };
+    let drawn = "Some strong and emphasis with code and a link.";
+    let (key, _) = para(&d);
+    let x_of = |d: &Drive, key, b: usize| d.core.caret_rect(key, b).unwrap().x;
+    let code = drawn.find("code").unwrap();
+    let mono_prefix = x_of(&d, key, code) - x_of(&d, key, 0);
+    assert!(
+        (mono_prefix - code as f32 * cw).abs() < 0.5,
+        "mono: {code} cells before `code`, {mono_prefix} px at {cw} a cell"
+    );
+    ex(&mut d, &mut app, "set font.prose=sans");
+    settle(&mut d, &mut app);
+    let (key, _) = para(&d);
+    let prefix = x_of(&d, key, code) - x_of(&d, key, 0);
+    assert!(
+        (prefix - mono_prefix).abs() > 2.0,
+        "the prose in another face: {prefix} px before `code`, was {mono_prefix}"
+    );
+    let span = x_of(&d, key, code + 4) - x_of(&d, key, code);
+    assert!(
+        (span - 4.0 * cw).abs() < 0.5,
+        "the code span in the editor's face: {span} px for four cells of {cw}"
+    );
+    // The code block's row and the caret's line stay as they were.
+    let after = rect_of_text(&d, "fn main() {").expect("the code block's row");
+    assert_eq!(after.2, body.2, "the code block's row is the editor's face");
+    d.press(&mut app, "3G");
+    settle(&mut d, &mut app);
+    let raw = d.core.nodes().iter().any(|n| {
+        n.text
+            .as_deref()
+            .is_some_and(|t| t.starts_with("Some **strong**"))
+    });
+    assert!(raw, "the caret's line is its source");
+    // A family that is not there: a toast, and the editor's face.
+    ex(&mut d, &mut app, "set font.prose=No Such Face");
+    settle(&mut d, &mut app);
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    let (key, _) = para(&d);
+    let prefix = x_of(&d, key, code) - x_of(&d, key, 0);
+    assert!(
+        (prefix - mono_prefix).abs() < 0.5,
+        "a missing family keeps the editor's face: {prefix} vs {mono_prefix}"
+    );
+}

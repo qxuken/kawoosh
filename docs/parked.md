@@ -125,7 +125,8 @@ Considered and beaten; the note keeps the reason.
   writes `settings.lua` through tree-sitter. ([themes.md](design/themes.md)
   Decision 5)
 - **Markdown**: editing through the rendering; a preview pane; math,
-  diagrams and HTML drawn; a proportional face.
+  diagrams and HTML drawn; a proportional face for the source rows
+  (`font.prose`, 2026-10-08, is the rendered prose's alone).
   ([markdown.md](design/markdown.md), "Deliberately not")
 - **Terminal**: search in place in a live terminal (`/` in copy mode
   is it); a visual bell that flashes. (roadmap.md, "Terminal")

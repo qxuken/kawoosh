@@ -791,6 +791,9 @@ pub struct Mark {
     pub strike: bool,
     pub color: Option<Color>,
     pub bg: Option<Color>,
+    /// In the editor's face where the row's is another (a code span in
+    /// prose drawn under `font.prose`).
+    pub mono: bool,
 }
 
 impl Mark {
@@ -804,6 +807,7 @@ impl Mark {
             strike: self.strike || other.strike,
             color: other.color.or(self.color),
             bg: other.bg.or(self.bg),
+            mono: self.mono || other.mono,
         }
     }
 }
@@ -819,6 +823,9 @@ impl Mark {
 pub struct RowForm {
     pub key: String,
     pub scale: f32,
+    /// The row's face where it is not the editor's: a prose row under
+    /// `font.prose`. Its code spans (`Mark::mono`) are the editor's.
+    pub family: Option<kui_native::FontFamily>,
     pub wrap: Option<kui_native::TextWrap>,
     pub bg: Option<Color>,
     /// The gutter's width, and what it shows beside the row and
@@ -1381,6 +1388,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             if let Some(id) = face.id {
                 base = base.font(id);
             }
+            if let Some(family) = f.family {
+                base = base.family(family);
+            }
             // The line's number, in the row: decoration, not text.
             if let Some((w, label, current)) = &f.gutter {
                 // On a baseline the box is its text's height, so that
@@ -1498,6 +1508,14 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     }
                     if l.mark.strike {
                         s = s.strikethrough();
+                    }
+                    // A code span in a prose row: the editor's face (kui
+                    // F130 shapes each span in its own).
+                    if l.mark.mono && form.is_some_and(|f| f.family.is_some()) {
+                        s = match face.id {
+                            Some(id) => s.family(kui_native::FontFamily::Custom(id)),
+                            None => s.mono(),
+                        };
                     }
                     s
                 })
@@ -1638,12 +1656,21 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     .role(Role::None)
                     .float(FloatConfig::parent().offset(x, y)),
                 |ui| {
-                    ui.rich_text(
-                        &[Span::new(&text[r.clone()])
-                            .color(pal.bg)
-                            .bg(caret_bg(pal, *kind))],
-                        base,
-                    )
+                    let mut s = Span::new(&text[r.clone()])
+                        .color(pal.bg)
+                        .bg(caret_bg(pal, *kind));
+                    // In the face the row drew it in: a code span's in
+                    // a prose row is the editor's.
+                    let in_code = segs
+                        .iter()
+                        .any(|(sr, l)| sr.contains(&r.start) && l.mark.mono);
+                    if in_code && form.is_some_and(|f| f.family.is_some()) {
+                        s = match face.id {
+                            Some(id) => s.family(kui_native::FontFamily::Custom(id)),
+                            None => s.mono(),
+                        };
+                    }
+                    ui.rich_text(&[s], base)
                 },
             );
         }

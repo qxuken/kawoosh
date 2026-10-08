@@ -25,6 +25,11 @@
 //!   kui's spelling (`liga=0`, `-liga`, `tnum`). Every mono run — the
 //!   rows, the gutter, the terminals' cells, the panes' tables — is
 //!   [`rows::mono`] over the one [`Face`], so the cell size follows.
+//!   **`font.prose`** names a face for a markdown buffer's rendered
+//!   prose alone — `sans`, `serif`, or an installed family; empty keeps
+//!   the editor's face. A code span in it, a code block, a table and
+//!   the caret's line (its source) stay in the editor's face
+//!   (markdown.md Decision 5, amended).
 //! - **`theme.name`** is a family of [`crate::themes`] — `rose-pine`
 //!   (the default), `rose-pine-moon`, `ayu`, `ayu-mirage`, `gruvbox`
 //!   (`-hard`, `-soft`), `tokyo-night` (`-storm`, `-moon`),
@@ -189,6 +194,8 @@ pub struct Look {
     pub hit: Option<Color>,
     /// The family a toast already said was missing.
     missing: Option<String>,
+    /// The `font.prose` family last noted as missing, so the toast is once.
+    missing_prose: Option<String>,
     /// The families kui can see and the face on show, shared with the
     /// `kawoosh.fonts` door (`fonts.rs`).
     pub fonts: crate::fonts::SharedFonts,
@@ -488,6 +495,28 @@ impl Kawoosh {
             size,
             line_height: (size * ratio).round().max(size + 2.0),
             features,
+        };
+        // The prose face: kui's stock `sans` and `serif` (`mono` is the
+        // editor's own, so none), else an installed family; a family
+        // that resolves to nothing is a toast, once, and the prose stays
+        // in the editor's face.
+        let prose = s.str("font.prose").unwrap_or("").trim().to_string();
+        self.prose = match prose.as_str() {
+            "" | "mono" => None,
+            "sans" => Some(kui_native::FontFamily::Sans),
+            "serif" => Some(kui_native::FontFamily::Serif),
+            family => match ui.core().add_system_font(family) {
+                Some(id) => Some(kui_native::FontFamily::Custom(id)),
+                None => {
+                    if self.look.missing_prose.as_deref() != Some(family) {
+                        notes.push(format!(
+                            "font.prose: no family \"{family}\" — the editor's face"
+                        ));
+                        self.look.missing_prose = Some(prose.clone());
+                    }
+                    None
+                }
+            },
         };
         let chrome = match s.get("font.chrome_size").and_then(Setting::as_float) {
             Some(n) if n > 0.0 => (n as f32).clamp(SIZE_RANGE.0, SIZE_RANGE.1),
