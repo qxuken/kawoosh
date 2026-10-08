@@ -35,6 +35,7 @@ use std::ffi::{CStr, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Mutex, OnceLock};
 
 use kui_ffi::{
     KuiStr, KuiValue, kui_value_as_bool, kui_value_as_float, kui_value_as_int, kui_value_as_str,
@@ -47,7 +48,7 @@ use mlua::{Function, Lua, MultiValue, Table, Value as LV};
 /// The ABI this build implements: `KW_ABI_VERSION` in `kawoosh.h`,
 /// bumped when a `kw_*` prototype or a `repr(C)` struct moves. An
 /// extension built against another is refused at load.
-pub const KW_ABI_VERSION: u32 = 1;
+pub const KW_ABI_VERSION: u32 = 2;
 
 /// The doors' version, `kw_protocol`: which `kawoosh.*` names exist and
 /// what they take. Moves with kawoosh's releases, never with the ABI.
@@ -66,6 +67,10 @@ pub struct Loaded {
     pub name: String,
     pub path: PathBuf,
     pub abi: u32,
+    /// It exports `kui_ext_abi` too: it draws, through kui's own
+    /// loader, as a kui extension under the same namespace (native.md
+    /// Decision 4).
+    pub kui: bool,
     /// Whatever `kw_ext_init` answered, handed to `kw_ext_free`.
     user: *mut c_void,
     free: Option<FreeFn>,
@@ -76,7 +81,12 @@ pub struct Loaded {
 #[derive(Default)]
 pub struct Native {
     pub loaded: Vec<Loaded>,
-    fns: Vec<(KwFn, *mut c_void)>,
+    /// Libraries that export `kui_ext_abi`, not yet added to the frame:
+    /// the shell takes them (`take_pending_kui`) on its next frame,
+    /// where kui's `Ui::add_extension` can run.
+    pending_kui: Vec<(String, PathBuf)>,
+    /// A handle with the namespace of the extension that made it.
+    fns: Vec<(KwFn, *mut c_void, Option<String>)>,
     /// The Lua function made over each handle, once.
     lua_fns: Vec<Option<Function>>,
     error: String,
@@ -98,19 +108,60 @@ impl Drop for Native {
     }
 }
 
-/// The context handed to C for one call: the runtime's Lua and its
-/// native state. Opaque to C, alive for the call it was made for.
+/// The context handed to C for one call: the runtime's Lua, its
+/// native state and the namespace of the extension whose call it is
+/// (none for a wake's). Opaque to C, alive for the call it was made for.
 pub struct KwCtx {
     native: NativeCell,
     lua: Lua,
+    namespace: Option<String>,
 }
 
-fn with_ctx<T>(native: &NativeCell, lua: &Lua, f: impl FnOnce(*mut KwCtx) -> T) -> T {
+fn with_ctx<T>(
+    native: &NativeCell,
+    lua: &Lua,
+    namespace: Option<&str>,
+    f: impl FnOnce(*mut KwCtx) -> T,
+) -> T {
     let mut ctx = KwCtx {
         native: native.clone(),
         lua: lua.clone(),
+        namespace: namespace.map(str::to_string),
     };
     f(&mut ctx)
+}
+
+/// A call queued from a thread (`kw_wake`), run on the UI thread.
+struct Wake(KwFn, *mut c_void);
+// SAFETY: the pointer crosses threads by the header's contract — what
+// `kw_wake` is for — and is only ever handed back to the function
+// beside it.
+unsafe impl Send for Wake {}
+
+static WAKES: Mutex<Vec<Wake>> = Mutex::new(Vec::new());
+static WAKER: OnceLock<Mutex<Option<kawoosh_systems::WakeHandle>>> = OnceLock::new();
+
+/// The shell's wake handle, so a `kw_wake` from a thread brings a
+/// frame; before it is set, a wake queues and the next frame runs it.
+pub fn set_waker(handle: kawoosh_systems::WakeHandle) {
+    *WAKER.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(handle);
+}
+
+/// Whether a wake is queued and not yet run.
+pub fn wakes_pending() -> bool {
+    !WAKES.lock().unwrap().is_empty()
+}
+
+/// Runs every queued wake on this thread, each with a context of its
+/// own and no namespace; what one returns is freed. How many ran.
+pub fn run_wakes(native: &NativeCell, lua: &Lua) -> usize {
+    let wakes: Vec<Wake> = std::mem::take(&mut *WAKES.lock().unwrap());
+    let n = wakes.len();
+    for Wake(f, user) in wakes {
+        let out = with_ctx(native, lua, None, |c| f(user, c, std::ptr::null()));
+        kui_value_free(out);
+    }
+    n
 }
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
@@ -189,6 +240,40 @@ pub extern "C" fn kw_protocol(ctx: *mut KwCtx) -> u32 {
     if ctx.is_null() { 0 } else { KW_PROTOCOL }
 }
 
+/// `kw_namespace(ctx, out)`: the namespace the extension whose call
+/// this is was loaded under, borrowed for the call; false with nothing
+/// written on a wake's context or a null one.
+#[unsafe(no_mangle)]
+pub extern "C" fn kw_namespace(ctx: *mut KwCtx, out: *mut KuiStr) -> bool {
+    guard(false, || {
+        // SAFETY: as `kw_call`'s; `out` is the caller's to write or null.
+        let (Some(ctx), Some(out)) = (unsafe { ctx.as_ref() }, unsafe { out.as_mut() }) else {
+            return false;
+        };
+        match &ctx.namespace {
+            Some(ns) => {
+                *out = kstr(ns);
+                true
+            }
+            None => false,
+        }
+    })
+}
+
+/// `kw_wake(fn, user)`: `fn(user, ctx, NULL)` on the UI thread, soon —
+/// the frame is woken. Callable from any thread, the one `kw_*` that
+/// is; a null `fn` does nothing.
+#[unsafe(no_mangle)]
+pub extern "C" fn kw_wake(f: Option<KwFn>, user: *mut c_void) {
+    guard((), || {
+        let Some(f) = f else { return };
+        WAKES.lock().unwrap().push(Wake(f, user));
+        if let Some(w) = WAKER.get().and_then(|w| w.lock().unwrap().clone()) {
+            w.wake();
+        }
+    })
+}
+
 /// `kw_fn(ctx, fn, user)`: a callable value — a map with the one key
 /// `kw_fn` — to put where Lua would put a function. Lives until the
 /// runtime goes. NULL for a null `fn`.
@@ -205,7 +290,7 @@ pub extern "C" fn kw_fn(ctx: *mut KwCtx, f: Option<KwFn>, user: *mut c_void) -> 
         };
         let id = {
             let mut n = ctx.native.borrow_mut();
-            n.fns.push((f, user));
+            n.fns.push((f, user, ctx.namespace.clone()));
             n.lua_fns.push(None);
             n.fns.len() - 1
         };
@@ -341,12 +426,12 @@ fn handle(ctx: &KwCtx, id: i64) -> mlua::Result<LV> {
     if let Some(Some(f)) = ctx.native.borrow().lua_fns.get(id) {
         return Ok(LV::Function(f.clone()));
     }
-    let (f, user) = ctx
+    let (f, user, namespace) = ctx
         .native
         .borrow()
         .fns
         .get(id)
-        .copied()
+        .cloned()
         .ok_or_else(|| mlua::Error::runtime("kw_fn: no such handle"))?;
     let native = ctx.native.clone();
     let lf = ctx.lua.create_function(move |lua, args: MultiValue| {
@@ -354,7 +439,7 @@ fn handle(ctx: &KwCtx, id: i64) -> mlua::Result<LV> {
         for a in args.iter() {
             kui_value_list_push(list, to_c(a));
         }
-        let (out, v) = with_ctx(&native, lua, |c| {
+        let (out, v) = with_ctx(&native, lua, namespace.as_deref(), |c| {
             let out = f(user, c, list);
             // SAFETY: `c` is the context made for this call, alive here.
             let v = to_lua(unsafe { &*c }, out);
@@ -528,23 +613,37 @@ pub fn load(native: &NativeCell, lua: &Lua, namespace: &str, path: &Path) -> Res
     let free = unsafe { lib.get::<FreeFn>(b"kw_ext_free\0") }
         .ok()
         .map(|s| *s);
+    let kui = unsafe { lib.get::<extern "C" fn() -> u32>(b"kui_ext_abi\0") }.is_ok();
     // Never unloaded: a handle's pointer, a Lua function over it, a
     // string the extension answered may all be reached again.
     std::mem::forget(lib);
     // Last, so an init that allocates does so once every check has
     // passed and `free` is already known to undo it.
     let user = init.map_or(std::ptr::null_mut(), |init| {
-        with_ctx(native, lua, |c| init(c))
+        with_ctx(native, lua, Some(namespace), |c| init(c))
     });
-    native.borrow_mut().loaded.push(Loaded {
+    let mut n = native.borrow_mut();
+    if kui {
+        n.pending_kui
+            .push((namespace.to_string(), path.to_path_buf()));
+    }
+    n.loaded.push(Loaded {
         namespace: namespace.to_string(),
         name,
         path: path.to_path_buf(),
         abi: claimed,
+        kui,
         user,
         free,
     });
     Ok(())
+}
+
+/// The libraries loaded since the last call that draw as kui
+/// extensions, for the shell to add to the frame under their
+/// namespaces.
+pub fn take_pending_kui(native: &NativeCell) -> Vec<(String, PathBuf)> {
+    std::mem::take(&mut native.borrow_mut().pending_kui)
 }
 
 /// The two doors, on the `kawoosh` table: the boot script's
@@ -585,6 +684,7 @@ pub fn seed(lua: &Lua, native: &NativeCell) -> mlua::Result<()> {
                 t.set("path", l.path.to_string_lossy().into_owned())?;
                 t.set("abi", l.abi)?;
                 t.set("protocol", KW_PROTOCOL)?;
+                t.set("draws", l.kui)?;
                 list.set(i + 1, t)?;
             }
             Ok(list)

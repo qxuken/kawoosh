@@ -91,7 +91,7 @@ fn launch(tag: &str, text: &str) -> (Drive, Kawoosh) {
     let mut app = Kawoosh::new("t", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    let mut d = Drive::new(900.0, 500.0);
+    let mut d = Drive::new(1600.0, 700.0);
     d.extension("lua", ext).unwrap();
     app.set_cwd(&dir);
     d.frame(&mut app);
@@ -148,7 +148,7 @@ fn a_c_extension_and_its_lua_twin_agree() {
             &mut app,
             "local e = kawoosh.extensions()[1] kawoosh.echo(e.namespace .. ' ' .. e.name .. ' ' .. e.abi .. ' ' .. e.protocol)"
         ),
-        "dupes dupes 1 1"
+        "dupes dupes 2 1"
     );
     lua(&mut app, include_str!("ext/dupes.lua"));
 
@@ -176,11 +176,11 @@ fn an_extension_is_refused_with_the_reason() {
 
     let r = load(&mut app, "noabi", &no_abi);
     assert!(
-        r.ends_with("extension declares no ABI; this build is 1"),
+        r.ends_with("extension declares no ABI; this build is 2"),
         "{r}"
     );
     let r = load(&mut app, "wrong", &wrong);
-    assert!(r.ends_with("extension is ABI 99, this build is 1"), "{r}");
+    assert!(r.ends_with("extension is ABI 99, this build is 2"), "{r}");
     let r = load(&mut app, "gone", Path::new("/nowhere/at/all.so"));
     assert!(
         r.starts_with("`gone`: no extension at /nowhere/at/all.")
@@ -234,7 +234,7 @@ fn extensions_lists_what_is_loaded() {
     ex(&mut d, &mut app, "extensions");
     let t = text(&mut app);
     assert!(
-        t.starts_with("dupes          dupes          abi 1  protocol 1  "),
+        t.starts_with("dupes          dupes          abi 2  protocol 1  "),
         "{t}"
     );
     assert!(t.ends_with("dupes.so"), "{t}");
@@ -306,4 +306,76 @@ fn the_library_is_found_by_convention_and_the_path_helpers_name_no_platform() {
             .display()
             .to_string()
     );
+}
+
+/// The text the native pane draws, if it is drawn, and its rect as
+/// `(x, y, w, h)`.
+fn pane_text(d: &mut Drive) -> Option<(String, (f32, f32, f32, f32))> {
+    d.core.nodes().into_iter().find_map(|n| {
+        let t = n.text.clone()?;
+        t.starts_with("native pane ")
+            .then_some((t, (n.rect.x, n.rect.y, n.rect.w, n.rect.h)))
+    })
+}
+
+#[test]
+fn a_native_pane_is_a_slot_and_its_clicks_are_its_own() {
+    let so = build("panel", &[], "panel-build");
+    let (mut d, mut app) = launch("panel", LINES);
+    assert_eq!(load(&mut app, "panel", &so), "ok");
+    assert_eq!(
+        lua(
+            &mut app,
+            "local e = kawoosh.extensions()[1] kawoosh.echo(e.name .. ' ' .. tostring(e.draws))"
+        ),
+        "panel true"
+    );
+    assert!(
+        pane_text(&mut d).is_none(),
+        "nothing drawn before the view is opened"
+    );
+
+    // `:cpanel` opens the view; the pane is the slot `panel/cpanel@N`,
+    // which the extension's `kui_ext_view` fills.
+    ex(&mut d, &mut app, "cpanel");
+    // The new column glides into view: the clock moved past the slide.
+    for _ in 0..4 {
+        d.advance(0.25);
+        d.frame(&mut app);
+    }
+    let (text, rect) = pane_text(&mut d).expect("the native pane is drawn");
+    assert!(text.ends_with(", clicks 0"), "{text}");
+    let (x, y, w, h) = rect;
+    assert!(w > 0.0 && h > 0.0 && x + w <= 1600.0, "{rect:?}");
+
+    // A click on its row goes to its own `kui_ext_on_event`; the next
+    // frame draws the count.
+    d.click(&mut app, x + w / 2.0, y + h / 2.0);
+    d.frame(&mut app);
+    let (text, _) = pane_text(&mut d).unwrap();
+    assert!(text.ends_with(", clicks 1"), "{text}");
+    d.click(&mut app, x + 2.0, y + h / 2.0);
+    d.frame(&mut app);
+    let (text, _) = pane_text(&mut d).unwrap();
+    assert!(text.ends_with(", clicks 2"), "{text}");
+    assert_eq!(d.warnings(), Vec::<String>::new(), "kui raised no warning");
+}
+
+#[test]
+fn a_thread_comes_back_through_kw_wake() {
+    let so = build("panel", &[], "wake-build");
+    let (mut d, mut app) = launch("wake", LINES);
+    assert_eq!(load(&mut app, "panel", &so), "ok");
+    ex(&mut d, &mut app, "cwake");
+    // The thread sleeps 20 ms and queues its wake; a frame runs it.
+    let mut seen = String::new();
+    for _ in 0..200 {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        d.frame(&mut app);
+        seen = app.ed.message.clone();
+        if seen.starts_with("woke") {
+            break;
+        }
+    }
+    assert_eq!(seen, "woke from a thread, namespace none");
 }

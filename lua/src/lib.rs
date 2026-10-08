@@ -1524,6 +1524,32 @@ impl Runtime {
         &self.native
     }
 
+    /// The namespace a native extension registered view `name` under
+    /// (`kawoosh.view(name, nil, nil, { native = ns })`): its pane is
+    /// the slot `ns/name@pane`, which the extension's `kui_ext_view`
+    /// fills. None for a Lua view.
+    pub fn native_namespace_of(&self, name: &str) -> Option<String> {
+        self.lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<Table>("_native"))
+            .and_then(|t| t.get::<Option<String>>(name))
+            .ok()
+            .flatten()
+    }
+
+    /// The libraries loaded since the last call that draw: for the
+    /// shell's frame to add as kui extensions.
+    pub fn take_native_kui(&self) -> Vec<(String, std::path::PathBuf)> {
+        native::take_pending_kui(&self.native)
+    }
+
+    /// Runs the `kw_wake`s queued from threads; how many ran (their
+    /// messages are on the queue, to drain).
+    pub fn run_native_wakes(&self) -> usize {
+        native::run_wakes(&self.native, &self.lua)
+    }
+
     pub fn lua(&self) -> &Lua {
         &self.lua
     }

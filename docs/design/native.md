@@ -3,9 +3,10 @@
 Status: asked 2026-10-08, "how expensive would be to open kawoosh for
 native extension?", three ways costed (Lua C modules, `abi_stable`, an
 ABI of kawoosh's own) and the third chosen: "option 3 is the way, let's
-design, estimate this". The estimate is at the end. **Round one built
-2026-10-08**, "let's get building"; the block after the estimate says
-what the building changed. The calls below are taken here, each the
+design, estimate this". The estimate is at the end. **Rounds one and
+two built 2026-10-08**, "let's get building" and "round two: native
+panes and kw_wake"; the blocks after the estimate say what the
+building changed. The calls below are taken here, each the
 user's to overturn. Companion
 to [plugin-panes.md](plugin-panes.md) (what a Lua plugin can do — a
 native one can do the same, by the same names), [lua-boundary.md](lua-boundary.md)
@@ -425,16 +426,56 @@ door's edges; the list. What the building decided beyond the draft:
   directory's rule moved to `kawoosh_systems::fs::config_dir`, one
   place for the settings, `init.lua`, the door and the lookup.
 
+**Round two, 2026-10-08.** Native panes and `kw_wake`
+(`tests/ext/panel.c`, both families in one library: a pane drawn by
+its `kui_ext_view`, clicked, its count its own; a thread back through
+`kw_wake`). What the building decided beyond the draft:
+
+- **A view says its namespace.** `kawoosh.view(name, nil, nil, {
+  native = NS })` registers a view whose pane is the slot
+  `NS/name@PANE`; the extension reads `NS` with `kw_namespace`, a
+  fifth function, since the host decides the namespace (kui's rule).
+  The Lua function, when none is given, draws "`NS` draws no such
+  view" — what a pane shows when the library has no `kui_ext_view`.
+  `Content::Lua(name)` is unchanged: the namespace is looked up at
+  draw, so maps with `view = name`, sessions and `:view_open` know
+  nothing new.
+- **`kw_ext_init` first, `kui_ext_init` on the first frame after.**
+  The draft had kui's first. `kawoosh.extension` opens the library
+  itself and runs `kw_ext_init` with a context there and then; a
+  library that exports `kui_ext_abi` is noted (`draws` in
+  `kawoosh.extensions()`) and the shell's next frame opens it again as
+  a `CExtension` — the same handle, the loader's count up by one —
+  and adds it under the namespace, where `Ui::add_extension` can run.
+  So kui's init has no `KwCtx`, as the draft said, and the order is
+  the one the two loaders allow: register in `kw_ext_init`, draw from
+  `kui_ext_view`.
+- **The kui half outlives a config reload.** It lives in the frame's
+  extension list, outside the runtime; a reload runs `kw_ext_init`
+  again and leaves the namespace kui holds as it is (a second
+  `add_extension` would be refused). A refusal of the kui half — no
+  `kui_ext_view`, another `KUI_ABI_VERSION` — is a toast under the
+  `extension` source on that frame; the `kw` half is loaded regardless.
+- **`kw_wake` is a static queue and the shell's wake handle**, set in
+  `App::setup` (`native::set_waker`); before it is set, as in the
+  tests, a wake queues and the next frame runs it. The frame runs the
+  queue after the processes' lines (`sync_native`), `wait_for_jobs`
+  runs it too, and a wake's context has no namespace — the header says
+  to keep it in `user`. ABI 2.
+- **The test drives the pane as a user would**: `:cpanel` opens it,
+  the tab's slide is let run (`advance`), the row is clicked at its
+  rect, the next frame's text carries the count; kui raised no warning.
+
 ## Open
 
 - **A door's documentation for C.** `types/` is written for LuaLS. The
   same `meta.rs` can emit a `kawoosh-doors.md` naming each door's
   arguments as value shapes; until it does, the Lua types are the
   reference, and `kw_call` is the Lua call with the parentheses moved.
-- **`kui_ext_init` before `kw_ext_init`**, with no context in the
-  first. Fine for state; a plugin that wants a door in `kui_ext_init`
-  waits a frame. If that bites, kawoosh's loader runs both itself and
-  hands the context to both.
+- **`kui_ext_init` after `kw_ext_init`**, with no context (round
+  two). Fine for state; a plugin that wants a door from kui's side
+  keeps a pointer to what `kw_ext_init` made. If that bites, kawoosh's
+  loader runs both itself and hands the context to both.
 - **Unloading** is refused by design; a `kw_fn` handle may be alive. An
   `:extension reload NS` that refuses while any handle is registered is
   possible, and not worth the race until a developer loop asks.

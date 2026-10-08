@@ -1131,6 +1131,7 @@ impl Kawoosh {
             self.drain_lua();
             self.drain_io();
             self.flush_proc_lines();
+            self.run_native_wakes();
             self.sync_syntax();
             if self.pending_jobs == 0 {
                 return;
@@ -2567,6 +2568,7 @@ impl kui_native::App for Kawoosh {
             w.set(wake.clone());
         }
         self.wake.set(wake);
+        kawoosh_lua::native::set_waker(self.wake.named("native"));
         let path = kawoosh_systems::io::socket_path();
         match self.io.listen(&path) {
             Ok(()) => {
@@ -2632,6 +2634,7 @@ impl kui_native::App for Kawoosh {
         }
         t = self.perf.lap(Io, "io drain", t);
         self.flush_proc_lines();
+        self.sync_native(ui);
         t = self.perf.lap(Io, "processes", t);
         self.sync_settings();
         self.fire_settings();

@@ -10,6 +10,8 @@ kawoosh = kawoosh or {}
 kawoosh._views = {}
 kawoosh._handlers = {}
 kawoosh._commands = {}
+-- The views native extensions draw, by name: the namespace each is under.
+kawoosh._native = {}
 kawoosh._writers = {}
 kawoosh._changers = {}
 kawoosh._restorers = {}
@@ -472,6 +474,17 @@ end
 -- `opts.here(pane)` says the directory the pane shows, if any: where
 -- `:terminal here` starts from it.
 function kawoosh.view(name, fn, on_event, opts)
+  -- `{ native = NAMESPACE }`: the view a native extension draws
+  -- (docs/design/native.md Decision 4) — its pane is the slot
+  -- `NAMESPACE/NAME@PANE`, which the extension's `kui_ext_view` fills;
+  -- the function here is what draws if the extension does not.
+  if opts and opts.native then
+    kawoosh._native[name] = tostring(opts.native)
+    fn = fn or function(ctx)
+      return column { pad = 12, text("`" .. name .. "`: `" .. tostring(opts.native) ..
+        "` draws no such view", { color = ctx.env.theme.danger }) }
+    end
+  end
   kawoosh._views[name] = fn
   kawoosh._handlers[name] = on_event
   kawoosh._transient[name] = (opts and opts.session == false) or nil

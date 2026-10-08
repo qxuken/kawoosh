@@ -26,9 +26,31 @@
  * extension that registers nothing does nothing. The strings and values
  * are kui's (KuiStr, KuiValue, the kui_value_* functions): the one value
  * type an extension already builds for kui_open. An extension that also
- * defines kui's seven kui_ext_* entry points draws its own panes
- * (native.md Decision 4); one that defines these four only is a
- * command-line extension.
+ * defines kui's kui_ext_* entry points draws its own panes (native.md
+ * Decision 4); one that defines these four only is a command-line
+ * extension.
+ *
+ * A PANE OF YOUR OWN. Register a view whose drawing is yours:
+ *
+ *     KuiStr ns; kw_namespace(ctx, &ns);
+ *     kw_call(ctx, "view", [ "panel", null, null, { native = ns } ])
+ *
+ * and define kui's seven (kui_ext_abi returning KUI_ABI_VERSION,
+ * kui_ext_slots answering { "*" }, kui_ext_view, kui_ext_on_event and
+ * the rest). `:view_open panel`, or kw_call("view_open", ["panel"]),
+ * puts it in a pane; each pane is the slot NAMESPACE/panel@PANE, which
+ * your kui_ext_view fills with kui_open / kui_text / kui_close, reading
+ * kui_slot_params for `pane`, `focused`, `width`, `height`, `title_h`
+ * and kui_theme for the colours. Clicks on your own nodes come to
+ * kui_ext_on_event; keys are kawoosh maps with `view = "panel"`,
+ * registered through kw_call("map", ...). Your kui_ext_init runs on the
+ * first frame after kw_ext_init, with no KwCtx and a state of its own:
+ * register in kw_ext_init, draw from kui_ext_view.
+ *
+ * A THREAD OF YOUR OWN. Everything here runs on the UI thread. Work you
+ * do on a thread comes back with kw_wake(fn, user), the one function
+ * callable from any thread: fn runs on the UI thread, soon, with a
+ * context of its own.
  *
  * Ownership is one rule: the extension frees what it made and what it
  * was returned; the host frees nothing of the extension's. Arguments
@@ -58,7 +80,7 @@ extern "C" {
  * the editor crosses as data (kw_call) and not as prototypes. Which
  * doors exist, and what they take, is the protocol (kw_protocol) and
  * moves with kawoosh's releases. */
-#define KW_ABI_VERSION 1
+#define KW_ABI_VERSION 2
 
 /* One call's context: the runtime's Lua and its native state. Opaque. */
 typedef struct KwCtx KwCtx;
@@ -110,6 +132,18 @@ bool kw_error(KwCtx *ctx, KuiStr *out);
 
 /* The doors' version; 0 on a null context. */
 uint32_t kw_protocol(KwCtx *ctx);
+
+/* The namespace the extension whose call this is was loaded under -
+ * what a view registers as `native`, and what tells one instance of you
+ * from another when a host loads you twice. Borrowed for the call.
+ * False with nothing written on a wake's context (kw_wake) or a null
+ * one. */
+bool kw_namespace(KwCtx *ctx, KuiStr *out);
+
+/* fn(user, ctx, NULL) on the UI thread, soon: the frame is woken. The
+ * one kw_* callable from any thread. The context it gets has no
+ * namespace; keep yours in `user`. A null fn does nothing. */
+void kw_wake(KwFn fn, void *user);
 
 /* A callable value, to put where Lua would put a function: a command's
  * body, an on_* hook, a spawn's on_lines. Yours to free like any value,

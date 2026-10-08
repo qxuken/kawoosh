@@ -97,6 +97,9 @@ pub struct Scripting {
     /// The bundled plugins are loading: what they declare is part of
     /// every launch, not news (a language they register is no log line).
     pub bundled: bool,
+    /// The namespaces of the native extensions added to the frame as
+    /// kui extensions (`sync_native`): once for the process.
+    pub kui_added: std::collections::HashSet<String>,
     /// The plugins' kinds of build (`kawoosh.compile_kind`, compile.md
     /// Decision 17), in the order first said, a name said again in its
     /// place; `None` a builtin's name turned off.
@@ -2112,11 +2115,64 @@ impl Kawoosh {
                 .on_click(tag),
             |ui| {
                 self.publish_drawing(name);
-                ui.slot_with(&format!("lua/{name}@{pane}"), &params);
+                // A native extension's view is its own slot
+                // (native.md Decision 4): under its namespace, the
+                // params the same, filled by its `kui_ext_view`.
+                let ns = self
+                    .scripting
+                    .rt
+                    .as_ref()
+                    .and_then(|rt| rt.native_namespace_of(name))
+                    .unwrap_or_else(|| "lua".into());
+                ui.slot_with(&format!("{ns}/{name}@{pane}"), &params);
             },
         );
         if focused {
             self.focus_sink(ui, sink);
+        }
+    }
+
+    /// The native extensions' frame half (native.md Decisions 4 and 5):
+    /// a library loaded since the last frame that draws is added to
+    /// the frame as a kui extension under its namespace — here, where
+    /// `Ui::add_extension` can run — and the `kw_wake`s threads queued
+    /// run, their messages drained. A namespace kui already holds (a
+    /// config reload loaded the library again) is left as it is: the
+    /// kui half lives in the frame's list, outside the runtime.
+    pub(crate) fn sync_native(&mut self, ui: &mut Ui<'_>) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        for (ns, path) in rt.take_native_kui() {
+            if self.scripting.kui_added.contains(&ns) {
+                continue;
+            }
+            // SAFETY: as the loader's — the library's code runs in this
+            // process already, from `kw_ext_init`.
+            let added = unsafe { kui_ffi::CExtension::open(&path) }
+                .and_then(|ext| ui.add_extension(&ns, Box::new(ext)));
+            match added {
+                Ok(_) => {
+                    self.scripting.kui_added.insert(ns);
+                }
+                Err(e) => {
+                    self.notify_with(
+                        Note::new(Level::Error, format!("{ns}: {e}")).source("extension"),
+                    );
+                }
+            }
+        }
+        self.run_native_wakes();
+    }
+
+    /// The `kw_wake`s queued from threads, run; what they asked for
+    /// applied.
+    pub(crate) fn run_native_wakes(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        if rt.run_native_wakes() > 0 {
+            self.drain_lua();
         }
     }
 
