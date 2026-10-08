@@ -39,10 +39,8 @@ static KuiValue *ran(void *user, KwCtx *ctx, const KuiValue *args) {
     kui_value_as_int(kui_value_get(c, KUI_STR("count")), &count);
     char msg[64];
     snprintf(msg, sizeof msg, "probe ran, count %lld", (long long)count);
-    KuiValue *a = one(kui_value_str(KUI_STR(msg)));
-    kui_value_free(kw_call(ctx, KUI_STR("echo"), a));
-    kui_value_free(a);
-    return kui_value_int(7); /* the host frees it */
+    kw_do(ctx, "echo", kw_str(msg));
+    return kw_int(7); /* the host frees it */
 }
 
 void *kw_ext_init(KwCtx *ctx) {
@@ -100,13 +98,9 @@ void *kw_ext_init(KwCtx *ctx) {
     snprintf(p, sizeof p, "protocol: %u", kw_protocol(ctx));
     line(p, KUI_STR(""));
     /* a command whose body is a handle */
-    a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR("probe")));
-    kui_value_list_push(a, kw_fn(ctx, ran, NULL));
-    r = kw_call(ctx, KUI_STR("command"), a);
-    line("command: ", r ? KUI_STR("registered") : error_of(ctx));
-    kui_value_free(r);
-    kui_value_free(a);
+    line("command: ", kw_do(ctx, "command", kw_str("probe"), kw_fn(ctx, ran, NULL))
+                          ? KUI_STR("registered")
+                          : error_of(ctx));
     /* a null function is no handle */
     r = kw_fn(ctx, NULL, NULL);
     line("null fn: ", r ? KUI_STR("a handle") : error_of(ctx));
@@ -124,11 +118,6 @@ void *kw_ext_init(KwCtx *ctx) {
     kui_value_free(h3);
 
     if (rlen > 0) rlen--;
-    KuiValue *spec = kui_value_map();
-    kui_value_map_set(spec, KUI_STR("name"), kui_value_str(KUI_STR("probe")));
-    kui_value_map_set(spec, KUI_STR("text"), kui_value_str((KuiStr){(const uint8_t *)report, rlen}));
-    a = one(spec);
-    kui_value_free(kw_call(ctx, KUI_STR("buf.open_scratch"), a));
-    kui_value_free(a);
+    kw_do(ctx, "buf.open_scratch", kw_map("name", kw_str("probe"), "text", kw_strn(report, rlen), NULL));
     return NULL;
 }

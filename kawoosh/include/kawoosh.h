@@ -33,7 +33,8 @@
  * A PANE OF YOUR OWN. Register a view whose drawing is yours:
  *
  *     KuiStr ns; kw_namespace(ctx, &ns);
- *     kw_call(ctx, "view", [ "panel", null, null, { native = ns } ])
+ *     kw_do(ctx, "view", kw_str("panel"), kw_null(), kw_null(),
+ *           kw_map("native", kw_strn(ns.ptr, ns.len), NULL));
  *
  * and define kui's seven (kui_ext_abi returning KUI_ABI_VERSION,
  * kui_ext_slots answering { "*" }, kui_ext_view, kui_ext_on_event and
@@ -191,6 +192,101 @@ bool kw_buf_edits(KwCtx *ctx, uint64_t buffer, const KwEdit *edits, size_t n);
  * after the first. NULL for a null `fn`. The value is a map with the
  * one key "kw_fn"; build it here, not by hand. */
 KuiValue *kw_fn(KwCtx *ctx, KwFn fn, void *user);
+
+/* -- Shorthand: the call as a call -------------------------------------
+ *
+ * Nothing below is ABI: static inline over kw_call and kui_value_*, in
+ * this header alone, so the parity test and the ABI number do not know
+ * it. Values are kui's, as lua_State is Lua's; these spell the ones
+ * you make from C strings and literals, and let a door be called in one
+ * line with its arguments consumed, so there is nothing to free but
+ * what comes back:
+ *
+ *     kw_do(ctx, "command", kw_str("dupes"), kw_fn(ctx, run, s));
+ *     kw_do(ctx, "map", kw_str("n"), kw_str("<leader>cd"), kw_str("dupes"));
+ *     KuiValue *lines = kw_callv(ctx, "buf.lines", kw_int(buffer));
+ *
+ * kw_callv and kw_do take one argument at least; a door called with
+ * none is kw_call(ctx, KUI_STR(name), NULL). Reading what comes back
+ * stays kui_value_as_str, kui_value_at and the rest. */
+
+#include <stdarg.h>
+
+static inline KuiValue *kw_null(void) { return kui_value_null(); }
+static inline KuiValue *kw_bool(bool v) { return kui_value_bool(v); }
+static inline KuiValue *kw_int(int64_t v) { return kui_value_int(v); }
+static inline KuiValue *kw_float(double v) { return kui_value_float(v); }
+/* A NUL-terminated C string, copied. */
+static inline KuiValue *kw_str(const char *s) { return kui_value_str(KUI_STR(s)); }
+/* `n` bytes at `p`, copied - a KuiStr's, a buffer's. */
+static inline KuiValue *kw_strn(const void *p, size_t n) {
+    return kui_value_str((KuiStr){(const uint8_t *)p, n});
+}
+
+/* kw_list(v, ...): a list of the values, consumed; kw_map("k", v, ...,
+ * NULL): a map of the pairs, consumed. Both end on NULL, which the
+ * macros supply for the list and you supply for the map. */
+static inline KuiValue *kw_list_(KuiValue *first, ...) {
+    KuiValue *list = kui_value_list();
+    va_list ap;
+    va_start(ap, first);
+    for (KuiValue *v = first; v; v = va_arg(ap, KuiValue *)) kui_value_list_push(list, v);
+    va_end(ap);
+    return list;
+}
+#define kw_list(...) kw_list_(__VA_ARGS__, NULL)
+
+static inline KuiValue *kw_map(const char *key, ...) {
+    KuiValue *map = kui_value_map();
+    va_list ap;
+    va_start(ap, key);
+    for (const char *k = key; k; k = va_arg(ap, const char *))
+        kui_value_map_set(map, KUI_STR(k), va_arg(ap, KuiValue *));
+    va_end(ap);
+    return map;
+}
+
+/* kw_callv(ctx, "door", v, ...): kw_call with the values as its
+ * arguments, consumed; what comes back is yours, NULL with kw_error as
+ * kw_call's. kw_do: the same, the result dropped, true when the door
+ * answered. */
+static inline KuiValue *kw_callv_(KwCtx *ctx, KuiStr name, KuiValue *first, ...) {
+    KuiValue *args = kui_value_list();
+    va_list ap;
+    va_start(ap, first);
+    for (KuiValue *v = first; v; v = va_arg(ap, KuiValue *)) kui_value_list_push(args, v);
+    va_end(ap);
+    KuiValue *out = kw_call(ctx, name, args);
+    kui_value_free(args);
+    return out;
+}
+#define kw_callv(ctx, name, ...) kw_callv_((ctx), KUI_STR(name), __VA_ARGS__, NULL)
+
+static inline bool kw_do_(KwCtx *ctx, KuiStr name, KuiValue *first, ...) {
+    KuiValue *args = kui_value_list();
+    va_list ap;
+    va_start(ap, first);
+    for (KuiValue *v = first; v; v = va_arg(ap, KuiValue *)) kui_value_list_push(args, v);
+    va_end(ap);
+    KuiValue *out = kw_call(ctx, name, args);
+    kui_value_free(args);
+    bool ok = out != NULL;
+    kui_value_free(out);
+    return ok;
+}
+#define kw_do(ctx, name, ...) kw_do_((ctx), KUI_STR(name), __VA_ARGS__, NULL)
+
+/* The reason the last call failed, as a C string into `buf`: for a
+ * message. Empty when there was none. */
+static inline const char *kw_error_str(KwCtx *ctx, char *buf, size_t cap) {
+    KuiStr e = {0, 0};
+    size_t n = kw_error(ctx, &e) && e.len < cap ? e.len : (cap ? cap - 1 : 0);
+    if (cap) {
+        if (n) memcpy(buf, e.ptr, n);
+        buf[n] = 0;
+    }
+    return buf;
+}
 
 #ifdef __cplusplus
 }

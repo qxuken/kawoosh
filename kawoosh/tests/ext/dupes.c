@@ -81,15 +81,8 @@ static KuiValue *run(void *user, KwCtx *ctx, const KuiValue *args) {
     } else {
         olen--; /* the last newline */
     }
-    KuiValue *spec = kui_value_map();
-    kui_value_map_set(spec, KUI_STR("name"), kui_value_str(KUI_STR("dupes")));
-    kui_value_map_set(spec, KUI_STR("text"), kui_value_str((KuiStr){(const uint8_t *)out, olen}));
-    kui_value_map_set(spec, KUI_STR("read_only"), kui_value_bool(true));
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, spec);
-    KuiValue *r = kw_call(ctx, KUI_STR("buf.open_scratch"), a);
-    kui_value_free(a);
-    kui_value_free(r);
+    kw_do(ctx, "buf.open_scratch",
+          kw_map("name", kw_str("dupes"), "text", kw_strn(out, olen), "read_only", kw_bool(true), NULL));
     kui_value_free(lines);
     free(tab);
     free(out);
@@ -103,20 +96,8 @@ typedef struct {
 void *kw_ext_init(KwCtx *ctx) {
     State *s = calloc(1, sizeof *s);
     s->inits++;
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR("dupes")));
-    kui_value_list_push(a, kw_fn(ctx, run, s));
-    KuiValue *r = kw_call(ctx, KUI_STR("command"), a);
-    kui_value_free(a);
-    kui_value_free(r);
-
-    a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR("n")));
-    kui_value_list_push(a, kui_value_str(KUI_STR("<leader>cd")));
-    kui_value_list_push(a, kui_value_str(KUI_STR("dupes")));
-    r = kw_call(ctx, KUI_STR("map"), a);
-    kui_value_free(a);
-    kui_value_free(r);
+    kw_do(ctx, "command", kw_str("dupes"), kw_fn(ctx, run, s));
+    kw_do(ctx, "map", kw_str("n"), kw_str("<leader>cd"), kw_str("dupes"));
     return s;
 }
 

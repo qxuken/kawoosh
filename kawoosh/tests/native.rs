@@ -489,12 +489,14 @@ fn the_header_describes_what_rust_lays_out() {
         kw_buf_edits(*mut KwCtx, u64, *const KwEdit, usize) -> bool
     );
 
-    // The header's prototypes, the extension's own entry points aside:
-    // every one is a row, every row is one.
+    // The header's prototypes, the extension's own entry points and
+    // the inline shorthand (no ABI) aside: every one is a row, every
+    // row is one.
     let header = include_str!("../include/kawoosh.h");
     let mut declared: Vec<&str> = header
         .lines()
         .filter(|l| !l.starts_with(' ') && !l.starts_with('*') && !l.starts_with('/'))
+        .filter(|l| !l.starts_with("static inline") && !l.starts_with('#'))
         .filter_map(|l| {
             let at = l.find("kw_")?;
             let name = &l[at..];

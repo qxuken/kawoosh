@@ -18,18 +18,10 @@
 uint32_t kw_ext_abi(void) { return KW_ABI_VERSION; }
 const char *kw_ext_name(void) { return "panel"; }
 
-static KuiValue *one_str(const char *s) {
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR(s)));
-    return a;
-}
-
 static KuiValue *open_pane(void *user, KwCtx *ctx, const KuiValue *args) {
     (void)user;
     (void)args;
-    KuiValue *a = one_str("cpanel");
-    kui_value_free(kw_call(ctx, KUI_STR("view_open"), a));
-    kui_value_free(a);
+    kw_do(ctx, "view_open", kw_str("cpanel"));
     return NULL;
 }
 
@@ -39,9 +31,7 @@ static KuiValue *woke(void *user, KwCtx *ctx, const KuiValue *args) {
     char msg[64];
     snprintf(msg, sizeof msg, "woke from a thread, namespace %s",
              kw_namespace(ctx, &(KuiStr){0}) ? "known" : "none");
-    KuiValue *a = one_str(msg);
-    kui_value_free(kw_call(ctx, KUI_STR("echo"), a));
-    kui_value_free(a);
+    kw_do(ctx, "echo", kw_str(msg));
     free(user);
     return NULL;
 }
@@ -69,9 +59,7 @@ static KuiValue *thread_misuse(void *user, KwCtx *ctx, const KuiValue *args) {
     void *out = NULL;
     pthread_create(&t, NULL, misuse, ctx);
     pthread_join(t, &out);
-    KuiValue *a = one_str(out ? "off-thread call refused" : "off-thread call answered");
-    kui_value_free(kw_call(ctx, KUI_STR("echo"), a));
-    kui_value_free(a);
+    kw_do(ctx, "echo", kw_str(out ? "off-thread call refused" : "off-thread call answered"));
     return NULL;
 }
 
@@ -85,28 +73,15 @@ static KuiValue *start_thread(void *user, KwCtx *ctx, const KuiValue *args) {
     return NULL;
 }
 
-static void command(KwCtx *ctx, const char *name, KwFn fn) {
-    KuiValue *a = one_str(name);
-    kui_value_list_push(a, kw_fn(ctx, fn, NULL));
-    kui_value_free(kw_call(ctx, KUI_STR("command"), a));
-    kui_value_free(a);
-}
-
 void *kw_ext_init(KwCtx *ctx) {
     KuiStr ns;
     if (!kw_namespace(ctx, &ns)) return NULL;
     /* kawoosh.view("cpanel", nil, nil, { native = NS }) */
-    KuiValue *a = one_str("cpanel");
-    kui_value_list_push(a, kui_value_null());
-    kui_value_list_push(a, kui_value_null());
-    KuiValue *opts = kui_value_map();
-    kui_value_map_set(opts, KUI_STR("native"), kui_value_str(ns));
-    kui_value_list_push(a, opts);
-    kui_value_free(kw_call(ctx, KUI_STR("view"), a));
-    kui_value_free(a);
-    command(ctx, "cpanel", open_pane);
-    command(ctx, "cwake", start_thread);
-    command(ctx, "cmisuse", thread_misuse);
+    kw_do(ctx, "view", kw_str("cpanel"), kw_null(), kw_null(),
+          kw_map("native", kw_strn(ns.ptr, ns.len), NULL));
+    kw_do(ctx, "command", kw_str("cpanel"), kw_fn(ctx, open_pane, NULL));
+    kw_do(ctx, "command", kw_str("cwake"), kw_fn(ctx, start_thread, NULL));
+    kw_do(ctx, "command", kw_str("cmisuse"), kw_fn(ctx, thread_misuse, NULL));
     return NULL;
 }
 

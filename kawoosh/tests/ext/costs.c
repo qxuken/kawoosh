@@ -17,12 +17,7 @@ static double now_ms(void) {
     return t.tv_sec * 1e3 + t.tv_nsec / 1e6;
 }
 
-static void echo(KwCtx *ctx, const char *s) {
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR(s)));
-    kui_value_free(kw_call(ctx, KUI_STR("echo"), a));
-    kui_value_free(a);
-}
+static void echo(KwCtx *ctx, const char *s) { kw_do(ctx, "echo", kw_str(s)); }
 
 /* The command's count: its first argument, else 1. */
 static long count_of(const KuiValue *args) {
@@ -70,20 +65,11 @@ static KuiValue *edits_data(void *user, KwCtx *ctx, const KuiValue *args) {
     long n = count_of(args);
     double t = now_ms();
     KuiValue *list = kui_value_list();
-    for (long i = 0; i < n; i++) {
-        KuiValue *e = kui_value_list();
-        kui_value_list_push(e, kui_value_int(i * 64));
-        kui_value_list_push(e, kui_value_int(i * 64));
-        kui_value_list_push(e, kui_value_str(KUI_STR("x")));
-        kui_value_list_push(list, e);
-    }
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, list);
-    KuiValue *r = kw_call(ctx, KUI_STR("buf.edits"), a);
-    kui_value_free(a);
+    for (long i = 0; i < n; i++)
+        kui_value_list_push(list, kw_list(kw_int(i * 64), kw_int(i * 64), kw_str("x")));
+    bool ok = kw_do(ctx, "buf.edits", list);
     char msg[96];
-    snprintf(msg, sizeof msg, "%.3f ms to queue %ld edits%s", now_ms() - t, n, r ? "" : " (refused)");
-    kui_value_free(r);
+    snprintf(msg, sizeof msg, "%.3f ms to queue %ld edits%s", now_ms() - t, n, ok ? "" : " (refused)");
     echo(ctx, msg);
     return NULL;
 }
@@ -103,16 +89,8 @@ static KuiValue *edits_typed(void *user, KwCtx *ctx, const KuiValue *args) {
 }
 
 static void command(KwCtx *ctx, const char *name, KwFn fn) {
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR(name)));
-    kui_value_list_push(a, kw_fn(ctx, fn, NULL));
-    KuiValue *opts = kui_value_map();
-    KuiValue *spec = kui_value_list();
-    kui_value_list_push(spec, kui_value_str(KUI_STR("text")));
-    kui_value_map_set(opts, KUI_STR("args"), spec);
-    kui_value_list_push(a, opts);
-    kui_value_free(kw_call(ctx, KUI_STR("command"), a));
-    kui_value_free(a);
+    kw_do(ctx, "command", kw_str(name), kw_fn(ctx, fn, NULL),
+          kw_map("args", kw_list(kw_str("text")), NULL));
 }
 
 void *kw_ext_init(KwCtx *ctx) {

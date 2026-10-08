@@ -280,7 +280,9 @@ pins the ABI number it was written for.
 
 `tests/ext/dupes.c`, as the tests build it: the command `dupes` lists
 a buffer's duplicate lines in a scratch pane. Nothing drawn, so the
-four `kw_ext_*` only; the hashing is left out here.
+four `kw_ext_*` only; the hashing is left out here. The `kw_do`,
+`kw_str`, `kw_map` spellings are the header's shorthand (static
+inline, no ABI) over `kw_call` and kui's values.
 
 ```c
 #include "kawoosh.h"
@@ -295,31 +297,15 @@ static KuiValue *run(void *user, KwCtx *ctx, const KuiValue *args) {
     size_t n = kui_value_len(lines);
     /* ... one hash pass over kui_value_at(lines, i), the report built into `out` ... */
 
-    KuiValue *spec = kui_value_map();
-    kui_value_map_set(spec, KUI_STR("name"), kui_value_str(KUI_STR("dupes")));
-    kui_value_map_set(spec, KUI_STR("text"), kui_value_str((KuiStr){(const uint8_t *)out, olen}));
-    kui_value_map_set(spec, KUI_STR("read_only"), kui_value_bool(true));
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, spec);                   /* consumed by the list */
-    kui_value_free(kw_call(ctx, KUI_STR("buf.open_scratch"), a));
-    kui_value_free(a);                              /* ours: freed, the host consumed nothing */
+    kw_do(ctx, "buf.open_scratch",
+          kw_map("name", kw_str("dupes"), "text", kw_strn(out, olen), "read_only", kw_bool(true), NULL));
     kui_value_free(lines);
     return NULL;
 }
 
 void *kw_ext_init(KwCtx *ctx) {
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR("dupes")));
-    kui_value_list_push(a, kw_fn(ctx, run, NULL));  /* where Lua takes a function */
-    kui_value_free(kw_call(ctx, KUI_STR("command"), a));
-    kui_value_free(a);
-
-    a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR("n")));
-    kui_value_list_push(a, kui_value_str(KUI_STR("<leader>cd")));
-    kui_value_list_push(a, kui_value_str(KUI_STR("dupes")));
-    kui_value_free(kw_call(ctx, KUI_STR("map"), a));
-    kui_value_free(a);
+    kw_do(ctx, "command", kw_str("dupes"), kw_fn(ctx, run, NULL));   /* kw_fn: where Lua takes a function */
+    kw_do(ctx, "map", kw_str("n"), kw_str("<leader>cd"), kw_str("dupes"));
     return NULL;
 }
 
@@ -346,15 +332,8 @@ view as its own —
 KuiStr ns;
 kw_namespace(ctx, &ns);
 /* kawoosh.view("panel", nil, nil, { native = NS }) */
-KuiValue *a = kui_value_list();
-kui_value_list_push(a, kui_value_str(KUI_STR("panel")));
-kui_value_list_push(a, kui_value_null());
-kui_value_list_push(a, kui_value_null());
-KuiValue *opts = kui_value_map();
-kui_value_map_set(opts, KUI_STR("native"), kui_value_str(ns));
-kui_value_list_push(a, opts);
-kui_value_free(kw_call(ctx, KUI_STR("view"), a));
-kui_value_free(a);
+kw_do(ctx, "view", kw_str("panel"), kw_null(), kw_null(),
+      kw_map("native", kw_strn(ns.ptr, ns.len), NULL));
 ```
 
 — and `kui_ext_view` draws each pane of it with kui's own builders,
@@ -366,10 +345,8 @@ void kui_ext_view(void *user, KuiCtx *ui) {
     kui_theme(ui, &t);
     KuiSpec column = {.dir = KUI_COLUMN, .width = {KUI_GROW, 1}, .height = {KUI_GROW, 1}, .pad_l = 12};
     kui_open(ui, &column, NULL);
-    KuiValue *tag = kui_value_map();
-    kui_value_map_set(tag, KUI_STR("kind"), kui_value_str(KUI_STR("bump")));
     KuiSpec row = {.dir = KUI_ROW};
-    kui_open(ui, &row, tag);                        /* its clicks come to kui_ext_on_event */
+    kui_open(ui, &row, kw_map("kind", kw_str("bump"), NULL));   /* its clicks come to kui_ext_on_event */
     KuiTextStyle style = {.size = 14, .color = t.fg};
     kui_text(ui, KUI_STR("a native pane"), &style);
     kui_close(ui);
@@ -569,6 +546,26 @@ And three lines in the header: no `kw_*` function consumes a value
 (unlike `kui_open` and `kui_value_map_set`); a buffer handle is never
 0, which is why 0 can mean the current one; `kw_protocol` moves when a
 door's shape changes after a release.
+
+**And the call as a call** ("very luaish; i don't really like that we
+use kui and kw in that strange way"): the ceremony was the caller
+building Lua's argument list by hand, a push and a free per value,
+and spelling kui's names on every line of an extension that never
+draws. The fix is in the header alone — `static inline` over `kw_call`
+and `kui_value_*`, since Rust cannot define a C variadic on stable and
+the ABI should not carry what C can spell for itself: `kw_str`,
+`kw_strn`, `kw_int`, `kw_bool`, `kw_float`, `kw_null` for the values
+an extension makes; `kw_list(…)` and `kw_map("k", v, …, NULL)` for
+the shapes; `kw_callv(ctx, "door", v, …)` and `kw_do(ctx, "door", v,
+…)` for the call with its arguments consumed, the second dropping the
+result and answering whether the door did; `kw_error_str` for a
+message. A registration is one line. Reading what comes back stays
+kui's (`kui_value_as_str`, `kui_value_at`): values are kui's as
+`lua_State` is Lua's, and a second name for one type would be the
+worse confusion. The parity test skips the inline lines, since they
+are no ABI. Typed prototypes for `command`, `map` and `view` — the
+third copy of the API, for three doors — stay declined until the
+shorthand reads badly in a real extension.
 
 ## Open
 

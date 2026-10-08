@@ -8,18 +8,11 @@
 
 uint32_t kw_ext_abi(void) { return KW_ABI_VERSION; }
 
-static void echo(KwCtx *ctx, const char *s) {
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR(s)));
-    kui_value_free(kw_call(ctx, KUI_STR("echo"), a));
-    kui_value_free(a);
-}
+static void echo(KwCtx *ctx, const char *s) { kw_do(ctx, "echo", kw_str(s)); }
 
 static void echo_error(KwCtx *ctx, const char *head) {
-    KuiStr e = KUI_STR("(no error)");
-    kw_error(ctx, &e);
-    char msg[256];
-    snprintf(msg, sizeof msg, "%s%.*s", head, (int)e.len, (const char *)e.ptr);
+    char why[200], msg[256];
+    snprintf(msg, sizeof msg, "%s%s", head, kw_error_str(ctx, why, sizeof why));
     echo(ctx, msg);
 }
 
@@ -83,18 +76,10 @@ static KuiValue *cedits_bad(void *user, KwCtx *ctx, const KuiValue *args) {
     return NULL;
 }
 
-static void command(KwCtx *ctx, const char *name, KwFn fn) {
-    KuiValue *a = kui_value_list();
-    kui_value_list_push(a, kui_value_str(KUI_STR(name)));
-    kui_value_list_push(a, kw_fn(ctx, fn, NULL));
-    kui_value_free(kw_call(ctx, KUI_STR("command"), a));
-    kui_value_free(a);
-}
-
 void *kw_ext_init(KwCtx *ctx) {
-    command(ctx, "ctext", ctext);
-    command(ctx, "ctext_bad", ctext_bad);
-    command(ctx, "cedits", cedits);
-    command(ctx, "cedits_bad", cedits_bad);
+    kw_do(ctx, "command", kw_str("ctext"), kw_fn(ctx, ctext, NULL));
+    kw_do(ctx, "command", kw_str("ctext_bad"), kw_fn(ctx, ctext_bad, NULL));
+    kw_do(ctx, "command", kw_str("cedits"), kw_fn(ctx, cedits, NULL));
+    kw_do(ctx, "command", kw_str("cedits_bad"), kw_fn(ctx, cedits_bad, NULL));
     return NULL;
 }
