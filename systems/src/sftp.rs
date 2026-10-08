@@ -228,11 +228,14 @@ fn packet(typ: u8, body: &[u8]) -> Vec<u8> {
 /// after the id.
 type Answer = crossbeam_channel::Receiver<(u8, Vec<u8>)>;
 
+/// Who waits on a request's answer.
+type Waiter = crossbeam_channel::Sender<(u8, Vec<u8>)>;
+
 /// The requests sent and not answered yet, by id, and whether the
 /// connection is gone — shared with the thread reading the answers.
 #[derive(Default)]
 struct Shared {
-    waiting: Mutex<std::collections::HashMap<u32, crossbeam_channel::Sender<(u8, Vec<u8>)>>>,
+    waiting: Mutex<std::collections::HashMap<u32, Waiter>>,
     /// Set when the pipe to the server broke: every call fails from then
     /// on, and the domain is down (`Fs::is_alive`).
     dead: std::sync::atomic::AtomicBool,
@@ -246,8 +249,7 @@ impl Shared {
     /// The connection gone: said, and every request waiting let go —
     /// its answer an error.
     fn die(&self) {
-        self.dead
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.dead.store(true, std::sync::atomic::Ordering::Relaxed);
         self.waiting
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -334,8 +336,7 @@ impl Sftp {
                 let said = said
                     .lines()
                     .map(str::trim)
-                    .filter(|l| !l.is_empty())
-                    .last()
+                    .rfind(|l| !l.is_empty())
                     .unwrap_or("");
                 return Err(if said.is_empty() {
                     e
@@ -364,10 +365,7 @@ impl Sftp {
         std::thread::Builder::new()
             .name("sftp".into())
             .spawn(move || {
-                loop {
-                    let Ok((t, b)) = recv_packet(&mut stdout) else {
-                        break;
-                    };
+                while let Ok((t, b)) = recv_packet(&mut stdout) {
                     let mut r = Reader { b: &b };
                     let Ok(id) = r.u32() else { break };
                     let to = s
@@ -1000,7 +998,9 @@ mod tests {
             .max_by_key(|e| e.size)
             .map(|e| host_join(&dir, Path::new(&e.name)))
             .expect("a file in the directory");
-        time("stat", &mut || format!("{:?}", s.stat(&file).map(|x| x.size)));
+        time("stat", &mut || {
+            format!("{:?}", s.stat(&file).map(|x| x.size))
+        });
         time("stat none", &mut || {
             format!("{:?}", s.stat(&host_join(&dir, Path::new("none"))).is_err())
         });
@@ -1012,7 +1012,9 @@ mod tests {
         });
         let bytes = s.read(&file).unwrap();
         let copy = host_join(&dir, Path::new(".kawoosh-timed-copy"));
-        time("write", &mut || format!("{:?}", s.write(&copy, &bytes).is_ok()));
+        time("write", &mut || {
+            format!("{:?}", s.write(&copy, &bytes).is_ok())
+        });
         let _ = s.remove(&copy);
         // Two threads at once: a stat is not held behind a read.
         let t = std::time::Instant::now();
@@ -1090,10 +1092,7 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
         // A listing, links followed for what they point at.
         s.create(&at("deep/b.txt"), false).unwrap();
-        assert!(
-            s.create(&at("deep/b.txt"), false).is_err(),
-            "not over one"
-        );
+        assert!(s.create(&at("deep/b.txt"), false).is_err(), "not over one");
         #[cfg(unix)]
         std::os::unix::fs::symlink(at("deep"), at("link")).unwrap();
         let mut names: Vec<(String, bool, bool)> = s
@@ -1109,8 +1108,7 @@ mod tests {
             [("deep".into(), true, false), ("link".into(), true, true)]
         );
         // A rename, into a directory made for it, never over a file.
-        s.rename(&at("deep/b.txt"), &at("new/c.txt"))
-            .unwrap();
+        s.rename(&at("deep/b.txt"), &at("new/c.txt")).unwrap();
         assert!(at("new/c.txt").is_file());
         assert!(s.rename(&f, &at("new/c.txt")).is_err());
         // Removing a directory takes what is in it.
@@ -1118,12 +1116,13 @@ mod tests {
         assert!(!at("deep").exists());
         // The home: `~` is where the server started.
         let home = s.canonicalize(Path::new("~")).unwrap();
-        assert!(home.to_string_lossy().starts_with('/') || home.is_absolute(), "{}", home.display());
-        #[cfg(unix)]
-        assert_eq!(
-            s.canonicalize(&at("new/../new")).unwrap(),
-            at("new")
+        assert!(
+            home.to_string_lossy().starts_with('/') || home.is_absolute(),
+            "{}",
+            home.display()
         );
+        #[cfg(unix)]
+        assert_eq!(s.canonicalize(&at("new/../new")).unwrap(), at("new"));
         drop(s);
         std::fs::remove_dir_all(&dir).ok();
     }

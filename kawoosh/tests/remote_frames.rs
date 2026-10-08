@@ -180,7 +180,11 @@ fn push(steps: &mut Vec<Step>, s: Step) {
         }
         if std::env::var_os("KAWOOSH_LAG_CALLS").is_some() {
             for (what, on_frame, _from) in &s.calls {
-                eprintln!("        {} {what}  <- {}", if *on_frame { "F" } else { " " }, _from);
+                eprintln!(
+                    "        {} {what}  <- {}",
+                    if *on_frame { "F" } else { " " },
+                    _from
+                );
             }
         }
     }
@@ -327,7 +331,10 @@ fn a_session_on(delay_ms: u64) -> Vec<Step> {
     for _ in 0..5 {
         d.frame(&mut app);
     }
-    push(&mut steps, step(&host, "<CR> into a directory", t.elapsed()));
+    push(
+        &mut steps,
+        step(&host, "<CR> into a directory", t.elapsed()),
+    );
 
     let t = Instant::now();
     d.keys(&mut app, "/a.md");

@@ -17,38 +17,22 @@ use crate::WakeHandle;
 pub enum IoMsg {
     /// Terminal `id`'s pty has output waiting in its [`PtyOutput`],
     /// where there was none: sent once until the output is taken.
-    Pty {
-        id: u64,
-    },
+    Pty { id: u64 },
     /// Terminal `id`'s pty closed (the process exited).
-    PtyClosed {
-        id: u64,
-    },
+    PtyClosed { id: u64 },
     /// A request over the command socket.
     Request(Incoming),
     /// A line (stdout or stderr) from process `id` (compile mode).
-    ProcLine {
-        id: u64,
-        line: String,
-    },
+    ProcLine { id: u64, line: String },
     /// Process `id` exited.
-    ProcExit {
-        id: u64,
-        code: Option<i32>,
-    },
+    ProcExit { id: u64, code: Option<i32> },
     /// Process `id`'s stdout whole, as it closed — asked for by
     /// [`ProcSpec::whole`] instead of lines: a base text, newline at
     /// the end and all.
-    ProcOut {
-        id: u64,
-        text: String,
-    },
+    ProcOut { id: u64, text: String },
     /// A line of process `id`'s stderr, when [`ProcSpec::split_err`]
     /// keeps it apart from stdout's.
-    ProcErr {
-        id: u64,
-        line: String,
-    },
+    ProcErr { id: u64, line: String },
     /// News of the grammar `name`'s install (`grammars::install`, on a
     /// thread of its own): a step of it, the last one its end.
     Grammar {
@@ -106,10 +90,7 @@ pub enum IoMsg {
     },
     /// A sizing walk's news (`du::walk`, the disk-usage pane): the walk's
     /// number and what it found since it last spoke.
-    Sized {
-        walk: u64,
-        batch: crate::du::Sized,
-    },
+    Sized { walk: u64, batch: crate::du::Sized },
     /// A project search for a plugin (`kawoosh.search(query, fn)`,
     /// docs/design/search.md): the job's token, the root its paths are
     /// relative to, and what it found.
@@ -190,14 +171,9 @@ pub enum IoMsg {
     },
     /// A domain's master is up and its files are reachable: the domain
     /// is in `kawoosh_doc::fs`'s registry (docs/design/domains.md).
-    DomainUp {
-        name: String,
-    },
+    DomainUp { name: String },
     /// A domain's connection gave up, and why.
-    DomainFailed {
-        name: String,
-        error: String,
-    },
+    DomainFailed { name: String, error: String },
 }
 
 /// What [`Io::run_command`] runs, and how its output comes back.

@@ -26,7 +26,7 @@ return {
 }
 ```
 
-Ports, keys, jump hosts and the agent are all ssh's business: whatever `ssh box` does in a shell, kawoosh does too. `ssh.command` names another ssh program, and `ssh.poll_secs` sets how often the host's open files are checked for changes (5 seconds by default).
+Ports, keys, jump hosts and the agent are all ssh's business: whatever `ssh box` does in a shell, kawoosh does too. `ssh.command` names another ssh program, `ssh.poll_secs` sets how often the host's open files are checked for changes (5 seconds by default), and `ssh.master` says whether kawoosh keeps one master connection that everything shares (on by default, off on Windows; see below).
 
 ## Paths on a host
 
@@ -52,13 +52,15 @@ Connecting opens a terminal in the dock running ssh, so a password, a passphrase
 
 If the connection drops, the next thing that uses the host connects again. Quitting kawoosh closes its connections.
 
+**On Windows** neither ssh can share one connection (Windows' own ssh cannot run a master, and Git's cannot pass a session through one), so there is no master and no pane: kawoosh connects when it needs to, with your key or agent and without asking anything, so a host that only takes a password does not connect (`ssh box` once in a terminal accepts a new host's key). Files travel over one SFTP connection, and short commands (the file manager's git colours, the file picker's walk) go through a shell kept open on the host, so each is a round trip rather than a new connection. A terminal or a language server is a connection of its own.
+
 ## What works on a host
 
 - **Files.** `:e`, `:w` and the rest work as they do locally. A file changed on the host is noticed on the next check and read again if you have no unsaved changes.
 - **The file manager.** `-` and `:dir` list a host's folders, and renaming, creating and deleting work there. Press `<C-l>` in a listing to read it again.
 - **Terminals.** With the working directory on a host (`:cd box:~/proj`), a new terminal is a shell on the host in that folder. Tools (`:tool`, `<leader>t`), `:compile` and processes a plugin starts run on the host in the same way.
 - **Language servers.** A host's file gets its language server on the host, started in the project's root there. The server must be installed on the host.
-- **Finding files.** The file picker (`<leader>f`) walks the host's folder over SFTP. The walk stops at 5000 files, skips hidden files, `target` and `node_modules`, and is kept for the rest of the session; kawoosh says so the first time.
+- **Finding files.** The file picker (`<leader>f`) asks the host for its files in one go: `git ls-files` in a repository (so `.gitignore` is read), else `find`, skipping hidden files, `target` and `node_modules`; only where neither runs does it walk the folder over SFTP. The walk stops at 5000 files and is kept for the rest of the session; kawoosh says so the first time.
 - **Sessions.** A session brings back a host's files and terminals without connecting at startup. They wait, titled with `:domain connect`, until you connect or use the host.
 
 The project search (`<leader>ss`) does not search a host's files yet.
@@ -80,7 +82,7 @@ This needs `bash` on the host, and the host's ssh server must allow port forward
 On Windows, `wsl:~/proj/main.rs` is a file in your default distro, with nothing in your settings. Everything above works there the same way, with a few differences:
 
 - **No password, no pane.** Connecting starts the distro if it is stopped and asks it where your home is; that takes a second or two the first time.
-- **Files** go through Windows' own share of the distro (`\\wsl.localhost\Ubuntu\…`). A file kawoosh saves keeps its permissions. The file picker walks the distro like a local folder: no limit, and `.gitignore` is read.
+- **Files** go through Windows' own share of the distro (`\\wsl.localhost\Ubuntu\…`). A file kawoosh saves keeps its permissions. The file picker asks the distro for its files (`git ls-files`, or `find`), else walks the share like a local folder: no limit, and `.gitignore` is read.
 - **Programs** (terminals, tools, `:compile`, language servers) run through `wsl.exe` with the `PATH` your login shell sets up, so a language server you installed in the distro with brew, cargo or npm is found.
 - **One file, one buffer.** `\\wsl.localhost\Ubuntu\home\me\x` opens as `wsl:/home/me/x` (`wsl-debian:/…` for another distro), and `wsl:/mnt/c/Users/me/x` opens as `C:\Users\me\x`.
 - **Closing a terminal** ends everything it was running in the distro, as closing any terminal does.

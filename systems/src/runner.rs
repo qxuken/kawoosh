@@ -144,7 +144,10 @@ impl Runner {
 }
 
 fn gone() -> io::Error {
-    io::Error::new(io::ErrorKind::ConnectionAborted, "the runner's channel closed")
+    io::Error::new(
+        io::ErrorKind::ConnectionAborted,
+        "the runner's channel closed",
+    )
 }
 
 /// A domain's runners: each behind its own lock, `None` while one is
@@ -248,6 +251,66 @@ pub fn forget(t: &Transport) {
 mod tests {
     use super::*;
 
+    /// A runner on a real host, timed against a process a script: the
+    /// ssh binary in `KAWOOSH_RUNNER_SSH`, the host in
+    /// `KAWOOSH_RUNNER_HOST`, a directory there in `KAWOOSH_RUNNER_DIR`.
+    /// `cargo test -p kawoosh-systems runner::tests::timed -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn timed_against_a_host() {
+        let (Ok(ssh), Ok(host)) = (
+            std::env::var("KAWOOSH_RUNNER_SSH"),
+            std::env::var("KAWOOSH_RUNNER_HOST"),
+        ) else {
+            eprintln!("no KAWOOSH_RUNNER_SSH and _HOST: skipped");
+            return;
+        };
+        let dir = std::env::var("KAWOOSH_RUNNER_DIR").unwrap_or("~".into());
+        let t = Transport::Ssh(crate::io::Ssh {
+            ssh,
+            host,
+            ctl: "unused".into(),
+            master: false,
+        });
+        let time = |what: &str, f: &dyn Fn() -> String| {
+            let at = std::time::Instant::now();
+            let said = f();
+            eprintln!(
+                "{what:<28} {:>7.1} ms  {said}",
+                at.elapsed().as_secs_f64() * 1000.0
+            );
+        };
+        let walk = format!("cd {dir} && git ls-files | wc -l\n");
+        time("runner start", &|| {
+            format!("{:?}", run(&t, "true\n", b"").map(|r| r.is_ok()))
+        });
+        for _ in 0..3 {
+            time("runner: true", &|| {
+                format!(
+                    "{:?}",
+                    run(&t, "true\n", b"").map(|r| r.map(|o| o.code).ok())
+                )
+            });
+        }
+        time("runner: git ls-files", &|| {
+            run(&t, &walk, b"")
+                .and_then(|r| r.ok())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default()
+        });
+        let mut c = t.remote_command(&walk);
+        c.stdin(Stdio::null());
+        let at = std::time::Instant::now();
+        let out = crate::spawn::output(&mut c).unwrap();
+        eprintln!(
+            "{:<28} {:>7.1} ms  {}",
+            "process: git ls-files",
+            at.elapsed().as_secs_f64() * 1000.0,
+            String::from_utf8_lossy(&out.stdout).trim()
+        );
+    }
+
     /// The loop against this machine's `sh`, as a host's: scripts with
     /// every kind of byte, input, both outputs and the code come back
     /// whole, one after another through the one process.
@@ -269,7 +332,7 @@ mod tests {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut child = c.spawn().unwrap();
+        let mut child = crate::spawn::spawn(&mut c).unwrap();
         let stdin = child.stdin.take().unwrap();
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let mut line = String::new();
@@ -290,6 +353,11 @@ mod tests {
         let out = r.run("cat\n", &input).unwrap();
         assert_eq!((out.code, out.stdout), (0, input));
         let out = r.run("cd / && echo $((1 + 2))\n", b"").unwrap();
-        assert_eq!(out.stdout, b"3\n", "{:?}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(
+            out.stdout,
+            b"3\n",
+            "{:?}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 }
