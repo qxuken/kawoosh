@@ -164,13 +164,7 @@ impl Kawoosh {
     /// what it shows.
     fn task_title(&self, p: PaneId) -> String {
         match self.layout.content(p) {
-            Some(Content::Terminal(t)) => self
-                .terms
-                .map
-                .get(&t)
-                .map(|t| t.title.clone())
-                .filter(|t| !t.is_empty())
-                .unwrap_or_else(|| "terminal".into()),
+            Some(Content::Terminal(t)) => self.term_title(t),
             Some(Content::Editor(v)) => self.ed.buffer_of(v).name.clone(),
             _ => "a pane".into(),
         }
