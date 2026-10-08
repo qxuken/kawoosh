@@ -273,9 +273,9 @@ block in markdown — the token is that language's. `:comment lines` is
 | on | `g.` |
 |---|---|
 | `true`, `false` | flips it |
-| `==`, `&&`, `<`, `and`, … | its counterpart: `!=`, `\|\|`, `>`, `or` (lua's `~=`) |
-| anywhere in a list — arguments, parameters, an array, an object, a table, an odin literal or `struct`/`enum`/`union` | one item a line if it is on one line, back on one line if not, with the trailing comma the language's formatter writes |
-| a string | its quotes: `"` → `'` → `` ` `` in javascript and typescript, `"` ↔ `'` in python and lua, `"` ↔ `` ` `` in odin |
+| `==`, `&&`, `<`, `and`, … | its counterpart: `!=`, `\|\|`, `>`, `or` (lua's `~=`; nu's `=~` ↔ `!~`, `in` ↔ `not-in` and the other word operators) |
+| anywhere in a list — arguments, parameters, an array, an object, a table, an odin literal or `struct`/`enum`/`union`, a nu list, record, table or signature | one item a line if it is on one line, back on one line if not, with the trailing comma the language's formatter writes (nu's: none on lines of their own, a space or a comma between on one) |
+| a string | its quotes: `"` → `'` → `` ` `` in javascript and typescript, `"` ↔ `'` in python, lua and nu, `"` ↔ `` ` `` in odin |
 | a number of five digits or more | `1000000` ↔ `1_000_000` |
 
 The innermost node one of them changes is the one changed, so on `true`
