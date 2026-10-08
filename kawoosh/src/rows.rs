@@ -1579,11 +1579,12 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             });
         }
         flush(ui, &segs[from..]);
+        // A wrapped row's line number, in the row before its text.
+        let gutter = form.and_then(|f| f.gutter.as_ref()).map_or(0.0, |g| g.0);
         // Where byte `b` of a wrapped row is: where kui laid it out last
         // frame, against where it laid the first — the frame that types
         // is a frame behind, and the next catches up.
         let wrapped_at = |ui: &mut Ui<'_>, b: usize| -> (f32, f32) {
-            let gutter = form.and_then(|f| f.gutter.as_ref()).map_or(0.0, |g| g.0);
             let placed = text_key
                 .get()
                 .and_then(|k| Some((ui.caret_rect(k, b)?, ui.caret_rect(k, 0)?)));
@@ -1720,7 +1721,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             let own = |ui: &mut Ui<'_>| ui.measure_text(text, &base, None).width;
             if wraps {
                 let (x, y) = wrapped_at(ui, len);
-                let x = line.trailing_at.map_or(x, |at| at.max(x));
+                // The column is measured from the text's start, the
+                // row's x from the gutter's.
+                let x = line.trailing_at.map_or(x, |at| (gutter + at).max(x));
                 let style = base
                     .color(color)
                     .wrap(kui_native::TextWrap::None)

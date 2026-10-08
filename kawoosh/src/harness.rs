@@ -151,7 +151,8 @@ impl Harness {
     /// Where each drawn row's text after its line starts and where the
     /// line's own text ends, in window pixels — `(note_x, text_end)` for
     /// the rows that have a note, top to bottom: a column of notes
-    /// starts at one x, past every line.
+    /// starts at one x, past every line. A wrapped row's line number is
+    /// in the row too, before its text, and is no note.
     pub fn note_places(&self) -> Vec<(f32, f32)> {
         let nodes = self.core.nodes();
         let holders: Vec<_> = nodes
@@ -167,14 +168,14 @@ impl Harness {
                 continue;
             }
             let depth = nodes[i].depth;
-            let (mut note, mut end) = (None, 0.0f32);
+            let (mut note, mut end, mut texted) = (None, 0.0f32, false);
             let mut j = i + 1;
             while j < nodes.len() && nodes[j].depth > depth {
                 if nodes[j].role == Some(kui_native::Role::None) {
                     let d = nodes[j].depth;
                     j += 1;
                     while j < nodes.len() && nodes[j].depth > d {
-                        if nodes[j].text.as_ref().is_some_and(|t| !t.is_empty()) {
+                        if texted && nodes[j].text.as_ref().is_some_and(|t| !t.is_empty()) {
                             note = note.or(Some(nodes[j].rect.x));
                         }
                         j += 1;
@@ -183,6 +184,7 @@ impl Harness {
                 }
                 if nodes[j].text.is_some() {
                     end = end.max(nodes[j].rect.x + nodes[j].rect.w);
+                    texted = true;
                 }
                 j += 1;
             }

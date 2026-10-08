@@ -2625,6 +2625,41 @@ fn a_listing_s_notes_are_a_column_in_any_script() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A wrapped listing's notes are a column too: a wrapped row carries its
+/// line number in the row, before its text, and the column — measured
+/// from the text's start — was set against an x from the row's, so each
+/// note hung after its own name (2026-10-08, `:wrap` in `dir`).
+#[test]
+fn a_wrapped_listing_s_notes_are_a_column() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dirwrap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    for name in ["a", "LICENSE", "Cargo.toml", "CHANGELOG.md", "README.md"] {
+        std::fs::write(dir.join(name), "x").unwrap();
+    }
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    d.frame(&mut app);
+    let flat = d.note_places();
+    ex(&mut d, &mut app, "wrap");
+    assert_eq!(app.ed.message, "wrap on");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let places = d.note_places();
+    assert_eq!(places.len(), 5, "a note a file: {places:?}");
+    for (at, _) in &places {
+        assert!((at - places[0].0).abs() < 0.5, "one column: {places:?}");
+    }
+    assert!(
+        (places[0].0 - flat[0].0).abs() < 0.5,
+        "where unwrapped: {flat:?} {places:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A listing sizes its directories where asked — `gS` (`dir.sizes`), or
 /// a sort by size: everything under each counted by a sizing walk
 /// (`kawoosh.du`), the size on the directory's line, and the listing
