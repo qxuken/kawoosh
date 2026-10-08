@@ -76,7 +76,9 @@ sixteen such kinds, javascript twenty-one, python thirteen). So a caret
 in a closure passed to a call does not split the call it is in, however
 far out the call's parenthesis is. It stops at a `block` too
 (2026-10-07): odin's procedure and `if` blocks fill no field, and a
-caret in `foo(proc() { … })` split `foo`'s arguments.
+caret in `foo(proc() { … })` split `foo`'s arguments. And at nu's
+`val_closure` (2026-10-08), whose statements fill no field either. The
+types it stops at are `kawoosh.node_actions.stops`, a set to add to.
 
 Beaten: **the node under the caret only**, ts-node-action's. A list is
 split from its parenthesis and nowhere else, and the caret is always on
@@ -141,7 +143,10 @@ change:
   `boolean_scalar`, toml's `boolean`).
 - **operator**: `==` ↔ `!=`, `===` ↔ `!==`, `&&` ↔ `||`, `and` ↔ `or`,
   `<` ↔ `>`, `<=` ↔ `>=` — on a token that fills an `operator` field
-  (python's `operators`), so rust's `Vec<T>` is no comparison.
+  (python's `operators`, nu's `opr`), so rust's `Vec<T>` is no
+  comparison. A language's own pairs: lua's `~=`; nu's `=~` ↔ `!~`
+  and each word operator with its `not-` (`in`, `has`, `like`,
+  `starts-with`, `ends-with`).
 - **split** (and join): a list on one line becomes one item a line,
   each at the node's line's indent and one unit more, the closer on a
   line of its own; a list on several lines is joined. Per language, the
@@ -158,6 +163,7 @@ change:
   | c, cpp | `argument_list` `parameter_list` `initializer_list` | the initializer's only | — |
   | toml | `array` | yes | — |
   | odin | `parameters` `call_expression` `struct` (a literal) `map` `struct_declaration` `enum_declaration` `union_declaration` `overloaded_procedure_declaration` | yes | — |
+  | nu | `val_list` `val_table` `val_record` `parameter_bracks` `parameter_parens` | no commas at all | — |
 
   The list is the node's last child, a closer, back to the first
   opener of its kind among the node's own children: the node's first
@@ -168,14 +174,27 @@ change:
 
   A join declines over a comment among the items: a line comment would
   swallow what followed it.
+
+  Nu's separators are optional, and its own style writes a list
+  `[1 2 3]`, a record `{a: 1, b: 2}`, a signature `[a: int, b = 2]`, and
+  all three one item a line with no commas. Its grammar keeps a comma
+  inside the item before it (a `parameter` ends in one), so the text
+  between commas is no item there. A list spec with `nodes = true`
+  reads its items as the list's named children instead, through a
+  `…_body` node that holds them, each shed of a trailing comma; split
+  writes them without commas, and join puts `sep` between them (a
+  space for a list and a table, `, ` for a record and a signature). A
+  table's head keeps its `;` on the item before it. A comment anywhere
+  inside an item (a parameter's own `# doc`) refuses the join too.
 - **quotes**: `"…"` → `'…'` → `` `…` `` (javascript's family) → `"…"`,
   in javascript, typescript, tsx, python and lua; `"…"` ↔ `` `…` ``
-  in odin (`'c'` is a rune); a prefix (python's
+  in odin (`'c'` is a rune); `"…"` ↔ `'…'` in nu, where a backquoted
+  string is a bare word and is left; a prefix (python's
   `f`, `r`, `b`) kept. It declines when the text holds the quote it
   would change to, holds an escape, is python's triple-quoted, or is a
   template with a `${`.
 - **digits**: `1000000` ↔ `1_000_000`, a decimal literal of five digits
-  or more, in rust, python, javascript, typescript, go and odin — a suffix
+  or more, in rust, python, javascript, typescript, go, odin and nu — a suffix
   (`1000000u64`) kept, a hex, octal or binary literal declined.
 
 `node_actions.NAME = false` in the settings turns a shipped one off.
@@ -217,6 +236,14 @@ and digits; flip and operator needed nothing. Odin's grammar is an
 install, not linked in, so the Lua tests cannot load it: checked by
 hand against the installed grammar (each list, quotes both ways,
 digits, a call around a `proc` literal left alone).
+
+Nu, 2026-10-08: lists read as nodes (`nodes`, `sep`), the climb's
+stops a table (`val_closure` added), `opr` and nu's own operators,
+quotes and digits; flip needed nothing (nu's `true` is a token). Nu's
+grammar is linked in, so `tests/node_actions.lua` covers each: a list,
+record and signature both ways, a table's row and the table from its
+`;`, a closure's caret refusing the list around it, the operators,
+quotes both ways and a backquoted word left, digits.
 
 ## Left
 
