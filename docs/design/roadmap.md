@@ -1391,11 +1391,13 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   [plugin-panes.md](plugin-panes.md) — the slot, `fn(ctx)` and its
   DSL, `on_event`, fields and the `field:lua:` fact, the picker as the
   worked example, and testing one with `kawoosh test`.
-- **Native extensions** — deferred [todo, mvp.md D8]. Decided against
+- ~~**Native extensions** — deferred [todo, mvp.md D8]. Decided against
   for the MVP: no stable Rust ABI, so a real dylib surface is a C-ABI
   project of its own. The rule kept — Lua talks through the same
   messages the systems do — is what makes it a packaging change later.
-  Nothing to schedule.
+  Nothing to schedule.~~ Taken up 2026-10-08 as a C ABI the kui way
+  ([native.md](native.md)): rounds one to four built by 2026-10-09,
+  Windows the fourth, with the extension pack (`scripts/pack.nu`).
 
 ### Files on disk
 
@@ -3234,7 +3236,8 @@ frame.
 Scheduled nowhere, on purpose: ~~incremental sync (measure first)~~
 (measured and built 2026-10-07, lsp-rules.md Decision 8), the
 ~~press-and-hold toggle (kui's)~~ (kui F125 in alpha.41, built 2026-10-07 as
-`keys.input_method`, settings.md), native extensions (deferred), ~~WSL (domains.md's
+`keys.input_method`, settings.md), ~~native extensions (deferred)~~ (built
+2026-10-08–09, native.md rounds one to four), ~~WSL (domains.md's
 note after, Windows only)~~ (built 2026-10-07 with the domains' picker,
 domains.md "WSL, and the picker") and an agent on a host (domains.md Decision
 3's after — when the walk's cap or the poll hurt).

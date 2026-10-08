@@ -6,8 +6,10 @@ ABI of kawoosh's own) and the third chosen: "option 3 is the way, let's
 design, estimate this". The estimate is at the end. **Rounds one to
 three built 2026-10-08**, "let's get building", "round two: native
 panes and kw_wake", "round three: parity test and typed buffer
-access"; **round four, Windows, 2026-10-09**; the blocks after the
-estimate say what the building changed. The calls below are taken here, each the
+access"; **round four, Windows, 2026-10-09**, and the extension pack
+the same day ("let's build pack.nu"); the blocks after the estimate say
+what the building changed. Round five, a crate for Rust authors, waits
+for the first to ask (backlog.md). The calls below are taken here, each the
 user's to overturn. Companion
 to [plugin-panes.md](plugin-panes.md) (what a Lua plugin can do — a
 native one can do the same, by the same names), [lua-boundary.md](lua-boundary.md)
@@ -37,7 +39,8 @@ fills every slot under `lua/` (kui's `"*"`). Its events come back with
 lines) dlopens a library, refuses one with no `kui_ext_abi`, another
 ABI or no `kui_ext_view`, reads its slots and name, runs its init;
 `Ui::add_extension(namespace, ext)` puts it in the frame's list, a
-namespace of its own; `kui.h` (4k lines, ABI 26) is the header, with
+namespace of its own; `kui.h` (4k lines; ABI 25 at the alpha.41
+kawoosh builds with, 26 in kui's tree since) is the header, with
 `KuiStr`, `KuiValue` (map, list, str, int, float, bool, null; 19
 functions) and the seven `kui_ext_*` entry points; `abi_parity`
 (`kui-ffi/build.rs`) regenerates `_Static_assert`s from the Rust layout
@@ -611,10 +614,13 @@ draft:
   running app — one found by convention from `init.lua` as
   `ext\dupes.dll`, one by path under a second namespace — `:dupes` in
   each giving the same scratch, `:extensions` listing both; `panel.c`'s
-  pane drawn in the window and `:cwake` back through `kw_wake`. Once,
-  the first `:cpanel` sent over `kawoosh ex` straight after loading
-  left the pane unopened; neither the same sequence replayed in a
-  fresh app nor the headless drive did it again.
+  pane drawn in the window and `:cwake` back through `kw_wake`. Once
+  the first `:cpanel` left the pane unopened; that was
+  the driver: `kawoosh.exe` is a GUI-subsystem program, PowerShell's
+  `&` does not wait for one, and two `kawoosh ex` started back to back
+  raced to the socket, the command ahead of the load. Each waited on
+  (`Start-Process -Wait`), the load and the open are in order every
+  time, and the headless drive opens it with no frame between.
 - **Two fixes the platform showed**: `locate` listed a path said with
   `.so` twice among the places looked (on every platform; the test
   asserted a prefix); `kawoosh.h`'s `kw_error_str` used `memcpy` with no
