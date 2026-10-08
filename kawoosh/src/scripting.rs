@@ -617,6 +617,7 @@ impl Kawoosh {
                 about,
                 payloads,
                 restore,
+                pane,
             } => {
                 let existing = self
                     .ed
@@ -728,11 +729,32 @@ impl Kawoosh {
                     self.last_pos.remove(&id);
                     return;
                 }
-                match self.focused_view().or_else(|| self.claim_launcher()) {
-                    Some(v) => self.show_buffer(v, id),
-                    None => {
-                        let v = self.ed.add_view(id);
-                        self.layout.open(Content::Editor(v), Place::Column);
+                // A pane asked for by number: the keys go there, if it
+                // is still an editor pane of the tab in front; one gone
+                // is a column of its own, as `"column"` asks.
+                let pane = match pane {
+                    Some(kawoosh_lua::ScratchPane::Pane(p)) => {
+                        let mut front: Vec<PaneId> = Vec::new();
+                        self.layout.tabs[self.layout.tab].panes(&mut front);
+                        if front.contains(&p) && self.view_of(p).is_some() {
+                            self.layout.focus(p);
+                            None
+                        } else {
+                            Some(kawoosh_lua::ScratchPane::Column)
+                        }
+                    }
+                    other => other,
+                };
+                if pane == Some(kawoosh_lua::ScratchPane::Column) {
+                    let v = self.ed.add_view(id);
+                    self.fill_or_open(Place::Column, Content::Editor(v));
+                } else {
+                    match self.focused_view().or_else(|| self.claim_launcher()) {
+                        Some(v) => self.show_buffer(v, id),
+                        None => {
+                            let v = self.ed.add_view(id);
+                            self.layout.open(Content::Editor(v), Place::Column);
+                        }
                     }
                 }
                 // The caret on the line asked for, else at the top: a
@@ -1835,6 +1857,43 @@ impl Kawoosh {
             }
         }
         true
+    }
+
+    /// The pane the keys are in (`kawoosh.pane()`), the tab in front's
+    /// panes, each with the buffer an editor pane shows, and every tab's
+    /// directory — the focused one's the editor's — for `kawoosh.panes()`
+    /// and `kawoosh.tabs()`.
+    pub(crate) fn publish_layout(&self) {
+        let Some(rt) = &self.scripting.rt else {
+            return;
+        };
+        rt.set_pane(self.layout.focused());
+        let mut panes = Vec::new();
+        self.layout.tabs[self.layout.tab].panes(&mut panes);
+        let front = panes
+            .into_iter()
+            .map(|p| {
+                let buffer = self
+                    .view_of(p)
+                    .and_then(|v| self.ed.views.get(v))
+                    .map(|v| kawoosh_lua::handle_of(v.buffer));
+                (p, buffer)
+            })
+            .collect();
+        let tabs = self
+            .layout
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let cwd = match &t.cwd {
+                    Some(c) if i != self.layout.tab => c,
+                    _ => &self.ed.cwd,
+                };
+                kawoosh_systems::fs::display(cwd)
+            })
+            .collect();
+        rt.set_layout(front, tabs, self.layout.tab);
     }
 
     /// The pane of a running terminal of tool `name` where `:tool NAME`

@@ -2,7 +2,9 @@
 
 Status: planned and built 2026-10-06 from the ask "Let's build man
 plugin to read man pages inside kawoosh". The calls below are taken
-here, each the user's to overturn. Roadmap step 92. Companion to
+here, each the user's to overturn; Decision 6, the man column, added
+2026-10-09. Roadmap step 92. Companion to
+[pane-placement.md](pane-placement.md) (where a pane opens),
 [plugin-panes.md](plugin-panes.md) (what a Lua plugin can do),
 [local-maps.md](local-maps.md) (keys local to a place),
 [jumps.md](jumps.md) (the way back) and vcs.md Decision 5 (`kawoosh.
@@ -51,7 +53,9 @@ running `man` — `less`'s keys, not the editor's, and nothing a buffer
 is. A split beside, as `vcs.show` opens — the page's width is the pane
 it opens in, and a pane made by the same command is not drawn yet when
 the page is asked for; `<C-w>v` first, or the picker's `<C-v>`, is the
-split (Decision 4).
+split (Decision 4). *Overturned for the key, 2026-10-09 (Decision 6):*
+`<leader>ik` opens the page in a column of its own, read again at the
+column's width once it is laid out; `:man` typed stays in the pane.
 
 ### 2. Rendered to the pane's width
 
@@ -115,6 +119,8 @@ at the pane's top (`man section next` `prev`); `q` closes the page as
 Everywhere: `<leader>ik` is `:man` — the word under the caret
 (`man.reference_at`: a reference when the caret is on one, else the
 word, its sentence's dot dropped), or, on nothing, the picker.
+*Since 2026-10-09 `<leader>ik` is `:man beside` and `<leader>iK` is
+`:man` (Decision 6).*
 
 The picker source `man` (`:man pick`, `picker man`) lists every page
 `man -k .` knows — the name with its section and the one-line
@@ -131,6 +137,63 @@ editor's: `kawoosh.spawn(cmd, { env = { NAME = "value" } })` sets them
 over the inherited ones — `ProcSpec::env` was there for the compile's
 colours (compile.md Decision 12), exported on a host too; the door to
 it from Lua is new.
+
+### 6. `<leader>ik` reads into the man column
+
+*Added 2026-10-09, asked as "let's `<leader>ik` open inside it's own
+column. or make `K` version that does that".* A page read from code is
+read beside the code, not instead of it: by pane-placement.md's thesis
+a page is a subject of its own, not something made from the buffer and
+acting back on it, so it takes a column, as `*messages*`, `*lsp*` and
+the tools do.
+
+`:man beside [PAGE…]` takes `:man`'s words and reads the page into the
+**man column**: the pane of the tab in front that shows a page already
+(`man.column(from)`: the pane the keys are in when it is one, else a
+column `:man beside` made, else the first pane showing a page) — so a
+second `<leader>ik` replaces the page there rather than open a column
+per page, as `:tool NAME` finds its tool's pane in the tab rather than
+start another — else a column of its own made beside the pane the keys
+are in (`open_scratch { pane = "column" }`, `Place::Column`). The keys
+go to the page, as they go to a tool. `<leader>ik` is `:man beside`;
+`<leader>iK`, the shifted one, is `:man` in the pane, as before. On
+nothing, `<leader>ik`'s picker puts its `<CR>` in the man column too
+and `<leader>iK`'s in the pane; `<C-v>` `<C-s>` `<C-t>` are as they
+were.
+
+In the column the page's keys are the page's: `K` and `<CR>` read the
+reference into the pane they are pressed in — the man column — and
+`<C-o>` walks back through the pages read there. `q` closes the page,
+as `:bd`, and the column with it when `:man beside` made it: the column
+was made for the page, where a pane `:man` read a page into was the
+user's before it. The keys go back to the pane they were in last
+(pane-placement.md Decision 5).
+
+Decision 1's objection is answered rather than set aside: the column is
+made the moment the page is asked for, showing `*man*` (`reading
+ls(1) …`), so it is laid out by the time `man` has printed; when the
+column turns out another width than the page was read at (a column just
+made: `man.width`, else eighty, since its width is not known when the
+page is asked for) the page is read again at the column's own before it
+is shown — a second `man`, on the first page only, three reads at most.
+`kawoosh.pane_size` answers nil until the pane is laid out (it gave the
+window's width for a pane drawn the first time, which is what a page
+read into a new column would have been rendered to), and `kawoosh.
+panes()` says which pane of the tab shows what, so the plugin finds
+the man column without the shell knowing what a page is.
+
+`:man` typed stays in the pane, with no modifier. A command line is the
+explicit gesture: `:man ls` from code is as likely to mean "here, in
+place of this" as `:help` is, and the column has its own spelling one
+word longer. *Beat:* `:man` itself going beside, the key left as `:man`
+— what every `:man` in a `settings.lua` key or a script means would
+move under it; a modifier, vim's `:vertical Man` / `:tab Man` — kawoosh
+has no command modifiers, and one for one command is a grammar for one
+case; `K` in code as the column's key — `K` is the hover's (Decision
+3), and the user offered it only as the other way to the same column;
+a column per page, every `<leader>ik` a new one — the ribbon fills
+with pages nobody closes, where one column read through with `<C-o>`
+is the browser's shape.
 
 ## Settings
 
@@ -158,12 +221,28 @@ by name as a restorable multibuffer is (`Multis::restored`), and the
 stand-in it comes back as is the page again once refilled: read-only,
 no hook, `:w` refused as before. `a_man_page_comes_back_with_a_session`.
 
+Decision 6, 2026-10-09: `:man beside`, `man.column`, the picker's
+`<CR>` following the key that opened it, `q` closing a column made for
+the page; in the engine `kawoosh.panes()` (the tab in front's panes and
+the buffer each shows, published before a command runs, after a frame,
+and before a process's end is told), `open_scratch`'s `pane` (a pane's
+number, the keys going there, or `"column"`), and `kawoosh.pane_size`
+nil until the pane is laid out. `kawoosh/lua/tests/man.lua`'s man
+column: `<leader>ik` a column of its own at the column's width (read
+again: it is narrower than the pane it was asked from), `K` staying in
+it, `:man beside` from the code finding it, `<leader>iK` in the pane,
+`q` closing the column, a missing page leaving no column, the picker's
+`<CR>` beside; `map_export.rs` the two keys.
+
 ## Not built
 
 - `K` in a shell or C buffer as the manual's: the hover's key stays
   the hover's; `<leader>ik` is a key away.
-- A page rendered again when its pane is resized, or opened beside in
-  one step at the new pane's width.
+- A page rendered again when its pane is resized. A page opened beside
+  is read at the new column's width (Decision 6), once laid out; one
+  resized after is as it was, `:man` again renders it anew.
+- `q` closing a man column a session brought back: which columns
+  `:man beside` made is the session's run only, so there `q` is `:bd`.
 - An outline of a page's sections in `grs` (the symbols picker reads
   the grammar; the heads are in `man.pages`' hand, not the tree's).
 - `apropos` as a query (`:man -k PATTERN`): the picker's filter over

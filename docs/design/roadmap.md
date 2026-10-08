@@ -3229,7 +3229,12 @@ frame.
     `]]` `[[` the section heads, `q` closes. `kawoosh.spawn` takes
     `env`. `kawoosh/lua/man.lua`, `kawoosh/lua/tests/man.lua` on a
     reader of the test's own. Not built: `K` in a shell buffer, a page
-    re-rendered on resize, the heads in `grs`.
+    re-rendered on resize, the heads in `grs`. *Amended 2026-10-09*
+    (man.md Decision 6, asked as "let's `<leader>ik` open inside it's
+    own column"): `<leader>ik` is `:man beside`, the page in the man
+    column — the tab's pane showing a page, else a column of its own,
+    read at its width once laid out — `<leader>iK` `:man` in the pane;
+    `kawoosh.panes()`, `open_scratch`'s `pane`.
 
 Scheduled nowhere, on purpose: ~~incremental sync (measure first)~~
 (measured and built 2026-10-07, lsp-rules.md Decision 8), the
