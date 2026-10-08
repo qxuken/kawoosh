@@ -43,6 +43,15 @@ pub struct Stat {
 /// the host's, named by the caller.
 pub trait Fs: Send + Sync {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
+    /// `len` bytes from `offset`, fewer at the end: a file's head looked
+    /// at (is it binary, a database, a vault) without the whole of it
+    /// crossing the link. Read whole and cut where a host has no better.
+    fn read_at(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        let all = self.read(path)?;
+        let from = offset.min(all.len() as u64) as usize;
+        let to = from.saturating_add(len).min(all.len());
+        Ok(all[from..to].to_vec())
+    }
     /// The whole file, replaced — through a sibling written first and
     /// renamed over it, so a dropped connection leaves the old text, not
     /// half of the new.
