@@ -543,3 +543,97 @@ its own.
 Found while testing: a login shell whose own config sets `EDITOR`
 (nushell's `env.nu` here) wins over the one the terminal exports, on
 ssh as in WSL; `$KAWOOSH_BIN edit --wait` is kawoosh's either way.
+
+
+## Built, small hosts
+
+**2026-10-09, reports from use.** "In OpenWrt I couldn't even open
+a terminal"; a Homebrew lock on openssl in a WSL terminal.
+
+*A small host.* Measured on OpenWrt 24.10's rootfs (the
+`openwrt/rootfs:x86-64-openwrt-24.10` image, dropbear on its port,
+reached with OpenSSH): busybox 1.36.1's ash is root's shell, `$SHELL`
+is `/bin/ash` under dropbear; there is no `sftp-server`, no `base64`,
+no `stat` and no bash; `printf` (with octal escapes, `\045` printed as
+`%`), `date -r FILE`, `ls -ln`, `readlink -f`, `mktemp` and `nc` are
+there. Three steps assumed what is not: the SFTP channel (its failure
+was the domain's, so nothing — no file, no terminal — was ever
+started), `base64 -d` in the line every process and terminal is
+started by (round three's `sh -c 'eval "$(echo B64 | base64 -d)"'`
+evaluated nothing, and the terminal exited at once), and the CLI's
+bash (`$EDITOR` pointing at a script whose `#!/usr/bin/env bash` is
+not there). Each degrades now:
+
+- The line is `sh -c 'eval "$(printf "\143\144…")"'`: the script's
+  bytes as `printf`'s octal escapes, letters, digits and `_ ./:,=+@-`
+  left as they are (`io::printf_octal`). What is left holds no quote,
+  no `\\` or `\'` (fish's single-quote escapes), no `$` or backquote
+  (`sh`'s double quotes) and no `%`, so bash, zsh, fish, nushell and
+  ash read the line alike, and nothing past `sh`'s own `printf` is
+  asked of the host. *Beat:* base64 with a probe for it at connect (a
+  round trip per connect, and two lines to keep); `printf '%b'` (its
+  octal is `\0NNN`, which busybox reads with a digit fewer after a
+  `\0` than bash does). WSL keeps base64: `wsl.exe -e` reaches the
+  distro's own `sh` with no login shell between, and every distro has
+  coreutils' or busybox's `base64`.
+- A host whose `-s sftp` fails still connects, its files through its
+  shell (`systems::shellfs::ShellFs`, the `Fs` trait's fourth): one
+  POSIX script a call through the transport — `cat` to read; to write,
+  `cat >` a sibling, its length checked (a cut channel ends `cat` as
+  an end of input would), then copied over the file, which keeps the
+  file's mode, owner and links; a glob and the shell's own tests to
+  list; size and seconds from `stat -L -c` where there is one, else
+  `ls -ln` and `date -r`. The connect asks the shell to answer first
+  (`ShellFs::check`), and says both failures when it does not. Slower
+  than SFTP — a channel and a shell a call — and a name with a newline
+  in it does not list. `Fs::via` says how a domain's files travel, and
+  `:domain` and the connect's message say it.
+- A terminal's `KAWOOSH_BIN`, `EDITOR`, `VISUAL` and `GIT_EDITOR` are
+  exported only when the CLI is there and can run (`[ -x … ]`, and
+  `command -v bash` on ssh): a read-only `~/.cache` or a host without
+  bash keeps the host's own `$EDITOR`, and the shell starts either way.
+
+Tests: `shellfs.rs`'s against this machine's `sh` with and without
+`stat` and `readlink` (functions that fail shadowing them), and
+`a_containers_files_go_through_its_shell` against a real OpenWrt
+container when `KAWOOSH_TEST_CONTAINER` names one (passed against the
+image above: a write's mode kept, a dangling link and a link to a
+directory listed as what they are); `io.rs`'s
+`a_remote_line_needs_no_base64`; domains.rs's
+`a_host_with_no_sftp_or_base64_still_connects` over the stand-in, whose
+home holding `.fake-ssh-small` makes it such a host (no subsystem, a
+`PATH` without `base64`, `stat` and bash), and
+`a_real_small_host_connects` against a real one when
+`KAWOOSH_TEST_SSH_HOST` names it — passed from a Debian container
+(OpenSSH's client, its master in the pane) against the OpenWrt one:
+the SFTP channel refused, the shell answering, a file opened, written
+with `:w`, a process and a terminal run. The stand-in's tests are
+unix's; on Windows they skip.
+
+*The Homebrew lock was Homebrew's.* Closing a WSL terminal's pane kills
+its `wsl.exe` (the job object, term's `job.rs`), and WSL hangs up the
+distro's side: measured with Kawoosh's own terminal on Ubuntu-24.04
+and nushell, an external `sleep` in the foreground of an interactive
+`nu -l` (its own process group) and one under `nu -lc` were both gone
+with the session within seconds of the pane closing. The connect's
+probe runs the login shell's `env`, whose `env.nu` runs `brew --prefix`
+— which takes no formula lock. The lock files left in
+`/home/linuxbrew/.linuxbrew/var/homebrew/locks` show one brew run
+locking `openssl@3` and `openssl@4` in the same instant, and an
+`openssl@3.6` — an alias of `openssl@3` — after: a brew run that
+reaches one formula under two names conflicts with itself, flock being
+per open file. Not Kawoosh's.
+
+*Found, not built: ssh from Windows.* Windows' own OpenSSH (9.5p2,
+the `ssh` on `PATH`) cannot be a master: `ssh -M -S CTL` fails at once
+with "getsockname failed: Not a socket", so the master's pane closes
+and the domain fails, whatever the host. Git's ssh (10.5p1, MSYS)
+makes a master, but a session through it fails passing descriptors
+(`mux_client_request_session: read from master failed`), each channel
+falling back to a connection of its own, and the master's own pane
+exits as its session fails. And the forward a terminal asks for, `-R
+PORT:SOCKET`, names the command socket's path, which on Windows is a
+file holding a port. An ssh domain on Windows wants a mode of its own:
+no master, each channel its own connection (a key or the agent, since
+a file channel has no terminal to ask in), and `-R
+PORT:127.0.0.1:LOCALPORT`.

@@ -46,7 +46,7 @@ The first time you use a path on a host that is not connected, kawoosh connects 
 - `:domain` lists your domains, how each one stands, and how many of its files are open.
 - `:domain tab box` opens a new tab on `box`, as the picker does.
 
-Connecting opens a terminal in the dock running ssh, so a password, a passphrase or a second factor is asked for where you can answer it. Once ssh is in, the dock steps aside and every later connection to that host (files, terminals, processes) reuses it without asking again. Files travel over SFTP, which your ssh server almost certainly already provides.
+Connecting opens a terminal in the dock running ssh, so a password, a passphrase or a second factor is asked for where you can answer it. Once ssh is in, the dock steps aside and every later connection to that host (files, terminals, processes) reuses it without asking again. Files travel over SFTP, which your ssh server almost certainly already provides. A host without an SFTP server, such as an OpenWrt router (dropbear and busybox), still connects: kawoosh reads, writes and lists its files with plain shell commands (`cat`, `ls`), which is slower but needs nothing installed.
 
 If the connection drops, the next thing that uses the host connects again. Quitting kawoosh closes its connections.
 
@@ -71,7 +71,7 @@ When kawoosh connects, it copies a small `kawoosh` command (a bash script) and a
 - `$EDITOR notes.txt` opens the host's `notes.txt` in kawoosh.
 - `"$KAWOOSH_BIN" edit FILE` and `"$KAWOOSH_BIN" theme` work as the local `kawoosh edit` and `kawoosh theme` do.
 
-This needs `bash` on the host, and the host's ssh server must allow port forwarding (`AllowTcpForwarding`). If your shell's own configuration sets `EDITOR` (nushell's `env.nu`, a `.bashrc`), yours wins; `"$KAWOOSH_BIN" edit --wait` still opens here.
+This needs `bash` on the host, and the host's ssh server must allow port forwarding (`AllowTcpForwarding`). A host without bash (busybox, as on OpenWrt) still gets its terminals; their `$EDITOR` is the host's own then. The same goes when `~/.cache` on the host cannot be written. If your shell's own configuration sets `EDITOR` (nushell's `env.nu`, a `.bashrc`), yours wins; `"$KAWOOSH_BIN" edit --wait` still opens here.
 
 ## WSL distros
 
@@ -81,6 +81,7 @@ On Windows, `wsl:~/proj/main.rs` is a file in your default distro, with nothing 
 - **Files** go through Windows' own share of the distro (`\\wsl.localhost\Ubuntu\…`). A file kawoosh saves keeps its permissions. The file picker walks the distro like a local folder: no limit, and `.gitignore` is read.
 - **Programs** (terminals, tools, `:compile`, language servers) run through `wsl.exe` with the `PATH` your login shell sets up, so a language server you installed in the distro with brew, cargo or npm is found.
 - **One file, one buffer.** `\\wsl.localhost\Ubuntu\home\me\x` opens as `wsl:/home/me/x`, and `wsl:/mnt/c/Users/me/x` opens as `C:\Users\me\x`.
+- **Closing a terminal** ends everything it was running in the distro, as closing any terminal does.
 - **`$EDITOR`** in a distro's terminal runs the Windows kawoosh through WSL's interop, so it works whatever WSL's networking mode is.
 
 See also: [files](files.md), [terminal](terminal.md), [settings](settings.md).

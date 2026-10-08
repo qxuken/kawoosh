@@ -74,6 +74,21 @@ pub trait Fs: Send + Sync {
     fn local(&self, _path: &Path) -> Option<PathBuf> {
         None
     }
+    /// How the files travel, as `:domain` and the domains' picker say
+    /// it: `SFTP`, `shell commands`, `the \\wsl.localhost share`.
+    fn via(&self) -> &'static str {
+        ""
+    }
+}
+
+/// How a connected domain's files travel ([`Fs::via`]); none when it is
+/// not connected.
+pub fn via(name: &str) -> Option<&'static str> {
+    domains()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(name)
+        .map(|fs| fs.via())
 }
 
 type Domains = RwLock<HashMap<String, Arc<dyn Fs>>>;

@@ -326,6 +326,191 @@ fn a_domain_connects_over_ssh_on_first_use() {
     );
 }
 
+/// A host as small as OpenWrt's — dropbear with no SFTP subsystem,
+/// busybox with no `base64`, `stat` or bash (the stand-in's
+/// `.fake-ssh-small`) — still connects: its files through its shell,
+/// read, written, listed; a process and a terminal run there, the
+/// terminal's `$EDITOR` left the host's, since the host's CLI is bash.
+#[test]
+fn a_host_with_no_sftp_or_base64_still_connects() {
+    if !cfg!(unix) {
+        eprintln!("the stand-in ssh is a unix script: skipped");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("kawoosh-small-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    std::fs::create_dir_all(root.join("proj")).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let (home, proj) = (root.join("home"), root.join("proj"));
+    std::fs::write(home.join(".fake-ssh-small"), "").unwrap();
+    std::fs::write(proj.join("a.txt"), "on a small host\n").unwrap();
+    let name = format!("o{}", std::process::id());
+    let (mut d, mut app) = ssh_app(&name, &home.display().to_string());
+    let sock = root.join("k.sock");
+    app.io.listen(&sock).unwrap();
+    app.socket = Some(sock.clone());
+    let file = format!("{name}:{}/a.txt", proj.display());
+    ex(&mut d, &mut app, &format!("e {file}"));
+    until(&mut d, &mut app, "connected and opened", |a| {
+        a.ed.buffer_at(Path::new(&file))
+            .is_some_and(|id| a.ed.buffers[id].text() == "on a small host\n")
+    });
+    assert_eq!(
+        kawoosh_doc::fs::via(&name),
+        Some("shell commands (no SFTP on the host)")
+    );
+    d.keys(&mut app, "Aand back ");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    assert_eq!(
+        std::fs::read_to_string(proj.join("a.txt")).unwrap(),
+        "on a small hostand back \n",
+        "{}",
+        app.ed.message
+    );
+    // The host's directory listed.
+    d.keys(&mut app, "-");
+    until(&mut d, &mut app, "the listing", |a| {
+        focused_name(a) == format!("dir: {name}:{}", proj.display())
+    });
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), "../\na.txt");
+    // The CLI was written, through the shell.
+    assert!(home.join(".cache/kawoosh/kawoosh").is_file());
+    // A process on the host, in the tab's directory.
+    let there = format!("{name}:{}", proj.display());
+    ex(&mut d, &mut app, &format!("cd {there}"));
+    app.run_lua_source(
+        "t",
+        "kawoosh.spawn('echo \"$PWD\"', { on_lines = function(l) kawoosh.echo('ran ' .. l[1]) end })",
+    );
+    until(&mut d, &mut app, "the process's line", |a| {
+        a.ed.message.starts_with("ran ")
+    });
+    assert_eq!(app.ed.message, format!("ran {}", proj.display()));
+    // A terminal starts, with no bash for the CLI: `$EDITOR` the host's.
+    ex(
+        &mut d,
+        &mut app,
+        "term printf '%s|%s' \"${KAWOOSH_BIN-none}\" \"$KAWOOSH_DOMAIN\" > term.txt",
+    );
+    for _ in 0..300 {
+        if proj.join("term.txt").exists() {
+            break;
+        }
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::fs::read_to_string(proj.join("term.txt")).unwrap_or_default(),
+        format!("none|{name}"),
+        "the terminal ran, the CLI's variables left out"
+    );
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// The same against a real small host, when one is named
+/// (`KAWOOSH_TEST_SSH_HOST`, a `Host` of `~/.ssh/config` reached with a
+/// key): OpenSSH's own `ssh` and its master, the host's dropbear and
+/// busybox — an OpenWrt container's. A file read and written in its
+/// `/tmp`, listed; a terminal there runs; a process says the host's
+/// `$HOME`.
+#[test]
+fn a_real_small_host_connects() {
+    let Ok(host) = std::env::var("KAWOOSH_TEST_SSH_HOST") else {
+        eprintln!("KAWOOSH_TEST_SSH_HOST not set: skipped");
+        return;
+    };
+    let name = format!("rs{}", std::process::id());
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("set domains.{name}.ssh={host}"));
+    let dir = format!("/tmp/kawoosh-real-{}", std::process::id());
+    ex(&mut d, &mut app, &format!("domain connect {name}"));
+    for _ in 0..1500 {
+        // Up, and the word of it taken: the dock has stepped aside.
+        if kawoosh_doc::fs::is_registered(&name) && app.ed.message.contains("connected") {
+            break;
+        }
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(kawoosh_doc::fs::is_registered(&name), "{}", app.ed.message);
+    let fs = |p: &str| PathBuf::from(format!("{name}:{p}"));
+    kawoosh_systems::fs::create(&fs(&dir), true).unwrap();
+    let file = format!("{name}:{dir}/a.txt");
+    kawoosh_systems::fs::write(&fs(&format!("{dir}/a.txt")), "on the router\n").unwrap();
+    ex(&mut d, &mut app, &format!("e {file}"));
+    // Each call a channel and a shell on the router: slower than SFTP.
+    for _ in 0..1500 {
+        if app
+            .ed
+            .buffer_at(Path::new(&file))
+            .is_some_and(|id| app.ed.buffers[id].text() == "on the router\n")
+        {
+            break;
+        }
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        app.ed
+            .buffer_at(Path::new(&file))
+            .map(|id| app.ed.buffers[id].text()),
+        Some("on the router\n".to_string()),
+        "{}",
+        app.ed.message
+    );
+    d.keys(&mut app, "Aand back ");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    assert_eq!(
+        kawoosh_systems::fs::read(&fs(&format!("{dir}/a.txt"))).unwrap(),
+        "on the routerand back \n",
+        "{}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, &format!("cd {name}:{dir}"));
+    app.run_lua_source(
+        "t",
+        "kawoosh.spawn('echo \"$PWD|$HOME\"', { on_lines = function(l) kawoosh.echo('ran ' .. l[1]) end })",
+    );
+    until(&mut d, &mut app, "the process's line", |a| {
+        a.ed.message.starts_with("ran ")
+    });
+    assert!(
+        app.ed.message.starts_with(&format!("ran {dir}|/")),
+        "{}",
+        app.ed.message
+    );
+    ex(
+        &mut d,
+        &mut app,
+        "term printf '%s|%s' \"${KAWOOSH_BIN-none}\" \"$KAWOOSH_DOMAIN\" > term.txt",
+    );
+    let out = fs(&format!("{dir}/term.txt"));
+    for _ in 0..1000 {
+        if kawoosh_systems::fs::read(&out).is_ok_and(|t| !t.is_empty()) {
+            break;
+        }
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        kawoosh_systems::fs::read(&out).unwrap_or_default(),
+        format!("none|{name}"),
+        "a terminal ran there"
+    );
+    let _ = kawoosh_systems::fs::remove(&fs(&dir));
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+}
+
 /// Round three: processes run on the host. A plugin's process and a
 /// compile start in the tab's directory there; a terminal is a shell on
 /// the host whose `$EDITOR` — the CLI written at connect — comes back to
