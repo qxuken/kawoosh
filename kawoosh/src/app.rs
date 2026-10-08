@@ -41,6 +41,9 @@ pub struct Kawoosh {
     pub pal: Pal,
     /// The face every mono run is shaped in, from `font.*` (`look.rs`).
     pub face: crate::look::Face,
+    /// The face a markdown buffer's rendered prose is shaped in, from
+    /// `font.prose` (`look.rs`); none is the editor's.
+    pub prose: Option<kui_native::FontFamily>,
     /// The chrome's face and heights, from the face (`look.rs`).
     pub chrome: crate::look::Chrome,
     /// The face kawoosh ships (`main.rs`), what an empty `font.family` names.
@@ -395,6 +398,7 @@ impl Kawoosh {
         let mut app = Self {
             pal: Pal::default(),
             face: Default::default(),
+            prose: None,
             chrome: Default::default(),
             bundled_font: None,
             look: Default::default(),
@@ -2208,9 +2212,21 @@ impl Kawoosh {
             width,
             cell_w: self.cell.0,
         };
-        // A rendered row maps back through the fold it was drawn with —
-        // around the carets, as the frame drew it.
-        let drawn = if self.markdown_rendered(self.ed.views[view].buffer) {
+        // A rendered row maps back through the fold it was drawn with:
+        // the row as the last frame drew it (`wrap_rows`), since the
+        // carets have moved on since — a drag's press put one on the
+        // line, and a render around it now would fold the marker the
+        // frame showed and map the byte two cells off (2026-10-08) —
+        // and only for a row the frame did not draw (a table's), the
+        // fold around the carets as they are.
+        let drawn = if let Some((_, _, drawn)) = self
+            .wrap_rows
+            .get(&view)
+            .and_then(|rows| rows.iter().find(|(l, ..)| *l == ln))
+            .filter(|_| self.markdown_rendered(self.ed.views[view].buffer))
+        {
+            drawn.clone()
+        } else if self.markdown_rendered(self.ed.views[view].buffer) {
             let style = self.markdown_style(self.dark);
             crate::markdown::Carets::of(&self.ed, view, self.md_shown.get(&view))
                 .line(

@@ -18,13 +18,16 @@
 --
 -- From each caret the dispatch starts at the leaf and climbs: the first
 -- node, innermost first, that an action takes and answers is the one
--- changed. The climb stops at a node filling a `body` field, or at a
--- `block` (odin's procedures name none), so a caret in a closure never
--- splits the call around it. `node_actions.NAME = false` in the
--- settings turns one off.
+-- changed. The climb stops at a node filling a `body` field, or at one
+-- of `M.stops` (a `block`: odin's procedures name none; nu's
+-- `val_closure`), so a caret in a closure never splits the call around
+-- it. `node_actions.NAME = false` in the settings turns one off.
 
 local M = { list = {} }
 kawoosh.node_actions = M
+
+-- The node types the climb stops at, besides a `body` field.
+M.stops = { block = true, val_closure = true }
 
 kawoosh.setting("node_actions", {
   type = "table",
@@ -106,7 +109,7 @@ function M.answers(where, caret, buffer)
         end
       end
     end
-    if n.field == "body" or n.type == "block" then break end
+    if n.field == "body" or M.stops[n.type] then break end
     n = n:parent()
   end
   return out
@@ -253,23 +256,39 @@ kawoosh.node.action("flip", {
 })
 
 -- Mirrored, as ts-node-action has them: a comparison turned round, an
--- equality negated, `and` for `or`. Lua spells not-equal `~=`.
+-- equality negated, `and` for `or`. Lua spells not-equal `~=`; nu has
+-- a regex match and the word operators, each with its `not-`.
 M.operators = {
   ["=="] = "!=", ["!="] = "==", ["==="] = "!==", ["!=="] = "===",
   ["&&"] = "||", ["||"] = "&&", ["and"] = "or", ["or"] = "and",
   ["<"] = ">", [">"] = "<", ["<="] = ">=", [">="] = "<=",
 }
-M.operators_by_language = { lua = { ["=="] = "~=", ["~="] = "==" } }
+M.operators_by_language = {
+  lua = { ["=="] = "~=", ["~="] = "==" },
+  nu = {
+    ["=~"] = "!~", ["!~"] = "=~", ["like"] = "not-like", ["not-like"] = "like",
+    ["in"] = "not-in", ["not-in"] = "in", ["has"] = "not-has", ["not-has"] = "has",
+    ["starts-with"] = "not-starts-with", ["not-starts-with"] = "starts-with",
+    ["ends-with"] = "not-ends-with", ["not-ends-with"] = "ends-with",
+  },
+}
+
+-- The fields an operator token fills: tree-sitter's usual, python's
+-- plural, nu's `opr`.
+local OPERATOR_FIELDS = { operator = true, operators = true, opr = true }
 
 do
-  local types = { "~=" }
+  local types = {}
   for op in pairs(M.operators) do types[#types + 1] = op end
+  for _, own in pairs(M.operators_by_language) do
+    for op in pairs(own) do types[#types + 1] = op end
+  end
   kawoosh.node.action("operator", {
     doc = "== ↔ !=, && ↔ ||, < ↔ >, …",
     types = types,
     run = function(n, ctx)
       -- A token filling an operator's field: rust's `Vec<T>` is none.
-      if n.field ~= "operator" and n.field ~= "operators" then return nil end
+      if not OPERATOR_FIELDS[n.field] then return nil end
       local own = M.operators_by_language[ctx.language] or {}
       local op = n:text()
       return own[op] or M.operators[op]
@@ -280,7 +299,10 @@ end
 -- The lists `split` takes, per language: whether one split keeps a
 -- trailing comma, whether one joined has spaces inside its brackets,
 -- and whether a list of one keeps its comma — as each language's
--- formatter writes it.
+-- formatter writes it. Where a grammar's separators are optional
+-- (`nodes`), the items are the list's named children, not the text
+-- between its commas, written without any on their lines and joined
+-- by `sep`.
 local T = { trailing = true }
 local TP = { trailing = true, pad = true }
 local N = { trailing = false }
@@ -312,6 +334,16 @@ M.lists = {
     parameters = T, call_expression = T, struct = T, map = T,
     struct_declaration = T, enum_declaration = T, union_declaration = T,
     overloaded_procedure_declaration = T,
+  },
+  -- Commas are optional, and nu writes a list `[1 2 3]`, a record and
+  -- a signature with them on one line, and all three without on lines
+  -- of their own; a table's head keeps its `;`.
+  nu = {
+    val_list = { nodes = true, sep = " " },
+    val_table = { nodes = true, sep = " " },
+    val_record = { nodes = true, sep = ", " },
+    parameter_bracks = { nodes = true, sep = ", " },
+    parameter_parens = { nodes = true, sep = ", " },
   },
 }
 
@@ -347,32 +379,53 @@ do
       if not first then return nil end
       local open = kids[first]
       local head = kawoosh.buf.slice(n.from, open.from, n.buffer)
-      -- The items: the text between the commas, whatever nodes it is
-      -- (an attribute and its field, a `*`).
-      local items, from, to, comment = {}, nil, nil, false
-      local function done()
-        if from then items[#items + 1] = kawoosh.buf.slice(from, to, n.buffer) end
-        from, to = nil, nil
-      end
-      for i = first + 1, #kids - 1 do
-        local k = kids[i]
-        if not k.named and k.type == "," then
-          done()
-        else
-          if k.type:find("comment") then comment = true end
-          from = from or k.from
-          to = k.to
+      local items, comment = {}, false
+      if spec.nodes then
+        -- The items: the named children, through a body that holds
+        -- them (nu's `list_body`), each shed of the comma it may end
+        -- in, a `;` among them kept on the item before it.
+        local inner = {}
+        for i = first + 1, #kids - 1 do inner[#inner + 1] = kids[i] end
+        if #inner == 1 and inner[1].named and inner[1].type:find("_body$") then
+          inner = inner[1]:children({ anonymous = true })
         end
+        for _, k in ipairs(inner) do
+          if k.named then
+            if k.type:find("comment") or #k:query("(comment) @c") > 0 then comment = true end
+            items[#items + 1] = (k:text():gsub(",?%s*$", ""))
+          elseif k.type == ";" and #items > 0 then
+            items[#items] = items[#items] .. ";"
+          end
+        end
+      else
+        -- The items: the text between the commas, whatever nodes it is
+        -- (an attribute and its field, a `*`).
+        local from, to
+        local function done()
+          if from then items[#items + 1] = kawoosh.buf.slice(from, to, n.buffer) end
+          from, to = nil, nil
+        end
+        for i = first + 1, #kids - 1 do
+          local k = kids[i]
+          if not k.named and k.type == "," then
+            done()
+          else
+            if k.type:find("comment") then comment = true end
+            from = from or k.from
+            to = k.to
+          end
+        end
+        done()
       end
-      done()
       if #items == 0 then return nil end
       local o, c = open:text(), close:text()
       -- From the opener: what heads it may sit on lines above (odin's
       -- `@(private)` over a declaration).
       if open.line == n.end_line then
         local inner = ctx.indent .. ctx.unit
+        local comma = spec.nodes and "" or ","
         return {
-          text = head .. o .. "\n" .. inner .. table.concat(items, ",\n" .. inner)
+          text = head .. o .. "\n" .. inner .. table.concat(items, comma .. "\n" .. inner)
             .. (spec.trailing and "," or "") .. "\n" .. ctx.indent .. c,
           cursor = #head,
         }
@@ -382,7 +435,7 @@ do
       local pad = spec.pad and " " or ""
       local one = (#items == 1 and spec.single) and "," or ""
       return {
-        text = head .. o .. pad .. table.concat(items, ", ") .. one .. pad .. c,
+        text = head .. o .. pad .. table.concat(items, spec.sep or ", ") .. one .. pad .. c,
         cursor = #head,
       }
     end,
@@ -394,12 +447,14 @@ local QUOTES = {
   python = { '"', "'" }, lua = { '"', "'" },
   -- `'c'` is a rune; a backquote quotes a raw string.
   odin = { '"', "`" },
+  -- A backquoted string is a bare word (at a pipeline's head it runs).
+  nu = { '"', "'" },
 }
 
 kawoosh.node.action("quotes", {
   doc = "\"…\" → '…' → `…`",
-  languages = { "javascript", "typescript", "tsx", "python", "lua", "odin" },
-  types = { "string", "template_string" },
+  languages = { "javascript", "typescript", "tsx", "python", "lua", "odin", "nu" },
+  types = { "string", "template_string", "val_string" },
   run = function(n, ctx)
     local cycle = QUOTES[ctx.language]
     local text = n:text()
@@ -424,8 +479,8 @@ kawoosh.node.action("quotes", {
 
 kawoosh.node.action("digits", {
   doc = "1000000 ↔ 1_000_000",
-  languages = { "rust", "python", "javascript", "typescript", "tsx", "go", "odin" },
-  types = { "integer_literal", "float_literal", "integer", "float", "number", "int_literal" },
+  languages = { "rust", "python", "javascript", "typescript", "tsx", "go", "odin", "nu" },
+  types = { "integer_literal", "float_literal", "integer", "float", "number", "int_literal", "val_number" },
   run = function(n)
     local text = n:text()
     if text:match("^0[xXoObB]") then return nil end

@@ -697,6 +697,10 @@ const DOCS: &[(&str, &str)] = &[
     ),
     ("font.features", "OpenType features, such as `-liga tnum`"),
     (
+        "font.prose",
+        "a family for a markdown buffer's rendered prose — `sans`, `serif`, or an installed family; empty keeps the editor's face. Code spans, code blocks, tables and the caret's line stay in the editor's face",
+    ),
+    (
         "font.chrome_size",
         "the size of the tabs', title bars', strips' and every pane's text, a pane's secondary text a step under it and its notes two; `0` follows `font.size` up to 16",
     ),
@@ -1195,6 +1199,9 @@ impl Settings {
         defaults.set("font.size", Setting::Int(13));
         defaults.set("font.line_height", Setting::Float(1.5));
         defaults.set("font.features", Setting::Str(String::new()));
+        // A markdown buffer's rendered prose in a face of its own
+        // (markdown.md Decision 5, amended): empty is the editor's.
+        defaults.set("font.prose", Setting::Str(String::new()));
         // The chrome's text (tabs, title bars, the strips): `0` follows
         // `font.size` up to a cap, a number is its own size.
         defaults.set("font.chrome_size", Setting::Int(0));
@@ -1835,6 +1842,7 @@ mod tests {
                 "font.family",
                 "font.features",
                 "font.line_height",
+                "font.prose",
                 "font.size",
                 "format_on_save",
                 "formatter",

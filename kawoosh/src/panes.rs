@@ -1886,6 +1886,7 @@ impl Kawoosh {
                     strike: st.strike,
                     color: None,
                     bg: None,
+                    mono: false,
                 })
             })
             .collect();
@@ -2103,6 +2104,7 @@ impl Kawoosh {
                                         marks,
                                         scale,
                                         code,
+                                        mono,
                                         rule,
                                         images: _,
                                         table: _,
@@ -2113,7 +2115,7 @@ impl Kawoosh {
                                         wrap,
                                         revealed: _,
                                     } = r;
-                                    (drawn, Some((marks, scale, code, rule, wrap, img)))
+                                    (drawn, Some((marks, scale, code, mono, rule, wrap, img)))
                                 }
                                 None => {
                                     let long = range.len() >= long_at;
@@ -2403,13 +2405,30 @@ impl Kawoosh {
                             }
                             let joined: Vec<(Range<usize>, rows::Mark)>;
                             let (marks, form) = match &md_row {
-                                Some((marks, scale, code, rule, wrap, img)) => {
+                                Some((marks, scale, code, mono, rule, wrap, img)) => {
+                                    // A prose row's face, where there is one
+                                    // (`font.prose`): not a code block's, a
+                                    // table's or the caret's source line.
+                                    let family = self.prose.filter(|_| !*mono);
+                                    let stamp = crate::markdown::Heights::stamp(
+                                        &drawn.text,
+                                        (
+                                            scale.to_bits(),
+                                            *code,
+                                            *rule,
+                                            img.len(),
+                                            in_table,
+                                            family.is_some(),
+                                        ),
+                                    );
+                                    // Drawn otherwise last frame: kui's
+                                    // layout under the key is that text's.
+                                    let stale =
+                                        self.md_heights.get(&view).and_then(|k| k.stamps.get(&ln))
+                                            != Some(&stamp);
                                     md_seen.push((
                                         ln,
-                                        crate::markdown::Heights::stamp(
-                                            &drawn.text,
-                                            (scale.to_bits(), *code, *rule, img.len(), in_table),
-                                        ),
+                                        stamp,
                                         ui.layout_of(ui.child_key(&label)).map(|r| r.h + edges),
                                     ));
                                     // Images side by side, each at most its
@@ -2420,6 +2439,8 @@ impl Kawoosh {
                                     let form = rows::RowForm {
                                         key: label.clone(),
                                         scale: *scale,
+                                        family,
+                                        stale,
                                         wrap: (!in_table).then_some(*wrap),
                                         bg: code.then_some(pal.strip),
                                         gutter: (!in_table)
@@ -2451,15 +2472,24 @@ impl Kawoosh {
                                 // a wrapping pane has no gutter column.
                                 None => match wrap {
                                     Some(w) => {
+                                        let stamp =
+                                            crate::markdown::Heights::stamp(&drawn.text, ());
+                                        let stale = self
+                                            .md_heights
+                                            .get(&view)
+                                            .and_then(|k| k.stamps.get(&ln))
+                                            != Some(&stamp);
                                         md_seen.push((
                                             ln,
-                                            crate::markdown::Heights::stamp(&drawn.text, ()),
+                                            stamp,
                                             ui.layout_of(ui.child_key(&label)).map(|r| r.h),
                                         ));
                                         let long = range.len() >= long_at;
                                         let form = rows::RowForm {
                                             key: label.clone(),
                                             scale: 1.0,
+                                            family: None,
+                                            stale,
                                             wrap: (!long).then_some(w),
                                             bg: None,
                                             gutter: Some((

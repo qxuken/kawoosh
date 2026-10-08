@@ -39,13 +39,14 @@ fills every slot under `lua/` (kui's `"*"`). Its events come back with
 lines) dlopens a library, refuses one with no `kui_ext_abi`, another
 ABI or no `kui_ext_view`, reads its slots and name, runs its init;
 `Ui::add_extension(namespace, ext)` puts it in the frame's list, a
-namespace of its own; `kui.h` (4k lines; ABI 25 at the alpha.41
-kawoosh builds with, 26 in kui's tree since) is the header, with
+namespace of its own; `kui.h` (4k lines; ABI 25 at alpha.41, where
+rounds one to four were built, 26 at alpha.44, where kawoosh is since
+2026-10-09 — the export list the same 280) is the header, with
 `KuiStr`, `KuiValue` (map, list, str, int, float, bool, null; 19
 functions) and the seven `kui_ext_*` entry points; `abi_parity`
 (`kui-ffi/build.rs`) regenerates `_Static_assert`s from the Rust layout
 so the hand-written header cannot drift. `kui-ffi` is in kawoosh's graph
-through `kui-lua` (alpha.41). The cost of all of this to kawoosh is a
+through `kui-lua`. The cost of all of this to kawoosh is a
 `#include`.
 
 **The one Lua state is safe.** `Lua::new()` disables `package.loadlib`
