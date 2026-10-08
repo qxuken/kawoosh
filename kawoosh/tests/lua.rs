@@ -422,6 +422,119 @@ fn a_bare_compile_runs_what_the_project_offers() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The compile picker's order (docs/design/compile.md Decision 19): the
+/// lines the user ran here, the lines the project's commands ran here,
+/// the user's own named commands, the rest of the project's, and last
+/// the lines run in another workspace — though one ran last of all. A
+/// line the memory kept before it said who said it is the project's when
+/// the project offers it; a named command run is its row, moved up.
+#[test]
+fn the_compile_picker_lists_by_tier() {
+    let base = std::env::temp_dir().join(format!("kawoosh-compile-tiers-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let here = base.join("here");
+    let far = base.join("far");
+    for d in [&here, &far] {
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+    }
+    std::fs::create_dir_all(here.join(".kawoosh")).unwrap();
+    std::fs::write(
+        here.join(".kawoosh").join("settings.lua"),
+        "return { compile = { commands = { proj = \"echo proj\" } } }\n",
+    )
+    .unwrap();
+    std::fs::write(here.join("Cargo.toml"), "[package]\nname = \"here\"\n").unwrap();
+    std::fs::write(here.join("Makefile"), "hello:\n\t@echo hello\n").unwrap();
+    std::fs::write(here.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    let main = here.join("src").join("main.rs");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&main);
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&here);
+    d.frame(&mut app);
+    // The user's own command: not the project's settings.
+    app.run_lua_source("t", r#"kawoosh.opt("compile.commands.mine", "echo mine")"#);
+    d.frame(&mut app);
+
+    // Oldest first: the project's named command, a line typed, a line
+    // kept with no word of who said it, and a line run in another
+    // repository, last of all.
+    ex(&mut d, &mut app, "compile proj");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "compile echo typed");
+    d.frame(&mut app);
+    app.compile_in("make hello", here.clone());
+    app.compile_by("echo far", far.clone(), Some(kawoosh::compile::By::User));
+    d.frame(&mut app);
+    let pane = app
+        .layout
+        .all_panes()
+        .into_iter()
+        .find(|p| {
+            matches!(app.layout.content(*p), Some(Content::Editor(v))
+                if app.ed.buffer_of(v).path.as_ref().is_some_and(|p| p.ends_with("main.rs")))
+        })
+        .expect("main.rs in a pane");
+    app.layout.focus(pane);
+    d.frame(&mut app);
+
+    ex(&mut d, &mut app, "compile pick");
+    d.frame(&mut app);
+    let shown: Vec<(&str, &str, u8)> = app
+        .compile
+        .shown()
+        .into_iter()
+        .map(|i| {
+            let o = &app.compile.offer[i];
+            (o.cmd.as_str(), o.from.as_str(), o.tier)
+        })
+        .collect();
+    assert_eq!(shown[0], ("echo typed", "recent", 1), "{shown:#?}");
+    assert_eq!(shown[1], ("make hello", "last run here", 2), "{shown:#?}");
+    assert_eq!(shown[2], ("echo proj", "compile.commands", 2), "{shown:#?}");
+    assert_eq!(shown[3], ("echo mine", "compile.commands", 3), "{shown:#?}");
+    let rest: Vec<&str> = shown[4..shown.len() - 1].iter().map(|r| r.0).collect();
+    assert!(
+        shown[4..shown.len() - 1].iter().all(|r| r.2 == 4),
+        "{shown:#?}"
+    );
+    for c in ["cargo check", "make"] {
+        assert!(rest.contains(&c), "{c} in the project's tier: {rest:?}");
+    }
+    assert!(
+        !rest.contains(&"make hello"),
+        "listed once, in its highest tier"
+    );
+    let last = shown.last().unwrap();
+    assert_eq!(*last, ("echo far", "recent elsewhere", 5), "{shown:#?}");
+
+    // The picker reads the same order.
+    app.run_lua_source(
+        "t",
+        r#"local o = kawoosh.compile_offer(); kawoosh.echo(o[1].cmd .. " | " .. o[#o].cmd)"#,
+    );
+    assert_eq!(app.ed.message, "echo typed | echo far");
+    // Who said each is kept as it was said; the line kept without a
+    // word stays so, read again each time the picker opens.
+    let kept: Vec<(String, Option<kawoosh::compile::By>)> = app
+        .recent_lines()
+        .into_iter()
+        .map(|r| (r.cmd, r.by))
+        .collect();
+    assert!(
+        kept.contains(&("echo typed".into(), Some(kawoosh::compile::By::User)))
+            && kept.contains(&("echo proj".into(), Some(kawoosh::compile::By::Project)))
+            && kept.contains(&("make hello".into(), None)),
+        "{kept:?}"
+    );
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+    std::fs::remove_dir_all(&base).ok();
+}
+
 /// A `build.nu` used as a module (docs/design/compile.md Decision 6):
 /// each `export def` offered, one wanting an argument skipped by a bare
 /// `:compile` and put in the prompt by the picker, the caret inside the
