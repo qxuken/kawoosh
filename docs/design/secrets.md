@@ -279,3 +279,12 @@ shape. Where it departed:
   vault, which the scratch stands for (`Buffer::about`, `open_scratch
   { about = }`): `:!ansible-vault view %` asks for the password where
   it can be answered.
+
+### `*.secret.json`, 2026-10-08
+
+- **One rule more**, `json`: `*.secret.json`, `*.secrets.json` and
+  `secrets.json` are private and masked by value — a pair's, an
+  array's bare one, an inline array or object whole — with the keys
+  kept, so the file's shape still reads. A line that opens a nested
+  `{` or `[` is not a value. The cost was the rule: a `files` rule is
+  what makes a file private.
