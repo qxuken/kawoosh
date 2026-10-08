@@ -598,7 +598,8 @@ unchanged), `string@[debug release]` those two.
 
 kawoosh reads the project's files, from the current file up to the
 repository root, for what they can run: `Cargo.toml` (cargo check,
-build, test, clippy, run), `package.json` scripts (with the package
+build, test, clippy, run, then `build --release` and `run --release`),
+`package.json` scripts (with the package
 manager its lockfile says), justfile recipes, nushell files
 (`build.nu` and `toolkit.nu`, or the names and paths `compile.nushell`
 lists), Makefile targets, `CMakeLists.txt`, `go.mod`, `pyproject.toml`
@@ -616,11 +617,26 @@ also lists the scripts of every other `package.json` in the repository
 (the open files' packages first), each run in its own package; type
 part of the path to narrow them (`api build`). A language server that
 lists what can run — rust-analyzer does — adds its rows as it answers,
-after your named commands and recent lines: the test under the caret
-(`cargo test --package app --lib -- tests::adds --exact`), its module's,
-and the package's check and test. `<CR>` runs it;
+after the project's named commands, before its files': the test under
+the caret (`cargo test --package app --lib -- tests::adds --exact`), its
+module's, and the package's check and test. `<CR>` runs it;
 `<C-e>` puts it in the prompt so you can add arguments first. A
 command that needs arguments always opens the prompt.
+
+The list is in this order, each command once, where it first appears:
+
+1. commands you ran in this workspace that you typed, or named in your
+   own settings — newest first;
+2. the project's commands you ran in this workspace (what its files
+   offer, what its `.kawoosh` settings name) — newest first;
+3. your own named commands and `compile.default`;
+4. the rest of the project's: its named commands, the language
+   server's, its files';
+5. commands you ran in another workspace, marked `recent elsewhere`.
+
+A workspace is the outermost folder with a `.kawoosh` above the current
+file, else its repository. Typing ranks by the match, as every picker
+does; between equal matches, this order.
 
 ## Manual pages
 

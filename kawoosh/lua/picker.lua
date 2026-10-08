@@ -1482,7 +1482,9 @@ picker.source("actions", {
 -- it wants arguments), the preview where it runs,
 -- why and how it is declared; `⏎` runs it (`compile pick N`), or puts
 -- one wanting arguments in the prompt to finish, as `<C-e>` does any
--- (`compile edit N`). The rows are what `kawoosh.compile_offer()` says.
+-- (`compile edit N`). The rows are what `kawoosh.compile_offer()` says,
+-- in its order: the tiers of Decision 19 (a query ranks by the match,
+-- equal ones in that order).
 picker.source("compile", {
   title = "compile", placeholder = "a command · <C-e> adds arguments first",
   keys = { ["<C-e>"] = function(item)

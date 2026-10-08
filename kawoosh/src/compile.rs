@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
 use kawoosh_doc::{Buffer, BufferId};
-use kawoosh_editor::{ArgKind, Args, Editor, Selection, Setting, Spec, ViewId};
+use kawoosh_editor::{ArgKind, Args, Editor, Layer, Selection, Setting, Spec, ViewId};
 use kawoosh_lua::CompileOfferSnap;
 use kawoosh_systems::io::{IoMsg, ProcCmd, ProcHandle, ProcSpec};
 use kawoosh_systems::store::MomentKey;
@@ -309,7 +309,8 @@ pub struct Compile {
     pub runs: Vec<Run>,
     /// How many commands were started: the last one's process id.
     pub started: u64,
-    /// The rows `compile pick` offered, in the picker's order.
+    /// The rows `compile pick` offered, in the order they were added —
+    /// a row's index never moves; [`Compile::shown`] is the picker's.
     pub offer: Vec<Offer>,
     /// The runnables asked of the caret's server as the picker opened
     /// (compile.md Decision 18): the token, and the server's name for the
@@ -323,6 +324,15 @@ pub struct Compile {
 }
 
 impl Compile {
+    /// The offer's rows in the order the picker shows them (compile.md
+    /// Decision 19): by tier, then by place in it, then as added — each
+    /// its index in [`Compile::offer`].
+    pub fn shown(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.offer.len()).collect();
+        order.sort_by_key(|&i| (self.offer[i].tier, self.offer[i].rank, i));
+        order
+    }
+
     /// The run started last: what `]q` walks, and what `r` and `<C-c>`
     /// mean asked from outside a compile buffer.
     pub fn last(&self) -> Option<&Run> {
@@ -398,9 +408,56 @@ pub struct Offer {
     /// How it is declared, for the preview.
     pub detail: Vec<String>,
     /// A language server's runnable (Decision 18): shown after the
-    /// settings' rows and the lines run, before the files' — wherever it
-    /// was added.
+    /// settings' rows, before the files' — wherever it was added.
     pub server: bool,
+    /// Who said it (Decision 19): the user, or the project.
+    pub by: By,
+    /// Its tier, 1 to 5 (Decision 19): the user's recent lines, the
+    /// project's recent ones, the user's commands, the project's, the
+    /// lines run elsewhere. A command in several is listed in its first.
+    pub tier: u8,
+    /// Its place in the tier: how recently it ran, for the lines run;
+    /// else the settings' rows (0), a server's (1), the files' (2), each
+    /// in the order they were added.
+    pub rank: usize,
+}
+
+/// Who said a command (compile.md Decision 19): the user — a line typed,
+/// a name or a default in their own settings, `:set` — or the project:
+/// its files, its server, its `.kawoosh` settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum By {
+    User,
+    Project,
+}
+
+impl By {
+    fn word(self) -> &'static str {
+        match self {
+            By::User => "user",
+            By::Project => "project",
+        }
+    }
+}
+
+/// A line the memory keeps (compile.md Decision 7): the command as it
+/// ran, where, and who said it — `None` in a row from before it was
+/// kept, read by what the project offers then.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recent {
+    pub cmd: String,
+    pub cwd: PathBuf,
+    pub by: Option<By>,
+}
+
+impl Recent {
+    fn json(&self) -> serde_json::Value {
+        let mut v = serde_json::json!({ "cmd": self.cmd, "cwd": self.cwd.display().to_string() });
+        if let Some(by) = self.by {
+            v["by"] = by.word().into();
+        }
+        v
+    }
 }
 
 impl Offer {
@@ -416,7 +473,18 @@ impl Offer {
             args_at: cmd.len(),
             detail: Vec::new(),
             server: false,
+            by: By::Project,
+            tier: 4,
+            rank: 2,
         }
+    }
+
+    /// In tier `tier` at `rank` — a deduced row's place unless said.
+    fn at(mut self, by: By, tier: u8, rank: usize) -> Self {
+        self.by = by;
+        self.tier = tier;
+        self.rank = rank;
+        self
     }
 
     /// The `:` line that finishes it, and the caret where its arguments
@@ -794,6 +862,14 @@ impl Kawoosh {
         {
             return root.to_path_buf();
         }
+        self.compile_root()
+    }
+
+    /// The caret's workspace, as the memory reads one (its outermost
+    /// `.kawoosh`, else its repository), else where a command no file
+    /// claims runs: what a line run "here" ran under (compile.md
+    /// Decision 19).
+    fn compile_root(&self) -> PathBuf {
         let (dir, _) = self.compile_start();
         match crate::moments::workspace_of(&dir) {
             ws if ws.is_empty() => self.compile_dir(),
@@ -860,6 +936,15 @@ impl Kawoosh {
     /// The command lines compiled in this workspace, newest first, and
     /// where each ran (compile.md Decision 7): the memory's.
     pub fn recent_compiles(&self) -> Vec<(String, PathBuf)> {
+        self.recent_lines()
+            .into_iter()
+            .map(|r| (r.cmd, r.cwd))
+            .collect()
+    }
+
+    /// The same lines, each with who said it where the memory knows
+    /// (compile.md Decision 19).
+    pub fn recent_lines(&self) -> Vec<Recent> {
         let Some(meta) = self.compile_memory() else {
             return Vec::new();
         };
@@ -870,12 +955,41 @@ impl Kawoosh {
                 .and_then(|c| c.as_str())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| self.compile_dir());
-            Some((cmd, cwd))
+            let by = match v.get("by").and_then(|b| b.as_str()) {
+                Some("user") => Some(By::User),
+                Some("project") => Some(By::Project),
+                _ => None,
+            };
+            Some(Recent { cmd, cwd, by })
         };
         match meta.get("recent").and_then(|r| r.as_array()) {
             Some(list) => list.iter().filter_map(entry).collect(),
             // A row from before the list: its one command.
             None => entry(&meta).into_iter().collect(),
+        }
+    }
+
+    /// Who said the setting at `path`: the project when its layer is
+    /// the project's (a `.kawoosh/settings.lua`, a trusted `init.lua`
+    /// there), else the user.
+    fn setting_by(&self, path: &str) -> By {
+        match self.ed.settings.source_of(path) {
+            Some((Layer::Project, _)) => By::Project,
+            _ => By::User,
+        }
+    }
+
+    /// Who said a `:compile` line: a name's settings, the default's when
+    /// it is the default, else the user, who typed it.
+    fn line_by(&self, line: &str) -> By {
+        let line = line.trim();
+        let word = line.split_whitespace().next().unwrap_or_default();
+        if self.compile_commands().iter().any(|n| n.name == word) {
+            self.setting_by(&format!("compile.commands.{word}"))
+        } else if self.ed.settings.str("compile.default").map(str::trim) == Some(line) {
+            self.setting_by("compile.default")
+        } else {
+            By::User
         }
     }
 
@@ -912,7 +1026,10 @@ impl Kawoosh {
     /// put in the prompt instead.
     pub fn compile(&mut self, line: &str) {
         match self.compile_line(line) {
-            Ok(Line::Run(cmd, cwd)) => self.compile_in(&cmd, cwd),
+            Ok(Line::Run(cmd, cwd)) => {
+                let by = self.line_by(line);
+                self.compile_by(&cmd, cwd, Some(by));
+            }
             Ok(Line::Finish(name)) => {
                 let line = format!("compile {name} ");
                 self.compile_prompt(&line, line.len());
@@ -958,18 +1075,33 @@ impl Kawoosh {
     /// Decision 12) — and remembered at the head of the memory's list for this
     /// workspace. The keys go to the buffer ([`Self::compile_show`]),
     /// and `q` there gives them back to the pane they were in
-    /// (`Layout::close`).
+    /// (`Layout::close`). Who said it is what the memory knew of the line
+    /// — a run again, `r`.
     pub fn compile_in(&mut self, cmd: &str, cwd: PathBuf) {
-        let mut recent: Vec<serde_json::Value> = self
-            .recent_compiles()
-            .into_iter()
-            .filter(|(c, d)| !(c == cmd && *d == cwd))
-            .map(|(c, d)| serde_json::json!({ "cmd": c, "cwd": d.display().to_string() }))
+        self.compile_by(cmd, cwd, None);
+    }
+
+    /// [`Self::compile_in`], the line remembered as `by`'s (compile.md
+    /// Decision 19); `None` keeps what the memory knew.
+    pub fn compile_by(&mut self, cmd: &str, cwd: PathBuf, by: Option<By>) {
+        let known = self.recent_lines();
+        let by = by.or_else(|| {
+            known
+                .iter()
+                .find(|r| r.cmd == cmd && r.cwd == cwd)
+                .and_then(|r| r.by)
+        });
+        let mut recent: Vec<serde_json::Value> = known
+            .iter()
+            .filter(|r| !(r.cmd == cmd && r.cwd == cwd))
+            .map(Recent::json)
             .collect();
-        recent.insert(
-            0,
-            serde_json::json!({ "cmd": cmd, "cwd": cwd.display().to_string() }),
-        );
+        let line = Recent {
+            cmd: cmd.to_string(),
+            cwd: cwd.clone(),
+            by,
+        };
+        recent.insert(0, line.json());
         recent.truncate(RECENT);
         self.note_tool(
             "compile",
@@ -1128,19 +1260,28 @@ impl Kawoosh {
     /// `compile pick`: `compile.default`, the named commands, the
     /// command lines run here and every command the project's files
     /// offer, one row per command, as the picker's `compile` source
-    /// (`kawoosh.compile_offer()`).
+    /// (`kawoosh.compile_offer()`) — each in its tier (Decision 19).
     pub fn offer_compile(&mut self) {
         let mut rows: Vec<Offer> = Vec::new();
         let add = |rows: &mut Vec<Offer>, o: Offer| {
             // Once where it runs: two packages' `yarn run build` are two.
-            if !rows
-                .iter()
-                .any(|r| r.cmd == o.cmd && r.cwd == o.cwd && (r.name.is_some() || o.name.is_none()))
-            {
-                rows.push(o);
+            // Met again in a higher tier, the row moves up to it.
+            let same = rows.iter_mut().find(|r| {
+                r.cmd == o.cmd && r.cwd == o.cwd && (r.name.is_some() || o.name.is_none())
+            });
+            match same {
+                Some(r) if o.tier < r.tier => {
+                    r.tier = o.tier;
+                    r.rank = o.rank;
+                }
+                Some(_) => {}
+                None => rows.push(o),
             }
         };
         let project = self.deduce_compile();
+        // After the caret's project's, every package's in the repository
+        // (Decision 9).
+        let packages = self.compile_packages();
         let named = self.compile_commands();
         let dir_of = |n: &Named| {
             n.cwd
@@ -1148,11 +1289,15 @@ impl Kawoosh {
                 .or_else(|| project.dir_for(&n.cmd).map(Path::to_path_buf))
                 .unwrap_or_else(|| self.compile_dir())
         };
+        // The settings' rows: the user's own a tier above the project's.
+        let tier = |by: By| if by == By::User { 3 } else { 4 };
         if let Some(d) = self.ed.settings.str("compile.default") {
             // Named, it is that command's row, marked; else a row of its own.
             let word = d.split_whitespace().next().unwrap_or_default();
             if let Some(n) = named.iter().find(|n| n.name == word) {
-                let mut o = Offer::of(&n.cmd, dir_of(n), "compile.default", &n.doc);
+                let by = self.setting_by(&format!("compile.commands.{}", n.name));
+                let mut o =
+                    Offer::of(&n.cmd, dir_of(n), "compile.default", &n.doc).at(by, tier(by), 0);
                 o.line = Some(d.to_string());
                 o.name = Some(n.name.clone());
                 o.needs = n.args && d.trim() == n.name;
@@ -1162,13 +1307,16 @@ impl Kawoosh {
                     .dir_for(d)
                     .map(Path::to_path_buf)
                     .unwrap_or_else(|| self.compile_dir());
-                let mut o = Offer::of(d, cwd, "compile.default", "");
+                let by = self.setting_by("compile.default");
+                let mut o = Offer::of(d, cwd, "compile.default", "").at(by, tier(by), 0);
                 o.line = Some(d.to_string());
                 add(&mut rows, o);
             }
         }
         for n in &named {
-            let mut o = Offer::of(&n.cmd, dir_of(n), "compile.commands", &n.doc);
+            let by = self.setting_by(&format!("compile.commands.{}", n.name));
+            let mut o =
+                Offer::of(&n.cmd, dir_of(n), "compile.commands", &n.doc).at(by, tier(by), 0);
             o.line = Some(n.name.clone());
             o.name = Some(n.name.clone());
             o.needs = n.args;
@@ -1176,13 +1324,35 @@ impl Kawoosh {
                 rows.push(o);
             }
         }
-        for (i, (cmd, cwd)) in self.recent_compiles().into_iter().enumerate() {
-            let from = if i == 0 { "last run here" } else { "recent" };
-            add(&mut rows, Offer::of(&cmd, cwd, from, ""));
+        // The lines run, newest first: the user's here, then the
+        // project's here, each above the settings' rows; a line run
+        // outside the caret's workspace below everything it offers.
+        let root = self.compile_root();
+        let mut first = true;
+        for (i, r) in self.recent_lines().into_iter().enumerate() {
+            let offered = project
+                .commands
+                .iter()
+                .chain(&packages)
+                .any(|d| d.cmd == r.cmd && d.cwd == r.cwd)
+                || rows
+                    .iter()
+                    .any(|o| o.by == By::Project && o.cmd == r.cmd && o.cwd == r.cwd);
+            let here = offered || r.cwd.starts_with(&root);
+            // A line from before the memory kept who said it: the
+            // project's when the project offers it.
+            let by = r.by.unwrap_or(if offered { By::Project } else { By::User });
+            let (tier, from) = match (here, by) {
+                (false, _) => (5, "recent elsewhere"),
+                (true, By::User) => (1, if first { "last run here" } else { "recent" }),
+                (true, By::Project) => (2, if first { "last run here" } else { "recent" }),
+            };
+            first &= !here;
+            add(
+                &mut rows,
+                Offer::of(&r.cmd, r.cwd, from, "").at(by, tier, i),
+            );
         }
-        // After the caret's project's, every package's in the repository
-        // (Decision 9).
-        let packages = self.compile_packages();
         for d in project.commands.into_iter().chain(packages) {
             let from = self.compile_from(&d.file);
             let mut o = Offer::of(&d.cmd, d.cwd, &from, &d.why);
@@ -1220,31 +1390,16 @@ impl Kawoosh {
 
     /// The offer as `kawoosh.compile_offer()` reads it: each row its
     /// index in [`Compile::offer`], which a row added later never moves,
-    /// in the order shown — the settings' and the lines run, then a
-    /// server's runnables, then the files'.
+    /// in the order shown ([`Compile::shown`], Decision 19): by tier, a
+    /// server's runnables among the project's between its settings' rows
+    /// and its files'.
     fn publish_offer(&self) {
         let Some(rt) = &self.scripting.rt else {
             return;
         };
-        let settled = |o: &Offer| {
-            [
-                "compile.default",
-                "compile.commands",
-                "last run here",
-                "recent",
-            ]
-            .contains(&o.from.as_str())
-        };
-        let mut order: Vec<usize> = (0..self.compile.offer.len()).collect();
-        order.sort_by_key(|&i| {
-            let o = &self.compile.offer[i];
-            match (settled(o), o.server) {
-                (true, _) => 0,
-                (_, true) => 1,
-                _ => 2,
-            }
-        });
-        let snap: Vec<CompileOfferSnap> = order
+        let snap: Vec<CompileOfferSnap> = self
+            .compile
+            .shown()
             .into_iter()
             .map(|i| {
                 let o = &self.compile.offer[i];
@@ -1320,12 +1475,18 @@ impl Kawoosh {
                 .collect::<Vec<_>>()
                 .join(" ");
             let cwd = r.cwd.unwrap_or_else(|| fallback.clone());
-            if self
+            // A row there already, where it runs: once — moved up to the
+            // project's tier when it was a line run elsewhere.
+            if let Some(o) = self
                 .compile
                 .offer
-                .iter()
-                .any(|o| o.cmd == cmd && o.cwd == cwd)
+                .iter_mut()
+                .find(|o| o.cmd == cmd && o.cwd == cwd)
             {
+                if o.tier > 4 {
+                    (o.tier, o.rank) = (4, 1);
+                    added = true;
+                }
                 continue;
             }
             let why = if r.label == cmd {
@@ -1333,7 +1494,7 @@ impl Kawoosh {
             } else {
                 r.label
             };
-            let mut o = Offer::of(&cmd, cwd, &server, &why);
+            let mut o = Offer::of(&cmd, cwd, &server, &why).at(By::Project, 4, 1);
             o.server = true;
             self.compile.offer.push(o);
             added = true;
@@ -1368,7 +1529,7 @@ impl Kawoosh {
         }
         match &o.line {
             Some(line) => self.compile(line),
-            None => self.compile_in(&o.cmd, o.cwd),
+            None => self.compile_by(&o.cmd, o.cwd, Some(o.by)),
         }
     }
 
@@ -1702,7 +1863,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     Bare::Again(c, cwd) => k.compile_in(&c, cwd),
                     Bare::Deduced(d) => {
                         let from = k.compile_from(&d.file);
-                        k.compile_in(&d.cmd, d.cwd);
+                        k.compile_by(&d.cmd, d.cwd, Some(By::Project));
                         k.ed.message = format!("{} — from {from} (<leader>cC for the rest)", d.cmd);
                     }
                     Bare::Nothing => k.ed.message = NOTHING.into(),
