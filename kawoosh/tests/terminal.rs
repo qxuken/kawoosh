@@ -1796,6 +1796,74 @@ fn a_bang_pane_stays_when_its_line_ends_and_r_runs_it_again() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A `:!CMD` pane is titled for its line when its process sets no title,
+/// and once it ends, whatever its process set: the next day it still
+/// says what it ran.
+#[cfg(unix)]
+#[test]
+fn a_bang_pane_is_titled_for_its_line() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-bang-title-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = Kawoosh::from_file(&dir.join("a.txt"));
+    app.set_cwd(&dir);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.shell",
+        kawoosh_editor::Setting::Str("/bin/sh".into()),
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    // Sets a title, then waits for `go`.
+    d.keys(
+        &mut app,
+        ":!printf '\\033]0;busy\\007'; until [ -e go ]; do sleep 0.01; done",
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.term_of_focused().expect("a terminal pane");
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if app.terms.map[&t].title == "busy" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        app.term_title(t),
+        "busy",
+        "its process's title while it runs"
+    );
+    std::fs::write(dir.join("go"), "").unwrap();
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if app.terms.done.contains_key(&t) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(app.terms.done.contains_key(&t), "{}", screen_text(&app, t));
+    assert_eq!(
+        app.term_title(t),
+        "terminal: printf '\\033]0;busy\\007'; until [ -e go ]; do sleep 0.01; done",
+        "its line once it ended"
+    );
+
+    // One that sets none is its line throughout.
+    d.keys(&mut app, ":!echo hi");
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.term_of_focused().expect("a terminal pane");
+    assert_eq!(app.term_title(t), "terminal: echo hi");
+    d.frame(&mut app);
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("terminal: echo hi")),
+        "the pane's title bar says it"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Where terminal `t`'s process is, once it is `want` (or the last seen).
 fn cwd_once(
     d: &mut Drive,

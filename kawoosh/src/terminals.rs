@@ -310,6 +310,50 @@ impl Kawoosh {
         Some(t)
     }
 
+    /// What terminal `id` is called, and whether that is the line it was
+    /// started with: the title its process set while it runs, else that
+    /// line — a finished `:!` pane says what it ran (`git pull`), not
+    /// what its process last set, nor nothing.
+    fn term_name(&self, id: TermId) -> Option<(String, bool)> {
+        let t = self.terms.map.get(&id)?;
+        if !t.title.is_empty() && !self.terms.done.contains_key(&id) {
+            return Some((t.title.clone(), false));
+        }
+        let s = self.terms.spawned.get(&id)?;
+        let line = match (&s.cmd, &s.argv) {
+            (Some(cmd), _) => cmd.trim().to_string(),
+            // The program by its name, not the path a shell found.
+            (None, Some(argv)) => argv
+                .iter()
+                .enumerate()
+                .map(|(i, a)| match i {
+                    0 => kawoosh_systems::fs::basename(Path::new(a)).unwrap_or(a.clone()),
+                    _ => a.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            (None, None) => return None,
+        };
+        (!line.is_empty()).then_some((line, true))
+    }
+
+    /// Terminal `id`'s pane title: its process's title, else
+    /// `terminal: LINE` for the line it was started with, else
+    /// `terminal`.
+    pub fn term_title(&self, id: TermId) -> String {
+        match self.term_name(id) {
+            Some((line, true)) => format!("terminal: {line}"),
+            Some((title, false)) => title,
+            None => "terminal".into(),
+        }
+    }
+
+    /// Terminal `id`'s name where its kind is said already (a tab's
+    /// label, a scrollback's): its title or its line, bare.
+    pub(crate) fn term_label(&self, id: TermId) -> Option<String> {
+        self.term_name(id).map(|(n, _)| n)
+    }
+
     /// [`Kawoosh::spawn_bang`] for a program and its arguments, with no
     /// shell between — whatever the user's shell quotes like — given the
     /// PATH a shell made: `:lsp install`'s `kawoosh lsp install …`.
@@ -1091,11 +1135,7 @@ impl Kawoosh {
         };
         let name = format!(
             "*scrollback {}*",
-            if t.title.is_empty() {
-                id.to_string()
-            } else {
-                t.title.clone()
-            }
+            self.term_label(id).unwrap_or_else(|| id.to_string())
         );
         let mut buf = Buffer::new(name, &text);
         buf.language = "scrollback".into();

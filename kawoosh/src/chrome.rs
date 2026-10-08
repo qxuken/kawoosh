@@ -228,13 +228,7 @@ impl Kawoosh {
                         ("editor", name, path)
                     }
                     Some(Content::Terminal(t)) => {
-                        let title = self
-                            .terms
-                            .map
-                            .get(&t)
-                            .filter(|t| !t.title.is_empty())
-                            .map(|t| t.title.clone())
-                            .unwrap_or_else(|| "term".into());
+                        let title = self.term_label(t).unwrap_or_else(|| "term".into());
                         ("terminal", title, None)
                     }
                     Some(Content::Lua(n)) => ("lua", n, None),
