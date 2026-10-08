@@ -208,7 +208,7 @@ buffer nobody else has comes to the tab in front.
 
 | keys | what |
 |---|---|
-| `<leader>ww` | workspaces you worked in before: a pick moves the tab there and opens the file you had last |
+| `<leader>ww` | workspaces you worked in before: `<CR>` opens a new tab on one, in its directory, with the file you had last open where you left it — or goes to the tab already on it; `<C-o>` moves this tab there instead |
 | `<leader>sd` `<C-S-z>` | directory jumps (zoxide's, when installed): `<CR>` makes one the working directory, `<C-t>` opens a new tab on it |
 | `~` | in a directory listing, make the listed directory the working one |
 | `<leader>ws` `<leader>wr` | save, restore the session (it is also saved on quit and restored by a bare `kawoosh`) |
@@ -226,8 +226,8 @@ A pane made bare — `<C-w>v`, `<C-w>s`, `<C-w>t`, `:vsplit`, `:split`,
 pane could be. Its sections are *here* (the buffer you split from, a
 scratch, a terminal, the directory), the open buffers, your tools and
 what plugins add, your pinned and recent files, the workspaces you worked
-in before, and — once you type a query — every file under the working
-directory.
+in before (picking one fills the new pane and moves its tab there), and
+— once you type a query — every file under the working directory.
 
 It opens in normal mode. While the query is empty a key launches: `<CR>`
 the first row (the same buffer, so `<C-w>v<CR>` is vim's split), `s` a

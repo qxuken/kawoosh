@@ -107,7 +107,7 @@ recently rank higher.
 | `<leader>/` | lines of the current buffer |
 | `<leader>.` | buffers, then files opened before, then all files |
 | `<leader>so` | files opened before in this workspace |
-| `<leader>ww` | workspaces worked in before |
+| `<leader>ww` | workspaces worked in before: `<CR>` a new tab on one (or the tab already on it), `<C-o>` this tab moved there |
 | `<leader>sd` | directory jumps (below) |
 | `<leader>ic` | every command |
 | `<leader>t` | tools to run in a terminal: lazygit, top, a shell, and those your settings add |

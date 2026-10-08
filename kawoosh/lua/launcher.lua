@@ -38,7 +38,9 @@
 -- text =, sub =, run = "cmd" | pick = fn, module = "here", key = "x" }`
 -- adds a row to a module (*plugins* unless said), `key` its letter;
 -- and a picker source registered with `launcher = true` is a module of
--- its name. A session does not keep the pane.
+-- its name, a row running the source's `launch` (what fills the pane,
+-- where its picker's pick opens a tab — `workspaces`), else its `pick`.
+-- A session does not keep the pane.
 
 local fs = kawoosh.fs
 local picker = kawoosh.picker
@@ -532,6 +534,10 @@ local function take(item, sec)
   if item.run then return kawoosh.run(item.run) end
   if item.pick then return item.pick(item) end
   if sec.def.pick then return sec.def.pick(item) end
+  -- A source's row in the bare pane: its `launch` when a pick in the
+  -- picker goes elsewhere (`workspaces`' new tab) and here fills the
+  -- pane, else its pick.
+  if src and src.launch then return src.launch(item) end
   if src and src.pick then return src.pick(item) end
   if item.buffer then
     kawoosh.buf.show(item.buffer)

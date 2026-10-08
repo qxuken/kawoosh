@@ -1046,7 +1046,9 @@ end
 -- fn(item) }, columns = {…} (as `picker.rows` takes them), wide =
 -- true (a row's `sub` matched too, after its text, as a row with
 -- columns is on its cells after its name), query = fn(query, ctx)
--- (the text matched for what was typed) }`. An item
+-- (the text matched for what was typed), launcher = true (a module of
+-- the launcher too, launcher.lua), launch = fn(item) (what its row does
+-- there, filling the bare pane, when `pick` goes elsewhere) }`. An item
 -- is `{ text =, sub =, path =, line =, col =, buffer =, offset =, run
 -- =, boost = }`, and a column's field. `opts`: `query`, `cursor`,
 -- `root` (the directory a source that walks or searches starts from,
@@ -1638,11 +1640,14 @@ local function recent_items()
 end
 
 -- The workspaces worked in before (roadmap step 32, workspaces.md
--- Decision 11): each root the memory has files under, newest first,
--- the one in front left out, with the file last attended there. A
--- pick moves the tab's directory to it and opens that file at its line
--- — the workspace as it was left — or lists the root when it has none.
--- A section of the launcher too (`launcher = true`).
+-- Decisions 11 and 13): each root the memory has files under, newest
+-- first, the one in front left out, with the file last attended there.
+-- A pick opens a new tab on it — its directory the workspace, that file
+-- open at its line, the workspace as it was left, or the root listed
+-- when it has none — or goes to the tab already on it; `<C-o>` moves
+-- the tab in front there instead, as a pick did before. A section of
+-- the launcher too (`launcher = true`), where a row fills the bare pane
+-- in place, as `<C-o>` does (`launch`).
 local function workspace_items()
   local by, order = {}, {}
   local here = fs.cwd()
@@ -1672,19 +1677,53 @@ local function workspace_items()
   return items
 end
 
+-- The tab in front moved to the workspace, its file opened in the pane
+-- the keys are in (or the root listed): `<C-o>`, and a launcher's row.
+local function workspace_here(item)
+  if not item then return end
+  fs.chdir(item.ws)
+  if item.file and fs.exists(item.file) then
+    kawoosh.open(item.file, { line = item.at })
+  else
+    -- The path as it is, not through a command line's words.
+    kawoosh.dir.open(item.ws)
+  end
+end
+
+-- The index of a tab, not the one in front, whose directory is in the
+-- workspace: the workspace is open there already.
+local function workspace_tab(ws)
+  for _, t in ipairs(kawoosh.tabs()) do
+    if not t.active and fs.relative(t.cwd, ws) then return t.index end
+  end
+end
+
+-- `<CR>`: the tab on the workspace — the one there is, else a new one,
+-- its directory the workspace and its file open (as `<C-t>` in the
+-- directory jumps makes a tab on a directory, dirs.lua).
+local function workspace_tab_on(item)
+  if not item then return end
+  local i = workspace_tab(item.ws)
+  if i then return kawoosh.run("tab goto " .. i) end
+  if item.file and fs.exists(item.file) then
+    kawoosh.open(item.file, { split = "tab", line = item.at })
+  else
+    kawoosh.open(item.ws, { split = "tab" })
+  end
+  -- After the open, so it is the new tab's directory that moves.
+  fs.chdir(item.ws)
+end
+
 picker.source("workspaces", {
-  title = "workspaces", placeholder = "a project worked in before", launcher = true,
+  title = "workspaces", placeholder = "a project worked in before · <C-o> moves this tab there", launcher = true,
   items = workspace_items,
-  pick = function(item)
+  pick = workspace_tab_on,
+  launch = workspace_here,
+  keys = { ["<C-o>"] = function(item)
     if not item then return end
-    fs.chdir(item.ws)
-    if item.file and fs.exists(item.file) then
-      kawoosh.open(item.file, { line = item.at })
-    else
-      -- The path as it is, not through a command line's words.
-      kawoosh.dir.open(item.ws)
-    end
-  end,
+    picker.close()
+    workspace_here(item)
+  end },
   empty = "no other workspace in the memory",
 })
 

@@ -595,10 +595,14 @@ fn a_workspace_closing_ends_its_dock_tasks() {
     std::fs::remove_dir_all(&root).ok();
 }
 
-/// Recent workspaces (roadmap step 32): the picker's `workspaces` — a
-/// launcher section too — lists the projects the memory has files in,
-/// the one in front left out; a pick moves the tab there and opens the
-/// file last attended, at its line.
+/// Recent workspaces (roadmap step 32, workspaces.md Decisions 11 and
+/// 13): the picker's `workspaces` — a launcher section too — lists the
+/// projects the memory has files in, the one in front left out. `<CR>`
+/// opens a new tab on one, its directory the workspace, the file last
+/// attended open at its line, the tab it was asked from left where it
+/// was; asked again, it goes to that tab rather than make another.
+/// `<C-o>` moves the tab in front there instead, as `<CR>` did before,
+/// and so does a launcher's row, which fills its bare pane in place.
 #[test]
 fn a_recent_workspace_is_picked_back_where_it_was() {
     let root = tmp("recentws");
@@ -622,15 +626,74 @@ fn a_recent_workspace_is_picked_back_where_it_was() {
         !listed.contains("beta="),
         "the one in front is left out: {listed}"
     );
+    let left = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        let b = app.ed.buffer_of(v);
+        (
+            b.name.clone(),
+            b.line_of(app.ed.views[v].sels.primary().head),
+        )
+    };
+    // `<CR>`: a new tab on alpha, where it was left; beta's tab stays.
     ex(&mut d, &mut app, "picker workspaces");
     d.frame(&mut app);
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 2, "a tab of its own");
+    assert_eq!(app.layout.tab, 1, "the new tab in front");
+    assert_eq!(app.ed.cwd, a, "the new tab is in alpha");
+    assert_eq!(left(&app), ("notes.txt".into(), 2), "where it was left");
+    d.keys(&mut app, "gt");
+    d.frame(&mut app);
+    assert_eq!(app.layout.tab, 0);
+    assert_eq!(app.ed.cwd, b, "the tab it was asked from stayed in beta");
+    // Asked again from beta: the tab on alpha there is, not another.
+    ex(&mut d, &mut app, "picker workspaces");
+    d.frame(&mut app);
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 2, "no tab more");
+    assert_eq!(app.layout.tab, 1, "the tab on alpha");
+    assert_eq!(app.ed.cwd, a);
+    // `<C-o>` from beta: this tab moves to alpha, as a pick used to.
+    d.keys(&mut app, "gt");
+    d.frame(&mut app);
+    assert_eq!(app.ed.cwd, b);
+    ex(&mut d, &mut app, "picker workspaces");
+    d.frame(&mut app);
+    d.press(&mut app, "<C-o>");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 2, "no tab made");
+    assert_eq!(app.layout.tab, 0, "this tab");
     assert_eq!(app.ed.cwd, a, "the tab moved to alpha");
-    let v = app.focused_view().unwrap();
-    assert_eq!(app.ed.buffer_of(v).name, "notes.txt");
-    let head = app.ed.views[v].sels.primary().head;
-    assert_eq!(app.ed.buffer_of(v).line_of(head), 2, "where it was left");
+    assert_eq!(left(&app), ("notes.txt".into(), 2), "where it was left");
+    // A launcher's row fills its bare pane, its tab moved there: a new
+    // tab's launcher, then a pick, is the project where it was left.
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    ex(&mut d, &mut app, "set layout.new_tab=launcher");
+    ex(&mut d, &mut app, "tabnew");
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 3);
+    assert_eq!(
+        app.layout.focused_content(),
+        Some(kawoosh::layout::Content::Lua("launcher".into())),
+        "a launcher"
+    );
+    d.keys(&mut app, "ialpha");
+    d.frame(&mut app);
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 3, "no tab more from the launcher");
+    assert_eq!(app.layout.tab, 2, "the launcher's tab");
+    assert_eq!(app.ed.cwd, a, "moved to alpha");
+    assert_eq!(
+        left(&app),
+        ("notes.txt".into(), 2),
+        "in the launcher's pane"
+    );
     std::fs::remove_dir_all(&root).ok();
 }

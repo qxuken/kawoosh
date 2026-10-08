@@ -792,7 +792,12 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   their last file; a pick is `:cd` there and that file at its line,
   else the root listed. Restoring a closed workspace's tabs was not
   built — its last file first.
-  `a_recent_workspace_is_picked_back_where_it_was`. What the entry
+  `a_recent_workspace_is_picked_back_where_it_was`. *Amended
+  2026-10-09* (workspaces.md Decision 13, asked as "i don't like
+  workspace switching"): the picker's pick (`<leader>ww`) is a new tab
+  on the workspace, or the tab on it there is; `<C-o>` moves the tab in
+  front as the pick did; the launcher's row fills its pane as before
+  (`launch`). `kawoosh.tabs()`, `:tab goto N`. What the entry
   said before it was built: A section of the workspaces worked in,
   most recent first, that opens one in the pane's tab: the tab's cwd
   moved there and either its directory listed (`dir`) or *something
