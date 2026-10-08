@@ -310,9 +310,8 @@ impl Kawoosh {
         self.note_tab_buffers();
         self.ed.tab_buffers = self.tab_buffers();
         let focused = self.layout.focused();
-        if let Some(rt) = &self.scripting.rt {
-            rt.set_pane(focused);
-        }
+        // The focused pane (`kawoosh.pane()`, `ctx.pane`) with the rest.
+        self.publish_layout();
         let content = self.layout.content(focused);
         let dock = self.layout.dock_focused && self.layout.dock_open;
         let facts = [
@@ -1033,6 +1032,22 @@ fn panes() -> Vec<ShellCommand> {
                 .alias(&["tabp", "tabprev"])
                 .doc("the previous tab, or the COUNTth back"),
             |k, ctx| k.layout.next_tab(-(ctx.count as i64)),
+        ),
+        cmd(
+            Spec::new("tab goto")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("the Nth tab, 1 first (kawoosh.tabs()'s index)"),
+            |k, ctx| {
+                let n = k.layout.tabs.len();
+                match ctx.args.first().map(|a| a.parse::<usize>()) {
+                    Some(Ok(i)) if (1..=n).contains(&i) => {
+                        let by = i as i64 - 1 - k.layout.tab as i64;
+                        k.layout.next_tab(by);
+                    }
+                    Some(_) => k.ed.message = format!("tab goto: 1 to {n}"),
+                    None => k.ed.message = "tab goto: which tab?".into(),
+                }
+            },
         ),
         cmd(
             Spec::new("tab move")

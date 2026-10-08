@@ -1002,6 +1002,10 @@ impl Kawoosh {
                         && let Some(rt) = self.scripting.rt.clone()
                     {
                         rt.publish(&self.ed, self.focused_view());
+                        // The panes as they are now, not as they were
+                        // when the process was asked for: a page read
+                        // into a pane made since (`man.lua`).
+                        self.publish_layout();
                         rt.proc_exit(p.token, code, p.out);
                         self.drain_lua();
                     }
@@ -2698,6 +2702,7 @@ impl kui_native::App for Kawoosh {
             rt.set_workspace(self.moments.workspace());
             self.publish_jumps();
             rt.publish(&self.ed, self.focused_view());
+            self.publish_layout();
         }
         t = self.perf.lap(Lua, "lua publish", t);
         if self.quit {

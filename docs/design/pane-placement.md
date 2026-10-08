@@ -111,6 +111,13 @@ with the keys left in the file, `glance_in_pane`, until 2026-10-02:
 now the keys go to it, compile.md Decision 8.) `*hover*` goes left even though it is a read-only text like
 `*messages*`, because it is the caret's.
 
+*Added 2026-10-09:* a manual page read by `<leader>ik` goes right, to
+the man column — the pane of the tab showing a page, else a column of
+its own (man.md Decision 6); `:man` typed stays in the pane. A
+plugin's scratch reaches `Column` by `open_scratch { pane = "column" }`,
+and a pane of the tab by `pane = N` (`kawoosh.panes()` says which shows
+what).
+
 What flips against today: the terminal, `:!` and the undocked tools
 (under → column); `*compile*` and the named text panes (under →
 column); `:undo` (column → under, at the stack's half). The

@@ -646,21 +646,35 @@ the way `man` would fill a terminal that wide, with its bold and
 underline kept: section heads in the keyword colour, options and names
 bold, arguments underlined, a reference to another page (`chmod(1)`) in
 the link colour. `:man 3 printf` and `:man printf(3)` name a section.
-`:man` alone takes the word under the caret, so `<leader>ik` on
-`strftime` in your code opens `strftime(3)`; on nothing it opens the
+`:man` alone takes the word under the caret; on nothing it opens the
 picker over every page your system has (`:man pick`, with their
 one-line descriptions, `<CR>` opens one; `<C-v>` `<C-s>` `<C-t>` into a
 pane beside, below, a new tab).
+
+`<leader>ik` reads the page of the word under the caret beside your
+code instead (`:man beside`, which takes the same words): in the **man
+column**, a column of its own made next to the pane you are in, or the
+pane already showing a page, so the next `<leader>ik` replaces the
+page there rather than open another column. The page is rendered to
+the column's width and the keys go to it. So `<leader>ik` on
+`strftime` in your code opens `strftime(3)` beside it; on nothing it
+opens the picker, whose `<CR>` goes to the man column too.
+`<leader>iK` is `:man`: the page in the pane you are in.
+
+| keys | where the page goes |
+|---|---|
+| `<leader>ik` | the man column (`:man beside`) |
+| `<leader>iK` | this pane (`:man`) |
 
 It is a buffer: `/` finds, `y` yanks, `*` searches the word, and a
 session brings it back. In it:
 
 | keys | what |
 |---|---|
-| `K`, `<CR>` | the page the reference under the caret names (`chmod(1)`), or the word there, in this pane |
+| `K`, `<CR>` | the page the reference under the caret names (`chmod(1)`), or the word there, in this pane: in the man column, it stays there |
 | `<C-o>` | back to the page, or the file, you came from — a jump |
 | `]]` `[[` | the next, previous section head (`NAME`, `SYNOPSIS`, …), COUNT on, put at the pane's top |
-| `q` | closes the page (`:bd`) |
+| `q` | closes the page (`:bd`); in a column `<leader>ik` made, the column too, the keys back where they were |
 
 `man.width` renders every page at a width of your own instead of the
 pane's; `man.command` names the reader when it is not `man` on your
