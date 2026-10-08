@@ -78,6 +78,9 @@ pub struct Domains {
     /// WSL's distros, each with whether it is the default: asked once a
     /// session, the first time a name or a share's path wants them.
     pub distros: std::sync::OnceLock<Vec<(String, bool)>>,
+    /// The picker was given the domains (`kawoosh.domains()`): a state
+    /// that moves publishes them again.
+    pub published: bool,
 }
 
 /// What a domain is.
@@ -89,14 +92,13 @@ pub enum Kind {
     Wsl(Option<String>),
 }
 
-impl Kind {
-    fn describe(&self) -> String {
-        match self {
-            Kind::Ssh(h) => format!("ssh {h}"),
-            Kind::Wsl(Some(d)) => format!("wsl {d}"),
-            Kind::Wsl(None) => "wsl (the default distro)".into(),
-        }
-    }
+/// The name a WSL distro other than the default is a domain under when
+/// no setting names it: `wsl-` and its own name in lower case
+/// (`wsl-debian`), so the kind is in every place the name is — a path,
+/// the tab strip, the title, the status line, a listing's header
+/// ("Built, the kind in the name").
+pub(crate) fn distro_name(distro: &str) -> String {
+    format!("wsl-{}", distro.to_lowercase())
 }
 
 /// Whether `name` can be spelled as a domain (`name:/…`).
@@ -112,7 +114,9 @@ const FROM_WSL: &str = "WSL";
 impl Kawoosh {
     /// What a domain is: what the settings say (`domains.NAME.ssh`,
     /// `domains.NAME.wsl`), else a `Host` of `~/.ssh/config`, else `wsl`
-    /// the default distro, else a distro under its name in lower case.
+    /// the default distro, else another distro under `wsl-` and its name
+    /// in lower case ([`distro_name`]) — or under that name bare, as it
+    /// was discovered before 2026-10-09, so a session from then opens.
     pub(crate) fn domain_kind(&self, name: &str) -> Option<Kind> {
         if let Some(k) = self.configured_kind(name) {
             return Some(k);
@@ -128,8 +132,31 @@ impl Kawoosh {
         }
         self.distros()
             .iter()
-            .find(|(d, default)| !default && d.to_lowercase() == name)
+            .find(|(d, default)| !default && (distro_name(d) == name || d.to_lowercase() == name))
             .map(|(d, _)| Kind::Wsl(Some(d.clone())))
+    }
+
+    /// The kind and the machine as the user reads them, the kind first
+    /// whatever the name: `ssh: box`, `wsl: Ubuntu-24.04 (default)`.
+    pub(crate) fn domain_label(&self, kind: &Kind) -> String {
+        match kind {
+            Kind::Ssh(h) => format!("ssh: {h}"),
+            Kind::Wsl(Some(d)) => format!("wsl: {d}"),
+            Kind::Wsl(None) => {
+                let default = match kawoosh_systems::io::transport_of("wsl") {
+                    Some(Transport::Wsl(Wsl { probe: Some(p), .. })) => Some(p.distro),
+                    _ => self
+                        .distros()
+                        .iter()
+                        .find(|(_, d)| *d)
+                        .map(|(n, _)| n.clone()),
+                };
+                match default {
+                    Some(d) => format!("wsl: {d} (default)"),
+                    None => "wsl: the default distro".into(),
+                }
+            }
+        }
     }
 
     /// Whether a domain not connected is a distro — asked without
@@ -140,7 +167,10 @@ impl Kawoosh {
             return matches!(k, Kind::Wsl(_));
         }
         let distro_like = (name == "wsl" && kawoosh_systems::wsl::exe().is_some())
-            || self.distros().iter().any(|(d, _)| d.to_lowercase() == name);
+            || self
+                .distros()
+                .iter()
+                .any(|(d, _)| distro_name(d) == name || d.to_lowercase() == name);
         distro_like && matches!(self.domain_kind(name), Some(Kind::Wsl(_)))
     }
 
@@ -177,7 +207,7 @@ impl Kawoosh {
 
     /// Every domain there is, with where it was found: the settings'
     /// first, then the hosts of `~/.ssh/config`, then `wsl` and the other
-    /// distros under their names — a name once, the first's.
+    /// distros as `wsl-NAME` — a name once, the first's.
     fn all_domains(&self) -> Vec<(String, Kind, &'static str)> {
         let mut out: Vec<(String, Kind, &'static str)> = match self.ed.settings.get("domains") {
             Some(Setting::Table(t)) => t
@@ -201,7 +231,7 @@ impl Kawoosh {
             if !default {
                 add(
                     &mut out,
-                    d.to_lowercase(),
+                    distro_name(d),
                     Kind::Wsl(Some(d.clone())),
                     FROM_WSL,
                 );
@@ -211,8 +241,8 @@ impl Kawoosh {
     }
 
     /// The name a distro is a domain under: the settings' for it, `wsl`
-    /// for the default, else its own in lower case — none when that
-    /// cannot be spelled.
+    /// for the default, else `wsl-` and its own in lower case — none
+    /// when that cannot be spelled.
     fn distro_domain(&self, distro: &str) -> Option<String> {
         if let Some(Setting::Table(t)) = self.ed.settings.get("domains") {
             for n in t.keys() {
@@ -234,7 +264,7 @@ impl Kawoosh {
         if default.is_some_and(|d| d.eq_ignore_ascii_case(distro)) {
             return Some("wsl".into());
         }
-        let name = distro.to_lowercase();
+        let name = distro_name(distro);
         spellable(&name).then_some(name)
     }
 
@@ -327,7 +357,8 @@ impl Kawoosh {
                     self.show_domain_pane(t);
                 }
                 if matches!(self.domains.state.get(name), Some(State::Up { .. })) {
-                    self.ed.message = format!("{name}: up");
+                    self.ed.message =
+                        format!("{name}: already connected (:domain disconnect {name} closes it)");
                 }
                 return;
             }
@@ -359,6 +390,7 @@ impl Kawoosh {
             .state
             .insert(name.to_string(), State::Connecting { term, cancel });
         self.ed.message = format!("{name}: connecting…");
+        self.refresh_domain_pick();
     }
 
     /// A distro connected (W5): no pane, nothing to type — the probe on
@@ -380,6 +412,7 @@ impl Kawoosh {
             },
         );
         self.ed.message = format!("{name}: starting…");
+        self.refresh_domain_pick();
     }
 
     fn show_domain_pane(&mut self, t: TermId) {
@@ -402,9 +435,23 @@ impl Kawoosh {
         if let Some(State::Connecting { cancel, .. }) = self.domains.state.get(name) {
             cancel.store(true, Ordering::Relaxed);
         }
+        let was = self
+            .domains
+            .transports
+            .get(name)
+            .map(|t| matches!(t, Transport::Ssh(_)));
         self.forget_domain(name);
         self.domains.pending.retain(|(n, _)| n != name);
-        self.ed.message = format!("{name}: disconnected");
+        self.ed.message = match was {
+            Some(true) => format!("{name}: disconnected, its ssh master told to exit"),
+            Some(false) => {
+                format!(
+                    "{name}: disconnected, forgotten here (the distro runs on, as WSL keeps it)"
+                )
+            }
+            None => format!("{name}: not connected"),
+        };
+        self.refresh_domain_pick();
     }
 
     /// Everything kept of a domain's connection let go: its files, its
@@ -433,6 +480,7 @@ impl Kawoosh {
     /// Every master told to go: at quit, since `ControlPersist` keeps
     /// one past the process that started it.
     pub(crate) fn domains_teardown(&mut self) {
+        self.domains.published = false;
         let names: Vec<String> = self.domains.transports.keys().cloned().collect();
         for n in names {
             self.domain_disconnect(&n);
@@ -458,7 +506,11 @@ impl Kawoosh {
         self.domains
             .state
             .insert(name.to_string(), State::Up { term });
-        self.ed.message = format!("{name}: connected");
+        self.ed.message = match kawoosh_doc::fs::via(name).filter(|v| !v.is_empty()) {
+            Some(via) => format!("{name}: connected, files over {via}"),
+            None => format!("{name}: connected"),
+        };
+        self.refresh_domain_pick();
         // What a session brought back on the host: its files read now,
         // its shells started.
         let waiting: Vec<PathBuf> = self
@@ -501,6 +553,7 @@ impl Kawoosh {
         self.domains.pending.retain(|(n, _)| n != name);
         self.domains.transports.remove(name);
         self.ed.message = format!("{name}: {error}");
+        self.refresh_domain_pick();
     }
 
     /// A terminal closed: a master's pane that closed before it was up
@@ -549,18 +602,73 @@ impl Kawoosh {
             );
             return out;
         }
-        for (name, kind, _) in all {
-            let state = match self.domain_state(&name) {
-                (s, Some(e)) => format!("{s}: {e}"),
-                (s, None) => s.to_string(),
-            };
+        for (name, kind, _) in &all {
+            let mut state = self.state_words(name);
+            if let Some(via) = kawoosh_doc::fs::via(name).filter(|v| !v.is_empty())
+                && self.domain_state(name).0 == "up"
+            {
+                state.push_str(&format!(" · files over {via}"));
+            }
             out.push_str(&format!(
                 "{name}\t{}\t{state}\t{} open\n",
-                kind.describe(),
-                self.domain_open(&name)
+                self.domain_label(kind),
+                self.domain_open(name)
             ));
         }
+        out.push_str(
+            "\nconnected: kawoosh holds the machine — for ssh, a master connection (ssh -M, \
+             ControlPersist) every file, terminal and process goes through, open until it is \
+             disconnected or kawoosh quits; for WSL, the distro answered and its files are its \
+             share's, nothing held open.\n\
+             not connected: nothing open; the first use of a NAME:/path connects it.\n\n\
+             :domain connect NAME, :domain disconnect NAME (an ssh master told to exit; a distro \
+             forgotten here, still running) — or <leader>wh, the domains' picker: <C-o> connects, \
+             <C-x> disconnects.\n",
+        );
         out
+    }
+
+    /// How a domain stands, in words: `connected`, `not connected`,
+    /// `connecting…`, `failed: why`.
+    fn state_words(&self, name: &str) -> String {
+        match self.domain_state(name) {
+            ("up", _) => "connected".into(),
+            ("down", _) => "not connected".into(),
+            ("connecting", _) => "connecting…".into(),
+            (s, Some(e)) => format!("{s}: {e}"),
+            (s, None) => s.into(),
+        }
+    }
+
+    /// What a domain's state means and what can be done with it, in a
+    /// sentence (the picker's preview).
+    fn state_means(&self, name: &str, kind: &Kind) -> String {
+        let ssh = matches!(kind, Kind::Ssh(_));
+        match self.domain_state(name) {
+            ("up", _) => {
+                let via = kawoosh_doc::fs::via(name).unwrap_or("");
+                if ssh {
+                    format!(
+                        "connected: an ssh master connection (ssh -M, ControlPersist) is open, and every file ({via}), terminal and process goes through it. <C-x> or :domain disconnect {name} tells it to exit."
+                    )
+                } else {
+                    format!(
+                        "connected: the distro answered; its files are {via}'s and its programs run through wsl.exe — nothing is held open. <C-x> or :domain disconnect {name} forgets it here; the distro runs on."
+                    )
+                }
+            }
+            ("connecting", _) if ssh => {
+                "connecting: ssh runs in a pane in the dock, where a password or a passphrase is asked; up once its master answers.".into()
+            }
+            ("connecting", _) => "starting: wsl.exe asked for the distro's home and PATH.".into(),
+            ("failed", e) => format!(
+                "failed: {}. <C-o> or :domain connect {name} tries again.",
+                e.unwrap_or_default()
+            ),
+            _ => format!(
+                "not connected: nothing is open to it. <C-o> or :domain connect {name} connects; so does the first use of {name}:/path."
+            ),
+        }
     }
 
     /// How a domain stands — `down`, `connecting`, `up`, `failed` — and
@@ -593,8 +701,28 @@ impl Kawoosh {
     /// ssh config's hosts, WSL's distros — and how each stands, in the
     /// picker, whose pick opens a tab on one.
     pub(crate) fn domain_pick(&mut self) {
-        let Some(rt) = self.scripting.rt.clone() else {
+        if self.scripting.rt.is_none() {
             self.ed.message = "the domains' picker needs lua".into();
+            return;
+        }
+        self.publish_domains();
+        self.domains.published = true;
+        self.run_lua_source("domains", "kawoosh.picker.open(\"domains\")");
+    }
+
+    /// A domain's state moved — connected, failed, disconnected — while
+    /// the picker has the domains: published again and the open picker
+    /// read again, so its row says how the domain stands now.
+    fn refresh_domain_pick(&mut self) {
+        if self.domains.published {
+            self.publish_domains();
+            self.run_lua_source("domains", "kawoosh.picker.reload()");
+        }
+    }
+
+    /// `kawoosh.domains()`: every domain and how it stands.
+    fn publish_domains(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
             return;
         };
         let snap: Vec<kawoosh_lua::DomainSnap> = self
@@ -602,6 +730,8 @@ impl Kawoosh {
             .into_iter()
             .map(|(name, kind, from)| {
                 let (state, error) = self.domain_state(&name);
+                let label = self.domain_label(&kind);
+                let means = self.state_means(&name, &kind);
                 let (kind, target) = match kind {
                     Kind::Ssh(h) => ("ssh", h),
                     Kind::Wsl(d) => ("wsl", d.unwrap_or_default()),
@@ -611,6 +741,8 @@ impl Kawoosh {
                     name,
                     kind: kind.into(),
                     target,
+                    label,
+                    means,
                     from: from.into(),
                     state: state.into(),
                     error,
@@ -618,7 +750,6 @@ impl Kawoosh {
             })
             .collect();
         rt.set_domains(Some(std::rc::Rc::new(snap)));
-        self.run_lua_source("domains", "kawoosh.picker.open(\"domains\")");
     }
 
     /// `:domain tab NAME` (W3): a new tab on the machine, its working
@@ -651,7 +782,7 @@ fn from_home(dir: PathBuf) -> PathBuf {
 pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![
         cmd(
-            Spec::new("domain").doc("the domains the settings name, and how each stands"),
+            Spec::new("domain").doc("every domain, what it is (ssh: HOST, wsl: DISTRO) and how it stands; what connected means, and how to disconnect"),
             |k, _| {
                 let text = k.domain_listing();
                 k.show_in_pane("*domains*", &text);
@@ -684,7 +815,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("domain disconnect")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("disconnect domain NAME: its master told to go"),
+                .doc("disconnect domain NAME: an ssh master told to exit, a WSL distro forgotten here (it runs on)"),
             |k, ctx| match ctx.args.first() {
                 Some(n) => k.domain_disconnect(n),
                 None => k.ed.message = "disconnect which domain?".into(),

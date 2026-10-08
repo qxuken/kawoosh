@@ -293,9 +293,13 @@ fn a_domain_connects_over_ssh_on_first_use() {
     let v = app.focused_view().unwrap();
     let listing = app.ed.buffer_of(v).text();
     assert!(
-        listing.contains(&format!("{name}\tssh {}\tup\t1 open", home.display())),
+        listing.contains(&format!(
+            "{name}\tssh: {}\tconnected · files over SFTP\t1 open",
+            home.display()
+        )),
         "{listing}"
     );
+    assert!(listing.contains(":domain disconnect NAME"), "{listing}");
     // The host's CLI, written at connect.
     assert!(home.join(".cache/kawoosh/kawoosh").is_file());
     d.keys(&mut app, "q");
@@ -834,7 +838,10 @@ fn a_wsl_distro_is_a_domain() {
     let v = app.focused_view().unwrap();
     let listing = app.ed.buffer_of(v).text();
     assert!(
-        listing.contains("wsl\twsl (the default distro)\tup\t1 open"),
+        listing.contains(&format!(
+            "wsl\twsl: {} (default)\tconnected · files over the \\\\wsl.localhost share\t1 open",
+            probe.distro
+        )),
         "{listing}"
     );
     d.keys(&mut app, "q");
@@ -922,9 +929,21 @@ fn the_domains_picker_opens_a_tab_on_a_machine() {
     ex(&mut d, &mut app, "domain pick");
     app.run_lua_source(
         "t",
-        r#"local d = kawoosh.domains()[1]; kawoosh.echo(d.name .. "|" .. d.kind .. "|" .. d.target .. "|" .. d.from .. "|" .. d.state)"#,
+        r#"local d = kawoosh.domains()[1]; kawoosh.echo(d.name .. "|" .. d.kind .. "|" .. d.target .. "|" .. d.label .. "|" .. d.from .. "|" .. d.state)"#,
     );
-    assert_eq!(app.ed.message, "zbox|ssh|nowhere.invalid|settings|down");
+    assert_eq!(
+        app.ed.message,
+        "zbox|ssh|nowhere.invalid|ssh: nowhere.invalid|settings|down"
+    );
+    // What `down` means, and what to do about it, in the row's preview.
+    app.run_lua_source("t", r#"kawoosh.echo(kawoosh.domains()[1].means)"#);
+    assert!(
+        app.ed
+            .message
+            .starts_with("not connected: nothing is open to it. <C-o>"),
+        "{}",
+        app.ed.message
+    );
     let Some(probe) = kawoosh_systems::wsl::Wsl::new(None).and_then(|w| w.probe().ok()) else {
         eprintln!("no WSL distro here: the tab skipped");
         return;
@@ -934,6 +953,27 @@ fn the_domains_picker_opens_a_tab_on_a_machine() {
         r#"for _, d in ipairs(kawoosh.domains()) do if d.name == "wsl" then kawoosh.echo(d.from .. "|" .. d.target) end end"#,
     );
     assert_eq!(app.ed.message, "WSL|", "the default distro, found");
+    // Every distro says it is one: its label `wsl: DISTRO`, and one
+    // found rather than named is `wsl-` and its name.
+    app.run_lua_source(
+        "t",
+        r#"local out = {}
+           for _, d in ipairs(kawoosh.domains()) do
+             if d.kind == "wsl" then out[#out + 1] = d.name .. "=" .. d.label end
+           end
+           kawoosh.echo(table.concat(out, ";"))"#,
+    );
+    let rows: Vec<String> = app.ed.message.split(';').map(str::to_string).collect();
+    assert!(
+        rows.contains(&format!("wsl=wsl: {} (default)", probe.distro)),
+        "{rows:?}"
+    );
+    for (d, default) in kawoosh_systems::wsl::distros().unwrap() {
+        if !default {
+            let n = format!("wsl-{}", d.to_lowercase());
+            assert!(rows.contains(&format!("{n}=wsl: {d}")), "{rows:?}");
+        }
+    }
     // The distro under a name of this test's: the registry of connected
     // domains is the process's, and another test has `wsl`.
     d.key(&mut app, "escape", KeyMods::default());
@@ -953,7 +993,28 @@ fn the_domains_picker_opens_a_tab_on_a_machine() {
         focused_name(a) == format!("dir: {home}")
     });
     assert_eq!(app.ed.cwd, Path::new(&home), "the tab's directory");
-    app.shell_command("domain disconnect", &[name], None);
+    // Up, the picker says what that is; `<C-x>` lets it go, and the row
+    // says so.
+    ex(&mut d, &mut app, "domain pick");
+    let row = |app: &mut Kawoosh, name: &str| {
+        app.run_lua_source(
+            "t",
+            &format!(
+                r#"for _, d in ipairs(kawoosh.domains()) do if d.name == "{name}" then kawoosh.echo(d.state .. "|" .. d.means) end end"#
+            ),
+        );
+        app.ed.message.clone()
+    };
+    let up = row(&mut app, &name);
+    assert!(up.starts_with("up|connected: the distro answered"), "{up}");
+    d.keys(&mut app, &name);
+    d.key(&mut app, "x", KeyMods::NONE.with_ctrl());
+    until(&mut d, &mut app, "disconnected", |_| {
+        !kawoosh_doc::fs::is_registered(&name)
+    });
+    d.frame(&mut app);
+    let down = row(&mut app, &name);
+    assert!(down.starts_with("down|not connected"), "{down}");
 }
 
 /// A language server for a distro's file runs in the distro, through

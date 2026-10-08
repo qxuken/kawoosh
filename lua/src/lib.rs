@@ -1059,6 +1059,12 @@ pub struct DomainSnap {
     pub kind: String,
     /// The host, the distro, or empty for the default distro.
     pub target: String,
+    /// The kind and the machine as the user reads them, the kind first
+    /// always: `ssh: box`, `wsl: Ubuntu-24.04 (default)`.
+    pub label: String,
+    /// What the state means for this domain, in a sentence: what being
+    /// connected holds, how to let it go.
+    pub means: String,
     /// What made it one: `settings`, `~/.ssh/config`, `WSL`.
     pub from: String,
     /// `down`, `connecting`, `up` or `failed`.
@@ -4802,7 +4808,8 @@ fn seed(
         })?,
     )?;
     // ---- kawoosh.domains(): what `domain pick` last offered — `{ name,
-    // kind, target, from, state, error, open }` each — or nil before.
+    // kind, target, label, from, state, means, error, open }` each — or nil
+    // before.
     let pp = published.clone();
     k.set(
         "domains",
@@ -4817,6 +4824,8 @@ fn seed(
                 e.set("name", d.name.as_str())?;
                 e.set("kind", d.kind.as_str())?;
                 e.set("target", d.target.as_str())?;
+                e.set("label", d.label.as_str())?;
+                e.set("means", d.means.as_str())?;
                 e.set("from", d.from.as_str())?;
                 e.set("state", d.state.as_str())?;
                 e.set("error", d.error.as_deref())?;

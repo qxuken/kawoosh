@@ -545,10 +545,12 @@ Found while testing: a login shell whose own config sets `EDITOR`
 ssh as in WSL; `$KAWOOSH_BIN edit --wait` is kawoosh's either way.
 
 
-## Built, small hosts
+## Built, small hosts and the kind in the name
 
-**2026-10-09, reports from use.** "In OpenWrt I couldn't even open
-a terminal"; a Homebrew lock on openssl in a WSL terminal.
+**2026-10-09, four reports from use.** "In OpenWrt I couldn't even open
+a terminal"; "WSL should be marked always, not just a random ubuntu";
+a Homebrew lock on openssl in a WSL terminal; "the host is up, but what
+does it mean and how can I down it?"
 
 *A small host.* Measured on OpenWrt 24.10's rootfs (the
 `openwrt/rootfs:x86-64-openwrt-24.10` image, dropbear on its port,
@@ -609,6 +611,38 @@ home holding `.fake-ssh-small` makes it such a host (no subsystem, a
 the SFTP channel refused, the shell answering, a file opened, written
 with `:w`, a process and a terminal run. The stand-in's tests are
 unix's; on Windows they skip.
+
+*The kind in the name.* A distro other than the default, found rather
+than named in the settings, is a domain under `wsl-` and its name in
+lower case — `wsl-debian`, `wsl-docker-desktop` — not the bare name.
+The name is what the tab strip (`wsl-debian: x.rs`), the title, the
+status line, a listing's header and every path show, so putting the
+kind there marks it in each of them with no second vocabulary. The
+default stays `wsl`; a name the settings give is the user's, as they
+gave it. The bare name is still read (`domain_kind`), so a session's
+`debian:/…` from the two days it was discovered so opens; a share's
+path comes in as `wsl-debian:/…`. Wherever domains are listed — the
+picker's rows, `:domain` — each says what it is with the kind first,
+`ssh: box`, `wsl: Ubuntu-24.04 (default)` (`kawoosh.domains()`'s
+`label`). *Beat:* the label alone, the name left bare (the tab strip
+and the paths still a "random ubuntu", and a label that is not what is
+typed); the label in the tab strip too (`wsl: ubuntu: x.rs`, read as a
+path on `wsl`).
+
+*What "up" is.* A state is said in words — `connected`, `not
+connected`, `connecting…`, `failed: why` — and what it means is said
+once: in `:domain`'s listing, under the rows (for ssh, a master
+connection every file, terminal and process goes through, open until
+it is disconnected or kawoosh quits; for WSL, the distro answered and
+nothing is held open), and in the picker's preview for the row
+(`kawoosh.domains()`'s `means`), with what to do about it. `<C-x>` in
+the picker disconnects the row's domain, as it closes a buffer in the
+buffers' picker; the picker stays, and its row is read again once the
+state moves (`refresh_domain_pick`: a connect, a failure, a
+disconnect republish the domains while the picker has them). The
+messages say what happened: `connected, files over SFTP`,
+`disconnected, its ssh master told to exit`, `disconnected, forgotten
+here (the distro runs on, as WSL keeps it)`.
 
 *The Homebrew lock was Homebrew's.* Closing a WSL terminal's pane kills
 its `wsl.exe` (the job object, term's `job.rs`), and WSL hangs up the
