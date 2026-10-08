@@ -486,6 +486,76 @@ fn a_concealed_paste_is_a_secret() {
     );
 }
 
+/// A `*.secret.json` is private, its values masked and its keys kept:
+/// a pair's value, an array's bare one, an inline array whole; a line
+/// opening a nested object, and a closing one, are not values.
+#[test]
+fn secret_json_values_are_masked() {
+    let dir = tmp("secret-json");
+    let file = dir.join("app.secret.json");
+    std::fs::write(
+        &file,
+        concat!(
+            "{\n",
+            "  \"token\": \"tok-0123456789\",\n",
+            "  \"port\": 5432,\n",
+            "  \"nested\": {\n",
+            "    \"inner\": \"hidden-inner\"\n",
+            "  },\n",
+            "  \"hosts\": [\"host-one\", \"host-two\"],\n",
+            "  \"user\": \"u-one\", \"pass\": \"p-two\",\n",
+            "  \"list\": [\n",
+            "    \"bare-item\"\n",
+            "  ]\n",
+            "}\n"
+        ),
+    )
+    .unwrap();
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::from_file(&file);
+    d.frame(&mut app);
+    assert!(app.ed.buffer_of(app.focused_view().unwrap()).private);
+    let shown = drawn(&d);
+    for kept in [
+        "\"token\"",
+        "\"port\"",
+        "\"nested\": {",
+        "\"inner\"",
+        "\"hosts\"",
+        "\"list\": [",
+    ] {
+        assert!(shown.contains(kept), "{kept} stays: {shown}");
+    }
+    for hidden in [
+        "tok-0123456789",
+        "5432",
+        "hidden-inner",
+        "host-one",
+        "host-two",
+        "u-one",
+        "p-two",
+        "bare-item",
+    ] {
+        assert!(!shown.contains(hidden), "{hidden} shown: {shown}");
+    }
+    let rows = d.line_rows();
+    assert!(
+        rows.iter().any(|r| r == "  \"token\": ••••••••,"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|r| r == "  \"hosts\": ••••••••,"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|r| r == "  \"user\": ••••••••,"),
+        "{rows:?}"
+    );
+    assert!(rows.iter().any(|r| r == "  \"nested\": {"), "{rows:?}");
+    assert!(rows.iter().any(|r| r == "    ••••••••"), "{rows:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A `*.key` file is masked but for its comments, a `.vault_pass` whole;
 /// every mask is the same eight `•` whatever it hides.
 #[test]

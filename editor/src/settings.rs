@@ -1029,6 +1029,30 @@ impl Settings {
                     rule(vec![("files", s(".vault_pass")), ("pattern", s(r"^(.+)$"))]),
                 ),
                 (
+                    // A `*.secret.json`: every value — a pair's, an
+                    // array's bare one, an inline array or object whole,
+                    // the rest of a line holding more pairs — and the
+                    // key kept; a line opening a nested `{`/`[` and a
+                    // closing one are not values.
+                    "json",
+                    rule(vec![
+                        (
+                            "files",
+                            Setting::List(vec![
+                                s("*.secret.json"),
+                                s("*.secrets.json"),
+                                s("secrets.json"),
+                            ]),
+                        ),
+                        (
+                            "pattern",
+                            s(
+                                r#"^\s*(?:"(?:[^"\\]|\\.)*"\s*:\s*)?(\[.*\]|\{.*\}|(?:"(?:[^"\\]|\\.)*"|-?\d[\d.eE+-]*|true|false|null)(?:\s*,\s*"(?:[^"\\]|\\.)*"\s*:.*?)?)\s*,?\s*$"#,
+                            ),
+                        ),
+                    ]),
+                ),
+                (
                     "pem",
                     rule(vec![
                         ("from", s(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -1898,6 +1922,8 @@ mod tests {
                 "secrets.forget_secs",
                 "secrets.masks.env.files",
                 "secrets.masks.env.pattern",
+                "secrets.masks.json.files",
+                "secrets.masks.json.pattern",
                 "secrets.masks.key.files",
                 "secrets.masks.key.pattern",
                 "secrets.masks.pem.from",

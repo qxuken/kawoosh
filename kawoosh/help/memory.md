@@ -102,7 +102,7 @@ secrets = {
 }
 ```
 
-A rule applies by `files` (globs on the name, or the whole path when the glob has a `/`), by `language`, or everywhere. `pattern` is a regex whose first group is masked; `from` and `to` mask every line between two matches. Shipped rules: `env`, `vault`, `key`, `vault_pass`, `pem` (private keys, anywhere) and `secret`. A buffer larger than `secrets.scan_max_kb` is not scanned.
+A rule applies by `files` (globs on the name, or the whole path when the glob has a `/`), by `language`, or everywhere. `pattern` is a regex whose first group is masked; `from` and `to` mask every line between two matches. Shipped rules: `env`, `vault`, `key`, `vault_pass`, `json` (`*.secret.json`, `*.secrets.json`, `secrets.json`: every value, the keys kept), `pem` (private keys, anywhere) and `secret`. A buffer larger than `secrets.scan_max_kb` is not scanned.
 
 **`:secret NAME`** opens `*secret NAME*`, a private scratch of `key: value` lines with the values masked. It is never on disk and is gone when the window closes. `:secret` alone lists the open ones.
 
