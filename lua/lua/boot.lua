@@ -408,6 +408,18 @@ function kawoosh.on_restore(fn)
   kawoosh._restorers[#kawoosh._restorers + 1] = fn
 end
 
+-- kawoosh.extension(namespace, path): a native extension loaded
+-- (docs/design/native.md) — a shared library against `kawoosh.h`,
+-- `~` and `..` in its path as `kawoosh.fs.expand` reads them. `true`,
+-- or `nil` and the reason, which is also a notification under the
+-- `extension` source: no `kw_ext_abi`, another ABI, a namespace taken,
+-- a path that leads nowhere. `:extensions` lists what is loaded.
+function kawoosh.extension(namespace, path)
+  local ok, err = kawoosh._extension(tostring(namespace), kawoosh.fs.expand(tostring(path)))
+  if not ok then kawoosh.notify(err, { level = "error", source = "extension" }) end
+  return ok, err
+end
+
 -- kawoosh.notify(text[, opts]): a notification. `opts` is a level name
 -- ("debug", "info", "warn", "error"; info when omitted) or a table:
 -- `level`, `source` (who says so), `show` ("toast", "corner", "log" —

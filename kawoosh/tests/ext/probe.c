@@ -1,0 +1,120 @@
+/* The door's edges, probed from kw_ext_init and reported as the lines of
+ * a scratch named `probe`: a door that does not exist, arguments that
+ * are not a list, a door that answers two values, a Lua error, a null
+ * context, the protocol; and a command whose body is a handle. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "kawoosh.h"
+
+uint32_t kw_ext_abi(void) { return KW_ABI_VERSION; }
+
+static char report[4096];
+static size_t rlen;
+
+static void line(const char *head, KuiStr s) {
+    rlen += (size_t)snprintf(report + rlen, sizeof report - rlen, "%s%.*s\n", head, (int)s.len,
+                             (const char *)s.ptr);
+}
+
+static KuiStr error_of(KwCtx *ctx) {
+    KuiStr e = KUI_STR("(no error)");
+    kw_error(ctx, &e);
+    return e;
+}
+
+static KuiValue *one(KuiValue *v) {
+    KuiValue *a = kui_value_list();
+    kui_value_list_push(a, v);
+    return a;
+}
+
+static KuiValue *ran(void *user, KwCtx *ctx, const KuiValue *args) {
+    (void)user;
+    /* args[0] is the command's ctx map; its `count` is what `:3probe`
+     * gave, 1 without. */
+    int64_t count = -1;
+    const KuiValue *c = kui_value_at(args, 0);
+    kui_value_as_int(kui_value_get(c, KUI_STR("count")), &count);
+    char msg[64];
+    snprintf(msg, sizeof msg, "probe ran, count %lld", (long long)count);
+    KuiValue *a = one(kui_value_str(KUI_STR(msg)));
+    kui_value_free(kw_call(ctx, KUI_STR("echo"), a));
+    kui_value_free(a);
+    return kui_value_int(7); /* the host frees it */
+}
+
+void *kw_ext_init(KwCtx *ctx) {
+    rlen = 0;
+    /* no such door */
+    KuiValue *r = kw_call(ctx, KUI_STR("nope"), NULL);
+    line(r ? "nope: answered" : "nope: ", r ? KUI_STR("") : error_of(ctx));
+    kui_value_free(r);
+    /* arguments that are a scalar, then a map */
+    KuiValue *scalar = kui_value_int(1);
+    r = kw_call(ctx, KUI_STR("echo"), scalar);
+    line("scalar: ", r ? KUI_STR("answered") : error_of(ctx));
+    kui_value_free(r);
+    kui_value_free(scalar);
+    KuiValue *map = kui_value_map();
+    kui_value_map_set(map, KUI_STR("x"), kui_value_int(1));
+    r = kw_call(ctx, KUI_STR("echo"), map);
+    line("map: ", r ? KUI_STR("answered") : error_of(ctx));
+    kui_value_free(r);
+    kui_value_free(map);
+    /* a door answering one string */
+    KuiValue *a = one(kui_value_str(KUI_STR("/a/b.txt")));
+    r = kw_call(ctx, KUI_STR("fs.basename"), a);
+    KuiStr s = KUI_STR("(not a string)");
+    if (r) kui_value_as_str(r, &s);
+    line("basename: ", r ? s : error_of(ctx));
+    kui_value_free(r);
+    kui_value_free(a);
+    /* a door answering two: `nil, err` is a two-entry list */
+    a = kui_value_list();
+    kui_value_list_push(a, kui_value_str(KUI_STR("")));
+    kui_value_list_push(a, kui_value_str(KUI_STR("nowhere")));
+    r = kw_call(ctx, KUI_STR("_extension"), a);
+    char two[64];
+    snprintf(two, sizeof two, "two: %zu entries, first %s", r ? kui_value_len(r) : 0,
+             r && kui_value_is_null(kui_value_at(r, 0)) ? "null" : "not null");
+    line(two, KUI_STR(""));
+    kui_value_free(r);
+    kui_value_free(a);
+    /* a Lua error: open_scratch given a number */
+    a = one(kui_value_int(1));
+    r = kw_call(ctx, KUI_STR("buf.open_scratch"), a);
+    KuiStr e = error_of(ctx);
+    line("lua error: ", r ? KUI_STR("answered") : (e.len > 20 ? (KuiStr){e.ptr, 20} : e));
+    kui_value_free(r);
+    kui_value_free(a);
+    /* a null context */
+    r = kw_call(NULL, KUI_STR("echo"), NULL);
+    line(r ? "null ctx: answered" : "null ctx: NULL", KUI_STR(""));
+    kui_value_free(r);
+    char p[32];
+    snprintf(p, sizeof p, "protocol: %u", kw_protocol(ctx));
+    line(p, KUI_STR(""));
+    /* a command whose body is a handle */
+    a = kui_value_list();
+    kui_value_list_push(a, kui_value_str(KUI_STR("probe")));
+    kui_value_list_push(a, kw_fn(ctx, ran, NULL));
+    r = kw_call(ctx, KUI_STR("command"), a);
+    line("command: ", r ? KUI_STR("registered") : error_of(ctx));
+    kui_value_free(r);
+    kui_value_free(a);
+    /* a null function is no handle */
+    r = kw_fn(ctx, NULL, NULL);
+    line("null fn: ", r ? KUI_STR("a handle") : error_of(ctx));
+    kui_value_free(r);
+
+    if (rlen > 0) rlen--;
+    KuiValue *spec = kui_value_map();
+    kui_value_map_set(spec, KUI_STR("name"), kui_value_str(KUI_STR("probe")));
+    kui_value_map_set(spec, KUI_STR("text"), kui_value_str((KuiStr){(const uint8_t *)report, rlen}));
+    a = one(spec);
+    kui_value_free(kw_call(ctx, KUI_STR("buf.open_scratch"), a));
+    kui_value_free(a);
+    return NULL;
+}

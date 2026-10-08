@@ -154,8 +154,6 @@ images and ligatures have since been built.
 - **A daemon** that detaches and attaches, tmux's way, or an OS daemon.
 - **A plugin manager, packages**: qd as its backbone would reopen it
   ([lsp-installs.md](design/lsp-installs.md)).
-- **Native extensions** (a dylib or C ABI): there is no stable Rust ABI
-  (mvp.md Decision 8, kui.md §6).
 - **DAP**, a debugger; `<leader>G*` is reserved.
 - **Multiple windows.**
 - **Proportional fonts** in the editor.

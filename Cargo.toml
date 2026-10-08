@@ -28,11 +28,18 @@ kawoosh-lua = { path = "./lua" }
 # taken from drydock9 pulls its siblings from crates.io and the graph holds
 # two `kui_core`s whose types do not meet. To work against a local checkout
 # while a release is in CI, these three lines become
-#   kui-native = { path = "../kui/crates/kui-native" }  (and the same for -core, -lua).
+#   kui-native = { path = "../kui/crates/kui-native" }  (and the same for -core, -lua, -ffi).
 # The runner crate is `kui-native` (`kui` on crates.io is another crate's).
+# kui-ffi is the native extensions' value type and loader
+# (docs/design/native.md Decision 1); it is in the graph through kui-lua
+# regardless.
 kui-native = "=0.1.0-alpha.41"
 kui-core = "=0.1.0-alpha.41"
 kui-lua = "=0.1.0-alpha.41"
+kui-ffi = "=0.1.0-alpha.41"
+# A grammar's shared library (`kawoosh-languages`) and a native extension's
+# (`kawoosh-lua`).
+libloading = "0.9"
 # The one Lua in the binary is kui-lua's (kui.md D6).
 mlua = { version = "0.12", features = ["lua55", "vendored"] }
 

@@ -4,6 +4,7 @@
 // app's `.icns` is `scripts/macos-app.nu`'s.
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    export_dynamic();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
@@ -19,4 +20,25 @@ fn main() {
         }
         _ => {}
     }
+}
+
+/// A native extension (docs/design/native.md Decision 8) links against
+/// nothing and resolves every `kw_*` and `kui_*` from the executable
+/// that loads it, the way a Lua C module resolves `lua_*`. The symbols
+/// are in the binary already — rustc links every object of a crate's
+/// rlib — but GNU ld puts only what an executable imports in the
+/// dynamic symbol table the loader reads, so Linux needs
+/// `--export-dynamic`; Apple's linker exports an executable's globals
+/// already, and the flag pins it. The tests load extensions too.
+/// Windows has no such flag: a DLL names the module each import comes
+/// from, so the exe exports through a `/DEF:` and ships the import
+/// library link.exe writes — round four of native.md, not here yet.
+fn export_dynamic() {
+    let flag = match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("macos") | Ok("ios") => "-Wl,-export_dynamic",
+        Ok("windows") => return,
+        _ => "-Wl,--export-dynamic",
+    };
+    println!("cargo:rustc-link-arg-bins={flag}");
+    println!("cargo:rustc-link-arg-tests={flag}");
 }

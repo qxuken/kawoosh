@@ -136,6 +136,12 @@ afternoon.
 - **Types for LuaLS**: parameters are `any` unless the name says,
   every one after the first optional, an undocumented Rust function
   `(...)`. (roadmap.md, "Lua and plugins"; `lua/src/meta.rs`)
+- **Native extensions, rounds two to five**: native panes as slots
+  under the extension's namespace and `kw_wake`; the parity test,
+  cost rows and typed `kw_buf_text`/`kw_buf_edits` if measured;
+  Windows export and a run there; a `kawoosh-ext` crate for Rust
+  authors. Round one (the loader, `kw_call`, `kw_fn`, `:extensions`)
+  is built. ([native.md](design/native.md))
 
 ## Look
 

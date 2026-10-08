@@ -11,10 +11,12 @@ use std::rc::Rc;
 
 pub mod fuzzy;
 mod meta;
+pub mod native;
 mod nodes;
 mod prof;
 
 pub use fuzzy::{Hit, Matcher};
+pub use native::{KW_ABI_VERSION, KW_PROTOCOL, NativeCell};
 pub use prof::Spent;
 
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
@@ -1381,6 +1383,9 @@ pub struct Runtime {
     pane: std::cell::Cell<u64>,
     /// The plugins' time, while the Perf tab is on show (`prof.rs`).
     prof: prof::ProfCell,
+    /// The native extensions loaded into this runtime
+    /// (docs/design/native.md), their handles and the last error.
+    native: NativeCell,
 }
 
 type DiagKey = (u64, Vec<(BufferId, kawoosh_doc::Version)>);
@@ -1416,6 +1421,8 @@ impl Runtime {
         seed(&lua, &queue, &published, &store, &pending, &tracked, &jobs)?;
         let prof = prof::ProfCell::default();
         prof::seed(&lua, &prof)?;
+        let native = NativeCell::default();
+        native::seed(&lua, &native)?;
         lua.load(BOOT).set_name("kawoosh:boot").exec()?;
         Ok((
             Self {
@@ -1433,6 +1440,7 @@ impl Runtime {
                 test: RefCell::new(None),
                 pane: std::cell::Cell::new(0),
                 prof,
+                native,
             },
             ext,
         ))
@@ -1508,6 +1516,12 @@ impl Runtime {
             parts.push(s);
         }
         Ok(parts.join("\t"))
+    }
+
+    /// The native extensions loaded into this runtime
+    /// (docs/design/native.md).
+    pub fn native(&self) -> &NativeCell {
+        &self.native
     }
 
     pub fn lua(&self) -> &Lua {

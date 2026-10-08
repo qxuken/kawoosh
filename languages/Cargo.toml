@@ -49,7 +49,7 @@ log.workspace = true
 tree-sitter.workspace = true
 # A grammar from a shared library: `LanguageFn` over its symbol.
 tree-sitter-language = "0.1"
-libloading = "0.9"
+libloading.workspace = true
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-toml-ng = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
