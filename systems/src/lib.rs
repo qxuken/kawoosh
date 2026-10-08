@@ -17,6 +17,7 @@ pub mod search;
 pub mod servers;
 pub mod sftp;
 pub mod shell_env;
+pub mod shellfs;
 pub mod spawn;
 pub mod sqlite;
 pub mod ssh_config;

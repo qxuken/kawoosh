@@ -2247,37 +2247,46 @@ picker.source("tools", {
 
 -- The machines within reach (docs/design/domains.md W3): the settings'
 -- domains, `~/.ssh/config`'s hosts, WSL's distros, as `domain pick`
--- last published them (`kawoosh.domains()`). `<CR>` opens a tab on one,
--- its home listed — connected first when it is down; `<C-o>` connects it
--- and stays.
+-- last published them (`kawoosh.domains()`), each with what it is —
+-- `ssh: box`, `wsl: Ubuntu-24.04` — and how it stands in words, what
+-- that means in the preview. `<CR>` opens a tab on one, its home listed
+-- — connected first when it is down; `<C-o>` connects it and stays;
+-- `<C-x>` disconnects it, the row saying so once it has.
+local DOMAIN_STATE = { up = "connected", down = "not connected", connecting = "connecting…", failed = "failed" }
+
 picker.source("domains", {
-  title = "domains", placeholder = "a machine · <C-o> connects without a tab",
+  title = "domains", placeholder = "a machine · <C-o> connects · <C-x> disconnects",
   columns = {
     { "text", grow = true },
     { "what", muted = true, min = 120, max = 320, share = 0.4 },
-    { "state", muted = true, min = 60, max = 160, share = 0.2 },
+    { "state", muted = true, min = 80, max = 180, share = 0.2 },
   },
   items = function()
     local items = {}
     for _, d in ipairs(kawoosh.domains() or {}) do
-      local target = d.target ~= "" and d.target or "the default distro"
-      local state = d.state .. (d.open > 0 and (" · " .. d.open .. " open") or "")
+      local state = (DOMAIN_STATE[d.state] or d.state) .. (d.open > 0 and (" · " .. d.open .. " open") or "")
       items[#items + 1] = {
-        text = d.name, what = d.kind .. " " .. target, state = state, name = d.name,
+        text = d.name, what = d.label, state = state, name = d.name,
         boost = d.state == "up" and 0.5 or 0,
-        preview = { title = d.name, lines = {
-          d.kind .. " " .. target, "from " .. d.from, d.state .. (d.error and (": " .. d.error) or ""),
-          "", d.name .. ":~ in a new tab",
+        preview = { title = d.name .. " — " .. d.label, lines = {
+          d.means, "", "found in " .. d.from, d.name .. ":~ in a new tab on <CR>",
         } },
       }
     end
     return items
   end,
-  keys = { ["<C-o>"] = function(item)
-    if not item then return end
-    picker.close()
-    kawoosh.run("domain connect " .. item.name)
-  end },
+  keys = {
+    ["<C-o>"] = function(item)
+      if not item then return end
+      picker.close()
+      kawoosh.run("domain connect " .. item.name)
+    end,
+    -- The picker stays: the row reads `not connected` once it is.
+    ["<C-x>"] = function(item)
+      if not item then return end
+      kawoosh.run("domain disconnect " .. item.name)
+    end,
+  },
   pick = function(item) if item then kawoosh.run("domain tab " .. item.name) end end,
   empty = "no domain: none in the settings, no host in ~/.ssh/config, no WSL distro",
 })

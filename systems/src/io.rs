@@ -575,11 +575,14 @@ impl Ssh {
 impl Ssh {
     /// The argv of an `ssh` that runs `script` — POSIX sh — on the host.
     /// What the host's own login shell is handed is one line every
-    /// shell reads alike, bash, zsh, fish or nushell: `sh -c 'eval
-    /// "$(echo B64 | base64 -d)"'`, the script in base64 — so neither
-    /// this side's quoting nor the host's reaches it. `pty` asks for a
-    /// terminal (`-t`), else none (`-T`); `forward` is a port on the
-    /// host's loopback carried back to a local socket (`-R`).
+    /// shell reads alike, bash, zsh, fish, nushell or busybox's ash:
+    /// `sh -c 'eval "$(printf "\143\144…")"'`, the script's bytes as
+    /// `printf`'s octal escapes ([`printf_octal`]) — so neither this
+    /// side's quoting nor the host's reaches it, and nothing past `sh`'s
+    /// own `printf` is asked of the host (OpenWrt's busybox has no
+    /// `base64`). `pty` asks for a terminal (`-t`), else none (`-T`);
+    /// `forward` is a port on the host's loopback carried back to a
+    /// local socket (`-R`).
     pub fn remote_argv(
         &self,
         script: &str,
@@ -599,8 +602,8 @@ impl Ssh {
         v.push(self.host.clone());
         v.push("--".into());
         v.push(format!(
-            "sh -c 'eval \"$(echo {} | base64 -d)\"'",
-            base64(script.as_bytes())
+            "sh -c 'eval \"$(printf \"{}\")\"'",
+            printf_octal(script.as_bytes())
         ));
         v
     }
@@ -645,6 +648,27 @@ pub fn remote_script(
     }
     out.push_str(exec);
     out.push('\n');
+    out
+}
+
+/// `bytes` as a `printf` format that prints them back: letters, digits
+/// and `_ ./:,=+@-` as they are, every other byte a three-digit octal
+/// escape (`\047` for `'`). What is left holds nothing any shell reads
+/// between single quotes — not fish's `\\` or `\'`, not nushell's — nor
+/// anything `sh` reads between double quotes, nor a `%` for `printf`
+/// (an escape's `%` is printed, not read as a conversion); a leading
+/// `-` is escaped too, or bash's `printf` would take it for an option.
+/// POSIX's `printf`, a builtin of every `sh` — dash, bash, busybox's ash.
+pub fn printf_octal(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for (i, &b) in bytes.iter().enumerate() {
+        let plain = b.is_ascii_alphanumeric() || b"_ ./:,=+@".contains(&b) || (b == b'-' && i > 0);
+        if plain {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("\\{b:03o}"));
+        }
+    }
     out
 }
 
@@ -1380,9 +1404,11 @@ fn install_shim(s: &dyn kawoosh_doc::fs::Fs, shim: &str) {
 impl Io {
     /// Waits on a thread for `transport`'s master to come up — the pane
     /// it runs in asking whatever it asks — then opens its SFTP channel
-    /// and registers `name`'s files: [`IoMsg::DomainUp`], or
-    /// [`IoMsg::DomainFailed`] when the channel fails, the wait runs past
-    /// `patience`, or `cancel` is set (the master's pane closed).
+    /// (or, on a host with no SFTP server, takes its files through its
+    /// shell, [`crate::shellfs`]) and registers `name`'s files:
+    /// [`IoMsg::DomainUp`], or [`IoMsg::DomainFailed`] when neither
+    /// answers, the wait runs past `patience`, or `cancel` is set (the
+    /// master's pane closed).
     pub fn connect_domain(
         &self,
         name: String,
@@ -1408,14 +1434,35 @@ impl Io {
                     if transport.is_up() {
                         let mut c = transport.command(&["-s"]);
                         c.arg("sftp");
-                        break match crate::sftp::Sftp::spawn(c) {
-                            Ok(s) => {
-                                install_host_shim(&s);
-                                kawoosh_doc::fs::register(&name, std::sync::Arc::new(s));
+                        // A host with no SFTP server (OpenWrt's dropbear)
+                        // still connects: its files through its shell,
+                        // when that answers.
+                        let files: Result<std::sync::Arc<dyn kawoosh_doc::fs::Fs>, String> =
+                            match crate::sftp::Sftp::spawn(c) {
+                                Ok(s) => Ok(std::sync::Arc::new(s)),
+                                Err(e) => {
+                                    let shell = crate::shellfs::ShellFs::over(Transport::Ssh(
+                                        transport.clone(),
+                                    ));
+                                    match shell.check() {
+                                        Ok(()) => {
+                                            log::info!(
+                                                "{name}: no SFTP ({e}); files through the shell"
+                                            );
+                                            Ok(std::sync::Arc::new(shell))
+                                        }
+                                        Err(why) => Err(format!("no SFTP ({e}), and {why}")),
+                                    }
+                                }
+                            };
+                        break match files {
+                            Ok(fs) => {
+                                install_host_shim(fs.as_ref());
+                                kawoosh_doc::fs::register(&name, fs);
                                 register_transport(&name, Transport::Ssh(transport.clone()));
                                 IoMsg::DomainUp { name: name.clone() }
                             }
-                            Err(e) => failed(format!("sftp: {e}")),
+                            Err(e) => failed(e),
                         };
                     }
                     if started.elapsed() > patience {
@@ -1832,6 +1879,61 @@ mod tests {
             );
             std::fs::remove_dir_all(&home).ok();
         }
+    }
+
+    /// The line an ssh host's login shell is handed carries the script
+    /// in `printf`'s octal escapes: no quote, backslash pair or `%` a
+    /// shell or `printf` would read, and nothing but `sh` and its
+    /// `printf` asked of the host — a busybox with no `base64` (OpenWrt)
+    /// runs it as written.
+    #[test]
+    fn a_remote_line_needs_no_base64() {
+        assert_eq!(printf_octal(b"cd /x"), "cd /x");
+        assert_eq!(printf_octal(b"-a'%\\\n"), "\\055a\\047\\045\\134\\012");
+        // Every byte but `\r`, which Git's bash, standing in for a host
+        // on Windows, drops from a `$(…)` of its own accord.
+        let script: String = (1u8..128)
+            .filter(|b| *b != b'\r')
+            .map(|b| b as char)
+            .chain("é ✓\n".chars())
+            .collect();
+        let t = Ssh {
+            ssh: "ssh".into(),
+            host: "h".into(),
+            ctl: "/c".into(),
+        };
+        let line = t.remote_argv(&script, false, None).pop().unwrap();
+        let inner = line
+            .strip_prefix("sh -c 'eval \"$(printf \"")
+            .and_then(|l| l.strip_suffix("\")\"'"))
+            .expect(&line);
+        assert!(
+            !inner.contains(['\'', '"', '%', '$', '`']) && !inner.contains("\\\\"),
+            "{inner}"
+        );
+        assert!(!line.contains("base64"));
+        // Run by a shell: `cat` of the script itself, byte for byte.
+        let sh = if cfg!(unix) {
+            Some(std::path::PathBuf::from("/bin/sh"))
+        } else {
+            program_path("sh")
+        };
+        let Some(sh) = sh else {
+            eprintln!("no sh here: the run skipped");
+            return;
+        };
+        let line = t
+            .remote_argv(&format!("cat <<'EOF'\n{script}EOF\n"), false, None)
+            .pop()
+            .unwrap();
+        let out =
+            crate::spawn::output(std::process::Command::new(&sh).arg("-c").arg(&line)).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            script,
+            "{:?}",
+            out.stderr
+        );
     }
 
     /// The host's CLI speaks the socket's JSON over the forwarded port:

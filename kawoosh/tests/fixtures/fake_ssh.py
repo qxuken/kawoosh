@@ -22,15 +22,48 @@ A HOST that is an absolute path is the host's home: the SFTP server starts
 there and a command runs with it as `$HOME` — so a test's host writes
 nothing into the real home. A command's `$SHELL` is `/bin/sh`, as on a
 host whose login shell is sh.
+
+A home holding a file `.fake-ssh-small` is a host as small as OpenWrt's
+(dropbear and busybox): no SFTP subsystem (`-s sftp` fails as dropbear's
+does), and a command's `PATH` without `base64`, `stat` or `bash` — a
+directory of links to everything else on this machine's `PATH`.
 """
 
 import os
 import socket
 import sys
+import tempfile
 import threading
 import time
 
 SFTP_SERVERS = ["/usr/libexec/sftp-server", "/usr/lib/openssh/sftp-server", "/usr/lib/ssh/sftp-server"]
+
+# What a small host does without.
+MISSING = {"base64", "stat", "bash", "sftp-server"}
+
+
+def small_path(home):
+    """A directory of links to every program on `PATH` but `MISSING`."""
+    farm = os.path.join(tempfile.gettempdir(), "fake-ssh-small-%d" % os.getuid())
+    if not os.path.isdir(farm):
+        tmp = farm + ".%d" % os.getpid()
+        os.makedirs(tmp, exist_ok=True)
+        for d in os.environ.get("PATH", "/usr/bin:/bin").split(":"):
+            if not os.path.isdir(d):
+                continue
+            for name in os.listdir(d):
+                link = os.path.join(tmp, name)
+                if name in MISSING or os.path.lexists(link):
+                    continue
+                try:
+                    os.symlink(os.path.join(d, name), link)
+                except OSError:
+                    pass
+        try:
+            os.rename(tmp, farm)
+        except OSError:
+            pass
+    return farm
 
 
 def parse(argv):
@@ -129,6 +162,12 @@ def main():
     home = host if host.startswith("/") else os.environ.get("HOME", "/")
     env = dict(os.environ, HOME=home, SHELL="/bin/sh")
     os.chdir(home)
+    small = os.path.exists(os.path.join(home, ".fake-ssh-small"))
+    if small:
+        env["PATH"] = small_path(home)
+        if opts["s"]:
+            sys.stderr.write("subsystem request failed on channel 0\n")
+            sys.exit(255)
     if opts["s"]:
         server = next((p for p in SFTP_SERVERS if os.path.exists(p)), None)
         if not server:

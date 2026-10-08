@@ -451,6 +451,10 @@ impl Fs for WslFs {
         Some(self.on_share(path))
     }
 
+    fn via(&self) -> &'static str {
+        "the \\\\wsl.localhost share"
+    }
+
     fn set_mode(&self, path: &Path, mode: u32) -> io::Result<()> {
         let host = self.host(path);
         let status = crate::spawn::status(

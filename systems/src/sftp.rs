@@ -633,6 +633,10 @@ impl Fs for Sftp {
         !exited
     }
 
+    fn via(&self) -> &'static str {
+        "SFTP"
+    }
+
     fn set_mode(&self, path: &Path, mode: u32) -> io::Result<()> {
         let mut body = Vec::new();
         put_bytes(&mut body, &wire(path));
