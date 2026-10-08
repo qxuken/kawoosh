@@ -451,7 +451,124 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use super::tidy_edits;
+    use super::{Against, Buffer, file_against, tidy_edits};
+    use crate::Editor;
+
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("kawoosh-editor-disk-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A file against a text: the same, grown, shrunk, changed within
+    /// the text — read through the window, so a text longer than it
+    /// crosses a seam — and an empty text against anything.
+    #[test]
+    fn a_file_stands_against_a_text() {
+        let dir = tmp("against");
+        let f = dir.join("a.txt");
+        let long: String = (0..200_000).map(|i| format!("line {i}\n")).collect();
+        assert!(long.len() > super::WINDOW, "crosses the window");
+        let text = text_buffer::Buffer::with_text(long.as_bytes());
+        std::fs::write(&f, &long).unwrap();
+        assert!(matches!(file_against(&f, &text).unwrap(), Against::Same));
+        std::fs::write(&f, format!("{long}more\n")).unwrap();
+        match file_against(&f, &text).unwrap() {
+            Against::Grew(t) => assert_eq!(t, b"more\n"),
+            o => panic!("{o:?}"),
+        }
+        std::fs::write(&f, &long[..long.len() - 1]).unwrap();
+        assert!(
+            matches!(file_against(&f, &text).unwrap(), Against::Other),
+            "shrank"
+        );
+        let mut changed = long.clone();
+        changed.replace_range(5..6, "X");
+        std::fs::write(&f, &changed).unwrap();
+        assert!(
+            matches!(file_against(&f, &text).unwrap(), Against::Other),
+            "changed within"
+        );
+        let empty = text_buffer::Buffer::new();
+        match file_against(&f, &empty).unwrap() {
+            Against::Grew(t) => assert_eq!(t.len(), changed.len()),
+            o => panic!("{o:?}"),
+        }
+        std::fs::write(&f, "").unwrap();
+        assert!(matches!(file_against(&f, &empty).unwrap(), Against::Same));
+        assert!(file_against(&dir.join("none"), &empty).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The reload: a grown file is an append sharing the text before,
+    /// a tail that is not UTF-8 or a file changed within is the whole
+    /// file again (repaired), and a file that is not UTF-8 and did not
+    /// change is no change.
+    #[test]
+    fn a_reload_follows_or_loads_whole() {
+        use crate::disk::Disk;
+        let dir = tmp("reload");
+        let f = dir.join("a.txt");
+        std::fs::write(&f, "one\n").unwrap();
+        let mut ed = Editor::new();
+        let id = ed.add_buffer(Buffer::from_file(&f).unwrap());
+        let v = ed.add_view(id);
+        let pieces = ed.buffers[id].piece_count();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, "one\ntwo\n").unwrap();
+        assert_eq!(ed.disk_state(id), Disk::Changed);
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, Some(4));
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\n");
+        assert_eq!(ed.buffers[id].piece_count(), pieces + 1);
+        assert!(!ed.buffers[id].modified);
+        assert_eq!(ed.disk_state(id), Disk::Same);
+        // A tail that is not UTF-8: the whole file, repaired.
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, b"one\ntwo\n\xff\n").unwrap();
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, None);
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\n\u{fffd}\n");
+        assert!(!ed.buffers[id].modified);
+        // The same bytes, a new stamp: not a change, though the text
+        // is not the bytes.
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, b"one\ntwo\n\xff\n").unwrap();
+        assert_eq!(ed.disk_state(id), Disk::Same);
+        // Changed within: whole.
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, "ONE\ntwo\n").unwrap();
+        assert_eq!(ed.disk_state(id), Disk::Changed);
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, None);
+        assert_eq!(ed.buffers[id].text(), "ONE\ntwo\n");
+        // Each a node: undo walks them back.
+        assert!(ed.undo(v));
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\n\u{fffd}\n");
+        assert!(ed.undo(v));
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\n");
+        assert!(ed.undo(v));
+        assert_eq!(ed.buffers[id].text(), "one\n");
+        // A modified buffer whose text is a head of the file: the
+        // reload appends and the buffer is clean on the file's text.
+        assert!(ed.apply_edits(id, &[(4..4, "two\n".into())]));
+        assert!(ed.buffers[id].modified);
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&f, "one\ntwo\nthree\n").unwrap();
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, Some(6));
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\nthree\n");
+        assert!(!ed.buffers[id].modified);
+        // A modified buffer whose file is its saved text: `:e!` loads
+        // the disk back, whole.
+        assert!(ed.apply_edits(id, &[(0..4, String::new())]));
+        let r = ed.reload_from_disk(id).unwrap();
+        assert_eq!(r.appended, None);
+        assert_eq!(ed.buffers[id].text(), "one\ntwo\nthree\n");
+        assert!(!ed.buffers[id].modified);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     fn tidied(text: &str, trim: bool, nl: bool, eol: Option<&str>) -> String {
         let mut out = text.to_string();

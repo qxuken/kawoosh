@@ -151,6 +151,46 @@ fn a_file_that_grew_is_followed_as_an_append() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A log rotated under its buffer — truncated and written again, the
+/// new text no longer the old one's head — is reloaded whole, and the
+/// corner says `reloaded`, not `followed`; a follow after that is a
+/// follow again.
+#[test]
+fn a_rotated_log_is_reloaded_whole() {
+    let dir = tmp("rotated");
+    let f = dir.join("consumer.log");
+    std::fs::write(&f, "one\ntwo\n").unwrap();
+    let (mut d, mut app) = launch(&f);
+    let settle = |d: &mut Drive, app: &mut Kawoosh, want: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while text_of(app) != want && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+            d.frame(app);
+        }
+        assert_eq!(text_of(app), want);
+        assert!(!modified(app));
+    };
+    outside_write(&f, "three\n");
+    settle(&mut d, &mut app, "three\n");
+    let said = |app: &Kawoosh, word: &str| {
+        app.notes
+            .shown
+            .iter()
+            .filter(|s| s.text.contains(word))
+            .count()
+    };
+    assert_eq!(said(&app, "reloaded, changed on disk"), 1);
+    assert_eq!(said(&app, "followed"), 0);
+    outside_write(&f, "three\nfour\n");
+    settle(&mut d, &mut app, "three\nfour\n");
+    assert_eq!(said(&app, "followed"), 1);
+    d.keys(&mut app, "u");
+    assert_eq!(text_of(&app), "three\n");
+    d.keys(&mut app, "u");
+    assert_eq!(text_of(&app), "one\ntwo\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A save ends the typing: `<C-s>` from insert mode writes and leaves
 /// the view in normal mode, as `<Esc>` would — the caret back on the
 /// last character typed — and from visual mode too; in normal mode it
