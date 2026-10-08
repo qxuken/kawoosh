@@ -84,11 +84,71 @@ fn epoch_secs(m: &std::fs::Metadata) -> Option<u64> {
         .map(|d| d.as_secs())
 }
 
+// ------------------------------------------------------------ a moment
+
+/// What a host said of a path within one moment — the frame or the key
+/// being handled (docs/design/domains.md, "Built, speed"). A file
+/// opened asks every opener whether it is theirs, each with an
+/// `is_dir` and a look at the head, and a listing asks `is_dir` of its
+/// directory three times: on a host each is a round trip, on the frame.
+/// Within a moment the first answer stands; [`new_moment`] (the app's,
+/// at each frame and each event) forgets them, and so does any change
+/// made on a host from here.
+#[derive(Default)]
+struct Memo {
+    moment: u64,
+    /// When the moment began: one the app never moves on from (a
+    /// window left idle, no frames) is over after [MOMENT_MAX], so the
+    /// poll's stat is never an old answer.
+    began: Option<std::time::Instant>,
+    stats: std::collections::HashMap<PathBuf, Result<Stat, (io::ErrorKind, String)>>,
+    /// A file's first [`HEAD`] bytes, or all of a shorter one.
+    heads: std::collections::HashMap<PathBuf, Vec<u8>>,
+}
+
+const MOMENT_MAX: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// How much of a host's file one look at its head brings.
+const HEAD: usize = 64 * 1024;
+
+static MOMENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn memo() -> std::sync::MutexGuard<'static, Memo> {
+    static M: std::sync::OnceLock<std::sync::Mutex<Memo>> = std::sync::OnceLock::new();
+    let mut m = M
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let now = MOMENT.load(std::sync::atomic::Ordering::Relaxed);
+    if m.moment != now || m.began.is_none_or(|t| t.elapsed() > MOMENT_MAX) {
+        m.moment = now;
+        m.began = Some(std::time::Instant::now());
+        m.stats.clear();
+        m.heads.clear();
+    }
+    m
+}
+
+/// A new moment: what hosts said before is asked again.
+pub fn new_moment() {
+    MOMENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The facts about `path`, the link followed; an error names the path.
 pub fn stat(path: &Path) -> io::Result<Stat> {
     if let Some(h) = on_host(path) {
+        if let Some(said) = memo().stats.get(path) {
+            return said.clone().map_err(|(k, m)| io::Error::new(k, m));
+        }
         let (fs, p) = h?;
-        return fs.stat(&p).map_err(|e| named(path, e));
+        let said = fs.stat(&p).map_err(|e| named(path, e));
+        memo().stats.insert(
+            path.to_path_buf(),
+            said.as_ref()
+                .map(Clone::clone)
+                .map_err(|e| (e.kind(), e.to_string())),
+        );
+        return said;
     }
     let link = std::fs::symlink_metadata(path).map_err(|e| named(path, e))?;
     let is_symlink = link.file_type().is_symlink();
@@ -563,9 +623,18 @@ pub fn drives() -> Vec<PathBuf> {
 /// amount rather than the disk.
 pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
     if let Some(h) = on_host(root) {
+        let (fs, _) = h?;
+        let (domain, rest) = domain_of(root).expect("on a host");
         // A host whose files are reached here too (a WSL distro's
-        // share): the local walk, its rows the host's, cut on `/`.
-        if let Some(local) = h?.0.local(domain_of(root).expect("on a host").1) {
+        // share): walked by the distro itself, a process there — the
+        // share's walk is a round trip through the 9P server for every
+        // directory, ten times a local disk's — else by the local
+        // walker on the share, its rows the host's, cut on `/`. Not
+        // kept: nothing says when a distro's files change.
+        if let Some(local) = fs.local(rest) {
+            if let Some(rows) = walk_by_host(domain, rest, max) {
+                return Ok(rows);
+            }
             let rows = walk(&local, max)?;
             return Ok(rows.into_iter().map(|r| r.replace('\\', "/")).collect());
         }
@@ -694,17 +763,66 @@ pub fn forget_walks(domain: &str) {
         .retain(|root, _| domain_of(root).is_none_or(|(d, _)| d != domain));
 }
 
-/// The walks of `path`'s host forgotten, after a change there.
+/// The walks of `path`'s host forgotten, after a change there, and what
+/// this moment heard of it.
 fn changed_on_host(path: &Path) {
     if let Some((d, _)) = domain_of(path) {
         forget_walks(d);
+        new_moment();
     }
+}
+
+/// What a walk on a host prints first, so an answer is told from a
+/// shell that ran nothing (a host without `base64` evals an empty line
+/// and says nothing, successfully).
+const WALKED: &str = "kawoosh-walk";
+
+/// The files under `dir` on `domain` as the host walks them, in one
+/// process through its transport: `git ls-files` in a repository — what
+/// git sees, `.gitignore` and all, as the local walk has it — else
+/// `find` with the SFTP walk's rules (hidden entries, `target` and
+/// `node_modules` left out). Hidden paths are left out of git's too, as
+/// the local walker does. `None` when the domain has no transport, the
+/// directory is not there, or the host could not run it: the caller
+/// walks another way.
+fn walk_by_host(domain: &str, dir: &Path, max: usize) -> Option<Vec<String>> {
+    let t = crate::io::transport_of(domain)?;
+    let walk = format!(
+        "echo {WALKED}\n\
+         {{ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then\n\
+           git -c core.quotePath=false ls-files -co --exclude-standard\n\
+         else\n\
+           find . \\( -type d \\( -name '.?*' -o -name target -o -name node_modules \\) -prune \\) \
+                  -o \\( -type f ! -name '.*' -print \\)\n\
+         fi; }} 2>/dev/null | head -n {}",
+        max.saturating_mul(2)
+    );
+    let script = crate::io::remote_script(dir, &[], &walk, false);
+    let out = crate::io::run_script(&t, &script, None).ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut lines = text.lines().map(|l| l.trim_end_matches('\r'));
+    if lines.next() != Some(WALKED) {
+        return None;
+    }
+    let mut rows: Vec<String> = lines
+        .map(|l| l.strip_prefix("./").unwrap_or(l))
+        .filter(|l| !l.is_empty() && !l.split('/').any(|c| c.starts_with('.')))
+        .map(str::to_string)
+        .collect();
+    rows.sort();
+    rows.truncate(max);
+    Some(rows)
 }
 
 /// A host's walk: its listings, breadth first, hidden entries and what
 /// a build leaves (`target`, `node_modules`) left out — no `.gitignore`
 /// is read through SFTP — sorted by name, stopped at `max`.
 fn walk_host(root: &Path, max: usize) -> io::Result<Vec<String>> {
+    if let Some((domain, rest)) = domain_of(root)
+        && let Some(rows) = walk_by_host(domain, rest, max)
+    {
+        return Ok(rows);
+    }
     if !stat(root)?.is_dir {
         return Err(io::Error::new(
             io::ErrorKind::NotADirectory,
@@ -837,14 +955,27 @@ pub fn read_bytes(path: &Path) -> io::Result<Vec<u8>> {
 /// `len` bytes of a file from `offset`, fewer at its end and none past
 /// it: what a pane over a file's bytes (`kawoosh/lua/hex.lua`) reads a
 /// screenful of each frame, the file never read whole. A host's file
-/// is read whole through its domain and cut here.
+/// is read through its domain's own `read_at`; a look within its head
+/// is the head's, read once a moment.
 pub fn read_at(path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
-    if on_host(path).is_some() {
-        let all = read_bytes(path)?;
-        let from = (offset.min(all.len() as u64)) as usize;
-        let to = from.saturating_add(len).min(all.len());
-        return Ok(all[from..to].to_vec());
+    if let Some(h) = on_host(path) {
+        let cut = |all: &[u8]| {
+            let from = (offset.min(all.len() as u64)) as usize;
+            let to = from.saturating_add(len).min(all.len());
+            all[from..to].to_vec()
+        };
+        let (fs, p) = h?;
+        if offset.saturating_add(len as u64) > HEAD as u64 {
+            return fs.read_at(&p, offset, len).map_err(|e| named(path, e));
+        }
+        if let Some(head) = memo().heads.get(path) {
+            return Ok(cut(head));
+        }
+        let head = fs.read_at(&p, 0, HEAD).map_err(|e| named(path, e))?;
+        let out = cut(&head);
+        memo().heads.insert(path.to_path_buf(), head);
+        return Ok(out);
     }
     let mut f = std::fs::File::open(path).map_err(|e| named(path, e))?;
     f.seek(SeekFrom::Start(offset))

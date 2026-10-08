@@ -417,8 +417,12 @@ impl Buffer {
         buf.path = Some(path.to_path_buf());
         buf.read_only = true;
         buf.loading = Some((0, total));
-        // Before the read, so a write while it maps is a change.
-        buf.disk = Stamp::of(path);
+        // Before the read, so a write while it maps is a change. A
+        // host's is taken by the read itself, off the frame: there it
+        // is a round trip.
+        if crate::fs::remote(path).is_none() {
+            buf.disk = Stamp::of(path);
+        }
         buf
     }
 

@@ -219,7 +219,41 @@ local function shown_lines(h, lines)
   return out
 end
 
+-- A host's files read for the preview while a picker is open, by path:
+-- there a stat is a round trip on the frame, and a preview drawn again
+-- each frame would ask each frame (docs/design/domains.md, "Built,
+-- speed"). Read once, kept until the next picker opens.
+local host_cache = {}
+
+-- Whether `path` is spelled on a domain (`box:/…`, `box:~…`): a name of
+-- two characters or more, so a drive's `C:/` is not one.
+local function on_host(path)
+  return path:match("^[%w_%.%-][%w_%.%-]+:[/~]") ~= nil
+end
+
 local function file_lines(path, around)
+  if on_host(path) then
+    local c = host_cache[path]
+    if not c then
+      local lines, why = (function()
+        local ok, st = pcall(fs.stat, path)
+        if not ok then return nil, "not on disk" end
+        if st.is_dir then return nil, "a directory" end
+        if st.size > PREVIEW_MAX then return nil, "too big to preview" end
+        local rok, text = pcall(fs.read, path)
+        if not rok then return nil, "not text" end
+        if text:find("\0", 1, true) then return nil, "binary" end
+        text = kawoosh.secrets.mask_text(text, path)
+        local out = {}
+        for line in (text .. "\n"):gmatch("(.-)\n") do out[#out + 1] = line end
+        if out[#out] == "" then out[#out] = nil end
+        return out
+      end)()
+      c = { lines = lines, why = why }
+      host_cache[path] = c
+    end
+    return c.lines, c.why
+  end
   local ok, st = pcall(fs.stat, path)
   if not ok then return nil, "not on disk" end
   if st.is_dir then return nil, "a directory" end
@@ -1070,6 +1104,7 @@ function picker.open(what, opts)
   if P and P.job and P.job.cancel then pcall(P.job.cancel) end
   if P and P.answer then P.answer(nil) end
   unfollow()
+  host_cache = {}
   -- `terminal`: opened from a terminal pane, where a pick goes back to;
   -- `pane`, that pane's id, for a source that renders to its size.
   local ctx = { buffer = kawoosh.buf.current(), cwd = fs.cwd(), root = opts.root or fs.cwd(),

@@ -13,6 +13,7 @@ pub mod job;
 pub mod lsp;
 pub mod overstrike;
 pub mod picture;
+pub mod runner;
 pub mod search;
 pub mod servers;
 pub mod sftp;

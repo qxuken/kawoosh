@@ -94,7 +94,9 @@ by the next channel failing, and that reopens the pane.
 
 *Beat:* `russh` or `ssh2` in-process — their own config parsing, agent,
 known hosts and jump hosts, when the user's `~/.ssh/config` is the
-thing to reuse, and a prompt problem that is worse in-process. And a
+thing to reuse, and a prompt problem that is worse in-process
+(reopened 2026-10-09 when Windows turned out to have no master to
+share — "Built, speed": a spike measured, not built). And a
 kawoosh agent on the host (`ssh box kawoosh agent`, vscode's shape:
 inotify, fast walks, one JSON channel): a binary to install per host
 and per architecture, so it is the round after, if polling and SFTP
@@ -671,3 +673,127 @@ file holding a port. An ssh domain on Windows wants a mode of its own:
 no master, each channel its own connection (a key or the agent, since
 a file channel has no terminal to ask in), and `-R
 PORT:127.0.0.1:LOCALPORT`.
+
+## Built, speed
+
+**2026-10-09, two reports from use.** "Very slow ssh experience. Vim
+inside a terminal works faster, traverse faster"; "WSL speed
+unacceptable: when I use WezTerm it performs even faster than native
+Windows Terminal, but Kawoosh is like I work on a remote machine."
+
+*Measured first.* Two benches. One in the tests
+(`kawoosh/tests/remote_frames.rs`): a mirrored host whose every call
+takes a while and notes the thread that asked, through a session of
+opening, moving, typing, saving, `-`, `<CR>` and the files picker. The
+other live: a real `sshd` in a container (Alpine, OpenSSH 9.7, a git
+repository of 3,003 files, `tc netem` adding 30 ms) and the Kawoosh
+window driven over its socket (`kawoosh ex`, whose own round trip is
+about 77 ms, so a command's wait on the frame is what it takes past
+that), the same for the WSL distro. What they showed:
+
+- The frame waited on the host where nothing needed it to. Opening a
+  file was eleven calls on it: the `:e` path's completion listing
+  three directories, each opener's `is_dir` (four) and two of them
+  reading the whole file for its head, then the stamp and the read
+  itself. Opening the 2 MB file stopped the window 7.6 s; a small one
+  680 ms. A listing asked `is_dir` of its directory three times; the
+  picker's preview a stat and a read each frame.
+- SFTP was one request at a time: a 2 MB read 62 round trips one after
+  another (2,018 ms), and a stat asked on one thread waited behind a
+  read on another (five of each: 10.3 s).
+- The language-server pool looked for a workspace's markers up the
+  parents at every sync — every edit — a stat each on the files'
+  channel, which the frame's calls then queued behind.
+- The picker's walk of a host was its listings, breadth first: 3,000
+  files had not come in 180 s.
+- ssh from Windows has no master ("Built, small hosts"): each channel
+  was a connection, 420 to 500 ms at 30 ms of delay, 26 of them in
+  the session — every listing's `git status`, every base, every walk —
+  and the master's pane closing as its own session failed made the
+  domain come up by a race (once in three runs).
+- WSL's files were not the slow part on this machine (a listing on
+  the share some 30 ms, the walk 0.5 s); its processes were: `wsl.exe`
+  is a tenth of a second before it runs anything, and a listing's git
+  colours are a process each. Its terminal is not: through the
+  `OpenConsole` a release ships beside `kawoosh.exe`, a byte's echo
+  from `wsl.exe -e cat` came back in 0.4 ms against 0.25 ms from a
+  local one (`term/tests/pty_latency.rs`); Windows' own console host
+  splits output 10 to 20 ms apart, which a development build, with
+  nothing beside it, still has.
+
+*What changed.*
+
+- **SFTP pipelined.** Each request goes out with its id and a thread
+  hands each answer to whoever waits on it, so nothing waits behind
+  another thread's call; a read sends its chunks a window at a time, a
+  write its chunks with the CLOSE behind them, a listing two READDIRs
+  and its links' stats at once, a stat LSTAT and STAT together, a
+  read's CLOSE unwaited. `Fs::read_at` reads a range. The bench: a
+  listing 125 → 63 ms, the 2 MB read 2,018 → 231, its write 2,211 →
+  333, the ten calls on two threads 10.3 s → 0.97.
+- **The frame asks less.** A host's file is read on the io thread
+  whatever its size, its stamp taken there; what a host says of a path
+  holds for a moment (`fs::new_moment`, at each frame and event, a
+  quarter second at most, ended by any change made there from here),
+  so the openers' four `is_dir` are one stat and their heads one
+  64 KB `read_at`; the picker's preview reads a host's file once while
+  it is open; a save makes its directory only when the write says it
+  is missing; the pool keeps a host's workspace roots. What the frame
+  still waits for on a host: a stat for a listing, a stat and a head
+  for a file opened (`a_host_is_asked_little_on_the_frame`).
+- **The host walks itself.** One process: `git ls-files -co
+  --exclude-standard` in a repository, else `find` with the SFTP
+  walk's rules; the listings only where neither runs. A distro too,
+  before the share's walk.
+- **No master on Windows, and runners.** `ssh.master` (off on
+  Windows): no pane, each channel its own connection in `BatchMode`
+  where it has no terminal, a terminal's `-R` to the TCP port the
+  socket's file names. What runs to its end — a process whose output
+  is wanted whole (git's), the walk, `ShellFs`'s calls — goes through
+  a runner (`systems::runner`): a POSIX sh loop kept open on the host,
+  started as an ordinary process's one script, that reads a script and
+  its input as lines of `printf` octal, runs it, and answers the code
+  and both outputs by their lengths. Up to three a domain, one warmed
+  at connect. On ssh without a master a script is 45 ms against
+  494 ms for a connection of its own; through `wsl.exe`, a few
+  milliseconds against a tenth of a second.
+
+The live bench after: connecting and opening a file 4.1 s → 1.3; a
+file opened stops the frame about 180 ms (680); the 2 MB file 0.2 s
+(7.6); a listing about 45 ms (190 to 250); the picker's walk 215 ms
+(unfinished at 180 s); 11 connections in the session (26). On WSL the
+walk went from 0.5 s to below what the bench can tell.
+
+*Beat:* a master kept by hand — a pane per channel that asks — and
+no master with a connection a process (each git a connection: the 26).
+`ssh -O` over Git's MSYS client fails on descriptor passing, which no
+option turns off.
+
+*An in-process client, measured, not built.* With no master on
+Windows, Decision 3's beat was asked again: one connection a domain,
+every channel on it, on every OS. A spike (russh 0.64.1 on `ring`, no
+`aws-lc` and so no CMake or NASM, russh-sftp 3.0.1; 61 crates new to
+the workspace, `pageant` among them; built from nothing in 28 s on
+Windows) against the same container: connect and authenticate with an
+ed25519 key 274 ms (OpenSSH's 450 to 500); the SFTP channel 196 ms; a
+stat 31; a listing of 60 entries 124; a small file 154 (its client
+waits on each step — ours, pipelined, is two round trips); the 2 MB
+file 367 (ours 231); an exec channel 98 ms a process (three round
+trips: a runner's script is one, 45 ms); `git ls-files` of 3,003
+files 113 ms (a runner 50); a pty's echo 31 ms, the round trip.
+Against OpenWrt's dropbear (no delay added): connected in 94 ms, the
+SFTP subsystem refused cleanly, exec and a pty under busybox worked.
+What it would buy: one connection for files, runners, terminals and
+language servers alike — a terminal or a server a channel of 100 ms
+rather than a connection of 500 — and a password typed once on
+Windows. What it would take, none of it in the spike: `~/.ssh/config`
+read to the depth OpenSSH does (`Include`, `ProxyJump`, `Match`), the
+agent (Windows' pipe, Pageant, `SSH_AUTH_SOCK`), `known_hosts` with an
+accept-new prompt, a passphrase, password and keyboard-interactive
+prompt in a pane, remote forwarding for the `$EDITOR` shim, and a
+terminal over a channel where `kawoosh_term` takes a `portable-pty`
+child. Each is a piece of what the user's `ssh` already does, which is
+why the runner was built first: it keeps that `ssh`, and its scripts
+are faster than the in-process exec. The in-process client stays the
+candidate for terminals and servers on Windows, measured here for the
+round that takes it up.

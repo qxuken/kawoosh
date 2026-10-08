@@ -16,7 +16,7 @@
 
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 
 use kawoosh_doc::fs::{Entry, Fs, Stat};
@@ -190,69 +190,90 @@ fn status_error(code: u32, msg: &str) -> io::Error {
     io::Error::new(kind, msg.to_string())
 }
 
-struct Conn {
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next: u32,
+fn closed() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::ConnectionAborted,
+        "sftp: the connection closed",
+    )
 }
 
-impl Conn {
-    fn send(&mut self, typ: u8, body: &[u8]) -> io::Result<()> {
-        let mut p = Vec::with_capacity(body.len() + 5);
-        put_u32(&mut p, body.len() as u32 + 1);
-        p.push(typ);
-        p.extend_from_slice(body);
-        self.stdin.write_all(&p)?;
-        self.stdin.flush()
-    }
-
-    fn recv(&mut self) -> io::Result<(u8, Vec<u8>)> {
-        let mut len = [0u8; 4];
-        self.stdout.read_exact(&mut len).map_err(|e| {
-            if e.kind() == io::ErrorKind::UnexpectedEof {
-                io::Error::new(
-                    io::ErrorKind::ConnectionAborted,
-                    "sftp: the connection closed",
-                )
-            } else {
-                e
-            }
-        })?;
-        let n = u32::from_be_bytes(len) as usize;
-        if n == 0 || n > 1 << 24 {
-            return Err(short());
+/// One packet off the server's stdout: its type and what follows.
+fn recv_packet(stdout: &mut impl Read) -> io::Result<(u8, Vec<u8>)> {
+    let mut len = [0u8; 4];
+    stdout.read_exact(&mut len).map_err(|e| {
+        if e.kind() == io::ErrorKind::UnexpectedEof {
+            closed()
+        } else {
+            e
         }
-        let mut buf = vec![0u8; n];
-        self.stdout.read_exact(&mut buf)?;
-        Ok((buf[0], buf[1..].to_vec()))
+    })?;
+    let n = u32::from_be_bytes(len) as usize;
+    if n == 0 || n > 1 << 24 {
+        return Err(short());
     }
-
-    /// One request and its answer: the type and the body after the id.
-    fn call(&mut self, typ: u8, body: &[u8]) -> io::Result<(u8, Vec<u8>)> {
-        self.next = self.next.wrapping_add(1);
-        let id = self.next;
-        let mut p = Vec::with_capacity(body.len() + 4);
-        put_u32(&mut p, id);
-        p.extend_from_slice(body);
-        self.send(typ, &p)?;
-        loop {
-            let (t, b) = self.recv()?;
-            let mut r = Reader { b: &b };
-            if r.u32()? == id {
-                return Ok((t, r.b.to_vec()));
-            }
-        }
-    }
+    let mut buf = vec![0u8; n];
+    stdout.read_exact(&mut buf)?;
+    Ok((buf[0], buf[1..].to_vec()))
 }
 
-/// A connected SFTP session and the process behind it.
-pub struct Sftp {
-    conn: Mutex<Conn>,
-    child: Mutex<Child>,
-    posix_rename: bool,
+fn packet(typ: u8, body: &[u8]) -> Vec<u8> {
+    let mut p = Vec::with_capacity(body.len() + 5);
+    put_u32(&mut p, body.len() as u32 + 1);
+    p.push(typ);
+    p.extend_from_slice(body);
+    p
+}
+
+/// The answer to one request, when it comes: the type and the body
+/// after the id.
+type Answer = crossbeam_channel::Receiver<(u8, Vec<u8>)>;
+
+/// Who waits on a request's answer.
+type Waiter = crossbeam_channel::Sender<(u8, Vec<u8>)>;
+
+/// The requests sent and not answered yet, by id, and whether the
+/// connection is gone — shared with the thread reading the answers.
+#[derive(Default)]
+struct Shared {
+    waiting: Mutex<std::collections::HashMap<u32, Waiter>>,
     /// Set when the pipe to the server broke: every call fails from then
     /// on, and the domain is down (`Fs::is_alive`).
     dead: std::sync::atomic::AtomicBool,
+}
+
+impl Shared {
+    fn is_dead(&self) -> bool {
+        self.dead.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The connection gone: said, and every request waiting let go —
+    /// its answer an error.
+    fn die(&self) {
+        self.dead.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.waiting
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+}
+
+/// The writing end: the server's stdin and the next request's id.
+struct Out {
+    stdin: ChildStdin,
+    next: u32,
+}
+
+/// A connected SFTP session and the process behind it.
+///
+/// Requests are pipelined: each is sent with an id of its own and a
+/// thread reads the answers and hands each to whoever waits on its id —
+/// so a stat asked on one thread is not held behind a read on another,
+/// and a read sends its chunks before the first comes back.
+pub struct Sftp {
+    out: Mutex<Out>,
+    shared: std::sync::Arc<Shared>,
+    child: Mutex<Child>,
+    posix_rename: bool,
 }
 
 impl Drop for Sftp {
@@ -264,6 +285,10 @@ impl Drop for Sftp {
     }
 }
 
+/// How many READs or WRITEs one transfer keeps in flight at most: a
+/// megabyte, which the server's pipe holds without the client waiting.
+const WINDOW: usize = 32;
+
 impl Sftp {
     /// Starts `command` with its stdio piped and says hello: version 3,
     /// and whether the server renames over a file.
@@ -271,19 +296,55 @@ impl Sftp {
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         let mut child = crate::spawn::spawn(&mut command)?;
-        let stdin = child.stdin.take().ok_or_else(short)?;
-        let stdout = BufReader::new(child.stdout.take().ok_or_else(short)?);
-        let mut conn = Conn {
-            stdin,
-            stdout,
-            next: 0,
-        };
+        // What the channel says on stderr, kept for the error when it
+        // never answers — ssh's `Permission denied`, a host key refused
+        // — and drained after, so a talkative one never blocks.
+        let said = std::sync::Arc::new(Mutex::new(String::new()));
+        if let Some(mut err) = child.stderr.take() {
+            let said = said.clone();
+            let _ = std::thread::Builder::new()
+                .name("sftp-stderr".into())
+                .spawn(move || {
+                    let mut buf = [0u8; 1024];
+                    while let Ok(n) = err.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                        let mut s = said.lock().unwrap_or_else(|e| e.into_inner());
+                        if s.len() < 4096 {
+                            s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        }
+                    }
+                });
+        }
+        let mut stdin = child.stdin.take().ok_or_else(short)?;
+        let mut stdout = BufReader::new(child.stdout.take().ok_or_else(short)?);
         let mut hello = Vec::new();
         put_u32(&mut hello, 3);
-        conn.send(INIT, &hello)?;
-        let (t, b) = conn.recv()?;
+        let hello = stdin
+            .write_all(&packet(INIT, &hello))
+            .and_then(|_| stdin.flush())
+            .and_then(|_| recv_packet(&mut stdout));
+        let (t, b) = match hello {
+            Ok(x) => x,
+            Err(e) => {
+                let _ = child.wait();
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let said = said.lock().unwrap_or_else(|e| e.into_inner());
+                let said = said
+                    .lines()
+                    .map(str::trim)
+                    .rfind(|l| !l.is_empty())
+                    .unwrap_or("");
+                return Err(if said.is_empty() {
+                    e
+                } else {
+                    io::Error::new(e.kind(), said.to_string())
+                });
+            }
+        };
         if t != VERSION {
             let _ = child.kill();
             return Err(io::Error::new(
@@ -299,40 +360,84 @@ impl Sftp {
             r.bytes()?;
             posix_rename |= name == "posix-rename@openssh.com";
         }
+        let shared = std::sync::Arc::new(Shared::default());
+        let s = shared.clone();
+        std::thread::Builder::new()
+            .name("sftp".into())
+            .spawn(move || {
+                while let Ok((t, b)) = recv_packet(&mut stdout) {
+                    let mut r = Reader { b: &b };
+                    let Ok(id) = r.u32() else { break };
+                    let to = s
+                        .waiting
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&id);
+                    // An answer nobody waits on (a CLOSE sent and not
+                    // waited for) is dropped.
+                    if let Some(to) = to {
+                        let _ = to.send((t, r.b.to_vec()));
+                    }
+                }
+                s.die();
+            })?;
         Ok(Sftp {
-            conn: Mutex::new(conn),
+            out: Mutex::new(Out { stdin, next: 0 }),
+            shared,
             child: Mutex::new(child),
             posix_rename,
-            dead: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
-    fn call(&self, typ: u8, body: &[u8]) -> io::Result<(u8, Vec<u8>)> {
-        use std::sync::atomic::Ordering;
-        if self.dead.load(Ordering::Relaxed) {
+    /// One request sent; its answer is the receiver's when it comes.
+    fn send(&self, typ: u8, body: &[u8]) -> io::Result<Answer> {
+        if self.shared.is_dead() {
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "sftp: the connection closed",
             ));
         }
-        let r = self
-            .conn
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
+        out.next = out.next.wrapping_add(1);
+        let id = out.next;
+        let mut p = Vec::with_capacity(body.len() + 4);
+        put_u32(&mut p, id);
+        p.extend_from_slice(body);
+        self.shared
+            .waiting
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .call(typ, body);
-        // A broken pipe or a closed stream is the connection gone, not
-        // one request failed.
-        if let Err(e) = &r
-            && matches!(
-                e.kind(),
-                io::ErrorKind::BrokenPipe
-                    | io::ErrorKind::ConnectionAborted
-                    | io::ErrorKind::UnexpectedEof
-            )
-        {
-            self.dead.store(true, Ordering::Relaxed);
+            .insert(id, tx);
+        // Gone since the look above: the reader let go of what waited
+        // before this was in, and nothing would answer it.
+        if self.shared.is_dead() {
+            return Err(closed());
         }
-        r
+        let sent = out
+            .stdin
+            .write_all(&packet(typ, &p))
+            .and_then(|_| out.stdin.flush());
+        if let Err(e) = sent {
+            // A broken pipe is the connection gone, not one request
+            // failed.
+            self.shared.die();
+            return Err(e);
+        }
+        Ok(rx)
+    }
+
+    /// The answer a request was sent for.
+    fn wait(&self, answer: Answer) -> io::Result<(u8, Vec<u8>)> {
+        answer.recv().map_err(|_| {
+            self.shared.die();
+            closed()
+        })
+    }
+
+    fn call(&self, typ: u8, body: &[u8]) -> io::Result<(u8, Vec<u8>)> {
+        let answer = self.send(typ, body)?;
+        self.wait(answer)
     }
 
     /// A request answered by a STATUS: OK, or the error it says.
@@ -368,6 +473,67 @@ impl Sftp {
         let mut body = Vec::new();
         put_bytes(&mut body, handle);
         self.status(CLOSE, &body)
+    }
+
+    /// A handle closed without waiting for the server to say so: what
+    /// was read through it is whole already, and a failed close of a
+    /// read changes nothing — a round trip saved.
+    fn close_later(&self, handle: &[u8]) {
+        let mut body = Vec::new();
+        put_bytes(&mut body, handle);
+        let _ = self.send(CLOSE, &body);
+    }
+
+    /// A READ of `len` bytes at `at` through `handle`, sent.
+    fn send_read(&self, handle: &[u8], at: u64, len: usize) -> io::Result<Answer> {
+        let mut body = Vec::new();
+        put_bytes(&mut body, handle);
+        body.extend_from_slice(&at.to_be_bytes());
+        put_u32(&mut body, len as u32);
+        self.send(READ, &body)
+    }
+
+    /// The whole of what `handle` reads, from its start: the READs sent
+    /// a window at a time — one, then twice as many each turn, to
+    /// [`WINDOW`] — so a small file is one round trip and a large one
+    /// is not one a chunk. A chunk shorter than asked for (the file's
+    /// end, or a server that reads less) starts the next window where it
+    /// stopped; the first answer of a window at the end says EOF.
+    fn read_handle(&self, handle: &[u8]) -> io::Result<Vec<u8>> {
+        let mut out = Vec::new();
+        let mut window = 4;
+        loop {
+            let at = out.len() as u64;
+            let sent: Vec<Answer> = (0..window)
+                .map(|i| self.send_read(handle, at + (i * CHUNK) as u64, CHUNK))
+                .collect::<io::Result<_>>()?;
+            let mut stop = false;
+            let mut short = false;
+            // Data past a short chunk: not joined on, but the file goes
+            // on, and the next window asks again from where it ended.
+            let mut more = false;
+            for answer in sent {
+                let (t, b) = self.wait(answer)?;
+                let eof = t == STATUS && Reader { b: &b }.u32()? == FX_EOF;
+                if stop || short {
+                    more |= t == DATA;
+                    continue;
+                }
+                match t {
+                    DATA => {
+                        let data = Reader { b: &b }.bytes()?;
+                        short = data.len() < CHUNK;
+                        out.extend_from_slice(&data);
+                    }
+                    _ if eof => stop = true,
+                    _ => return Err(unexpected(t, &b)),
+                }
+            }
+            if stop || (short && !more) {
+                return Ok(out);
+            }
+            window = (window * 2).min(WINDOW);
+        }
     }
 
     fn mkdir_all(&self, dir: &Path) -> io::Result<()> {
@@ -407,10 +573,22 @@ impl Sftp {
         let (t, b) = self.path_call(OPENDIR, dir)?;
         let handle = handle_of(t, &b)?;
         let mut out = Vec::new();
-        let result = loop {
+        let readdir = || {
             let mut body = Vec::new();
             put_bytes(&mut body, &handle);
-            let (t, b) = match self.call(READDIR, &body) {
+            self.send(READDIR, &body)
+        };
+        // Two READDIRs in flight, so a directory one answer holds (a
+        // hundred entries, OpenSSH's) is a round trip with its EOF; the
+        // server takes a handle's requests in their order.
+        let mut flight = std::collections::VecDeque::new();
+        let result = loop {
+            // A send that fails is the connection gone: no close to send.
+            while flight.len() < 2 {
+                flight.push_back(readdir()?);
+            }
+            let answer = flight.pop_front().expect("two in flight");
+            let (t, b) = match self.wait(answer) {
                 Ok(x) => x,
                 Err(e) => break Err(e),
             };
@@ -438,7 +616,7 @@ impl Sftp {
                 _ => break Err(unexpected(t, &b)),
             }
         };
-        let _ = self.close(&handle);
+        self.close_later(&handle);
         result.map(|_| out)
     }
 }
@@ -489,50 +667,120 @@ fn stat_of(link: Attrs, target: Attrs) -> Stat {
 impl Fs for Sftp {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         let handle = self.open(path, READ_FLAG)?;
-        let mut out = Vec::new();
-        let result = loop {
-            let mut body = Vec::new();
-            put_bytes(&mut body, &handle);
-            body.extend_from_slice(&(out.len() as u64).to_be_bytes());
-            put_u32(&mut body, CHUNK as u32);
-            match self.call(READ, &body) {
-                Ok((DATA, b)) => out.extend_from_slice(&Reader { b: &b }.bytes()?),
-                Ok((STATUS, b)) if Reader { b: &b }.u32()? == FX_EOF => break Ok(()),
-                Ok((t, b)) => break Err(unexpected(t, &b)),
-                Err(e) => break Err(e),
-            }
-        };
-        let _ = self.close(&handle);
-        result.map(|_| out)
+        let result = self.read_handle(&handle);
+        self.close_later(&handle);
+        result
     }
 
+    /// Two round trips: the open, then every chunk of the range asked at
+    /// once.
+    fn read_at(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        let handle = self.open(path, READ_FLAG)?;
+        let sent: io::Result<Vec<Answer>> = (0..len.div_ceil(CHUNK))
+            .map(|i| {
+                let n = CHUNK.min(len - i * CHUNK);
+                self.send_read(&handle, offset + (i * CHUNK) as u64, n)
+            })
+            .collect();
+        let mut out = Vec::new();
+        let mut result = Ok(());
+        for answer in sent? {
+            match self.wait(answer)? {
+                // Past a short chunk the rest is not joined on.
+                (DATA, b) if result.is_ok() => {
+                    let data = Reader { b: &b }.bytes()?;
+                    let short = data.len() < CHUNK;
+                    out.extend_from_slice(&data);
+                    if short {
+                        result = Err(None);
+                    }
+                }
+                (STATUS, b) if result.is_ok() => {
+                    let code = Reader { b: &b }.u32()?;
+                    result = Err((code != FX_EOF).then(|| unexpected(STATUS, &b)));
+                }
+                (t, b) if result.is_ok() => result = Err(Some(unexpected(t, &b))),
+                _ => {}
+            }
+        }
+        self.close_later(&handle);
+        match result {
+            Err(Some(e)) => Err(e),
+            _ => Ok(out),
+        }
+    }
+
+    /// Three round trips whatever the size: the sibling opened while the
+    /// file's mode is asked; the chunks written a window at a time and
+    /// the handle closed behind them; the mode set on the sibling and the
+    /// rename over the file sent together (the server takes requests on
+    /// one file in their order).
     fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
         let tmp = sibling(path);
-        let handle = self.open(&tmp, WRITE_FLAG | CREAT | TRUNC)?;
-        let mut result = Ok(());
-        for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
+        let mode = {
             let mut body = Vec::new();
-            put_bytes(&mut body, &handle);
-            body.extend_from_slice(&((i * CHUNK) as u64).to_be_bytes());
-            put_bytes(&mut body, chunk);
-            result = self.status(WRITE, &body);
+            put_bytes(&mut body, &wire(path));
+            self.send(STAT, &body)?
+        };
+        let handle = self.open(&tmp, WRITE_FLAG | CREAT | TRUNC)?;
+        let perms = match self.wait(mode)? {
+            (ATTRS, b) => Reader { b: &b }.attrs().ok().and_then(|a| a.perms),
+            _ => None,
+        };
+        let mut result = Ok(());
+        let chunks: Vec<&[u8]> = bytes.chunks(CHUNK).collect();
+        let windows: Vec<&[&[u8]]> = chunks.chunks(WINDOW).collect();
+        // The CLOSE goes behind the last window's WRITEs, unwaited for
+        // between: the server takes a handle's requests in their order.
+        let mut closing = None;
+        for (n, window) in windows.iter().enumerate() {
+            let sent: Vec<Answer> = window
+                .iter()
+                .enumerate()
+                .map(|(i, chunk)| {
+                    let mut body = Vec::new();
+                    put_bytes(&mut body, &handle);
+                    body.extend_from_slice(&(((n * WINDOW + i) * CHUNK) as u64).to_be_bytes());
+                    put_bytes(&mut body, chunk);
+                    self.send(WRITE, &body)
+                })
+                .collect::<io::Result<_>>()?;
+            if n + 1 == windows.len() {
+                let mut body = Vec::new();
+                put_bytes(&mut body, &handle);
+                closing = Some(self.send(CLOSE, &body)?);
+            }
+            for answer in sent {
+                let (t, b) = self.wait(answer)?;
+                if result.is_ok() {
+                    result = expect_status(t, &b);
+                }
+            }
             if result.is_err() {
                 break;
             }
         }
-        let closed = self.close(&handle);
+        let closed = match closing {
+            Some(a) => self.wait(a).and_then(|(t, b)| expect_status(t, &b)),
+            None => self.close(&handle),
+        };
         let result = result.and(closed).and_then(|_| {
             // The file's mode stays what it was.
-            if let Ok(a) = self.attrs_of(STAT, path)
-                && let Some(perms) = a.perms
-            {
-                let mut body = Vec::new();
-                put_bytes(&mut body, &wire(&tmp));
-                put_u32(&mut body, ATTR_PERMISSIONS);
-                put_u32(&mut body, perms & 0o7777);
-                let _ = self.status(SETSTAT, &body);
+            let setstat = match perms {
+                Some(perms) => {
+                    let mut body = Vec::new();
+                    put_bytes(&mut body, &wire(&tmp));
+                    put_u32(&mut body, ATTR_PERMISSIONS);
+                    put_u32(&mut body, perms & 0o7777);
+                    self.send(SETSTAT, &body).ok()
+                }
+                None => None,
+            };
+            let renamed = self.rename_over(&tmp, path);
+            if let Some(a) = setstat {
+                let _ = self.wait(a);
             }
-            self.rename_over(&tmp, path)
+            renamed
         });
         if result.is_err() {
             let mut body = Vec::new();
@@ -542,25 +790,48 @@ impl Fs for Sftp {
         result
     }
 
+    /// One round trip: the link's attributes and its target's asked
+    /// together.
     fn stat(&self, path: &Path) -> io::Result<Stat> {
-        let link = self.attrs_of(LSTAT, path)?;
-        let target = if link.kind() == S_IFLNK {
+        let mut body = Vec::new();
+        put_bytes(&mut body, &wire(path));
+        let lstat = self.send(LSTAT, &body)?;
+        let stat = self.send(STAT, &body)?;
+        let link = match self.wait(lstat)? {
+            (ATTRS, b) => Reader { b: &b }.attrs()?,
+            (t, b) => {
+                let _ = self.wait(stat);
+                return Err(unexpected(t, &b));
+            }
+        };
+        let target = match self.wait(stat)? {
+            (ATTRS, b) if link.kind() == S_IFLNK => Reader { b: &b }.attrs().unwrap_or(link),
             // A dangling link is what it is: the link's own attributes.
-            self.attrs_of(STAT, path).unwrap_or(link)
-        } else {
-            link
+            _ => link,
         };
         Ok(stat_of(link, target))
     }
 
     fn list(&self, dir: &Path) -> io::Result<Vec<Entry>> {
         let mut out = Vec::new();
-        for (name, a) in self.entries(dir)? {
-            let target = if a.kind() == S_IFLNK {
-                self.attrs_of(STAT, &host_join(dir, Path::new(&name)))
-                    .unwrap_or(a)
-            } else {
-                a
+        let entries = self.entries(dir)?;
+        // Every link's target asked at once: one round trip, however many.
+        let targets: Vec<Option<Answer>> = entries
+            .iter()
+            .map(|(name, a)| {
+                (a.kind() == S_IFLNK)
+                    .then(|| {
+                        let mut body = Vec::new();
+                        put_bytes(&mut body, &wire(&host_join(dir, Path::new(name))));
+                        self.send(STAT, &body).ok()
+                    })
+                    .flatten()
+            })
+            .collect();
+        for ((name, a), target) in entries.into_iter().zip(targets) {
+            let target = match target.map(|t| self.wait(t)) {
+                Some(Ok((ATTRS, b))) => Reader { b: &b }.attrs().unwrap_or(a),
+                _ => a,
             };
             let st = stat_of(a, target);
             out.push(Entry {
@@ -616,8 +887,7 @@ impl Fs for Sftp {
     }
 
     fn is_alive(&self) -> bool {
-        use std::sync::atomic::Ordering;
-        if self.dead.load(Ordering::Relaxed) {
+        if self.shared.is_dead() {
             return false;
         }
         // The channel's process gone — its master dropped, the host
@@ -628,7 +898,7 @@ impl Fs for Sftp {
             .map(|mut c| c.try_wait().is_ok_and(|s| s.is_some()))
             .unwrap_or(false);
         if exited {
-            self.dead.store(true, Ordering::Relaxed);
+            self.shared.die();
         }
         !exited
     }
@@ -663,14 +933,107 @@ mod tests {
     /// The server OpenSSH ships, where it is: the client's tests run
     /// against the real thing, with no ssh in between.
     fn server() -> Option<Command> {
+        // Git for Windows ships one too (MSYS2's, which takes `C:/…`).
+        let git = std::env::var_os("PATH").and_then(|path| {
+            // Beside Git's `cmd` or its `usr\bin`, whichever is on the
+            // PATH.
+            std::env::split_paths(&path)
+                .filter_map(|d| d.parent().map(Path::to_path_buf))
+                .flat_map(|up| {
+                    [
+                        up.join("usr/lib/ssh/sftp-server.exe"),
+                        up.join("lib/ssh/sftp-server.exe"),
+                    ]
+                })
+                .find(|p| p.is_file())
+        });
         [
             "/usr/libexec/sftp-server",
             "/usr/lib/openssh/sftp-server",
             "/usr/lib/ssh/sftp-server",
         ]
         .iter()
-        .find(|p| Path::new(p).exists())
+        .map(PathBuf::from)
+        .chain(git)
+        .find(|p| p.is_file())
         .map(Command::new)
+    }
+
+    /// The round trips a host costs, timed against a real server over a
+    /// real link: `KAWOOSH_SFTP` is the command that opens the subsystem,
+    /// its words split on `|` (`ssh|-F|CONFIG|-s|HOST|sftp`), and
+    /// `KAWOOSH_SFTP_DIR` a directory there with files in it.
+    /// `cargo test -p kawoosh-systems sftp::tests::timed -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn timed_against_a_host() {
+        let Ok(cmd) = std::env::var("KAWOOSH_SFTP") else {
+            eprintln!("no KAWOOSH_SFTP: skipped");
+            return;
+        };
+        let dir = PathBuf::from(std::env::var("KAWOOSH_SFTP_DIR").unwrap_or("~".into()));
+        let words: Vec<&str> = cmd.split('|').collect();
+        let mut c = Command::new(words[0]);
+        c.args(&words[1..]);
+        let t = std::time::Instant::now();
+        let s = Sftp::spawn(c).unwrap();
+        eprintln!("connect      {:>6} ms", t.elapsed().as_millis());
+        let time = |what: &str, f: &mut dyn FnMut() -> String| {
+            let t = std::time::Instant::now();
+            let n = 5;
+            let mut said = String::new();
+            for _ in 0..n {
+                said = f();
+            }
+            eprintln!(
+                "{what:<12} {:>6.1} ms  {said}",
+                t.elapsed().as_secs_f64() * 1000.0 / n as f64
+            );
+        };
+        let entries = s.list(&dir).unwrap();
+        let file = entries
+            .iter()
+            .filter(|e| !e.is_dir)
+            .max_by_key(|e| e.size)
+            .map(|e| host_join(&dir, Path::new(&e.name)))
+            .expect("a file in the directory");
+        time("stat", &mut || {
+            format!("{:?}", s.stat(&file).map(|x| x.size))
+        });
+        time("stat none", &mut || {
+            format!("{:?}", s.stat(&host_join(&dir, Path::new("none"))).is_err())
+        });
+        time("list", &mut || {
+            format!("{} entries", s.list(&dir).map(|l| l.len()).unwrap_or(0))
+        });
+        time("read", &mut || {
+            format!("{} bytes", s.read(&file).map(|b| b.len()).unwrap_or(0))
+        });
+        let bytes = s.read(&file).unwrap();
+        let copy = host_join(&dir, Path::new(".kawoosh-timed-copy"));
+        time("write", &mut || {
+            format!("{:?}", s.write(&copy, &bytes).is_ok())
+        });
+        let _ = s.remove(&copy);
+        // Two threads at once: a stat is not held behind a read.
+        let t = std::time::Instant::now();
+        std::thread::scope(|sc| {
+            sc.spawn(|| {
+                for _ in 0..5 {
+                    let _ = s.read(&file);
+                }
+            });
+            sc.spawn(|| {
+                for _ in 0..5 {
+                    let _ = s.stat(&file);
+                }
+            });
+        });
+        eprintln!(
+            "5 reads and 5 stats on two threads {:>6} ms",
+            t.elapsed().as_millis()
+        );
     }
 
     #[test]
@@ -691,19 +1054,23 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kawoosh-sftp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let dir = std::fs::canonicalize(&dir).unwrap();
+        // The host's paths on `/`, which a Windows sftp-server (MSYS2's)
+        // takes as `C:/…` and this side's file system as well.
+        let dir = crate::fs::canonicalize(&dir).unwrap();
+        let base = dir.display().to_string().replace('\\', "/");
+        let at = |p: &str| PathBuf::from(format!("{base}/{p}"));
         let s = Sftp::spawn(cmd).unwrap();
         // A file made, written in more than one chunk, read back whole.
         let text: Vec<u8> = (0..100_000u32)
             .flat_map(|i| (i % 251).to_be_bytes())
             .collect();
-        let f = dir.join("deep/a.bin");
-        s.create(&dir.join("deep"), true).unwrap();
+        let f = at("deep/a.bin");
+        s.create(&at("deep"), true).unwrap();
         s.write(&f, &text).unwrap();
         assert_eq!(s.read(&f).unwrap(), text);
         assert_eq!(std::fs::read(&f).unwrap(), text, "on the disk");
         assert!(
-            !dir.join("deep/.a.bin.kawoosh~").exists(),
+            !at("deep/.a.bin.kawoosh~").exists(),
             "the sibling renamed away"
         );
         // Written again: replaced, its mode kept.
@@ -716,21 +1083,20 @@ mod tests {
             let mode = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
+        #[cfg(not(unix))]
+        s.write(&f, b"short").unwrap();
         let st = s.stat(&f).unwrap();
         assert!(st.is_file && !st.is_dir && st.size == 5 && st.modified.is_some());
-        assert!(s.stat(&dir.join("deep")).unwrap().is_dir);
-        let err = s.stat(&dir.join("nope")).unwrap_err();
+        assert!(s.stat(&at("deep")).unwrap().is_dir);
+        let err = s.stat(&at("nope")).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
         // A listing, links followed for what they point at.
-        s.create(&dir.join("deep/b.txt"), false).unwrap();
-        assert!(
-            s.create(&dir.join("deep/b.txt"), false).is_err(),
-            "not over one"
-        );
+        s.create(&at("deep/b.txt"), false).unwrap();
+        assert!(s.create(&at("deep/b.txt"), false).is_err(), "not over one");
         #[cfg(unix)]
-        std::os::unix::fs::symlink(dir.join("deep"), dir.join("link")).unwrap();
+        std::os::unix::fs::symlink(at("deep"), at("link")).unwrap();
         let mut names: Vec<(String, bool, bool)> = s
-            .list(&dir)
+            .list(&PathBuf::from(&base))
             .unwrap()
             .into_iter()
             .map(|e| (e.name, e.is_dir, e.is_symlink))
@@ -742,20 +1108,21 @@ mod tests {
             [("deep".into(), true, false), ("link".into(), true, true)]
         );
         // A rename, into a directory made for it, never over a file.
-        s.rename(&dir.join("deep/b.txt"), &dir.join("new/c.txt"))
-            .unwrap();
-        assert!(dir.join("new/c.txt").is_file());
-        assert!(s.rename(&f, &dir.join("new/c.txt")).is_err());
+        s.rename(&at("deep/b.txt"), &at("new/c.txt")).unwrap();
+        assert!(at("new/c.txt").is_file());
+        assert!(s.rename(&f, &at("new/c.txt")).is_err());
         // Removing a directory takes what is in it.
-        s.remove(&dir.join("deep")).unwrap();
-        assert!(!dir.join("deep").exists());
+        s.remove(&at("deep")).unwrap();
+        assert!(!at("deep").exists());
         // The home: `~` is where the server started.
         let home = s.canonicalize(Path::new("~")).unwrap();
-        assert!(home.is_absolute(), "{}", home.display());
-        assert_eq!(
-            s.canonicalize(&dir.join("new/../new")).unwrap(),
-            dir.join("new")
+        assert!(
+            home.to_string_lossy().starts_with('/') || home.is_absolute(),
+            "{}",
+            home.display()
         );
+        #[cfg(unix)]
+        assert_eq!(s.canonicalize(&at("new/../new")).unwrap(), at("new"));
         drop(s);
         std::fs::remove_dir_all(&dir).ok();
     }

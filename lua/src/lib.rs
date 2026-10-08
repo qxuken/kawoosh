@@ -7400,10 +7400,8 @@ fn seed(
             use std::io::Read;
             let path = expand(&p);
             let out = if kfs::domain_of(&path).is_some() {
-                // A host's whole, through its domain, and cut here.
-                let mut b = kfs::read_bytes(&path).map_err(io_err)?;
-                b.truncate(n);
-                b
+                // A host's head, through its domain: not the whole file.
+                kfs::read_at(&path, 0, n).map_err(io_err)?
             } else {
                 let mut out = Vec::with_capacity(n.min(1 << 16));
                 std::fs::File::open(&path)

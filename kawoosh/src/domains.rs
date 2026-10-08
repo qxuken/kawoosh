@@ -314,7 +314,20 @@ impl Kawoosh {
             .map(Path::to_path_buf)
             .unwrap_or_else(std::env::temp_dir);
         let ctl = dir.join(format!("kawoosh-{}-{name}.ctl", std::process::id()));
-        Ssh { ssh, host, ctl }
+        // No master on Windows unless the settings say so: neither ssh
+        // there can share its connection (`Ssh::master`).
+        let master = self
+            .ed
+            .settings
+            .get("ssh.master")
+            .and_then(Setting::as_bool)
+            .unwrap_or(!cfg!(windows));
+        Ssh {
+            ssh,
+            host,
+            ctl,
+            master,
+        }
     }
 
     /// Whether `path` is on a domain that is not up — and, when it is
@@ -370,8 +383,14 @@ impl Kawoosh {
         };
         let transport = self.transport(name, host);
         // The master runs from a local directory, whatever the tab's.
+        // With no master (Windows) there is no pane: the files' channel
+        // is the first connection, made on the thread.
         let home = kawoosh_systems::fs::home().unwrap_or_else(std::env::temp_dir);
-        let term = self.spawn_terminal_argv(&transport.master_argv(), &home);
+        let term = if transport.master {
+            self.spawn_terminal_argv(&transport.master_argv(), &home)
+        } else {
+            None
+        };
         if let Some(t) = term {
             self.terms.spawned.entry(t).or_default().tool = Some(format!("ssh {name}"));
             self.layout.open(Content::Terminal(t), Place::Dock);
