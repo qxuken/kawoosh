@@ -826,6 +826,14 @@ pub struct RowForm {
     /// The row's face where it is not the editor's: a prose row under
     /// `font.prose`. Its code spans (`Mark::mono`) are the editor's.
     pub family: Option<kui_native::FontFamily>,
+    /// The row drew another text last frame (its marker folded to a
+    /// bullet as the caret left it, its source shown as the caret
+    /// came): kui's layout of it is that text's, and a caret placed by
+    /// it would stand at the byte's place in the old text — two cells
+    /// off, through a drag (2026-10-08). Placed by measure instead,
+    /// right on the first visual line, and the pane asks for the frame
+    /// that places it by the new layout.
+    pub stale: bool,
     pub wrap: Option<kui_native::TextWrap>,
     pub bg: Option<Color>,
     /// The gutter's width, and what it shows beside the row and
@@ -1602,9 +1610,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         // Where byte `b` of a wrapped row is: where kui laid it out last
         // frame, against where it laid the first — the frame that types
         // is a frame behind, and the next catches up.
+        let stale = form.is_some_and(|f| f.stale);
         let wrapped_at = |ui: &mut Ui<'_>, b: usize| -> (f32, f32) {
             let placed = text_key
                 .get()
+                .filter(|_| !stale)
                 .and_then(|k| Some((ui.caret_rect(k, b)?, ui.caret_rect(k, 0)?)));
             match placed {
                 Some((at, origin)) => (gutter + at.x - origin.x, at.y - origin.y),

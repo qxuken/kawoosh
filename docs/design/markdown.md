@@ -244,6 +244,20 @@ rest if the round runs long.
 - **Editing through the rendering** (typing `**` around a word and
   seeing bold as you type). You see it when the caret leaves the line.
 
+*Two things a drag found (2026-10-08, from a video of one over the
+README's list, a frame at a time).* A pointer hit's byte is in the text
+the frame drew, so it maps to source through that row as drawn
+(`wrap_rows`), not through a render around the carets as they are at
+the event — the press had put one on the line, the render folded the
+marker the frame showed, and the head landed two cells off. And a
+caret on a rendered row is placed by kui's layout of the row's text
+*last* frame; on the frame the text changes under the key (the marker
+folding as the head leaves it), that layout is the old text's and the
+caret stood at the byte's place in it. A row whose stamp moved since
+last frame (`RowForm::stale`) places its carets by measure that frame,
+right on the first visual line, and the pane's request for the frame
+that measures the row anew places them by the new layout.
+
 ## Build order
 
 One round, one commit, in this order:

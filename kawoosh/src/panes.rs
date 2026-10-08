@@ -2410,19 +2410,25 @@ impl Kawoosh {
                                     // (`font.prose`): not a code block's, a
                                     // table's or the caret's source line.
                                     let family = self.prose.filter(|_| !*mono);
+                                    let stamp = crate::markdown::Heights::stamp(
+                                        &drawn.text,
+                                        (
+                                            scale.to_bits(),
+                                            *code,
+                                            *rule,
+                                            img.len(),
+                                            in_table,
+                                            family.is_some(),
+                                        ),
+                                    );
+                                    // Drawn otherwise last frame: kui's
+                                    // layout under the key is that text's.
+                                    let stale =
+                                        self.md_heights.get(&view).and_then(|k| k.stamps.get(&ln))
+                                            != Some(&stamp);
                                     md_seen.push((
                                         ln,
-                                        crate::markdown::Heights::stamp(
-                                            &drawn.text,
-                                            (
-                                                scale.to_bits(),
-                                                *code,
-                                                *rule,
-                                                img.len(),
-                                                in_table,
-                                                family.is_some(),
-                                            ),
-                                        ),
+                                        stamp,
                                         ui.layout_of(ui.child_key(&label)).map(|r| r.h + edges),
                                     ));
                                     // Images side by side, each at most its
@@ -2434,6 +2440,7 @@ impl Kawoosh {
                                         key: label.clone(),
                                         scale: *scale,
                                         family,
+                                        stale,
                                         wrap: (!in_table).then_some(*wrap),
                                         bg: code.then_some(pal.strip),
                                         gutter: (!in_table)
@@ -2465,9 +2472,16 @@ impl Kawoosh {
                                 // a wrapping pane has no gutter column.
                                 None => match wrap {
                                     Some(w) => {
+                                        let stamp =
+                                            crate::markdown::Heights::stamp(&drawn.text, ());
+                                        let stale = self
+                                            .md_heights
+                                            .get(&view)
+                                            .and_then(|k| k.stamps.get(&ln))
+                                            != Some(&stamp);
                                         md_seen.push((
                                             ln,
-                                            crate::markdown::Heights::stamp(&drawn.text, ()),
+                                            stamp,
                                             ui.layout_of(ui.child_key(&label)).map(|r| r.h),
                                         ));
                                         let long = range.len() >= long_at;
@@ -2475,6 +2489,7 @@ impl Kawoosh {
                                             key: label.clone(),
                                             scale: 1.0,
                                             family: None,
+                                            stale,
                                             wrap: (!long).then_some(w),
                                             bg: None,
                                             gutter: Some((
