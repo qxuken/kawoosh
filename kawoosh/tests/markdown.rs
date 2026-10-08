@@ -1479,3 +1479,178 @@ fn a_menu_stays_over_the_rows_above_the_caret() {
         assert_eq!(over, 0, "nothing of the pane is drawn after the menu");
     }
 }
+
+/// `font.prose` draws the rendered prose in a face of its own and keeps
+/// the editor's for what is code: a code span inside a paragraph (kui
+/// F130, a span in its own face), a code block's rows, and the caret's
+/// line, which is its source. Carets on a prose row are placed where
+/// kui laid the bytes out, so `l` over a code span crosses it a cell a
+/// step.
+#[test]
+fn prose_takes_its_face_and_code_keeps_the_editors() {
+    let dir = fixture("prose");
+    let (mut d, mut app) = launch(&dir, 900.0);
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    let body = rect_of_text(&d, "fn main() {").expect("the code block's row");
+    let cw = body.2 / 11.0;
+    let para = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| {
+                n.text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("Some strong"))
+            })
+            .map(|n| (n.key, n.rect))
+            .expect("the paragraph")
+    };
+    let drawn = "Some strong and emphasis with code and a link.";
+    let (key, _) = para(&d);
+    let x_of = |d: &Drive, key, b: usize| d.core.caret_rect(key, b).unwrap().x;
+    let code = drawn.find("code").unwrap();
+    let mono_prefix = x_of(&d, key, code) - x_of(&d, key, 0);
+    assert!(
+        (mono_prefix - code as f32 * cw).abs() < 0.5,
+        "mono: {code} cells before `code`, {mono_prefix} px at {cw} a cell"
+    );
+    ex(&mut d, &mut app, "set font.prose=sans");
+    settle(&mut d, &mut app);
+    let (key, _) = para(&d);
+    let prefix = x_of(&d, key, code) - x_of(&d, key, 0);
+    assert!(
+        (prefix - mono_prefix).abs() > 2.0,
+        "the prose in another face: {prefix} px before `code`, was {mono_prefix}"
+    );
+    let span = x_of(&d, key, code + 4) - x_of(&d, key, code);
+    assert!(
+        (span - 4.0 * cw).abs() < 0.5,
+        "the code span in the editor's face: {span} px for four cells of {cw}"
+    );
+    // The code block's row and the caret's line stay as they were.
+    let after = rect_of_text(&d, "fn main() {").expect("the code block's row");
+    assert_eq!(after.2, body.2, "the code block's row is the editor's face");
+    d.press(&mut app, "3G");
+    settle(&mut d, &mut app);
+    let raw = d.core.nodes().iter().any(|n| {
+        n.text
+            .as_deref()
+            .is_some_and(|t| t.starts_with("Some **strong**"))
+    });
+    assert!(raw, "the caret's line is its source");
+    // A family that is not there: a toast, and the editor's face.
+    ex(&mut d, &mut app, "set font.prose=No Such Face");
+    settle(&mut d, &mut app);
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    let (key, _) = para(&d);
+    let prefix = x_of(&d, key, code) - x_of(&d, key, 0);
+    assert!(
+        (prefix - mono_prefix).abs() < 0.5,
+        "a missing family keeps the editor's face: {prefix} vs {mono_prefix}"
+    );
+}
+
+/// A drag along a rendered row keeps the head under the pointer and the
+/// caret on its glyph, while the row's text changes under the drag: the
+/// marker folds to a bullet as the head leaves it and comes back as it
+/// returns. A hit's byte maps through the text the frame drew, not a
+/// render around the carets as they are now; a caret is placed by
+/// measure, not by kui's layout of the text before, on the frame the
+/// text changed (2026-10-08, from a video of a drag over the README's
+/// list).
+#[test]
+fn a_drag_over_a_rendered_row_follows_the_pointer() {
+    use kawoosh_editor::{Layer, Setting};
+    use kui_native::{InputEvent, Vec2};
+    let dir = fixture("drag");
+    let readme = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../README.md");
+    std::fs::copy(&readme, dir.join("doc.md")).unwrap();
+    let (mut d, mut app) = launch(&dir, 900.0);
+    app.ed.settings.set(
+        Layer::Session,
+        "editor.selection_radius",
+        Setting::Float(4.0),
+    );
+    app.ed.settings.set(
+        Layer::Session,
+        "markdown.reveal",
+        Setting::Str("span".into()),
+    );
+    app.ed
+        .settings
+        .set(Layer::Session, "relativenumber", Setting::Bool(true));
+    d.keys(&mut app, "15G");
+    settle(&mut d, &mut app);
+    let v = app.focused_view().unwrap();
+    let cw = rect_of_text(&d, "    println!(\"hi\");").map_or(7.82666, |r| r.2 / 19.0);
+    let row = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| {
+                n.text
+                    .as_deref()
+                    .is_some_and(|t| t.contains("Build output"))
+            })
+            .map(|n| (n.text.clone().unwrap(), n.rect))
+            .expect("the list's row")
+    };
+    // The head's char, and every one-char float on the row at the cell
+    // of that char in the row's text as drawn this frame.
+    let check = |d: &Drive, app: &Kawoosh, what: &str, want: &str| {
+        let (t, r) = row(d);
+        let sel = app.ed.views[v].sels.primary();
+        let buf = app.ed.buffer_of(v);
+        assert_eq!(buf.slice(sel.head..sel.head + 1), want, "{what}: the head");
+        let floats: Vec<(String, f32)> = d
+            .core
+            .nodes()
+            .iter()
+            .filter(|n| {
+                n.text.as_deref().is_some_and(|t| t.chars().count() == 1)
+                    && (n.rect.y - r.y).abs() < 2.0
+                    && n.rect.x >= r.x - 1.0
+            })
+            .map(|n| (n.text.clone().unwrap(), (n.rect.x - r.x) / cw))
+            .collect();
+        assert_eq!(floats.len(), 1, "{what}: one caret float, {floats:?}");
+        let (glyph, cell) = &floats[0];
+        assert_eq!(glyph, want, "{what}: the caret's glyph");
+        let at = t.chars().nth(cell.round() as usize).map(String::from);
+        assert_eq!(at.as_deref(), Some(want), "{what}: at cell {cell} of {t:?}");
+        assert!(
+            (cell - cell.round()).abs() < 0.1,
+            "{what}: on a cell, {cell}"
+        );
+    };
+    let (_, r) = row(&d);
+    let y = r.y + r.h / 2.0;
+    let at = |c: f32| Vec2::new(r.x + (c + 0.25) * cw, y);
+    d.input(&mut app, InputEvent::CursorMoved(at(2.0)));
+    d.input(&mut app, InputEvent::mouse_down(1));
+    d.frame(&mut app);
+    d.input(
+        &mut app,
+        InputEvent::CursorMoved(Vec2::new(r.x + 2.25 * cw + 8.0, y + 8.0)),
+    );
+    for (c, want) in [
+        (3.0, "u"),
+        (4.0, "i"),
+        (5.0, "l"),
+        (3.0, "u"),
+        (1.0, " "),
+        (0.0, "-"),
+        (4.0, "i"),
+    ] {
+        d.input(&mut app, InputEvent::CursorMoved(at(c)));
+        d.frame(&mut app);
+        check(&d, &app, &format!("moved to cell {c}"), want);
+    }
+    d.input(&mut app, InputEvent::mouse_up());
+    settle(&mut d, &mut app);
+    check(&d, &app, "released", "i");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

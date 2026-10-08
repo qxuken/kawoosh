@@ -195,6 +195,25 @@ Bold and italic come from the face's variants as kui finds them.
 *Beat:* `font.prose`, a second `Face` for rendered rows — a second face
 through every mono path for a difference nobody asked for.
 
+*Amended 2026-10-08, with kui alpha.43 (F130: a span in a face and a
+size of its own).* The beat's cost is gone: a rendered row is already
+its own path (Decision 4's `RowForm`), kui places a caret, a hit and a
+selection by the glyphs it drew whatever their face, and a span's own
+family lets a code span keep the editor's face inside a prose row. So
+`font.prose` names a face for the rendered prose alone — `sans`,
+`serif`, or an installed family; empty, the default, keeps the editor's
+face and nothing here changes. Under it a paragraph, a heading, a list,
+a quote and a table-less line shape in the prose face at the body's
+size and the heading ratios; a code span in them (`Mark::mono`), a code
+block's rows, a table's rows (their columns are cells) and the caret's
+line (its source, Decision 3) stay in the editor's face. The editor's
+face is still the one `Face`: the prose family is a `FontFamily` the
+row's base style and no mono path carries (`RowForm::family`). A family
+that resolves to nothing is a toast, once, and the editor's face. The
+`:fonts` pane and the lab show the editor's face alone; the prose face
+is picked by name (`:set font.prose=`, completed with `sans`, `serif`
+and the families).
+
 ### 6. An image line is an image row
 
 A line that is only `![alt](path)` with a local path is drawn as kui's
@@ -217,11 +236,27 @@ rest if the round runs long.
 
 - **A preview pane**, live or otherwise.
 - **Math, diagrams, HTML.** Drawn as their source.
-- **A proportional face.** Decision 5.
+- **A proportional face for the editor.** Decision 5: `font.prose` is
+  the rendered prose's alone; code, tables and the caret's line stay in
+  the editor's face.
 - **Wrap for other buffers, in this round.** Decision 4.
 - **`gj` `gk`.** With wrap, later, if missed.
 - **Editing through the rendering** (typing `**` around a word and
   seeing bold as you type). You see it when the caret leaves the line.
+
+*Two things a drag found (2026-10-08, from a video of one over the
+README's list, a frame at a time).* A pointer hit's byte is in the text
+the frame drew, so it maps to source through that row as drawn
+(`wrap_rows`), not through a render around the carets as they are at
+the event — the press had put one on the line, the render folded the
+marker the frame showed, and the head landed two cells off. And a
+caret on a rendered row is placed by kui's layout of the row's text
+*last* frame; on the frame the text changes under the key (the marker
+folding as the head leaves it), that layout is the old text's and the
+caret stood at the byte's place in it. A row whose stamp moved since
+last frame (`RowForm::stale`) places its carets by measure that frame,
+right on the first visual line, and the pane's request for the frame
+that measures the row anew places them by the new layout.
 
 ## Build order
 

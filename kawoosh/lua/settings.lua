@@ -61,7 +61,7 @@ door.sections = {
   { name = "Editing", paths = { "tabstop", "expandtab", "shiftwidth", "scrolloff", "relativenumber",
     "leader", "whichkey", "keys.", "pairs.", "clipboard.", "editor.bell", "trim_trailing_whitespace",
     "insert_final_newline", "end_of_line", "editorconfig." } },
-  { name = "Look", paths = { "font.family", "font.size", "font.line_height", "font.features", "font.", "theme.appearance", "theme.name", "theme.dark", "theme.light",
+  { name = "Look", paths = { "font.family", "font.size", "font.line_height", "font.features", "font.prose", "font.", "theme.appearance", "theme.name", "theme.dark", "theme.light",
     "theme.", "theme", "tokens.", "editor.wrap", "editor.wrap_languages", "editor.breadcrumbs",
     "editor.selection_radius", "markdown." } },
   { name = "Layout", paths = { "layout.", "launcher.", "tabs.", "buffers." } },

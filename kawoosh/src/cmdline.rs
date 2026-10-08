@@ -255,6 +255,10 @@ impl Kawoosh {
         }
         match (path, settings.kind(path)) {
             ("font.family", _) => all.extend(self.look.fonts.borrow().names()),
+            ("font.prose", _) => {
+                all.extend(["sans", "serif"].map(String::from));
+                all.extend(self.look.fonts.borrow().names());
+            }
             ("theme.name", _) => {
                 all.push("system".into());
                 all.extend(crate::themes::FAMILIES.iter().map(|f| f.name.to_string()));
