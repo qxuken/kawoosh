@@ -44,14 +44,22 @@ fn main() {
 /// names as linker directives (`kawoosh-exports.s`, one `/EXPORT:`
 /// each, in the `.drectve` section a C compiler writes for a
 /// `dllexport`), and every test that can build an extension exports.
+///
+/// The list is written on every target, though only Windows links with
+/// it: `scripts/pack.nu` makes the Windows import libraries of the
+/// extension pack from it, on whatever machine runs it.
 fn export_dynamic() {
+    let exports = export_def();
+    if let Err(why) = &exports {
+        println!("cargo:warning=no export list for native extensions: {why}");
+    }
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let flag = match os.as_str() {
         "macos" | "ios" => "-Wl,-export_dynamic",
         // link.exe's; a GNU-ABI Windows build would hand ld the `.def`
         // itself, and nothing builds kawoosh that way.
         "windows" if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") => {
-            let directives = match export_def() {
+            let directives = match exports {
                 Ok((def, names)) => {
                     println!("cargo:rustc-link-arg-bin=kawoosh=/DEF:{def}");
                     let exports: Vec<String> =
@@ -62,11 +70,9 @@ fn export_dynamic() {
                     )
                 }
                 // No list, no flag: kawoosh.exe still builds, and an
-                // extension fails to link, with this said at the build.
-                Err(why) => {
-                    println!("cargo:warning=kawoosh.exe exports no extension ABI: {why}");
-                    String::new()
-                }
+                // extension fails to link, with the warning above said
+                // at the build.
+                Err(_) => String::new(),
             };
             if let Ok(out) = std::env::var("OUT_DIR") {
                 std::fs::write(
@@ -89,10 +95,10 @@ fn export_dynamic() {
 /// `kui.h` of the kui-ffi this build links — where it went, and the
 /// names. Read from the headers, since the headers are what an
 /// extension is written against and a list kept here would go stale
-/// with the next kui; the
-/// extension's own entry points (`kw_ext_*`, `kui_ext_*`) are declared
-/// there too and left out. A name the header declares and nothing
-/// defines is link.exe's LNK2001, never a quiet gap.
+/// with the next kui; the extension's own entry points (`kw_ext_*`,
+/// `kui_ext_*`) are declared there too and left out. A name the header
+/// declares and nothing defines is link.exe's LNK2001, never a quiet
+/// gap.
 fn export_def() -> Result<(String, Vec<String>), String> {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").map_err(|e| e.to_string())?;
     let ours = std::path::Path::new(&manifest).join("include/kawoosh.h");

@@ -23,6 +23,8 @@
 #   clang -O2 -shared -I Kawoosh\include dupes.c Kawoosh\kawoosh.lib -o dupes.dll
 #
 # and loads into this kawoosh.exe — an import library names its module.
+# The same three, for every platform and from any machine, are the
+# extension pack (scripts/pack.nu).
 #
 # With --install, Kawoosh is also registered as an editor, all of it
 # under HKCU (`register-editor` below):

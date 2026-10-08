@@ -11,6 +11,11 @@
  * `kawoosh.fs.config()`, `fs.join` and `fs.dylib(name)` spell a path by
  * hand without naming a platform.
  *
+ * The extension pack for each platform (kawoosh-ext-<version>-<platform>,
+ * made by scripts/pack.nu) holds this header, kui.h at the kui this
+ * Kawoosh is built with, an example, and on Windows kawoosh.lib; its
+ * BUILD.txt has the line below for that platform.
+ *
  * It links against nothing. Every kw_* and kui_* it calls is left
  * undefined and resolved from the kawoosh executable at load, the way a
  * Lua C module resolves lua_*. Build it as a kui extension is built:
@@ -22,7 +27,8 @@
  * On Windows a DLL may leave nothing undefined: it names the module each
  * import comes from, and takes that name from an import library. The
  * Kawoosh folder ships kawoosh.exe's, kawoosh.lib, with this header and
- * kui.h in its include folder (native.md Decision 8):
+ * kui.h in its include folder, and so does the win32 pack (native.md
+ * Decision 8):
  *
  *     clang -O2 -shared -I Kawoosh\include dupes.c Kawoosh\kawoosh.lib -o dupes.dll
  *

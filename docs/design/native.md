@@ -630,6 +630,35 @@ draft:
   | `kw_call("buf.edits")`, 10,000 edits queued | 27.6 ms | 42.8 ms with the apply |
   | `kw_buf_edits`, 10,000 edits queued | 0.70 ms | 8.7 ms with the apply |
 
+**The extension pack, 2026-10-09** ("let's build pack.nu that
+generates libs for major platforms and put headers. kui have something
+like this"). `scripts/pack.nu` is kui's `pack-ffi.nu` at kawoosh's size:
+`target/pack/kawoosh-ext-<version>-<platform>/` for darwin-arm64,
+linux-x64, linux-arm64 and win32-x64, each with `include/` (`kawoosh.h`,
+and `kui.h` from the kui-ffi the build links, LF whatever the checkout),
+`example/dupes.c`, a `BUILD.txt` with the versions, both ABI numbers and
+the platform's line that builds the example; a tarball each and
+`SHA256SUMS`. What it decided:
+
+- **Only Windows has a library.** On macOS and Linux an extension links
+  against nothing, so there is nothing to ship but the headers;
+  `BUILD.txt` says so rather than leaving `lib/` empty.
+- **The import library is made from the list, not from a link.** It
+  holds no code — the names and the module's, `kawoosh.exe` — so
+  `llvm-dlltool` (or `zig dlltool`) makes it from `kawoosh-exports.def`,
+  on any machine, for any platform: no container and no SDK, where kui's
+  pack needs both to compile. `build.rs` now writes the list on every
+  target, and the pack finds it through cargo's `build-script-executed`
+  message, so the rule that reads the headers stays in one place.
+- **The two import libraries agree**: the pack's and the one link.exe
+  writes beside the exe name the same 280 and the same module, and
+  import by name, so a DLL linked against either loads. Checked: the
+  win32 tarball unpacked to a fresh folder, `dupes.c` built by its
+  `BUILD.txt` line (and again against a `zig dlltool` library), both
+  loaded into the release `kawoosh.exe` from `init.lua`, `:dupes` right.
+- Windows on arm64 is a row of the table (`-m arm64`) when Kawoosh is
+  built there.
+
 ## Open
 
 - **A door's documentation for C.** `types/` is written for LuaLS. The
