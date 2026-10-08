@@ -107,6 +107,9 @@ pub struct Native {
     /// `kawoosh.buf.edits` read and push, without a Lua value between.
     published: Option<Rc<RefCell<Published>>>,
     queue: Option<Rc<RefCell<Vec<Msg>>>>,
+    /// The thread the runtime was made on: the UI thread, the one a
+    /// `kw_*` call may run on.
+    thread: Option<std::thread::ThreadId>,
 }
 
 pub type NativeCell = Rc<RefCell<Native>>;
@@ -135,6 +138,28 @@ pub struct KwCtx {
     /// What `kw_buf_text` answered, kept for the call: the strings it
     /// handed out point into these.
     texts: RefCell<Vec<String>>,
+    /// The UI thread, copied out so a call from another thread is
+    /// caught before anything behind the `Rc` is touched.
+    thread: std::thread::ThreadId,
+}
+
+impl KwCtx {
+    /// Whether this call is on the UI thread. A call from any other
+    /// answers NULL or false and sets no error — nothing on that thread
+    /// may touch the runtime, the error slot included.
+    fn on_thread(&self) -> bool {
+        std::thread::current().id() == self.thread
+    }
+
+    /// The start of a `kw_*` call that can fail: the last error
+    /// cleared, so `kw_error` after it is this call's.
+    fn enter(&self) -> bool {
+        if !self.on_thread() {
+            return false;
+        }
+        self.native.borrow_mut().error.clear();
+        true
+    }
 }
 
 fn with_ctx<T>(
@@ -143,11 +168,16 @@ fn with_ctx<T>(
     namespace: Option<&str>,
     f: impl FnOnce(*mut KwCtx) -> T,
 ) -> T {
+    let thread = native
+        .borrow()
+        .thread
+        .unwrap_or_else(|| std::thread::current().id());
     let mut ctx = KwCtx {
         native: native.clone(),
         lua: lua.clone(),
         namespace: namespace.map(str::to_string),
         texts: RefCell::new(Vec::new()),
+        thread,
     };
     f(&mut ctx)
 }
@@ -215,7 +245,8 @@ fn kstr(s: &str) -> KuiStr {
 /// `kw_call(ctx, name, args)`: `kawoosh.NAME(args...)` with a C calling
 /// convention. Answers the return value (a list of them when the door
 /// returns several), the caller's to free, or NULL with the reason in
-/// `kw_error`.
+/// `kw_error` — a door that answers `nil, why` has refused, and that
+/// is NULL and `why` too.
 #[unsafe(no_mangle)]
 pub extern "C" fn kw_call(ctx: *mut KwCtx, name: KuiStr, args: *const KuiValue) -> *mut KuiValue {
     guard(std::ptr::null_mut(), || {
@@ -224,6 +255,9 @@ pub extern "C" fn kw_call(ctx: *mut KwCtx, name: KuiStr, args: *const KuiValue) 
         let Some(ctx) = (unsafe { ctx.as_ref() }) else {
             return std::ptr::null_mut();
         };
+        if !ctx.enter() {
+            return std::ptr::null_mut();
+        }
         let name = str_of(name).into_owned();
         match call(ctx, &name, args) {
             Ok(v) => v,
@@ -235,9 +269,9 @@ pub extern "C" fn kw_call(ctx: *mut KwCtx, name: KuiStr, args: *const KuiValue) 
     })
 }
 
-/// `kw_error(ctx, out)`: the last error a `kw_*` call on this context
-/// left, borrowed until the next; false with nothing written when
-/// there is none.
+/// `kw_error(ctx, out)`: why the last `kw_call`, `kw_fn` or `kw_buf_*`
+/// on this context answered NULL or false, borrowed until the next of
+/// them; false with nothing written when it succeeded.
 #[unsafe(no_mangle)]
 pub extern "C" fn kw_error(ctx: *mut KwCtx, out: *mut KuiStr) -> bool {
     guard(false, || {
@@ -245,6 +279,9 @@ pub extern "C" fn kw_error(ctx: *mut KwCtx, out: *mut KuiStr) -> bool {
         let (Some(ctx), Some(out)) = (unsafe { ctx.as_ref() }, unsafe { out.as_mut() }) else {
             return false;
         };
+        if !ctx.on_thread() {
+            return false;
+        }
         let n = ctx.native.borrow();
         if n.error.is_empty() {
             return false;
@@ -291,6 +328,9 @@ pub extern "C" fn kw_buf_text(ctx: *mut KwCtx, buffer: u64, out: *mut KuiStr) ->
         let (Some(ctx), Some(out)) = (unsafe { ctx.as_ref() }, unsafe { out.as_mut() }) else {
             return false;
         };
+        if !ctx.enter() {
+            return false;
+        }
         match snapshot_text(ctx, buffer) {
             Ok(text) => {
                 let mut texts = ctx.texts.borrow_mut();
@@ -323,6 +363,9 @@ pub extern "C" fn kw_buf_edits(
         let Some(ctx) = (unsafe { ctx.as_ref() }) else {
             return false;
         };
+        if !ctx.enter() {
+            return false;
+        }
         let edits = if edits.is_null() || n == 0 {
             &[][..]
         } else {
@@ -409,15 +452,29 @@ pub extern "C" fn kw_fn(ctx: *mut KwCtx, f: Option<KwFn>, user: *mut c_void) -> 
         let Some(ctx) = (unsafe { ctx.as_ref() }) else {
             return std::ptr::null_mut();
         };
+        if !ctx.enter() {
+            return std::ptr::null_mut();
+        }
         let Some(f) = f else {
             ctx.native.borrow_mut().error = "kw_fn: a null function".into();
             return std::ptr::null_mut();
         };
+        // The same function with the same `user` from the same
+        // extension is the same handle: a handle made per event or per
+        // spawn costs nothing after the first.
         let id = {
             let mut n = ctx.native.borrow_mut();
-            n.fns.push((f, user, ctx.namespace.clone()));
-            n.lua_fns.push(None);
-            n.fns.len() - 1
+            let same = n.fns.iter().position(|(g, u, ns)| {
+                *g as usize == f as usize && *u == user && *ns == ctx.namespace
+            });
+            match same {
+                Some(id) => id,
+                None => {
+                    n.fns.push((f, user, ctx.namespace.clone()));
+                    n.lua_fns.push(None);
+                    n.fns.len() - 1
+                }
+            }
         };
         let m = kui_value_map();
         kui_value_map_set(m, kstr(HANDLE_KEY), kui_value_int(id as i64));
@@ -446,6 +503,12 @@ fn call(ctx: &KwCtx, name: &str, args: *const KuiValue) -> Result<*mut KuiValue,
         }
     }
     let out: MultiValue = f.call(lua_args).map_err(|e| format!("`{name}`: {e}"))?;
+    // A refusal, the way every refusing door speaks: `nil, why`.
+    if out.len() == 2
+        && let (LV::Nil, LV::String(why)) = (&out[0], &out[1])
+    {
+        return Err(format!("`{name}`: {}", why.to_string_lossy()));
+    }
     Ok(match out.len() {
         0 => kui_value_null(),
         1 => to_c(&out[0]),
@@ -638,6 +701,14 @@ fn to_c(v: &LV) -> *mut KuiValue {
 
 // ---- loading
 
+/// A namespace is a word with no `/`: kui's rule for a slot's prefix.
+pub fn check_namespace(namespace: &str) -> Result<(), String> {
+    if namespace.is_empty() || namespace.contains('/') {
+        return Err(format!("`{namespace}`: a namespace is a word with no `/`"));
+    }
+    Ok(())
+}
+
 /// Where the library for `namespace` is (native.md Decision 7): with
 /// nothing said, `ext/NAMESPACE.<ext>` under the config directory,
 /// `.so` accepted on any platform as grammars are named; a directory
@@ -686,9 +757,7 @@ pub fn locate(
 /// answers Ok. The library stays open for the process (native.md
 /// Decision 7).
 pub fn load(native: &NativeCell, lua: &Lua, namespace: &str, path: &Path) -> Result<(), String> {
-    if namespace.is_empty() || namespace.contains('/') {
-        return Err(format!("`{namespace}`: a namespace is a word with no `/`"));
-    }
+    check_namespace(namespace)?;
     if let Some(prev) = native
         .borrow()
         .loaded
@@ -784,6 +853,7 @@ pub fn seed(
         let mut n = native.borrow_mut();
         n.published = Some(published.clone());
         n.queue = Some(queue.clone());
+        n.thread = Some(std::thread::current().id());
     }
     let k: Table = lua.globals().get("kawoosh")?;
     let n = native.clone();
@@ -795,11 +865,13 @@ pub fn seed(
         "_extension",
         lua.create_function(move |lua, (namespace, said): (String, Option<String>)| {
             let config = kawoosh_systems::fs::config_dir();
-            let found = locate(
-                &namespace,
-                said.as_deref().map(Path::new),
-                config.as_deref(),
-            );
+            let found = check_namespace(&namespace).and_then(|()| {
+                locate(
+                    &namespace,
+                    said.as_deref().map(Path::new),
+                    config.as_deref(),
+                )
+            });
             match found.and_then(|path| load(&n, lua, &namespace, &path)) {
                 Ok(()) => Ok((Some(true), None)),
                 Err(e) => Ok((None, Some(e))),

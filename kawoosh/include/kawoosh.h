@@ -54,12 +54,19 @@
  *
  * Ownership is one rule: the extension frees what it made and what it
  * was returned; the host frees nothing of the extension's. Arguments
- * are borrowed for the call. A KuiStr a kw_* function answers is
- * borrowed until the next kw_* call on that context.
+ * are borrowed for the call - no kw_* function consumes a value, unlike
+ * kui_open or kui_value_map_set. A KuiStr a kw_* function answers is
+ * borrowed until the call that asked returns.
+ *
+ * Errors are strings: a kw_* that answers NULL or false left the reason
+ * in kw_error, which the next kw_call, kw_fn or kw_buf_* on the context
+ * clears or sets anew.
  *
  * Everything runs on the UI thread, inside kw_ext_init or a KwFn the
- * host is calling. The KwCtx handed to either is alive for that one
- * call: store nothing.
+ * host is calling; a thread of yours comes back through kw_wake. A kw_*
+ * call from any other thread answers NULL or false and sets no error,
+ * since nothing on that thread may touch the editor. The KwCtx handed
+ * to a call is alive for that one call: store nothing.
  */
 #ifndef KAWOOSH_H
 #define KAWOOSH_H
@@ -119,18 +126,22 @@ KW_EXT_EXPORT void kw_ext_free(void *user);
 /* kawoosh.NAME(args...) with a C calling convention. `name` is the Lua
  * name ("buf.lines", "command", "map", "spawn", "opt"); `args` is a list
  * value, one entry per Lua argument, or NULL for none. Answers the
- * call's return value - a list of them when the door returns several
- * (`nil, err` is a two-entry list) - yours to free, or NULL with the
- * reason in kw_error: a name this build has no door for, arguments that
- * are not a list, or the Lua error the door raised. A function in a
- * result is null; a table with keys 1..n is a list, any other a map. */
+ * call's return value - a list of them when the door returns several -
+ * yours to free, or NULL with the reason in kw_error: a name this build
+ * has no door for, arguments that are not a list, the Lua error the
+ * door raised, or the door's own refusal (a door that answers `nil, why`
+ * has refused; `why` is the reason). A function in a result is null; a
+ * table with keys 1..n is a list, any other a map. */
 KuiValue *kw_call(KwCtx *ctx, KuiStr name, const KuiValue *args);
 
-/* The last error a kw_* call on this context left, borrowed until the
- * next; false with nothing written when there is none. */
+/* Why the last kw_call, kw_fn or kw_buf_* on this context answered NULL
+ * or false, borrowed until the next of them; false with nothing written
+ * when it succeeded. */
 bool kw_error(KwCtx *ctx, KuiStr *out);
 
-/* The doors' version; 0 on a null context. */
+/* The doors' version: which kawoosh.* names exist and what they take.
+ * It moves when a door's shape changes after a release; 0 on a null
+ * context. */
 uint32_t kw_protocol(KwCtx *ctx);
 
 /* The namespace the extension whose call this is was loaded under -
@@ -152,7 +163,7 @@ void kw_wake(KwFn fn, void *user);
  * edit. These do the same work with one copy and no table; measured in
  * tests/lua_costs.rs, `native_buffer_access`. Everything else stays
  * kw_call. `buffer` is a handle from kw_call("buf.current") or
- * ("buf.list"), or 0 for the current one. */
+ * ("buf.list") - never 0 - or 0 for the current one. */
 
 /* The buffer's text, one copy, [lib]: borrowed until the call that
  * asked returns. False with the reason in kw_error. */
@@ -175,8 +186,10 @@ bool kw_buf_edits(KwCtx *ctx, uint64_t buffer, const KwEdit *edits, size_t n);
 /* A callable value, to put where Lua would put a function: a command's
  * body, an on_* hook, a spawn's on_lines. Yours to free like any value,
  * and consumed like any value when a door takes it; the function it
- * names lives until the runtime goes. NULL for a null `fn`. The value is
- * a map with the one key "kw_fn"; build it here, not by hand. */
+ * names lives until the runtime goes. The same fn with the same user is
+ * the same handle, so one made per event or per spawn costs nothing
+ * after the first. NULL for a null `fn`. The value is a map with the
+ * one key "kw_fn"; build it here, not by hand. */
 KuiValue *kw_fn(KwCtx *ctx, KwFn fn, void *user);
 
 #ifdef __cplusplus

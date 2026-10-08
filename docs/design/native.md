@@ -278,9 +278,9 @@ pins the ABI number it was written for.
 
 ## The example
 
-`dupes.c`: the command `dupes` lists a buffer's duplicate lines in a
-scratch pane. Nothing in it is drawn, so it exports the `kw_ext_*`
-four only.
+`tests/ext/dupes.c`, as the tests build it: the command `dupes` lists
+a buffer's duplicate lines in a scratch pane. Nothing drawn, so the
+four `kw_ext_*` only; the hashing is left out here.
 
 ```c
 #include "kawoosh.h"
@@ -289,41 +289,37 @@ uint32_t kw_ext_abi(void) { return KW_ABI_VERSION; }
 const char *kw_ext_name(void) { return "dupes"; }
 
 static KuiValue *run(void *user, KwCtx *ctx, const KuiValue *args) {
-    (void)user; (void)args;                       /* args: the command's ctx map */
-    KuiValue *none = kui_value_list();
-    KuiValue *buf = kw_call(ctx, KUI_STR("buf.current"), none);
-    KuiValue *lines = kw_call(ctx, KUI_STR("buf.lines"), none);   /* the current buffer's */
-    kui_value_free(none);
-    if (!buf || !lines) { kui_value_free(buf); kui_value_free(lines); return NULL; }
-
-    /* ... one hash pass over kui_value_len(lines) × kui_value_at(lines, i) ... */
-    KuiValue *out = kui_value_list();
-    /* kui_value_list_push(out, kui_value_str(...)) per "L: same as F" */
+    (void)user; (void)args;                         /* args[0]: the command's ctx map */
+    KuiValue *lines = kw_call(ctx, KUI_STR("buf.lines"), NULL);   /* the current buffer's */
+    if (!lines) return NULL;                        /* kw_error says why */
+    size_t n = kui_value_len(lines);
+    /* ... one hash pass over kui_value_at(lines, i), the report built into `out` ... */
 
     KuiValue *spec = kui_value_map();
     kui_value_map_set(spec, KUI_STR("name"), kui_value_str(KUI_STR("dupes")));
-    kui_value_map_set(spec, KUI_STR("lines"), out);              /* consumed by the map */
+    kui_value_map_set(spec, KUI_STR("text"), kui_value_str((KuiStr){(const uint8_t *)out, olen}));
     kui_value_map_set(spec, KUI_STR("read_only"), kui_value_bool(true));
     KuiValue *a = kui_value_list();
-    kui_value_list_push(a, spec);
-    KuiValue *r = kw_call(ctx, KUI_STR("buf.open_scratch"), a);
-    kui_value_free(a); kui_value_free(r); kui_value_free(buf); kui_value_free(lines);
-    return NULL;                                                 /* nothing to answer */
+    kui_value_list_push(a, spec);                   /* consumed by the list */
+    kui_value_free(kw_call(ctx, KUI_STR("buf.open_scratch"), a));
+    kui_value_free(a);                              /* ours: freed, the host consumed nothing */
+    kui_value_free(lines);
+    return NULL;
 }
 
 void *kw_ext_init(KwCtx *ctx) {
     KuiValue *a = kui_value_list();
     kui_value_list_push(a, kui_value_str(KUI_STR("dupes")));
-    kui_value_list_push(a, kw_fn(ctx, run, NULL));
-    KuiValue *r = kw_call(ctx, KUI_STR("command"), a);
-    kui_value_free(a); kui_value_free(r);
+    kui_value_list_push(a, kw_fn(ctx, run, NULL));  /* where Lua takes a function */
+    kui_value_free(kw_call(ctx, KUI_STR("command"), a));
+    kui_value_free(a);
 
     a = kui_value_list();
     kui_value_list_push(a, kui_value_str(KUI_STR("n")));
     kui_value_list_push(a, kui_value_str(KUI_STR("<leader>cd")));
     kui_value_list_push(a, kui_value_str(KUI_STR("dupes")));
-    r = kw_call(ctx, KUI_STR("map"), a);
-    kui_value_free(a); kui_value_free(r);
+    kui_value_free(kw_call(ctx, KUI_STR("map"), a));
+    kui_value_free(a);
     return NULL;
 }
 
@@ -342,8 +338,48 @@ and loaded by one line in `init.lua`:
 kawoosh.extension("dupes")   -- ext/dupes.<ext> under the config directory
 ```
 
-The `KUI_STR`/`kui_value_*` ceremony is C's; the `kawoosh-ext` crate of
-Decision 10 makes the same extension ten lines of Rust.
+A pane of its own is the same library with kui's seven entry points
+beside these four (`tests/ext/panel.c`): `kw_ext_init` registers the
+view as its own —
+
+```c
+KuiStr ns;
+kw_namespace(ctx, &ns);
+/* kawoosh.view("panel", nil, nil, { native = NS }) */
+KuiValue *a = kui_value_list();
+kui_value_list_push(a, kui_value_str(KUI_STR("panel")));
+kui_value_list_push(a, kui_value_null());
+kui_value_list_push(a, kui_value_null());
+KuiValue *opts = kui_value_map();
+kui_value_map_set(opts, KUI_STR("native"), kui_value_str(ns));
+kui_value_list_push(a, opts);
+kui_value_free(kw_call(ctx, KUI_STR("view"), a));
+kui_value_free(a);
+```
+
+— and `kui_ext_view` draws each pane of it with kui's own builders,
+`kui_slot_params` saying which pane, how wide, whether focused:
+
+```c
+void kui_ext_view(void *user, KuiCtx *ui) {
+    KuiTheme t = KUI_THEME_INIT;
+    kui_theme(ui, &t);
+    KuiSpec column = {.dir = KUI_COLUMN, .width = {KUI_GROW, 1}, .height = {KUI_GROW, 1}, .pad_l = 12};
+    kui_open(ui, &column, NULL);
+    KuiValue *tag = kui_value_map();
+    kui_value_map_set(tag, KUI_STR("kind"), kui_value_str(KUI_STR("bump")));
+    KuiSpec row = {.dir = KUI_ROW};
+    kui_open(ui, &row, tag);                        /* its clicks come to kui_ext_on_event */
+    KuiTextStyle style = {.size = 14, .color = t.fg};
+    kui_text(ui, KUI_STR("a native pane"), &style);
+    kui_close(ui);
+    kui_close(ui);
+}
+```
+
+A thread's end comes back with `kw_wake(fn, user)`, the one function
+callable from any thread; `fn` runs on the UI thread with a context of
+its own.
 
 ## What this buys over a Lua C module
 
@@ -509,6 +545,30 @@ What the building decided beyond the draft:
   copy out of the piece tree. The edits go thirty times faster to
   queue, and the engine's apply of ten thousand is under 2 ms either
   way — the crossing was the cost, as Decision 6 supposed.
+
+**Reviewed before the push, 2026-10-08.** Four changes from the
+review of the surface as rounds one to three left it, each applied:
+
+- **`kw_error` is cleared** at the start of every `kw_call`, `kw_fn` and
+  `kw_buf_*`: it is why the last of them answered NULL or false, never
+  a stale reason after a success.
+- **`kw_fn` deduplicates** on the function, the `user` and the
+  namespace: a handle made per event or per spawn is one handle, not
+  a table growing for the runtime's life.
+- **A `kw_*` call off the UI thread answers NULL or false** and sets
+  no error. The context carries the UI thread's id, copied out of the
+  runtime when it is made, so the check touches nothing behind the
+  `Rc`; before, such a call was undefined behaviour in the Lua state.
+- **A door's `nil, why` is a refusal**: NULL and `why` in `kw_error`,
+  the one shape every refusing door speaks on both sides, instead of a
+  two-entry list whose first entry a reader had to test. A namespace
+  is checked before the library is looked for, so the refusal names
+  the namespace, not the places looked.
+
+And three lines in the header: no `kw_*` function consumes a value
+(unlike `kui_open` and `kui_value_map_set`); a buffer handle is never
+0, which is why 0 can mean the current one; `kw_protocol` moves when a
+door's shape changes after a release.
 
 ## Open
 

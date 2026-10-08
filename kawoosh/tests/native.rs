@@ -162,13 +162,21 @@ fn the_doors_edges_probed() {
     assert_eq!(lines[1], "scalar: `echo`: the arguments are not a list");
     assert_eq!(lines[2], "map: `echo`: the arguments are a map, not a list");
     assert_eq!(lines[3], "basename: b.txt");
-    assert_eq!(lines[4], "two: 2 entries, first null");
-    assert_eq!(lines[5], "lua error: `buf.open_scratch`: ");
-    assert_eq!(lines[6], "null ctx: NULL");
-    assert_eq!(lines[7], "protocol: 1");
-    assert_eq!(lines[8], "command: registered");
-    assert_eq!(lines[9], "null fn: kw_fn: a null function");
-    assert_eq!(lines.len(), 10, "{report}");
+    assert_eq!(
+        lines[4],
+        "refused: `_extension`: ``: a namespace is a word with no `/`"
+    );
+    assert_eq!(lines[5], "after a success: no error");
+    assert_eq!(lines[6], "lua error: `buf.open_scratch`: ");
+    assert_eq!(lines[7], "null ctx: NULL");
+    assert_eq!(lines[8], "protocol: 1");
+    assert_eq!(lines[9], "command: registered");
+    assert_eq!(lines[10], "null fn: kw_fn: a null function");
+    assert_eq!(
+        lines[11],
+        "handles: same fn same user is one, another user another"
+    );
+    assert_eq!(lines.len(), 12, "{report}");
 
     // The handle runs as the command's body, with the command's ctx.
     ex(&mut d, &mut app, "probe");
@@ -333,6 +341,11 @@ fn a_thread_comes_back_through_kw_wake() {
         }
     }
     assert_eq!(seen, "woke from a thread, namespace none");
+
+    // A thread of the extension's own using the call's context while
+    // the call waits: NULL, no error, nothing touched.
+    ex(&mut d, &mut app, "cmisuse");
+    assert_eq!(app.ed.message, "off-thread call refused");
 }
 
 #[test]

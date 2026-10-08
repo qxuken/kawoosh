@@ -5,6 +5,7 @@
  * kui's `kui_ext_view` draws the pane, a row whose clicks come back to
  * `kui_ext_on_event` and are counted on the next frame. */
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,29 @@ static void *work(void *arg) {
     return NULL;
 }
 
+/* A thread using the call's context while the call waits: refused,
+ * with nothing touched. */
+static void *misuse(void *arg) {
+    KwCtx *ctx = arg;
+    KuiValue *r = kw_call(ctx, KUI_STR("echo"), NULL);
+    KuiStr e;
+    bool had_error = kw_error(ctx, &e);
+    return (void *)(intptr_t)(r == NULL && !had_error);
+}
+
+static KuiValue *thread_misuse(void *user, KwCtx *ctx, const KuiValue *args) {
+    (void)user;
+    (void)args;
+    pthread_t t;
+    void *out = NULL;
+    pthread_create(&t, NULL, misuse, ctx);
+    pthread_join(t, &out);
+    KuiValue *a = one_str(out ? "off-thread call refused" : "off-thread call answered");
+    kui_value_free(kw_call(ctx, KUI_STR("echo"), a));
+    kui_value_free(a);
+    return NULL;
+}
+
 static KuiValue *start_thread(void *user, KwCtx *ctx, const KuiValue *args) {
     (void)user;
     (void)ctx;
@@ -82,6 +106,7 @@ void *kw_ext_init(KwCtx *ctx) {
     kui_value_free(a);
     command(ctx, "cpanel", open_pane);
     command(ctx, "cwake", start_thread);
+    command(ctx, "cmisuse", thread_misuse);
     return NULL;
 }
 
