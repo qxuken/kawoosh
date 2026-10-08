@@ -452,6 +452,18 @@ fn commands_of(f: &Found, dirs: &[PathBuf]) -> Vec<Deduced> {
             if bin {
                 out.push(row("cargo run".into(), ""));
             }
+            // The release profile's after the dev profile's, so the top
+            // stays the quick ones (compile.md Decision 20).
+            out.push(row(
+                "cargo build --release".into(),
+                "the release profile, optimised",
+            ));
+            if bin {
+                out.push(row(
+                    "cargo run --release".into(),
+                    "the release profile, optimised",
+                ));
+            }
             out
         }
         Kind::Node => node(f, &text, dirs, &row),
@@ -1238,6 +1250,47 @@ mod tests {
 
     fn cmds(p: &Project) -> Vec<&str> {
         p.commands.iter().map(|d| d.cmd.as_str()).collect()
+    }
+
+    /// cargo's release profile (compile.md Decision 20): a build, and a
+    /// run beside a binary, after every dev-profile row; a crate with no
+    /// binary has no run of either.
+    #[test]
+    fn cargo_offers_the_release_profile_after_the_dev_one() {
+        let dir = tree(
+            "release",
+            &[
+                ("Cargo.toml", "[package]\nname = \"app\"\n"),
+                ("src/main.rs", "fn main() {}\n"),
+                ("lib/Cargo.toml", "[package]\nname = \"lib\"\n"),
+                ("lib/src/lib.rs", "\n"),
+            ],
+        );
+        let rust = ["Cargo.toml".to_string()];
+        let p = deduce(&dir.join("src"), &rust, &nu_files());
+        assert_eq!(
+            cmds(&p)[..7],
+            [
+                "cargo check",
+                "cargo build",
+                "cargo test",
+                "cargo clippy",
+                "cargo run",
+                "cargo build --release",
+                "cargo run --release",
+            ]
+        );
+        assert!(p.commands[5..7].iter().all(|d| d.cwd == dir && !d.needs));
+        assert_eq!(p.commands[6].why, "the release profile, optimised");
+        assert_eq!(p.dir_for("cargo run --release"), Some(dir.as_path()));
+
+        // The library alone (its own repository): no run, debug or release.
+        std::fs::create_dir_all(dir.join("lib/.git")).unwrap();
+        let p = deduce(&dir.join("lib/src"), &rust, &nu_files());
+        let c = cmds(&p);
+        assert!(c.contains(&"cargo build --release"), "{c:?}");
+        assert!(!c.iter().any(|c| c.starts_with("cargo run")), "{c:?}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

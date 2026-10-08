@@ -501,7 +501,7 @@ fn the_compile_picker_lists_by_tier() {
         shown[4..shown.len() - 1].iter().all(|r| r.2 == 4),
         "{shown:#?}"
     );
-    for c in ["cargo check", "make"] {
+    for c in ["cargo check", "cargo build --release", "make"] {
         assert!(rest.contains(&c), "{c} in the project's tier: {rest:?}");
     }
     assert!(

@@ -598,7 +598,8 @@ unchanged), `string@[debug release]` those two.
 
 kawoosh reads the project's files, from the current file up to the
 repository root, for what they can run: `Cargo.toml` (cargo check,
-build, test, clippy, run), `package.json` scripts (with the package
+build, test, clippy, run, then `build --release` and `run --release`),
+`package.json` scripts (with the package
 manager its lockfile says), justfile recipes, nushell files
 (`build.nu` and `toolkit.nu`, or the names and paths `compile.nushell`
 lists), Makefile targets, `CMakeLists.txt`, `go.mod`, `pyproject.toml`

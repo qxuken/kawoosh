@@ -14,8 +14,8 @@ for its command, then a buffer a command and directory, the same day
 (Decisions 10 and 11); the colours, the head and how long it took
 2026-10-06 (Decision 12); the end said once, a location's pane and
 the session the same day (Decision 13); the note's "Not built"
-2026-10-07 (Decisions 14–18); the picker's order 2026-10-09
-(Decision 19). The calls
+2026-10-07 (Decisions 14–18); the picker's order and cargo's release
+profile 2026-10-09 (Decisions 19 and 20). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -46,7 +46,7 @@ compile on a host is typed or set, as before.
 
 | file | commands | where |
 |---|---|---|
-| `Cargo.toml` | `cargo check` `build` `test` `clippy`, `run` for a binary | the outermost, the workspace — cargo prints its paths from there |
+| `Cargo.toml` | `cargo check` `build` `test` `clippy`, `run` for a binary; then `build --release`, `run --release` for a binary (Decision 20) | the outermost, the workspace — cargo prints its paths from there |
 | `package.json` | `<pm> run SCRIPT` per script; `<pm> exec tsc --noEmit` beside a `tsconfig.json` with no script that runs `tsc` | the nearest; the package manager by its lockfile (`pnpm-lock.yaml`, `yarn.lock`, `bun.lock[b]`) or `packageManager`, else npm |
 | `justfile` `Justfile` `.justfile` | `just`, `just RECIPE` per public recipe, its `#` comment as the why | the nearest |
 | `build.nu` | `nu build.nu [SUB]` for a script's `main` and `main SUB` (an `alias "main SUB"` too), else `nu -c 'use build.nu; build NAME'` per `export def` of a module; the comment above as the why (Decision 6) | the nearest |
@@ -784,6 +784,24 @@ leaving out the lines run elsewhere — a command just run in a sibling
 checkout is a fair one to want again, only not first; the tiers as a
 `boost` on the match (`picker.rank`) — big enough to keep them apart, a
 poor match here would outrank the exact one typed for.
+
+### 20. cargo's release profile
+
+*Added 2026-10-09, asked:* "can deduction for cargo also include
+release build/run options? if cargo does not suggest that, we can skip
+this one". cargo does: `release` is one of its two built-in profiles,
+`--release` the flag that picks it. A `Cargo.toml` offers `cargo build
+--release`, and beside a binary `cargo run --release`, after every
+dev-profile row: the quick ones stay at the top, and a bare `:compile`
+still checks. Their output is cargo's, read as the rest is — no matcher
+of their own, `]q` walking it the same. kawoosh offers no per-binary or
+per-example row (`--bin NAME`, `--example NAME`; rust-analyzer's
+runnables have them, Decision 18), so there is none to pair.
+
+Beaten: each release row beside its dev one (the top would be two
+builds before a test); `--release` on every row (a `check` or `clippy`
+under it reads the same code bar `cfg(debug_assertions)`, and a `test
+--release` is rare enough to type, or to name).
 
 ## Not built
 
