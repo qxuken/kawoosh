@@ -2,7 +2,14 @@
  *
  * An extension is a shared library that `init.lua` names:
  *
- *     kawoosh.extension("dupes", "~/.config/kawoosh/ext/dupes.so")
+ *     kawoosh.extension("dupes")
+ *
+ * which is `ext/dupes.<ext>` under the config directory, the extension
+ * the platform's (.dylib, .so, .dll; .so accepted anywhere) - one
+ * init.lua for every machine. A second argument says where instead: the
+ * library, a directory holding it, or its path without the extension;
+ * `kawoosh.fs.config()`, `fs.join` and `fs.dylib(name)` spell a path by
+ * hand without naming a platform.
  *
  * It links against nothing. Every kw_* and kui_* it calls is left
  * undefined and resolved from the kawoosh executable at load, the way a

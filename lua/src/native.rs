@@ -1,7 +1,7 @@
 //! Native extensions: the C ABI the kui way (docs/design/native.md).
 //!
-//! A shared library `init.lua` names (`kawoosh.extension(namespace,
-//! path)`) is opened here, its `kw_ext_abi` checked against
+//! A shared library `init.lua` names (`kawoosh.extension(namespace[,
+//! where])`, found by [`locate`]) is opened here, its `kw_ext_abi` checked against
 //! [`KW_ABI_VERSION`], its `kw_ext_init` run with a context. Everything
 //! it then asks of the editor goes through one door, `kw_call(ctx, name,
 //! args)`: the Lua name of a `kawoosh.*` function and its arguments as a
@@ -428,6 +428,46 @@ fn to_c(v: &LV) -> *mut KuiValue {
 
 // ---- loading
 
+/// Where the library for `namespace` is (native.md Decision 7): with
+/// nothing said, `ext/NAMESPACE.<ext>` under the config directory,
+/// `.so` accepted on any platform as grammars are named; a directory
+/// said holds `NAMESPACE.<ext>`; a path said without its extension
+/// gets the platform's; a file said is the file. Not there: the places
+/// looked, in the error.
+pub fn locate(
+    namespace: &str,
+    said: Option<&Path>,
+    config: Option<&Path>,
+) -> Result<PathBuf, String> {
+    let ext = std::env::consts::DLL_EXTENSION;
+    let mut names = vec![format!("{namespace}.{ext}")];
+    if ext != "so" {
+        names.push(format!("{namespace}.so"));
+    }
+    let cands: Vec<PathBuf> = match said {
+        Some(p) if p.is_file() => return Ok(p.to_path_buf()),
+        Some(p) if p.is_dir() => names.iter().map(|n| p.join(n)).collect(),
+        Some(p) => {
+            let mut c = vec![p.with_extension(ext)];
+            if ext != "so" {
+                c.push(p.with_extension("so"));
+            }
+            c.push(p.to_path_buf());
+            c
+        }
+        None => {
+            let Some(config) = config else {
+                return Err(format!("`{namespace}`: no config directory to look under"));
+            };
+            names.iter().map(|n| config.join("ext").join(n)).collect()
+        }
+    };
+    cands.iter().find(|p| p.is_file()).cloned().ok_or_else(|| {
+        let looked: Vec<String> = cands.iter().map(|p| p.display().to_string()).collect();
+        format!("`{namespace}`: no extension at {}", looked.join(", "))
+    })
+}
+
 /// Opens the library at `path` as `namespace` and runs its
 /// `kw_ext_init`. Refused, with the reason: a namespace that is empty,
 /// has a `/` or is another library's; a library that will not load;
@@ -512,14 +552,20 @@ pub fn load(native: &NativeCell, lua: &Lua, namespace: &str, path: &Path) -> Res
 pub fn seed(lua: &Lua, native: &NativeCell) -> mlua::Result<()> {
     let k: Table = lua.globals().get("kawoosh")?;
     let n = native.clone();
-    // `kawoosh._extension(namespace, path)`: the library at `path`
-    // loaded as `namespace` (`kawoosh.extension` is the one to call —
-    // it expands the path and says why a load was refused); `true`, or
-    // `nil` and the reason.
+    // `kawoosh._extension(namespace[, where])`: the library `locate`
+    // finds loaded as `namespace` (`kawoosh.extension` is the one to
+    // call — it expands `where` and says why a load was refused);
+    // `true`, or `nil` and the reason.
     k.set(
         "_extension",
-        lua.create_function(move |lua, (namespace, path): (String, String)| {
-            match load(&n, lua, &namespace, Path::new(&path)) {
+        lua.create_function(move |lua, (namespace, said): (String, Option<String>)| {
+            let config = kawoosh_systems::fs::config_dir();
+            let found = locate(
+                &namespace,
+                said.as_deref().map(Path::new),
+                config.as_deref(),
+            );
+            match found.and_then(|path| load(&n, lua, &namespace, &path)) {
                 Ok(()) => Ok((Some(true), None)),
                 Err(e) => Ok((None, Some(e))),
             }

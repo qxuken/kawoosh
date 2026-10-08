@@ -6757,6 +6757,21 @@ fn seed(
         "home",
         lua.create_function(|_, ()| Ok(kfs::home().map(|h| kfs::display(&h))))?,
     )?;
+    // `fs.config()`: the user's config directory, as kawoosh finds it
+    // (`$XDG_CONFIG_HOME/kawoosh`, else `~/.config/kawoosh`) — where
+    // `init.lua`, `settings.lua`, `parsers/` and `ext/` are; nil with no
+    // home. What a plugin would otherwise rebuild from `os.getenv`.
+    fs.set(
+        "config",
+        lua.create_function(|_, ()| Ok(kfs::config_dir().map(|h| kfs::display(&h))))?,
+    )?;
+    // `fs.dylib(name)`: `name` as this platform names a shared library
+    // — `dupes.dylib` on macOS, `dupes.so` on Linux, `dupes.dll` on
+    // Windows — so a path to one reads the same in every `init.lua`.
+    fs.set(
+        "dylib",
+        lua.create_function(|_, name: String| Ok(kfs::dylib(&name)))?,
+    )?;
     // `fs.list(path)` answers now; `fs.list(path, fn)` reads the
     // directory on a thread of its own and calls `fn(entries)` — or
     // `fn(nil, why)` — when it is read, so a listing of forty thousand

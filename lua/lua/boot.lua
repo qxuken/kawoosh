@@ -408,14 +408,20 @@ function kawoosh.on_restore(fn)
   kawoosh._restorers[#kawoosh._restorers + 1] = fn
 end
 
--- kawoosh.extension(namespace, path): a native extension loaded
--- (docs/design/native.md) — a shared library against `kawoosh.h`,
--- `~` and `..` in its path as `kawoosh.fs.expand` reads them. `true`,
--- or `nil` and the reason, which is also a notification under the
--- `extension` source: no `kw_ext_abi`, another ABI, a namespace taken,
--- a path that leads nowhere. `:extensions` lists what is loaded.
-function kawoosh.extension(namespace, path)
-  local ok, err = kawoosh._extension(tostring(namespace), kawoosh.fs.expand(tostring(path)))
+-- kawoosh.extension(namespace[, where]): a native extension loaded
+-- (docs/design/native.md) — a shared library against `kawoosh.h`.
+-- With no `where`, the library is `ext/NAMESPACE` under the config
+-- directory with the platform's extension (`fs.dylib`: `.dylib`,
+-- `.so`, `.dll`; `.so` is accepted on any), so one `init.lua` reads
+-- the same on every machine. `where` may be the library, a directory
+-- holding it, or the path without its extension; `~` and `..` as
+-- `fs.expand` reads them. `true`, or `nil` and the reason, which is
+-- also a notification under the `extension` source: nothing at the
+-- places looked, no `kw_ext_abi`, another ABI, a namespace taken.
+-- `:extensions` lists what is loaded.
+function kawoosh.extension(namespace, where)
+  if where ~= nil then where = kawoosh.fs.expand(tostring(where)) end
+  local ok, err = kawoosh._extension(tostring(namespace), where)
   if not ok then kawoosh.notify(err, { level = "error", source = "extension" }) end
   return ok, err
 end

@@ -210,10 +210,15 @@ optimising), and each is one prototype and one struct, audited.
 
 ### 7. Loading, listing, trust
 
-`kawoosh.extension("dupes", "~/.config/kawoosh/ext/dupes.so")` from
-`init.lua`: the namespace is the first argument, the library the second
-(`.so`, `.dylib`, `.dll` by platform, `.so` accepted on any, as
-grammars are named). The app opens it as a `CExtension` (when it
+`kawoosh.extension("dupes")` from `init.lua`: the namespace is the
+one argument, and the library is `ext/dupes.<ext>` under the config
+directory, the extension the platform's (`.dylib`, `.so`, `.dll`; `.so`
+accepted on any, as grammars are named) — one `init.lua` for every
+machine, which a path spelling `~/.config` and `.so` was not. A second
+argument says where instead: the library, a directory holding it, or
+its path without the extension, as a grammar's `path` is read. For a
+path spelled by hand, `kawoosh.fs.config()`, `fs.join` and
+`fs.dylib(name)` name no platform. The app opens it as a `CExtension` (when it
 exports `kui_ext_abi`) and reads the `kw_ext_*` symbols; a refusal
 (no `kw_ext_abi`, another `KW_ABI_VERSION`, another `KUI_ABI_VERSION`,
 a namespace taken, a path that leads nowhere) is a toast under the
@@ -333,7 +338,7 @@ cc -O2 -shared -undefined dynamic_lookup -I kawoosh/include -I kui/include dupes
 and loaded by one line in `init.lua`:
 
 ```lua
-kawoosh.extension("dupes", "~/.config/kawoosh/ext/dupes.so")
+kawoosh.extension("dupes")   -- ext/dupes.<ext> under the config directory
 ```
 
 The `KUI_STR`/`kui_value_*` ceremony is C's; the `kawoosh-ext` crate of
@@ -412,6 +417,13 @@ door's edges; the list. What the building decided beyond the draft:
   _extension` in Rust: it expands the path (`~`, `..`) and makes a
   refusal a notification under the `extension` source as well as its
   `nil, err`.
+- **A path that names a platform is a bad connection string** (the
+  user, on `"~/.config/kawoosh/ext/dupes.so"`): the library is found
+  by convention from the namespace alone (`native::locate`, the
+  grammars' rule), and `fs.config()` and `fs.dylib(name)` join
+  `fs.join` as the helpers for a path spelled by hand; the config
+  directory's rule moved to `kawoosh_systems::fs::config_dir`, one
+  place for the settings, `init.lua`, the door and the lookup.
 
 ## Open
 

@@ -182,7 +182,11 @@ fn an_extension_is_refused_with_the_reason() {
     let r = load(&mut app, "wrong", &wrong);
     assert!(r.ends_with("extension is ABI 99, this build is 1"), "{r}");
     let r = load(&mut app, "gone", Path::new("/nowhere/at/all.so"));
-    assert!(r.starts_with("/nowhere/at/all.so: "), "{r}");
+    assert!(
+        r.starts_with("`gone`: no extension at /nowhere/at/all.")
+            && r.contains("/nowhere/at/all.so"),
+        "{r}"
+    );
     let r = load(&mut app, "a/b", &good);
     assert!(r.contains("a namespace is a word with no `/`"), "{r}");
     assert_eq!(load(&mut app, "dupes", &good), "ok");
@@ -234,4 +238,72 @@ fn extensions_lists_what_is_loaded() {
         "{t}"
     );
     assert!(t.ends_with("dupes.so"), "{t}");
+}
+
+#[test]
+fn the_library_is_found_by_convention_and_the_path_helpers_name_no_platform() {
+    use kawoosh_lua::native::locate;
+    let so = build("dupes", &[], "find-build");
+    let dir = so.parent().unwrap().to_path_buf();
+    let ext = std::env::consts::DLL_EXTENSION;
+
+    // Nothing said: `ext/NAMESPACE.<ext>` under the config directory,
+    // `.so` on any platform.
+    let config = tmp("find-config");
+    std::fs::create_dir_all(config.join("ext")).unwrap();
+    std::fs::copy(&so, config.join("ext").join("dupes.so")).unwrap();
+    assert_eq!(
+        locate("dupes", None, Some(&config)).unwrap(),
+        config.join("ext").join("dupes.so")
+    );
+    let r = locate("other", None, Some(&config)).unwrap_err();
+    assert!(
+        r.starts_with("`other`: no extension at ") && r.contains("ext/other."),
+        "{r}"
+    );
+    assert!(
+        locate("dupes", None, None)
+            .unwrap_err()
+            .contains("no config directory")
+    );
+    // A directory holding it; the path without its extension; the file.
+    assert_eq!(locate("dupes", Some(&dir), None).unwrap(), so);
+    assert_eq!(locate("dupes", Some(&dir.join("dupes")), None).unwrap(), so);
+    assert_eq!(locate("x", Some(&so), None).unwrap(), so);
+
+    // The same three ways through the door, each loading: a directory
+    // and a stem are read by the namespace's name.
+    std::fs::copy(&so, dir.join("bydir.so")).unwrap();
+    std::fs::copy(&so, dir.join("bystem.so")).unwrap();
+    let (_d, mut app) = launch("find", LINES);
+    assert_eq!(load(&mut app, "bydir", &dir), "ok");
+    assert_eq!(load(&mut app, "bystem", &dir.join("bystem")), "ok");
+    assert_eq!(load(&mut app, "byfile", &so), "ok");
+    assert_eq!(lua(&mut app, "kawoosh.echo(#kawoosh.extensions())"), "3");
+
+    // The helpers for a path spelled by hand.
+    assert_eq!(
+        lua(&mut app, "kawoosh.echo(kawoosh.fs.dylib('dupes'))"),
+        format!("dupes.{ext}")
+    );
+    assert_eq!(
+        lua(
+            &mut app,
+            &format!("kawoosh.echo(kawoosh.fs.dylib('dupes.{ext}'))")
+        ),
+        format!("dupes.{ext}")
+    );
+    let config = lua(&mut app, "kawoosh.echo(kawoosh.fs.config())");
+    assert!(config.ends_with("kawoosh"), "{config}");
+    assert_eq!(
+        lua(
+            &mut app,
+            "kawoosh.echo(kawoosh.fs.join(kawoosh.fs.config(), 'ext', kawoosh.fs.dylib('dupes')))"
+        ),
+        Path::new(&config)
+            .join("ext")
+            .join(format!("dupes.{ext}"))
+            .display()
+            .to_string()
+    );
 }
