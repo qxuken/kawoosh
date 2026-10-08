@@ -16,7 +16,7 @@ mod nodes;
 mod prof;
 
 pub use fuzzy::{Hit, Matcher};
-pub use native::{KW_ABI_VERSION, KW_PROTOCOL, NativeCell};
+pub use native::{KW_ABI_VERSION, KW_PROTOCOL, KwEdit, NativeCell};
 pub use prof::Spent;
 
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
@@ -1422,7 +1422,7 @@ impl Runtime {
         let prof = prof::ProfCell::default();
         prof::seed(&lua, &prof)?;
         let native = NativeCell::default();
-        native::seed(&lua, &native)?;
+        native::seed(&lua, &native, &published, &queue)?;
         lua.load(BOOT).set_name("kawoosh:boot").exec()?;
         Ok((
             Self {
@@ -3347,6 +3347,22 @@ fn register_lines(
 }
 
 /// Where a caret goes after `kawoosh.buf.edits`.
+/// Edits that may go in one message: none overlapping (an empty edit
+/// of nothing is no edit). The rule `kawoosh.buf.edits` and
+/// `kw_buf_edits` share.
+pub(crate) fn check_edits(edits: &[(std::ops::Range<usize>, String)]) -> Result<(), String> {
+    let mut by_start: Vec<&std::ops::Range<usize>> = edits
+        .iter()
+        .filter(|(r, t)| !(r.is_empty() && t.is_empty()))
+        .map(|(r, _)| r)
+        .collect();
+    by_start.sort_by_key(|r| (r.start, r.end));
+    match by_start.windows(2).find(|w| w[1].start < w[0].end) {
+        Some(w) => Err(format!("edits: {:?} and {:?} overlap", w[0], w[1])),
+        None => Ok(()),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Caret {
     /// So many bytes into an edit's text (by its index), bounded by it.
@@ -6230,18 +6246,7 @@ fn seed(
                         None => Caret::At(at),
                     });
                 }
-                let mut by_start: Vec<&std::ops::Range<usize>> = edits
-                    .iter()
-                    .filter(|(r, t)| !(r.is_empty() && t.is_empty()))
-                    .map(|(r, _)| r)
-                    .collect();
-                by_start.sort_by_key(|r| (r.start, r.end));
-                if let Some(w) = by_start.windows(2).find(|w| w[1].start < w[0].end) {
-                    return Err(mlua::Error::runtime(format!(
-                        "edits: {:?} and {:?} overlap",
-                        w[0], w[1]
-                    )));
-                }
+                check_edits(&edits).map_err(mlua::Error::runtime)?;
                 qq.borrow_mut().push(Msg::Edits {
                     buffer: h,
                     edits,

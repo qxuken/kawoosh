@@ -80,7 +80,7 @@ extern "C" {
  * the editor crosses as data (kw_call) and not as prototypes. Which
  * doors exist, and what they take, is the protocol (kw_protocol) and
  * moves with kawoosh's releases. */
-#define KW_ABI_VERSION 2
+#define KW_ABI_VERSION 3
 
 /* One call's context: the runtime's Lua and its native state. Opaque. */
 typedef struct KwCtx KwCtx;
@@ -144,6 +144,33 @@ bool kw_namespace(KwCtx *ctx, KuiStr *out);
  * one kw_* callable from any thread. The context it gets has no
  * namespace; keep yours in `user`. A null fn does nothing. */
 void kw_wake(KwFn fn, void *user);
+
+/* -- Typed buffer access: the two reads the data route copies twice --
+ *
+ * kw_call("buf.text") copies the text three times (the snapshot's, the
+ * Lua string, the value) and kw_call("buf.edits") makes a Lua table per
+ * edit. These do the same work with one copy and no table; measured in
+ * tests/lua_costs.rs, `native_buffer_access`. Everything else stays
+ * kw_call. `buffer` is a handle from kw_call("buf.current") or
+ * ("buf.list"), or 0 for the current one. */
+
+/* The buffer's text, one copy, [lib]: borrowed until the call that
+ * asked returns. False with the reason in kw_error. */
+bool kw_buf_text(KwCtx *ctx, uint64_t buffer, KuiStr *out);
+
+/* One edit: bytes from..to (to exclusive) replaced by text. [in]: yours,
+ * read during the call. */
+typedef struct KwEdit {
+    uint64_t from;
+    uint64_t to;
+    KuiStr text;
+} KwEdit;
+
+/* n edits applied at once, each range in the text before them, none
+ * overlapping - what kw_call("buf.edits", ...) does from a list. False
+ * with the reason in kw_error: a range ending before it starts, two
+ * that overlap, a buffer that is not. */
+bool kw_buf_edits(KwCtx *ctx, uint64_t buffer, const KwEdit *edits, size_t n);
 
 /* A callable value, to put where Lua would put a function: a command's
  * body, an on_* hook, a spawn's on_lines. Yours to free like any value,

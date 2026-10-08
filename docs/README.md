@@ -132,4 +132,4 @@ commits; 70 integration test files and 31 Lua test scripts.
 - [lua-boundary.md](design/lua-boundary.md): where Lua ends and Rust
   begins, the bundled plugins reviewed.
 - [native.md](design/native.md): native extensions, a C ABI the kui
-  way; rounds one and two built.
+  way; rounds one to three built.

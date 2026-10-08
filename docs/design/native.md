@@ -3,10 +3,10 @@
 Status: asked 2026-10-08, "how expensive would be to open kawoosh for
 native extension?", three ways costed (Lua C modules, `abi_stable`, an
 ABI of kawoosh's own) and the third chosen: "option 3 is the way, let's
-design, estimate this". The estimate is at the end. **Rounds one and
-two built 2026-10-08**, "let's get building" and "round two: native
-panes and kw_wake"; the blocks after the estimate say what the
-building changed. The calls below are taken here, each the
+design, estimate this". The estimate is at the end. **Rounds one to
+three built 2026-10-08**, "let's get building", "round two: native
+panes and kw_wake", "round three: parity test and typed buffer
+access"; the blocks after the estimate say what the building changed. The calls below are taken here, each the
 user's to overturn. Companion
 to [plugin-panes.md](plugin-panes.md) (what a Lua plugin can do — a
 native one can do the same, by the same names), [lua-boundary.md](lua-boundary.md)
@@ -465,6 +465,50 @@ its `kui_ext_view`, clicked, its count its own; a thread back through
 - **The test drives the pane as a user would**: `:cpanel` opens it,
   the tab's slide is let run (`advance`), the row is clicked at its
   rect, the next frame's text carries the count; kui raised no warning.
+
+**Round three, 2026-10-08.** The parity test, the cost rows and the
+two typed doors (`tests/ext/typed.c`, `tests/ext/costs.c`; ABI 3).
+What the building decided beyond the draft:
+
+- **The parity test is kawoosh's own, in `tests/native.rs`**, kui's
+  shape at kawoosh's size: a `repr(C)` struct is restated as a row
+  whose destructuring pins every field to the Rust definition and
+  whose offsets, sizes and alignment come from Rust; a `kw_*` function
+  as a row that coerces the Rust function to the signature it spells
+  and derives the C prototype from the Rust types (`c_of`), emitted as
+  a typed function pointer that the header's prototype must be
+  compatible with. The unit is compiled by the system's `cc` with
+  `-fsyntax-only -Werror`, nothing linked; `KW_ABI_VERSION` is
+  asserted equal to the Rust constant, and the header's set of `kw_*`
+  prototypes is asserted equal to the rows' set both ways, so a
+  function added to one side alone fails. No build.rs: eight
+  functions and one struct do not need rows derived from source.
+- **`kw_buf_text` answers one copy, borrowed until the call returns**
+  — stronger than the draft's "until the next `kw_*` call", and
+  simpler: the context keeps what it handed out. The data route is
+  three copies (the snapshot's, the Lua string, the value).
+- **`kw_buf_edits` is the Lua door's rule with no table between**:
+  `check_edits` (a range ending before it starts, two that overlap)
+  is one function both doors call, and the message is the same
+  `Msg::Edits`. Carets are the Lua door's alone; an extension that
+  wants them places them through `kw_call("buf.edits", …)`.
+- **The typed doors read the runtime's snapshot and queue directly**:
+  `Native` holds the same `Rc`s `seed` gives the Lua doors. A context
+  has them from the one runtime; `0` is the current buffer.
+- **Measured** (`tests/lua_costs.rs`, `native_buffer_access`, release,
+  Apple Silicon, a 10 MB buffer, 10,000 edits):
+
+  | route | C clock | wall around the command |
+  |---|---|---|
+  | `kw_call("buf.text")`, a read | 7.8 ms | 40 ms for 5 |
+  | `kw_buf_text`, a read | 4.1 ms | 21 ms for 5 |
+  | `kw_call("buf.edits")`, 10,000 edits queued | 5.3 ms | 8.1 ms with the apply |
+  | `kw_buf_edits`, 10,000 edits queued | 0.16 ms | 1.9 ms with the apply |
+
+  The read halves: what is left of the typed one is the snapshot's own
+  copy out of the piece tree. The edits go thirty times faster to
+  queue, and the engine's apply of ten thousand is under 2 ms either
+  way — the crossing was the cost, as Decision 6 supposed.
 
 ## Open
 

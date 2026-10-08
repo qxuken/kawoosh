@@ -866,3 +866,61 @@ fn hex_find() {
     eprint!("{}", perf_read(&mut d, &mut app));
     std::fs::remove_dir_all(&root).ok();
 }
+
+// ------------------------------------------------------------ native
+
+/// The cost rows of docs/design/native.md Decision 6: a native
+/// extension's reads of a big buffer and its edits, through the data
+/// route (`kw_call("buf.text")`, `kw_call("buf.edits")`) and the typed
+/// one (`kw_buf_text`, `kw_buf_edits`). The C side clocks its own call
+/// (`tests/ext/costs.c`); the wall clock around the command is the
+/// whole, the edits' application by the engine included. Sizes:
+/// `LUA_COSTS_NATIVE_MB` (10), `LUA_COSTS_NATIVE_EDITS` (10000).
+#[test]
+#[ignore]
+fn native_buffer_access() {
+    let _s = serial();
+    let mb = env_usize("LUA_COSTS_NATIVE_MB", 10);
+    let edits = env_usize("LUA_COSTS_NATIVE_EDITS", 10_000);
+    let root = sandbox("native");
+    let path = root.join("big.txt");
+    let line = "the quick brown fox jumps over the lazy dog, again and again x\n";
+    let mut text = String::with_capacity(mb << 20);
+    while text.len() < mb << 20 {
+        text.push_str(line);
+    }
+    std::fs::write(&path, &text).unwrap();
+    drop(text);
+    let so = drive::build_ext("costs", &[], "costs");
+    eprintln!("\n== native_buffer_access: a {mb} MB buffer, {edits} edits ==");
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let mut d = boot(&mut app, 1600.0, 700.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("e {}", path.display()));
+    app.wait_for_open();
+    frames(&mut d, &mut app, 3);
+    lua(
+        &mut app,
+        &format!("assert(kawoosh.extension('costs', [[{}]]))", so.display()),
+    );
+    for (label, cmd) in [
+        ("buf.text through kw_call, 5 reads", "ctext_data 5"),
+        ("kw_buf_text, 5 reads", "ctext_typed 5"),
+    ] {
+        let t = Instant::now();
+        let said = lua(&mut app, &format!("kawoosh.run('{cmd}')"));
+        let wall = ms(t);
+        eprintln!("  {label:<40} C clock {said}; wall {wall:9.1} ms");
+    }
+    for (label, cmd) in [
+        ("buf.edits through kw_call", "cedits_data"),
+        ("kw_buf_edits", "cedits_typed"),
+    ] {
+        let t = Instant::now();
+        let said = lua(&mut app, &format!("kawoosh.run('{cmd} {edits}')"));
+        let wall = ms(t);
+        eprintln!("  {label:<40} C clock {said}; wall incl. apply {wall:9.1} ms");
+        frames(&mut d, &mut app, 2);
+    }
+}

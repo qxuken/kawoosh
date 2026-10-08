@@ -45,10 +45,12 @@ use kui_ffi::{
 };
 use mlua::{Function, Lua, MultiValue, Table, Value as LV};
 
+use crate::{Msg, Published};
+
 /// The ABI this build implements: `KW_ABI_VERSION` in `kawoosh.h`,
 /// bumped when a `kw_*` prototype or a `repr(C)` struct moves. An
 /// extension built against another is refused at load.
-pub const KW_ABI_VERSION: u32 = 2;
+pub const KW_ABI_VERSION: u32 = 3;
 
 /// The doors' version, `kw_protocol`: which `kawoosh.*` names exist and
 /// what they take. Moves with kawoosh's releases, never with the ABI.
@@ -60,6 +62,16 @@ pub const KW_PROTOCOL: u32 = 1;
 pub type KwFn = extern "C" fn(*mut c_void, *mut KwCtx, *const KuiValue) -> *mut KuiValue;
 type InitFn = extern "C" fn(*mut KwCtx) -> *mut c_void;
 type FreeFn = extern "C" fn(*mut c_void);
+
+/// One edit for `kw_buf_edits`: `from..to` (bytes, `to` exclusive)
+/// replaced by `text`. `[in]`: the extension allocates, the host reads;
+/// a field appended here is read only by a build that knows it.
+#[repr(C)]
+pub struct KwEdit {
+    pub from: u64,
+    pub to: u64,
+    pub text: KuiStr,
+}
 
 /// A loaded extension: what `kawoosh.extensions()` lists.
 pub struct Loaded {
@@ -90,6 +102,11 @@ pub struct Native {
     /// The Lua function made over each handle, once.
     lua_fns: Vec<Option<Function>>,
     error: String,
+    /// The runtime's snapshot and queue, for the typed doors
+    /// (`kw_buf_text`, `kw_buf_edits`): what `kawoosh.buf.text` and
+    /// `kawoosh.buf.edits` read and push, without a Lua value between.
+    published: Option<Rc<RefCell<Published>>>,
+    queue: Option<Rc<RefCell<Vec<Msg>>>>,
 }
 
 pub type NativeCell = Rc<RefCell<Native>>;
@@ -115,6 +132,9 @@ pub struct KwCtx {
     native: NativeCell,
     lua: Lua,
     namespace: Option<String>,
+    /// What `kw_buf_text` answered, kept for the call: the strings it
+    /// handed out point into these.
+    texts: RefCell<Vec<String>>,
 }
 
 fn with_ctx<T>(
@@ -127,6 +147,7 @@ fn with_ctx<T>(
         native: native.clone(),
         lua: lua.clone(),
         namespace: namespace.map(str::to_string),
+        texts: RefCell::new(Vec::new()),
     };
     f(&mut ctx)
 }
@@ -258,6 +279,110 @@ pub extern "C" fn kw_namespace(ctx: *mut KwCtx, out: *mut KuiStr) -> bool {
             None => false,
         }
     })
+}
+
+/// `kw_buf_text(ctx, buffer, out)`: the buffer's text (0 = the current
+/// one), one copy — the snapshot's — borrowed until the call returns;
+/// false with the reason in `kw_error` for a buffer that is not.
+#[unsafe(no_mangle)]
+pub extern "C" fn kw_buf_text(ctx: *mut KwCtx, buffer: u64, out: *mut KuiStr) -> bool {
+    guard(false, || {
+        // SAFETY: as `kw_call`'s; `out` is the caller's to write or null.
+        let (Some(ctx), Some(out)) = (unsafe { ctx.as_ref() }, unsafe { out.as_mut() }) else {
+            return false;
+        };
+        match snapshot_text(ctx, buffer) {
+            Ok(text) => {
+                let mut texts = ctx.texts.borrow_mut();
+                texts.push(text);
+                *out = kstr(texts.last().unwrap());
+                true
+            }
+            Err(e) => {
+                ctx.native.borrow_mut().error = e;
+                false
+            }
+        }
+    })
+}
+
+/// `kw_buf_edits(ctx, buffer, edits, n)`: `n` edits applied to the
+/// buffer (0 = the current one) as `kawoosh.buf.edits` applies a list
+/// of them — at once, each range in the text before, none overlapping —
+/// with no Lua table between. False with the reason in `kw_error`.
+#[unsafe(no_mangle)]
+pub extern "C" fn kw_buf_edits(
+    ctx: *mut KwCtx,
+    buffer: u64,
+    edits: *const KwEdit,
+    n: usize,
+) -> bool {
+    guard(false, || {
+        // SAFETY: as `kw_call`'s; `edits` is `n` structs the caller
+        // laid out, by the header's contract, or null for none.
+        let Some(ctx) = (unsafe { ctx.as_ref() }) else {
+            return false;
+        };
+        let edits = if edits.is_null() || n == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(edits, n) }
+        };
+        match push_edits(ctx, buffer, edits) {
+            Ok(()) => true,
+            Err(e) => {
+                ctx.native.borrow_mut().error = e;
+                false
+            }
+        }
+    })
+}
+
+fn buffer_of(ctx: &KwCtx, buffer: u64) -> Result<u64, String> {
+    let n = ctx.native.borrow();
+    let p = n
+        .published
+        .as_ref()
+        .ok_or_else(|| "no runtime".to_string())?
+        .borrow();
+    let h = if buffer == 0 { p.current } else { Some(buffer) };
+    let h = h.ok_or_else(|| "no current buffer".to_string())?;
+    if !p.buffers.contains_key(&h) {
+        return Err(format!("no buffer {h}"));
+    }
+    Ok(h)
+}
+
+fn snapshot_text(ctx: &KwCtx, buffer: u64) -> Result<String, String> {
+    let h = buffer_of(ctx, buffer)?;
+    let n = ctx.native.borrow();
+    let p = n.published.as_ref().unwrap().borrow();
+    Ok(p.buffers[&h].snapshot.text())
+}
+
+fn push_edits(ctx: &KwCtx, buffer: u64, edits: &[KwEdit]) -> Result<(), String> {
+    let h = buffer_of(ctx, buffer)?;
+    let mut list = Vec::with_capacity(edits.len());
+    for e in edits {
+        let (from, to) = (e.from as usize, e.to as usize);
+        if to < from {
+            return Err(format!("edits: {from}..{to} ends before it starts"));
+        }
+        list.push((from..to, str_of(e.text).into_owned()));
+    }
+    crate::check_edits(&list)?;
+    let n = ctx.native.borrow();
+    n.queue
+        .as_ref()
+        .ok_or_else(|| "no runtime".to_string())?
+        .borrow_mut()
+        .push(Msg::Edits {
+            buffer: h,
+            edits: list,
+            carets: Vec::new(),
+            primary: 0,
+        });
+    Ok(())
 }
 
 /// `kw_wake(fn, user)`: `fn(user, ctx, NULL)` on the UI thread, soon —
@@ -647,8 +772,19 @@ pub fn take_pending_kui(native: &NativeCell) -> Vec<(String, PathBuf)> {
 }
 
 /// The two doors, on the `kawoosh` table: the boot script's
-/// `kawoosh.extension` wraps the first.
-pub fn seed(lua: &Lua, native: &NativeCell) -> mlua::Result<()> {
+/// `kawoosh.extension` wraps the first. The snapshot and the queue are
+/// the typed doors'.
+pub fn seed(
+    lua: &Lua,
+    native: &NativeCell,
+    published: &Rc<RefCell<Published>>,
+    queue: &Rc<RefCell<Vec<Msg>>>,
+) -> mlua::Result<()> {
+    {
+        let mut n = native.borrow_mut();
+        n.published = Some(published.clone());
+        n.queue = Some(queue.clone());
+    }
     let k: Table = lua.globals().get("kawoosh")?;
     let n = native.clone();
     // `kawoosh._extension(namespace[, where])`: the library `locate`

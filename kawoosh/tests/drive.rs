@@ -108,3 +108,68 @@ pub fn overflows_of(d: &Drive, boxes: bool) -> Vec<String> {
     }
     out
 }
+
+/// kui's header, from the kui-ffi crate in the graph, for a native
+/// extension built in a test (docs/design/native.md).
+pub fn kui_include() -> &'static std::path::Path {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let mut cmd = std::process::Command::new(env!("CARGO"));
+        cmd.args(["metadata", "--format-version", "1"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"));
+        let out = kawoosh_systems::spawn::output(&mut cmd).expect("cargo metadata");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let pkg = v["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "kui-ffi")
+            .expect("kui-ffi in the graph");
+        std::path::Path::new(pkg["manifest_path"].as_str().unwrap())
+            .parent()
+            .unwrap()
+            .join("include")
+    })
+}
+
+/// `tests/ext/NAME.c` built as a shared library into a fresh folder
+/// under the system's temp dir, linked against nothing: every `kw_*`
+/// and `kui_*` resolves from the test binary, which `build.rs` links
+/// with `-export_dynamic`. `defines` are `-D`s.
+pub fn build_ext(name: &str, defines: &[&str], tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("kawoosh-ext-{tag}-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    let out = dir.join(format!("{name}.so"));
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = std::process::Command::new("cc");
+    cmd.args(["-O1", "-shared", "-Wall", "-Wextra"]);
+    if cfg!(target_os = "macos") {
+        cmd.args(["-undefined", "dynamic_lookup"]);
+    } else {
+        cmd.arg("-fPIC");
+    }
+    cmd.arg("-I")
+        .arg(root.join("include"))
+        .arg("-I")
+        .arg(kui_include());
+    for d in defines {
+        cmd.arg(format!("-D{d}"));
+    }
+    cmd.arg("-o")
+        .arg(&out)
+        .arg(root.join("tests/ext").join(format!("{name}.c")));
+    let o = kawoosh_systems::spawn::output(&mut cmd).expect("cc");
+    assert!(
+        o.status.success(),
+        "cc {name}.c: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    out
+}

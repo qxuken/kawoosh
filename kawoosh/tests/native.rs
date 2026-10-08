@@ -11,8 +11,6 @@
 mod drive;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::OnceLock;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
@@ -25,63 +23,8 @@ fn tmp(tag: &str) -> PathBuf {
     kawoosh_systems::fs::canonicalize(&dir).unwrap()
 }
 
-/// kui's header, from the kui-ffi crate in the graph.
-fn kui_include() -> &'static Path {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        let mut cmd = Command::new(env!("CARGO"));
-        cmd.args(["metadata", "--format-version", "1"])
-            .current_dir(env!("CARGO_MANIFEST_DIR"));
-        let out = kawoosh_systems::spawn::output(&mut cmd).expect("cargo metadata");
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        let pkg = v["packages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|p| p["name"] == "kui-ffi")
-            .expect("kui-ffi in the graph");
-        Path::new(pkg["manifest_path"].as_str().unwrap())
-            .parent()
-            .unwrap()
-            .join("include")
-    })
-}
-
-/// `tests/ext/NAME.c` built as a shared library, linked against
-/// nothing: every `kw_*` and `kui_*` resolves from this test binary,
-/// which `build.rs` links with `-export_dynamic`.
 fn build(name: &str, defines: &[&str], tag: &str) -> PathBuf {
-    let out = tmp(tag).join(format!("{name}.so"));
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut cmd = Command::new("cc");
-    cmd.args(["-O1", "-shared", "-Wall", "-Wextra"]);
-    if cfg!(target_os = "macos") {
-        cmd.args(["-undefined", "dynamic_lookup"]);
-    } else {
-        cmd.arg("-fPIC");
-    }
-    cmd.arg("-I")
-        .arg(root.join("include"))
-        .arg("-I")
-        .arg(kui_include());
-    for d in defines {
-        cmd.arg(format!("-D{d}"));
-    }
-    cmd.arg("-o")
-        .arg(&out)
-        .arg(root.join("tests/ext").join(format!("{name}.c")));
-    let o = kawoosh_systems::spawn::output(&mut cmd).expect("cc");
-    assert!(
-        o.status.success(),
-        "cc {name}.c: {}",
-        String::from_utf8_lossy(&o.stderr)
-    );
-    out
+    drive::build_ext(name, defines, tag)
 }
 
 fn launch(tag: &str, text: &str) -> (Drive, Kawoosh) {
@@ -148,7 +91,7 @@ fn a_c_extension_and_its_lua_twin_agree() {
             &mut app,
             "local e = kawoosh.extensions()[1] kawoosh.echo(e.namespace .. ' ' .. e.name .. ' ' .. e.abi .. ' ' .. e.protocol)"
         ),
-        "dupes dupes 2 1"
+        format!("dupes dupes {} 1", kawoosh_lua::KW_ABI_VERSION)
     );
     lua(&mut app, include_str!("ext/dupes.lua"));
 
@@ -176,11 +119,20 @@ fn an_extension_is_refused_with_the_reason() {
 
     let r = load(&mut app, "noabi", &no_abi);
     assert!(
-        r.ends_with("extension declares no ABI; this build is 2"),
+        r.ends_with(&format!(
+            "extension declares no ABI; this build is {}",
+            kawoosh_lua::KW_ABI_VERSION
+        )),
         "{r}"
     );
     let r = load(&mut app, "wrong", &wrong);
-    assert!(r.ends_with("extension is ABI 99, this build is 2"), "{r}");
+    assert!(
+        r.ends_with(&format!(
+            "extension is ABI 99, this build is {}",
+            kawoosh_lua::KW_ABI_VERSION
+        )),
+        "{r}"
+    );
     let r = load(&mut app, "gone", Path::new("/nowhere/at/all.so"));
     assert!(
         r.starts_with("`gone`: no extension at /nowhere/at/all.")
@@ -234,7 +186,10 @@ fn extensions_lists_what_is_loaded() {
     ex(&mut d, &mut app, "extensions");
     let t = text(&mut app);
     assert!(
-        t.starts_with("dupes          dupes          abi 2  protocol 1  "),
+        t.starts_with(&format!(
+            "dupes          dupes          abi {}  protocol 1  ",
+            kawoosh_lua::KW_ABI_VERSION
+        )),
         "{t}"
     );
     assert!(t.ends_with("dupes.so"), "{t}");
@@ -378,4 +333,185 @@ fn a_thread_comes_back_through_kw_wake() {
         }
     }
     assert_eq!(seen, "woke from a thread, namespace none");
+}
+
+#[test]
+fn the_typed_doors_read_and_edit_without_a_lua_value_between() {
+    let so = build("typed", &[], "typed-build");
+    let (mut d, mut app) = launch("typed", LINES);
+    assert_eq!(load(&mut app, "typed", &so), "ok");
+    ex(&mut d, &mut app, "ctext");
+    assert_eq!(
+        app.ed.message,
+        format!("typed: {} bytes, head alpha", LINES.len())
+    );
+    ex(&mut d, &mut app, "ctext_bad");
+    assert_eq!(app.ed.message, "ctext_bad: no buffer 999999");
+    ex(&mut d, &mut app, "cedits");
+    assert_eq!(app.ed.message, "cedits: applied");
+    assert!(
+        text(&mut app).starts_with("XalYYha\nbeta"),
+        "{}",
+        text(&mut app)
+    );
+    ex(&mut d, &mut app, "cedits_bad");
+    assert_eq!(
+        app.ed.message,
+        "edits: 0..2 and 1..3 overlap | edits: 3..1 ends before it starts"
+    );
+}
+
+/// One `repr(C)` struct, restated as C: the destructuring pins every
+/// field to the Rust definition (a field added there and not here is a
+/// missing field in the initializer), each binding to the Rust type the
+/// row declares; offsets, sizes and alignment come from Rust itself.
+macro_rules! abi_struct {
+    ($out:expr, $ty:ident { $($f:ident : $rt:ty => $c:literal),* $(,)? }) => {{
+        #[allow(dead_code)]
+        fn pinned(v: $ty) -> $ty {
+            $(let $f: $rt = v.$f;)*
+            $ty { $($f),* }
+        }
+        $out.push_str(&format!(
+            "KW_STRUCT({}, {}, {});\n",
+            stringify!($ty),
+            std::mem::size_of::<$ty>(),
+            std::mem::align_of::<$ty>(),
+        ));
+        $($out.push_str(&format!(
+            "KW_FIELD({}, {}, {}, {}, {});\n",
+            stringify!($ty),
+            stringify!($f),
+            $c,
+            std::mem::offset_of!($ty, $f),
+            std::mem::size_of::<$rt>(),
+        ));)*
+    }};
+}
+
+/// One `kw_*` function, restated as C: the coercion pins the row to the
+/// Rust signature, and the C prototype is derived from the Rust types,
+/// so a row cannot drift from the function and the header is checked
+/// against the row. A header prototype that differs is an incompatible
+/// function pointer, an error under `-Werror`.
+macro_rules! abi_fn {
+    ($out:expr, $names:expr, $name:ident ( $($a:ty),* $(,)? ) $(-> $r:ty)?) => {{
+        let _: extern "C" fn($($a),*) $(-> $r)? = kawoosh_lua::native::$name;
+        let args: Vec<String> = vec![$(c_of(stringify!($a))),*];
+        let args = if args.is_empty() { "void".to_string() } else { args.join(", ") };
+        let ret = abi_fn!(@ret $($r)?);
+        $out.push_str(&format!(
+            "static {ret} (*const check_{name})({args}) __attribute__((unused)) = {name};\n",
+            name = stringify!($name)
+        ));
+        $names.push(stringify!($name));
+    }};
+    (@ret) => { "void".to_string() };
+    (@ret $r:ty) => { c_of(stringify!($r)) };
+}
+
+/// A Rust type as the header spells it.
+fn c_of(rust: &str) -> String {
+    match rust {
+        "*mut KwCtx" => "KwCtx *",
+        "KuiStr" => "KuiStr",
+        "*mut KuiStr" => "KuiStr *",
+        "*const KuiValue" => "const KuiValue *",
+        "*mut KuiValue" => "KuiValue *",
+        "*const KwEdit" => "const KwEdit *",
+        "*mut c_void" => "void *",
+        "Option<KwFn>" => "KwFn",
+        "bool" => "bool",
+        "u32" => "uint32_t",
+        "u64" => "uint64_t",
+        "usize" => "size_t",
+        other => panic!("no C spelling for `{other}`"),
+    }
+    .to_string()
+}
+
+/// `kawoosh.h` checked against what Rust lays out and declares, the way
+/// kui's `abi_parity` checks `kui.h`: a translation unit of
+/// `_Static_assert`s and typed function pointers, settled in the C
+/// front end (`-fsyntax-only`), nothing linked. The header's set of
+/// `kw_*` prototypes is the rows' set, both ways.
+#[test]
+fn the_header_describes_what_rust_lays_out() {
+    use kawoosh_lua::native::{KW_ABI_VERSION, KwCtx, KwEdit, KwFn};
+    use kui_ffi::{KuiStr, KuiValue};
+    use std::ffi::c_void;
+    let mut c = String::from(
+        "#include <stddef.h>\n#include \"kawoosh.h\"\n\
+         #define KW_STRUCT(T, size, align) \\\n\
+         \x20   _Static_assert(sizeof(T) == (size), \"sizeof(\" #T \") differs from Rust\"); \\\n\
+         \x20   _Static_assert(_Alignof(T) == (align), \"_Alignof(\" #T \") differs from Rust\")\n\
+         #define KW_FIELD(T, f, CT, off, size) \\\n\
+         \x20   _Static_assert(offsetof(T, f) == (off), #T \".\" #f \": offset differs from Rust\"); \\\n\
+         \x20   _Static_assert(sizeof(((T *)0)->f) == (size), #T \".\" #f \": size differs from Rust\"); \\\n\
+         \x20   _Static_assert(_Generic(((T *)0)->f, CT: 1, default: 0), #T \".\" #f \": type differs from Rust\")\n",
+    );
+    c.push_str(&format!(
+        "_Static_assert(KW_ABI_VERSION == {KW_ABI_VERSION}, \"KW_ABI_VERSION differs from Rust\");\n"
+    ));
+    abi_struct!(c, KwEdit { from: u64 => "uint64_t", to: u64 => "uint64_t", text: KuiStr => "KuiStr" });
+    let mut names: Vec<&str> = Vec::new();
+    abi_fn!(
+        c,
+        names,
+        kw_call(*mut KwCtx, KuiStr, *const KuiValue) -> *mut KuiValue
+    );
+    abi_fn!(c, names, kw_error(*mut KwCtx, *mut KuiStr) -> bool);
+    abi_fn!(c, names, kw_protocol(*mut KwCtx) -> u32);
+    abi_fn!(
+        c,
+        names,
+        kw_fn(*mut KwCtx, Option<KwFn>, *mut c_void) -> *mut KuiValue
+    );
+    abi_fn!(c, names, kw_namespace(*mut KwCtx, *mut KuiStr) -> bool);
+    abi_fn!(c, names, kw_wake(Option<KwFn>, *mut c_void));
+    abi_fn!(c, names, kw_buf_text(*mut KwCtx, u64, *mut KuiStr) -> bool);
+    abi_fn!(
+        c,
+        names,
+        kw_buf_edits(*mut KwCtx, u64, *const KwEdit, usize) -> bool
+    );
+
+    // The header's prototypes, the extension's own entry points aside:
+    // every one is a row, every row is one.
+    let header = include_str!("../include/kawoosh.h");
+    let mut declared: Vec<&str> = header
+        .lines()
+        .filter(|l| !l.starts_with(' ') && !l.starts_with('*') && !l.starts_with('/'))
+        .filter_map(|l| {
+            let at = l.find("kw_")?;
+            let name = &l[at..];
+            let end = name.find('(')?;
+            let name = &name[..end];
+            (!name.starts_with("kw_ext_")
+                && name.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+            .then_some(name)
+        })
+        .collect();
+    declared.sort_unstable();
+    declared.dedup();
+    names.sort_unstable();
+    assert_eq!(declared, names, "the header's kw_* prototypes and the rows");
+
+    let dir = tmp("parity");
+    let unit = dir.join("parity.c");
+    std::fs::write(&unit, &c).unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = std::process::Command::new("cc");
+    cmd.args(["-fsyntax-only", "-std=c11", "-Wall", "-Wextra", "-Werror"])
+        .arg("-I")
+        .arg(root.join("include"))
+        .arg("-I")
+        .arg(drive::kui_include())
+        .arg(&unit);
+    let o = kawoosh_systems::spawn::output(&mut cmd).expect("cc");
+    assert!(
+        o.status.success(),
+        "the header lied:\n{}\n--- the unit ---\n{c}",
+        String::from_utf8_lossy(&o.stderr)
+    );
 }
