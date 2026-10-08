@@ -81,6 +81,76 @@ fn a_clean_buffer_follows_its_file() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A file that grew under a clean buffer — a log written to — is
+/// followed: the new bytes go in as an append the text before shares,
+/// one undo node `u` takes back; the first time the corner says so,
+/// a follow soon after is the log's alone. `:e!` on a buffer that is
+/// its file says so and changes nothing.
+#[test]
+fn a_file_that_grew_is_followed_as_an_append() {
+    let dir = tmp("grew");
+    let f = dir.join("consumer.log");
+    std::fs::write(&f, "one\n").unwrap();
+    let (mut d, mut app) = launch(&f);
+    let id = app.ed.views[app.focused_view().unwrap()].buffer;
+    let pieces = app.ed.buffers[id].piece_count();
+    let append = |text: &str| {
+        use std::io::Write;
+        std::thread::sleep(Duration::from_millis(15));
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&f)
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+    };
+    let follow = |d: &mut Drive, app: &mut Kawoosh, want: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while text_of(app) != want && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+            d.frame(app);
+        }
+        assert_eq!(text_of(app), want, "the watch followed it");
+        assert!(!modified(app));
+    };
+    append("two\n");
+    follow(&mut d, &mut app, "one\ntwo\n");
+    let shown = |app: &Kawoosh| {
+        app.notes
+            .shown
+            .iter()
+            .filter(|s| s.text.contains("followed"))
+            .count()
+    };
+    assert_eq!(shown(&app), 1, "the corner says so once");
+    assert_eq!(
+        app.ed.buffers[id].piece_count(),
+        pieces + 1,
+        "the text before is the same piece, the tail one more"
+    );
+    append("three\n");
+    follow(&mut d, &mut app, "one\ntwo\nthree\n");
+    assert_eq!(shown(&app), 1, "a follow soon after is the log's alone");
+    assert!(app.notes.render_log().contains("grew by 6 B"));
+    d.keys(&mut app, "u");
+    assert_eq!(text_of(&app), "one\ntwo\n", "one node a follow");
+    d.keys(&mut app, "u");
+    assert_eq!(text_of(&app), "one\n");
+    assert!(modified(&app));
+    d.press(&mut app, "<C-r>");
+    d.press(&mut app, "<C-r>");
+    assert_eq!(text_of(&app), "one\ntwo\nthree\n");
+    assert!(!modified(&app), "the disk's text again");
+    ex(&mut d, &mut app, "e!");
+    assert!(
+        app.ed.message.contains("is as on disk"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(text_of(&app), "one\ntwo\nthree\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A save ends the typing: `<C-s>` from insert mode writes and leaves
 /// the view in normal mode, as `<Esc>` would — the caret back on the
 /// last character typed — and from visual mode too; in normal mode it

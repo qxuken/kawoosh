@@ -447,13 +447,17 @@ impl Buffer {
     }
 
     pub fn from_file(path: &Path) -> std::io::Result<Self> {
-        // The stamp before the read: a write that lands between the two
-        // reads as a change later, which a comparison of the texts
-        // answers, where the other order would miss it.
+        let (disk, read) = Self::read_file(path)?;
+        Ok(Self::from_read(path, disk, read))
+    }
+
+    /// The file's stamp, then its bytes as they are — a host's file
+    /// through its domain (docs/design/domains.md). The stamp before
+    /// the read: a write that lands between the two reads as a change
+    /// later, which a comparison of the texts answers, where the other
+    /// order would miss it.
+    pub fn read_file(path: &Path) -> std::io::Result<(Option<Stamp>, Vec<u8>)> {
         let disk = Stamp::of(path);
-        // The bytes read are the text's one block: a valid file is not
-        // copied again, an invalid one is repaired into a fresh vector.
-        // A host's file through its domain (docs/design/domains.md).
         let read = match crate::fs::remote(path) {
             Some(host) => {
                 let (fs, p) = host?;
@@ -461,6 +465,13 @@ impl Buffer {
             }
             None => std::fs::read(path)?,
         };
+        Ok((disk, read))
+    }
+
+    /// A buffer on `path` from what [`Buffer::read_file`] read there.
+    pub fn from_read(path: &Path, disk: Option<Stamp>, read: Vec<u8>) -> Self {
+        // The bytes read are the text's one block: a valid file is not
+        // copied again, an invalid one is repaired into a fresh vector.
         let bytes = match String::from_utf8(read) {
             Ok(s) => s.into_bytes(),
             Err(e) => String::from_utf8_lossy(e.as_bytes())
@@ -475,7 +486,7 @@ impl Buffer {
         buf.saved = buf.text.clone();
         buf.path = Some(path.to_path_buf());
         buf.disk = disk;
-        Ok(buf)
+        buf
     }
 
     // ------------------------------------------------------------ reading

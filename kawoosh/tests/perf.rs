@@ -501,3 +501,103 @@ fn ribbon_frame_cost() {
         eprintln!("{n:4} columns: {:.3}ms a frame", ms(t) / 20.0);
     }
 }
+
+/// A log file written to under its buffer, as a consumer's `> file`
+/// does: `KAWOOSH_TAIL_MB=20 cargo test --test perf -- tail_cost
+/// --ignored --nocapture` opens a file of that many megabytes, appends
+/// what half a second of a busy writer adds (`KAWOOSH_TAIL_KB`), and
+/// prints what the check, the reload and the frame after cost, with
+/// the footprint, `KAWOOSH_TAIL_ROUNDS` times over. Before 2026-10-08
+/// the frame was 180 ms and the footprint 20 MB more a round: the
+/// conflict scan walked every line, and the reload held a fresh tree.
+#[test]
+#[ignore]
+fn tail_cost() {
+    let env = |name: &str, or: usize| {
+        std::env::var(name)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(or)
+    };
+    let (mb, chunk_kb, rounds) = (
+        env("KAWOOSH_TAIL_MB", 20),
+        env("KAWOOSH_TAIL_KB", 64),
+        env("KAWOOSH_TAIL_ROUNDS", 10),
+    );
+    let dir = std::env::temp_dir().join(format!("kawoosh-tail-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("consumer.log");
+    let line = |i: usize| {
+        format!(
+            "2026-10-08T12:00:{:02}.{:03}Z INFO  consumer-1 partition=3 offset={i} key=order-{} value={{\"id\":{i},\"status\":\"shipped\",\"items\":[1,2,3]}}\n",
+            i % 60,
+            i % 1000,
+            i * 7
+        )
+    };
+    let mut text = String::new();
+    let mut i = 0;
+    while text.len() < mb << 20 {
+        text += &line(i);
+        i += 1;
+    }
+    std::fs::write(&path, &text).unwrap();
+    drop(text);
+    let mem = || {
+        let m = kawoosh::perf::read_mem();
+        format!("{} footprint", kawoosh::perf::bytes(m.footprint))
+    };
+    let mut app = Kawoosh::from_file(&path);
+    let mut d = Drive::new(1100.0, 760.0);
+    load_fonts(&mut d, &mut app);
+    let t = Instant::now();
+    loop {
+        d.frame(&mut app);
+        let v = app.focused_view().unwrap();
+        if app.ed.buffer_of(v).loading.is_none() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    eprintln!("opened {mb} MB in {:.0} ms, {}", ms(t), mem());
+    d.keys(&mut app, "G");
+    d.frame(&mut app);
+    let t = Instant::now();
+    d.frame(&mut app);
+    eprintln!("a quiet frame {:.2} ms", ms(t));
+    let id = app.ed.views[app.focused_view().unwrap()].buffer;
+    for n in 0..rounds {
+        let mut chunk = String::new();
+        while chunk.len() < chunk_kb << 10 {
+            chunk += &line(i);
+            i += 1;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(chunk.as_bytes())
+            .unwrap();
+        // What the frame does when the watch says the file moved:
+        // the question, the reload, then the frame that draws it.
+        let t = Instant::now();
+        let state = app.ed.disk_state(id);
+        let asked = ms(t);
+        let t = Instant::now();
+        let msg = app.ed.reload_from_disk(id);
+        let reloaded = ms(t);
+        let t = Instant::now();
+        d.frame(&mut app);
+        let frame = ms(t);
+        eprintln!(
+            "#{n} +{chunk_kb} KB: disk_state {asked:5.1} ms ({state:?}), reload {reloaded:5.1} ms, frame {frame:5.1} ms, {}, {} pieces, {} undo nodes   {}",
+            mem(),
+            app.ed.buffers[id].piece_count(),
+            app.ed.history_key(id).0,
+            msg.map(|r| r.message).unwrap_or_else(|e| e)
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

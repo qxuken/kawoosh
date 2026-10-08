@@ -260,6 +260,13 @@ leaves in one file already, and vim users resolve conflicts in the
 buffer today with `dp` and `do` or a plugin's `co` `ct`; the washes
 and the four commands are that, without a mode.
 
+Changed 2026-10-08: the markers are found by a search for `<<<<<<<`
+through the text's pieces, not a walk of its lines — the walk cost
+150 ms a version over a 20 MB log followed under its buffer
+(disk.md), every half second the file grew, and 150 ms of its first
+frame. A text without the marker is left after that one search; the
+other three are looked for only past the first `<<<<<<<`.
+
 ### 12. Staging is a patch the editor makes
 
 Built 2026-10-03, the item Decision 3 left ("let's implement
