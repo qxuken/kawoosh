@@ -250,6 +250,11 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
         ),
         ("ssh.command", K::Str, "the ssh binary a domain runs"),
         (
+            "ssh.master",
+            K::Bool,
+            "one master connection a host's channels share (not on Windows, whose ssh clients cannot share one)",
+        ),
+        (
             "ssh.poll_secs",
             K::Int,
             "how often a host's watched files are polled",

@@ -138,10 +138,15 @@ pub enum IoMsg {
         text: text_buffer::Buffer,
         mapped: bool,
         elapsed: std::time::Duration,
+        /// A host's file's stamp, taken here before the read rather
+        /// than on the frame (`Buffer::opening` leaves it to this).
+        disk: Option<kawoosh_doc::Stamp>,
     },
     OpenFailed {
         path: PathBuf,
         error: String,
+        /// There is no such file: a host's path opened is a new file.
+        missing: bool,
     },
     /// A search's match count over a big buffer ([`Io::run`] from the
     /// shell): the buffer and the text version it counted, the pattern
@@ -510,12 +515,79 @@ impl Transport {
     }
 
     /// The connection let go: an ssh master told to go; a distro left
-    /// running, as it was found.
+    /// running, as it was found. The runners go either way.
     pub fn exit(&self) {
-        if let Transport::Ssh(s) = self {
-            s.exit();
+        match self {
+            Transport::Ssh(s) => s.exit(),
+            Transport::Wsl(_) => crate::runner::forget(self),
         }
     }
+
+    /// What tells one transport's runners from another's
+    /// ([`crate::runner`]).
+    pub fn key(&self) -> String {
+        match self {
+            Transport::Ssh(s) => format!("ssh {} {} {}", s.ssh, s.host, s.ctl.display()),
+            Transport::Wsl(w) => format!("wsl {}", w.distro.as_deref().unwrap_or("")),
+        }
+    }
+}
+
+/// `script` (POSIX sh) run to its end on `t`'s host, `stdin` its input:
+/// through one of the domain's runners where it keeps them — no
+/// connection, no `wsl.exe`, a round trip — else, or when a runner
+/// cannot be had, a process of its own (docs/design/domains.md, "Built,
+/// speed").
+pub fn run_script(
+    t: &Transport,
+    script: &str,
+    stdin: Option<&[u8]>,
+) -> std::io::Result<crate::runner::Output> {
+    use std::io::Write;
+    match crate::runner::run(t, script, stdin.unwrap_or_default()) {
+        Some(Ok(out)) => return Ok(out),
+        Some(Err(e)) => log::warn!("a runner on {}: {e}; a process of its own", t.key()),
+        None => {}
+    }
+    let mut c = t.remote_command(script);
+    c.stdin(if stdin.is_some() {
+        std::process::Stdio::piped()
+    } else {
+        std::process::Stdio::null()
+    })
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped());
+    let mut child = crate::spawn::spawn(&mut c)?;
+    let writer = stdin.zip(child.stdin.take()).map(|(bytes, mut pipe)| {
+        let bytes = bytes.to_vec();
+        thread::spawn(move || {
+            let _ = pipe.write_all(&bytes);
+        })
+    });
+    let out = child.wait_with_output()?;
+    if let Some(w) = writer {
+        let _ = w.join();
+    }
+    Ok(crate::runner::Output {
+        code: out.status.code().unwrap_or(-1),
+        stdout: out.stdout,
+        stderr: out.stderr,
+    })
+}
+
+/// A forward of the host's loopback `port` back to the command socket:
+/// on unix the socket itself (OpenSSH forwards a TCP port to a unix
+/// socket); on Windows the socket's path is a file holding the TCP port
+/// it listens on (`Io::listen`), so it is that port the forward goes to.
+fn forward_spec(port: u16, sock: &std::path::Path) -> String {
+    if cfg!(windows)
+        && let Some(local) = std::fs::read_to_string(sock)
+            .ok()
+            .and_then(|s| s.trim().parse::<u16>().ok())
+    {
+        return format!("127.0.0.1:{port}:127.0.0.1:{local}");
+    }
+    format!("127.0.0.1:{port}:{}", sock.display())
 }
 
 /// How an ssh domain is reached (docs/design/domains.md Decision 3):
@@ -526,14 +598,34 @@ pub struct Ssh {
     pub ssh: String,
     pub host: String,
     pub ctl: std::path::PathBuf,
+    /// Whether a master is kept whose connection every channel shares
+    /// (`-S CTL`). Not on Windows (`ssh.master`): neither client there
+    /// can share one — Windows' own makes no master, Git's MSYS one
+    /// passes no descriptors through it — so each channel connects on
+    /// its own, with no terminal to ask a password in (`BatchMode`),
+    /// and what runs to its end goes through a runner kept open
+    /// (`crate::runner`) rather than a connection each.
+    pub master: bool,
 }
 
 impl Ssh {
-    /// `ssh -S CTL ARGS… HOST`, as a command to run.
+    /// `ssh -S CTL ARGS… HOST`, as a command to run; with no master,
+    /// `ssh -o BatchMode=yes ARGS… HOST`, a connection of its own.
     pub fn command(&self, args: &[&str]) -> std::process::Command {
         let mut c = command(&self.ssh);
-        c.arg("-S").arg(&self.ctl).args(args).arg(&self.host);
+        c.args(self.channel(false)).args(args).arg(&self.host);
         c
+    }
+
+    /// How a channel reaches the host: through the master's socket, or
+    /// on a connection of its own — one that asks nothing when it has no
+    /// terminal to ask in (`pty`).
+    fn channel(&self, pty: bool) -> Vec<String> {
+        match (self.master, pty) {
+            (true, _) => vec!["-S".into(), self.ctl.display().to_string()],
+            (false, false) => vec!["-o".into(), "BatchMode=yes".into()],
+            (false, true) => Vec::new(),
+        }
     }
 
     /// The master's argv, for a pane: it asks for a password or a
@@ -550,8 +642,12 @@ impl Ssh {
         ]
     }
 
-    /// Whether the master answers on its control socket.
+    /// Whether the master answers on its control socket; with none,
+    /// always (each channel connects or fails on its own).
     pub fn is_up(&self) -> bool {
+        if !self.master {
+            return true;
+        }
         crate::spawn::status(
             self.command(&["-O", "check"])
                 .stdin(std::process::Stdio::null())
@@ -561,8 +657,13 @@ impl Ssh {
         .is_ok_and(|s| s.success())
     }
 
-    /// The master told to go, the control socket with it.
+    /// The master told to go, the control socket with it; with none,
+    /// the runners let go.
     pub fn exit(&self) {
+        crate::runner::forget(&Transport::Ssh(self.clone()));
+        if !self.master {
+            return;
+        }
         let _ = crate::spawn::status(
             self.command(&["-O", "exit"])
                 .stdin(std::process::Stdio::null())
@@ -589,15 +690,12 @@ impl Ssh {
         pty: bool,
         forward: Option<(u16, &std::path::Path)>,
     ) -> Vec<String> {
-        let mut v = vec![
-            self.ssh.clone(),
-            "-S".into(),
-            self.ctl.display().to_string(),
-            if pty { "-t" } else { "-T" }.into(),
-        ];
+        let mut v = vec![self.ssh.clone()];
+        v.extend(self.channel(pty));
+        v.push(if pty { "-t" } else { "-T" }.into());
         if let Some((port, sock)) = forward {
             v.push("-R".into());
-            v.push(format!("127.0.0.1:{port}:{}", sock.display()));
+            v.push(forward_spec(port, sock));
         }
         v.push(self.host.clone());
         v.push("--".into());
@@ -869,6 +967,16 @@ pub struct ProcHandle {
 }
 
 impl ProcHandle {
+    /// A handle on no process here: a command a host's runner runs
+    /// (`crate::runner`), which runs to its end.
+    fn detached() -> Self {
+        ProcHandle {
+            child: Arc::new(Mutex::new(None)),
+            #[cfg(windows)]
+            tree: Arc::new(crate::job::Tree::none()),
+        }
+    }
+
     /// Kills the process and everything it started: the shell that ran
     /// the command need not `exec` it (nushell does not, cmd cannot),
     /// and a `cargo` left behind would hold the pipes open and the exit
@@ -1021,11 +1129,13 @@ impl Io {
             .name("open".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
+                let mut disk = None;
                 let opened = (|| -> std::io::Result<(text_buffer::Buffer, bool)> {
                     // A host's file: read whole through its domain, and
                     // repaired to UTF-8 where it is not.
                     if crate::fs::domain_of(&path).is_some() {
-                        let bytes = crate::fs::read_bytes(&path)?;
+                        let (stamp, bytes) = kawoosh_doc::Buffer::read_file(&path)?;
+                        disk = stamp;
                         let text = match String::from_utf8(bytes) {
                             Ok(s) => s.into_bytes(),
                             Err(e) => String::from_utf8_lossy(e.as_bytes())
@@ -1071,9 +1181,11 @@ impl Io {
                         text,
                         mapped,
                         elapsed: started.elapsed(),
+                        disk,
                     },
                     Err(e) => IoMsg::OpenFailed {
                         path,
+                        missing: e.kind() == std::io::ErrorKind::NotFound,
                         error: e.to_string(),
                     },
                 };
@@ -1149,6 +1261,64 @@ impl Io {
             let (name, dir) = crate::fs::domain_of(d)?;
             Some((name.to_string(), dir.to_path_buf()))
         });
+        // Output wanted whole, on a host that keeps runners: through one
+        // (docs/design/domains.md, "Built, speed") — a listing's `git
+        // status` a round trip, not a connection or a `wsl.exe` each.
+        // Its lines come at its end, which is when they were wanted.
+        if whole
+            && let Some((name, dir)) = &host
+            && let Some(t) = transport_of(name)
+            && crate::runner::wanted(&t)
+            && stdin
+                .as_ref()
+                .is_none_or(|s| s.len() <= crate::runner::STDIN_MAX)
+        {
+            let exec = match &cmd {
+                ProcCmd::Shell(c) => {
+                    format!("exec \"${{SHELL:-/bin/sh}}\" -c {}", shell_quote(c))
+                }
+                ProcCmd::Argv(argv) => {
+                    let quoted: Vec<String> = argv.iter().map(|a| shell_quote(a)).collect();
+                    format!("exec {}", quoted.join(" "))
+                }
+            };
+            let script = remote_script(dir, &env, &exec, false);
+            let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
+            thread::spawn(move || {
+                let mut stdin = stdin;
+                let out = run_script(&t, &script, stdin.as_deref().map(str::as_bytes));
+                if let Some(s) = stdin.as_mut() {
+                    text_buffer::wipe_string(s);
+                }
+                let code = match out {
+                    Ok(out) => {
+                        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                        let _ = tx.send(IoMsg::ProcOut { id, text });
+                        for line in String::from_utf8_lossy(&out.stderr).lines() {
+                            let line = line.trim_end_matches('\r').to_string();
+                            let _ = tx.send(if split_err {
+                                IoMsg::ProcErr { id, line }
+                            } else {
+                                IoMsg::ProcLine { id, line }
+                            });
+                        }
+                        Some(out.code)
+                    }
+                    Err(e) => {
+                        let line = e.to_string();
+                        let _ = tx.send(if split_err {
+                            IoMsg::ProcErr { id, line }
+                        } else {
+                            IoMsg::ProcLine { id, line }
+                        });
+                        None
+                    }
+                };
+                let _ = tx.send(IoMsg::ProcExit { id, code });
+                wake.wake();
+            });
+            return Ok(ProcHandle::detached());
+        }
         let mut command = match &host {
             Some((name, dir)) => {
                 let t = transport_of(name).ok_or_else(|| {
@@ -1460,6 +1630,9 @@ impl Io {
                                 install_host_shim(fs.as_ref());
                                 kawoosh_doc::fs::register(&name, fs);
                                 register_transport(&name, Transport::Ssh(transport.clone()));
+                                // The runner's connection made now, while
+                                // nothing waits on it.
+                                crate::runner::warm(&Transport::Ssh(transport.clone()));
                                 IoMsg::DomainUp { name: name.clone() }
                             }
                             Err(e) => failed(e),
@@ -1490,6 +1663,7 @@ impl Io {
                     Ok((wsl, fs)) => {
                         install_wsl_shim(&fs);
                         kawoosh_doc::fs::register(&name, std::sync::Arc::new(fs));
+                        crate::runner::warm(&Transport::Wsl(wsl.clone()));
                         register_transport(&name, Transport::Wsl(wsl));
                         IoMsg::DomainUp { name }
                     }
@@ -1856,6 +2030,7 @@ mod tests {
             ssh: "ssh".into(),
             host: "h".into(),
             ctl: "/c".into(),
+            master: true,
         };
         let argv = t.remote_argv(&s, false, None);
         assert_eq!(&argv[..6], ["ssh", "-S", "/c", "-T", "h", "--"]);
@@ -1901,6 +2076,7 @@ mod tests {
             ssh: "ssh".into(),
             host: "h".into(),
             ctl: "/c".into(),
+            master: true,
         };
         let line = t.remote_argv(&script, false, None).pop().unwrap();
         let inner = line

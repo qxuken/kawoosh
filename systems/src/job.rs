@@ -111,6 +111,15 @@ impl Tree {
         }
     }
 
+    /// No job: what a command run by a host's runner has here, where
+    /// no process of its own is (`crate::runner`).
+    pub fn none() -> Self {
+        Self {
+            job: 0,
+            killed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
     /// Ends every process in the job; `child` alone where there is none.
     pub fn kill(&self, child: &mut Child) {
         use std::sync::atomic::Ordering;

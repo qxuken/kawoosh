@@ -129,28 +129,42 @@ impl ShellFs {
                 "the connection closed",
             ));
         }
-        let mut c = (self.run)(&format!("{HELPERS}{script}"));
-        c.stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-        let mut child = crate::spawn::spawn(&mut c)?;
-        // Written on a thread of its own, so a host that answers before
-        // it has read everything does not leave both sides waiting.
-        let writer = stdin.zip(child.stdin.take()).map(|(bytes, mut pipe)| {
-            let bytes = bytes.to_vec();
-            std::thread::spawn(move || {
-                let _ = pipe.write_all(&bytes);
-            })
-        });
-        let out = child.wait_with_output()?;
-        if let Some(w) = writer {
-            let _ = w.join();
-        }
-        let code = out.status.code().unwrap_or(-1);
+        let full = format!("{HELPERS}{script}");
+        // Through the domain's runner where it keeps them (ssh with no
+        // master, a distro): a round trip, not a connection a call.
+        let out = match &self.transport {
+            Some(t) if crate::runner::wanted(t) => crate::io::run_script(t, &full, stdin)?,
+            _ => {
+                let mut c = (self.run)(&full);
+                c.stdin(if stdin.is_some() {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                })
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+                let mut child = crate::spawn::spawn(&mut c)?;
+                // Written on a thread of its own, so a host that answers
+                // before it has read everything does not leave both
+                // sides waiting.
+                let writer = stdin.zip(child.stdin.take()).map(|(bytes, mut pipe)| {
+                    let bytes = bytes.to_vec();
+                    std::thread::spawn(move || {
+                        let _ = pipe.write_all(&bytes);
+                    })
+                });
+                let out = child.wait_with_output()?;
+                if let Some(w) = writer {
+                    let _ = w.join();
+                }
+                crate::runner::Output {
+                    code: out.status.code().unwrap_or(-1),
+                    stdout: out.stdout,
+                    stderr: out.stderr,
+                }
+            }
+        };
+        let code = out.code;
         if code == 0 {
             return Ok(out.stdout);
         }
@@ -502,6 +516,7 @@ mod tests {
                 ssh: "ssh".into(),
                 host: "h".into(),
                 ctl: "/c".into(),
+                master: true,
             }
             .remote_argv(script, false, None)
             .pop()

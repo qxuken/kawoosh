@@ -1029,13 +1029,27 @@ impl Kawoosh {
                     text,
                     mapped,
                     elapsed,
+                    disk,
                 } => {
                     if let Some(id) = self.ed.buffer_at(&path)
                         && let Some(b) = self.ed.buffers.get_mut(id)
                         && b.loading.is_some()
                     {
                         b.attach(text);
-                        if &*b.language == kawoosh_languages::FALLBACK {
+                        // A host's file: its stamp from the read, and its
+                        // history from last time, as `buffer_for` gives a
+                        // file read on the frame.
+                        let remote = disk.is_some();
+                        if remote {
+                            b.disk = disk;
+                        }
+                        let private = b.private;
+                        if remote && !private {
+                            self.attach_file_history(id, &path);
+                        }
+                        if let Some(b) = self.ed.buffers.get_mut(id)
+                            && &*b.language == kawoosh_languages::FALLBACK
+                        {
                             b.language = self.languages.detect(&path, &first_line(b)).into();
                         }
                         self.open_progress(&path, None, true);
@@ -1050,13 +1064,28 @@ impl Kawoosh {
                         );
                     }
                 }
-                IoMsg::OpenFailed { path, error } => {
+                IoMsg::OpenFailed {
+                    path,
+                    error,
+                    missing,
+                } => {
                     self.ed.message = format!("cannot open {}: {error}", path.display());
                     self.open_progress(&path, None, true);
                     if let Some(id) = self.ed.buffer_at(&path)
                         && self.ed.buffers.get(id).is_some_and(|b| b.loading.is_some())
                     {
                         self.ed.buffers[id].loading = None;
+                        // A host's path with no file there yet: a new
+                        // file, as one read on the frame is (`buffer_for`).
+                        if missing && kawoosh_systems::fs::domain_of(&path).is_some() {
+                            let b = &mut self.ed.buffers[id];
+                            b.read_only = false;
+                            let private = b.private;
+                            self.ed.message = format!("\"{}\" [new file]", path.display());
+                            if !private {
+                                self.attach_file_history(id, &path);
+                            }
+                        }
                     }
                 }
                 IoMsg::Counted {
@@ -1660,6 +1689,21 @@ impl Kawoosh {
         let resolved = self.resolve(path);
         let path = resolved.as_path();
         if let Some(id) = self.ed.buffer_at(path) {
+            return Some(id);
+        }
+        // A host's file is read on the io thread whatever its size: its
+        // stat and its read are round trips, which the window does not
+        // wait on (docs/design/domains.md, "Built, speed"). The buffer
+        // stands in, read only, until the text lands — or, when there
+        // is no such file, becomes a new one then.
+        if kawoosh_doc::fs::remote(path).is_some_and(|r| r.is_ok()) {
+            let waited = self.secrets.waited.as_deref() == Some(path);
+            let private = self.private_path(path, waited);
+            let id = self.open_on_io_thread(path, 0);
+            self.ed.buffers[id].private = private;
+            if private {
+                self.drop_file_history(path);
+            }
             return Some(id);
         }
         // A big file is opened on the io thread — mapped and indexed in

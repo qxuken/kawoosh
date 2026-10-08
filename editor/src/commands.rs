@@ -1823,14 +1823,21 @@ pub(crate) fn save_beside(
         let (fs, p) = host?;
         let mut bytes = Vec::with_capacity(buf.len());
         buf.write_to(&mut bytes)?;
-        // The host's path, cut on `/` alone: a `\` there is a name's.
-        if let Some(dir) = kawoosh_doc::paths::host_parent(&p)
-            && !dir.as_os_str().is_empty()
-            && fs.stat(dir).is_err()
-        {
-            fs.create(dir, true)?;
-        }
-        return fs.write(&p, &bytes);
+        // Written first and its directory made only when it is missing:
+        // a stat before every write is a round trip a save waits on. The
+        // host's path, cut on `/` alone: a `\` there is a name's.
+        return match fs.write(&p, &bytes) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match kawoosh_doc::paths::host_parent(&p) {
+                    Some(dir) if !dir.as_os_str().is_empty() && fs.stat(dir).is_err() => {
+                        fs.create(dir, true)?;
+                        fs.write(&p, &bytes)
+                    }
+                    _ => Err(e),
+                }
+            }
+            r => r,
+        };
     }
     // A link is written through, not replaced; the file's mode stays.
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
