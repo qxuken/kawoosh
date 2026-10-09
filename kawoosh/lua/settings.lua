@@ -605,7 +605,7 @@ local function row_node(r, ctx, is_cursor, t)
   if S.open[r.path] then body[#body + 1] = layers_node(r, t) end
 
   return row {
-    key = "row " .. r.path, width = "grow", gap = 10, pad = { x = 8, y = 7 }, radius = 5,
+    key = "setting " .. r.path, width = "grow", gap = 10, pad = { x = 8, y = 7 }, radius = 5,
     bg = is_cursor and t.surface or nil, hover_bg = not is_cursor and t.sunken or nil,
     border = is_cursor and { w = 1, color = t.border } or nil,
     on_click = { kind = "cursor", path = r.path },
@@ -738,7 +738,7 @@ kawoosh.view(VIEW, function(ctx)
     row { width = "grow", height = 1, bg = t.border } }
 
   local groups = grouped()
-  local list = column { key = "list", width = "grow", height = "grow", scroll_y = true, gap = 0,
+  local list = column { key = "settings list", width = "grow", height = "grow", scroll_y = true, gap = 0,
                         pad = { x = PAD - 8, bottom = PAD } }
   local cur_section
   for _, g in ipairs(groups) do
@@ -774,9 +774,9 @@ kawoosh.view(VIEW, function(ctx)
     S.reveal = nil
     local i = index_of(S.cursor)
     if i == 1 or not S.cursor then
-      ctx.env.set_scroll("list", 0, 0)
+      ctx.env.set_scroll("settings list", 0, 0)
     else
-      ctx.env.reveal("row " .. S.cursor)
+      ctx.env.reveal("setting " .. S.cursor)
     end
   end
 

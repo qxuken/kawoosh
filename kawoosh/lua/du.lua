@@ -321,7 +321,7 @@ kawoosh.view(VIEW, function(ctx)
   if list[cur] then S.cursor = list[cur].name end
   if S.reveal and not sh.reading then
     S.reveal = nil
-    reveal_row(ctx.env, "list", cur - 1, ROW_H)
+    reveal_row(ctx.env, "du list", cur - 1, ROW_H)
   end
   local largest, whole = sh.largest, sh.whole
 
@@ -344,7 +344,7 @@ kawoosh.view(VIEW, function(ctx)
 
   -- A narrow pane drops the bar and the file counts, for the names.
   local wide = (ctx.width or 0) == 0 or ctx.width >= WIDE
-  local rows = uniform_list(ctx.env, { key = "list", rows = #list, row_h = ROW_H, width = "grow",
+  local rows = uniform_list(ctx.env, { key = "du list", rows = #list, row_h = ROW_H, width = "grow",
                                        height = "grow", pad = { x = 12 } }, function(i)
     local e = list[i + 1]
     local on = i + 1 == cur

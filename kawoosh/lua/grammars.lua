@@ -281,7 +281,7 @@ kawoosh.view(VIEW, function(ctx)
   S.at = at
   if S.reveal and at then
     if at == 1 then
-      ctx.env.set_scroll("list", 0, 0)
+      ctx.env.set_scroll("grammars list", 0, 0)
     else
       ctx.env.reveal("grammar " .. S.cursor)
     end
@@ -306,7 +306,7 @@ kawoosh.view(VIEW, function(ctx)
     ctx.legend({ { { "j", "k", "gg", "G" }, "walk" }, { "/", "filters" }, { "<CR>", "installs" },
       { "b", "builds here" }, { "u", "updates all" }, { "d", "removes" }, { "q", "closes" } }, { size = NOTE }) }
 
-  local list = column { key = "list", width = "grow", height = "grow", pad = { x = PAD, bottom = PAD },
+  local list = column { key = "grammars list", width = "grow", height = "grow", pad = { x = PAD, bottom = PAD },
     gap = 14, scroll_y = true }
   if #inn > 0 then
     local col = column { width = "grow", gap = 2, section("installed", "at the revision shown", t) }

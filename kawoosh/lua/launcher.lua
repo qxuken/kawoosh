@@ -78,8 +78,11 @@ local LIMIT = 50
 -- How wide the layout is by default: a column down the middle of a
 -- wide pane reads as a list, where rows the pane's width do not.
 local WIDTH = 720
--- The scroller's label, for `set_scroll`.
-local LIST = "list"
+-- The scroller's label, for `set_scroll`, and the prefix of every
+-- label it reveals: its own, since every Lua pane shares one origin and
+-- a label another pane in the tab declares too ("list", qd's "m …")
+-- would be ambiguous (kui `ambiguous-key`).
+local LIST = "launcher list"
 
 -- The open launcher: its pane, the layout resolved (`tree`), the
 -- modules with rows in reading order (`sections`) with their items and
@@ -595,7 +598,7 @@ end
 -- A module's header.
 local function header(r, t)
   return row {
-    key = "h " .. r.section.name, width = "grow", height = ROW_H, pad = { x = 10 }, cross_align = "end",
+    key = "launcher h " .. r.section.name, width = "grow", height = ROW_H, pad = { x = 10 }, cross_align = "end",
     text({ { r.header .. (r.loading and "  …" or ""), bold = true } }, { size = NOTE, color = t.faint }),
   }
 end
@@ -618,7 +621,7 @@ local function list_row(i, r, R)
   local spans = spans_of(r, t)
   if it.sub and it.sub ~= "" then spans[#spans + 1] = { "  " .. it.sub, color = t.muted } end
   local line = row {
-    key = "r" .. i, width = "grow", min_height = ROW_H, pad = { x = 10, y = 1 }, gap = 8, cross_align = "center",
+    key = "launcher r" .. i, width = "grow", min_height = ROW_H, pad = { x = 10, y = 1 }, gap = 8, cross_align = "center",
     bg = selected and (R.focused and t.selection or t.sunken) or nil,
     hover_bg = not selected and t.sunken or nil,
     on_click = { kind = "row", i = i },
@@ -636,7 +639,7 @@ local function tile(i, r, R)
   local t = R.t
   local selected = i == L.cursor
   local chip = row {
-    key = "r" .. i, min_height = ROW_H, max_width = "100%", pad = { x = 8, y = 1 }, gap = 6, radius = 4,
+    key = "launcher r" .. i, min_height = ROW_H, max_width = "100%", pad = { x = 8, y = 1 }, gap = 6, radius = 4,
     cross_align = "center",
     bg = selected and (R.focused and t.selection or t.sunken) or t.raised,
     hover_bg = not selected and t.sunken or nil,
@@ -688,7 +691,7 @@ local function draw_module(node, R)
   end
   local sec = node.sec
   if not sec or not sec.from then return nil end
-  local out = column { key = "m " .. node.name, width = "grow", gap = 0 }
+  local out = column { key = "launcher m " .. node.name, width = "grow", gap = 0 }
   local i = sec.from
   if def.style == "tiles" then
     if L.rows[i].header then
@@ -703,7 +706,7 @@ local function draw_module(node, R)
   -- The header with the first row, so revealing the first row brings
   -- its header along.
   if L.rows[i].header and i + 1 <= sec.to then
-    out[#out + 1] = column { key = "g " .. node.name, width = "grow", gap = 0,
+    out[#out + 1] = column { key = "launcher g " .. node.name, width = "grow", gap = 0,
                              header(L.rows[i], R.t), list_row(i + 1, L.rows[i + 1], R) }
     i = i + 2
   elseif L.rows[i].header then
@@ -747,11 +750,11 @@ local function reveal(env)
   if L.cursor == first_taken() then
     env.set_scroll(LIST, 0, 0)
   elseif sec.def.style == "tiles" then
-    env.reveal("m " .. sec.name)
+    env.reveal("launcher m " .. sec.name)
   elseif L.cursor == sec.from + 1 and L.rows[sec.from].header then
-    env.reveal("g " .. sec.name)
+    env.reveal("launcher g " .. sec.name)
   else
-    env.reveal("r" .. L.cursor)
+    env.reveal("launcher r" .. L.cursor)
   end
 end
 

@@ -31,6 +31,10 @@
 local themes = kawoosh.themes
 
 local VIEW = "themes"
+-- The labels it looks up (`set_scroll`, `reveal`) are its own: every
+-- Lua pane shares one origin, so a label another pane in the tab also
+-- declares ("body", "card …") would be ambiguous (kui `ambiguous-key`).
+local BODY = "themes body"
 local PANE_FACT = "lua:" .. VIEW
 -- The panes' one scale (`kawoosh.metrics`: the text, a step under it,
 -- two), read each frame as the picker's is; a card's least width
@@ -166,7 +170,7 @@ local function card(v, cur, ctx, is_cursor, width)
   -- every card, so nothing moves as the cursor walks.
   local ring = is_cursor and t.accent or shown and r.border_strong or r.border
   return column {
-    key = "card " .. v.name, width = width, bg = r.bg, radius = RADIUS, clip = true, gap = 0,
+    key = "theme card " .. v.name, width = width, bg = r.bg, radius = RADIUS, clip = true, gap = 0,
     pad = RING, border = { w = RING, color = ring }, on_click = { kind = "take", name = v.name },
     head, code, status, swatches,
   }
@@ -215,13 +219,13 @@ kawoosh.view(VIEW, function(ctx)
     local top = false
     for _, n in ipairs(first) do top = top or n == S.cursor end
     if top then
-      ctx.env.set_scroll("body", 0, 0)
+      ctx.env.set_scroll(BODY, 0, 0)
     else
-      ctx.env.reveal("card " .. S.cursor)
+      ctx.env.reveal("theme card " .. S.cursor)
     end
     S.reveal = nil
   end
-  S.scrolled = ctx.env.scroll_offset("body").y
+  S.scrolled = ctx.env.scroll_offset(BODY).y
   local w = (ctx.width or 0) > 0 and ctx.width or 900
   local room = w - 2 * PAD
   local cols = math.max(1, math.floor((room + GAP) / (card_min() + GAP)))
@@ -258,7 +262,7 @@ kawoosh.view(VIEW, function(ctx)
         text("copy", { size = SMALL, color = t.fg, wrap = "none" }) } },
   }
 
-  return column { key = "body", width = "grow", height = "grow", bg = t.bg, pad = PAD, gap = 16, scroll_y = true,
+  return column { key = BODY, width = "grow", height = "grow", bg = t.bg, pad = PAD, gap = 16, scroll_y = true,
     head, dark, light, foot }
 end, function(ev)
   if not S then return end
