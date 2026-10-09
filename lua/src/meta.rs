@@ -16,7 +16,13 @@ use mlua::{Function, Table, Value as LV};
 use crate::Runtime;
 
 /// This crate's source, for the Rust functions' doc comments.
-const SOURCE: &str = concat!(include_str!("lib.rs"), "\n", include_str!("nodes.rs"));
+const SOURCE: &str = concat!(
+    include_str!("lib.rs"),
+    "\n",
+    include_str!("nodes.rs"),
+    "\n",
+    include_str!("native.rs")
+);
 /// How deep the walk goes below `kawoosh`.
 const DEPTH: usize = 4;
 

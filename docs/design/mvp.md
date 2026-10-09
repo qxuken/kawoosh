@@ -524,6 +524,11 @@ C ABI (or into a separate process) a packaging change later, not a redesign
 — and it is testable today, because the headless harness drives the same
 boundary.
 
+*Taken up 2026-10-08 by [native.md](native.md): not the Lua runtime as the
+first plugin, but a C ABI beside it whose one door, `kw_call`, is the Lua
+API with a C calling convention — the rule above is why every door existed
+on day one. Rounds one to four built by 2026-10-09.*
+
 ### Deliberately not in the MVP
 
 Detachable daemon (tmux's attach/detach — the channel boundaries and the

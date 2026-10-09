@@ -57,6 +57,28 @@ pub fn basename(path: &Path) -> Option<String> {
     file_name(path).map(|n| n.to_string_lossy().into_owned())
 }
 
+/// The user's config directory: `$XDG_CONFIG_HOME/kawoosh`, else
+/// `~/.config/kawoosh` — the one rule, for the settings, `init.lua`,
+/// `kawoosh.fs.config()` and where a native extension is looked for.
+pub fn config_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home().map(|h| h.join(".config")))?;
+    Some(base.join("kawoosh"))
+}
+
+/// `name` as the platform names a shared library: `dupes.dylib`,
+/// `dupes.so`, `dupes.dll`. A name that has the extension already is
+/// left alone.
+pub fn dylib(name: &str) -> String {
+    let ext = std::env::consts::DLL_EXTENSION;
+    if Path::new(name).extension().is_some_and(|e| e == ext) {
+        name.to_string()
+    } else {
+        format!("{name}.{ext}")
+    }
+}
+
 /// The path as text, for a message or a buffer name.
 pub fn display(path: &Path) -> String {
     path.display().to_string()

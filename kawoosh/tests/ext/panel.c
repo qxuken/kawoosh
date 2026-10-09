@@ -1,0 +1,184 @@
+/* A native pane and a thread (docs/design/native.md Decisions 4 and 5):
+ * both families of entry points in one library. `kw_ext_init` registers
+ * the view `cpanel` as this extension's own and two commands - `cpanel`
+ * opens it, `cwake` starts a thread that comes back through kw_wake;
+ * kui's `kui_ext_view` draws the pane, a row whose clicks come back to
+ * `kui_ext_on_event` and are counted on the next frame. */
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "kawoosh.h"
+
+/* A thread, started and joined or let go, and a nap: Win32's or
+ * POSIX's, the one difference between the platforms in this file. */
+typedef void *(*Body)(void *);
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+typedef struct {
+    Body body;
+    void *arg;
+    void *out;
+    bool join;
+} Run;
+static DWORD WINAPI run(LPVOID p) {
+    Run *r = p;
+    r->out = r->body(r->arg);
+    if (!r->join) free(r); /* let go: no one reads it after */
+    return 0;
+}
+static void *spawn(Body body, void *arg, bool join) {
+    Run *r = malloc(sizeof *r);
+    *r = (Run){body, arg, NULL, join};
+    HANDLE h = CreateThread(NULL, 0, run, r, 0, NULL);
+    void *out = NULL;
+    if (join) {
+        WaitForSingleObject(h, INFINITE);
+        out = r->out;
+        free(r);
+    }
+    CloseHandle(h);
+    return out;
+}
+static void nap_ms(unsigned ms) { Sleep(ms); }
+#else
+#include <pthread.h>
+#include <unistd.h>
+static void *spawn(Body body, void *arg, bool join) {
+    pthread_t t;
+    void *out = NULL;
+    pthread_create(&t, NULL, body, arg);
+    if (join)
+        pthread_join(t, &out);
+    else
+        pthread_detach(t);
+    return out;
+}
+static void nap_ms(unsigned ms) { usleep(ms * 1000); }
+#endif
+
+/* -- the kawoosh half ------------------------------------------------- */
+
+uint32_t kw_ext_abi(void) { return KW_ABI_VERSION; }
+const char *kw_ext_name(void) { return "panel"; }
+
+static KuiValue *open_pane(void *user, KwCtx *ctx, const KuiValue *args) {
+    (void)user;
+    (void)args;
+    kw_do(ctx, "view_open", kw_str("cpanel"));
+    return NULL;
+}
+
+/* The thread's end: back on the UI thread, with a context of its own. */
+static KuiValue *woke(void *user, KwCtx *ctx, const KuiValue *args) {
+    (void)args;
+    char msg[64];
+    snprintf(msg, sizeof msg, "woke from a thread, namespace %s",
+             kw_namespace(ctx, &(KuiStr){0}) ? "known" : "none");
+    kw_do(ctx, "echo", kw_str(msg));
+    free(user);
+    return NULL;
+}
+
+static void *work(void *arg) {
+    nap_ms(20);
+    kw_wake(woke, arg);
+    return NULL;
+}
+
+/* A thread using the call's context while the call waits: refused,
+ * with nothing touched. */
+static void *misuse(void *arg) {
+    KwCtx *ctx = arg;
+    KuiValue *r = kw_call(ctx, KUI_STR("echo"), NULL);
+    KuiStr e;
+    bool had_error = kw_error(ctx, &e);
+    return (void *)(intptr_t)(r == NULL && !had_error);
+}
+
+static KuiValue *thread_misuse(void *user, KwCtx *ctx, const KuiValue *args) {
+    (void)user;
+    (void)args;
+    void *out = spawn(misuse, ctx, true);
+    kw_do(ctx, "echo", kw_str(out ? "off-thread call refused" : "off-thread call answered"));
+    return NULL;
+}
+
+static KuiValue *start_thread(void *user, KwCtx *ctx, const KuiValue *args) {
+    (void)user;
+    (void)ctx;
+    (void)args;
+    spawn(work, malloc(1), false);
+    return NULL;
+}
+
+void *kw_ext_init(KwCtx *ctx) {
+    KuiStr ns;
+    if (!kw_namespace(ctx, &ns)) return NULL;
+    /* kawoosh.view("cpanel", nil, nil, { native = NS }) */
+    kw_do(ctx, "view", kw_str("cpanel"), kw_null(), kw_null(),
+          kw_map("native", kw_strn(ns.ptr, ns.len), NULL));
+    kw_do(ctx, "command", kw_str("cpanel"), kw_fn(ctx, open_pane, NULL));
+    kw_do(ctx, "command", kw_str("cwake"), kw_fn(ctx, start_thread, NULL));
+    kw_do(ctx, "command", kw_str("cmisuse"), kw_fn(ctx, thread_misuse, NULL));
+    return NULL;
+}
+
+void kw_ext_free(void *user) { (void)user; }
+
+/* -- the kui half ----------------------------------------------------- */
+
+uint32_t kui_ext_abi(void) { return KUI_ABI_VERSION; }
+
+static const KuiStr SLOTS[] = {{(const uint8_t *)"*", 1}};
+const KuiStr *kui_ext_slots(size_t *count) {
+    *count = 1;
+    return SLOTS;
+}
+
+typedef struct {
+    int clicks;
+} Panel;
+
+void *kui_ext_init(void) { return calloc(1, sizeof(Panel)); }
+void kui_ext_free(void *user) { free(user); }
+
+void kui_ext_view(void *user, KuiCtx *ui) {
+    Panel *p = user;
+    const KuiValue *params = kui_slot_params(ui);
+    int64_t pane = 0;
+    if (params) kui_value_as_int(kui_value_get(params, KUI_STR("pane")), &pane);
+    KuiTheme t = KUI_THEME_INIT;
+    kui_theme(ui, &t);
+    KuiSpec column = {
+        .dir = KUI_COLUMN,
+        .width = {KUI_GROW, 1},
+        .height = {KUI_GROW, 1},
+        .pad_l = 12, .pad_r = 12, .pad_t = 12, .pad_b = 12,
+        .gap = 8,
+    };
+    kui_open(ui, &column, NULL);
+    {
+        KuiValue *tag = kui_value_map();
+        kui_value_map_set(tag, KUI_STR("kind"), kui_value_str(KUI_STR("bump")));
+        KuiSpec row = {.dir = KUI_ROW, .pad_t = 4, .pad_b = 4};
+        kui_open(ui, &row, tag);
+        char line[64];
+        snprintf(line, sizeof line, "native pane %lld, clicks %d", (long long)pane, p->clicks);
+        KuiTextStyle style = {.size = 14, .color = t.fg};
+        kui_text(ui, KUI_STR(line), &style);
+        kui_close(ui);
+    }
+    kui_close(ui);
+}
+
+void kui_ext_on_event(void *user, const KuiEvent *ev) {
+    Panel *p = user;
+    if (!ev->payload) return;
+    KuiStr kind;
+    const KuiValue *k = kui_value_get(ev->payload, KUI_STR("kind"));
+    if (k && kui_value_as_str(k, &kind) && kind.len == 4 && memcmp(kind.ptr, "bump", 4) == 0)
+        p->clicks++;
+}

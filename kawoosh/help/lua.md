@@ -334,6 +334,24 @@ kawoosh.icons.check = { { glyph = "\u{F012C}" } }   -- a Nerd Font's
 
 A part is `{ stroke = points, width = 0.1, curve = false }` (a line through the points, `width` a share of the box), `{ fill = points }` (a filled outline of three to eight points), `{ dot = r }` (a disc in the middle) or `{ glyph = "…", scale = 1 }` (a character, where its font puts it).
 
+## Native extensions
+
+A shared library in C, or anything that speaks C, can do what a Lua plugin does — commands, keys, hooks, panes — by the same names, with its own computation, its own threads and its own drawing.
+
+```lua
+kawoosh.extension("dupes")   -- in init.lua
+```
+
+loads `ext/dupes.dylib` (macOS), `ext/dupes.so` (Linux, or anywhere) or `ext/dupes.dll` (Windows) from your config folder (`kawoosh.fs.config()` says where). A second argument names the library instead: the file, a folder holding it, or its path without the extension. `:extensions` lists what is loaded. A library built for another ABI is refused, with both numbers, and nothing of it runs.
+
+- In C, `kawoosh.buf.lines(...)` is `kw_call(ctx, KUI_STR("buf.lines"), args)`, the arguments a list, and the header's shorthand makes a call one line: `kw_do(ctx, "echo", kw_str("hi"))`. Where Lua takes a function, pass `kw_fn(ctx, fn, user)`. A thread of yours comes back with `kw_wake(fn, user)`. `kawoosh.h` documents every function, and who frees what.
+- What to build against is the extension pack for your platform: the headers (`kawoosh.h`, and the `kui.h` of the kui this Kawoosh is built with), an example, and on Windows `kawoosh.lib`. `nu scripts/pack.nu` in a kawoosh checkout writes one for each platform into `target/pack/`; the Windows `Kawoosh` folder carries the same, in `include\` and `kawoosh.lib`. From the pack's folder:
+  - macOS: `cc -O2 -shared -undefined dynamic_lookup -I include example/dupes.c -o dupes.dylib`
+  - Linux: `cc -O2 -shared -fPIC -I include example/dupes.c -o dupes.so`
+  - Windows: `clang -O2 -shared -I include example\dupes.c lib\kawoosh.lib -o dupes.dll` (an MSVC-ABI compiler; a UCRT MinGW `gcc` works too). A DLL linked so loads into `kawoosh.exe` and no other program.
+- A library is never unloaded: build it again and `:relaunch`. Windows will not write over a DLL in use, so move the old one aside first.
+- A project's `.kawoosh/init.lua` loads one only once you trust it, as with the rest of its code. A crash in the library is a crash of Kawoosh.
+
 ## Where a frame's time goes
 
 The developer tools panel (F12) has tabs that measure kawoosh as it runs. `:perf` opens the Perf tab: what a frame spends where — by phase, by system and by plugin, a plugin's Lua time its own row — what the systems report of their threads, and what the process holds. `:frames` opens the Frames tab: why each frame was drawn — a key, a thread's wake, a frame asked for by the one before — and the *burns*, frames drawn one after another with no input between them, summed up when they end. Each measures only while it is on show; closed, nothing is timed. `KAWOOSH_FRAME_LOG=PATH` in kawoosh's environment appends every burn to PATH, frame by frame, with no tab open. `:syntax_tree` is the third tab ([code](code.md#the-syntax-tree)); each command again closes the panel.

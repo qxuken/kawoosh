@@ -64,12 +64,9 @@ pub const SETTINGS_STUB: &str =
     "-- kawoosh settings: a table, read on save.\n---@type kawoosh.Settings\nreturn {\n}\n";
 
 /// The user's config directory: `$XDG_CONFIG_HOME/kawoosh`, else
-/// `~/.config/kawoosh`.
+/// `~/.config/kawoosh` (`kawoosh_systems::fs::config_dir`, the one rule).
 pub fn config_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| kawoosh_systems::fs::home().map(|h| h.join(".config")))?;
-    Some(base.join("kawoosh"))
+    kawoosh_systems::fs::config_dir()
 }
 
 /// Where `init.lua` lives: `$KAWOOSH_INIT`, else `init.lua` in the
