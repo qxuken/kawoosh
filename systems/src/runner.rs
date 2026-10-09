@@ -364,7 +364,10 @@ mod tests {
         let stdout = child.stdout.take().unwrap();
         let mut r = Runner::over(Box::new(child), Box::new(stdin), Box::new(stdout)).unwrap();
         let out = r
-            .run("printf 'a%%b\\n'; echo \"q'uo\\\\te\" >&2; exit 3\n", b"")
+            .run(
+                "printf 'a%%b\\n'; printf '%s\\n' \"q'uo\\\\te\" >&2; exit 3\n",
+                b"",
+            )
             .unwrap();
         assert_eq!(out.code, 3);
         assert_eq!(out.stdout, b"a%b\n");

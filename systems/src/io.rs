@@ -2320,7 +2320,7 @@ mod tests {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
-            use std::io::Write;
+            use std::io::{BufRead, BufReader, Write};
             let mut got = Vec::new();
             for reply in ["closed", "/picked dir"] {
                 let (mut s, _) = l.accept().unwrap();
