@@ -55,9 +55,43 @@ pub struct Proc {
     pub out: Option<String>,
 }
 
+/// A Lua view's last fresh run (kui ADR 0045): what it read of the host
+/// (`ViewReads`, by category) and the generations it was built at.
+#[derive(Clone, Debug)]
+pub struct ViewTrack {
+    pub gens: FrameGens,
+    pub reads: kawoosh_lua::ViewReads,
+}
+
+/// One frame's generations of what a Lua view may read of the host:
+/// the runtime's (`kawoosh_lua::Gens`), the palette's, the legends',
+/// and whether plugin code ran outside a view since the frame before.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FrameGens {
+    pub gens: kawoosh_lua::Gens,
+    pub palette: u64,
+    pub legend: u64,
+    /// The shell's doors' states, hashed while a view reads one (0 else).
+    pub themes: u64,
+    pub fonts: u64,
+    pub grammars: u64,
+    pub settings_pane: u64,
+    /// The panes' own settings (`pane_settings.rs`): `kawoosh.pane_opt`
+    /// and a legend's fullness.
+    pub pane_settings: u64,
+    pub ran_outside: bool,
+}
+
 #[derive(Default)]
 pub struct Scripting {
     pub rt: Option<Rc<Runtime>>,
+    /// Each Lua view's last fresh run, by `NAME@PANE`: what it read of
+    /// the host and the generations then (kui ADR 0045, lua-boundary.md
+    /// Decision 10). Its slot is replayed while every generation it
+    /// read is the one it was built at.
+    pub view_tracks: HashMap<String, ViewTrack>,
+    /// This frame's generations, read once after the publish.
+    pub frame_gens: FrameGens,
     pub tools: HashMap<String, ToolDef>,
     /// The processes plugins spawned, by the io thread's process id —
     /// numbered from a high mark so compile mode's never coincide.
@@ -187,6 +221,9 @@ impl Kawoosh {
         if let Err(e) = crate::pane_settings::lua_door(rt.lua(), self.pane_settings.clone()) {
             log::error!("kawoosh.pane_opt: {e}");
         }
+        // The doors above, wrapped for the reads a view makes of them
+        // (lua-boundary.md Decision 10), before a plugin takes a local.
+        rt.track_reads();
         self.scripting.bundled = true;
         for (name, src) in crate::plugins::BUNDLED {
             if let Err(e) = rt.load_source(name, src) {
@@ -2146,6 +2183,12 @@ impl Kawoosh {
         focused: bool,
     ) {
         let rect = self.layout.rects.get(&pane).copied();
+        // Whether the host vouches for the view's inputs this frame
+        // (kui ADR 0045; lua-boundary.md Decision 10): kui checks its
+        // own — the params below, every fact of the frame the view read
+        // — and replays the pane's tree without running the view.
+        let track = format!("{name}@{pane}");
+        let (fresh, why) = self.lua_view_fresh(&track);
         let params = Value::map([
             ("pane", Value::Int(pane as i64)),
             ("focused", Value::Bool(focused)),
@@ -2194,7 +2237,9 @@ impl Kawoosh {
                 // pane.
                 .on_click(tag),
             |ui| {
+                let t = crate::perf::span_start();
                 self.publish_drawing(name);
+                crate::perf::span("publish drawing", t);
                 // A native extension's view is its own slot
                 // (native.md Decision 4): under its namespace, the
                 // params the same, filled by its `kui_ext_view`.
@@ -2204,12 +2249,177 @@ impl Kawoosh {
                     .as_ref()
                     .and_then(|rt| rt.native_namespace_of(name))
                     .unwrap_or_else(|| "lua".into());
-                ui.slot_with(&format!("{ns}/{name}@{pane}"), &params);
+                let slot = format!("{ns}/{name}@{pane}");
+                let t = crate::perf::span_start();
+                let fill = if fresh {
+                    ui.slot_replay(&slot, &params)
+                } else {
+                    ui.slot_kept(&slot, &params);
+                    None
+                };
+                let replayed = fill == Some(kui_native::SlotFill::Replayed);
+                // What the view declared of the frame beyond its tree, made
+                // again for it: that it drew a legend (its title bar's hint).
+                if replayed
+                    && self
+                        .scripting
+                        .view_tracks
+                        .get(&track)
+                        .is_some_and(|t| t.reads.legend_drawn)
+                {
+                    self.legends.borrow_mut().declare(pane);
+                }
+                crate::perf::span(
+                    match fill {
+                        Some(f) => f.name(),
+                        None => "kept",
+                    },
+                    t,
+                );
+                // The view ran: what it read, at this frame's generations,
+                // is what the next frame's claim rests on.
+                if !replayed
+                    && let Some(rt) = self.scripting.rt.as_ref()
+                    && let Some(reads) = rt.view_reads(&track)
+                {
+                    if t.is_some() {
+                        let mut note = format!("{track}: {why}");
+                        // kui's own reason, when it was asked and refused:
+                        // the fact that moved, or what the fill declared.
+                        if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
+                            note.push_str(" kui: ");
+                            note.push_str(kui_why);
+                        }
+                        if !reads.opaque.is_empty() {
+                            note.push_str(" opaque ");
+                            note.push_str(&reads.opaque.join(" "));
+                        }
+                        if reads.clock {
+                            note.push_str(" clock");
+                        }
+                        crate::perf::note(note);
+                    }
+                    let gens = self.scripting.frame_gens;
+                    self.scripting
+                        .view_tracks
+                        .insert(track.clone(), ViewTrack { gens, reads });
+                }
             },
         );
         if focused {
             self.focus_sink(ui, sink);
         }
+    }
+
+    /// Whether the host vouches for the view tracked as `track` this
+    /// frame, and why not when it does not: plugin code ran outside a
+    /// view since, the view never ran, it read something the host does
+    /// not track (or the clock), or a category it read moved.
+    fn lua_view_fresh(&self, track: &str) -> (bool, &'static str) {
+        let now = &self.scripting.frame_gens;
+        if now.ran_outside {
+            return (false, "lua ran");
+        }
+        let Some(t) = self.scripting.view_tracks.get(track) else {
+            return (false, "untracked");
+        };
+        let r = &t.reads;
+        if r.clock {
+            return (false, "clock");
+        }
+        if !r.opaque.is_empty() {
+            return (false, "opaque");
+        }
+        let (then, g) = (&t.gens, &now.gens);
+        if r.editor && then.gens.editor != g.editor {
+            return (false, "editor");
+        }
+        if r.fields && then.gens.fields != g.fields {
+            return (false, "fields");
+        }
+        if r.settings && then.gens.settings != g.settings {
+            return (false, "settings");
+        }
+        if r.commands && then.gens.commands != g.commands {
+            return (false, "commands");
+        }
+        if r.memory && then.gens.memory != g.memory {
+            return (false, "memory");
+        }
+        if r.palette && then.palette != now.palette {
+            return (false, "palette");
+        }
+        if r.legend && then.legend != now.legend {
+            return (false, "legend");
+        }
+        if r.themes && then.themes != now.themes {
+            return (false, "themes");
+        }
+        if r.fonts && then.fonts != now.fonts {
+            return (false, "fonts");
+        }
+        if r.grammars && then.grammars != now.grammars {
+            return (false, "grammars");
+        }
+        if r.settings_pane && then.settings_pane != now.settings_pane {
+            return (false, "settings pane");
+        }
+        if r.pane_settings && then.pane_settings != now.pane_settings {
+            return (false, "pane settings");
+        }
+        (true, "fresh")
+    }
+
+    /// Reads this frame's generations, once the editor is published:
+    /// what every Lua pane's claim this frame is measured against.
+    pub(crate) fn read_frame_gens(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        let ran_outside = rt.take_ran_outside();
+        if ran_outside {
+            // Plugin state may have moved under every view: each runs
+            // once more and is tracked afresh.
+            self.scripting.view_tracks.clear();
+        }
+        fn hash_debug(v: &impl std::fmt::Debug) -> u64 {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            format!("{v:?}").hash(&mut h);
+            h.finish()
+        }
+        // A door's state is hashed only while some view reads it: the
+        // fonts' families are hundreds of names.
+        let reads = |f: fn(&kawoosh_lua::ViewReads) -> bool| {
+            self.scripting.view_tracks.values().any(|t| f(&t.reads))
+        };
+        self.scripting.frame_gens = FrameGens {
+            gens: rt.gens(),
+            palette: hash_debug(&self.pal),
+            legend: self.legends.borrow().generation(),
+            themes: if reads(|r| r.themes) {
+                hash_debug(&*self.look.shown.borrow())
+            } else {
+                0
+            },
+            fonts: if reads(|r| r.fonts) {
+                hash_debug(&self.look.fonts.borrow().shown)
+            } else {
+                0
+            },
+            grammars: if reads(|r| r.grammars) {
+                hash_debug(&*self.grammars.shown.borrow())
+            } else {
+                0
+            },
+            settings_pane: if reads(|r| r.settings_pane) {
+                self.settings_door.borrow().stamp()
+            } else {
+                0
+            },
+            pane_settings: self.pane_settings.borrow().generation(),
+            ran_outside,
+        };
     }
 
     /// The native extensions' frame half (native.md Decisions 4 and 5):

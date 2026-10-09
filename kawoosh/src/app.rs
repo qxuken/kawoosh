@@ -2722,6 +2722,20 @@ impl kui_native::App for Kawoosh {
         // lap is a clock read then, and nothing otherwise.
         let measure = self.tab_shown == Some(crate::perf::TAB);
         self.perf.set_on(measure);
+        // `KAWOOSH_PERF_LOG` measures every frame, tab or not.
+        let measure = self.perf.on();
+        if self.perf.logging() {
+            let core = ui.core();
+            let kui = core.stats.last().map(|s| crate::perf::KuiSample {
+                input: s.input_ms,
+                view: s.view_ms,
+                layout: s.layout_ms,
+                render: s.render_ms,
+                wait: s.wait_ms,
+                texts: core.text_cache_len(),
+            });
+            self.perf.log_frame(kui);
+        }
         if let Some(rt) = &self.scripting.rt {
             rt.set_profiling(measure);
         }
@@ -2788,6 +2802,8 @@ impl kui_native::App for Kawoosh {
             self.publish_layout();
         }
         t = self.perf.lap(Lua, "lua publish", t);
+        self.read_frame_gens();
+        t = self.perf.lap(Lua, "lua gens", t);
         if self.quit {
             if !self.session_saved {
                 self.save_session();
@@ -2974,7 +2990,10 @@ impl kui_native::App for Kawoosh {
             Some(rt) if measure => rt.take_profile(),
             _ => Vec::new(),
         };
-        self.perf.end_frame(frame_started, plugins);
+        let frames = &self.frames;
+        self.perf.end_frame(frame_started, plugins, || {
+            frames.last().map(|f| f.causes()).unwrap_or_default()
+        });
         self.frames.end();
         if self.hud {
             kui_native::widgets::latency_hud(ui);

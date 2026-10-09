@@ -45,6 +45,22 @@ pub struct Legends {
 pub type Shared = Rc<RefCell<Legends>>;
 
 impl Legends {
+    /// A reading of the whole state, for a view that drew a legend
+    /// (lua-boundary.md Decision 10): the same while no pane began or
+    /// stopped drawing one. Whether a legend is whole is a pane setting
+    /// (`pane_settings.rs`), read under its own generation.
+    pub fn generation(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let mut drawn: Vec<&PaneId> = self.drawn.iter().collect();
+        drawn.sort();
+        drawn.hash(&mut h);
+        let mut last: Vec<&PaneId> = self.last.iter().collect();
+        last.sort();
+        last.hash(&mut h);
+        h.finish()
+    }
+
     /// A frame begins: what was drawn is the frame before's.
     pub fn roll(&mut self) {
         self.last = std::mem::take(&mut self.drawn);

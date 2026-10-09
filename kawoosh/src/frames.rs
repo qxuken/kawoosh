@@ -420,6 +420,11 @@ impl Frames {
         self.on
     }
 
+    /// The frame under way, or the last one kept.
+    pub fn last(&self) -> Option<&Frame> {
+        self.ring.back()
+    }
+
     /// Whether a log asks for the burns whether or not the tab shows.
     pub fn logging(&self) -> bool {
         self.log.is_some()
@@ -675,7 +680,7 @@ fn chrono_now() -> String {
 impl Kawoosh {
     /// The frame's causes read, before anything else in `view`.
     pub(crate) fn frames_begin(&mut self, ui: &mut Ui<'_>) {
-        let on = self.tab_shown == Some(TAB) || self.frames.logging();
+        let on = self.tab_shown == Some(TAB) || self.frames.logging() || self.perf.logging();
         self.frames.set_on(on);
         let core = ui.core();
         if core.frame_trace() != on {

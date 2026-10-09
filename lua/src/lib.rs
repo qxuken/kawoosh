@@ -17,7 +17,7 @@ mod prof;
 
 pub use fuzzy::{Hit, Matcher};
 pub use native::{KW_ABI_VERSION, KW_PROTOCOL, KwEdit, NativeCell};
-pub use prof::Spent;
+pub use prof::{Spent, clock_secs};
 
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
 use std::collections::BTreeSet;
@@ -1389,6 +1389,9 @@ pub struct Runtime {
     /// Which tracked lines the `"` register's lines were, for the
     /// register that was last looked at.
     register_map: RefCell<Option<(RegisterKey, Vec<Option<usize>>)>>,
+    /// Each published buffer's version, beside the snapshot: what the
+    /// editor half of [`Gens`] is read from (ADR 0045's host side).
+    buf_versions: RefCell<Vec<(u64, kawoosh_doc::Version)>>,
     /// The register's payloads as last read from its tracked lines, by
     /// where they were taken (buffer, version, range): what it answers
     /// once its buffer is filled anew, so a line yanked in a listing
@@ -1411,6 +1414,10 @@ pub struct Runtime {
     pane: std::cell::Cell<u64>,
     /// The plugins' time, while the Perf tab is on show (`prof.rs`).
     prof: prof::ProfCell,
+    /// Plugin code was called from here since the last `take_ran_outside`
+    /// — a hook, a callback, a command — and may have changed what a view
+    /// draws from (lua-boundary.md Decision 10).
+    touched: std::cell::Cell<bool>,
     /// The native extensions loaded into this runtime
     /// (docs/design/native.md), their handles and the last error.
     native: NativeCell,
@@ -1461,6 +1468,8 @@ impl Runtime {
                 pending,
                 tracked,
                 register_map: RefCell::new(None),
+                buf_versions: RefCell::new(Vec::new()),
+                touched: std::cell::Cell::new(true),
                 register_kept: RefCell::new(None),
                 jobs,
                 memory_snap: RefCell::new(None),
@@ -1531,6 +1540,7 @@ impl Runtime {
                 .into_function()
                 .map_err(|e| e.to_string())?,
         };
+        self.touched.set(true);
         let out: mlua::MultiValue = f.call(()).map_err(|e| e.to_string())?;
         let show: Function = self
             .lua
@@ -1540,6 +1550,7 @@ impl Runtime {
             .map_err(|e| e.to_string())?;
         let mut parts = Vec::new();
         for v in out {
+            self.touched.set(true);
             let s: String = show.call(v).map_err(|e| e.to_string())?;
             parts.push(s);
         }
@@ -1824,6 +1835,8 @@ impl Runtime {
         let mut p = self.published.borrow_mut();
         p.buffers.clear();
         p.tracked.clear();
+        let mut versions = self.buf_versions.borrow_mut();
+        versions.clear();
         p.trees.retain(|h, _| ed.buffers.contains_key(id_of(*h)));
         let mut tracked = self.tracked.borrow_mut();
         tracked.retain(|id, _| ed.buffers.contains_key(*id));
@@ -1879,6 +1892,7 @@ impl Runtime {
                 .map(of)
                 .or_else(|| ed.views.values().find(|v| v.buffer == id).map(of))
                 .unwrap_or_default();
+            versions.push((handle_of(id), b.version()));
             p.buffers.insert(
                 handle_of(id),
                 BufSnap {
@@ -2205,6 +2219,7 @@ impl Runtime {
         let _ = t.set("bang", ctx.bang());
         let _ = t.set("query", ctx.query());
         let _ = t.set("pane", self.pane.get());
+        self.touched.set(true);
         if let Err(e) = f.call::<()>((name, t)) {
             self.queue
                 .borrow_mut()
@@ -2223,6 +2238,7 @@ impl Runtime {
         else {
             return false;
         };
+        self.touched.set(true);
         match f.call::<bool>(path) {
             Ok(taken) => taken,
             Err(e) => {
@@ -2247,6 +2263,7 @@ impl Runtime {
         };
         let meta: serde_json::Value = serde_json::from_str(meta).unwrap_or_default();
         let meta = json_to_lua(&self.lua, &meta).unwrap_or(LV::Nil);
+        self.touched.set(true);
         match f.call::<bool>((kind, subject, meta)) {
             Ok(taken) => taken,
             Err(e) => {
@@ -2414,6 +2431,7 @@ impl Runtime {
         else {
             return;
         };
+        self.touched.set(true);
         if let Err(e) = f.call::<()>((name, handle)) {
             self.queue
                 .borrow_mut()
@@ -2431,6 +2449,7 @@ impl Runtime {
         else {
             return;
         };
+        self.touched.set(true);
         if let Err(e) = f.call::<()>(()) {
             self.queue
                 .borrow_mut()
@@ -2517,6 +2536,7 @@ impl Runtime {
             }
             Ok::<_, mlua::Error>(t)
         })();
+        self.touched.set(true);
         match list.and_then(|t| f.call::<bool>((title, t))) {
             Ok(taken) => taken,
             Err(e) => {
@@ -2550,6 +2570,7 @@ impl Runtime {
         else {
             return;
         };
+        self.touched.set(true);
         if let Err(e) = f.call::<()>(args) {
             self.queue
                 .borrow_mut()
@@ -2569,6 +2590,7 @@ impl Runtime {
             return;
         };
         let list: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        self.touched.set(true);
         if let Err(e) = f.call::<()>((name, list)) {
             self.queue
                 .borrow_mut()
@@ -2586,6 +2608,7 @@ impl Runtime {
         else {
             return;
         };
+        self.touched.set(true);
         if let Err(e) = f.call::<()>(name) {
             self.queue
                 .borrow_mut()
@@ -2606,6 +2629,7 @@ impl Runtime {
             return true;
         };
         let lines: Vec<String> = text.lines().map(str::to_string).collect();
+        self.touched.set(true);
         match f.call::<LV>((name, lines)) {
             Ok(LV::Boolean(false)) => false,
             Ok(_) => true,
@@ -2716,6 +2740,8 @@ impl Runtime {
                     .push(Msg::Formatted { token, result });
             }
         };
+        // A delivery to a plugin, not a reading of it: its state may move.
+        self.touched.set(true);
         match self.timed(&f, || f.call::<LV>((t, text, done))) {
             Ok(LV::String(s)) => answer(Ok(s.to_string_lossy())),
             Ok(_) => {}
@@ -2906,6 +2932,8 @@ impl Runtime {
                 LV::Nil,
             ),
         };
+        // A delivery to a plugin, not a reading of it: its state may move.
+        self.touched.set(true);
         if let Err(e) = self.timed(&f, || f.call::<()>(args)) {
             self.queue
                 .borrow_mut()
@@ -2977,6 +3005,7 @@ impl Runtime {
                     None => t.set(i + 1, false)?,
                 }
             }
+            self.touched.set(true);
             f.call::<()>(t)
         };
         if let Err(e) = self.timed(&f, call) {
@@ -2998,6 +3027,8 @@ impl Runtime {
             Ok(()) => (LV::Boolean(true), LV::Nil),
             Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
         };
+        // A delivery to a plugin, not a reading of it: its state may move.
+        self.touched.set(true);
         if let Err(e) = self.timed(&f, || f.call::<()>(args)) {
             self.queue.borrow_mut().push(Msg::Echo(format!("fs: {e}")));
         }
@@ -3033,6 +3064,8 @@ impl Runtime {
             Ok(t) => (LV::Table(t), LV::Nil),
             Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
         };
+        // A delivery to a plugin, not a reading of it: its state may move.
+        self.touched.set(true);
         if let Err(e) = self.timed(&f, || f.call::<()>(args)) {
             self.queue
                 .borrow_mut()
@@ -3065,6 +3098,8 @@ impl Runtime {
             };
             self.lua.registry_value::<mlua::Function>(key).ok()
         };
+        // A delivery to a plugin, not a reading of it: its state may move.
+        self.touched.set(true);
         if let Some(f) = f
             && let Err(e) = self.timed(&f, || f.call::<()>(lines))
         {
@@ -3085,6 +3120,8 @@ impl Runtime {
             let _ = self.lua.remove_registry_value(k);
         }
         if let Some(k) = keys.done {
+            // A delivery to a plugin, not a reading of it: its state may move.
+            self.touched.set(true);
             if let Ok(f) = self.lua.registry_value::<mlua::Function>(&k)
                 && let Err(e) = self.timed(&f, || f.call::<()>((out.unwrap_or_default(), code)))
             {
@@ -3095,6 +3132,8 @@ impl Runtime {
             let _ = self.lua.remove_registry_value(k);
         }
         if let Some(k) = keys.exit {
+            // A delivery to a plugin, not a reading of it: its state may move.
+            self.touched.set(true);
             if let Ok(f) = self.lua.registry_value::<mlua::Function>(&k)
                 && let Err(e) = self.timed(&f, || f.call::<()>(code))
             {
@@ -3144,6 +3183,7 @@ impl Runtime {
             t.set("unstage", unstage)?;
             Ok::<_, mlua::Error>(t)
         })();
+        self.touched.set(true);
         match opts.and_then(|o| f.call::<bool>((path.display().to_string(), patch, o))) {
             Ok(taken) => taken,
             Err(e) => {
@@ -8361,5 +8401,206 @@ mod tests {
                 (1, 0, 1, 1)
             ]
         );
+    }
+}
+
+// -- A Lua view's inputs on the host's side (ADR 0045) ----------------------
+
+/// The generations of what a Lua view may read from the host through
+/// `kawoosh.*`, as of the last `publish`: the view is replayed only while
+/// each generation it read is the one it was built at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Gens {
+    /// The editor's snapshot: the buffers and their versions, the
+    /// current view and its selections, the mode, the message, the
+    /// facts, the panes, the pickers' lists, the images.
+    pub editor: u64,
+    /// The Lua views' fields: each one's text, mode, caret and focus,
+    /// and which the keys are on.
+    pub fields: u64,
+    /// The settings' version.
+    pub settings: u64,
+    /// The commands' and the keymap's versions.
+    pub commands: u64,
+    /// The working memory and the register.
+    pub memory: u64,
+}
+
+/// What a Lua view read while it ran, by category (`boot.lua`'s
+/// `READS`): the categories of [`Gens`], the clock, and the names of
+/// the functions it called that the host does not track — a view that
+/// called one is run every frame.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ViewReads {
+    pub editor: bool,
+    pub fields: bool,
+    pub settings: bool,
+    pub commands: bool,
+    pub memory: bool,
+    pub palette: bool,
+    pub legend: bool,
+    /// The shell's own doors: `kawoosh.themes`, `.fonts`, `.grammars`,
+    /// `.settings` (the pane's), each with a generation of its own.
+    pub themes: bool,
+    pub fonts: bool,
+    pub grammars: bool,
+    pub settings_pane: bool,
+    /// The panes' own settings (`kawoosh.pane_opt`, a legend's fullness).
+    pub pane_settings: bool,
+    pub clock: bool,
+    /// The view told the title bar it drew a legend (`_legend_drawn`): a
+    /// declaration a replay does not re-make, so the host does.
+    pub legend_drawn: bool,
+    pub opaque: Vec<String>,
+}
+
+impl ViewReads {
+    /// Whether the host can vouch for the view at all: it read nothing
+    /// the host does not track, and not the clock.
+    pub fn trackable(&self) -> bool {
+        !self.clock && self.opaque.is_empty()
+    }
+}
+
+fn hash_one<T: std::hash::Hash>(v: &T) -> u64 {
+    use std::hash::BuildHasher;
+    // A fixed hasher: a generation compares across frames, not runs.
+    std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
+        .hash_one(v)
+}
+
+impl Runtime {
+    /// The generations as of the last `publish`.
+    pub fn gens(&self) -> Gens {
+        use std::hash::{Hash, Hasher};
+        let p = self.published.borrow();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.current.hash(&mut h);
+        p.mode.hash(&mut h);
+        p.message.hash(&mut h);
+        p.workspace.hash(&mut h);
+        p.facts.hash(&mut h);
+        p.selection_radius.map(f32::to_bits).hash(&mut h);
+        for (id, v) in self.buf_versions.borrow().iter() {
+            (id, v).hash(&mut h);
+            if let Some(b) = p.buffers.get(id) {
+                b.name.hash(&mut h);
+                b.path.hash(&mut h);
+                b.language.hash(&mut h);
+                b.sels.hash(&mut h);
+                b.primary.hash(&mut h);
+                b.top.hash(&mut h);
+                (
+                    b.modified,
+                    b.read_only,
+                    b.private,
+                    b.field,
+                    b.borrowed,
+                    b.in_tab,
+                )
+                    .hash(&mut h);
+            }
+        }
+        for (path, img) in &p.images {
+            path.hash(&mut h);
+            std::mem::discriminant(img).hash(&mut h);
+        }
+        p.candidates.as_ref().map(Rc::as_ptr).hash(&mut h);
+        p.candidate.hash(&mut h);
+        p.actions.as_ref().map(Rc::as_ptr).hash(&mut h);
+        p.compile_offer.as_ref().map(Rc::as_ptr).hash(&mut h);
+        p.domains.as_ref().map(Rc::as_ptr).hash(&mut h);
+        for (id, g) in &p.panes {
+            (id, g.width.to_bits(), g.height.to_bits(), g.cols, g.rows).hash(&mut h);
+        }
+        p.front.hash(&mut h);
+        let editor = h.finish();
+
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.field.hash(&mut h);
+        p.prompt.hash(&mut h);
+        let mut names: Vec<&String> = p.fields.keys().collect();
+        names.sort();
+        for n in names {
+            let f = &p.fields[n];
+            (n, &f.text, &f.mode, f.caret, f.anchor, f.focused).hash(&mut h);
+        }
+        let mut focus: Vec<(&String, &String)> = p.field_focus.iter().collect();
+        focus.sort();
+        focus.hash(&mut h);
+        let fields = h.finish();
+
+        let memory = hash_one(&(
+            Rc::as_ptr(&p.memory) as usize,
+            p.register.as_ref().map(|r| (&r.text, r.buffer)),
+        ));
+        Gens {
+            editor,
+            fields,
+            settings: p.settings_version,
+            commands: hash_one(&(p.commands_version, p.keys_version)),
+            memory,
+        }
+    }
+
+    /// What the view filling `slot` (`NAME@PANE`) read the last time it
+    /// ran, as `boot.lua` noted it; `None` before it ran.
+    pub fn view_reads(&self, slot: &str) -> Option<ViewReads> {
+        let k: Table = self.lua.globals().get("kawoosh").ok()?;
+        let reads: Table = k.get::<Table>("_reads").ok()?.get(slot).ok()?;
+        let flag = |n: &str| reads.get::<Option<bool>>(n).ok().flatten().unwrap_or(false);
+        let mut opaque = Vec::new();
+        if let Ok(t) = reads.get::<Table>("opaque") {
+            for (name, _) in t.pairs::<String, mlua::Value>().flatten() {
+                opaque.push(name);
+            }
+            opaque.sort();
+        }
+        Some(ViewReads {
+            editor: flag("editor"),
+            fields: flag("fields"),
+            settings: flag("settings"),
+            commands: flag("commands"),
+            memory: flag("memory"),
+            palette: flag("palette"),
+            legend: flag("legend"),
+            themes: flag("themes"),
+            fonts: flag("fonts"),
+            grammars: flag("grammars"),
+            settings_pane: flag("settings_pane"),
+            pane_settings: flag("pane_settings"),
+            clock: flag("clock"),
+            legend_drawn: flag("legend_drawn"),
+            opaque,
+        })
+    }
+
+    /// Wraps the natives seeded since boot for the reads a view makes of
+    /// them (`boot.lua`'s `track_reads`): what the shell calls after it
+    /// seeds a door of its own (`kawoosh.grammars`, …).
+    pub fn track_reads(&self) {
+        if let Ok(k) = self.lua.globals().get::<Table>("kawoosh")
+            && let Ok(f) = k.get::<mlua::Function>("_track_reads")
+            && let Err(e) = f.call::<()>(())
+        {
+            log::warn!("track_reads: {e}");
+        }
+    }
+
+    /// Whether any plugin code ran outside a view's function since this
+    /// was last asked — a command, a handler, a hook, a callback — and so
+    /// may have changed what a view draws from without the host seeing.
+    pub fn take_ran_outside(&self) -> bool {
+        let Ok(k) = self.lua.globals().get::<Table>("kawoosh") else {
+            return true;
+        };
+        let ran = k
+            .get::<Option<bool>>("_ran_outside")
+            .ok()
+            .flatten()
+            .unwrap_or(true);
+        let _ = k.set("_ran_outside", false);
+        // And the calls made from here, which `boot.lua`'s `timed` never saw.
+        self.touched.replace(false) || ran
     }
 }

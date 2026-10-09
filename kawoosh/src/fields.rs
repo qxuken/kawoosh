@@ -255,13 +255,15 @@ impl Extension for EngineDraw {
     fn view(&mut self, slot: &Slot<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
         let d = self.drawing.borrow();
         let p = slot.params;
-        let r = match param(p, "kind") {
-            Some(Value::Str(k)) if k == "field" => Self::field(&d, p, ui),
-            Some(Value::Str(k)) if k == "keys" => Self::keys(&d, p, ui),
-            Some(Value::Str(k)) if k == "legend" => Self::legend(&d, p, ui),
-            Some(Value::Str(k)) if k == "toggle" => Self::toggle(&d, p, ui),
-            other => Err(format!("no kind {other:?} to draw")),
+        let t = crate::perf::span_start();
+        let (r, what) = match param(p, "kind") {
+            Some(Value::Str(k)) if k == "field" => (Self::field(&d, p, ui), "engine field"),
+            Some(Value::Str(k)) if k == "keys" => (Self::keys(&d, p, ui), "engine keys"),
+            Some(Value::Str(k)) if k == "legend" => (Self::legend(&d, p, ui), "engine legend"),
+            Some(Value::Str(k)) if k == "toggle" => (Self::toggle(&d, p, ui), "engine toggle"),
+            other => (Err(format!("no kind {other:?} to draw")), "engine ?"),
         };
+        crate::perf::span(what, t);
         r.map_err(|e| format!("{}: {e}", slot.name))
     }
 
@@ -309,7 +311,34 @@ impl Extension for LuaHost {
         {
             log::error!("the engine's drawing for Lua views: {e}");
         }
-        self.lua.view(slot, ui)
+        let t = crate::perf::span_start();
+        let c0 = t.map(|_| kawoosh_lua::clock_secs());
+        let r = self.lua.view(slot, ui);
+        crate::perf::span("lua host view", t);
+        // The Lua side's marks (boot.lua's `view`): what kui-lua spent
+        // before the call (its env), the call, and after it (the tree
+        // built from the table).
+        if let Some(c0) = c0 {
+            let c2 = kawoosh_lua::clock_secs();
+            let g = self.lua.lua().globals();
+            let k: Option<mlua::Table> = g.get("kawoosh").ok();
+            let marks = k.and_then(|k| {
+                let a: f64 = k.get("_vt_in").ok()?;
+                let b: f64 = k.get("_vt_out").ok()?;
+                let b2: f64 = k.get("_vt_out2").ok()?;
+                let n: f64 = k.get("_vt_nodes").ok()?;
+                Some((a, b, b2, n))
+            });
+            if let Some((a, b, b2, n)) = marks
+                && a >= c0
+            {
+                crate::perf::span_ms("kui-lua env", ((a - c0) * 1e3) as f32);
+                crate::perf::span_ms("lua view fn", ((b - a) * 1e3) as f32);
+                crate::perf::span_ms("kui-lua build", ((c2 - b2) * 1e3) as f32);
+                crate::perf::span_ms("tree tables", n as f32);
+            }
+        }
+        r
     }
 
     fn on_event(&mut self, ev: &UiEvent) -> Vec<Value> {

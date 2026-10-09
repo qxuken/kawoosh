@@ -11,6 +11,7 @@
 //! and the plugins go untimed. Reopened, it starts over.
 
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use kui_native::{Align, Min, NodeSpec, TextWrap, Ui};
@@ -18,6 +19,55 @@ use kui_native::{Align, Min, NodeSpec, TextWrap, Ui};
 use crate::devtab::Tab;
 
 use crate::app::Kawoosh;
+
+thread_local! {
+    /// Whether this frame is measured, for [`span`] — which is called
+    /// where the app is not at hand (a kui extension's `view`).
+    static MEASURING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The spans this frame, by name: ms summed and how many.
+    static SPANS: std::cell::RefCell<Vec<(&'static str, f32, u32)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// Free-form notes this frame, for the log line.
+    static NOTES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A note on this frame's log line, when measuring.
+pub fn note(s: String) {
+    if MEASURING.get() {
+        NOTES.with(|n| n.borrow_mut().push(s));
+    }
+}
+
+/// The clock read for a [`span`], when measuring.
+pub fn span_start() -> Option<Instant> {
+    MEASURING.get().then(Instant::now)
+}
+
+/// The time since `t` counted under `name` in this frame's spans: a
+/// part of a pane's draw that runs outside the app (a kui extension).
+pub fn span(name: &'static str, t: Option<Instant>) {
+    let Some(t) = t else {
+        return;
+    };
+    span_ms(name, ms(t));
+}
+
+/// `ms` counted under `name` in this frame's spans.
+pub fn span_ms(name: &'static str, m: f32) {
+    if !MEASURING.get() {
+        return;
+    }
+    SPANS.with(|s| {
+        let mut s = s.borrow_mut();
+        match s.iter_mut().find(|(n, ..)| *n == name) {
+            Some((_, total, k)) => {
+                *total += m;
+                *k += 1;
+            }
+            None => s.push((name, m, 1)),
+        }
+    });
+}
 
 /// The tab's name in the devtools strip.
 pub const TAB: &str = "perf";
@@ -64,6 +114,13 @@ struct Reading {
     /// The plugins' time since the frame before, the input handled
     /// between them included: ms and calls.
     plugins: Vec<(String, f32, u32)>,
+    /// Each pane drawn, by what it holds, and its time: the title bar,
+    /// the rows, a Lua view's fill.
+    panes: Vec<(String, f32)>,
+    /// The spans ([`span`]): ms and how many.
+    spans: Vec<(&'static str, f32, u32)>,
+    /// The notes ([`note`]).
+    notes: Vec<String>,
 }
 
 /// The process's memory, as the OS counts it.
@@ -108,6 +165,54 @@ pub struct Perf {
     /// The tab's sections as last built, when, and whether any frame
     /// was measured by then.
     shown: Option<(Instant, bool, Vec<Section>)>,
+    /// `KAWOOSH_PERF_LOG`: every frame, one line, appended here.
+    log: Option<Log>,
+    /// The environment was read for it: once, at the first frame.
+    log_tried: bool,
+}
+
+/// The per-frame log (`KAWOOSH_PERF_LOG=PATH`): a frame's line waits
+/// for kui's own reading of it — the view, the layout and the render
+/// are only known once the frame has gone — and is written at the start
+/// of the next.
+struct Log {
+    out: std::io::BufWriter<std::fs::File>,
+    /// When the log began, for each line's time.
+    epoch: Instant,
+    /// The frame drawn last: its start, its readings, its causes.
+    pending: Option<(Instant, Reading, String)>,
+    /// The frame before that one's start, for the gap.
+    last_at: Option<Instant>,
+}
+
+impl Log {
+    fn open() -> Option<Self> {
+        let path = std::env::var_os("KAWOOSH_PERF_LOG")?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| log::warn!("KAWOOSH_PERF_LOG {}: {e}", path.to_string_lossy()))
+            .ok()?;
+        Some(Self {
+            out: std::io::BufWriter::new(file),
+            epoch: Instant::now(),
+            pending: None,
+            last_at: None,
+        })
+    }
+}
+
+/// What kui read of the frame before (`Core::stats`), ms, and the
+/// text cache's entries then.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KuiSample {
+    pub input: f32,
+    pub view: f32,
+    pub layout: f32,
+    pub render: f32,
+    pub wait: f32,
+    pub texts: usize,
 }
 
 /// A row of the breakdown: where, then avg, worst and total ms over
@@ -119,6 +224,14 @@ impl Perf {
     /// before. Turned on, it starts over — what was kept is from before
     /// it closed.
     pub fn set_on(&mut self, on: bool) {
+        if self.log.is_none() && !self.log_tried {
+            self.log_tried = true;
+            self.log = Log::open();
+        }
+        let on = on || self.log.is_some();
+        MEASURING.set(on);
+        SPANS.with(|s| s.borrow_mut().clear());
+        NOTES.with(|n| n.borrow_mut().clear());
         if on && !self.on {
             self.frames.clear();
             self.shown = None;
@@ -150,19 +263,100 @@ impl Perf {
         Some(now)
     }
 
+    /// Whether every frame is written to `KAWOOSH_PERF_LOG`.
+    pub fn logging(&self) -> bool {
+        self.log.is_some()
+    }
+
+    /// A pane's draw, `what` it holds, since `t`.
+    pub fn pane(&mut self, what: String, t: Option<Instant>) {
+        if let Some(t) = t {
+            self.cur.panes.push((what, ms(t)));
+        }
+    }
+
+    /// The frame drawn last, written to the log with kui's reading of
+    /// it — at the start of the frame after, the only time kui has it.
+    pub fn log_frame(&mut self, kui: Option<KuiSample>) {
+        use std::io::Write as _;
+        let Some(log) = &mut self.log else {
+            return;
+        };
+        let Some((at, r, causes)) = log.pending.take() else {
+            return;
+        };
+        let gap = log
+            .last_at
+            .map_or(0.0, |l| at.duration_since(l).as_secs_f32() * 1e3);
+        log.last_at = Some(at);
+        let mut s = String::new();
+        let t = at.duration_since(log.epoch).as_secs_f64();
+        let _ = write!(s, "t={t:.3} gap={gap:.1}");
+        if let Some(k) = kui {
+            let work = k.input + k.view + k.layout + k.render;
+            let _ = write!(
+                s,
+                " kui[work={work:.2} in={:.2} view={:.2} layout={:.2} render={:.2} wait={:.2} texts={}]",
+                k.input, k.view, k.layout, k.render, k.wait, k.texts
+            );
+        }
+        let p = &r.phases.0;
+        let _ = write!(s, " app[");
+        for (i, n) in Phases::NAMES.iter().enumerate() {
+            let _ = write!(s, "{}{n}={:.2}", if i > 0 { " " } else { "" }, p[i]);
+        }
+        let _ = write!(s, "] panes[");
+        for (i, (n, m)) in r.panes.iter().enumerate() {
+            let _ = write!(s, "{}{n}={m:.2}", if i > 0 { "; " } else { "" });
+        }
+        let _ = write!(s, "] spans[");
+        for (i, (n, m, k)) in r.spans.iter().enumerate() {
+            let _ = write!(s, "{}{n}={m:.2}/{k}", if i > 0 { "; " } else { "" });
+        }
+        let _ = write!(s, "] lua[");
+        let mut plugins = r.plugins.clone();
+        plugins.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (i, (n, m, c)) in plugins.iter().filter(|p| p.1 >= 0.01).enumerate() {
+            let _ = write!(s, "{}{n}={m:.2}/{c}", if i > 0 { " " } else { "" });
+        }
+        let _ = write!(s, "] laps[");
+        let mut laps = r.laps.clone();
+        laps.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (i, (n, m)) in laps.iter().filter(|l| l.1 >= 0.05).take(8).enumerate() {
+            let _ = write!(s, "{}{n}={m:.2}", if i > 0 { "; " } else { "" });
+        }
+        let _ = write!(s, "] cause[{}]", causes.trim());
+        if !r.notes.is_empty() {
+            let _ = write!(s, " notes[{}]", r.notes.join(" | "));
+        }
+        let _ = writeln!(s);
+        let _ = log.out.write_all(s.as_bytes());
+        let _ = log.out.flush();
+    }
+
     /// Closes the frame under way, `view` having begun at `started`,
     /// with the plugins' time since the frame before: its readings join
     /// the window.
-    pub fn end_frame(&mut self, started: Option<Instant>, plugins: Vec<kawoosh_lua::Spent>) {
+    pub fn end_frame(
+        &mut self,
+        started: Option<Instant>,
+        plugins: Vec<kawoosh_lua::Spent>,
+        causes: impl FnOnce() -> String,
+    ) {
         let Some(started) = started else {
             return;
         };
         let mut r = std::mem::take(&mut self.cur);
         r.phases.0[Phases::VIEW] = ms(started);
+        r.spans = SPANS.with(|s| std::mem::take(&mut *s.borrow_mut()));
+        r.notes = NOTES.with(|n| std::mem::take(&mut *n.borrow_mut()));
         r.plugins = plugins
             .into_iter()
             .map(|s| (s.plugin, s.time.as_secs_f32() * 1e3, s.calls))
             .collect();
+        if let Some(log) = &mut self.log {
+            log.pending = Some((started, r.clone(), causes()));
+        }
         if self.frames.len() == KEEP {
             self.frames.pop_front();
         }

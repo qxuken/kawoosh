@@ -156,6 +156,46 @@ compact, and tells the title bar it drew one. A toggle's click is a
 reply carrying its pane. `_key_caps` and `_cap` are gone with their one
 user.
 
+### 10. A pane's tree is replayed while nothing its view read has moved
+
+Every frame the window drew ran every visible Lua view and had kui-lua
+turn the table it returned into nodes — about 2 µs a table, twice the
+view's own time: the settings pane's 1,561 tables cost 1.25 ms in the
+view and 3.0 ms in the walk on a frame where a key went to the editor
+beside it, and 14–22 ms cold at the caret's 2 Hz with the pane focused
+(the perf log of 2026-10-09; kui's layout of the same frame 0.3 ms, the
+editor pane 0.25). kui F142 (ADR 0045, which amends its ADR 0016) lets
+the host say a slot is unchanged and have the kept tree pushed again
+without the view running, kui itself checking the params and every fact
+of the frame the fill read. The host's half here is what the view read
+*of kawoosh*: at boot every native under `kawoosh` and its tables is
+wrapped with a category — `editor` (the published snapshot), `fields`,
+`settings`, `commands`, `memory`, `palette`, `pane_settings` (a pane's
+own values and its legend's fullness, under the store's count of
+changes), `legend`, `clock`, `none`
+for one pure of its arguments — or `opaque` for the rest (a write, the
+file system, a process, the store) — the shell's own doors, seeded after
+the script (`kawoosh.themes`, `.fonts`, `.grammars`, `.settings`,
+`.du`, the icons', the legends'), are wrapped by a second walk
+(`Runtime::track_reads`, before the bundled plugins take a local) and
+read as states the shell hashes while a view reads one — and a view
+running notes what it called (`kawoosh._reads[NAME@PANE]`); `ctx.env` is a proxy that notes
+`now` and `caret_visible`, the two fields of kui's reading that kui
+cannot compare. After the publish each frame the shell reads the
+generations (`Runtime::gens`: a hash of the snapshot per category,
+`FrameGens` adding the palette's and the legends') and whether any
+plugin code ran outside a view since — `timed`'s flag on the Lua side,
+and the runtime's `touched` for every call the Rust half makes that
+delivers something to a plugin (a hook, a process's lines, a picker's
+answer, a command), which `timed` never sees — a reading the shell asks
+of a plugin every frame (a status segment, a tab's title) is not one,
+or nothing would ever replay: if it did, every view is run once more; else a view that read only tracked categories,
+none of which moved since its last run, has its pane declared with
+`slot_replay`, the others with `slot_kept`. `render_lua_pane` logs the
+answer and, for a view that will not replay, why and which natives it
+called, so a pane that stays slow says so in `KAWOOSH_PERF_LOG`. A view
+that calls an opaque native is correct and slow, never stale.
+
 ## Rounds
 
 **Round 1, 2026-10-07: the cheap batch** (d290f9f). `ctx.title_h`
@@ -253,6 +293,21 @@ bar's four fields and their placeholders).
 1138 of 1138, and a test window over its socket: the search bar's
 `⌥/ hide keys` and its legend, caps with their icons, wrapped between
 items.
+
+**Round 14, 2026-10-09: the pane's tree replayed** (Decision 10; kui
+F142). Asked after the perf log found the walk: "open the kui round for
+slot replay". Verified by the perf log over the same panes and runs as
+the finding (release build, the editor driven over its socket with the
+pane beside it unfocused, forty frames each, medians): the settings
+pane 4.6 → 0.30 ms a frame, themes 5.0 → 0.22, the theme lab 3.1 →
+0.14, grammars 2.3 → 0.15, the whole frame's work 5.9 / 6.2 / 4.6 /
+3.5 → 1.65 / 1.36 / 1.60 / 1.54 ms against 1.16 with no pane; 344
+frames replayed, the few filled fresh each with a reason the log names
+— the focus moving to the pane, the window's focus in the env reading,
+the engine extension loaded on a pane's first frame, plugin code run by
+a command. The pane's `lua host view` span is gone from the replayed
+frames and `replayed` stands in its place; and the kui suites (nine
+tests of the replay, the Lua and C and Node bindings' each).
 
 ## Open
 

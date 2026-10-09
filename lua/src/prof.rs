@@ -74,6 +74,13 @@ pub fn plugin_of(f: &Function) -> String {
     plugin_name(f.info().source.as_deref().unwrap_or("?"))
 }
 
+/// Seconds since the first reading, the clock `kawoosh._clock()` reads:
+/// a span the Lua side marks, measured against the app's.
+pub fn clock_secs() -> f64 {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
+
 /// `kawoosh._prof_enter(name)`, `kawoosh._prof_leave()`,
 /// `kawoosh._plugin_of(fn)` and the `kawoosh._profiling` flag: what
 /// `boot.lua`'s `timed` calls through.
@@ -95,6 +102,7 @@ pub fn seed(lua: &Lua, prof: &ProfCell) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    k.set("_clock", lua.create_function(|_, ()| Ok(clock_secs()))?)?;
     k.set(
         "_plugin_of",
         lua.create_function(|_, f: Function| Ok(plugin_of(&f)))?,

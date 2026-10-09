@@ -85,6 +85,18 @@ pub struct Door {
     pub requests: Vec<Request>,
 }
 
+impl Door {
+    /// A reading of what the pane draws from: the copy's generation, the
+    /// last reload's note and the requests waiting — what a view of it
+    /// is replayed against (lua-boundary.md Decision 10).
+    pub fn stamp(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (self.generation, &self.reloaded, self.requests.len()).hash(&mut h);
+        h.finish()
+    }
+}
+
 impl Default for Door {
     fn default() -> Self {
         Self {

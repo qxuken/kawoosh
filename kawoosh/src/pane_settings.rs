@@ -56,6 +56,9 @@ pub struct PaneSettings {
     /// What each key holds, from the settings' declarations when the
     /// store was made: Lua's writes are checked without the settings.
     kinds: HashMap<&'static str, SettingKind>,
+    /// Counted up with every change: what a Lua view that read a pane's
+    /// values is replayed against (lua-boundary.md Decision 10).
+    generation: u64,
 }
 
 pub type Shared = Rc<RefCell<PaneSettings>>;
@@ -68,10 +71,17 @@ impl PaneSettings {
         PaneSettings {
             panes: HashMap::new(),
             kinds,
+            generation: 0,
         }
     }
 
     /// Pane `pane`'s values, if it holds any.
+    /// The count of changes so far: the same while nothing was set,
+    /// unset, cleared, copied or let go.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn of(&self, pane: PaneId) -> Option<&Setting> {
         self.panes.get(&pane)
     }
@@ -84,6 +94,7 @@ impl PaneSettings {
     /// `value` at `path` for pane `pane`, once it is one a pane may hold
     /// and of the kind the setting is; why not, else.
     pub fn set(&mut self, pane: PaneId, path: &str, value: Setting) -> Result<(), String> {
+        self.generation += 1;
         let Some(key) = keys().find(|k| *k == path) else {
             return Err(not_a_panes(path));
         };
@@ -97,6 +108,7 @@ impl PaneSettings {
 
     /// Takes pane `pane`'s value at `path` out; whether it held one.
     pub fn unset(&mut self, pane: PaneId, path: &str) -> bool {
+        self.generation += 1;
         let Some(t) = self.panes.get_mut(&pane) else {
             return false;
         };
@@ -109,11 +121,13 @@ impl PaneSettings {
 
     /// Takes every value pane `pane` held out.
     pub fn clear(&mut self, pane: PaneId) -> bool {
+        self.generation += 1;
         self.panes.remove(&pane).is_some()
     }
 
     /// Pane `to` holds what `from` does (a split, Decision 1).
     pub fn copy(&mut self, from: PaneId, to: PaneId) {
+        self.generation += 1;
         match self.panes.get(&from).cloned() {
             Some(t) => {
                 self.panes.insert(to, t);
@@ -126,6 +140,7 @@ impl PaneSettings {
 
     /// Only the panes `alive` keeps.
     pub fn retain(&mut self, alive: impl Fn(PaneId) -> bool) {
+        self.generation += 1;
         self.panes.retain(|p, _| alive(*p));
     }
 }
