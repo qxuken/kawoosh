@@ -522,8 +522,11 @@ impl Kawoosh {
             envs.push(("KAWOOSH_SOCKET".into(), sock.display().to_string()));
             if let Ok(exe) = std::env::current_exe() {
                 // The binary itself, for a hook that asks it something
-                // (`kawoosh theme`) without it being on the PATH.
-                envs.push(("KAWOOSH_BIN".into(), exe.display().to_string()));
+                // (`kawoosh theme`) without it being on the PATH — on
+                // Windows `kawoosh.com` beside it, which PowerShell and
+                // cmd wait for and read (`bin/cli.rs`).
+                let bin = crate::cli::console_exe(&exe).unwrap_or_else(|| exe.clone());
+                envs.push(("KAWOOSH_BIN".into(), bin.display().to_string()));
                 // One program with no arguments where there can be one
                 // (`kawoosh-edit`, `app::shipped_editor`): a shell that
                 // runs `$EDITOR` as a path — nushell's `config env` —

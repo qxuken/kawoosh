@@ -15,20 +15,20 @@
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if matches!(args.first().map(String::as_str), Some("-h" | "--help")) {
-        println!(
+        kawoosh::outln!(
             "kawoosh-edit [+LINE] PATH...  open the paths in the running kawoosh, until closed"
         );
         return;
     }
     // No window started for nothing to open.
     if args.is_empty() {
-        eprintln!("kawoosh-edit: edit: no path given");
+        kawoosh::errln!("kawoosh-edit: edit: no path given");
         std::process::exit(1);
     }
     let (sock, outside) = match kawoosh::running::socket_or_start() {
         Ok(found) => found,
         Err(e) => {
-            eprintln!("kawoosh-edit: no running kawoosh, and none started: {e}");
+            kawoosh::errln!("kawoosh-edit: no running kawoosh, and none started: {e}");
             std::process::exit(1);
         }
     };
@@ -36,7 +36,7 @@ fn main() {
         kawoosh::running::raise(pid);
     }
     if let Err(e) = kawoosh_systems::io::edit(&sock, &args, true) {
-        eprintln!("kawoosh-edit: {e}");
+        kawoosh::errln!("kawoosh-edit: {e}");
         std::process::exit(1);
     }
 }

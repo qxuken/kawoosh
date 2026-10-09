@@ -2605,6 +2605,7 @@ dependencies = [
  "kawoosh-lua",
  "kawoosh-systems",
  "kawoosh-term",
+ "kui-ffi",
  "kui-lua",
  "kui-native",
  "libc",
@@ -2690,7 +2691,9 @@ dependencies = [
  "kawoosh-editor",
  "kawoosh-systems",
  "kui-core",
+ "kui-ffi",
  "kui-lua",
+ "libloading 0.9.0",
  "log",
  "mlua",
  "serde_json",
@@ -2850,6 +2853,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0f54521470b4bbd9470fdcf20b94e4779239017f18e3213dbc4cfaa4a28c927"
 dependencies = [
  "kui-core",
+ "kui-native",
 ]
 
 [[package]]

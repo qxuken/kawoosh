@@ -46,8 +46,7 @@ pub fn socket_or_start() -> io::Result<(PathBuf, Option<u32>)> {
 /// path, so it comes up on the last session and the file joins it — a
 /// window started on the file alone would save a session of that file
 /// over the last one as it quits. Apart from the terminal it was
-/// started from: no stdio of it, and out of its process group, so
-/// neither `<C-c>` nor the terminal closing takes the window with it.
+/// started from ([`spawn_apart`]), no stdio of it.
 pub fn start() -> io::Result<(PathBuf, u32)> {
     use kawoosh_systems::io::{Request, send_request, socket_path_of};
     use std::process::{Command, Stdio};
@@ -55,10 +54,40 @@ pub fn start() -> io::Result<(PathBuf, u32)> {
     c.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    let mut child = spawn_apart(&mut c)?;
+    let pid = child.id();
+    let sock = socket_path_of(pid);
+    let until = Instant::now() + STARTING;
+    loop {
+        // Its socket file may be there before the port is written in
+        // it: asked again until something answers.
+        if send_request(&sock, &Request::Theme).is_ok() {
+            return Ok((sock, pid));
+        }
+        if let Some(status) = child.try_wait()? {
+            return Err(io::Error::other(format!(
+                "the kawoosh started exited ({status})"
+            )));
+        }
+        if Instant::now() >= until {
+            return Err(io::Error::other(format!(
+                "the kawoosh started did not answer within {}s",
+                STARTING.as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// A window `c` starts, apart from the terminal this process was run
+/// from: out of its process group, so neither `<C-c>` nor the terminal
+/// closing takes the window with it, and on Windows with none of this
+/// process's own standard handles but those `c` names.
+pub fn spawn_apart(c: &mut std::process::Command) -> io::Result<std::process::Child> {
     #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut c, 0);
+    std::os::unix::process::CommandExt::process_group(c, 0);
     #[cfg(windows)]
-    let mut child = {
+    let child = {
         use std::os::windows::process::CommandExt;
         use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
         use windows_sys::Win32::System::Console::{
@@ -83,38 +112,17 @@ pub fn start() -> io::Result<(PathBuf, u32)> {
         // terminal may close its job, and every process in it, with
         // the tab.
         c.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
-        match kawoosh_systems::spawn::spawn(&mut c) {
+        match kawoosh_systems::spawn::spawn(c) {
             Ok(child) => child,
             Err(_) => {
                 c.creation_flags(CREATE_NEW_PROCESS_GROUP);
-                kawoosh_systems::spawn::spawn(&mut c)?
+                kawoosh_systems::spawn::spawn(c)?
             }
         }
     };
     #[cfg(not(windows))]
-    let mut child = kawoosh_systems::spawn::spawn(&mut c)?;
-    let pid = child.id();
-    let sock = socket_path_of(pid);
-    let until = Instant::now() + STARTING;
-    loop {
-        // Its socket file may be there before the port is written in
-        // it: asked again until something answers.
-        if send_request(&sock, &Request::Theme).is_ok() {
-            return Ok((sock, pid));
-        }
-        if let Some(status) = child.try_wait()? {
-            return Err(io::Error::other(format!(
-                "the kawoosh started exited ({status})"
-            )));
-        }
-        if Instant::now() >= until {
-            return Err(io::Error::other(format!(
-                "the kawoosh started did not answer within {}s",
-                STARTING.as_secs()
-            )));
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    let child = kawoosh_systems::spawn::spawn(c)?;
+    Ok(child)
 }
 
 /// The window's binary: this one, or the `kawoosh` beside it when this

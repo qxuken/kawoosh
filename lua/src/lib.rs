@@ -11,10 +11,12 @@ use std::rc::Rc;
 
 pub mod fuzzy;
 mod meta;
+pub mod native;
 mod nodes;
 mod prof;
 
 pub use fuzzy::{Hit, Matcher};
+pub use native::{KW_ABI_VERSION, KW_PROTOCOL, KwEdit, NativeCell};
 pub use prof::Spent;
 
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
@@ -1409,6 +1411,9 @@ pub struct Runtime {
     pane: std::cell::Cell<u64>,
     /// The plugins' time, while the Perf tab is on show (`prof.rs`).
     prof: prof::ProfCell,
+    /// The native extensions loaded into this runtime
+    /// (docs/design/native.md), their handles and the last error.
+    native: NativeCell,
 }
 
 type DiagKey = (u64, Vec<(BufferId, kawoosh_doc::Version)>);
@@ -1444,6 +1449,8 @@ impl Runtime {
         seed(&lua, &queue, &published, &store, &pending, &tracked, &jobs)?;
         let prof = prof::ProfCell::default();
         prof::seed(&lua, &prof)?;
+        let native = NativeCell::default();
+        native::seed(&lua, &native, &published, &queue)?;
         lua.load(BOOT).set_name("kawoosh:boot").exec()?;
         Ok((
             Self {
@@ -1461,6 +1468,7 @@ impl Runtime {
                 test: RefCell::new(None),
                 pane: std::cell::Cell::new(0),
                 prof,
+                native,
             },
             ext,
         ))
@@ -1536,6 +1544,38 @@ impl Runtime {
             parts.push(s);
         }
         Ok(parts.join("\t"))
+    }
+
+    /// The native extensions loaded into this runtime
+    /// (docs/design/native.md).
+    pub fn native(&self) -> &NativeCell {
+        &self.native
+    }
+
+    /// The namespace a native extension registered view `name` under
+    /// (`kawoosh.view(name, nil, nil, { native = ns })`): its pane is
+    /// the slot `ns/name@pane`, which the extension's `kui_ext_view`
+    /// fills. None for a Lua view.
+    pub fn native_namespace_of(&self, name: &str) -> Option<String> {
+        self.lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<Table>("_native"))
+            .and_then(|t| t.get::<Option<String>>(name))
+            .ok()
+            .flatten()
+    }
+
+    /// The libraries loaded since the last call that draw: for the
+    /// shell's frame to add as kui extensions.
+    pub fn take_native_kui(&self) -> Vec<(String, std::path::PathBuf)> {
+        native::take_pending_kui(&self.native)
+    }
+
+    /// Runs the `kw_wake`s queued from threads; how many ran (their
+    /// messages are on the queue, to drain).
+    pub fn run_native_wakes(&self) -> usize {
+        native::run_wakes(&self.native, &self.lua)
     }
 
     pub fn lua(&self) -> &Lua {
@@ -3344,6 +3384,22 @@ fn register_lines(
 }
 
 /// Where a caret goes after `kawoosh.buf.edits`.
+/// Edits that may go in one message: none overlapping (an empty edit
+/// of nothing is no edit). The rule `kawoosh.buf.edits` and
+/// `kw_buf_edits` share.
+pub(crate) fn check_edits(edits: &[(std::ops::Range<usize>, String)]) -> Result<(), String> {
+    let mut by_start: Vec<&std::ops::Range<usize>> = edits
+        .iter()
+        .filter(|(r, t)| !(r.is_empty() && t.is_empty()))
+        .map(|(r, _)| r)
+        .collect();
+    by_start.sort_by_key(|r| (r.start, r.end));
+    match by_start.windows(2).find(|w| w[1].start < w[0].end) {
+        Some(w) => Err(format!("edits: {:?} and {:?} overlap", w[0], w[1])),
+        None => Ok(()),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Caret {
     /// So many bytes into an edit's text (by its index), bounded by it.
@@ -6283,18 +6339,7 @@ fn seed(
                         None => Caret::At(at),
                     });
                 }
-                let mut by_start: Vec<&std::ops::Range<usize>> = edits
-                    .iter()
-                    .filter(|(r, t)| !(r.is_empty() && t.is_empty()))
-                    .map(|(r, _)| r)
-                    .collect();
-                by_start.sort_by_key(|r| (r.start, r.end));
-                if let Some(w) = by_start.windows(2).find(|w| w[1].start < w[0].end) {
-                    return Err(mlua::Error::runtime(format!(
-                        "edits: {:?} and {:?} overlap",
-                        w[0], w[1]
-                    )));
-                }
+                check_edits(&edits).map_err(mlua::Error::runtime)?;
                 qq.borrow_mut().push(Msg::Edits {
                     buffer: h,
                     edits,
@@ -6835,6 +6880,21 @@ fn seed(
     fs.set(
         "home",
         lua.create_function(|_, ()| Ok(kfs::home().map(|h| kfs::display(&h))))?,
+    )?;
+    // `fs.config()`: the user's config directory, as kawoosh finds it
+    // (`$XDG_CONFIG_HOME/kawoosh`, else `~/.config/kawoosh`) — where
+    // `init.lua`, `settings.lua`, `parsers/` and `ext/` are; nil with no
+    // home. What a plugin would otherwise rebuild from `os.getenv`.
+    fs.set(
+        "config",
+        lua.create_function(|_, ()| Ok(kfs::config_dir().map(|h| kfs::display(&h))))?,
+    )?;
+    // `fs.dylib(name)`: `name` as this platform names a shared library
+    // — `dupes.dylib` on macOS, `dupes.so` on Linux, `dupes.dll` on
+    // Windows — so a path to one reads the same in every `init.lua`.
+    fs.set(
+        "dylib",
+        lua.create_function(|_, name: String| Ok(kfs::dylib(&name)))?,
     )?;
     // `fs.list(path)` answers now; `fs.list(path, fn)` reads the
     // directory on a thread of its own and calls `fn(entries)` — or

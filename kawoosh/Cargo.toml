@@ -22,6 +22,9 @@ tree-sitter-lua.workspace = true
 crossbeam-channel.workspace = true
 kawoosh-lua.workspace = true
 kui-lua.workspace = true
+# A native extension that draws is a kui extension (`CExtension`),
+# added to the frame by the shell (docs/design/native.md Decision 4).
+kui-ffi.workspace = true
 mlua.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -61,6 +64,13 @@ path = "src/bin/edit.rs"
 name = "kawoosh-update"
 path = "src/bin/update.rs"
 
+# `kawoosh` from cmd, PowerShell and nushell on Windows: a console
+# program they wait for, running the window's binary (src/bin/cli.rs),
+# shipped beside it as `kawoosh.com`.
+[[bin]]
+name = "kawoosh-cli"
+path = "src/bin/cli.rs"
+
 [[bin]]
 name = "kawoosh-gen"
 path = "src/bin/gen.rs"
@@ -78,6 +88,8 @@ name = "logger"
 harness = false
 
 # kawoosh.exe's icon (build.rs): rc.exe on Windows, llvm-rc for a build
-# from another host.
+# from another host. serde_json reads `cargo metadata` for kui's header,
+# whose `kui_*` the exe exports on Windows (build.rs, `export_def`).
 [build-dependencies]
 embed-resource = "3"
+serde_json.workspace = true

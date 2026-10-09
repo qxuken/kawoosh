@@ -10,6 +10,8 @@ kawoosh = kawoosh or {}
 kawoosh._views = {}
 kawoosh._handlers = {}
 kawoosh._commands = {}
+-- The views native extensions draw, by name: the namespace each is under.
+kawoosh._native = {}
 kawoosh._writers = {}
 kawoosh._changers = {}
 kawoosh._restorers = {}
@@ -408,6 +410,24 @@ function kawoosh.on_restore(fn)
   kawoosh._restorers[#kawoosh._restorers + 1] = fn
 end
 
+-- kawoosh.extension(namespace[, where]): a native extension loaded
+-- (docs/design/native.md) — a shared library against `kawoosh.h`.
+-- With no `where`, the library is `ext/NAMESPACE` under the config
+-- directory with the platform's extension (`fs.dylib`: `.dylib`,
+-- `.so`, `.dll`; `.so` is accepted on any), so one `init.lua` reads
+-- the same on every machine. `where` may be the library, a directory
+-- holding it, or the path without its extension; `~` and `..` as
+-- `fs.expand` reads them. `true`, or `nil` and the reason, which is
+-- also a notification under the `extension` source: nothing at the
+-- places looked, no `kw_ext_abi`, another ABI, a namespace taken.
+-- `:extensions` lists what is loaded.
+function kawoosh.extension(namespace, where)
+  if where ~= nil then where = kawoosh.fs.expand(tostring(where)) end
+  local ok, err = kawoosh._extension(tostring(namespace), where)
+  if not ok then kawoosh.notify(err, { level = "error", source = "extension" }) end
+  return ok, err
+end
+
 -- kawoosh.notify(text[, opts]): a notification. `opts` is a level name
 -- ("debug", "info", "warn", "error"; info when omitted) or a table:
 -- `level`, `source` (who says so), `show` ("toast", "corner", "log" —
@@ -454,6 +474,17 @@ end
 -- `opts.here(pane)` says the directory the pane shows, if any: where
 -- `:terminal here` starts from it.
 function kawoosh.view(name, fn, on_event, opts)
+  -- `{ native = NAMESPACE }`: the view a native extension draws
+  -- (docs/design/native.md Decision 4) — its pane is the slot
+  -- `NAMESPACE/NAME@PANE`, which the extension's `kui_ext_view` fills;
+  -- the function here is what draws if the extension does not.
+  if opts and opts.native then
+    kawoosh._native[name] = tostring(opts.native)
+    fn = fn or function(ctx)
+      return column { pad = 12, text("`" .. name .. "`: `" .. tostring(opts.native) ..
+        "` draws no such view", { color = ctx.env.theme.danger }) }
+    end
+  end
   kawoosh._views[name] = fn
   kawoosh._handlers[name] = on_event
   kawoosh._transient[name] = (opts and opts.session == false) or nil

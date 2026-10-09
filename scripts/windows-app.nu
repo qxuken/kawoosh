@@ -4,12 +4,30 @@
 # binary is a GUI program (`windows_subsystem`). What goes in:
 #
 #   Kawoosh\kawoosh.exe        the window, its icon linked in (build.rs)
+#   Kawoosh\kawoosh.com        `kawoosh` from cmd, PowerShell and nushell:
+#                              the CLI half as a console program they
+#                              wait for and read (kawoosh-cli, src/bin/cli.rs)
 #   Kawoosh\kawoosh-edit.exe   a terminal's $EDITOR, found beside it
 #   Kawoosh\kawoosh-update.exe what :relaunch puts the next one in with
 #   Kawoosh\conpty.dll         the pseudo console, and the host a terminal's
 #   Kawoosh\OpenConsole.exe    screen is rendered in (`console-host` below)
 #   Kawoosh\fonts\             the bundled faces, found from the binary
 #                              (left out with --no-fonts)
+#   Kawoosh\kawoosh.lib        what a native extension links against, and
+#   Kawoosh\include\           the two headers it is built with (below)
+#
+# A native extension (docs/design/native.md) calls `kw_*` and `kui_*`
+# from kawoosh.exe. Windows resolves a DLL's imports through an import
+# library naming the module they come from, so kawoosh.exe exports both
+# families (kawoosh/build.rs) and link.exe writes `kawoosh.lib` beside it;
+# shipped with `kawoosh.h` and the `kui.h` of the kui it was built with,
+# an extension builds from this folder alone:
+#
+#   clang -O2 -shared -I Kawoosh\include dupes.c Kawoosh\kawoosh.lib -o dupes.dll
+#
+# and loads into this kawoosh.exe — an import library names its module.
+# The same three, for every platform and from any machine, are the
+# extension pack (scripts/pack.nu).
 #
 # With --install, Kawoosh is also registered as an editor, all of it
 # under HKCU (`register-editor` below):
@@ -86,7 +104,7 @@ def main [
   # Before the build: a package that cannot be had stops it early.
   let host = console-host $target
 
-  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit --bin kawoosh-update
+  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-cli --bin kawoosh-edit --bin kawoosh-update
   # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
   let version = ^cargo pkgid --manifest-path $manifest -p kawoosh | str trim | str replace -r '.*[#@]' ''
 
@@ -110,9 +128,21 @@ def main [
   for bin in [kawoosh kawoosh-edit kawoosh-update] {
     cp ($target | path join release $"($bin).exe") $fresh
   }
+  # By `PATHEXT` a `.com` is found before an `.exe` of its name.
+  cp ($target | path join release kawoosh-cli.exe) ($fresh | path join kawoosh.com)
   for f in $host {
     cp $f $fresh
   }
+  # link.exe writes the import library beside the binary in `deps\`,
+  # where cargo leaves it.
+  let lib = $target | path join release deps kawoosh.lib
+  if not ($lib | path exists) {
+    error make {msg: $"no ($lib): kawoosh.exe exported nothing, so no native extension can link against it. See the build's warnings (kawoosh/build.rs)"}
+  }
+  cp $lib $fresh
+  mkdir ($fresh | path join include)
+  cp ($root | path join kawoosh include kawoosh.h) ($fresh | path join include)
+  cp (kui-header $manifest) ($fresh | path join include)
   if not $no_fonts {
     cp -r $fonts $fresh
   }
@@ -237,6 +267,14 @@ def register-editor [exe: path, built: path] {
       [Kawoosh.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
     '#
   }
+}
+
+# `kui.h` of the kui-ffi the build links: the header `kawoosh.h`
+# includes, at the ABI kawoosh.exe was built with.
+def kui-header [manifest: path]: nothing -> path {
+  ^cargo metadata --format-version 1 --offline --manifest-path $manifest
+    | from json | get packages | where name == 'kui-ffi' | first
+    | get manifest_path | path dirname | path join include kui.h
 }
 
 # Microsoft.Windows.Console.ConPTY (MIT), the version shipped and its
