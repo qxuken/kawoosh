@@ -90,6 +90,9 @@ impl Kawoosh {
         if !back && changed.is_empty() {
             return;
         }
+        // A file gone may have gone with its directory: a tab's, moved,
+        // takes the buffers under it along before any is said deleted.
+        self.check_dirs(&[]);
         let ids: Vec<BufferId> = self
             .ed
             .buffers

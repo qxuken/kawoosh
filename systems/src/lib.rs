@@ -7,6 +7,7 @@ pub mod du;
 pub mod filter;
 pub mod fs;
 pub mod grammars;
+pub mod held_dir;
 pub mod indent;
 pub mod io;
 pub mod job;

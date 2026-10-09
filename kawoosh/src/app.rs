@@ -92,6 +92,8 @@ pub struct Kawoosh {
     pub config: Config,
     /// The watch on the open buffers' files (`disk.rs`).
     pub disk: crate::disk::DiskWatch,
+    /// The tabs' directories, followed when moved (`cwd_watch.rs`).
+    pub cwd_watch: crate::cwd_watch::CwdWatch,
     /// The watch for a new Kawoosh beside this one (`update.rs`).
     pub(crate) update: crate::update::UpdateWatch,
     /// The project `init.lua` records and the question up (`trust.rs`).
@@ -438,6 +440,7 @@ impl Kawoosh {
             domains: Default::default(),
             config: Config::new(wake.named("settings"), beat.clone()),
             disk: crate::disk::DiskWatch::new(wake.named("disk"), beat.clone()),
+            cwd_watch: crate::cwd_watch::CwdWatch::new(wake.named("cwd"), beat.clone()),
             update: Default::default(),
             trust: Default::default(),
             compile: Compile::default(),
@@ -607,8 +610,9 @@ impl Kawoosh {
     /// the project layer and the trusted `init.lua` are read again only
     /// when `dir` is in another project, whose files above it are not
     /// the same list; the settings watch follows it either way. `how`
-    /// is what `kawoosh.on_cwd` is told: `cd`, or `tab` for a switch to
-    /// a tab in another directory.
+    /// is what `kawoosh.on_cwd` is told: `cd`, `tab` for a switch to a
+    /// tab in another directory, `moved` or `gone` for one moved or
+    /// deleted under it (`cwd_watch.rs`).
     pub(crate) fn apply_cwd(&mut self, dir: PathBuf, how: &'static str) {
         let project = |d: &Path| {
             (
@@ -2739,6 +2743,7 @@ impl kui_native::App for Kawoosh {
         t = self.perf.lap(Io, "processes", t);
         self.sync_settings();
         self.fire_settings();
+        self.sync_dirs(false);
         self.sync_cwd();
         self.sync_editorconfig();
         self.sync_probes();
@@ -3035,6 +3040,7 @@ impl Kawoosh {
         // looked at for what changed while it was away.
         if ev.kind() == Some("window") {
             if p.get_str("phase") == Some("focused") {
+                self.sync_dirs(true);
                 self.sync_disk(true);
                 self.sync_clipboard(core, true);
             }
