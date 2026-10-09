@@ -922,10 +922,43 @@ not: 313 against 231 — 50 ms of it is spent with no delay at all, as
 OpenSSH's is (~72 ms), so it is this sshd's own cost, not the client's.
 So is a session's first process: 49 ms with no delay, against dropbear's
 1.9 — OpenSSH's first through a fresh master took 56, its later ones 12.
-On macOS the default is OpenSSH with a master, and through it a process
-is about two round trips against the builtin exec's three: a lead,
-not chased (the exec is sent with `want_reply`; whether waiting on it
-is the third is not measured).
+
+*The two clients side by side on macOS* (the same day, the same
+containers; one scratch bench running the same steps over each in one
+process — the SFTP client, the runner, the echo loop the same code —
+three runs, the range shown). OpenSSH is macOS's own, `/usr/bin/ssh`
+(OpenSSH 10.3p1, LibreSSL), the way kawoosh runs it here: one master
+(`-M`, `ControlPersist`), every channel through it, and so no runners —
+a script is a process through the master.
+
+| | russh, 30 ms | OpenSSH + master, 30 ms | russh, 0 ms | OpenSSH + master, 0 ms |
+|---|---|---|---|---|
+| connect (the master up) | 301–329 ms | 357–372 ms | 50–53 ms | 63–69 ms |
+| a process, the session's first | 144–150 | 157–167 | 49–51 | 52–55 |
+| a process, later | 72–73 | 77–85 | 2.2–2.4 | 10–11 |
+| the SFTP channel | 106–111 | 146–152 | 1.7–2.0 | 9–10 |
+| a stat | 34–37 | 36–37 | 0.3–0.4 | 0.3 |
+| a listing (6) | 68–69 | 70–74 | 0.7–0.8 | 0.6–0.7 |
+| read 2.8 MB | 279–286 | 286–292 | 81–82 | 81–82 |
+| write 2.8 MB | 184–197 | 187–249 | 14–15 | 12–16 |
+| a script (a runner; a process) | 36–39 | 80–86 | 1.2–1.3 | 8.9–9.3 |
+| `git ls-files`, 3,004 files | 37–42 | 72–83 | 2.0–2.3 | 9–11 |
+| a terminal's echo | 35 | 41–42 | 0.3 | 20–22 |
+
+Over the wire the two are one protocol and cost the same: a stat, a
+listing, a read and a write are the round trips either way, and a
+process is two (the earlier note here, that the builtin exec took three
+against OpenSSH's two, set the session's first against later ones — it
+was wrong). Where they part is around the wire. Each OpenSSH channel is
+a process of its own (`ssh -S`), 8 to 10 ms of start and mux before a
+byte moves, so a script costs one round trip through a runner and two
+through the master — the runner's whole point, which a master rules out.
+And OpenSSH's terminal echo waits on `ObscureKeystrokeTiming` (on since
+OpenSSH 9.5): keystrokes leave on a 20 ms tick, hiding their timing from
+whoever watches the traffic — 20 ms a key on a fast link, 6 to 8 at
+30 ms. With `-o ObscureKeystrokeTiming=no` given to the master (a mux
+client's own is ignored) it is 0.3 ms, as russh's; russh has no such
+obfuscation.
 `builtin_ssh.rs` passes against both containers (the dropbear's root
 given a password, else the `none` probe gets in and no key is tried).
 
