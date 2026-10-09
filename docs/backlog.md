@@ -142,13 +142,6 @@ afternoon.
   parity test, the typed buffer doors) and four (Windows: the exports,
   `kawoosh.lib` shipped, a run there) are built.
   ([native.md](design/native.md))
-- **Two kui notes from native views replayed** (an F-round each, small):
-  `kui_theme` reads the theme with no `Read` noted, so a fill that drew
-  from it replays across a theme change (kawoosh covers it with the
-  palette in its claim); and `Core::slot_fill` after a frame that
-  filled with `slot_kept` answers the frame before's `slot_replay`
-  answer, not nothing. ([native.md](design/native.md), "Native views
-  replayed")
 
 ## Look
 
