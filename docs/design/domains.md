@@ -901,6 +901,34 @@ over 30 ms its files' calls are cheaper than through a process's pipes.
 And it reaches what the OpenSSH path on Windows cannot: a host that
 takes a password, or a key with a passphrase and no agent running.
 
+*Measured on macOS* (2026-10-09, Apple Silicon, Docker Desktop: a
+Debian bookworm `sshd` behind 30 ms of `netem`, OpenWrt 24.10.8's
+rootfs for dropbear; the client's own ignored tests, three runs each,
+russh 0.58 and 0.64.1 alike within their noise). The container's own
+round trip is 0.4 ms, so Docker's port proxy adds nothing measurable.
+
+| | builtin, 30 ms | openssh, 30 ms | builtin, 0 ms | dropbear, 0 ms |
+|---|---|---|---|---|
+| connect | 313–324 ms | 336 ms (a master up), ~510 (`ssh true`) | 50 ms | 19 ms |
+| a process | 144–150 ms, the first | 70–77 ms through a master, ~510 without | 49 ms, the first | 1.9 ms |
+| the SFTP channel | 103–108 ms | 601 ms (a connection) | 2.1 ms | refused cleanly |
+| a script through a runner | 35–40 ms | 37–50 ms | 2.0 ms | 2.3 ms |
+| `git ls-files`, 3,004 files | — | 47 ms (runner), 574 (a process) | — | — |
+| a terminal's echo | 34–35 ms | — | 0.4 ms | 0.3 ms |
+
+The round trip here is about 34 ms, against Windows' 31, and every
+channel step is Windows' number plus that difference. Connect is
+not: 313 against 231 — 50 ms of it is spent with no delay at all, as
+OpenSSH's is (~72 ms), so it is this sshd's own cost, not the client's.
+So is a session's first process: 49 ms with no delay, against dropbear's
+1.9 — OpenSSH's first through a fresh master took 56, its later ones 12.
+On macOS the default is OpenSSH with a master, and through it a process
+is about two round trips against the builtin exec's three: a lead,
+not chased (the exec is sent with `want_reply`; whether waiting on it
+is the third is not measured).
+`builtin_ssh.rs` passes against both containers (the dropbear's root
+given a password, else the `none` probe gets in and no key is tried).
+
 Tests: `ssh_config.rs`'s resolve; `ssh.rs`'s
 `one_connection_carries_everything` (ignored, against any host: an
 exec's code and outputs, SFTP, a runner, a pty's echo, a forward back);
