@@ -42,11 +42,6 @@ pub enum IoMsg {
     /// The grammars there are, fetched alone (`grammars::refresh`): the
     /// bases' list and which did not answer, or why none did.
     Grammars(Result<crate::grammars::Listing, String>),
-    /// A wake the app asked for at a time (`Io::tick_at`): a status
-    /// segment that changes with the clock (docs/design/status.md).
-    Tick,
-    /// A wake at a time and nothing else: a picture's next frame is due.
-    Wake,
     /// A change `kawoosh.fs.remove(path, fn)` or `fs.copy(a, b, fn)`
     /// made on a thread of its own: the job's token, and why not.
     FsDone {

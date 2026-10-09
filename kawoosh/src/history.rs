@@ -173,7 +173,7 @@ impl Histories {
             base: HashMap::new(),
             over: HashSet::new(),
             changed: 0,
-            alarm: Alarm::spawn(wake),
+            alarm: Alarm::latest(wake),
             quiet: QUIET,
             max_text: MAX_TEXT,
         }

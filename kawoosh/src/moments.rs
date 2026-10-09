@@ -191,7 +191,7 @@ impl Moments {
             changed: 0,
             evicted: 0,
             swept: false,
-            alarm: Alarm::spawn(wake),
+            alarm: Alarm::latest(wake),
             quiet: QUIET,
             window_focused: true,
         }

@@ -299,13 +299,7 @@ impl Kawoosh {
         }
         let due = (k.since + Duration::from_millis(k.frames[k.at].delay_ms as u64)).max(now);
         k.due = Some(due);
-        // A test draws its frames itself.
-        if !self.jobs_inline {
-            self.io.run("picture frame", move || {
-                std::thread::sleep(due.saturating_duration_since(Instant::now()));
-                IoMsg::Wake
-            });
-        }
+        self.picture_alarm.set(due);
     }
 
     /// `frame = n`: the frame shown, from 0, held from now.

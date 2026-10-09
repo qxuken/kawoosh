@@ -579,6 +579,10 @@ impl Kawoosh {
             return;
         };
         let now = std::time::SystemTime::now();
+        // The beat this frame reached is spent.
+        if self.status_due.is_some_and(|d| d <= now) {
+            self.status_due = None;
+        }
         let secs = now
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |d| d.as_secs_f64());
@@ -589,10 +593,7 @@ impl Kawoosh {
         }
         self.status_due = Some(due);
         let wait = due.duration_since(now).unwrap_or_default();
-        self.io.run("status tick", move || {
-            std::thread::sleep(wait);
-            kawoosh_systems::io::IoMsg::Tick
-        });
+        self.status_alarm.set(std::time::Instant::now() + wait);
     }
 
     /// The segments `kawoosh.status` put at `place`, as blocks: each

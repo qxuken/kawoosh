@@ -393,7 +393,7 @@ impl Frames {
         let f = Self::default();
         Self {
             on: f.log.is_some(),
-            alarm: Some(Alarm::spawn(wake.named(OWN_WAKE))),
+            alarm: Some(Alarm::latest(wake.named(OWN_WAKE))),
             ..f
         }
     }
@@ -680,6 +680,13 @@ impl Kawoosh {
         let core = ui.core();
         if core.frame_trace() != on {
             core.set_frame_trace(on);
+        }
+        // The alarms this frame reached are spent and counted as the
+        // wakes they are, and the loop asked for the next.
+        let now = Instant::now();
+        self.wake.fire_alarms(now);
+        for w in &self.shared_wakes {
+            w.fire_alarms(now);
         }
         // The wakes' tally is taken either way, so the first frame kept
         // does not count the ones from before.

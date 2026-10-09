@@ -342,7 +342,7 @@ float, and the answer is two-fold:
   line with a syntax error on every line after it, and the messages reflowed
   on every key; in insert mode an answer for a buffer whose text moved in the
   last 600 ms (`lsp::DIAG_QUIET`) is held, the newest kept, and applied once
-  the text has been still that long — an alarm thread brings the frame, since
+  the text has been still that long — an alarm brings the frame, since
   no keystroke will — or the moment insert mode ends. The open's answer lands
   at once.
 - **Hover, type info, diagnostics detail, and signature help open a real

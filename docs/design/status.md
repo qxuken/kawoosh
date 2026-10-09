@@ -89,8 +89,9 @@ answering one), `kawoosh.lsp.counts()`. `kawoosh/src/chrome.rs`: the
 title bar's blocks are parts in colours now, the segments first, then
 kawoosh's own; the tab strip draws its segments in a row beside the
 tabs when it has any; `sync_status_tick` asks one wake at a time for
-the shortest `every`'s next beat on the wall clock (`IoMsg::Tick`, a
-thread sleeping till then). `kawoosh/lua/status.lua`, bundled: the
+the shortest `every`'s next beat on the wall clock (a soonest
+`Alarm`, the loop asleep till then; until kui alpha.47 an io job
+slept to it and sent `IoMsg::Tick`). `kawoosh/lua/status.lua`, bundled: the
 clock (`status.clock`) and the counts (`status.diagnostics`). Tests:
 `kawoosh/tests/status.rs` — a segment on each place, a click running
 its command, hidden by `nil`, taken away by `nil` and by failing; the

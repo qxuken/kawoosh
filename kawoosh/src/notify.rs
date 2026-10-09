@@ -271,7 +271,7 @@ impl Notifications {
             progress: Vec::new(),
             log_version: 0,
             next_id: 0,
-            alarm: Alarm::spawn_soonest(wake),
+            alarm: Alarm::soonest(wake),
             last_echo: String::new(),
             echo_at: None,
             focus: None,

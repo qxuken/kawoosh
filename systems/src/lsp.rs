@@ -2059,7 +2059,7 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         event_tx,
         progress_pace: Pace::new(PROGRESS_PACE),
         progress_wake: wake.named("lsp progress"),
-        progress_at: crate::Alarm::spawn_soonest(wake.named("lsp progress")),
+        progress_at: crate::Alarm::soonest(wake.named("lsp progress")),
         wake,
         failed: Default::default(),
         crashes: HashMap::new(),

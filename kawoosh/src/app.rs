@@ -254,6 +254,10 @@ pub struct Kawoosh {
     pub(crate) beat: kawoosh_systems::watch::Beat,
     /// Brings the frame that ends a yank's wash (`sync_flash`).
     flash_alarm: kawoosh_systems::Alarm,
+    /// The next beat of a status segment's clock (`sync_status_tick`).
+    pub(crate) status_alarm: kawoosh_systems::Alarm,
+    /// A moving picture's next frame (`picture_play`).
+    pub(crate) picture_alarm: kawoosh_systems::Alarm,
     /// Wake handles made before the app was — the logger's — set with
     /// the app's own in `setup`.
     pub(crate) shared_wakes: Vec<WakeHandle>,
@@ -490,7 +494,9 @@ impl Kawoosh {
             memory_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
-            flash_alarm: kawoosh_systems::Alarm::spawn(wake.named("flash")),
+            flash_alarm: kawoosh_systems::Alarm::latest(wake.named("flash")),
+            status_alarm: kawoosh_systems::Alarm::soonest(wake.named("status tick")),
+            picture_alarm: kawoosh_systems::Alarm::soonest(wake.named("picture frame")),
             wake,
             beat,
             shared_wakes: Vec::new(),
@@ -911,8 +917,6 @@ impl Kawoosh {
                 IoMsg::Request(incoming) => self.on_request(incoming),
                 IoMsg::Grammar { name, step } => self.on_grammar(name, step),
                 IoMsg::Grammars(result) => self.on_grammars(result),
-                // A status segment's time came: the wake drew the frame.
-                IoMsg::Tick => self.status_due = None,
                 IoMsg::FsDone { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {
@@ -954,7 +958,6 @@ impl Kawoosh {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     self.image_decoded(path, result, drawn);
                 }
-                IoMsg::Wake => {}
                 IoMsg::Searched {
                     token,
                     root,
@@ -2637,11 +2640,17 @@ pub const ASYNC_OPEN_BYTES: usize = 64 << 20;
 
 impl kui_native::App for Kawoosh {
     fn setup(&mut self, waker: kui_native::Waker) {
+        let at: kawoosh_systems::WakeAt = {
+            let waker = waker.clone();
+            Arc::new(move |t| waker.wake_at(t))
+        };
         let wake: kawoosh_systems::Wake = Arc::new(move || waker.wake());
         for w in &self.shared_wakes {
             w.set(wake.clone());
+            w.set_at(at.clone());
         }
         self.wake.set(wake);
+        self.wake.set_at(at);
         kawoosh_lua::native::set_waker(self.wake.named("native"));
         let path = kawoosh_systems::io::socket_path();
         match self.io.listen(&path) {
