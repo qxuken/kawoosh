@@ -341,6 +341,76 @@ fn a_native_pane_is_a_slot_and_its_clicks_are_its_own() {
     assert_eq!(d.warnings(), Vec::<String>::new(), "kui raised no warning");
 }
 
+/// How many times the native pane's `kui_ext_view` has run, as the
+/// pane says it (`view ran N times`): a replayed frame shows the last
+/// fill's number again.
+fn panel_runs(d: &Drive) -> u32 {
+    d.core
+        .nodes()
+        .into_iter()
+        .find_map(|n| {
+            let t = n.text.clone()?;
+            t.strip_prefix("view ran ")?
+                .strip_suffix(" times")?
+                .parse()
+                .ok()
+        })
+        .expect("the native pane is drawn")
+}
+
+#[test]
+fn a_native_pane_is_replayed_until_native_code_runs() {
+    let so = build("panel", &[], "replay-build");
+    let (mut d, mut app) = launch("replay", LINES);
+    assert_eq!(load(&mut app, "panel", &so), "ok");
+    ex(&mut d, &mut app, "cpanel");
+    for _ in 0..4 {
+        d.advance(0.25);
+        d.frame(&mut app);
+    }
+    d.frame(&mut app);
+    let (_, rect) = pane_text(&mut d).expect("the native pane is drawn");
+
+    // Nothing the host feeds it moved: kui pushes the kept fill again
+    // and the extension's `kui_ext_view` is not asked.
+    let ran = panel_runs(&d);
+    for _ in 0..5 {
+        d.advance(0.016);
+        d.frame(&mut app);
+    }
+    assert_eq!(panel_runs(&d), ran, "idle frames are replayed");
+
+    // A click is handed to its `kui_ext_on_event`, which the host never
+    // sees: counted as a call in, the frame after it (the harness draws
+    // one inside the click) runs the view and shows it.
+    let (x, y, w, h) = rect;
+    d.click(&mut app, x + w / 2.0, y + h / 2.0);
+    let (text, _) = pane_text(&mut d).unwrap();
+    assert!(text.ends_with(", clicks 1"), "{text}");
+    let ran = panel_runs(&d);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(panel_runs(&d), ran, "settled again");
+
+    // A command of its own is a `KwFn` call: the view runs again, once.
+    lua(&mut app, "kawoosh.run('cpanel')");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(panel_runs(&d), ran + 1, "after a native command");
+
+    // Plain Lua is not native code: still replayed.
+    lua(&mut app, "kawoosh.echo('lua only')");
+    d.frame(&mut app);
+    assert_eq!(panel_runs(&d), ran + 1, "after Lua alone");
+
+    // The palette is the host's (kui's `kui_theme` notes no read).
+    ex(&mut d, &mut app, "theme toggle");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(panel_runs(&d) > ran + 1, "a theme change runs it again");
+    assert_eq!(d.warnings(), Vec::<String>::new(), "kui raised no warning");
+}
+
 #[test]
 fn a_thread_comes_back_through_kw_wake() {
     let so = build("panel", &[], "wake-build");

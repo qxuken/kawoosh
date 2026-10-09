@@ -35,6 +35,7 @@ use std::ffi::{CStr, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use kui_ffi::{
@@ -182,6 +183,27 @@ fn with_ctx<T>(
     f(&mut ctx)
 }
 
+/// How many times the host has called into native code: a `KwFn` (a
+/// command, a map, a hook, a wake), a `kw_ext_init`, a kui event an
+/// extension's `kui_ext_on_event` was handed (the shell's, `touch`).
+/// Every change to an extension's state happens inside one of these, so
+/// a native view whose last fill was at this count draws the same now
+/// — the host's half of a slot replay (kui ADR 0045, native.md
+/// "native views replayed"). The process's, as the wakes are: the kui
+/// half outlives a runtime, and a count that restarted with one could
+/// meet an old fill's.
+static CALLS_IN: AtomicU64 = AtomicU64::new(0);
+
+/// The count of calls into native code so far (`CALLS_IN`).
+pub fn calls_in() -> u64 {
+    CALLS_IN.load(Ordering::Relaxed)
+}
+
+/// One more call into native code is about to run.
+pub fn touch() {
+    CALLS_IN.fetch_add(1, Ordering::Relaxed);
+}
+
 /// A call queued from a thread (`kw_wake`), run on the UI thread.
 struct Wake(KwFn, *mut c_void);
 // SAFETY: the pointer crosses threads by the header's contract — what
@@ -209,6 +231,7 @@ pub fn run_wakes(native: &NativeCell, lua: &Lua) -> usize {
     let wakes: Vec<Wake> = std::mem::take(&mut *WAKES.lock().unwrap());
     let n = wakes.len();
     for Wake(f, user) in wakes {
+        touch();
         let out = with_ctx(native, lua, None, |c| f(user, c, std::ptr::null()));
         kui_value_free(out);
     }
@@ -627,6 +650,7 @@ fn handle(ctx: &KwCtx, id: i64) -> mlua::Result<LV> {
         for a in args.iter() {
             kui_value_list_push(list, to_c(a));
         }
+        touch();
         let (out, v) = with_ctx(&native, lua, namespace.as_deref(), |c| {
             let out = f(user, c, list);
             // SAFETY: `c` is the context made for this call, alive here.
@@ -817,6 +841,7 @@ pub fn load(native: &NativeCell, lua: &Lua, namespace: &str, path: &Path) -> Res
     // Last, so an init that allocates does so once every check has
     // passed and `free` is already known to undo it.
     let user = init.map_or(std::ptr::null_mut(), |init| {
+        touch();
         with_ctx(native, lua, Some(namespace), |c| init(c))
     });
     let mut n = native.borrow_mut();
