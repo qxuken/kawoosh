@@ -40,8 +40,10 @@ lines) dlopens a library, refuses one with no `kui_ext_abi`, another
 ABI or no `kui_ext_view`, reads its slots and name, runs its init;
 `Ui::add_extension(namespace, ext)` puts it in the frame's list, a
 namespace of its own; `kui.h` (4k lines; ABI 25 at alpha.41, where
-rounds one to four were built, 26 at alpha.44, where kawoosh is since
-2026-10-09 — the export list the same 280) is the header, with
+rounds one to four were built, 26 at alpha.44 — the export list the
+same 280 — and 27 at alpha.47, where kawoosh is since 2026-10-09: the
+turns, keyframes and frame clock added, `KuiStr`/`KuiValue` and the
+`kui_ext_*` points untouched) is the header, with
 `KuiStr`, `KuiValue` (map, list, str, int, float, bool, null; 19
 functions) and the seven `kui_ext_*` entry points; `abi_parity`
 (`kui-ffi/build.rs`) regenerates `_Static_assert`s from the Rust layout

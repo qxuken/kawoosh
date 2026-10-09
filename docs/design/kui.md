@@ -551,9 +551,16 @@ server's token. A running token with a percentage is a loader: a bar
 under its line, filled that far, whoever owns the token.
 
 Redraw stays event-driven: what times out arms a `systems::Alarm` at the
-earliest expiry (`Alarm::spawn_soonest`; the diagnostics debounce keeps
-the latest-wins one), so a toast's going brings its own frame and a
-quiet editor still draws nothing.
+earliest expiry (`Alarm::soonest`; the diagnostics debounce keeps
+the latest-wins `Alarm::latest`), so a toast's going brings its own
+frame and a quiet editor still draws nothing. Since kui alpha.47 no
+thread waits for one: the alarms of a `WakeHandle` keep their times
+there, the loop is asked for the soonest through `Waker::wake_at`
+(kui F135) and sleeps to it, and each frame spends the ones it reached
+(`WakeHandle::fire_alarms`, counted under their names for `:frames`)
+and asks for the next. Before, each alarm was a thread of its own
+sleeping on a channel, ten of them, and a status clock or a GIF's
+next frame held an io worker in `sleep`.
 
 ### 10. Settings: data in layers, a file per source, reloaded on save
 

@@ -59,7 +59,7 @@ impl Secrets {
             asked: HashMap::new(),
             given: HashMap::new(),
             revealed: None,
-            alarm: Alarm::spawn_soonest(wake),
+            alarm: Alarm::soonest(wake),
             waited: None,
         }
     }

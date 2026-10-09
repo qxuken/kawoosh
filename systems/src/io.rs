@@ -42,11 +42,6 @@ pub enum IoMsg {
     /// The grammars there are, fetched alone (`grammars::refresh`): the
     /// bases' list and which did not answer, or why none did.
     Grammars(Result<crate::grammars::Listing, String>),
-    /// A wake the app asked for at a time (`Io::tick_at`): a status
-    /// segment that changes with the clock (docs/design/status.md).
-    Tick,
-    /// A wake at a time and nothing else: a picture's next frame is due.
-    Wake,
     /// A change `kawoosh.fs.remove(path, fn)` or `fs.copy(a, b, fn)`
     /// made on a thread of its own: the job's token, and why not.
     FsDone {
@@ -2320,7 +2315,7 @@ mod tests {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
-            use std::io::Write;
+            use std::io::{BufRead, BufReader, Write};
             let mut got = Vec::new();
             for reply in ["closed", "/picked dir"] {
                 let (mut s, _) = l.accept().unwrap();

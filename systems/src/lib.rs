@@ -48,6 +48,10 @@ pub const PLATFORM: &str = if cfg!(target_os = "macos") {
 /// Wakes the UI loop. Cheap to clone, safe from any thread.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
+/// Wakes the UI loop at a time: the loop sleeps to it, the earliest
+/// asked for winning, and forgets it once a frame reaches it.
+pub type WakeAt = Arc<dyn Fn(Instant) + Send + Sync>;
+
 pub fn no_wake() -> Wake {
     Arc::new(|| {})
 }
@@ -70,6 +74,13 @@ pub struct WakeHandle {
 
 struct Shared {
     wake: Mutex<Wake>,
+    /// The loop woken at a time — the runner's `Waker::wake_at` — with
+    /// no thread waiting for it; none before [`WakeHandle::set_at`],
+    /// as a headless test has none.
+    at: Mutex<Option<WakeAt>>,
+    /// Every [`Alarm`] made from this handle, its time kept here until
+    /// a frame reaches it ([`WakeHandle::fire_alarms`]).
+    alarms: Mutex<Alarms>,
     /// Every name a handle was made under, with its wakes since the
     /// last [`WakeHandle::take_counts`].
     names: Mutex<Vec<(&'static str, Arc<AtomicU32>)>>,
@@ -89,6 +100,8 @@ impl WakeHandle {
         Self {
             shared: Arc::new(Shared {
                 wake: Mutex::new(no_wake()),
+                at: Mutex::new(None),
+                alarms: Mutex::new(Alarms::default()),
                 names: Mutex::new(vec![("wake", count.clone())]),
             }),
             count,
@@ -115,6 +128,54 @@ impl WakeHandle {
 
     pub fn set(&self, wake: Wake) {
         *self.shared.wake.lock().unwrap() = wake;
+    }
+
+    /// The wake at a time, for the [`Alarm`]s: set with [`set`](Self::set),
+    /// once the window's waker is known. The alarms armed before it are
+    /// asked for at once.
+    pub fn set_at(&self, at: WakeAt) {
+        *self.shared.at.lock().unwrap() = Some(at);
+        let mut alarms = self.shared.alarms.lock().unwrap();
+        alarms.asked = None;
+        self.ask(&mut alarms, Instant::now());
+    }
+
+    /// A frame's look at the alarms: those whose time has come are
+    /// spent, each counted as a wake under its name (the frame is the
+    /// wake it asked for), and the loop is asked for the soonest of the
+    /// rest. Every frame calls it, before anything reads the time.
+    pub fn fire_alarms(&self, now: Instant) {
+        let mut alarms = self.shared.alarms.lock().unwrap();
+        alarms.slots.retain(|slot| {
+            let Some(slot) = slot.upgrade() else {
+                return false;
+            };
+            let mut due = slot.due.lock().unwrap();
+            if due.is_some_and(|t| t <= now) {
+                *due = None;
+                slot.count.fetch_add(1, Ordering::Relaxed);
+            }
+            true
+        });
+        self.ask(&mut alarms, now);
+    }
+
+    /// Asks the loop for the soonest alarm, unless what it was asked
+    /// for last is still ahead and no later.
+    fn ask(&self, alarms: &mut Alarms, now: Instant) {
+        let soonest = alarms
+            .slots
+            .iter()
+            .filter_map(|s| s.upgrade().and_then(|s| *s.due.lock().unwrap()))
+            .min();
+        let Some(t) = soonest else { return };
+        if alarms.asked.is_some_and(|a| a > now && a <= t) {
+            return;
+        }
+        if let Some(at) = self.shared.at.lock().unwrap().as_ref() {
+            alarms.asked = Some(t);
+            at(t);
+        }
     }
 
     pub fn wake(&self) {
@@ -144,54 +205,70 @@ impl WakeHandle {
 /// while its buffer is being typed in, and there is no keystroke to
 /// bring the frame that applies it), or once something has been on
 /// show for long enough (a toast's timeout). `set` arms it; armed again
-/// before it fires, [`Alarm::spawn`]'s keeps the later time (a debounce:
-/// the last keystroke's quiet is the one that counts) and
-/// [`Alarm::spawn_soonest`]'s the earlier (a deadline: the first toast
-/// to expire is the one to wake for).
+/// before it fires, [`Alarm::latest`]'s keeps the later time (a
+/// debounce: the last keystroke's quiet is the one that counts) and
+/// [`Alarm::soonest`]'s the earlier (a deadline: the first toast to
+/// expire is the one to wake for).
+///
+/// No thread waits for it: its time is kept by the [`WakeHandle`] it
+/// was made from, which asks the loop for the soonest of its alarms
+/// (kui's `Waker::wake_at`) and spends them as frames reach them
+/// ([`WakeHandle::fire_alarms`]). A clone is the same alarm.
 #[derive(Clone)]
 pub struct Alarm {
-    tx: crossbeam_channel::Sender<Instant>,
+    slot: Arc<AlarmSlot>,
+    wake: WakeHandle,
+}
+
+struct AlarmSlot {
+    due: Mutex<Option<Instant>>,
+    pick: fn(Instant, Instant) -> Instant,
+    /// The tally of the name the alarm was made under.
+    count: Arc<AtomicU32>,
+}
+
+/// A handle's alarms, and the time the loop was last asked for.
+#[derive(Default)]
+struct Alarms {
+    slots: Vec<std::sync::Weak<AlarmSlot>>,
+    asked: Option<Instant>,
 }
 
 impl Alarm {
     /// Later wins.
-    pub fn spawn(wake: WakeHandle) -> Self {
-        Self::spawn_with(wake, Instant::max)
+    pub fn latest(wake: WakeHandle) -> Self {
+        Self::with(wake, Instant::max)
     }
 
     /// Earlier wins.
-    pub fn spawn_soonest(wake: WakeHandle) -> Self {
-        Self::spawn_with(wake, Instant::min)
+    pub fn soonest(wake: WakeHandle) -> Self {
+        Self::with(wake, Instant::min)
     }
 
-    fn spawn_with(wake: WakeHandle, pick: fn(Instant, Instant) -> Instant) -> Self {
-        let (tx, rx) = crossbeam_channel::unbounded::<Instant>();
-        std::thread::Builder::new()
-            .name("alarm".into())
-            .spawn(move || {
-                use crossbeam_channel::RecvTimeoutError::{Disconnected, Timeout};
-                let mut due: Option<Instant> = None;
-                loop {
-                    let got = match due {
-                        Some(t) => rx.recv_timeout(t.saturating_duration_since(Instant::now())),
-                        None => rx.recv().map_err(|_| Disconnected),
-                    };
-                    match got {
-                        Ok(t) => due = Some(due.map_or(t, |d| pick(d, t))),
-                        Err(Timeout) => {
-                            due = None;
-                            wake.wake();
-                        }
-                        Err(Disconnected) => return,
-                    }
-                }
-            })
-            .expect("spawning the alarm thread");
-        Self { tx }
+    fn with(wake: WakeHandle, pick: fn(Instant, Instant) -> Instant) -> Self {
+        let slot = Arc::new(AlarmSlot {
+            due: Mutex::new(None),
+            pick,
+            count: wake.count.clone(),
+        });
+        let mut alarms = wake.shared.alarms.lock().unwrap();
+        alarms.slots.push(Arc::downgrade(&slot));
+        drop(alarms);
+        Self { slot, wake }
     }
 
     pub fn set(&self, when: Instant) {
-        let _ = self.tx.send(when);
+        {
+            let mut due = self.slot.due.lock().unwrap();
+            *due = Some(due.map_or(when, |d| (self.slot.pick)(d, when)));
+        }
+        let mut alarms = self.wake.shared.alarms.lock().unwrap();
+        self.wake.ask(&mut alarms, Instant::now());
+    }
+
+    /// The time it is armed for, if it is.
+    pub fn due(&self) -> Option<Instant> {
+        *self.slot.due.lock().unwrap()
     }
 }
 
@@ -200,48 +277,92 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    /// The alarm wakes once, at the latest time it was set to.
-    #[test]
-    fn the_alarm_wakes_at_the_latest_time_set() {
-        let (tx, rx) = crossbeam_channel::unbounded::<Instant>();
+    /// What the loop is asked for, and what the frames reach: a
+    /// `WakeAt` that records its times.
+    fn asked() -> (WakeHandle, Arc<Mutex<Vec<Instant>>>) {
+        let times = Arc::new(Mutex::new(Vec::new()));
         let wake = WakeHandle::new();
-        wake.set(Arc::new(move || {
-            let _ = tx.send(Instant::now());
-        }));
-        let alarm = Alarm::spawn(wake);
-        let t0 = Instant::now();
-        alarm.set(t0 + Duration::from_millis(40));
-        alarm.set(t0 + Duration::from_millis(120));
-        let woke = rx.recv_timeout(Duration::from_secs(2)).expect("a wake");
-        assert!(
-            woke >= t0 + Duration::from_millis(120),
-            "not before the later time"
-        );
-        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "once");
-        // Armed again, it fires again.
-        alarm.set(Instant::now() + Duration::from_millis(20));
-        assert!(rx.recv_timeout(Duration::from_secs(2)).is_ok());
+        let t = times.clone();
+        wake.set_at(Arc::new(move |at| t.lock().unwrap().push(at)));
+        (wake, times)
     }
 
-    /// The soonest alarm wakes at the earliest time it was set to, even
-    /// when that one was set second.
+    /// The latest alarm keeps the later time: a frame at the earlier
+    /// one spends nothing and asks again for the later; the frame that
+    /// reaches it spends it once, counted under its name.
     #[test]
-    fn the_soonest_alarm_wakes_at_the_earliest_time_set() {
-        let (tx, rx) = crossbeam_channel::unbounded::<Instant>();
-        let wake = WakeHandle::new();
-        wake.set(Arc::new(move || {
-            let _ = tx.send(Instant::now());
-        }));
-        let alarm = Alarm::spawn_soonest(wake);
+    fn the_latest_alarm_keeps_the_later_time() {
+        let (wake, times) = asked();
+        let alarm = Alarm::latest(wake.named("quiet"));
         let t0 = Instant::now();
-        alarm.set(t0 + Duration::from_millis(400));
-        alarm.set(t0 + Duration::from_millis(40));
-        let woke = rx.recv_timeout(Duration::from_secs(2)).expect("a wake");
-        assert!(woke >= t0 + Duration::from_millis(40));
-        assert!(
-            woke < t0 + Duration::from_millis(400),
-            "the later time did not push it out"
+        let (early, late) = (
+            t0 + Duration::from_millis(40),
+            t0 + Duration::from_millis(120),
         );
+        alarm.set(early);
+        alarm.set(late);
+        assert_eq!(alarm.due(), Some(late));
+        assert_eq!(times.lock().unwrap()[0], early, "asked at once");
+        wake.fire_alarms(early);
+        assert_eq!(alarm.due(), Some(late), "not spent before its time");
+        assert_eq!(times.lock().unwrap().last(), Some(&late), "asked again");
+        assert!(wake.take_counts().is_empty());
+        wake.fire_alarms(late);
+        assert_eq!(alarm.due(), None);
+        assert_eq!(wake.take_counts(), [("quiet", 1)]);
+        let n = times.lock().unwrap().len();
+        wake.fire_alarms(late + Duration::from_secs(1));
+        assert_eq!(times.lock().unwrap().len(), n, "nothing left to ask");
+        // Armed again, it fires again.
+        alarm.set(late + Duration::from_secs(2));
+        wake.fire_alarms(late + Duration::from_secs(2));
+        assert_eq!(wake.take_counts(), [("quiet", 1)]);
+    }
+
+    /// The soonest alarm keeps the earlier time, even set second; the
+    /// loop is asked for the soonest of a handle's alarms and not asked
+    /// again while that is still ahead.
+    #[test]
+    fn the_soonest_alarm_keeps_the_earlier_time() {
+        let (wake, times) = asked();
+        let a = Alarm::soonest(wake.named("toast"));
+        let b = Alarm::latest(wake.named("quiet"));
+        let t0 = Instant::now() + Duration::from_secs(10);
+        a.set(t0 + Duration::from_millis(400));
+        a.set(t0 + Duration::from_millis(40));
+        assert_eq!(a.due(), Some(t0 + Duration::from_millis(40)));
+        b.set(t0 + Duration::from_millis(200));
+        assert_eq!(
+            *times.lock().unwrap(),
+            [
+                t0 + Duration::from_millis(400),
+                t0 + Duration::from_millis(40)
+            ],
+            "the later alarm asked nothing past the soonest"
+        );
+        wake.fire_alarms(t0 + Duration::from_millis(40));
+        assert_eq!(
+            times.lock().unwrap().last(),
+            Some(&(t0 + Duration::from_millis(200)))
+        );
+        assert_eq!(wake.take_counts(), [("toast", 1)]);
+    }
+
+    /// An alarm armed before the loop's wake is known is asked for once
+    /// it is; a dropped alarm is forgotten.
+    #[test]
+    fn alarms_wait_for_the_wake_and_go_with_their_owner() {
+        let wake = WakeHandle::new();
+        let alarm = Alarm::soonest(wake.clone());
+        let t = Instant::now() + Duration::from_secs(5);
+        alarm.set(t);
+        let times = Arc::new(Mutex::new(Vec::new()));
+        let r = times.clone();
+        wake.set_at(Arc::new(move |at| r.lock().unwrap().push(at)));
+        assert_eq!(*times.lock().unwrap(), [t]);
+        drop(alarm);
+        wake.fire_alarms(Instant::now());
+        assert!(wake.shared.alarms.lock().unwrap().slots.is_empty());
     }
 
     /// Every name made from one handle shares its wake and counts apart;

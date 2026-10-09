@@ -213,7 +213,7 @@ impl LspState {
             quiet: DIAG_QUIET,
             plugin_held: HashMap::new(),
             typed: None,
-            alarm: Alarm::spawn(wake.named("lsp alarm")),
+            alarm: Alarm::latest(wake.named("lsp alarm")),
             completion: None,
             requested: None,
             said_unavailable: HashMap::new(),

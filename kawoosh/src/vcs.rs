@@ -55,7 +55,7 @@ impl Vcs {
             asks: HashMap::new(),
             next_ask: 0,
             moved: HashMap::new(),
-            alarm: Alarm::spawn(wake),
+            alarm: Alarm::latest(wake),
         }
     }
 }
