@@ -91,6 +91,13 @@ pub struct HostConfig {
     /// `StrictHostKeyChecking`: `yes`, `no`, `accept-new` or `ask` (the
     /// default).
     pub strict: String,
+    /// `ProxyCommand`, which the in-process client does not run.
+    pub proxy_command: Option<String>,
+    /// `CertificateFile`s, which it does not present.
+    pub certificate_files: Vec<PathBuf>,
+    /// Whether the files read hold a `Match` block, which it does not
+    /// evaluate: what applies to the host cannot be known here.
+    pub has_match: bool,
 }
 
 /// [`HostConfig`] for `target` — a `Host` alias, `user@host`, or either
@@ -103,6 +110,11 @@ pub fn resolve(target: &str) -> HostConfig {
 
 /// [`resolve`] from `config`, as [`hosts_in`] reads one.
 pub fn resolve_in(target: &str, config: &Path, dir: &Path, home: &Path) -> HostConfig {
+    // `ssh://[user@]host[:port][/path]`, as OpenSSH takes a destination.
+    let target = match target.strip_prefix("ssh://") {
+        Some(r) => r.split('/').next().unwrap_or(r),
+        None => target,
+    };
     let (user, rest) = match target.rsplit_once('@') {
         Some((u, h)) => (Some(u.to_string()), h),
         None => (None, target),
@@ -114,7 +126,8 @@ pub fn resolve_in(target: &str, config: &Path, dir: &Path, home: &Path) -> HostC
         _ => (rest.to_string(), None),
     };
     let mut set: Vec<(String, String)> = Vec::new();
-    collect(config, dir, home, &alias, &mut set, 0);
+    let mut has_match = false;
+    collect(config, dir, home, &alias, &mut set, &mut has_match, 0);
     let first = |k: &str| {
         set.iter()
             .find(|(key, _)| key.eq_ignore_ascii_case(k))
@@ -163,6 +176,11 @@ pub fn resolve_in(target: &str, config: &Path, dir: &Path, home: &Path) -> HostC
             .collect(),
         None => vec![home.join(".ssh").join("known_hosts")],
     };
+    let certificate_files = set
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("certificatefile"))
+        .map(|(_, v)| expand(v))
+        .collect();
     HostConfig {
         alias,
         host_name,
@@ -175,6 +193,9 @@ pub fn resolve_in(target: &str, config: &Path, dir: &Path, home: &Path) -> HostC
         strict: first("stricthostkeychecking")
             .map(|v| v.to_ascii_lowercase())
             .unwrap_or_else(|| "ask".into()),
+        proxy_command: first("proxycommand").filter(|v| !v.eq_ignore_ascii_case("none")),
+        certificate_files,
+        has_match,
     }
 }
 
@@ -187,6 +208,7 @@ fn collect(
     home: &Path,
     alias: &str,
     out: &mut Vec<(String, String)>,
+    has_match: &mut bool,
     depth: usize,
 ) {
     if depth > 16 {
@@ -220,13 +242,14 @@ fn collect(
                     .filter(|p| !p.starts_with('!'))
                     .any(|p| glob(&p.to_ascii_lowercase(), &alias.to_ascii_lowercase()));
         } else if key.eq_ignore_ascii_case("match") {
+            *has_match = true;
             on = false;
         } else if !on {
             continue;
         } else if key.eq_ignore_ascii_case("include") {
             for pattern in words(rest) {
                 for f in included(&pattern, dir, home) {
-                    collect(&f, dir, home, alias, out, depth + 1);
+                    collect(&f, dir, home, alias, out, has_match, depth + 1);
                 }
             }
         } else {
@@ -400,6 +423,7 @@ mod tests {
             ("root", 2022, "10.0.0.1")
         );
         assert_eq!(u.strict, "ask");
+        assert!(u.has_match && u.proxy_command.is_none());
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -177,6 +177,9 @@ pub enum IoMsg {
     /// A connection asks the user (`crate::ssh`): a host key to trust,
     /// a passphrase, a password. `reply` takes the answer, `None` for
     /// none; the connecting thread waits on it.
+    /// The in-process client could not serve a domain and OpenSSH's
+    /// took it (`ssh.client = "auto"`): why, in a few words.
+    DomainFellBack { name: String, why: String },
     DomainAsk {
         name: String,
         question: crate::ssh::Question,
@@ -674,6 +677,15 @@ pub fn run_on_channel(
     })
 }
 
+/// `-F FILE` where `KAWOOSH_SSH_CONFIG` names the config file both
+/// clients read instead of `~/.ssh/config` (the tests' own).
+fn config_args() -> Vec<String> {
+    match std::env::var("KAWOOSH_SSH_CONFIG") {
+        Ok(f) if !f.is_empty() => vec!["-F".into(), f],
+        _ => Vec::new(),
+    }
+}
+
 /// The line an ssh host's login shell is handed for `script` — POSIX sh
 /// — whatever that shell is ([`Ssh::remote_argv`]).
 pub fn ssh_line(script: &str) -> String {
@@ -719,6 +731,9 @@ pub struct Ssh {
     pub builtin: bool,
     /// Its connection, once connected.
     pub client: Option<std::sync::Arc<crate::ssh::Client>>,
+    /// Whether OpenSSH's client takes over, with no master, where the
+    /// in-process one cannot serve the host (`ssh.client = "auto"`).
+    pub fall_back: bool,
 }
 
 impl Ssh {
@@ -734,25 +749,29 @@ impl Ssh {
     /// on a connection of its own — one that asks nothing when it has no
     /// terminal to ask in (`pty`).
     fn channel(&self, pty: bool) -> Vec<String> {
-        match (self.master, pty) {
+        let mut v = config_args();
+        v.extend(match (self.master, pty) {
             (true, _) => vec!["-S".into(), self.ctl.display().to_string()],
             (false, false) => vec!["-o".into(), "BatchMode=yes".into()],
             (false, true) => Vec::new(),
-        }
+        });
+        v
     }
 
     /// The master's argv, for a pane: it asks for a password or a
     /// passphrase there, and stays up past the pane (`ControlPersist`).
     pub fn master_argv(&self) -> Vec<String> {
-        vec![
-            self.ssh.clone(),
+        let mut v = vec![self.ssh.clone()];
+        v.extend(config_args());
+        v.extend([
             "-M".into(),
             "-S".into(),
             self.ctl.display().to_string(),
             "-o".into(),
             "ControlPersist=yes".into(),
             self.host.clone(),
-        ]
+        ]);
+        v
     }
 
     /// Whether the master answers on its control socket; with none,
@@ -1732,10 +1751,23 @@ impl Io {
                         awake.wake();
                         answer.recv().ok().flatten()
                     });
-                    match crate::ssh::connect(&transport.host, ask) {
+                    match crate::ssh::connect(&transport.host, ask, transport.fall_back) {
                         Ok(c) => transport.client = Some(std::sync::Arc::new(c)),
-                        Err(e) => {
-                            let _ = tx.send(failed(e));
+                        // What the in-process client does not do: OpenSSH's
+                        // client takes the domain, with no master (Windows
+                        // has none to keep), and the window says so once.
+                        Err(f) if f.falls_back() && transport.fall_back => {
+                            log::info!("{name}: {f}; OpenSSH's client takes it");
+                            transport.builtin = false;
+                            transport.master = false;
+                            let _ = tx.send(IoMsg::DomainFellBack {
+                                name: name.clone(),
+                                why: f.message().to_string(),
+                            });
+                            wake.wake();
+                        }
+                        Err(f) => {
+                            let _ = tx.send(failed(f.message().to_string()));
                             wake.wake();
                             return;
                         }
@@ -2185,6 +2217,7 @@ mod tests {
             master: true,
             builtin: false,
             client: None,
+            fall_back: false,
         };
         let argv = t.remote_argv(&s, false, None);
         assert_eq!(&argv[..6], ["ssh", "-S", "/c", "-T", "h", "--"]);
@@ -2233,6 +2266,7 @@ mod tests {
             master: true,
             builtin: false,
             client: None,
+            fall_back: false,
         };
         let line = t.remote_argv(&script, false, None).pop().unwrap();
         let inner = line

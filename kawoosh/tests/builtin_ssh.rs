@@ -55,6 +55,18 @@ fn asked(app: &Kawoosh, words: &str) -> bool {
 /// A config of the test's own: `Host NAME` at `addr`, as `user`, with
 /// `key` (or a key that is not there), its known hosts in `dir`.
 fn config(dir: &Path, name: &str, addr: &str, user: &str, key: Option<&str>) -> PathBuf {
+    config_with(dir, name, addr, user, key, "")
+}
+
+/// [`config`], with `extra` lines in the host's block.
+fn config_with(
+    dir: &Path,
+    name: &str,
+    addr: &str,
+    user: &str,
+    key: Option<&str>,
+    extra: &str,
+) -> PathBuf {
     let (host, port) = addr.rsplit_once(':').expect("HOST:PORT");
     let key = key.map(|k| k.replace('\\', "/")).unwrap_or_else(|| {
         dir.join("no-such-key")
@@ -64,7 +76,7 @@ fn config(dir: &Path, name: &str, addr: &str, user: &str, key: Option<&str>) -> 
     });
     let text = format!(
         "Host {name}\n  HostName {host}\n  Port {port}\n  User {user}\n  IdentityFile {key}\n  \
-         IdentitiesOnly yes\n  UserKnownHostsFile {}\n",
+         IdentitiesOnly yes\n  UserKnownHostsFile {}\n{extra}",
         dir.join("known_hosts")
             .display()
             .to_string()
@@ -76,13 +88,18 @@ fn config(dir: &Path, name: &str, addr: &str, user: &str, key: Option<&str>) -> 
 }
 
 fn builtin_app(name: &str, alias: &str) -> (Drive, Kawoosh) {
+    client_app(name, alias, "builtin")
+}
+
+/// An app whose `ssh.client` is `client`, with domain `name` on `alias`.
+fn client_app(name: &str, alias: &str, client: &str) -> (Drive, Kawoosh) {
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
     d.frame(&mut app);
-    ex(&mut d, &mut app, "set ssh.client=builtin");
+    ex(&mut d, &mut app, &format!("set ssh.client={client}"));
     ex(&mut d, &mut app, &format!("set domains.{name}.ssh={alias}"));
     (d, app)
 }
@@ -263,6 +280,295 @@ fn a_dropbear_host_without_sftp_over_the_builtin_client() {
     );
     until(&mut d, &mut app, "the host's copy read back", |a| {
         a.ed.message.starts_with("read on dropbear")
+    });
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    unsafe { std::env::remove_var("KAWOOSH_SSH_CONFIG") };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `:domain`'s listing, as text.
+fn listing(d: &mut Drive, app: &mut Kawoosh) -> String {
+    ex(d, app, "domain");
+    let v = app.focused_view().unwrap();
+    let text = app.ed.buffer_of(v).text();
+    d.keys(app, "q");
+    text
+}
+
+/// `ssh.client = "auto"` (the default on Windows): where the built-in
+/// client cannot serve a host, OpenSSH's takes it — a note said once, the
+/// listing saying which client and why — and where the refusal is the
+/// user's or the host's, it does not.
+#[test]
+fn auto_falls_back_to_openssh_where_the_builtin_client_cannot() {
+    let Ok(addr) = std::env::var("KAWOOSH_TEST_SSHD") else {
+        eprintln!("no KAWOOSH_TEST_SSHD: skipped");
+        return;
+    };
+    if !cfg!(windows) {
+        eprintln!("auto is OpenSSH's client off Windows: nothing falls back");
+        return;
+    }
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("auto");
+    let pid = std::process::id();
+    let key = std::env::var("KAWOOSH_TEST_SSHD_KEY").ok();
+    let strict = "  StrictHostKeyChecking accept-new\n";
+
+    // Up front: a config that holds a `Match` block.
+    let name = format!("mt{pid}");
+    let alias = format!("mt-{pid}");
+    let f = config_with(
+        &dir,
+        &alias,
+        &addr,
+        "me",
+        key.as_deref(),
+        &format!("{strict}Match host never-this-one\n  User nobody\n"),
+    );
+    unsafe { std::env::set_var("KAWOOSH_SSH_CONFIG", &f) };
+    let (mut d, mut app) = client_app(&name, &alias, "auto");
+    let file = format!("{name}:/home/me/proj/Cargo.toml");
+    ex(&mut d, &mut app, &format!("e {file}"));
+    until(&mut d, &mut app, "the file through OpenSSH", |a| {
+        a.ed.buffer_at(Path::new(&file))
+            .is_some_and(|id| a.ed.buffers[id].text().contains("[package]"))
+    });
+    let log = app.notes.render_log();
+    assert!(
+        log.contains(&format!(
+            "{name}: using OpenSSH — the built-in client doesn't follow Match blocks"
+        )),
+        "{log}"
+    );
+    assert!(app.confirm.is_none(), "nothing asked");
+    let l = listing(&mut d, &mut app);
+    assert!(
+        l.contains("over OpenSSH: the built-in client doesn't follow Match blocks"),
+        "{l}"
+    );
+    // Once a session: a reconnect says nothing again.
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {name}:/home/me/proj/.gitignore"),
+    );
+    until(&mut d, &mut app, "connected again", |a| {
+        a.ed.buffer_at(Path::new(&format!("{name}:/home/me/proj/.gitignore")))
+            .is_some_and(|id| a.ed.buffers[id].loading.is_none())
+    });
+    let said = app.notes.render_log().matches("using OpenSSH").count();
+    assert_eq!(said, 1, "{}", app.notes.render_log());
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    drop((d, app));
+
+    // An RSA key and no agent: OpenSSH's client, which takes it.
+    if let Ok(rsa) = std::env::var("KAWOOSH_TEST_SSHD_RSA_KEY") {
+        let name = format!("rs{pid}");
+        let alias = format!("rs-{pid}");
+        let f = config_with(&dir, &alias, &addr, "me", Some(&rsa), strict);
+        unsafe { std::env::set_var("KAWOOSH_SSH_CONFIG", &f) };
+        let (mut d, mut app) = client_app(&name, &alias, "auto");
+        let file = format!("{name}:/home/me/proj/Cargo.toml");
+        ex(&mut d, &mut app, &format!("e {file}"));
+        until(&mut d, &mut app, "the file with the RSA key", |a| {
+            a.ed.buffer_at(Path::new(&file))
+                .is_some_and(|id| a.ed.buffers[id].text().contains("[package]"))
+        });
+        assert!(
+            app.notes.render_log().contains("is an RSA key"),
+            "{}",
+            app.notes.render_log()
+        );
+        ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    }
+
+    // The password refused with `<Esc>`: no fallback behind the user.
+    let name = format!("es{pid}");
+    let alias = format!("es-{pid}");
+    let f = config_with(&dir, &alias, &addr, "me", None, strict);
+    unsafe { std::env::set_var("KAWOOSH_SSH_CONFIG", &f) };
+    let (mut d, mut app) = client_app(&name, &alias, "auto");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {name}:/home/me/proj/Cargo.toml"),
+    );
+    until(&mut d, &mut app, "the password asked", |a| {
+        asked(a, "Password for me@")
+    });
+    d.key(&mut app, "escape", KeyMods::default());
+    until(&mut d, &mut app, "the refusal said", |a| {
+        a.ed.message.contains("the password not given")
+    });
+    assert!(!app.notes.render_log().contains("using OpenSSH"));
+
+    // The network: nothing to fall back for.
+    let name = format!("nw{pid}");
+    let alias = format!("nw-{pid}");
+    let f = config_with(&dir, &alias, "127.0.0.1:9", "me", None, strict);
+    unsafe { std::env::set_var("KAWOOSH_SSH_CONFIG", &f) };
+    let (mut d, mut app) = client_app(&name, &alias, "auto");
+    ex(&mut d, &mut app, &format!("e {name}:/x"));
+    until(&mut d, &mut app, "the network's failure", |a| {
+        a.ed.message.contains("127.0.0.1:9")
+    });
+    assert!(!app.notes.render_log().contains("using OpenSSH"));
+
+    // Pinned: `builtin` does not fall back.
+    let name = format!("pn{pid}");
+    let alias = format!("pn-{pid}");
+    let f = config_with(
+        &dir,
+        &alias,
+        &addr,
+        "me",
+        key.as_deref(),
+        &format!("{strict}Match host never-this-one\n  User nobody\n"),
+    );
+    unsafe { std::env::set_var("KAWOOSH_SSH_CONFIG", &f) };
+    let (mut d, mut app) = client_app(&name, &alias, "builtin");
+    let file = format!("{name}:/home/me/proj/Cargo.toml");
+    ex(&mut d, &mut app, &format!("e {file}"));
+    until(&mut d, &mut app, "the file, pinned", |a| {
+        a.ed.buffer_at(Path::new(&file))
+            .is_some_and(|id| a.ed.buffers[id].text().contains("[package]"))
+    });
+    assert!(!app.notes.render_log().contains("using OpenSSH"));
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    unsafe { std::env::remove_var("KAWOOSH_SSH_CONFIG") };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Where nothing is asked and no key is taken (a dropbear that takes no
+/// passwords, a key it does not know), auto tries OpenSSH's client, which
+/// says what it says.
+#[test]
+fn auth_with_nothing_to_ask_falls_back() {
+    let (Ok(addr), Ok(key)) = (
+        std::env::var("KAWOOSH_TEST_DROPBEAR"),
+        std::env::var("KAWOOSH_TEST_STRANGER_KEY"),
+    ) else {
+        eprintln!("no KAWOOSH_TEST_DROPBEAR and _STRANGER_KEY: skipped");
+        return;
+    };
+    if !cfg!(windows) {
+        return;
+    }
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("stranger");
+    let pid = std::process::id();
+    let name = format!("st{pid}");
+    let alias = format!("st-{pid}");
+    let f = config_with(
+        &dir,
+        &alias,
+        &addr,
+        "root",
+        Some(&key),
+        "  StrictHostKeyChecking accept-new\n",
+    );
+    unsafe { std::env::set_var("KAWOOSH_SSH_CONFIG", &f) };
+    let (mut d, mut app) = client_app(&name, &alias, "auto");
+    ex(&mut d, &mut app, &format!("e {name}:/tmp/x"));
+    until(&mut d, &mut app, "OpenSSH's own failure", |a| {
+        a.ed.message.starts_with(&format!("{name}: no SFTP"))
+            || a.ed.message.contains("Permission denied")
+    });
+    assert!(
+        app.notes
+            .render_log()
+            .contains("found no way in to root@127.0.0.1 that asks nothing"),
+        "{}",
+        app.notes.render_log()
+    );
+    unsafe { std::env::remove_var("KAWOOSH_SSH_CONFIG") };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `:ssh me@HOST:PORT [path]`: a tab on the machine, a domain made for
+/// it (named by what tells it apart, remembered in the store), offered by
+/// the picker and known to a new window on the same store.
+#[test]
+fn ssh_opens_a_tab_on_a_machine_named_as_ssh_names_it() {
+    let (Ok(addr), Ok(key)) = (
+        std::env::var("KAWOOSH_TEST_SSHD"),
+        std::env::var("KAWOOSH_TEST_SSHD_KEY"),
+    ) else {
+        eprintln!("no KAWOOSH_TEST_SSHD and _KEY: skipped");
+        return;
+    };
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("cmd");
+    let (host, port) = addr.rsplit_once(':').unwrap();
+    // The host by its address, a key and known hosts of the test's own:
+    // no `User`, so `me` is not who it is reached as by default.
+    let text = format!(
+        "Host {host}\n  IdentityFile {}\n  IdentitiesOnly yes\n  UserKnownHostsFile {}\n  \
+         StrictHostKeyChecking accept-new\n",
+        key.replace('\\', "/"),
+        dir.join("known_hosts")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    std::fs::write(dir.join("config"), text).unwrap();
+    unsafe { std::env::set_var("KAWOOSH_SSH_CONFIG", dir.join("config")) };
+    let store = std::rc::Rc::new(kawoosh_systems::store::Store::in_memory().unwrap());
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    app.store = Some(store.clone());
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    let name = format!("me-{host}-{port}");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("ssh me@{host}:{port} /home/me/proj"),
+    );
+    let listed = format!("dir: {name}:/home/me/proj");
+    until(&mut d, &mut app, "the tab's listing", |a| {
+        a.focused_view()
+            .is_some_and(|v| a.ed.buffer_of(v).name == listed)
+    });
+    assert_eq!(
+        app.cwd.display().to_string(),
+        format!("{name}:/home/me/proj")
+    );
+    assert_eq!(app.layout.tabs.len(), 2, "a tab of its own");
+    let l = listing(&mut d, &mut app);
+    assert!(
+        l.contains(&format!("{name}\tssh: ssh://me@{host}:{port}")),
+        "{l}"
+    );
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    drop((d, app));
+
+    // A new window on the same store knows it, and the URL's spelling is
+    // the same machine.
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    app.store = Some(store);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    let l = listing(&mut d, &mut app);
+    assert!(
+        l.contains(&format!("{name}\tssh: ssh://me@{host}:{port}")),
+        "{l}"
+    );
+    ex(
+        &mut d,
+        &mut app,
+        &format!("ssh ssh://me@{host}:{port}/home/me"),
+    );
+    until(&mut d, &mut app, "the home through the URL", |a| {
+        a.focused_view()
+            .is_some_and(|v| a.ed.buffer_of(v).name == format!("dir: {name}:/home/me"))
     });
     ex(&mut d, &mut app, &format!("domain disconnect {name}"));
     unsafe { std::env::remove_var("KAWOOSH_SSH_CONFIG") };
