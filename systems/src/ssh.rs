@@ -113,7 +113,7 @@ struct H {
     ask: Asker,
     shared: Arc<Shared>,
     /// Why the key was refused, for the error.
-    refused: Arc<Mutex<Option<String>>>,
+    refused: Arc<Mutex<Option<Failure>>>,
 }
 
 impl client::Handler for H {
@@ -128,13 +128,14 @@ impl client::Handler for H {
                 Ok(true) => return Ok(true),
                 Ok(false) => {}
                 Err(russh::keys::Error::KeyChanged { line }) => {
-                    *self.refused.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!(
-                        "THE HOST KEY OF {} CHANGED (line {line} of {} has another): refused — \
+                    *self.refused.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(Failure::Final(format!(
+                            "THE HOST KEY OF {} CHANGED (line {line} of {} has another): refused — \
                          it may be someone in the middle; if the host was reinstalled, remove \
                          that line",
-                        self.host,
-                        f.display()
-                    ));
+                            self.host,
+                            f.display()
+                        )));
                     return Ok(false);
                 }
                 Err(_) => {}
@@ -145,10 +146,11 @@ impl client::Handler for H {
             return Ok(true);
         }
         if strict == "yes" {
-            *self.refused.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!(
-                "{} is not in known_hosts and StrictHostKeyChecking is yes",
-                self.host
-            ));
+            *self.refused.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(Failure::Final(format!(
+                    "{} is not in known_hosts and StrictHostKeyChecking is yes",
+                    self.host
+                )));
             return Ok(false);
         }
         let accepted = strict == "accept-new" || {
@@ -172,8 +174,9 @@ impl client::Handler for H {
                 .unwrap_or(false)
         };
         if !accepted {
-            *self.refused.lock().unwrap_or_else(|e| e.into_inner()) =
-                Some(format!("{}'s key not trusted", self.host));
+            *self.refused.lock().unwrap_or_else(|e| e.into_inner()) = Some(Failure::Declined(
+                format!("{}'s key not trusted", self.host),
+            ));
             return Ok(false);
         }
         if let Some(f) = files.first() {
@@ -267,25 +270,124 @@ fn err(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
 }
 
-/// Connects to `target` as `~/.ssh/config` says (`ssh_config::resolve`),
-/// through its jumps, authenticated, asking `ask` what has to be asked.
-/// Blocks; not on the window's thread.
-pub fn connect(target: &str, ask: Asker) -> Result<Client, String> {
-    let config = crate::ssh_config::resolve(target);
-    rt().block_on(connect_async(config, ask))
+/// Why a connection was not made — and so whether OpenSSH's client might
+/// make it (`ssh.client = "auto"`, docs/design/domains.md "Built, the
+/// fallback and :ssh").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// The network: the host not reached, its name not known. Another
+    /// client would fare no better.
+    Network(String),
+    /// A refusal that stands: a host key that changed, a host strictly
+    /// unknown, a password wrong when asked.
+    Final(String),
+    /// The user refused a question: a host key not trusted, a
+    /// passphrase or a password not given. Not asked again behind them.
+    Declined(String),
+    /// What this client does not do — a `ProxyCommand`, a `Match`, a
+    /// certificate, an RSA key, an algorithm the server and it share
+    /// none of, or no way in that asks nothing: OpenSSH's may.
+    Unsupported(String),
 }
 
-async fn connect_async(config: HostConfig, ask: Asker) -> Result<Client, String> {
+impl Failure {
+    pub fn message(&self) -> &str {
+        match self {
+            Failure::Network(m) | Failure::Final(m) | Failure::Declined(m) => m,
+            Failure::Unsupported(m) => m,
+        }
+    }
+
+    /// Whether OpenSSH's client is worth trying in its place.
+    pub fn falls_back(&self) -> bool {
+        matches!(self, Failure::Unsupported(_))
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+/// Connects to `target` as `~/.ssh/config` says (`ssh_config::resolve`),
+/// through its jumps, authenticated, asking `ask` what has to be asked.
+/// With `fall_back` (OpenSSH there to take over), what this client does
+/// not do is said before anything is asked: a config it cannot follow,
+/// an RSA key it cannot use. Blocks; not on the window's thread.
+pub fn connect(target: &str, ask: Asker, fall_back: bool) -> Result<Client, Failure> {
+    let config = crate::ssh_config::resolve(target);
+    if fall_back {
+        let hops = config
+            .proxy_jump
+            .iter()
+            .map(|h| crate::ssh_config::resolve(h));
+        for hc in std::iter::once(config.clone()).chain(hops) {
+            if let Some(why) = unsupported(&hc) {
+                return Err(Failure::Unsupported(why));
+            }
+        }
+    }
+    rt().block_on(connect_async(config, ask, fall_back))
+}
+
+/// What in `hc` this client cannot follow, before it tries.
+pub fn unsupported(hc: &HostConfig) -> Option<String> {
+    if hc.proxy_command.is_some() {
+        return Some("ProxyCommand isn't supported by the built-in client".into());
+    }
+    if !hc.certificate_files.is_empty() {
+        return Some("CertificateFile isn't supported by the built-in client".into());
+    }
+    if hc.has_match {
+        return Some("the built-in client doesn't follow Match blocks".into());
+    }
+    // Every key it has is RSA, and no agent to offer another.
+    let files = if hc.identity_files.is_empty() {
+        default_identities()
+    } else {
+        hc.identity_files.clone()
+    };
+    let there: Vec<&PathBuf> = files.iter().filter(|f| f.is_file()).collect();
+    if !there.is_empty() && there.iter().all(|f| is_rsa(f)) && !agent_there() {
+        return Some(format!(
+            "{} is an RSA key, which the built-in client can't use",
+            there[0].display()
+        ));
+    }
+    None
+}
+
+/// Whether the key at `f` is RSA: its public half says so, or its
+/// private one is PEM's RSA.
+fn is_rsa(f: &Path) -> bool {
+    let public = PathBuf::from(format!("{}.pub", f.display()));
+    if let Ok(p) = std::fs::read_to_string(&public) {
+        return p.trim_start().starts_with("ssh-rsa");
+    }
+    std::fs::read_to_string(f).is_ok_and(|t| t.contains("BEGIN RSA PRIVATE KEY"))
+}
+
+/// Whether an agent may answer: `SSH_AUTH_SOCK`, or on Windows OpenSSH's
+/// pipe (Pageant cannot be asked without asking it).
+fn agent_there() -> bool {
+    if std::env::var_os("SSH_AUTH_SOCK").is_some() {
+        return true;
+    }
+    cfg!(windows) && Path::new(r"\\.\pipe\openssh-ssh-agent").exists()
+}
+
+async fn connect_async(config: HostConfig, ask: Asker, fall_back: bool) -> Result<Client, Failure> {
     let mut jumps: Vec<Handle<H>> = Vec::new();
     for hop in &config.proxy_jump {
         let hc = crate::ssh_config::resolve(hop);
         let h = match jumps.last() {
-            None => open(&hc, &ask, None).await?,
-            Some(prev) => open(&hc, &ask, Some(prev)).await?,
+            None => open(&hc, &ask, None, fall_back).await?,
+            Some(prev) => open(&hc, &ask, Some(prev), fall_back).await?,
         };
         jumps.push(h.0);
     }
-    let (handle, shared) = open(&config, &ask, jumps.last()).await?;
+    let (handle, shared) = open(&config, &ask, jumps.last(), fall_back).await?;
     Ok(Client {
         handle,
         shared,
@@ -300,7 +402,8 @@ async fn open(
     hc: &HostConfig,
     ask: &Asker,
     via: Option<&Handle<H>>,
-) -> Result<(Handle<H>, Arc<Shared>), String> {
+    fall_back: bool,
+) -> Result<(Handle<H>, Arc<Shared>), Failure> {
     let shared = Arc::new(Shared::default());
     let refused = Arc::new(Mutex::new(None));
     let handler = H {
@@ -317,12 +420,17 @@ async fn open(
         nodelay: true,
         ..Default::default()
     });
+    // A failure past the TCP connection and before authentication is the
+    // handshake's — an algorithm not shared, a server that hung up on it
+    // — unless the host key was refused.
     let said = |e: russh::Error| {
         refused
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take()
-            .unwrap_or_else(|| format!("{}: {e}", hc.host_name))
+            .unwrap_or_else(|| {
+                Failure::Unsupported(format!("the built-in client's handshake failed: {e}"))
+            })
     };
     let mut handle = match via {
         None => {
@@ -332,8 +440,10 @@ async fn open(
                 tokio::net::TcpStream::connect(addr),
             )
             .await
-            .map_err(|_| format!("{}:{}: no answer in 20 s", hc.host_name, hc.port))?
-            .map_err(|e| format!("{}:{}: {e}", hc.host_name, hc.port))?;
+            .map_err(|_| {
+                Failure::Network(format!("{}:{}: no answer in 20 s", hc.host_name, hc.port))
+            })?
+            .map_err(|e| Failure::Network(format!("{}:{}: {e}", hc.host_name, hc.port)))?;
             let _ = tcp.set_nodelay(true);
             client::connect_stream(config, tcp, handler)
                 .await
@@ -343,13 +453,15 @@ async fn open(
             let ch = prev
                 .channel_open_direct_tcpip(hc.host_name.clone(), hc.port as u32, "127.0.0.1", 0)
                 .await
-                .map_err(|e| format!("through the jump to {}: {e}", hc.host_name))?;
+                .map_err(|e| {
+                    Failure::Network(format!("through the jump to {}: {e}", hc.host_name))
+                })?;
             client::connect_stream(config, ch.into_stream(), handler)
                 .await
                 .map_err(said)?
         }
     };
-    authenticate(&mut handle, hc, ask).await?;
+    authenticate(&mut handle, hc, ask, fall_back).await?;
     Ok((handle, shared))
 }
 
@@ -362,82 +474,128 @@ fn default_identities() -> Vec<PathBuf> {
         .collect()
 }
 
-async fn authenticate(handle: &mut Handle<H>, hc: &HostConfig, ask: &Asker) -> Result<(), String> {
+/// `ask(q)` off the runtime's threads.
+async fn asking(ask: &Asker, q: Question) -> Option<String> {
+    let ask = ask.clone();
+    tokio::task::spawn_blocking(move || ask(q))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// The ways in the server takes, tried as OpenSSH tries them: the
+/// agent's keys, the identity files (a passphrase asked), then
+/// keyboard-interactive and the password, asked — each only where the
+/// server offers it, so a host that takes keys alone is not asked for a
+/// password it would refuse. A question refused ends it there
+/// (`Declined`); with nothing asked and nothing taken it is this
+/// client's failure (`Unsupported`, OpenSSH may have a way in), else the
+/// host's (`Final`).
+async fn authenticate(
+    handle: &mut Handle<H>,
+    hc: &HostConfig,
+    ask: &Asker,
+    fall_back: bool,
+) -> Result<(), Failure> {
+    use russh::MethodKind;
     let user = hc.user.clone();
+    let who = format!("{}@{}", user, hc.host_name);
+    let methods: Vec<MethodKind> = match handle.authenticate_none(user.clone()).await {
+        Ok(r) if r.success() => return Ok(()),
+        Ok(russh::client::AuthResult::Failure {
+            remaining_methods, ..
+        }) => remaining_methods.to_vec(),
+        Ok(_) => Vec::new(),
+        Err(e) => return Err(Failure::Unsupported(format!("{who}: {e}"))),
+    };
+    let takes = |m: MethodKind| methods.contains(&m);
     let hash = handle
         .best_supported_rsa_hash()
         .await
         .ok()
         .flatten()
         .flatten();
-    let files = if hc.identity_files.is_empty() {
-        default_identities()
-    } else {
-        hc.identity_files.clone()
-    };
-    // The public halves of the files, for `IdentitiesOnly`.
-    let wanted: Vec<PublicKey> = files
-        .iter()
-        .filter_map(|f| {
-            let p = PathBuf::from(format!("{}.pub", f.display()));
-            russh::keys::ssh_key::PublicKey::read_openssh_file(&p).ok()
-        })
-        .collect();
-    let mut tried = Vec::new();
-    // The agent's keys first, as OpenSSH tries them.
-    if agent_auth(handle, &user, hash, hc.identities_only, &wanted, &mut tried).await {
-        return Ok(());
-    }
-    for f in files.iter().filter(|f| f.is_file()) {
-        let key = match russh::keys::load_secret_key(f, None) {
-            Ok(k) => Some(k),
-            Err(russh::keys::Error::KeyIsEncrypted) => {
-                let mut got = None;
-                for _ in 0..3 {
-                    let ask = ask.clone();
-                    let q = Question {
-                        title: format!("Passphrase for {}", f.display()),
-                        lines: vec![format!("{}@{}", user, hc.host_name)],
-                        kind: AskKind::Secret,
-                    };
-                    let Some(pass) = tokio::task::spawn_blocking(move || ask(q))
-                        .await
-                        .ok()
-                        .flatten()
-                    else {
-                        break;
-                    };
-                    if let Ok(k) = russh::keys::load_secret_key(f, Some(&pass)) {
-                        got = Some(k);
-                        break;
-                    }
-                }
-                got
-            }
-            Err(e) => {
-                log::info!("{}: {e}", f.display());
-                None
-            }
+    let mut asked = false;
+    // Keys this client could not use, for the failure's word.
+    let mut unusable: Vec<String> = Vec::new();
+    if takes(MethodKind::PublicKey) {
+        let files = if hc.identity_files.is_empty() {
+            default_identities()
+        } else {
+            hc.identity_files.clone()
         };
-        let Some(key) = key else { continue };
-        if tried.contains(key.public_key()) {
-            continue;
-        }
-        let r = handle
-            .authenticate_publickey(
-                user.clone(),
-                PrivateKeyWithHashAlg::new(Arc::new(key), hash),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        if r.success() {
+        // The public halves of the files, for `IdentitiesOnly`.
+        let wanted: Vec<PublicKey> = files
+            .iter()
+            .filter_map(|f| {
+                let p = PathBuf::from(format!("{}.pub", f.display()));
+                russh::keys::ssh_key::PublicKey::read_openssh_file(&p).ok()
+            })
+            .collect();
+        let mut tried = Vec::new();
+        // The agent's keys first, as OpenSSH tries them.
+        if agent_auth(handle, &user, hash, hc.identities_only, &wanted, &mut tried).await {
             return Ok(());
         }
+        for f in files.iter().filter(|f| f.is_file()) {
+            let key = match russh::keys::load_secret_key(f, None) {
+                Ok(k) => Some(k),
+                Err(russh::keys::Error::KeyIsEncrypted) => {
+                    let mut got = None;
+                    for _ in 0..3 {
+                        asked = true;
+                        let q = Question {
+                            title: format!("Passphrase for {}", f.display()),
+                            lines: vec![who.clone()],
+                            kind: AskKind::Secret,
+                        };
+                        let Some(pass) = asking(ask, q).await else {
+                            return Err(Failure::Declined(format!(
+                                "{who}: the passphrase for {} not given",
+                                f.display()
+                            )));
+                        };
+                        if let Ok(k) = russh::keys::load_secret_key(f, Some(&pass)) {
+                            got = Some(k);
+                            break;
+                        }
+                    }
+                    got
+                }
+                Err(e) => {
+                    log::info!("{}: {e}", f.display());
+                    unusable.push(f.display().to_string());
+                    None
+                }
+            };
+            let Some(key) = key else { continue };
+            if tried.contains(key.public_key()) {
+                continue;
+            }
+            let r = handle
+                .authenticate_publickey(
+                    user.clone(),
+                    PrivateKeyWithHashAlg::new(Arc::new(key), hash),
+                )
+                .await
+                .map_err(|e| Failure::Unsupported(format!("{who}: {e}")))?;
+            if r.success() {
+                return Ok(());
+            }
+        }
+    }
+    // A key here this client could not read (RSA, a format it lacks):
+    // OpenSSH's may take it, before anything is asked.
+    if fall_back && let Some(f) = unusable.first() {
+        return Err(Failure::Unsupported(format!(
+            "{f} is a key the built-in client can't use"
+        )));
     }
     // Keyboard-interactive: each prompt asked.
-    if let Ok(mut r) = handle
-        .authenticate_keyboard_interactive_start(user.clone(), None)
-        .await
+    if takes(MethodKind::KeyboardInteractive)
+        && let Ok(mut r) = handle
+            .authenticate_keyboard_interactive_start(user.clone(), None)
+            .await
     {
         for _ in 0..5 {
             use russh::client::KeyboardInteractiveAuthResponse as K;
@@ -451,12 +609,12 @@ async fn authenticate(handle: &mut Handle<H>, hc: &HostConfig, ask: &Asker) -> R
                 } => {
                     let mut answers = Vec::new();
                     for p in prompts {
-                        let ask = ask.clone();
+                        asked = true;
                         let q = Question {
                             title: if p.prompt.trim().is_empty() {
-                                format!("{}@{}", user, hc.host_name)
+                                who.clone()
                             } else {
-                                format!("{}@{}: {}", user, hc.host_name, p.prompt.trim())
+                                format!("{who}: {}", p.prompt.trim())
                             },
                             lines: [name.clone(), instructions.clone()]
                                 .into_iter()
@@ -468,13 +626,11 @@ async fn authenticate(handle: &mut Handle<H>, hc: &HostConfig, ask: &Asker) -> R
                                 AskKind::Secret
                             },
                         };
-                        match tokio::task::spawn_blocking(move || ask(q))
-                            .await
-                            .ok()
-                            .flatten()
-                        {
+                        match asking(ask, q).await {
                             Some(a) => answers.push(a),
-                            None => return Err("not authenticated: the answer not given".into()),
+                            None => {
+                                return Err(Failure::Declined(format!("{who}: not answered")));
+                            }
                         }
                     }
                     r = match handle
@@ -489,31 +645,35 @@ async fn authenticate(handle: &mut Handle<H>, hc: &HostConfig, ask: &Asker) -> R
         }
     }
     // The password, asked.
-    for _ in 0..3 {
-        let ask = ask.clone();
-        let q = Question {
-            title: format!("Password for {}@{}", user, hc.host_name),
-            lines: Vec::new(),
-            kind: AskKind::Secret,
-        };
-        let Some(pass) = tokio::task::spawn_blocking(move || ask(q))
-            .await
-            .ok()
-            .flatten()
-        else {
-            break;
-        };
-        match handle.authenticate_password(user.clone(), pass).await {
-            Ok(r) if r.success() => return Ok(()),
-            Ok(_) => continue,
-            Err(e) => return Err(e.to_string()),
+    if takes(MethodKind::Password) {
+        for _ in 0..3 {
+            asked = true;
+            let q = Question {
+                title: format!("Password for {who}"),
+                lines: Vec::new(),
+                kind: AskKind::Secret,
+            };
+            let Some(pass) = asking(ask, q).await else {
+                return Err(Failure::Declined(format!("{who}: the password not given")));
+            };
+            match handle.authenticate_password(user.clone(), pass).await {
+                Ok(r) if r.success() => return Ok(()),
+                Ok(_) => continue,
+                Err(e) => return Err(Failure::Final(format!("{who}: {e}"))),
+            }
         }
     }
-    Err(format!(
-        "{}@{}: not authenticated (no key the agent or the identity files hold was taken, and \
-         no password given; an RSA key is the `openssh` client's: ssh.client = \"openssh\")",
-        user, hc.host_name
-    ))
+    let why = format!(
+        "{who}: not authenticated (no key the agent or the identity files hold was taken{})",
+        if asked { ", nor what was typed" } else { "" }
+    );
+    Err(if asked || !fall_back {
+        Failure::Final(why)
+    } else {
+        Failure::Unsupported(format!(
+            "the built-in client found no way in to {who} that asks nothing"
+        ))
+    })
 }
 
 /// The agent's keys tried, each recorded in `tried`: true once one is
@@ -1044,7 +1204,7 @@ mod tests {
                 .then(|| "yes".into())
         });
         let t = std::time::Instant::now();
-        let c = Arc::new(connect(&host, ask).expect("connected"));
+        let c = Arc::new(connect(&host, ask, false).expect("connected"));
         time("connect", t);
         let t = std::time::Instant::now();
         let out = crate::io::run_on_channel(
@@ -1088,6 +1248,7 @@ mod tests {
             master: false,
             builtin: true,
             client: Some(c.clone()),
+            fall_back: false,
         });
         let t = std::time::Instant::now();
         let first = crate::runner::run(&tr, "true\n", b"").unwrap();

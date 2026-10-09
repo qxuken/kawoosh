@@ -44,6 +44,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::jumps::commands());
     v.extend(crate::dock::commands());
     v.extend(crate::domains::commands());
+    v.extend(crate::ssh_cmd::commands());
     v.extend(crate::trust::commands());
     v.extend(crate::disk::commands());
     v.extend(crate::look::commands());

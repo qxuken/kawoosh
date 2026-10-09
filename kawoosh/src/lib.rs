@@ -77,6 +77,7 @@ pub mod session;
 pub mod settings;
 pub mod settings_edit;
 pub mod settings_pane;
+pub mod ssh_cmd;
 pub mod statusline;
 pub mod term_images;
 pub mod terminals;

@@ -154,6 +154,8 @@ pub enum ArgKind {
     Language,
     /// A font family kui can see (`:font`), the rest of the line.
     Font,
+    /// A machine: a `Host` of `~/.ssh/config` or a domain (`:ssh`).
+    Host,
     /// Anything.
     Text,
 }
@@ -170,6 +172,7 @@ impl ArgKind {
             "view" => Self::View,
             "language" => Self::Language,
             "font" => Self::Font,
+            "host" | "domain" => Self::Host,
             "text" | "string" => Self::Text,
             _ => return None,
         })
@@ -185,6 +188,7 @@ impl ArgKind {
             Self::View => "view",
             Self::Language => "language",
             Self::Font => "font",
+            Self::Host => "host",
             Self::Text => "text",
         }
     }
