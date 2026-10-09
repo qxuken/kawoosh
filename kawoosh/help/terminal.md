@@ -163,6 +163,6 @@ When a program in the terminal turns echo off to ask for a password (`sudo`, `ss
 | `terminal.place` | `"column"` | where `:terminal` and `:!` open: `column`, a column of its own, or `under` the focused pane in its column; `<C-w>s` then `t` is under either way |
 | `terminal.raw` | `{}` | programs a pane is raw for while one is in front, such as `{ "nvim", "hx" }` |
 | `editor.bell` | `false` | whether the editor rings for its own failures |
-| `env.shell` | `""` | the shell whose `PATH` kawoosh borrows when started outside a terminal (from the Dock, Finder); read at startup |
+| `env.shell` | `""` | the shell whose `PATH` kawoosh borrows when started outside a terminal (from the Dock, Finder); read from `settings.lua` at startup, before `init.lua` runs |
 
 See [settings](settings.md) for how to set them.

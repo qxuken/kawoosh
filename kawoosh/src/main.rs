@@ -347,23 +347,12 @@ fn main() -> anyhow::Result<()> {
     app.share_wake(wake);
     let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
     app.open_store(None);
-    app.load_config();
     // Opened outside a terminal — from Finder, the Dock — the PATH is
     // launchd's: a shell is asked for its own on a thread, and the
-    // children get it (`shell_env`). From a terminal it is the shell's
-    // already.
-    if cfg!(target_os = "macos") && std::env::var_os("TERM").is_none() {
-        let shell = app
-            .ed
-            .settings
-            .str("env.shell")
-            .filter(|s| !s.is_empty())
-            .map(std::ffi::OsString::from)
-            .or_else(|| std::env::var_os("SHELL"));
-        if let Some(shell) = shell {
-            kawoosh_systems::shell_env::resolve(shell);
-        }
-    }
+    // children get it (`shell_env`), the config's own among them. From
+    // a terminal it is the shell's already.
+    app.config.ask_shell = cfg!(target_os = "macos") && std::env::var_os("TERM").is_none();
+    app.load_config();
     // After the config, so what `init.lua` and the plugins added is in
     // the types lua-language-server reads.
     if let Some(dir) = kawoosh::types::types_dir() {
