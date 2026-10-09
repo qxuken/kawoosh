@@ -222,6 +222,22 @@ impl Kawoosh {
                 self.load_user_settings(&p);
             }
         }
+        // Before `init.lua`, so a process it starts is looked up on the
+        // shell's PATH: started first, `brew --prefix` was looked for
+        // on launchd's (2026-10-09). After `settings.lua`, which may
+        // name the shell.
+        if self.config.ask_shell {
+            let shell = self
+                .ed
+                .settings
+                .str("env.shell")
+                .filter(|s| !s.is_empty())
+                .map(std::ffi::OsString::from)
+                .or_else(|| std::env::var_os("SHELL"));
+            if let Some(shell) = shell {
+                kawoosh_systems::shell_env::resolve(shell);
+            }
+        }
         if let Some(p) = crate::settings::config_path() {
             self.config.init = Some(p.clone());
             if p.is_file() {

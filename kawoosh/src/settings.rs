@@ -146,6 +146,10 @@ pub struct Config {
     /// (`settings_pane.rs`): read at once, so the watch seeing the
     /// write is no news.
     pub written: std::collections::HashMap<PathBuf, blake3::Hash>,
+    /// Whether the login shell is asked for its PATH (`shell_env`) once
+    /// `settings.lua` names it and before `init.lua` runs: set by
+    /// `main.rs` for a window opened outside a terminal.
+    pub ask_shell: bool,
 }
 
 impl Config {
@@ -163,6 +167,7 @@ impl Config {
             undeclared_said: Default::default(),
             editorconfig: Default::default(),
             written: Default::default(),
+            ask_shell: false,
         }
     }
 }
