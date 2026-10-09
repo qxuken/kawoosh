@@ -1584,7 +1584,6 @@ fn a_drag_over_a_rendered_row_follows_the_pointer() {
     d.keys(&mut app, "15G");
     settle(&mut d, &mut app);
     let v = app.focused_view().unwrap();
-    let cw = rect_of_text(&d, "    println!(\"hi\");").map_or(7.82666, |r| r.2 / 19.0);
     let row = |d: &Drive| {
         d.core
             .nodes()
@@ -1596,6 +1595,14 @@ fn a_drag_over_a_rendered_row_follows_the_pointer() {
             })
             .map(|n| (n.text.clone().unwrap(), n.rect))
             .expect("the list's row")
+    };
+    // A cell as this platform draws the editor's face, which the row is
+    // in: the row's node is as wide as its text. Not a width written in
+    // (7.83, where the test was written): on Windows it is 7.62, and a
+    // caret on its cell read as 0.11 of one off by the fourth.
+    let cw = {
+        let (t, r) = row(&d);
+        r.w / t.chars().count() as f32
     };
     // The head's char, and every one-char float on the row at the cell
     // of that char in the row's text as drawn this frame.
