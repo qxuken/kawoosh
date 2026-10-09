@@ -180,10 +180,15 @@ fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
     };
     ex(&mut d, &mut app, "cd");
     assert_eq!(app.cwd.display().to_string(), format!("{name}:/src"));
-    // A link in a file at the host's root is against that root.
+    // A link in a file at the host's root is against that root. The
+    // buffer is named before the host's bytes arrive, and `gx` on an
+    // empty one finds no link: wait for the text.
     ex(&mut d, &mut app, &format!("e {name}:/doc.md"));
-    until(&mut d, &mut app, "the markdown open", |a| {
-        focused_name(a) == "doc.md"
+    until(&mut d, &mut app, "the markdown read", |a| {
+        a.focused_view().is_some_and(|v| {
+            let b = a.ed.buffer_of(v);
+            b.name == "doc.md" && b.loading.is_none() && b.text() == "[a](src/a.txt)\n"
+        })
     });
     d.press(&mut app, "gg");
     d.press(&mut app, "gx");
@@ -561,9 +566,13 @@ fn processes_and_terminals_run_on_the_host() {
         "term \"$EDITOR\" note.txt && echo edited > done.txt",
     );
     let note = format!("{name}:{}/note.txt", proj.display());
+    // Read, not only named: a buffer the host has not answered for yet
+    // is read only, and what is typed into it is refused.
     until(&mut d, &mut app, "the host's $EDITOR opening here", |a| {
-        a.focused_view()
-            .is_some_and(|v| a.ed.buffer_of(v).path.as_deref() == Some(Path::new(&note)))
+        a.focused_view().is_some_and(|v| {
+            let b = a.ed.buffer_of(v);
+            b.path.as_deref() == Some(Path::new(&note)) && b.loading.is_none()
+        })
     });
     let t = app.terms.map.keys().copied().max().expect("the terminal");
     assert_eq!(
