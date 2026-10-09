@@ -671,6 +671,127 @@ the platform's line that builds the example; a tarball each and
 - Windows on arm64 is a row of the table (`-m arm64`) when Kawoosh is
   built there.
 
+**Native against Lua, measured, 2026-10-09** ("I want to see numbers
+for kawoosh native extension vs lua. make something mildly complex,
+instrument and measure, does it pay off?"). One plugin written twice —
+`tests/ext/words.c` over `kawoosh.h`/`kui.h`, `tests/ext/words.lua` as a
+Lua plugin would be — at three jobs, its outputs asserted equal:
+`tests/lua_costs.rs`, `native_vs_lua` (`LUA_COSTS_WORDS_MB`, 4). The
+corpus is the workspace's own Rust (`kawoosh/src`, `editor/src`,
+`lua/src`) repeated to size; release, Apple Silicon, the C at the
+harness' `-O1`; each side's own clock (C's monotonic, Lua's
+`kawoosh._clock`), medians of 7 runs.
+
+- **An index**: every identifier counted, ranked (count down, bytes
+  up), the top 100 into a scratch; the ranking kept for a pane.
+
+  | buffer | C, `kw_buf_text` | C, `kw_call("buf.text")` | Lua | Lua / C |
+  |---|---|---|---|---|
+  | 1 MB, 130k words | 3.9 ms | 4.3 ms | 20.5 ms | 5.2× |
+  | 4 MB, 500k words | 14.1 ms | 15.3 ms | 75.6 ms | 5.4× |
+  | 16 MB, 1.9M words | 49.1 ms | 54.1 ms | 271 ms | 5.5× |
+
+  The crossing is not the gap: reading the text is the same 1.4 ms per
+  4 MB on both sides (Lua's `buf.text` and `kw_buf_text` are each the
+  snapshot's one copy), the data route another 1.4. The gap is the
+  interpreter: `gmatch` and a table of counts at 64 ms against an open
+  hash table at 11; Lua's sort with a comparator 7.9 against `qsort`'s
+  1.2. Lua passes a 16 ms frame at about 0.8 MB, C at about 4.5.
+- **A rename**: every whole-word `self` replaced, one batch of edits,
+  forward by one side and back by the other, the buffer asserted the
+  corpus again.
+
+  | 4 MB, 11,822 edits | own clock | wall, the apply included |
+  |---|---|---|
+  | C: `memchr`, edges by byte, `kw_buf_edits` | 4.2 ms | 8.8 ms |
+  | Lua: `find` with `%f[%w_]self%f[^%w_]` | 57.5 ms (13.6×) | 61.5 ms (7.0×) |
+  | Lua: plain `find`, edges by `string.byte` | 7.5 ms (1.7×) | 11.9 ms (1.3×) |
+
+  At 1 and 16 MB the same ratios (12.5×/11.4× patterned, 1.7×/1.8×
+  plain). A frontier pattern tries a match at every byte; a plain find
+  is C inside Lua's string library, and what is left of Lua is one
+  iteration a hit. Queueing the edits: 1.1 ms from a Lua table, 0.25
+  from a `KwEdit` array; the engine's apply, about 4.5 ms, is the same
+  for both.
+- **A pane**: the ranking as 200 rows of count, word and a bar (a
+  scrolling column, about 1,000 nodes), the same tree from
+  `kui_ext_view` and from a Lua view; 120 frames idle, 120 with the
+  selection moved before each. Pane draw is the perf log's (`panes[…]`),
+  the frame the harness' wall clock; the editor alone is 0.16 ms a
+  frame.
+
+  | | C pane draw | frame | Lua pane draw | frame |
+  |---|---|---|---|---|
+  | idle | 0.20 ms (0.07 since replayed, below) | 0.52 ms (0.38) | 0.07 ms (replayed) | 0.40 ms |
+  | moving every frame | 0.20 ms | 0.53 ms | 1.70 ms (fn 0.40, kui-lua build 1.12) | 2.09 ms |
+
+  Changing, the native pane fills 8.5× cheaper: two-thirds of Lua's
+  cost is kui-lua turning the returned tables into nodes, which a
+  native view never has. Idle, Lua wins: its pane is replayed (kui
+  F142, lua-boundary.md Decision 10), while a native view has no read
+  tracking, is never vouched for (`lua_view_fresh` answers
+  "untracked") and fills every frame. Both sides showed a lone 12–166
+  ms frame in some runs, the native pane's too: the Lua collector
+  paying for the 4–16 MB strings the index made, not either pane.
+
+**Does it pay off.** For a loop the interpreter runs — tokenising,
+counting, hashing, sorting with a comparator — five times, steady from
+1 MB to 16, and that is the line between a keystroke's work fitting a
+frame and not. For work Lua's string library does in C (a plain
+`find`, `gsub`, `rep`), not: within 2×, and 1.3× on the wall once the
+engine's apply is counted. For a pane redrawn every frame, eight times
+on its own draw, though 200 rows of Lua is 2 ms, comfortably in a
+frame, so it is a large tree redrawn continuously (live data, an
+animation) that asks for C; idle, the two are now the same (below).
+The boundary itself, since the typed doors, is no longer where the
+time goes.
+
+**Native views replayed, 2026-10-09** ("let's build native view
+replay, then merge"). A native pane's slot is now declared with
+`slot_replay` when kawoosh vouches for it, as a Lua pane's is (kui ADR
+0045, lua-boundary.md Decision 10), and kui checks the rest. What the
+host vouches for, and why that is enough:
+
+- **No call into native code since the last fill.** An extension's
+  state changes only inside a call kawoosh makes: a `KwFn` (a command,
+  a map, a hook, a callback, a wake), `kw_ext_init`, or a kui event its
+  `kui_ext_on_event` is handed. `kui_ext_view` has no `KwCtx`, so it
+  can read nothing of the editor that an earlier call did not copy. So
+  the claim is one count, `kawoosh_lua::native::calls_in`, bumped
+  before each of those: the `KwFn` trampoline (`handle`), `run_wakes`
+  and `load` in `lua/src/native.rs`, and the kui half's `on_event`
+  through `NativeKui`, kawoosh's wrapper over kui's `CExtension` —
+  kui routes an extension's events to it directly, so the host never
+  saw a click before. The count is the process's, as the wakes are:
+  the kui half outlives a runtime, and a count that restarted with one
+  could meet an old fill's.
+- **The palette the same.** kui's `kui_theme` reads the theme with no
+  read noted, so a fill that drew from it would replay across a theme
+  change; kawoosh sets the theme from its palette, so the palette's
+  hash is in the claim. (backlog.md, with the other kui note below.)
+- **Everything else is kui's**: the params (`focused`, `width`, …),
+  every fact read through a kui door — a hover, a press, a scroll
+  offset, `kui_now`, which is the clock and never replays.
+- **The contract, in `kawoosh.h`**: change what the view draws only
+  inside a call kawoosh makes (from a thread, through `kw_wake`), never
+  in `kui_ext_view`, and read the time through `kui_now`. One
+  count for every extension: a command of one refills the panes of
+  all, which is a fill, never a stale frame.
+- **Tested** (`tests/native.rs`,
+  `a_native_pane_is_replayed_until_native_code_runs`): `panel.c` draws
+  how many times its view ran, which a replay pushes again unchanged;
+  idle frames leave it, a click, a native command and `:theme toggle`
+  each run it once more, plain Lua does not. With the event wrapper's
+  count taken out, the click's frame shows `clicks 0`.
+- **Measured** (`native_vs_lua`, 4 MB, the 200-row pane idle): the
+  native pane's draw 0.20 → 0.07 ms, Lua's replay to the hundredth;
+  the frame's median 0.52 → 0.38 ms. Moving every frame is unchanged
+  (0.20 against Lua's 1.68).
+- **Found on the way, in kui**: `Core::slot_fill` after a frame that
+  filled with `slot_kept` answers the frame before's `slot_replay`
+  answer, so the test reads the pane's own count instead. Noted in
+  backlog.md beside `kui_theme`.
+
 ## Open
 
 - **A door's documentation for C.** `types/` is written for LuaLS. The

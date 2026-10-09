@@ -90,6 +90,10 @@ pub struct Scripting {
     /// Decision 10). Its slot is replayed while every generation it
     /// read is the one it was built at.
     pub view_tracks: HashMap<String, ViewTrack>,
+    /// Each native view's last fill, by `NAME@PANE`: the count of calls
+    /// into native code and the palette then (native.md, native views
+    /// replayed). Its slot is replayed while both are what they were.
+    pub native_tracks: HashMap<String, (u64, u64)>,
     /// This frame's generations, read once after the publish.
     pub frame_gens: FrameGens,
     pub tools: HashMap<String, ToolDef>,
@@ -2184,7 +2188,18 @@ impl Kawoosh {
         // own — the params below, every fact of the frame the view read
         // — and replays the pane's tree without running the view.
         let track = format!("{name}@{pane}");
-        let (fresh, why) = self.lua_view_fresh(&track);
+        let native = self
+            .scripting
+            .rt
+            .as_ref()
+            .and_then(|rt| rt.native_namespace_of(name));
+        // Read before the fill: a call into native code during it moves
+        // the count, and the next frame fills again.
+        let calls_in = kawoosh_lua::native::calls_in();
+        let (fresh, why) = match native {
+            Some(_) => self.native_view_fresh(&track, calls_in),
+            None => self.lua_view_fresh(&track),
+        };
         let params = Value::map([
             ("pane", Value::Int(pane as i64)),
             ("focused", Value::Bool(focused)),
@@ -2239,12 +2254,7 @@ impl Kawoosh {
                 // A native extension's view is its own slot
                 // (native.md Decision 4): under its namespace, the
                 // params the same, filled by its `kui_ext_view`.
-                let ns = self
-                    .scripting
-                    .rt
-                    .as_ref()
-                    .and_then(|rt| rt.native_namespace_of(name))
-                    .unwrap_or_else(|| "lua".into());
+                let ns = native.as_deref().unwrap_or("lua");
                 let slot = format!("{ns}/{name}@{pane}");
                 let t = crate::perf::span_start();
                 let fill = if fresh {
@@ -2272,9 +2282,26 @@ impl Kawoosh {
                     },
                     t,
                 );
+                // A native view ran: the count and the palette it ran at
+                // are what the next frame's claim rests on.
+                if !replayed && native.is_some() {
+                    if t.is_some() {
+                        let mut note = format!("{track}: {why}");
+                        if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
+                            note.push_str(" kui: ");
+                            note.push_str(kui_why);
+                        }
+                        crate::perf::note(note);
+                    }
+                    let palette = self.scripting.frame_gens.palette;
+                    self.scripting
+                        .native_tracks
+                        .insert(track.clone(), (calls_in, palette));
+                }
                 // The view ran: what it read, at this frame's generations,
                 // is what the next frame's claim rests on.
                 if !replayed
+                    && native.is_none()
                     && let Some(rt) = self.scripting.rt.as_ref()
                     && let Some(reads) = rt.view_reads(&track)
                 {
@@ -2305,6 +2332,24 @@ impl Kawoosh {
         if focused {
             self.focus_sink(ui, sink);
         }
+    }
+
+    /// Whether the host vouches for the native view tracked as `track`
+    /// this frame: no call into native code since its last fill — every
+    /// change to an extension's state is inside one — and the palette
+    /// the same, since kui's `kui_theme` notes no read (kui checks the
+    /// rest: the params, every fact of the frame the fill read).
+    fn native_view_fresh(&self, track: &str, calls_in: u64) -> (bool, &'static str) {
+        let Some(&(then, palette)) = self.scripting.native_tracks.get(track) else {
+            return (false, "untracked");
+        };
+        if then != calls_in {
+            return (false, "native ran");
+        }
+        if palette != self.scripting.frame_gens.palette {
+            return (false, "palette");
+        }
+        (true, "fresh")
     }
 
     /// Whether the host vouches for the view tracked as `track` this
@@ -2436,7 +2481,7 @@ impl Kawoosh {
             // SAFETY: as the loader's — the library's code runs in this
             // process already, from `kw_ext_init`.
             let added = unsafe { kui_ffi::CExtension::open(&path) }
-                .and_then(|ext| ui.add_extension(&ns, Box::new(ext)));
+                .and_then(|ext| ui.add_extension(&ns, Box::new(NativeKui(ext))));
             match added {
                 Ok(_) => {
                     self.scripting.kui_added.insert(ns);
@@ -2561,6 +2606,28 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
     ]
+}
+
+/// A native extension's kui half as the frame holds it: kui's loader's,
+/// with every event it is handed counted as a call into native code
+/// (`kawoosh_lua::native::touch`) — a click on its pane changes its
+/// state where the host never sees it, and its panes must fill again.
+struct NativeKui(kui_ffi::CExtension);
+
+impl kui_native::Extension for NativeKui {
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+    fn slots(&self) -> &[String] {
+        self.0.slots()
+    }
+    fn view(&mut self, slot: &kui_native::Slot<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+        self.0.view(slot, ui)
+    }
+    fn on_event(&mut self, ev: &kui_native::UiEvent) -> Vec<Value> {
+        kawoosh_lua::native::touch();
+        self.0.on_event(ev)
+    }
 }
 
 #[cfg(test)]

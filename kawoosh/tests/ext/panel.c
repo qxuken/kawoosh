@@ -3,7 +3,9 @@
  * the view `cpanel` as this extension's own and two commands - `cpanel`
  * opens it, `cwake` starts a thread that comes back through kw_wake;
  * kui's `kui_ext_view` draws the pane, a row whose clicks come back to
- * `kui_ext_on_event` and are counted on the next frame. */
+ * `kui_ext_on_event` and are counted on the next frame, and under it how
+ * many times the view has run - the probe for a replayed slot, which
+ * pushes the last fill's text again without running it. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -140,6 +142,7 @@ const KuiStr *kui_ext_slots(size_t *count) {
 
 typedef struct {
     int clicks;
+    int fills;
 } Panel;
 
 void *kui_ext_init(void) { return calloc(1, sizeof(Panel)); }
@@ -170,6 +173,12 @@ void kui_ext_view(void *user, KuiCtx *ui) {
         KuiTextStyle style = {.size = 14, .color = t.fg};
         kui_text(ui, KUI_STR(line), &style);
         kui_close(ui);
+    }
+    {
+        char line[64];
+        snprintf(line, sizeof line, "view ran %d times", ++p->fills);
+        KuiTextStyle style = {.size = 12, .color = t.muted};
+        kui_text(ui, KUI_STR(line), &style);
     }
     kui_close(ui);
 }
