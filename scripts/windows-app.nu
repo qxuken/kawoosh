@@ -4,6 +4,9 @@
 # binary is a GUI program (`windows_subsystem`). What goes in:
 #
 #   Kawoosh\kawoosh.exe        the window, its icon linked in (build.rs)
+#   Kawoosh\kawoosh.com        `kawoosh` from cmd, PowerShell and nushell:
+#                              the CLI half as a console program they
+#                              wait for and read (kawoosh-cli, src/bin/cli.rs)
 #   Kawoosh\kawoosh-edit.exe   a terminal's $EDITOR, found beside it
 #   Kawoosh\kawoosh-update.exe what :relaunch puts the next one in with
 #   Kawoosh\conpty.dll         the pseudo console, and the host a terminal's
@@ -101,7 +104,7 @@ def main [
   # Before the build: a package that cannot be had stops it early.
   let host = console-host $target
 
-  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit --bin kawoosh-update
+  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-cli --bin kawoosh-edit --bin kawoosh-update
   # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
   let version = ^cargo pkgid --manifest-path $manifest -p kawoosh | str trim | str replace -r '.*[#@]' ''
 
@@ -125,6 +128,8 @@ def main [
   for bin in [kawoosh kawoosh-edit kawoosh-update] {
     cp ($target | path join release $"($bin).exe") $fresh
   }
+  # By `PATHEXT` a `.com` is found before an `.exe` of its name.
+  cp ($target | path join release kawoosh-cli.exe) ($fresh | path join kawoosh.com)
   for f in $host {
     cp $f $fresh
   }

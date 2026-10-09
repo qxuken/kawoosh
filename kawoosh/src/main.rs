@@ -1,7 +1,11 @@
 // On Windows the window's binary is a GUI program: opened from Explorer
-// or the Start menu it brings no console with it. What its CLI half
-// prints goes to the console it was run from (`attach_console`); a
-// terminal's `$EDITOR`, which has to be waited for, is `kawoosh-edit`.
+// or the Start menu it brings no console with it. cmd and PowerShell
+// neither wait for a GUI program nor take its output (`$x = kawoosh.exe
+// pick dirs` is empty, `for /f` reads nothing), so from them the CLI
+// half is `kawoosh.com`, a console program beside it that they find
+// first by the name `kawoosh` and that runs this one and waits
+// (`bin/cli.rs`); nushell and Git bash wait for either. A terminal's
+// `$EDITOR`, which has to be waited for, is `kawoosh-edit`.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::collections::HashSet;
@@ -83,7 +87,6 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
     if !matches!(verb, "edit" | "ex" | "theme" | "pick") {
         return Ok(false);
     }
-    attach_console();
     // A file to edit starts a Kawoosh when none runs; the other verbs
     // ask one that is there — a prompt hook's `kawoosh theme` opens no
     // window.
@@ -102,7 +105,7 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
         kawoosh::running::raise(pid);
     }
     if verb == "theme" {
-        println!("{}", send_request(&sock, &Request::Theme)?);
+        kawoosh::outln!("{}", send_request(&sock, &Request::Theme)?);
         return Ok(true);
     }
     // `kawoosh pick dirs`: what is picked on stdout, or nothing and
@@ -122,7 +125,7 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
         if reply.is_empty() {
             std::process::exit(1);
         }
-        println!("{reply}");
+        kawoosh::outln!("{reply}");
         return Ok(true);
     }
     if verb == "ex" {
@@ -133,7 +136,7 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
             },
         )?;
         if !reply.is_empty() {
-            println!("{reply}");
+            kawoosh::outln!("{reply}");
         }
         return Ok(true);
     }
@@ -165,10 +168,13 @@ fn hand_over(path: Option<&String>) -> bool {
 }
 
 /// On Windows, the console `kawoosh` was run from, for what the CLI
-/// half prints: a GUI program has none of its own. A pipe it was handed
-/// (`cd (kawoosh pick dirs)`) is already its output and stays so. cmd
-/// and PowerShell do not wait for a GUI program, so their prompt may
-/// come back before the output does.
+/// half prints: a GUI program has none of its own. A pipe or file it
+/// was handed — by nushell, Git bash, `Start-Process
+/// -RedirectStandardOutput`, `kawoosh.com` — is already its output and
+/// stays so. Run as `kawoosh.exe` from cmd or PowerShell it is neither
+/// waited for nor handed their pipe: the prompt comes back before the
+/// output, which goes to the console or nowhere (`kawoosh.com` is the
+/// CLI there, `bin/cli.rs`).
 fn attach_console() {
     #[cfg(windows)]
     // SAFETY: no preconditions; with no parent console it fails and
@@ -259,48 +265,41 @@ fn main() -> anyhow::Result<()> {
     }
     let after_dashes = args.first().is_some_and(|a| a == "--");
     let reuse = args.first().is_some_and(|a| a == REUSE);
-    // A flag, or `test`: the CLI half, whose output wants a console —
-    // but for `--after` and `--reuse`, which are the window.
-    if !after_dashes
-        && !reuse
-        && args.first().is_some_and(|a| {
-            (a.starts_with('-') && a != "-" && a != kawoosh::update::AFTER) || a == "test"
-        })
-    {
+    // A verb or a flag: the CLI half, whose output wants a console.
+    if kawoosh::cli::is_cli(&args) {
         attach_console();
     }
     match args.first().map(String::as_str) {
         Some("-h" | "--help") => {
-            print!("{USAGE}");
+            kawoosh::out!("{USAGE}");
             return Ok(());
         }
         Some("-V" | "--version") => {
-            println!("kawoosh {}", env!("CARGO_PKG_VERSION"));
+            kawoosh::outln!("kawoosh {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         // What Info.plist's document types are compiled from
         // (scripts/macos-app.nu).
         Some("--languages") => {
-            println!("{}", kawoosh::grammars::languages_json());
+            kawoosh::outln!("{}", kawoosh::grammars::languages_json());
             return Ok(());
         }
         // `--after PID`: started by that Kawoosh's `:relaunch`, to open
         // once it has gone — its session saved, its store let go.
         Some(kawoosh::update::AFTER) => {
             let Some(pid) = args.get(1).and_then(|p| p.parse::<u32>().ok()) else {
-                eprintln!("kawoosh: --after takes a process id");
+                kawoosh::errln!("kawoosh: --after takes a process id");
                 std::process::exit(2);
             };
             args.drain(..2);
             if !kawoosh::update::gone_within(pid, kawoosh::update::QUIT) {
-                eprintln!("kawoosh: process {pid} did not quit");
+                kawoosh::errln!("kawoosh: process {pid} did not quit");
                 std::process::exit(1);
             }
         }
         // `kawoosh lsp install yaml`: servers installed with no window
         // (docs/design/lsp-installs.md).
         Some("lsp") => {
-            attach_console();
             std::process::exit(kawoosh::lsp_cli::run(&args[1..]));
         }
         // What follows is a path, dash or not, as after `--`.
@@ -316,7 +315,7 @@ fn main() -> anyhow::Result<()> {
         }
         // A mistyped flag is not a file to create.
         Some(a) if a.starts_with('-') && a != "-" => {
-            eprintln!("kawoosh: unknown option {a} (kawoosh --help lists them)");
+            kawoosh::errln!("kawoosh: unknown option {a} (kawoosh --help lists them)");
             std::process::exit(2);
         }
         _ => {

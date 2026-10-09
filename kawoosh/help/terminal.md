@@ -119,7 +119,7 @@ Every kawoosh terminal gets these environment variables:
 |---|---|
 | `EDITOR`, `VISUAL`, `GIT_EDITOR` | `kawoosh-edit` |
 | `KAWOOSH_SOCKET` | how the command-line tools reach this window |
-| `KAWOOSH_BIN` | the kawoosh binary |
+| `KAWOOSH_BIN` | the kawoosh binary (on Windows `kawoosh.com`, below) |
 | `TERM_PROGRAM` | `kawoosh` (and `TERM_PROGRAM_VERSION`) |
 | `TERM_APPEARANCE` | `dark` or `light`, as the window was when the shell started |
 
@@ -133,6 +133,8 @@ The same socket serves the `kawoosh` command inside a terminal:
 | `kawoosh ex LINE` | run LINE as a `:` command |
 | `kawoosh theme` | print `dark` or `light`, for a prompt hook to follow the theme |
 | `kawoosh pick SOURCE [QUERY]` | the picker on SOURCE (`dirs`, `files`…); prints the pick, or exits 1 |
+
+On Windows the window is `kawoosh.exe`, a program cmd and PowerShell neither wait for nor read the output of. Beside it is `kawoosh.com`, a console program that runs it and waits, and cmd, PowerShell and nushell take it for `kawoosh` before the `.exe`. So `$d = kawoosh pick dirs`, `for /f %d in ('kawoosh pick dirs') do cd %d` and nushell's `cd (kawoosh pick dirs)` get the pick, in order and with its exit code. Typing `kawoosh.exe` by its full name skips it: the prompt comes back before the answer, and an answer captured or redirected comes back empty. Git bash and WSL wait for either.
 
 ## $EDITOR outside kawoosh
 

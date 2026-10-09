@@ -621,7 +621,10 @@ draft:
   `&` does not wait for one, and two `kawoosh ex` started back to back
   raced to the socket, the command ahead of the load. Each waited on
   (`Start-Process -Wait`), the load and the open are in order every
-  time, and the headless drive opens it with no frame between.
+  time, and the headless drive opens it with no frame between. Since
+  then `kawoosh` from PowerShell is `kawoosh.com`, a console program
+  that waits (`kawoosh/src/bin/cli.rs`); only `kawoosh.exe` by its full
+  name still races.
 - **Two fixes the platform showed**: `locate` listed a path said with
   `.so` twice among the places looked (on every platform; the test
   asserted a prefix); `kawoosh.h`'s `kw_error_str` used `memcpy` with no
