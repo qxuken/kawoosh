@@ -980,21 +980,7 @@ impl Kawoosh {
                     self.ed.message = e;
                 }
             }
-            Msg::Retarget { from, to } => {
-                for b in self.ed.buffers.values_mut() {
-                    let Some(p) = &b.path else { continue };
-                    let moved = if p == &from {
-                        to.clone()
-                    } else if let Some(rest) = kawoosh_systems::fs::relative(p, &from) {
-                        kawoosh_systems::fs::join(&to, &rest)
-                    } else {
-                        continue;
-                    };
-                    b.name = kawoosh_systems::fs::basename(&moved)
-                        .unwrap_or_else(|| moved.display().to_string());
-                    b.path = Some(moved);
-                }
-            }
+            Msg::Retarget { from, to } => self.path_moved(&from, &to),
             Msg::OpenView {
                 name,
                 focus,
@@ -2107,6 +2093,7 @@ impl Kawoosh {
         self.scripting.next_proc += 1;
         let id = LUA_PROC_BASE + self.scripting.next_proc;
         let what = format!("{:?} in {:?}", spec.cmd, spec.cwd);
+        let spec_cwd = spec.cwd.clone();
         match self.io.run_command(id, spec) {
             Ok(handle) => {
                 self.pending_jobs += 1;
@@ -2122,7 +2109,13 @@ impl Kawoosh {
                 );
             }
             Err(e) => {
-                self.ed.message = format!("spawn: {e}");
+                // A directory gone says so, not the program's "no such file".
+                self.ed.message = match &spec_cwd {
+                    Some(d) if kawoosh_systems::fs::domain_of(d).is_none() && !d.is_dir() => {
+                        format!("spawn: no directory {}", d.display())
+                    }
+                    _ => format!("spawn: {e}"),
+                };
                 log::warn!("spawn: {e}: {what}");
                 rt.proc_exit(token, None, None);
             }

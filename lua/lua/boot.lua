@@ -268,8 +268,10 @@ end
 -- moved, once a frame, after it moved; not for the directory kawoosh
 -- started in. The working directory is the focused tab's
 -- (docs/design/workspaces.md): `how` is "cd" (`:cd`, a listing's
--- `~` in a listing, `kawoosh.fs.chdir`) or "tab" (the keys went to a tab
--- in another directory).
+-- `~` in a listing, `kawoosh.fs.chdir`), "tab" (the keys went to a tab
+-- in another directory), "moved" (the directory, or one above it, was
+-- renamed or moved, and the tab went along) or "gone" (it was deleted,
+-- and the tab went up to the nearest directory still there).
 kawoosh._cwd_hooks = {}
 function kawoosh.on_cwd(fn)
   kawoosh._cwd_hooks[#kawoosh._cwd_hooks + 1] = fn

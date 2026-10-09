@@ -18,6 +18,7 @@ pub mod cmdline;
 pub mod commands;
 pub mod compile;
 pub mod confirm;
+pub mod cwd_watch;
 pub mod deduce;
 pub mod devtab;
 pub mod diff;

@@ -363,6 +363,68 @@ symmetry with the picker — it leaves the launcher's own tab empty;
 **`<C-t>` for the new tab**, the picker's split key, with `<CR>` left
 moving the tab — the ask was that the plain pick open the tab.
 
+## Round three: a directory that moves
+
+*Decided and built 2026-10-10, from the ask "when I rename the current
+dir I get a bunch of errors from plugins like vcs — change the cwd if
+we rename it, and do something if it or a parent is renamed, deleted
+or moved". The calls are the round's, each with what it beat, and the
+user's to overturn.*
+
+What happened: a tab's directory was a path, and nothing looked at it
+again. Renamed under it, every plugin process started there failed
+(`spawn: No such file or directory`, vcs's `git` first), and every
+buffer in it was said "deleted on disk", though its file was only one
+name over.
+
+### 14. A tab's directory is held by what it is
+
+Every tab's directory is held open (`kawoosh_systems::held_dir`), its
+path on a watch of its own (`cwd_watch.rs`, a stat twice a second,
+and all of them when the window comes back to the front). When the
+path stops naming a directory, the handle says where it went — macOS
+`F_GETPATH`, Linux `/proc/self/fd` — through a rename of its own or
+of any directory above it:
+
+- **moved** — everything that stood at or under the old path stands
+  under the new one (`Kawoosh::path_moved`): every tab's directory,
+  every buffer's file (its name with it, so `:w` goes where the file
+  went), and the editor's working directory, with the project layer
+  read again where the project's files moved. `kawoosh.on_cwd` is told
+  `moved`; a corner line says from where to where, once for the
+  outermost directory however many tabs were under it.
+- **gone** — deleted, or moved into a trash (`~/.Trash`, a volume's
+  `.Trashes`, `~/.local/share/Trash`, `.Trash-UID`): the tabs in it go
+  to the nearest directory above it still there, `kawoosh.on_cwd` told
+  `gone`, a warning saying so. The buffers keep their text and are
+  said deleted, as any file is.
+
+A path that still names a directory is kept, whatever is behind it:
+one deleted and made again in its place (a checkout, a build's
+`rm -rf && mkdir`) is where the tab is, and is held anew. The file
+manager's own rename (`kawoosh.buf.retarget`) comes to the same
+`path_moved`, so renaming the cwd in a listing moves the tab at once,
+before the watch would.
+
+A buffer's file seen gone looks at the tabs' directories first, so a
+file that went with its directory is followed rather than said
+deleted — the two watches are two threads, and either may hear first.
+
+A plugin process whose directory is not there says so (`spawn: no
+directory …`) rather than the program's "no such file".
+
+*Beat:* **follow the path's parent and guess** (a new directory with
+the same inode in the parent's listing) — misses a move to elsewhere,
+a parent's rename, and costs a listing; the handle answers all three.
+**`:cd` to the nearest parent on any change** — loses the user's
+place on the commonest case, a rename. **The buffers' files held as
+well** — a handle per open file; a file renamed alone is rarer than
+the directory it is in, and says "deleted on disk" as before.
+
+**Windows** holds by name alone: a handle open on a directory there
+refuses the very rename it would follow. A directory moved away reads
+as gone, its tabs going up.
+
 ## Build order
 
 One round: the tab's `cwd` and the sync on the frame (`Kawoosh::sync_cwd`,
