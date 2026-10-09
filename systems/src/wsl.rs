@@ -355,6 +355,15 @@ impl Fs for WslFs {
         std::fs::read(self.on_share(path))
     }
 
+    fn read_at(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = std::fs::File::open(self.on_share(path))?;
+        f.seek(SeekFrom::Start(offset))?;
+        let mut out = Vec::with_capacity(len.min(1 << 16));
+        f.take(len as u64).read_to_end(&mut out)?;
+        Ok(out)
+    }
+
     /// In place for a file that is there — its mode, owner and links
     /// the file's still, which a sibling renamed over through the share
     /// would lose — and created for one that is not.
@@ -389,7 +398,15 @@ impl Fs for WslFs {
             let e = e?;
             let name = e.file_name().to_string_lossy().into_owned();
             let is_symlink = e.file_type().is_ok_and(|t| t.is_symlink());
-            let m = std::fs::metadata(e.path()).ok();
+            // What the listing itself carries (on Windows the directory
+            // read brings each entry's size, times and kind): a stat of
+            // its own only for a link, to say what it points at — each
+            // stat through the share is a round trip to the 9P server.
+            let m = if is_symlink {
+                std::fs::metadata(e.path()).ok()
+            } else {
+                e.metadata().ok()
+            };
             out.push(Entry {
                 name,
                 is_dir: m.as_ref().is_some_and(|m| m.is_dir()),
@@ -449,6 +466,10 @@ impl Fs for WslFs {
 
     fn local(&self, path: &Path) -> Option<PathBuf> {
         Some(self.on_share(path))
+    }
+
+    fn via(&self) -> &'static str {
+        "the \\\\wsl.localhost share"
     }
 
     fn set_mode(&self, path: &Path, mode: u32) -> io::Result<()> {

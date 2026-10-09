@@ -14,7 +14,8 @@ for its command, then a buffer a command and directory, the same day
 (Decisions 10 and 11); the colours, the head and how long it took
 2026-10-06 (Decision 12); the end said once, a location's pane and
 the session the same day (Decision 13); the note's "Not built"
-2026-10-07 (Decisions 14–18). The calls
+2026-10-07 (Decisions 14–18); the picker's order and cargo's release
+profile 2026-10-09 (Decisions 19 and 20). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -45,7 +46,7 @@ compile on a host is typed or set, as before.
 
 | file | commands | where |
 |---|---|---|
-| `Cargo.toml` | `cargo check` `build` `test` `clippy`, `run` for a binary | the outermost, the workspace — cargo prints its paths from there |
+| `Cargo.toml` | `cargo check` `build` `test` `clippy`, `run` for a binary; then `build --release`, `run --release` for a binary (Decision 20) | the outermost, the workspace — cargo prints its paths from there |
 | `package.json` | `<pm> run SCRIPT` per script; `<pm> exec tsc --noEmit` beside a `tsconfig.json` with no script that runs `tsc` | the nearest; the package manager by its lockfile (`pnpm-lock.yaml`, `yarn.lock`, `bun.lock[b]`) or `packageManager`, else npm |
 | `justfile` `Justfile` `.justfile` | `just`, `just RECIPE` per public recipe, its `#` comment as the why | the nearest |
 | `build.nu` | `nu build.nu [SUB]` for a script's `main` and `main SUB` (an `alias "main SUB"` too), else `nu -c 'use build.nu; build NAME'` per `export def` of a module; the comment above as the why (Decision 6) | the nearest |
@@ -104,7 +105,7 @@ since).
 
 A picker of `compile.default`, the named `compile.commands`, the lines
 run here (newest first; Decision 7), and every deduced one, a command
-listed once: the command, what said so (`Cargo.toml`,
+listed once, in the tiers of Decision 19: the command, what said so (`Cargo.toml`,
 `web/package.json`) muted beside it, the preview its directory, its
 why (the script's body, the recipe's comment) and how it is declared
 (a `def`'s signature, a recipe's line). `<CR>` runs it (`:compile pick
@@ -217,7 +218,9 @@ command spelled out. A bare `:compile` runs the first again: after
 *that spec*, not `yarn pw src/Button.tsx`. The two meanings stay apart
 without a switch: the setting is a template, the memory a record. The
 picker lists the lines after the named commands, `last run here` then
-`recent`; a line that is a named command's is listed once.
+`recent`; a line that is a named command's is listed once. (Decision 19
+puts the lines run here above the named commands, and the ones run
+elsewhere below everything.)
 
 **npm's `--`**: `npm run pw path` gives `path` to npm, not the script,
 so arguments after an `npm run X` go past a `--` — appended to a name,
@@ -700,7 +703,9 @@ memory's lines would lose it.
 **Where it shows.** After the settings' rows and the lines run, before
 the files' (`publish_offer`): the test at the caret is the most
 particular thing on offer, and a named command or the line just run is
-still the user's. The rows go to the end of `Compile::offer`, so a row's
+still the user's. (Decision 19 keeps them so among the project's
+rows: after its settings', before its files'.) The rows go to the end
+of `Compile::offer`, so a row's
 index — what `compile pick N` and `<CR>` take — never moves under a key
 pressed as the answer lands; only the order shown changes, and the
 picker reads its rows again (`picker.reload()`), query and cursor kept.
@@ -716,6 +721,88 @@ environment as `VAR=value` before the command (a shell's spelling,
 `cmd.exe` has none, and `RUSTC_TOOLCHAIN` is what the rustup proxy finds
 anyway).
 
+### 19. The picker by who said a command, and where it ran
+
+*Added 2026-10-09, asked:* "order for compile commands picker should be
+like that: recently user specified, recently from this workspace, user
+specified, rest from workspace, recent from others. now it looks like
+recently used elsewhere can superceed repos commands."
+
+The picker listed the settings' rows, then the lines run, then a
+server's, then the files'. The lines are the memory's for the working
+directory's workspace (Decision 2), each kept where it ran — so a file
+of another repository opened and compiled from here, or a launch from
+home (the workspace `""`: one list for every repository), put that
+repository's command at the head of this one's picker, over its own
+`cargo check`. A row did not say two things: who said it, and whether
+it ran here.
+
+- **Who said it** (`compile::By`). The user: a line typed (`:compile
+  LINE`, `kawoosh.compile`), a name or a default in the user's settings,
+  `init.lua` or `:set`. The project: its files, its server, a name or a
+  default in its settings layer (a `.kawoosh/settings.lua`, a trusted
+  `.kawoosh/init.lua`). A named command's line is the name's, arguments
+  typed after it or not — the template is what runs. **The memory keeps
+  it**, `by` beside each line's `cmd` and `cwd` (`"user"`,
+  `"project"`); a line run again — `r`, a bare `:compile`, the memory's
+  `<CR>` — keeps what it had. A line kept before there was a `by` is
+  read as the project's when the project offers it where it ran, else as
+  the user's, and stays unsaid until it runs again.
+- **Here.** A line ran here when its directory is under the caret's
+  workspace, as the memory reads one (the outermost `.kawoosh`, else the
+  repository; `workspace_of`) — with neither, under where a command no
+  file claims runs — or when the project offers it where it ran (an open
+  buffer's package outside the repository, Decision 9).
+
+Then five tiers, a command listed once, in the first it falls in:
+
+1. the user's lines run here, newest first;
+2. the project's lines run here, newest first — a named or deduced
+   command run is its own row moved up, under its name;
+3. the user's commands, `compile.default` and `compile.commands` from
+   the user's settings, in the settings' order;
+4. the project's: its default and names, a server's runnables (Decision
+   18), its files' and its packages', in that order as before;
+5. the lines run outside the workspace, newest first, `recent
+   elsewhere` beside them.
+
+`last run here` marks the newest of the first two tiers. The rows keep
+their index in `Compile::offer` (Decision 18's reason); `Compile::shown`
+is the order, a tier and a place in it on each row. **A query ranks as
+in every picker**, by the match, equal matches in the list's order: the
+tiers are the order of an empty prompt, and which of two equal matches
+comes first. A bare `:compile` is as it was (Decision 2): the line last
+run, wherever it ran.
+
+Beaten: telling the user's lines from the project's by matching them
+against what the project offers, with nothing kept — a named command's
+line with its `%` put in matches nothing, and a server's rows come
+after the picker opens, so both would read as typed; a memory row per
+repository, by where a line ran — the row is the workspace's, forgotten
+in `:memory` as one, and a launch from home would make one list still;
+leaving out the lines run elsewhere — a command just run in a sibling
+checkout is a fair one to want again, only not first; the tiers as a
+`boost` on the match (`picker.rank`) — big enough to keep them apart, a
+poor match here would outrank the exact one typed for.
+
+### 20. cargo's release profile
+
+*Added 2026-10-09, asked:* "can deduction for cargo also include
+release build/run options? if cargo does not suggest that, we can skip
+this one". cargo does: `release` is one of its two built-in profiles,
+`--release` the flag that picks it. A `Cargo.toml` offers `cargo build
+--release`, and beside a binary `cargo run --release`, after every
+dev-profile row: the quick ones stay at the top, and a bare `:compile`
+still checks. Their output is cargo's, read as the rest is — no matcher
+of their own, `]q` walking it the same. kawoosh offers no per-binary or
+per-example row (`--bin NAME`, `--example NAME`; rust-analyzer's
+runnables have them, Decision 18), so there is none to pair.
+
+Beaten: each release row beside its dev one (the top would be two
+builds before a test); `--release` on every row (a `check` or `clippy`
+under it reads the same code bar `cfg(debug_assertions)`, and a `test
+--release` is rare enough to type, or to name).
+
 ## Not built
 
 - ~~A program that colours only on a terminal and reads none of the
@@ -730,3 +817,6 @@ anyway).
   16.
 - ~~`run.command` as a `tools` entry: the same shape question as
   `compile.command`, left for its own round.~~ Decision 14.
+- A bare `:compile` again by Decision 19's "here": the last line run in
+  the caret's workspace, not the last run anywhere (Decision 2 as it
+  stands).

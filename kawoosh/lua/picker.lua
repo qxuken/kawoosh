@@ -219,7 +219,41 @@ local function shown_lines(h, lines)
   return out
 end
 
+-- A host's files read for the preview while a picker is open, by path:
+-- there a stat is a round trip on the frame, and a preview drawn again
+-- each frame would ask each frame (docs/design/domains.md, "Built,
+-- speed"). Read once, kept until the next picker opens.
+local host_cache = {}
+
+-- Whether `path` is spelled on a domain (`box:/…`, `box:~…`): a name of
+-- two characters or more, so a drive's `C:/` is not one.
+local function on_host(path)
+  return path:match("^[%w_%.%-][%w_%.%-]+:[/~]") ~= nil
+end
+
 local function file_lines(path, around)
+  if on_host(path) then
+    local c = host_cache[path]
+    if not c then
+      local lines, why = (function()
+        local ok, st = pcall(fs.stat, path)
+        if not ok then return nil, "not on disk" end
+        if st.is_dir then return nil, "a directory" end
+        if st.size > PREVIEW_MAX then return nil, "too big to preview" end
+        local rok, text = pcall(fs.read, path)
+        if not rok then return nil, "not text" end
+        if text:find("\0", 1, true) then return nil, "binary" end
+        text = kawoosh.secrets.mask_text(text, path)
+        local out = {}
+        for line in (text .. "\n"):gmatch("(.-)\n") do out[#out + 1] = line end
+        if out[#out] == "" then out[#out] = nil end
+        return out
+      end)()
+      c = { lines = lines, why = why }
+      host_cache[path] = c
+    end
+    return c.lines, c.why
+  end
   local ok, st = pcall(fs.stat, path)
   if not ok then return nil, "not on disk" end
   if st.is_dir then return nil, "a directory" end
@@ -1046,7 +1080,9 @@ end
 -- fn(item) }, columns = {…} (as `picker.rows` takes them), wide =
 -- true (a row's `sub` matched too, after its text, as a row with
 -- columns is on its cells after its name), query = fn(query, ctx)
--- (the text matched for what was typed) }`. An item
+-- (the text matched for what was typed), launcher = true (a module of
+-- the launcher too, launcher.lua), launch = fn(item) (what its row does
+-- there, filling the bare pane, when `pick` goes elsewhere) }`. An item
 -- is `{ text =, sub =, path =, line =, col =, buffer =, offset =, run
 -- =, boost = }`, and a column's field. `opts`: `query`, `cursor`,
 -- `root` (the directory a source that walks or searches starts from,
@@ -1068,6 +1104,7 @@ function picker.open(what, opts)
   if P and P.job and P.job.cancel then pcall(P.job.cancel) end
   if P and P.answer then P.answer(nil) end
   unfollow()
+  host_cache = {}
   -- `terminal`: opened from a terminal pane, where a pick goes back to;
   -- `pane`, that pane's id, for a source that renders to its size.
   local ctx = { buffer = kawoosh.buf.current(), cwd = fs.cwd(), root = opts.root or fs.cwd(),
@@ -1482,7 +1519,9 @@ picker.source("actions", {
 -- it wants arguments), the preview where it runs,
 -- why and how it is declared; `⏎` runs it (`compile pick N`), or puts
 -- one wanting arguments in the prompt to finish, as `<C-e>` does any
--- (`compile edit N`). The rows are what `kawoosh.compile_offer()` says.
+-- (`compile edit N`). The rows are what `kawoosh.compile_offer()` says,
+-- in its order: the tiers of Decision 19 (a query ranks by the match,
+-- equal ones in that order).
 picker.source("compile", {
   title = "compile", placeholder = "a command · <C-e> adds arguments first",
   keys = { ["<C-e>"] = function(item)
@@ -1638,11 +1677,14 @@ local function recent_items()
 end
 
 -- The workspaces worked in before (roadmap step 32, workspaces.md
--- Decision 11): each root the memory has files under, newest first,
--- the one in front left out, with the file last attended there. A
--- pick moves the tab's directory to it and opens that file at its line
--- — the workspace as it was left — or lists the root when it has none.
--- A section of the launcher too (`launcher = true`).
+-- Decisions 11 and 13): each root the memory has files under, newest
+-- first, the one in front left out, with the file last attended there.
+-- A pick opens a new tab on it — its directory the workspace, that file
+-- open at its line, the workspace as it was left, or the root listed
+-- when it has none — or goes to the tab already on it; `<C-o>` moves
+-- the tab in front there instead, as a pick did before. A section of
+-- the launcher too (`launcher = true`), where a row fills the bare pane
+-- in place, as `<C-o>` does (`launch`).
 local function workspace_items()
   local by, order = {}, {}
   local here = fs.cwd()
@@ -1672,19 +1714,53 @@ local function workspace_items()
   return items
 end
 
+-- The tab in front moved to the workspace, its file opened in the pane
+-- the keys are in (or the root listed): `<C-o>`, and a launcher's row.
+local function workspace_here(item)
+  if not item then return end
+  fs.chdir(item.ws)
+  if item.file and fs.exists(item.file) then
+    kawoosh.open(item.file, { line = item.at })
+  else
+    -- The path as it is, not through a command line's words.
+    kawoosh.dir.open(item.ws)
+  end
+end
+
+-- The index of a tab, not the one in front, whose directory is in the
+-- workspace: the workspace is open there already.
+local function workspace_tab(ws)
+  for _, t in ipairs(kawoosh.tabs()) do
+    if not t.active and fs.relative(t.cwd, ws) then return t.index end
+  end
+end
+
+-- `<CR>`: the tab on the workspace — the one there is, else a new one,
+-- its directory the workspace and its file open (as `<C-t>` in the
+-- directory jumps makes a tab on a directory, dirs.lua).
+local function workspace_tab_on(item)
+  if not item then return end
+  local i = workspace_tab(item.ws)
+  if i then return kawoosh.run("tab goto " .. i) end
+  if item.file and fs.exists(item.file) then
+    kawoosh.open(item.file, { split = "tab", line = item.at })
+  else
+    kawoosh.open(item.ws, { split = "tab" })
+  end
+  -- After the open, so it is the new tab's directory that moves.
+  fs.chdir(item.ws)
+end
+
 picker.source("workspaces", {
-  title = "workspaces", placeholder = "a project worked in before", launcher = true,
+  title = "workspaces", placeholder = "a project worked in before · <C-o> moves this tab there", launcher = true,
   items = workspace_items,
-  pick = function(item)
+  pick = workspace_tab_on,
+  launch = workspace_here,
+  keys = { ["<C-o>"] = function(item)
     if not item then return end
-    fs.chdir(item.ws)
-    if item.file and fs.exists(item.file) then
-      kawoosh.open(item.file, { line = item.at })
-    else
-      -- The path as it is, not through a command line's words.
-      kawoosh.dir.open(item.ws)
-    end
-  end,
+    picker.close()
+    workspace_here(item)
+  end },
   empty = "no other workspace in the memory",
 })
 
@@ -2206,37 +2282,46 @@ picker.source("tools", {
 
 -- The machines within reach (docs/design/domains.md W3): the settings'
 -- domains, `~/.ssh/config`'s hosts, WSL's distros, as `domain pick`
--- last published them (`kawoosh.domains()`). `<CR>` opens a tab on one,
--- its home listed — connected first when it is down; `<C-o>` connects it
--- and stays.
+-- last published them (`kawoosh.domains()`), each with what it is —
+-- `ssh: box`, `wsl: Ubuntu-24.04` — and how it stands in words, what
+-- that means in the preview. `<CR>` opens a tab on one, its home listed
+-- — connected first when it is down; `<C-o>` connects it and stays;
+-- `<C-x>` disconnects it, the row saying so once it has.
+local DOMAIN_STATE = { up = "connected", down = "not connected", connecting = "connecting…", failed = "failed" }
+
 picker.source("domains", {
-  title = "domains", placeholder = "a machine · <C-o> connects without a tab",
+  title = "domains", placeholder = "a machine · <C-o> connects · <C-x> disconnects",
   columns = {
     { "text", grow = true },
     { "what", muted = true, min = 120, max = 320, share = 0.4 },
-    { "state", muted = true, min = 60, max = 160, share = 0.2 },
+    { "state", muted = true, min = 80, max = 180, share = 0.2 },
   },
   items = function()
     local items = {}
     for _, d in ipairs(kawoosh.domains() or {}) do
-      local target = d.target ~= "" and d.target or "the default distro"
-      local state = d.state .. (d.open > 0 and (" · " .. d.open .. " open") or "")
+      local state = (DOMAIN_STATE[d.state] or d.state) .. (d.open > 0 and (" · " .. d.open .. " open") or "")
       items[#items + 1] = {
-        text = d.name, what = d.kind .. " " .. target, state = state, name = d.name,
+        text = d.name, what = d.label, state = state, name = d.name,
         boost = d.state == "up" and 0.5 or 0,
-        preview = { title = d.name, lines = {
-          d.kind .. " " .. target, "from " .. d.from, d.state .. (d.error and (": " .. d.error) or ""),
-          "", d.name .. ":~ in a new tab",
+        preview = { title = d.name .. " — " .. d.label, lines = {
+          d.means, "", "found in " .. d.from, d.name .. ":~ in a new tab on <CR>",
         } },
       }
     end
     return items
   end,
-  keys = { ["<C-o>"] = function(item)
-    if not item then return end
-    picker.close()
-    kawoosh.run("domain connect " .. item.name)
-  end },
+  keys = {
+    ["<C-o>"] = function(item)
+      if not item then return end
+      picker.close()
+      kawoosh.run("domain connect " .. item.name)
+    end,
+    -- The picker stays: the row reads `not connected` once it is.
+    ["<C-x>"] = function(item)
+      if not item then return end
+      kawoosh.run("domain disconnect " .. item.name)
+    end,
+  },
   pick = function(item) if item then kawoosh.run("domain tab " .. item.name) end end,
   empty = "no domain: none in the settings, no host in ~/.ssh/config, no WSL distro",
 })

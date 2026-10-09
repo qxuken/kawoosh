@@ -477,6 +477,9 @@ pub enum Msg {
         /// the plugin that made it to fill (`kawoosh.on_restore`) — a
         /// page with no `on_write`, which is kept by name otherwise.
         restore: bool,
+        /// Where it is shown instead of the focused pane, the keys going
+        /// with it: a pane of the tab in front, or a column of its own.
+        pane: Option<ScratchPane>,
     },
     /// `kawoosh.buf.set_private(private[, buffer])`.
     SetPrivate {
@@ -906,6 +909,15 @@ pub fn size_problem(v: &kawoosh_editor::Setting) -> Option<String> {
     }
 }
 
+/// Where `kawoosh.buf.open_scratch { pane = }` shows its buffer: in that
+/// pane (a number, `kawoosh.panes()`'s), or a column of its own
+/// (`"column"`, docs/design/pane-placement.md's `Place::Column`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScratchPane {
+    Pane(u64),
+    Column,
+}
+
 /// An editor pane's size as last drawn: its text column in logical px
 /// and in cells of the editor's font — what a page rendered to fit it
 /// is asked for (`man.lua`'s `MANWIDTH`).
@@ -983,6 +995,13 @@ pub struct Published {
     /// Each editor pane's size as last drawn (`kawoosh.pane_size`),
     /// by pane id.
     pub panes: HashMap<u64, PaneGeom>,
+    /// The tab in front's panes in their order, each with the buffer
+    /// it shows when it is an editor pane (`kawoosh.panes()`).
+    pub front: Vec<(u64, Option<u64>)>,
+    /// Every tab's working directory in the strip's order, and which
+    /// is in front (`kawoosh.tabs()`).
+    pub tabs: Vec<String>,
+    pub tab: usize,
     /// The pane the keyboard is in, as the shell last said it
     /// (`kawoosh.pane()`; a command's `ctx.pane`).
     pub pane: u64,
@@ -1061,6 +1080,12 @@ pub struct DomainSnap {
     pub kind: String,
     /// The host, the distro, or empty for the default distro.
     pub target: String,
+    /// The kind and the machine as the user reads them, the kind first
+    /// always: `ssh: box`, `wsl: Ubuntu-24.04 (default)`.
+    pub label: String,
+    /// What the state means for this domain, in a sentence: what being
+    /// connected holds, how to let it go.
+    pub means: String,
     /// What made it one: `settings`, `~/.ssh/config`, `WSL`.
     pub from: String,
     /// `down`, `connecting`, `up` or `failed`.
@@ -1222,6 +1247,9 @@ impl Default for Published {
             compile_offer: None,
             domains: None,
             panes: HashMap::new(),
+            front: Vec::new(),
+            tabs: Vec::new(),
+            tab: 0,
             pane: 0,
             diagnostics: Rc::new(Vec::new()),
             trees: HashMap::new(),
@@ -2140,6 +2168,15 @@ impl Runtime {
         if p.panes.get(&pane) != Some(&geom) {
             p.panes.insert(pane, geom);
         }
+    }
+
+    /// The tab in front's panes, each with the buffer it shows, and
+    /// every tab's directory (`kawoosh.panes()`, `kawoosh.tabs()`).
+    pub fn set_layout(&self, front: Vec<(u64, Option<u64>)>, tabs: Vec<String>, tab: usize) {
+        let mut p = self.published.borrow_mut();
+        p.front = front;
+        p.tabs = tabs;
+        p.tab = tab;
     }
 
     /// A pane closed: its size forgotten.
@@ -4043,6 +4080,45 @@ fn seed(
             Ok(Some(t))
         })?,
     )?;
+    // ---- `kawoosh.panes()`: the tab in front's panes in their order —
+    // a strip's columns left to right, each column top to bottom —
+    // `{ pane =, buffer = }` each, `buffer` the handle an editor pane
+    // shows (nil for a terminal, a Lua view…), as the shell last said
+    // them: before a command runs, before a process's end is told.
+    let pp = published.clone();
+    k.set(
+        "panes",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let t = lua.create_table()?;
+            for (i, (pane, buffer)) in p.front.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("pane", *pane)?;
+                e.set("buffer", *buffer)?;
+                t.set(i + 1, e)?;
+            }
+            Ok(t)
+        })?,
+    )?;
+    // ---- `kawoosh.tabs()`: every tab in the strip's order, `{ index =,
+    // cwd =, active = }` each — `index` from 1, what `:tab goto N`
+    // takes; `cwd` its working directory (workspaces.md Decision 1).
+    let pp = published.clone();
+    k.set(
+        "tabs",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let t = lua.create_table()?;
+            for (i, cwd) in p.tabs.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("index", i + 1)?;
+                e.set("cwd", cwd.as_str())?;
+                e.set("active", i == p.tab)?;
+                t.set(i + 1, e)?;
+            }
+            Ok(t)
+        })?,
+    )?;
     let qq = q(queue);
     let jj = jobs.clone();
     k.set(
@@ -4697,6 +4773,7 @@ fn seed(
                 about,
                 payloads,
                 restore,
+                pane,
             ): (
                 String,
                 String,
@@ -4711,7 +4788,19 @@ fn seed(
                 Option<String>,
                 Option<Table>,
                 Option<bool>,
+                LV,
             )| {
+                let pane = match pane {
+                    LV::Nil => None,
+                    LV::Integer(n) => Some(ScratchPane::Pane(n as u64)),
+                    LV::Number(n) => Some(ScratchPane::Pane(n as u64)),
+                    LV::String(s) if s.to_str()? == "column" => Some(ScratchPane::Column),
+                    other => {
+                        return Err(mlua::Error::runtime(format!(
+                            "open_scratch: pane is a pane's number or \"column\", not {other:?}"
+                        )));
+                    }
+                };
                 // `{ [line] = payload }`, holes and all: a line with none.
                 let mut lines: Vec<Option<String>> = Vec::new();
                 if let Some(t) = payloads {
@@ -4740,6 +4829,7 @@ fn seed(
                     about: about.map(|a| expand(&a)),
                     payloads: lines,
                     restore: restore.unwrap_or(false),
+                    pane,
                 });
                 Ok(())
             },
@@ -4858,7 +4948,8 @@ fn seed(
         })?,
     )?;
     // ---- kawoosh.domains(): what `domain pick` last offered — `{ name,
-    // kind, target, from, state, error, open }` each — or nil before.
+    // kind, target, label, from, state, means, error, open }` each — or nil
+    // before.
     let pp = published.clone();
     k.set(
         "domains",
@@ -4873,6 +4964,8 @@ fn seed(
                 e.set("name", d.name.as_str())?;
                 e.set("kind", d.kind.as_str())?;
                 e.set("target", d.target.as_str())?;
+                e.set("label", d.label.as_str())?;
+                e.set("means", d.means.as_str())?;
                 e.set("from", d.from.as_str())?;
                 e.set("state", d.state.as_str())?;
                 e.set("error", d.error.as_deref())?;
@@ -7367,10 +7460,8 @@ fn seed(
             use std::io::Read;
             let path = expand(&p);
             let out = if kfs::domain_of(&path).is_some() {
-                // A host's whole, through its domain, and cut here.
-                let mut b = kfs::read_bytes(&path).map_err(io_err)?;
-                b.truncate(n);
-                b
+                // A host's head, through its domain: not the whole file.
+                kfs::read_at(&path, 0, n).map_err(io_err)?
             } else {
                 let mut out = Vec::with_capacity(n.min(1 << 16));
                 std::fs::File::open(&path)

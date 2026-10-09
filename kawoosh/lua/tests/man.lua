@@ -176,3 +176,101 @@ kawoosh.wait(function() return kawoosh.picker.state().count == 1 end, nil, "one 
 kawoosh.test.eq(kawoosh.picker.state().text, "fchmod(2)")
 kawoosh.press("<CR>")
 kawoosh.wait(function() return kawoosh.buf.name() == "*man fchmod(2)*" end, nil, "the pick's page")
+
+-- ------------------------------------------------------- the man column
+
+-- The panes of the tab in front, by the name each shows.
+local function shown()
+  local by = {}
+  for _, p in ipairs(kawoosh.panes()) do
+    if p.buffer then by[kawoosh.buf.name(p.buffer)] = p.pane end
+  end
+  return by
+end
+
+-- `<leader>ik` (`:man beside`) on a word: its page in a column of its
+-- own beside the pane, the keys going to it, rendered to the column's
+-- width — not to the pane it was asked from.
+kawoosh.cmd("e " .. file)
+kawoosh.frame()
+kawoosh.test.eq(#kawoosh.panes(), 1, "one pane to start from")
+local code = kawoosh.pane()
+local code_width = kawoosh.pane_size(code).cols - 1
+kawoosh.press("ggw")
+kawoosh.press("<leader>ik")
+kawoosh.wait(function() return kawoosh.buf.name() == "*man chmod(1)*" end, nil, "the page beside")
+kawoosh.frame()
+kawoosh.test.eq(#kawoosh.panes(), 2, "a column of its own")
+local column = kawoosh.pane()
+kawoosh.test.ok(column ~= code, "the keys went to the column")
+kawoosh.test.eq(shown()["*man chmod(1)*"], column)
+kawoosh.test.eq(shown()["*man*"], nil, "the stand-in became the page")
+local beside = tonumber(kawoosh.buf.line(4):match("at width (%d+)"))
+kawoosh.test.eq(beside, kawoosh.pane_size(column).cols - 1, "rendered to the column's width")
+kawoosh.test.ok(beside < code_width, "not the pane's it was asked from: " .. beside .. " < " .. code_width)
+kawoosh.test.eq(kawoosh.man.column(code), column, "the man column")
+
+-- `K` in it follows the word into the same column.
+kawoosh.press("/file<CR>")
+kawoosh.frame()
+kawoosh.test.eq(kawoosh.buf.cursor().line, 7)
+kawoosh.press("K")
+kawoosh.wait(function() return kawoosh.buf.name() == "*man file(1)*" end, nil, "the word's page")
+kawoosh.frame()
+kawoosh.test.eq(#kawoosh.panes(), 2, "no column more")
+kawoosh.test.eq(kawoosh.pane(), column, "in the man column")
+
+-- From the code again, `:man beside` reads into the man column there is.
+kawoosh.cmd("pane left")
+kawoosh.frame()
+kawoosh.test.eq(kawoosh.pane(), code)
+kawoosh.cmd("man beside 2 fchmod")
+kawoosh.wait(function() return kawoosh.buf.name() == "*man fchmod(2)*" end, nil, "fchmod(2) beside")
+kawoosh.frame()
+kawoosh.test.eq(#kawoosh.panes(), 2, "the man column again, not another")
+kawoosh.test.eq(kawoosh.pane(), column)
+kawoosh.test.eq(shown()["*man fchmod(2)*"], column)
+kawoosh.test.eq(tonumber(kawoosh.buf.line(4):match("at width (%d+)")), beside, "at the column's width at once")
+
+-- `<leader>iK` is the page in the pane the keys are in, as `:man`.
+kawoosh.cmd("pane left")
+kawoosh.frame()
+kawoosh.press("<leader>iK")
+kawoosh.wait(function() return kawoosh.buf.name() == "*man chmod(1)*" end, nil, "the page in this pane")
+kawoosh.frame()
+kawoosh.test.eq(kawoosh.pane(), code, "in this pane")
+kawoosh.test.eq(tonumber(kawoosh.buf.line(4):match("at width (%d+)")), kawoosh.pane_size(code).cols - 1)
+kawoosh.press("q")
+kawoosh.frame()
+kawoosh.test.eq(#kawoosh.panes(), 2, "`q` in a pane that was there before keeps it")
+
+-- `q` in the column `:man beside` made closes the page and the column,
+-- the keys back in the code.
+kawoosh.cmd("pane right")
+kawoosh.frame()
+kawoosh.test.eq(kawoosh.buf.name(), "*man fchmod(2)*")
+kawoosh.press("q")
+kawoosh.frame(2)
+kawoosh.test.eq(#kawoosh.panes(), 1, "the column closed")
+kawoosh.test.eq(kawoosh.pane(), code, "the keys back in the code")
+kawoosh.test.eq(man.pages()["*man fchmod(2)*"], nil, "the page closed")
+
+-- A page there is none of: the column made for it goes again.
+kawoosh.cmd("man beside nope")
+kawoosh.wait(function() return kawoosh.message():find("No manual entry", 1, true) ~= nil end, nil, "the error beside")
+kawoosh.frame(2)
+kawoosh.test.eq(#kawoosh.panes(), 1, "no column left for no page")
+kawoosh.test.eq(shown()["*man*"], nil)
+
+-- On nothing, `<leader>ik` is the picker, and its `<CR>` the man column.
+kawoosh.press("j")
+kawoosh.press("<leader>ik")
+kawoosh.frame(2)
+kawoosh.test.eq(kawoosh.picker.state().source, "man")
+kawoosh.wait(function() return kawoosh.picker.state().count == 3 end, nil, "the pages listed again")
+kawoosh.press("fch")
+kawoosh.wait(function() return kawoosh.picker.state().count == 1 end, nil, "fchmod")
+kawoosh.press("<CR>")
+kawoosh.wait(function() return kawoosh.buf.name() == "*man fchmod(2)*" end, nil, "the pick beside")
+kawoosh.frame()
+kawoosh.test.eq(#kawoosh.panes(), 2, "the pick in a column of its own")

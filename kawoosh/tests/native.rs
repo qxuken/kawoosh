@@ -26,7 +26,20 @@ fn build(name: &str, defines: &[&str], tag: &str) -> PathBuf {
     drive::build_ext(name, defines, tag)
 }
 
+// `kw_wake`'s queue is the process's (one editor to a process), and any
+// app's frame runs it: two tests' apps at once would run each other's
+// wakes. So a test that launches holds this until its thread ends —
+// libtest gives each test a thread of its own, and the thread-local's
+// destructor lets go, a panic included.
+static ONE_APP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+thread_local! {
+    static HELD: std::cell::RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 fn launch(tag: &str, text: &str) -> (Drive, Kawoosh) {
+    let held = ONE_APP.lock().unwrap_or_else(|e| e.into_inner());
+    HELD.with(|h| *h.borrow_mut() = Some(held));
     let dir = tmp(tag);
     let file = dir.join("lines.txt");
     std::fs::write(&file, text).unwrap();

@@ -1921,8 +1921,13 @@ impl Kawoosh {
             - 2.0)
             .max(0.0);
         // The pane's size in the editor's cells, for a plugin that
-        // renders to fit it (`kawoosh.pane_size`; `man.lua`'s width).
-        if let Some(rt) = &self.scripting.rt {
+        // renders to fit it (`kawoosh.pane_size`; `man.lua`'s width) —
+        // once the pane is laid out: the window's width, which a pane
+        // drawn the first time is sliced to, is not the pane's, and a
+        // page read into a column just made was rendered to it.
+        if let Some(rt) = &self.scripting.rt
+            && self.layout.rects.contains_key(&pane)
+        {
             let height = self
                 .layout
                 .rects

@@ -712,8 +712,12 @@ end
 -- picker's source). kawoosh.pane_size(pane): an editor pane's text
 -- column as the last frame drew it — `width`, `height` in logical px,
 -- `cols`, `rows` in cells of the editor's font — or nil for a pane
--- that is not an editor pane or is not drawn yet; what a page
--- rendered to fit the pane asks (`man.lua`).
+-- that is not an editor pane or is not laid out yet; what a page
+-- rendered to fit the pane asks (`man.lua`). kawoosh.panes(): the
+-- tab in front's panes in their order, `{ pane =, buffer = }` each
+-- (`buffer` nil for a pane that is not an editor's); kawoosh.tabs():
+-- every tab, `{ index =, cwd =, active = }` each, `index` what `:tab
+-- goto N` takes.
 
 -- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, on_change=fn,
 -- read_only=bool, language=, reuse=handle, line=n, private=bool,
@@ -737,13 +741,18 @@ end
 -- payloads`), the buffer filled anew since or not. `restore = true`:
 -- a session brings its pane back, empty under its name, for
 -- `kawoosh.on_restore` to fill — what `on_write` does already for a
--- buffer that writes (a man page has none).
+-- buffer that writes (a man page has none). `pane = N` shows it in
+-- pane N of the tab in front (`kawoosh.panes()`) instead of the focused
+-- one, the keys going there — a column of its own when that pane is
+-- gone; `pane = "column"` in a new column beside the focused pane
+-- (docs/design/pane-placement.md), as a launcher with the keys fills
+-- itself instead.
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   if t.on_change then kawoosh._changers[t.name] = t.on_change end
   kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
     t.reuse, t.line, t.show ~= false, t.on_change ~= nil, t.private or false, t.about, t.payloads,
-    t.restore or false)
+    t.restore or false, t.pane)
 end
 
 -- ---------------------------------------------------------------- fields

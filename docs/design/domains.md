@@ -94,7 +94,9 @@ by the next channel failing, and that reopens the pane.
 
 *Beat:* `russh` or `ssh2` in-process — their own config parsing, agent,
 known hosts and jump hosts, when the user's `~/.ssh/config` is the
-thing to reuse, and a prompt problem that is worse in-process. And a
+thing to reuse, and a prompt problem that is worse in-process
+(reopened 2026-10-09 when Windows turned out to have no master to
+share — "Built, speed": a spike measured, not built). And a
 kawoosh agent on the host (`ssh box kawoosh agent`, vscode's shape:
 inotify, fast walks, one JSON channel): a binary to install per host
 and per architecture, so it is the round after, if polling and SFTP
@@ -543,3 +545,255 @@ its own.
 Found while testing: a login shell whose own config sets `EDITOR`
 (nushell's `env.nu` here) wins over the one the terminal exports, on
 ssh as in WSL; `$KAWOOSH_BIN edit --wait` is kawoosh's either way.
+
+
+## Built, small hosts and the kind in the name
+
+**2026-10-09, four reports from use.** "In OpenWrt I couldn't even open
+a terminal"; "WSL should be marked always, not just a random ubuntu";
+a Homebrew lock on openssl in a WSL terminal; "the host is up, but what
+does it mean and how can I down it?"
+
+*A small host.* Measured on OpenWrt 24.10's rootfs (the
+`openwrt/rootfs:x86-64-openwrt-24.10` image, dropbear on its port,
+reached with OpenSSH): busybox 1.36.1's ash is root's shell, `$SHELL`
+is `/bin/ash` under dropbear; there is no `sftp-server`, no `base64`,
+no `stat` and no bash; `printf` (with octal escapes, `\045` printed as
+`%`), `date -r FILE`, `ls -ln`, `readlink -f`, `mktemp` and `nc` are
+there. Three steps assumed what is not: the SFTP channel (its failure
+was the domain's, so nothing — no file, no terminal — was ever
+started), `base64 -d` in the line every process and terminal is
+started by (round three's `sh -c 'eval "$(echo B64 | base64 -d)"'`
+evaluated nothing, and the terminal exited at once), and the CLI's
+bash (`$EDITOR` pointing at a script whose `#!/usr/bin/env bash` is
+not there). Each degrades now:
+
+- The line is `sh -c 'eval "$(printf "\143\144…")"'`: the script's
+  bytes as `printf`'s octal escapes, letters, digits and `_ ./:,=+@-`
+  left as they are (`io::printf_octal`). What is left holds no quote,
+  no `\\` or `\'` (fish's single-quote escapes), no `$` or backquote
+  (`sh`'s double quotes) and no `%`, so bash, zsh, fish, nushell and
+  ash read the line alike, and nothing past `sh`'s own `printf` is
+  asked of the host. *Beat:* base64 with a probe for it at connect (a
+  round trip per connect, and two lines to keep); `printf '%b'` (its
+  octal is `\0NNN`, which busybox reads with a digit fewer after a
+  `\0` than bash does). WSL keeps base64: `wsl.exe -e` reaches the
+  distro's own `sh` with no login shell between, and every distro has
+  coreutils' or busybox's `base64`.
+- A host whose `-s sftp` fails still connects, its files through its
+  shell (`systems::shellfs::ShellFs`, the `Fs` trait's fourth): one
+  POSIX script a call through the transport — `cat` to read; to write,
+  `cat >` a sibling, its length checked (a cut channel ends `cat` as
+  an end of input would), then copied over the file, which keeps the
+  file's mode, owner and links; a glob and the shell's own tests to
+  list; size and seconds from `stat -L -c` where there is one, else
+  `ls -ln` and `date -r`. The connect asks the shell to answer first
+  (`ShellFs::check`), and says both failures when it does not. Slower
+  than SFTP — a channel and a shell a call — and a name with a newline
+  in it does not list. `Fs::via` says how a domain's files travel, and
+  `:domain` and the connect's message say it.
+- A terminal's `KAWOOSH_BIN`, `EDITOR`, `VISUAL` and `GIT_EDITOR` are
+  exported only when the CLI is there and can run (`[ -x … ]`, and
+  `command -v bash` on ssh): a read-only `~/.cache` or a host without
+  bash keeps the host's own `$EDITOR`, and the shell starts either way.
+
+Tests: `shellfs.rs`'s against this machine's `sh` with and without
+`stat` and `readlink` (functions that fail shadowing them), and
+`a_containers_files_go_through_its_shell` against a real OpenWrt
+container when `KAWOOSH_TEST_CONTAINER` names one (passed against the
+image above: a write's mode kept, a dangling link and a link to a
+directory listed as what they are); `io.rs`'s
+`a_remote_line_needs_no_base64`; domains.rs's
+`a_host_with_no_sftp_or_base64_still_connects` over the stand-in, whose
+home holding `.fake-ssh-small` makes it such a host (no subsystem, a
+`PATH` without `base64`, `stat` and bash), and
+`a_real_small_host_connects` against a real one when
+`KAWOOSH_TEST_SSH_HOST` names it — passed from a Debian container
+(OpenSSH's client, its master in the pane) against the OpenWrt one:
+the SFTP channel refused, the shell answering, a file opened, written
+with `:w`, a process and a terminal run. The stand-in's tests are
+unix's; on Windows they skip.
+
+*The kind in the name.* A distro other than the default, found rather
+than named in the settings, is a domain under `wsl-` and its name in
+lower case — `wsl-debian`, `wsl-docker-desktop` — not the bare name.
+The name is what the tab strip (`wsl-debian: x.rs`), the title, the
+status line, a listing's header and every path show, so putting the
+kind there marks it in each of them with no second vocabulary. The
+default stays `wsl`; a name the settings give is the user's, as they
+gave it. The bare name is still read (`domain_kind`), so a session's
+`debian:/…` from the two days it was discovered so opens; a share's
+path comes in as `wsl-debian:/…`. Wherever domains are listed — the
+picker's rows, `:domain` — each says what it is with the kind first,
+`ssh: box`, `wsl: Ubuntu-24.04 (default)` (`kawoosh.domains()`'s
+`label`). *Beat:* the label alone, the name left bare (the tab strip
+and the paths still a "random ubuntu", and a label that is not what is
+typed); the label in the tab strip too (`wsl: ubuntu: x.rs`, read as a
+path on `wsl`).
+
+*What "up" is.* A state is said in words — `connected`, `not
+connected`, `connecting…`, `failed: why` — and what it means is said
+once: in `:domain`'s listing, under the rows (for ssh, a master
+connection every file, terminal and process goes through, open until
+it is disconnected or kawoosh quits; for WSL, the distro answered and
+nothing is held open), and in the picker's preview for the row
+(`kawoosh.domains()`'s `means`), with what to do about it. `<C-x>` in
+the picker disconnects the row's domain, as it closes a buffer in the
+buffers' picker; the picker stays, and its row is read again once the
+state moves (`refresh_domain_pick`: a connect, a failure, a
+disconnect republish the domains while the picker has them). The
+messages say what happened: `connected, files over SFTP`,
+`disconnected, its ssh master told to exit`, `disconnected, forgotten
+here (the distro runs on, as WSL keeps it)`.
+
+*The Homebrew lock was Homebrew's.* Closing a WSL terminal's pane kills
+its `wsl.exe` (the job object, term's `job.rs`), and WSL hangs up the
+distro's side: measured with Kawoosh's own terminal on Ubuntu-24.04
+and nushell, an external `sleep` in the foreground of an interactive
+`nu -l` (its own process group) and one under `nu -lc` were both gone
+with the session within seconds of the pane closing. The connect's
+probe runs the login shell's `env`, whose `env.nu` runs `brew --prefix`
+— which takes no formula lock. The lock files left in
+`/home/linuxbrew/.linuxbrew/var/homebrew/locks` show one brew run
+locking `openssl@3` and `openssl@4` in the same instant, and an
+`openssl@3.6` — an alias of `openssl@3` — after: a brew run that
+reaches one formula under two names conflicts with itself, flock being
+per open file. Not Kawoosh's.
+
+*Found, not built: ssh from Windows.* Windows' own OpenSSH (9.5p2,
+the `ssh` on `PATH`) cannot be a master: `ssh -M -S CTL` fails at once
+with "getsockname failed: Not a socket", so the master's pane closes
+and the domain fails, whatever the host. Git's ssh (10.5p1, MSYS)
+makes a master, but a session through it fails passing descriptors
+(`mux_client_request_session: read from master failed`), each channel
+falling back to a connection of its own, and the master's own pane
+exits as its session fails. And the forward a terminal asks for, `-R
+PORT:SOCKET`, names the command socket's path, which on Windows is a
+file holding a port. An ssh domain on Windows wants a mode of its own:
+no master, each channel its own connection (a key or the agent, since
+a file channel has no terminal to ask in), and `-R
+PORT:127.0.0.1:LOCALPORT`.
+
+## Built, speed
+
+**2026-10-09, two reports from use.** "Very slow ssh experience. Vim
+inside a terminal works faster, traverse faster"; "WSL speed
+unacceptable: when I use WezTerm it performs even faster than native
+Windows Terminal, but Kawoosh is like I work on a remote machine."
+
+*Measured first.* Two benches. One in the tests
+(`kawoosh/tests/remote_frames.rs`): a mirrored host whose every call
+takes a while and notes the thread that asked, through a session of
+opening, moving, typing, saving, `-`, `<CR>` and the files picker. The
+other live: a real `sshd` in a container (Alpine, OpenSSH 9.7, a git
+repository of 3,003 files, `tc netem` adding 30 ms) and the Kawoosh
+window driven over its socket (`kawoosh ex`, whose own round trip is
+about 77 ms, so a command's wait on the frame is what it takes past
+that), the same for the WSL distro. What they showed:
+
+- The frame waited on the host where nothing needed it to. Opening a
+  file was eleven calls on it: the `:e` path's completion listing
+  three directories, each opener's `is_dir` (four) and two of them
+  reading the whole file for its head, then the stamp and the read
+  itself. Opening the 2 MB file stopped the window 7.6 s; a small one
+  680 ms. A listing asked `is_dir` of its directory three times; the
+  picker's preview a stat and a read each frame.
+- SFTP was one request at a time: a 2 MB read 62 round trips one after
+  another (2,018 ms), and a stat asked on one thread waited behind a
+  read on another (five of each: 10.3 s).
+- The language-server pool looked for a workspace's markers up the
+  parents at every sync — every edit — a stat each on the files'
+  channel, which the frame's calls then queued behind.
+- The picker's walk of a host was its listings, breadth first: 3,000
+  files had not come in 180 s.
+- ssh from Windows has no master ("Built, small hosts"): each channel
+  was a connection, 420 to 500 ms at 30 ms of delay, 26 of them in
+  the session — every listing's `git status`, every base, every walk —
+  and the master's pane closing as its own session failed made the
+  domain come up by a race (once in three runs).
+- WSL's files were not the slow part on this machine (a listing on
+  the share some 30 ms, the walk 0.5 s); its processes were: `wsl.exe`
+  is a tenth of a second before it runs anything, and a listing's git
+  colours are a process each. Its terminal is not: through the
+  `OpenConsole` a release ships beside `kawoosh.exe`, a byte's echo
+  from `wsl.exe -e cat` came back in 0.4 ms against 0.25 ms from a
+  local one (`term/tests/pty_latency.rs`); Windows' own console host
+  splits output 10 to 20 ms apart, which a development build, with
+  nothing beside it, still has.
+
+*What changed.*
+
+- **SFTP pipelined.** Each request goes out with its id and a thread
+  hands each answer to whoever waits on it, so nothing waits behind
+  another thread's call; a read sends its chunks a window at a time, a
+  write its chunks with the CLOSE behind them, a listing two READDIRs
+  and its links' stats at once, a stat LSTAT and STAT together, a
+  read's CLOSE unwaited. `Fs::read_at` reads a range. The bench: a
+  listing 125 → 63 ms, the 2 MB read 2,018 → 231, its write 2,211 →
+  333, the ten calls on two threads 10.3 s → 0.97.
+- **The frame asks less.** A host's file is read on the io thread
+  whatever its size, its stamp taken there; what a host says of a path
+  holds for a moment (`fs::new_moment`, at each frame and event, a
+  quarter second at most, ended by any change made there from here),
+  so the openers' four `is_dir` are one stat and their heads one
+  64 KB `read_at`; the picker's preview reads a host's file once while
+  it is open; a save makes its directory only when the write says it
+  is missing; the pool keeps a host's workspace roots. What the frame
+  still waits for on a host: a stat for a listing, a stat and a head
+  for a file opened (`a_host_is_asked_little_on_the_frame`).
+- **The host walks itself.** One process: `git ls-files -co
+  --exclude-standard` in a repository, else `find` with the SFTP
+  walk's rules; the listings only where neither runs. A distro too,
+  before the share's walk.
+- **No master on Windows, and runners.** `ssh.master` (off on
+  Windows): no pane, each channel its own connection in `BatchMode`
+  where it has no terminal, a terminal's `-R` to the TCP port the
+  socket's file names. What runs to its end — a process whose output
+  is wanted whole (git's), the walk, `ShellFs`'s calls — goes through
+  a runner (`systems::runner`): a POSIX sh loop kept open on the host,
+  started as an ordinary process's one script, that reads a script and
+  its input as lines of `printf` octal, runs it, and answers the code
+  and both outputs by their lengths. Up to three a domain, one warmed
+  at connect. On ssh without a master a script is 45 ms against
+  494 ms for a connection of its own; through `wsl.exe`, a few
+  milliseconds against a tenth of a second.
+
+The live bench after: connecting and opening a file 4.1 s → 1.3; a
+file opened stops the frame about 180 ms (680); the 2 MB file 0.2 s
+(7.6); a listing about 45 ms (190 to 250); the picker's walk 215 ms
+(unfinished at 180 s); 11 connections in the session (26). On WSL the
+walk went from 0.5 s to below what the bench can tell.
+
+*Beat:* a master kept by hand — a pane per channel that asks — and
+no master with a connection a process (each git a connection: the 26).
+`ssh -O` over Git's MSYS client fails on descriptor passing, which no
+option turns off.
+
+*An in-process client, measured, not built.* With no master on
+Windows, Decision 3's beat was asked again: one connection a domain,
+every channel on it, on every OS. A spike (russh 0.64.1 on `ring`, no
+`aws-lc` and so no CMake or NASM, russh-sftp 3.0.1; 61 crates new to
+the workspace, `pageant` among them; built from nothing in 28 s on
+Windows) against the same container: connect and authenticate with an
+ed25519 key 274 ms (OpenSSH's 450 to 500); the SFTP channel 196 ms; a
+stat 31; a listing of 60 entries 124; a small file 154 (its client
+waits on each step — ours, pipelined, is two round trips); the 2 MB
+file 367 (ours 231); an exec channel 98 ms a process (three round
+trips: a runner's script is one, 45 ms); `git ls-files` of 3,003
+files 113 ms (a runner 50); a pty's echo 31 ms, the round trip.
+Against OpenWrt's dropbear (no delay added): connected in 94 ms, the
+SFTP subsystem refused cleanly, exec and a pty under busybox worked.
+What it would buy: one connection for files, runners, terminals and
+language servers alike — a terminal or a server a channel of 100 ms
+rather than a connection of 500 — and a password typed once on
+Windows. What it would take, none of it in the spike: `~/.ssh/config`
+read to the depth OpenSSH does (`Include`, `ProxyJump`, `Match`), the
+agent (Windows' pipe, Pageant, `SSH_AUTH_SOCK`), `known_hosts` with an
+accept-new prompt, a passphrase, password and keyboard-interactive
+prompt in a pane, remote forwarding for the `$EDITOR` shim, and a
+terminal over a channel where `kawoosh_term` takes a `portable-pty`
+child. Each is a piece of what the user's `ssh` already does, which is
+why the runner was built first: it keeps that `ssh`, and its scripts
+are faster than the in-process exec. The in-process client stays the
+candidate for terminals and servers on Windows, measured here for the
+round that takes it up.

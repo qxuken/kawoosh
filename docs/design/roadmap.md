@@ -792,7 +792,12 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   their last file; a pick is `:cd` there and that file at its line,
   else the root listed. Restoring a closed workspace's tabs was not
   built — its last file first.
-  `a_recent_workspace_is_picked_back_where_it_was`. What the entry
+  `a_recent_workspace_is_picked_back_where_it_was`. *Amended
+  2026-10-09* (workspaces.md Decision 13, asked as "i don't like
+  workspace switching"): the picker's pick (`<leader>ww`) is a new tab
+  on the workspace, or the tab on it there is; `<C-o>` moves the tab in
+  front as the pick did; the launcher's row fills its pane as before
+  (`launch`). `kawoosh.tabs()`, `:tab goto N`. What the entry
   said before it was built: A section of the workspaces worked in,
   most recent first, that opens one in the pane's tab: the tab's cwd
   moved there and either its directory listed (`dir`) or *something
@@ -3231,7 +3236,12 @@ frame.
     `]]` `[[` the section heads, `q` closes. `kawoosh.spawn` takes
     `env`. `kawoosh/lua/man.lua`, `kawoosh/lua/tests/man.lua` on a
     reader of the test's own. Not built: `K` in a shell buffer, a page
-    re-rendered on resize, the heads in `grs`.
+    re-rendered on resize, the heads in `grs`. *Amended 2026-10-09*
+    (man.md Decision 6, asked as "let's `<leader>ik` open inside it's
+    own column"): `<leader>ik` is `:man beside`, the page in the man
+    column — the tab's pane showing a page, else a column of its own,
+    read at its width once laid out — `<leader>iK` `:man` in the pane;
+    `kawoosh.panes()`, `open_scratch`'s `pane`.
 
 Scheduled nowhere, on purpose: ~~incremental sync (measure first)~~
 (measured and built 2026-10-07, lsp-rules.md Decision 8), the

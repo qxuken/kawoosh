@@ -1893,6 +1893,11 @@ struct Pool {
     /// Whether a server's `when` files are at or above a directory, by
     /// the directory and the server's name: asked at every sync.
     when_seen: HashMap<(PathBuf, String), bool>,
+    /// A host's file's workspace root, by its directory and the root
+    /// markers asked for: each marker looked for up the parents is a
+    /// round trip there, and a sync — every edit — asks again
+    /// (domains.md, "Built, speed"). Forgotten with `when_seen`.
+    roots_seen: HashMap<(PathBuf, Vec<String>), PathBuf>,
     /// What each server last published for a document, by its uri and
     /// the server: a document's diagnostics are all of theirs.
     published: HashMap<String, BTreeMap<usize, Value>>,
@@ -1964,6 +1969,7 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         texts: HashMap::new(),
         order: BTreeMap::new(),
         when_seen: HashMap::new(),
+        roots_seen: HashMap::new(),
         published: HashMap::new(),
         actions: HashMap::new(),
         action_of: HashMap::new(),
@@ -2469,9 +2475,26 @@ impl Pool {
         seen
     }
 
+    /// [`workspace_root`], kept for a host's file: there each marker
+    /// looked for is a round trip. A local one is asked each time, a
+    /// stat being a microsecond, so a marker made later counts at once.
+    fn root_of(&mut self, def: &ServerDef, path: &Path) -> PathBuf {
+        if crate::fs::domain_of(path).is_none() {
+            return workspace_root(path, def);
+        }
+        let dir = kawoosh_doc::paths::parent(path).unwrap_or_else(|| path.to_path_buf());
+        let k = (dir, def.roots.clone());
+        if let Some(root) = self.roots_seen.get(&k) {
+            return root.clone();
+        }
+        let root = workspace_root(path, def);
+        self.roots_seen.insert(k, root.clone());
+        root
+    }
+
     fn server_of(&mut self, def: &ServerDef, path: &Path) -> Option<usize> {
         let mut def = def.clone();
-        let root = workspace_root(path, &def);
+        let root = self.root_of(&def, path);
         let k = (root.clone(), def.command.clone(), def.args.clone());
         if let Some(&key) = self.keys.get(&k) {
             return self.servers[key].as_ref().map(|_| key);
@@ -2579,6 +2602,7 @@ impl Pool {
             Cmd::Servers(defs) => {
                 self.defs = defs;
                 self.when_seen.clear();
+                self.roots_seen.clear();
                 for key in 0..self.servers.len() {
                     // New settings reach a server running, as the
                     // protocol has them change.
@@ -2624,6 +2648,7 @@ impl Pool {
             Cmd::Restart { commands } => {
                 // A config written since is looked for again.
                 self.when_seen.clear();
+                self.roots_seen.clear();
                 // Dropped, each server is killed; what it still says on
                 // its threads finds no server at its key, and a document
                 // synced again starts a new one at a new key.

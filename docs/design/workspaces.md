@@ -283,6 +283,11 @@ pick moves the tab's directory there and opens that file at its line,
 or lists the root when it has none — so a new tab's launcher, then a
 pick, is "open that project where I left it".
 
+*Amended 2026-10-09 (Decision 13):* the picker's pick (`<leader>ww`,
+the key since keymap-regroup.md) opens a new tab on the workspace, or
+goes to the tab on it there is; moving the tab in front is `<C-o>`'s.
+The launcher's row still fills its pane in place.
+
 ### 12. The dock as a strip, the experiment
 
 `layout.dock = "scroll"` (`tree` the default): the dock's panes as
@@ -296,6 +301,67 @@ converts the dock both ways with its panes.
 (`layout.dock_scope`) — the ordering and the titles may be enough;
 and *levels* — strips stacked vertically, the dock one of them — which
 the experiment is there to argue for or against.
+
+### 13. A workspace picked is a tab of its own
+
+*Decided and built 2026-10-09, asked as "i don't like workspace
+switching. let's `<leader>ww` pick open new tab".* A pick in Decision
+11's picker moved the tab in front: its directory went to the other
+project, and the file the tab showed was replaced by the one last
+attended there. The tab was the piece of work the user was in, and the
+pick took it away to make the other — the switching Decision 1 had
+argued the tab out of.
+
+`<CR>` in `picker workspaces` now opens a new tab *on* the workspace:
+its directory the workspace, the file last attended open at its line
+(or the root listed when the memory has no file there), the tab it was
+asked from left as it was. It is Decision 6's "tab a project" gesture
+(`<C-t>` in the directory jumps) reached from the memory, and is made
+the same way: `kawoosh.open(file, { split = "tab", line = })`, then
+`kawoosh.fs.chdir(root)`, which moves the new tab's directory, as
+`:domain tab NAME` makes a tab on a machine and then moves its
+directory there.
+
+When a tab is on the workspace already — its directory in it, not the
+tab in front, which is left out of the list — the pick goes to that tab
+(`:tab goto N`, the first such in the strip) instead of making a second.
+The tab is the workspace (Decision 1); a second tab on it would be a
+second piece of work in one project, which a user makes on purpose
+(`:tabnew` there), not as a side effect of asking for the project. It
+is `:tool NAME`'s rule, which finds the tool's pane in the tab before
+starting another. The tab is shown as it was left, not at the memory's
+last file: its panes are where the user was in it.
+
+`<C-o>` keeps the old pick — the tab in front moved there, the file
+opened in its pane — for whoever wants it, the secondary key the
+domains picker uses for its own other way (`<C-o>` connects without a
+tab, `<leader>wh`), named in the placeholder as the buffers picker
+names `<C-x>` and the domains picker `<C-o>`.
+
+The launcher's section stays as it was. A launcher is a bare pane
+asking what it is for, and what is picked fills it in place: from a
+`:tabnew`'s launcher a pick that opened yet another tab would leave the
+asking one empty behind it, and one that went to the tab on the
+workspace would too. Its row runs the source's `launch`
+(`kawoosh.picker.source`'s, new, what a row does in the launcher when
+it differs from the picker's pick), which is the old pick: the tab the
+launcher is in moved there, the file in the launcher's pane. So "a new
+tab's launcher, then a pick" is still "open that project where I left
+it".
+
+For it the engine says two things it did not: `kawoosh.tabs()`, every
+tab's directory in the strip's order with which is in front, and `:tab
+goto N`, the Nth tab from 1.
+
+*Beat:* **always a new tab**, a second tab on a project open already —
+two tabs that are one workspace share its buffers (Decision 7's count)
+and its dock, so the second is the first's clutter; **a confirm**
+asking "go to it, or another tab?" — a question every time for the
+answer that is nearly always the same, where `:tabnew` then `<C-o>` is
+the rare other; **the launcher's row opening a tab too**, for
+symmetry with the picker — it leaves the launcher's own tab empty;
+**`<C-t>` for the new tab**, the picker's split key, with `<CR>` left
+moving the tab — the ask was that the plain pick open the tab.
 
 ## Build order
 

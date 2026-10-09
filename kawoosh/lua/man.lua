@@ -8,17 +8,25 @@
 -- `:man` alone takes the word under the caret, and with none the
 -- picker over every page `man -k` knows (`:man pick`, `picker man`).
 --
+-- `:man beside` (`<leader>ik`; `<leader>iK` is `:man`) takes the same
+-- words and reads the page into the man column instead: the pane of
+-- the tab in front that shows a page already, else a column of its own
+-- made beside (man.md Decision 6), the page rendered to that column's
+-- width once it is laid out, the keys going to it.
+--
 -- In a page: `K` or `<CR>` follows the reference under the caret (the
--- word there when it is none) into the same pane, `<C-o>` is the way
--- back, `]]` `[[` go to the next and previous section head, `q` closes
--- the page (`:bd`). The buffer is a buffer: `/` finds, `y` yanks, `:w`
--- is refused.
+-- word there when it is none) into the same pane — the man column's
+-- page stays in the man column — `<C-o>` is the way back, `]]` `[[` go
+-- to the next and previous section head, `q` closes the page (`:bd`),
+-- and a column `:man beside` made with it. The buffer is a buffer: `/`
+-- finds, `y` yanks, `:w` is refused.
 --
 -- Hackable: `kawoosh.man` — `open(page, section, opts)`, `render(raw)`
 -- (the text with its overstrikes read off, and the spans they styled),
 -- `parse(words)`, `reference_at(line, col)`, `pages()` (what is open),
--- `index(fn)` (every page, from `man -k .`, cached for the session) —
--- and the settings `man.command`, `man.width`.
+-- `index(fn)` (every page, from `man -k .`, cached for the session),
+-- `column(from)` (the man column's pane) — and the settings
+-- `man.command`, `man.width`.
 
 local fs = kawoosh.fs
 local picker = kawoosh.picker
@@ -51,6 +59,16 @@ kawoosh.man = man
 local open = {}
 -- `man -k .`, parsed, once a session (`man.index`).
 local index = nil
+-- The buffer a column `:man beside` makes shows while its first page is
+-- read: the column is made at once, so it is laid out — and its width
+-- known — by the time the page is.
+local PENDING = "*man*"
+-- The panes `:man beside` made, this session: `q` in a page there
+-- closes the column with the page, which was made for it.
+local columns = {}
+-- How often a page for the man column is read again when the column
+-- turns out another width than it was read at.
+local REFITS = 3
 
 -- --------------------------------------------------------------- reading
 
@@ -236,18 +254,65 @@ end
 
 -- --------------------------------------------------------------- opening
 
--- The width a page opened from `pane` is rendered to: `man.width`, else
--- the pane's columns, else the classic eighty.
-local function width_for(pane)
+-- `man.width` when one is set, else nil.
+local function set_width()
   local set = tonumber(kawoosh.opt("man.width")) or 0
   if set > 0 then return math.max(MIN_WIDTH, math.floor(set)) end
+end
+
+-- The width a page fits `pane` at — its columns less one — or nil while
+-- the pane is not laid out (or is not an editor pane).
+local function fitted(pane)
   local g = pane and kawoosh.pane_size(pane)
   if g and g.cols and g.cols > 0 then
     -- A line as wide as the pane lands on its last cell's edge; one
     -- less and it is whole.
     return math.max(MIN_WIDTH, g.cols - 1)
   end
-  return DEFAULT_WIDTH
+end
+
+-- The width a page opened from `pane` is rendered to: `man.width`, else
+-- the pane's columns, else the classic eighty.
+local function width_for(pane)
+  return set_width() or fitted(pane) or DEFAULT_WIDTH
+end
+
+-- The buffer named `name`, or nil.
+local function buffer_named(name)
+  for _, h in ipairs(kawoosh.buf.list()) do
+    local ok, n = pcall(kawoosh.buf.name, h)
+    if ok and n == name then return h end
+  end
+end
+
+local function is_page(h)
+  if not h then return false end
+  local ok, lang = pcall(kawoosh.buf.language, h)
+  return ok and lang == LANG
+end
+
+-- man.column(from): the man column — the pane of the tab in front a
+-- page is read into by `:man beside` — or nil for none: the column
+-- being made (it shows `*man*`), else `from` (the pane the keys are
+-- in) when it shows a page, else a column `:man beside` made that shows
+-- one, else the first pane that does.
+function man.column(from)
+  local panes = kawoosh.panes()
+  local mine, any
+  for _, p in ipairs(panes) do
+    if p.buffer then
+      local ok, name = pcall(kawoosh.buf.name, p.buffer)
+      if ok and name == PENDING then return p.pane end
+    end
+  end
+  for _, p in ipairs(panes) do
+    if is_page(p.buffer) then
+      if p.pane == from then return p.pane end
+      if columns[p.pane] and not mine then mine = p.pane end
+      if not any then any = p.pane end
+    end
+  end
+  return mine or any
 end
 
 -- The page's name and section as its header line says them (`LS(1)`),
@@ -260,13 +325,27 @@ local function header_of(text, page, section)
 end
 
 -- The rendered page into its buffer: shown in the focused pane unless
--- `opts.show == false` (a session's restore fills where it is).
-local function fill(raw, page, section, width, opts)
+-- `opts.show == false` (a session's restore fills where it is), or in
+-- pane `into` (`open_scratch`'s `pane`: a number, or `"column"`) — the
+-- man column, whose `*man*` becomes the page.
+local function fill(raw, page, section, width, opts, into)
   local text, info = man.render(raw)
   page, section = header_of(text, page, section)
   local name = buffer_name(page, section)
+  -- The stand-in of the column the page goes to, when it is there.
+  local pending = nil
+  if into then
+    local h = buffer_named(PENDING)
+    for _, p in ipairs(kawoosh.panes()) do
+      if h and p.pane == into and p.buffer == h then pending = h end
+    end
+  end
+  -- A page open already is shown as it is refilled, and the column's
+  -- stand-in is not needed: it goes once the page is in its place.
+  local drop = pending and buffer_named(name) ~= nil
   kawoosh.buf.open_scratch { name = name, text = text, read_only = true, language = LANG, show = opts.show ~= false,
-                             restore = true }
+                             restore = true, pane = into, reuse = pending }
+  if drop then kawoosh.buf.close(pending, { force = true }) end
   kawoosh.buf.paint(SET, paints_of(text, info), name)
   open[name] = { page = page, section = section, width = width, heads = info.heads }
   return name
@@ -276,32 +355,76 @@ end
 -- focused pane. `opts.pane` is the pane the keys are in (a command's
 -- `ctx.pane`), whose width the page is rendered to; `opts.width` one
 -- of your own; `opts.show = false` fills the buffer without showing
--- it; `opts.done(name)` is told the buffer's name, or `done(nil, why)`.
+-- it; `opts.beside = true` reads it into the man column instead
+-- (`man.column`, a column of its own made beside when there is none);
+-- `opts.done(name)` is told the buffer's name, or `done(nil, why)`.
 function man.open(page, section, opts)
   opts = opts or {}
   if type(page) ~= "string" or page == "" then return kawoosh.echo("man: which page?") end
-  local width = opts.width or width_for(opts.pane)
-  local argv = command()
-  if section then argv[#argv + 1] = section end
-  argv[#argv + 1] = page
-  local said = {}
-  kawoosh.spawn(argv, {
-    env = env_for(width),
-    on_stderr = function(ls)
-      for _, l in ipairs(ls) do if l ~= "" then said[#said + 1] = l end end
-    end,
-    on_done = function(text, code)
-      if code ~= 0 or text == nil or text:match("^%s*$") then
-        local why = said[1] or ("no manual entry for " .. page .. (section and (" in section " .. section) or ""))
-        if code == nil then why = argv[1] .. ": not found" end
-        kawoosh.echo(why)
-        if opts.done then opts.done(nil, why) end
-        return
-      end
-      local name = fill(text, page, section, width, opts)
-      if opts.done then opts.done(name) end
-    end,
-  })
+  local fixed = opts.width or set_width()
+  local target, made = nil, false
+  if opts.beside then
+    target = man.column(opts.pane)
+    if not target then
+      -- The column now, so it is laid out by the time the page is read
+      -- and the page can be rendered to its width.
+      made = true
+      kawoosh.buf.open_scratch { name = PENDING, read_only = true, language = LANG, pane = "column",
+                                 text = "reading " .. page .. (section and ("(" .. section .. ")") or "") .. " …" }
+    end
+  end
+  local tries = 0
+  local function read(width)
+    tries = tries + 1
+    local argv = command()
+    if section then argv[#argv + 1] = section end
+    argv[#argv + 1] = page
+    local said = {}
+    kawoosh.spawn(argv, {
+      env = env_for(width),
+      on_stderr = function(ls)
+        for _, l in ipairs(ls) do if l ~= "" then said[#said + 1] = l end end
+      end,
+      on_done = function(text, code)
+        if code ~= 0 or text == nil or text:match("^%s*$") then
+          local why = said[1] or ("no manual entry for " .. page .. (section and (" in section " .. section) or ""))
+          if code == nil then why = argv[1] .. ": not found" end
+          kawoosh.echo(why)
+          -- A column made for this page, and no page: the column goes
+          -- again when the keys are still in it, and its stand-in.
+          local h = made and buffer_named(PENDING)
+          if h then
+            for _, p in ipairs(kawoosh.panes()) do
+              if p.buffer == h and p.pane == kawoosh.pane() then kawoosh.run("close") end
+            end
+            kawoosh.buf.close(h, { force = true })
+          end
+          if opts.done then opts.done(nil, why) end
+          return
+        end
+        local into = nil
+        if opts.beside then
+          into = man.column(opts.pane)
+          -- The column laid out at another width than the page was
+          -- read at — one just made, whose width was not known when the
+          -- page was asked for — reads it again at its own.
+          local want = into and fitted(into)
+          if not fixed and into and want ~= width and tries < REFITS then
+            return read(want or width)
+          end
+          if into and made then columns[into] = true end
+        end
+        local name = fill(text, page, section, width, opts, opts.beside and (into or "column") or nil)
+        if opts.done then opts.done(name) end
+      end,
+    })
+  end
+  -- The width of the pane it goes to: the man column's, the pane the
+  -- keys are in; a column being made is not laid out yet (`man.width`,
+  -- else eighty, and read again once it is).
+  local into = opts.pane
+  if opts.beside then into = target end
+  read(fixed or width_for(into))
 end
 
 -- man.pages(): the pages open, by buffer name — `{ page =, section =,
@@ -385,8 +508,10 @@ local COLUMNS = {
 }
 
 -- The pane the picker was opened from: where a pick is shown, whose
--- width it is rendered to.
+-- width it is rendered to — or, opened by `:man beside` on nothing,
+-- the pane the man column is looked for from (`pick_beside`).
 local from_pane = nil
+local pick_beside = false
 
 picker.source("man", {
   title = "manual pages", placeholder = "find a manual page",
@@ -414,7 +539,9 @@ picker.source("man", {
       kawoosh.run(split)
       return man.open(item.page, item.section, {})
     end
-    man.open(item.page, item.section, { pane = from_pane })
+    -- `<CR>`: where the key that opened the picker would have put the
+    -- page — the man column for `<leader>ik`, the pane for `:man`.
+    man.open(item.page, item.section, { pane = from_pane, beside = pick_beside })
   end,
   empty = "no page matches",
 })
@@ -422,28 +549,42 @@ picker.source("man", {
 -- -------------------------------------------------------------- commands
 
 -- `:man [PAGE | SECTION PAGE | PAGE(SECTION)]`: the page; alone, the
--- word under the caret, else the picker.
-kawoosh.command("man", function(ctx)
+-- word under the caret, else the picker. `beside`: into the man column.
+local function man_command(ctx, beside)
   local page, section = man.parse(ctx.args)
   if not page then
     page, section = under_caret()
-    if not page then return picker.open("man") end
+    if not page then
+      pick_beside = beside
+      return picker.open("man")
+    end
   end
-  man.open(page, section, { pane = ctx.pane })
-end, {
+  man.open(page, section, { pane = ctx.pane, beside = beside })
+end
+
+kawoosh.command("man", function(ctx) man_command(ctx, false) end, {
   args = { "text..." },
-  doc = "the manual page: `:man ls`, `:man 3 printf`, `:man printf(3)`; alone, the word under the caret, else the picker over every page",
+  doc = "the manual page in this pane: `:man ls`, `:man 3 printf`, `:man printf(3)`; alone, the word under the caret, else the picker over every page",
+})
+
+-- `:man beside [PAGE…]` (`<leader>ik`): the same, into the man column —
+-- the pane of the tab that shows a page, else a column of its own.
+kawoosh.command("man beside", function(ctx) man_command(ctx, true) end, {
+  args = { "text..." },
+  doc = "the manual page in a column of its own, the one a page is in already if there is one: `:man beside ls`; alone, the word under the caret, else the picker",
 })
 
 kawoosh.command("man pick", function(ctx)
   if ctx.bang then index = nil end
+  pick_beside = false
   picker.open("man")
 end, {
   bang = "read the list of pages again",
   doc = "every manual page in a picker, its description beside; `<CR>` opens one",
 })
 
--- `K`, `<CR>` in a page: the reference under the caret, into the pane.
+-- `K`, `<CR>` in a page: the reference under the caret, into the pane —
+-- the man column's page stays in the man column.
 kawoosh.command("man here", function(ctx)
   local page, section = under_caret()
   if not page then return kawoosh.echo("no page under the caret") end
@@ -486,10 +627,17 @@ kawoosh.command("man section next", function(ctx) section_step(ctx, 1) end,
 kawoosh.command("man section prev", function(ctx) section_step(ctx, -1) end,
   { when = { "language:" .. LANG }, doc = "the previous section head of the page, COUNT back", jump = true })
 
-kawoosh.command("man close", function()
+-- `q`: the page closed, as `:bd`; in a column `:man beside` made, the
+-- column too — it was made for the page, where a pane the page was read
+-- into was yours before it — the keys back where they were last.
+kawoosh.command("man close", function(ctx)
   local h = kawoosh.buf.current()
+  if columns[ctx.pane] then
+    columns[ctx.pane] = nil
+    kawoosh.run("close")
+  end
   if h then kawoosh.buf.close(h, { force = true }) end
-end, { when = { "language:" .. LANG }, doc = "the page closed, as `:bd`" })
+end, { when = { "language:" .. LANG }, doc = "the page closed, as `:bd`, and the column `:man beside` made for it" })
 
 local AT = { language = LANG }
 kawoosh.map("n", "K", "man here", AT)
@@ -497,4 +645,7 @@ kawoosh.map("n", "<CR>", "man here", AT)
 kawoosh.map("n", "]]", "man section next", AT)
 kawoosh.map("n", "[[", "man section prev", AT)
 kawoosh.map("n", "q", "man close", AT)
-kawoosh.map("n", "<leader>ik", "man")
+-- The manual's key everywhere: a column of its own, the man column
+-- (man.md Decision 6); the shifted one in the pane, as `:man`.
+kawoosh.map("n", "<leader>ik", "man beside")
+kawoosh.map("n", "<leader>iK", "man")

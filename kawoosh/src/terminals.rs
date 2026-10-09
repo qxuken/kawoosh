@@ -655,8 +655,12 @@ impl Kawoosh {
             ("KAWOOSH_DOMAIN".to_string(), name.to_string()),
         ];
         let port = remote_port();
+        // The CLI's variables, set only where it was written and can run
+        // — `~/.cache` may be read only, and the ssh host's CLI is bash,
+        // which a busybox host (OpenWrt) has none of: the host's own
+        // `$EDITOR` then, and the shell starts either way.
+        let mut cli = String::new();
         if let Some(sock) = &self.socket {
-            let shim = "$HOME/.cache/kawoosh".to_string();
             match &t {
                 kawoosh_systems::io::Transport::Ssh(_) => {
                     envs.push(("KAWOOSH_PORT".into(), port.to_string()));
@@ -685,15 +689,21 @@ impl Kawoosh {
                     envs.push(("WSLENV".into(), wslenv));
                 }
             }
-            envs.push(("KAWOOSH_BIN".into(), format!("{shim}/kawoosh")));
-            for k in ["EDITOR", "VISUAL", "GIT_EDITOR"] {
-                envs.push((k.into(), format!("{shim}/kawoosh-edit")));
-            }
+            let runs = match &t {
+                kawoosh_systems::io::Transport::Ssh(_) => " && command -v bash >/dev/null 2>&1",
+                kawoosh_systems::io::Transport::Wsl(_) => "",
+            };
+            let shim = "\"$HOME\"/.cache/kawoosh";
+            cli = format!(
+                "if [ -x {shim}/kawoosh ]{runs}; then export KAWOOSH_BIN={shim}/kawoosh \
+                 EDITOR={shim}/kawoosh-edit VISUAL={shim}/kawoosh-edit GIT_EDITOR={shim}/kawoosh-edit; fi\n"
+            );
         }
         let exec = match cmd {
             Some(c) => format!("exec \"${{SHELL:-/bin/sh}}\" -lc {}", shell_quote(c)),
             None => "exec \"${SHELL:-/bin/sh}\" -l".to_string(),
         };
+        let exec = format!("{cli}{exec}");
         let script = remote_script(dir, &envs, &exec, cmd.is_none());
         let forward = self
             .socket
