@@ -39,7 +39,11 @@ fn every_card_is_outlined_whole_with_nothing_painted_over_its_ring() {
     };
     let cards: Vec<_> = nodes
         .iter()
-        .filter(|n| n.label.as_deref().is_some_and(|l| l.starts_with("card ")))
+        .filter(|n| {
+            n.label
+                .as_deref()
+                .is_some_and(|l| l.starts_with("theme card "))
+        })
         .collect();
     assert!(cards.len() >= 3, "cards on screen: {}", cards.len());
     // One ring width for every card, so the content does not move as

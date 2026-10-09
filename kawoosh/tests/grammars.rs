@@ -1916,7 +1916,7 @@ fn gg_and_g_go_to_the_first_and_last_row_and_ctrl_d_ctrl_u_page() {
     // Whether the row of `name` is inside the list's box.
     let shown = |d: &mut Drive, name: &str| {
         let r = d.rect(&format!("grammar {name}")).unwrap();
-        let list = d.rect("list").unwrap();
+        let list = d.rect("grammars list").unwrap();
         r.y >= list.y - 0.5 && r.y + r.h <= list.y + list.h + 0.5
     };
     let (first, last) = (rows[0].clone(), rows[rows.len() - 1].clone());

@@ -275,19 +275,19 @@ kawoosh.view(VIEW, function(ctx)
   -- The cursor's card into view, from where the list is.
   if S.reveal then
     S.reveal = nil
-    local g = ctx.env.scroll_geometry("list")
+    local g = ctx.env.scroll_geometry("fonts list")
     local y = (index() - 1) * stride
     if g then
       if y < g.offset.y then
-        ctx.env.set_scroll("list", 0, y)
+        ctx.env.set_scroll("fonts list", 0, y)
       elseif y + stride > g.offset.y + g.h then
-        ctx.env.set_scroll("list", 0, y + stride - g.h)
+        ctx.env.set_scroll("fonts list", 0, y + stride - g.h)
       end
     else
-      ctx.env.set_scroll("list", 0, y)
+      ctx.env.set_scroll("fonts list", 0, y)
     end
   end
-  local g = ctx.env.scroll_geometry("list")
+  local g = ctx.env.scroll_geometry("fonts list")
   S.scrolled = g and g.offset.y or 0
 
   local shown = on_show(cur)
@@ -322,7 +322,7 @@ kawoosh.view(VIEW, function(ctx)
     ctx.legend({ { { "j", "k" }, "walk" }, { "<CR>", "takes" }, { "/", "searches" }, { { "n", "N" }, "next, back" },
       { "m", "mono or all" }, { { "+", "-" }, "size" }, { "y", "copies" }, { "q", "closes" } }, { size = NOTE }) }
 
-  local list = uniform_list(ctx.env, { key = "list", rows = #S.list, row_h = stride, width = "grow",
+  local list = uniform_list(ctx.env, { key = "fonts list", rows = #S.list, row_h = stride, width = "grow",
                                        height = "grow", pad = { x = PAD } }, function(i)
     local f = S.list[i + 1]
     return card(f, cur, ctx, f.name == S.cursor, h, S.query)
