@@ -322,11 +322,21 @@ impl Kawoosh {
             .get("ssh.master")
             .and_then(Setting::as_bool)
             .unwrap_or(!cfg!(windows));
+        // The in-process client (`ssh.client = "builtin"`), Windows's
+        // own default: one connection, every channel on it, where no
+        // ssh there can keep a master (domains.md, "Built, our ssh").
+        let builtin = match self.ed.settings.str("ssh.client") {
+            Some("builtin") => true,
+            Some("openssh") => false,
+            _ => cfg!(windows),
+        };
         Ssh {
             ssh,
             host,
             ctl,
-            master,
+            master: master && !builtin,
+            builtin,
+            client: None,
         }
     }
 
@@ -459,10 +469,11 @@ impl Kawoosh {
             .transports
             .get(name)
             .map(|t| matches!(t, Transport::Ssh(_)));
+        let how = self.ssh_carried(name);
         self.forget_domain(name);
         self.domains.pending.retain(|(n, _)| n != name);
         self.ed.message = match was {
-            Some(true) => format!("{name}: disconnected, its ssh master told to exit"),
+            Some(true) => format!("{name}: disconnected, {}", how.closed()),
             Some(false) => {
                 format!(
                     "{name}: disconnected, forgotten here (the distro runs on, as WSL keeps it)"
@@ -565,6 +576,39 @@ impl Kawoosh {
         }
     }
 
+    /// A connection's question (the in-process client's, `ssh.client =
+    /// "builtin"`): the confirm, with a field when it wants a line, its
+    /// answer back to the connecting thread.
+    pub(crate) fn domain_ask(
+        &mut self,
+        name: &str,
+        q: kawoosh_systems::ssh::Question,
+        reply: crossbeam_channel::Sender<Option<String>>,
+    ) {
+        use kawoosh_systems::ssh::AskKind;
+        let actions = match q.kind {
+            AskKind::Confirm => vec![
+                ("Trust it".into(), String::new()),
+                ("Refuse".into(), String::new()),
+            ],
+            _ => vec![
+                ("OK".into(), String::new()),
+                ("Cancel".into(), String::new()),
+            ],
+        };
+        self.confirm_with(crate::confirm::Confirm {
+            title: format!("{name}: {}", q.title),
+            lines: q.lines,
+            actions,
+            chosen: 0,
+        });
+        self.asking = Some(crate::confirm::Asking {
+            reply,
+            input: (q.kind != AskKind::Confirm).then(String::new),
+            secret: q.kind == AskKind::Secret,
+        });
+    }
+
     pub(crate) fn domain_failed(&mut self, name: &str, error: &str) {
         self.domains
             .state
@@ -635,8 +679,8 @@ impl Kawoosh {
             ));
         }
         out.push_str(
-            "\nconnected: kawoosh holds the machine — for ssh, a master connection (ssh -M, \
-             ControlPersist) every file, terminal and process goes through, open until it is \
+            "\nconnected: kawoosh holds the machine — for ssh, one connection every file, \
+             terminal and process goes through (kawoosh's own, or ssh's master), open until it is \
              disconnected or kawoosh quits; for WSL, the distro answered and its files are its \
              share's, nothing held open.\n\
              not connected: nothing open; the first use of a NAME:/path connects it.\n\n\
@@ -659,6 +703,20 @@ impl Kawoosh {
         }
     }
 
+    /// How an ssh domain is carried: its transport's when it has one,
+    /// else what the settings would make of it.
+    fn ssh_carried(&self, name: &str) -> Carried {
+        let s = match self.domains.transports.get(name) {
+            Some(Transport::Ssh(s)) => s.clone(),
+            _ => self.transport(name, String::new()),
+        };
+        match (s.builtin, s.master) {
+            (true, _) => Carried::Builtin,
+            (false, true) => Carried::Master,
+            (false, false) => Carried::Direct,
+        }
+    }
+
     /// What a domain's state means and what can be done with it, in a
     /// sentence (the picker's preview).
     fn state_means(&self, name: &str, kind: &Kind) -> String {
@@ -668,7 +726,9 @@ impl Kawoosh {
                 let via = kawoosh_doc::fs::via(name).unwrap_or("");
                 if ssh {
                     format!(
-                        "connected: an ssh master connection (ssh -M, ControlPersist) is open, and every file ({via}), terminal and process goes through it. <C-x> or :domain disconnect {name} tells it to exit."
+                        "connected: {}, and every file ({via}), terminal and process goes through it. <C-x> or :domain disconnect {name} {}.",
+                        self.ssh_carried(name).held(),
+                        self.ssh_carried(name).closing()
                     )
                 } else {
                     format!(
@@ -676,9 +736,7 @@ impl Kawoosh {
                     )
                 }
             }
-            ("connecting", _) if ssh => {
-                "connecting: ssh runs in a pane in the dock, where a password or a passphrase is asked; up once its master answers.".into()
-            }
+            ("connecting", _) if ssh => self.ssh_carried(name).connecting().into(),
             ("connecting", _) => "starting: wsl.exe asked for the distro's home and PATH.".into(),
             ("failed", e) => format!(
                 "failed: {}. <C-o> or :domain connect {name} tries again.",
@@ -841,4 +899,52 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
     ]
+}
+
+/// How an ssh domain is carried (`ssh.client`, `ssh.master`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Carried {
+    /// The in-process client: one connection, every channel on it.
+    Builtin,
+    /// OpenSSH's master, its pane in the dock.
+    Master,
+    /// OpenSSH with no master (Windows): a connection a channel.
+    Direct,
+}
+
+impl Carried {
+    fn held(self) -> &'static str {
+        match self {
+            Carried::Builtin => "one ssh connection, kawoosh's own, is open",
+            Carried::Master => "an ssh master connection (ssh -M, ControlPersist) is open",
+            Carried::Direct => {
+                "ssh connects for each channel (no master: Windows' ssh cannot keep one), a shell kept open on the host for short commands"
+            }
+        }
+    }
+    fn closing(self) -> &'static str {
+        match self {
+            Carried::Master => "tells it to exit",
+            Carried::Builtin | Carried::Direct => "closes it",
+        }
+    }
+    fn closed(self) -> &'static str {
+        match self {
+            Carried::Master => "its ssh master told to exit",
+            Carried::Builtin | Carried::Direct => "its connection closed",
+        }
+    }
+    fn connecting(self) -> &'static str {
+        match self {
+            Carried::Builtin => {
+                "connecting: kawoosh's own ssh, which asks here what it has to — a host key not seen before, a passphrase, a password."
+            }
+            Carried::Master => {
+                "connecting: ssh runs in a pane in the dock, where a password or a passphrase is asked; up once its master answers."
+            }
+            Carried::Direct => {
+                "connecting: ssh with no terminal to ask in, so with a key or the agent; up once the host's files answer."
+            }
+        }
+    }
 }

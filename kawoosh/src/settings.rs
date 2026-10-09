@@ -247,6 +247,11 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
         ),
         ("ssh.command", K::Str, "the ssh binary a domain runs"),
         (
+            "ssh.client",
+            K::Str,
+            "which ssh carries a host: `builtin` (in-process: one connection for everything, the default on Windows) or `openssh` (the `ssh` binary, `ssh.command`)",
+        ),
+        (
             "ssh.master",
             K::Bool,
             "one master connection a host's channels share (not on Windows, whose ssh clients cannot share one)",

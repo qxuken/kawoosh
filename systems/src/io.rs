@@ -174,6 +174,14 @@ pub enum IoMsg {
     DomainUp { name: String },
     /// A domain's connection gave up, and why.
     DomainFailed { name: String, error: String },
+    /// A connection asks the user (`crate::ssh`): a host key to trust,
+    /// a passphrase, a password. `reply` takes the answer, `None` for
+    /// none; the connecting thread waits on it.
+    DomainAsk {
+        name: String,
+        question: crate::ssh::Question,
+        reply: crossbeam_channel::Sender<Option<String>>,
+    },
 }
 
 /// What [`Io::run_command`] runs, and how its output comes back.
@@ -490,6 +498,24 @@ impl Transport {
         }
     }
 
+    /// A channel of the in-process client's connection running `script`
+    /// (no terminal): `None` for a transport that starts processes.
+    pub fn exec(&self, script: &str) -> Option<std::io::Result<crate::ssh::Remote>> {
+        let c = self.client()?;
+        Some(c.open(crate::ssh::Open::Exec {
+            line: &ssh_line(script),
+            pty: None,
+        }))
+    }
+
+    /// The in-process client's connection, where the domain has one.
+    pub fn client(&self) -> Option<&std::sync::Arc<crate::ssh::Client>> {
+        match self {
+            Transport::Ssh(s) => s.client.as_ref(),
+            Transport::Wsl(_) => None,
+        }
+    }
+
     /// The connection let go: an ssh master told to go; a distro left
     /// running, as it was found. The runners go either way.
     pub fn exit(&self) {
@@ -525,6 +551,10 @@ pub fn run_script(
         Some(Err(e)) => log::warn!("a runner on {}: {e}; a process of its own", t.key()),
         None => {}
     }
+    // A channel of the in-process client's connection.
+    if let Some(r) = t.exec(script) {
+        return run_on_channel(r?, stdin);
+    }
     let mut c = t.remote_command(script);
     c.stdin(if stdin.is_some() {
         std::process::Stdio::piped()
@@ -549,6 +579,108 @@ pub fn run_script(
         stdout: out.stdout,
         stderr: out.stderr,
     })
+}
+
+/// A process's outputs read on threads of their own into `tx`: stdout's
+/// lines as they come (or whole at its end, `whole`), stderr's apart
+/// (`split_err`) or among them — each made a string whatever its bytes:
+/// a stop at the first that was not UTF-8 left a `git show` of a
+/// Latin-1 file hanging on a full pipe.
+fn pump_outputs(
+    id: u64,
+    stdout: Box<dyn Read + Send>,
+    stderr: Box<dyn Read + Send>,
+    whole: bool,
+    split_err: bool,
+    tx: &Sender<IoMsg>,
+    wake: &WakeHandle,
+) -> (thread::JoinHandle<()>, thread::JoinHandle<()>) {
+    use std::io::{BufRead, BufReader};
+    let pump = |reader: Box<dyn Read + Send>, tx: Sender<IoMsg>, wake: WakeHandle, err: bool| {
+        thread::spawn(move || {
+            let mut reader = BufReader::new(reader);
+            let mut bytes = Vec::new();
+            loop {
+                bytes.clear();
+                match reader.read_until(b'\n', &mut bytes) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+                if bytes.last() == Some(&b'\n') {
+                    bytes.pop();
+                    if bytes.last() == Some(&b'\r') {
+                        bytes.pop();
+                    }
+                }
+                let line = String::from_utf8_lossy(&bytes).into_owned();
+                let msg = if err {
+                    IoMsg::ProcErr { id, line }
+                } else {
+                    IoMsg::ProcLine { id, line }
+                };
+                if tx.send(msg).is_err() {
+                    return;
+                }
+                wake.wake();
+            }
+        })
+    };
+    let a = if whole {
+        let (tx, wake) = (tx.clone(), wake.clone());
+        thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let mut reader = stdout;
+            let _ = reader.read_to_end(&mut bytes);
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            if tx.send(IoMsg::ProcOut { id, text }).is_ok() {
+                wake.wake();
+            }
+        })
+    } else {
+        pump(stdout, tx.clone(), wake.clone(), false)
+    };
+    let b = pump(stderr, tx.clone(), wake.clone(), split_err);
+    (a, b)
+}
+
+/// A channel's process run to its end: `stdin` written and closed, both
+/// outputs read whole.
+pub fn run_on_channel(
+    mut r: crate::ssh::Remote,
+    stdin: Option<&[u8]>,
+) -> std::io::Result<crate::runner::Output> {
+    use std::io::{Read, Write};
+    if let Some(mut w) = r.stdin.take()
+        && let Some(bytes) = stdin
+    {
+        w.write_all(bytes)?;
+    }
+    let err = r.stderr.take().map(|mut e| {
+        thread::spawn(move || {
+            let mut b = Vec::new();
+            let _ = e.read_to_end(&mut b);
+            b
+        })
+    });
+    let mut stdout = Vec::new();
+    if let Some(mut o) = r.stdout.take() {
+        o.read_to_end(&mut stdout)?;
+    }
+    let stderr = err.and_then(|t| t.join().ok()).unwrap_or_default();
+    Ok(crate::runner::Output {
+        code: r.done.wait().unwrap_or(-1),
+        stdout,
+        stderr,
+    })
+}
+
+/// The line an ssh host's login shell is handed for `script` — POSIX sh
+/// — whatever that shell is ([`Ssh::remote_argv`]).
+pub fn ssh_line(script: &str) -> String {
+    format!(
+        "sh -c 'eval \"$(printf \"{}\")\"'",
+        printf_octal(script.as_bytes())
+    )
 }
 
 /// A forward of the host's loopback `port` back to the command socket:
@@ -582,6 +714,11 @@ pub struct Ssh {
     /// and what runs to its end goes through a runner kept open
     /// (`crate::runner`) rather than a connection each.
     pub master: bool,
+    /// Whether the in-process client (`crate::ssh`) carries the domain
+    /// rather than the `ssh` binary (`ssh.client`).
+    pub builtin: bool,
+    /// Its connection, once connected.
+    pub client: Option<std::sync::Arc<crate::ssh::Client>>,
 }
 
 impl Ssh {
@@ -621,7 +758,10 @@ impl Ssh {
     /// Whether the master answers on its control socket; with none,
     /// always (each channel connects or fails on its own).
     pub fn is_up(&self) -> bool {
-        if !self.master {
+        if let Some(c) = &self.client {
+            return c.is_alive();
+        }
+        if !self.master || self.builtin {
             return true;
         }
         crate::spawn::status(
@@ -637,7 +777,7 @@ impl Ssh {
     /// the runners let go.
     pub fn exit(&self) {
         crate::runner::forget(&Transport::Ssh(self.clone()));
-        if !self.master {
+        if !self.master || self.builtin {
             return;
         }
         let _ = crate::spawn::status(
@@ -675,10 +815,7 @@ impl Ssh {
         }
         v.push(self.host.clone());
         v.push("--".into());
-        v.push(format!(
-            "sh -c 'eval \"$(printf \"{}\")\"'",
-            printf_octal(script.as_bytes())
-        ));
+        v.push(ssh_line(script));
         v
     }
 
@@ -940,6 +1077,8 @@ pub struct ProcHandle {
     child: Arc<Mutex<Option<crate::spawn::Session>>>,
     #[cfg(windows)]
     tree: Arc<crate::job::Tree>,
+    /// A channel's process (`crate::ssh`), ended through its channel.
+    remote: Option<crate::ssh::RemoteKiller>,
 }
 
 impl ProcHandle {
@@ -950,6 +1089,7 @@ impl ProcHandle {
             child: Arc::new(Mutex::new(None)),
             #[cfg(windows)]
             tree: Arc::new(crate::job::Tree::none()),
+            remote: None,
         }
     }
 
@@ -960,6 +1100,9 @@ impl ProcHandle {
     /// its own (`spawn::session`), so its group is the command's; on
     /// Windows it is in a job of its own (`job::Tree`).
     pub fn kill(&self) {
+        if let Some(r) = &self.remote {
+            r.kill();
+        }
         if let Ok(mut c) = self.child.lock()
             && let Some(child) = c.as_mut()
         {
@@ -1214,7 +1357,7 @@ impl Io {
     /// ([`IoMsg::ProcErr`]); then [`IoMsg::ProcExit`]. Bytes that are
     /// not UTF-8 are replaced, never a stop.
     pub fn run_command(&self, id: u64, spec: ProcSpec) -> std::io::Result<ProcHandle> {
-        use std::io::{BufRead, BufReader, Write};
+        use std::io::Write;
         let ProcSpec {
             cmd,
             cwd,
@@ -1295,6 +1438,49 @@ impl Io {
             });
             return Ok(ProcHandle::detached());
         }
+        // On a host the in-process client carries: a channel of its
+        // connection, its outputs pumped as a process's are.
+        if let Some((name, dir)) = &host
+            && let Some(t) = transport_of(name)
+            && t.client().is_some()
+        {
+            let exec = match &cmd {
+                ProcCmd::Shell(c) => {
+                    format!("exec \"${{SHELL:-/bin/sh}}\" -c {}", shell_quote(c))
+                }
+                ProcCmd::Argv(argv) => {
+                    let quoted: Vec<String> = argv.iter().map(|a| shell_quote(a)).collect();
+                    format!("exec {}", quoted.join(" "))
+                }
+            };
+            let script = remote_script(dir, &env, &exec, false);
+            let mut r = t.exec(&script).expect("a client")?;
+            let input = r.stdin.take();
+            if let (Some(mut text), Some(mut pipe)) = (stdin, input) {
+                thread::spawn(move || {
+                    let _ = pipe.write_all(text.as_bytes());
+                    drop(pipe);
+                    text_buffer::wipe_string(&mut text);
+                });
+            }
+            let stdout: Box<dyn Read + Send> = Box::new(r.stdout.take().expect("a channel's"));
+            let stderr: Box<dyn Read + Send> = Box::new(r.stderr.take().expect("a channel's"));
+            let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
+            let (a, b) = pump_outputs(id, stdout, stderr, whole, split_err, &tx, &wake);
+            let mut handle = ProcHandle::detached();
+            handle.remote = Some(r.killer());
+            let done = r.done.clone();
+            thread::spawn(move || {
+                let _ = a.join();
+                let _ = b.join();
+                let _ = tx.send(IoMsg::ProcExit {
+                    id,
+                    code: done.wait(),
+                });
+                wake.wake();
+            });
+            return Ok(handle);
+        }
         let mut command = match &host {
             Some((name, dir)) => {
                 let t = transport_of(name).ok_or_else(|| {
@@ -1352,58 +1538,12 @@ impl Io {
         let stderr = child.take_stderr().unwrap();
         let child = Arc::new(Mutex::new(Some(child)));
         let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
-        // Lines as they come, each made a string whatever its bytes —
-        // a stop at the first that was not UTF-8 left a `git show` of a
-        // Latin-1 file hanging on a full pipe.
-        let pump =
-            |reader: Box<dyn Read + Send>, tx: Sender<IoMsg>, wake: WakeHandle, err: bool| {
-                thread::spawn(move || {
-                    let mut reader = BufReader::new(reader);
-                    let mut bytes = Vec::new();
-                    loop {
-                        bytes.clear();
-                        match reader.read_until(b'\n', &mut bytes) {
-                            Ok(0) | Err(_) => return,
-                            Ok(_) => {}
-                        }
-                        if bytes.last() == Some(&b'\n') {
-                            bytes.pop();
-                            if bytes.last() == Some(&b'\r') {
-                                bytes.pop();
-                            }
-                        }
-                        let line = String::from_utf8_lossy(&bytes).into_owned();
-                        let msg = if err {
-                            IoMsg::ProcErr { id, line }
-                        } else {
-                            IoMsg::ProcLine { id, line }
-                        };
-                        if tx.send(msg).is_err() {
-                            return;
-                        }
-                        wake.wake();
-                    }
-                })
-            };
-        let a = if whole {
-            let (tx, wake) = (tx.clone(), wake.clone());
-            thread::spawn(move || {
-                let mut bytes = Vec::new();
-                let mut reader = stdout;
-                let _ = reader.read_to_end(&mut bytes);
-                let text = String::from_utf8_lossy(&bytes).into_owned();
-                if tx.send(IoMsg::ProcOut { id, text }).is_ok() {
-                    wake.wake();
-                }
-            })
-        } else {
-            pump(stdout, tx.clone(), wake.clone(), false)
-        };
-        let b = pump(stderr, tx.clone(), wake.clone(), split_err);
+        let (a, b) = pump_outputs(id, stdout, stderr, whole, split_err, &tx, &wake);
         let handle = ProcHandle {
             child: child.clone(),
             #[cfg(windows)]
             tree: tree.clone(),
+            remote: None,
         };
         thread::spawn(move || {
             // The pipes close when the process ends — or was killed —
@@ -1573,18 +1713,54 @@ impl Io {
                     name: name.clone(),
                     error,
                 };
+                // The in-process client: its connection made first,
+                // asking the window what it has to (a host key, a
+                // passphrase, a password).
+                let mut transport = transport;
+                if transport.builtin {
+                    let (atx, awake, aname) = (tx.clone(), wake.clone(), name.clone());
+                    let ask: crate::ssh::Asker = std::sync::Arc::new(move |question| {
+                        let (reply, answer) = crossbeam_channel::bounded(1);
+                        let asked = IoMsg::DomainAsk {
+                            name: aname.clone(),
+                            question,
+                            reply,
+                        };
+                        if atx.send(asked).is_err() {
+                            return None;
+                        }
+                        awake.wake();
+                        answer.recv().ok().flatten()
+                    });
+                    match crate::ssh::connect(&transport.host, ask) {
+                        Ok(c) => transport.client = Some(std::sync::Arc::new(c)),
+                        Err(e) => {
+                            let _ = tx.send(failed(e));
+                            wake.wake();
+                            return;
+                        }
+                    }
+                }
                 let msg = loop {
                     if cancel.load(Ordering::Relaxed) {
                         break failed("the connection's pane closed".into());
                     }
                     if transport.is_up() {
-                        let mut c = transport.command(&["-s"]);
-                        c.arg("sftp");
+                        let sftp = match &transport.client {
+                            Some(client) => client
+                                .open(crate::ssh::Open::Subsystem("sftp"))
+                                .and_then(crate::sftp::Sftp::on_channel),
+                            None => {
+                                let mut c = transport.command(&["-s"]);
+                                c.arg("sftp");
+                                crate::sftp::Sftp::spawn(c)
+                            }
+                        };
                         // A host with no SFTP server (OpenWrt's dropbear)
                         // still connects: its files through its shell,
                         // when that answers.
                         let files: Result<std::sync::Arc<dyn kawoosh_doc::fs::Fs>, String> =
-                            match crate::sftp::Sftp::spawn(c) {
+                            match sftp {
                                 Ok(s) => Ok(std::sync::Arc::new(s)),
                                 Err(e) => {
                                     let shell = crate::shellfs::ShellFs::over(Transport::Ssh(
@@ -2007,6 +2183,8 @@ mod tests {
             host: "h".into(),
             ctl: "/c".into(),
             master: true,
+            builtin: false,
+            client: None,
         };
         let argv = t.remote_argv(&s, false, None);
         assert_eq!(&argv[..6], ["ssh", "-S", "/c", "-T", "h", "--"]);
@@ -2053,6 +2231,8 @@ mod tests {
             host: "h".into(),
             ctl: "/c".into(),
             master: true,
+            builtin: false,
+            client: None,
         };
         let line = t.remote_argv(&script, false, None).pop().unwrap();
         let inner = line
@@ -2106,7 +2286,7 @@ mod tests {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader, Write};
+            use std::io::Write;
             let mut got = Vec::new();
             for reply in ["closed", "/picked dir"] {
                 let (mut s, _) = l.accept().unwrap();

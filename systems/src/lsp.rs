@@ -1564,9 +1564,27 @@ struct Document {
     lsp_version: i64,
 }
 
+/// What a server runs as: a process here (or the `ssh` that carries it
+/// to a host), or a channel of the in-process client's connection.
+enum ServerProc {
+    Local(Child),
+    Channel(std::sync::Arc<crate::ssh::Done>, crate::ssh::RemoteKiller),
+}
+
+impl ServerProc {
+    fn kill(&mut self) {
+        match self {
+            ServerProc::Local(c) => {
+                let _ = c.kill();
+            }
+            ServerProc::Channel(_, k) => k.kill(),
+        }
+    }
+}
+
 struct Server {
-    child: Child,
-    stdin: std::process::ChildStdin,
+    child: ServerProc,
+    stdin: Box<dyn Write + Send>,
     initialized: bool,
     queued: Vec<Value>,
     next_id: i64,
@@ -1636,7 +1654,7 @@ impl Server {
         // On a host: through its domain, started in the root there
         // (docs/design/domains.md Decision 7).
         let domain = crate::fs::domain_of(root).map(|(d, _)| d.to_string());
-        let mut command = match crate::fs::domain_of(root) {
+        let command = match crate::fs::domain_of(root) {
             Some((name, dir)) => {
                 let t = crate::io::transport_of(name)?;
                 let mut line = format!("exec {}", crate::io::shell_quote(&def.command));
@@ -1644,7 +1662,11 @@ impl Server {
                     line.push(' ');
                     line.push_str(&crate::io::shell_quote(a));
                 }
-                t.remote_command(&crate::io::remote_script(dir, &[], &line, false))
+                let script = crate::io::remote_script(dir, &[], &line, false);
+                match t.exec(&script) {
+                    Some(r) => Launch::Channel(r.ok()?),
+                    None => Launch::Command(t.remote_command(&script)),
+                }
             }
             // One kawoosh installed is started from its directory, ahead
             // of the PATH (docs/design/lsp-installs.md).
@@ -1654,21 +1676,47 @@ impl Server {
                     .unwrap_or_else(|| def.command.clone().into());
                 let mut c = crate::io::command(program);
                 c.args(&def.args).current_dir(root);
-                c
+                Launch::Command(c)
             }
         };
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = crate::spawn::spawn(&mut command).ok()?;
-        // It ends with this process, however that ends, and what it
-        // starts with it (`job.rs`): `Drop` below is the orderly way.
-        crate::job::adopt(&child);
-        let stdin = child.stdin.take()?;
-        let stdout = child.stdout.take()?;
+        let (child, stdin, stdout, stderr): Pipes = match command {
+            Launch::Channel(mut r) => {
+                let stdin = r.stdin.take()?;
+                let stdout = r.stdout.take()?;
+                let stderr = r.stderr.take().map(|e| Box::new(e) as Box<dyn Read + Send>);
+                (
+                    ServerProc::Channel(r.done.clone(), r.killer()),
+                    Box::new(stdin),
+                    Box::new(stdout),
+                    stderr,
+                )
+            }
+            Launch::Command(mut command) => {
+                command
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                let mut child = crate::spawn::spawn(&mut command).ok()?;
+                // It ends with this process, however that ends, and what
+                // it starts with it (`job.rs`): `Drop` below is the
+                // orderly way.
+                crate::job::adopt(&child);
+                let stdin = child.stdin.take()?;
+                let stdout = child.stdout.take()?;
+                let stderr = child
+                    .stderr
+                    .take()
+                    .map(|e| Box::new(e) as Box<dyn Read + Send>);
+                (
+                    ServerProc::Local(child),
+                    Box::new(stdin),
+                    Box::new(stdout),
+                    stderr,
+                )
+            }
+        };
         // What the server says on stderr is the log's, line by line.
-        let stderr_reader = child.stderr.take().map(|stderr| {
+        let stderr_reader = stderr.map(|stderr| {
             let tx = from_tx.clone();
             thread::spawn(move || {
                 for line in BufReader::new(stderr).lines() {
@@ -1789,7 +1837,23 @@ impl Server {
 
 /// How `child`, its output closed, ended: its status once it has
 /// exited — a moment given — or that it closed its output alive.
-fn exit_status(child: &mut Child) -> String {
+fn exit_status(child: &mut ServerProc) -> String {
+    let child = match child {
+        ServerProc::Local(c) => c,
+        ServerProc::Channel(done, _) => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            while std::time::Instant::now() < deadline {
+                if let Some(code) = done.try_get() {
+                    return match code {
+                        Some(c) => format!("exited with {c}"),
+                        None => "exited".into(),
+                    };
+                }
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
+            return "closed its output".into();
+        }
+    };
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     loop {
         match child.try_wait() {
@@ -1816,8 +1880,22 @@ fn exit_status(child: &mut Child) -> String {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        self.child.kill();
     }
+}
+
+/// A server's process and its stdin, stdout and stderr.
+type Pipes = (
+    ServerProc,
+    Box<dyn Write + Send>,
+    Box<dyn Read + Send>,
+    Option<Box<dyn Read + Send>>,
+);
+
+/// How a server is started.
+enum Launch {
+    Command(std::process::Command),
+    Channel(crate::ssh::Remote),
 }
 
 /// How often a server's progress reports may wake the loop. A report

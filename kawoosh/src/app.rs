@@ -371,6 +371,9 @@ pub struct Kawoosh {
     pub(crate) mods: KeyMods,
     /// The question on show, if one (`confirm.rs`): the keys are its.
     pub confirm: Option<crate::confirm::Confirm>,
+    /// What waits on the confirm's answer, and the field it has: a
+    /// connection's question (a host key, a passphrase, a password).
+    pub(crate) asking: Option<crate::confirm::Asking>,
     /// Jobs a plugin asked for (`kawoosh.fs.list(path, fn)`) whose
     /// answer is still out on the io thread.
     pub(crate) pending_jobs: usize,
@@ -533,6 +536,7 @@ impl Kawoosh {
             grid_cell: (8.0, crate::rows::LH),
             mods: KeyMods::NONE,
             confirm: None,
+            asking: None,
             pending_jobs: 0,
             format: Default::default(),
             jobs_inline: false,
@@ -897,6 +901,11 @@ impl Kawoosh {
                 }
                 IoMsg::DomainUp { name } => self.domain_up(&name),
                 IoMsg::DomainFailed { name, error } => self.domain_failed(&name, &error),
+                IoMsg::DomainAsk {
+                    name,
+                    question,
+                    reply,
+                } => self.domain_ask(&name, question, reply),
                 IoMsg::PtyClosed { id } => self.pty_closed(id),
                 IoMsg::Request(incoming) => self.on_request(incoming),
                 IoMsg::Grammar { name, step } => self.on_grammar(name, step),

@@ -150,6 +150,15 @@ impl Watcher {
                         if !remote_due && crate::fs::domain_of(p).is_some() {
                             continue;
                         }
+                        // A host that could not be asked (its connection
+                        // dropped, about to be made again) says nothing
+                        // of the file: not that it is gone.
+                        if crate::fs::domain_of(p).is_some()
+                            && crate::fs::stat(p)
+                                .is_err_and(|e| e.kind() != std::io::ErrorKind::NotFound)
+                        {
+                            continue;
+                        }
                         let now = stamp(p);
                         if now != *old {
                             *old = now;
