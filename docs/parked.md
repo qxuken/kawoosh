@@ -29,7 +29,8 @@ Designed or obvious, and nothing in daily use has wanted it yet.
   injected layer. ([comments.md](design/comments.md) Decisions 3, 5)
 - **Node actions** with edits beyond the node.
   ([node-actions.md](design/node-actions.md), "Left")
-- **`:setlocal`**, a value for one buffer; **`max_line_length` as a
+- **A value for one buffer** (`:setlocal` is a pane's,
+  [pane-settings.md](design/pane-settings.md)); **`max_line_length` as a
   ruler** (there is no ruler); **guessing indentation** from the text
   (vim-sleuth). ([editorconfig.md](design/editorconfig.md), "Left")
 - **Settings pane**: a `@go` filter for a language's own values; `R`

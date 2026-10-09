@@ -36,7 +36,7 @@ Almost every key goes to the program in the terminal, `<C-w>`, `<C-l>`, `<C-r>` 
 | `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>` | the pane narrower, wider, shorter, taller |
 | {{mac:`⌘1`…`⌘9`, }}`<C-S-1>`…`<C-S-9>` | the Nth column (or pane) |
 | `<C-Tab>` `<C-S-Tab>` | the next and previous tab |
-| {{mac:`⌘=` `⌘-` `⌘0`}}{{pc:`<C-=>` `<C-->` `<C-0>`}} | font bigger, smaller, back to the setting; {{mac:`⌘` or `Ctrl`}}{{pc:`Ctrl`}} and the wheel size it too |
+| {{mac:`⌘=` `⌘-` `⌘0`}}{{pc:`<C-=>` `<C-->` `<C-0>`}} | this terminal's text bigger, smaller, back to the window's (its grid follows); {{mac:`⌘` or `Ctrl`}}{{pc:`Ctrl`}} and the wheel size it too; with {{mac:`⌥`}}{{pc:`Alt`}} every pane's ([look](look.md#fonts)) |
 | {{mac:`⌘v`, }}`<C-S-v>` | paste the clipboard, bracketed when the program asks for it |
 | `F12` | the devtools |
 

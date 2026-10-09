@@ -232,7 +232,9 @@ and whole as its items and a last `⌥/ hide keys`.
   the command line's (`a_panes_places_are_not_its_fields`); a filter's
   field gives `<Esc>` first.
 - **Per pane, for the session.** A flip is the pane's
-  (`Legends`, keyed by pane, shared with Lua as `kawoosh._legend`):
+  (`Legends`, keyed by pane, shared with Lua as `kawoosh._legend`;
+  since 2026-10-09 the pane's own `keys.legend`,
+  [pane-settings.md](pane-settings.md)):
   opening the grammars' keys leaves the themes pane's as they were,
   and a pane opened later starts as the setting says. A flip is kept
   over a change of the setting — it is what the user asked of that

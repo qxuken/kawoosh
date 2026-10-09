@@ -71,9 +71,10 @@ impl Kawoosh {
         }
     }
 
-    /// Whether the gutter draws the signs (`vcs.signs`, on).
-    pub(crate) fn signs_on(&self) -> bool {
-        self.ed.settings.bool("vcs.signs") != Some(false)
+    /// Whether pane `pane`'s gutter draws the signs: its `vcs.signs`, on
+    /// unless it says otherwise (its own, pane-settings.md).
+    pub fn pane_signs_on(&self, pane: crate::layout::PaneId) -> bool {
+        self.pane_bool(pane, "vcs.signs") != Some(false)
     }
 
     /// The signs of buffer `id`'s lines `lines` as the gutter draws them:
@@ -106,9 +107,6 @@ impl Kawoosh {
         from_files: &[MultiLine],
         staged: bool,
     ) -> HashMap<usize, Sign> {
-        if !self.signs_on() {
-            return HashMap::new();
-        }
         let signs_in = |id: BufferId, lines: std::ops::Range<usize>| {
             if staged {
                 self.ed.staged_signs_in(id, lines)

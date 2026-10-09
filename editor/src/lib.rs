@@ -79,6 +79,10 @@ pub struct View {
     pub left: f32,
     /// Visible rows, written by the shell each frame, read by paging.
     pub rows: usize,
+    /// The lines kept above and below the caret as the shell last drew
+    /// the view — its pane's `scrolloff`, which may be its own
+    /// (pane-settings.md) — read by `H` `M` `L`; `None` until drawn.
+    pub scrolloff: Option<usize>,
     /// The caret as the shell last drew the view, written each frame:
     /// the view follows its caret when it moved since, and not when the
     /// pane changed size under it.
@@ -100,6 +104,7 @@ impl View {
             top: 0,
             left: 0.0,
             rows: 24,
+            scrolloff: None,
             drawn_caret: None,
             goal_col: None,
             mode: Mode::Normal,
@@ -1594,6 +1599,7 @@ impl Editor {
         Scope {
             language: &b.language,
             local,
+            pane: None,
         }
     }
 
@@ -1687,6 +1693,7 @@ impl Editor {
         let scope = crate::settings::Scope {
             language: &layer,
             local: scope_of.local,
+            pane: None,
         };
         let read = |path: &str| self.settings.scoped(path, scope);
         let line = read("comment")

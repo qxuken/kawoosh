@@ -170,6 +170,7 @@ impl Kawoosh {
     pub(crate) fn close_pane_at(&mut self, pane: PaneId) -> bool {
         if let Some(c) = self.layout.close(pane) {
             self.drop_content(c);
+            self.forget_pane_settings(pane);
             if let Some(rt) = &self.scripting.rt {
                 rt.forget_pane(pane);
             }

@@ -988,14 +988,10 @@ pub struct Numbers {
 impl Numbers {
     /// The numbering of `buf` with the caret on `current`, as the
     /// settings ask for it.
-    pub fn of(
-        buf: &kawoosh_doc::Buffer,
-        current: usize,
-        settings: &kawoosh_editor::Settings,
-    ) -> Self {
+    pub fn of(buf: &kawoosh_doc::Buffer, current: usize, relative: bool) -> Self {
         let last = buf.line_count().saturating_sub(1);
         Numbers {
-            relative: settings.bool("relativenumber") == Some(true),
+            relative,
             current,
             phantom: (last > 0 && buf.line_range(last).is_empty()).then_some(last),
             files: None,

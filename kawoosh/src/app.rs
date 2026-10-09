@@ -59,11 +59,10 @@ pub struct Kawoosh {
     /// Kitty's images, as kui has them (`term_images.rs`).
     pub(crate) term_images: crate::term_images::TermImages,
     /// Soft wrap (`wrap.rs`): each wrapping view's rows as last drawn —
-    /// line, text node, drawn text — for `gj` `gk`; `:wrap`'s word for a
-    /// view; a row move asked for and not yet resolved; the x a run of
-    /// them keeps, with the caret it was kept for.
+    /// line, text node, drawn text — for `gj` `gk`; a row move asked for
+    /// and not yet resolved; the x a run of them keeps, with the caret
+    /// it was kept for.
     pub(crate) wrap_rows: HashMap<ViewId, Vec<(usize, kui_native::Key, crate::rows::Drawn)>>,
-    pub(crate) wrap_views: HashMap<ViewId, bool>,
     pub(crate) row_move: Option<(ViewId, i32)>,
     pub(crate) row_goal: Option<(f32, usize)>,
     /// When the window was last asked to wake for a status segment's
@@ -243,9 +242,14 @@ pub struct Kawoosh {
     /// The icon set, the user's shapes over the shipped ones, shared
     /// with Lua (`icons.rs`).
     pub(crate) icons: crate::icons::Shared,
-    /// The panes whose key legend was flipped, whole or compact, shared
-    /// with Lua (`legends.rs`).
+    /// The panes whose view drew a key legend, shared with Lua
+    /// (`legends.rs`).
     pub(crate) legends: crate::legends::Shared,
+    /// Every pane's own settings (`:setlocal`), shared with Lua
+    /// (`pane_settings.rs`).
+    pub(crate) pane_settings: crate::pane_settings::Shared,
+    /// The face each pane's body was last drawn in (`look::PaneFace`).
+    pub(crate) pane_faces: HashMap<PaneId, crate::look::PaneFace>,
     /// kui's latency HUD — frame times as a graph in the corner —
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
@@ -402,6 +406,9 @@ impl Kawoosh {
         let wake = WakeHandle::new();
         let secrets_wake = wake.named("secrets");
         let beat = kawoosh_systems::watch::Beat::default();
+        let pane_settings = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::pane_settings::PaneSettings::new(&ed.settings),
+        ));
         let mut app = Self {
             pal: Pal::default(),
             face: Default::default(),
@@ -414,7 +421,6 @@ impl Kawoosh {
             scroll_probe: crate::scroll_probe::ScrollProbe::from_env(),
             term_images: Default::default(),
             wrap_rows: HashMap::new(),
-            wrap_views: HashMap::new(),
             row_move: None,
             row_goal: None,
             status_due: None,
@@ -481,6 +487,8 @@ impl Kawoosh {
             settings_door: Default::default(),
             icons: Default::default(),
             legends: Default::default(),
+            pane_settings,
+            pane_faces: HashMap::new(),
             line_cells: Default::default(),
             note_columns: Default::default(),
             perf: Default::default(),
@@ -1340,9 +1348,10 @@ impl Kawoosh {
         }
     }
 
-    /// Sizes terminal `id` to `w × h` px of cells.
+    /// Sizes terminal `id` to `w × h` px of cells — its pane's cells,
+    /// which may be its own size (pane-settings.md Decision 4).
     pub(crate) fn fit_terminal(&mut self, id: TermId, w: f32, h: f32) -> TermSize {
-        let (cw, ch) = self.grid_cell;
+        let (cw, ch) = self.term_grid(id);
         let size = TermSize {
             cols: ((w / cw).floor().max(2.0)) as u16,
             rows: ((h / ch).floor().max(1.0)) as u16,
@@ -2243,6 +2252,7 @@ impl Kawoosh {
         byte: usize,
     ) -> (usize, usize) {
         let tabstop = self.ed.tabstop_in(self.ed.views[view].buffer);
+        let cell_w = self.face_of(pane).cell.0;
         let top = self
             .drawn_top
             .get(&view)
@@ -2260,7 +2270,7 @@ impl Kawoosh {
             .get(&pane)
             .map(|r| {
                 let gutter = rows::gutter_w(
-                    self.cell.0,
+                    cell_w,
                     buf.line_count(),
                     marked,
                     self.ed.blame_width(self.ed.views[view].buffer),
@@ -2271,7 +2281,7 @@ impl Kawoosh {
         let window = rows::Window {
             left: self.ed.views[view].left,
             width,
-            cell_w: self.cell.0,
+            cell_w,
         };
         // A rendered row maps back through the fold it was drawn with:
         // the row as the last frame drew it (`wrap_rows`), since the
@@ -2289,16 +2299,23 @@ impl Kawoosh {
             drawn.clone()
         } else if self.markdown_rendered(self.ed.views[view].buffer) {
             let style = self.markdown_style(self.dark);
-            crate::markdown::Carets::of(&self.ed, view, self.md_shown.get(&view))
-                .line(
-                    buf,
-                    ln,
-                    &style,
-                    tabstop,
-                    &mut crate::markdown::Tables::default(),
-                )
-                .0
-                .drawn
+            crate::markdown::Carets::of(
+                &self.ed,
+                view,
+                self.md_shown.get(&view),
+                self.pane_value(pane, "markdown.reveal")
+                    .as_ref()
+                    .and_then(|v| v.as_str()),
+            )
+            .line(
+                buf,
+                ln,
+                &style,
+                tabstop,
+                &mut crate::markdown::Tables::default(),
+            )
+            .0
+            .drawn
         } else {
             Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0, None).0
         };
@@ -2316,7 +2333,7 @@ impl Kawoosh {
             // rect, past its border, title and padding.
             let (row, col) = match self.layout.rects.get(&pane) {
                 Some(r) => {
-                    let (cw, ch) = self.grid_cell;
+                    let (cw, ch) = self.face_of(pane).grid;
                     (
                         ((s.pos.y - r.y - self.chrome.pane_title_h - 1.0 - 4.0) / ch).max(0.0)
                             as usize,
@@ -2360,7 +2377,7 @@ impl Kawoosh {
                 self.follow_caret = false;
             }
         }
-        let total = self.scroll_carry - s.delta.y / self.face.line_height;
+        let total = self.scroll_carry - s.delta.y / self.face_of(pane).face.line_height;
         let whole = total.trunc();
         self.scroll_carry = total - whole;
         if whole == 0.0 {
@@ -2834,6 +2851,8 @@ impl kui_native::App for Kawoosh {
         let scale = ui.core().scale();
         let snap = |v: f32| (v * scale).round().max(1.0) / scale;
         self.grid_cell = (snap(self.cell.0), snap(self.cell.1));
+        let layout = &self.layout;
+        self.pane_faces.retain(|p, _| layout.content(*p).is_some());
         self.publish_face();
         if let Some(text) = self.clip_out.take() {
             self.clip_last = Some(text.clone());
@@ -3082,7 +3101,7 @@ impl Kawoosh {
         if let Some(s) = ev.scroll() {
             // The window's own, for the wheel with ⌘ or Ctrl held.
             if tag_kind == Some("zoom") {
-                self.on_zoom(s.delta.y);
+                self.on_zoom(s.pos, s.delta.y);
                 return;
             }
             match pane {

@@ -81,7 +81,9 @@ the outline held.
 `editor.breadcrumbs` (`true` by default: the title bar has the room)
 for every editor pane; `:breadcrumbs` (`<leader>ob`, beside the look's
 other toggles) flips the focused pane for the session, as `:wrap`
-does. A buffer with no outline shows none.
+does. A buffer with no outline shows none. *Amended 2026-10-09:* the
+flip is the pane's own `editor.breadcrumbs`
+([pane-settings.md](pane-settings.md)).
 
 ### 6. A crumb is a place
 

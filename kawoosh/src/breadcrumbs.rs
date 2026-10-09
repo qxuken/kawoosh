@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{BufferId, Version};
-use kawoosh_editor::{Selection, Selections, Spec, ViewId};
+use kawoosh_editor::{Selection, Selections, Setting, Spec, ViewId};
 use kawoosh_systems::ts::{OutlineAnswer, OutlineJob, Outlined};
 use kawoosh_systems::{Alarm, WakeHandle};
 use kui_native::{CursorShape, NodeSpec, TextStyle, Ui, Value};
@@ -51,8 +51,6 @@ pub struct Breadcrumbs {
     moved: HashMap<BufferId, (Version, Instant)>,
     /// Wakes the window when a buffer has been still for long enough.
     alarm: Alarm,
-    /// `:breadcrumbs`' word for a pane, for the session.
-    pub views: HashMap<ViewId, bool>,
 }
 
 impl Breadcrumbs {
@@ -63,7 +61,6 @@ impl Breadcrumbs {
             next_ask: 0,
             moved: HashMap::new(),
             alarm: Alarm::latest(wake),
-            views: HashMap::new(),
         }
     }
 
@@ -97,13 +94,15 @@ pub fn path_at(outline: &[Outlined], line: usize) -> Vec<&Outlined> {
 }
 
 impl Kawoosh {
-    /// Whether view `view`'s pane shows breadcrumbs: `:breadcrumbs`'
-    /// word for it, else `editor.breadcrumbs`.
+    /// Whether view `view`'s pane shows breadcrumbs: its
+    /// `editor.breadcrumbs` as the pane reads it — its own
+    /// (`:breadcrumbs`, pane-settings.md), else the window's.
     pub(crate) fn breadcrumbs_on(&self, view: ViewId) -> bool {
-        if let Some(&on) = self.crumbs.views.get(&view) {
-            return on;
+        match self.pane_of_view(view) {
+            Some(pane) => self.pane_bool(pane, "editor.breadcrumbs"),
+            None => self.ed.settings.bool("editor.breadcrumbs"),
         }
-        self.ed.settings.bool("editor.breadcrumbs").unwrap_or(true)
+        .unwrap_or(true)
     }
 
     /// The crumbs of view `view`'s caret, from its buffer's outline as
@@ -274,7 +273,11 @@ impl Kawoosh {
             return;
         };
         let on = !self.breadcrumbs_on(v);
-        self.crumbs.views.insert(v, on);
+        let pane = self.layout.focused();
+        if let Err(e) = self.set_pane_value(pane, "editor.breadcrumbs", Setting::Bool(on)) {
+            self.ed.message = e;
+            return;
+        }
         self.ed.message = if on {
             "breadcrumbs on"
         } else {

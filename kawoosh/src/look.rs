@@ -106,6 +106,77 @@ impl Default for Face {
     }
 }
 
+/// The face a pane's body is drawn in, with the cell it makes: the
+/// window's, or the pane's own when it has a `font.size` or
+/// `font.line_height` of its own (docs/design/pane-settings.md Decision
+/// 4). Measured as the pane is drawn; read after the frame — a click's
+/// byte, the wheel's lines, a terminal's cell — through
+/// [`Kawoosh::face_of`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaneFace {
+    pub face: Face,
+    /// A mono cell's advance and height.
+    pub cell: (f32, f32),
+    /// A terminal grid's cell, on whole device pixels.
+    pub grid: (f32, f32),
+}
+
+impl Kawoosh {
+    /// The window's face and cells, as last measured.
+    pub(crate) fn window_face(&self) -> PaneFace {
+        PaneFace {
+            face: self.face,
+            cell: self.cell,
+            grid: self.grid_cell,
+        }
+    }
+
+    /// The face pane `pane` was last drawn in.
+    pub fn face_of(&self, pane: crate::layout::PaneId) -> PaneFace {
+        self.pane_faces
+            .get(&pane)
+            .copied()
+            .unwrap_or_else(|| self.window_face())
+    }
+
+    /// The face pane `pane` draws its body in this frame: its own size
+    /// and line height as it reads them (its own, its buffer's language,
+    /// the window's), measured when they are not the window's.
+    pub(crate) fn pane_face(&mut self, ui: &mut Ui<'_>, pane: crate::layout::PaneId) -> PaneFace {
+        let window = self.window_face();
+        let size = self
+            .pane_float(pane, "font.size")
+            .map_or(window.face.size, |f| {
+                (f as f32).clamp(SIZE_RANGE.0, SIZE_RANGE.1)
+            });
+        let ratio = self
+            .pane_float(pane, "font.line_height")
+            .unwrap_or(LINE_HEIGHT)
+            .clamp(1.0, 3.0) as f32;
+        let line_height = (size * ratio).round().max(size + 2.0);
+        let pf = if size == window.face.size && line_height == window.face.line_height {
+            window
+        } else {
+            let face = Face {
+                size,
+                line_height,
+                ..self.face
+            };
+            let m = ui.measure_text("M", &crate::rows::mono(face, &self.pal), None);
+            let cell = (m.width.max(1.0), line_height);
+            let scale = ui.core().scale();
+            let snap = |v: f32| (v * scale).round().max(1.0) / scale;
+            PaneFace {
+                face,
+                cell,
+                grid: (snap(cell.0), snap(cell.1)),
+            }
+        };
+        self.pane_faces.insert(pane, pf);
+        pf
+    }
+}
+
 /// The chrome's metrics (2026-09-23): the rows around the panes — the
 /// tab strip, a pane's title bar, the status and command strips, the
 /// title bar's text — follow the editor's font up to [`CHROME_MAX`], so
@@ -165,7 +236,7 @@ impl Default for Chrome {
 }
 
 /// The smallest and largest `font.size` honoured.
-const SIZE_RANGE: (f32, f32) = (6.0, 96.0);
+pub(crate) const SIZE_RANGE: (f32, f32) = (6.0, 96.0);
 /// The default `font.line_height`, the ratio that makes 13 px rows of 20.
 pub const LINE_HEIGHT: f64 = 1.5;
 
@@ -905,10 +976,12 @@ impl Kawoosh {
     }
 
     /// The wheel with ⌘ or Ctrl held, anywhere in the window (the root's
-    /// `scroll_mods`, kui F122): up is bigger, a pixel a notch, what a notch
-    /// did not cover carried to the next — a trackpad's swipe comes in
-    /// pixels. A turn the other way starts from nothing.
-    pub(crate) fn on_zoom(&mut self, dy: f32) {
+    /// `scroll_mods`, kui F122): the text of the pane under the pointer
+    /// at `pos` (pane-settings.md Decision 5), up bigger, a pixel a
+    /// notch, what a notch did not cover carried to the next — a
+    /// trackpad's swipe comes in pixels. A turn the other way starts
+    /// from nothing.
+    pub(crate) fn on_zoom(&mut self, pos: kui_native::Vec2, dy: f32) {
         if dy == 0.0 {
             return;
         }
@@ -919,7 +992,8 @@ impl Kawoosh {
         let steps = (self.zoom_carry / ZOOM_STEP).trunc();
         if steps != 0.0 {
             self.zoom_carry -= steps * ZOOM_STEP;
-            self.font_step(steps as f64);
+            let pane = self.pane_at(pos.x, pos.y);
+            self.pane_font_step(pane, steps as f64);
         }
     }
 }
