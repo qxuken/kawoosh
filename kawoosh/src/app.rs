@@ -2785,6 +2785,8 @@ impl kui_native::App for Kawoosh {
             self.publish_layout();
         }
         t = self.perf.lap(Lua, "lua publish", t);
+        self.read_frame_gens();
+        t = self.perf.lap(Lua, "lua gens", t);
         if self.quit {
             if !self.session_saved {
                 self.save_session();

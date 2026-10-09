@@ -44,6 +44,24 @@ pub struct Legends {
 pub type Shared = Rc<RefCell<Legends>>;
 
 impl Legends {
+    /// A reading of the whole state, for a view that read of it
+    /// (`kawoosh._legend`): the same while nothing flipped and no pane
+    /// began or stopped drawing a legend.
+    pub fn generation(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let mut panes: Vec<(&PaneId, &bool)> = self.panes.iter().collect();
+        panes.sort();
+        panes.hash(&mut h);
+        let mut drawn: Vec<&PaneId> = self.drawn.iter().collect();
+        drawn.sort();
+        drawn.hash(&mut h);
+        let mut last: Vec<&PaneId> = self.last.iter().collect();
+        last.sort();
+        last.hash(&mut h);
+        h.finish()
+    }
+
     /// Whether pane `pane`'s legend is full: its flip, else `default`.
     pub fn full(&self, pane: PaneId, default: bool) -> bool {
         self.panes.get(&pane).copied().unwrap_or(default)

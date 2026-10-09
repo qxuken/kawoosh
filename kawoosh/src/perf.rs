@@ -27,6 +27,15 @@ thread_local! {
     /// The spans this frame, by name: ms summed and how many.
     static SPANS: std::cell::RefCell<Vec<(&'static str, f32, u32)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Free-form notes this frame, for the log line.
+    static NOTES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A note on this frame's log line, when measuring.
+pub fn note(s: String) {
+    if MEASURING.get() {
+        NOTES.with(|n| n.borrow_mut().push(s));
+    }
 }
 
 /// The clock read for a [`span`], when measuring.
@@ -110,6 +119,8 @@ struct Reading {
     panes: Vec<(String, f32)>,
     /// The spans ([`span`]): ms and how many.
     spans: Vec<(&'static str, f32, u32)>,
+    /// The notes ([`note`]).
+    notes: Vec<String>,
 }
 
 /// The process's memory, as the OS counts it.
@@ -220,6 +231,7 @@ impl Perf {
         let on = on || self.log.is_some();
         MEASURING.set(on);
         SPANS.with(|s| s.borrow_mut().clear());
+        NOTES.with(|n| n.borrow_mut().clear());
         if on && !self.on {
             self.frames.clear();
             self.shown = None;
@@ -313,7 +325,11 @@ impl Perf {
         for (i, (n, m)) in laps.iter().filter(|l| l.1 >= 0.05).take(8).enumerate() {
             let _ = write!(s, "{}{n}={m:.2}", if i > 0 { "; " } else { "" });
         }
-        let _ = writeln!(s, "] cause[{}]", causes.trim());
+        let _ = write!(s, "] cause[{}]", causes.trim());
+        if !r.notes.is_empty() {
+            let _ = write!(s, " notes[{}]", r.notes.join(" | "));
+        }
+        let _ = writeln!(s);
         let _ = log.out.write_all(s.as_bytes());
         let _ = log.out.flush();
     }
@@ -333,6 +349,7 @@ impl Perf {
         let mut r = std::mem::take(&mut self.cur);
         r.phases.0[Phases::VIEW] = ms(started);
         r.spans = SPANS.with(|s| std::mem::take(&mut *s.borrow_mut()));
+        r.notes = NOTES.with(|n| std::mem::take(&mut *n.borrow_mut()));
         r.plugins = plugins
             .into_iter()
             .map(|s| (s.plugin, s.time.as_secs_f32() * 1e3, s.calls))

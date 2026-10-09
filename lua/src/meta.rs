@@ -49,6 +49,7 @@ impl Runtime {
             chunks,
             files: HashMap::new(),
             rust,
+            natives: k.get::<Option<Table>>("_natives").ok().flatten(),
             seen: HashSet::new(),
             out: &mut out,
         };
@@ -63,6 +64,10 @@ struct Walk<'a> {
     /// Files read for a function defined in one, by path.
     files: HashMap<String, Option<String>>,
     rust: HashMap<String, (String, String)>,
+    /// The natives as seeded, by their path under `kawoosh`
+    /// (`kawoosh._natives`): what `boot.lua` wrapped to note a view's
+    /// reads (lua-boundary.md Decision 10), read here as themselves.
+    natives: Option<Table>,
     seen: HashSet<usize>,
     out: &'a mut String,
 }
@@ -114,6 +119,15 @@ impl Walk<'_> {
     }
 
     fn function(&mut self, full: &str, f: &Function) {
+        // A tracking wrapper reads as the native under it.
+        let native = full.strip_prefix("kawoosh.").and_then(|short| {
+            self.natives
+                .as_ref()?
+                .get::<Option<Function>>(short)
+                .ok()
+                .flatten()
+        });
+        let f = native.as_ref().unwrap_or(f);
         let (params, doc) = self
             .lua_signature(f)
             .or_else(|| {

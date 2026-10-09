@@ -33,10 +33,12 @@ kawoosh-lua = { path = "./lua" }
 # kui-ffi is the native extensions' value type and loader
 # (docs/design/native.md Decision 1); it is in the graph through kui-lua
 # regardless.
-kui-native = "=0.1.0-alpha.47"
-kui-core = "=0.1.0-alpha.47"
-kui-lua = "=0.1.0-alpha.47"
-kui-ffi = "=0.1.0-alpha.47"
+# By path while kui F142 (slot replay, ADR 0045) is unreleased: pin to
+# the alpha that carries it once cut.
+kui-native = { path = "../../../../kui/.claude/worktrees/slot-replay-f142/crates/kui-native" }
+kui-core = { path = "../../../../kui/.claude/worktrees/slot-replay-f142/crates/kui-core" }
+kui-lua = { path = "../../../../kui/.claude/worktrees/slot-replay-f142/crates/kui-lua" }
+kui-ffi = { path = "../../../../kui/.claude/worktrees/slot-replay-f142/crates/kui-ffi" }
 # A grammar's shared library (`kawoosh-languages`) and a native extension's
 # (`kawoosh-lua`).
 libloading = "0.9"

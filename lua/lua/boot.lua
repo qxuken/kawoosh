@@ -33,6 +33,12 @@ local function left(...)
   return ...
 end
 local function timed(fn, ...)
+  -- Plugin code running outside a view's function — a command, a
+  -- handler, a hook, a callback — may have changed what a view draws
+  -- from; the shell reads the flag a frame (`take_ran_outside`) and
+  -- vouches for no view that frame (docs/design/lua-boundary.md
+  -- Decision 10).
+  if not kawoosh._view_reads then kawoosh._ran_outside = true end
   if not kawoosh._profiling or type(fn) ~= "function" then return pcall(fn, ...) end
   local name = plugin_of[fn]
   if not name then
@@ -902,6 +908,21 @@ function view(env, slot)
     return column { pad = 12, text("no such view: " .. name, { color = t.danger }) }
   end
   local params = slot.params or {}
+  -- What the view reads of the host while it runs, by category: the
+  -- tracked natives mark it (`track_reads` below), and `env.now` or
+  -- `env.caret_visible` read off the proxy marks the clock. The shell
+  -- reads it back by `NAME@PANE` to decide whether the pane's slot may
+  -- be replayed next frame (lua-boundary.md Decision 10).
+  local reads = { opaque = {} }
+  kawoosh._view_reads = reads
+  local raw_env = env
+  env = setmetatable({}, {
+    __index = function(_, k)
+      if k == "now" or k == "caret_visible" then reads.clock = true end
+      return raw_env[k]
+    end,
+    __newindex = raw_env,
+  })
   -- `ctx.field { name = "q", placeholder = , size = , label = }`: a
   -- one-line input drawn through the editor (kui.md Decision 12), the
   -- node to put in the tree; `ctx.field_text("q")` is its line.
@@ -937,6 +958,8 @@ function view(env, slot)
   ctx.legend_toggle = function(opts) return legend_toggle(name, pane, at(), env, opts) end
   ctx.legend_full = function() return legend_full(pane) end
   local ok, tree = timed(fn, ctx)
+  kawoosh._view_reads = nil
+  kawoosh._reads[name .. "@" .. tostring(pane)] = reads
   if kawoosh._profiling then
     kawoosh._vt_out = kawoosh._clock()
     -- The tree's tables, for the perf log: how much kui-lua builds.
@@ -1119,3 +1142,96 @@ function kawoosh._show(v, depth)
   end
   return "{ " .. table.concat(parts, ", ") .. " }"
 end
+
+-- ---------------------------------------------------------------- reads
+
+-- A slot replayed by its host (kui ADR 0045; docs/design/lua-boundary.md
+-- Decision 10): the shell asks kui to push a pane's last tree again
+-- instead of running its view, when nothing the view read of the host
+-- has changed. What a view reads is noted here, by category, as it
+-- calls the natives: each native under `kawoosh` and its tables is
+-- wrapped once, at boot, with the category its name is in — `editor`
+-- (the published snapshot), `fields`, `settings`, `commands`, `memory`,
+-- `palette`, `legend`, `clock`, `none` (pure of its arguments) — or
+-- `opaque`, for everything else: a write, the file system, a process,
+-- the store. A view that called an opaque native, or read the clock,
+-- is run every frame; the perf log (`KAWOOSH_PERF_LOG`) names what it
+-- called, so a pane that will not replay says why.
+kawoosh._reads = {}
+kawoosh._ran_outside = true
+-- The natives as seeded, by their path under `kawoosh` (`buf.close`),
+-- for the types file, which reads a native's signature from the Rust
+-- half and a Lua function's from its source line.
+kawoosh._natives = {}
+local READS = {
+  -- the editor's snapshot
+  buf = "editor", node = "editor", lsp = "editor", diagnostics = "editor",
+  mode = "editor", message = "editor", pane = "editor", pane_size = "editor",
+  panes = "editor", tabs = "editor", holds = "editor", can = "editor",
+  language = "editor", image = "editor", _selection_radius = "editor",
+  compile_offer = "editor", domains = "editor", _change = "editor",
+  -- the Lua views' fields
+  _field = "fields", field_text = "fields", field_focus = "fields",
+  _field_focus = "fields",
+  -- the settings
+  opt = "settings", _settings = "settings", secrets = "settings",
+  -- the commands and the keymap
+  commands = "commands",
+  -- the working memory
+  memory = "memory", recall = "memory",
+  -- the shell's own doors, seeded after this script (`Runtime::track_reads`
+  -- wraps them): each a reading of a state the shell keeps a generation of
+  themes = "themes", fonts = "fonts", grammars = "grammars", settings = "settings_pane",
+  -- the palette, the legends, the clock
+  colors = "palette", _legend = "legend",
+  -- A declaration the view makes each frame, re-made by the shell on a
+  -- replay (`Legends::declare`): noted apart.
+  _legend_drawn = "legend_drawn",
+  _clock = "clock", now = "clock",
+  -- pure of their arguments
+  icon = "none", icon_names = "none", metrics = "none", fuzzy = "none",
+  matcher = "none", json = "none", diff = "none", highlight = "none",
+  echo = "none", test = "none", _prof_enter = "none", _prof_leave = "none",
+  _plugin_of = "none",
+  ["fs.expand"] = "none", ["fs.join"] = "none", ["fs.parent"] = "none",
+  ["fs.basename"] = "none", ["fs.relative"] = "none", ["fs.short"] = "none",
+  ["fs.form"] = "none", ["fs.home"] = "none", ["fs.config"] = "none",
+  ["fs.dylib"] = "none", ["sqlite.quote"] = "none", ["sqlite.is"] = "none",
+}
+-- The functions already looked at — wrapped, or Lua's own — so a second
+-- walk (the shell's, after it seeds a door of its own later than this
+-- script: `kawoosh.grammars`, `kawoosh.fonts`, …) wraps only what is new.
+local tracked = setmetatable({}, { __mode = "k" })
+local function track_reads(tbl, prefix)
+  for k, f in pairs(tbl) do
+    if type(k) == "string" then
+      if type(f) == "function" and not tracked[f] then
+        tracked[f] = true
+        -- A native: `string.dump` refuses a C function (the `debug`
+        -- library is not loaded here).
+        if not pcall(string.dump, f) then
+          local full = prefix == "" and k or (prefix .. "." .. k)
+          local cat = READS[full] or (prefix ~= "" and READS[prefix]) or "opaque"
+          if cat ~= "none" then
+            kawoosh._natives[full] = f
+            local wrapper = function(...)
+              local r = kawoosh._view_reads
+              if r then
+                if cat == "opaque" then r.opaque[full] = true else r[cat] = true end
+              end
+              return f(...)
+            end
+            tracked[wrapper] = true
+            tbl[k] = wrapper
+          end
+        end
+      elseif type(f) == "table" and prefix == "" and k:sub(1, 1) ~= "_" then
+        track_reads(f, k)
+      end
+    end
+  end
+end
+-- Once here, and again by the shell (`Runtime::track_reads`) after it
+-- seeds its own doors.
+function kawoosh._track_reads() track_reads(kawoosh, "") end
+kawoosh._track_reads()
