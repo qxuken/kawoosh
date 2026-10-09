@@ -39,6 +39,18 @@ notify = "8"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 # An SVG drawn to pixels at the size it is shown at (`picture.rs`).
 resvg = "0.48"
+# The ssh client in-process (docs/design/domains.md Decision 3, amended
+# 2026-10-09): one connection a domain, every channel on it — where no
+# OpenSSH on Windows can keep a master. Its crypto on `ring`, which
+# builds with no CMake or NASM; tokio is in the tree already. 0.58, not
+# later: from 0.60 its ML-KEM is RustCrypto's 0.3, whose `kem` 0.3 cannot
+# sit beside the pre-release `age` (through `qdot`) holds; and no `rsa`,
+# whose release candidates no longer build together (an RSA key is the
+# `openssh` client's).
+russh = { version = "0.58.0", default-features = false, features = ["ring", "flate2"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+# A terminal over a channel, behind the pty traits `kawoosh_term` takes.
+portable-pty.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -21,6 +21,7 @@ pub mod shell_env;
 pub mod shellfs;
 pub mod spawn;
 pub mod sqlite;
+pub mod ssh;
 pub mod ssh_config;
 pub mod store;
 pub mod textobjects;

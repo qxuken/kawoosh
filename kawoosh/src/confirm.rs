@@ -30,9 +30,24 @@ pub struct Confirm {
     pub chosen: usize,
 }
 
+/// A confirm that asks for an answer rather than running a command: a
+/// connection's question (`kawoosh_systems::ssh`) — a host key to trust,
+/// or a line typed into its field, a passphrase or a password not shown.
+pub struct Asking {
+    pub reply: crossbeam_channel::Sender<Option<String>>,
+    /// The field's text, for a question that takes one.
+    pub input: Option<String>,
+    /// Typed but not shown.
+    pub secret: bool,
+}
+
 impl Kawoosh {
-    /// Puts a confirm up, over one already there.
+    /// Puts a confirm up, over one already there — whose question, if it
+    /// asked one, is answered with none.
     pub fn confirm_with(&mut self, c: Confirm) {
+        if let Some(a) = self.asking.take() {
+            let _ = a.reply.send(None);
+        }
         let n = c.actions.len().max(1);
         self.confirm = Some(Confirm {
             chosen: c.chosen.min(n - 1),
@@ -47,6 +62,16 @@ impl Kawoosh {
         let Some(c) = self.confirm.take() else {
             return;
         };
+        // A question's answer goes to whoever asked: the field's text, or
+        // a yes; anything but the first action is none.
+        if let Some(a) = self.asking.take() {
+            let answer = match index {
+                Some(0) => Some(a.input.unwrap_or_else(|| "yes".into())),
+                _ => None,
+            };
+            let _ = a.reply.send(answer);
+            return;
+        }
         if let Some(cmd) = index
             .and_then(|i| c.actions.get(i))
             .map(|(_, cmd)| cmd.clone())
@@ -66,6 +91,25 @@ impl Kawoosh {
         };
         let n = c.actions.len().max(1);
         let note = stroke.notation();
+        // A field takes what is typed: `<CR>` answers, `<Esc>` refuses.
+        if let Some(input) = self.asking.as_mut().and_then(|a| a.input.as_mut()) {
+            match note.as_str() {
+                "<CR>" => self.confirm_answer(Some(0)),
+                "<Esc>" | "<C-c>" => self.confirm_answer(None),
+                "<BS>" => {
+                    input.pop();
+                }
+                "<C-u>" => input.clear(),
+                "<Space>" => input.push(' '),
+                "<lt>" => input.push('<'),
+                "<Bslash>" => input.push('\\'),
+                "<Bar>" => input.push('|'),
+                t if t.chars().count() == 1 => input.push_str(t),
+                _ => {}
+            }
+            self.wake.wake();
+            return true;
+        }
         match note.as_str() {
             "<Esc>" | "n" | "q" | "<C-c>" => self.confirm_answer(None),
             "<CR>" | "<Space>" => {
@@ -134,6 +178,29 @@ impl Kawoosh {
                     &c.title,
                     TextStyle::new(self.chrome.face.size).color(pal.fg),
                 );
+                // A question's field: what is typed, or a dot for each
+                // character of a secret, the caret after it.
+                if let Some(a) = &self.asking
+                    && let Some(input) = &a.input
+                {
+                    let shown = if a.secret {
+                        "•".repeat(input.chars().count())
+                    } else {
+                        input.clone()
+                    };
+                    ui.with(
+                        NodeSpec::row()
+                            .grow_width()
+                            .pad_xy(6.0, 3.0)
+                            .radius(3.0)
+                            .bg(pal.strip)
+                            .border(1.0, pal.accent)
+                            .label("answer"),
+                        |ui| {
+                            ui.text(&format!("{shown}▏"), mono.color(pal.fg).nowrap());
+                        },
+                    );
+                }
                 if !c.lines.is_empty() {
                     ui.with(NodeSpec::column().gap(2.0), |ui| {
                         // A plan's line wraps, after a `/` as at a space,

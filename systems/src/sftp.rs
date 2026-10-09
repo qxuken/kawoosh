@@ -16,7 +16,7 @@
 
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 use kawoosh_doc::fs::{Entry, Fs, Stat};
@@ -257,13 +257,32 @@ impl Shared {
     }
 }
 
-/// The writing end: the server's stdin and the next request's id.
+/// The writing end: the server's input and the next request's id.
 struct Out {
-    stdin: ChildStdin,
+    stdin: Box<dyn Write + Send>,
     next: u32,
 }
 
-/// A connected SFTP session and the process behind it.
+/// What carries the session: a process (`ssh -s HOST sftp`, a server in
+/// the tests) or a channel of the in-process client's connection.
+pub trait Behind: Send {
+    /// Whether it has ended: its master dropped, the host gone.
+    fn ended(&mut self) -> bool;
+    /// Ended now.
+    fn end(&mut self);
+}
+
+impl Behind for std::process::Child {
+    fn ended(&mut self) -> bool {
+        self.try_wait().is_ok_and(|s| s.is_some())
+    }
+    fn end(&mut self) {
+        let _ = self.kill();
+        let _ = self.wait();
+    }
+}
+
+/// A connected SFTP session and what carries it.
 ///
 /// Requests are pipelined: each is sent with an id of its own and a
 /// thread reads the answers and hands each to whoever waits on its id —
@@ -272,15 +291,14 @@ struct Out {
 pub struct Sftp {
     out: Mutex<Out>,
     shared: std::sync::Arc<Shared>,
-    child: Mutex<Child>,
+    behind: Mutex<Box<dyn Behind>>,
     posix_rename: bool,
 }
 
 impl Drop for Sftp {
     fn drop(&mut self) {
-        if let Ok(mut c) = self.child.lock() {
-            let _ = c.kill();
-            let _ = c.wait();
+        if let Ok(mut c) = self.behind.lock() {
+            c.end();
         }
     }
 }
@@ -288,6 +306,29 @@ impl Drop for Sftp {
 /// How many READs or WRITEs one transfer keeps in flight at most: a
 /// megabyte, which the server's pipe holds without the client waiting.
 const WINDOW: usize = 32;
+
+/// What `err` says, kept for the error when the session never answers —
+/// ssh's `Permission denied`, a host key refused — and drained after, so
+/// a talkative one never blocks.
+fn keep_said(mut err: impl Read + Send + 'static) -> std::sync::Arc<Mutex<String>> {
+    let said = std::sync::Arc::new(Mutex::new(String::new()));
+    let s = said.clone();
+    let _ = std::thread::Builder::new()
+        .name("sftp-stderr".into())
+        .spawn(move || {
+            let mut buf = [0u8; 1024];
+            while let Ok(n) = err.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                let mut s = s.lock().unwrap_or_else(|e| e.into_inner());
+                if s.len() < 4096 {
+                    s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                }
+            }
+        });
+    said
+}
 
 impl Sftp {
     /// Starts `command` with its stdio piped and says hello: version 3,
@@ -298,29 +339,31 @@ impl Sftp {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = crate::spawn::spawn(&mut command)?;
-        // What the channel says on stderr, kept for the error when it
-        // never answers — ssh's `Permission denied`, a host key refused
-        // — and drained after, so a talkative one never blocks.
-        let said = std::sync::Arc::new(Mutex::new(String::new()));
-        if let Some(mut err) = child.stderr.take() {
-            let said = said.clone();
-            let _ = std::thread::Builder::new()
-                .name("sftp-stderr".into())
-                .spawn(move || {
-                    let mut buf = [0u8; 1024];
-                    while let Ok(n) = err.read(&mut buf) {
-                        if n == 0 {
-                            break;
-                        }
-                        let mut s = said.lock().unwrap_or_else(|e| e.into_inner());
-                        if s.len() < 4096 {
-                            s.push_str(&String::from_utf8_lossy(&buf[..n]));
-                        }
-                    }
-                });
-        }
-        let mut stdin = child.stdin.take().ok_or_else(short)?;
-        let mut stdout = BufReader::new(child.stdout.take().ok_or_else(short)?);
+        let said = child.stderr.take().map(keep_said);
+        let stdin = child.stdin.take().ok_or_else(short)?;
+        let stdout = child.stdout.take().ok_or_else(short)?;
+        Self::over(Box::new(stdin), Box::new(stdout), Box::new(child), said)
+    }
+
+    /// The session on a channel of the in-process client's connection
+    /// (the `sftp` subsystem opened on it).
+    pub fn on_channel(mut r: crate::ssh::Remote) -> io::Result<Sftp> {
+        let said = r.stderr.take().map(keep_said);
+        let stdin = r.stdin.take().ok_or_else(short)?;
+        let stdout = r.stdout.take().ok_or_else(short)?;
+        let behind = r.end();
+        Self::over(Box::new(stdin), Box::new(stdout), Box::new(behind), said)
+    }
+
+    /// The hello said over `stdin` and `stdout`, and the thread that reads
+    /// the answers started.
+    fn over(
+        mut stdin: Box<dyn Write + Send>,
+        stdout: Box<dyn Read + Send>,
+        mut behind: Box<dyn Behind>,
+        said: Option<std::sync::Arc<Mutex<String>>>,
+    ) -> io::Result<Sftp> {
+        let mut stdout = BufReader::new(stdout);
         let mut hello = Vec::new();
         put_u32(&mut hello, 3);
         let hello = stdin
@@ -330,9 +373,11 @@ impl Sftp {
         let (t, b) = match hello {
             Ok(x) => x,
             Err(e) => {
-                let _ = child.wait();
+                behind.end();
                 std::thread::sleep(std::time::Duration::from_millis(50));
-                let said = said.lock().unwrap_or_else(|e| e.into_inner());
+                let said = said
+                    .map(|s| s.lock().unwrap_or_else(|e| e.into_inner()).clone())
+                    .unwrap_or_default();
                 let said = said
                     .lines()
                     .map(str::trim)
@@ -346,7 +391,7 @@ impl Sftp {
             }
         };
         if t != VERSION {
-            let _ = child.kill();
+            behind.end();
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "sftp: the server did not say its version",
@@ -384,11 +429,10 @@ impl Sftp {
         Ok(Sftp {
             out: Mutex::new(Out { stdin, next: 0 }),
             shared,
-            child: Mutex::new(child),
+            behind: Mutex::new(behind),
             posix_rename,
         })
     }
-
     /// One request sent; its answer is the receiver's when it comes.
     fn send(&self, typ: u8, body: &[u8]) -> io::Result<Answer> {
         if self.shared.is_dead() {
@@ -892,11 +936,7 @@ impl Fs for Sftp {
         }
         // The channel's process gone — its master dropped, the host
         // unreachable — is the connection gone, before a call finds out.
-        let exited = self
-            .child
-            .lock()
-            .map(|mut c| c.try_wait().is_ok_and(|s| s.is_some()))
-            .unwrap_or(false);
+        let exited = self.behind.lock().map(|mut c| c.ended()).unwrap_or(false);
         if exited {
             self.shared.die();
         }

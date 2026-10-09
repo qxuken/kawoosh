@@ -226,14 +226,26 @@ end
 
 -- vcs.head(root, done): `done(head)` with the backend's `{ branch =,
 -- rev = }` for `root`, as last read.
+-- A head that could not be read stays unread (`false`) until the
+-- repository moves: asked again at every frame, a failure was a spawn a
+-- frame (a host's root spelled as a local path: 500 in three seconds).
+-- Asked while a read is under way, the asker waits for that read.
+local heads_waiting = {}
 function vcs.head(r, done)
   local h = heads[r.root]
-  if h then return done(h) end
+  if h ~= nil then return done(h or nil) end
   if not r.backend.head then return done(nil) end
-  heads[r.root] = false
+  local waiting = heads_waiting[r.root]
+  if waiting then
+    waiting[#waiting + 1] = done
+    return
+  end
+  heads_waiting[r.root] = { done }
   r.backend.head(r.root, function(head)
-    heads[r.root] = head or nil
-    done(head)
+    heads[r.root] = head or false
+    local all = heads_waiting[r.root] or {}
+    heads_waiting[r.root] = nil
+    for _, cb in ipairs(all) do cb(head) end
   end)
 end
 
@@ -989,7 +1001,15 @@ function git.probe(dir, done)
     -- Git writes `/` on every platform (`C:/p` on Windows); the paths
     -- kawoosh holds are the platform's. A git directory relative to
     -- `dir` is joined on, an absolute one kept.
-    root = fs.expand(root)
+    -- On a host git prints the host's path: spelled on its domain
+    -- (`box:/p`), else `expand` made it a local one (`C:\p` on
+    -- Windows) where no process could start.
+    local domain = dir:match("^([%w_%.%-][%w_%.%-]+):[/~]")
+    if domain and root:sub(1, 1) == "/" then
+      root = domain .. ":" .. root
+    else
+      root = fs.expand(root)
+    end
     if gitdir then gitdir = fs.join(dir, gitdir) end
     gitdirs[root] = gitdir
     done(root)
