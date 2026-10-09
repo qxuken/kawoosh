@@ -714,7 +714,7 @@ impl Kawoosh {
                     let summary = p.summary();
                     let _ = std::fs::write(&p.out, csv);
                     let _ = std::fs::write(p.out.with_extension("txt"), &summary);
-                    eprint!("{summary}");
+                    crate::cli::write_err(format_args!("{summary}"));
                     self.quit = true;
                     return;
                 }

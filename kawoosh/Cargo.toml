@@ -64,6 +64,13 @@ path = "src/bin/edit.rs"
 name = "kawoosh-update"
 path = "src/bin/update.rs"
 
+# `kawoosh` from cmd, PowerShell and nushell on Windows: a console
+# program they wait for, running the window's binary (src/bin/cli.rs),
+# shipped beside it as `kawoosh.com`.
+[[bin]]
+name = "kawoosh-cli"
+path = "src/bin/cli.rs"
+
 [[bin]]
 name = "kawoosh-gen"
 path = "src/bin/gen.rs"

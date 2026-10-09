@@ -364,16 +364,16 @@ fn run_script(path: &Path) -> Result<(), String> {
 /// and the exit code — 0 when every one passed.
 pub fn run_files(paths: &[String]) -> i32 {
     if paths.is_empty() {
-        eprintln!("kawoosh test: no files given");
+        crate::errln!("kawoosh test: no files given");
         return 2;
     }
     let mut failed = 0;
     for p in paths {
         match run_file(Path::new(p)) {
-            Ok(()) => println!("ok   {p}"),
+            Ok(()) => crate::outln!("ok   {p}"),
             Err(e) => {
                 failed += 1;
-                println!(
+                crate::outln!(
                     "FAIL {p}\n{}",
                     e.lines()
                         .map(|l| format!("     {l}"))
@@ -383,6 +383,6 @@ pub fn run_files(paths: &[String]) -> i32 {
             }
         }
     }
-    println!("{} passed, {failed} failed", paths.len() - failed);
+    crate::outln!("{} passed, {failed} failed", paths.len() - failed);
     i32::from(failed > 0)
 }

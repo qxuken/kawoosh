@@ -10,8 +10,13 @@ fn main() {
     }
     println!("cargo:rerun-if-changed=kawoosh.rc");
     println!("cargo:rerun-if-changed=../assets/icons/kawoosh.ico");
-    // Only the window: `kawoosh-edit` and `kawoosh-gen` are console tools.
-    match embed_resource::compile_for("kawoosh.rc", ["kawoosh"], embed_resource::NONE) {
+    // The window, and `kawoosh.com`, which is `kawoosh` in a listing
+    // too: `kawoosh-edit` and `kawoosh-gen` are tools.
+    match embed_resource::compile_for(
+        "kawoosh.rc",
+        ["kawoosh", "kawoosh-cli"],
+        embed_resource::NONE,
+    ) {
         embed_resource::CompilationResult::Failed(why) => panic!("kawoosh.rc: {why}"),
         // No resource compiler (a build from another host without
         // llvm-rc): the binary is built, with the platform's default icon.

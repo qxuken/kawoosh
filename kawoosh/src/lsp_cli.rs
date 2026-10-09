@@ -42,7 +42,7 @@ pub fn run(args: &[String]) -> i32 {
     match go(args) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("kawoosh lsp: {e}");
+            crate::errln!("kawoosh lsp: {e}");
             1
         }
     }
@@ -58,7 +58,7 @@ pub fn name_version(s: &str) -> (&str, Option<&str>) {
 
 fn go(args: &[String]) -> Result<(), String> {
     let Some(verb) = args.first() else {
-        print!("{USAGE}");
+        crate::out!("{USAGE}");
         return Ok(());
     };
     let root = servers::root().ok_or("no data directory (HOME is not set)")?;
@@ -79,7 +79,7 @@ fn go(args: &[String]) -> Result<(), String> {
         let failed = names
             .iter()
             .filter(|n| {
-                f(n).map_err(|e| eprintln!("kawoosh lsp: {n}: {e}"))
+                f(n).map_err(|e| crate::errln!("kawoosh lsp: {n}: {e}"))
                     .is_err()
             })
             .count();
@@ -111,7 +111,7 @@ fn go(args: &[String]) -> Result<(), String> {
                 rest.clone()
             };
             if names.is_empty() {
-                println!("nothing installed in {}", root.display());
+                crate::outln!("nothing installed in {}", root.display());
                 return Ok(());
             }
             let installed = servers::installed_in(&root);
@@ -124,7 +124,7 @@ fn go(args: &[String]) -> Result<(), String> {
                 let now = servers::installed(&root, &p).and_then(|r| r.version);
                 match servers::latest(&p)? {
                     Some(v) if Some(&v) == now.as_ref() => {
-                        println!("{name}: {v}, the latest");
+                        crate::outln!("{name}: {v}, the latest");
                         Ok(())
                     }
                     Some(v) => install_package(&root, name, &p, Some(&v)),
@@ -135,10 +135,10 @@ fn go(args: &[String]) -> Result<(), String> {
         "outdated" => {
             let out = servers::check(&root, 0);
             if out.is_empty() {
-                println!("every server kawoosh installed is at its latest");
+                crate::outln!("every server kawoosh installed is at its latest");
             }
             for (dir, r) in out {
-                println!(
+                crate::outln!(
                     "{}  {} → {}",
                     dir_name(&dir),
                     r.version.as_deref().unwrap_or("?"),
@@ -153,16 +153,16 @@ fn go(args: &[String]) -> Result<(), String> {
             }
             each(&rest, "removed", &|name| {
                 let dir = servers::remove(&root, &package(name)?)?;
-                println!("removed {}", dir.display());
+                crate::outln!("removed {}", dir.display());
                 Ok(())
             })
         }
         "list" => {
-            print!("{}", list(&root, &defs));
+            crate::out!("{}", list(&root, &defs));
             Ok(())
         }
         "-h" | "--help" | "help" => {
-            print!("{USAGE}");
+            crate::out!("{USAGE}");
             Ok(())
         }
         other => Err(format!("unknown verb {other}\n{USAGE}")),
@@ -201,7 +201,7 @@ fn install_line(d: &ServerDef) -> Result<(), String> {
             d.install
         ));
     }
-    println!("› {}", d.install);
+    crate::outln!("› {}", d.install);
     let mut c = shell_line(&d.install);
     let shell = c.get_program().to_string_lossy().into_owned();
     let mut child = kawoosh_systems::spawn::spawn(&mut c).map_err(|e| format!("{shell}: {e}"))?;
@@ -240,14 +240,14 @@ fn install_package(
     p: &Package,
     version: Option<&str>,
 ) -> Result<(), String> {
-    println!(
+    crate::outln!(
         "{name}: {}{}",
         p.describe(),
         version.map(|v| format!(" at {v}")).unwrap_or_default()
     );
-    let mut say = |line: &str| println!("› {line}");
+    let mut say = |line: &str| crate::outln!("› {line}");
     let (dir, v) = servers::install(root, p, version, Out::Shown(&mut say))?;
-    println!(
+    crate::outln!(
         "{name}: {} in {}",
         v.as_deref().unwrap_or("installed"),
         dir.display()
