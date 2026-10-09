@@ -894,6 +894,7 @@ local function split_slot(name)
 end
 
 function view(env, slot)
+  if kawoosh._profiling then kawoosh._vt_in = kawoosh._clock() end
   local name, pane = split_slot(slot.name)
   local fn = kawoosh._views[name]
   local t = env.theme
@@ -936,6 +937,18 @@ function view(env, slot)
   ctx.legend_toggle = function(opts) return legend_toggle(name, pane, at(), env, opts) end
   ctx.legend_full = function() return legend_full(pane) end
   local ok, tree = timed(fn, ctx)
+  if kawoosh._profiling then
+    kawoosh._vt_out = kawoosh._clock()
+    -- The tree's tables, for the perf log: how much kui-lua builds.
+    local n = 0
+    local function count(t)
+      n = n + 1
+      for _, c in ipairs(t) do if type(c) == "table" then count(c) end end
+    end
+    if ok and type(tree) == "table" then count(tree) end
+    kawoosh._vt_nodes = n
+    kawoosh._vt_out2 = kawoosh._clock()
+  end
   if not ok then
     return column { pad = 12, gap = 6,
       text("view `" .. name .. "` failed", { color = t.danger }),

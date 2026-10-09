@@ -2191,7 +2191,9 @@ impl Kawoosh {
                 // pane.
                 .on_click(tag),
             |ui| {
+                let t = crate::perf::span_start();
                 self.publish_drawing(name);
+                crate::perf::span("publish drawing", t);
                 // A native extension's view is its own slot
                 // (native.md Decision 4): under its namespace, the
                 // params the same, filled by its `kui_ext_view`.

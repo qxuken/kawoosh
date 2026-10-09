@@ -759,6 +759,22 @@ impl Kawoosh {
     }
 
     pub(crate) fn render_pane(&mut self, ui: &mut Ui<'_>, pane: PaneId) {
+        let t = self.perf.start();
+        self.render_pane_inner(ui, pane);
+        if t.is_some() {
+            let what = match self.layout.content(pane) {
+                Some(Content::Editor(_)) => "editor".to_string(),
+                Some(Content::Terminal(_)) => "terminal".to_string(),
+                Some(Content::Lua(n)) => format!("lua {n}"),
+                Some(Content::Undo) => "undo".to_string(),
+                Some(Content::Memory) => "memory".to_string(),
+                None => "?".to_string(),
+            };
+            self.perf.pane(what, t);
+        }
+    }
+
+    fn render_pane_inner(&mut self, ui: &mut Ui<'_>, pane: PaneId) {
         let pal = self.pal;
         let focused = self.layout.focused() == pane;
         let content = self.layout.content(pane);
