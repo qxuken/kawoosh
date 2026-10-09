@@ -519,6 +519,7 @@ mod tests {
                 master: true,
                 builtin: false,
                 client: None,
+                fall_back: false,
             }
             .remote_argv(script, false, None)
             .pop()

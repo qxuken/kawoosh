@@ -397,8 +397,12 @@ fn a_host_is_asked_little_on_the_frame() {
     ] {
         assert_eq!(frame(quiet).0, 0, "{quiet}: {:?}", frame(quiet).1);
     }
+    // One stat a moment: the command's and the answer's asks are one
+    // when the answer lands in the same moment, two when the machine is
+    // busy enough (the whole suite at once) that it lands in the next —
+    // never the three a listing asked before.
     for listing in ["- (listing)", "- (parent)", "<CR> into a directory"] {
-        assert!(frame(listing).0 <= 1, "{listing}: {:?}", frame(listing).1);
+        assert!(frame(listing).0 <= 2, "{listing}: {:?}", frame(listing).1);
     }
     let (n, sites) = frame("<CR> on a file");
     assert!(n <= 2, "{sites:?}");

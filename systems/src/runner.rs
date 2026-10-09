@@ -298,6 +298,7 @@ mod tests {
             master: false,
             builtin: false,
             client: None,
+            fall_back: false,
         });
         let time = |what: &str, f: &dyn Fn() -> String| {
             let at = std::time::Instant::now();

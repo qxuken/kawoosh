@@ -249,7 +249,7 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
         (
             "ssh.client",
             K::Str,
-            "which ssh carries a host: `builtin` (in-process: one connection for everything, the default on Windows) or `openssh` (the `ssh` binary, `ssh.command`)",
+            "which ssh carries a host: `auto` (the default: the in-process client on Windows, OpenSSH's taking over with a note where it cannot serve the host; OpenSSH's elsewhere), `builtin` (in-process, one connection for everything; pinned) or `openssh` (the `ssh` binary, `ssh.command`; pinned)",
         ),
         (
             "ssh.master",

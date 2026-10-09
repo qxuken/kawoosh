@@ -915,3 +915,94 @@ Not built: `Match`, `ProxyCommand`, certificates, an RSA key (each the
 `openssh` client's still), GSSAPI; the hosts that refuse a key in
 `BatchMode` (`cdvn1`, `gfs1` here) were not connected to — they want a
 passphrase or a password typed, which the window now asks for.
+
+## Built, the fallback and `:ssh`
+
+**2026-10-09, two asks.** "Can you silently fall back to another
+client?" — then "but better with a notification probably"; and "is
+there something like `:ssh qxuken@somehost`?"
+
+### F1. `auto` falls back to OpenSSH's client where ours cannot serve
+
+`ssh.client` is `auto` by default: the in-process client on Windows,
+OpenSSH's taking over where it cannot serve a host; OpenSSH's
+elsewhere, where its master works and nothing needs falling back from.
+`builtin` and `openssh`, set, pin one and never fall back. What the
+in-process client cannot serve is said in its failure's kind
+(`ssh::Failure`): `Unsupported` falls back, `Network`, `Final` and
+`Declined` do not.
+
+- *Before anything is asked*, from the host's resolved config and its
+  jumps': a `ProxyCommand`, a `CertificateFile`, a `Match` block
+  anywhere in the files read (what it would apply cannot be known
+  without evaluating it), every identity file RSA with no agent there
+  (`SSH_AUTH_SOCK`, Windows' OpenSSH pipe).
+- *On the way*: a handshake that fails past the TCP connection (an
+  algorithm not shared, a server that hangs up on our offer), a key
+  file it cannot read (RSA, a format it lacks) before a password would
+  be asked, and authentication run out with nothing asked — the
+  server's ways in are learned first (`none`), so a host that takes
+  keys alone is not asked for a password.
+- *Never*: a host key that changed (`Final`, loud as before), a
+  question answered `<Esc>` (`Declined`: not asked again behind the
+  user's back), the network (`Network`: a host not reached, a name not
+  known — another client would fare no better), a wrong password typed.
+
+The fallback is OpenSSH's client with no master (`ssh.master` off:
+Windows has none to keep), in the connecting thread, which goes on as
+if it had been asked for. One note a domain a session says so, with
+the reason in a few words — `box: using OpenSSH — ProxyCommand isn't
+supported by the built-in client` — nothing to answer; the log has it
+at info; `:domain` adds `· over OpenSSH: why` to the host's row and the
+picker's preview says it. *Beat:* silent (asked, and taken back: a
+host that went slower, or asked nothing where it used to ask, with no
+word of why); a dialog offering the switch (a question for something
+the user can do nothing about but say yes); falling back on every
+failure (a wrong password typed twice, once to each client).
+
+### S1. `:ssh [user@]host[:port] [path]` makes the domain on the spot
+
+`:ssh qxuken@somehost`, `:ssh 192.168.50.1 /etc`, `:ssh
+ssh://root@box:2222/srv`: a new tab on the machine, its home or the
+path its directory and listed, as `:domain tab` makes one — connected
+first. The domain is the one the settings or `~/.ssh/config` name when
+the target is just that host (the user and port the config's own);
+else one made for it, named after the host as written (an alias is a
+host), the user before it when it is not the one the host is reached
+as anyway (the config's `User`, else this machine's: `qxuken-somehost`)
+and the port after it when it is not its own (`somehost-2222`) — so two
+users on one host are two domains, and each name reads as what it is.
+A settings domain of the same name reaching elsewhere keeps the name;
+this one is `ssh-NAME`. The domain reaches `user@host`, or
+`ssh://user@host:port` with a port — the destination OpenSSH takes, and
+`ssh_config::resolve` reads the same — so either client carries it.
+
+It is remembered in the store (namespace `domains`: the name, what it
+reaches, when it was last used), as trust's records are: the picker
+offers it, the last used first, from `:ssh`; `domain_kind` knows it, so
+a session's files and tabs on it come back as any domain's do. `<Tab>`
+completes a host (`ArgKind::Host`): `~/.ssh/config`'s, what `:ssh`
+reached before, every domain's name.
+
+*Beat:* `user@host` in a path (`me@box:/etc`) — a domain name cannot
+hold `@`, and a path's domain would be two things at once; `:domain add
+NAME TARGET`, then `:domain tab NAME` (two commands and a name to make
+up for what `ssh` takes in one); writing the domain into
+`settings.lua` (the user's file written by a command, and a host tried
+once kept there for good); the moments' memory (`kawoosh.remember`, as
+the workspaces picker's) — ranked and pruned for what is attended, where
+a domain is a name to keep until it is replaced.
+
+Tests (`builtin_ssh.rs`, against the container `sshd`, the OpenWrt
+dropbear and the Windows OpenSSH client, each run only where the
+environment names it): a `Match` block falls back with the note said
+once across a reconnect and the listing saying why, nothing asked; an
+RSA key falls back and OpenSSH's client takes it; a password refused
+with `<Esc>`, an unreachable port and a pinned `builtin` do not; a
+dropbear that takes no password and a key it does not know falls back
+and says OpenSSH's own failure; `:ssh me@HOST:PORT /home/me/proj` opens
+a tab on `me-HOST-PORT`, a second window on the same store knows it and
+`ssh://me@HOST:PORT/home/me` reaches it again. `ssh_cmd.rs`'s parse and
+naming. Live: `:ssh 192.168.50.1 /www` and `:ssh
+ssh://root@192.168.50.1/etc` on the router both reach its `~/.ssh/config`
+domain, `root` being the config's user.

@@ -72,6 +72,14 @@ pub struct Domains {
     pub transports: BTreeMap<String, Transport>,
     /// The domains whose walk the message line has explained.
     pub walk_told: std::collections::HashSet<String>,
+    /// The domains OpenSSH's client took when the in-process one could
+    /// not serve them (`ssh.client = "auto"`), and why; those already
+    /// told of it this session.
+    pub fell_back: BTreeMap<String, String>,
+    pub fallback_told: std::collections::HashSet<String>,
+    /// The domains `:ssh` made (`ssh_cmd`), from the store: what each
+    /// reaches and when it was last used. Read once there is a store.
+    pub adhoc: std::cell::RefCell<Option<BTreeMap<String, (String, i64)>>>,
     /// A session's terminals on a host, their panes kept, waiting for
     /// the domain to be connected.
     pub terminals: Vec<(String, TermId, crate::terminals::Pending)>,
@@ -110,6 +118,7 @@ fn spellable(name: &str) -> bool {
 const FROM_SETTINGS: &str = "settings";
 const FROM_SSH: &str = "~/.ssh/config";
 const FROM_WSL: &str = "WSL";
+const FROM_SSH_CMD: &str = ":ssh";
 
 impl Kawoosh {
     /// What a domain is: what the settings say (`domains.NAME.ssh`,
@@ -120,6 +129,9 @@ impl Kawoosh {
     pub(crate) fn domain_kind(&self, name: &str) -> Option<Kind> {
         if let Some(k) = self.configured_kind(name) {
             return Some(k);
+        }
+        if let Some(t) = self.adhoc_target(name) {
+            return Some(Kind::Ssh(t));
         }
         if kawoosh_systems::ssh_config::hosts()
             .iter()
@@ -221,6 +233,10 @@ impl Kawoosh {
                 out.push((name, kind, from));
             }
         };
+        // What `:ssh` made, the last used first.
+        for (n, t) in self.adhoc_recent() {
+            add(&mut out, n, Kind::Ssh(t), FROM_SSH_CMD);
+        }
         for h in kawoosh_systems::ssh_config::hosts() {
             add(&mut out, h.clone(), Kind::Ssh(h), FROM_SSH);
         }
@@ -238,6 +254,11 @@ impl Kawoosh {
             }
         }
         out
+    }
+
+    /// Every domain's name, as the picker lists them.
+    pub(crate) fn domain_names(&self) -> Vec<String> {
+        self.all_domains().into_iter().map(|(n, _, _)| n).collect()
     }
 
     /// The name a distro is a domain under: the settings' for it, `wsl`
@@ -325,10 +346,13 @@ impl Kawoosh {
         // The in-process client (`ssh.client = "builtin"`), Windows's
         // own default: one connection, every channel on it, where no
         // ssh there can keep a master (domains.md, "Built, our ssh").
-        let builtin = match self.ed.settings.str("ssh.client") {
-            Some("builtin") => true,
-            Some("openssh") => false,
-            _ => cfg!(windows),
+        // `builtin` and `openssh` pin it; `auto`, the default, is the
+        // in-process client on Windows with OpenSSH's taking over where
+        // it cannot serve the host, and OpenSSH's elsewhere.
+        let (builtin, fall_back) = match self.ed.settings.str("ssh.client") {
+            Some("builtin") => (true, false),
+            Some("openssh") => (false, false),
+            _ => (cfg!(windows), cfg!(windows)),
         };
         Ssh {
             ssh,
@@ -337,6 +361,7 @@ impl Kawoosh {
             master: master && !builtin,
             builtin,
             client: None,
+            fall_back,
         }
     }
 
@@ -609,6 +634,27 @@ impl Kawoosh {
         });
     }
 
+    /// The in-process client could not serve `name` and OpenSSH's took
+    /// it: its transport says so, `:domain` and the picker say why, and
+    /// a note says it once a session — nothing to answer, the
+    /// connection going on.
+    pub(crate) fn domain_fell_back(&mut self, name: &str, why: &str) {
+        if let Some(Transport::Ssh(s)) = self.domains.transports.get_mut(name) {
+            s.builtin = false;
+            s.master = false;
+        }
+        self.domains
+            .fell_back
+            .insert(name.to_string(), why.to_string());
+        if self.domains.fallback_told.insert(name.to_string()) {
+            self.notify(
+                crate::notify::Level::Info,
+                format!("{name}: using OpenSSH — {why}"),
+            );
+        }
+        self.refresh_domain_pick();
+    }
+
     pub(crate) fn domain_failed(&mut self, name: &str, error: &str) {
         self.domains
             .state
@@ -672,6 +718,9 @@ impl Kawoosh {
             {
                 state.push_str(&format!(" · files over {via}"));
             }
+            if let Some(why) = self.domains.fell_back.get(name) {
+                state.push_str(&format!(" · over OpenSSH: {why}"));
+            }
             out.push_str(&format!(
                 "{name}\t{}\t{state}\t{} open\n",
                 self.domain_label(kind),
@@ -706,6 +755,9 @@ impl Kawoosh {
     /// How an ssh domain is carried: its transport's when it has one,
     /// else what the settings would make of it.
     fn ssh_carried(&self, name: &str) -> Carried {
+        if self.domains.fell_back.contains_key(name) {
+            return Carried::Direct;
+        }
         let s = match self.domains.transports.get(name) {
             Some(Transport::Ssh(s)) => s.clone(),
             _ => self.transport(name, String::new()),
@@ -729,7 +781,12 @@ impl Kawoosh {
                         "connected: {}, and every file ({via}), terminal and process goes through it. <C-x> or :domain disconnect {name} {}.",
                         self.ssh_carried(name).held(),
                         self.ssh_carried(name).closing()
-                    )
+                    ) + &self
+                        .domains
+                        .fell_back
+                        .get(name)
+                        .map(|why| format!(" OpenSSH's client carries it: {why}."))
+                        .unwrap_or_default()
                 } else {
                     format!(
                         "connected: the distro answered; its files are {via}'s and its programs run through wsl.exe — nothing is held open. <C-x> or :domain disconnect {name} forgets it here; the distro runs on."
@@ -847,7 +904,7 @@ impl Kawoosh {
 /// A directory on a domain spelled from its home (`box:~/p`) as the
 /// host says it (`box:/home/me/p`), once the domain is up: a tab's
 /// directory, which a terminal's reports compare with.
-fn from_home(dir: PathBuf) -> PathBuf {
+pub(crate) fn from_home(dir: PathBuf) -> PathBuf {
     match kawoosh_systems::fs::domain_of(&dir) {
         Some((_, rest)) if rest.starts_with("~") => {
             kawoosh_systems::fs::canonicalize(&dir).unwrap_or(dir)

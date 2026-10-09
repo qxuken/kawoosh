@@ -159,6 +159,7 @@ impl Kawoosh {
         let args: Vec<String> = match kind {
             None | Some(ArgKind::Text) | Some(ArgKind::Font) => Vec::new(),
             Some(ArgKind::Path) => self.path_candidates(token),
+            Some(ArgKind::Host) => self.host_candidates(token),
             Some(ArgKind::Command) => self.command_name_candidates(token),
             Some(ArgKind::Buffer) => {
                 let names: Vec<&str> = self
