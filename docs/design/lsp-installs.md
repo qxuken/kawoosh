@@ -190,30 +190,32 @@ Builtin beside: eslint (`vscode-eslint-language-server`, from
 `eslint/confirmESLintExecution` approved), biome (`biome lsp-proxy`),
 ruff (`ruff server`).
 
-### 5. kawoosh → qd: a `:qd` pane *(round three)*
+### 5. kawoosh → qd: a `:qd` pane *(round three; amended 2026-10-09, the user's)*
 
-A Lua plugin in kawoosh over qd — linked as a library, asked by the
-user after the first build over the CLI ("you probably can interface by
-building a library … publish qd even on a crates.io as well as drydock9
-registry"), and the binary when the two differ:
+A Lua plugin in kawoosh over qd — the `qd` on the PATH, run for every
+operation (`qd status --json` both ways, `qd state show`, `qd push
+MOD`, `qd pull MOD`, flags as typed, `qd init` in a terminal); with no
+`qd` there, the pane and its commands say so.
 
-- **qd is a library**: `qd::Session` (qd's `src/session.rs`) holds the
-  state and the repo and does every operation, returning data; the
-  binary is a printer over it, behind a default `cli` feature. The
-  crate is `qdot` (crates.io's `qd` is a float crate); lib and bin stay
-  `qd`. drydock9 from CI on a tag, crates.io by hand once qd has a
-  license — it has one since 0.2.0, and kawoosh takes `qdot` from
-  crates.io (2026-10-04), naming no registry of its own.
-- **Which door**: the library while `qd::VERSION` is the version of the
-  `qd` on the PATH, or there is none — they share `state.toml`, the
-  journal and the trash, and an older reader of a newer journal is
-  where `undo` goes wrong — and the binary otherwise. Flags and `qd
-  init` always go to the binary.
-- **One at a time**: the library's operations run on one worker thread
-  in the order asked (`kawoosh/src/dotfiles.rs`). A test typing `<lt>`
-  — four keys, the last `>` — ran a push into a pull in flight and
-  removed a file the pull was writing; qd's own CLI never meets that,
-  being one process a command.
+- **The binary, not the library.** From 2026-10-04 to 2026-10-09 qd was
+  linked (`qdot`, lib `qd`: `qd::Session` on a worker thread, the
+  shell's `dotfiles.rs`, `kawoosh._qd`) and was the door while
+  `qd::VERSION` was the binary's, or there was no binary. Unlinked
+  2026-10-09 ("let's remove qdot and let's communicate via qd call"):
+  `age`, which qdot holds, keeps `kem` at `0.3.0-pre.0`, and one graph
+  holds one `kem` 0.3 — so russh stayed at 0.58, under eight RustSec
+  advisories the audit job failed on. Linked, it was also a second qd
+  on the user's state, the reason the version gate existed: an older
+  reader of a newer journal is where `undo` goes wrong. One binary is
+  one qd, whatever the version.
+- **One at a time** comes free: each operation is a process of its
+  own, as qd's own CLI is. (Linked, a test typing `<lt>` — four keys,
+  the last `>` — ran a push into a pull in flight, which is why the
+  library's operations had a thread of their own.)
+
+Beaten: the library door (above), and keeping it beside a russh on a
+patched, unreleased `age` (the linked `age` then another than the
+binary's).
 
 The first build, over the CLI alone: `:qd` opens the status —
 `qd status --json`, by module, what push and pull would do — with
@@ -269,3 +271,13 @@ interface by building a library … publish qd even on a crates.io as
 well as drydock9 registry" — the CLI stays the door until that is
 decided (the version a linked qd would be, against the one the user
 runs on the same state, is the question).
+
+Amended 2026-10-09: Decision 5, the binary alone. `qdot` out of the
+workspace, `kawoosh/src/dotfiles.rs` and `kawoosh._qd` gone; `qd.lua`
+runs `qd` for the status, push, pull and add, and says `qd is not on
+the PATH` where there is none (`kawoosh/tests/qd.rs`
+`with_no_qd_on_the_path_the_pane_says_so`, which replaces the
+library's test). With `age` out of the graph russh moved to 0.64.1
+(`systems/src/ssh.rs`: host keys as `PublicKeyOrCertificate`, a
+forwarded port's channel accepted or refused, agent certificates not
+offered), and `cargo audit --deny warnings --no-yanked` is clean.

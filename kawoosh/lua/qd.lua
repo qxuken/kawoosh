@@ -1,11 +1,8 @@
 -- The qd pane (docs/design/lsp-installs.md Decision 5): kawoosh over
--- qd, the dotfiles manager. qd is linked into kawoosh (`kawoosh._qd`,
--- the shell's `dotfiles.rs`, one operation at a time) and that is the
--- door while it is the version of the `qd` on the PATH, or there is
--- none: the two share one `state.toml`, journal and trash. Otherwise
--- the pane runs that binary (`qd status --json`, `qd push MOD`), and
--- what takes flags (`:qd pull -s "message"`) and `:qd init` always
--- do. `:qd` opens a
+-- qd, the dotfiles manager — the `qd` on the PATH, run for everything
+-- (`qd status --json`, `qd push MOD`, `:qd pull -s "message"`), so the
+-- pane and a shell are one qd on one `state.toml`, journal and trash.
+-- With no `qd` there the pane says so. `:qd` opens a
 -- column with every module of the dotfiles repo and where it stands —
 -- `qd status --json` both ways — and under a module out of step, each
 -- file: `differs` (both have it, not alike), `machine only` (here, not
@@ -102,25 +99,10 @@ local function files_of(push, pull, src)
   return out
 end
 
--- The door to qd: `lib`, the qd linked into kawoosh (`kawoosh._qd`),
--- while it is the version of the `qd` on the PATH — they share one
--- state, journal and trash — or there is none; else `cli`, that binary.
--- Chosen once a session, the binary's version asked once.
-local DOOR = nil
-local function door(done)
-  if DOOR then return done(DOOR) end
-  kawoosh._qd("version", {}, function(v)
-    local mine = v and v.version
-    if fs.on_path("qd") ~= true then
-      DOOR = "lib"
-      return done(DOOR)
-    end
-    kawoosh.spawn({ "qd", "--version" }, { on_done = function(text, code)
-      local theirs = code == 0 and (text or ""):match("(%d+%.%d+%.%d+%S*)") or nil
-      DOOR = (mine and theirs == mine) and "lib" or "cli"
-      done(DOOR)
-    end })
-  end)
+-- Why qd cannot be asked, or nil: no `qd` on the PATH.
+local NO_QD = "qd is not on the PATH (https://github.com/qxuken/qdot)"
+local function missing()
+  if fs.on_path("qd") == false then return NO_QD end
 end
 
 -- Plans both ways as modules: each `{ name, dest, first_run, files }`.
@@ -147,28 +129,23 @@ local function read_repo(done)
 end
 
 -- qd.status(fn): `fn(modules, why, repo)` — each module `{ name, dest,
--- first_run, files = { { rel, state, path } } }` — through the door.
+-- first_run, files = { { rel, state, path } } }` — from `qd status
+-- --json` both ways.
 function qd.status(done)
-  door(function(d)
-    if d == "lib" then
-      return kawoosh._qd("status", {}, function(v, why)
-        if not v then return done(nil, why) end
-        done(modules_of(v.push, v.pull, v.repo), nil, v.repo)
-      end)
-    end
-    local function read(args, k)
-      kawoosh.spawn(args, { on_done = function(text, code)
-        if code ~= 0 then return k(nil, (text or ""):match("[^\n]+") or ("qd exited with " .. code)) end
-        k(kawoosh.json.decode(text))
-      end })
-    end
-    read_repo(function(repo)
-      read({ "qd", "status", "--json" }, function(push, why)
-        if not push then return done(nil, why) end
-        read({ "qd", "status", "--pull", "--json" }, function(pull, why2)
-          if not pull then return done(nil, why2) end
-          done(modules_of(push, pull, repo), nil, repo)
-        end)
+  local why = missing()
+  if why then return done(nil, why) end
+  local function read(args, k)
+    kawoosh.spawn(args, { on_done = function(text, code)
+      if code ~= 0 then return k(nil, (text or ""):match("[^\n]+") or ("qd exited with " .. code)) end
+      k(kawoosh.json.decode(text))
+    end })
+  end
+  read_repo(function(repo)
+    read({ "qd", "status", "--json" }, function(push, why)
+      if not push then return done(nil, why) end
+      read({ "qd", "status", "--pull", "--json" }, function(pull, why2)
+        if not pull then return done(nil, why2) end
+        done(modules_of(push, pull, repo), nil, repo)
       end)
     end)
   end)
@@ -197,29 +174,18 @@ local function ended(what, ok, why)
   refresh()
 end
 
--- Runs `args` (after `qd`): through the library a push or a pull with
--- no flags, through the binary anything else.
+-- Runs `qd ARGS…`, `what` its name in the note it ends with.
 local function run_qd(args, what)
   if S then S.busy = what end
-  door(function(d)
-    local verb, plain = args[1], true
-    for i = 2, #args do
-      if args[i]:sub(1, 1) == "-" then plain = false end
-    end
-    if d == "lib" and plain and (verb == "push" or verb == "pull") then
-      return kawoosh._qd("sync", args, function(v, why) ended(what, v ~= nil, why) end)
-    end
-    if fs.on_path("qd") == false then
-      return ended(what, false, "that needs the qd binary, which is not on the PATH")
-    end
-    local argv = { "qd" }
-    for _, a in ipairs(args) do argv[#argv + 1] = a end
-    kawoosh.spawn(argv, { on_done = function(text, code)
-      local last = nil
-      for l in (text or ""):gmatch("[^\n]+") do last = l end
-      ended(what, code == 0, last or ("exited with " .. code))
-    end })
-  end)
+  local why = missing()
+  if why then return ended(what, false, why) end
+  local argv = { "qd" }
+  for _, a in ipairs(args) do argv[#argv + 1] = a end
+  kawoosh.spawn(argv, { on_done = function(text, code)
+    local last = nil
+    for l in (text or ""):gmatch("[^\n]+") do last = l end
+    ended(what, code == 0, last or ("exited with " .. code))
+  end })
 end
 
 -- ------------------------------------------------------------ the view
@@ -371,25 +337,13 @@ end
 -- the module pulled in. The default is kawoosh's config folder, as
 -- `kawoosh`, its fonts left out.
 function qd.add(path, name)
-  if not DOOR then return door(function() qd.add(path, name) end) end
   local mine = path == nil or path == ""
   path = mine and config_dir() or fs.expand(path)
   name = (name and name ~= "") and name or (mine and "kawoosh" or fs.basename(path))
   if not name:match("^[%w_.-]+$") then return kawoosh.echo("qd add: a module's name is letters, digits, - _ .") end
   if not fs.is_dir(path) then return kawoosh.echo("qd add: " .. fs.short(path) .. " is not a folder") end
-  local ignore = mine and { "fonts/**" } or {}
-  if DOOR == "lib" then
-    local args = { name, path }
-    for _, g in ipairs(ignore) do args[#args + 1] = g end
-    if S then S.busy = "qd add " .. name end
-    return kawoosh._qd("add", args, function(v, why)
-      if not v then
-        if S then S.busy = nil end
-        return kawoosh.echo("qd add: " .. tostring(why))
-      end
-      ended("qd add " .. name, true)
-    end)
-  end
+  local why = missing()
+  if why then return kawoosh.echo("qd add: " .. why) end
   read_repo(function(repo)
     if not repo then return kawoosh.echo("qd add: no dotfiles repo yet (:qd init URL)") end
     local dir = fs.join(repo, name)
