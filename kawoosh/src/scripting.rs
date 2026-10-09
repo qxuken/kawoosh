@@ -2050,6 +2050,7 @@ impl Kawoosh {
     fn start_lua_proc(&mut self, rt: &Runtime, token: u64, spec: kawoosh_systems::io::ProcSpec) {
         self.scripting.next_proc += 1;
         let id = LUA_PROC_BASE + self.scripting.next_proc;
+        let what = format!("{:?} in {:?}", spec.cmd, spec.cwd);
         match self.io.run_command(id, spec) {
             Ok(handle) => {
                 self.pending_jobs += 1;
@@ -2066,6 +2067,7 @@ impl Kawoosh {
             }
             Err(e) => {
                 self.ed.message = format!("spawn: {e}");
+                log::warn!("spawn: {e}: {what}");
                 rt.proc_exit(token, None, None);
             }
         }
