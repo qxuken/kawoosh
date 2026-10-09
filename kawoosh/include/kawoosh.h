@@ -65,9 +65,9 @@
  * A pane that did not change is not drawn again: kawoosh tells kui so
  * and kui pushes the last fill's nodes without calling kui_ext_view. It
  * knows nothing changed when kawoosh has called none of your code since
- * - no KwFn (a command, a map, a hook, a wake), no kui_ext_on_event -
- * and the theme is the same; kui checks the rest of what you read
- * through it (the params, a hover, a scroll offset, kui_now). So change
+ * - no KwFn (a command, a map, a hook, a wake), no kui_ext_on_event;
+ * kui checks the rest of what you read through it (the params, the
+ * theme, a hover, a scroll offset, kui_now). So change
  * what your view draws only inside one of those calls - from a thread,
  * through kw_wake - never in kui_ext_view itself, and read the time
  * through kui_now, not a clock of your own.

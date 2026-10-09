@@ -341,25 +341,16 @@ fn a_native_pane_is_a_slot_and_its_clicks_are_its_own() {
     assert_eq!(d.warnings(), Vec::<String>::new(), "kui raised no warning");
 }
 
-/// How many times the native pane's `kui_ext_view` has run, as the
-/// pane says it (`view ran N times`): a replayed frame shows the last
-/// fill's number again.
-fn panel_runs(d: &Drive) -> u32 {
-    d.core
-        .nodes()
-        .into_iter()
-        .find_map(|n| {
-            let t = n.text.clone()?;
-            t.strip_prefix("view ran ")?
-                .strip_suffix(" times")?
-                .parse()
-                .ok()
-        })
-        .expect("the native pane is drawn")
+/// How kui filled the native pane `panel/cpanel@PANE` on the frame
+/// just drawn: `Replayed`, why it ran the view instead, or `None` when
+/// the host did not vouch (it filled with `slot_kept`).
+fn panel_fill(d: &Drive, pane: &str) -> Option<kui_native::SlotFill> {
+    d.core.slot_fill(&format!("panel/cpanel@{pane}"))
 }
 
 #[test]
 fn a_native_pane_is_replayed_until_native_code_runs() {
+    use kui_native::SlotFill::Replayed;
     let so = build("panel", &[], "replay-build");
     let (mut d, mut app) = launch("replay", LINES);
     assert_eq!(load(&mut app, "panel", &so), "ok");
@@ -368,46 +359,57 @@ fn a_native_pane_is_replayed_until_native_code_runs() {
         d.advance(0.25);
         d.frame(&mut app);
     }
-    d.frame(&mut app);
-    let (_, rect) = pane_text(&mut d).expect("the native pane is drawn");
+    let (text, rect) = pane_text(&mut d).expect("the native pane is drawn");
+    // "native pane N, clicks 0": the slot is `panel/cpanel@N`.
+    let pane = text["native pane ".len()..]
+        .split(',')
+        .next()
+        .unwrap()
+        .to_string();
 
     // Nothing the host feeds it moved: kui pushes the kept fill again
     // and the extension's `kui_ext_view` is not asked.
-    let ran = panel_runs(&d);
-    for _ in 0..5 {
-        d.advance(0.016);
-        d.frame(&mut app);
-    }
-    assert_eq!(panel_runs(&d), ran, "idle frames are replayed");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(panel_fill(&d, &pane), Some(Replayed), "idle, replayed");
 
     // A click is handed to its `kui_ext_on_event`, which the host never
     // sees: counted as a call in, the frame after it (the harness draws
-    // one inside the click) runs the view and shows it.
+    // one inside the click) runs the view and shows it — a replay
+    // would still say 0.
     let (x, y, w, h) = rect;
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     let (text, _) = pane_text(&mut d).unwrap();
     assert!(text.ends_with(", clicks 1"), "{text}");
-    let ran = panel_runs(&d);
     d.frame(&mut app);
-    d.frame(&mut app);
-    assert_eq!(panel_runs(&d), ran, "settled again");
+    assert_eq!(panel_fill(&d, &pane), Some(Replayed), "settled again");
 
-    // A command of its own is a `KwFn` call: the view runs again, once.
+    // A command of its own is a `KwFn` call: the host does not vouch.
     lua(&mut app, "kawoosh.run('cpanel')");
     d.frame(&mut app);
+    assert_eq!(panel_fill(&d, &pane), None, "after a native command");
     d.frame(&mut app);
-    assert_eq!(panel_runs(&d), ran + 1, "after a native command");
+    assert_eq!(panel_fill(&d, &pane), Some(Replayed));
 
     // Plain Lua is not native code: still replayed.
     lua(&mut app, "kawoosh.echo('lua only')");
     d.frame(&mut app);
-    assert_eq!(panel_runs(&d), ran + 1, "after Lua alone");
+    assert_eq!(panel_fill(&d, &pane), Some(Replayed), "after Lua alone");
 
-    // The palette is the host's (kui's `kui_theme` notes no read).
-    ex(&mut d, &mut app, "theme toggle");
-    d.frame(&mut app);
-    d.frame(&mut app);
-    assert!(panel_runs(&d) > ran + 1, "a theme change runs it again");
+    // The theme is kui's to check (F155): the host still vouches, and
+    // kui runs the view because the theme it read moved.
+    // Run with no frame between, so each frame after it is read.
+    lua(&mut app, "kawoosh.run('theme toggle')");
+    let mut fills = Vec::new();
+    for _ in 0..3 {
+        d.frame(&mut app);
+        fills.push(panel_fill(&d, &pane));
+    }
+    assert!(
+        fills.contains(&Some(kui_native::SlotFill::Reads)),
+        "a theme change runs it again: {fills:?}"
+    );
+    assert_eq!(fills.last(), Some(&Some(Replayed)), "{fills:?}");
     assert_eq!(d.warnings(), Vec::<String>::new(), "kui raised no warning");
 }
 

@@ -91,9 +91,9 @@ pub struct Scripting {
     /// read is the one it was built at.
     pub view_tracks: HashMap<String, ViewTrack>,
     /// Each native view's last fill, by `NAME@PANE`: the count of calls
-    /// into native code and the palette then (native.md, native views
-    /// replayed). Its slot is replayed while both are what they were.
-    pub native_tracks: HashMap<String, (u64, u64)>,
+    /// into native code then (native.md, native views replayed). Its
+    /// slot is replayed while the count is what it was.
+    pub native_tracks: HashMap<String, u64>,
     /// This frame's generations, read once after the publish.
     pub frame_gens: FrameGens,
     pub tools: HashMap<String, ToolDef>,
@@ -2282,8 +2282,8 @@ impl Kawoosh {
                     },
                     t,
                 );
-                // A native view ran: the count and the palette it ran at
-                // are what the next frame's claim rests on.
+                // A native view ran: the count it ran at is what the next
+                // frame's claim rests on.
                 if !replayed && native.is_some() {
                     if t.is_some() {
                         let mut note = format!("{track}: {why}");
@@ -2293,10 +2293,7 @@ impl Kawoosh {
                         }
                         crate::perf::note(note);
                     }
-                    let palette = self.scripting.frame_gens.palette;
-                    self.scripting
-                        .native_tracks
-                        .insert(track.clone(), (calls_in, palette));
+                    self.scripting.native_tracks.insert(track.clone(), calls_in);
                 }
                 // The view ran: what it read, at this frame's generations,
                 // is what the next frame's claim rests on.
@@ -2336,20 +2333,15 @@ impl Kawoosh {
 
     /// Whether the host vouches for the native view tracked as `track`
     /// this frame: no call into native code since its last fill — every
-    /// change to an extension's state is inside one — and the palette
-    /// the same, since kui's `kui_theme` notes no read (kui checks the
-    /// rest: the params, every fact of the frame the fill read).
+    /// change to an extension's state is inside one. kui checks the
+    /// rest: the params, and every fact of the frame the fill read, the
+    /// theme and the metrics among them (kui F155).
     fn native_view_fresh(&self, track: &str, calls_in: u64) -> (bool, &'static str) {
-        let Some(&(then, palette)) = self.scripting.native_tracks.get(track) else {
-            return (false, "untracked");
-        };
-        if then != calls_in {
-            return (false, "native ran");
+        match self.scripting.native_tracks.get(track) {
+            None => (false, "untracked"),
+            Some(&then) if then != calls_in => (false, "native ran"),
+            Some(_) => (true, "fresh"),
         }
-        if palette != self.scripting.frame_gens.palette {
-            return (false, "palette");
-        }
-        (true, "fresh")
     }
 
     /// Whether the host vouches for the view tracked as `track` this

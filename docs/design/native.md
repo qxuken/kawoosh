@@ -765,13 +765,12 @@ host vouches for, and why that is enough:
   saw a click before. The count is the process's, as the wakes are:
   the kui half outlives a runtime, and a count that restarted with one
   could meet an old fill's.
-- **The palette the same.** kui's `kui_theme` reads the theme with no
-  read noted, so a fill that drew from it would replay across a theme
-  change; kawoosh sets the theme from its palette, so the palette's
-  hash is in the claim. (backlog.md, with the other kui note below.)
 - **Everything else is kui's**: the params (`focused`, `width`, …),
   every fact read through a kui door — a hover, a press, a scroll
-  offset, `kui_now`, which is the clock and never replays.
+  offset, the theme and the metrics, `kui_now`, which is the clock and
+  never replays. (The claim first held the palette's hash too, since
+  `kui_theme` noted no read; kui F155, in alpha.51, notes it, and the
+  hash went with the pin, below.)
 - **The contract, in `kawoosh.h`**: change what the view draws only
   inside a call kawoosh makes (from a thread, through `kw_wake`), never
   in `kui_ext_view`, and read the time through `kui_now`. One
@@ -782,15 +781,21 @@ host vouches for, and why that is enough:
   how many times its view ran, which a replay pushes again unchanged;
   idle frames leave it, a click, a native command and `:theme toggle`
   each run it once more, plain Lua does not. With the event wrapper's
-  count taken out, the click's frame shows `clicks 0`.
+  count taken out, the click's frame shows `clicks 0`. Since alpha.51
+  the test asks kui (`Core::slot_fill`): `Replayed` idle, `None` after a
+  native command (the host filled), `Reads` after `:theme toggle` (kui
+  saw the theme move), and the count in `panel.c` is gone.
 - **Measured** (`native_vs_lua`, 4 MB, the 200-row pane idle): the
   native pane's draw 0.20 → 0.07 ms, Lua's replay to the hundredth;
   the frame's median 0.52 → 0.38 ms. Moving every frame is unchanged
   (0.20 against Lua's 1.68).
-- **Found on the way, in kui**: `Core::slot_fill` after a frame that
-  filled with `slot_kept` answers the frame before's `slot_replay`
-  answer, so the test reads the pane's own count instead. Noted in
-  backlog.md beside `kui_theme`.
+- **Found on the way, in kui, and fixed there**: `kui_theme` noted no
+  read (F155), and `Core::slot_fill` after a frame that filled with
+  `slot_kept` answered the frame before's `slot_replay` answer (F156).
+  Both are in kui 0.1.0-alpha.51 (2026-10-09); kawoosh pinned to it
+  2026-10-10, through alpha.50, whose C ABI is 30 (`KuiTextStyle.bold`,
+  `KuiMenuItem.replay`): an extension that draws is built again against
+  the new `kui.h`.
 
 ## Open
 
