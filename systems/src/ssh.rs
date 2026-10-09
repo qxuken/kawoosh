@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use russh::client::{self, Handle, Msg};
-use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey};
-use russh::{Channel, ChannelMsg, Sig};
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
+use russh::{Channel, ChannelMsg, ChannelOpenFailure, Sig};
 use tokio::sync::mpsc;
 
 use crate::ssh_config::HostConfig;
@@ -119,7 +119,21 @@ struct H {
 impl client::Handler for H {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool, Self::Error> {
+    async fn check_server_key(
+        &mut self,
+        key: &PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        // A host certificate comes only when asked for (russh's
+        // `Preferred::host_key_certificates`, empty here): known_hosts
+        // holds keys, and no authority is trusted.
+        let PublicKeyOrCertificate::PublicKey { key, .. } = key else {
+            *self.refused.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(Failure::Final(format!(
+                    "{} offered a host certificate, which is not asked for",
+                    self.host
+                )));
+            return Ok(false);
+        };
         let key = key.clone();
         let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
         let files = &self.config.known_hosts;
@@ -199,6 +213,7 @@ impl client::Handler for H {
         connected_port: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: client::ChannelOpenHandle,
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
         let to = self
@@ -209,8 +224,12 @@ impl client::Handler for H {
             .get(&connected_port)
             .cloned();
         let Some(to) = to else {
+            reply
+                .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
             return Ok(());
         };
+        reply.accept().await;
         tokio::spawn(async move {
             let mut ch = channel.into_stream();
             let r = match to {
@@ -735,7 +754,11 @@ where
         return false;
     };
     for id in ids {
-        let key = id;
+        // A certificate the agent holds is not offered: the files say
+        // keys, and so does `wanted`.
+        let russh::keys::agent::AgentIdentity::PublicKey { key, .. } = id else {
+            continue;
+        };
         if only && !wanted.iter().any(|w| w.key_data() == key.key_data()) {
             continue;
         }

@@ -83,8 +83,6 @@ pub struct Kawoosh {
     /// (docs/design/grammars.md).
     pub grammars: crate::grammars::Grammars,
     pub lsp: LspState,
-    /// qd, the dotfiles manager, linked: the `:qd` pane's door.
-    pub(crate) dotfiles: crate::dotfiles::Dotfiles,
     /// `lsp.ensure_installed`'s installs and the registries' checks.
     pub lsp_installs: crate::lsp_installs::Installs,
     pub scripting: Scripting,
@@ -432,7 +430,6 @@ impl Kawoosh {
             languages: kawoosh_languages::Registry::builtin(),
             grammars: crate::grammars::Grammars::default(),
             lsp: LspState::new(wake.clone()),
-            dotfiles: crate::dotfiles::Dotfiles::new(wake.named("qd")),
             lsp_installs: crate::lsp_installs::Installs::new(wake.named("lsp installs")),
             scripting: Scripting {
                 servers: crate::lsp_rules::builtin(),
@@ -722,16 +719,6 @@ impl Kawoosh {
         }
         // A buffer's outline, as a server's symbols: the path its
         // file's (or its name), the kind the grammar's.
-        let answers = self.dotfiles.drain();
-        if !answers.is_empty()
-            && let Some(rt) = self.scripting.rt.clone()
-        {
-            for (token, result) in answers {
-                self.pending_jobs = self.pending_jobs.saturating_sub(1);
-                rt.qd_answered(token, result);
-            }
-            self.drain_lua();
-        }
         let (marks, outlines): (Vec<_>, Vec<_>) = self
             .ts
             .outline_answers
