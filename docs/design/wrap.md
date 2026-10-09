@@ -49,6 +49,10 @@ wraps those languages' buffers whatever `editor.wrap` says: `{ "text",
 beside the look's other toggles) flips wrapping for the focused pane
 alone, for the session: vim's `:set wrap!`, a window's setting.
 
+*Amended 2026-10-09.* `:wrap` sets the pane's own `editor.wrap`
+([pane-settings.md](pane-settings.md)), `off` or the window's mode;
+`:setlocal editor.wrap=glyph` says any of the three for one pane.
+
 ### 2. `j` and `k` move by line; `gj` and `gk` by screen row
 
 As vim: `j` `k` and the arrows move between the buffer's lines, so a

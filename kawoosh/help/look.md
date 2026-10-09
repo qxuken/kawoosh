@@ -72,12 +72,15 @@ tokens = {
 | | `:font` | say the face on show, its size and row height |
 | | `:font NAME` | use family NAME for the session (it completes, monospaced first) |
 | `<leader>of` | `:fonts` | the fonts pane |
-| {{mac:`⌘=` `⌘+`}}{{pc:`<C-=>` `<C-+>`}} | `:font bigger` | a pixel bigger, for the session |
-| {{mac:`⌘-` `⌘_`}}{{pc:`<C-->` `<C-_>`}} | `:font smaller` | a pixel smaller |
-| {{mac:`⌘0`}}{{pc:`<C-0>`}} | `:font reset` | back to `font.size` |
-| {{mac:`⌘` or `Ctrl`}}{{pc:`Ctrl`}} and the wheel | | bigger with the wheel up, smaller with it down, a pixel a notch |
+| {{mac:`⌘=` `⌘+`}}{{pc:`<C-=>` `<C-+>`}} | `:pane font bigger` | the text of the pane you are in a pixel bigger, for the session |
+| {{mac:`⌘-` `⌘_`}}{{pc:`<C-->` `<C-_>`}} | `:pane font smaller` | a pixel smaller |
+| {{mac:`⌘0`}}{{pc:`<C-0>`}} | `:pane font reset` | back to the window's size |
+| {{mac:`⌘` or `Ctrl`}}{{pc:`Ctrl`}} and the wheel | | the pane under the pointer bigger with the wheel up, smaller with it down, a pixel a notch |
+| {{mac:`⌘⌥=` `⌘⌥+`}}{{pc:`<C-A-=>` `<C-A-+>`}} | `:font bigger` | every pane's text a pixel bigger, for the session |
+| {{mac:`⌘⌥-` `⌘⌥_`}}{{pc:`<C-A-->` `<C-A-_>`}} | `:font smaller` | every pane's a pixel smaller |
+| {{mac:`⌘⌥0`}}{{pc:`<C-A-0>`}} | `:font reset` | back to `font.size` |
 
-The size keys and the wheel work in every mode and pane.
+The size keys and the wheel work in every mode and pane. A pane's own size is its text alone: an editor's rows, a terminal's grid (the program in it is told its new size); the title bars, tabs and status line stay as they are. A tool pane (the settings, the pickers, the grammars) draws at the chrome's size and keeps it. A pane zoomed on its own keeps its size when the window's changes; `:pane font reset` puts it back with the others. The same with a command: `:setlocal font.size=16` ([settings](settings.md#setlocal)).
 
 The fonts pane lists every family as a card drawn in that font, with two lines of code in the current theme: yours first, then the ones kawoosh ships (JetBrains Mono, Cascadia Code, Fira Mono, IBM Plex Mono, Monaspace and more), then the system's. `<CR>` or a click uses the family; `j` `k` `gg` `G` `<C-d>` `<C-u>` walk; `/` searches by name, with `n` `N` for the next and previous match; `m` switches between monospaced families and all; `+` `-` change the size; `y` copies the settings line; `q` closes.
 
@@ -95,7 +98,7 @@ A character the family lacks is drawn from kawoosh's list, in order: the Nerd Fo
 
 ## Soft wrap
 
-Long lines run past the pane's edge unless you wrap them. `editor.wrap = "word"` wraps every editor pane at its width, breaking between words; `"glyph"` breaks anywhere. `editor.wrap_languages = { "text", "gitcommit" }` wraps those languages' buffers only. `:wrap` (`<leader>ow`) turns wrapping on or off for the pane you are in, until you quit.
+Long lines run past the pane's edge unless you wrap them. `editor.wrap = "word"` wraps every editor pane at its width, breaking between words; `"glyph"` breaks anywhere. `editor.wrap_languages = { "text", "gitcommit" }` wraps those languages' buffers only. `:wrap` (`<leader>ow`) turns wrapping on or off for the pane you are in, until you quit: it is that pane's own `editor.wrap` ([`:setlocal`](settings.md#setlocal)).
 
 A wrapped line keeps its number on its first row only. `j` and `k` still move a whole line at a time, as in vim; `gj` and `gk` (or `g` with an arrow) move one row on screen, keeping the caret's position across. A line longer than 64 KiB is not wrapped, so a minified file stays fast: it is drawn on one row, clipped at the pane's edge, with its number in the row as the others have.
 

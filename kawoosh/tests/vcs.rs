@@ -145,7 +145,10 @@ fn signs_are_off_by_a_setting_and_the_hunks_stay() {
     d.frame(&mut app);
     ex(&mut d, &mut app, "set vcs.signs false");
     d.frame(&mut app);
-    assert!(app.signs_of(id, 0, &[]).is_empty());
+    assert!(
+        !app.pane_signs_on(app.layout.focused()),
+        "the gutter draws none"
+    );
     assert_eq!(
         app.ed.signs_in(id, 0..10).len(),
         1,

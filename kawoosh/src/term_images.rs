@@ -47,8 +47,14 @@ impl Kawoosh {
     /// frame asked for while any is out), and the uploads no pane drew
     /// last frame freed.
     pub(crate) fn sync_term_graphics(&mut self, ui: &mut Ui<'_>) {
-        let (cw, ch) = self.cell_px(ui);
-        for t in self.terms.map.values_mut() {
+        let ids: Vec<_> = self.terms.map.keys().copied().collect();
+        for id in ids {
+            // Its pane's cell, which may be its own size
+            // (pane-settings.md Decision 4).
+            let (cw, ch) = self.cell_px(ui, self.term_grid(id));
+            let Some(t) = self.terms.map.get_mut(&id) else {
+                continue;
+            };
             t.set_cell_pixels(cw, ch);
             if t.poll_graphics() || t.graphics_busy() {
                 crate::frames::request(ui, "terminal graphics");
@@ -70,10 +76,10 @@ impl Kawoosh {
         }
     }
 
-    /// A cell's size in the window's pixels.
-    fn cell_px(&self, ui: &mut Ui<'_>) -> (u16, u16) {
+    /// A grid cell of `grid` logical pixels in the window's pixels.
+    fn cell_px(&self, ui: &mut Ui<'_>, grid: (f32, f32)) -> (u16, u16) {
         let scale = ui.core().scale();
-        let (cw, ch) = self.grid_cell;
+        let (cw, ch) = grid;
         (
             (cw * scale).round().max(1.0) as u16,
             (ch * scale).round().max(1.0) as u16,
@@ -90,8 +96,9 @@ impl Kawoosh {
         if placed.is_empty() {
             return Vec::new();
         }
-        let (pw, ph) = self.cell_px(ui);
-        let (cw, ch) = self.grid_cell;
+        let grid = self.term_grid(id);
+        let (pw, ph) = self.cell_px(ui, grid);
+        let (cw, ch) = grid;
         // A pixel as the program counted it, in logical ones: a cell is
         // a cell whatever the rounding.
         let (sx, sy) = (cw / pw as f32, ch / ph as f32);

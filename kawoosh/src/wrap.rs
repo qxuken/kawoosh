@@ -1,33 +1,40 @@
 //! Soft wrap in the editor (docs/design/wrap.md, roadmap step 63): which
 //! panes wrap (`editor.wrap`, `editor.wrap_languages`, `:wrap` for one
-//! pane), and `gj` `gk` — the caret a row down or up on screen, asked of
+//! pane — its own `editor.wrap`, pane-settings.md), and `gj` `gk` — the caret a row down or up on screen, asked of
 //! the rows kui laid out last frame. The drawing is the rendered rows'
 //! (`panes.rs`: a wrapped pane is `tall`, as the markdown buffer is).
 
-use kawoosh_editor::{Mode, Selection, Selections, Spec, ViewId};
+use kawoosh_editor::{Mode, Selection, Selections, Setting, Spec, ViewId};
 use kui_native::{Core, TextWrap, Vec2};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
+use crate::layout::PaneId;
 
 impl Kawoosh {
-    /// How view `view` wraps, if it does: `:wrap`'s word for the pane
-    /// first, else its buffer's language in `editor.wrap_languages`,
-    /// else `editor.wrap`.
-    pub(crate) fn soft_wrap(&self, view: ViewId) -> Option<TextWrap> {
-        let s = &self.ed.settings;
-        let mode = s.str("editor.wrap").unwrap_or("off");
+    /// How pane `pane` (showing view `view`) wraps, if it does: the
+    /// pane's own `editor.wrap` first (`:wrap`, `:setlocal`,
+    /// pane-settings.md), else its buffer's language in
+    /// `editor.wrap_languages`, else `editor.wrap` as the pane reads it.
+    pub(crate) fn soft_wrap(&self, pane: PaneId, view: ViewId) -> Option<TextWrap> {
+        let (mode, from) = self
+            .pane_origin(pane, "editor.wrap")
+            .map(|(v, from)| (v.as_str().unwrap_or("off").to_string(), from))
+            .unwrap_or(("off".into(), String::new()));
         // `word` as kui F106's `break-spaces`: between words, every
         // space its room, so a caret on a space at a row's end stays in
         // the pane (wrap.md Decision 5).
-        let how = if mode == "glyph" {
-            TextWrap::Glyph
-        } else {
-            TextWrap::BreakSpaces
+        let how = |mode: &str| {
+            if mode == "glyph" {
+                TextWrap::Glyph
+            } else {
+                TextWrap::BreakSpaces
+            }
         };
-        if let Some(&on) = self.wrap_views.get(&view) {
-            return on.then_some(how);
+        if from == "pane" {
+            return (mode != "off").then(|| how(&mode));
         }
+        let s = &self.ed.settings;
         let language = self
             .ed
             .views
@@ -39,17 +46,28 @@ impl Kawoosh {
             }
             _ => false,
         };
-        (mode != "off" || listed).then_some(how)
+        (mode != "off" || listed).then(|| how(&mode))
     }
 
-    /// `:wrap`: wrapping flipped for the focused pane, for the session.
+    /// `:wrap`: wrapping flipped for the focused pane, for the session —
+    /// its own `editor.wrap`, `off` or the window's mode (`word` when
+    /// that is `off`).
     fn toggle_wrap(&mut self) {
+        let pane = self.layout.focused();
         let Some(v) = self.focused_view() else {
             self.ed.message = "wrap: not an editor pane".into();
             return;
         };
-        let on = self.soft_wrap(v).is_none();
-        self.wrap_views.insert(v, on);
+        let on = self.soft_wrap(pane, v).is_none();
+        let mode = match self.ed.settings.str("editor.wrap") {
+            Some(m) if on && m != "off" => m.to_string(),
+            _ if on => "word".into(),
+            _ => "off".into(),
+        };
+        if let Err(e) = self.set_pane_value(pane, "editor.wrap", Setting::Str(mode)) {
+            self.ed.message = e;
+            return;
+        }
         self.ed.message = if on { "wrap on" } else { "wrap off" }.into();
     }
 

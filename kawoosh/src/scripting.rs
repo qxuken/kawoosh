@@ -184,6 +184,9 @@ impl Kawoosh {
         if let Err(e) = crate::legends::lua_door(rt.lua(), self.legends.clone()) {
             log::error!("kawoosh.legends: {e}");
         }
+        if let Err(e) = crate::pane_settings::lua_door(rt.lua(), self.pane_settings.clone()) {
+            log::error!("kawoosh.pane_opt: {e}");
+        }
         self.scripting.bundled = true;
         for (name, src) in crate::plugins::BUNDLED {
             if let Err(e) = rt.load_source(name, src) {

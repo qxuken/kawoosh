@@ -147,6 +147,23 @@ Every settings file and `init.lua`, yours and the project's (including ones not 
 
 Paths complete as you type, and so do the choices of a setting that takes a few words.
 
+## :setlocal
+
+`:setlocal` (`:setl`) changes a value for the pane you are in alone, until you quit, over `:set` and every file: vim's window options. It is spelled as `:set` is.
+
+| form | what |
+|---|---|
+| `:setlocal font.size=18` | this pane's text bigger, the others as they were ({{mac:`⌘=` `⌘-` `⌘0`}}{{pc:`<C-=>` `<C-->` `<C-0>`}} step it) |
+| `:setlocal editor.wrap=word`, `:setlocal -relativenumber` | set a value, or a switch, for this pane |
+| `:setlocal editor.wrap?` | say the value this pane reads and where it came from: `(pane)` for its own |
+| `:setlocal editor.wrap!` | take the pane's own out, so it reads as the others |
+| `:setlocal` | list what the pane holds of its own |
+| `:setlocal!` | drop all of it |
+
+A pane may hold the settings it draws by: `font.size` and `font.line_height` (an editor's or a terminal's text), `editor.wrap`, `editor.breadcrumbs`, `scrolloff`, `relativenumber`, `markdown.reveal`, `vcs.signs` (an editor pane's), and `keys.legend` (any pane's). Anything else is the window's, and `:setlocal` says so. `:wrap`, `:breadcrumbs` and `<A-/>` are the pane's own values too, so `:setlocal!` undoes them as well.
+
+A pane's values stay with the pane, whatever it shows: `:e other` in a zoomed pane is still zoomed. A split of an editor pane starts with what its pane holds; a closed pane's are gone, and a session does not keep them. A pane that says nothing reads its buffer's language table, so `language.markdown = { font = { size = 16 } }` in your settings makes every markdown pane's text bigger. From Lua, `kawoosh.pane_opt(pane, path)` reads a pane's own value, `kawoosh.pane_opt(pane, path, value)` sets it and `kawoosh.pane_unset(pane, path)` takes it out ([lua](lua.md)).
+
 ## The settings pane
 
 `:settings` (or {{mac:`⌘,`, or }}`<leader>,`) opens every setting in a column beside the one you are in, so a change shows on the code at once. `:settings QUERY` opens it already searched: `:settings font`.

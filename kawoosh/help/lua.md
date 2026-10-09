@@ -53,6 +53,7 @@ A plugin reads settings the same way the editor does.
 
 - `kawoosh.setting(path, { type = ..., doc = ... })` declares a setting your code reads. The type is `"string"`, `"boolean"`, `"integer"`, `"number"`, `"list"`, `"table"` (a table whose keys are the user's), or a list of allowed words such as `{ "on", "off" }`. A key in a settings file that nobody declared gets a warning, so declare what you read.
 - `kawoosh.opt(path)` reads the value in effect (a table for a part of the tree, the whole tree with no path). `kawoosh.opt(path, value)` sets it; `nil` unsets it. What `init.lua` sets this way belongs with your own settings.
+- `kawoosh.pane_opt(pane, path)` is a pane's own value (`nil` when it holds none, and it reads as every pane does); `kawoosh.pane_opt(pane, path, value)` sets it, as `:setlocal` does, an error for a setting a pane may not hold or a value not of its kind; `kawoosh.pane_unset(pane, path)` takes it out ([settings](settings.md#setlocal)).
 - `kawoosh.settings` is what the settings pane reads and writes: every setting with its doc and layers, and a change written into a settings file ([settings](settings.md#the-settings-pane)).
 - `kawoosh.on_settings(fn)` calls `fn()` once when you register it and again whenever the settings change (a settings file saved, `:set`, `kawoosh.opt`). Read your settings there, and the same code handles startup and later changes.
 

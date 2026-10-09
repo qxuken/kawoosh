@@ -66,6 +66,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::nodes::commands());
     v.extend(crate::whichkey::commands());
     v.extend(crate::legends::commands());
+    v.extend(crate::pane_settings::commands());
     v.extend(crate::launcher::commands());
     v.extend(crate::markdown::commands());
     v.extend(crate::secrets::commands());
@@ -399,13 +400,20 @@ impl Kawoosh {
             return;
         };
         let nv = self.ed.add_view(buffer);
-        if let Some(v) = self.focused_view()
-            && self.ed.views[v].buffer == buffer
-        {
+        let from = self.layout.focused();
+        let same = self
+            .focused_view()
+            .filter(|v| self.ed.views[*v].buffer == buffer);
+        if let Some(v) = same {
             let src = self.ed.views[v].clone();
             self.ed.views[nv] = src;
         }
-        self.layout.split(dir, Content::Editor(nv));
+        let new = self.layout.split(dir, Content::Editor(nv));
+        // The same view twice: the pane's own settings with it, as
+        // vim's `:split` copies a window's (pane-settings.md).
+        if same.is_some() {
+            self.copy_pane_settings(from, new);
+        }
     }
 
     fn close_pane(&mut self) {

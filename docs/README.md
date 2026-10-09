@@ -124,6 +124,8 @@ commits; 70 integration test files and 31 Lua test scripts.
   pane.
 - [fonts.md](design/fonts.md): the fonts pane and lab.
 - [settings.md](design/settings.md): the settings pane.
+- [pane-settings.md](design/pane-settings.md): settings local to a
+  pane, `:setlocal`, a pane's own font size.
 
 ### Lua
 

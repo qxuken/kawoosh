@@ -253,6 +253,7 @@ An editor pane's title bar shows the symbols the caret is inside after
 the file's name: `parser.test.ts › parser › with a table › skips`.
 Click one to go to it. A narrow pane keeps the innermost and shows `…`
 for the rest. `:breadcrumbs` (`<leader>ob`) turns them off or on for
-the pane you are in, until you quit; `editor.breadcrumbs = false` turns
+the pane you are in, until you quit (that pane's own
+`editor.breadcrumbs`, as `:setlocal` sets it); `editor.breadcrumbs = false` turns
 them off everywhere. They come from the syntax tree, so a file with no
 grammar has none.

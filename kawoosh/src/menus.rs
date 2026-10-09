@@ -430,9 +430,14 @@ impl Kawoosh {
             run("Find in Files…", None, "picker grep"),
         ];
         let view_menu = vec![
-            run("Bigger Text", None, "font bigger"),
-            run("Smaller Text", None, "font smaller"),
-            run("Actual Size", None, "font reset"),
+            // The focused pane's text, as ⌘= ⌘- ⌘0; the window's under
+            // them, as ⌘⌥ (docs/design/pane-settings.md Decision 5).
+            run("Bigger Text", None, "pane font bigger"),
+            run("Smaller Text", None, "pane font smaller"),
+            run("Actual Size", None, "pane font reset"),
+            run("Bigger Text Everywhere", None, "font bigger"),
+            run("Smaller Text Everywhere", None, "font smaller"),
+            run("Every Pane's Actual Size", None, "font reset"),
             MenuItem::separator(),
             run("Toggle Light and Dark", None, "theme toggle"),
             run("Toggle the Dock", None, "dock"),

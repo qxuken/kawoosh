@@ -214,42 +214,58 @@ fn the_font_steps_from_the_keyboard() {
     let mut app = Kawoosh::new("a", "text");
     d.frame(&mut app);
     let base = app.face.size;
-    let chord = |shift: bool| {
+    let chord = |shift: bool, alt: bool| {
         if cfg!(target_os = "macos") {
             KeyMods {
                 super_key: true,
                 shift,
+                alt,
                 ..KeyMods::default()
             }
         } else {
             KeyMods {
                 ctrl: true,
                 shift,
+                alt,
                 ..KeyMods::default()
             }
         }
     };
-    d.key(&mut app, "=", chord(false));
+    // ⌘= the focused pane's text (pane-settings.md Decision 5): the
+    // window's face stays.
+    let pane = app.layout.focused();
+    let size = |app: &Kawoosh| app.face_of(pane).face.size;
+    d.key(&mut app, "=", chord(false, false));
     d.frame(&mut app);
-    assert_eq!(app.face.size, base + 1.0);
-    d.key(&mut app, "+", chord(true));
+    assert_eq!(size(&app), base + 1.0);
+    assert_eq!(app.face.size, base, "the window's stays");
+    d.key(&mut app, "+", chord(true, false));
     d.frame(&mut app);
-    assert_eq!(app.face.size, base + 2.0);
-    d.key(&mut app, "-", chord(false));
-    d.key(&mut app, "_", chord(true));
-    d.key(&mut app, "-", chord(false));
+    assert_eq!(size(&app), base + 2.0);
+    d.key(&mut app, "-", chord(false, false));
+    d.key(&mut app, "_", chord(true, false));
+    d.key(&mut app, "-", chord(false, false));
     d.frame(&mut app);
-    assert_eq!(app.face.size, base - 1.0);
-    // From insert mode too, and back to the settings' size.
+    assert_eq!(size(&app), base - 1.0);
+    // From insert mode too, and back to the window's size.
     d.keys(&mut app, "i");
-    d.key(&mut app, "0", chord(false));
+    d.key(&mut app, "0", chord(false, false));
     d.frame(&mut app);
-    assert_eq!(app.face.size, base);
+    assert_eq!(size(&app), base);
     assert_eq!(
         app.ed.buffer_of(app.focused_view().unwrap()).text(),
         "text",
         "nothing typed"
     );
+    // With ⌥, the window's: every pane's that has none of its own.
+    d.key(&mut app, "=", chord(false, true));
+    d.key(&mut app, "=", chord(false, true));
+    d.frame(&mut app);
+    assert_eq!(app.face.size, base + 2.0);
+    assert_eq!(size(&app), base + 2.0);
+    d.key(&mut app, "0", chord(false, true));
+    d.frame(&mut app);
+    assert_eq!(app.face.size, base);
 }
 
 /// The chrome follows the font up to a cap: at the default size it is
@@ -565,31 +581,35 @@ fn the_wheel_with_a_modifier_held_sizes_the_font() {
             ..KeyMods::default()
         })
     };
-    assert_eq!(app.face.size, 13.0);
+    // The pane under the pointer's text (pane-settings.md Decision 5).
+    let pane = app.layout.focused();
+    let size = |app: &Kawoosh| app.face_of(pane).face.size;
+    assert_eq!(size(&app), 13.0);
     d.input(&mut app, held(false, true));
     d.wheel(&mut app, 300.0, 250.0, 0.0, 40.0);
     d.frame(&mut app);
-    assert_eq!(app.face.size, 14.0, "a notch up, a pixel bigger");
+    assert_eq!(size(&app), 14.0, "a notch up, a pixel bigger");
+    assert_eq!(app.face.size, 13.0, "the window's stays");
     // A trackpad's pixels add up to a notch.
     for _ in 0..4 {
         d.wheel(&mut app, 300.0, 250.0, 0.0, 10.0);
     }
     d.frame(&mut app);
-    assert_eq!(app.face.size, 15.0);
+    assert_eq!(size(&app), 15.0);
     d.input(&mut app, held(true, false));
     d.wheel(&mut app, 300.0, 250.0, 0.0, -120.0);
     d.frame(&mut app);
-    assert_eq!(app.face.size, 12.0, "three notches down, under Ctrl");
-    // Over the tabs, which no pane's handler hears.
+    assert_eq!(size(&app), 12.0, "three notches down, under Ctrl");
+    // Over the tabs, which no pane's handler hears: the focused pane's.
     let tab = d.rect("tab0").unwrap();
     d.wheel(&mut app, tab.x + 10.0, tab.y + 5.0, 0.0, 40.0);
     d.frame(&mut app);
-    assert_eq!(app.face.size, 13.0);
+    assert_eq!(size(&app), 13.0);
     assert_eq!(top(&app), 0, "nothing scrolled under it");
     // Nothing held: a scroll, and the size stays.
     d.input(&mut app, held(false, false));
     d.wheel(&mut app, 300.0, 250.0, 0.0, -120.0);
     d.frame(&mut app);
     assert!(top(&app) > 0);
-    assert_eq!(app.face.size, 13.0);
+    assert_eq!(size(&app), 13.0);
 }

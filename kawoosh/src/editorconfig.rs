@@ -315,6 +315,7 @@ impl Kawoosh {
         let scope = Scope {
             language,
             local: &[],
+            pane: None,
         };
         let get = |k: &str| self.ed.settings.scoped(k, scope);
         let int = |k: &str| get(k).and_then(Setting::as_int).filter(|n| *n > 0);

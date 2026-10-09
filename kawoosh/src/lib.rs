@@ -64,6 +64,7 @@ pub mod multis;
 pub mod nodes;
 pub mod notify;
 pub mod palette;
+pub mod pane_settings;
 pub mod panes;
 pub mod perf;
 pub mod pictures;

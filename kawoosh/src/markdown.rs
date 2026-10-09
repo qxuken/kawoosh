@@ -824,10 +824,11 @@ impl Carets {
         ed: &kawoosh_editor::Editor,
         view: kawoosh_editor::ViewId,
         shown: Option<&Shown>,
+        reveal: Option<&str>,
     ) -> Self {
         let v = &ed.views[view];
         let buf = &ed.buffers[v.buffer];
-        let mode = match ed.settings.str("markdown.reveal") {
+        let mode = match reveal {
             _ if buf.read_only => RevealMode::None,
             Some("span") => RevealMode::Span,
             Some("none") => RevealMode::None,
@@ -1261,7 +1262,8 @@ impl Kawoosh {
     /// the anchor when the caret's row stays where it was
     /// ([`Anchored`]). `follow` is `render_editor`'s: whether the caret
     /// pulls the view; `width` the pane's, which the heights were
-    /// measured at.
+    /// measured at; `pane` the one it is drawn in, whose face's row and
+    /// `scrolloff` it scrolls by (pane-settings.md).
     pub(crate) fn md_follow(
         &mut self,
         ui: &kui_native::Ui<'_>,
@@ -1269,15 +1271,11 @@ impl Kawoosh {
         avail: f32,
         width: f32,
         follow: bool,
+        pane: crate::layout::PaneId,
     ) -> (usize, Option<Anchored>) {
-        let lh = self.face.line_height;
+        let lh = self.face_of(pane).face.line_height;
         let rows_est = ((avail / lh).floor() as usize).max(1);
-        let so = self
-            .ed
-            .settings
-            .int("scrolloff")
-            .map_or(3, |n| n.max(0) as usize)
-            .min(rows_est / 2);
+        let so = self.ed.views[view].scrolloff.unwrap_or(3).min(rows_est / 2);
         let buf_id = self.ed.views[view].buffer;
         let buf = &self.ed.buffers[buf_id];
         let known = self.md_heights.entry(view).or_default();

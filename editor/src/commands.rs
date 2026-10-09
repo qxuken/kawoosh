@@ -2445,10 +2445,9 @@ pub fn install(ed: &mut Editor) {
             let last = ed.buffers[v.buffer].line_count().saturating_sub(1);
             let top = v.top.min(last);
             let bottom = (top + rows - 1).min(last);
-            let margin = ed
-                .settings
-                .int("scrolloff")
-                .map(|n| n.max(0) as usize)
+            let margin = v
+                .scrolloff
+                .or_else(|| ed.settings.int("scrolloff").map(|n| n.max(0) as usize))
                 .unwrap_or(3)
                 .min((rows - 1) / 2);
             let first = if top == 0 { 0 } else { top + margin };
@@ -5861,7 +5860,9 @@ pub fn default_keymap(km: &mut Keymap) {
     // The font's size, from every mode and every pane (a ⌘ chord
     // reaches the keymap from a terminal too, `Kawoosh::pane_chord`):
     // ⌘= and ⌘+ bigger, ⌘- and ⌘_ smaller, ⌘0 back to the settings' —
-    // Ctrl where there is no ⌘, as every editor there spells it.
+    // Ctrl where there is no ⌘, as every editor there spells it. The
+    // focused pane's text, as iTerm2's; with ⌥ the window's
+    // (docs/design/pane-settings.md Decision 5).
     let m = if cfg!(target_os = "macos") { "D" } else { "C" };
     for (k, c) in [
         ("=", "font bigger"),
@@ -5871,7 +5872,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("0", "font reset"),
     ] {
         for mode in [Normal, Visual, Insert, Pane] {
-            km.bind(mode, &format!("<{m}-{k}>"), c);
+            km.bind(mode, &format!("<{m}-{k}>"), &format!("pane {c}"));
+            km.bind(mode, &format!("<{m}-A-{k}>"), c);
         }
     }
     // The next and the previous tab, from every mode and every pane, as

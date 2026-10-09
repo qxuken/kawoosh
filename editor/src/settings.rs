@@ -733,11 +733,24 @@ const DOCS: &[(&str, &str)] = &[
 /// Where a buffer's settings are read beside the tree
 /// ([`Settings::scoped`]): its language, whose `language.NAME` table lays
 /// over the bare keys, and its own sources — what the `.editorconfig`
-/// files above it say, each section a source by its name.
+/// files above it say, each section a source by its name — and, read
+/// for a pane, that pane's own values (docs/design/pane-settings.md),
+/// over everything.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Scope<'a> {
     pub language: &'a str,
     pub local: &'a [(String, Setting)],
+    pub pane: Option<&'a Setting>,
+}
+
+impl<'a> Scope<'a> {
+    /// This scope read in a pane holding `values`.
+    pub fn in_pane(self, values: Option<&'a Setting>) -> Self {
+        Scope {
+            pane: values,
+            ..self
+        }
+    }
 }
 
 /// What a setting holds, as a declaration says it (roadmap step 34):
@@ -1587,6 +1600,8 @@ impl Settings {
     /// editorconfig.md Decision 1), and where it came from — the tiers,
     /// the first that has it winning:
     ///
+    /// 0. the pane's own value, when read for one (`:setlocal`,
+    ///    pane-settings.md Decision 1) — what was typed at that pane;
     /// 1. the session's `language.LANG.PATH`, then its bare `PATH` —
     ///    what was typed is meant now;
     /// 2. the buffer's own sources, its `.editorconfig` sections then
@@ -1622,8 +1637,11 @@ impl Settings {
             Some((v, origin))
         };
         let lower = [Layer::Project, Layer::User, Layer::Default];
-        lang.as_deref()
-            .and_then(|k| from(Layer::Session, k))
+        scope
+            .pane
+            .and_then(|t| t.get(path))
+            .map(|v| (v, "pane".to_string()))
+            .or_else(|| lang.as_deref().and_then(|k| from(Layer::Session, k)))
             .or_else(|| from(Layer::Session, path))
             .or_else(|| {
                 scope
@@ -1966,6 +1984,29 @@ mod tests {
         );
     }
 
+    /// A pane's own value is over every layer, the session's too, and
+    /// says so; a key it holds nothing at reads as the buffer's scope.
+    #[test]
+    fn a_panes_value_is_over_every_tier() {
+        let mut s = Settings::new();
+        s.set(Layer::Session, "editor.wrap", Setting::Str("word".into()));
+        let pane = tbl(&[("editor", tbl(&[("wrap", Setting::Str("off".into()))]))]);
+        let scope = Scope {
+            language: "go",
+            ..Scope::default()
+        }
+        .in_pane(Some(&pane));
+        assert_eq!(
+            s.scoped_origin("editor.wrap", scope),
+            Some((&Setting::Str("off".into()), "pane".to_string()))
+        );
+        assert_eq!(s.scoped("expandtab", scope), Some(&Setting::Bool(false)));
+        assert_eq!(
+            s.scoped("editor.wrap", scope.in_pane(None)),
+            Some(&Setting::Str("word".into()))
+        );
+    }
+
     #[test]
     fn a_buffers_read_is_its_languages_then_its_files() {
         let mut s = Settings::new();
@@ -1975,11 +2016,11 @@ mod tests {
         )];
         let go = Scope {
             language: "go",
-            local: &[],
+            ..Scope::default()
         };
         let rust = Scope {
             language: "rust",
-            local: &[],
+            ..Scope::default()
         };
         // The defaults' language table over the bare key.
         assert_eq!(s.scoped("expandtab", go), Some(&Setting::Bool(false)));
@@ -2010,6 +2051,7 @@ mod tests {
         let go_file = Scope {
             language: "go",
             local: &local,
+            pane: None,
         };
         assert_eq!(s.scoped("tabstop", go_file), Some(&Setting::Int(8)));
         assert_eq!(

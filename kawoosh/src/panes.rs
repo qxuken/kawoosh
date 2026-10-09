@@ -1036,7 +1036,10 @@ impl Kawoosh {
             return;
         }
         let pal = self.pal;
-        let font = self.face;
+        // The pane's face: the window's, or its own size
+        // (pane-settings.md Decision 4); the grid's cell with it.
+        let pf = self.pane_face(ui, pane);
+        let font = pf.face;
         let pad = 4.0;
         let (w, h) = self
             .layout
@@ -1137,7 +1140,7 @@ impl Kawoosh {
                     .then(|| {
                         let r = ui.layout_of(ui.child_key("cells"))?;
                         let p = ui.core().cursor()?;
-                        let (cw, ch) = self.grid_cell;
+                        let (cw, ch) = pf.grid;
                         let inside = p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h;
                         if !inside || cw <= 0.0 || ch <= 0.0 {
                             return None;
@@ -1228,7 +1231,7 @@ impl Kawoosh {
                                     .inside(Align::Start, Align::End)
                                     .offset(6.0, -6.0),
                             )
-                            .max_width((screen.cols as f32 * self.grid_cell.0 * 0.8).max(160.0))
+                            .max_width((screen.cols as f32 * pf.grid.0 * 0.8).max(160.0))
                             .pad_xy(8.0, 3.0)
                             .radius(4.0)
                             .bg(pal.strip)
@@ -1323,7 +1326,10 @@ impl Kawoosh {
             return;
         }
         let pal = self.pal;
-        let font = self.face;
+        // The pane's face: the window's, or its own size
+        // (pane-settings.md Decision 4).
+        let pf = self.pane_face(ui, pane);
+        let font = pf.face;
         let height = self
             .layout
             .rects
@@ -1331,14 +1337,14 @@ impl Kawoosh {
             .map(|r| r.h - self.chrome.pane_title_h - 2.0)
             .unwrap_or(self.body_h - self.chrome.pane_title_h)
             - self.header_height(pane, view);
-        let rows_n = ((height / self.face.line_height).floor().max(1.0)) as usize;
-        let scrolloff = self
-            .ed
-            .settings
-            .int("scrolloff")
+        let rows_n = ((height / font.line_height).floor().max(1.0)) as usize;
+        let scrolloff_set = self
+            .pane_value(pane, "scrolloff")
+            .and_then(|v| v.as_int())
             .map(|n| n.max(0) as usize)
-            .unwrap_or(3)
-            .min(rows_n / 2);
+            .unwrap_or(3);
+        self.ed.views[view].scrolloff = Some(scrolloff_set);
+        let scrolloff = scrolloff_set.min(rows_n / 2);
         let tabstop = self.ed.tabstop_in(self.ed.views[view].buffer);
         // The long lines' cell indexes, out of `self` for the rows below
         // (which borrow the buffer) and back at the end.
@@ -1372,7 +1378,7 @@ impl Kawoosh {
         // on the rendered rows' own path — rows as tall as they wrap to,
         // numbers inside them, the pane scrolling by what they
         // measured, no sideways scroll. `tall` is either.
-        let wrap = if md { None } else { self.soft_wrap(view) };
+        let wrap = if md { None } else { self.soft_wrap(pane, view) };
         let tall = md || wrap.is_some();
         if wrap.is_some() {
             self.ed.views[view].left = 0.0;
@@ -1398,7 +1404,7 @@ impl Kawoosh {
         let mut md_anchored = None;
         if tall {
             let width = self.layout.rects.get(&pane).map_or(0.0, |r| r.w);
-            let (last, anchored) = self.md_follow(ui, view, height, width, follow);
+            let (last, anchored) = self.md_follow(ui, view, height, width, follow, pane);
             md_last = Some(last);
             md_anchored = anchored;
         }
@@ -1462,7 +1468,7 @@ impl Kawoosh {
             .get(&pane)
             .map_or(ui.viewport().w, |r| r.w)
             - rows::gutter_w(
-                self.cell.0,
+                pf.cell.0,
                 self.ed.buffers[buf_id].line_count(),
                 self.marks.any(buf_id),
                 self.ed.blame_width(buf_id),
@@ -1476,8 +1482,16 @@ impl Kawoosh {
             let v = &self.ed.views[view];
             let buf = &self.ed.buffers[buf_id];
             // Where the carets are, and what of the lines around them is
-            // their source (`markdown.reveal`).
-            let carets = crate::markdown::Carets::of(&self.ed, view, self.md_shown.get(&view));
+            // their source (`markdown.reveal`, as the pane reads it).
+            let reveal = self
+                .pane_value(pane, "markdown.reveal")
+                .and_then(|v| v.as_str().map(str::to_string));
+            let carets = crate::markdown::Carets::of(
+                &self.ed,
+                view,
+                self.md_shown.get(&view),
+                reveal.as_deref(),
+            );
             let buffers = &self.ed.buffers;
             self.md_table_cache
                 .retain(|id, _| buffers.contains_key(*id));
@@ -1526,15 +1540,15 @@ impl Kawoosh {
             if follow && let Some(first) = md_tables.get(&head_line).copied() {
                 let range = buf.line_range(head_line);
                 let before = buf.slice(range.start..head.clamp(range.start, range.end));
-                let x = unicode_width::UnicodeWidthStr::width(before.as_str()) as f32 * self.cell.0;
+                let x = unicode_width::UnicodeWidthStr::width(before.as_str()) as f32 * pf.cell.0;
                 let seen = self
                     .md_table_left
                     .get(&(view, first))
                     .copied()
                     .unwrap_or(0.0);
-                let room = (width_guess - 3.0 * self.cell.0).max(self.cell.0);
+                let room = (width_guess - 3.0 * pf.cell.0).max(pf.cell.0);
                 let off = if x < seen {
-                    (x - 3.0 * self.cell.0).max(0.0)
+                    (x - 3.0 * pf.cell.0).max(0.0)
                 } else if x > seen + room {
                     x - room
                 } else {
@@ -1571,7 +1585,7 @@ impl Kawoosh {
                 }
             }
             // An image at most its column's share of the pane.
-            let cell_w = self.cell.0;
+            let cell_w = pf.cell.0;
             let max_w = |columns: usize| {
                 let n = columns.max(1) as f32;
                 ((width_guess - 16.0 - n * 2.0 * cell_w - (n + 1.0)) / n).max(40.0)
@@ -1749,7 +1763,8 @@ impl Kawoosh {
         let sels = &v.sels;
         let primary = sels.primary();
         let cur_line = buf.line_of(primary.head);
-        let mut numbers = rows::Numbers::of(buf, cur_line, &self.ed.settings);
+        let relative = self.pane_bool(pane, "relativenumber") == Some(true);
+        let mut numbers = rows::Numbers::of(buf, cur_line, relative);
         // A multibuffer's lines are its files': each drawn line's source
         // and line there — the gutter's number, and where its colours
         // and squiggles are read from (docs/design/search.md Decision 9).
@@ -1782,17 +1797,23 @@ impl Kawoosh {
         // sign's colour, so a review reads as a diff. A staged line's
         // sign (Decision 12) is the same drawn faint, its wash fainter,
         // where no unstaged sign stands.
+        // Not while `vcs.signs` is off, as the pane reads it.
         let staged_alpha = crate::vcs::STAGED_ALPHA;
-        let mut signs: HashMap<usize, (kawoosh_editor::Sign, kui_native::Color, f32)> = self
-            .staged_signs_of(buf_id, top, &from_files)
-            .into_iter()
-            .map(|(ln, s)| (ln, (s, self.sign_color(s), staged_alpha)))
-            .collect();
-        signs.extend(
-            self.signs_of(buf_id, top, &from_files)
-                .into_iter()
-                .map(|(ln, s)| (ln, (s, self.sign_color(s), 1.0))),
-        );
+        let signs_on = self.pane_signs_on(pane);
+        let mut signs: HashMap<usize, (kawoosh_editor::Sign, kui_native::Color, f32)> =
+            HashMap::new();
+        if signs_on {
+            signs.extend(
+                self.staged_signs_of(buf_id, top, &from_files)
+                    .into_iter()
+                    .map(|(ln, s)| (ln, (s, self.sign_color(s), staged_alpha))),
+            );
+            signs.extend(
+                self.signs_of(buf_id, top, &from_files)
+                    .into_iter()
+                    .map(|(ln, s)| (ln, (s, self.sign_color(s), 1.0))),
+            );
+        }
         if !from_files.is_empty() {
             use kawoosh_editor::Sign;
             for (ln, (s, c, strength)) in &signs {
@@ -1849,7 +1870,7 @@ impl Kawoosh {
             .is_some_and(|rt| rt.notes_aligned(buf_id));
         let note_column = if aligned {
             let mut columns = std::mem::take(&mut self.note_columns);
-            let at = columns.widest(ui, font, &pal, (buf_id, buf), tabstop, self.cell.0);
+            let at = columns.widest(ui, font, &pal, (buf_id, buf), tabstop, pf.cell.0);
             self.note_columns = columns;
             Some(at)
         } else {
@@ -1892,7 +1913,7 @@ impl Kawoosh {
             .collect();
         let any_styled = token_marks.iter().any(Option::is_some);
         let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
-        let cell_w = self.cell.0;
+        let cell_w = pf.cell.0;
         let marked = self.marks.any(buf_id);
         let gutter = rows::gutter_w(
             cell_w,
