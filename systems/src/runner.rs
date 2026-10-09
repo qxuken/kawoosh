@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::io::Transport;
@@ -65,33 +65,57 @@ pub struct Output {
 }
 
 struct Runner {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    behind: Box<dyn crate::sftp::Behind>,
+    stdin: Box<dyn Write + Send>,
+    stdout: BufReader<Box<dyn Read + Send>>,
 }
 
 impl Drop for Runner {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.behind.end();
     }
 }
 
 impl Runner {
+    /// A process running the loop through `t`, or a channel of its
+    /// in-process client's connection.
     fn start(t: &Transport) -> io::Result<Runner> {
-        let mut c = t.remote_command(LOOP);
-        c.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let mut child = crate::spawn::spawn(&mut c)?;
-        let stdin = child.stdin.take().ok_or_else(gone)?;
-        let mut stdout = BufReader::new(child.stdout.take().ok_or_else(gone)?);
+        let (behind, stdin, stdout): (
+            Box<dyn crate::sftp::Behind>,
+            Box<dyn Write + Send>,
+            Box<dyn Read + Send>,
+        ) = match t.exec(LOOP) {
+            Some(r) => {
+                let mut r = r?;
+                let stdin = r.stdin.take().ok_or_else(gone)?;
+                let stdout = r.stdout.take().ok_or_else(gone)?;
+                (Box::new(r.end()), Box::new(stdin), Box::new(stdout))
+            }
+            None => {
+                let mut c = t.remote_command(LOOP);
+                c.stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null());
+                let mut child = crate::spawn::spawn(&mut c)?;
+                let stdin = child.stdin.take().ok_or_else(gone)?;
+                let stdout = child.stdout.take().ok_or_else(gone)?;
+                (Box::new(child), Box::new(stdin), Box::new(stdout))
+            }
+        };
+        Self::over(behind, stdin, stdout)
+    }
+
+    fn over(
+        mut behind: Box<dyn crate::sftp::Behind>,
+        stdin: Box<dyn Write + Send>,
+        stdout: Box<dyn Read + Send>,
+    ) -> io::Result<Runner> {
+        let mut stdout = BufReader::new(stdout);
         let mut line = String::new();
         loop {
             line.clear();
             if stdout.read_line(&mut line)? == 0 {
-                let _ = child.kill();
-                let _ = child.wait();
+                behind.end();
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionRefused,
                     "the host's shell did not start a runner",
@@ -102,7 +126,7 @@ impl Runner {
             }
         }
         Ok(Runner {
-            child,
+            behind,
             stdin,
             stdout,
         })
@@ -272,6 +296,8 @@ mod tests {
             host,
             ctl: "unused".into(),
             master: false,
+            builtin: false,
+            client: None,
         });
         let time = |what: &str, f: &dyn Fn() -> String| {
             let at = std::time::Instant::now();
@@ -334,15 +360,8 @@ mod tests {
             .stderr(Stdio::null());
         let mut child = crate::spawn::spawn(&mut c).unwrap();
         let stdin = child.stdin.take().unwrap();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut line = String::new();
-        stdout.read_line(&mut line).unwrap();
-        assert_eq!(line.trim_end(), READY);
-        let mut r = Runner {
-            child,
-            stdin,
-            stdout,
-        };
+        let stdout = child.stdout.take().unwrap();
+        let mut r = Runner::over(Box::new(child), Box::new(stdin), Box::new(stdout)).unwrap();
         let out = r
             .run("printf 'a%%b\\n'; echo \"q'uo\\\\te\" >&2; exit 3\n", b"")
             .unwrap();

@@ -94,9 +94,17 @@ by the next channel failing, and that reopens the pane.
 
 *Beat:* `russh` or `ssh2` in-process — their own config parsing, agent,
 known hosts and jump hosts, when the user's `~/.ssh/config` is the
-thing to reuse, and a prompt problem that is worse in-process
-(reopened 2026-10-09 when Windows turned out to have no master to
-share — "Built, speed": a spike measured, not built). And a
+thing to reuse, and a prompt problem that is worse in-process.
+*Amended 2026-10-09* ("Built, our ssh"): on Windows no ssh can keep a
+master — Windows' own makes none, Git's MSYS one passes no session
+through one — so there every channel was a connection of its own and a
+password-only host could not be reached at all. The in-process client
+(russh) is the transport there now, by default, and anywhere by
+`ssh.client = "builtin"`: one connection a domain, every channel on
+it, `~/.ssh/config`, the agent, `known_hosts` and the prompts done by
+kawoosh, the questions asked in the window's confirm rather than a
+pane. OpenSSH's binary stays the default elsewhere and the way to what
+the client does not do (an RSA key, `Match`, a `ProxyCommand`). And a
 kawoosh agent on the host (`ssh box kawoosh agent`, vscode's shape:
 inotify, fast walks, one JSON channel): a binary to install per host
 and per architecture, so it is the round after, if polling and SFTP
@@ -797,3 +805,113 @@ why the runner was built first: it keeps that `ssh`, and its scripts
 are faster than the in-process exec. The in-process client stays the
 candidate for terminals and servers on Windows, measured here for the
 round that takes it up.
+
+## Built, our ssh
+
+**2026-10-09, the round that took it up.** "Let's continue with our
+ssh", measured in the real world: the user's OpenWrt router on the LAN
+(aarch64, busybox, dropbear with OpenSSH's `sftp-server`), the same
+container `sshd` behind 30 ms of `netem`, and OpenWrt's rootfs in a
+container for a dropbear with no SFTP at all.
+
+*What it is.* `kawoosh_systems::ssh`: russh 0.58 on `ring` (no CMake,
+no NASM; not later, whose ML-KEM's `kem` cannot sit beside the
+pre-release `age` holds; and no `rsa`, whose release candidates no
+longer build together) on a tokio runtime of two threads, used from
+ordinary threads through blocking readers and a writer, so everything
+above it is the code the OpenSSH path has. `ssh.client` says which
+carries a host: `builtin`, the default on Windows, or `openssh`, the
+default elsewhere. One connection a domain carries:
+
+- the SFTP subsystem — the same pipelined client (`Sftp::on_channel`),
+  `ShellFs` through the runners when the host refuses it;
+- the runners, each an exec channel running the loop;
+- a process (`kawoosh.spawn`, a compile, a tool) an exec channel, its
+  outputs pumped as a process's (`pump_outputs`), killed by a KILL
+  signal and the channel closed;
+- a language server an exec channel (`ServerProc::Channel`);
+- a terminal a pty channel, `portable-pty`'s master and child traits
+  over it (`ChannelPty`, `ChannelChild`), which `Terminal::spawn_on`
+  takes as it takes a local pseudo console — a resize a window-change;
+- the `$EDITOR` shim's way back: `tcpip-forward` of the terminal's port,
+  each connection the host opens on it carried to the command socket
+  (on Windows the TCP port its file names).
+
+What OpenSSH did by itself is done here. `~/.ssh/config`
+(`ssh_config::resolve`): `HostName` (`%h`), `User`, `Port`,
+`IdentityFile` (every one, `~` and `%d %u %r %h`), `IdentitiesOnly`,
+`ProxyJump` (each hop a connection through the one before, over a
+direct-tcpip channel), `UserKnownHostsFile`, `StrictHostKeyChecking`,
+first value winning, `Host` patterns and `!` negations, `Include` where
+it stands; `Match` is passed over. Authentication: the agent's keys
+(`SSH_AUTH_SOCK`; on Windows `SSH_AUTH_SOCK` when it names a pipe,
+OpenSSH's `\\.\pipe\openssh-ssh-agent`, then Pageant), then the
+identity files — the configured, else `id_ed25519`, `id_ecdsa`,
+`id_rsa` — an encrypted one's passphrase asked, three tries; then
+keyboard-interactive, each prompt asked; then the password, asked.
+`known_hosts`: a host whose key is there goes on; one not there is
+asked about with the key's SHA-256 fingerprint and, trusted, written
+to the first `UserKnownHostsFile` (OpenSSH's `accept-new`, asked);
+`StrictHostKeyChecking yes` refuses it, `no` takes it; a key that
+changed is refused in capitals with the line it differs from, nothing
+asked. A connection that drops (keepalives every 30 s, three missed)
+is noticed by its files' channel ending, and the next use connects
+again — the poll no longer says the open files were deleted when it
+could not ask (`watch.rs`: only a host's not-found is gone).
+
+*What asks.* The window's confirm, given a field (`confirm::Asking`):
+the connecting thread sends `IoMsg::DomainAsk` and waits; a host key
+is *Trust it* or *Refuse*, a passphrase or a password is typed into a
+field drawn as dots, `<CR>` answering and `<Esc>` refusing. A confirm
+put up over it answers it with none. *Beat:* a pane running a prompt
+of the CLI's (a process and a socket request for each question); the
+picker's query (shown as typed).
+
+*Found on the way, on either client.* A host's git root was made a
+local path: `git rev-parse --show-toplevel` prints the host's `/p`,
+which `fs.expand` made `C:\p` on Windows, so every `git` the listing
+and the status line asked for started in a directory that is not there
+— and the status line asked for the head at every frame, its failure
+not kept: 500 spawns in three seconds. The root is spelled on the
+domain now, and a head that could not be read stays unread until the
+repository moves.
+
+*Measured* (the live Kawoosh driven over its socket, each step until
+its buffer is there, the CLI's own round trip about 77 ms of each; and
+the client's own timings in `ssh.rs`'s and `pty_latency.rs`'s ignored
+tests):
+
+| | router, LAN, builtin | router, openssh | container 30 ms, builtin | container 30 ms, openssh |
+|---|---|---|---|---|
+| connect (the client alone) | 85 ms | 215 ms a connection | 231 ms | ~490 ms a connection |
+| connect + first file, live | 261 ms | 343 ms | 962 ms | 1,229 ms |
+| a file opened, live | ~160 ms | ~155 ms | ~340 ms (its frame 90) | ~410 ms (its frame 140) |
+| the 2 MB file, live | — | — | 590 ms | 729 ms |
+| a listing, live | ~155 ms | ~155 ms | 185–219 ms | 201–233 ms |
+| the picker's walk, live | 157 ms (143) | 155 ms | 157 ms (3,003) | 265 ms |
+| `:w`, its round trip | 92 ms | 93 ms | 232 ms | 279 ms |
+| a process (an exec) | 15 ms | 215 ms (a connection) | 135 ms | ~490 ms |
+| a script through a runner | 14 ms | — | 34 ms | 45 ms |
+| a terminal's echo | 2.4 ms | 2.4 ms | 31 ms | 31 ms |
+
+On the LAN every live step is at what the bench can tell; the client
+is faster to connect and to open a channel — a terminal, a language
+server, a process that streams — by a connection's handshake each, and
+over 30 ms its files' calls are cheaper than through a process's pipes.
+And it reaches what the OpenSSH path on Windows cannot: a host that
+takes a password, or a key with a passphrase and no agent running.
+
+Tests: `ssh_config.rs`'s resolve; `ssh.rs`'s
+`one_connection_carries_everything` (ignored, against any host: an
+exec's code and outputs, SFTP, a runner, a pty's echo, a forward back);
+`builtin_ssh.rs` against the container `sshd` when `KAWOOSH_TEST_SSHD`
+names it (the host key asked and written down, a password typed and not
+drawn, a file, a process, a terminal's shell answering, a passphrase,
+a changed key refused) and an OpenWrt dropbear when
+`KAWOOSH_TEST_DROPBEAR` does (no SFTP: a new file written and read
+back through the shell).
+
+Not built: `Match`, `ProxyCommand`, certificates, an RSA key (each the
+`openssh` client's still), GSSAPI; the hosts that refuse a key in
+`BatchMode` (`cdvn1`, `gfs1` here) were not connected to — they want a
+passphrase or a password typed, which the window now asks for.

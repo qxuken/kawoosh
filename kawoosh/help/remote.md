@@ -26,7 +26,7 @@ return {
 }
 ```
 
-Ports, keys, jump hosts and the agent are all ssh's business: whatever `ssh box` does in a shell, kawoosh does too. `ssh.command` names another ssh program, `ssh.poll_secs` sets how often the host's open files are checked for changes (5 seconds by default), and `ssh.master` says whether kawoosh keeps one master connection that everything shares (on by default, off on Windows; see below).
+Ports, keys, jump hosts and the agent are all ssh's business: whatever `ssh box` does in a shell, kawoosh does too. `ssh.command` names another ssh program, `ssh.poll_secs` sets how often the host's open files are checked for changes (5 seconds by default), `ssh.client` says which ssh carries a host: `builtin`, kawoosh's own (the default on Windows), or `openssh`, your `ssh` program (the default elsewhere); and `ssh.master` says whether that program keeps one master connection that everything shares (on by default, off on Windows; see below).
 
 ## Paths on a host
 
@@ -46,13 +46,13 @@ The first time you use a path on a host that is not connected, kawoosh connects 
 - `:domain` lists your domains, what each one is, whether it is connected and how its files travel, and how many of its files are open.
 - `:domain tab box` opens a new tab on `box`, as the picker does.
 
-Connecting opens a terminal in the dock running ssh, so a password, a passphrase or a second factor is asked for where you can answer it. Once ssh is in, the dock steps aside and every later connection to that host (files, terminals, processes) reuses it without asking again. Files travel over SFTP, which your ssh server almost certainly already provides. A host without an SFTP server, such as an OpenWrt router (dropbear and busybox), still connects: kawoosh reads, writes and lists its files with plain shell commands (`cat`, `ls`), which is slower but needs nothing installed.
+With your ssh program (`ssh.client = "openssh"`, the default except on Windows), connecting opens a terminal in the dock running ssh, so a password, a passphrase or a second factor is asked for where you can answer it. Once ssh is in, the dock steps aside and every later connection to that host (files, terminals, processes) reuses it without asking again. Files travel over SFTP, which your ssh server almost certainly already provides. A host without an SFTP server, such as an OpenWrt router (dropbear and busybox), still connects: kawoosh reads, writes and lists its files with plain shell commands (`cat`, `ls`), which is slower but needs nothing installed.
 
 **What "connected" means.** For an ssh host, kawoosh holds one ssh connection to it (ssh's master connection, kept with `ControlPersist`), and every file, terminal and process goes through it. It stays open until you disconnect or quit kawoosh. `:domain disconnect box` (or `<C-x>` in the picker) tells it to exit; the files you have open on the host stay open and connect again when you use them. For a WSL distro nothing is held open: connected means the distro answered. Disconnecting forgets it in kawoosh; the distro itself keeps running, as WSL runs it (`wsl --terminate NAME` stops it).
 
 If the connection drops, the next thing that uses the host connects again. Quitting kawoosh closes its connections.
 
-**On Windows** neither ssh can share one connection (Windows' own ssh cannot run a master, and Git's cannot pass a session through one), so there is no master and no pane: kawoosh connects when it needs to, with your key or agent and without asking anything, so a host that only takes a password does not connect (`ssh box` once in a terminal accepts a new host's key). Files travel over one SFTP connection, and short commands (the file manager's git colours, the file picker's walk) go through a shell kept open on the host, so each is a round trip rather than a new connection. A terminal or a language server is a connection of its own.
+**On Windows** kawoosh uses its own ssh (`ssh.client = "builtin"`), since neither ssh program there can share one connection. It reads your `~/.ssh/config` (`Host`, `HostName`, `User`, `Port`, `IdentityFile`, `Include`, `ProxyJump`), tries your agent (Windows' OpenSSH agent or Pageant) and your keys, and holds one connection to the host that files, terminals, processes and language servers all share. There is no pane: what has to be asked is asked in a dialog — a host it has not seen before (its key's fingerprint; trusted, it is written to `known_hosts`), a key's passphrase, a password — and a host whose key changed is refused. It does not take RSA keys, `Match` blocks or `ProxyCommand`; for those set `ssh.client = "openssh"`, which uses your `ssh` program with no master: a connection for each terminal or process, with your key or agent only (no password), short commands going through a shell kept open on the host.
 
 ## What works on a host
 

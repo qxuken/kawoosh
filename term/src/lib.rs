@@ -460,14 +460,32 @@ impl Terminal {
             .slave
             .spawn_command(builder)
             .context("spawning shell in pty")?;
+        drop(pair.slave);
+        Self::over(pair.master, child, cwd, size)
+    }
+
+    /// A terminal over a pty that is not this machine's: a channel of
+    /// an ssh connection (`kawoosh_systems::ssh`), behind `portable-pty`'s
+    /// traits, its program already started on the far side.
+    pub fn spawn_on(
+        master: Box<dyn portable_pty::MasterPty + Send>,
+        child: Box<dyn portable_pty::Child + Send + Sync>,
+        cwd: Option<&std::path::Path>,
+        size: TermSize,
+    ) -> Result<(Self, Box<dyn Read + Send>)> {
+        Self::over(master, child, cwd, size)
+    }
+
+    fn over(
+        master: Box<dyn portable_pty::MasterPty + Send>,
+        child: Box<dyn portable_pty::Child + Send + Sync>,
+        cwd: Option<&std::path::Path>,
+        size: TermSize,
+    ) -> Result<(Self, Box<dyn Read + Send>)> {
         #[cfg(windows)]
         let job = child.as_raw_handle().and_then(job::Job::of);
-        drop(pair.slave);
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .context("cloning pty reader")?;
-        let writer = pair.master.take_writer().context("taking pty writer")?;
+        let reader = master.try_clone_reader().context("cloning pty reader")?;
+        let writer = master.take_writer().context("taking pty writer")?;
         let (tx, events) = channel();
         let term = Term::new(config(HISTORY), &size, Proxy { tx });
         Ok((
@@ -482,7 +500,7 @@ impl Terminal {
                 commands: Vec::new(),
                 typed: false,
                 palette: Palette::default(),
-                pty: Some(pair.master),
+                pty: Some(master),
                 writer: Some(writer),
                 child: Some(child),
                 #[cfg(windows)]

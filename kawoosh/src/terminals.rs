@@ -554,18 +554,26 @@ impl Kawoosh {
             kawoosh_systems::fs::domain_of(&cwd).map(|(n, d)| (n.to_string(), d.to_path_buf()));
         let spawned = match &host {
             Some((name, dir)) => {
-                let Some(argv) = self.remote_terminal_argv(name, dir, cmd) else {
+                let Some(launch) = self.remote_terminal_argv(name, dir, cmd, size) else {
                     self.ed.message = format!("{name}: not connected (:domain connect {name})");
                     return None;
                 };
                 // The local end runs from a local directory.
                 let home = kawoosh_systems::fs::home().unwrap_or_else(std::env::temp_dir);
-                in_a_pty(|| Terminal::spawn_argv(&argv, Some(&home), size, &[])).map(
-                    |(mut t, r)| {
-                        t.set_domain(name, cwd.clone());
-                        (t, r)
-                    },
-                )
+                let started = match launch {
+                    RemoteLaunch::Argv(argv) => {
+                        in_a_pty(|| Terminal::spawn_argv(&argv, Some(&home), size, &[]))
+                    }
+                    // A channel of the in-process client's connection.
+                    RemoteLaunch::Channel(pty, child) => {
+                        Terminal::spawn_on(Box::new(pty), Box::new(child), None, size)
+                    }
+                    RemoteLaunch::Failed(e) => Err(anyhow::anyhow!(e)),
+                };
+                started.map(|(mut t, r)| {
+                    t.set_domain(name, cwd.clone());
+                    (t, r)
+                })
             }
             None => {
                 let shell = self.ed.settings.str("terminal.shell");
@@ -639,7 +647,8 @@ impl Kawoosh {
         name: &str,
         dir: &Path,
         cmd: Option<&str>,
-    ) -> Option<Vec<String>> {
+        size: TermSize,
+    ) -> Option<RemoteLaunch> {
         use kawoosh_systems::io::{remote_script, shell_quote, transport_of};
         let t = transport_of(name)?;
         let mut envs = vec![
@@ -710,7 +719,22 @@ impl Kawoosh {
             .as_deref()
             .filter(|_| matches!(t, kawoosh_systems::io::Transport::Ssh(_)))
             .map(|s| (port, s));
-        Some(t.remote_argv(&script, true, forward))
+        // The in-process client: a pty channel on the domain's
+        // connection, the port forwarded back on that connection too.
+        if let Some(client) = t.client() {
+            if let Some((port, sock)) = forward
+                && let Some(to) = kawoosh_systems::ssh::Local::of_socket(sock)
+                && let Err(e) = client.forward(port, to)
+            {
+                log::warn!("{name}: forwarding port {port} back: {e}");
+            }
+            let line = kawoosh_systems::io::ssh_line(&script);
+            return Some(match client.pty(&line, size.cols, size.rows) {
+                Ok((pty, child)) => RemoteLaunch::Channel(pty, child),
+                Err(e) => RemoteLaunch::Failed(format!("{name}: {e}")),
+            });
+        }
+        Some(RemoteLaunch::Argv(t.remote_argv(&script, true, forward)))
     }
 
     /// `terminal.scrollback`: the lines of history a terminal keeps.
@@ -1614,3 +1638,14 @@ def --env zk [...q] { cd (^$env.KAWOOSH_BIN pick dirs ...$q) }
 # zsh, bash:
 zk() { local d; d=$("$KAWOOSH_BIN" pick dirs "$@") && cd "$d"; }
 "#;
+
+/// How a terminal on a host starts: an `ssh -t` in a local pty, or a
+/// pty channel of the in-process client's connection.
+enum RemoteLaunch {
+    Argv(Vec<String>),
+    Channel(
+        kawoosh_systems::ssh::ChannelPty,
+        kawoosh_systems::ssh::ChannelChild,
+    ),
+    Failed(String),
+}

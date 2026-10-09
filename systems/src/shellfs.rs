@@ -517,6 +517,8 @@ mod tests {
                 host: "h".into(),
                 ctl: "/c".into(),
                 master: true,
+                builtin: false,
+                client: None,
             }
             .remote_argv(script, false, None)
             .pop()
