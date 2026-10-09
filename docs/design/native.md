@@ -671,6 +671,83 @@ the platform's line that builds the example; a tarball each and
 - Windows on arm64 is a row of the table (`-m arm64`) when Kawoosh is
   built there.
 
+**Native against Lua, measured, 2026-10-09** ("I want to see numbers
+for kawoosh native extension vs lua. make something mildly complex,
+instrument and measure, does it pay off?"). One plugin written twice —
+`tests/ext/words.c` over `kawoosh.h`/`kui.h`, `tests/ext/words.lua` as a
+Lua plugin would be — at three jobs, its outputs asserted equal:
+`tests/lua_costs.rs`, `native_vs_lua` (`LUA_COSTS_WORDS_MB`, 4). The
+corpus is the workspace's own Rust (`kawoosh/src`, `editor/src`,
+`lua/src`) repeated to size; release, Apple Silicon, the C at the
+harness' `-O1`; each side's own clock (C's monotonic, Lua's
+`kawoosh._clock`), medians of 7 runs.
+
+- **An index**: every identifier counted, ranked (count down, bytes
+  up), the top 100 into a scratch; the ranking kept for a pane.
+
+  | buffer | C, `kw_buf_text` | C, `kw_call("buf.text")` | Lua | Lua / C |
+  |---|---|---|---|---|
+  | 1 MB, 130k words | 3.9 ms | 4.3 ms | 20.5 ms | 5.2× |
+  | 4 MB, 500k words | 14.1 ms | 15.3 ms | 75.6 ms | 5.4× |
+  | 16 MB, 1.9M words | 49.1 ms | 54.1 ms | 271 ms | 5.5× |
+
+  The crossing is not the gap: reading the text is the same 1.4 ms per
+  4 MB on both sides (Lua's `buf.text` and `kw_buf_text` are each the
+  snapshot's one copy), the data route another 1.4. The gap is the
+  interpreter: `gmatch` and a table of counts at 64 ms against an open
+  hash table at 11; Lua's sort with a comparator 7.9 against `qsort`'s
+  1.2. Lua passes a 16 ms frame at about 0.8 MB, C at about 4.5.
+- **A rename**: every whole-word `self` replaced, one batch of edits,
+  forward by one side and back by the other, the buffer asserted the
+  corpus again.
+
+  | 4 MB, 11,822 edits | own clock | wall, the apply included |
+  |---|---|---|
+  | C: `memchr`, edges by byte, `kw_buf_edits` | 4.2 ms | 8.8 ms |
+  | Lua: `find` with `%f[%w_]self%f[^%w_]` | 57.5 ms (13.6×) | 61.5 ms (7.0×) |
+  | Lua: plain `find`, edges by `string.byte` | 7.5 ms (1.7×) | 11.9 ms (1.3×) |
+
+  At 1 and 16 MB the same ratios (12.5×/11.4× patterned, 1.7×/1.8×
+  plain). A frontier pattern tries a match at every byte; a plain find
+  is C inside Lua's string library, and what is left of Lua is one
+  iteration a hit. Queueing the edits: 1.1 ms from a Lua table, 0.25
+  from a `KwEdit` array; the engine's apply, about 4.5 ms, is the same
+  for both.
+- **A pane**: the ranking as 200 rows of count, word and a bar (a
+  scrolling column, about 1,000 nodes), the same tree from
+  `kui_ext_view` and from a Lua view; 120 frames idle, 120 with the
+  selection moved before each. Pane draw is the perf log's (`panes[…]`),
+  the frame the harness' wall clock; the editor alone is 0.16 ms a
+  frame.
+
+  | | C pane draw | frame | Lua pane draw | frame |
+  |---|---|---|---|---|
+  | idle | 0.20 ms | 0.52 ms | 0.07 ms (replayed) | 0.40 ms |
+  | moving every frame | 0.20 ms | 0.53 ms | 1.70 ms (fn 0.40, kui-lua build 1.12) | 2.09 ms |
+
+  Changing, the native pane fills 8.5× cheaper: two-thirds of Lua's
+  cost is kui-lua turning the returned tables into nodes, which a
+  native view never has. Idle, Lua wins: its pane is replayed (kui
+  F142, lua-boundary.md Decision 10), while a native view has no read
+  tracking, is never vouched for (`lua_view_fresh` answers
+  "untracked") and fills every frame. Both sides showed a lone 12–166
+  ms frame in some runs, the native pane's too: the Lua collector
+  paying for the 4–16 MB strings the index made, not either pane.
+
+**Does it pay off.** For a loop the interpreter runs — tokenising,
+counting, hashing, sorting with a comparator — five times, steady from
+1 MB to 16, and that is the line between a keystroke's work fitting a
+frame and not. For work Lua's string library does in C (a plain
+`find`, `gsub`, `rep`), not: within 2×, and 1.3× on the wall once the
+engine's apply is counted. For a pane redrawn every frame, eight times
+on its own draw, though 200 rows of Lua is 2 ms, comfortably in a
+frame, so it is a large tree redrawn continuously (live data, an
+animation) that asks for C; an idle pane is cheaper in Lua until
+native views can be replayed — a native `kw_*` generation the view
+bumps when its state changes would give the host a claim to vouch
+with. The boundary itself, since the typed doors, is no longer where
+the time goes.
+
 ## Open
 
 - **A door's documentation for C.** `types/` is written for LuaLS. The

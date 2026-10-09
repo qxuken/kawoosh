@@ -17,7 +17,8 @@
 //!
 //! Sizes: `LUA_COSTS_LINES` (vcs, 10000), `LUA_COSTS_FILES` (picker,
 //! 100000), `LUA_COSTS_DU` (du, 16000), `LUA_COSTS_ROWS` (sqlite,
-//! 200000), `LUA_COSTS_HEX_MB` (hex, 50). Everything is built under the
+//! 200000), `LUA_COSTS_HEX_MB` (hex, 50), `LUA_COSTS_WORDS_MB` (native
+//! against Lua, 4). Everything is built under the
 //! system's temp folder, HOME and the XDG folders pointed there too.
 
 mod drive;
@@ -923,4 +924,337 @@ fn native_buffer_access() {
         eprintln!("  {label:<40} C clock {said}; wall incl. apply {wall:9.1} ms");
         frames(&mut d, &mut app, 2);
     }
+}
+
+// ------------------------------------------------------- 8. native vs lua
+
+/// The workload: the workspace's own Rust (`kawoosh/src`, `editor/src`,
+/// `lua/src`), file after file in path order, again until `mb` MB.
+fn rust_corpus(mb: usize) -> String {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let ws = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let mut files = Vec::new();
+    for d in ["kawoosh/src", "editor/src", "lua/src"] {
+        walk(&ws.join(d), &mut files);
+    }
+    files.sort();
+    let mut text = String::new();
+    'fill: loop {
+        for f in &files {
+            text.push_str(&std::fs::read_to_string(f).unwrap());
+            if text.len() >= mb << 20 {
+                break 'fill;
+            }
+        }
+    }
+    text
+}
+
+/// `total X ms` out of a command's echo.
+fn total_of(said: &str) -> f64 {
+    said.split("total ")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(f64::NAN)
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    v.sort_by(f64::total_cmp);
+    v[v.len() / 2]
+}
+
+/// The perf log's lines from `from` on: the pane `what`'s draw, ms, a
+/// frame, and the spans named, summed a frame — medians.
+fn log_medians(log: &Path, from: usize, what: &str, spans: &[&str]) -> (usize, f64, Vec<f64>) {
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().skip(from).collect();
+    let field = |line: &str, open: &str| -> String {
+        line.split(open)
+            .nth(1)
+            .and_then(|s| s.split(']').next())
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut pane = Vec::new();
+    let mut per_span = vec![Vec::new(); spans.len()];
+    for l in &lines {
+        let panes = field(l, " panes[");
+        let Some(m) = panes
+            .split("; ")
+            .find_map(|p| p.strip_prefix(&format!("{what}=")))
+            .and_then(|m| m.parse::<f64>().ok())
+        else {
+            continue;
+        };
+        pane.push(m);
+        let sp = field(l, " spans[");
+        for (i, name) in spans.iter().enumerate() {
+            let v: f64 = sp
+                .split("; ")
+                .filter_map(|s| s.strip_prefix(&format!("{name}=")))
+                .filter_map(|s| s.split('/').next()?.parse::<f64>().ok())
+                .fold(0.0, |a, b| a + b);
+            per_span[i].push(v);
+        }
+    }
+    let n = pane.len();
+    if n == 0 {
+        return (0, f64::NAN, vec![f64::NAN; spans.len()]);
+    }
+    (n, median(pane), per_span.into_iter().map(median).collect())
+}
+
+fn log_len(log: &Path) -> usize {
+    std::fs::read_to_string(log)
+        .map(|t| t.lines().count())
+        .unwrap_or(0)
+}
+
+/// The same plugin twice — `tests/ext/words.c` and `tests/ext/words.lua`
+/// — at one mildly complex job, three ways: an index (every identifier
+/// of the buffer counted and ranked, the top 100 in a scratch), a
+/// rename (every whole-word `self` edited, as one batch), and a pane of
+/// 200 ranked rows drawn idle and with its selection moving every
+/// frame. Each run's own clock (the C side's, Lua's `kawoosh._clock`)
+/// and the wall clock around the command; the pane's draw from the
+/// per-frame perf log. The two outputs are asserted equal.
+///
+/// `LUA_COSTS_WORDS_MB` (4): the corpus' size, the workspace's own Rust.
+#[test]
+#[ignore]
+fn native_vs_lua() {
+    let _s = serial();
+    let mb = env_usize("LUA_COSTS_WORDS_MB", 4);
+    let reps = env_usize("LUA_COSTS_WORDS_REPS", 7);
+    let root = sandbox("words");
+    let path = root.join("corpus.rs");
+    let corpus = rust_corpus(mb);
+    std::fs::write(&path, &corpus).unwrap();
+    let log = root.join("perf.log");
+    // SAFETY: as `sandbox`'s: one case at a time, before the app reads it.
+    unsafe { std::env::set_var("KAWOOSH_PERF_LOG", &log) };
+    let so = drive::build_ext("words", &[], "words");
+    eprintln!(
+        "\n== native_vs_lua: words.c against words.lua, a {:.1} MB Rust buffer, {reps} runs each ==",
+        corpus.len() as f64 / (1 << 20) as f64
+    );
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let mut d = boot(&mut app, 1600.0, 900.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("e {}", path.display()));
+    app.wait_for_open();
+    frames(&mut d, &mut app, 3);
+    lua(
+        &mut app,
+        &format!("assert(kawoosh.extension('words', [[{}]]))", so.display()),
+    );
+    app.run_lua_source("words.lua", include_str!("ext/words.lua"));
+    frames(&mut d, &mut app, 2);
+
+    // -- 1. the index ---------------------------------------------------
+    eprintln!("  -- index: count + rank every identifier, top 100 into a scratch");
+    // One side's runs: its own clock's totals, the wall's, what it said
+    // last and the scratch it made.
+    #[derive(Default)]
+    struct Runs {
+        label: &'static str,
+        own: Vec<f64>,
+        wall: Vec<f64>,
+        said: String,
+        out: String,
+    }
+    let mut runs: Vec<Runs> = ["C, kw_buf_text", "C, kw_call(\"buf.text\")", "Lua"]
+        .into_iter()
+        .map(|label| Runs {
+            label,
+            ..Runs::default()
+        })
+        .collect();
+    for _ in 0..reps {
+        for (i, cmd) in ["cwords", "cwords_data", "lwords"].iter().enumerate() {
+            let t = Instant::now();
+            let said = lua(&mut app, &format!("kawoosh.run('{cmd}')"));
+            let wall = ms(t);
+            frames(&mut d, &mut app, 1);
+            let out = lua(&mut app, "kawoosh.echo(kawoosh.buf.text())");
+            lua(&mut app, "kawoosh.run('bd')");
+            frames(&mut d, &mut app, 1);
+            let r = &mut runs[i];
+            r.own.push(total_of(&said));
+            r.wall.push(wall);
+            r.said = said;
+            r.out = out;
+        }
+    }
+    for r in &runs {
+        eprintln!(
+            "  {:<24} own clock median {:8.2} ms  wall median {:8.2} ms   last: {}",
+            r.label,
+            median(r.own.clone()),
+            median(r.wall.clone()),
+            r.said
+        );
+    }
+    assert!(runs[0].out.contains(' '), "{}", runs[0].out);
+    assert_eq!(runs[0].out, runs[1].out, "C's two reads rank alike");
+    assert_eq!(runs[0].out, runs[2].out, "C and Lua rank alike");
+    let c_idx = median(runs[0].own.clone());
+    let l_idx = median(runs[2].own.clone());
+    eprintln!("  => index: Lua / C = {:.1}x (own clocks)", l_idx / c_idx);
+
+    // -- 2. the rename ----------------------------------------------------
+    eprintln!("  -- rename: every whole-word `self` → `slf_renamed` and back, one batch of edits");
+    let original = lua(&mut app, "kawoosh.echo(kawoosh.buf.text())");
+    assert_eq!(original.len(), corpus.len(), "the buffer is the corpus");
+    for (lname, lcmd) in [
+        ("Lua, pattern find", "lwords_rename"),
+        ("Lua, plain find", "lwords_rename_fast"),
+    ] {
+        let (mut c_own, mut c_wall, mut l_own, mut l_wall) = (vec![], vec![], vec![], vec![]);
+        let mut last = (String::new(), String::new());
+        for round in 0..reps.min(4) {
+            // Each side renames forward one round and back the next, so
+            // both make the same edits.
+            let order = if round % 2 == 0 {
+                [
+                    ("cwords_rename self slf_renamed".to_string(), true),
+                    (format!("{lcmd} slf_renamed self"), false),
+                ]
+            } else {
+                [
+                    (format!("{lcmd} self slf_renamed"), false),
+                    ("cwords_rename slf_renamed self".to_string(), true),
+                ]
+            };
+            for (cmd, is_c) in order {
+                let t = Instant::now();
+                let said = lua(&mut app, &format!("kawoosh.run('{cmd}')"));
+                let wall = ms(t);
+                frames(&mut d, &mut app, 2);
+                if is_c {
+                    c_own.push(total_of(&said));
+                    c_wall.push(wall);
+                    last.0 = said;
+                } else {
+                    l_own.push(total_of(&said));
+                    l_wall.push(wall);
+                    last.1 = said;
+                }
+            }
+            let now = lua(&mut app, "kawoosh.echo(kawoosh.buf.text())");
+            assert!(
+                now == original,
+                "{lcmd} round {round}: renamed and back is the corpus again"
+            );
+        }
+        eprintln!(
+            "  {:<24} own clock median {:8.2} ms  wall incl. apply {:8.2} ms   last: {}",
+            "C, kw_buf_edits",
+            median(c_own.clone()),
+            median(c_wall.clone()),
+            last.0
+        );
+        eprintln!(
+            "  {:<24} own clock median {:8.2} ms  wall incl. apply {:8.2} ms   last: {}",
+            lname,
+            median(l_own.clone()),
+            median(l_wall.clone()),
+            last.1
+        );
+        eprintln!(
+            "  => rename, {lname}: Lua / C = {:.1}x (own clocks), {:.1}x (wall)",
+            median(l_own) / median(c_own),
+            median(l_wall) / median(c_wall)
+        );
+    }
+
+    // -- 3. the pane --------------------------------------------------------
+    eprintln!(
+        "  -- pane: 200 ranked rows (count, word, bar), 120 frames idle, 120 moving the selection"
+    );
+    // The ranking the panes draw: each side's own, made again.
+    lua(
+        &mut app,
+        "kawoosh.run('cwords') kawoosh.run('bd') kawoosh.run('lwords') kawoosh.run('bd')",
+    );
+    frames(&mut d, &mut app, 2);
+    let base = frames(&mut d, &mut app, 120);
+    eprintln!("  {}", base.line("no pane (the editor alone), a frame"));
+    let spans = ["lua view fn", "kui-lua build"];
+    for (label, open, next, what) in [
+        ("C pane", "cwords_pane", "cwords_next", "lua cwords"),
+        ("Lua pane", "lwords_pane", "lwords_next", "lua lwords"),
+    ] {
+        lua(&mut app, &format!("kawoosh.run('{open}')"));
+        for _ in 0..6 {
+            d.advance(0.25);
+            d.frame(&mut app);
+        }
+        let drawn = texts(&d).iter().any(|t| t.ends_with("words ranked, row 1"));
+        assert!(drawn, "{label} drawn");
+        frames(&mut d, &mut app, 2);
+        let from = log_len(&log);
+        let mut idle_v = Vec::new();
+        let mut idle = Stats::default();
+        for _ in 0..120 {
+            d.advance(0.016);
+            let t = Instant::now();
+            d.frame(&mut app);
+            idle.add(ms(t));
+            idle_v.push(ms(t));
+        }
+        frames(&mut d, &mut app, 1);
+        let (n_i, pane_i, sp_i) = log_medians(&log, from, what, &spans);
+        let from = log_len(&log);
+        let mut moving = Stats::default();
+        let mut moving_v = Vec::new();
+        for _ in 0..120 {
+            lua(&mut app, &format!("kawoosh.run('{next}')"));
+            d.advance(0.016);
+            let t = Instant::now();
+            d.frame(&mut app);
+            moving.add(ms(t));
+            moving_v.push(ms(t));
+        }
+        frames(&mut d, &mut app, 1);
+        let (n_m, pane_m, sp_m) = log_medians(&log, from, what, &spans);
+        eprintln!(
+            "  {}  median {:6.2} ms",
+            idle.line(&format!("{label}, idle, a frame")),
+            median(idle_v)
+        );
+        eprintln!(
+            "      pane draw median {pane_i:6.3} ms over {n_i}  (view fn {:.3}, kui-lua build {:.3})",
+            sp_i[0], sp_i[1]
+        );
+        eprintln!(
+            "  {}  median {:6.2} ms",
+            moving.line(&format!("{label}, selection moving, a frame")),
+            median(moving_v)
+        );
+        eprintln!(
+            "      pane draw median {pane_m:6.3} ms over {n_m}  (view fn {:.3}, kui-lua build {:.3})",
+            sp_m[0], sp_m[1]
+        );
+        ex(&mut d, &mut app, "close");
+        for _ in 0..6 {
+            d.advance(0.25);
+            d.frame(&mut app);
+        }
+    }
+    unsafe { std::env::remove_var("KAWOOSH_PERF_LOG") };
 }
