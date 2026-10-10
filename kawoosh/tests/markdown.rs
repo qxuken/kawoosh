@@ -1858,6 +1858,66 @@ fn not_wrapping_the_pane_scrolls_sideways_under_its_numbers() {
         app.left_max_of(v),
         "the offset held to the room ({pane})"
     );
+    // The caret at the line's start, the pane swiped past it: the caret
+    // is under the number, whose ground is painted over it — the block
+    // in normal mode, the bar in insert (a float the row declared after
+    // the number's, once).
+    for mode in ["", "i"] {
+        d.press(&mut app, "<Esc>");
+        d.press(&mut app, "3G0");
+        d.press(&mut app, mode);
+        settle(&mut d, &mut app);
+        // Just far enough that its cell is where the number is.
+        let n = number(&d, "3");
+        let text_x = d
+            .core
+            .nodes()
+            .into_iter()
+            .find(|x| {
+                x.text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("words words"))
+            })
+            .unwrap()
+            .rect
+            .x;
+        d.wheel(&mut app, 300.0, moved.y + 5.0, -(text_x - n.x - 2.0), 0.0);
+        for _ in 0..4 {
+            d.frame(&mut app);
+        }
+        let scale = d.scale;
+        let dl = d.core.output().0;
+        let at = |q: &kui_native::Quad| {
+            let r = q.rect;
+            (r.x / scale, r.y / scale, r.w / scale, r.h / scale)
+        };
+        let caret = dl
+            .quads
+            .iter()
+            .rposition(|q| {
+                let (x, y, _, h) = at(q);
+                q.kind == kui_native::QuadKind::Solid
+                    && q.color == app.pal.accent
+                    && x < n.x + n.w
+                    && y < n.y + n.h
+                    && y + h > n.y
+            })
+            .unwrap_or_else(|| panic!("{mode:?}: the caret under the number"));
+        let ground = dl
+            .quads
+            .iter()
+            .rposition(|q| {
+                let (x, y, w, h) = at(q);
+                q.kind == kui_native::QuadKind::Solid
+                    && q.color == app.pal.panel
+                    && x <= n.x
+                    && x + w >= n.x + n.w
+                    && y <= n.y
+                    && y + h >= n.y + n.h
+            })
+            .expect("the number's ground");
+        assert!(ground > caret, "{mode:?}: painted over the caret");
+    }
 }
 
 /// `:wrap` in a rendered pane flips that pane's own `markdown.wrap`; the

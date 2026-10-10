@@ -1463,24 +1463,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                         let float = FloatConfig::parent().offset(at.x, 0.0).clipped();
                         let spec = spec.height(body).cross_align(Align::Center);
                         if at.kept {
-                            // Its room in the flow, a line tall (an empty
-                            // line's row has nothing else to be tall by),
-                            // and the float on the row's ground the
-                            // line's height, so the text passing under it
-                            // — a heading's, taller than the number — is
-                            // hidden.
+                            // Its room in the flow, a line tall: an empty
+                            // line's row has nothing else to be tall by.
+                            // The number itself is drawn last
+                            // (`pinned`), over what passes under it.
                             ui.leaf(NodeSpec::row().size(*w, lh));
-                            ui.with(
-                                NodeSpec::column()
-                                    .size(*w, lh)
-                                    .bg(f.bg.unwrap_or(pal.panel))
-                                    .role(Role::None)
-                                    .float(float),
-                                |ui| {
-                                    ui.leaf(NodeSpec::row().height(y));
-                                    number(ui, spec);
-                                },
-                            );
                         } else {
                             number(ui, spec.float(float.offset(at.x, y)));
                         }
@@ -1871,9 +1858,57 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             out.set(text_key.get());
         }
     };
+    // A number kept at the pane's edge while the row scrolls under it
+    // (`GutterAt::kept`): a float on the row's ground the line's height,
+    // declared after everything else in the row — kui stacks a float
+    // over the floats before it, and a bar caret, a lifted block or the
+    // cell past the end scrolled under the number drew over it. A pixel
+    // taller, on whole pixels: a block caret's ground, snapped outward,
+    // reached a pixel below it (2026-10-10).
+    let pinned = |ui: &mut Ui<'_>| {
+        let Some(f) = form else { return };
+        let (Some((w, label, current)), Some(at)) = (&f.gutter, f.gutter_at) else {
+            return;
+        };
+        if !at.kept {
+            return;
+        }
+        let body = face.line_height;
+        let y = ((lh - body) / 2.0 + 0.3 * face.size * (f.scale - 1.0)).max(0.0);
+        ui.with(
+            NodeSpec::column()
+                .size(*w, lh + 1.0)
+                .bg(f.bg.unwrap_or(pal.panel))
+                .pixel_snap()
+                .role(Role::None)
+                .float(FloatConfig::parent().offset(at.x, 0.0).clipped()),
+            |ui| {
+                ui.leaf(NodeSpec::row().height(y));
+                ui.with(
+                    NodeSpec::row()
+                        .width(*w)
+                        .height(body)
+                        .pad_xy(GUTTER_PAD, 0.0)
+                        .main_align(Align::End)
+                        .cross_align(Align::Center),
+                    |ui| {
+                        sign_bar(ui, f.sign, lh);
+                        if let Some((text, x)) = &f.blame {
+                            blame_text(ui, face, pal, text, *x, lh);
+                        }
+                        let color = if *current { pal.dim } else { pal.faint };
+                        ui.text(label, mono(face, pal).color(color));
+                    },
+                );
+            },
+        );
+    };
     match form {
         Some(f) => {
-            ui.with_keyed(&f.key, row, body);
+            ui.with_keyed(&f.key, row, |ui| {
+                body(ui);
+                pinned(ui);
+            });
         }
         None => {
             ui.with(row, body);
