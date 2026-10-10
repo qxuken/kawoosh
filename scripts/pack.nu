@@ -119,9 +119,11 @@ def export-list [] {
 }
 
 # `kui.h` of the kui-ffi the build links, and that kui's version: the
-# header the export list was read from.
+# header the export list was read from. The graph for this host alone:
+# unfiltered, `--offline` wants every target's sources.
 def kui-header [] {
-    let pkg = ^cargo metadata --format-version 1 --offline --manifest-path ($ROOT | path join Cargo.toml)
+    let host = ^rustc -vV | lines | where $it starts-with "host: " | first | str substring 6..
+    let pkg = ^cargo metadata --format-version 1 --offline --filter-platform $host --manifest-path ($ROOT | path join Cargo.toml)
         | from json | get packages | where name == "kui-ffi" | first
     { path: ($pkg.manifest_path | path dirname | path join include kui.h), version: $pkg.version }
 }

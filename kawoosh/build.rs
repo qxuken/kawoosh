@@ -172,7 +172,10 @@ fn prototypes(header: &str, prefix: &str) -> Vec<String> {
 }
 
 /// `include/kui.h` of the kui-ffi in this build's graph, wherever cargo
-/// put it — the registry's copy, or a checkout a `path` names.
+/// put it — the registry's copy, or a checkout a `path` names. The graph
+/// for this build's target alone: unfiltered, `cargo metadata` wants the
+/// source of every target's dependencies, and `--offline` will not fetch
+/// one no build here needed (`fiat-crypto`, `russh`'s off Windows).
 // One spawn on the build script's one thread: `kawoosh_systems::spawn`
 // serialises the app's many, and is not a build dependency.
 #[allow(clippy::disallowed_methods)]
@@ -184,8 +187,10 @@ fn kui_header(manifest: &str) -> Result<std::path::PathBuf, String> {
             "--format-version",
             "1",
             "--offline",
-            "--manifest-path",
+            "--filter-platform",
         ])
+        .arg(std::env::var("TARGET").map_err(|e| format!("TARGET: {e}"))?)
+        .arg("--manifest-path")
         .arg(std::path::Path::new(manifest).join("Cargo.toml"))
         .output()
         .map_err(|e| format!("cargo metadata: {e}"))?;
