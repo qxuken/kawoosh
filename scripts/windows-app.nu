@@ -270,9 +270,11 @@ def register-editor [exe: path, built: path] {
 }
 
 # `kui.h` of the kui-ffi the build links: the header `kawoosh.h`
-# includes, at the ABI kawoosh.exe was built with.
+# includes, at the ABI kawoosh.exe was built with. The graph for this
+# host alone: unfiltered, `--offline` wants every target's sources.
 def kui-header [manifest: path]: nothing -> path {
-  ^cargo metadata --format-version 1 --offline --manifest-path $manifest
+  let host = ^rustc -vV | lines | where $it starts-with 'host: ' | first | str substring 6..
+  ^cargo metadata --format-version 1 --offline --filter-platform $host --manifest-path $manifest
     | from json | get packages | where name == 'kui-ffi' | first
     | get manifest_path | path dirname | path join include kui.h
 }
