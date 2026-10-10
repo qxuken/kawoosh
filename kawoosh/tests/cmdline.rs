@@ -574,3 +574,46 @@ fn the_word_and_line_keys_reach_insert_mode_the_prompt_and_a_field() {
     assert_eq!(app.ed.field_text(field).as_deref(), Some(" "));
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// What completes is the word before the caret: a caret moved back
+/// inside a word offers nothing (the ghost was drawn there, a value's
+/// `false` in the middle of `markdown.render`); one moved back after a
+/// word completes it, the text after the caret kept and the caret
+/// after what was taken.
+#[test]
+fn the_completion_reads_up_to_the_caret() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "");
+    d.frame(&mut app);
+    d.keys(&mut app, ":set markdown.render ");
+    assert!(app.cmdline_ghost().is_some(), "a value at the end");
+    for _ in 0.."markdown.render ".len() {
+        d.press(&mut app, "<Left>");
+    }
+    assert_eq!(app.ed.prompt_caret(), Some("set ".len()));
+    assert_eq!(app.cmdline_ghost(), None, "inside a word, nothing");
+    assert!(app.cmd_completion.is_none());
+    tab(&mut d, &mut app);
+    assert_eq!(
+        app.ed.prompt_text().as_deref(),
+        Some("set markdown.render "),
+        "nothing taken"
+    );
+    leave(&mut d, &mut app);
+
+    d.keys(&mut app, ":set mark true");
+    for _ in 0.." true".len() {
+        d.press(&mut app, "<Left>");
+    }
+    let ghost = app.cmdline_ghost().expect("the path before the caret");
+    let cand = format!("mark{ghost}");
+    assert!(cand.starts_with("markdown."), "{cand}");
+    tab(&mut d, &mut app);
+    assert_eq!(
+        app.ed.prompt_text().unwrap_or_default(),
+        format!("set {cand} true")
+    );
+    assert_eq!(app.ed.prompt_caret(), Some("set ".len() + cand.len()));
+    leave(&mut d, &mut app);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

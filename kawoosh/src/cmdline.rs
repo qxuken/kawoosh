@@ -14,7 +14,9 @@
 //! A command's subcommands complete as its first word (`:memory fo`
 //! is `:memory forget`), and the words after complete as the
 //! subcommand's own. Nothing is a popup: the candidates are a row in
-//! the strip. The keys are the shell's commands `prompt complete`
+//! the strip. What completes is the word before the caret — a caret
+//! moved back into the line completes there, the text after it kept;
+//! one inside a word completes nothing. The keys are the shell's commands `prompt complete`
 //! (`<Tab>`, `<C-y>`) and `prompt cycle next|prev` (`<C-n>`, `<C-p>`),
 //! bound `when field:cmdline` over the engine's history walk on the
 //! same keys, which a search prompt keeps.
@@ -25,7 +27,7 @@ use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_editor::commands::set_value;
-use kawoosh_editor::{ArgKind, Mode, Prompt, Spec};
+use kawoosh_editor::{ArgKind, Mode, Prompt, Selection, Selections, Spec};
 
 use crate::commands::{ShellCommand, cmd};
 
@@ -35,11 +37,12 @@ use crate::app::Kawoosh;
 /// None when it could not be read; kept while the prompt is open.
 pub(crate) type Listed = RefCell<HashMap<PathBuf, Option<Rc<Vec<kawoosh_doc::fs::Entry>>>>>;
 
-/// What the command line is completing: the token from `start` and the
-/// candidates for it, `index` the current one.
+/// What the command line is completing: the token from `start` to the
+/// caret at `at`, the candidates for it, `index` the current one.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CmdCompletion {
     pub start: usize,
+    pub at: usize,
     pub candidates: Vec<String>,
     pub index: usize,
 }
@@ -405,6 +408,23 @@ impl Kawoosh {
             .collect()
     }
 
+    /// Where on `line` the completion reads up to: the caret in insert
+    /// mode, the line's end otherwise (a block caret is on a letter, and
+    /// no key completes there). None when the caret is inside a word —
+    /// a candidate would be put in the middle of it.
+    fn cmdline_caret(&self, line: &str) -> Option<usize> {
+        let v = self.ed.prompt_view()?;
+        if self.ed.views[v].mode != Mode::Insert {
+            return Some(line.len());
+        }
+        let at = self.ed.prompt_caret()?.min(line.len());
+        let at = (0..=at).rev().find(|&i| line.is_char_boundary(i))?;
+        match line[at..].chars().next() {
+            Some(c) if !c.is_whitespace() => None,
+            _ => Some(at),
+        }
+    }
+
     /// Whether the command line is at the `:` prompt.
     fn at_command_prompt(&self) -> bool {
         self.ed.prompt_kind() == Some(Prompt::Command)
@@ -418,15 +438,28 @@ impl Kawoosh {
         }
         let c = self.cmd_completion.as_ref()?;
         let line = self.ed.prompt_text()?;
-        let token = line.get(c.start..)?;
+        let v = self.ed.prompt_view()?;
+        // Drawn at the caret, so only in insert mode and only while the
+        // caret is where the candidates were read (a click moves it
+        // without a key).
+        if self.ed.views[v].mode != Mode::Insert || self.ed.prompt_caret()? != c.at {
+            return None;
+        }
+        let token = line.get(c.start..c.at)?;
         c.ghost(token).map(str::to_string)
     }
 
-    /// `<Tab>` / `<C-y>`: the token replaced with the current candidate,
-    /// then completed on from it (a directory's entries, a command's
-    /// longer spellings). Nothing to take is nothing done — a `<Tab>`
-    /// is never a character on the command line.
+    /// `<Tab>` / `<C-y>`: the token before the caret replaced with the
+    /// current candidate, the text after it kept, the caret after the
+    /// candidate; then completed on from it (a directory's entries, a
+    /// command's longer spellings). Nothing to take is nothing done — a
+    /// `<Tab>` is never a character on the command line.
     fn take_candidate(&mut self) {
+        // A caret moved since the candidates were read (a click) reads
+        // them again where it is.
+        if self.cmd_completion.as_ref().map(|c| c.at) != self.ed.prompt_caret() {
+            self.cmdline_refresh();
+        }
         let Some(c) = &self.cmd_completion else {
             return;
         };
@@ -434,10 +467,14 @@ impl Kawoosh {
         let Some(line) = self.ed.prompt_text() else {
             return;
         };
-        let start = c.start.min(line.len());
-        let mut line = line[..start].to_string();
-        line.push_str(cand);
+        let at = c.at.min(line.len());
+        let start = c.start.min(at);
+        let caret = start + cand.len();
+        let line = format!("{}{cand}{}", &line[..start], &line[at..]);
         self.ed.set_prompt_text(&line);
+        if let Some(v) = self.ed.prompt_view() {
+            self.ed.views[v].sels = Selections::single(Selection::point(caret));
+        }
         self.cmdline_refresh();
     }
 
@@ -469,13 +506,18 @@ impl Kawoosh {
             return;
         }
         let line = self.ed.prompt_text().unwrap_or_default();
-        let (start, candidates) = self.cmd_candidates(&line);
+        let Some(at) = self.cmdline_caret(&line) else {
+            self.cmd_completion = None;
+            return;
+        };
+        let (start, candidates) = self.cmd_candidates(&line[..at]);
         let index = match &self.cmd_completion {
-            Some(c) if c.start == start && c.candidates == candidates => c.index,
+            Some(c) if c.start == start && c.at == at && c.candidates == candidates => c.index,
             _ => 0,
         };
         self.cmd_completion = Some(CmdCompletion {
             start,
+            at,
             candidates,
             index,
         });
