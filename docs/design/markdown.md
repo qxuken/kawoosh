@@ -176,7 +176,41 @@ it — one frame late on a wrapped row, never wrong on a still one.
 `j` and `k` stay by line; `gj` `gk` by visual line are not this round.
 
 *Beat:* no wrap — the plain pane's long line scrolled sideways, which
-is the thing that makes prose unreadable. And wrap for every language
+is the thing that makes prose unreadable.
+
+*Amended 2026-10-10, asked: "markdown wrap. it should disable or
+enable including pane local settings. when wrap is on, it should wrap
+inside tables".* `markdown.wrap` (`true` by default), a setting a pane
+may hold (pane-settings.md), and `:wrap` in a rendered pane flips the
+pane's own, since `editor.wrap` means nothing there. **On**, a table
+wraps too: it is held to the pane's width (`NodeSpec::table()` grown,
+not fit), its fit columns compressed into it as kui compresses them,
+the widest first, each cell's text wrapping `break-spaces` in its
+column down to its longest word (`Min::AUTO`), the row as tall as its
+tallest cell (`TableRow::wrap`: the cells and their rules `Fit`/grown,
+not a fixed height). A row's number is then no longer in a column
+beside the table — that column's rows had their heights before the
+frame, and a wrapped row's is known after it — but a float on the row,
+left of the table (`RowForm::gutter_at`, `kept: false`). The caret's
+row, its source, wraps across the table's width. **Off**, a row is as
+long as its line and the pane scrolls sideways as a code pane does:
+the lines column `scroll_x`, the view's `left` its offset, followed to
+the caret measured in the row's face and size, the wheel's held to
+last frame's room (`Kawoosh::left_max`) — kui clamps the scroll to
+the content and animates it back, and what the offset places would
+otherwise part from the text through a fast swipe, as it did the
+first day. The numbers stay at the pane's left edge: each a float on
+its row at `left`, on the row's ground the line's height, with its
+room kept in the flow (`kept: true`); a table's column of them a float
+the same way. A table is as wide as its columns and the pane scrolls
+over it as over a long line.
+
+*Beat:* a table that scrolls on its own inside a pane that scrolls —
+two sideways scrollers, one inside the other, and a table cut at the
+pane's edge once the pane had scrolled. Its own scroll (the block's
+`scroll_x`, `md_table_left`, its caret follow and its `table` scroll
+tag) is gone with this amendment: on, nothing is wider than the pane;
+off, the pane is what scrolls. And wrap for every language
 in the same round: the door is the same, and a `wrap` setting can
 follow through it, but a code buffer's wrap changes the long-line
 windowing (`LONG_LINE_BYTES`), the caret measure and every column
@@ -369,7 +403,8 @@ After a day's use (2026-09-23), five more:
   the reparse's changed span was the typed byte, and the layer's runs
   outside it stood. The ts thread widens every structure span to the
   lines it touches.
-- **A table scrolls on its own.** A table's rows are one block, keyed
+- **A table scrolls on its own** (until 2026-10-10: Decision 4's
+  amendment wraps it to the pane, or scrolls the pane over it). A table's rows are one block, keyed
   by its first line, that scrolls sideways — the wheel's `dx` over it,
   and the caret, which slides it to show itself — its line numbers in
   a column beside it that does not scroll; the rest of the pane does

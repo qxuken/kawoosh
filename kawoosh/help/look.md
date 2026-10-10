@@ -108,6 +108,8 @@ A markdown buffer is drawn rendered: the marks hidden, headings larger, prose wr
 
 `markdown.reveal` chooses how much of the source the caret shows. `"line"` (the default) shows its whole line. `"span"` keeps the line rendered and shows only the marks of what the caret is in: the `**` of a bold word, a link with its destination, a code span's backticks, a heading's `#` from anywhere on the heading. `"none"` keeps the caret's line rendered too; on a hidden mark the caret stands on the next character shown, and a check box, bullet or quote bar shows its source while the caret is on it, so you can edit it. A caret on a table, a line of images or a rule still sees its source, since it has nowhere else to stand. A read-only buffer, a help page among them, is always drawn as under `"none"`: nothing is typed there, so no source is shown for it.
 
+`markdown.wrap` (on by default) wraps the rendered text at the pane's width, and a table's cells in their columns, so a wide table fits the pane. Turned off, every line keeps to one row and the pane scrolls sideways to the caret, as a code pane does, the line numbers staying at its left edge; a wide table is then as wide as its columns. `:wrap` in a rendered pane turns it on or off for that pane alone (`:setlocal markdown.wrap=false` says the same).
+
 `markdown.navigation = "row"` makes `j` and `k` (and the arrows) move one row on screen, through a wrapped paragraph, as `gj` and `gk` always do. An operator's `j`, as in `dj`, is still a line.
 
 `:markdown toggle` (`<leader>om`) switches between rendered and source for the session. `gx` on a link opens it: a URL in the browser, a path here, an `#anchor` at its heading.
@@ -118,6 +120,7 @@ A markdown buffer is drawn rendered: the marks hidden, headings larger, prose wr
 | `markdown.heading` | `{ 1.6, 1.35, 1.15, 1.0 }` | heading sizes for h1 to h6, as a ratio of the text; a level not listed is the text's size |
 | `markdown.reveal` | `"line"` | what the caret shows as its source: `line`, `span` or `none` |
 | `markdown.navigation` | `"line"` | what `j` and `k` move by: a `line` or a `row` on screen |
+| `markdown.wrap` | `true` | wrap at the pane's width, tables in their cells; off, the pane scrolls sideways |
 | `markdown.image_max_mb` | `16` | images larger than this show their alt text |
 
 ## The selection

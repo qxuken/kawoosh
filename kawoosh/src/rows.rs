@@ -839,6 +839,8 @@ pub struct RowForm {
     /// The gutter's width, and what it shows beside the row and
     /// whether it is the caret's line.
     pub gutter: Option<(f32, String, bool)>,
+    /// Where the number is drawn when not first in the row's flow.
+    pub gutter_at: Option<GutterAt>,
     /// The line's hunk sign and its colour (docs/design/vcs.md).
     pub sign: Option<(kawoosh_editor::Sign, Color)>,
     /// The blame column's text on this row, and how far in it starts
@@ -857,6 +859,17 @@ pub struct RowForm {
     pub table: Option<TableRow>,
 }
 
+/// A row's number as a float, `x` from the row's left: a table's row
+/// has it left of the table, since the row's in-flow children are its
+/// cells; a row of a pane that scrolls sideways (`markdown.wrap` off)
+/// has it at the pane's left edge, over the text passing under it, the
+/// gutter's width `kept` in the flow for it.
+#[derive(Clone, Copy, Debug)]
+pub struct GutterAt {
+    pub x: f32,
+    pub kept: bool,
+}
+
 /// A table's row as the cells of a kui table, which lines its columns
 /// up whatever is in them: a 1px rule, a cell, a rule, …, a rule — the
 /// rules as tall as the row, so they meet the next row's.
@@ -868,7 +881,10 @@ pub struct TableRow {
     pub cells: Vec<TableCell>,
     /// The delimiter row: a rule across each cell.
     pub delimiter: bool,
+    /// The row's height; with `wrap`, its least: its cells' texts wrap
+    /// in their columns and the row is as tall as the tallest.
     pub height: f32,
+    pub wrap: bool,
     /// A cell's pad on each side.
     pub pad: f32,
     pub rule: Color,
@@ -894,13 +910,28 @@ pub fn table_cells(
     t: &TableRow,
     mut text: impl FnMut(&mut Ui<'_>, Range<usize>),
 ) {
+    // As tall as the row: its own height, or, its texts wrapping, the
+    // row's whatever its tallest cell made it.
     let rule = |ui: &mut Ui<'_>| {
-        ui.leaf(NodeSpec::row().size(1.0, t.height).bg(t.rule));
+        let rule = NodeSpec::row().width(1.0).bg(t.rule);
+        ui.leaf(if t.wrap {
+            rule.height(Sizing::GROW).min_height(Min::px(t.height))
+        } else {
+            rule.height(t.height)
+        });
     };
     let cell = NodeSpec::row()
-        .height(t.height)
         .pad_xy(t.pad, 0.0)
         .cross_align(Align::Center);
+    let cell = if t.wrap {
+        // A column the table compressed: its text wraps in it, down to
+        // its longest word, and the row grows.
+        cell.height(Sizing::Fit)
+            .min_height(Min::px(t.height))
+            .min_width(Min::AUTO)
+    } else {
+        cell.height(t.height)
+    };
     for j in 0..t.columns.max(t.cells.len()) {
         rule(ui);
         if t.delimiter {
@@ -1318,7 +1349,12 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     // the numbers of lines at the body's size sit on it already, and an
     // image or a rule has no baseline to share.
     let on_baseline = form.is_some_and(|f| {
-        f.scale != 1.0 && f.gutter.is_some() && f.images.is_empty() && !f.rule && f.table.is_none()
+        f.scale != 1.0
+            && f.gutter.is_some()
+            && f.gutter_at.is_none()
+            && f.images.is_empty()
+            && !f.rule
+            && f.table.is_none()
     });
     // At least the pane's width, and as wide as its text: the floor is
     // what the lines column's horizontal scroll measures its content by.
@@ -1404,21 +1440,41 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     .pad_xy(GUTTER_PAD, 0.0)
                     .main_align(Align::End)
                     .role(Role::None);
-                ui.with(
-                    if on_baseline {
-                        spec
-                    } else {
-                        spec.height(lh).cross_align(Align::Center)
-                    },
-                    |ui| {
+                let number = |ui: &mut Ui<'_>, spec: NodeSpec| {
+                    ui.with(spec, |ui| {
                         sign_bar(ui, f.sign, lh);
                         if let Some((text, x)) = &f.blame {
                             blame_text(ui, face, pal, text, *x, lh);
                         }
                         let color = if *current { pal.dim } else { pal.faint };
                         ui.text(label, mono(face, pal).color(color));
-                    },
-                );
+                    });
+                };
+                match f.gutter_at {
+                    // Out of the flow: a float beside the first line,
+                    // cut where the pane cuts the row. Off the row's
+                    // flow there is no baseline to share: a line's
+                    // baseline is about 0.3 of its size below its
+                    // middle, so a larger line's number goes down by
+                    // the difference.
+                    Some(at) => {
+                        let body = face.line_height;
+                        let y = ((lh - body) / 2.0 + 0.3 * face.size * (f.scale - 1.0)).max(0.0);
+                        let float = FloatConfig::parent().offset(at.x, 0.0).clipped();
+                        let spec = spec.height(body).cross_align(Align::Center);
+                        if at.kept {
+                            // Its room in the flow, a line tall: an empty
+                            // line's row has nothing else to be tall by.
+                            // The number itself is drawn last
+                            // (`pinned`), over what passes under it.
+                            ui.leaf(NodeSpec::row().size(*w, lh));
+                        } else {
+                            number(ui, spec.float(float.offset(at.x, y)));
+                        }
+                    }
+                    None if on_baseline => number(ui, spec),
+                    None => number(ui, spec.height(lh).cross_align(Align::Center)),
+                }
             }
             if !f.images.is_empty() && f.table.is_none() {
                 ui.with(NodeSpec::row().gap(8.0).role(Role::None), |ui| {
@@ -1601,8 +1657,12 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             });
         }
         flush(ui, &segs[from..]);
-        // A wrapped row's line number, in the row before its text.
-        let gutter = form.and_then(|f| f.gutter.as_ref()).map_or(0.0, |g| g.0);
+        // A row's line number, in the row before its text — or out of
+        // its flow, taking no room unless it keeps it.
+        let gutter = form
+            .filter(|f| f.gutter_at.is_none_or(|at| at.kept))
+            .and_then(|f| f.gutter.as_ref())
+            .map_or(0.0, |g| g.0);
         // Where byte `b` of a wrapped row is: where kui laid it out last
         // frame, against where it laid the first — the frame that types
         // is a frame behind, and the next catches up.
@@ -1633,7 +1693,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 caret_bar_at(ui, pal.accent, line.caret_on, x, y, lh);
                 continue;
             }
-            let mut x = before + ui.measure_text(&text[..cb], &base, None).width;
+            let mut x = before + gutter + ui.measure_text(&text[..cb], &base, None).width;
             x += virtual_w
                 .iter()
                 .filter(|(b, _)| cb > *b)
@@ -1649,6 +1709,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 wrapped_at(ui, r.start)
             } else {
                 let x = before
+                    + gutter
                     + ui.measure_text(&text[..r.start], &base, None).width
                     + virtual_w
                         .iter()
@@ -1797,9 +1858,57 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             out.set(text_key.get());
         }
     };
+    // A number kept at the pane's edge while the row scrolls under it
+    // (`GutterAt::kept`): a float on the row's ground the line's height,
+    // declared after everything else in the row — kui stacks a float
+    // over the floats before it, and a bar caret, a lifted block or the
+    // cell past the end scrolled under the number drew over it. A pixel
+    // taller, on whole pixels: a block caret's ground, snapped outward,
+    // reached a pixel below it (2026-10-10).
+    let pinned = |ui: &mut Ui<'_>| {
+        let Some(f) = form else { return };
+        let (Some((w, label, current)), Some(at)) = (&f.gutter, f.gutter_at) else {
+            return;
+        };
+        if !at.kept {
+            return;
+        }
+        let body = face.line_height;
+        let y = ((lh - body) / 2.0 + 0.3 * face.size * (f.scale - 1.0)).max(0.0);
+        ui.with(
+            NodeSpec::column()
+                .size(*w, lh + 1.0)
+                .bg(f.bg.unwrap_or(pal.panel))
+                .pixel_snap()
+                .role(Role::None)
+                .float(FloatConfig::parent().offset(at.x, 0.0).clipped()),
+            |ui| {
+                ui.leaf(NodeSpec::row().height(y));
+                ui.with(
+                    NodeSpec::row()
+                        .width(*w)
+                        .height(body)
+                        .pad_xy(GUTTER_PAD, 0.0)
+                        .main_align(Align::End)
+                        .cross_align(Align::Center),
+                    |ui| {
+                        sign_bar(ui, f.sign, lh);
+                        if let Some((text, x)) = &f.blame {
+                            blame_text(ui, face, pal, text, *x, lh);
+                        }
+                        let color = if *current { pal.dim } else { pal.faint };
+                        ui.text(label, mono(face, pal).color(color));
+                    },
+                );
+            },
+        );
+    };
     match form {
         Some(f) => {
-            ui.with_keyed(&f.key, row, body);
+            ui.with_keyed(&f.key, row, |ui| {
+                body(ui);
+                pinned(ui);
+            });
         }
         None => {
             ui.with(row, body);

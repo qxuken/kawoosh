@@ -30,6 +30,7 @@ const KEYS: &[(&str, Draws)] = &[
     ("scrolloff", Draws::Editor),
     ("relativenumber", Draws::Editor),
     ("markdown.reveal", Draws::Editor),
+    ("markdown.wrap", Draws::Editor),
     ("vcs.signs", Draws::Editor),
 ];
 

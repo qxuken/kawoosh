@@ -564,6 +564,10 @@ const DOCS: &[(&str, &str)] = &[
         "what `j` and `k` move by in a rendered markdown pane: `line` or `row` on screen",
     ),
     (
+        "markdown.wrap",
+        "wrap rendered markdown at the pane's width, tables in their cells; off, the pane scrolls sideways",
+    ),
+    (
         "markdown.image_max_mb",
         "an image past this many MB is left as its text",
     ),
@@ -988,6 +992,10 @@ impl Settings {
         // row on screen.
         defaults.set("markdown.reveal", Setting::Str("line".into()));
         defaults.set("markdown.navigation", Setting::Str("line".into()));
+        // Rendered prose wrapped at the pane's width, and a table's
+        // cells in it; off, every row as long as its line and the pane
+        // scrolling sideways, a table's block on its own.
+        defaults.set("markdown.wrap", Setting::Bool(true));
         // `p` puts what was copied in another program too: the system
         // clipboard, read when the window or an editor pane gets the
         // keys back, is the register's newest when it is news.
@@ -1931,6 +1939,7 @@ mod tests {
                 "markdown.navigation",
                 "markdown.render",
                 "markdown.reveal",
+                "markdown.wrap",
                 "memory.idle_secs",
                 "memory.keep_days",
                 "memory.max_mb",

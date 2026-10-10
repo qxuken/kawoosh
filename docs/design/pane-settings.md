@@ -69,6 +69,7 @@ Only those a pane draws by, each read with the pane in hand:
 | `scrolloff` | lines kept in view around the caret |
 | `relativenumber` | the gutter's numbers |
 | `markdown.reveal` | what a rendered markdown pane shows as written |
+| `markdown.wrap` | whether a rendered markdown pane wraps (`:wrap` there; markdown.md Decision 4, amended 2026-10-10) |
 | `vcs.signs` | the gutter's change bars |
 
 Any other path is refused, naming why: `theme.name is the window's —
