@@ -32,7 +32,7 @@
       ],
       "archive": "astro.sqlar",
       "size": 117760,
-      "blake3": "4e8b004bb2e912183b65a1b5a35adfa962c824fc00ceecd4201af4a59e34b4d4"
+      "blake3": "2dbe3658f8faac39c7f9309f03505539cf04a210b001d765118d299ebb4b23ac"
     },
     "awk": {
       "extensions": [
@@ -1744,8 +1744,8 @@
         "injections.scm"
       ],
       "archive": "svelte.sqlar",
-      "size": 179200,
-      "blake3": "a05a71a728ed89d9d75ca34f7e93fe77c7d86a55037d12ab872e8697eba56576"
+      "size": 180224,
+      "blake3": "42da6f85b27b5ea21f86b2b10630679505f1046bf4ed9030ccf7d2eaf92cf184"
     },
     "templ": {
       "extensions": [
