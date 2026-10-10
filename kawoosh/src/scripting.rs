@@ -14,7 +14,7 @@ use kawoosh_editor::{ArgKind, Args, Cond, KeyStroke, Mode, Spec, ViewId};
 use kawoosh_lua::{Msg, Runtime};
 use kawoosh_systems::lsp::ServerDef;
 use kawoosh_systems::ts::Token;
-use kui_native::{Color, NodeSpec, Ui, Value};
+use kui_native::{Color, Key, NodeSpec, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -30,6 +30,9 @@ const LUA_PROC_BASE: u64 = 1 << 32;
 /// asks for a `git show` each, and as many children at once would
 /// spend the descriptors every pipe needs (macOS allows 256).
 const LUA_PROCS_AT_ONCE: usize = 32;
+/// `:view scroll bottom`'s offset: past any end, which the layout holds
+/// to the content.
+const SCROLL_END: f32 = 1.0e9;
 
 #[derive(Clone, Debug)]
 pub struct ToolDef {
@@ -53,6 +56,15 @@ pub struct Proc {
     pub err: Vec<String>,
     /// stdout whole, once it closed, when asked (`on_done`).
     pub out: Option<String>,
+}
+
+/// A move of a Lua view's scroller from the keys (`:view scroll`), in
+/// px: by so much from where it is, or to an offset — the layout holds
+/// either to the content, so `To(f32::MAX)` is the end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ScrollAsk {
+    By(f32),
+    To(f32),
 }
 
 /// A Lua view's last fresh run (kui ADR 0045): what it read of the host
@@ -108,6 +120,9 @@ pub struct Scripting {
     /// the order asked: each started as one running ends.
     pub queued: std::collections::VecDeque<(u64, kawoosh_systems::io::ProcSpec)>,
     pub next_proc: u64,
+    /// The moves `:view scroll` asked of a pane's declared scroller,
+    /// made when the pane is next drawn (`render_lua_pane`).
+    pub scroll_asks: HashMap<PaneId, Vec<ScrollAsk>>,
     /// The settings version `kawoosh.on_settings` was last told of.
     pub settings_seen: u64,
     pub servers: Vec<ServerDef>,
@@ -2249,6 +2264,9 @@ impl Kawoosh {
                 // params the same, filled by its `kui_ext_view`.
                 let ns = native.as_deref().unwrap_or("lua");
                 let slot = format!("{ns}/{name}@{pane}");
+                // The key kui declares the slot at: the view's root is
+                // keyed under it.
+                let slot_key = ui.child_key(&slot);
                 let t = crate::perf::span_start();
                 let fill = if fresh {
                     ui.slot_replay(&slot, &params)
@@ -2317,11 +2335,92 @@ impl Kawoosh {
                         .view_tracks
                         .insert(track.clone(), ViewTrack { gens, reads });
                 }
+                self.scroll_lua_pane(ui, pane, name, slot_key);
             },
         );
         if focused {
             self.focus_sink(ui, sink);
         }
+    }
+
+    /// The moves `:view scroll` asked of the pane, made on the scroller
+    /// its view declared (`kawoosh.view`'s `scroll`) once the slot is
+    /// filled or replayed: the root node under the slot's key, so a
+    /// pane never moves another's of the same label. Set while the
+    /// frame is built, the offset is this frame's layout's.
+    fn scroll_lua_pane(&mut self, ui: &mut Ui<'_>, pane: PaneId, name: &str, slot_key: Key) {
+        let Some(asks) = self.scripting.scroll_asks.remove(&pane) else {
+            return;
+        };
+        let Some(label) = self.view_scroller(name) else {
+            return;
+        };
+        let key = slot_key.str(&label);
+        if ui.core().label_of(key) != Some(label.as_str()) {
+            self.ed.message = format!("view scroll: `{name}`'s root is not `{label}`");
+            return;
+        }
+        let mut at = ui.scroll_offset(key);
+        for ask in asks {
+            at.y = match ask {
+                ScrollAsk::By(d) => (at.y + d).max(0.0),
+                ScrollAsk::To(y) => y,
+            };
+        }
+        ui.set_scroll(key, at);
+    }
+
+    /// The label of the node the view `name` scrolls by (`kawoosh.view`'s
+    /// `scroll`), read off the table it was registered in — no plugin
+    /// code runs.
+    fn view_scroller(&self, name: &str) -> Option<String> {
+        let rt = self.scripting.rt.as_ref()?;
+        rt.lua()
+            .globals()
+            .get::<mlua::Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Table>("_scrollers"))
+            .and_then(|t| t.get::<Option<String>>(name))
+            .ok()
+            .flatten()
+    }
+
+    /// `:view scroll HOW`: the focused pane's view moved as the wheel
+    /// moves it — `down` / `up` three lines of the chrome's text a
+    /// count, `half down` / `half up` half the pane, `top`, `bottom` —
+    /// at its next frame, where its tree is replayed: the keys run no
+    /// plugin code, which would have every view on the screen run again
+    /// (lua-boundary.md Decision 11).
+    fn view_scroll(&mut self, how: &str, count: usize) {
+        let pane = self.layout.focused();
+        let Some(name) = self.lua_name_of(pane) else {
+            self.ed.message = "view scroll: not a view's pane".into();
+            return;
+        };
+        if self.view_scroller(&name).is_none() {
+            self.ed.message = format!("view scroll: `{name}` declares no scroller");
+            return;
+        }
+        let n = count.max(1) as f32;
+        let line = 3.0 * self.chrome.face.size;
+        let half = self.layout.rects.get(&pane).map_or(400.0, |r| r.h) / 2.0;
+        let ask = match how {
+            "down" => ScrollAsk::By(n * line),
+            "up" => ScrollAsk::By(-n * line),
+            "half down" => ScrollAsk::By(n * half),
+            "half up" => ScrollAsk::By(-n * half),
+            "top" => ScrollAsk::To(0.0),
+            "bottom" => ScrollAsk::To(SCROLL_END),
+            _ => {
+                self.ed.message =
+                    format!("view scroll: `{how}`? down, up, half down, half up, top, bottom");
+                return;
+            }
+        };
+        self.scripting
+            .scroll_asks
+            .entry(pane)
+            .or_default()
+            .push(ask);
     }
 
     /// Whether the host vouches for the native view tracked as `track`
@@ -2574,6 +2673,12 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 Some(n) => k.open_lua_view(n, true),
                 None => k.ed.message = "view what?".into(),
             },
+        ),
+        cmd(
+            Spec::new("view scroll")
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("move the focused view's scroller as the wheel does, the view not run: `down` `up` (three lines, a count times), `half down` `half up`, `top`, `bottom`"),
+            |k, ctx| k.view_scroll(&ctx.args.join(" "), ctx.count),
         ),
         cmd(
             Spec::new("field blur")

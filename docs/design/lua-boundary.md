@@ -196,6 +196,27 @@ answer and, for a view that will not replay, why and which natives it
 called, so a pane that stays slow says so in `KAWOOSH_PERF_LOG`. A view
 that calls an opaque native is correct and slow, never stale.
 
+### 11. A view's scroller is moved by the keys without the view
+
+The replay stops at any plugin code run outside a view, and a key that
+scrolls by a plugin command is plugin code: the theme lab's `j` set a
+field its view read back to `set_scroll`, so every press ran the view
+and rebuilt its 1,532 tables — 6–9 ms a frame where the wheel over the
+same pane, which kui scrolls itself, replayed it in 0.2 (reported
+2026-10-10: "large gap in performance when i scroll with j/k or mouse
+wheel"). Scrolling changes nothing a view draws from, so it is the
+host's: `kawoosh.view`'s `opts.scroll` names the label of the view's
+root node when that node scrolls, and `:view scroll HOW` (`down`, `up`
+three lines of the chrome's text a count, `half down`, `half up`, `top`,
+`bottom`) queues the move on the focused pane, made in
+`render_lua_pane` once the slot is filled or replayed — on the node
+under the slot's key, so another pane's node of the same label is never
+moved — and set while the frame is built, so its layout is at the
+offset. The view's keys map to it; no Lua runs, the tree is replayed.
+The root alone: a scroller nested deeper is keyed under its parents,
+and a pane with several (the settings pane's index and list) moves them
+from its own state, which a re-run is the price of anyway.
+
 ## Rounds
 
 **Round 1, 2026-10-07: the cheap batch** (d290f9f). `ctx.title_h`
@@ -308,6 +329,18 @@ the engine extension loaded on a pane's first frame, plugin code run by
 a command. The pane's `lua host view` span is gone from the replayed
 frames and `replayed` stands in its place; and the kui suites (nine
 tests of the replay, the Lua and C and Node bindings' each).
+
+**Round 15, 2026-10-10: the keys scroll as the wheel does** (Decision
+11). Asked as "large gap in performance when i scroll with j/k or mouse
+wheel". Measured on a release build driven over its socket, the lab
+focused beside a markdown file, a move each 130 ms, medians over 38
+frames: kui's work 7.0 → 3.4 ms a `j` (max 9.0 → 4.5), the lab's pane
+4.7 → 0.25 (`lua ran` → `replayed`), against 2.7 for the wheel over the
+same pane (CGEvent wheel notches). What is left between the two is
+kui's render, 0.5 or 1.7 ms a frame by turns on the keys' frames — no
+frame of an ease follows one. `kawoosh/tests/view_scroll.rs`: `j` `k`
+`<C-d>` `G` `gg` move the body with the slot replayed, `f` (plugin
+code) still runs the view.
 
 ## Open
 
