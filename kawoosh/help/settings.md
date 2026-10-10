@@ -160,7 +160,7 @@ Paths complete as you type, and so do the choices of a setting that takes a few 
 | `:setlocal` | list what the pane holds of its own |
 | `:setlocal!` | drop all of it |
 
-A pane may hold the settings it draws by: `font.size` and `font.line_height` (an editor's or a terminal's text), `editor.wrap`, `editor.breadcrumbs`, `scrolloff`, `relativenumber`, `markdown.reveal`, `vcs.signs` (an editor pane's), and `keys.legend` (any pane's). Anything else is the window's, and `:setlocal` says so. `:wrap`, `:breadcrumbs` and `<A-/>` are the pane's own values too, so `:setlocal!` undoes them as well.
+A pane may hold the settings it draws by: `font.size` and `font.line_height` (an editor's or a terminal's text), `editor.wrap`, `editor.breadcrumbs`, `scrolloff`, `relativenumber`, `markdown.reveal`, `markdown.wrap`, `vcs.signs` (an editor pane's), and `keys.legend` (any pane's). Anything else is the window's, and `:setlocal` says so. `:wrap`, `:breadcrumbs` and `<A-/>` are the pane's own values too, so `:setlocal!` undoes them as well.
 
 A pane's values stay with the pane, whatever it shows: `:e other` in a zoomed pane is still zoomed. A split of an editor pane starts with what its pane holds; a closed pane's are gone, and a session does not keep them. A pane that says nothing reads its buffer's language table, so `language.markdown = { font = { size = 16 } }` in your settings makes every markdown pane's text bigger. From Lua, `kawoosh.pane_opt(pane, path)` reads a pane's own value, `kawoosh.pane_opt(pane, path, value)` sets it and `kawoosh.pane_unset(pane, path)` takes it out ([lua](lua.md)).
 
@@ -281,6 +281,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `markdown.render` | `true` | draw markdown rendered |
 | `markdown.reveal` | `"line"` | what the caret shows as its source: its `line`, the `span` it is in, or `none` ([look](look.md#markdown)) |
 | `markdown.navigation` | `"line"` | what `j` and `k` move by in rendered markdown: a `line` or a `row` on screen |
+| `markdown.wrap` | `true` | wrap rendered markdown at the pane's width, tables in their cells; off, the pane scrolls sideways (`:wrap` in a rendered pane flips its own) |
 | `editor.selection_radius` | `0` | round the selection's corners, in pixels |
 | `editor.breadcrumbs` | `true` | the symbols the caret is inside, on the pane's title bar ([search](search.md#breadcrumbs)) |
 | `editor.wrap` | `"off"` | wrap long lines at the pane's width: `"word"` between words, `"glyph"` anywhere ([look](look.md#soft-wrap)) |

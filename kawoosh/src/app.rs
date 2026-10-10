@@ -187,9 +187,11 @@ pub struct Kawoosh {
     /// row ordinal counts from — the view's `top`, or a line above it in
     /// a pane drawn around its caret (`markdown::Anchored`).
     pub(crate) drawn_top: HashMap<ViewId, usize>,
-    /// Each rendered table's sideways offset, by view and its first
-    /// line: a table wider than the pane scrolls on its own.
-    pub(crate) md_table_left: HashMap<(ViewId, usize), f32>,
+    /// How far each pane's lines column could scroll sideways last
+    /// frame: the wheel's offset is held to it before a frame is drawn,
+    /// so what is placed by the offset — a rendered pane's numbers kept
+    /// at its edge — agrees with where kui scrolls, which clamps it.
+    pub(crate) left_max: HashMap<ViewId, f32>,
     /// Each rendered buffer's tables: their lines, columns and widest
     /// cells, kept while its text and its layers stay as they were.
     pub(crate) md_table_cache: HashMap<BufferId, crate::markdown::TableCache>,
@@ -478,7 +480,7 @@ impl Kawoosh {
             md_shown: HashMap::new(),
             md_anchor: HashMap::new(),
             drawn_top: HashMap::new(),
-            md_table_left: HashMap::new(),
+            left_max: HashMap::new(),
             md_table_cache: HashMap::new(),
             md_slow_tables: crate::markdown::SLOW_TABLES,
             md_slow_offered: HashSet::new(),
@@ -2314,7 +2316,12 @@ impl Kawoosh {
         (off, ln)
     }
 
-    fn on_scroll(&mut self, pane: PaneId, s: Scroll, tag: Option<&Value>) {
+    /// How far view `view`'s lines could scroll sideways last frame.
+    pub fn left_max_of(&self, view: ViewId) -> f32 {
+        self.left_max.get(&view).copied().unwrap_or(0.0)
+    }
+
+    fn on_scroll(&mut self, pane: PaneId, s: Scroll) {
         if let Some(t) = self.term_of(pane) {
             // A grid: kui already turned the wheel into whole lines. A
             // program reporting the mouse gets wheel buttons; a full-screen
@@ -2352,18 +2359,11 @@ impl Kawoosh {
             return;
         };
         let dx = s.delta.x;
-        // Over a rendered table: sideways is the table's own.
-        let table = tag.and_then(|t| t.get_int("table")).map(|t| t as usize);
-        if let (Some(first), true) = (table, dx != 0.0) {
-            let off = self.md_table_left.entry((view, first)).or_insert(0.0);
-            *off = (*off - dx).max(0.0);
-            if pane == self.layout.focused() {
-                self.follow_caret = false;
-            }
-        } else if dx != 0.0 {
+        if dx != 0.0 {
             // Sideways: px, clamped to the content when the frame draws.
+            let max = self.left_max.get(&view).copied().unwrap_or(f32::MAX);
             let v = &mut self.ed.views[view];
-            v.left = (v.left - dx).max(0.0);
+            v.left = (v.left - dx).clamp(0.0, max.max(0.0));
             if pane == self.layout.focused() {
                 self.follow_caret = false;
             }
@@ -3117,7 +3117,7 @@ impl Kawoosh {
                 return;
             }
             match pane {
-                Some(pane) => self.on_scroll(pane, s, tag),
+                Some(pane) => self.on_scroll(pane, s),
                 // A Lua view's own `on_scroll`: its handler ran, what it
                 // asked for is applied now.
                 None if ev.slot.is_some() => self.drain_lua(),

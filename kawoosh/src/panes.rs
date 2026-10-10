@@ -1396,6 +1396,12 @@ impl Kawoosh {
         // measured, no sideways scroll. `tall` is either.
         let wrap = if md { None } else { self.soft_wrap(pane, view) };
         let tall = md || wrap.is_some();
+        // A rendered pane that does not wrap (`markdown.wrap` off): its
+        // rows as long as their lines, still as tall as they measure,
+        // and the pane scrolling sideways as a code pane does, the
+        // numbers kept at its left edge.
+        let md_wrap = md && self.md_wraps(pane);
+        let sideways = !tall || md && !md_wrap;
         if wrap.is_some() {
             self.ed.views[view].left = 0.0;
         }
@@ -1550,28 +1556,6 @@ impl Kawoosh {
                 .map(|first| (first, cache.widths(buf, first, &style, tabstop).clone()))
                 .collect();
             let slow = cache.slow(self.md_slow_tables);
-            // A table the caret is in slides sideways to show it.
-            let head = v.sels.primary().head;
-            let head_line = buf.line_of(head);
-            if follow && let Some(first) = md_tables.get(&head_line).copied() {
-                let range = buf.line_range(head_line);
-                let before = buf.slice(range.start..head.clamp(range.start, range.end));
-                let x = unicode_width::UnicodeWidthStr::width(before.as_str()) as f32 * pf.cell.0;
-                let seen = self
-                    .md_table_left
-                    .get(&(view, first))
-                    .copied()
-                    .unwrap_or(0.0);
-                let room = (width_guess - 3.0 * pf.cell.0).max(pf.cell.0);
-                let off = if x < seen {
-                    (x - 3.0 * pf.cell.0).max(0.0)
-                } else if x > seen + room {
-                    x - room
-                } else {
-                    seen
-                };
-                self.md_table_left.insert((view, first), off);
-            }
             let dir = buf.path.as_deref().and_then(kawoosh_systems::fs::parent);
             // An image as read: kui's id and its size, else its alt (and
             // why it failed) — asked for if it was not.
@@ -1624,6 +1608,7 @@ impl Kawoosh {
                     cells,
                     delimiter: false,
                     height: font.line_height,
+                    wrap: false,
                     pad: cell_w,
                     rule: pal.dim,
                 };
@@ -1690,6 +1675,7 @@ impl Kawoosh {
                         cells,
                         delimiter: r.delimiter,
                         height: tallest,
+                        wrap: md_wrap,
                         pad: cell_w,
                         rule: pal.dim,
                     }
@@ -1726,13 +1712,6 @@ impl Kawoosh {
             md_columns = tables.columns;
         }
         let md_cell_h: HashMap<usize, f32> = md_cells.iter().map(|(l, t)| (*l, t.height)).collect();
-        let md_table_left: HashMap<usize, f32> = self
-            .md_table_left
-            .iter()
-            .filter(|((v, _), _)| *v == view)
-            .map(|((_, first), off)| (*first, *off))
-            .collect();
-        let mut md_table_seen: Vec<(usize, f32)> = Vec::new();
         let v = &self.ed.views[view];
         let buf = &self.ed.buffers[buf_id];
         let search = self
@@ -1765,7 +1744,10 @@ impl Kawoosh {
         // The first line drawn: the view's top, or above it the rows a
         // tall pane stacks up from its caret's (`markdown::Anchored`).
         let top = md_anchored.map_or(v.top, |a| a.from);
-        let mut left = if tall { 0.0 } else { v.left };
+        let mut left = if sideways { v.left } else { 0.0 };
+        // How far the column could scroll last frame, and this frame's,
+        // kept after it.
+        let mut left_room = None;
         let last = md_last.unwrap_or((top + rows_n).min(buf.line_count()));
         // The paints of the lines drawn, over the syntax; their washes
         // under the conflicts'.
@@ -2038,6 +2020,47 @@ impl Kawoosh {
                 revealed = true;
             }
         }
+        // A rendered pane that does not wrap follows its caret sideways
+        // the same way, measured in the row's own face and size: its
+        // text starts past the number kept in the row. A table's row is
+        // its block's to follow.
+        if follow
+            && sideways
+            && tall
+            && let Some((r, _)) = md_rows.get(&cur_line)
+        {
+            let range = buf.line_range(cur_line);
+            let head = r
+                .drawn
+                .to_drawn(primary.head.clamp(range.start, range.end) - range.start)
+                .min(r.drawn.text.len());
+            let mut style = rows::mono(font, &pal);
+            style.size = font.size * r.scale;
+            if let Some(family) = self.prose.filter(|_| !r.mono) {
+                style = style.family(family);
+            }
+            let x0 = ui.measure_text(&r.drawn.text[..head], &style, None).width;
+            let next = if head < r.drawn.text.len() {
+                rows::next_char(&r.drawn.text, head)
+            } else {
+                head
+            };
+            let space = ui.measure_text(" ", &style, None).width;
+            let x1 = ui.measure_text(&r.drawn.text[..next], &style, None).width
+                + if next == head { space } else { 0.0 };
+            // Never past the line's end and its newline's cell: kui
+            // clamps the scroll to the content, and the numbers kept at
+            // the pane's edge are placed by this offset, not kui's.
+            let end = ui.measure_text(&r.drawn.text, &style, None).width + space;
+            let margin = (cell_w * 3.0).min(width / 4.0);
+            if x0 - margin < left {
+                left = (x0 - margin).max(0.0);
+                revealed = true;
+            } else if width > 0.0 && x1 + margin > left + width {
+                left = ((x1 + margin).min(end) - width).max(0.0);
+                revealed = true;
+            }
+        }
 
         // Each tall row drawn: its line, what it drew
         // (`Heights::stamp`), and its height last frame when it has one.
@@ -2111,7 +2134,15 @@ impl Kawoosh {
                 let lines_spec = NodeSpec::column().fill().on_scroll(tag.clone());
                 let lines = ui.with_keyed(
                     "lines",
-                    if tall {
+                    if tall && sideways {
+                        // A rendered pane that does not wrap: its rect
+                        // as a tall pane's, and sideways as a code
+                        // pane's.
+                        lines_spec
+                            .scroll_x()
+                            .clip()
+                            .on_layout(Value::map([("kind", "lines".into())]))
+                    } else if tall {
                         // Its rect, for the next frame to find the
                         // caret's row in it (`markdown::Anchor`). Rows
                         // as tall as they wrap to have no sideways
@@ -2461,6 +2492,7 @@ impl Kawoosh {
                                             img.len(),
                                             in_table,
                                             family.is_some(),
+                                            md_wrap,
                                         ),
                                     );
                                     // Drawn otherwise last frame: kui's
@@ -2483,10 +2515,32 @@ impl Kawoosh {
                                         scale: *scale,
                                         family,
                                         stale,
-                                        wrap: (!in_table).then_some(*wrap),
+                                        // Wrapping, a table's cells wrap
+                                        // in their columns too.
+                                        wrap: md_wrap.then_some(if in_table {
+                                            kui_native::TextWrap::BreakSpaces
+                                        } else {
+                                            *wrap
+                                        }),
                                         bg: code.then_some(pal.strip),
-                                        gutter: (!in_table)
+                                        // A table's rows that do not wrap
+                                        // have their numbers in a column
+                                        // beside the block that scrolls.
+                                        gutter: (!in_table || md_wrap)
                                             .then(|| (gutter, numbers.label(ln), ln == cur_line)),
+                                        gutter_at: if in_table {
+                                            // Left of the table, its row's
+                                            // in-flow children its cells.
+                                            Some(rows::GutterAt {
+                                                x: -gutter,
+                                                kept: false,
+                                            })
+                                        } else {
+                                            (!md_wrap).then_some(rows::GutterAt {
+                                                x: left,
+                                                kept: true,
+                                            })
+                                        },
                                         sign: signs.get(&ln).copied(),
                                         blame: blames.get(&ln).cloned(),
                                         rule: *rule,
@@ -2500,7 +2554,7 @@ impl Kawoosh {
                                                 Err(alt) => Err(alt.clone()),
                                             })
                                             .collect(),
-                                        fit: in_table,
+                                        fit: in_table && !md_wrap,
                                         table: md_cells.remove(&ln).filter(|_| in_table),
                                     };
                                     (marks.as_slice(), Some(form))
@@ -2539,6 +2593,7 @@ impl Kawoosh {
                                                 numbers.label(ln),
                                                 ln == cur_line,
                                             )),
+                                            gutter_at: None,
                                             sign: signs.get(&ln).copied(),
                                             blame: blames.get(&ln).cloned(),
                                             rule: false,
@@ -2622,7 +2677,6 @@ impl Kawoosh {
                                 while ln < to && md_tables.get(&ln) == Some(&table) {
                                     ln += 1;
                                 }
-                                let offset = md_table_left.get(&table).copied().unwrap_or(0.0);
                                 // Its rules above and below, when its first
                                 // row and its last are in sight.
                                 let lh = font.line_height;
@@ -2643,12 +2697,29 @@ impl Kawoosh {
                                         .height(Sizing::Fit)
                                         .min_height(kui_native::Min::FIT),
                                     |ui| {
-                                        ui.with(
-                                            NodeSpec::column()
-                                                .width(gutter)
-                                                .height(Sizing::Fit)
-                                                .role(Role::None),
-                                            |ui| {
+                                        // Wrapping, each row has its number
+                                        // beside it (`rows::GutterAt`): a
+                                        // row's height is what its cells
+                                        // wrap to, known after the frame.
+                                        // Not wrapping, a column of them,
+                                        // kept at the pane's left edge
+                                        // while the pane scrolls sideways.
+                                        let numbers_spec = NodeSpec::column()
+                                            .width(gutter)
+                                            .height(Sizing::Fit)
+                                            .role(Role::None);
+                                        let numbers_spec = if md_wrap {
+                                            None
+                                        } else if sideways {
+                                            ui.leaf(NodeSpec::row().width(gutter));
+                                            Some(numbers_spec.bg(pal.panel).float(
+                                                FloatConfig::parent().offset(left, 0.0).clipped(),
+                                            ))
+                                        } else {
+                                            Some(numbers_spec)
+                                        };
+                                        if let Some(numbers_spec) = numbers_spec {
+                                            ui.with(numbers_spec, |ui| {
                                                 if top {
                                                     edge(ui);
                                                 }
@@ -2676,20 +2747,30 @@ impl Kawoosh {
                                                 if bottom {
                                                     edge(ui);
                                                 }
-                                            },
-                                        );
-                                        let block = ui.with_key(
-                                            ui.child_key("tbl").index(table as u64),
-                                            NodeSpec::column()
+                                            });
+                                        } else {
+                                            ui.leaf(NodeSpec::row().width(gutter));
+                                        }
+                                        // Wrapping, the table is held to the
+                                        // pane's width, its columns
+                                        // compressed into it and their
+                                        // texts wrapped; else it is as wide
+                                        // as its columns, and the pane
+                                        // scrolls sideways over it as over
+                                        // a long line.
+                                        let block_spec = NodeSpec::column()
+                                            .height(Sizing::Fit)
+                                            .min_height(kui_native::Min::FIT);
+                                        let block_spec = if md_wrap {
+                                            block_spec
                                                 .grow_width()
-                                                .height(Sizing::Fit)
-                                                .min_height(kui_native::Min::FIT)
-                                                .scroll_x()
-                                                .on_scroll(Value::map([
-                                                    ("kind", "pane".into()),
-                                                    ("pane", Value::Int(pane as i64)),
-                                                    ("table", Value::Int(table as i64)),
-                                                ])),
+                                                .min_width(kui_native::Min::px(0.0))
+                                        } else {
+                                            block_spec.width(Sizing::Fit)
+                                        };
+                                        ui.with_key(
+                                            ui.child_key("tbl").index(table as u64),
+                                            block_spec,
                                             |ui| {
                                                 // A kui table: its rows' cells
                                                 // line up, whatever is in them.
@@ -2698,7 +2779,16 @@ impl Kawoosh {
                                                 // a row of it.
                                                 ui.with(
                                                     NodeSpec::table()
-                                                        .width(Sizing::Fit)
+                                                        .width(if md_wrap {
+                                                            Sizing::GROW
+                                                        } else {
+                                                            Sizing::Fit
+                                                        })
+                                                        .min_width(if md_wrap {
+                                                            kui_native::Min::px(0.0)
+                                                        } else {
+                                                            kui_native::Min::AUTO
+                                                        })
                                                         .height(Sizing::Fit)
                                                         .min_height(kui_native::Min::FIT),
                                                     |ui| {
@@ -2731,12 +2821,24 @@ impl Kawoosh {
                                                                 // or a row with no cells (`|`),
                                                                 // which draws nothing and is
                                                                 // still its number's height.
+                                                                // Wrapping, the table's
+                                                                // width, which its text wraps
+                                                                // at; else as wide as it is.
+                                                                let one = NodeSpec::column()
+                                                                    .height(lh)
+                                                                    .min_height(
+                                                                        kui_native::Min::FIT,
+                                                                    );
                                                                 ui.with(
-                                                                    NodeSpec::column()
-                                                                        .height(lh)
-                                                                        .min_height(
-                                                                            kui_native::Min::FIT,
-                                                                        ),
+                                                                    if md_wrap {
+                                                                        one.grow_width().min_width(
+                                                                            kui_native::Min::px(
+                                                                                0.0,
+                                                                            ),
+                                                                        )
+                                                                    } else {
+                                                                        one
+                                                                    },
                                                                     |ui| emit(ui, l, true, edges),
                                                                 );
                                                             }
@@ -2748,14 +2850,6 @@ impl Kawoosh {
                                                 );
                                             },
                                         );
-                                        // The offset clamped to what the block
-                                        // holds last frame, kept for the next.
-                                        let max = ui
-                                            .scroll_geometry(block)
-                                            .map_or(offset, |g| g.max_offset.x);
-                                        let offset = offset.clamp(0.0, max.max(0.0));
-                                        ui.set_scroll(block, Vec2::new(offset, 0.0));
-                                        md_table_seen.push((table, offset));
                                     },
                                 );
                             }
@@ -2814,15 +2908,22 @@ impl Kawoosh {
                 // edge until a frame more (2026-10-01). kui's layout
                 // clamps it to this frame's content, and the next frame's
                 // clamp brings the view's number to that.
-                if !tall {
-                    if let Some(geo) = ui.scroll_geometry(lines).filter(|_| !revealed) {
-                        left = left.min(geo.max_offset.x);
+                if sideways {
+                    if let Some(geo) = ui.scroll_geometry(lines) {
+                        if !revealed {
+                            left = left.min(geo.max_offset.x);
+                        }
+                        left_room = Some(geo.max_offset.x);
                     }
                     ui.set_scroll(lines, Vec2::new(left, 0.0));
                 }
             },
         );
         self.ed.views[view].left = left;
+        match left_room {
+            Some(room) => self.left_max.insert(view, room),
+            None => self.left_max.remove(&view),
+        };
         self.line_cells = cells;
         if focused {
             self.ghost_shown = ghost_drawn;
@@ -2879,9 +2980,6 @@ impl Kawoosh {
             known.stamps = stamps;
             if moved {
                 crate::frames::request(ui, "markdown heights");
-            }
-            for (first, off) in md_table_seen {
-                self.md_table_left.insert((view, first), off);
             }
         }
         if focused {

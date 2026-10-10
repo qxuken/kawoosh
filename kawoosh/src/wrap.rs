@@ -49,15 +49,36 @@ impl Kawoosh {
         (mode != "off" || listed).then(|| how(&mode))
     }
 
+    /// Whether a rendered markdown pane wraps (`markdown.wrap`, the
+    /// pane's own first).
+    pub(crate) fn md_wraps(&self, pane: PaneId) -> bool {
+        self.pane_bool(pane, "markdown.wrap").unwrap_or(true)
+    }
+
     /// `:wrap`: wrapping flipped for the focused pane, for the session —
     /// its own `editor.wrap`, `off` or the window's mode (`word` when
-    /// that is `off`).
+    /// that is `off`); in a rendered markdown pane its own
+    /// `markdown.wrap`, which is what that pane draws by.
     fn toggle_wrap(&mut self) {
         let pane = self.layout.focused();
         let Some(v) = self.focused_view() else {
             self.ed.message = "wrap: not an editor pane".into();
             return;
         };
+        if self.markdown_rendered(self.ed.views[v].buffer) {
+            let on = !self.md_wraps(pane);
+            if let Err(e) = self.set_pane_value(pane, "markdown.wrap", Setting::Bool(on)) {
+                self.ed.message = e;
+                return;
+            }
+            self.ed.message = if on {
+                "markdown wrap on"
+            } else {
+                "markdown wrap off"
+            }
+            .into();
+            return;
+        }
         let on = self.soft_wrap(pane, v).is_none();
         let mode = match self.ed.settings.str("editor.wrap") {
             Some(m) if on && m != "off" => m.to_string(),

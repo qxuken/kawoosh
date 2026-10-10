@@ -269,8 +269,10 @@ fn a_heading_typed_takes_its_size() {
     assert_eq!(typed, h2, "an h2's size, not an h1's");
 }
 
-/// A table wider than the pane scrolls sideways on its own — the wheel
-/// over it moves it and nothing else; a row of images is images side by
+/// A table wider than the pane wraps in its cells to the pane's width
+/// (`markdown.wrap`); not wrapping, it is as wide as its columns and the
+/// pane scrolls sideways over it as over a long line — the wheel over
+/// it moves it and the prose with it. A row of images is images side by
 /// side, and in a table each is in its column, under its header's text;
 /// the table's rules meet from its top edge to its bottom; `gx` on an
 /// anchor goes to its heading.
@@ -289,11 +291,19 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
             })
             .map(|n| n.rect)
     };
+    let body = rect_of_text(&d, "The end.").unwrap().3;
+    let wrapped = header(&d).expect("the wide table's third header");
+    assert!(
+        wrapped.x + wrapped.w <= 700.0,
+        "its columns held to the pane: {wrapped:?}"
+    );
+    ex(&mut d, &mut app, "set markdown.wrap=false");
+    settle(&mut d, &mut app);
     let before = header(&d).expect("the wide table's third header");
     let para_x = rect_of_text(&d, "The end.").unwrap().0;
     assert!(
-        before.x + before.w > 700.0,
-        "wider than the pane: {before:?}"
+        before.x + before.w > 700.0 && before.h < body * 1.5,
+        "one line, wider than the pane: {before:?}"
     );
     d.wheel(&mut app, before.x + 50.0, before.y + 5.0, -120.0, 0.0);
     for _ in 0..4 {
@@ -305,10 +315,16 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
         "the table moved: {before:?} → {after:?}"
     );
     assert_eq!(
-        rect_of_text(&d, "The end.").unwrap().0,
-        para_x,
-        "and nothing else did"
+        rect_of_text(&d, "The end.").unwrap().0 - para_x,
+        after.x - before.x,
+        "and the prose with it"
     );
+    // Back, so what follows is in sight.
+    d.wheel(&mut app, after.x + 50.0, after.y + 5.0, 120.0, 0.0);
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    assert_eq!(header(&d).unwrap().x, before.x, "back where it was");
     // The images in sight, not a table's ghost's in a row 0px tall.
     let nodes = d.core.nodes();
     let by_key: std::collections::HashMap<_, _> = nodes.iter().map(|n| (n.key, n)).collect();
@@ -585,6 +601,9 @@ fn a_ghost_mid_line_sits_at_the_caret() {
     )
     .unwrap();
     let (mut d, mut app) = launch(&dir, 900.0);
+    // A row that does not wrap draws the ghost: a table's source row
+    // wraps with the rest when the pane does.
+    ex(&mut d, &mut app, "set markdown.wrap=false");
     d.press(&mut app, "7G$");
     d.press(&mut app, "i");
     settle(&mut d, &mut app);
@@ -1332,14 +1351,19 @@ fn a_sideways_swipe_over_prose_moves_the_strip() {
     );
 }
 
-/// A wide table takes a sideways swipe while it has room that way; at
-/// its right edge a swipe further right is the strip's, and back left
-/// the table's again (kui F118: a handler that scrolls an axis is
-/// answered by its room).
+/// Not wrapping, a pane with a wide table takes a sideways swipe while
+/// it has room that way; at its right edge a swipe further right is the
+/// strip's, and back left the pane's again (kui F118: a handler that
+/// scrolls an axis is answered by its room).
 #[test]
 fn a_table_at_its_edge_passes_a_sideways_swipe_to_the_strip() {
     let dir = fixture("table-edge");
     let (mut d, mut app, md) = md_in_a_strip(&dir);
+    ex(&mut d, &mut app, "set markdown.wrap=false");
+    for _ in 0..6 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
     let header = |d: &Drive| {
         d.core
             .nodes()
@@ -1660,4 +1684,200 @@ fn a_drag_over_a_rendered_row_follows_the_pointer() {
     check(&d, &app, "released", "i");
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `markdown.wrap` on (the default): a table wider than the pane is held
+/// to its width, a long cell's text wrapping in its column and its row
+/// as tall as it wraps to, the row's number beside its first line; the
+/// caret's row, its source, wraps across the table's width, not a glyph
+/// a line (2026-10-10).
+#[test]
+fn a_tables_cells_wrap_to_the_pane() {
+    let dir = fixture("cells-wrap");
+    let long = "a rather long cell that wants to wrap, and then some more words to make it longer than the pane is wide";
+    std::fs::write(
+        dir.join("doc.md"),
+        format!("# T\n\n| name | description |\n|---|---|\n| alpha | {long} |\n| beta | short |\n\nend\n"),
+    )
+    .unwrap();
+    let (mut d, mut app) = launch(&dir, 600.0);
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    let body = rect_of_text(&d, "end").unwrap().3;
+    let cell = d
+        .core
+        .nodes()
+        .into_iter()
+        .filter(|n| {
+            n.text
+                .as_deref()
+                .is_some_and(|t| t.starts_with("a rather long cell"))
+        })
+        .map(|n| (n.rect.x, n.rect.y, n.rect.w, n.rect.h))
+        // The row's, not the table's ghost row of its widest cells.
+        .max_by(|a, b| a.3.total_cmp(&b.3))
+        .expect("the long cell");
+    assert!(
+        cell.0 + cell.2 <= 600.0 && cell.3 > body * 1.5,
+        "wrapped in the pane: {cell:?}"
+    );
+    // The drawn rows', below the table's ghost row of its widest cells.
+    let lowest = |d: &Drive, text: &str| {
+        d.core
+            .nodes()
+            .into_iter()
+            .filter(|n| n.text.as_deref() == Some(text))
+            .map(|n| (n.rect.x, n.rect.y, n.rect.w, n.rect.h))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap()
+    };
+    let alpha = lowest(&d, "alpha");
+    let beta = lowest(&d, "beta");
+    assert!(beta.1 > cell.1 + cell.3 - 1.0, "the next row under it");
+    // Line 5's number, at its row's first line, left of the table.
+    let number = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some("5") && (n.rect.y - alpha.1).abs() < body)
+        .expect("the row's number beside it");
+    assert!(number.rect.x < alpha.0, "{:?} {alpha:?}", number.rect);
+    // The caret on the row: its source across the table.
+    d.press(&mut app, "5G");
+    settle(&mut d, &mut app);
+    let source = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| {
+            n.text
+                .as_deref()
+                .is_some_and(|t| t.starts_with("| alpha |"))
+        })
+        .expect("the caret's row, its source");
+    assert!(
+        source.rect.w > 300.0 && source.rect.h < body * 4.0,
+        "wrapped across the table: {:?}",
+        source.rect
+    );
+}
+
+/// `markdown.wrap` off: a long line is one row, the pane scrolls
+/// sideways to the caret, and the numbers stay at the pane's left edge
+/// over the text passing under them — a swipe past the line's end
+/// included, which kui clamps (2026-10-10).
+#[test]
+fn not_wrapping_the_pane_scrolls_sideways_under_its_numbers() {
+    let dir = fixture("nowrap");
+    let long = "words ".repeat(60);
+    std::fs::write(
+        dir.join("doc.md"),
+        format!("# Head\n\n{}\n\nend\n", long.trim_end()),
+    )
+    .unwrap();
+    let (mut d, mut app) = launch(&dir, 600.0);
+    ex(&mut d, &mut app, "setlocal markdown.wrap=false");
+    settle(&mut d, &mut app);
+    let body = rect_of_text(&d, "end").unwrap().3;
+    let number = |d: &Drive, n: &str| {
+        d.core
+            .nodes()
+            .into_iter()
+            .find(|x| x.text.as_deref() == Some(n))
+            .map(|x| x.rect)
+            .unwrap()
+    };
+    let row = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| {
+            n.text
+                .as_deref()
+                .is_some_and(|t| t.starts_with("words words"))
+        })
+        .expect("the long line")
+        .rect;
+    assert!(row.h < body * 1.5 && row.w > 600.0, "one row: {row:?}");
+    let n0 = number(&d, "3");
+    d.press(&mut app, "3G$");
+    settle(&mut d, &mut app);
+    let moved = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| {
+            n.text
+                .as_deref()
+                .is_some_and(|t| t.starts_with("words words"))
+        })
+        .unwrap()
+        .rect;
+    assert!(moved.x < row.x - 300.0, "scrolled to the caret: {moved:?}");
+    let caret = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.bg == app.pal.accent && (n.rect.y - moved.y).abs() < body && n.rect.w < 30.0)
+        .map(|n| n.rect);
+    if let Some(c) = caret {
+        assert!(c.x + c.w <= 600.0, "the caret in sight: {c:?}");
+    }
+    let n1 = number(&d, "3");
+    assert!(
+        (n1.x - n0.x).abs() < 1.0,
+        "the number stayed: {n0:?} {n1:?}"
+    );
+    // A swipe far past the end: the text stops at its end, and the
+    // numbers with it.
+    d.wheel(&mut app, 300.0, moved.y + 5.0, -3000.0, 0.0);
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    let end = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| {
+            n.text
+                .as_deref()
+                .is_some_and(|t| t.starts_with("words words"))
+        })
+        .unwrap()
+        .rect;
+    assert!(end.x + end.w > 300.0, "not past its end: {end:?}");
+    let n2 = number(&d, "3");
+    assert!(
+        (n2.x - n0.x).abs() < 1.0,
+        "still at the edge: {n0:?} {n2:?}"
+    );
+    let v = app.focused_view().unwrap();
+    let pane = app.layout.focused();
+    assert_eq!(
+        app.ed.views[v].left,
+        app.left_max_of(v),
+        "the offset held to the room ({pane})"
+    );
+}
+
+/// `:wrap` in a rendered pane flips that pane's own `markdown.wrap`; the
+/// pane beside keeps wrapping.
+#[test]
+fn wrap_flips_a_rendered_panes_own_markdown_wrap() {
+    let dir = fixture("wrap-toggle");
+    let (mut d, mut app) = launch(&dir, 900.0);
+    let first = app.layout.focused();
+    d.press(&mut app, "<C-w>v");
+    settle(&mut d, &mut app);
+    let second = app.layout.focused();
+    assert_ne!(first, second);
+    ex(&mut d, &mut app, "wrap");
+    assert_eq!(app.ed.message, "markdown wrap off");
+    assert_eq!(
+        app.pane_own(second, "markdown.wrap"),
+        Some(kawoosh_editor::Setting::Bool(false))
+    );
+    assert_eq!(app.pane_own(first, "markdown.wrap"), None);
+    ex(&mut d, &mut app, "wrap");
+    assert_eq!(app.ed.message, "markdown wrap on");
 }
