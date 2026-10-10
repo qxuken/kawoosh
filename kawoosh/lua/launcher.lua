@@ -79,9 +79,9 @@ local LIMIT = 50
 -- wide pane reads as a list, where rows the pane's width do not.
 local WIDTH = 720
 -- The scroller's label, for `set_scroll`, and the prefix of every
--- label it reveals: its own, since every Lua pane shares one origin and
--- a label another pane in the tab declares too ("list", qd's "m …")
--- would be ambiguous (kui `ambiguous-key`).
+-- label it reveals: named after the launcher. kui finds a label among
+-- the asking pane's own nodes (F157, alpha.52); the name keeps them
+-- unmistakable beside other panes' "list" and qd's "m …".
 local LIST = "launcher list"
 
 -- The open launcher: its pane, the layout resolved (`tree`), the

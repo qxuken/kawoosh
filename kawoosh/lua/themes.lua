@@ -31,9 +31,9 @@
 local themes = kawoosh.themes
 
 local VIEW = "themes"
--- The labels it looks up (`set_scroll`, `reveal`) are its own: every
--- Lua pane shares one origin, so a label another pane in the tab also
--- declares ("body", "card …") would be ambiguous (kui `ambiguous-key`).
+-- The labels it looks up (`set_scroll`, `reveal`) carry its name: kui
+-- finds a label among the asking pane's own nodes (F157, alpha.52), and
+-- a name of its own keeps them unmistakable beside other panes' "body".
 local BODY = "themes body"
 local PANE_FACT = "lua:" .. VIEW
 -- The panes' one scale (`kawoosh.metrics`: the text, a step under it,

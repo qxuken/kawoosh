@@ -1,11 +1,13 @@
 //! The labels the bundled Lua panes look up — `set_scroll`,
 //! `scroll_offset`, `reveal`, `scroll_geometry`, a `uniform_list`'s own
-//! scroller — are their own. kui finds a label among every node of one
+//! scroller — are their own. kui found a label among every node of one
 //! origin, and every Lua pane is the one Lua extension's, so a label two
-//! panes in a tab declare is ambiguous and the first in tree order wins:
+//! panes in a tab declared was ambiguous and the first in tree order won:
 //! the themes pane beside a new tab's launcher scrolled by the
 //! launcher's "body" (kui `ambiguous-key`, seen 2026-10-10 in a smoke
-//! run), and "list" was the scroller of six panes.
+//! run), and "list" was the scroller of six panes. The panes now name
+//! their labels after themselves, and kui (F157, alpha.52) answers a
+//! pane's lookup from its own nodes alone; this holds either.
 
 mod drive;
 
