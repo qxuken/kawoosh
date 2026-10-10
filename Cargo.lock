@@ -2670,9 +2670,9 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.52"
+version = "0.1.0-alpha.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e692de7e745227df5b0dd6ddd3fa30a8fce479d5fe42ed43656e9e19cb91c853"
+checksum = "4366920e2aeee0b72e0136f5b02ff0038b2c5e1642751f7838655a412f458368"
 dependencies = [
  "cosmic-text",
  "kui-derive",
@@ -2687,9 +2687,9 @@ dependencies = [
 
 [[package]]
 name = "kui-derive"
-version = "0.1.0-alpha.52"
+version = "0.1.0-alpha.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "817d8975a6dc768de822285301a96fd9ce99c91aaf4b5434c7c5fcc10ee98585"
+checksum = "1bfae63460d8d8318a0fbfe6980402a30eb3356d9494ec9b92fa809435014564"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2698,9 +2698,9 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.52"
+version = "0.1.0-alpha.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cfaa6011b5ed7507758b11fd227ecbd16f9e0d81967a4f711741be80008655c"
+checksum = "30a942ba916999e8d48b7737ed56f862b6e28d5a3f0a6b774617f8cbc2006114"
 dependencies = [
  "kui-core",
  "kui-native",
@@ -2708,9 +2708,9 @@ dependencies = [
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.52"
+version = "0.1.0-alpha.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1c77d0abdce172851b12dadb3f682a1ab34b2583276a2a58747805cda3fffc4"
+checksum = "5514834eda13ca4a0f876d366918d98f0b983a80a4cf11dd2febb8d2fb5b1ed0"
 dependencies = [
  "kui-core",
  "kui-ffi",
@@ -2719,9 +2719,9 @@ dependencies = [
 
 [[package]]
 name = "kui-native"
-version = "0.1.0-alpha.52"
+version = "0.1.0-alpha.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3904b48ae85eb3dc3e06b909f9bc736102d947b0d69ae9eda705466c7825312c"
+checksum = "98fc070bf40791fddb0ddb781a6db7020ef605e748d5bfead65e447e8729a574"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2747,9 +2747,9 @@ dependencies = [
 
 [[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.52"
+version = "0.1.0-alpha.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12e037cd092efa318648a75222c34e7e67a28fa969d2e43a1cf5a5c7a91620da"
+checksum = "d3f1f99f4c3d99f14eb10dd3035ca39306b4e5e40a6d5601566e7dd2434d460b"
 dependencies = [
  "bytemuck",
  "kui-core",
