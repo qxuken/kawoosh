@@ -19,7 +19,9 @@
 -- the lab open beside them.
 --
 -- `f` shows only what falls short, `r` writes the report
--- (`:theme check`), `j` `k` `<C-d>` `<C-u>` `gg` `G` scroll, `q` closes. It reads `kawoosh.themes.check()`, the
+-- (`:theme check`), `j` `k` `<C-d>` `<C-u>` `gg` `G` scroll, `q` closes.
+-- The scrolling keys are `:view scroll`'s, which moves the body as the
+-- wheel does, the view not run again. It reads `kawoosh.themes.check()`, the
 -- same numbers `:theme check` writes, which a plugin can read too.
 
 local themes = kawoosh.themes
@@ -27,6 +29,9 @@ local fonts = kawoosh.fonts
 
 local VIEW = "theme lab"
 local PANE_FACT = "lua:" .. VIEW
+-- The scroller, the view's root (`kawoosh.view`'s `scroll`), named
+-- after the pane as every bundled pane's label is.
+local BODY = "theme lab body"
 local SHARE = 0.5
 -- The panes' one scale (`kawoosh.metrics`), read each frame.
 local SIZE, SMALL, NOTE = 13, 12, 11
@@ -293,13 +298,6 @@ kawoosh.view(VIEW, function(ctx)
   if not L then L = {} end
   F = fonts.current()
   local s = checked()
-  -- A scroll the keys asked for, from where the lab is.
-  if L.scroll then
-    local y = L.scroll == "top" and 0 or L.scroll == "end" and 1e7
-      or ctx.env.scroll_offset("lab").y + L.scroll * (L.scroll_page and ((ctx.height or 400) / 2) or SIZE * 3)
-    ctx.env.set_scroll("lab", 0, math.max(0, y))
-    L.scroll, L.scroll_page = nil, nil
-  end
   local short = 0
   for _, c in ipairs(s.checks) do if not c.ok then short = short + 1 end end
   local head = column { width = "grow", gap = 4,
@@ -310,7 +308,7 @@ kawoosh.view(VIEW, function(ctx)
       { size = SMALL, color = short > 0 and t.danger or t.muted, wrap = "word" }),
     text("f what falls short · r the report · j k scroll · q closes",
       { size = NOTE, color = t.faint, wrap = "word" }) }
-  local body = column { key = "lab", width = "grow", height = "grow", bg = t.bg, pad = 14, gap = 10,
+  local body = column { key = BODY, width = "grow", height = "grow", bg = t.bg, pad = 14, gap = 10,
     scroll_y = true, head }
   local function add(title, note, scene)
     body[#body + 1] = heading(title, note, t)
@@ -328,7 +326,7 @@ kawoosh.view(VIEW, function(ctx)
   end
   add("every pair", nil, all_pairs(s, t))
   return body
-end, function() end, { session = false })
+end, nil, { session = false, scroll = BODY })
 
 -- -------------------------------------------------------- the commands
 
@@ -347,17 +345,12 @@ end
 on("short", function() if L then L.short = not L.short end end, "only the pairs below their floor, or all")
 on("report", function() kawoosh.run("theme check") end, "the report, as `:theme check` writes it")
 on("close", function() L = nil kawoosh.view_close(VIEW) end, "close the lab")
-local function scroll(by, page) if L then L.scroll, L.scroll_page = by, page end end
-on("down", function() scroll(1) end, "scroll down a little")
-on("up", function() scroll(-1) end, "scroll up a little")
-on("page down", function() scroll(1, true) end, "scroll down half the pane")
-on("page up", function() scroll(-1, true) end, "scroll up half the pane")
-on("top", function() scroll("top") end, "to the top")
-on("bottom", function() scroll("end") end, "to the end")
-for k, c in pairs { f = "short", r = "report", q = "close", ["<Esc>"] = "close",
-                    j = "down", k = "up", ["<Down>"] = "down", ["<Up>"] = "up",
-                    ["<C-d>"] = "page down", ["<C-u>"] = "page up", gg = "top", G = "bottom" } do
-  kawoosh.map("p", k, "theme lab " .. c, { view = VIEW })
+for k, c in pairs { f = "theme lab short", r = "theme lab report", q = "theme lab close",
+                    ["<Esc>"] = "theme lab close",
+                    j = "view scroll down", k = "view scroll up", ["<Down>"] = "view scroll down",
+                    ["<Up>"] = "view scroll up", ["<C-d>"] = "view scroll half down",
+                    ["<C-u>"] = "view scroll half up", gg = "view scroll top", G = "view scroll bottom" } do
+  kawoosh.map("p", k, c, { view = VIEW })
 end
 
 -- themes.lab(): what the lab shows — `title`, `short` (how many pairs

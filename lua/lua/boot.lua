@@ -18,6 +18,7 @@ kawoosh._restorers = {}
 kawoosh._openers = {}
 kawoosh._transient = {}
 kawoosh._here = {}
+kawoosh._scrollers = {}
 kawoosh._settings_hooks = {}
 kawoosh._watches = {}
 kawoosh._tools = {}
@@ -480,7 +481,11 @@ end
 -- payloads reach `on_event(ev)`. `opts.session = false` keeps the view
 -- out of a session: a picker is asked for again, not brought back.
 -- `opts.here(pane)` says the directory the pane shows, if any: where
--- `:terminal here` starts from it.
+-- `:terminal here` starts from it. `opts.scroll` is the label of the
+-- view's root node when that node scrolls: `:view scroll` moves it
+-- from the keys (`j`, `<C-d>`, `G` mapped to it) as the wheel does,
+-- without running the view — a key that runs plugin code has every
+-- view on the screen run again (lua-boundary.md Decision 11).
 function kawoosh.view(name, fn, on_event, opts)
   -- `{ native = NAMESPACE }`: the view a native extension draws
   -- (docs/design/native.md Decision 4) — its pane is the slot
@@ -497,6 +502,7 @@ function kawoosh.view(name, fn, on_event, opts)
   kawoosh._handlers[name] = on_event
   kawoosh._transient[name] = (opts and opts.session == false) or nil
   kawoosh._here[name] = opts and opts.here or nil
+  kawoosh._scrollers[name] = opts and opts.scroll or nil
 end
 
 -- kawoosh.tool(name, { cmd =, cwd =, place =, dock =, restore =, key = }):
