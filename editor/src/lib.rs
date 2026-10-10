@@ -1376,6 +1376,13 @@ impl Editor {
         self.field_text(self.prompt_view()?)
     }
 
+    /// Where the prompt's caret is, as a byte of its line: the primary
+    /// selection's head.
+    pub fn prompt_caret(&self) -> Option<usize> {
+        let v = self.views.get(self.prompt_view()?)?;
+        Some(v.sels.primary().head)
+    }
+
     /// Puts `line` on the prompt, the caret at its end.
     pub fn set_prompt_text(&mut self, line: &str) {
         if let Some(v) = self.prompt_view() {

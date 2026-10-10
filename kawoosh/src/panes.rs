@@ -305,13 +305,12 @@ impl Kawoosh {
                     // clipped at the strip's end.
                     let ghost = self.cmdline_ghost();
                     self.field_line(ui, field, true, ghost.as_deref(), font);
-                    let line_len = self.ed.prompt_text().map_or(0, |t| t.len());
                     let candidates = self
                         .cmd_completion
                         .as_ref()
                         // After a command's word the row shows before a
                         // letter is typed: its subcommands, what it takes.
-                        .filter(|c| c.candidates.len() > 1 && (line_len > c.start || c.start > 0))
+                        .filter(|c| c.candidates.len() > 1 && (c.at > c.start || c.start > 0))
                         .map(|c| (c.candidates.clone(), c.index));
                     if let Some((cands, index)) = candidates {
                         // A strip that scrolls, each candidate at its own
