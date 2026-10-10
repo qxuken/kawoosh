@@ -991,6 +991,40 @@ fn tabs_glide_to_their_places_when_reordered() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// The tab moved is drawn over the tabs it passes, whichever way it
+/// goes. Each tab is drawn in its place's order, and moved left it
+/// would pass under the tab gliding out of its way — eaten from both
+/// sides, a block shrinking to its middle and growing back from the
+/// next place's, where moved right it slid over.
+#[test]
+fn the_tab_moved_is_drawn_over_the_tabs_it_passes() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, "tabnew");
+    d.frame(&mut app);
+    // The topmost tab where the moved one and the one it swaps with
+    // cross, half the glide on: the later in the paint order.
+    let on_top = |d: &mut Drive, a: u64, b: u64| -> u64 {
+        let (ka, kb) = (
+            d.key_of(&format!("tab{a}")).unwrap(),
+            d.key_of(&format!("tab{b}")).unwrap(),
+        );
+        let hits = d.core.interaction.hits();
+        let at = |k| hits.iter().rposition(|h| h.key == k).expect("drawn");
+        if at(ka) > at(kb) { a } else { b }
+    };
+    for (keys, moved, passed) in [("[T", 2, 1), ("]T", 2, 1), ("[T", 2, 1)] {
+        d.keys(&mut app, keys);
+        d.advance(0.06);
+        d.frame(&mut app);
+        assert_eq!(on_top(&mut d, moved, passed), moved, "{keys}");
+        settle(&mut d, &mut app);
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// A tab moves along the strip: `]T` `[T` a place right and left
 /// (COUNT places), `:tabmove +N` / `-N` / `N` / bare to the end, the
 /// keyboard staying on it; and from a pane without a view the
