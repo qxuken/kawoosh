@@ -159,7 +159,7 @@ view* (a field named `pane`, made once, unlisted) in that mode, so a
 key there resolves as any key does: counts, prefixes, the which-key,
 `:map list p`, a plugin's own maps. A miss in pane mode falls through
 to normal mode for what every pane shares — `<C-w>…`, `<leader>…`,
-`:`, `]x` / `[x`, the shift chords (`Keymap::shared_from_pane`) — and for nothing
+`:`, `]x` / `[x`, the `Z` keys, the shift chords (`Keymap::shared_from_pane`) — and for nothing
 else: `dd` in a list does nothing rather than editing a hidden buffer.
 The prompt opens over the pane view, and a command that shows a
 buffer splits an editor pane for it, which is what makes `:tabnew`
@@ -179,6 +179,7 @@ and `:e` reachable when the memory pane is the only pane there is.
 | `<Esc>` | `pane back`: the keyboard to the editor pane it came from |
 | `:` | the command line |
 | `]t` `[t` `gt` `gT` `]q` `[q` | the next-and-previous cluster is shared too (`]b` needs an editor pane and says so; `<C-Tab>` `<C-S-Tab>` are bound in pane mode too) |
+| `ZQ` `ZZ` `ZT` `ZA` | shared: the pane closed (nothing to write), the tab, everything |
 
 A pane's own keys are its own maps, local to its place
 ([local-maps.md](local-maps.md)), so one key can mean each pane's
@@ -412,9 +413,12 @@ objects, or any other character on both sides.
 | `ZT` | close the tab (`:tabclose`) |
 | `ZA` | quit all |
 
-The `Z` keys are an editor pane's alone, local to `editor`
-(local-maps.md; asked 2026-10-11: "`Z` only available from the
-editor"): a terminal's escape and a plugin's pane find nothing on `Z`.
+The `Z` keys are every pane's but a terminal's (asked 2026-10-11: "`Z`
+only available from the editor", then "i want to close something from
+:du often"): global, gated `!terminal`, and shared from pane mode as
+`<C-w>` is, so `:du`, the memory pane or a picker close on `ZQ` — and on
+`ZZ`, a pane with no buffer having nothing to write. A terminal's escape
+finds nothing on them (`<C-\>ZT` says `ZT: not bound`).
 
 ### `<leader>` groups (Space)
 

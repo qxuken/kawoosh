@@ -796,15 +796,16 @@ impl Keymap {
 
     /// Whether a sequence begun in pane mode is one every pane shares
     /// with normal mode — the `<C-w>` cluster, the leader's groups,
-    /// `:`, the next-and-previous cluster (`]t` `[t` `]q` `[q`), and a
-    /// ctrl- or alt-shift chord (the pane cluster from a terminal too)
-    /// — so a miss in pane mode looks it up there. Anything else
-    /// (`dd`, `i`) is not: a list does not edit.
+    /// `:`, the next-and-previous cluster (`]t` `[t` `]q` `[q`), the
+    /// `Z` keys that close (`ZQ` `ZT` `ZA`), and a ctrl- or alt-shift
+    /// chord (the pane cluster from a terminal too) — so a miss in pane
+    /// mode looks it up there. Anything else (`dd`, `i`) is not: a list
+    /// does not edit.
     pub fn shared_from_pane(&self, keys: &[String]) -> bool {
         let Some(first) = keys.first() else {
             return false;
         };
-        if matches!(first.as_str(), "<C-w>" | ":" | "]" | "[")
+        if matches!(first.as_str(), "<C-w>" | ":" | "]" | "[" | "Z")
             || first == LEADER
             || *first == self.leader
         {

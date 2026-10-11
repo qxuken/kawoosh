@@ -3370,6 +3370,12 @@ pub fn install(ed: &mut Editor) {
             .bang("write over a file changed on disk since it was read")
             .doc("write, then quit"),
         |ed, ctx| {
+            // A pane with no buffer of its own (`:du`, the memory pane)
+            // has nothing to write: `ZZ` closes it as `ZQ` does.
+            if ed.is_pane_view(ctx.view) && ctx.args.is_empty() {
+                ed.effects.push(Effect::Quit { force: false });
+                return;
+            }
             if write(ed, ctx, crate::AfterWrite::Quit) {
                 ed.effects.push(Effect::Quit { force: false });
             }
@@ -5576,16 +5582,19 @@ pub fn default_keymap(km: &mut Keymap) {
     for (k, c) in n {
         km.bind(Normal, k, c);
     }
-    // `Z`: write and quit — the pane, the tab, all of them. An editor
-    // pane's alone (asked 2026-10-11: "`Z` only available from the
-    // editor"): a terminal's escape, a plugin's pane find nothing.
+    // `Z`: write and quit — the pane, the tab, all of them. Not from a
+    // terminal (asked 2026-10-11: "`Z` only available from the
+    // editor"), where its escape finds nothing on `Z`; every other pane
+    // shares it (`Keymap::shared_from_pane`), `:du` closed with `ZQ`
+    // ("i want to close something from :du often").
+    let not_terminal = [crate::command::Cond::parse("!terminal")];
     for (k, c) in [
         ("ZZ", "write quit"),
         ("ZQ", "quit!"),
         ("ZT", "tab close"),
         ("ZA", "quit all"),
     ] {
-        km.bind_local("editor", Normal, k, c, &[]);
+        km.bind_when(Normal, k, c, &not_terminal);
     }
     // A terminal pane's: the shell's prompts (its OSC 133 marks), ⌘↑ ⌘↓
     // as iTerm and Terminal.app have them and ctrl-shift where there is

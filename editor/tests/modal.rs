@@ -684,7 +684,7 @@ fn select_next_and_all_matches() {
     assert_eq!(t.sel(), Selection::new(4, 4));
     t.keys("cx<Esc>");
     assert_eq!(t.text(), "x b x b x");
-    // `gh` / `gl`, `ZQ`, `<C-s>` in every mode, and `<D-a>` `<C-S-a>` are bound.
+    // `gh` / `gl`, `ZZ`, `<C-s>` in every mode, and `<D-a>` `<C-S-a>` are bound.
     let mut t = T::new("  ab cd");
     t.keys("$gh");
     assert_eq!(t.head(), 2);
@@ -706,12 +706,7 @@ fn select_next_and_all_matches() {
     t.keys("<Esc>ix<C-s>");
     assert_eq!(t.ed.message, "no file name (use :w <path>)");
     assert_eq!(t.ed.mode(t.v), Mode::Normal, "a write leaves insert");
-    // `Z` is an editor pane's, which the shell says the pane is: with
-    // no word of it, `ZQ` quits nothing.
     t.keys("<Esc>ZQ");
-    assert!(!t.ed.take_effects().contains(&Effect::Quit { force: true }));
-    t.ed.fact("editor", true);
-    t.keys("ZQ");
     assert!(t.ed.take_effects().contains(&Effect::Quit { force: true }));
 }
 

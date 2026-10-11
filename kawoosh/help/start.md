@@ -127,8 +127,8 @@ Quitting never loses work. `:q` keeps what is unsaved — scratch buffers
 too — and the next bare `kawoosh` brings it back with the session; only
 `:q!` and `ZQ` discard.
 
-The `Z` keys are an editor pane's: a terminal or a plugin's pane has
-none.
+The `Z` keys work in every pane but a terminal: `ZQ` or `ZZ` closes
+`:du`, the memory pane or a picker as it closes a file.
 
 `:relaunch` quits as `:qa` does and starts kawoosh again on the
 session, so a kawoosh installed over the running one is the one that
