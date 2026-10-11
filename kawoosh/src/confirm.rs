@@ -56,6 +56,18 @@ impl Kawoosh {
         self.wake.wake();
     }
 
+    /// Whether the confirm is asking for a secret in its field: while it
+    /// is, the keyboard is the platform's secure entry (kui F85) and the
+    /// input method is off (kui F125), as for kui's own `secure` editor —
+    /// no other app reads the keys, and no candidate window shows them.
+    pub(crate) fn asking_secret(&self) -> bool {
+        self.confirm.is_some()
+            && self
+                .asking
+                .as_ref()
+                .is_some_and(|a| a.secret && a.input.is_some())
+    }
+
     /// Answers the confirm with action `index`: the float goes, and
     /// the action's command runs (none for a label without one).
     pub(crate) fn confirm_answer(&mut self, index: Option<usize>) {
@@ -188,18 +200,21 @@ impl Kawoosh {
                     } else {
                         input.clone()
                     };
-                    ui.with(
-                        NodeSpec::row()
-                            .grow_width()
-                            .pad_xy(6.0, 3.0)
-                            .radius(3.0)
-                            .bg(pal.strip)
-                            .border(1.0, pal.accent)
-                            .label("answer"),
-                        |ui| {
-                            ui.text(&format!("{shown}▏"), mono.color(pal.fg).nowrap());
-                        },
-                    );
+                    let mut field = NodeSpec::row()
+                        .grow_width()
+                        .pad_xy(6.0, 3.0)
+                        .radius(3.0)
+                        .bg(pal.strip)
+                        .border(1.0, pal.accent)
+                        .label("answer");
+                    // A secret's is read as a password field: the
+                    // screen reader says so and reads the dots.
+                    if a.secret {
+                        field = field.role(Role::PasswordInput);
+                    }
+                    ui.with(field, |ui| {
+                        ui.text(&format!("{shown}▏"), mono.color(pal.fg).nowrap());
+                    });
                 }
                 if !c.lines.is_empty() {
                     ui.with(NodeSpec::column().gap(2.0), |ui| {
@@ -277,5 +292,71 @@ impl Kawoosh {
             },
         );
         ui.take_key_focus(sink);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Asking, Confirm};
+    use crate::app::Kawoosh;
+    use crate::harness::Harness;
+    use kui_native::Role;
+
+    /// A secret asked in the confirm's field keeps the keys to the
+    /// window: the platform's secure entry on and the input method off
+    /// while it is up — over `keys.input_method = always` — and the
+    /// field read as a password; both given back once it is answered.
+    #[test]
+    fn a_secret_asked_takes_the_keyboard_secure() {
+        let mut app = Kawoosh::new("*scratch*", "");
+        let mut h = Harness::new(800.0, 600.0);
+        h.frame(&mut app);
+        app.run_line("set keys.input_method=always");
+        h.frame(&mut app);
+        assert!(!h.core.secure_input() && !h.core.ime_off(), "nothing asked");
+
+        let (reply, answer) = crossbeam_channel::unbounded();
+        app.confirm_with(Confirm {
+            title: "box: Password for me@box".into(),
+            lines: vec![],
+            actions: vec![
+                ("OK".into(), String::new()),
+                ("Cancel".into(), String::new()),
+            ],
+            chosen: 0,
+        });
+        app.asking = Some(Asking {
+            reply,
+            input: Some(String::new()),
+            secret: true,
+        });
+        h.frame(&mut app);
+        h.press(&mut app, "hunter2");
+        assert!(h.core.secure_input(), "secure entry while it asks");
+        assert!(h.core.ime_off(), "no input method while it asks");
+        assert!(
+            h.core
+                .nodes()
+                .iter()
+                .any(|n| n.role == Some(Role::PasswordInput)),
+            "the field is a password's"
+        );
+        let drawn = format!(
+            "{:?}",
+            h.core
+                .nodes()
+                .iter()
+                .filter_map(|n| n.text.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !drawn.contains("hunter2") && drawn.contains("•••••••"),
+            "{drawn}"
+        );
+
+        h.press(&mut app, "<CR>");
+        assert_eq!(answer.try_recv().ok().flatten().as_deref(), Some("hunter2"));
+        h.frame(&mut app);
+        assert!(!h.core.secure_input() && !h.core.ime_off(), "given back");
     }
 }

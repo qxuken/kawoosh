@@ -284,8 +284,12 @@ impl Kawoosh {
     /// the launcher — so a held `j` repeats, `⌥e` waits for nothing and
     /// an IME composes no `j`. Text is typed with it on: insert mode,
     /// the prompt and every field, `r`'s and `f`'s character, a
-    /// terminal's pty.
+    /// terminal's pty. A secret typed into the confirm's field takes it
+    /// off whatever the setting says: a composition would show it.
     pub(crate) fn ime_off(&self) -> bool {
+        if self.asking_secret() {
+            return true;
+        }
         if self.ed.settings.str("keys.input_method") == Some("always") {
             return false;
         }
