@@ -409,7 +409,12 @@ objects, or any other character on both sides.
 | `<C-s>` `<D-s>` | write, from normal, visual and insert mode alike, and leave the view in normal mode, as `<Esc>` would (asked 2026-10-05: "save should change mode to normal"; the mode stayed before) |
 | `ZZ` | write and quit |
 | `ZQ` | quit, discarding |
+| `ZT` | close the tab (`:tabclose`) |
 | `ZA` | quit all |
+
+The `Z` keys are an editor pane's alone, local to `editor`
+(local-maps.md; asked 2026-10-11: "`Z` only available from the
+editor"): a terminal's escape and a plugin's pane find nothing on `Z`.
 
 ### `<leader>` groups (Space)
 

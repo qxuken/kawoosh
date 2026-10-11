@@ -1375,7 +1375,8 @@ fn map_list_here_lists_what_applies_where_the_keys_are() {
     d.frame(&mut app);
     let maps = maps_text(&app);
     assert!(
-        maps.starts_with("here, innermost first: buffer t, then the global map"),
+        // `editor` the pane's own place: the `Z` keys' (keys.md).
+        maps.starts_with("here, innermost first: buffer t · editor, then the global map"),
         "{maps}"
     );
     assert!(
@@ -1390,7 +1391,7 @@ fn map_list_here_lists_what_applies_where_the_keys_are() {
     d.keys(&mut app, "q");
     d.frame(&mut app);
     // Another buffer: the whole list still names the place; `here` has
-    // none of it.
+    // none of it, the editor pane's place alone.
     ex(&mut d, &mut app, "enew");
     d.frame(&mut app);
     ex(&mut d, &mut app, "map list n");
@@ -1405,7 +1406,10 @@ fn map_list_here_lists_what_applies_where_the_keys_are() {
     ex(&mut d, &mut app, "map list here n");
     d.frame(&mut app);
     let maps = maps_text(&app);
-    assert!(maps.starts_with("here: the global map alone"), "{maps}");
+    assert!(
+        maps.starts_with("here, innermost first: editor, then the global map"),
+        "{maps}"
+    );
     assert!(!maps.contains("echo mine"), "{maps}");
 }
 

@@ -1654,6 +1654,46 @@ fn the_escape_looks_past_a_binding_gated_off_here() {
     assert_eq!(app.ed.message, "", "`zz` ran, quietly");
 }
 
+/// `Z` is an editor pane's (asked 2026-10-11: "`Z` only available
+/// from the editor"): after a terminal's escape it is bound to nothing
+/// and the tab stays; from the editor pane above, `ZT` closes the tab.
+#[test]
+fn z_is_the_editors_and_zt_closes_the_tab() {
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.keys(&mut app, ":tabnew");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 2);
+    app.add_headless_terminal();
+    d.frame(&mut app);
+    let pane = app.ed.pane_view();
+    assert!(
+        matches!(
+            app.ed.lookup_keys(pane, Mode::Normal, &["Z".to_string()]),
+            Lookup::None
+        ),
+        "no `Z` from a terminal"
+    );
+    d.press(&mut app, "<C-\\>");
+    d.keys(&mut app, "Z");
+    assert_eq!(app.ed.message, "Z: not bound");
+    assert!(app.terms.escape.is_none());
+    assert_eq!(app.layout.tabs.len(), 2, "the tab stays");
+    d.press(&mut app, "<C-\\>");
+    d.press(&mut app, "<C-w>");
+    d.keys(&mut app, "k");
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Editor(_))
+    ));
+    d.keys(&mut app, "ZT");
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 1, "`ZT` closed the tab");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// The text of terminal `t`'s screen, a line a row.
 #[cfg(unix)]
 fn screen_text(app: &Kawoosh, t: u64) -> String {

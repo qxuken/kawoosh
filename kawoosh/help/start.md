@@ -120,11 +120,15 @@ your settings turns the card off, and `leader = ","` moves the leader.
 | `ZZ` | write and close (`:wq`, `:x`) |
 | `ZQ` | close, discarding changes (`:q!`) |
 | `:q` | close the pane, or the app from the last one |
+| `ZT` | close the tab (`:tabclose`) |
 | `ZA` | quit everything (`:qa`) |
 
 Quitting never loses work. `:q` keeps what is unsaved — scratch buffers
 too — and the next bare `kawoosh` brings it back with the session; only
 `:q!` and `ZQ` discard.
+
+The `Z` keys are an editor pane's: a terminal or a plugin's pane has
+none.
 
 `:relaunch` quits as `:qa` does and starts kawoosh again on the
 session, so a kawoosh installed over the running one is the one that
