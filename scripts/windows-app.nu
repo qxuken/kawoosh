@@ -272,8 +272,10 @@ def register-editor [exe: path, built: path] {
 # `kui.h` of the kui-ffi the build links: the header `kawoosh.h`
 # includes, at the ABI kawoosh.exe was built with. The graph for this
 # host alone: unfiltered, `--offline` wants every target's sources.
+# `--print host-tuple`, not `-vV` cut at its `host:` line: a pipe closed
+# on rustc mid-write has it say `failed printing to stdout`.
 def kui-header [manifest: path]: nothing -> path {
-  let host = ^rustc -vV | lines | where $it starts-with 'host: ' | first | str substring 6..
+  let host = ^rustc --print host-tuple | str trim
   ^cargo metadata --format-version 1 --offline --filter-platform $host --manifest-path $manifest
     | from json | get packages | where name == 'kui-ffi' | first
     | get manifest_path | path dirname | path join include kui.h
