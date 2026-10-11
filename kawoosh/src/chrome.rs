@@ -23,7 +23,9 @@
 //! tabs whose order changed — by that or by `]T` — glide to their places
 //! ([`TabsGlide`]).
 
-use kui_native::{Align, CursorShape, Enter, NodeSpec, Role, Span, Ui, Value, widgets};
+use kui_native::{
+    Align, CursorShape, Enter, FloatConfig, NodeSpec, Role, Span, Ui, Value, widgets,
+};
 
 use crate::app::Kawoosh;
 use crate::icons;
@@ -379,7 +381,6 @@ impl Kawoosh {
                             // reaches it.
                             let mut block = NodeSpec::column()
                                 .grow_width()
-                                .min_width(TAB_MIN_W)
                                 .grow_height()
                                 .bg(bg)
                                 .hoverable()
@@ -400,87 +401,106 @@ impl Kawoosh {
                                 if let Some((_, dx)) = g.from.iter().find(|(t, _)| t == id) {
                                     block = block.enter(Enter::from(*dx, 0.0));
                                 }
+                                // The tab moved is drawn over those it
+                                // passes. In flow it is painted in its
+                                // place's order, and moved left it went
+                                // under the one gliding out of its way.
+                                // Floated in its place it paints above the
+                                // row, clipped by the strip still.
+                                if is_active {
+                                    block = block.float(FloatConfig::parent().clipped());
+                                }
                             }
-                            let key = ui.with_keyed(&format!("tab{id}"), block, |ui| {
-                                // i3's coloured top edge on the block.
-                                ui.leaf(NodeSpec::row().grow_width().height(2.0).bg(edge));
-                                ui.with(
-                                    NodeSpec::row().fill().gap(0.0).cross_align(Align::Center),
-                                    |ui| {
-                                        // A click goes to the tab, a
-                                        // drag takes it along the row.
-                                        let mut item = NodeSpec::row()
-                                            .fill()
-                                            .pad_xy(10.0, 0.0)
-                                            .cross_align(Align::Center)
-                                            .clip()
-                                            .hover_group(&group)
-                                            .on_click(Value::map([
-                                                ("kind", "tab".into()),
-                                                ("index", Value::Int(i as i64)),
-                                            ]))
-                                            .on_drag(Value::map([
-                                                ("kind", "tabdrag".into()),
-                                                ("index", Value::Int(i as i64)),
-                                            ]))
-                                            .role(Role::Tab)
-                                            .selected(is_active)
-                                            .label(label.as_str());
-                                        if dragging {
-                                            item = item.cursor(CursorShape::Grabbing);
-                                        }
-                                        ui.with_keyed("item", item.gap(4.0), |ui| {
-                                            ui.text(
-                                                label,
-                                                rows::mono(font, &pal).color(fg).ellipsis(),
-                                            );
-                                            if *dot {
-                                                icons::icon(ui, &icon_set, "dot", font.size, fg);
+                            // Its place in the row, which the block fills
+                            // — or floats over while it glides.
+                            let slot = NodeSpec::column()
+                                .grow_width()
+                                .min_width(TAB_MIN_W)
+                                .grow_height();
+                            let key = ui.with_keyed(&format!("slot{id}"), slot, |ui| {
+                                ui.with_keyed(&format!("tab{id}"), block, |ui| {
+                                    // i3's coloured top edge on the block.
+                                    ui.leaf(NodeSpec::row().grow_width().height(2.0).bg(edge));
+                                    ui.with(
+                                        NodeSpec::row().fill().gap(0.0).cross_align(Align::Center),
+                                        |ui| {
+                                            // A click goes to the tab, a
+                                            // drag takes it along the row.
+                                            let mut item = NodeSpec::row()
+                                                .fill()
+                                                .pad_xy(10.0, 0.0)
+                                                .cross_align(Align::Center)
+                                                .clip()
+                                                .hover_group(&group)
+                                                .on_click(Value::map([
+                                                    ("kind", "tab".into()),
+                                                    ("index", Value::Int(i as i64)),
+                                                ]))
+                                                .on_drag(Value::map([
+                                                    ("kind", "tabdrag".into()),
+                                                    ("index", Value::Int(i as i64)),
+                                                ]))
+                                                .role(Role::Tab)
+                                                .selected(is_active)
+                                                .label(label.as_str());
+                                            if dragging {
+                                                item = item.cursor(CursorShape::Grabbing);
                                             }
-                                        });
-                                        if n > 1 && hovered && !dragging {
-                                            // Its own colour under the pointer
-                                            // alone: a group's hover lights
-                                            // every member.
-                                            let on = ui.is_hovered(ui.child_key("close"));
-                                            // A square shorter than the row,
-                                            // centred in it, its × the `close`
-                                            // icon about the middle: a glyph
-                                            // sits on the font's math axis,
-                                            // below it.
-                                            let side = (font.line_height * 0.75).round();
-                                            let mut close = icons::icon_box(side)
-                                                .radius(3.0)
-                                                .hover_group(&group);
-                                            if on {
-                                                close = close.bg(if is_active {
-                                                    theme.accent_hover
-                                                } else {
-                                                    pal.border
-                                                });
-                                            }
-                                            ui.with_keyed(
-                                                "close",
-                                                close
-                                                    .on_click(Value::map([
-                                                        ("kind", "tab close".into()),
-                                                        ("index", Value::Int(i as i64)),
-                                                    ]))
-                                                    .label("close tab"),
-                                                |ui| {
+                                            ui.with_keyed("item", item.gap(4.0), |ui| {
+                                                ui.text(
+                                                    label,
+                                                    rows::mono(font, &pal).color(fg).ellipsis(),
+                                                );
+                                                if *dot {
                                                     icons::icon(
-                                                        ui,
-                                                        &icon_set,
-                                                        "close",
-                                                        font.size.round(),
-                                                        fg,
+                                                        ui, &icon_set, "dot", font.size, fg,
                                                     );
-                                                },
-                                            );
-                                            ui.leaf(NodeSpec::row().width(6.0));
-                                        }
-                                    },
-                                );
+                                                }
+                                            });
+                                            if n > 1 && hovered && !dragging {
+                                                // Its own colour under the pointer
+                                                // alone: a group's hover lights
+                                                // every member.
+                                                let on = ui.is_hovered(ui.child_key("close"));
+                                                // A square shorter than the row,
+                                                // centred in it, its × the `close`
+                                                // icon about the middle: a glyph
+                                                // sits on the font's math axis,
+                                                // below it.
+                                                let side = (font.line_height * 0.75).round();
+                                                let mut close = icons::icon_box(side)
+                                                    .radius(3.0)
+                                                    .hover_group(&group);
+                                                if on {
+                                                    close = close.bg(if is_active {
+                                                        theme.accent_hover
+                                                    } else {
+                                                        pal.border
+                                                    });
+                                                }
+                                                ui.with_keyed(
+                                                    "close",
+                                                    close
+                                                        .on_click(Value::map([
+                                                            ("kind", "tab close".into()),
+                                                            ("index", Value::Int(i as i64)),
+                                                        ]))
+                                                        .label("close tab"),
+                                                    |ui| {
+                                                        icons::icon(
+                                                            ui,
+                                                            &icon_set,
+                                                            "close",
+                                                            font.size.round(),
+                                                            fg,
+                                                        );
+                                                    },
+                                                );
+                                                ui.leaf(NodeSpec::row().width(6.0));
+                                            }
+                                        },
+                                    );
+                                });
                             });
                             if is_active {
                                 active_key = Some(key);
