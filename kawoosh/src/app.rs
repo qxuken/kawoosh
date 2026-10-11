@@ -2868,11 +2868,13 @@ impl kui_native::App for Kawoosh {
         }
         self.sync_clipboard(ui.core(), false);
         // Secure keyboard entry while a terminal at a password prompt
-        // has the keys (kui F85; per frame, so it goes when this does).
-        if self
-            .term_of(self.layout.focused())
-            .and_then(|t| self.terms.map.get(&t))
-            .is_some_and(|t| t.password_prompt())
+        // has the keys, or the confirm asks for a secret (kui F85; per
+        // frame, so it goes when this does).
+        if self.asking_secret()
+            || self
+                .term_of(self.layout.focused())
+                .and_then(|t| self.terms.map.get(&t))
+                .is_some_and(|t| t.password_prompt())
         {
             ui.secure_input(true);
         }
