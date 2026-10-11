@@ -391,3 +391,46 @@ fn many_entries_cost() {
     eprintln!("s (sorted again): {:.1} ms", ms(t));
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// `Z` is every pane's but a terminal's (asked 2026-10-11: "i want to
+/// close something from :du often"): `ZQ` closes the pane, `ZZ` too —
+/// nothing to write — and `ZT` the tab it is in.
+#[test]
+fn z_closes_the_disk_usage_pane() {
+    let root = std::env::temp_dir().join(format!("kawoosh-du-z-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a"), b"a").unwrap();
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    let on_du = |app: &Kawoosh| {
+        matches!(
+            app.layout.focused_content(),
+            Some(kawoosh::layout::Content::Lua(_))
+        )
+    };
+    for keys in ["ZQ", "ZZ"] {
+        ex(&mut d, &mut app, &format!("du {}", root.display()));
+        d.frame(&mut app);
+        assert!(on_du(&app));
+        let panes = app.layout.visible_panes().len();
+        d.keys(&mut app, keys);
+        d.frame(&mut app);
+        assert!(!on_du(&app), "{keys} closed it: {}", app.ed.message);
+        assert_eq!(app.layout.visible_panes().len(), panes - 1, "{keys}");
+    }
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("du {}", root.display()));
+    d.frame(&mut app);
+    assert!(on_du(&app));
+    assert_eq!(app.layout.tabs.len(), 2);
+    d.keys(&mut app, "ZT");
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 1, "`ZT` closed the tab");
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

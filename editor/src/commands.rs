@@ -3370,6 +3370,12 @@ pub fn install(ed: &mut Editor) {
             .bang("write over a file changed on disk since it was read")
             .doc("write, then quit"),
         |ed, ctx| {
+            // A pane with no buffer of its own (`:du`, the memory pane)
+            // has nothing to write: `ZZ` closes it as `ZQ` does.
+            if ed.is_pane_view(ctx.view) && ctx.args.is_empty() {
+                ed.effects.push(Effect::Quit { force: false });
+                return;
+            }
             if write(ed, ctx, crate::AfterWrite::Quit) {
                 ed.effects.push(Effect::Quit { force: false });
             }
@@ -5331,11 +5337,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-u>", "node parent"),
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),
-        // The file: `<C-s>` from any mode, and vim's `ZZ` / `ZQ`.
+        // The file: `<C-s>` from any mode; vim's `ZZ` / `ZQ` are the
+        // editor pane's, below.
         ("<C-s>", "write"),
         ("<D-s>", "write"),
-        ("ZZ", "write quit"),
-        ("ZQ", "quit!"),
         // The tab's jumps (docs/design/jumps.md): vim's keys; kui tells
         // `<C-i>` from `<Tab>`, which stays free.
         ("<C-o>", "jump back"),
@@ -5509,8 +5514,6 @@ pub fn default_keymap(km: &mut Keymap) {
         // closes the pane, `C` the tab; `m` the layout's mode.
         ("<C-w>C", "tab close"),
         ("<C-w>m", "layout"),
-        // `Z`: write and quit, all of them too.
-        ("ZA", "quit all"),
         // `<leader>` groups, one module each (keymap-regroup.md): b
         // buffers, c compile, i help, m memory, o the look, s search,
         // w the workspace, y the path; single letters for the daily
@@ -5578,6 +5581,20 @@ pub fn default_keymap(km: &mut Keymap) {
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);
+    }
+    // `Z`: write and quit — the pane, the tab, all of them. Not from a
+    // terminal (asked 2026-10-11: "`Z` only available from the
+    // editor"), where its escape finds nothing on `Z`; every other pane
+    // shares it (`Keymap::shared_from_pane`), `:du` closed with `ZQ`
+    // ("i want to close something from :du often").
+    let not_terminal = [crate::command::Cond::parse("!terminal")];
+    for (k, c) in [
+        ("ZZ", "write quit"),
+        ("ZQ", "quit!"),
+        ("ZT", "tab close"),
+        ("ZA", "quit all"),
+    ] {
+        km.bind_when(Normal, k, c, &not_terminal);
     }
     // A terminal pane's: the shell's prompts (its OSC 133 marks), ⌘↑ ⌘↓
     // as iTerm and Terminal.app have them and ctrl-shift where there is
