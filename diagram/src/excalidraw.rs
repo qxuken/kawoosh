@@ -183,6 +183,9 @@ pub fn export(doc: &Doc) -> Value {
                 if matches!(n.shape, Shape::Round | Shape::Cylinder) {
                     m.insert("roundness".into(), json!({ "type": 3 }));
                 }
+                if n.dashed {
+                    m.insert("strokeStyle".into(), json!("dashed"));
+                }
                 let mut bound_to = arrows_of(&n.id);
                 let label_id = format!("{id}-label");
                 if !n.label.is_empty() {

@@ -216,6 +216,7 @@ pub fn add_node(doc: &Doc, x: i32, y: i32, w: i32, h: i32) -> (Change, String) {
         h: h.max(1),
         shape: Shape::Rect,
         color: None,
+        dashed: false,
     };
     (Change::Add(Item::Node(n)), id)
 }
@@ -239,6 +240,46 @@ pub fn add_edge(from: &str, to: &str) -> Change {
         dashed: false,
         color: None,
     }))
+}
+
+/// The group that holds just the selection's boxes and groups already,
+/// whatever their order: a second one round them would be a frame drawn
+/// over the first.
+pub fn existing_group(doc: &Doc, sel: &[usize]) -> Option<usize> {
+    let mut want: Vec<&str> = sel
+        .iter()
+        .filter_map(|&i| doc.entries.get(i).and_then(|e| e.item.id()))
+        .collect();
+    want.sort_unstable();
+    want.dedup();
+    if want.is_empty() {
+        return None;
+    }
+    doc.entries.iter().position(|e| match &e.item {
+        Item::Group(g) => {
+            let mut have: Vec<&str> = g.members.iter().map(String::as_str).collect();
+            have.sort_unstable();
+            have == want
+        }
+        _ => false,
+    })
+}
+
+/// The arrows with an end on one of the selection's boxes, by entry.
+pub fn arrows_of(doc: &Doc, sel: &[usize]) -> Vec<usize> {
+    let ids: Vec<&str> = sel
+        .iter()
+        .filter_map(|&i| match &doc.entries.get(i)?.item {
+            Item::Node(n) => Some(n.id.as_str()),
+            _ => None,
+        })
+        .collect();
+    doc.entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches!(&e.item, Item::Edge(x) if ids.contains(&x.from.as_str()) || ids.contains(&x.to.as_str())))
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// A group round the selection's boxes and groups; its id.
@@ -400,5 +441,10 @@ mod tests {
     fn a_group_round_the_selection() {
         let out = run(TEXT, |d| vec![group(d, &[0, 1, 2]).unwrap().0]);
         assert!(out.ends_with("group g1 { a b }\n"), "{out}");
+        // `g` holds a and b already, in whichever order they are chosen.
+        let doc = parse(TEXT);
+        assert_eq!(existing_group(&doc, &[1, 0]), Some(4));
+        assert_eq!(existing_group(&doc, &[0]), None);
+        assert_eq!(arrows_of(&doc, &[1]), vec![2]);
     }
 }

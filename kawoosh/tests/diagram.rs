@@ -196,7 +196,7 @@ fn a_line_that_does_not_read_is_shown_and_the_rest_draws() {
     let path = file("problem", "box a at 0,0\narrow a -> ghost\n");
     let mut d = Drive::new(1000.0, 600.0);
     let _app = open(&mut d, &path);
-    let texts = drawn(&d);
+    let texts = d.texts_under("top");
     assert!(
         texts.iter().any(|t| t == "line 2: no box `ghost`"),
         "{texts:?}"
@@ -379,15 +379,15 @@ fn the_toolbar_and_the_menu_run_the_canvas_commands() {
     let mut app = open(&mut d, &path);
     let v = app.focused_view().unwrap();
     // The toolbar's box button: the box tool.
-    let r = d.rect("b1").expect("the toolbar's box button");
+    let r = d.rect("diagram tool box").expect("the toolbar's box button");
     d.click(&mut app, r.x + r.w / 2.0, r.y + r.h / 2.0);
     assert_eq!(app.canvas.views[&v].tool, kawoosh::canvas::Tool::Box);
     d.keys(&mut app, "v");
     // `T` hides it, and again shows it.
     d.keys(&mut app, "T");
-    assert!(!drawn(&d).iter().any(|t| t == "colour"), "hidden");
+    assert!(d.rect("diagram tool box").is_none(), "hidden");
     d.keys(&mut app, "T");
-    assert!(drawn(&d).iter().any(|t| t == "colour"), "shown");
+    assert!(d.rect("diagram tool box").is_some(), "shown");
 
     // A right-click on B: its rows; a shape from the submenu.
     let b = at(&app, 16.0, 1.5);
@@ -406,5 +406,112 @@ fn the_toolbar_and_the_menu_run_the_canvas_commands() {
     d.keys(&mut app, "Here");
     enter(&mut d, &mut app);
     assert!(text(&app).ends_with("box n1 \"Here\" at 2,8\n"), "{}", text(&app));
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// The selection as the file's ids, for asserting what is selected.
+fn selected(app: &mut Kawoosh) -> Vec<String> {
+    let v = app.focused_view().unwrap();
+    let doc = app.diagram_doc(v);
+    app.canvas.views[&v]
+        .sel
+        .iter()
+        .map(|&i| match &doc.entries[i].item {
+            kawoosh_diagram::Item::Edge(e) => format!("{}->{}", e.from, e.to),
+            item => item.id().unwrap_or("text").to_string(),
+        })
+        .collect()
+}
+
+/// Asked as "cursor navigation with hjkl when box, text": the box and
+/// text tools put a grid cursor out; `hjkl` move it, `<CR>` places.
+#[test]
+fn the_box_and_text_tools_place_by_a_grid_cursor() {
+    let path = file("cursor", "box a \"A\" at 0,0\n");
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let v = app.focused_view().unwrap();
+    d.keys(&mut app, "l");
+    assert_eq!(selected(&mut app), vec!["a"]);
+    // The box tool: the cursor starts right of A, at 12,0.
+    d.keys(&mut app, "b");
+    assert_eq!(app.canvas.views[&v].cursor, Some((12, 0)));
+    // `<CR>` the first corner, `jjlllll` and `<CR>` the second.
+    enter(&mut d, &mut app);
+    d.keys(&mut app, "jjlllll");
+    enter(&mut d, &mut app);
+    d.keys(&mut app, "B");
+    enter(&mut d, &mut app);
+    assert!(text(&app).ends_with("box n1 \"B\" at 12,0 size 5x2\n"), "{}", text(&app));
+    assert_eq!(app.canvas.views[&v].tool, kawoosh::canvas::Tool::Select);
+    // The text tool: `<CR>` twice is no box; one `<CR>` is the text.
+    d.keys(&mut app, "t");
+    d.keys(&mut app, "J");
+    enter(&mut d, &mut app);
+    d.keys(&mut app, "note");
+    enter(&mut d, &mut app);
+    assert!(text(&app).ends_with("text \"note\" at 21,5\n"), "{}", text(&app));
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Asked as "i can't select multiple boxes" from the keys, and "I can
+/// group same thing twice".
+#[test]
+fn v_extends_the_selection_and_a_group_is_made_once() {
+    let path = file("extend", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    d.keys(&mut app, "l");
+    // `V`, then `l`: B added to A.
+    d.keys(&mut app, "Vhl");
+    assert_eq!(selected(&mut app), vec!["a", "b"]);
+    d.press(&mut app, "<Esc>");
+    d.keys(&mut app, "G");
+    d.keys(&mut app, "AB");
+    enter(&mut d, &mut app);
+    assert!(text(&app).ends_with("group g1 \"AB\" { a b }\n"), "{}", text(&app));
+    // The group's boxes again, from nothing selected, `G` again: the
+    // one there, selected.
+    d.press(&mut app, "<Esc>");
+    d.keys(&mut app, "V");
+    d.press(&mut app, "<C-n>");
+    d.press(&mut app, "<C-n>");
+    d.press(&mut app, "<Esc>");
+    assert_eq!(selected(&mut app), vec!["a", "b"]);
+    let before = text(&app);
+    d.keys(&mut app, "G");
+    assert_eq!(text(&app), before, "no second group");
+    assert_eq!(selected(&mut app), vec!["g1"]);
+    assert!(app.ed.message.contains("already grouped"), "{}", app.ed.message);
+    // Ungrouped, what it held is selected.
+    ex(&mut d, &mut app, "diagram ungroup");
+    assert!(!text(&app).contains("group"), "{}", text(&app));
+    assert_eq!(selected(&mut app), vec!["a", "b"]);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Asked as "toolbar should be with a context … actions on a box should
+/// also apply": a box's `r` elbows its arrows, `-` dashes its outline;
+/// the toolbar offers what the selection can take.
+#[test]
+fn the_toolbar_follows_the_selection_and_a_box_takes_route_and_dash() {
+    let path = file("context", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    assert!(d.rect("diagram color").is_none(), "nothing selected: no colour");
+    assert!(d.rect("diagram route").is_none());
+    d.keys(&mut app, "l");
+    assert!(d.rect("diagram color").is_some() && d.rect("diagram shape").is_some());
+    assert!(d.rect("diagram heads").is_none(), "heads are an arrow's");
+    // A box: `r` elbows its arrows, `-` dashes its own outline.
+    d.keys(&mut app, "r-");
+    let t = text(&app);
+    assert!(t.contains("arrow a -> b elbow\n"), "{t}");
+    assert!(t.contains("box a \"A\" at 0,0 dashed\n"), "{t}");
+    // An arrow selected: its heads offered.
+    d.press(&mut app, "<C-n>");
+    d.press(&mut app, "<C-n>");
+    assert_eq!(selected(&mut app), vec!["a->b"]);
+    assert!(d.rect("diagram heads").is_some());
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

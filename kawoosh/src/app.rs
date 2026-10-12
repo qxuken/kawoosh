@@ -3173,6 +3173,14 @@ impl Kawoosh {
                 }
                 return;
             }
+            // A diagram's canvas, between its toolbar and its status.
+            if tag_kind == Some("canvaslayout") {
+                if let Some(pane) = pane {
+                    let r = l.rect;
+                    self.canvas.laid(pane, r.x, r.y, r.w, r.h);
+                }
+                return;
+            }
             if let Some(pane) = pane {
                 let r = l.rect;
                 self.layout.rects.insert(

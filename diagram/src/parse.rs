@@ -129,6 +129,7 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
                 h: 0,
                 shape: Shape::Rect,
                 color: None,
+                dashed: false,
             };
             let mut size = None;
             while let Some(t) = r.next() {
@@ -144,6 +145,8 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
                             })?;
                         }
                         "color" => n.color = Some(r.color()?),
+                        "dashed" => n.dashed = true,
+                        "solid" => n.dashed = false,
                         _ => return Err(format!("`{w}` means nothing to a box")),
                     },
                     _ => return Err("a brace means nothing to a box".into()),

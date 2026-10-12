@@ -27,7 +27,7 @@ group backend "Backend" { db }
 
 | line | what it is |
 |---|---|
-| `box ID "LABEL" at X,Y size WxH shape S color C` | a box; only its id is needed (`at 0,0`, `size 8x3` otherwise) |
+| `box ID "LABEL" at X,Y size WxH shape S color C dashed` | a box; only its id is needed (`at 0,0`, `size 8x3` otherwise); `dashed` draws its outline dashed |
 | `text "LABEL" at X,Y color C` | free text, its top left at the point |
 | `arrow A -> B "LABEL" elbow dashed color C` | an arrow between two boxes; `->` a head at B, `<-` at A, `<->` both, `--` none |
 | `group ID "LABEL" { A B }` | a frame round boxes (or other groups) |
@@ -60,9 +60,11 @@ again in a standard form; lines it does not touch stay as you wrote them.
 - **Right-click** a thing for what you can do to it — its shape, its
   colour, an arrow's heads, a box added after it — or the empty canvas
   for a box, a text or a paste right there.
-- **The toolbar** along the top has the tools and the common changes,
-  each with its key; `T` hides it and shows it again (the
-  `diagram.toolbar` setting keeps it hidden).
+- **The toolbar** above the diagram has the tools, what makes boxes, and
+  the changes that fit what is selected — a box's shape, an arrow's heads
+  — each with its key; the line under the diagram says what is selected.
+  `T` hides the toolbar and shows it again (the `diagram.toolbar`
+  setting keeps it hidden).
 
 ## The keys
 
@@ -70,7 +72,11 @@ Everything can be done from the keyboard. A diagram from nothing: `n`
 makes a box and asks its label, `o` adds the next one to the right joined
 by an arrow, `O` one below; `hjkl` walk from box to box; `a` on a box
 starts an arrow from it, `hjkl` to the box it goes to and `<CR>` joins
-them.
+them. The box and text tools (`b`, `t`) put out a cursor on the grid:
+`hjkl` move it (`HJKL` five), `<CR>` puts a text there, or a box's first
+corner and then its second — `<CR>` twice where it stands for an 8×3.
+`V` makes `hjkl` and `<C-n>` add to the selection instead of replacing it,
+to connect, group or move several things.
 
 | key | what it does |
 |---|---|
@@ -78,18 +84,21 @@ them.
 | `o` · `O` | a new box to the right · below the one selected, an arrow to it |
 | `h` `j` `k` `l`, the arrows | select the nearest box or text that way |
 | `<C-n>` · `<C-p>` | select the next · previous thing in the file, arrows and groups too |
+| `V` | extend: the keys above add to the selection; `V` or `<Esc>` stop |
 | `H` `J` `K` `L`, shift and the arrows | move the selection a unit (`5L` five) |
 | `<A-h>` `<A-l>` · `<A-k>` `<A-j>` | narrower, wider · shorter, taller |
 | `a` | with a box selected, an arrow from it: `hjkl` to the other box, `<CR>` joins, `<Esc>` lets go; otherwise the arrow tool for the mouse |
-| `b` · `t` · `v` | the box tool (drag one, or click for an 8×3), the text tool, back to select |
+| `b` · `t` · `v` | the box tool (drag one, or `hjkl` the cursor and `<CR>` its two corners), the text tool (click, or the cursor and `<CR>`), back to select |
 | `<Esc>` | let go of the tool, then the selection |
 | `<CR>` `i` | edit the label |
 | `x` `<Del>` | delete; a box takes its arrows with it |
 | `s` | the next shape |
-| `r` · `-` · `R` | an arrow straight or elbowed · dashed or solid · the other way round |
+| `r` | arrows elbowed or straight again — a box's arrows, on a box |
+| `-` | dashed or solid: an arrow, or a box's outline |
+| `R` | an arrow the other way round |
 | `c` | the next colour |
 | `C` | connect the selected boxes, in the order you selected them |
-| `G` | group the selection |
+| `G` | group the selection (once: the same boxes again select the group they are in) |
 | `y` · `p` · `D` | copy · paste · duplicate |
 | `<C-a>` | select everything |
 | `u` · `<C-r>` | undo · redo |

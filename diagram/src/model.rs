@@ -132,6 +132,8 @@ pub struct Node {
     pub h: i32,
     pub shape: Shape,
     pub color: Option<Color>,
+    /// Its outline dashed: something outside, planned, optional.
+    pub dashed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

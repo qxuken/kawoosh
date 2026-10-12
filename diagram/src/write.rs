@@ -44,6 +44,9 @@ pub fn line(item: &Item) -> String {
                 s.push_str(" shape ");
                 s.push_str(n.shape.word());
             }
+            if n.dashed {
+                s.push_str(" dashed");
+            }
             color(&mut s, n.color);
             s
         }
@@ -92,7 +95,7 @@ mod tests {
 
     #[test]
     fn a_line_written_reads_back_as_the_item() {
-        let text = "box api \"API \\\"gw\\\"\\nv2\" at -2,3 size 9x4 shape round color blue\nbox s at 0,0 shape dot\ntext \"note\" at 1,9 color red\narrow api <-> s \"both\" elbow dashed color green\narrow s -- s\ngroup g \"G\" { api s } color gray\n";
+        let text = "box api \"API \\\"gw\\\"\\nv2\" at -2,3 size 9x4 shape round dashed color blue\nbox s at 0,0 shape dot\ntext \"note\" at 1,9 color red\narrow api <-> s \"both\" elbow dashed color green\narrow s -- s\ngroup g \"G\" { api s } color gray\n";
         let doc = parse(text);
         assert_eq!(doc.problems, vec![]);
         let written: String = doc.items().map(|i| line(i) + "\n").collect();

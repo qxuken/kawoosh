@@ -109,15 +109,16 @@ the capitals move.
 | `n` · `o` · `O` | a box (beside the selected one, else in the middle) · one to its right · below it, joined by an arrow; the label asked each time |
 | `h` `j` `k` `l`, arrows | the nearest box or text that way, by its middle, the straight way counting double the sideways |
 | `<C-n>` `<C-p>` | the next, previous thing in the file — the way to an arrow or a group |
+| `V` | extend: those keys add to the selection, `V` or `<Esc>` stop |
 | `H` `J` `K` `L`, shift-arrows | move a unit, a count for more |
 | `<A-hjkl>` | narrower, taller, shorter, wider |
 | `a` | on a box: an arrow from it, `hjkl` to the other, `<CR>` joins, `<Esc>` lets go; else the arrow tool |
-| `v` `<Esc>` · `b` · `t` | tools: select, box, text |
+| `v` `<Esc>` · `b` · `t` | tools: select, box, text — the box and text tools with a grid cursor, `hjkl` (`HJKL` five) and `<CR>`: a text there, a box's two corners (twice in place, an 8×3) |
 | `<CR>` `i` | the selection's label, in the prompt (`:diagram label TEXT`) |
 | `x` `<Del>` | delete; a box takes its arrows with it |
-| `s` · `r` · `-` · `R` · `c` | next shape · straight/elbow · dashed · reversed · next colour |
+| `s` · `r` · `-` · `R` · `c` | next shape · elbowed or straight again, a box's arrows on a box · dashed, an arrow or a box's outline · reversed · next colour |
 | `C` | connect the selected boxes in the order selected |
-| `G` | group the selection (`g` is a prefix in pane mode: `gt`, `gg`) |
+| `G` | group the selection (`g` is a prefix in pane mode: `gt`, `gg`); a group round just those already is selected instead of a second |
 | `y` · `p` · `D` | copy · paste · duplicate |
 | `<C-a>` | select everything |
 | `u` `<C-r>` | the buffer's undo, redo |
@@ -186,9 +187,16 @@ Y`). Each row runs a command line on the pane (menus.md's thesis), its
 key beside it; a capital is spelled `Shift+O`, since a menu shows every
 letter as a capital.
 
-The toolbar is a row at the canvas's top left: the tools, what makes
-boxes, what changes the selection, the view — each a button running its
-command, its key beside it, the tool in hand lit. `T` or `diagram
+The toolbar is a strip over the drawing: the tools and what makes boxes
+always, then what changes the selection *for what is selected* — a
+box's shape, an arrow's heads and reverse, connect for two boxes,
+ungroup for a group (asked 2026-10-13: `elbow` and `dashed` read as
+nothing until an arrow was selected) — then the view; each a button
+running its command, keyed by it, its key beside it, the tool in hand
+lit. A strip under the drawing says the tool, the zoom, what is
+selected (`2 boxes · 1 arrow`) and what the keys do now. The changes
+reach a box too: `r` on a box elbows its arrows, `-` dashes its own
+outline (`box a dashed`, a new word on its line). `T` or `diagram
 toolbar` hides it for the session; `diagram.toolbar = false` keeps it
 hidden. A drag that starts on it moves nothing.
 
@@ -205,6 +213,14 @@ an A labeled box". kui keeps its float layers' stack from frame to frame
 items under keys given by place, so a pan that drew one grid line more
 renumbered everything after it; the box behind `a` came out under a
 fresh key, on top — over its label, a float of its own beside it.
+
+Then (the same day, a box over the title bar and a group's wash over
+the pane beside): a float escapes its parent's clip unless it says
+`clipped`, and the toolbar, a float over the drawing, was under any
+box kui saw after it. So the drawing's floats are all `clipped`, and the
+toolbar and the status are strips in the flow above and below the
+drawing, which no float in it can reach; the drawing's own box is read
+from its `on_layout`, not worked out from the pane's.
 
 So: every node the canvas draws has a key of its own — a grid line by
 its place on the grid (`gx12`), a thing by its entry (`n3`, `e7`), a

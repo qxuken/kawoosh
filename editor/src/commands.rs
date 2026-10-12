@@ -5834,6 +5834,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<Right>", "diagram select right"),
         ("<C-n>", "diagram select next"),
         ("<C-p>", "diagram select prev"),
+        // Extend: the keys above add to the selection.
+        ("V", "diagram extend"),
         // Move it, a unit a press (a count for more); size it.
         ("H", "diagram nudge -1 0"),
         ("J", "diagram nudge 0 1"),
