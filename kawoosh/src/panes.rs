@@ -1027,6 +1027,12 @@ impl Kawoosh {
                 }
                 crate::perf::part("title bar", t);
                 match &content {
+                    // A `.kdraw` buffer drawn as its diagram (`canvas.rs`).
+                    Some(Content::Editor(v)) if self.diagram_drawn(*v) => {
+                        if !self.culled(ui, pane) {
+                            self.render_canvas(ui, pane, *v, focused);
+                        }
+                    }
                     // A buffer wearing a header (`headers.rs`): the view
                     // over the text, the keys the field's while it has one.
                     Some(Content::Editor(v)) => match self.header_of(*v).cloned() {

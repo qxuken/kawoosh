@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["text-buffer", "doc", "editor", "term", "systems", "lua", "kawoosh", "languages"]
+members = ["text-buffer", "doc", "editor", "term", "systems", "lua", "kawoosh", "languages", "diagram"]
 
 [workspace.package]
 publish = false
@@ -18,6 +18,7 @@ kawoosh-term = { path = "./term" }
 kawoosh-systems = { path = "./systems" }
 kawoosh-languages = { path = "./languages" }
 kawoosh-lua = { path = "./lua" }
+kawoosh-diagram = { path = "./diagram" }
 
 # kui at one exact pre-release from crates.io, where it is published since
 # alpha.33 (docs/design/kui-requirements.md R1.1). Not drydock9's copies:

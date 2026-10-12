@@ -1073,8 +1073,9 @@ impl Kawoosh {
         }
     }
 
-    /// The prompt open on `line`, the caret at byte `caret`.
-    fn compile_prompt(&mut self, line: &str, caret: usize) {
+    /// The prompt open on `line`, the caret at byte `caret`: a command
+    /// to finish — a compile's arguments, a diagram's label.
+    pub(crate) fn compile_prompt(&mut self, line: &str, caret: usize) {
         self.open_cmdline();
         self.ed.set_prompt_text(line);
         if let Some(v) = self.ed.prompt_view() {

@@ -5808,6 +5808,52 @@ pub fn default_keymap(km: &mut Keymap) {
     ] {
         km.bind_local("undo", Pane, k, c, &[]);
     }
+    // A diagram's canvas (docs/design/diagrams.md Decision 4): its view
+    // takes its keys in pane mode, so these shadow the list keys and a
+    // vim letter never edits the text under the drawing.
+    for (k, c) in [
+        ("v", "diagram tool select"),
+        ("b", "diagram tool box"),
+        ("a", "diagram tool arrow"),
+        ("t", "diagram tool text"),
+        ("<Esc>", "diagram escape"),
+        ("<CR>", "diagram edit"),
+        ("i", "diagram edit"),
+        ("x", "diagram delete"),
+        ("<Del>", "diagram delete"),
+        ("<BS>", "diagram delete"),
+        ("h", "diagram nudge -1 0"),
+        ("j", "diagram nudge 0 1"),
+        ("k", "diagram nudge 0 -1"),
+        ("l", "diagram nudge 1 0"),
+        ("<Left>", "diagram nudge -1 0"),
+        ("<Down>", "diagram nudge 0 1"),
+        ("<Up>", "diagram nudge 0 -1"),
+        ("<Right>", "diagram nudge 1 0"),
+        ("H", "diagram nudge -5 0"),
+        ("J", "diagram nudge 0 5"),
+        ("K", "diagram nudge 0 -5"),
+        ("L", "diagram nudge 5 0"),
+        ("s", "diagram shape"),
+        ("r", "diagram route"),
+        ("-", "diagram dashed"),
+        ("c", "diagram color"),
+        ("C", "diagram connect"),
+        ("G", "diagram group"),
+        ("y", "diagram copy"),
+        ("p", "diagram paste"),
+        ("D", "diagram duplicate"),
+        ("<C-a>", "diagram all"),
+        ("u", "undo"),
+        ("<C-r>", "redo"),
+        ("=", "diagram fit"),
+        ("0", "diagram zoom 1"),
+        ("+", "diagram zoom in"),
+        ("_", "diagram zoom out"),
+        ("<Tab>", "diagram toggle"),
+    ] {
+        km.bind_local("diagram", Pane, k, c, &[]);
+    }
     let i = [
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),
