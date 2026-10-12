@@ -203,3 +203,14 @@ program's, ⌥⌫ `ESC DEL` (every shell's kill-word back), ⌥← ⌥→ ⌥⌦
 xterm's `CSI 1 ; 3 D`, `CSI 1 ; 3 C`, `CSI 3 ; 3 ~` — not rewritten to
 `ESC b` `ESC f` `ESC d`, which would take `<A-Left>` from a vim in the
 pane. Test: `cmds_text_keys_reach_a_shell_as_readlines`.
+
+**Decision 6, amended again** 2026-10-12, from the user: "we sending
+<D-c> into terminal but also do action, choose one". ⌘C over a terminal
+did two things when its program had pushed the protocol: kui's runner
+copied the grid's selection — its own half of the chord, after the
+press reaches the app — and the press went on to the program as
+super-c. Now the selection decides, as Ghostty's `performable` copy
+does: something selected on screen, and ⌘C is the copy alone, the
+program hearing neither its press nor its release; nothing selected,
+and it is the program's. Raw changes nothing about it — ⌘ is kawoosh's
+there too. Test: `cmd_c_copies_a_selection_or_reaches_the_program_never_both`.
