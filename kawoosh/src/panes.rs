@@ -758,22 +758,28 @@ impl Kawoosh {
     }
 
     pub(crate) fn render_pane(&mut self, ui: &mut Ui<'_>, pane: PaneId) {
-        let t = self.perf.start();
+        let t = self.perf.pane_start();
         self.render_pane_inner(ui, pane);
         if t.is_some() {
+            // Named as its title bar names it, so the one slow pane of
+            // several of a kind is found.
             let what = match self.layout.content(pane) {
-                Some(Content::Editor(_)) => "editor".to_string(),
-                Some(Content::Terminal(_)) => "terminal".to_string(),
+                Some(Content::Editor(v)) => format!("editor · {}", self.ed.buffer_of(v).name),
+                Some(Content::Terminal(t)) => match self.term_label(t) {
+                    Some(name) => format!("terminal · {name}"),
+                    None => "terminal".to_string(),
+                },
                 Some(Content::Lua(n)) => format!("lua {n}"),
                 Some(Content::Undo) => "undo".to_string(),
                 Some(Content::Memory) => "memory".to_string(),
                 None => "?".to_string(),
             };
-            self.perf.pane(what, t);
+            self.perf.pane(pane, what, t);
         }
     }
 
     fn render_pane_inner(&mut self, ui: &mut Ui<'_>, pane: PaneId) {
+        let t = crate::perf::span_start();
         let pal = self.pal;
         let focused = self.layout.focused() == pane;
         let content = self.layout.content(pane);
@@ -1019,6 +1025,7 @@ impl Kawoosh {
                             .label("drop"),
                     );
                 }
+                crate::perf::part("title bar", t);
                 match &content {
                     // A buffer wearing a header (`headers.rs`): the view
                     // over the text, the keys the field's while it has one.
@@ -1050,6 +1057,7 @@ impl Kawoosh {
         if self.culled(ui, pane) {
             return;
         }
+        let mut t = crate::perf::span_start();
         let pal = self.pal;
         // The pane's face: the window's, or its own size
         // (pane-settings.md Decision 4); the grid's cell with it.
@@ -1068,13 +1076,16 @@ impl Kawoosh {
             })
             .unwrap_or((800.0, self.body_h - self.chrome.pane_title_h));
         self.fit_terminal(id, w, h);
+        t = crate::perf::part("fit", t);
         // Kitty's images on its screen (`term_images.rs`).
         let shown = self.term_image_boxes(ui, id);
+        t = crate::perf::part("images", t);
         let Some(term) = self.terms.map.get(&id) else {
             return;
         };
         // The palette is the frame's (`sync_term_palettes`).
         let screen = term.screen();
+        t = crate::perf::part("screen copy", t);
         let cursor = screen.cursor.map(|(r, c, shape)| {
             (
                 r,
@@ -1167,6 +1178,7 @@ impl Kawoosh {
                             .flatten()
                     })
                     .flatten();
+                t = crate::perf::part("links", t);
                 // Not reporting, a right-click is the terminal's menu, on
                 // the grid itself so its Select All is the grid's
                 // (`menus.rs`).
@@ -1234,6 +1246,7 @@ impl Kawoosh {
                     }
                     None => ui.cells_keyed("cells", &grid, spec),
                 }
+                crate::perf::part("cells", t);
                 for s in shown.iter().filter(|s| !s.under) {
                     image(ui, s);
                 }
@@ -1340,6 +1353,7 @@ impl Kawoosh {
         if self.culled(ui, pane) {
             return;
         }
+        let mut t = crate::perf::span_start();
         let pal = self.pal;
         // The pane's face: the window's, or its own size
         // (pane-settings.md Decision 4).
@@ -1462,6 +1476,7 @@ impl Kawoosh {
             }
             v.top = v.top.min(line_count.saturating_sub(1));
         }
+        t = crate::perf::part("scroll", t);
 
         // The rendered rows, worked out before the frame borrows the
         // buffer — an image among them is asked for here — each with
@@ -1712,6 +1727,7 @@ impl Kawoosh {
         }
         let md_cell_h: HashMap<usize, f32> = md_cells.iter().map(|(l, t)| (*l, t.height)).collect();
         let v = &self.ed.views[view];
+        t = crate::perf::part("rendered rows", t);
         let buf = &self.ed.buffers[buf_id];
         let search = self
             .ed
@@ -2061,6 +2077,7 @@ impl Kawoosh {
             }
         }
 
+        t = crate::perf::part("decorations", t);
         // Each tall row drawn: its line, what it drew
         // (`Heights::stamp`), and its height last frame when it has one.
         let mut md_seen: Vec<(usize, u64, Option<f32>)> = Vec::new();
@@ -2918,6 +2935,7 @@ impl Kawoosh {
                 }
             },
         );
+        t = crate::perf::part("rows", t);
         self.ed.views[view].left = left;
         match left_room {
             Some(room) => self.left_max.insert(view, room),
@@ -2981,6 +2999,7 @@ impl Kawoosh {
                 crate::frames::request(ui, "markdown heights");
             }
         }
+        crate::perf::part("heights", t);
         if focused {
             self.focus_sink(ui, sink);
         }

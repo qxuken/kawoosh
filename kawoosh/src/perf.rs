@@ -29,6 +29,34 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
     /// Free-form notes this frame, for the log line.
     static NOTES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The parts of the pane being drawn ([`part`], and the [`span`]s
+    /// under it), while one is and the frame is measured.
+    static PARTS: std::cell::RefCell<Option<Parts>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A pane's draw by part: a name and its ms, summed by name, in the
+/// order first met.
+type Parts = Vec<(&'static str, f32)>;
+
+fn add(parts: &mut Parts, name: &'static str, m: f32) {
+    match parts.iter_mut().find(|(n, _)| *n == name) {
+        Some((_, total)) => *total += m,
+        None => parts.push((name, m)),
+    }
+}
+
+/// The time since `t` counted as part `name` of the pane being drawn;
+/// the next part starts now. Nothing when not measuring.
+pub fn part(name: &'static str, t: Option<Instant>) -> Option<Instant> {
+    let t = t?;
+    let now = Instant::now();
+    let m = (now - t).as_secs_f32() * 1e3;
+    PARTS.with(|p| {
+        if let Some(parts) = &mut *p.borrow_mut() {
+            add(parts, name, m);
+        }
+    });
+    Some(now)
 }
 
 /// A note on this frame's log line, when measuring.
@@ -49,7 +77,14 @@ pub fn span(name: &'static str, t: Option<Instant>) {
     let Some(t) = t else {
         return;
     };
-    span_ms(name, ms(t));
+    let m = ms(t);
+    // Under the pane being drawn too: a Lua view's fill is its pane's.
+    PARTS.with(|p| {
+        if let Some(parts) = &mut *p.borrow_mut() {
+            add(parts, name, m);
+        }
+    });
+    span_ms(name, m);
 }
 
 /// `ms` counted under `name` in this frame's spans.
@@ -114,13 +149,23 @@ struct Reading {
     /// The plugins' time since the frame before, the input handled
     /// between them included: ms and calls.
     plugins: Vec<(String, f32, u32)>,
-    /// Each pane drawn, by what it holds, and its time: the title bar,
-    /// the rows, a Lua view's fill.
-    panes: Vec<(String, f32)>,
+    /// Each pane drawn, and its time: the title bar, the rows, a Lua
+    /// view's fill.
+    panes: Vec<PaneTime>,
     /// The spans ([`span`]): ms and how many.
     spans: Vec<(&'static str, f32, u32)>,
     /// The notes ([`note`]).
     notes: Vec<String>,
+}
+
+/// One pane's draw in a frame: the pane, what it holds and is called,
+/// its ms, and its parts' ([`part`]).
+#[derive(Clone, Debug)]
+struct PaneTime {
+    id: u64,
+    name: String,
+    ms: f32,
+    parts: Parts,
 }
 
 /// The process's memory, as the OS counts it.
@@ -268,10 +313,24 @@ impl Perf {
         self.log.is_some()
     }
 
-    /// A pane's draw, `what` it holds, since `t`.
-    pub fn pane(&mut self, what: String, t: Option<Instant>) {
+    /// The clock read for a pane's draw, when measuring, its [`part`]s
+    /// gathered from now until [`Perf::pane`].
+    pub fn pane_start(&self) -> Option<Instant> {
+        let t = self.start()?;
+        PARTS.with(|p| *p.borrow_mut() = Some(Vec::new()));
+        Some(t)
+    }
+
+    /// Pane `pane`'s draw, `what` it holds, since `t`, with its parts.
+    pub fn pane(&mut self, pane: u64, what: String, t: Option<Instant>) {
+        let parts = PARTS.with(|p| p.borrow_mut().take()).unwrap_or_default();
         if let Some(t) = t {
-            self.cur.panes.push((what, ms(t)));
+            self.cur.panes.push(PaneTime {
+                id: pane,
+                name: what,
+                ms: ms(t),
+                parts,
+            });
         }
     }
 
@@ -306,8 +365,15 @@ impl Perf {
             let _ = write!(s, "{}{n}={:.2}", if i > 0 { " " } else { "" }, p[i]);
         }
         let _ = write!(s, "] panes[");
-        for (i, (n, m)) in r.panes.iter().enumerate() {
-            let _ = write!(s, "{}{n}={m:.2}", if i > 0 { "; " } else { "" });
+        for (i, p) in r.panes.iter().enumerate() {
+            let _ = write!(s, "{}{}={:.2}", if i > 0 { "; " } else { "" }, p.name, p.ms);
+            if !p.parts.is_empty() {
+                let _ = write!(s, " (");
+                for (j, (n, m)) in p.parts.iter().enumerate() {
+                    let _ = write!(s, "{}{n}={m:.2}", if j > 0 { " " } else { "" });
+                }
+                let _ = write!(s, ")");
+            }
         }
         let _ = write!(s, "] spans[");
         for (i, (n, m, k)) in r.spans.iter().enumerate() {
@@ -421,6 +487,75 @@ impl Perf {
             list.sort_by(|a, b| b.3.total_cmp(&a.3).then(a.0.cmp(&b.0)));
         }
         (systems, plugins)
+    }
+
+    /// Each pane over the window, by its id under the name it had last
+    /// (a terminal's title moves), the most total first, each followed
+    /// by its parts, indented, the most total first — and what no part
+    /// took, as `rest`.
+    fn pane_breakdown(&self) -> Vec<Spent> {
+        /// A pane's ms total and worst, and the frames it was drawn in;
+        /// each part's total and worst.
+        struct Sum<'a> {
+            id: u64,
+            name: &'a str,
+            total: f32,
+            worst: f32,
+            drawn: u32,
+            parts: Vec<(&'static str, f32, f32)>,
+        }
+        let n = self.frames.len().max(1) as f32;
+        let mut panes: Vec<Sum<'_>> = Vec::new();
+        for r in &self.frames {
+            for p in &r.panes {
+                let at = match panes.iter().position(|s| s.id == p.id) {
+                    Some(at) => at,
+                    None => {
+                        panes.push(Sum {
+                            id: p.id,
+                            name: &p.name,
+                            total: 0.0,
+                            worst: 0.0,
+                            drawn: 0,
+                            parts: Vec::new(),
+                        });
+                        panes.len() - 1
+                    }
+                };
+                let s = &mut panes[at];
+                s.name = &p.name;
+                s.total += p.ms;
+                s.worst = s.worst.max(p.ms);
+                s.drawn += 1;
+                let rest = p.ms - p.parts.iter().map(|(_, m)| m).sum::<f32>();
+                let rest = (!p.parts.is_empty()).then_some(("rest", rest.max(0.0)));
+                for (name, m) in p.parts.iter().copied().chain(rest) {
+                    match s.parts.iter_mut().find(|(q, ..)| *q == name) {
+                        Some((_, total, worst)) => {
+                            *total += m;
+                            *worst = worst.max(m);
+                        }
+                        None => s.parts.push((name, m, m)),
+                    }
+                }
+            }
+        }
+        panes.sort_by(|a, b| b.total.total_cmp(&a.total).then(a.name.cmp(b.name)));
+        let mut out = Vec::new();
+        for mut s in panes {
+            out.push((
+                s.name.to_string(),
+                s.total / n,
+                s.worst,
+                s.total,
+                Some(s.drawn),
+            ));
+            s.parts.sort_by(|a, b| b.1.total_cmp(&a.1));
+            for (name, total, worst) in s.parts {
+                out.push((format!("  {name}"), total / n, worst, total, None));
+            }
+        }
+        out
     }
 
     /// The process's memory, asked for at most every [`MEM_EVERY`].
@@ -741,6 +876,7 @@ impl Kawoosh {
             .collect();
         let frames = self.perf.frames.len();
         let (systems, plugins) = self.perf.breakdown();
+        let panes = self.perf.pane_breakdown();
         let ts_last = self.perf.ts_last;
         let ts_answers = self.perf.ts_answers;
         let rows_last = self.inspector.last_build;
@@ -810,6 +946,14 @@ impl Kawoosh {
             Some(vec!["system", "avg", "worst", "total", ""]),
             spent(systems),
             Some("A lap through the frame each: a system counts the plugins it calls."),
+        ));
+        sections.push((
+            format!("panes · ms, over {frames} frames"),
+            Some(vec!["pane", "avg", "worst", "total", "drawn"]),
+            spent(panes),
+            Some(
+                "The `panes` lap by pane, under the name it has now, and each pane's draw by part.",
+            ),
         ));
         sections.push((
             format!("plugins · ms, over {frames} frames"),

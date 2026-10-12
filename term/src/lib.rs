@@ -332,6 +332,10 @@ impl OscScan {
 /// The most commands a terminal remembers the marks of.
 const COMMANDS_MAX: usize = 2000;
 
+/// How long [`Terminal::cwd_recent`] keeps a read: a `cd` in a shell
+/// that reports none shows on its tab within it.
+const CWD_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
+
 pub struct Terminal {
     term: Term<Proxy>,
     parser: Processor,
@@ -363,6 +367,8 @@ pub struct Terminal {
     domain: Option<String>,
     /// The directory the shell last said it is in (OSC 7).
     reported_cwd: Option<std::path::PathBuf>,
+    /// [`Terminal::cwd_recent`]'s last read, and when.
+    cwd_read: std::cell::RefCell<Option<(std::time::Instant, Option<std::path::PathBuf>)>>,
     pub bell: bool,
     exited: bool,
     /// How the process ended, once it was reaped ([`Terminal::exit`]).
@@ -511,6 +517,7 @@ impl Terminal {
                 spawned_in: cwd.map(Into::into),
                 domain: None,
                 reported_cwd: None,
+                cwd_read: Default::default(),
                 bell: false,
                 exited: false,
                 exit: None,
@@ -547,6 +554,7 @@ impl Terminal {
             spawned_in: None,
             domain: None,
             reported_cwd: None,
+            cwd_read: Default::default(),
             bell: false,
             exited: false,
             exit: None,
@@ -792,6 +800,7 @@ impl Terminal {
             return;
         };
         if let Some(url) = s.strip_prefix("7;") {
+            self.cwd_read.take();
             if let Some(p) = file_url_path(url, self.domain.is_some()) {
                 self.reported_cwd = Some(p);
             }
@@ -983,6 +992,22 @@ impl Terminal {
             .filter(|p| p.is_dir())
             .or_else(|| self.process_cwd())
             .or_else(|| self.spawned_in.clone())
+    }
+
+    /// [`Terminal::cwd`] read at most every [`CWD_EVERY`], and again as
+    /// soon as the shell reports one: for what is drawn every frame (a
+    /// tab's label), where each read was a `stat`, or the process asked
+    /// (`proc_pidinfo`), every frame for every terminal tab.
+    pub fn cwd_recent(&self) -> Option<std::path::PathBuf> {
+        let now = std::time::Instant::now();
+        if let Some((at, cwd)) = &*self.cwd_read.borrow()
+            && now.duration_since(*at) < CWD_EVERY
+        {
+            return cwd.clone();
+        }
+        let cwd = self.cwd();
+        *self.cwd_read.borrow_mut() = Some((now, cwd.clone()));
+        cwd
     }
 
     /// Whether the program on the pty is asking for a password: echo
