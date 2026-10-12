@@ -68,10 +68,11 @@ pub(crate) fn tab_pitch(g: &kui_native::ScrollGeometry, n: usize) -> f32 {
 impl Kawoosh {
     /// Where tab `t` is: the directory its terminal's shell last said
     /// it is in (OSC 7), when a terminal has its focus, else the tab's
-    /// own, else the editor's.
+    /// own, else the editor's. Asked every frame for every tab: a
+    /// terminal's is its last read of half a second ago.
     pub(crate) fn tab_dir(&self, t: &crate::layout::Tab) -> std::path::PathBuf {
         if let Some(Content::Terminal(id)) = self.layout.content(t.focused)
-            && let Some(dir) = self.terms.map.get(&id).and_then(|term| term.cwd())
+            && let Some(dir) = self.terms.map.get(&id).and_then(|term| term.cwd_recent())
         {
             return dir;
         }

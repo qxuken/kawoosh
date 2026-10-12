@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::io::Read as _;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 /// The most bytes one APC keeps: a chunk is at most 4096, but a direct
 /// transmission need not be chunked.
@@ -626,12 +626,19 @@ impl Graphics {
             let Pixels::Pending(rx, reply) = &mut img.pixels else {
                 continue;
             };
+            // A worker gone without an answer (it panicked) is a failed
+            // decode: left pending, the image stayed busy for good, and
+            // its terminal asked for a frame every frame until closed.
             let got = if wait {
-                rx.recv().ok()
+                rx.recv().map_err(|_| ())
             } else {
-                rx.try_recv().ok()
+                match rx.try_recv() {
+                    Ok(got) => Ok(got),
+                    Err(TryRecvError::Empty) => continue,
+                    Err(TryRecvError::Disconnected) => Err(()),
+                }
             };
-            let Some(got) = got else { continue };
+            let got = got.unwrap_or_else(|()| Err("EINVAL:the image could not be decoded".into()));
             let reply = reply.take();
             changed = true;
             match got {
@@ -985,5 +992,28 @@ mod tests {
         assert_eq!(drawn(Fill::Cells(2, 3), (30, 40), cell), (20, 60));
         assert_eq!(drawn(Fill::Cols(3), (30, 40), cell), (30, 40));
         assert_eq!(drawn(Fill::Rows(1), (30, 40), cell), (15, 20));
+    }
+
+    #[test]
+    fn a_decode_whose_worker_died_fails_rather_than_staying_busy() {
+        let mut g = Graphics::default();
+        let (tx, rx) = channel();
+        drop(tx);
+        g.images.insert(
+            1,
+            Image {
+                id: 1,
+                number: 0,
+                width: 1,
+                height: 1,
+                pixels: Pixels::Pending(rx, None),
+                generation: 1,
+                order: 1,
+            },
+        );
+        assert!(g.busy());
+        assert!(g.poll(false), "the image changed: it failed");
+        assert!(!g.busy(), "nothing left to wait a frame for");
+        assert!(g.images.is_empty(), "a failed image goes");
     }
 }

@@ -354,6 +354,21 @@ fn perf_and_frames_measure_only_while_on_show() {
         texts.iter().any(|t| t.starts_with("plugins · ms")),
         "{texts:?}"
     );
+    // Each pane by the name its title bar has: the one slow pane of
+    // several is found.
+    assert!(
+        texts.iter().any(|t| t.starts_with("panes · ms")),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.starts_with("editor · ")),
+        "{texts:?}"
+    );
+    // And under each, where its draw went.
+    assert!(
+        has("  title bar") && has("  rows") && has("  scroll"),
+        "{texts:?}"
+    );
     assert!(
         has("panes") && has("lua publish") && has("status line"),
         "{texts:?}"
