@@ -99,20 +99,35 @@ The canvas's view takes its keys in pane mode while it is drawn, gated
 by the `diagram` fact, so a stray `x` never edits text nobody can see,
 and `:` `<leader>` `<C-w>` still reach normal mode's maps:
 
+The keys reach everything the mouse does (asked 2026-10-13: "keyboard
+navigation (making box without mouse)"): `hjkl` *walk*, not nudge — a
+keyboard user moves between things far more than they move things — and
+the capitals move.
+
 | key | |
 |---|---|
-| `v` `<Esc>` · `b` · `a` · `t` | tools: select, box, arrow, text |
+| `n` · `o` · `O` | a box (beside the selected one, else in the middle) · one to its right · below it, joined by an arrow; the label asked each time |
+| `h` `j` `k` `l`, arrows | the nearest box or text that way, by its middle, the straight way counting double the sideways |
+| `<C-n>` `<C-p>` | the next, previous thing in the file — the way to an arrow or a group |
+| `H` `J` `K` `L`, shift-arrows | move a unit, a count for more |
+| `<A-hjkl>` | narrower, taller, shorter, wider |
+| `a` | on a box: an arrow from it, `hjkl` to the other, `<CR>` joins, `<Esc>` lets go; else the arrow tool |
+| `v` `<Esc>` · `b` · `t` | tools: select, box, text |
 | `<CR>` `i` | the selection's label, in the prompt (`:diagram label TEXT`) |
 | `x` `<Del>` | delete; a box takes its arrows with it |
-| `h` `j` `k` `l` | nudge a unit; `H` `J` `K` `L` five |
-| `s` · `r` · `-` · `c` | next shape · straight/elbow · dashed · next colour |
-| `C` | connect the two selected boxes |
-| `g` | group the selection |
+| `s` · `r` · `-` · `R` · `c` | next shape · straight/elbow · dashed · reversed · next colour |
+| `C` | connect the selected boxes in the order selected |
+| `G` | group the selection (`g` is a prefix in pane mode: `gt`, `gg`) |
 | `y` · `p` · `D` | copy · paste · duplicate |
 | `<C-a>` | select everything |
 | `u` `<C-r>` | the buffer's undo, redo |
-| `=` · `0` · `+` `_` | fit · zoom 1 · zoom in, out |
+| `=` · `0` · `+` `_` · `zz` | fit · zoom 1 · zoom in, out · centre on the selection |
+| `T` | the toolbar (Decision 8) |
 | `<Tab>` | the source |
+
+A box made from the keys lands where it covers nothing: moved down (or
+right, for one made below) until it is clear. The view follows the
+selection a key moved to, the least that shows it with a unit of air.
 
 The mouse: a press on an item selects it (shift adds), a drag moves the
 selection, a corner of one selected box resizes it, a drag on nothing
@@ -156,7 +171,51 @@ gesture makes, and the export — no kui in it, tested in milliseconds.
 `kawoosh/src/canvas.rs` is the pane: the view state (pan, zoom,
 selection, tool, gesture), the drawing, the events and the commands.
 
-### 8. Not in this round
+### 8. A right-click menu and a toolbar, both commands
+
+Asked 2026-10-13: "maybe right click to do some actions and small
+toolbar, at least toggleable". The canvas claims the secondary button
+(`on_button`, as an editor's rows do) so the press says where it was:
+what is under it is selected unless it is in the selection already, and
+kui's menu opens with the rows for it — a box's label, shape and colour
+(submenus, the current one checked), a box after it, below it, an arrow
+from it; an arrow's elbow, dash, heads, reverse; connect, group,
+ungroup; duplicate, copy, delete — or, over nothing, a box, a text or a
+paste *there* (`diagram box X Y`, `diagram text X Y`, `diagram paste X
+Y`). Each row runs a command line on the pane (menus.md's thesis), its
+key beside it; a capital is spelled `Shift+O`, since a menu shows every
+letter as a capital.
+
+The toolbar is a row at the canvas's top left: the tools, what makes
+boxes, what changes the selection, the view — each a button running its
+command, its key beside it, the tool in hand lit. `T` or `diagram
+toolbar` hides it for the session; `diagram.toolbar = false` keeps it
+hidden. A drag that starts on it moves nothing.
+
+*Beat:* a palette of shapes to drag from (the keys and the menu reach
+every shape already, and a drag-from-palette is a second way to make a
+box with its own placement rules).
+
+### 9. Every node keyed; a label inside its box
+
+Reported 2026-10-13: "while i was panning label disappeared … only to
+an A labeled box". kui keeps its float layers' stack from frame to frame
+*by key*, a key it has not seen going on top
+(`emit::stack_floats`). The canvas had drawn its grid lines and its
+items under keys given by place, so a pan that drew one grid line more
+renumbered everything after it; the box behind `a` came out under a
+fresh key, on top — over its label, a float of its own beside it.
+
+So: every node the canvas draws has a key of its own — a grid line by
+its place on the grid (`gx12`), a thing by its entry (`n3`, `e7`), a
+part of it after that (`n3.label`) — and a rectangle's label is a child
+of the box's own float, drawn after its fill whatever the stack does. A
+path, a line and a polygon open no layer (they paint in their parent's,
+in order); a path shape's label is a float over it. A test pans the view
+back and forth and fails if any opaque node is stacked over a label
+that is not in it.
+
+### 10. Not in this round
 
 Free-floating arrows (an end that is a point, not a box), ports a user
 picks, curved arrows, rotation, images, frames that clip, align and

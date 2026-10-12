@@ -4,7 +4,8 @@ A file ending in `.kdraw` opens as a diagram: boxes, arrows between them,
 free text and groups, on a grid. Draw services, state machines, a
 component broken into its parts. The file stays plain text, a line for
 each thing, so it reads in a diff and you can write it by hand.
-`:e services.kdraw` starts a new one.
+`:diagram new` starts one (`diagram.kdraw` here, or `:diagram new
+services` for `services.kdraw`); `:e` on any `.kdraw` file does too.
 
 `<Tab>` on the diagram shows its text; `:diagram toggle` goes back. You
 can also have the text open in a split beside the diagram: each follows
@@ -56,31 +57,50 @@ again in a standard form; lines it does not touch stay as you wrote them.
 - **Double-click** a thing to edit its label.
 - **The wheel** pans; {{mac:⌘}}{{pc:Ctrl}} and the wheel zooms where the
   pointer is; the middle button drags the view.
+- **Right-click** a thing for what you can do to it — its shape, its
+  colour, an arrow's heads, a box added after it — or the empty canvas
+  for a box, a text or a paste right there.
+- **The toolbar** along the top has the tools and the common changes,
+  each with its key; `T` hides it and shows it again (the
+  `diagram.toolbar` setting keeps it hidden).
 
 ## The keys
 
+Everything can be done from the keyboard. A diagram from nothing: `n`
+makes a box and asks its label, `o` adds the next one to the right joined
+by an arrow, `O` one below; `hjkl` walk from box to box; `a` on a box
+starts an arrow from it, `hjkl` to the box it goes to and `<CR>` joins
+them.
+
 | key | what it does |
 |---|---|
-| `b` · `a` · `t` · `v` | the box tool (drag one, or click for an 8×3), the arrow tool, the text tool, back to select |
+| `n` | a new box, beside the one selected or in the middle, its label asked |
+| `o` · `O` | a new box to the right · below the one selected, an arrow to it |
+| `h` `j` `k` `l`, the arrows | select the nearest box or text that way |
+| `<C-n>` · `<C-p>` | select the next · previous thing in the file, arrows and groups too |
+| `H` `J` `K` `L`, shift and the arrows | move the selection a unit (`5L` five) |
+| `<A-h>` `<A-l>` · `<A-k>` `<A-j>` | narrower, wider · shorter, taller |
+| `a` | with a box selected, an arrow from it: `hjkl` to the other box, `<CR>` joins, `<Esc>` lets go; otherwise the arrow tool for the mouse |
+| `b` · `t` · `v` | the box tool (drag one, or click for an 8×3), the text tool, back to select |
 | `<Esc>` | let go of the tool, then the selection |
 | `<CR>` `i` | edit the label |
 | `x` `<Del>` | delete; a box takes its arrows with it |
-| `h` `j` `k` `l`, the arrows | nudge a unit; `H` `J` `K` `L` five |
 | `s` | the next shape |
-| `r` · `-` | an arrow straight or elbowed · dashed or solid |
+| `r` · `-` · `R` | an arrow straight or elbowed · dashed or solid · the other way round |
 | `c` | the next colour |
 | `C` | connect the selected boxes, in the order you selected them |
 | `G` | group the selection |
 | `y` · `p` · `D` | copy · paste · duplicate |
 | `<C-a>` | select everything |
 | `u` · `<C-r>` | undo · redo |
-| `=` · `0` · `+` `_` | fit everything in view · 100% · zoom in, out |
+| `=` · `0` · `+` `_` · `zz` | fit everything in view · 100% · zoom in, out · centre on the selection |
+| `T` | the toolbar |
 | `<Tab>` | the text |
 
 `:`, `<leader>` and `<C-w>` work as everywhere else. Every key is a
 command you can also type: `:diagram shape cylinder`, `:diagram color
-blue`, `:diagram label Payments`, `:diagram heads` (cycles an arrow's
-heads), `:diagram zoom 2`.
+blue`, `:diagram label Payments`, `:diagram heads both`, `:diagram add
+down`, `:diagram box 10 4`, `:diagram zoom 2`.
 
 ## Sharing it
 
@@ -95,3 +115,4 @@ in a monospace font rather than hand-drawn.
 | setting | default | what it does |
 |---|---|---|
 | `diagram.render` | `true` | open `.kdraw` files as their diagram; `false` opens them as text |
+| `diagram.toolbar` | `true` | show the toolbar over the diagram |

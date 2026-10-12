@@ -3119,7 +3119,7 @@ impl Kawoosh {
         if let Some(b) = ev.button() {
             match (tag_kind, pane) {
                 (Some("termbutton"), Some(pane)) => self.on_term_button(pane, b),
-                (Some("canvasbutton"), Some(pane)) => self.on_canvas_button(pane, b),
+                (Some("canvasbutton"), Some(pane)) => self.on_canvas_button(pane, b, ev.key, core),
                 (Some("editbutton"), Some(pane)) => self.on_edit_button(pane, b, ev.key, core),
                 _ => {}
             }
@@ -3133,6 +3133,8 @@ impl Kawoosh {
                 (Some("panedrag"), Some(pane)) => self.on_pane_drag(pane, d),
                 (Some("tabdrag"), _) => self.on_tab_drag(d, tag, core),
                 (Some("canvas"), Some(pane)) => self.on_canvas_drag(pane, d),
+                // A drag on a canvas's toolbar moves nothing.
+                (Some("canvasbar"), _) => {}
                 (_, Some(pane)) => self.on_drag(pane, d),
                 // A Lua view's own `on_drag`: its handler ran, what it
                 // asked for is applied now.
@@ -3237,6 +3239,16 @@ impl Kawoosh {
         match ev.kind() {
             Some("syntax") => self.on_syntax_click(p),
             Some("undo") => self.on_undo_click(p),
+            // A canvas's toolbar button: its command, on its pane.
+            Some("canvasbtn") => {
+                if let Some(pane) = p.get_int("pane") {
+                    self.layout.focus(pane as PaneId);
+                }
+                if let Some(line) = p.get_str("run") {
+                    let line = line.to_string();
+                    self.run_line(&line);
+                }
+            }
             Some("memory") => self.on_memory_click(p),
             // A legend's `⌥/ keys`: its pane's whole, or compact again.
             Some("legend") => {

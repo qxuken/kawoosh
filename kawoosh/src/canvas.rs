@@ -19,8 +19,9 @@ use kawoosh_diagram::{Change, Doc, Item, Node, Route, Shape, Text, UNIT, Wire, e
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{ArgKind, Args, Mode, Spec, ViewId};
 use kui_native::{
-    Align, ButtonEvent, ButtonPhase, Buttons, Color, CursorShape, Drag, DragPhase, FloatConfig,
-    MouseButton, NodeSpec, Path, Scroll, Stroke, TextStyle, Ui, Value, Vec2,
+    Align, ButtonEvent, ButtonPhase, Buttons, Color, Core, CursorShape, Drag, DragPhase,
+    FloatConfig, Key, Menu, MenuItem, MouseButton, NodeSpec, Path, Scroll, Stroke, TextStyle, Ui,
+    Value, Vec2,
 };
 
 use crate::app::Kawoosh;
@@ -111,6 +112,12 @@ pub struct Canvas {
     texts: HashMap<String, (f32, f32)>,
     /// The last press, for a double click.
     press: Option<(Instant, Vec2)>,
+    /// The box an arrow made from the keys starts at: `a` on a box,
+    /// then `hjkl` to the other and `<CR>`.
+    pub from: Option<usize>,
+    /// The canvas's size as last drawn, px: where its middle is, for
+    /// what the keys place and reveal.
+    body: (f32, f32),
 }
 
 impl Default for Canvas {
@@ -126,6 +133,8 @@ impl Default for Canvas {
             built: None,
             texts: HashMap::new(),
             press: None,
+            from: None,
+            body: (0.0, 0.0),
         }
     }
 }
@@ -220,6 +229,145 @@ fn node_at(doc: &Doc, layout: &Layout, p: Pt, tol: f32) -> Option<usize> {
         matches!(&doc.entries[i].item, Item::Node(n)
             if layout.bounds[i].is_some_and(|r| kawoosh_diagram::geom::inside(n.shape, &r, p) || r.grown(tol).contains(p) && n.w.min(n.h) <= 1))
     })
+}
+
+/// Where entry `i` is: its bounds, or an arrow's label point.
+fn anchor_rect(layout: &Layout, i: usize) -> Option<Rect> {
+    layout.bounds.get(i).copied().flatten().or_else(|| {
+        let m = layout.wires.get(i)?.as_ref()?.mid;
+        Some(Rect::new(m.x, m.y, 0.0, 0.0))
+    })
+}
+
+/// `want` (x, y, w, h), moved along `step` until it covers no box and no
+/// text, a half unit of air round it; where it gave up after that.
+fn free_spot(doc: &Doc, layout: &Layout, want: (i32, i32, i32, i32), step: (i32, i32)) -> (i32, i32) {
+    let (mut x, mut y, w, h) = want;
+    let overlaps = |a: &Rect, b: &Rect| {
+        a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom()
+    };
+    for _ in 0..60 {
+        let r = Rect::new(x as f32, y as f32, w as f32, h as f32).grown(0.5);
+        let taken = doc.entries.iter().enumerate().any(|(i, e)| {
+            matches!(e.item, Item::Node(_) | Item::Text(_))
+                && layout.bounds[i].is_some_and(|b| overlaps(&b, &r))
+        });
+        if !taken || step == (0, 0) {
+            break;
+        }
+        x += step.0;
+        y += step.1;
+    }
+    (x, y)
+}
+
+/// The rows of the canvas's menu (Decision 8), for what is selected, or
+/// for the empty canvas pressed at `at`: each runs a command line on the
+/// pane, as `:` would, its key beside it.
+fn menu_rows(
+    doc: &Doc,
+    sel: &[usize],
+    pane: PaneId,
+    at: (i32, i32),
+    has_clip: bool,
+    toolbar: bool,
+) -> Vec<MenuItem> {
+    use kawoosh_diagram::{Color as Hue, Heads};
+    let row = |label: &str, keys: &str, line: &str| {
+        let r = MenuItem::new(label).id(Value::map([
+            ("run", Value::str(line)),
+            ("pane", Value::Int(pane as i64)),
+        ]));
+        // A menu spells a key as a shortcut, a letter in capitals: `O`
+        // is `Shift+O`, so `o` reads as itself beside it.
+        match keys.chars().next() {
+            None => r,
+            Some(c) if keys.len() == 1 && c.is_ascii_uppercase() => {
+                r.accel(format!("shift+{}", c.to_ascii_lowercase()))
+            }
+            Some(_) => r.accel(keys),
+        }
+    };
+    let items: Vec<&Item> = sel
+        .iter()
+        .filter_map(|&i| doc.entries.get(i).map(|e| &e.item))
+        .collect();
+    let mut out = Vec::new();
+    if items.is_empty() {
+        let (x, y) = at;
+        out.push(row("New Box Here", "", &format!("diagram box {x} {y}")));
+        out.push(row("New Text Here", "", &format!("diagram text {x} {y}")));
+        out.push(row("Paste Here", "p", &format!("diagram paste {x} {y}")).enabled(has_clip));
+        out.push(MenuItem::separator());
+        out.push(row("Select All", "", "diagram all"));
+        out.push(row("Fit to View", "=", "diagram fit"));
+        out.push(MenuItem::separator());
+        out.push(row("Show the Text", "", "diagram toggle"));
+        out.push(row("Export to Excalidraw", "", "diagram export"));
+        out.push(row("Toolbar", "T", "diagram toolbar").checked(toolbar));
+        return out;
+    }
+    let node = items.iter().find_map(|i| match i {
+        Item::Node(n) => Some(n),
+        _ => None,
+    });
+    let edge = items.iter().find_map(|i| match i {
+        Item::Edge(e) => Some(e),
+        _ => None,
+    });
+    let nodes = items.iter().filter(|i| matches!(i, Item::Node(_))).count();
+    let groups = items.iter().filter(|i| matches!(i, Item::Group(_))).count();
+    out.push(row("Edit Label", "i", "diagram edit").enabled(items.len() == 1));
+    if let Some(n) = node {
+        let shapes = Shape::ALL
+            .iter()
+            .map(|s| row(s.word(), "", &format!("diagram shape {}", s.word())).checked(*s == n.shape))
+            .collect();
+        out.push(MenuItem::submenu("Shape", shapes));
+    }
+    let color = items[0].color();
+    let mut colors = vec![row("none", "", "diagram color none").checked(color.is_none())];
+    colors.extend(
+        Hue::ALL
+            .iter()
+            .map(|h| row(h.word(), "", &format!("diagram color {}", h.word())).checked(color == Some(*h))),
+    );
+    out.push(MenuItem::submenu("Colour", colors));
+    if let Some(e) = edge {
+        out.push(row("Elbow", "r", "diagram route").checked(e.route == Route::Elbow));
+        out.push(row("Dashed", "-", "diagram dashed").checked(e.dashed));
+        let heads = [
+            ("at the end", "end", Heads::End),
+            ("at the start", "start", Heads::Start),
+            ("at both ends", "both", Heads::Both),
+            ("none", "none", Heads::None),
+        ]
+        .iter()
+        .map(|(label, word, h)| row(label, "", &format!("diagram heads {word}")).checked(e.heads == *h))
+        .collect();
+        out.push(MenuItem::submenu("Heads", heads));
+        out.push(row("Reverse", "R", "diagram reverse"));
+    }
+    out.push(MenuItem::separator());
+    if nodes == 1 && items.len() == 1 {
+        out.push(row("Add a Box After", "o", "diagram add right"));
+        out.push(row("Add a Box Below", "O", "diagram add down"));
+        out.push(row("Draw an Arrow From It", "a", "diagram tool arrow"));
+    }
+    if nodes >= 2 {
+        out.push(row("Connect in Order", "C", "diagram connect"));
+    }
+    if nodes + groups > 0 {
+        out.push(row("Group", "G", "diagram group"));
+    }
+    if groups > 0 {
+        out.push(row("Ungroup", "", "diagram ungroup"));
+    }
+    out.push(MenuItem::separator());
+    out.push(row("Duplicate", "D", "diagram duplicate"));
+    out.push(row("Copy", "y", "diagram copy"));
+    out.push(row("Delete", "x", "diagram delete"));
+    out
 }
 
 /// What a gesture's release asks of the app, once the canvas is let go.
@@ -562,11 +710,18 @@ impl Kawoosh {
         }
     }
 
-    /// The middle button drags the view.
-    pub(crate) fn on_canvas_button(&mut self, pane: PaneId, b: ButtonEvent) {
+    /// The middle button drags the view; the secondary one opens the
+    /// canvas's menu over what it pressed (Decision 8).
+    pub(crate) fn on_canvas_button(&mut self, pane: PaneId, b: ButtonEvent, key: Key, core: &mut Core) {
         let Some(view) = self.canvas_view(pane) else {
             return;
         };
+        if b.button == MouseButton::Secondary {
+            if b.phase == ButtonPhase::Press {
+                self.canvas_menu(pane, view, b.pos, key, core);
+            }
+            return;
+        }
         if b.button != MouseButton::Middle {
             return;
         }
@@ -589,6 +744,192 @@ impl Kawoosh {
                 }
             }
         }
+    }
+
+    /// The canvas's menu at `pos` (Decision 8): what is under the
+    /// pointer selected first, unless it is in the selection already;
+    /// then the rows for what is selected — or, over nothing, a box or a
+    /// text made where it was pressed.
+    fn canvas_menu(&mut self, pane: PaneId, view: ViewId, pos: Vec2, key: Key, core: &mut Core) {
+        self.layout.focus(pane);
+        if self.ed.prompt_view().is_some() {
+            self.ed.cancel_prompt();
+        }
+        let Some(body) = self.canvas_body(pane) else {
+            return;
+        };
+        let (doc, layout) = self.canvas_layout(view);
+        let has_clip = !self.canvas.clip.is_empty();
+        let toolbar = self.ed.settings.bool("diagram.toolbar") != Some(false);
+        let c = self.canvas_of(view);
+        c.gesture = None;
+        let p = c.units(&body, pos);
+        let tol = SLACK / c.scale();
+        match layout.hit(&doc, p, tol) {
+            Some(i) if !c.sel.contains(&i) => c.sel = vec![i],
+            Some(_) => {}
+            None => c.sel.clear(),
+        }
+        let sel = c.sel.clone();
+        let at = (p.x.round() as i32, p.y.round() as i32);
+        let items = menu_rows(&doc, &sel, pane, at, has_clip, toolbar);
+        core.open_menu(Menu::new(key, pos, items));
+    }
+
+    /// The view moved the least that shows the selection whole, a unit
+    /// of air round it: what a key that selects or makes does after.
+    fn canvas_reveal(&mut self, view: ViewId) {
+        let (_, layout) = self.canvas_layout(view);
+        let c = self.canvas_of(view);
+        let Some(r) = c
+            .sel
+            .iter()
+            .filter_map(|&i| anchor_rect(&layout, i))
+            .reduce(|a, b| a.union(&b))
+        else {
+            return;
+        };
+        let (w, h) = c.body;
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let s = c.scale();
+        let (x0, x1) = (c.origin.x + (r.x - 1.0) * s, c.origin.x + (r.right() + 1.0) * s);
+        let (y0, y1) = (c.origin.y + (r.y - 1.0) * s, c.origin.y + (r.bottom() + 1.0) * s);
+        if x0 < 0.0 {
+            c.origin.x -= x0;
+        } else if x1 > w {
+            c.origin.x -= (x1 - w).min(x0);
+        }
+        if y0 < 0.0 {
+            c.origin.y -= y0;
+        } else if y1 > h {
+            c.origin.y -= (y1 - h).min(y0);
+        }
+    }
+
+    /// The canvas's middle, in units.
+    fn canvas_middle(&self, view: ViewId) -> Pt {
+        let c = &self.canvas.views[&view];
+        let s = c.scale();
+        Pt::new((c.body.0 / 2.0 - c.origin.x) / s, (c.body.1 / 2.0 - c.origin.y) / s)
+    }
+
+    /// The selection moved to the nearest thing `dir` of it — a box or a
+    /// text, by its middle, the straightest way counting most — or, with
+    /// nothing selected, to the one nearest the canvas's middle.
+    fn canvas_select_toward(&mut self, view: ViewId, dir: (f32, f32)) {
+        let (doc, layout) = self.canvas_layout(view);
+        let middle = self.canvas_middle(view);
+        let from = self.canvas.views[&view].sel.last().copied();
+        let origin = from.and_then(|i| anchor_rect(&layout, i)).map(|r| r.center());
+        let candidates = (0..doc.entries.len()).filter(|&i| {
+            Some(i) != from
+                && matches!(doc.entries[i].item, Item::Node(_) | Item::Text(_))
+                && layout.bounds[i].is_some()
+        });
+        let pick = match origin {
+            None => candidates.min_by(|&a, &b| {
+                let d = |i: usize| layout.bounds[i].unwrap().center().dist(middle);
+                d(a).total_cmp(&d(b))
+            }),
+            Some(o) => candidates
+                .filter_map(|i| {
+                    let c = layout.bounds[i]?.center();
+                    let (dx, dy) = (c.x - o.x, c.y - o.y);
+                    let along = dx * dir.0 + dy * dir.1;
+                    let across = (dx * dir.1 - dy * dir.0).abs();
+                    (along > 0.01).then_some((along + 2.0 * across, i))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, i)| i),
+        };
+        if let Some(i) = pick {
+            self.canvas_of(view).sel = vec![i];
+            self.canvas_reveal(view);
+        }
+    }
+
+    /// The selection a step along the file's order, round: an arrow and
+    /// a group are reached this way too.
+    fn canvas_select_step(&mut self, view: ViewId, by: isize) {
+        let n = self.diagram_doc(view).entries.len() as isize;
+        if n == 0 {
+            return;
+        }
+        let c = self.canvas_of(view);
+        let i = match c.sel.last() {
+            Some(&i) => (i as isize + by).rem_euclid(n),
+            None if by > 0 => 0,
+            None => n - 1,
+        };
+        c.sel = vec![i as usize];
+        self.canvas_reveal(view);
+    }
+
+    /// A new box `w` by `h` near `want`, moved along `step` until it
+    /// covers nothing; an arrow to it from `from` when said. It is
+    /// selected, shown, and its label asked for.
+    fn canvas_new_box(
+        &mut self,
+        view: ViewId,
+        want: (i32, i32),
+        step: (i32, i32),
+        from: Option<String>,
+    ) {
+        let (doc, layout) = self.canvas_layout(view);
+        let (w, h) = Shape::Rect.default_size();
+        let (x, y) = free_spot(&doc, &layout, (want.0, want.1, w, h), step);
+        let (change, id) = edit::add_node(&doc, x, y, w, h);
+        let mut changes = vec![change];
+        if let Some(from) = &from {
+            changes.push(edit::add_edge(from, &id));
+        }
+        if !self.canvas_apply(view, &changes, false) {
+            return;
+        }
+        let doc = self.diagram_doc(view);
+        if let Some(i) = doc.node_index(&id) {
+            self.canvas_of(view).sel = vec![i];
+        }
+        self.canvas_reveal(view);
+        self.canvas_edit(view);
+    }
+
+    /// `diagram add DIR`: a box `DIR` of the selected one, an arrow to
+    /// it; with no box selected, a box where `diagram box` puts one.
+    fn canvas_add(&mut self, view: ViewId, dir: &str) {
+        let doc = self.diagram_doc(view);
+        let at = self.canvas.views[&view].sel.last().copied();
+        let Some(Item::Node(n)) = at.and_then(|i| doc.entries.get(i)).map(|e| &e.item) else {
+            self.canvas_box_here(view);
+            return;
+        };
+        let (w, h) = Shape::Rect.default_size();
+        let gap = 4;
+        let (want, step) = match dir {
+            "left" => ((n.x - gap - w, n.y + (n.h - h) / 2), (0, h + 1)),
+            "up" => ((n.x + (n.w - w) / 2, n.y - gap - h), (w + 2, 0)),
+            "down" => ((n.x + (n.w - w) / 2, n.y + n.h + gap), (w + 2, 0)),
+            _ => ((n.x + n.w + gap, n.y + (n.h - h) / 2), (0, h + 1)),
+        };
+        self.canvas_new_box(view, want, step, Some(n.id.clone()));
+    }
+
+    /// `diagram box`: a box to the right of the selected one, else in the
+    /// canvas's middle — not joined to anything.
+    fn canvas_box_here(&mut self, view: ViewId) {
+        let doc = self.diagram_doc(view);
+        let (w, h) = Shape::Rect.default_size();
+        let at = self.canvas.views[&view].sel.last().copied();
+        let (want, step) = match at.and_then(|i| doc.entries.get(i)).map(|e| &e.item) {
+            Some(Item::Node(n)) => ((n.x + n.w + 4, n.y), (0, h + 1)),
+            _ => {
+                let m = self.canvas_middle(view);
+                (((m.x - w as f32 / 2.0).round() as i32, (m.y - h as f32 / 2.0).round() as i32), (w + 2, 0))
+            }
+        };
+        self.canvas_new_box(view, want, step, None);
     }
 
     /// The wheel pans a canvas; true when `pane` is one.
@@ -722,8 +1063,15 @@ impl Kawoosh {
     }
 
     /// The canvas: the grid, the groups, the boxes, the arrows, the
-    /// texts, what is selected and the gesture under way, and a line of
-    /// what the tool does.
+    /// texts, what is selected and the gesture under way, the toolbar
+    /// and a line of what the tool does.
+    ///
+    /// Every node here has a key of its own — a grid line by its place
+    /// on the grid, a thing by its entry — and a box's label is drawn in
+    /// the box's own float. kui keeps its floats' stack from frame to
+    /// frame by key, a key it has not seen going on top: with the keys
+    /// given by place, a pan that drew one grid line more renumbered
+    /// everything after it, and a box's fill went over its label.
     pub(crate) fn render_canvas(&mut self, ui: &mut Ui<'_>, pane: PaneId, view: ViewId, focused: bool) {
         if focused && self.ed.prompt_view().is_none() && self.ed.mode(view) != Mode::Pane {
             self.ed.set_mode(view, Mode::Pane);
@@ -752,8 +1100,10 @@ impl Kawoosh {
                 sizes.insert(t.label.clone(), (w / UNIT, h / UNIT));
             }
         }
+        let toolbar = self.ed.settings.bool("diagram.toolbar") != Some(false);
         let c = self.canvas_of(view);
         c.texts = sizes;
+        c.body = (body.w, body.h);
         let shown = preview(&doc, &c.sel, c.gesture.as_ref());
         let layout = Layout::of(&shown, &node_rect, &|t| text_size(&c.texts, t));
         if !c.placed && body.w > 0.0 {
@@ -776,7 +1126,7 @@ impl Kawoosh {
         let c = &self.canvas.views[&view];
         let sel = c.sel.clone();
         let gesture = c.gesture.clone();
-        let tool = c.tool;
+        let (tool, from) = (c.tool, c.from);
         let pal = self.pal;
         let tag = Value::map([("kind", "canvas".into()), ("pane", Value::Int(pane as i64))]);
         let cursor = match gesture {
@@ -786,6 +1136,7 @@ impl Kawoosh {
         };
         let name = format!("diagram {}", self.ed.buffer_of(view).name);
         let chrome_small = self.chrome.small;
+        let chrome_note = self.chrome.note;
         let sink = ui.with_keyed(
             "canvas",
             NodeSpec::column()
@@ -799,56 +1150,80 @@ impl Kawoosh {
                     ("kind", "canvasbutton".into()),
                     ("pane", Value::Int(pane as i64)),
                 ]))
-                .buttons(Buttons::MIDDLE)
+                .buttons(Buttons::from_bits(
+                    Buttons::MIDDLE.bits() | Buttons::SECONDARY.bits(),
+                ))
                 .cursor(cursor)
                 .label(name.as_str()),
             |ui| {
                 pen.grid(ui);
-                // Groups behind, then the boxes, the arrows over them,
-                // the free texts on top.
+                // Groups behind, then the boxes, the arrows, the free
+                // texts. A rectangle's box is a float; a path's and an
+                // arrow's are drawn in the canvas's own layer, under
+                // every float.
                 for (i, e) in shown.entries.iter().enumerate() {
                     if let (Item::Group(g), Some(r)) = (&e.item, layout.bounds[i]) {
-                        pen.group(ui, &g.label, g.color, &r);
+                        pen.group(ui, &format!("g{i}"), &g.label, g.color, &r);
                     }
                 }
                 for (i, e) in shown.entries.iter().enumerate() {
                     if let (Item::Node(n), Some(r)) = (&e.item, layout.bounds[i])
                         && pen.on_screen(&r)
                     {
-                        pen.node(ui, n, &r);
+                        pen.node(ui, &format!("n{i}"), n, &r);
                     }
                 }
                 for (i, e) in shown.entries.iter().enumerate() {
                     if let (Item::Edge(edge), Some(w)) = (&e.item, &layout.wires[i]) {
-                        pen.edge(ui, edge, w, sel.contains(&i));
+                        pen.edge(ui, &format!("e{i}"), edge, w, sel.contains(&i));
                     }
                 }
                 for (i, e) in shown.entries.iter().enumerate() {
                     if let (Item::Text(t), Some(r)) = (&e.item, layout.bounds[i])
                         && pen.on_screen(&r)
                     {
-                        pen.text(ui, t, &r);
+                        pen.text(ui, &format!("t{i}"), t, &r);
                     }
                 }
-                // What is selected, a box's corners when it is one box.
+                // What is selected, a box's corners when it is one box;
+                // where a keyboard arrow starts.
                 for &i in &sel {
                     if !matches!(shown.entries.get(i).map(|e| &e.item), Some(Item::Edge(_)))
                         && let Some(Some(r)) = layout.bounds.get(i)
                     {
-                        pen.outline(ui, r);
+                        pen.outline(ui, &format!("sel{i}"), r, pal.accent);
                     }
                 }
                 if let [i] = sel[..]
                     && let Some(Item::Node(_)) = shown.entries.get(i).map(|e| &e.item)
                     && let Some(r) = layout.bounds[i]
+                    && tool == Tool::Select
                 {
                     pen.handles(ui, &r);
+                }
+                if tool == Tool::Arrow
+                    && let Some(f) = from
+                    && let Some(Some(a)) = layout.bounds.get(f)
+                {
+                    pen.outline(ui, "from", a, pal.command);
+                    if let [j] = sel[..]
+                        && let Some(Some(b)) = layout.bounds.get(j)
+                    {
+                        ui.line_keyed(
+                            "pending",
+                            pen.px(a.center()),
+                            pen.px(b.center()),
+                            Stroke::new(pen.width(), pal.command).dash(6.0, 4.0),
+                            NodeSpec::row(),
+                        );
+                    }
                 }
                 match &gesture {
                     Some(Gesture::Marquee { from, to, .. }) => {
                         let r = Rect::spanning(*from, *to);
                         let (a, b) = (pen.px(Pt::new(r.x, r.y)), pen.px(Pt::new(r.right(), r.bottom())));
-                        ui.leaf(
+                        ui.leaf_keyed(
+                            "marquee",
                             float_at(a.x, a.y)
                                 .size(b.x - a.x, b.y - a.y)
                                 .bg(pal.accent.with_alpha(0.08))
@@ -858,15 +1233,14 @@ impl Kawoosh {
                     Some(Gesture::Create { from, to }) => {
                         let snap = |p: &Pt| Pt::new(p.x.round(), p.y.round());
                         let r = Rect::spanning(snap(from), snap(to));
-                        pen.outline(ui, &r);
+                        pen.outline(ui, "create", &r, pal.accent);
                     }
                     Some(Gesture::Connect { from, to }) => {
                         if let Some(r) = layout.bounds[*from] {
-                            let a = pen.px(r.center());
-                            let b = pen.px(*to);
-                            ui.line(
-                                a,
-                                b,
+                            ui.line_keyed(
+                                "connect",
+                                pen.px(r.center()),
+                                pen.px(*to),
                                 Stroke::new(pen.width(), pal.accent).dash(6.0, 4.0),
                                 NodeSpec::row(),
                             );
@@ -874,15 +1248,24 @@ impl Kawoosh {
                             if let Some(j) = node_at(&shown, &layout, *to, tol)
                                 && let Some(r) = layout.bounds[j]
                             {
-                                pen.outline(ui, &r);
+                                pen.outline(ui, "target", &r, pal.accent);
                             }
                         }
                     }
                     _ => {}
                 }
+                if toolbar {
+                    pen.toolbar(ui, pane, tool, chrome_small, chrome_note);
+                }
                 // The tool and the zoom, at the foot.
                 let small = TextStyle::new(chrome_small).color(pal.dim);
-                ui.with(
+                let hint = if tool == Tool::Arrow && from.is_some() {
+                    "hjkl to the box it goes to · <CR> joins · <Esc> lets go"
+                } else {
+                    tool.hint()
+                };
+                ui.with_keyed(
+                    "hud",
                     NodeSpec::row()
                         .float(FloatConfig::parent().inside(Align::Start, Align::End).offset(8.0, -6.0))
                         .pad_xy(6.0, 2.0)
@@ -894,14 +1277,15 @@ impl Kawoosh {
                             &format!("{} · {:.0}%", tool.word(), pen.zoom * 100.0),
                             small,
                         );
-                        ui.text(tool.hint(), TextStyle::new(chrome_small).color(pal.faint));
+                        ui.text(hint, TextStyle::new(chrome_small).color(pal.faint));
                     },
                 );
-                // What did not read, over the top.
+                // What did not read, at the top right.
                 if !doc.problems.is_empty() {
-                    ui.with(
+                    ui.with_keyed(
+                        "problems",
                         NodeSpec::column()
-                            .float(FloatConfig::parent().inside(Align::Start, Align::Start).offset(8.0, 6.0))
+                            .float(FloatConfig::parent().inside(Align::End, Align::Start).offset(-8.0, 6.0))
                             .pad_xy(6.0, 3.0)
                             .gap(2.0)
                             .bg(pal.strip)
@@ -924,10 +1308,18 @@ impl Kawoosh {
                     );
                 }
                 if doc.entries.is_empty() && doc.problems.is_empty() {
-                    ui.text_in(
-                        NodeSpec::row().float(FloatConfig::parent().inside(Align::Center, Align::Center)),
-                        "an empty diagram: b a box · a an arrow · t a text · <Tab> its text",
-                        TextStyle::new(chrome_small).color(pal.faint),
+                    ui.with_keyed(
+                        "empty",
+                        NodeSpec::column()
+                            .float(FloatConfig::parent().inside(Align::Center, Align::Center))
+                            .cross_align(Align::Center)
+                            .gap(4.0),
+                        |ui| {
+                            let faint = TextStyle::new(chrome_small).color(pal.faint);
+                            ui.text("an empty diagram", TextStyle::new(chrome_small).color(pal.dim));
+                            ui.text("n a box · o a box joined to it · t a text · drag with the box tool", faint);
+                            ui.text("right-click for more · <Tab> its text", faint);
+                        },
                     );
                 }
             },
@@ -975,6 +1367,30 @@ fn corner_at(c: &Canvas, doc: &Doc, pos: Vec2, body: &Rect) -> Option<Gesture> {
     }
     None
 }
+
+/// The toolbar's buttons: what each says, its key, the line it runs.
+/// `None` is a gap between groups.
+const TOOLBAR: &[Option<(&str, &str, &str)>] = &[
+    Some(("select", "v", "diagram tool select")),
+    Some(("box", "b", "diagram tool box")),
+    Some(("arrow", "a", "diagram tool arrow")),
+    Some(("text", "t", "diagram tool text")),
+    None,
+    Some(("new", "n", "diagram box")),
+    Some(("next", "o", "diagram add right")),
+    Some(("below", "O", "diagram add down")),
+    None,
+    Some(("shape", "s", "diagram shape")),
+    Some(("colour", "c", "diagram color")),
+    Some(("elbow", "r", "diagram route")),
+    Some(("dashed", "-", "diagram dashed")),
+    Some(("group", "G", "diagram group")),
+    Some(("delete", "x", "diagram delete")),
+    None,
+    Some(("fit", "=", "diagram fit")),
+    Some(("text view", "Tab", "diagram toggle")),
+    Some(("export", "", "diagram export")),
+];
 
 /// What a frame draws with: where units are, the theme, the face.
 struct Pen {
@@ -1040,7 +1456,9 @@ impl Pen {
     }
 
     /// The grid: a line a unit, every fifth stronger; the units' lines
-    /// left out where they would be closer than 8 px.
+    /// left out where they would be closer than 8 px. Each line keyed by
+    /// its place on the grid, so a pan that brings one in moves no
+    /// other's key.
     fn grid(&self, ui: &mut Ui<'_>) {
         let minor = self.pal.fg.with_alpha(0.045);
         let major = self.pal.fg.with_alpha(0.09);
@@ -1051,28 +1469,35 @@ impl Pen {
         for k in k0..=k1 {
             let x = (self.origin.x + k as f32 * s).round() + 0.5;
             let c = if (k * step) % 5 == 0 { major } else { minor };
-            ui.line(Vec2::new(x, 0.0), Vec2::new(x, self.h), Stroke::new(1.0, c), NodeSpec::row());
+            ui.line_keyed(
+                &format!("gx{}", k * step),
+                Vec2::new(x, 0.0),
+                Vec2::new(x, self.h),
+                Stroke::new(1.0, c),
+                NodeSpec::row(),
+            );
         }
         let k0 = (-self.origin.y / s).floor() as i64;
         let k1 = ((self.h - self.origin.y) / s).ceil() as i64;
         for k in k0..=k1 {
             let y = (self.origin.y + k as f32 * s).round() + 0.5;
             let c = if (k * step) % 5 == 0 { major } else { minor };
-            ui.line(Vec2::new(0.0, y), Vec2::new(self.w, y), Stroke::new(1.0, c), NodeSpec::row());
+            ui.line_keyed(
+                &format!("gy{}", k * step),
+                Vec2::new(0.0, y),
+                Vec2::new(self.w, y),
+                Stroke::new(1.0, c),
+                NodeSpec::row(),
+            );
         }
     }
 
-    fn group(&self, ui: &mut Ui<'_>, label: &str, color: Option<kawoosh_diagram::Color>, r: &Rect) {
+    fn group(&self, ui: &mut Ui<'_>, key: &str, label: &str, color: Option<kawoosh_diagram::Color>, r: &Rect) {
         let (x, y, w, h) = self.rect(r);
         let ink = self.hue(color).unwrap_or(self.pal.dim);
-        ui.leaf(
-            float_at(x, y)
-                .size(w, h)
-                .bg(ink.with_alpha(0.04))
-                .radius(6.0 * self.zoom.min(1.0)),
-        );
         let dash = (6.0 * self.zoom).max(3.0);
-        ui.polyline(
+        ui.polyline_keyed(
+            &format!("{key}.line"),
             &[
                 Vec2::new(x, y),
                 Vec2::new(x + w, y),
@@ -1083,15 +1508,25 @@ impl Pen {
             Stroke::new(1.0, ink.with_alpha(0.8)).dash(dash, dash * 0.7),
             NodeSpec::row(),
         );
-        if !label.is_empty() && self.label_size() >= 5.0 {
-            let style = self.style(self.label_size() * 0.9, ink);
-            ui.with(float_at(x + 0.5 * self.s, y + 0.35 * self.s), |ui| {
-                self.lines(ui, label, style);
-            });
-        }
+        // The wash and the label in one float, the label inside it.
+        let show = !label.is_empty() && self.label_size() >= 5.0;
+        let style = self.style(self.label_size() * 0.9, ink);
+        ui.with_keyed(
+            key,
+            float_at(x, y)
+                .size(w, h)
+                .bg(ink.with_alpha(0.04))
+                .radius(6.0 * self.zoom.min(1.0))
+                .pad_xy(0.5 * self.s, 0.35 * self.s),
+            |ui| {
+                if show {
+                    self.lines(ui, label, style);
+                }
+            },
+        );
     }
 
-    fn node(&self, ui: &mut Ui<'_>, n: &Node, r: &Rect) {
+    fn node(&self, ui: &mut Ui<'_>, key: &str, n: &Node, r: &Rect) {
         let (x, y, w, h) = self.rect(r);
         let ink = self.ink(n.color);
         let fill = self
@@ -1100,6 +1535,8 @@ impl Pen {
             .unwrap_or(self.pal.strip);
         let bw = self.width();
         let stroke = Stroke::new(bw, ink);
+        let show = !n.label.is_empty() && self.label_size() >= 5.0;
+        let style = self.style(self.label_size(), self.pal.fg);
         match n.shape {
             Shape::Rect | Shape::Round => {
                 let radius = if n.shape == Shape::Round {
@@ -1107,9 +1544,26 @@ impl Pen {
                 } else {
                     0.0
                 };
-                ui.leaf(float_at(x, y).size(w, h).bg(fill).border(bw, ink).radius(radius));
+                // The box and its label one float: the label is drawn
+                // after the fill, whatever the stack does.
+                ui.with_keyed(
+                    key,
+                    float_at(x, y)
+                        .size(w, h)
+                        .bg(fill)
+                        .border(bw, ink)
+                        .radius(radius)
+                        .main_align(Align::Center)
+                        .cross_align(Align::Center),
+                    |ui| {
+                        if show {
+                            self.lines(ui, &n.label, style);
+                        }
+                    },
+                );
+                return;
             }
-            Shape::Ellipse => ui.path(&ellipse(x, y, w, h).stroked(stroke), NodeSpec::row().bg(fill)),
+            Shape::Ellipse => ui.path_keyed(key, &ellipse(x, y, w, h).stroked(stroke), NodeSpec::row().bg(fill)),
             Shape::Diamond => {
                 let p = Path::new()
                     .move_to(x + w / 2.0, y)
@@ -1118,7 +1572,7 @@ impl Pen {
                     .line_to(x, y + h / 2.0)
                     .close()
                     .stroked(stroke);
-                ui.path(&p, NodeSpec::row().bg(fill));
+                ui.path_keyed(key, &p, NodeSpec::row().bg(fill));
             }
             Shape::Cylinder => {
                 let (rx, ry) = (w / 2.0, (h * 0.15).min(0.5 * self.s).max(2.0));
@@ -1129,35 +1583,40 @@ impl Pen {
                     .arc_to(rx, ry, 0.0, false, true, x, y + h - ry)
                     .close()
                     .stroked(stroke);
-                ui.path(&body, NodeSpec::row().bg(fill));
+                ui.path_keyed(key, &body, NodeSpec::row().bg(fill));
                 let rim = Path::new()
                     .move_to(x, y + ry)
                     .arc_to(rx, ry, 0.0, false, false, x + w, y + ry)
                     .stroked(stroke);
-                ui.path(&rim, NodeSpec::row().bg(Color::TRANSPARENT));
+                ui.path_keyed(&format!("{key}.rim"), &rim, NodeSpec::row().bg(Color::TRANSPARENT));
             }
-            Shape::Dot => ui.path(&ellipse(x, y, w, h), NodeSpec::row().bg(ink)),
+            Shape::Dot => ui.path_keyed(key, &ellipse(x, y, w, h), NodeSpec::row().bg(ink)),
             Shape::Final => {
-                ui.path(&ellipse(x, y, w, h).stroked(stroke), NodeSpec::row().bg(self.pal.panel));
+                ui.path_keyed(key, &ellipse(x, y, w, h).stroked(stroke), NodeSpec::row().bg(self.pal.panel));
                 let (iw, ih) = (w * 0.5, h * 0.5);
-                ui.path(
+                ui.path_keyed(
+                    &format!("{key}.core"),
                     &ellipse(x + (w - iw) / 2.0, y + (h - ih) / 2.0, iw, ih),
                     NodeSpec::row().bg(ink),
                 );
             }
         }
-        if n.label.is_empty() || self.label_size() < 5.0 {
+        // A path is drawn in the canvas's layer: its label, a float, is
+        // over it whatever the stack does.
+        if !show {
             return;
         }
-        let style = self.style(self.label_size(), self.pal.fg);
+        let label_key = format!("{key}.label");
         if matches!(n.shape, Shape::Dot | Shape::Final) {
             // Too small to hold it: beside, on the right.
-            ui.with(
+            ui.with_keyed(
+                &label_key,
                 float_at(x + w + 0.4 * self.s, y).height(h).main_align(Align::Center),
                 |ui| self.lines(ui, &n.label, style),
             );
         } else {
-            ui.with(
+            ui.with_keyed(
+                &label_key,
                 float_at(x, y)
                     .size(w, h)
                     .main_align(Align::Center)
@@ -1167,7 +1626,7 @@ impl Pen {
         }
     }
 
-    fn edge(&self, ui: &mut Ui<'_>, e: &kawoosh_diagram::Edge, w: &Wire, selected: bool) {
+    fn edge(&self, ui: &mut Ui<'_>, key: &str, e: &kawoosh_diagram::Edge, w: &Wire, selected: bool) {
         let color = if selected {
             self.pal.accent
         } else {
@@ -1181,17 +1640,17 @@ impl Pen {
         let head = (9.0 * self.zoom).clamp(6.0, 16.0);
         let n = pts.len();
         if e.heads.at_end() {
-            pts[n - 1] = arrow_head(ui, pts[n - 2], pts[n - 1], head, color);
+            pts[n - 1] = arrow_head(ui, &format!("{key}.h1"), pts[n - 2], pts[n - 1], head, color);
         }
         if e.heads.at_start() {
-            pts[0] = arrow_head(ui, pts[1], pts[0], head, color);
+            pts[0] = arrow_head(ui, &format!("{key}.h0"), pts[1], pts[0], head, color);
         }
         let mut stroke = Stroke::new(width, color);
         if e.dashed {
             let d = (6.0 * self.zoom).max(3.0);
             stroke = stroke.dash(d, d * 0.7);
         }
-        ui.polyline(&pts, stroke, NodeSpec::row());
+        ui.polyline_keyed(key, &pts, stroke, NodeSpec::row());
         if e.label.is_empty() || self.label_size() < 5.0 {
             return;
         }
@@ -1204,7 +1663,8 @@ impl Pen {
         let lines = e.label.split('\n').count() as f32;
         let th = lines * (self.label_size() * 0.9 * 1.3).round();
         let m = self.px(w.mid);
-        ui.with(
+        ui.with_keyed(
+            &format!("{key}.label"),
             float_at(m.x - widest / 2.0 - 4.0, m.y - th / 2.0 - 1.0)
                 .pad_xy(4.0, 1.0)
                 .bg(self.pal.panel)
@@ -1214,22 +1674,23 @@ impl Pen {
         );
     }
 
-    fn text(&self, ui: &mut Ui<'_>, t: &Text, r: &Rect) {
+    fn text(&self, ui: &mut Ui<'_>, key: &str, t: &Text, r: &Rect) {
         if self.label_size() < 5.0 {
             return;
         }
         let (x, y, _, _) = self.rect(r);
         let style = self.style(self.label_size(), self.hue(t.color).unwrap_or(self.pal.fg));
-        ui.with(float_at(x, y), |ui| self.lines(ui, &t.label, style));
+        ui.with_keyed(key, float_at(x, y), |ui| self.lines(ui, &t.label, style));
     }
 
-    /// A selection's frame round `r`.
-    fn outline(&self, ui: &mut Ui<'_>, r: &Rect) {
+    /// A frame round `r`: what is selected, a box an arrow will join.
+    fn outline(&self, ui: &mut Ui<'_>, key: &str, r: &Rect, color: Color) {
         let (x, y, w, h) = self.rect(r);
-        ui.leaf(
+        ui.leaf_keyed(
+            key,
             float_at(x - 3.0, y - 3.0)
                 .size(w + 6.0, h + 6.0)
-                .border(1.5, self.pal.accent)
+                .border(1.5, color)
                 .radius(3.0),
         );
     }
@@ -1237,14 +1698,72 @@ impl Pen {
     /// The four corners a box resizes by.
     fn handles(&self, ui: &mut Ui<'_>, r: &Rect) {
         let (x, y, w, h) = self.rect(r);
-        for (cx, cy) in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)] {
-            ui.leaf(
+        for (n, (cx, cy)) in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)].into_iter().enumerate() {
+            ui.leaf_keyed(
+                &format!("handle{n}"),
                 float_at(cx - HANDLE / 2.0, cy - HANDLE / 2.0)
                     .size(HANDLE, HANDLE)
                     .bg(self.pal.panel)
                     .border(1.5, self.pal.accent),
             );
         }
+    }
+
+    /// The toolbar, at the top left: the tools, what makes boxes, what
+    /// changes the selection, the view — each a button running its
+    /// command, its key beside it. A drag on it moves nothing.
+    fn toolbar(&self, ui: &mut Ui<'_>, pane: PaneId, tool: Tool, size: f32, note: f32) {
+        let pal = self.pal;
+        let word = TextStyle::new(size).color(pal.fg);
+        let key = TextStyle::new(note).color(pal.faint);
+        ui.with_keyed(
+            "toolbar",
+            NodeSpec::row()
+                .float(FloatConfig::parent().inside(Align::Start, Align::Start).offset(8.0, 6.0))
+                .max_width(self.w - 16.0)
+                .wrap()
+                .pad(3.0)
+                .gap(2.0)
+                .cross_align(Align::Center)
+                .bg(pal.strip)
+                .border(1.0, pal.border)
+                .radius(6.0)
+                .on_drag(Value::map([("kind", "canvasbar".into())]))
+                .label("diagram toolbar"),
+            |ui| {
+                for (n, b) in TOOLBAR.iter().enumerate() {
+                    let Some((label, keys, line)) = b else {
+                        ui.leaf(NodeSpec::row().size(1.0, size).bg(pal.border));
+                        continue;
+                    };
+                    let on = line.strip_prefix("diagram tool ") == Some(tool.word());
+                    ui.with_keyed(
+                        &format!("b{n}"),
+                        NodeSpec::row()
+                            .pad_xy(6.0, 2.0)
+                            .gap(4.0)
+                            .radius(4.0)
+                            .cross_align(Align::Center)
+                            .bg(if on { pal.select } else { Color::TRANSPARENT })
+                            .hover_bg(pal.hover)
+                            .cursor(CursorShape::Pointer)
+                            .keep_focus()
+                            .on_click(Value::map([
+                                ("kind", "canvasbtn".into()),
+                                ("pane", Value::Int(pane as i64)),
+                                ("run", (*line).into()),
+                            ]))
+                            .label(*label),
+                        |ui| {
+                            ui.text(label, word);
+                            if !keys.is_empty() {
+                                ui.text(keys, key);
+                            }
+                        },
+                    );
+                }
+            },
+        );
     }
 }
 
@@ -1260,7 +1779,7 @@ fn ellipse(x: f32, y: f32, w: f32, h: f32) -> Path {
 
 /// A head at `tip`, pointing away from `from`, `size` long; where the
 /// line stops so its end is under the head.
-fn arrow_head(ui: &mut Ui<'_>, from: Vec2, tip: Vec2, size: f32, color: Color) -> Vec2 {
+fn arrow_head(ui: &mut Ui<'_>, key: &str, from: Vec2, tip: Vec2, size: f32, color: Color) -> Vec2 {
     let (dx, dy) = (tip.x - from.x, tip.y - from.y);
     let len = (dx * dx + dy * dy).sqrt();
     if len < 1.0 {
@@ -1271,7 +1790,8 @@ fn arrow_head(ui: &mut Ui<'_>, from: Vec2, tip: Vec2, size: f32, color: Color) -
     let size = size.min(len * 0.6);
     let base = Vec2::new(tip.x - ux * size, tip.y - uy * size);
     let half = size * 0.45;
-    ui.polygon(
+    ui.polygon_keyed(
+        key,
         &[
             tip,
             Vec2::new(base.x + nx * half, base.y + ny * half),
@@ -1312,7 +1832,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             Spec::new("diagram tool")
                 .args(Args::new(&[ArgKind::Text]))
                 .when(on)
-                .doc("what a press does: select, box, arrow or text"),
+                .doc("what a press does: select, box, arrow or text; the arrow tool on a selected box starts an arrow from it, `hjkl` to the other and `<CR>`"),
             |k, ctx| {
                 let tool = match ctx.arg(0) {
                     Some("box") => Tool::Box,
@@ -1325,7 +1845,18 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     }
                 };
                 if let Some(v) = k.canvas_here() {
-                    k.canvas_of(v).tool = tool;
+                    let doc = k.diagram_doc(v);
+                    let c = k.canvas_of(v);
+                    c.tool = tool;
+                    // From the keys: the box selected is where it starts.
+                    c.from = match c.sel[..] {
+                        [i] if tool == Tool::Arrow
+                            && matches!(doc.entries.get(i).map(|e| &e.item), Some(Item::Node(_))) =>
+                        {
+                            Some(i)
+                        }
+                        _ => None,
+                    };
                 }
             },
         ),
@@ -1339,6 +1870,10 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     if c.gesture.take().is_none() {
                         if c.tool != Tool::Select {
                             c.tool = Tool::Select;
+                            // Back on the box the arrow was to start at.
+                            if let Some(f) = c.from.take() {
+                                c.sel = vec![f];
+                            }
                         } else {
                             c.sel.clear();
                         }
@@ -1349,11 +1884,35 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("diagram edit")
                 .when(on)
-                .doc("the selection's label, in the prompt"),
+                .doc("the selection's label, in the prompt; with an arrow started from the keys, the arrow to the box selected"),
             |k, _| {
-                if let Some(v) = k.canvas_here() {
-                    k.canvas_edit(v);
+                let Some(v) = k.canvas_here() else {
+                    return;
+                };
+                let doc = k.diagram_doc(v);
+                let c = k.canvas_of(v);
+                if c.tool == Tool::Arrow
+                    && let Some(f) = c.from
+                {
+                    let to = c.sel.last().copied();
+                    let (Some(a), Some(b)) = (
+                        doc.entries.get(f).and_then(|e| e.item.id()),
+                        to.and_then(|t| doc.entries.get(t)).and_then(|e| match &e.item {
+                            Item::Node(n) => Some(n.id.as_str()),
+                            _ => None,
+                        }),
+                    ) else {
+                        k.ed.message = "select the box the arrow goes to".into();
+                        return;
+                    };
+                    c.tool = Tool::Select;
+                    c.from = None;
+                    // On to the box it went to, to go on from there.
+                    let change = edit::add_edge(a, b);
+                    k.canvas_apply(v, &[change], false);
+                    return;
                 }
+                k.canvas_edit(v);
             },
         ),
         cmd(
@@ -1436,18 +1995,42 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("diagram heads")
+                .args(Args::new(&[ArgKind::Text]))
                 .when(on)
-                .doc("the selected arrows' heads: at the end, both, at the start, none"),
-            |k, _| {
+                .doc("the selected arrows' heads: end, start, both or none, else the next of them"),
+            |k, ctx| {
                 use kawoosh_diagram::Heads;
+                let named = match ctx.arg(0) {
+                    Some("end") => Some(Heads::End),
+                    Some("start") => Some(Heads::Start),
+                    Some("both") => Some(Heads::Both),
+                    Some("none") => Some(Heads::None),
+                    Some(w) => {
+                        k.ed.message = format!("no heads `{w}`: end, start, both, none");
+                        return;
+                    }
+                    None => None,
+                };
                 k.canvas_each(|item| {
                     if let Item::Edge(e) = item {
-                        e.heads = match e.heads {
+                        e.heads = named.unwrap_or(match e.heads {
                             Heads::End => Heads::Both,
                             Heads::Both => Heads::Start,
                             Heads::Start => Heads::None,
                             Heads::None => Heads::End,
-                        };
+                        });
+                    }
+                });
+            },
+        ),
+        cmd(
+            Spec::new("diagram reverse")
+                .when(on)
+                .doc("the selected arrows the other way round"),
+            |k, _| {
+                k.canvas_each(|item| {
+                    if let Item::Edge(e) = item {
+                        std::mem::swap(&mut e.from, &mut e.to);
                     }
                 });
             },
@@ -1535,11 +2118,32 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("diagram paste")
+                .args(Args::new(&[ArgKind::Text, ArgKind::Text]))
                 .when(on)
-                .doc("what `diagram copy` took, its boxes named afresh, a little down and right"),
-            |k, _| {
+                .doc("what `diagram copy` took, its boxes named afresh: its top left at X Y, else a little down and right"),
+            |k, ctx| {
+                let at = ctx
+                    .arg(0)
+                    .zip(ctx.arg(1))
+                    .and_then(|(x, y)| Some((x.parse::<i32>().ok()?, y.parse::<i32>().ok()?)));
                 k.canvas_do(true, |doc, _, canvases| {
-                    edit::paste(doc, &canvases.clip, PASTE_OFFSET, PASTE_OFFSET)
+                    let (dx, dy) = match at {
+                        Some((x, y)) => {
+                            let corner = canvases
+                                .clip
+                                .iter()
+                                .filter_map(|i| match i {
+                                    Item::Node(n) => Some((n.x, n.y)),
+                                    Item::Text(t) => Some((t.x, t.y)),
+                                    _ => None,
+                                })
+                                .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1)))
+                                .unwrap_or((x, y));
+                            (x - corner.0, y - corner.1)
+                        }
+                        None => (PASTE_OFFSET, PASTE_OFFSET),
+                    };
+                    edit::paste(doc, &canvases.clip, dx, dy)
                 });
             },
         ),
@@ -1589,6 +2193,178 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     },
                 };
                 c.zoom_about(Vec2::new(body.w / 2.0, body.h / 2.0), factor);
+            },
+        ),
+        cmd(
+            Spec::new("diagram select")
+                .args(Args::new(&[ArgKind::Text]))
+                .when(on)
+                .doc("the selection to the nearest box or text left, right, up or down, or the next or prev thing in the file; COUNT times"),
+            |k, ctx| {
+                let Some(v) = k.canvas_here() else {
+                    return;
+                };
+                for _ in 0..ctx.count.max(1) {
+                    match ctx.arg(0) {
+                        Some("left") => k.canvas_select_toward(v, (-1.0, 0.0)),
+                        Some("right") => k.canvas_select_toward(v, (1.0, 0.0)),
+                        Some("up") => k.canvas_select_toward(v, (0.0, -1.0)),
+                        Some("down") => k.canvas_select_toward(v, (0.0, 1.0)),
+                        Some("next") | None => k.canvas_select_step(v, 1),
+                        Some("prev") => k.canvas_select_step(v, -1),
+                        Some(w) => {
+                            k.ed.message = format!("no way `{w}`: left right up down next prev");
+                            return;
+                        }
+                    }
+                }
+            },
+        ),
+        cmd(
+            Spec::new("diagram resize")
+                .args(Args::new(&[ArgKind::Text, ArgKind::Text]))
+                .when(on)
+                .doc("the selected boxes DW DH units wider and taller, COUNT times, a unit each way at least"),
+            |k, ctx| {
+                let n = ctx.count.max(1) as i32;
+                let dw = ctx.arg(0).and_then(|a| a.parse::<i32>().ok()).unwrap_or(0) * n;
+                let dh = ctx.arg(1).and_then(|a| a.parse::<i32>().ok()).unwrap_or(0) * n;
+                k.canvas_each(|item| {
+                    if let Item::Node(b) = item {
+                        b.w = (b.w + dw).max(1);
+                        b.h = (b.h + dh).max(1);
+                    }
+                });
+            },
+        ),
+        cmd(
+            Spec::new("diagram box")
+                .args(Args::new(&[ArgKind::Text, ArgKind::Text]))
+                .when(on)
+                .doc("a new box at X Y, else beside the selected one or in the middle, its label asked"),
+            |k, ctx| {
+                let Some(v) = k.canvas_here() else {
+                    return;
+                };
+                let at = ctx
+                    .arg(0)
+                    .zip(ctx.arg(1))
+                    .and_then(|(x, y)| Some((x.parse::<i32>().ok()?, y.parse::<i32>().ok()?)));
+                match at {
+                    Some(at) => k.canvas_new_box(v, at, (0, 0), None),
+                    None => k.canvas_box_here(v),
+                }
+            },
+        ),
+        cmd(
+            Spec::new("diagram add")
+                .args(Args::new(&[ArgKind::Text]))
+                .when(on)
+                .doc("a new box right (else left, up, down) of the selected one, an arrow to it, its label asked"),
+            |k, ctx| {
+                if let Some(v) = k.canvas_here() {
+                    k.canvas_add(v, ctx.arg(0).unwrap_or("right"));
+                }
+            },
+        ),
+        cmd(
+            Spec::new("diagram text")
+                .args(Args::new(&[ArgKind::Text, ArgKind::Text]))
+                .when(on)
+                .doc("a new free text at X Y, else in the middle, its words asked"),
+            |k, ctx| {
+                let Some(v) = k.canvas_here() else {
+                    return;
+                };
+                let m = k.canvas_middle(v);
+                let (x, y) = ctx
+                    .arg(0)
+                    .zip(ctx.arg(1))
+                    .and_then(|(x, y)| Some((x.parse::<i32>().ok()?, y.parse::<i32>().ok()?)))
+                    .unwrap_or((m.x.round() as i32, m.y.round() as i32));
+                if k.canvas_apply(v, &[edit::add_text("text", x, y)], true) {
+                    k.canvas_edit(v);
+                }
+            },
+        ),
+        cmd(
+            Spec::new("diagram ungroup")
+                .when(on)
+                .doc("the selected groups taken out, what they held left where it is"),
+            |k, _| {
+                k.canvas_do(false, |doc, sel, _| {
+                    let groups: Vec<usize> = sel
+                        .iter()
+                        .copied()
+                        .filter(|&i| matches!(doc.entries.get(i).map(|e| &e.item), Some(Item::Group(_))))
+                        .collect();
+                    edit::delete(doc, &groups)
+                });
+            },
+        ),
+        cmd(
+            Spec::new("diagram center")
+                .when(on)
+                .doc("the view centred on the selection"),
+            |k, _| {
+                let Some(v) = k.canvas_here() else {
+                    return;
+                };
+                let (_, layout) = k.canvas_layout(v);
+                let c = k.canvas_of(v);
+                let Some(r) = c
+                    .sel
+                    .iter()
+                    .filter_map(|&i| anchor_rect(&layout, i))
+                    .reduce(|a, b| a.union(&b))
+                else {
+                    return;
+                };
+                let s = c.scale();
+                let m = r.center();
+                c.origin = Vec2::new(c.body.0 / 2.0 - m.x * s, c.body.1 / 2.0 - m.y * s);
+            },
+        ),
+        cmd(
+            Spec::new("diagram toolbar")
+                .doc("the canvas's toolbar shown or hidden (the `diagram.toolbar` setting, for the session)"),
+            |k, _| {
+                let on = k.ed.settings.bool("diagram.toolbar") != Some(false);
+                k.ed.settings.set(
+                    kawoosh_editor::Layer::Session,
+                    "diagram.toolbar",
+                    kawoosh_editor::Setting::Bool(!on),
+                );
+            },
+        ),
+        cmd(
+            Spec::new("diagram new")
+                .args(Args::new(&[ArgKind::Path]))
+                .doc("a new diagram: NAME.kdraw, else the first free diagram.kdraw, diagram-2.kdraw … here"),
+            |k, ctx| {
+                let path = match ctx.arg(0) {
+                    Some(p) => {
+                        let mut p = std::path::PathBuf::from(p);
+                        if p.extension().is_none() {
+                            p.set_extension("kdraw");
+                        }
+                        if p.is_relative() {
+                            p = k.cwd.join(p);
+                        }
+                        p
+                    }
+                    None => (1..)
+                        .map(|n| {
+                            k.cwd.join(if n == 1 {
+                                "diagram.kdraw".to_string()
+                            } else {
+                                format!("diagram-{n}.kdraw")
+                            })
+                        })
+                        .find(|p| !p.exists() && k.ed.buffers.values().all(|b| b.path.as_deref() != Some(p.as_path())))
+                        .unwrap(),
+                };
+                k.open_in_editor(&path, None, None);
             },
         ),
         cmd(

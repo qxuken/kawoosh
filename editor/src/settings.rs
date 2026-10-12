@@ -588,6 +588,10 @@ const DOCS: &[(&str, &str)] = &[
         "draw a `.kdraw` file as its diagram, a pane at a time `<Tab>` to its text",
     ),
     (
+        "diagram.toolbar",
+        "show the toolbar over a diagram's canvas (`T` there flips it for the session)",
+    ),
+    (
         "markdown.render",
         "draw markdown rendered: marks folded, headings at their sizes",
     ),
@@ -1018,6 +1022,7 @@ impl Settings {
         defaults.set("markdown.render", Setting::Bool(true));
         // A `.kdraw` file drawn as its diagram (docs/design/diagrams.md).
         defaults.set("diagram.render", Setting::Bool(true));
+        defaults.set("diagram.toolbar", Setting::Bool(true));
         defaults.set(
             "markdown.heading",
             Setting::List(vec![
@@ -1898,6 +1903,7 @@ mod tests {
                 "buffers.scope",
                 "clipboard.system",
                 "diagram.render",
+                "diagram.toolbar",
                 "editor.bell",
                 "editor.breadcrumbs",
                 "editor.selection_radius",
