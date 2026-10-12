@@ -534,7 +534,8 @@ fn the_compile_picker_lists_by_tier() {
     d.frame(&mut app);
 
     // The project's named command run again is first, over the line
-    // typed, and says it ran last.
+    // typed, and says it ran last; a line run once since is under it,
+    // the most run lately first, and says it ran last instead.
     app.compile_by("echo proj", here.clone(), Some(kawoosh::compile::By::Project));
     d.frame(&mut app);
     app.layout.focus(pane);
@@ -547,6 +548,39 @@ fn the_compile_picker_lists_by_tier() {
         (o.cmd.as_str(), o.from.as_str(), o.name.as_deref()),
         ("echo proj", "last run here", Some("proj"))
     );
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+    app.compile_by("echo once", here.clone(), Some(kawoosh::compile::By::User));
+    d.frame(&mut app);
+    app.layout.focus(pane);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "compile pick");
+    d.frame(&mut app);
+    let shown: Vec<(&str, &str)> = app.compile.shown()[..3]
+        .iter()
+        .map(|&i| (app.compile.offer[i].cmd.as_str(), app.compile.offer[i].from.as_str()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("echo proj", "compile.commands"),
+            ("echo once", "last run here"),
+            ("make hello", "recent"),
+        ]
+    );
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+
+    // Over the memory's cap the line worth least goes, not the oldest:
+    // the one run twice outlasts a run of lines once each.
+    for n in 0..kawoosh::compile::RECENT {
+        app.compile_by(&format!("echo n{n}"), here.clone(), Some(kawoosh::compile::By::User));
+        d.frame(&mut app);
+    }
+    let kept: Vec<String> = app.recent_lines().into_iter().map(|r| r.cmd).collect();
+    assert_eq!(kept.len(), kawoosh::compile::RECENT, "{kept:?}");
+    assert!(kept.contains(&"echo proj".to_string()), "{kept:?}");
+    assert!(!kept.contains(&"echo once".to_string()), "{kept:?}");
     d.press(&mut app, "<C-c>");
     d.frame(&mut app);
     std::fs::remove_dir_all(&base).ok();

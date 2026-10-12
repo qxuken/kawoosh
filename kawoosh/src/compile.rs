@@ -419,7 +419,7 @@ pub struct Offer {
     /// them, the user's commands, the project's, the lines run
     /// elsewhere. A command in several is listed in its first.
     pub tier: u8,
-    /// Its place in the tier: how recently it ran, for the lines run;
+    /// Its place in the tier: by [`Recent::score`], for the lines run;
     /// else the settings' rows (0), a server's (1), the files' (2), each
     /// in the order they were added.
     pub rank: usize,
@@ -444,14 +444,25 @@ impl By {
 }
 
 /// A line the memory keeps (compile.md Decision 7): the command as it
-/// ran, where, and who said it — `None` in a row from before it was
-/// kept, read by what the project offers then.
+/// ran, where, who said it — `None` in a row from before it was kept,
+/// read by what the project offers then — and how often and lately it
+/// ran (Decision 19).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Recent {
     pub cmd: String,
     pub cwd: PathBuf,
     pub by: Option<By>,
+    /// How many times it ran, each run halved every week since
+    /// ([`HALF_LIFE`]), as of `at` — one for a line kept before the
+    /// memory counted.
+    pub runs: f64,
+    /// When it last ran, unix seconds; `None` kept before.
+    pub at: Option<i64>,
 }
+
+/// A line's runs count half after a week (compile.md Decision 19), as the
+/// memory's own scores do.
+pub const HALF_LIFE: f64 = 7.0 * 86_400.0;
 
 impl Recent {
     fn json(&self) -> serde_json::Value {
@@ -459,7 +470,20 @@ impl Recent {
         if let Some(by) = self.by {
             v["by"] = by.word().into();
         }
+        v["runs"] = self.runs.into();
+        if let Some(at) = self.at {
+            v["at"] = at.into();
+        }
         v
+    }
+
+    /// Its runs as of `now`: how often and how lately — what the picker
+    /// ranks the lines run by, and the cap keeps.
+    pub fn score(&self, now: i64) -> f64 {
+        match self.at {
+            Some(at) => self.runs * 0.5f64.powf((now - at).max(0) as f64 / HALF_LIFE),
+            None => self.runs,
+        }
     }
 }
 
@@ -963,7 +987,15 @@ impl Kawoosh {
                 Some("project") => Some(By::Project),
                 _ => None,
             };
-            Some(Recent { cmd, cwd, by })
+            let runs = v.get("runs").and_then(|r| r.as_f64()).unwrap_or(1.0);
+            let at = v.get("at").and_then(|a| a.as_i64());
+            Some(Recent {
+                cmd,
+                cwd,
+                by,
+                runs,
+                at,
+            })
         };
         match meta.get("recent").and_then(|r| r.as_array()) {
             Some(list) => list.iter().filter_map(entry).collect(),
@@ -1087,25 +1119,41 @@ impl Kawoosh {
     /// [`Self::compile_in`], the line remembered as `by`'s (compile.md
     /// Decision 19); `None` keeps what the memory knew.
     pub fn compile_by(&mut self, cmd: &str, cwd: PathBuf, by: Option<By>) {
+        let now = kawoosh_systems::store::now();
         let known = self.recent_lines();
-        let by = by.or_else(|| {
-            known
-                .iter()
-                .find(|r| r.cmd == cmd && r.cwd == cwd)
-                .and_then(|r| r.by)
-        });
-        let mut recent: Vec<serde_json::Value> = known
-            .iter()
+        let before = known.iter().find(|r| r.cmd == cmd && r.cwd == cwd);
+        let by = by.or_else(|| before.and_then(|r| r.by));
+        let runs = before.map_or(0.0, |r| r.score(now)) + 1.0;
+        let mut lines: Vec<Recent> = known
+            .into_iter()
             .filter(|r| !(r.cmd == cmd && r.cwd == cwd))
-            .map(Recent::json)
+            .map(|mut r| {
+                // A line kept before the memory said when: its one run
+                // counted from now on.
+                r.at.get_or_insert(now);
+                r
+            })
             .collect();
-        let line = Recent {
-            cmd: cmd.to_string(),
-            cwd: cwd.clone(),
-            by,
-        };
-        recent.insert(0, line.json());
-        recent.truncate(RECENT);
+        lines.insert(
+            0,
+            Recent {
+                cmd: cmd.to_string(),
+                cwd: cwd.clone(),
+                by,
+                runs,
+                at: Some(now),
+            },
+        );
+        // Over the cap, the line worth least goes, the older of two
+        // equal — never the one just run.
+        while lines.len() > RECENT {
+            let least = (1..lines.len())
+                .rev()
+                .min_by(|&a, &b| lines[a].score(now).total_cmp(&lines[b].score(now)))
+                .unwrap_or(lines.len() - 1);
+            lines.remove(least);
+        }
+        let recent: Vec<serde_json::Value> = lines.iter().map(Recent::json).collect();
         self.note_tool(
             "compile",
             serde_json::json!({ "cmd": cmd, "cwd": cwd.display().to_string(), "recent": recent }),
@@ -1331,13 +1379,19 @@ impl Kawoosh {
                 rows.push(o);
             }
         }
-        // The lines run here, newest first, whoever said them — a named
-        // command run is the user's choice as much as a line typed —
-        // above the settings' rows; a line run outside the caret's
-        // workspace below everything it offers.
+        // The lines run here, the most run lately first, whoever said
+        // them — a named command run is the user's choice as much as a
+        // line typed — above the settings' rows; a line run outside the
+        // caret's workspace below everything it offers. Of two lines
+        // run as much, the newer first.
         let root = self.compile_root();
+        let now = kawoosh_systems::store::now();
+        let lines = self.recent_lines();
+        let mut order: Vec<usize> = (0..lines.len()).collect();
+        order.sort_by(|&a, &b| lines[b].score(now).total_cmp(&lines[a].score(now)).then(a.cmp(&b)));
+        let place = |i: usize| order.iter().position(|&o| o == i).unwrap_or(i);
         let mut first = true;
-        for (i, r) in self.recent_lines().into_iter().enumerate() {
+        for (i, r) in lines.into_iter().enumerate() {
             let offered = project
                 .commands
                 .iter()
@@ -1358,7 +1412,7 @@ impl Kawoosh {
             first &= !here;
             add(
                 &mut rows,
-                Offer::of(&r.cmd, r.cwd, from, "").at(by, tier, i),
+                Offer::of(&r.cmd, r.cwd, from, "").at(by, tier, place(i)),
             );
         }
         for d in project.commands.into_iter().chain(packages) {
@@ -2010,6 +2064,27 @@ mod tests {
         assert_eq!(painted("ok, so the errors: none"), s(&[]));
         assert_eq!(painted("no warnings: 3 terrors:"), s(&[]));
         assert_eq!(painted("see src/a.rs for more"), s(&[]));
+    }
+
+    #[test]
+    fn a_line_s_runs_count_half_after_a_week() {
+        let line = |runs, at| Recent {
+            cmd: "make".into(),
+            cwd: PathBuf::from("/p"),
+            by: None,
+            runs,
+            at,
+        };
+        let week = HALF_LIFE as i64;
+        assert_eq!(line(4.0, Some(0)).score(0), 4.0);
+        assert_eq!(line(4.0, Some(0)).score(week), 2.0);
+        assert_eq!(line(4.0, Some(0)).score(2 * week), 1.0);
+        // Run three times a week ago outweighs once today.
+        assert!(line(3.0, Some(0)).score(week) > line(1.0, Some(week)).score(week));
+        // Kept before the memory said when: as it is.
+        assert_eq!(line(1.0, None).score(week), 1.0);
+        let json = line(2.5, Some(7)).json();
+        assert_eq!((json["runs"].as_f64(), json["at"].as_i64()), (Some(2.5), Some(7)));
     }
 
     #[test]

@@ -756,20 +756,34 @@ it ran here.
 
 Then four tiers, a command listed once, in the first it falls in:
 
-1. the lines run here, newest first, whoever said them — a named or
-   deduced command run is its own row moved up, under its name;
+1. the lines run here, the most run lately first, whoever said them —
+   a named or deduced command run is its own row moved up, under its
+   name;
 2. the user's commands, `compile.default` and `compile.commands` from
    the user's settings, in the settings' order;
 3. the project's: its default and names, a server's runnables (Decision
    18), its files' and its packages', in that order as before;
-4. the lines run outside the workspace, newest first, `recent
+4. the lines run outside the workspace, the same way, `recent
    elsewhere` beside them.
 
+**The most run lately**: the memory keeps, beside each line, how many
+times it ran (`runs`) and when last (`at`, unix seconds); each run
+counts half after a week, as the memory's own scores do (`HALF_LIFE`).
+A run adds one to what the line's runs come to by then. The picker
+ranks by what they come to now, the newer of two equal first, so a
+line kept before there was a count (one run, no `at`) keeps its place
+until the lines around it run again; it is dated the next time the
+list is written. Over the memory's ten the line worth least goes, the
+older of two equal, never the one just run — a command run every day
+outlasts a burst of one-offs. The list stays newest first: a bare
+`:compile` and `r` run the last line, not the most run.
+
 `last run here` marks the newest of the first tier, a named row moved
-up too. Who said a line ranks the commands not yet run, not the ones
-run: running the project's `install` is as much the user's choice as a
-line typed, and the user's lines over the project's put a `scoop
-install` typed once above the `install` run every day. The rows keep
+up too — under the most run when it is not that. Who said a line ranks
+the commands not yet run, not the ones run: running the project's
+`install` is as much the user's choice as a line typed, and the user's
+lines over the project's put a `scoop install` typed once above the
+`install` run every day. The rows keep
 their index in `Compile::offer` (Decision 18's reason); `Compile::shown`
 is the order, a tier and a place in it on each row. **A query ranks as
 in every picker**, by the match, equal matches in the list's order: the
