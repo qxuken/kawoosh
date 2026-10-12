@@ -5834,6 +5834,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<Right>", "diagram select right"),
         ("<C-n>", "diagram select next"),
         ("<C-p>", "diagram select prev"),
+        // Every thing that way, the arrows among them; the group round it.
+        ("<C-h>", "diagram select left all"),
+        ("<C-j>", "diagram select down all"),
+        ("<C-k>", "diagram select up all"),
+        ("<C-l>", "diagram select right all"),
+        ("<C-o>", "diagram select outer"),
         // Extend: the keys above add to the selection.
         ("V", "diagram extend"),
         // Move it, a unit a press (a count for more); size it.
@@ -5871,7 +5877,6 @@ pub fn default_keymap(km: &mut Keymap) {
         ("+", "diagram zoom in"),
         ("_", "diagram zoom out"),
         ("zz", "diagram center"),
-        ("T", "diagram toolbar"),
         ("<Tab>", "diagram toggle"),
     ] {
         km.bind_local("diagram", Pane, k, c, &[]);

@@ -1939,8 +1939,18 @@ impl Kawoosh {
                 .term_of(self.layout.focused())
                 .is_some_and(|t| self.term_raw(t));
         let ctrl_tab = stroke.ctrl && stroke.code == "tab" && !raw;
+        // The pane's text size off a Mac, where its keys are Ctrl's and
+        // not ⌘'s: what a terminal app's own zoom is on Windows too
+        // (pane-settings.md Decision 5), so `<C-0>` resets a terminal
+        // pane's as ⌘0 does on a Mac.
+        let ctrl_font = !cfg!(target_os = "macos")
+            && !raw
+            && matches!(
+                stroke.notation().as_str(),
+                "<C-0>" | "<C-=>" | "<C-->" | "<C-+>" | "<C-_>"
+            );
         let chord =
-            (((stroke.ctrl || stroke.alt) && stroke.shift && !raw) || stroke.sup || ctrl_tab)
+            (((stroke.ctrl || stroke.alt) && stroke.shift && !raw) || stroke.sup || ctrl_tab || ctrl_font)
                 && self.ed.prompt_view().is_none()
                 && on_term
                 && !escaping

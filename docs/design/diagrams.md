@@ -108,7 +108,9 @@ the capitals move.
 |---|---|
 | `n` · `o` · `O` | a box (beside the selected one, else in the middle) · one to its right · below it, joined by an arrow; the label asked each time |
 | `h` `j` `k` `l`, arrows | the nearest box or text that way, by its middle, the straight way counting double the sideways |
-| `<C-n>` `<C-p>` | the next, previous thing in the file — the way to an arrow or a group |
+| `<C-hjkl>` | the same, the arrows among them, each where its label is |
+| `<C-n>` `<C-p>` | the next, previous thing in the file — the way to a group too |
+| `<C-o>` | out: the group round the selection, then the one round that |
 | `V` | extend: those keys add to the selection, `V` or `<Esc>` stop |
 | `H` `J` `K` `L`, shift-arrows | move a unit, a count for more |
 | `<A-hjkl>` | narrower, taller, shorter, wider |
@@ -123,7 +125,7 @@ the capitals move.
 | `<C-a>` | select everything |
 | `u` `<C-r>` | the buffer's undo, redo |
 | `=` · `0` · `+` `_` · `zz` | fit · zoom 1 · zoom in, out · centre on the selection |
-| `T` | the toolbar (Decision 8) |
+| `<A-/>` | the toolbar: the pane's legend (Decision 8) |
 | `<Tab>` | the source |
 
 A box made from the keys lands where it covers nothing: moved down (or
@@ -154,8 +156,11 @@ them.
 
 ### 6. Export: `:diagram export`
 
-`:diagram export [PATH]` writes the diagram as Excalidraw's JSON
-(`PATH`, else the file's name with `.excalidraw`): rectangles (rounded
+`:diagram export [PATH]` opens the diagram as Excalidraw's JSON in a pane
+beside — the buffer of `PATH`, else of the file's name with
+`.excalidraw`, its text the export, unsaved: `:w` keeps it, `:q` asks
+(asked 2026-10-13: written at once, it overwrote a file nobody had looked
+at). The JSON: rectangles (rounded
 for `round`, `cylinder`), ellipses (a `dot` filled, a `final` a ring
 and a dot), diamonds, each label a text bound to its shape, each arrow
 an arrow bound at both ends with its label bound to it, a group a
@@ -196,9 +201,15 @@ running its command, keyed by it, its key beside it, the tool in hand
 lit. A strip under the drawing says the tool, the zoom, what is
 selected (`2 boxes · 1 arrow`) and what the keys do now. The changes
 reach a box too: `r` on a box elbows its arrows, `-` dashes its own
-outline (`box a dashed`, a new word on its line). `T` or `diagram
-toolbar` hides it for the session; `diagram.toolbar = false` keeps it
-hidden. A drag that starts on it moves nothing.
+outline (`box a dashed`, a new word on its line). It is the pane's key legend (icons.md Decision 6, asked 2026-10-13: `use
+panels convention <A-/>`): `<A-/>`, or `⌥/ keys` in the title bar,
+shows and hides it, `keys.legend` says how it starts — hidden, as every
+pane's legend. Every button is always there in its place, the ones that
+do not fit the selection dimmed and deaf: a toolbar that grew and shrank
+with the selection moved its buttons, and the drawing under them. The
+drawing does not move as the strip comes and goes either: its origin is
+measured from the pane's inside under the title bar, not from the
+canvas's own box below the strip. A drag that starts on it moves nothing.
 
 *Beat:* a palette of shapes to drag from (the keys and the menu reach
 every shape already, and a drag-from-palette is a second way to make a

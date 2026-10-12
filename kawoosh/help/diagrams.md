@@ -61,10 +61,11 @@ again in a standard form; lines it does not touch stay as you wrote them.
   colour, an arrow's heads, a box added after it — or the empty canvas
   for a box, a text or a paste right there.
 - **The toolbar** above the diagram has the tools, what makes boxes, and
-  the changes that fit what is selected — a box's shape, an arrow's heads
-  — each with its key; the line under the diagram says what is selected.
-  `T` hides the toolbar and shows it again (the `diagram.toolbar`
-  setting keeps it hidden).
+  the changes — lit when they fit what is selected, a box's shape, an
+  arrow's heads — each with its key; the line under the diagram says what
+  is selected. It is the pane's key legend: {{mac:`⌥/`}}{{pc:`<A-/>`}}, or
+  `keys` in the title bar, shows and hides it, and `keys.legend = "full"`
+  shows it from the start.
 
 ## The keys
 
@@ -83,7 +84,9 @@ to connect, group or move several things.
 | `n` | a new box, beside the one selected or in the middle, its label asked |
 | `o` · `O` | a new box to the right · below the one selected, an arrow to it |
 | `h` `j` `k` `l`, the arrows | select the nearest box or text that way |
+| `<C-h>` `<C-j>` `<C-k>` `<C-l>` | the same, the arrows among them (by their label) |
 | `<C-n>` · `<C-p>` | select the next · previous thing in the file, arrows and groups too |
+| `<C-o>` | the group round the selection, then the one round that |
 | `V` | extend: the keys above add to the selection; `V` or `<Esc>` stop |
 | `H` `J` `K` `L`, shift and the arrows | move the selection a unit (`5L` five) |
 | `<A-h>` `<A-l>` · `<A-k>` `<A-j>` | narrower, wider · shorter, taller |
@@ -103,7 +106,6 @@ to connect, group or move several things.
 | `<C-a>` | select everything |
 | `u` · `<C-r>` | undo · redo |
 | `=` · `0` · `+` `_` · `zz` | fit everything in view · 100% · zoom in, out · centre on the selection |
-| `T` | the toolbar |
 | `<Tab>` | the text |
 
 `:`, `<leader>` and `<C-w>` work as everywhere else. Every key is a
@@ -113,8 +115,9 @@ down`, `:diagram box 10 4`, `:diagram zoom 2`.
 
 ## Sharing it
 
-`:diagram export` writes the diagram as an Excalidraw file beside it
-(`services.excalidraw`), or `:diagram export PATH`. Open it at
+`:diagram export` opens the diagram as an Excalidraw file in a pane beside
+it — `services.excalidraw`, or `:diagram export PATH` — not written yet:
+`:w` there saves it. Open it at
 excalidraw.com or in any app that reads the format: the shapes keep their
 labels, the arrows stay attached to their boxes, and it is drawn sharp
 in a monospace font rather than hand-drawn.
@@ -124,4 +127,3 @@ in a monospace font rather than hand-drawn.
 | setting | default | what it does |
 |---|---|---|
 | `diagram.render` | `true` | open `.kdraw` files as their diagram; `false` opens them as text |
-| `diagram.toolbar` | `true` | show the toolbar over the diagram |

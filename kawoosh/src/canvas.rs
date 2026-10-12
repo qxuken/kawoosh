@@ -117,9 +117,9 @@ pub struct Canvas {
     /// The box an arrow made from the keys starts at: `a` on a box,
     /// then `hjkl` to the other and `<CR>`.
     pub from: Option<usize>,
-    /// The canvas's size as last drawn, px: where its middle is, for
-    /// what the keys place and reveal.
-    body: (f32, f32),
+    /// The canvas's own box as last drawn, px from the frame the origin
+    /// is measured from: where its middle is, what is in view.
+    body: Rect,
     /// The grid cursor the box and text tools place by from the keys:
     /// `hjkl` move it, `<CR>` puts the text there, or the box's first
     /// corner and then its second.
@@ -145,7 +145,7 @@ impl Default for Canvas {
             texts: HashMap::new(),
             press: None,
             from: None,
-            body: (0.0, 0.0),
+            body: Rect::new(0.0, 0.0, 0.0, 0.0),
             cursor: None,
             corner: None,
             extend: false,
@@ -184,16 +184,17 @@ impl Canvas {
         self.origin = Vec2::new(at.x - u.0 * s2, at.y - u.1 * s2);
     }
 
-    /// `ext` in the middle of a canvas `w` by `h`, at the zoom that holds
-    /// it with two units round it, no closer than 1.5.
-    fn fit(&mut self, w: f32, h: f32, ext: &Rect) {
+    /// `ext` in the middle of `view` (the canvas's box), at the zoom that
+    /// holds it with two units round it, no closer than 1.5.
+    fn fit(&mut self, view: &Rect, ext: &Rect) {
+        let (w, h) = (view.w, view.h);
         let pad = 2.0;
         let zw = w / ((ext.w + 2.0 * pad) * UNIT);
         let zh = h / ((ext.h + 2.0 * pad) * UNIT);
         self.zoom = zw.min(zh).clamp(ZOOM_MIN, 1.5);
         let s = self.scale();
         let c = ext.center();
-        self.origin = Vec2::new(w / 2.0 - c.x * s, h / 2.0 - c.y * s);
+        self.origin = Vec2::new(view.x + w / 2.0 - c.x * s, view.y + h / 2.0 - c.y * s);
     }
 }
 
@@ -328,7 +329,7 @@ fn menu_rows(
         out.push(MenuItem::separator());
         out.push(row("Show the Text", "", "diagram toggle"));
         out.push(row("Export to Excalidraw", "", "diagram export"));
-        out.push(row("Toolbar", "T", "diagram toolbar").checked(toolbar));
+        out.push(row("Toolbar", "alt+/", "legend").checked(toolbar));
         return out;
     }
     let node = items.iter().find_map(|i| match i {
@@ -457,13 +458,13 @@ impl Kawoosh {
         self.focused_view().filter(|v| self.diagram_drawn(*v))
     }
 
-    /// The canvas's box in the window: the pane's inside its frame,
-    /// under its title bar.
+    /// What the drawing's origin is measured from, in the window: the
+    /// pane's inside under its title bar — not the canvas's own box, which
+    /// the toolbar's strip moves as it comes and goes and wraps; measured
+    /// from the pane, the drawing stays where it is and the strip covers
+    /// its top (asked 2026-10-13: "canvas jumps depending on toolbar
+    /// height").
     fn canvas_body(&self, pane: PaneId) -> Option<Rect> {
-        // As laid out last frame; before it was, the pane's inside.
-        if let Some(r) = self.canvas.rects.get(&pane) {
-            return Some(*r);
-        }
         let r = self.layout.rects.get(&pane)?;
         let title = self.chrome.pane_title_h;
         Some(Rect::new(
@@ -472,6 +473,17 @@ impl Kawoosh {
             (r.w - 2.0).max(0.0),
             (r.h - 2.0 - title).max(0.0),
         ))
+    }
+
+    /// The canvas's own box as last laid out — between the toolbar's
+    /// strip and the status — in [`Self::canvas_body`]'s coordinates; the
+    /// whole of it before it was.
+    fn canvas_view_box(&self, pane: PaneId) -> Rect {
+        let frame = self.canvas_body(pane).unwrap_or_default();
+        match self.canvas.rects.get(&pane) {
+            Some(r) => Rect::new(r.x - frame.x, r.y - frame.y, r.w, r.h),
+            None => Rect::new(0.0, 0.0, frame.w, frame.h),
+        }
     }
 
     /// The view's diagram, parsed again when its buffer moved since; a
@@ -793,7 +805,7 @@ impl Kawoosh {
         };
         let (doc, layout) = self.canvas_layout(view);
         let has_clip = !self.canvas.clip.is_empty();
-        let toolbar = self.ed.settings.bool("diagram.toolbar") != Some(false);
+        let toolbar = self.legend_full(pane);
         let c = self.canvas_of(view);
         c.gesture = None;
         let p = c.units(&body, pos);
@@ -868,30 +880,37 @@ impl Kawoosh {
     fn canvas_middle(&self, view: ViewId) -> Pt {
         let c = &self.canvas.views[&view];
         let s = c.scale();
-        Pt::new((c.body.0 / 2.0 - c.origin.x) / s, (c.body.1 / 2.0 - c.origin.y) / s)
+        let b = c.body;
+        Pt::new((b.x + b.w / 2.0 - c.origin.x) / s, (b.y + b.h / 2.0 - c.origin.y) / s)
     }
 
     /// The selection moved to the nearest thing `dir` of it — a box or a
     /// text, by its middle, the straightest way counting most — or, with
     /// nothing selected, to the one nearest the canvas's middle.
-    fn canvas_select_toward(&mut self, view: ViewId, dir: (f32, f32)) {
+    fn canvas_select_toward(&mut self, view: ViewId, dir: (f32, f32), all: bool) {
         let (doc, layout) = self.canvas_layout(view);
         let middle = self.canvas_middle(view);
         let from = self.canvas.views[&view].sel.last().copied();
         let origin = from.and_then(|i| anchor_rect(&layout, i)).map(|r| r.center());
+        // `all` (`<C-hjkl>`): the arrows too, each where its label sits.
+        let at = |i: usize| anchor_rect(&layout, i).map(|r| r.center());
         let candidates = (0..doc.entries.len()).filter(|&i| {
             Some(i) != from
-                && matches!(doc.entries[i].item, Item::Node(_) | Item::Text(_))
-                && layout.bounds[i].is_some()
+                && match doc.entries[i].item {
+                    Item::Node(_) | Item::Text(_) => true,
+                    Item::Edge(_) => all,
+                    Item::Group(_) => false,
+                }
+                && at(i).is_some()
         });
         let pick = match origin {
             None => candidates.min_by(|&a, &b| {
-                let d = |i: usize| layout.bounds[i].unwrap().center().dist(middle);
+                let d = |i: usize| at(i).unwrap().dist(middle);
                 d(a).total_cmp(&d(b))
             }),
             Some(o) => candidates
                 .filter_map(|i| {
-                    let c = layout.bounds[i]?.center();
+                    let c = at(i)?;
                     let (dx, dy) = (c.x - o.x, c.y - o.y);
                     let along = dx * dir.0 + dy * dir.1;
                     let across = (dx * dir.1 - dy * dir.0).abs();
@@ -902,6 +921,43 @@ impl Kawoosh {
         };
         if let Some(i) = pick {
             self.canvas_pick(view, i);
+        }
+    }
+
+    /// The group the selection's last is in — a box's, a group's; an
+    /// arrow's, its first end's — and, from a group, the one round it:
+    /// `<C-o>` out, again and again. False when there is none.
+    fn canvas_select_outer(&mut self, view: ViewId) -> bool {
+        let doc = self.diagram_doc(view);
+        let Some(&i) = self.canvas.views[&view].sel.last() else {
+            return false;
+        };
+        let id = match doc.entries.get(i).map(|e| &e.item) {
+            Some(Item::Edge(e)) => e.from.clone(),
+            Some(item) => match item.id() {
+                Some(id) => id.to_string(),
+                None => return false,
+            },
+            None => return false,
+        };
+        // The smallest group holding it: the nearest round it.
+        let outer = doc
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(&e.item, Item::Group(g) if g.members.contains(&id)))
+            .min_by_key(|(_, e)| match &e.item {
+                Item::Group(g) => doc.group_nodes(&g.id).len(),
+                _ => usize::MAX,
+            })
+            .map(|(g, _)| g);
+        match outer {
+            Some(g) => {
+                self.canvas_of(view).sel = vec![g];
+                self.canvas_reveal(view);
+                true
+            }
+            None => false,
         }
     }
 
@@ -1059,16 +1115,14 @@ impl Kawoosh {
         let (Some(view), pane) = (self.canvas_here(), self.layout.focused()) else {
             return;
         };
-        let Some(body) = self.canvas_body(pane) else {
-            return;
-        };
+        let vb = self.canvas_view_box(pane);
         let (_, layout) = self.canvas_layout(view);
         let c = self.canvas_of(view);
         match layout.extent() {
-            Some(ext) => c.fit(body.w, body.h, &ext),
+            Some(ext) => c.fit(&vb, &ext),
             None => {
                 c.zoom = 1.0;
-                c.origin = Vec2::new(2.0 * UNIT, 2.0 * UNIT);
+                c.origin = Vec2::new(vb.x + 2.0 * UNIT, vb.y + 2.0 * UNIT);
             }
         }
     }
@@ -1089,14 +1143,35 @@ impl Kawoosh {
             },
         };
         let json = kawoosh_diagram::excalidraw::export(&doc);
-        let text = serde_json::to_string_pretty(&json).unwrap_or_default();
-        self.ed.message = match std::fs::write(&path, text) {
-            Ok(()) => format!(
-                "exported to {}",
-                kawoosh_systems::fs::abbreviate_home(&path)
-            ),
-            Err(e) => format!("export: {e}"),
+        let text = serde_json::to_string_pretty(&json).unwrap_or_default() + "\n";
+        // Not written: the buffer of that path, in a pane beside, its text
+        // the export — modified, so `:w` keeps it and `:q` asks (asked
+        // 2026-10-13: "not saved right away but opened as … unsaved").
+        let Some(buffer) = self.buffer_for(&path) else {
+            self.ed.message = format!("export: no buffer for {}", path.display());
+            return;
         };
+        let shown = self
+            .layout
+            .visible_panes()
+            .into_iter()
+            .find(|p| self.view_of(*p).is_some_and(|v| self.ed.views[v].buffer == buffer));
+        match shown {
+            Some(p) => self.layout.focus(p),
+            None => {
+                let nv = self.ed.add_view(buffer);
+                self.layout
+                    .split(crate::layout::SplitDir::H, crate::layout::Content::Editor(nv));
+            }
+        }
+        let len = self.ed.buffers[buffer].len();
+        if self.ed.buffers[buffer].text() != text {
+            self.ed.apply_edits(buffer, &[(0..len, text)]);
+        }
+        self.ed.message = format!(
+            "{}: the export, unsaved — :w keeps it",
+            kawoosh_systems::fs::abbreviate_home(&path)
+        );
     }
 
     /// The colours the file names, from the theme's terminal sixteen
@@ -1135,7 +1210,6 @@ impl Kawoosh {
             self.ed.set_mode(view, Mode::Pane);
         }
         let doc = self.diagram_doc(view);
-        let body = self.canvas_body(pane).unwrap_or_default();
         let pen_face = self.face;
         // Free texts measured at zoom 1, in units: what a press finds
         // them by.
@@ -1158,28 +1232,35 @@ impl Kawoosh {
                 sizes.insert(t.label.clone(), (w / UNIT, h / UNIT));
             }
         }
-        let toolbar = self.ed.settings.bool("diagram.toolbar") != Some(false);
+        // The toolbar is the pane's legend (icons.md Decision 6): `<A-/>`,
+        // the title bar's `⌥/ keys`, `keys.legend` how it starts.
+        self.legends.borrow_mut().declare(pane);
+        let toolbar = self.legend_full(pane);
         let c = self.canvas_of(view);
         c.texts = sizes;
-        c.body = (body.w, body.h);
+        let vb = self.canvas_view_box(pane);
+        let c = self.canvas_of(view);
+        c.body = vb;
         let shown = preview(&doc, &c.sel, c.gesture.as_ref());
         let layout = Layout::of(&shown, &node_rect, &|t| text_size(&c.texts, t));
-        if !c.placed && body.w > 0.0 {
+        if !c.placed && vb.w > 0.0 {
             c.placed = true;
             match layout.extent() {
-                Some(ext) => c.fit(body.w, body.h, &ext),
+                Some(ext) => c.fit(&vb, &ext),
                 None => c.origin = Vec2::new(2.0 * UNIT, 2.0 * UNIT),
             }
         }
+        // The pen draws in the canvas's own box: the origin less where
+        // that box starts.
         let pen = Pen {
-            origin: c.origin,
+            origin: Vec2::new(c.origin.x - vb.x, c.origin.y - vb.y),
             s: c.scale(),
             zoom: c.zoom,
             pal: self.pal,
             face: pen_face,
             hues: self.canvas_hues(),
-            w: body.w,
-            h: body.h,
+            w: vb.w,
+            h: vb.h,
         };
         let c = &self.canvas.views[&view];
         let sel = c.sel.clone();
@@ -1416,22 +1497,23 @@ impl Kawoosh {
 /// The view moved the least that shows `r` (units) whole, a unit of air
 /// round it.
 fn reveal(c: &mut Canvas, r: Rect) {
-    let (w, h) = c.body;
-    if w <= 0.0 || h <= 0.0 {
+    let b = c.body;
+    if b.w <= 0.0 || b.h <= 0.0 {
         return;
     }
     let s = c.scale();
-    let (x0, x1) = (c.origin.x + (r.x - 1.0) * s, c.origin.x + (r.right() + 1.0) * s);
-    let (y0, y1) = (c.origin.y + (r.y - 1.0) * s, c.origin.y + (r.bottom() + 1.0) * s);
+    // In the canvas's own box: from its top left.
+    let (x0, x1) = (c.origin.x - b.x + (r.x - 1.0) * s, c.origin.x - b.x + (r.right() + 1.0) * s);
+    let (y0, y1) = (c.origin.y - b.y + (r.y - 1.0) * s, c.origin.y - b.y + (r.bottom() + 1.0) * s);
     if x0 < 0.0 {
         c.origin.x -= x0;
-    } else if x1 > w {
-        c.origin.x -= (x1 - w).min(x0);
+    } else if x1 > b.w {
+        c.origin.x -= (x1 - b.w).min(x0);
     }
     if y0 < 0.0 {
         c.origin.y -= y0;
-    } else if y1 > h {
-        c.origin.y -= (y1 - h).min(y0);
+    } else if y1 > b.h {
+        c.origin.y -= (y1 - b.h).min(y0);
     }
 }
 
@@ -1890,15 +1972,13 @@ impl Pen {
         }
     }
 
-    /// The toolbar, a strip over the drawing (Decision 8): the tools and
-    /// what makes boxes always; what changes the selection only for what
-    /// it can change — an arrow's elbow and heads with an arrow or a box
-    /// selected, a box's shape with a box — then the view. Each a button
-    /// running its command, keyed by it, its key beside it.
+    /// The toolbar, a strip over the drawing and the pane's legend
+    /// (Decision 8): every button always there, in its place — what does
+    /// not fit the selection dimmed and deaf, so choosing something never
+    /// moves the buttons or the drawing under them. Each runs its command,
+    /// keyed by it, its key beside it.
     fn toolbar(&self, ui: &mut Ui<'_>, pane: PaneId, tool: Tool, what: &Selected, size: f32, note: f32) {
         let pal = self.pal;
-        let word = TextStyle::new(size).color(pal.fg);
-        let key = TextStyle::new(note).color(pal.faint);
         ui.with_keyed(
             "toolbar",
             NodeSpec::row()
@@ -1913,38 +1993,39 @@ impl Pen {
                     if n > 0 {
                         ui.leaf_keyed(&format!("gap{n}"), NodeSpec::row().size(1.0, size).bg(pal.border));
                     }
-                    for (label, keys, line) in group {
+                    for ((label, keys, line), lit) in group {
                         let on = line.strip_prefix("diagram tool ") == Some(tool.word());
-                        ui.with_keyed(
-                            line,
-                            NodeSpec::row()
-                                .pad_xy(6.0, 2.0)
-                                .gap(4.0)
-                                .radius(4.0)
-                                .cross_align(Align::Center)
-                                .bg(if on { pal.select } else { Color::TRANSPARENT })
+                        let word = TextStyle::new(size).color(if lit { pal.fg } else { pal.faint });
+                        let key = TextStyle::new(note).color(if lit { pal.dim } else { pal.faint.with_alpha(0.5) });
+                        let mut spec = NodeSpec::row()
+                            .pad_xy(6.0, 2.0)
+                            .gap(4.0)
+                            .radius(4.0)
+                            .cross_align(Align::Center)
+                            .bg(if on { pal.select } else { Color::TRANSPARENT })
+                            .keep_focus()
+                            .label(label);
+                        if lit {
+                            spec = spec
                                 .hover_bg(pal.hover)
                                 .cursor(CursorShape::Pointer)
-                                .keep_focus()
                                 .on_click(Value::map([
                                     ("kind", "canvasbtn".into()),
                                     ("pane", Value::Int(pane as i64)),
                                     ("run", line.into()),
-                                ]))
-                                .label(label),
-                            |ui| {
-                                ui.text(label, word);
-                                if !keys.is_empty() {
-                                    ui.text(keys, key);
-                                }
-                            },
-                        );
+                                ]));
+                        }
+                        ui.with_keyed(line, spec, |ui| {
+                            ui.text(label, word);
+                            if !keys.is_empty() {
+                                ui.text(keys, key);
+                            }
+                        });
                     }
                 }
             },
         );
     }
-
     /// The grid cursor: a cross at its point.
     fn crosshair(&self, ui: &mut Ui<'_>, p: Pt) {
         let c = self.px(p);
@@ -1958,58 +2039,41 @@ impl Pen {
 /// A toolbar button: what it says, its key, the command line it runs.
 type Button = (&'static str, &'static str, &'static str);
 
-/// The toolbar's buttons for what is selected, in groups.
-fn toolbar_groups(what: &Selected) -> Vec<Vec<Button>> {
-    let mut groups = vec![vec![
-        ("select", "v", "diagram tool select"),
-        ("box", "b", "diagram tool box"),
-        ("arrow", "a", "diagram tool arrow"),
-        ("text", "t", "diagram tool text"),
-    ]];
-    let mut make = vec![("new", "n", "diagram box")];
-    if what.boxes == 1 && what.arrows + what.texts + what.groups == 0 {
-        make.push(("next", "o", "diagram add right"));
-        make.push(("below", "O", "diagram add down"));
-    }
-    groups.push(make);
-    let mut change: Vec<Button> = Vec::new();
-    if what.boxes > 0 {
-        change.push(("shape", "s", "diagram shape"));
-    }
-    if what.any() {
-        change.push(("colour", "c", "diagram color"));
-    }
-    if what.boxes + what.arrows > 0 {
-        change.push(("dashed", "-", "diagram dashed"));
-        change.push(("elbow", "r", "diagram route"));
-    }
-    if what.arrows > 0 {
-        change.push(("heads", "", "diagram heads"));
-        change.push(("reverse", "R", "diagram reverse"));
-    }
-    if what.boxes >= 2 {
-        change.push(("connect", "C", "diagram connect"));
-    }
-    if what.boxes + what.groups > 0 {
-        change.push(("group", "G", "diagram group"));
-    }
-    if what.groups > 0 {
-        change.push(("ungroup", "", "diagram ungroup"));
-    }
-    if what.any() {
-        change.push(("delete", "x", "diagram delete"));
-    }
-    if !change.is_empty() {
-        groups.push(change);
-    }
-    groups.push(vec![
-        ("fit", "=", "diagram fit"),
-        ("text view", "Tab", "diagram toggle"),
-        ("export", "", "diagram export"),
-    ]);
-    groups
+/// The toolbar's buttons in groups, each lit when it fits what is
+/// selected: the same buttons whatever is.
+fn toolbar_groups(what: &Selected) -> Vec<Vec<(Button, bool)>> {
+    let one_box = what.boxes == 1 && what.arrows + what.texts + what.groups == 0;
+    vec![
+        vec![
+            (("select", "v", "diagram tool select"), true),
+            (("box", "b", "diagram tool box"), true),
+            (("arrow", "a", "diagram tool arrow"), true),
+            (("text", "t", "diagram tool text"), true),
+        ],
+        vec![
+            (("new", "n", "diagram box"), true),
+            (("next", "o", "diagram add right"), one_box),
+            (("below", "O", "diagram add down"), one_box),
+        ],
+        vec![
+            (("shape", "s", "diagram shape"), what.boxes > 0),
+            (("colour", "c", "diagram color"), what.any()),
+            (("dashed", "-", "diagram dashed"), what.boxes + what.arrows > 0),
+            (("elbow", "r", "diagram route"), what.boxes + what.arrows > 0),
+            (("heads", "", "diagram heads"), what.arrows > 0),
+            (("reverse", "R", "diagram reverse"), what.arrows > 0),
+            (("connect", "C", "diagram connect"), what.boxes >= 2),
+            (("group", "G", "diagram group"), what.boxes + what.groups > 0),
+            (("ungroup", "", "diagram ungroup"), what.groups > 0),
+            (("delete", "x", "diagram delete"), what.any()),
+        ],
+        vec![
+            (("fit", "=", "diagram fit"), true),
+            (("text view", "Tab", "diagram toggle"), true),
+            (("export", "", "diagram export"), true),
+        ],
+    ]
 }
-
 /// The outline of `shape` in `x`, `y`, `w`, `h` as a closed line: what a
 /// dashed box is drawn round with, a stroke a path cannot dash.
 fn outline_points(shape: Shape, x: f32, y: f32, w: f32, h: f32, radius: f32) -> Vec<Vec2> {
@@ -2554,8 +2618,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .when(on)
                 .doc("the zoom: in, out, or a number (1 is a unit 20 px)"),
             |k, ctx| {
-                let pane = k.layout.focused();
-                let (Some(v), Some(body)) = (k.canvas_here(), k.canvas_body(pane)) else {
+                let Some(v) = k.canvas_here() else {
                     return;
                 };
                 let c = k.canvas_of(v);
@@ -2570,18 +2633,26 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                         }
                     },
                 };
-                c.zoom_about(Vec2::new(body.w / 2.0, body.h / 2.0), factor);
+                let b = c.body;
+                c.zoom_about(Vec2::new(b.x + b.w / 2.0, b.y + b.h / 2.0), factor);
             },
         ),
         cmd(
             Spec::new("diagram select")
-                .args(Args::new(&[ArgKind::Text]))
+                .args(Args::new(&[ArgKind::Text, ArgKind::Text]))
                 .when(on)
-                .doc("the selection to the nearest box or text left, right, up or down, or the next or prev thing in the file, COUNT times; with the box or text tool's cursor, the cursor a unit that way"),
+                .doc("the selection to the nearest box or text left, right, up or down (`all` after: an arrow too), the next or prev thing in the file, or the outer group, COUNT times; with the box or text tool's cursor, the cursor a unit that way"),
             |k, ctx| {
                 let Some(v) = k.canvas_here() else {
                     return;
                 };
+                if ctx.arg(0) == Some("outer") {
+                    if !k.canvas_select_outer(v) {
+                        k.ed.message = "in no group".into();
+                    }
+                    return;
+                }
+                let all = ctx.arg(1) == Some("all");
                 // The box and text tools walk their grid cursor instead.
                 if k.canvas.views[&v].cursor.is_some() {
                     let n = ctx.count.max(1) as i32;
@@ -2597,14 +2668,14 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 }
                 for _ in 0..ctx.count.max(1) {
                     match ctx.arg(0) {
-                        Some("left") => k.canvas_select_toward(v, (-1.0, 0.0)),
-                        Some("right") => k.canvas_select_toward(v, (1.0, 0.0)),
-                        Some("up") => k.canvas_select_toward(v, (0.0, -1.0)),
-                        Some("down") => k.canvas_select_toward(v, (0.0, 1.0)),
+                        Some("left") => k.canvas_select_toward(v, (-1.0, 0.0), all),
+                        Some("right") => k.canvas_select_toward(v, (1.0, 0.0), all),
+                        Some("up") => k.canvas_select_toward(v, (0.0, -1.0), all),
+                        Some("down") => k.canvas_select_toward(v, (0.0, 1.0), all),
                         Some("next") | None => k.canvas_select_step(v, 1),
                         Some("prev") => k.canvas_select_step(v, -1),
                         Some(w) => {
-                            k.ed.message = format!("no way `{w}`: left right up down next prev");
+                            k.ed.message = format!("no way `{w}`: left right up down next prev outer");
                             return;
                         }
                     }
@@ -2735,19 +2806,8 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 };
                 let s = c.scale();
                 let m = r.center();
-                c.origin = Vec2::new(c.body.0 / 2.0 - m.x * s, c.body.1 / 2.0 - m.y * s);
-            },
-        ),
-        cmd(
-            Spec::new("diagram toolbar")
-                .doc("the canvas's toolbar shown or hidden (the `diagram.toolbar` setting, for the session)"),
-            |k, _| {
-                let on = k.ed.settings.bool("diagram.toolbar") != Some(false);
-                k.ed.settings.set(
-                    kawoosh_editor::Layer::Session,
-                    "diagram.toolbar",
-                    kawoosh_editor::Setting::Bool(!on),
-                );
+                let b = c.body;
+                c.origin = Vec2::new(b.x + b.w / 2.0 - m.x * s, b.y + b.h / 2.0 - m.y * s);
             },
         ),
         cmd(

@@ -172,10 +172,20 @@ fn tab_shows_the_text_and_the_export_is_excalidraw() {
     ex(&mut d, &mut app, "diagram toggle");
     assert!(app.diagram_drawn(v), "the diagram again");
 
+    // The zoom, said.
+    ex(&mut d, &mut app, "diagram zoom 2");
+    assert!((app.canvas.views[&v].zoom - 2.0).abs() < 1e-3);
+
+    // The export: a buffer of NAME.excalidraw beside, unsaved; nothing
+    // written until `:w`.
     ex(&mut d, &mut app, "diagram export");
     let out = path.with_extension("excalidraw");
-    let json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&out).expect("the export")).unwrap();
+    let ev = app.focused_view().unwrap();
+    assert_ne!(ev, v, "in a pane of its own");
+    let b = app.ed.buffer_of(ev);
+    assert_eq!(b.path.as_deref(), Some(out.as_path()));
+    assert!(b.modified && !out.exists(), "unsaved, not on disk");
+    let json: serde_json::Value = serde_json::from_str(&b.text()).unwrap();
     assert_eq!(json["type"], "excalidraw");
     let ids: Vec<&str> = json["elements"]
         .as_array()
@@ -184,10 +194,8 @@ fn tab_shows_the_text_and_the_export_is_excalidraw() {
         .filter_map(|e| e["id"].as_str())
         .collect();
     assert!(ids.contains(&"box-a") && ids.contains(&"arrow-2"), "{ids:?}");
-
-    // The zoom, said.
-    ex(&mut d, &mut app, "diagram zoom 2");
-    assert!((app.canvas.views[&v].zoom - 2.0).abs() < 1e-3);
+    ex(&mut d, &mut app, "w");
+    assert!(out.exists(), ":w keeps it");
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -378,16 +386,21 @@ fn the_toolbar_and_the_menu_run_the_canvas_commands() {
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = open(&mut d, &path);
     let v = app.focused_view().unwrap();
+    // The toolbar is the pane's legend: hidden until `<A-/>`, the title
+    // bar's `⌥/ keys` the way to it — and the drawing stays where it
+    // is as it comes and goes.
+    assert!(d.rect("diagram tool box").is_none(), "hidden to start");
+    let a = at(&app, 4.0, 1.5);
+    d.press(&mut app, "<A-/>");
+    d.frame(&mut app);
+    assert_eq!(at(&app, 4.0, 1.5), a, "the drawing did not move");
     // The toolbar's box button: the box tool.
     let r = d.rect("diagram tool box").expect("the toolbar's box button");
     d.click(&mut app, r.x + r.w / 2.0, r.y + r.h / 2.0);
     assert_eq!(app.canvas.views[&v].tool, kawoosh::canvas::Tool::Box);
     d.keys(&mut app, "v");
-    // `T` hides it, and again shows it.
-    d.keys(&mut app, "T");
-    assert!(d.rect("diagram tool box").is_none(), "hidden");
-    d.keys(&mut app, "T");
-    assert!(d.rect("diagram tool box").is_some(), "shown");
+    d.press(&mut app, "<A-/>");
+    assert!(d.rect("diagram tool box").is_none(), "hidden again");
 
     // A right-click on B: its rows; a shape from the submenu.
     let b = at(&app, 16.0, 1.5);
@@ -498,11 +511,16 @@ fn the_toolbar_follows_the_selection_and_a_box_takes_route_and_dash() {
     let path = file("context", START);
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = open(&mut d, &path);
-    assert!(d.rect("diagram color").is_none(), "nothing selected: no colour");
-    assert!(d.rect("diagram route").is_none());
+    d.press(&mut app, "<A-/>");
+    d.frame(&mut app);
+    let bar = d.rect("toolbar").expect("the toolbar");
+    assert!(!lit(&mut d, "diagram color"), "nothing selected: no colour");
+    assert!(!lit(&mut d, "diagram route"));
     d.keys(&mut app, "l");
-    assert!(d.rect("diagram color").is_some() && d.rect("diagram shape").is_some());
-    assert!(d.rect("diagram heads").is_none(), "heads are an arrow's");
+    assert!(lit(&mut d, "diagram color") && lit(&mut d, "diagram shape"));
+    assert!(!lit(&mut d, "diagram heads"), "heads are an arrow's");
+    // The same buttons in the same places, whatever is selected.
+    assert_eq!(d.rect("toolbar"), Some(bar), "the toolbar did not move");
     // A box: `r` elbows its arrows, `-` dashes its own outline.
     d.keys(&mut app, "r-");
     let t = text(&app);
@@ -512,6 +530,50 @@ fn the_toolbar_follows_the_selection_and_a_box_takes_route_and_dash() {
     d.press(&mut app, "<C-n>");
     d.press(&mut app, "<C-n>");
     assert_eq!(selected(&mut app), vec!["a->b"]);
-    assert!(d.rect("diagram heads").is_some());
+    assert!(lit(&mut d, "diagram heads"));
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Whether the toolbar's button running `line` is lit: there, and
+/// answering a click.
+fn lit(d: &mut Drive, line: &str) -> bool {
+    let Some(key) = d.key_of(line) else {
+        return false;
+    };
+    d.core
+        .nodes()
+        .iter()
+        .find(|n| n.key == key)
+        .is_some_and(|n| n.flags.contains(&"click"))
+}
+
+/// Asked as "`<C-h/j/k/l>` to move between all elements including
+/// arrows" and "`<C-O>` … to select the outer group".
+#[test]
+fn ctrl_hjkl_walk_every_thing_and_ctrl_o_goes_out_to_the_group() {
+    let path = file(
+        "walk",
+        "box a \"A\" at 0,0\nbox b \"B\" at 20,0\narrow a -> b \"call\"\ngroup inner { b }\ngroup outer { inner a }\n",
+    );
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    d.press(&mut app, "<C-n>");
+    assert_eq!(selected(&mut app), vec!["a"]);
+    // `l` steps over the arrow to B; `<C-l>` stops on it.
+    d.keys(&mut app, "l");
+    assert_eq!(selected(&mut app), vec!["b"]);
+    d.keys(&mut app, "h");
+    d.press(&mut app, "<C-l>");
+    assert_eq!(selected(&mut app), vec!["a->b"]);
+    d.press(&mut app, "<C-l>");
+    assert_eq!(selected(&mut app), vec!["b"]);
+    // `<C-o>`: B's group, then the one round that.
+    d.press(&mut app, "<C-o>");
+    assert_eq!(selected(&mut app), vec!["inner"]);
+    d.press(&mut app, "<C-o>");
+    assert_eq!(selected(&mut app), vec!["outer"]);
+    d.press(&mut app, "<C-o>");
+    assert_eq!(selected(&mut app), vec!["outer"], "nothing round it");
+    assert_eq!(app.ed.message, "in no group");
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
