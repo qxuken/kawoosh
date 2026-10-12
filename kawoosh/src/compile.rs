@@ -274,6 +274,9 @@ const NOTHING: &str =
 /// Decision 7).
 pub const RECENT: usize = 10;
 
+/// What the picker says beside the line run here last (Decision 19).
+const LAST_HERE: &str = "last run here";
+
 /// A command's run in a directory, and the buffer showing it. The two
 /// are what a run is: the same command in the same directory runs into
 /// the same buffer again; another command, or the same one somewhere
@@ -412,9 +415,9 @@ pub struct Offer {
     pub server: bool,
     /// Who said it (Decision 19): the user, or the project.
     pub by: By,
-    /// Its tier, 1 to 5 (Decision 19): the user's recent lines, the
-    /// project's recent ones, the user's commands, the project's, the
-    /// lines run elsewhere. A command in several is listed in its first.
+    /// Its tier, 1 to 4 (Decision 19): the lines run here, whoever said
+    /// them, the user's commands, the project's, the lines run
+    /// elsewhere. A command in several is listed in its first.
     pub tier: u8,
     /// Its place in the tier: how recently it ran, for the lines run;
     /// else the settings' rows (0), a server's (1), the files' (2), each
@@ -474,7 +477,7 @@ impl Offer {
             detail: Vec::new(),
             server: false,
             by: By::Project,
-            tier: 4,
+            tier: 3,
             rank: 2,
         }
     }
@@ -1265,7 +1268,8 @@ impl Kawoosh {
         let mut rows: Vec<Offer> = Vec::new();
         let add = |rows: &mut Vec<Offer>, o: Offer| {
             // Once where it runs: two packages' `yarn run build` are two.
-            // Met again in a higher tier, the row moves up to it.
+            // Met again in a higher tier, the row moves up to it — the
+            // line last run here saying so, a named row too.
             let same = rows.iter_mut().find(|r| {
                 r.cmd == o.cmd && r.cwd == o.cwd && (r.name.is_some() || o.name.is_none())
             });
@@ -1273,6 +1277,9 @@ impl Kawoosh {
                 Some(r) if o.tier < r.tier => {
                     r.tier = o.tier;
                     r.rank = o.rank;
+                    if o.from == LAST_HERE {
+                        r.from = o.from;
+                    }
                 }
                 Some(_) => {}
                 None => rows.push(o),
@@ -1290,7 +1297,7 @@ impl Kawoosh {
                 .unwrap_or_else(|| self.compile_dir())
         };
         // The settings' rows: the user's own a tier above the project's.
-        let tier = |by: By| if by == By::User { 3 } else { 4 };
+        let tier = |by: By| if by == By::User { 2 } else { 3 };
         if let Some(d) = self.ed.settings.str("compile.default") {
             // Named, it is that command's row, marked; else a row of its own.
             let word = d.split_whitespace().next().unwrap_or_default();
@@ -1324,9 +1331,10 @@ impl Kawoosh {
                 rows.push(o);
             }
         }
-        // The lines run, newest first: the user's here, then the
-        // project's here, each above the settings' rows; a line run
-        // outside the caret's workspace below everything it offers.
+        // The lines run here, newest first, whoever said them — a named
+        // command run is the user's choice as much as a line typed —
+        // above the settings' rows; a line run outside the caret's
+        // workspace below everything it offers.
         let root = self.compile_root();
         let mut first = true;
         for (i, r) in self.recent_lines().into_iter().enumerate() {
@@ -1342,10 +1350,10 @@ impl Kawoosh {
             // A line from before the memory kept who said it: the
             // project's when the project offers it.
             let by = r.by.unwrap_or(if offered { By::Project } else { By::User });
-            let (tier, from) = match (here, by) {
-                (false, _) => (5, "recent elsewhere"),
-                (true, By::User) => (1, if first { "last run here" } else { "recent" }),
-                (true, By::Project) => (2, if first { "last run here" } else { "recent" }),
+            let (tier, from) = match (here, first) {
+                (false, _) => (4, "recent elsewhere"),
+                (true, true) => (1, LAST_HERE),
+                (true, false) => (1, "recent"),
             };
             first &= !here;
             add(
@@ -1483,8 +1491,8 @@ impl Kawoosh {
                 .iter_mut()
                 .find(|o| o.cmd == cmd && o.cwd == cwd)
             {
-                if o.tier > 4 {
-                    (o.tier, o.rank) = (4, 1);
+                if o.tier > 3 {
+                    (o.tier, o.rank) = (3, 1);
                     added = true;
                 }
                 continue;
@@ -1494,7 +1502,7 @@ impl Kawoosh {
             } else {
                 r.label
             };
-            let mut o = Offer::of(&cmd, cwd, &server, &why).at(By::Project, 4, 1);
+            let mut o = Offer::of(&cmd, cwd, &server, &why).at(By::Project, 3, 1);
             o.server = true;
             self.compile.offer.push(o);
             added = true;

@@ -754,19 +754,22 @@ it ran here.
   file claims runs — or when the project offers it where it ran (an open
   buffer's package outside the repository, Decision 9).
 
-Then five tiers, a command listed once, in the first it falls in:
+Then four tiers, a command listed once, in the first it falls in:
 
-1. the user's lines run here, newest first;
-2. the project's lines run here, newest first — a named or deduced
-   command run is its own row moved up, under its name;
-3. the user's commands, `compile.default` and `compile.commands` from
+1. the lines run here, newest first, whoever said them — a named or
+   deduced command run is its own row moved up, under its name;
+2. the user's commands, `compile.default` and `compile.commands` from
    the user's settings, in the settings' order;
-4. the project's: its default and names, a server's runnables (Decision
+3. the project's: its default and names, a server's runnables (Decision
    18), its files' and its packages', in that order as before;
-5. the lines run outside the workspace, newest first, `recent
+4. the lines run outside the workspace, newest first, `recent
    elsewhere` beside them.
 
-`last run here` marks the newest of the first two tiers. The rows keep
+`last run here` marks the newest of the first tier, a named row moved
+up too. Who said a line ranks the commands not yet run, not the ones
+run: running the project's `install` is as much the user's choice as a
+line typed, and the user's lines over the project's put a `scoop
+install` typed once above the `install` run every day. The rows keep
 their index in `Compile::offer` (Decision 18's reason); `Compile::shown`
 is the order, a tier and a place in it on each row. **A query ranks as
 in every picker**, by the match, equal matches in the list's order: the
