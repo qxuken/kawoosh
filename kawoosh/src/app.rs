@@ -3083,6 +3083,19 @@ impl Kawoosh {
                 }
                 return;
             }
+            // ⌘C over a terminal with something selected on screen is
+            // kui's copy of it, the runner's own half of the chord: the
+            // program hears ⌘C (kitty's keyboard protocol) only when
+            // nothing is selected — one or the other, never both. Its
+            // release goes nowhere either, its press never having been
+            // sent (`term_key_aside`).
+            if k.mods.super_key
+                && k.code.name().eq_ignore_ascii_case("c")
+                && self.term_of(self.layout.focused()).is_some()
+                && core.copy_selection().is_some_and(|t| !t.is_empty())
+            {
+                return;
+            }
             self.on_key(k);
             // A `gj` / `gk` is resolved against the rows kui laid out
             // (`wrap.rs`), which only the event's core can answer.

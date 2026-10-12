@@ -974,6 +974,48 @@ fn a_drag_selects_in_the_live_pane() {
     let _ = t;
 }
 
+/// ⌘C over a terminal is one thing: with a selection on screen it is
+/// kui's copy of it, the program hearing nothing; with none, the
+/// program's — as super-c, under kitty's keyboard protocol.
+#[test]
+fn cmd_c_copies_a_selection_or_reaches_the_program_never_both() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    app.feed_terminal(t, b"\x1b[>3uhello world\r\n");
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    let sent = |app: &mut Kawoosh| {
+        String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap()
+    };
+    sent(&mut app);
+    d.key(&mut app, "c", KeyMods::NONE.with_super());
+    assert_eq!(
+        sent(&mut app),
+        "\x1b[99;9u\x1b[99;9:3u",
+        "nothing selected: the program's"
+    );
+    let cells = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
+        .unwrap()
+        .rect;
+    d.drag(
+        &mut app,
+        Vec2::new(cells.x + 2.0, cells.y + 5.0),
+        Vec2::new(cells.x + 40.0, cells.y + 5.0),
+    );
+    d.frame(&mut app);
+    assert!(d.core.copy_selection().is_some_and(|s| !s.is_empty()));
+    sent(&mut app);
+    d.key(&mut app, "c", KeyMods::NONE.with_super());
+    assert_eq!(sent(&mut app), "", "a selection: kui's copy alone");
+}
+
 /// `p` and the system clipboard: what another program — or a
 /// terminal's selection — put there is read when the keys come back to
 /// an editor pane and made the register's newest, so `p` puts it; what
