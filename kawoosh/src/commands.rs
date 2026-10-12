@@ -1388,6 +1388,7 @@ fn instruments() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("settings project")
+                .alias(&["project init"])
                 .doc("open the project's .kawoosh/settings.lua nearest the working directory, a template in it when there is none"),
             |k, _| k.open_project_settings(),
         ),
