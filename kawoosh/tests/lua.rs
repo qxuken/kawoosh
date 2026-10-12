@@ -423,9 +423,9 @@ fn a_bare_compile_runs_what_the_project_offers() {
 }
 
 /// The compile picker's order (docs/design/compile.md Decision 19): the
-/// lines the user ran here, the lines the project's commands ran here,
-/// the user's own named commands, the rest of the project's, and last
-/// the lines run in another workspace — though one ran last of all. A
+/// lines run here, newest first, the user's typed or the project's
+/// named, the user's own named commands, the rest of the project's, and
+/// last the lines run in another workspace — though one ran last of all. A
 /// line the memory kept before it said who said it is the project's when
 /// the project offers it; a named command run is its row, moved up.
 #[test]
@@ -492,13 +492,13 @@ fn the_compile_picker_lists_by_tier() {
             (o.cmd.as_str(), o.from.as_str(), o.tier)
         })
         .collect();
-    assert_eq!(shown[0], ("echo typed", "recent", 1), "{shown:#?}");
-    assert_eq!(shown[1], ("make hello", "last run here", 2), "{shown:#?}");
-    assert_eq!(shown[2], ("echo proj", "compile.commands", 2), "{shown:#?}");
-    assert_eq!(shown[3], ("echo mine", "compile.commands", 3), "{shown:#?}");
+    assert_eq!(shown[0], ("make hello", "last run here", 1), "{shown:#?}");
+    assert_eq!(shown[1], ("echo typed", "recent", 1), "{shown:#?}");
+    assert_eq!(shown[2], ("echo proj", "compile.commands", 1), "{shown:#?}");
+    assert_eq!(shown[3], ("echo mine", "compile.commands", 2), "{shown:#?}");
     let rest: Vec<&str> = shown[4..shown.len() - 1].iter().map(|r| r.0).collect();
     assert!(
-        shown[4..shown.len() - 1].iter().all(|r| r.2 == 4),
+        shown[4..shown.len() - 1].iter().all(|r| r.2 == 3),
         "{shown:#?}"
     );
     for c in ["cargo check", "cargo build --release", "make"] {
@@ -509,14 +509,14 @@ fn the_compile_picker_lists_by_tier() {
         "listed once, in its highest tier"
     );
     let last = shown.last().unwrap();
-    assert_eq!(*last, ("echo far", "recent elsewhere", 5), "{shown:#?}");
+    assert_eq!(*last, ("echo far", "recent elsewhere", 4), "{shown:#?}");
 
     // The picker reads the same order.
     app.run_lua_source(
         "t",
         r#"local o = kawoosh.compile_offer(); kawoosh.echo(o[1].cmd .. " | " .. o[#o].cmd)"#,
     );
-    assert_eq!(app.ed.message, "echo typed | echo far");
+    assert_eq!(app.ed.message, "make hello | echo far");
     // Who said each is kept as it was said; the line kept without a
     // word stays so, read again each time the picker opens.
     let kept: Vec<(String, Option<kawoosh::compile::By>)> = app
@@ -530,6 +530,57 @@ fn the_compile_picker_lists_by_tier() {
             && kept.contains(&("make hello".into(), None)),
         "{kept:?}"
     );
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+
+    // The project's named command run again is first, over the line
+    // typed, and says it ran last; a line run once since is under it,
+    // the most run lately first, and says it ran last instead.
+    app.compile_by("echo proj", here.clone(), Some(kawoosh::compile::By::Project));
+    d.frame(&mut app);
+    app.layout.focus(pane);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "compile pick");
+    d.frame(&mut app);
+    let first = app.compile.shown()[0];
+    let o = &app.compile.offer[first];
+    assert_eq!(
+        (o.cmd.as_str(), o.from.as_str(), o.name.as_deref()),
+        ("echo proj", "last run here", Some("proj"))
+    );
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+    app.compile_by("echo once", here.clone(), Some(kawoosh::compile::By::User));
+    d.frame(&mut app);
+    app.layout.focus(pane);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "compile pick");
+    d.frame(&mut app);
+    let shown: Vec<(&str, &str)> = app.compile.shown()[..3]
+        .iter()
+        .map(|&i| (app.compile.offer[i].cmd.as_str(), app.compile.offer[i].from.as_str()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("echo proj", "compile.commands"),
+            ("echo once", "last run here"),
+            ("make hello", "recent"),
+        ]
+    );
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+
+    // Over the memory's cap the line worth least goes, not the oldest:
+    // the one run twice outlasts a run of lines once each.
+    for n in 0..kawoosh::compile::RECENT {
+        app.compile_by(&format!("echo n{n}"), here.clone(), Some(kawoosh::compile::By::User));
+        d.frame(&mut app);
+    }
+    let kept: Vec<String> = app.recent_lines().into_iter().map(|r| r.cmd).collect();
+    assert_eq!(kept.len(), kawoosh::compile::RECENT, "{kept:?}");
+    assert!(kept.contains(&"echo proj".to_string()), "{kept:?}");
+    assert!(!kept.contains(&"echo once".to_string()), "{kept:?}");
     d.press(&mut app, "<C-c>");
     d.frame(&mut app);
     std::fs::remove_dir_all(&base).ok();
