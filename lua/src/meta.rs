@@ -54,10 +54,25 @@ impl Runtime {
             out: &mut out,
         };
         w.table("kawoosh", &k, 0);
+        out.push_str(PROJECT);
         out.push_str(crate::nodes::LUALS_CLASS);
         out
     }
 }
+
+/// `kawoosh.project`, which the walk never sees: it is set only while a
+/// project's `init.lua` runs and nil by the time the meta is written
+/// (compile.md Decision 7). Typed as present — the code that reads it is
+/// that `init.lua`'s top level, where it always is.
+const PROJECT: &str = r#"---The project whose `init.lua` is running; nil once it has run.
+---@class kawoosh.Project
+---@field root string the directory holding its `.kawoosh`
+---@field dir string its `.kawoosh` directory
+
+---@type kawoosh.Project
+kawoosh.project = nil
+
+"#;
 
 struct Walk<'a> {
     chunks: HashMap<String, &'a str>,
@@ -357,6 +372,9 @@ mod tests {
         );
         assert!(meta.contains("---@class kawoosh.Node\n"));
         assert!(meta.contains("function Node:closest(types) end"));
+        // `kawoosh.project`, nil whenever the meta is written.
+        assert!(meta.contains("---@type kawoosh.Project\nkawoosh.project = nil"));
+        assert!(meta.contains("---@field root string"));
         // The plugin surface of 2026-10-03: a plugin's diagnostics, the
         // tree hook and its handle, a plugin's server rules.
         assert!(meta.contains("---@class kawoosh.diagnostics\n"), "{meta}");
