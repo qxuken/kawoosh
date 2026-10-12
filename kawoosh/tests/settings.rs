@@ -906,7 +906,8 @@ fn the_pane_keeps_its_place_and_sets_the_session() {
     std::fs::remove_dir_all(&t.dir).ok();
 }
 
-/// `:settings user` (`:settings global`) and `:settings project` open
+/// `:settings user` (`:settings global`) and `:settings project`
+/// (`:project init`) open
 /// the file from the command line: the project's nearest the working
 /// directory, and where a layer has none, a template at its path as the
 /// tab's `new` row makes.
@@ -941,9 +942,10 @@ fn a_settings_file_opens_from_the_command_line() {
         opened(&app),
         Some(t.root.join(PROJECT_DIR).join(SETTINGS_FILE))
     );
-    // No project above: a template in the working directory, unsaved.
+    // No project above: a template in the working directory, unsaved —
+    // `:project init`, the same command by the name a new project asks.
     app.set_cwd(&t.other);
-    ex(&mut d, &mut app, "settings project");
+    ex(&mut d, &mut app, "project init");
     let file = t.other.join(PROJECT_DIR).join(SETTINGS_FILE);
     assert_eq!(opened(&app), Some(file.clone()));
     let v = app.focused_view().unwrap();

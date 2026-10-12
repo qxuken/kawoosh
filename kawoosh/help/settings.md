@@ -18,7 +18,7 @@ Your files live in `~/.config/kawoosh/` (or `$XDG_CONFIG_HOME/kawoosh/`): `setti
 | command | opens |
 |---|---|
 | `:settings user` (or `:settings global`) | your `settings.lua` |
-| `:settings project` | the `.kawoosh/settings.lua` nearest the working directory |
+| `:settings project` (or `:project init`) | the `.kawoosh/settings.lua` nearest the working directory |
 
 A file that does not exist yet opens as a template at its path (the project's in the working directory), unsaved: `:w` creates it, `.kawoosh/` included.
 
