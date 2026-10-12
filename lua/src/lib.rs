@@ -5398,7 +5398,7 @@ fn seed(
 
     // ---- formatters (docs/design/formatters.md): `kawoosh.formatter(name,
     // def)` defines one — `cmd`, `args`, `languages`, `when`, `node`,
-    // `range`, `probe`, `timeout_ms` as `format.NAME` has them, under
+    // `range`, `probe`, `timeout_ms`, `install` as `format.NAME` has them, under
     // the user's file — or, with `run = fn(ctx, text, done)`, one that
     // is Lua: `done(text)` or `done(nil, why)` when it has formatted,
     // later if it is slow (a `kawoosh.spawn`'s `on_exit`), or the text
@@ -5409,6 +5409,13 @@ fn seed(
     k.set(
         "formatter",
         lua.create_function(move |lua, (name, t): (String, Table)| {
+            // `format.ensure_installed` and `format.check_updates` are
+            // the installs' (formatter-installs.md), not formatters.
+            if matches!(name.as_str(), "ensure_installed" | "check_updates") {
+                return Err(mlua::Error::runtime(format!(
+                    "formatter: `{name}` is format.{name}'s, not a formatter's name"
+                )));
+            }
             let mut def = Setting::table();
             let mut run = false;
             for pair in t.pairs::<String, LV>() {

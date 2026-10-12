@@ -799,3 +799,175 @@ fn a_relative_cmd_is_from_where_it_runs() {
     assert_eq!(app.ed.message, "formatted with local (1 edit)");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A fake `npm` in `dir/tools`, first on the PATH, and kawoosh's folder
+/// `dir/servers`: `npm view` says `dir/latest`; `npm install --prefix
+/// DIR …` logs what it was asked to `dir/asked` and puts `fake-shout`,
+/// a formatter upper-casing stdin, in `DIR/node_modules/.bin`. Each test
+/// is a process of its own under nextest: its PATH is its own to set.
+fn fake_npm(dir: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let tools = dir.join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::fs::write(dir.join("latest"), "2.0.0\n").unwrap();
+    let npm = tools.join("npm");
+    std::fs::write(
+        &npm,
+        format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = view ]; then cat '{d}/latest'; exit 0; fi\n\
+             echo \"$*\" >> '{d}/asked'\n\
+             while [ \"$1\" != --prefix ]; do shift; done\n\
+             mkdir -p \"$2/node_modules/.bin\"\n\
+             printf '#!/bin/sh\\ntr a-z A-Z\\n' > \"$2/node_modules/.bin/fake-shout\"\n\
+             chmod +x \"$2/node_modules/.bin/fake-shout\"\n",
+            d = dir.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::var("PATH").unwrap_or_default();
+    let servers = dir.join("servers");
+    unsafe {
+        std::env::set_var("PATH", format!("{}:{path}", tools.display()));
+        std::env::set_var("KAWOOSH_SERVERS", &servers);
+    }
+    servers
+}
+
+/// `format.shout`: `fake-shout` for typescript where a `.shoutrc` is,
+/// installed by npm.
+fn shout_installed_by_npm(app: &mut Kawoosh) {
+    let s = |v: &str| Setting::Str(v.into());
+    let set = |app: &mut Kawoosh, k: &str, v: Setting| app.ed.settings.set(Layer::User, k, v);
+    set(app, "format.shout.cmd", s("fake-shout"));
+    set(app, "format.shout.languages", files(&["typescript"]));
+    set(app, "format.shout.when", files(&[".shoutrc"]));
+    set(app, "format.shout.install.npm", s("fake-shout"));
+}
+
+/// A formatter kawoosh installs (formatter-installs.md): one not found
+/// says how to get it; `:format install` runs `kawoosh format install`
+/// in a pane, which asks its manager — a fake `npm` here — for it in
+/// kawoosh's own folder, the record saying a formatter; once it ends
+/// well the buffer formats with it from there, the PATH having no such
+/// program.
+#[test]
+fn a_formatter_is_installed_into_kawooshs_folder_and_runs_from_there() {
+    let dir = project("install", &[(".shoutrc", ""), ("a.ts", "x\n")]);
+    let servers = fake_npm(&dir);
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    app.lsp.cli = vec![env!("CARGO_BIN_EXE_kawoosh").into(), "lsp".into()];
+    shout_installed_by_npm(&mut app);
+    let a = open(&mut d, &mut app, &dir, "a.ts");
+    ex(&mut d, &mut app, "format?");
+    assert_eq!(
+        app.ed.message,
+        "shout is not found, and .shoutrc says the project formats with it; :format install shout"
+    );
+
+    let panes = app.layout.all_panes().len();
+    ex(&mut d, &mut app, "format install");
+    assert_eq!(app.layout.all_panes().len(), panes + 1, "a pane of its own");
+    let pkg = servers.join("npm/fake-shout");
+    let program = pkg.join("node_modules/.bin/fake-shout");
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .notes
+            .shown
+            .iter()
+            .any(|s| s.text == "shout installed")),
+        "installed: {}",
+        app.ed.message
+    );
+    let record =
+        std::fs::read_to_string(pkg.join(kawoosh_systems::servers::RECORD)).unwrap_or_default();
+    assert!(record.contains("\"version\": \"2.0.0\""), "{record}");
+    assert!(record.contains("\"formatter\""), "{record}");
+
+    // Back to the file: its formatter is kawoosh's now.
+    assert_eq!(open(&mut d, &mut app, &dir, "a.ts"), a);
+    ex(&mut d, &mut app, "format?");
+    assert_eq!(
+        app.ed.message,
+        format!("shout: .shoutrc ({})", program.display())
+    );
+    ex(&mut d, &mut app, "format");
+    assert_eq!(text(&app, a), "X\n");
+
+    ex(&mut d, &mut app, "format install nope");
+    assert_eq!(
+        app.ed.message,
+        "format install: no formatter nope (format.nope)"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `format.ensure_installed`, as `lsp.ensure_installed`: a name not in
+/// is installed in the background at the registry's latest, and the
+/// buffer's formatter is found there; nothing is moved unasked, and the
+/// next launch's check says what an `:format update` would bring.
+#[test]
+fn format_ensure_installed_installs_and_says_updates() {
+    let dir = project("ensure", &[(".shoutrc", ""), ("a.ts", "x\n")]);
+    let servers = fake_npm(&dir);
+    let asked = || std::fs::read_to_string(dir.join("asked")).unwrap_or_default();
+    let program = servers.join("npm/fake-shout/node_modules/.bin/fake-shout");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    shout_installed_by_npm(&mut app);
+    let a = open(&mut d, &mut app, &dir, "a.ts");
+    app.ed
+        .settings
+        .set(Layer::Session, "format.ensure_installed", files(&["shout"]));
+    assert!(
+        until(&mut d, &mut app, |_| program.is_file()),
+        "installed: {}",
+        asked()
+    );
+    assert!(asked().contains("fake-shout@2.0.0"), "{}", asked());
+    let record = servers
+        .join("npm/fake-shout")
+        .join(kawoosh_systems::servers::RECORD);
+    assert!(
+        until(&mut d, &mut app, |_| std::fs::read_to_string(&record)
+            .is_ok_and(|r| r.contains("\"formatter\""))),
+        "the record, a formatter's"
+    );
+    ex(&mut d, &mut app, "format");
+    assert_eq!(text(&app, a), "X\n");
+
+    // A newer one: said on the next launch, not installed.
+    std::fs::write(dir.join("latest"), "2.1.0\n").unwrap();
+    // As if never checked.
+    let old = std::fs::read_to_string(&record).unwrap();
+    std::fs::write(&record, without_checked(&old)).unwrap();
+    let before = asked();
+    let mut next = Kawoosh::new("t", "hello\n");
+    shout_installed_by_npm(&mut next);
+    next.ed
+        .settings
+        .set(Layer::Session, "format.ensure_installed", files(&["shout"]));
+    let said = "1 formatter update: fake-shout 2.0.0 → 2.1.0 (:format update)";
+    assert!(
+        until(&mut d, &mut next, |a| a
+            .notes
+            .shown
+            .iter()
+            .any(|s| s.text == said)),
+        "{said}"
+    );
+    assert_eq!(asked(), before, "an update said, not made");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A record's `checked` taken out, so the next check asks the registry.
+fn without_checked(record: &str) -> String {
+    record
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("\"checked\""))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace(",\n}", "\n}")
+}

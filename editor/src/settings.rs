@@ -293,13 +293,51 @@ impl Layer {
 /// project uses it (`FILE:KEY` for a key in it), `"always"` or
 /// `"never"` — `node` for `node_modules/.bin` first, `range` the args
 /// that format a range, `probe` a snippet per language its indentation
-/// is read from, `timeout_ms`, `enabled`.
+/// is read from, `timeout_ms`, `enabled`, and `install`, as a server's
+/// (formatter-installs.md): a package kawoosh installs into its own
+/// folder — the same one as a server's where the program is both
+/// (biome, ruff, taplo) — or a line.
 fn formatter_defaults(defaults: &mut Setting) {
     let s = |v: &str| Setting::Str(v.into());
     let list = |v: &[&str]| Setting::List(v.iter().map(|x| s(x)).collect());
     let probes = |pairs: &[(&str, &str)]| {
         Setting::Table(pairs.iter().map(|(k, v)| (k.to_string(), s(v))).collect())
     };
+    let package = |manager: &str, name: &str, args: &[&str]| {
+        let mut t = Setting::table();
+        t.set(manager, s(name));
+        if !args.is_empty() {
+            t.set("args", list(args));
+        }
+        t
+    };
+    let prettier_configs = [
+        ".prettierrc",
+        ".prettierrc.json",
+        ".prettierrc.json5",
+        ".prettierrc.yaml",
+        ".prettierrc.yml",
+        ".prettierrc.toml",
+        ".prettierrc.js",
+        ".prettierrc.cjs",
+        ".prettierrc.mjs",
+        ".prettierrc.ts",
+        "prettier.config.js",
+        "prettier.config.cjs",
+        "prettier.config.mjs",
+        "prettier.config.ts",
+        "package.json:prettier",
+    ];
+    let prettier_languages = [
+        "javascript",
+        "typescript",
+        "tsx",
+        "json",
+        "jsonc",
+        "css",
+        "yaml",
+        "markdown",
+    ];
     let js = "if (a) {\nb;\n}\n";
     let json = "{\n\"a\": 1\n}\n";
     let css = "a {\nb: c;\n}\n";
@@ -318,39 +356,8 @@ fn formatter_defaults(defaults: &mut Setting) {
             vec![
                 ("cmd", s("prettier")),
                 ("args", list(&["--stdin-filepath", "{path}"])),
-                (
-                    "languages",
-                    list(&[
-                        "javascript",
-                        "typescript",
-                        "tsx",
-                        "json",
-                        "jsonc",
-                        "css",
-                        "yaml",
-                        "markdown",
-                    ]),
-                ),
-                (
-                    "when",
-                    list(&[
-                        ".prettierrc",
-                        ".prettierrc.json",
-                        ".prettierrc.json5",
-                        ".prettierrc.yaml",
-                        ".prettierrc.yml",
-                        ".prettierrc.toml",
-                        ".prettierrc.js",
-                        ".prettierrc.cjs",
-                        ".prettierrc.mjs",
-                        ".prettierrc.ts",
-                        "prettier.config.js",
-                        "prettier.config.cjs",
-                        "prettier.config.mjs",
-                        "prettier.config.ts",
-                        "package.json:prettier",
-                    ]),
-                ),
+                ("languages", list(&prettier_languages)),
+                ("when", list(&prettier_configs)),
                 ("node", Setting::Bool(true)),
                 (
                     "range",
@@ -362,6 +369,23 @@ fn formatter_defaults(defaults: &mut Setting) {
                     ]),
                 ),
                 ("probe", web_probes.clone()),
+                ("install", package("npm", "prettier", &[])),
+            ],
+        ),
+        (
+            // prettier as a daemon: node started once, each format a
+            // message to it — the project's own prettier where there is
+            // one, else its bundled. After prettier by name, so `auto`
+            // takes it where prettier is not found.
+            "prettierd",
+            vec![
+                ("cmd", s("prettierd")),
+                ("args", list(&["{path}"])),
+                ("languages", list(&prettier_languages)),
+                ("when", list(&prettier_configs)),
+                ("node", Setting::Bool(true)),
+                ("probe", web_probes.clone()),
+                ("install", package("npm", "@fsouza/prettierd", &[])),
             ],
         ),
         (
@@ -373,6 +397,7 @@ fn formatter_defaults(defaults: &mut Setting) {
                 ("when", list(&["biome.json", "biome.jsonc"])),
                 ("node", Setting::Bool(true)),
                 ("probe", web_probes),
+                ("install", package("npm", "@biomejs/biome", &[])),
             ],
         ),
         (
@@ -387,6 +412,7 @@ fn formatter_defaults(defaults: &mut Setting) {
                     list(&["--range-start", "{start}", "--range-end", "{end}"]),
                 ),
                 ("probe", probes(&[("lua", "if a then\nb()\nend\n")])),
+                ("install", package("cargo", "stylua", &["--locked"])),
             ],
         ),
         (
@@ -397,6 +423,8 @@ fn formatter_defaults(defaults: &mut Setting) {
                 ("languages", list(&["c", "cpp"])),
                 ("when", list(&[".clang-format", "_clang-format"])),
                 ("range", list(&["--offset={start}", "--length={length}"])),
+                // LLVM's wheels on PyPI: the one program, no toolchain.
+                ("install", package("pip", "clang-format", &[])),
                 (
                     "probe",
                     probes(&[
@@ -417,6 +445,7 @@ fn formatter_defaults(defaults: &mut Setting) {
                     list(&["ruff.toml", ".ruff.toml", "pyproject.toml:tool.ruff"]),
                 ),
                 ("probe", probes(&[("python", "if a:\n  b\n")])),
+                ("install", package("pip", "ruff", &[])),
             ],
         ),
         (
@@ -435,6 +464,11 @@ fn formatter_defaults(defaults: &mut Setting) {
                 ("args", list(&["fmt", "-"])),
                 ("languages", list(&["toml"])),
                 ("when", list(&[".taplo.toml", "taplo.toml"])),
+                // As `lsp.toml`'s, to the argument: one directory for both.
+                (
+                    "install",
+                    package("cargo", "taplo-cli", &["--locked", "--features", "lsp"]),
+                ),
             ],
         ),
         (
@@ -445,6 +479,7 @@ fn formatter_defaults(defaults: &mut Setting) {
                 ("languages", list(&["bash"])),
                 ("when", s("never")),
                 ("probe", probes(&[("bash", "if a; then\nb\nfi\n")])),
+                ("install", package("go", "mvdan.cc/sh/v3/cmd/shfmt", &[])),
             ],
         ),
         (
@@ -455,6 +490,7 @@ fn formatter_defaults(defaults: &mut Setting) {
                 ("languages", list(&["rust"])),
                 ("when", s("never")),
                 ("probe", probes(&[("rust", "fn f() {\nlet a = 1;\n}\n")])),
+                ("install", s("rustup component add rustfmt")),
             ],
         ),
     ];
@@ -1317,7 +1353,7 @@ impl Settings {
         s.declare(
             "format",
             SettingKind::Open,
-            "formatters by name: `cmd`, `args`, `languages`, `when`, `node`, `range`, `probe`, `timeout_ms`, `enabled` (formatters.md)",
+            "formatters by name: `cmd`, `args`, `languages`, `when`, `node`, `range`, `probe`, `timeout_ms`, `enabled`, `install` (formatters.md); `format.ensure_installed`, the formatters this machine installs (`\"prettier\"`, `\"prettier@3.6.2\"`), `format.check_updates` (formatter-installs.md)",
         );
         s.declare(
             "grammars.sources",

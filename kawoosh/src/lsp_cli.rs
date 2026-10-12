@@ -9,7 +9,7 @@
 //!                                       or its line for a manager
 //!                                       kawoosh does not drive (brew,
 //!                                       rustup, gem)
-//! kawoosh lsp update [NAME…]            every installed package moved to
+//! kawoosh lsp update [NAME…]            every installed server moved to
 //!                                       its registry's latest — or those
 //!                                       named; one there already is left
 //! kawoosh lsp outdated                  the registries asked; what has a
@@ -27,7 +27,7 @@
 use std::path::Path;
 
 use kawoosh_systems::lsp::ServerDef;
-use kawoosh_systems::servers::{self, Out, Package};
+use kawoosh_systems::servers::{self, Kind, Out, Package};
 
 const USAGE: &str = "\
 kawoosh lsp install [--spec JSON] NAME[@VERSION]…
@@ -62,101 +62,40 @@ fn go(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     let root = servers::root().ok_or("no data directory (HOME is not set)")?;
-    let mut rest: Vec<String> = args[1..].to_vec();
-    let mut spec: Option<Package> = None;
-    if let Some(i) = rest.iter().position(|a| a == "--spec") {
-        let json = rest.get(i + 1).ok_or("--spec takes a package as JSON")?;
-        spec = Some(serde_json::from_str(json).map_err(|e| format!("--spec: {e}"))?);
-        rest.drain(i..i + 2);
-    }
+    let (rest, spec) = take_spec(&args[1..])?;
     let defs = crate::lsp_rules::builtin();
     // The package NAME means: the one `--spec` gave, else its server's.
     let package = |name: &str| match &spec {
         Some(p) => Ok(p.clone()),
         None => package_of(&defs, name),
     };
-    let each = |names: &[String], what: &str, f: &dyn Fn(&str) -> Result<(), String>| {
-        let failed = names
-            .iter()
-            .filter(|n| {
-                f(n).map_err(|e| crate::errln!("kawoosh lsp: {n}: {e}"))
-                    .is_err()
-            })
-            .count();
-        if failed > 0 {
-            return Err(format!("{failed} of {} not {what}", names.len()));
-        }
-        Ok(())
+    let packages = Verbs {
+        root: &root,
+        kind: Kind::Server,
+        rest: &rest,
+        spec: spec.as_ref(),
+        package: &package,
     };
     match verb.as_str() {
         "install" => {
             if rest.is_empty() {
                 return Err("install which? (kawoosh lsp list names them)".into());
             }
-            each(&rest, "installed", &|arg| {
+            each("lsp", &rest, "installed", &|arg| {
                 let (name, version) = name_version(arg);
                 if spec.is_none() && def_of(&defs, name)?.package.is_none() {
-                    return install_line(def_of(&defs, name)?);
+                    let d = def_of(&defs, name)?;
+                    return install_line(&d.install, &d.command);
                 }
-                install_package(&root, name, &package(name)?, version)
+                install_package(&root, name, &package(name)?, version, Kind::Server)
             })
         }
-        "update" => {
-            let names: Vec<String> = if rest.is_empty() && spec.is_none() {
-                servers::installed_in(&root)
-                    .into_iter()
-                    .map(|(dir, _)| dir_name(&dir))
-                    .collect()
-            } else {
-                rest.clone()
-            };
-            if names.is_empty() {
-                crate::outln!("nothing installed in {}", root.display());
-                return Ok(());
-            }
-            let installed = servers::installed_in(&root);
-            each(&names, "updated", &|name| {
-                // By server, or — bare `update` — by its directory's name.
-                let p = match installed.iter().find(|(d, _)| dir_name(d) == name) {
-                    Some((_, r)) if rest.is_empty() && spec.is_none() => r.package.clone(),
-                    _ => package(name)?,
-                };
-                let now = servers::installed(&root, &p).and_then(|r| r.version);
-                match servers::latest(&p)? {
-                    Some(v) if Some(&v) == now.as_ref() => {
-                        crate::outln!("{name}: {v}, the latest");
-                        Ok(())
-                    }
-                    Some(v) => install_package(&root, name, &p, Some(&v)),
-                    None => install_package(&root, name, &p, None),
-                }
-            })
-        }
+        "update" => packages.update(),
         "outdated" => {
-            let out = servers::check(&root, 0);
-            if out.is_empty() {
-                crate::outln!("every server kawoosh installed is at its latest");
-            }
-            for (dir, r) in out {
-                crate::outln!(
-                    "{}  {} → {}",
-                    dir_name(&dir),
-                    r.version.as_deref().unwrap_or("?"),
-                    r.update().unwrap_or("?")
-                );
-            }
+            packages.outdated();
             Ok(())
         }
-        "remove" => {
-            if rest.is_empty() {
-                return Err("remove which?".into());
-            }
-            each(&rest, "removed", &|name| {
-                let dir = servers::remove(&root, &package(name)?)?;
-                crate::outln!("removed {}", dir.display());
-                Ok(())
-            })
-        }
+        "remove" => packages.remove(),
         "list" => {
             crate::out!("{}", list(&root, &defs));
             Ok(())
@@ -166,6 +105,133 @@ fn go(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         other => Err(format!("unknown verb {other}\n{USAGE}")),
+    }
+}
+
+/// `args` with `--spec JSON` taken out, and the package it gave.
+pub(crate) fn take_spec(args: &[String]) -> Result<(Vec<String>, Option<Package>), String> {
+    let mut rest = args.to_vec();
+    let mut spec = None;
+    if let Some(i) = rest.iter().position(|a| a == "--spec") {
+        let json = rest.get(i + 1).ok_or("--spec takes a package as JSON")?;
+        spec = Some(serde_json::from_str(json).map_err(|e| format!("--spec: {e}"))?);
+        rest.drain(i..i + 2);
+    }
+    Ok((rest, spec))
+}
+
+/// `f` for each of `names`, each failure said under `kawoosh VERB`, and
+/// how many failed after.
+pub(crate) fn each(
+    verb: &str,
+    names: &[String],
+    what: &str,
+    f: &dyn Fn(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let failed = names
+        .iter()
+        .filter(|n| {
+            f(n).map_err(|e| crate::errln!("kawoosh {verb}: {n}: {e}"))
+                .is_err()
+        })
+        .count();
+    if failed > 0 {
+        return Err(format!("{failed} of {} not {what}", names.len()));
+    }
+    Ok(())
+}
+
+/// What `kawoosh lsp` and `kawoosh format` do alike over the packages of
+/// their kind: `update`, `outdated`, `remove`.
+pub(crate) struct Verbs<'a> {
+    pub root: &'a Path,
+    pub kind: Kind,
+    /// The names after the verb, `--spec` taken out.
+    pub rest: &'a [String],
+    pub spec: Option<&'a Package>,
+    /// The package a name means.
+    pub package: &'a dyn Fn(&str) -> Result<Package, String>,
+}
+
+impl Verbs<'_> {
+    /// The ones named moved to their registry's latest — bare, every
+    /// package of the kind installed — one there already left.
+    pub fn update(&self) -> Result<(), String> {
+        let bare = self.rest.is_empty() && self.spec.is_none();
+        let installed: Vec<_> = servers::installed_in(self.root)
+            .into_iter()
+            .filter(|(_, r)| r.is(self.kind))
+            .collect();
+        let names: Vec<String> = if bare {
+            installed.iter().map(|(dir, _)| dir_name(dir)).collect()
+        } else {
+            self.rest.to_vec()
+        };
+        if names.is_empty() {
+            crate::outln!(
+                "no {} installed in {}",
+                self.kind.name(),
+                self.root.display()
+            );
+            return Ok(());
+        }
+        each(self.kind.verb(), &names, "updated", &|name| {
+            // By its name, or — bare `update` — by its directory's.
+            let p = match installed.iter().find(|(d, _)| dir_name(d) == name) {
+                Some((_, r)) if bare => r.package.clone(),
+                _ => (self.package)(name)?,
+            };
+            let now = servers::installed(self.root, &p).and_then(|r| r.version);
+            match servers::latest(&p)? {
+                Some(v) if Some(&v) == now.as_ref() => {
+                    crate::outln!("{name}: {v}, the latest");
+                    Ok(())
+                }
+                Some(v) => install_package(self.root, name, &p, Some(&v), self.kind),
+                None => install_package(self.root, name, &p, None, self.kind),
+            }
+        })
+    }
+
+    /// The registries asked; what of the kind has a newer version.
+    pub fn outdated(&self) {
+        let out: Vec<_> = servers::check(self.root, 0)
+            .into_iter()
+            .filter(|(_, r)| r.is(self.kind))
+            .collect();
+        if out.is_empty() {
+            crate::outln!(
+                "every {} kawoosh installed is at its latest",
+                self.kind.name()
+            );
+        }
+        for (dir, r) in out {
+            crate::outln!(
+                "{}  {} → {}",
+                dir_name(&dir),
+                r.version.as_deref().unwrap_or("?"),
+                r.update().unwrap_or("?")
+            );
+        }
+    }
+
+    /// The ones named taken away.
+    pub fn remove(&self) -> Result<(), String> {
+        if self.rest.is_empty() {
+            return Err("remove which?".into());
+        }
+        each(self.kind.verb(), self.rest, "removed", &|name| {
+            let p = (self.package)(name)?;
+            match servers::remove(self.root, &p, self.kind)? {
+                Some(dir) => crate::outln!("removed {}", dir.display()),
+                None => crate::outln!(
+                    "{name}: no longer a {}; {} is kept, installed as another kind too",
+                    self.kind.name(),
+                    p.dir(self.root).display()
+                ),
+            }
+            Ok(())
+        })
     }
 }
 
@@ -184,30 +250,29 @@ fn package_of(defs: &[ServerDef], name: &str) -> Result<Package, String> {
         .ok_or_else(|| format!("`{}` is not one kawoosh installs", d.command))
 }
 
-/// A server kawoosh does not install itself: its line, in a shell.
-fn install_line(d: &ServerDef) -> Result<(), String> {
-    if d.install.is_empty() {
+/// A program kawoosh does not install itself (`command`): its `line`,
+/// in a shell.
+pub(crate) fn install_line(line: &str, command: &str) -> Result<(), String> {
+    if line.is_empty() {
         return Err(format!(
-            "kawoosh has no install command for `{}`; install it yourself and put it on the PATH",
-            d.command
+            "kawoosh has no install command for `{command}`; install it yourself and put it on the PATH"
         ));
     }
     // The manager it runs, looked for first: one not here is said as a
     // package's is, not as a shell's "not recognized" after it.
-    let program = d.install.split_whitespace().next().unwrap_or_default();
+    let program = line.split_whitespace().next().unwrap_or_default();
     if kawoosh_systems::io::on_path(program) == Some(false) {
         return Err(format!(
-            "`{}` needs `{program}`, which is not on the PATH",
-            d.install
+            "`{line}` needs `{program}`, which is not on the PATH"
         ));
     }
-    crate::outln!("› {}", d.install);
-    let mut c = shell_line(&d.install);
+    crate::outln!("› {line}");
+    let mut c = shell_line(line);
     let shell = c.get_program().to_string_lossy().into_owned();
     let mut child = kawoosh_systems::spawn::spawn(&mut c).map_err(|e| format!("{shell}: {e}"))?;
     let status = child.wait().map_err(|e| e.to_string())?;
     if !status.success() {
-        return Err(format!("`{}` ended with {status}", d.install));
+        return Err(format!("`{line}` ended with {status}"));
     }
     Ok(())
 }
@@ -234,19 +299,35 @@ fn shell_line(line: &str) -> std::process::Command {
     }
 }
 
-fn install_package(
+pub(crate) fn install_package(
     root: &Path,
     name: &str,
     p: &Package,
     version: Option<&str>,
+    kind: Kind,
 ) -> Result<(), String> {
+    // In already as the other kind (biome the server, asked for as a
+    // formatter): the same package, so only said to be this too — not
+    // moved to another version under the other's feet.
+    if version.is_none()
+        && let Some(r) = servers::installed(root, p).filter(|r| !r.is(kind))
+    {
+        servers::mark(root, p, kind)?;
+        crate::outln!(
+            "{name}: {} in {}, now a {} too",
+            r.version.as_deref().unwrap_or("installed"),
+            p.dir(root).display(),
+            kind.name()
+        );
+        return Ok(());
+    }
     crate::outln!(
         "{name}: {}{}",
         p.describe(),
         version.map(|v| format!(" at {v}")).unwrap_or_default()
     );
     let mut say = |line: &str| crate::outln!("› {line}");
-    let (dir, v) = servers::install(root, p, version, Out::Shown(&mut say))?;
+    let (dir, v) = servers::install(root, p, version, kind, Out::Shown(&mut say))?;
     crate::outln!(
         "{name}: {} in {}",
         v.as_deref().unwrap_or("installed"),
@@ -255,7 +336,7 @@ fn install_package(
     Ok(())
 }
 
-fn dir_name(dir: &Path) -> String {
+pub(crate) fn dir_name(dir: &Path) -> String {
     dir.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()

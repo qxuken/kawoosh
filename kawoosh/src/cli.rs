@@ -14,8 +14,9 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-/// The verbs that are the CLI half (`main.rs`'s `shim`, `lsp`, `test`).
-const VERBS: [&str; 6] = ["edit", "ex", "theme", "pick", "lsp", "test"];
+/// The verbs that are the CLI half (`main.rs`'s `shim`, `lsp`, `format`,
+/// `test`).
+const VERBS: [&str; 7] = ["edit", "ex", "theme", "pick", "lsp", "format", "test"];
 
 /// Whether `args` (after the program's name) ask the CLI half — a verb,
 /// or a flag that prints and exits — rather than the window: none, a
@@ -95,6 +96,7 @@ mod tests {
             &["theme"],
             &["edit", "a.txt"],
             &["lsp", "list"],
+            &["format", "list"],
             &["test", "a.lua"],
             &["--version"],
             &["-h"],

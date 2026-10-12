@@ -1,21 +1,25 @@
 //! `lsp.ensure_installed` (docs/design/lsp-installs.md Decisions 4 and
-//! 6): the servers a machine wants, said in the settings — which qd
-//! keeps — and installed by kawoosh in the background, a corner line
-//! saying so, one at a time on a thread of its own:
+//! 6) and `format.ensure_installed` (docs/design/formatter-installs.md):
+//! the servers and formatters a machine wants, said in the settings —
+//! which qd keeps — and installed by kawoosh in the background, a corner
+//! line saying so, one at a time on a thread of its own:
 //!
 //! - a name (`"yaml"`) is installed when it is not in, at the
 //!   registry's latest, and then left where it is;
 //! - a name at a version (`"yaml@1.15.0"`) is installed at that version,
 //!   and again when the one in is another;
-//! - a server kawoosh does not install (brew's, rustup's) is said once,
-//!   with how to install it, when its program is not found;
-//! - with the list set, the registries are asked once a day what is
-//!   newer than what is in (`lsp.check_updates`, on by default), and a
-//!   corner line says what an `:lsp update` would bring. Nothing is
-//!   updated unasked.
+//! - one in already as the other kind (biome the server, wanted as a
+//!   formatter) is only marked so: the same package;
+//! - one kawoosh does not install (brew's, rustup's) is said once, with
+//!   how to install it, when its program is not found;
+//! - with a list set, the registries are asked once a day what is newer
+//!   than what is in (`lsp.check_updates`, `format.check_updates`, on by
+//!   default), and a corner line says what an `:lsp update` or a
+//!   `:format update` would bring. Nothing is updated unasked.
 //!
-//! An install that ends well starts its server for the buffers that
-//! missed it, as `:lsp install`'s does.
+//! A server's install that ends well starts it for the buffers that
+//! missed it, as `:lsp install`'s does; a formatter's has the buffers'
+//! formatters found afresh.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -24,9 +28,10 @@ use std::time::Instant;
 
 use kawoosh_editor::Setting;
 use kawoosh_systems::WakeHandle;
-use kawoosh_systems::servers::{self, Out, Package};
+use kawoosh_systems::servers::{self, Kind, Out, Package};
 
 use crate::app::Kawoosh;
+use crate::format::Install;
 use crate::notify::{Level, Note, Show};
 
 /// Who the corner lines are from.
@@ -34,13 +39,15 @@ const SOURCE: &str = "lsp install";
 
 /// A job for the worker.
 enum Job {
-    /// Installs `package` at `version` (the latest for none) for the
-    /// server on `command`, named `name` in the list.
+    /// Installs `package` at `version` (the latest for none) as `kind`,
+    /// for the program `command`, named `name` in the list — or, one in
+    /// already as the other kind and no version asked, marks it.
     Install {
         name: String,
         command: String,
         package: Package,
         version: Option<String>,
+        kind: Kind,
     },
     /// Asks the registries what is newer, if not within `every` seconds.
     Check { every: u64 },
@@ -56,14 +63,17 @@ pub enum Said {
         name: String,
         command: String,
         version: Option<String>,
+        kind: Kind,
     },
     Failed {
         name: String,
         why: String,
+        kind: Kind,
     },
     /// The packages with a newer version: their directory's name, the
-    /// version in, the newer one.
-    Updates(Vec<(String, String, String)>),
+    /// version in, the newer one, and the kind it is said as — a
+    /// server's first, for one that is both.
+    Updates(Vec<(String, String, String, Kind)>),
 }
 
 pub struct Installs {
@@ -71,15 +81,16 @@ pub struct Installs {
     said: Receiver<Said>,
     tx: Sender<Said>,
     wake: WakeHandle,
-    /// The list as it was last acted on, so a settings change that does
-    /// not touch it does nothing.
-    seen: Option<Vec<String>>,
+    /// The lists as they were last acted on — the servers', the
+    /// formatters' — so a settings change that does not touch them does
+    /// nothing.
+    seen: Option<(Vec<String>, Vec<String>)>,
     /// The names said once: unknown, or not kawoosh's to install.
     told: HashSet<String>,
     /// The registries were asked this session.
     checked: bool,
-    /// Installs on their way, by name.
-    pub(crate) busy: HashSet<String>,
+    /// Installs on their way, by kind and name.
+    pub(crate) busy: HashSet<(Kind, String)>,
     /// `$KAWOOSH_SERVERS` as the shell saw it, for a test to read.
     pub root: Option<PathBuf>,
 }
@@ -136,7 +147,22 @@ fn work(root: &std::path::Path, job: Job, tx: &Sender<Said>, wake: &WakeHandle) 
             command,
             package,
             version,
+            kind,
         } => {
+            // In as the other kind: the same package, marked.
+            if version.is_none() && servers::installed(root, &package).is_some_and(|r| !r.is(kind))
+            {
+                match servers::mark(root, &package, kind) {
+                    Ok(r) => say(Said::Installed {
+                        name,
+                        command,
+                        version: r.and_then(|r| r.version),
+                        kind,
+                    }),
+                    Err(why) => say(Said::Failed { name, why, kind }),
+                }
+                return;
+            }
             let what = match &version {
                 Some(v) => format!("{} {v}", package.describe()),
                 None => package.describe(),
@@ -145,17 +171,18 @@ fn work(root: &std::path::Path, job: Job, tx: &Sender<Said>, wake: &WakeHandle) 
                 name: name.clone(),
                 what,
             });
-            match servers::install(root, &package, version.as_deref(), Out::Kept) {
+            match servers::install(root, &package, version.as_deref(), kind, Out::Kept) {
                 Ok((_, version)) => say(Said::Installed {
                     name,
                     command,
                     version,
+                    kind,
                 }),
-                Err(why) => say(Said::Failed { name, why }),
+                Err(why) => say(Said::Failed { name, why, kind }),
             }
         }
         Job::Check { every } => {
-            let updates: Vec<(String, String, String)> = servers::check(root, every)
+            let updates: Vec<(String, String, String, Kind)> = servers::check(root, every)
                 .into_iter()
                 .map(|(dir, r)| {
                     let name = dir
@@ -163,7 +190,12 @@ fn work(root: &std::path::Path, job: Job, tx: &Sender<Said>, wake: &WakeHandle) 
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     let new = r.update().unwrap_or("").to_string();
-                    (name, r.version.unwrap_or_else(|| "?".into()), new)
+                    let kind = if r.is(Kind::Server) {
+                        Kind::Server
+                    } else {
+                        Kind::Formatter
+                    };
+                    (name, r.version.unwrap_or_else(|| "?".into()), new, kind)
                 })
                 .collect();
             if !updates.is_empty() {
@@ -173,9 +205,10 @@ fn work(root: &std::path::Path, job: Job, tx: &Sender<Said>, wake: &WakeHandle) 
     }
 }
 
-/// The names `lsp.ensure_installed` lists, as written.
-fn wanted(settings: &kawoosh_editor::Settings) -> Vec<String> {
-    match settings.get("lsp.ensure_installed") {
+/// The names `KEY` (`lsp.ensure_installed`, `format.ensure_installed`)
+/// lists, as written.
+fn wanted(settings: &kawoosh_editor::Settings, key: &str) -> Vec<String> {
+    match settings.get(key) {
         Some(Setting::List(l)) => l
             .iter()
             .filter_map(|v| v.as_str().map(str::to_string))
@@ -185,74 +218,133 @@ fn wanted(settings: &kawoosh_editor::Settings) -> Vec<String> {
     }
 }
 
+/// What one entry of a list asks, worked out from its def.
+enum Wanted {
+    /// A package kawoosh installs, for the program `command`.
+    Package { command: String, package: Package },
+    /// Not kawoosh's to install: said once, when `command` is not on the
+    /// PATH, with how to get it.
+    Elsewhere { command: String, how: String },
+    /// No such server or formatter, or a def that does not read.
+    Unknown(String),
+}
+
 impl Kawoosh {
-    /// Acts on `lsp.ensure_installed` when it moved: what is missing, or
-    /// at another version than one pinned, is installed; and, the first
-    /// time with the list set, the registries are asked what is newer.
+    /// Acts on `lsp.ensure_installed` and `format.ensure_installed` when
+    /// they moved: what is missing, or at another version than one
+    /// pinned, is installed; and, the first time with a list set, the
+    /// registries are asked what is newer.
     pub(crate) fn sync_lsp_installs(&mut self) {
-        let list = wanted(&self.ed.settings);
-        if self.lsp_installs.seen.as_ref() == Some(&list) {
+        let lists = (
+            wanted(&self.ed.settings, "lsp.ensure_installed"),
+            wanted(&self.ed.settings, "format.ensure_installed"),
+        );
+        if self.lsp_installs.seen.as_ref() == Some(&lists) {
             return;
         }
-        self.lsp_installs.seen = Some(list.clone());
-        if list.is_empty() {
+        self.lsp_installs.seen = Some(lists.clone());
+        if lists.0.is_empty() && lists.1.is_empty() {
             return;
         }
         let Some(root) = self.lsp_installs.root.clone() else {
             return;
         };
-        let defs = self.lsp.defs.clone();
-        for entry in &list {
-            let (name, version) = crate::lsp_cli::name_version(entry);
-            let Ok(def) = crate::lsp_cli::def_of(&defs, name) else {
-                self.tell(
-                    entry,
-                    Level::Warn,
-                    format!("lsp.ensure_installed: no language server for {name}"),
-                );
-                continue;
-            };
-            let Some(package) = def.package.clone() else {
-                if kawoosh_systems::io::on_path(&def.command) == Some(false) {
-                    let how = if def.install.is_empty() {
-                        "install it and put it on the PATH".to_string()
-                    } else {
-                        format!(":lsp install {} ({})", def.language, def.install)
-                    };
-                    self.tell(
-                        entry,
-                        Level::Info,
-                        format!("`{}` is not one kawoosh installs: {how}", def.command),
-                    );
+        for (kind, list) in [(Kind::Server, &lists.0), (Kind::Formatter, &lists.1)] {
+            for entry in list {
+                let (name, version) = crate::lsp_cli::name_version(entry);
+                let told = format!("{}.{entry}", kind.verb());
+                let (command, package) = match self.wanted_install(kind, name) {
+                    Wanted::Package { command, package } => (command, package),
+                    Wanted::Elsewhere { command, how } => {
+                        if kawoosh_systems::io::on_path(&command) == Some(false) {
+                            self.tell(
+                                &told,
+                                Level::Info,
+                                format!("`{command}` is not one kawoosh installs: {how}"),
+                            );
+                        }
+                        continue;
+                    }
+                    Wanted::Unknown(why) => {
+                        self.tell(
+                            &told,
+                            Level::Warn,
+                            format!("{}.ensure_installed: {why}", kind.verb()),
+                        );
+                        continue;
+                    }
+                };
+                let due = match (servers::installed(&root, &package), version) {
+                    (None, _) => true,
+                    (Some(r), Some(v)) => r.version.as_deref() != Some(v) || !r.is(kind),
+                    (Some(r), None) => !r.is(kind),
+                };
+                if due && self.lsp_installs.busy.insert((kind, name.to_string())) {
+                    self.lsp_installs.send(Job::Install {
+                        name: name.to_string(),
+                        command,
+                        package,
+                        version: version.map(str::to_string),
+                        kind,
+                    });
                 }
-                continue;
-            };
-            let have = servers::installed(&root, &package);
-            let due = match (&have, version) {
-                (None, _) => true,
-                (Some(r), Some(v)) => r.version.as_deref() != Some(v),
-                (Some(_), None) => false,
-            };
-            if due && self.lsp_installs.busy.insert(name.to_string()) {
-                self.lsp_installs.send(Job::Install {
-                    name: name.to_string(),
-                    command: def.command.clone(),
-                    package,
-                    version: version.map(str::to_string),
-                });
             }
         }
-        let check = self
-            .ed
-            .settings
-            .get("lsp.check_updates")
-            .and_then(Setting::as_bool)
-            != Some(false);
+        let check = |key: &str| self.ed.settings.get(key).and_then(Setting::as_bool) != Some(false);
+        let check = (!lists.0.is_empty() && check("lsp.check_updates"))
+            || (!lists.1.is_empty() && check("format.check_updates"));
         if check && !self.lsp_installs.checked {
             self.lsp_installs.checked = true;
             self.lsp_installs.send(Job::Check {
                 every: servers::CHECK_EVERY,
             });
+        }
+    }
+
+    /// What `name` in `kind`'s list asks: a server by its `lsp.NAME` or
+    /// a language it serves, a formatter by its `format.NAME`.
+    fn wanted_install(&self, kind: Kind, name: &str) -> Wanted {
+        match kind {
+            Kind::Server => {
+                let Ok(def) = crate::lsp_cli::def_of(&self.lsp.defs, name) else {
+                    return Wanted::Unknown(format!("no language server for {name}"));
+                };
+                match &def.package {
+                    Some(p) => Wanted::Package {
+                        command: def.command.clone(),
+                        package: p.clone(),
+                    },
+                    None => Wanted::Elsewhere {
+                        command: def.command.clone(),
+                        how: if def.install.is_empty() {
+                            "install it and put it on the PATH".to_string()
+                        } else {
+                            format!(":lsp install {} ({})", def.language, def.install)
+                        },
+                    },
+                }
+            }
+            Kind::Formatter => {
+                let all = crate::format::defs(&self.ed.settings);
+                let Some(def) = all.into_iter().find(|d| d.name == name) else {
+                    return Wanted::Unknown(format!("no formatter {name} (format.{name})"));
+                };
+                match def.install {
+                    Some(Ok(Install::Package(package))) => Wanted::Package {
+                        command: def.cmd,
+                        package,
+                    },
+                    Some(Ok(Install::Line(line))) => Wanted::Elsewhere {
+                        command: def.cmd,
+                        how: format!(":format install {name} ({line})"),
+                    },
+                    Some(Err(e)) => Wanted::Unknown(format!("format.{name}.install: {e}")),
+                    None => Wanted::Elsewhere {
+                        command: def.cmd,
+                        how: "install it and put it on the PATH".to_string(),
+                    },
+                }
+            }
         }
     }
 
@@ -264,7 +356,8 @@ impl Kawoosh {
     }
 
     /// What the worker said since the last frame: progress in the
-    /// corner, a server started once it is in, the updates there are.
+    /// corner, a server started once it is in, a formatter found, the
+    /// updates there are.
     pub(crate) fn drain_lsp_installs(&mut self) {
         let said: Vec<Said> = self.lsp_installs.said.try_iter().collect();
         for s in said {
@@ -284,8 +377,9 @@ impl Kawoosh {
                     name,
                     command,
                     version,
+                    kind,
                 } => {
-                    self.lsp_installs.busy.remove(&name);
+                    self.lsp_installs.busy.remove(&(kind, name.clone()));
                     let what = match version {
                         Some(v) => format!("{command} {v}"),
                         None => command.clone(),
@@ -299,10 +393,13 @@ impl Kawoosh {
                         true,
                         Instant::now(),
                     );
-                    self.lsp_restart_commands(vec![command]);
+                    match kind {
+                        Kind::Server => self.lsp_restart_commands(vec![command]),
+                        Kind::Formatter => self.reload_probes(),
+                    }
                 }
-                Said::Failed { name, why } => {
-                    self.lsp_installs.busy.remove(&name);
+                Said::Failed { name, why, kind } => {
+                    self.lsp_installs.busy.remove(&(kind, name.clone()));
                     self.notes
                         .progress(SOURCE, &name, None, None, None, true, Instant::now());
                     let first = why.lines().next().unwrap_or("").to_string();
@@ -319,21 +416,29 @@ impl Kawoosh {
                     );
                 }
                 Said::Updates(list) => {
-                    let names: Vec<String> = list
-                        .iter()
-                        .map(|(n, from, to)| format!("{n} {from} → {to}"))
-                        .collect();
-                    let text = format!(
-                        "{} server update{}: {} (:lsp update)",
-                        list.len(),
-                        if list.len() == 1 { "" } else { "s" },
-                        names.join(", ")
-                    );
-                    self.notify_with(
-                        Note::new(Level::Info, text)
-                            .source(SOURCE)
-                            .show(Show::Corner),
-                    );
+                    for kind in Kind::ALL {
+                        let names: Vec<String> = list
+                            .iter()
+                            .filter(|(.., k)| *k == kind)
+                            .map(|(n, from, to, _)| format!("{n} {from} → {to}"))
+                            .collect();
+                        if names.is_empty() {
+                            continue;
+                        }
+                        let text = format!(
+                            "{} {} update{}: {} (:{} update)",
+                            names.len(),
+                            kind.name(),
+                            if names.len() == 1 { "" } else { "s" },
+                            names.join(", "),
+                            kind.verb()
+                        );
+                        self.notify_with(
+                            Note::new(Level::Info, text)
+                                .source(SOURCE)
+                                .show(Show::Corner),
+                        );
+                    }
                 }
             }
         }
