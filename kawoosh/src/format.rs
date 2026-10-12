@@ -21,6 +21,7 @@ use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{AfterWrite, ArgKind, Args, Effect, Setting, Spec};
 use kawoosh_systems::filter::Failure;
 use kawoosh_systems::io::IoMsg;
+use kawoosh_systems::servers::Package;
 
 use crate::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -56,6 +57,43 @@ pub struct Formatter {
     pub enabled: bool,
     /// A Lua `run` formats in its place (`kawoosh.formatter`).
     pub lua: bool,
+    /// How it installs (formatter-installs.md): `None` for no way
+    /// known, an error for an `install` that does not read.
+    pub install: Option<Result<Install, String>>,
+}
+
+/// How a formatter installs, as a server does (lsp-installs.md): a
+/// package kawoosh installs into its own folder, or a line for a manager
+/// it does not drive.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Install {
+    Package(Package),
+    Line(String),
+}
+
+impl Install {
+    /// How it reads on `:format?` and `kawoosh format list`.
+    pub fn describe(&self) -> String {
+        match self {
+            Install::Package(p) => p.describe(),
+            Install::Line(l) => l.clone(),
+        }
+    }
+}
+
+/// `format.NAME.install`, read as `lsp.NAME.install` is: a line, a line
+/// per platform (this one's taken; none here is no way), or a package
+/// table (`{ npm = "prettier" }`).
+fn install_of(v: &Setting) -> Option<Result<Install, String>> {
+    match v {
+        Setting::Str(line) if line.is_empty() => None,
+        Setting::Str(line) => Some(Ok(Install::Line(line.clone()))),
+        v => match crate::lsp_rules::platform_line(v) {
+            Some(line) if line.is_empty() => None,
+            Some(line) => Some(Ok(Install::Line(line))),
+            None => Some(crate::lsp_rules::package_setting(v).map(Install::Package)),
+        },
+    }
 }
 
 impl Formatter {
@@ -107,7 +145,24 @@ impl Formatter {
                 .unwrap_or(TIMEOUT),
             enabled: t.get("enabled").and_then(Setting::as_bool).unwrap_or(true),
             lua,
+            install: t.get("install").and_then(install_of),
         })
+    }
+
+    /// The package kawoosh installs it from, when it says one.
+    pub fn package(&self) -> Option<&Package> {
+        match &self.install {
+            Some(Ok(Install::Package(p))) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// What a "not found" adds: how to install it, when there is a way.
+    fn install_hint(&self) -> String {
+        match &self.install {
+            Some(Ok(_)) => format!("; :format install {}", self.name),
+            _ => String::new(),
+        }
     }
 
     fn formats(&self, language: &str) -> bool {
@@ -132,8 +187,8 @@ pub struct Picked {
     pub def: Formatter,
     /// The `when` file found, if one was.
     pub config: Option<PathBuf>,
-    /// The program: the project's own (`node_modules/.bin`) or the name
-    /// for the `PATH`.
+    /// The program: the project's own (`node_modules/.bin`), the one
+    /// kawoosh installed, or the name for the `PATH`.
     pub program: String,
     /// Whether the program is the project's own.
     pub own: bool,
@@ -258,6 +313,9 @@ pub struct FormatState {
     /// The `format` table the answers were had under: a def changed
     /// (its args) asks again.
     defs_seen: Option<Setting>,
+    /// `:format install`'s and `:format update`'s terminals, and what is
+    /// said once one ends well (`prettier installed`).
+    pub(crate) installs: HashMap<crate::terminals::TermId, String>,
 }
 
 /// The formatters the settings define, by name.
@@ -335,9 +393,16 @@ fn node_bin(cmd: &str, dir: &Path) -> Option<PathBuf> {
     })
 }
 
-/// `def` made ready for a buffer at `path` in `dir`.
+/// `def` made ready for a buffer at `path` in `dir`: its program the
+/// project's own (`node`), else the one kawoosh installed
+/// (formatter-installs.md), else its command for the `PATH`.
 fn pick(def: &Formatter, dir: &Path, config: Option<PathBuf>, why: String) -> Picked {
     let own = def.node.then(|| node_bin(&def.cmd, dir)).flatten();
+    let installed = if own.is_none() && !def.lua {
+        kawoosh_systems::servers::find(&def.cmd)
+    } else {
+        None
+    };
     let cwd = config
         .as_deref()
         .and_then(Path::parent)
@@ -359,6 +424,7 @@ fn pick(def: &Formatter, dir: &Path, config: Option<PathBuf>, why: String) -> Pi
         def: def.clone(),
         program: own
             .as_ref()
+            .or(installed.as_ref())
             .map(|p| p.display().to_string())
             .unwrap_or(program),
         own: own.is_some(),
@@ -475,26 +541,31 @@ impl Kawoosh {
                         continue;
                     };
                     // The nearest config's formatter; a tie to the
-                    // first by name.
-                    let mut best: Option<(usize, &Formatter, PathBuf)> = None;
+                    // first by name that is found — prettierd, which
+                    // reads prettier's configs, where prettier is not.
+                    let mut best: Option<(usize, Picked)> = None;
                     for def in all.iter().filter(|d| d.enabled && d.formats(&language)) {
                         if let Some(c) = find_config(def, dir) {
                             let depth = c.components().count();
-                            if best.as_ref().is_none_or(|(d, _, _)| depth > *d) {
-                                best = Some((depth, def, c));
+                            let why = format!("{}: {}", def.name, self.short_name(&c));
+                            let p = pick(def, dir, Some(c), why);
+                            if best.as_ref().is_none_or(|(d, b)| {
+                                depth > *d || (depth == *d && !b.found() && p.found())
+                            }) {
+                                best = Some((depth, p));
                             }
                         }
                     }
-                    if let Some((_, def, c)) = best {
+                    if let Some((_, p)) = best {
                         // The project's word: not another formatter's
                         // style in its place when this one is missing.
-                        let config = self.short_name(&c);
-                        let why = format!("{}: {config}", def.name);
-                        let p = pick(def, dir, Some(c), why);
                         if !p.found() {
+                            let config = p.config.as_deref().map(|c| self.short_name(c));
                             return Choice::None(format!(
-                                "{} is not found, and {config} says the project formats with it",
-                                def.name
+                                "{} is not found, and {} says the project formats with it{}",
+                                p.def.name,
+                                config.unwrap_or_default(),
+                                p.def.install_hint()
                             ));
                         }
                         return Choice::Tool(Box::new(p));
@@ -508,7 +579,7 @@ impl Kawoosh {
                         if p.found() {
                             return Choice::Tool(Box::new(p));
                         }
-                        skipped.push(format!("{} is not found", def.name));
+                        skipped.push(format!("{} is not found{}", def.name, def.install_hint()));
                     }
                     if let Some(c) = lsp(&mut skipped, false) {
                         return c;
@@ -542,7 +613,7 @@ impl Kawoosh {
                     };
                     let p = pick(def, dir, config, why);
                     if !p.found() {
-                        skipped.push(format!("{name} is not found"));
+                        skipped.push(format!("{name} is not found{}", def.install_hint()));
                         continue;
                     }
                     return Choice::Tool(Box::new(p));
@@ -1203,6 +1274,170 @@ impl Kawoosh {
         };
     }
 
+    /// The formatter `:format install` with no name means for buffer
+    /// `id`: the first its `formatter` setting names, or — `auto` — the
+    /// one whose config is nearest, else one that always runs for its
+    /// language. Found or not: what is wanted is the one it would use.
+    fn formatter_wanted(&self, id: BufferId) -> Option<String> {
+        let b = self.ed.buffers.get(id)?;
+        let language = b.language.to_string();
+        let dir = b
+            .path
+            .as_deref()
+            .map(|p| crate::editorconfig::absolute(p, &self.cwd))
+            .and_then(|p| p.parent().map(Path::to_path_buf));
+        let wanted: Vec<String> = match self.ed.setting_in(id, "formatter") {
+            Some(Setting::List(l)) => l
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
+            Some(Setting::Str(s)) => vec![s.clone()],
+            _ => vec!["auto".into()],
+        };
+        let all = defs(&self.ed.settings);
+        let usable = |d: &&Formatter| d.enabled && d.formats(&language);
+        for w in wanted {
+            match w.as_str() {
+                "lsp" | "indent" => {}
+                "auto" => {
+                    let nearest = dir.as_deref().and_then(|dir| {
+                        all.iter()
+                            .filter(usable)
+                            .filter_map(|d| Some((find_config(d, dir)?.components().count(), d)))
+                            // The deepest; a tie to the first by name.
+                            .reduce(|a, b| if b.0 > a.0 { b } else { a })
+                    });
+                    if let Some((_, d)) = nearest {
+                        return Some(d.name.clone());
+                    }
+                    if let Some(d) = all.iter().filter(usable).find(|d| d.when == When::Always) {
+                        return Some(d.name.clone());
+                    }
+                }
+                name if all.iter().any(|d| d.name == name) => return Some(name.to_string()),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// `kawoosh format ARGS…`, by the program this is: `:lsp install`'s
+    /// command with `format` for its verb.
+    fn format_cli(&self, args: &[&str]) -> Vec<String> {
+        let mut argv = self.lsp.cli.clone();
+        if let Some(verb) = argv.last_mut() {
+            *verb = "format".into();
+        }
+        argv.extend(args.iter().map(|a| a.to_string()));
+        argv
+    }
+
+    /// The def `:format install NAME` or `:format update NAME` means —
+    /// the focused buffer's formatter for none — or the message line
+    /// says why there is none.
+    fn format_def_for(&mut self, verb: &str, named: Option<&str>) -> Option<Formatter> {
+        let name = match named {
+            Some(n) => n.to_string(),
+            None => {
+                let id = self.ed.views[self.focused_view()?].buffer;
+                let Some(n) = self.formatter_wanted(id) else {
+                    self.ed.message = format!(
+                        "format {verb}: which? no formatter for this buffer (:format {verb} NAME)"
+                    );
+                    return None;
+                };
+                n
+            }
+        };
+        let def = defs(&self.ed.settings).into_iter().find(|d| d.name == name);
+        if def.is_none() {
+            self.ed.message = format!("format {verb}: no formatter {name} (format.{name})");
+        }
+        def
+    }
+
+    /// `:format install [NAME]`: the buffer's formatter — or NAME —
+    /// installed in a `:!` pane of its own, as `:lsp install` installs a
+    /// server: its package by `kawoosh format install` into kawoosh's
+    /// folder (formatter-installs.md), else its line.
+    fn format_install(&mut self, named: Option<&str>) {
+        let Some(def) = self.format_def_for("install", named) else {
+            return;
+        };
+        let cwd = self.cwd.clone();
+        let t = match &def.install {
+            Some(Ok(Install::Package(p))) => {
+                let spec = serde_json::to_string(p).unwrap_or_default();
+                let argv = self.format_cli(&["install", "--spec", &spec, &def.name]);
+                self.spawn_bang_argv(&argv, &cwd)
+            }
+            Some(Ok(Install::Line(line))) => self.spawn_bang(line, &cwd),
+            Some(Err(e)) => {
+                self.ed.message = format!("format install: format.{}.install: {e}", def.name);
+                return;
+            }
+            None => {
+                self.ed.message = format!(
+                    "format install: kawoosh has no install command for `{}`; install it yourself, or set format.{}.install to one",
+                    def.cmd, def.name
+                );
+                return;
+            }
+        };
+        if let Some(t) = t {
+            self.format
+                .installs
+                .insert(t, format!("{} installed", def.name));
+            self.fill_or_open(self.terminal_place(), crate::layout::Content::Terminal(t));
+        }
+    }
+
+    /// `:format update [NAME]`: every formatter kawoosh installed asked
+    /// of its manager again — or NAME's — in a pane.
+    fn format_update(&mut self, named: Option<&str>) {
+        let (argv, name) = match named {
+            Some(n) => {
+                let Some(def) = self.format_def_for("update", Some(n)) else {
+                    return;
+                };
+                let Some(p) = def.package() else {
+                    self.ed.message =
+                        format!("format update: `{}` is not one kawoosh installs", def.cmd);
+                    return;
+                };
+                let spec = serde_json::to_string(p).unwrap_or_default();
+                (
+                    self.format_cli(&["update", "--spec", &spec, &def.name]),
+                    format!("{} updated", def.name),
+                )
+            }
+            None => (
+                self.format_cli(&["update"]),
+                "formatters updated".to_string(),
+            ),
+        };
+        let cwd = self.cwd.clone();
+        if let Some(t) = self.spawn_bang_argv(&argv, &cwd) {
+            self.format.installs.insert(t, name);
+            self.fill_or_open(self.terminal_place(), crate::layout::Content::Terminal(t));
+        }
+    }
+
+    /// A `:format install` or `:format update` terminal ended: `ok`, the
+    /// buffers' formatters are found afresh — a format chooses anew each
+    /// time, and the probes are asked again.
+    pub(crate) fn formatter_installed(&mut self, said: &str, ok: bool) {
+        if !ok {
+            return;
+        }
+        self.reload_probes();
+        self.notify_with(
+            crate::notify::Note::new(crate::notify::Level::Info, said)
+                .source("format")
+                .show(crate::notify::Show::Corner),
+        );
+    }
+
     fn format_focused(&mut self, named: Option<&str>, selection: bool) {
         let Some(v) = self.focused_view() else { return };
         let id = self.ed.views[v].buffer;
@@ -1245,6 +1480,18 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .args(Args::rest(&[ArgKind::Text]))
                 .doc("take back `:format allow` for the buffer's formatter, or TOOL DIR"),
             |k, ctx| k.format_allow(&ctx.args, false),
+        ),
+        cmd(
+            Spec::new("format install")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("install the buffer's formatter — or NAME — into kawoosh's own folder, as `:lsp install` does a server (`format.NAME.install`)"),
+            |k, ctx| k.format_install(ctx.args.first().map(String::as_str)),
+        ),
+        cmd(
+            Spec::new("format update")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("move every formatter kawoosh installed — or NAME — to its registry's latest"),
+            |k, ctx| k.format_update(ctx.args.first().map(String::as_str)),
         ),
         cmd(
             Spec::new("format selection")

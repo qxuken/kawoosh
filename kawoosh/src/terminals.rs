@@ -402,6 +402,9 @@ impl Kawoosh {
             if let Some(command) = self.lsp.installs.get(&id).cloned() {
                 self.lsp_installed(command, ok);
             }
+            if let Some(name) = self.format.installs.get(&id).cloned() {
+                self.formatter_installed(&name, ok);
+            }
             return;
         }
         if let Some(t) = self.terms.map.get_mut(&id) {
@@ -493,6 +496,9 @@ impl Kawoosh {
         };
         if let Some(command) = self.lsp.installs.remove(&old) {
             self.lsp.installs.insert(t, command);
+        }
+        if let Some(name) = self.format.installs.remove(&old) {
+            self.format.installs.insert(t, name);
         }
         if let Some(c) = self.layout.panes.insert(pane, Content::Terminal(t)) {
             self.drop_content(c);

@@ -227,6 +227,8 @@ other to the kawoosh started last:
   kawoosh theme                  print `dark` or `light`
   kawoosh lsp install NAME...    install a language server into kawoosh's
                                  own servers/ folder (update, remove, list)
+  kawoosh format install NAME... install a formatter there, as a server is
+                                 (update, outdated, remove, list)
   kawoosh pick SOURCE [QUERY]    the picker on SOURCE (dirs, files, …);
                                  prints what is picked, or exits 1
   kawoosh-edit [+LINE] PATH...   edit --wait as one program: $EDITOR
@@ -249,7 +251,7 @@ Environment:
   KAWOOSH_FONTS      your fonts folder (default: $XDG_CONFIG_HOME/kawoosh/fonts)
   KAWOOSH_STATE      the state db (default: $XDG_DATA_HOME/kawoosh/state.db)
   KAWOOSH_TYPES      where the Lua type stubs go (default: a folder per build under types/ beside the db)
-  KAWOOSH_SERVERS    language servers kawoosh installs (default: servers/ beside the db)
+  KAWOOSH_SERVERS    language servers and formatters kawoosh installs (default: servers/ beside the db)
 ";
 
 fn main() -> anyhow::Result<()> {
@@ -301,6 +303,11 @@ fn main() -> anyhow::Result<()> {
         // (docs/design/lsp-installs.md).
         Some("lsp") => {
             std::process::exit(kawoosh::lsp_cli::run(&args[1..]));
+        }
+        // `kawoosh format install prettier`: formatters, the same way
+        // (docs/design/formatter-installs.md).
+        Some("format") => {
+            std::process::exit(kawoosh::format_cli::run(&args[1..]));
         }
         // What follows is a path, dash or not, as after `--`.
         Some(REUSE) => {

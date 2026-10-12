@@ -652,7 +652,7 @@ const PLATFORMS: [&str; 3] = ["mac", "linux", "windows"];
 /// `{ mac = "brew install x", windows = "winget install x" }`: this
 /// machine's line, `""` where it has none; `None` for a table that is
 /// not lines by platform.
-fn platform_line(v: &Setting) -> Option<String> {
+pub(crate) fn platform_line(v: &Setting) -> Option<String> {
     let Setting::Table(t) = v else { return None };
     let lines = !t.is_empty()
         && t.iter()

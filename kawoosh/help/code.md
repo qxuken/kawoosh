@@ -449,7 +449,7 @@ buffer's own words are offered.
 
 ## Formatting
 
-`:format` (`grf`) formats the buffer with its formatter: prettier, biome, stylua, clang-format, ruff, gofmt, taplo, shfmt, rustfmt, the language server, or `indent` — the language's syntax putting each line at its indent and touching nothing else ([editing](editing.md#indentation)). The formatted text goes in as the lines that changed, as one undo step, so the caret stays where it was on lines the formatter did not touch.
+`:format` (`grf`) formats the buffer with its formatter: prettier, prettierd, biome, stylua, clang-format, ruff, gofmt, taplo, shfmt, rustfmt, the language server, or `indent` — the language's syntax putting each line at its indent and touching nothing else ([editing](editing.md#indentation)). The formatted text goes in as the lines that changed, as one undo step, so the caret stays where it was on lines the formatter did not touch.
 
 Which one formats a buffer is its `formatter` setting. The default, `auto`, is the formatter whose config file is nearest the file (a `.prettierrc`, a `"prettier"` key in `package.json`, `biome.json`, `stylua.toml`, `.clang-format`, `ruff.toml` or `[tool.ruff]` in `pyproject.toml`, `taplo.toml`), then one that always runs for the language (gofmt for Go), then the language server, then `indent` where the language has indent rules — so JSON, YAML or TOML with no formatter configured and no server still get `:format` and a format on save. Rust formats through rust-analyzer, which knows the crate's edition.
 
@@ -474,8 +474,39 @@ A list goes on past what cannot format: a formatter not installed, a server that
 | `:format?` | which formatter, why, and the indent it uses |
 | `:format allow` | let the project's own formatter run on save (below) |
 | `:format revoke` | take that back |
+| `:format install [NAME]` | install the buffer's formatter, or NAME, in a terminal pane (below) |
+| `:format update [NAME]` | move every formatter kawoosh installed, or NAME, to the latest |
 
-A project's own copy (`node_modules/.bin/prettier`) is used before one on your `PATH`.
+A project's own copy (`node_modules/.bin/prettier`) is used first, then one kawoosh installed, then one on your `PATH`.
+
+**Installing a formatter.** Formatters install the way [servers](#language-servers) do: into kawoosh's folder (`~/.local/share/kawoosh/servers`), with your own `npm`, `uv`, `cargo` or `go`, locked at a version until you update them. When a project's config names a formatter that is not found, `:format?` says `:format install prettier`. They are installed as:
+
+| formatter | from |
+|---|---|
+| prettier | npm `prettier` |
+| prettierd | npm `@fsouza/prettierd` |
+| biome | npm `@biomejs/biome`, the same install as `lsp.biome` |
+| stylua | `cargo install stylua` |
+| clang-format | PyPI `clang-format` |
+| ruff | PyPI `ruff`, the same install as `lsp.ruff` |
+| taplo | `cargo install taplo-cli`, the same install as `lsp.toml` |
+| shfmt | `go install mvdan.cc/sh/v3/cmd/shfmt` |
+| rustfmt | `rustup component add rustfmt` |
+| gofmt | comes with Go |
+
+A program that is both a server and a formatter is installed once. Installing it as the other kind only records it as that kind too. Removing it as one kind keeps it for the other.
+
+The formatters a machine wants go in your settings beside the servers:
+
+```lua
+return {
+  format = { ensure_installed = { "prettier", "stylua" } },
+}
+```
+
+kawoosh installs what is missing in the background, and says once a day what `:format update` would bring (`format.check_updates = false` stops the asking). With no window: `kawoosh format install prettier`, `kawoosh format update`, `kawoosh format outdated`, `kawoosh format remove prettier` and `kawoosh format list`.
+
+**prettierd** is prettier kept running: node starts once, and each format after that is a message to it, not a new process. It reads the same configs and uses the project's own prettier when there is one. `auto` picks prettier where both are installed, and prettierd where prettier is not. To use it everywhere, set `formatter = "prettierd"` (or `{ "prettierd", "prettier" }`) for the languages you want.
 
 **On save.** With `format_on_save`, `:w` formats first and writes what the formatter made. If the formatter fails, or takes too long, or you type while it works, the file is written as it is and the message says why. `:w!` writes without formatting. `:wq` and `:wqa` quit once everything is written.
 
@@ -511,6 +542,7 @@ return {
 | `probe` | a snippet per language whose formatting shows the indent |
 | `timeout_ms` | how long it may take (5000) |
 | `enabled` | `false` to turn it off |
+| `install` | how `:format install` installs it, as a server's `install`: a package (`{ npm = "name" }`; `pip`, `cargo`, `go`, `dotnet`), a shell line, or a line for each platform |
 
 A formatter written in Lua is in [lua](lua.md#formatters).
 

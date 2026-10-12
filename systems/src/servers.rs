@@ -13,6 +13,12 @@
 //! Nothing moves it but an update asked for; a check ([`check`]) finds
 //! the registry's latest and keeps it beside, so an update can be said
 //! to be there without one being made.
+//!
+//! Formatters are installed here too (docs/design/formatter-installs.md),
+//! mason's categories: a record says the [`Kind`]s it was installed as,
+//! so `kawoosh lsp update` moves the servers and `kawoosh format update`
+//! the formatters. One package may be both — biome, ruff, taplo — and is
+//! one directory either way.
 
 use std::path::{Path, PathBuf};
 
@@ -98,11 +104,39 @@ impl Package {
     }
 }
 
+/// What a package is installed as: mason's categories, the two kawoosh
+/// runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Server,
+    Formatter,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 2] = [Kind::Server, Kind::Formatter];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Server => "server",
+            Kind::Formatter => "formatter",
+        }
+    }
+
+    /// The command that installs and updates its kind: `lsp`, `format`.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Kind::Server => "lsp",
+            Kind::Formatter => "format",
+        }
+    }
+}
+
 /// What a package's directory says of it: the package, the version
 /// installed (`None` for one a registry does not version — a cargo
 /// `--git` — or a record from before versions were kept), and the
 /// registry's latest when last checked, with when (seconds since the
-/// epoch).
+/// epoch), and what it was installed as.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     #[serde(flatten)]
@@ -113,6 +147,9 @@ pub struct Record {
     pub latest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked: Option<u64>,
+    /// None in a record from before formatters were installed: a server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<Kind>,
 }
 
 impl Record {
@@ -120,6 +157,15 @@ impl Record {
     pub fn update(&self) -> Option<&str> {
         let latest = self.latest.as_deref()?;
         (Some(latest) != self.version.as_deref()).then_some(latest)
+    }
+
+    /// Whether it was installed as `kind`.
+    pub fn is(&self, kind: Kind) -> bool {
+        if self.kinds.is_empty() {
+            kind == Kind::Server
+        } else {
+            self.kinds.contains(&kind)
+        }
     }
 }
 
@@ -424,13 +470,15 @@ fn tail(o: &std::process::Output) -> String {
 
 /// Installs `p` under `root` at `version` — or, with none, at the
 /// registry's latest, looked up first so the record says what is in
-/// ([`latest`]) — and writes its record once every step ended well: a
-/// failed install is not one to update. The version installed is the
-/// answer (`None` for one no registry versions).
+/// ([`latest`]) — as `kind`, beside what it was installed as before, and
+/// writes its record once every step ended well: a failed install is not
+/// one to update. The version installed is the answer (`None` for one no
+/// registry versions).
 pub fn install(
     root: &Path,
     p: &Package,
     version: Option<&str>,
+    kind: Kind,
     mut out: Out,
 ) -> Result<(PathBuf, Option<String>), String> {
     let have = |prog: &str| crate::io::on_path(prog) == Some(true);
@@ -449,7 +497,8 @@ pub fn install(
     };
     let dir = p.dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let present = dir.join(RECORD).is_file();
+    let before = read_record(&dir);
+    let present = before.is_some();
     for step in steps(p, &dir, version.as_deref(), have, present) {
         let mut c = crate::io::command(&step.argv[0]);
         c.args(&step.argv[1..]).current_dir(&dir);
@@ -476,11 +525,16 @@ pub fn install(
             }
         }
     }
+    let kinds: Vec<Kind> = Kind::ALL
+        .into_iter()
+        .filter(|k| *k == kind || before.as_ref().is_some_and(|r| r.is(*k)))
+        .collect();
     let record = Record {
         package: p.clone(),
         version: version.clone(),
         latest: (!asked).then(|| version.clone()).flatten(),
         checked: (!asked).then(now),
+        kinds,
     };
     write_record(&dir, &record)?;
     Ok((dir, version))
@@ -587,16 +641,55 @@ pub fn check(root: &Path, every: u64) -> Vec<(PathBuf, Record)> {
     out
 }
 
+/// `p`, installed already as another kind, marked `kind` too — biome the
+/// server asked for as a formatter — with nothing run: the package is
+/// the same. Its record after, or `None` when it is not installed.
+pub fn mark(root: &Path, p: &Package, kind: Kind) -> Result<Option<Record>, String> {
+    let dir = p.dir(root);
+    let Some(mut r) = read_record(&dir) else {
+        return Ok(None);
+    };
+    if !r.is(kind) {
+        r.kinds = Kind::ALL
+            .into_iter()
+            .filter(|k| *k == kind || r.is(*k))
+            .collect();
+        write_record(&dir, &r)?;
+    }
+    Ok(Some(r))
+}
+
 /// What the record of `p` under `root` says, when it is installed.
 pub fn installed(root: &Path, p: &Package) -> Option<Record> {
     read_record(&p.dir(root))
 }
 
-/// Takes `p`'s directory away, and with it the server.
-pub fn remove(root: &Path, p: &Package) -> Result<PathBuf, String> {
+/// Takes `p` away as `kind`: its directory, and with it the program —
+/// or, for one installed as another kind too (biome, a server and a
+/// formatter), only that word from its record, the directory kept for
+/// the other (`None`).
+pub fn remove(root: &Path, p: &Package, kind: Kind) -> Result<Option<PathBuf>, String> {
     let dir = p.dir(root);
+    if let Some(mut r) = read_record(&dir) {
+        if !r.is(kind) {
+            return Err(format!(
+                "{} is not installed as a {}",
+                p.describe(),
+                kind.name()
+            ));
+        }
+        let others: Vec<Kind> = Kind::ALL
+            .into_iter()
+            .filter(|k| *k != kind && r.is(*k))
+            .collect();
+        if !others.is_empty() {
+            r.kinds = others;
+            write_record(&dir, &r)?;
+            return Ok(None);
+        }
+    }
     std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    Ok(dir)
+    Ok(Some(dir))
 }
 
 #[cfg(test)]
@@ -740,6 +833,7 @@ mod tests {
             version: v.map(Into::into),
             latest: l.map(Into::into),
             checked: None,
+            kinds: Vec::new(),
         };
         assert_eq!(r(Some("1.0.0"), Some("1.1.0")).update(), Some("1.1.0"));
         assert_eq!(r(Some("1.1.0"), Some("1.1.0")).update(), None);
@@ -749,6 +843,62 @@ mod tests {
             text,
             r#"{"manager":"npm","packages":["x"],"version":"1.0.0"}"#
         );
+    }
+
+    /// A record from before formatters were installed is a server's; one
+    /// says what it was installed as.
+    #[test]
+    fn a_record_says_its_kinds() {
+        let old: Record =
+            serde_json::from_str(r#"{"manager":"npm","packages":["x"],"version":"1.0.0"}"#)
+                .unwrap();
+        assert!(old.is(Kind::Server));
+        assert!(!old.is(Kind::Formatter));
+        let both: Record = serde_json::from_str(
+            r#"{"manager":"npm","packages":["x"],"kinds":["server","formatter"]}"#,
+        )
+        .unwrap();
+        assert!(both.is(Kind::Server) && both.is(Kind::Formatter));
+        let fmt = Record {
+            kinds: vec![Kind::Formatter],
+            ..both
+        };
+        assert!(!fmt.is(Kind::Server));
+        assert!(
+            serde_json::to_string(&fmt)
+                .unwrap()
+                .ends_with(r#""kinds":["formatter"]}"#)
+        );
+    }
+
+    /// One package installed as a server and a formatter (biome) is one
+    /// directory: marked a formatter too with nothing run; removed as a
+    /// formatter, kept for the server; removed as the server, gone. A
+    /// kind it is not installed as is not removed.
+    #[test]
+    fn a_package_is_one_directory_for_both_kinds() {
+        let root = std::env::temp_dir().join(format!("kawoosh-kinds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let p = Package::new(Manager::Npm, &["@biomejs/biome"], &[]);
+        assert_eq!(mark(&root, &p, Kind::Formatter), Ok(None), "not in");
+        let dir = p.dir(&root);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A record from before kinds: a server's.
+        std::fs::write(
+            dir.join(RECORD),
+            r#"{"manager":"npm","packages":["@biomejs/biome"],"version":"2.0.0"}"#,
+        )
+        .unwrap();
+        assert!(remove(&root, &p, Kind::Formatter).is_err());
+        let r = mark(&root, &p, Kind::Formatter).unwrap().unwrap();
+        assert_eq!(r.kinds, [Kind::Server, Kind::Formatter]);
+        assert_eq!(r.version.as_deref(), Some("2.0.0"), "nothing moved");
+        assert_eq!(remove(&root, &p, Kind::Formatter), Ok(None));
+        let r = installed(&root, &p).unwrap();
+        assert!(r.is(Kind::Server) && !r.is(Kind::Formatter));
+        assert_eq!(remove(&root, &p, Kind::Server), Ok(Some(dir.clone())));
+        assert!(!dir.exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Every registry answers a latest version, as the builtin servers'

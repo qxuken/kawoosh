@@ -101,6 +101,8 @@ commits; 70 integration test files and 31 Lua test scripts.
 - [lsp-installs.md](design/lsp-installs.md): installs, and qd.
 - [formatters.md](design/formatters.md): formatters, and what they say
   of indentation.
+- [formatter-installs.md](design/formatter-installs.md): formatters
+  installed as servers are, a kind beside them.
 - [editorconfig.md](design/editorconfig.md): `.editorconfig` and the
   languages' ways.
 - [compile.md](design/compile.md): compile commands, deduced, and their

@@ -30,6 +30,7 @@ pub mod editorconfig;
 pub mod fields;
 pub mod fonts;
 pub mod format;
+pub mod format_cli;
 pub mod frames;
 pub mod grammars;
 pub mod graph;

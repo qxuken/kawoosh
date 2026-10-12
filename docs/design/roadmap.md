@@ -3243,6 +3243,21 @@ frame.
     read at its width once laid out — `<leader>iK` `:man` in the pane;
     `kawoosh.panes()`, `open_scratch`'s `pane`.
 
+93. ~~**Formatter installs**: prettier as eslint is~~
+    ([formatter-installs.md](formatter-installs.md)). Asked 2026-10-12
+    ("let's make prettier to be a lsp server like eslint, maybe we
+    should add a separate category of formatters (like mason)"); asked
+    back, the user took formatters installed as servers are, with a
+    CLI of their own. Built the same day: `format.NAME.install`, the
+    shipped formatters' packages (biome's, ruff's, taplo's their
+    servers'), one folder with a kind in each record (`servers::Kind`,
+    `mark`), `kawoosh format install|update|outdated|remove|list`,
+    `:format install`, `:format update`, `format.ensure_installed`,
+    `format.check_updates`; a formatter found in kawoosh's folder after
+    the project's own and before the `PATH`; `prettierd` shipped, and
+    `auto`'s tie of configs to the first found. Not a prettier server:
+    there is none of prettier's own.
+
 Scheduled nowhere, on purpose: ~~incremental sync (measure first)~~
 (measured and built 2026-10-07, lsp-rules.md Decision 8), the
 ~~press-and-hold toggle (kui's)~~ (kui F125 in alpha.41, built 2026-10-07 as

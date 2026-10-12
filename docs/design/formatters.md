@@ -288,7 +288,8 @@ and a def with `run` can do it (Decision 1).
   own file the day it happens, without a release.
 - **node's start-up.** A format is 150–400 ms for prettier; on save it
   is felt, not blocking. A daemon (`prettierd`) is a def with another
-  `cmd`.
+  `cmd` — shipped since 2026-10-12, with every formatter's `install`
+  ([formatter-installs.md](formatter-installs.md)).
 - **A probe the tool rejects** (a snippet it cannot parse): the probe
   fails and the buffer keeps the lower tiers — said on `:format?`,
   never a toast.
