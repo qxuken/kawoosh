@@ -447,7 +447,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("pane font bigger")
-                .doc("the focused pane's text a pixel bigger, for the session (⌘=); `font bigger` the window's"),
+                .doc("the focused pane's text a pixel bigger, for the session ({{mac:`⌘=`}}{{pc:`⌃=`}}); `font bigger` the window's"),
             |k, ctx| {
                 let pane = k.layout.focused();
                 k.pane_font_step(pane, ctx.count.max(1) as f64);
@@ -455,7 +455,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("pane font smaller")
-                .doc("the focused pane's text a pixel smaller, for the session (⌘-); `font smaller` the window's"),
+                .doc("the focused pane's text a pixel smaller, for the session ({{mac:`⌘-`}}{{pc:`⌃-`}}); `font smaller` the window's"),
             |k, ctx| {
                 let pane = k.layout.focused();
                 k.pane_font_step(pane, -(ctx.count.max(1) as f64));
@@ -463,7 +463,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("pane font reset")
-                .doc("the focused pane's text back to the window's size (⌘0)"),
+                .doc("the focused pane's text back to the window's size ({{mac:`⌘0`}}{{pc:`⌃0`}})"),
             |k, _| {
                 let pane = k.layout.focused();
                 k.pane_settings.borrow_mut().unset(pane, "font.size");

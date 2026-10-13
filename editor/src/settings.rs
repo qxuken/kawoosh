@@ -584,6 +584,10 @@ const DOCS: &[(&str, &str)] = &[
         "which buffers the lists show: `tab` the focused tab's, `all` every one",
     ),
     (
+        "diagram.render",
+        "draw a `.kdraw` file as its diagram, a pane at a time `<Tab>` to its text",
+    ),
+    (
         "markdown.render",
         "draw markdown rendered: marks folded, headings at their sizes",
     ),
@@ -1012,6 +1016,8 @@ impl Settings {
         // the body), prose wrapped — and images past this many MB left
         // as their text.
         defaults.set("markdown.render", Setting::Bool(true));
+        // A `.kdraw` file drawn as its diagram (docs/design/diagrams.md).
+        defaults.set("diagram.render", Setting::Bool(true));
         defaults.set(
             "markdown.heading",
             Setting::List(vec![
@@ -1891,6 +1897,7 @@ mod tests {
             [
                 "buffers.scope",
                 "clipboard.system",
+                "diagram.render",
                 "editor.bell",
                 "editor.breadcrumbs",
                 "editor.selection_radius",

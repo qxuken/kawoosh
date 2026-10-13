@@ -406,6 +406,7 @@ pub fn fact_words(fact: &str) -> Option<String> {
         "readonly" => "a read-only buffer",
         "exited" => "a finished command's pane",
         "rows" => "a pane whose `j` and `k` move by row on screen",
+        "diagram" => "a diagram's canvas",
         _ => "",
     };
     if !words.is_empty() {

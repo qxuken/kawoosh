@@ -22,6 +22,7 @@ buffers you have open, the pages among them.
 | [files](files.md) | the file manager, the pickers, directory jumps, links, a file's bytes, pictures, disk usage, SQLite databases |
 | [search](search.md) | `/` and `*`, the project search, multibuffers, lists, marks |
 | [code](code.md) | syntax, language servers, diagnostics, compile commands, manual pages |
+| [diagrams](diagrams.md) | `.kdraw` files: boxes, arrows and groups on a grid, the keys and the mouse, Excalidraw export |
 | [vcs](vcs.md) | hunks in the gutter, staging them, reviewing a branch, blame, history, worktrees |
 | [terminal](terminal.md) | terminal panes, scrollback, copy mode, tools, `$EDITOR` |
 | [memory](memory.md) | everything yanked and deleted, the undo tree, secrets |

@@ -69,6 +69,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::pane_settings::commands());
     v.extend(crate::launcher::commands());
     v.extend(crate::markdown::commands());
+    v.extend(crate::canvas::commands());
     v.extend(crate::secrets::commands());
     v.extend(crate::help::commands());
     v.extend(crate::wrap::commands());
@@ -347,6 +348,12 @@ impl Kawoosh {
                     }
                     _ => false,
                 },
+            ),
+            // A `.kdraw` buffer drawn as its diagram: the canvas's keys
+            // (docs/design/diagrams.md Decision 4).
+            (
+                "diagram",
+                matches!(content, Some(Content::Editor(v)) if self.diagram_drawn(v)),
             ),
             // The run `<C-c>` would stop: the pane's, else the last.
             (

@@ -218,6 +218,9 @@ pub struct Kawoosh {
     /// The undo history pane (`:undo history`): which buffer it follows,
     /// its rows and its cursor.
     pub undo: crate::undo::UndoPanel,
+    /// Each view drawing a `.kdraw` file as its diagram: where it looks,
+    /// what is selected, the gesture under way (`canvas.rs`).
+    pub canvas: crate::canvas::Canvases,
     /// The memory's deltas, ring and flush (`moments.rs`).
     pub moments: crate::moments::Moments,
     /// The live marks of the open files (docs/design/marks.md).
@@ -484,6 +487,7 @@ impl Kawoosh {
             md_table_cache: HashMap::new(),
             md_slow_tables: crate::markdown::SLOW_TABLES,
             md_slow_offered: HashSet::new(),
+            canvas: Default::default(),
             show_tab: None,
             tab_shown: None,
             settings_door: Default::default(),
@@ -1935,8 +1939,18 @@ impl Kawoosh {
                 .term_of(self.layout.focused())
                 .is_some_and(|t| self.term_raw(t));
         let ctrl_tab = stroke.ctrl && stroke.code == "tab" && !raw;
+        // The pane's text size off a Mac, where its keys are Ctrl's and
+        // not ⌘'s: what a terminal app's own zoom is on Windows too
+        // (pane-settings.md Decision 5), so `<C-0>` resets a terminal
+        // pane's as ⌘0 does on a Mac.
+        let ctrl_font = !cfg!(target_os = "macos")
+            && !raw
+            && matches!(
+                stroke.notation().as_str(),
+                "<C-0>" | "<C-=>" | "<C-->" | "<C-+>" | "<C-_>"
+            );
         let chord =
-            (((stroke.ctrl || stroke.alt) && stroke.shift && !raw) || stroke.sup || ctrl_tab)
+            (((stroke.ctrl || stroke.alt) && stroke.shift && !raw) || stroke.sup || ctrl_tab || ctrl_font)
                 && self.ed.prompt_view().is_none()
                 && on_term
                 && !escaping
@@ -1957,6 +1971,12 @@ impl Kawoosh {
             if self.ed.prompt_view().is_none() && self.completion_key(&stroke) {
                 self.follow_caret = true;
                 return;
+            }
+            // A diagram's canvas takes its keys in pane mode, so a vim
+            // letter never edits the text it draws (diagrams.md
+            // Decision 4).
+            if self.ed.prompt_view().is_none() && self.canvas_mode(v) {
+                self.sync_facts();
             }
             // Whether the key was typed into the text (the one that
             // enters insert mode is not), for the completion's trigger.
@@ -2323,6 +2343,9 @@ impl Kawoosh {
     }
 
     fn on_scroll(&mut self, pane: PaneId, s: Scroll) {
+        if self.on_canvas_scroll(pane, &s) {
+            return;
+        }
         if let Some(t) = self.term_of(pane) {
             // A grid: kui already turned the wheel into whole lines. A
             // program reporting the mouse gets wheel buttons; a full-screen
@@ -3106,6 +3129,7 @@ impl Kawoosh {
         if let Some(b) = ev.button() {
             match (tag_kind, pane) {
                 (Some("termbutton"), Some(pane)) => self.on_term_button(pane, b),
+                (Some("canvasbutton"), Some(pane)) => self.on_canvas_button(pane, b, ev.key, core),
                 (Some("editbutton"), Some(pane)) => self.on_edit_button(pane, b, ev.key, core),
                 _ => {}
             }
@@ -3118,6 +3142,9 @@ impl Kawoosh {
                 (Some("termbar"), Some(pane)) => self.on_term_bar_drag(pane, d),
                 (Some("panedrag"), Some(pane)) => self.on_pane_drag(pane, d),
                 (Some("tabdrag"), _) => self.on_tab_drag(d, tag, core),
+                (Some("canvas"), Some(pane)) => self.on_canvas_drag(pane, d),
+                // A drag on a canvas's toolbar moves nothing.
+                (Some("canvasbar"), _) => {}
                 (_, Some(pane)) => self.on_drag(pane, d),
                 // A Lua view's own `on_drag`: its handler ran, what it
                 // asked for is applied now.
@@ -3153,6 +3180,14 @@ impl Kawoosh {
             if tag_kind == Some("headerlayout") {
                 if let Some(pane) = pane {
                     self.header_laid(pane, l.rect.h);
+                }
+                return;
+            }
+            // A diagram's canvas, between its toolbar and its status.
+            if tag_kind == Some("canvaslayout") {
+                if let Some(pane) = pane {
+                    let r = l.rect;
+                    self.canvas.laid(pane, r.x, r.y, r.w, r.h);
                 }
                 return;
             }
@@ -3193,6 +3228,12 @@ impl Kawoosh {
             // open, every frame asked again and a terminal pasted
             // each answer, for good.
             let pasted = std::mem::take(&mut self.awaiting_paste);
+            // A canvas has no caret: its text takes no paste.
+            if self.ed.prompt_view().is_none()
+                && self.focused_view().is_some_and(|v| self.diagram_drawn(v))
+            {
+                return;
+            }
             if let Some(v) = self
                 .header_field()
                 .filter(|_| self.ed.prompt_view().is_none())
@@ -3216,6 +3257,16 @@ impl Kawoosh {
         match ev.kind() {
             Some("syntax") => self.on_syntax_click(p),
             Some("undo") => self.on_undo_click(p),
+            // A canvas's toolbar button: its command, on its pane.
+            Some("canvasbtn") => {
+                if let Some(pane) = p.get_int("pane") {
+                    self.layout.focus(pane as PaneId);
+                }
+                if let Some(line) = p.get_str("run") {
+                    let line = line.to_string();
+                    self.run_line(&line);
+                }
+            }
             Some("memory") => self.on_memory_click(p),
             // A legend's `⌥/ keys`: its pane's whole, or compact again.
             Some("legend") => {

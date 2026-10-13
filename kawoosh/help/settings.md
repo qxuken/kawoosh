@@ -279,6 +279,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `theme.name`, `theme.dark`, `theme.light` | `"rose-pine"`, `""`, `""` | the theme family, and a dark and a light theme apart from it ([look](look.md#themes)) |
 | `theme.appearance` | `"system"` | `system`, `dark` or `light` |
 | `markdown.render` | `true` | draw markdown rendered |
+| `diagram.render` | `true` | open a `.kdraw` file as its diagram ([diagrams](diagrams.md)) |
 | `markdown.reveal` | `"line"` | what the caret shows as its source: its `line`, the `span` it is in, or `none` ([look](look.md#markdown)) |
 | `markdown.navigation` | `"line"` | what `j` and `k` move by in rendered markdown: a `line` or a `row` on screen |
 | `markdown.wrap` | `true` | wrap rendered markdown at the pane's width, tables in their cells; off, the pane scrolls sideways (`:wrap` in a rendered pane flips its own) |

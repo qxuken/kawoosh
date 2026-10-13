@@ -5808,6 +5808,79 @@ pub fn default_keymap(km: &mut Keymap) {
     ] {
         km.bind_local("undo", Pane, k, c, &[]);
     }
+    // A diagram's canvas (docs/design/diagrams.md Decision 4): its view
+    // takes its keys in pane mode, so these shadow the list keys and a
+    // vim letter never edits the text under the drawing.
+    for (k, c) in [
+        ("v", "diagram tool select"),
+        ("b", "diagram tool box"),
+        ("a", "diagram tool arrow"),
+        ("t", "diagram tool text"),
+        ("<Esc>", "diagram escape"),
+        ("<CR>", "diagram edit"),
+        ("i", "diagram edit"),
+        ("x", "diagram delete"),
+        ("<Del>", "diagram delete"),
+        ("<BS>", "diagram delete"),
+        // Walk the diagram: the nearest thing that way, or the file's
+        // order (an arrow and a group are reached so).
+        ("h", "diagram select left"),
+        ("j", "diagram select down"),
+        ("k", "diagram select up"),
+        ("l", "diagram select right"),
+        ("<Left>", "diagram select left"),
+        ("<Down>", "diagram select down"),
+        ("<Up>", "diagram select up"),
+        ("<Right>", "diagram select right"),
+        ("<C-n>", "diagram select next"),
+        ("<C-p>", "diagram select prev"),
+        // Every thing that way, the arrows among them; the group round it.
+        ("<C-h>", "diagram select left all"),
+        ("<C-j>", "diagram select down all"),
+        ("<C-k>", "diagram select up all"),
+        ("<C-l>", "diagram select right all"),
+        ("<C-o>", "diagram select outer"),
+        // Extend: the keys above add to the selection.
+        ("V", "diagram extend"),
+        // Move it, a unit a press (a count for more); size it.
+        ("H", "diagram nudge -1 0"),
+        ("J", "diagram nudge 0 1"),
+        ("K", "diagram nudge 0 -1"),
+        ("L", "diagram nudge 1 0"),
+        ("<S-Left>", "diagram nudge -1 0"),
+        ("<S-Down>", "diagram nudge 0 1"),
+        ("<S-Up>", "diagram nudge 0 -1"),
+        ("<S-Right>", "diagram nudge 1 0"),
+        ("<A-h>", "diagram resize -1 0"),
+        ("<A-l>", "diagram resize 1 0"),
+        ("<A-k>", "diagram resize 0 -1"),
+        ("<A-j>", "diagram resize 0 1"),
+        // Make: a box, a box joined on to the right or below.
+        ("n", "diagram box"),
+        ("o", "diagram add right"),
+        ("O", "diagram add down"),
+        ("s", "diagram shape"),
+        ("r", "diagram route"),
+        ("R", "diagram reverse"),
+        ("-", "diagram dashed"),
+        ("c", "diagram color"),
+        ("C", "diagram connect"),
+        ("G", "diagram group"),
+        ("y", "diagram copy"),
+        ("p", "diagram paste"),
+        ("D", "diagram duplicate"),
+        ("<C-a>", "diagram all"),
+        ("u", "undo"),
+        ("<C-r>", "redo"),
+        ("=", "diagram fit"),
+        ("0", "diagram zoom 1"),
+        ("+", "diagram zoom in"),
+        ("_", "diagram zoom out"),
+        ("zz", "diagram center"),
+        ("<Tab>", "diagram toggle"),
+    ] {
+        km.bind_local("diagram", Pane, k, c, &[]);
+    }
     let i = [
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),

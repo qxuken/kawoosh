@@ -985,6 +985,10 @@ impl Kawoosh {
         if dy == 0.0 {
             return;
         }
+        // A diagram's canvas zooms itself, about the pointer.
+        if self.canvas_zoom_at(self.pane_at(pos.x, pos.y), pos, dy) {
+            return;
+        }
         if (dy > 0.0) != (self.zoom_carry > 0.0) {
             self.zoom_carry = 0.0;
         }
