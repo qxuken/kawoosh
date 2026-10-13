@@ -6,9 +6,11 @@
 //! pane nobody touched (reported 2026-10-13: "why launcher does takes so
 //! long to render?"). The assertion names what the view read.
 //!
+//! A buffer's header is a view's slot too, replayed as a pane's is: the
+//! search's bar over its results was filled every frame (`headers.rs`).
+//!
 //! Not here: `hex` and `sqlite` draw a `cells` grid, which kui does not
-//! replay; the search's bar is a buffer's header, which is filled every
-//! frame (`headers.rs`).
+//! replay.
 
 mod drive;
 
@@ -74,13 +76,30 @@ fn idle(
     }
     let mut ps = Vec::new();
     app.layout.tab().panes(&mut ps);
+    // A view's pane, or the pane whose header it is: the one it ran in.
+    app.run_lua_source(
+        "t",
+        &format!(
+            r#"local at = ""
+               for k in pairs(kawoosh._reads) do
+                 local p = k:match("^{name}@(%d+)$")
+                 if p then at = p end
+               end
+               kawoosh.echo(at)"#
+        ),
+    );
+    let ran_in: Option<u64> = app.ed.message.parse().ok();
     let Some(pane) = ps
         .into_iter()
-        .find(|p| app.lua_name_of(*p).as_deref() == Some(name))
+        .find(|p| app.lua_name_of(*p).as_deref() == Some(name) || Some(*p) == ran_in)
     else {
         return Some(format!("{name}: not open ({})", app.ed.message));
     };
     let slot = format!("lua/{name}@{pane}");
+    // The Lua that asked ran outside a view: every view runs once more.
+    for _ in 0..2 {
+        d.frame(&mut app);
+    }
     let mut fills = Vec::new();
     for _ in 0..3 {
         d.advance(0.05);
@@ -109,7 +128,14 @@ fn every_bundled_pane_is_replayed_when_idle() {
     std::fs::copy(&png, root.join("p.png")).unwrap();
     let du = format!("du {}", root.display());
     let image = format!("image {}", root.join("p.png").display());
-    let cases: [(&str, &[&str]); 11] = [
+    let cases: [(&str, &[&str]); 13] = [
+        // The bar with the keys in its field, and with them in the
+        // results under it.
+        ("search", &["search project hello"]),
+        (
+            "search",
+            &["search project hello", "lua kawoosh.cmd('search results')"],
+        ),
         ("themes", &["themes"]),
         ("fonts", &["fonts"]),
         ("grammars", &["grammars"]),

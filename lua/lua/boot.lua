@@ -1178,6 +1178,9 @@ local READS = {
   panes = "editor", tabs = "editor", holds = "editor", can = "editor",
   language = "editor", image = "editor", _selection_radius = "editor",
   compile_offer = "editor", domains = "editor", _change = "editor",
+  -- the working directory, as of the last publish (the editor's
+  -- generation hashes it)
+  ["fs.cwd"] = "editor",
   -- the Lua views' fields
   _field = "fields", field_text = "fields", field_focus = "fields",
   _field_focus = "fields",

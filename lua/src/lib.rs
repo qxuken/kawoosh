@@ -8443,6 +8443,8 @@ impl Runtime {
         p.mode.hash(&mut h);
         p.message.hash(&mut h);
         p.workspace.hash(&mut h);
+        // `fs.cwd`'s answer, an editor read (boot.lua's `READS`).
+        EDITOR_CWD.with(|c| c.borrow().hash(&mut h));
         p.facts.hash(&mut h);
         p.selection_radius.map(f32::to_bits).hash(&mut h);
         for (id, v) in self.buf_versions.borrow().iter() {

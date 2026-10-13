@@ -2191,23 +2191,11 @@ impl Kawoosh {
         focused: bool,
     ) {
         let rect = self.layout.rects.get(&pane).copied();
-        // Whether the host vouches for the view's inputs this frame
-        // (kui ADR 0045; lua-boundary.md Decision 10): kui checks its
-        // own — the params below, every fact of the frame the view read
-        // — and replays the pane's tree without running the view.
-        let track = format!("{name}@{pane}");
         let native = self
             .scripting
             .rt
             .as_ref()
             .and_then(|rt| rt.native_namespace_of(name));
-        // Read before the fill: a call into native code during it moves
-        // the count, and the next frame fills again.
-        let calls_in = kawoosh_lua::native::calls_in();
-        let (fresh, why) = match native {
-            Some(_) => self.native_view_fresh(&track, calls_in),
-            None => self.lua_view_fresh(&track),
-        };
         let params = Value::map([
             ("pane", Value::Int(pane as i64)),
             ("focused", Value::Bool(focused)),
@@ -2259,88 +2247,115 @@ impl Kawoosh {
                 let t = crate::perf::span_start();
                 self.publish_drawing(name);
                 crate::perf::span("publish drawing", t);
-                // A native extension's view is its own slot
-                // (native.md Decision 4): under its namespace, the
-                // params the same, filled by its `kui_ext_view`.
-                let ns = native.as_deref().unwrap_or("lua");
-                let slot = format!("{ns}/{name}@{pane}");
-                // The key kui declares the slot at: the view's root is
-                // keyed under it.
-                let slot_key = ui.child_key(&slot);
-                let t = crate::perf::span_start();
-                let fill = if fresh {
-                    ui.slot_replay(&slot, &params)
-                } else {
-                    ui.slot_kept(&slot, &params);
-                    None
-                };
-                let replayed = fill == Some(kui_native::SlotFill::Replayed);
-                // What the view declared of the frame beyond its tree, made
-                // again for it: that it drew a legend (its title bar's hint).
-                if replayed
-                    && self
-                        .scripting
-                        .view_tracks
-                        .get(&track)
-                        .is_some_and(|t| t.reads.legend_drawn)
-                {
-                    self.legends.borrow_mut().declare(pane);
-                }
-                crate::perf::span(
-                    match fill {
-                        Some(f) => f.name(),
-                        None => "kept",
-                    },
-                    t,
-                );
-                // A native view ran: the count it ran at is what the next
-                // frame's claim rests on.
-                if !replayed && native.is_some() {
-                    if t.is_some() {
-                        let mut note = format!("{track}: {why}");
-                        if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
-                            note.push_str(" kui: ");
-                            note.push_str(kui_why);
-                        }
-                        crate::perf::note(note);
-                    }
-                    self.scripting.native_tracks.insert(track.clone(), calls_in);
-                }
-                // The view ran: what it read, at this frame's generations,
-                // is what the next frame's claim rests on.
-                if !replayed
-                    && native.is_none()
-                    && let Some(rt) = self.scripting.rt.as_ref()
-                    && let Some(reads) = rt.view_reads(&track)
-                {
-                    if t.is_some() {
-                        let mut note = format!("{track}: {why}");
-                        // kui's own reason, when it was asked and refused:
-                        // the fact that moved, or what the fill declared.
-                        if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
-                            note.push_str(" kui: ");
-                            note.push_str(kui_why);
-                        }
-                        if !reads.opaque.is_empty() {
-                            note.push_str(" opaque ");
-                            note.push_str(&reads.opaque.join(" "));
-                        }
-                        if reads.clock {
-                            note.push_str(" clock");
-                        }
-                        crate::perf::note(note);
-                    }
-                    let gens = self.scripting.frame_gens;
-                    self.scripting
-                        .view_tracks
-                        .insert(track.clone(), ViewTrack { gens, reads });
-                }
+                let slot_key = self.fill_view_slot(ui, pane, name, native.as_deref(), &params);
                 self.scroll_lua_pane(ui, pane, name, slot_key);
             },
         );
         if focused {
             self.focus_sink(ui, sink);
         }
+    }
+
+    /// Fills the slot of view `name` in `pane` — a pane's, or a buffer's
+    /// header over it (`headers.rs`) — with `params`: its tree replayed
+    /// when the host vouches for what the view read (kui ADR 0045;
+    /// lua-boundary.md Decision 10), kui checking its own — the params,
+    /// every fact of the frame the view read — else the view run, and
+    /// what it read then tracked for the next frame's claim. `native`, the
+    /// namespace of a native extension that draws it. The slot's key.
+    pub(crate) fn fill_view_slot(
+        &mut self,
+        ui: &mut Ui<'_>,
+        pane: PaneId,
+        name: &str,
+        native: Option<&str>,
+        params: &Value,
+    ) -> Key {
+        let track = format!("{name}@{pane}");
+        // Read before the fill: a call into native code during it moves
+        // the count, and the next frame fills again.
+        let calls_in = kawoosh_lua::native::calls_in();
+        let (fresh, why) = match native {
+            Some(_) => self.native_view_fresh(&track, calls_in),
+            None => self.lua_view_fresh(&track),
+        };
+        // A native extension's view is its own slot (native.md
+        // Decision 4): under its namespace, the params the same, filled
+        // by its `kui_ext_view`.
+        let ns = native.unwrap_or("lua");
+        let slot = format!("{ns}/{name}@{pane}");
+        // The key kui declares the slot at: the view's root is keyed
+        // under it.
+        let slot_key = ui.child_key(&slot);
+        let t = crate::perf::span_start();
+        let fill = if fresh {
+            ui.slot_replay(&slot, params)
+        } else {
+            ui.slot_kept(&slot, params);
+            None
+        };
+        let replayed = fill == Some(kui_native::SlotFill::Replayed);
+        // What the view declared of the frame beyond its tree, made again
+        // for it: that it drew a legend (its title bar's hint).
+        if replayed
+            && self
+                .scripting
+                .view_tracks
+                .get(&track)
+                .is_some_and(|t| t.reads.legend_drawn)
+        {
+            self.legends.borrow_mut().declare(pane);
+        }
+        crate::perf::span(
+            match fill {
+                Some(f) => f.name(),
+                None => "kept",
+            },
+            t,
+        );
+        // A native view ran: the count it ran at is what the next frame's
+        // claim rests on.
+        if !replayed && native.is_some() {
+            if t.is_some() {
+                let mut note = format!("{track}: {why}");
+                if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
+                    note.push_str(" kui: ");
+                    note.push_str(kui_why);
+                }
+                crate::perf::note(note);
+            }
+            self.scripting.native_tracks.insert(track.clone(), calls_in);
+        }
+        // The view ran: what it read, at this frame's generations, is what
+        // the next frame's claim rests on.
+        if !replayed
+            && native.is_none()
+            && let Some(rt) = self.scripting.rt.as_ref()
+            && let Some(reads) = rt.view_reads(&track)
+        {
+            if t.is_some() {
+                let mut note = format!("{track}: {why}");
+                // kui's own reason, when it was asked and refused: the
+                // fact that moved, or what the fill declared.
+                if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
+                    note.push_str(" kui: ");
+                    note.push_str(kui_why);
+                }
+                if !reads.opaque.is_empty() {
+                    note.push_str(" opaque ");
+                    note.push_str(&reads.opaque.join(" "));
+                }
+                if reads.clock {
+                    note.push_str(" clock");
+                }
+                crate::perf::note(note);
+            }
+            let gens = self.scripting.frame_gens;
+            self.scripting
+                .view_tracks
+                .insert(track, ViewTrack { gens, reads });
+        }
+        slot_key
     }
 
     /// The moves `:view scroll` asked of the pane, made on the scroller
