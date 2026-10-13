@@ -208,7 +208,10 @@ impl Kawoosh {
                 .on_click(tag),
             |ui| {
                 self.publish_drawing(&header.view);
-                ui.slot_with(&format!("lua/{}@{pane}", header.view), &params);
+                // Replayed while what the view read holds, as a pane's
+                // (lua-boundary.md Decision 10): the search's bar was run
+                // every frame over results nobody touched.
+                self.fill_view_slot(ui, pane, &header.view, None, &params);
             },
         );
         if focused {
