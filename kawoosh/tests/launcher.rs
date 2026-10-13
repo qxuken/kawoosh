@@ -740,6 +740,45 @@ fn bd_on_a_launcher_leaves_its_field_be() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// An idle launcher's tree is replayed, not built again a frame: its
+/// view read the working directory (`fs.cwd`, a native the host keeps
+/// no generation of) every frame for a block's context, and a view that
+/// reads one runs every frame — the launcher's 0.7 ms a frame against
+/// the replayed panes' few hundredths (reported 2026-10-13: "why
+/// launcher does takes so long to render?"). A key that moves its
+/// cursor still has it run.
+#[test]
+fn an_idle_launcher_is_replayed() {
+    let _g = serial();
+    let dir = project("replay");
+    let (mut d, mut app) = launch(&dir);
+    d.press(&mut app, "<C-w>v");
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    assert!(on_launcher(&app));
+    let slot = format!("lua/launcher@{}", app.layout.focused());
+    for i in 0..3 {
+        d.frame(&mut app);
+        assert_eq!(
+            d.core.slot_fill(&slot),
+            Some(kui_native::SlotFill::Replayed),
+            "idle frame {i}: {:?}",
+            d.core.slot_fill_why(&slot)
+        );
+    }
+    d.press(&mut app, "j");
+    d.frame(&mut app);
+    assert_ne!(
+        d.core.slot_fill(&slot),
+        Some(kui_native::SlotFill::Replayed),
+        "j moves the cursor"
+    );
+    app.run_lua_source("t", "kawoosh.echo(kawoosh.launcher.state().cursor)");
+    assert_eq!(app.ed.message, "scratch");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// The text node drawn starting `start` — the probe says a long text's
 /// start, and the rest is its rect's to show — and the nodes drawn.
 fn text_starting(d: &Drive, start: &str) -> (kui_native::NodeInfo, Vec<kui_native::NodeInfo>) {
