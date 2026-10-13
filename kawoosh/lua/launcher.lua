@@ -430,8 +430,11 @@ end
 
 local function open_state(pane, origin)
   local sctx = { buffer = origin and origin.buffer or nil, cwd = fs.cwd(), origin = origin }
-  L = { pane = pane, origin = origin, sections = {}, rows = {}, cursor = 1, query = nil, seen = {},
-        budget = 20, sig = signature(), reveal = true }
+  -- `cwd` kept for the blocks' context: `fs.cwd` is a read the host
+  -- keeps no generation of, and a view that makes one each frame is
+  -- never replayed (lua-boundary.md Decision 10).
+  L = { pane = pane, origin = origin, cwd = sctx.cwd, sections = {}, rows = {}, cursor = 1, query = nil,
+        seen = {}, budget = 20, sig = signature(), reveal = true }
   L.tree = build_tree()
   each_module(L.tree, function(node)
     if has_rows(node.def) then
@@ -782,7 +785,7 @@ kawoosh.view(VIEW, function(ctx)
 
   L.blocks = {}
   local R = { t = t, ctx = ctx, focused = ctx.focused,
-              bctx = { origin = L.origin, cwd = fs.cwd(), query = L.query or "", theme = t, size = SIZE,
+              bctx = { origin = L.origin, cwd = L.cwd, query = L.query or "", theme = t, size = SIZE,
                        env = ctx.env } }
 
   -- What comes after the prompt scrolls and what comes before stays;
