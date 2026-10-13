@@ -1209,6 +1209,18 @@ end, {
 -- thread, `reading…` until they come, the pane drawn again when they
 -- do — a text file's first lines, or a word on why not.
 local cache = {}
+-- The entry under the caret's stat, `{ path =, ok =, st = }`, kept until
+-- the caret leaves it or its watch sees it move (written, made, gone):
+-- a stat each frame is a read the host keeps no generation of, and the
+-- pane was never replayed (lua-boundary.md Decision 10).
+local statted = nil
+local function stat_of(path)
+  if statted and statted.path == path then return statted.ok, statted.st end
+  local ok, st = pcall(fs.stat, path)
+  statted = { path = path, ok = ok, st = st }
+  kawoosh.fs.watch("dir preview", { path }, function() statted = nil end)
+  return ok, st
+end
 local PREVIEW_MAX = 512 * 1024
 local PREVIEW_LINES = 400
 
@@ -1289,7 +1301,7 @@ kawoosh.view(PREVIEW, function(ctx)
     return root
   end
   local path = fs.join(d, name)
-  local ok, st = pcall(fs.stat, path)
+  local ok, st = stat_of(path)
   say(path, t.fg)
   if not ok then
     say("not on disk yet")

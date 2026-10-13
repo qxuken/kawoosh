@@ -45,6 +45,22 @@ fn frames(d: &mut Drive, app: &mut Kawoosh, n: usize) {
     }
 }
 
+/// Frames until the pane's `field` reads `want`, or three seconds: a
+/// file written is seen by the pane's watch, which looks twice a second
+/// (the view does not stat the file each frame, which kept it from being
+/// replayed).
+fn until_state(d: &mut Drive, app: &mut Kawoosh, field: &str, want: &str) {
+    let t = std::time::Instant::now();
+    while t.elapsed() < std::time::Duration::from_secs(3) {
+        frames(d, app, 2);
+        if state(app, field) == want {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(state(app, field), want, "{field} within three seconds");
+}
+
 fn png(path: &Path, w: u32, h: u32) {
     image::RgbaImage::from_pixel(w, h, image::Rgba([200, 40, 40, 255]))
         .save_with_format(path, image::ImageFormat::Png)
@@ -286,17 +302,15 @@ fn a_drawing_is_text_first_and_drawn_beside_it_at_the_size_shown() {
     // The file written again is read again, at the size it is shown.
     // (Another size on disk: a stamp is the size and the second.)
     svg(&path, 300, 30);
+    until_state(&mut d, &mut app, "width", "300");
     frames(&mut d, &mut app, 4);
-    assert_eq!(state(&mut app, "width"), "300");
     assert_eq!(num(&mut app, "pixel_width"), 600.0);
     assert_eq!(num(&mut app, "pixel_height"), 60.0);
     // Broken, it says so; mended, it is drawn.
     std::fs::write(&path, "<svg").unwrap();
-    frames(&mut d, &mut app, 4);
-    assert_eq!(state(&mut app, "width"), "nil");
+    until_state(&mut d, &mut app, "width", "nil");
     svg(&path, 12, 12);
-    frames(&mut d, &mut app, 5);
-    assert_eq!(state(&mut app, "width"), "12");
+    until_state(&mut d, &mut app, "width", "12");
     let _ = std::fs::remove_dir_all(&root);
 }
 

@@ -109,8 +109,17 @@ local function rewatch()
     end
   end
   if #paths == 0 then return fs.watch("image", nil) end
-  -- The draw that follows sees the stamp moved and asks for it again.
-  fs.watch("image", paths, function() end)
+  -- The draw that follows reads the stamp again, sees it moved and asks
+  -- for the picture again. The view reads it only then: a stat each
+  -- frame is a read the host keeps no generation of, and the pane was
+  -- never replayed (lua-boundary.md Decision 10).
+  fs.watch("image", paths, function(changed)
+    local moved = {}
+    for _, p in ipairs(changed or {}) do moved[p] = true end
+    for _, st in pairs(states) do
+      if moved[st.path] then st.restat = true end
+    end
+  end)
 end
 
 local function start(pane, path)
@@ -170,8 +179,13 @@ kawoosh.view(VIEW, function(ctx)
   if ctx.focused then last = ctx.pane end
   if not S then return column { width = "grow", height = "grow", bg = t.bg } end
 
-  -- The file as it is now: one that changed is read again.
-  local stamp, size = stamp_of(S.path)
+  -- The file as it is now — read first, again when the watch saw it
+  -- move or `r` asked: one that changed is read again.
+  if S.seen == nil or S.restat or S.reload then
+    local now, bytes = stamp_of(S.path)
+    S.seen, S.restat = { stamp = now, size = bytes }, nil
+  end
+  local stamp, size = S.seen.stamp, S.seen.size
   local reload = S.reload or (S.stamp ~= nil and stamp ~= nil and stamp ~= S.stamp)
   S.reload = nil
   if stamp then S.stamp = stamp end

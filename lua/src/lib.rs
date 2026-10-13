@@ -775,7 +775,7 @@ pub struct FieldSnap {
 
 /// An image as `kawoosh.image(path)` reads it: on its way, registered
 /// with kui (its handle, for `image { id = }`, and its size), or why not.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub enum ImageSnap {
     Loading,
     Ready {
@@ -8465,9 +8465,12 @@ impl Runtime {
                     .hash(&mut h);
             }
         }
+        // Each image whole: a frame stepped, a drawing drawn at another
+        // width, a file read again are news to the view showing it —
+        // its kind alone held a pane on the frame it was replayed at.
         for (path, img) in &p.images {
             path.hash(&mut h);
-            std::mem::discriminant(img).hash(&mut h);
+            img.hash(&mut h);
         }
         p.candidates.as_ref().map(Rc::as_ptr).hash(&mut h);
         p.candidate.hash(&mut h);
