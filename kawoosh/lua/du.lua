@@ -79,7 +79,7 @@ end
 local function start(pane, root, walk)
   local keep = states[pane]
   if keep and keep.walk then door.forget(keep.walk) end
-  S = { root = root, dir = root, sort = "size", marked = {}, listed = {} }
+  S = { root = root, dir = root, sort = "size", marked = {}, listed = {}, stamps = {} }
   if keep and keep.root == root then S.dir, S.cursor, S.sort = keep.dir, keep.cursor, keep.sort end
   S.walk = walk or door.walk(root)
   states[pane] = S
@@ -138,7 +138,14 @@ local ORDER = { size = by_size, files = by_files, name = by_name }
 local function shown()
   local d = S.dir
   local rows = listing(d)
-  local stamp = door.stamp(S.walk, d)
+  -- A finished walk's stamps move no more (but by `remove`, which lets
+  -- them go): kept, so an idle pane asks the door nothing and is
+  -- replayed (lua-boundary.md Decision 10).
+  local stamp = S.done and S.stamps[d]
+  if not stamp then
+    stamp = door.stamp(S.walk, d)
+    if S.done then S.stamps[d] = stamp end
+  end
   local sh = S.shown
   if sh and sh.dir == d and sh.sort == S.sort and sh.stamp == stamp and sh.list == rows then
     return sh
@@ -254,6 +261,8 @@ local function remove(gone)
       end
     end
     if st.walk ~= walk_id then return end
+    -- The totals and the stamps moved: asked of the door again.
+    st.done, st.stamps = nil, {}
     for _, e in ipairs(gone) do
       if not fs.exists(e.path) then
         local function within(p) return p == e.path or fs.relative(p, e.path) ~= nil end
@@ -314,7 +323,10 @@ kawoosh.view(VIEW, function(ctx)
   S = states[ctx.pane]
   if ctx.focused then last = ctx.pane end
   if not S then return column { width = "grow", height = "grow", bg = t.bg } end
-  local st = door.state(S.walk) or { files = 0, bytes = 0, dirs = 0, errors = 0, done = true, secs = 0 }
+  -- The walk's counts, asked of the door each frame while it runs and
+  -- kept once it is done: they are its last.
+  local st = S.done or door.state(S.walk) or { files = 0, bytes = 0, dirs = 0, errors = 0, done = true, secs = 0 }
+  if st.done then S.done = st end
   local sh = shown()
   local list = sh.rows
   local cur = index_of(sh, S.cursor)
