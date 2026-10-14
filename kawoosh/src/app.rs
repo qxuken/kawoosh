@@ -2757,7 +2757,7 @@ impl kui_native::App for Kawoosh {
         if let Some(rt) = &self.scripting.rt {
             rt.set_profiling(measure);
         }
-        let frame_started = self.perf.start();
+        let frame_started = self.perf.frame_start();
         let mut t = frame_started;
         self.drain_io();
         // Output a budget left behind: parsed on the next frame.
