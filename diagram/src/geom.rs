@@ -39,7 +39,12 @@ impl Rect {
 
     /// The rectangle with `a` and `b` at opposite corners.
     pub fn spanning(a: Pt, b: Pt) -> Rect {
-        Rect::new(a.x.min(b.x), a.y.min(b.y), (a.x - b.x).abs(), (a.y - b.y).abs())
+        Rect::new(
+            a.x.min(b.x),
+            a.y.min(b.y),
+            (a.x - b.x).abs(),
+            (a.y - b.y).abs(),
+        )
     }
 
     pub fn right(&self) -> f32 {
@@ -65,7 +70,12 @@ impl Rect {
     pub fn union(&self, o: &Rect) -> Rect {
         let x = self.x.min(o.x);
         let y = self.y.min(o.y);
-        Rect::new(x, y, self.right().max(o.right()) - x, self.bottom().max(o.bottom()) - y)
+        Rect::new(
+            x,
+            y,
+            self.right().max(o.right()) - x,
+            self.bottom().max(o.bottom()) - y,
+        )
     }
 
     pub fn grown(&self, d: f32) -> Rect {
@@ -232,7 +242,12 @@ fn elbow(sa: Shape, ra: &Rect, sb: Shape, rb: &Rect, lane: f32) -> Vec<Pt> {
             (ra.x, rb.right())
         };
         let mx = (xa + xb) / 2.0;
-        vec![Pt::new(xa, ay), Pt::new(mx, ay), Pt::new(mx, by), Pt::new(xb, by)]
+        vec![
+            Pt::new(xa, ay),
+            Pt::new(mx, ay),
+            Pt::new(mx, by),
+            Pt::new(xb, by),
+        ]
     } else {
         let ax = (ca.x + lane).clamp(ra.x, ra.right());
         let bx = (cb.x + lane).clamp(rb.x, rb.right());
@@ -242,7 +257,12 @@ fn elbow(sa: Shape, ra: &Rect, sb: Shape, rb: &Rect, lane: f32) -> Vec<Pt> {
             (ra.y, rb.bottom())
         };
         let my = (ya + yb) / 2.0;
-        vec![Pt::new(ax, ya), Pt::new(ax, my), Pt::new(bx, my), Pt::new(bx, yb)]
+        vec![
+            Pt::new(ax, ya),
+            Pt::new(ax, my),
+            Pt::new(bx, my),
+            Pt::new(bx, yb),
+        ]
     };
     // A round or a diamond box's side is not its outline: each end
     // moved in to where the outline is, along its first leg.
@@ -282,7 +302,12 @@ fn onto(shape: Shape, r: &Rect, p: Pt, toward: Pt) -> Pt {
         return p;
     }
     let deep = r.w.max(r.h);
-    crossing(shape, r, start, Pt::new(start.x + ux * deep, start.y + uy * deep))
+    crossing(
+        shape,
+        r,
+        start,
+        Pt::new(start.x + ux * deep, start.y + uy * deep),
+    )
 }
 
 /// A loop on a box: up out of its top left of the middle, across, and
@@ -418,7 +443,9 @@ impl Layout {
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| matches!(&e.item, Item::Edge(edge) if held(&edge.from) && held(&edge.to)))
+            .filter(
+                |(_, e)| matches!(&e.item, Item::Edge(edge) if held(&edge.from) && held(&edge.to)),
+            )
             .map(|(i, _)| i)
             .collect();
         out.extend(edges);
@@ -479,7 +506,9 @@ mod tests {
     fn layout(text: &str) -> (Doc, Layout) {
         let doc = parse(text);
         assert_eq!(doc.problems, vec![]);
-        let l = Layout::of(&doc, &at_rest, &|t| (t.label.chars().count() as f32 * 0.5, 1.0));
+        let l = Layout::of(&doc, &at_rest, &|t| {
+            (t.label.chars().count() as f32 * 0.5, 1.0)
+        });
         (doc, l)
     }
 
@@ -489,7 +518,9 @@ mod tests {
 
     #[test]
     fn a_straight_arrow_leaves_and_meets_the_outlines() {
-        let (_, l) = layout("box a at 0,0 size 4x2\nbox b at 10,0 size 4x2\nbox c at 10,10 size 4x4 shape ellipse\narrow a -> b\narrow a -> c\n");
+        let (_, l) = layout(
+            "box a at 0,0 size 4x2\nbox b at 10,0 size 4x2\nbox c at 10,10 size 4x4 shape ellipse\narrow a -> b\narrow a -> c\n",
+        );
         let w = l.wires[3].as_ref().unwrap();
         assert!(close(w.points[0], Pt::new(4.0, 1.0)), "{w:?}");
         assert!(close(w.points[1], Pt::new(10.0, 1.0)), "{w:?}");
@@ -503,11 +534,15 @@ mod tests {
 
     #[test]
     fn two_arrows_between_two_boxes_run_side_by_side() {
-        let (_, l) = layout("box a at 0,0 size 4x4\nbox b at 10,0 size 4x4\narrow a -> b\narrow b -> a\n");
+        let (_, l) =
+            layout("box a at 0,0 size 4x4\nbox b at 10,0 size 4x4\narrow a -> b\narrow b -> a\n");
         let (w1, w2) = (l.wires[2].as_ref().unwrap(), l.wires[3].as_ref().unwrap());
         // Horizontal, a lane apart.
         assert!((w1.points[0].y - w1.points[1].y).abs() < 1e-3);
-        assert!(((w1.points[0].y - w2.points[0].y).abs() - LANE).abs() < 1e-3, "{w1:?} {w2:?}");
+        assert!(
+            ((w1.points[0].y - w2.points[0].y).abs() - LANE).abs() < 1e-3,
+            "{w1:?} {w2:?}"
+        );
     }
 
     #[test]
@@ -516,7 +551,12 @@ mod tests {
         let w = l.wires[2].as_ref().unwrap();
         assert_eq!(
             w.points,
-            vec![Pt::new(4.0, 1.0), Pt::new(8.0, 1.0), Pt::new(8.0, 7.0), Pt::new(12.0, 7.0)]
+            vec![
+                Pt::new(4.0, 1.0),
+                Pt::new(8.0, 1.0),
+                Pt::new(8.0, 7.0),
+                Pt::new(12.0, 7.0)
+            ]
         );
         // Lined up, it is one straight run.
         let (_, l) = layout("box a at 0,0 size 4x2\nbox b at 12,0 size 4x2\narrow a -> b elbow\n");
@@ -530,17 +570,27 @@ mod tests {
 
     #[test]
     fn a_loop_goes_up_from_its_top_and_back_down_into_it() {
-        let (_, l) = layout("box a at 0,0 size 4x2\narrow a -> a\nbox e at 10,0 size 6x4 shape ellipse\narrow e -> e\n");
+        let (_, l) = layout(
+            "box a at 0,0 size 4x2\narrow a -> a\nbox e at 10,0 size 6x4 shape ellipse\narrow e -> e\n",
+        );
         let w = l.wires[1].as_ref().unwrap();
         assert_eq!(
             w.points,
-            vec![Pt::new(1.0, 0.0), Pt::new(1.0, -1.5), Pt::new(3.0, -1.5), Pt::new(3.0, 0.0)]
+            vec![
+                Pt::new(1.0, 0.0),
+                Pt::new(1.0, -1.5),
+                Pt::new(3.0, -1.5),
+                Pt::new(3.0, 0.0)
+            ]
         );
         // On an ellipse's outline, not its box's top.
         let w = l.wires[3].as_ref().unwrap();
         let (first, last) = (w.points[0], *w.points.last().unwrap());
         let on = |p: Pt| ((p.x - 13.0) / 3.0).powi(2) + ((p.y - 2.0) / 2.0).powi(2);
-        assert!((on(first) - 1.0).abs() < 1e-2 && (on(last) - 1.0).abs() < 1e-2, "{w:?}");
+        assert!(
+            (on(first) - 1.0).abs() < 1e-2 && (on(last) - 1.0).abs() < 1e-2,
+            "{w:?}"
+        );
         assert!(first.y > 0.0, "below the box's top: {first:?}");
         // Its legs straight up.
         assert!((first.x - w.points[1].x).abs() < 1e-3, "{w:?}");
@@ -549,7 +599,9 @@ mod tests {
 
     #[test]
     fn a_point_hits_the_topmost_thing_under_it() {
-        let (doc, l) = layout("box a at 0,0 size 4x2\nbox b at 10,0 size 4x2 shape diamond\narrow a -> b \"x\"\ntext \"hi\" at 0,5\ngroup g \"G\" { a b }\n");
+        let (doc, l) = layout(
+            "box a at 0,0 size 4x2\nbox b at 10,0 size 4x2 shape diamond\narrow a -> b \"x\"\ntext \"hi\" at 0,5\ngroup g \"G\" { a b }\n",
+        );
         assert_eq!(l.hit(&doc, Pt::new(1.0, 1.0), 0.3), Some(0));
         assert_eq!(l.hit(&doc, Pt::new(12.0, 1.0), 0.3), Some(1));
         // A diamond's corner is not the diamond.
@@ -566,8 +618,13 @@ mod tests {
 
     #[test]
     fn a_marquee_takes_what_it_holds_whole() {
-        let (doc, l) = layout("box a at 0,0 size 4x2\nbox b at 10,0 size 4x2\nbox c at 30,0 size 4x2\narrow a -> b\narrow a -> c\n");
-        assert_eq!(l.within(&doc, &Rect::new(-1.0, -1.0, 20.0, 5.0)), vec![0, 1, 3]);
+        let (doc, l) = layout(
+            "box a at 0,0 size 4x2\nbox b at 10,0 size 4x2\nbox c at 30,0 size 4x2\narrow a -> b\narrow a -> c\n",
+        );
+        assert_eq!(
+            l.within(&doc, &Rect::new(-1.0, -1.0, 20.0, 5.0)),
+            vec![0, 1, 3]
+        );
         assert_eq!(l.extent(), Some(Rect::new(0.0, 0.0, 34.0, 2.0)));
     }
 }

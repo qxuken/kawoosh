@@ -536,7 +536,11 @@ fn the_compile_picker_lists_by_tier() {
     // The project's named command run again is first, over the line
     // typed, and says it ran last; a line run once since is under it,
     // the most run lately first, and says it ran last instead.
-    app.compile_by("echo proj", here.clone(), Some(kawoosh::compile::By::Project));
+    app.compile_by(
+        "echo proj",
+        here.clone(),
+        Some(kawoosh::compile::By::Project),
+    );
     d.frame(&mut app);
     app.layout.focus(pane);
     d.frame(&mut app);
@@ -558,7 +562,12 @@ fn the_compile_picker_lists_by_tier() {
     d.frame(&mut app);
     let shown: Vec<(&str, &str)> = app.compile.shown()[..3]
         .iter()
-        .map(|&i| (app.compile.offer[i].cmd.as_str(), app.compile.offer[i].from.as_str()))
+        .map(|&i| {
+            (
+                app.compile.offer[i].cmd.as_str(),
+                app.compile.offer[i].from.as_str(),
+            )
+        })
         .collect();
     assert_eq!(
         shown,
@@ -574,7 +583,11 @@ fn the_compile_picker_lists_by_tier() {
     // Over the memory's cap the line worth least goes, not the oldest:
     // the one run twice outlasts a run of lines once each.
     for n in 0..kawoosh::compile::RECENT {
-        app.compile_by(&format!("echo n{n}"), here.clone(), Some(kawoosh::compile::By::User));
+        app.compile_by(
+            &format!("echo n{n}"),
+            here.clone(),
+            Some(kawoosh::compile::By::User),
+        );
         d.frame(&mut app);
     }
     let kept: Vec<String> = app.recent_lines().into_iter().map(|r| r.cmd).collect();
