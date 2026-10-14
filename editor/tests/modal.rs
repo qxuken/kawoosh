@@ -1087,6 +1087,41 @@ fn substitute_is_vims_on_a_line_a_range_and_the_file() {
     );
 }
 
+/// `:s` over several carets or selections: every caret follows the
+/// text it was on — the primary too, so the set keeps its shape and a
+/// `ix` after puts the same text at each (one caret alone lands at the
+/// last changed line's start, vim's). From visual mode each selection
+/// becomes a caret at the start of what its text became: normal mode
+/// with no selection left wide, none collapsed onto another's place.
+#[test]
+fn substitute_keeps_every_caret_where_its_text_went() {
+    let mut t = T::new("one two\none two\none two\n");
+    t.keys("w<C-j><C-j>");
+    assert_eq!(t.sels(), vec![(4, 4), (12, 12), (20, 20)]);
+    t.keys(":s/one/1/<CR>");
+    assert_eq!(t.text(), "1 two\n1 two\n1 two\n");
+    assert_eq!(t.sels(), vec![(2, 2), (8, 8), (14, 14)]);
+    assert_eq!(
+        t.head(),
+        14,
+        "the primary on its `two`, not its line's start"
+    );
+    t.keys("ix<Esc>");
+    assert_eq!(t.text(), "1 xtwo\n1 xtwo\n1 xtwo\n");
+
+    // Three `foo`s selected by `<C-n>`, each replaced: a caret at the
+    // start of each `barbaz`, in normal mode, the last still primary.
+    let mut t = T::new("foo x foo\nfoo y\nfoo z\n");
+    t.keys("<C-n><C-n><C-n>");
+    assert_eq!(t.ed.mode(t.v), Mode::Visual);
+    assert_eq!(t.sels(), vec![(0, 2), (6, 8), (10, 12)]);
+    t.keys(":s/foo/barbaz/g<CR>");
+    assert_eq!(t.text(), "barbaz x barbaz\nbarbaz y\nfoo z\n");
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    assert_eq!(t.sels(), vec![(0, 0), (9, 9), (16, 16)]);
+    assert_eq!(t.ed.views[t.v].sels.primary, 2);
+}
+
 #[test]
 fn indent_and_change_line() {
     let mut t = T::new("a\nb");

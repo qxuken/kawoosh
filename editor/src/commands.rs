@@ -1687,9 +1687,10 @@ fn substitute_ranges(ed: &Editor, ctx: &Ctx, spec: &str) -> Result<Vec<Range<usi
 /// `:[range]s/pat/rep/[flags]` — flags `g` (every match on a line, not
 /// the first), `i` (case-insensitive). The matches are found on every
 /// core (`search::substitutions`) and applied as one edit, one tree for
-/// the lot however many (`Buffer::replace_many`); the selections follow
-/// the text and the primary lands at the start of the last line changed,
-/// as vim's does. The pattern becomes the search `n` walks.
+/// the lot however many (`Buffer::replace_many`); a lone caret lands at
+/// the start of the last line changed, as vim's does, and several each
+/// at the start of where its text went (docs/design/substitute.md
+/// Decision 3). The pattern becomes the search `n` walks.
 fn substitute(ed: &mut Editor, ctx: &Ctx) {
     let (range, pat, rep, flags) = match ctx.args.as_slice() {
         [r, p, s, f] => (r.as_str(), p.as_str(), s.as_str(), f.as_str()),
@@ -1764,30 +1765,29 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
         ed.buffers[id].replace_many(&refs);
     }
     drop(edits);
-    // The selections follow the text; the primary to the last changed
-    // line's start.
+    // Where the carets land. One alone: the last changed line's start,
+    // vim's. Several: each where its text went — the primary too, or
+    // the set the user built loses its shape (a caret per line on the
+    // same word, the primary alone at its line's start, and the next
+    // `i` types in two places) — as a caret at the start of what it
+    // covered, so no selection is left wide in the normal mode `:s`
+    // ends in, and a caret on a replaced match is on its replacement.
     let (buffers, views) = (&ed.buffers, &mut ed.views);
     let buf = &buffers[id];
     let journal = buf.journal();
-    let primary = views[ctx.view].sels.primary();
-    let last_line_start = {
-        let at = journal
-            .transform_offset(last_start, v0, kawoosh_doc::Bias::Left)
-            .unwrap_or(last_start);
-        buf.line_range(buf.line_of(at)).start
+    let t = |o: usize| {
+        journal
+            .transform_offset(o, v0, kawoosh_doc::Bias::Left)
+            .unwrap_or(o)
     };
-    views[ctx.view].sels.map(|s| {
-        if s == primary {
-            Selection::new(last_line_start, last_line_start)
-        } else {
-            let t = |o: usize| {
-                journal
-                    .transform_offset(o, v0, kawoosh_doc::Bias::Left)
-                    .unwrap_or(o)
-            };
-            Selection::new(t(s.anchor), t(s.head))
-        }
-    });
+    let sels = &mut views[ctx.view].sels;
+    if sels.len() == 1 {
+        let at = t(last_start);
+        let line_start = buf.line_range(buf.line_of(at)).start;
+        sels.map(|_| Selection::point(line_start));
+    } else {
+        sels.map(|s| Selection::point(t(s.start())));
+    }
     if ed.mode(ctx.view) == Mode::Visual {
         ed.set_mode(ctx.view, Mode::Normal);
     }
