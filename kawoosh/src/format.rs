@@ -239,7 +239,7 @@ pub type ProbeKey = (String, PathBuf, Option<PathBuf>, String);
 /// `probe_key` reads but the files.
 struct Probed {
     path: PathBuf,
-    language: String,
+    language: std::sync::Arc<str>,
     formatter: Option<Setting>,
     key: Option<ProbeKey>,
 }
@@ -1169,8 +1169,8 @@ impl Kawoosh {
                 .ed
                 .buffers
                 .get(id)
-                .map(|b| b.language.to_string())
-                .unwrap_or_default();
+                .map(|b| b.language.clone())
+                .unwrap_or_else(|| "".into());
             let formatter = || self.ed.setting_in(id, "formatter").cloned();
             let key = match self.format.probed.get(&id) {
                 Some(p)
