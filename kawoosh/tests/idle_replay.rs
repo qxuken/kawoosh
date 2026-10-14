@@ -74,6 +74,9 @@ fn idle(
         d.advance(0.1);
         d.frame(&mut app);
     }
+    // What the setup set going — a listing, a preview's highlight, the
+    // vcs plugin's git — answered, or it lands in the frames counted.
+    d.settle(&mut app);
     let mut ps = Vec::new();
     app.layout.tab().panes(&mut ps);
     // A view's pane, or the pane whose header it is: the one it ran in.

@@ -33,6 +33,9 @@ fn the_lab_scrolls_by_the_keys_with_its_tree_replayed() {
         d.advance(0.25);
         d.frame(&mut app);
     }
+    // The vcs plugin's `git rev-parse` for the working directory,
+    // answered: its callback in a key's frame has every view run.
+    d.settle(&mut app);
     let pane = app.layout.focused();
     assert_eq!(app.lua_name_of(pane).as_deref(), Some("theme lab"));
     let slot = format!("lua/theme lab@{pane}");

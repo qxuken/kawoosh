@@ -55,6 +55,25 @@ impl Harness {
         Self(Drive::new(core, w, h).framing())
     }
 
+    /// Frames until one is idle: every job the app had out — a plugin's
+    /// process, a text to highlight, a listing — answered before it, no
+    /// plugin code run outside a view since the frame before, and none
+    /// out after it. An answer's callback is plugin code, and every view
+    /// runs again the frame after it (lua-boundary.md Decision 10): a
+    /// test that counts replays settles first, or what was still out —
+    /// the vcs plugin's `git rev-parse` at start, a picker preview's
+    /// highlight, late on a loaded machine — lands in the frames it
+    /// counts.
+    pub fn settle(&mut self, app: &mut Kawoosh) {
+        for _ in 0..20 {
+            app.wait_for_jobs();
+            self.frame(app);
+            if !app.scripting.frame_gens.ran_outside && app.pending_jobs == 0 {
+                return;
+            }
+        }
+    }
+
     /// Where the node labelled `label` was hit last frame (kui's
     /// `rect_of`, by the name a test knows it by).
     pub fn rect(&mut self, label: &str) -> Option<Rect> {
