@@ -18,10 +18,19 @@ one would do on a host whose files are this machine's:
                            on 127.0.0.1:PORT is forwarded to the unix
                            socket, as the real one forwards a host's port.
 
+A host named `closed` (as `user@closed` too) is one nothing listens on:
+every call but `-O` fails as OpenSSH's does when the connection is refused,
+the reason on stderr and 255 the exit, master or not.
+
+`-F FILE` (`KAWOOSH_SSH_CONFIG`'s) is taken and passed over.
+
 A HOST that is an absolute path is the host's home: the SFTP server starts
 there and a command runs with it as `$HOME` — so a test's host writes
 nothing into the real home. A command's `$SHELL` is `/bin/sh`, as on a
 host whose login shell is sh.
+
+A home holding a file `.fake-ssh-refuse-tty` refuses a terminal's channel
+(`-t`) as a host gone down refuses a new connection.
 
 A home holding a file `.fake-ssh-small` is a host as small as OpenWrt's
 (dropbear and busybox): no SFTP subsystem (`-s sftp` fails as dropbear's
@@ -76,7 +85,7 @@ def parse(argv):
             rest.append(a)
         elif a in ("-M", "-s", "-T", "-t", "-q", "-N"):
             opts[a[1]] = True
-        elif a in ("-S", "-O", "-R", "-o", "-p", "-l"):
+        elif a in ("-S", "-O", "-R", "-o", "-p", "-l", "-F"):
             i += 1
             v = argv[i]
             if a == "-R":
@@ -139,6 +148,9 @@ def main():
         if ctl and os.path.exists(ctl):
             os.remove(ctl)
         sys.exit(0)
+    if host.rsplit("@", 1)[-1] == "closed":
+        sys.stderr.write("ssh: connect to host closed port 22: Connection refused\r\n")
+        sys.exit(255)
     if opts["M"]:
         print("fake ssh: connecting to %s" % host, flush=True)
         if host == "refuse":
@@ -162,6 +174,12 @@ def main():
     home = host if host.startswith("/") else os.environ.get("HOME", "/")
     env = dict(os.environ, HOME=home, SHELL="/bin/sh")
     os.chdir(home)
+    # A terminal's channel (`-t`) refused while the home holds
+    # `.fake-ssh-refuse-tty`: a host gone down since it was connected,
+    # met by the next connection a channel makes.
+    if opts.get("t") and os.path.exists(os.path.join(home, ".fake-ssh-refuse-tty")):
+        sys.stderr.write("ssh: connect to host box port 22: Connection refused\r\n")
+        sys.exit(255)
     small = os.path.exists(os.path.join(home, ".fake-ssh-small"))
     if small:
         env["PATH"] = small_path(home)

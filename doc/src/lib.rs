@@ -13,6 +13,7 @@
 //! and the producer's answer, which covers the edit, corrects it.
 
 pub mod diagnostic;
+pub mod durable;
 pub mod fs;
 pub mod line_diff;
 pub mod paths;

@@ -2485,6 +2485,7 @@ name = "kawoosh-doc"
 version = "0.0.1"
 dependencies = [
  "imara-diff",
+ "libc",
  "slotmap",
  "text-buffer",
  "unicode-segmentation",

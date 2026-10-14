@@ -12,3 +12,7 @@ text-buffer.workspace = true
 slotmap.workspace = true
 unicode-segmentation.workspace = true
 imara-diff = "0.2"
+
+# `fsync` itself on macOS, where std's sync is `F_FULLFSYNC` alone.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

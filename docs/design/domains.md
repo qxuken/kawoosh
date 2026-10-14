@@ -1072,3 +1072,66 @@ a tab on `me-HOST-PORT`, a second window on the same store knows it and
 naming. Live: `:ssh 192.168.50.1 /www` and `:ssh
 ssh://root@192.168.50.1/etc` on the router both reach its `~/.ssh/config`
 domain, `root` being the config's user.
+
+## Built, a failed connection said
+
+**2026-10-14, asked.** "I couldn't connect to ssh server. Checked in a
+terminal - got refused connection, but kawoosh did not thrown a toast."
+
+### R1. A connection that fails says why in a toast
+
+What it was, path by path, against a host nothing listens on:
+
+- *OpenSSH with a master* (the default off Windows): the master runs
+  in a pane in the dock, and ssh, refused, printed `ssh: connect to
+  host box port 22: Connection refused` there and exited 255. A pane
+  whose terminal ends closes, taking that line with it; its closing
+  set the connecting thread's cancel, and the message line said `box:
+  the connection's pane closed` — no reason, no toast. The same for a
+  wrong password typed three times, a host not found.
+- *OpenSSH with no master* (`ssh.master = false`): each channel its
+  own connection, so SFTP and then the shell met the refusal: `no
+  SFTP (ssh: … Connection refused), and the host's shell did not
+  answer: ssh: … Connection refused` — the reason, twice, as a host
+  without SFTP, on the message line.
+- *The in-process client*: `box: 127.0.0.1:2222: Connection refused
+  (os error 61)` (`Failure::Network`) on the message line only.
+- `:ssh host` and a session's files come through the same connect
+  (`domain_connect`), so each said the same as its client did.
+- *A terminal on a host* whose ssh failed (a host gone down since it
+  was connected) closed its pane at once, ssh's line in it — nothing
+  at all.
+
+Now a connection that fails is said on the message line *and* in an
+error toast, `box: ssh: connect to host box port 22: Connection
+refused`, source `domain`, no actions (gone after the toast's time; the
+log keeps it). The master ending by itself before it is up fails the
+domain at once with ssh's last line (`domain_term_closed`: the terminal
+still held means its process ended, not its pane), and the thread's
+later word is passed over — a failure for a domain no longer
+connecting is its thread catching up (`:domain disconnect` while
+connecting no longer has its message overwritten by it either). The
+same failure met by the SFTP channel and the shell is the connection's
+and said once. A terminal on a host closing with OpenSSH's 255 says
+`box: the terminal's ssh failed: …` as its pane closes; a shell that
+ended is no news.
+
+Not toasted: what the user did — a question refused with `<Esc>`
+(`Failure::Declined`), the master's pane closed by hand (the
+`declined` of `IoMsg::DomainFailed`). The toast, not the corner: a
+connection is asked for and waited on, and its failure is the answer
+(the corner is for what goes on by itself, quiet-eviction's rule);
+the fallback's note (F1) stays a corner line, since the connection
+goes on. *Beat:* keeping the master's pane open with the output (a
+pane to close for one line); a *Retry* action (a toast with actions
+stays until one is taken, and the work that waited is dropped
+anyway — `:domain connect NAME` is one line).
+
+Tests: `domains.rs`'s `a_refused_connection_is_said_in_a_toast` (the
+stand-in's host `closed`: with a master, without, `:ssh`, once each,
+the thread catching up silent), the master refused with a wrong
+password now said with ssh's word, a terminal refused
+(`.fake-ssh-refuse-tty`) in `processes_and_terminals_run_on_the_host`;
+`builtin_ssh.rs`'s `a_refused_port_is_said_in_a_toast` (a port of
+127.0.0.1 nothing listens on, no container needed), and the `<Esc>`
+case not toasted.

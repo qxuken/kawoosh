@@ -2056,9 +2056,16 @@ pub(crate) fn save_beside(
         let mut out = std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(&tmp)?);
         buf.write_to(&mut out)?;
         std::io::Write::flush(&mut out)?;
-        out.into_inner().map_err(|e| e.into_error())?.sync_all()?;
-        if let Some(mode) = mode {
-            std::fs::set_permissions(&tmp, mode)?;
+        // As far onto the disk as its file system goes: an SMB or NFS
+        // mount refuses macOS's full sync, and a sync it does not keep
+        // does not fail the save (docs/design/disk.md Decision 3).
+        kawoosh_doc::durable::sync(&out.into_inner().map_err(|e| e.into_error())?)?;
+        // Nor a mode the file system cannot hold.
+        if let Some(mode) = mode
+            && let Err(e) = std::fs::set_permissions(&tmp, mode)
+            && !kawoosh_doc::durable::unsupported(&e)
+        {
+            return Err(e);
         }
         std::fs::rename(&tmp, &path)
     })();

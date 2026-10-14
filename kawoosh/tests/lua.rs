@@ -35,6 +35,52 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.key(app, "enter", KeyMods::default());
 }
 
+/// `q` pressed by accident (asked 2026-10-14): an `init.lua` takes it
+/// off, or moves recording to `Q`. `q` alone then records nothing — a
+/// pane's own `q` (a listing's close) is local and stays — and `Q`
+/// starts and ends a recording that `@` plays: a macro is the commands
+/// it ran, `macro record` left out by name whatever key ran it.
+#[test]
+fn q_is_unmapped_and_recording_moved_to_shift_q_from_init_lua() {
+    let mut d = Drive::new(600.0, 200.0);
+    let mut app = app_with_lua(&mut d, "t", "a\nb\nc\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        kawoosh.unmap("n", "q")
+        kawoosh.map("n", "Q", "macro record")
+        "#,
+    );
+    d.frame(&mut app);
+    let text = |app: &Kawoosh| app.ed.buffer_of(app.focused_view().unwrap()).text();
+    d.keys(&mut app, "q");
+    assert_eq!(app.ed.recording(), None, "q records nothing");
+    // Nor waits for a register: the `x` after it is a delete.
+    d.keys(&mut app, "x");
+    assert_eq!(text(&app), "\nb\nc\n");
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), "a\nb\nc\n");
+    d.keys(&mut app, "Qa");
+    assert_eq!(app.ed.recording(), Some('a'));
+    d.keys(&mut app, "A;");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "jQ");
+    assert_eq!(app.ed.recording(), None);
+    d.keys(&mut app, "@a");
+    assert_eq!(text(&app), "a;\nb;\nc\n");
+    d.keys(&mut app, "@@");
+    assert_eq!(text(&app), "a;\nb;\nc;\n");
+    // A pane's own `q` is untouched: `:messages` closes with it.
+    ex(&mut d, &mut app, "messages");
+    let shown = app.focused_view().map(|v| app.ed.buffer_of(v).name.clone());
+    d.keys(&mut app, "q");
+    assert_ne!(
+        app.focused_view().map(|v| app.ed.buffer_of(v).name.clone()),
+        shown,
+        "the pane's local q closed it"
+    );
+}
+
 #[test]
 fn config_commands_keymaps_and_edits() {
     let mut d = Drive::new(900.0, 500.0);

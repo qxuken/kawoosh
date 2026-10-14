@@ -976,6 +976,11 @@ impl Terminal {
         self.spawned_in = Some(start);
     }
 
+    /// The domain the shell runs on ([`Terminal::set_domain`]).
+    pub fn domain(&self) -> Option<&str> {
+        self.domain.as_deref()
+    }
+
     pub fn cwd(&self) -> Option<std::path::PathBuf> {
         if let Some(d) = &self.domain {
             return self

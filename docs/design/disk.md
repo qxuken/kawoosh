@@ -75,6 +75,37 @@ in the corner. A whole reload says `reloaded, changed on disk` as it
 did. (quiet-eviction's rule: housekeeping goes to the log and its
 pane, not the corner.)
 
+### 3. A sync the file system does not keep does not fail the save
+
+Asked 2026-10-14: two files on a NAS (`/Volumes/appdata`,
+`/Volumes/Media`, both `smbfs`) would not save — `Operation not
+supported (os error 45)` — where vim wrote them. A regression of
+2026-09-16 (b09e757): the save through a sibling renamed over came
+with `sync_all()` on the sibling, before it a plain `std::fs::write`
+that asked for no sync. On macOS the standard library's `sync_all`
+(and `sync_data`) is `fcntl(F_FULLFSYNC)`, and smbfs refuses it:
+measured read-only on both mounts, `F_FULLFSYNC` → `ENOTSUP` (45),
+`fsync` → 0. vim's `vim_fsync` takes `F_FULLFSYNC` and falls back to
+`fsync` when it fails.
+
+A sync is a promise about bytes already written, not the write, so
+it steps down as far as the file system goes (`kawoosh_doc::durable`):
+`F_FULLFSYNC`, then `fsync`, then none, each step taken only when the
+last answered *not supported* (`ENOTSUP`, `EOPNOTSUPP`, `EINVAL`,
+`ENOSYS`). A sync that was tried and failed — `EIO`, a full disk, a
+quota, which NFS may report only at the sync — still fails the save:
+the bytes may not be there, and the rename over the file is not made.
+Copying the file's mode onto the sibling is held to the same rule: a
+mode the file system cannot hold does not stop the save. The bytes
+pane's write in place (`kawoosh_systems::fs::write_runs`) syncs the
+same way.
+
+Nothing is said: what a save gets is what the mount gives every
+program writing there, and the step down would be said again at every
+`:w` (quiet-eviction's rule). *Beat:* the step down in the log — a
+line a save on that mount would add each time, and nothing to do
+about it.
+
 ## Not built
 
 - **Following the tail in the view**: a buffer followed keeps its
