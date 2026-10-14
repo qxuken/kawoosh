@@ -1406,10 +1406,13 @@ impl Editor {
         Some(v.sels.primary().head)
     }
 
-    /// Puts `line` on the prompt, the caret at its end.
+    /// Puts `line` on the prompt, the caret at its end, previewed as a
+    /// line typed is (`kawoosh.cmdline("%s/a/b/g")` shows what it will
+    /// do).
     pub fn set_prompt_text(&mut self, line: &str) {
         if let Some(v) = self.prompt_view() {
             self.set_field_text(v, line);
+            self.after_prompt_key(v);
         }
     }
 

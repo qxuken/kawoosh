@@ -1222,6 +1222,11 @@ fn substitute_is_previewed_as_it_is_typed() {
     t.keys(":%s/foo/Y/g<CR>");
     assert_eq!(t.text(), "Y bar Y\nY\nbaz\n");
     assert_eq!(shown(&t), None);
+    // A line put on the prompt whole (`kawoosh.cmdline`) is previewed
+    // as one typed.
+    t.keys("u:");
+    t.ed.set_prompt_text("%s/foo/Z/g");
+    assert_eq!(shown(&t).unwrap().0.len(), 3);
 }
 
 #[test]
