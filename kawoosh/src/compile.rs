@@ -1389,7 +1389,12 @@ impl Kawoosh {
         let now = kawoosh_systems::store::now();
         let lines = self.recent_lines();
         let mut order: Vec<usize> = (0..lines.len()).collect();
-        order.sort_by(|&a, &b| lines[b].score(now).total_cmp(&lines[a].score(now)).then(a.cmp(&b)));
+        order.sort_by(|&a, &b| {
+            lines[b]
+                .score(now)
+                .total_cmp(&lines[a].score(now))
+                .then(a.cmp(&b))
+        });
         let place = |i: usize| order.iter().position(|&o| o == i).unwrap_or(i);
         let mut first = true;
         for (i, r) in lines.into_iter().enumerate() {
@@ -2085,7 +2090,10 @@ mod tests {
         // Kept before the memory said when: as it is.
         assert_eq!(line(1.0, None).score(week), 1.0);
         let json = line(2.5, Some(7)).json();
-        assert_eq!((json["runs"].as_f64(), json["at"].as_i64()), (Some(2.5), Some(7)));
+        assert_eq!(
+            (json["runs"].as_f64(), json["at"].as_i64()),
+            (Some(2.5), Some(7))
+        );
     }
 
     #[test]

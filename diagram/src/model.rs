@@ -302,10 +302,11 @@ impl Doc {
     }
 
     pub fn node(&self, id: &str) -> Option<&Node> {
-        self.node_index(id).and_then(|i| match &self.entries[i].item {
-            Item::Node(n) => Some(n),
-            _ => None,
-        })
+        self.node_index(id)
+            .and_then(|i| match &self.entries[i].item {
+                Item::Node(n) => Some(n),
+                _ => None,
+            })
     }
 
     pub fn group(&self, id: &str) -> Option<&Group> {

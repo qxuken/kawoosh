@@ -58,10 +58,16 @@ fn a_box_dragged_writes_its_line_and_u_takes_it_back() {
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = open(&mut d, &path);
     let v = app.focused_view().unwrap();
-    assert!(app.diagram_drawn(v), "a .kdraw file is drawn as its diagram");
+    assert!(
+        app.diagram_drawn(v),
+        "a .kdraw file is drawn as its diagram"
+    );
     // The labels are drawn.
     let texts = drawn(&d);
-    assert!(texts.iter().any(|t| t == "A") && texts.iter().any(|t| t == "B"), "{texts:?}");
+    assert!(
+        texts.iter().any(|t| t == "A") && texts.iter().any(|t| t == "B"),
+        "{texts:?}"
+    );
 
     // A's middle, two units right and one down.
     let (from, to) = (at(&app, 4.0, 1.5), at(&app, 6.0, 2.5));
@@ -72,13 +78,21 @@ fn a_box_dragged_writes_its_line_and_u_takes_it_back() {
         "# services\nbox a \"A\" at 2,1\nbox b \"B\" at 12,0\narrow a -> b\n",
         "the moved line and no other"
     );
-    assert_eq!(app.canvas.views[&v].sel, vec![0], "what was dragged is selected");
+    assert_eq!(
+        app.canvas.views[&v].sel,
+        vec![0],
+        "what was dragged is selected"
+    );
     assert!(app.ed.buffer_of(v).modified);
 
     // The keys are the canvas's: `L` nudges, `u` undoes.
     d.keys(&mut app, "L");
     d.frame(&mut app);
-    assert!(text(&app).contains("box a \"A\" at 3,1\n"), "{}", text(&app));
+    assert!(
+        text(&app).contains("box a \"A\" at 3,1\n"),
+        "{}",
+        text(&app)
+    );
     d.keys(&mut app, "uu");
     d.frame(&mut app);
     assert_eq!(text(&app), START);
@@ -96,14 +110,25 @@ fn a_box_drawn_takes_its_label_and_an_arrow_joins_it() {
     let (from, to) = (at(&app, 2.0, 8.0), at(&app, 8.0, 11.0));
     d.drag(&mut app, from, to);
     d.frame(&mut app);
-    assert!(text(&app).ends_with("box n1 at 2,8 size 6x3\n"), "{}", text(&app));
+    assert!(
+        text(&app).ends_with("box n1 at 2,8 size 6x3\n"),
+        "{}",
+        text(&app)
+    );
     d.keys(&mut app, "Cache");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
-    assert!(text(&app).ends_with("box n1 \"Cache\" at 2,8 size 6x3\n"), "{}", text(&app));
+    assert!(
+        text(&app).ends_with("box n1 \"Cache\" at 2,8 size 6x3\n"),
+        "{}",
+        text(&app)
+    );
 
     // Alt held, a drag from A onto the new box: an arrow between them.
-    d.input(&mut app, kui_native::InputEvent::Modifiers(KeyMods::NONE.with_alt()));
+    d.input(
+        &mut app,
+        kui_native::InputEvent::Modifiers(KeyMods::NONE.with_alt()),
+    );
     let (from, to) = (at(&app, 4.0, 1.5), at(&app, 5.0, 9.5));
     d.drag(&mut app, from, to);
     d.input(&mut app, kui_native::InputEvent::Modifiers(KeyMods::NONE));
@@ -113,7 +138,11 @@ fn a_box_drawn_takes_its_label_and_an_arrow_joins_it() {
     // Elbowed, dashed, then a box deleted takes its arrows with it.
     d.keys(&mut app, "r-");
     d.frame(&mut app);
-    assert!(text(&app).ends_with("arrow a -> n1 elbow dashed\n"), "{}", text(&app));
+    assert!(
+        text(&app).ends_with("arrow a -> n1 elbow dashed\n"),
+        "{}",
+        text(&app)
+    );
     let a = at(&app, 2.0, 1.0);
     d.click(&mut app, a.x, a.y);
     d.frame(&mut app);
@@ -151,7 +180,11 @@ fn a_marquee_selects_and_the_selection_copies_and_groups() {
     d.keys(&mut app, "Copy");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
-    assert!(text(&app).ends_with("group g1 \"Copy\" { a1 b1 }\n"), "{}", text(&app));
+    assert!(
+        text(&app).ends_with("group g1 \"Copy\" { a1 b1 }\n"),
+        "{}",
+        text(&app)
+    );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -193,7 +226,10 @@ fn tab_shows_the_text_and_the_export_is_excalidraw() {
         .iter()
         .filter_map(|e| e["id"].as_str())
         .collect();
-    assert!(ids.contains(&"box-a") && ids.contains(&"arrow-2"), "{ids:?}");
+    assert!(
+        ids.contains(&"box-a") && ids.contains(&"arrow-2"),
+        "{ids:?}"
+    );
     ex(&mut d, &mut app, "w");
     assert!(out.exists(), ":w keeps it");
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
@@ -212,12 +248,14 @@ fn a_line_that_does_not_read_is_shown_and_the_rest_draws() {
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
-
 /// What covers a label the canvas draws: a node painted over it, opaque
 /// enough to hide it, that is not the box the label is in.
 fn covered_labels(d: &Drive) -> Vec<String> {
     let nodes = d.core.nodes();
-    let Some(at) = nodes.iter().position(|n| n.label.as_deref() == Some("canvas")) else {
+    let Some(at) = nodes
+        .iter()
+        .position(|n| n.label.as_deref() == Some("canvas"))
+    else {
         return vec!["no canvas".into()];
     };
     let inside: Vec<_> = nodes[at + 1..]
@@ -234,7 +272,10 @@ fn covered_labels(d: &Drive) -> Vec<String> {
         out
     };
     let mut out = Vec::new();
-    for t in inside.iter().filter(|n| n.text.as_ref().is_some_and(|t| !t.is_empty())) {
+    for t in inside
+        .iter()
+        .filter(|n| n.text.as_ref().is_some_and(|t| !t.is_empty()))
+    {
         let (cx, cy) = (t.rect.x + t.rect.w / 2.0, t.rect.y + t.rect.h / 2.0);
         let mine = ancestors(t);
         let over = inside.iter().find(|n| {
@@ -248,7 +289,10 @@ fn covered_labels(d: &Drive) -> Vec<String> {
                 && cy <= n.rect.y + n.rect.h
         });
         if let Some(n) = over {
-            out.push(format!("{:?} under {:?} (layer {} over {})", t.text, n.key, n.layer, t.layer));
+            out.push(format!(
+                "{:?} under {:?} (layer {} over {})",
+                t.text, n.key, n.layer, t.layer
+            ));
         }
     }
     out
@@ -259,7 +303,10 @@ fn covered_labels(d: &Drive) -> Vec<String> {
 /// they were drawn — the label over its box.
 #[test]
 fn a_label_stays_over_its_box_while_the_view_pans() {
-    let path = file("pan", "box a \"a\" at 0,0\nbox b \"b\" at 0,7\narrow a -> b\nbox e \"e\" at 12,0 shape ellipse\n");
+    let path = file(
+        "pan",
+        "box a \"a\" at 0,0\nbox b \"b\" at 0,7\narrow a -> b\nbox e \"e\" at 12,0 shape ellipse\n",
+    );
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = open(&mut d, &path);
     let c = at(&app, 4.0, 1.5);
@@ -297,7 +344,12 @@ fn choose(d: &mut Drive, app: &mut Kawoosh, path: &[&str]) {
         let i = rows
             .iter()
             .position(|r| r.text() == *label)
-            .unwrap_or_else(|| panic!("no row {label:?} in {:?}", rows.iter().map(|r| r.text()).collect::<Vec<_>>()));
+            .unwrap_or_else(|| {
+                panic!(
+                    "no row {label:?} in {:?}",
+                    rows.iter().map(|r| r.text()).collect::<Vec<_>>()
+                )
+            });
         at.push(i);
         rows = &rows[i].submenu;
     }
@@ -332,7 +384,14 @@ fn a_diagram_is_made_and_walked_from_the_keys_alone() {
     app.set_cwd(&dir);
     ex(&mut d, &mut app, "diagram new flow");
     let v = app.focused_view().unwrap();
-    assert!(app.ed.buffer_of(v).path.as_ref().unwrap().ends_with("flow.kdraw"));
+    assert!(
+        app.ed
+            .buffer_of(v)
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("flow.kdraw")
+    );
     assert!(app.diagram_drawn(v), "a new diagram is drawn");
     d.frame(&mut app);
 
@@ -344,13 +403,21 @@ fn a_diagram_is_made_and_walked_from_the_keys_alone() {
     d.keys(&mut app, "DB");
     enter(&mut d, &mut app);
     let api = node(&mut app, "n1");
-    assert_eq!(node(&mut app, "n2"), (api.0 + api.2 + 4, api.1, 8, 3), "right of it");
+    assert_eq!(
+        node(&mut app, "n2"),
+        (api.0 + api.2 + 4, api.1, 8, 3),
+        "right of it"
+    );
     // `h` back to API, `O` one joined below it.
     d.keys(&mut app, "h");
     d.keys(&mut app, "O");
     d.keys(&mut app, "Cache");
     enter(&mut d, &mut app);
-    assert_eq!(node(&mut app, "n3"), (api.0, api.1 + api.3 + 4, 8, 3), "below it");
+    assert_eq!(
+        node(&mut app, "n3"),
+        (api.0, api.1 + api.3 + 4, 8, 3),
+        "below it"
+    );
     // `a` on Cache, `l` to DB, `<CR>`: an arrow between them, from the keys.
     d.keys(&mut app, "al");
     enter(&mut d, &mut app);
@@ -374,7 +441,11 @@ fn a_diagram_is_made_and_walked_from_the_keys_alone() {
     d.press(&mut app, "<C-n>");
     let doc = app.diagram_doc(v);
     let i = app.canvas.views[&v].sel[0];
-    assert!(matches!(doc.entries[i].item, kawoosh_diagram::Item::Edge(_)), "{:?}", doc.entries[i].item);
+    assert!(
+        matches!(doc.entries[i].item, kawoosh_diagram::Item::Edge(_)),
+        "{:?}",
+        doc.entries[i].item
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -395,7 +466,9 @@ fn the_toolbar_and_the_menu_run_the_canvas_commands() {
     d.frame(&mut app);
     assert_eq!(at(&app, 4.0, 1.5), a, "the drawing did not move");
     // The toolbar's box button: the box tool.
-    let r = d.rect("diagram tool box").expect("the toolbar's box button");
+    let r = d
+        .rect("diagram tool box")
+        .expect("the toolbar's box button");
     d.click(&mut app, r.x + r.w / 2.0, r.y + r.h / 2.0);
     assert_eq!(app.canvas.views[&v].tool, kawoosh::canvas::Tool::Box);
     d.keys(&mut app, "v");
@@ -410,7 +483,11 @@ fn the_toolbar_and_the_menu_run_the_canvas_commands() {
         assert!(rows.iter().any(|x| x == r), "{r} in {rows:?}");
     }
     choose(&mut d, &mut app, &["Shape", "cylinder"]);
-    assert!(text(&app).contains("box b \"B\" at 12,0 shape cylinder\n"), "{}", text(&app));
+    assert!(
+        text(&app).contains("box b \"B\" at 12,0 shape cylinder\n"),
+        "{}",
+        text(&app)
+    );
 
     // On nothing: a box made where it was pressed, its label asked.
     let e = at(&app, 2.2, 8.3);
@@ -418,7 +495,11 @@ fn the_toolbar_and_the_menu_run_the_canvas_commands() {
     choose(&mut d, &mut app, &["New Box Here"]);
     d.keys(&mut app, "Here");
     enter(&mut d, &mut app);
-    assert!(text(&app).ends_with("box n1 \"Here\" at 2,8\n"), "{}", text(&app));
+    assert!(
+        text(&app).ends_with("box n1 \"Here\" at 2,8\n"),
+        "{}",
+        text(&app)
+    );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -455,7 +536,11 @@ fn the_box_and_text_tools_place_by_a_grid_cursor() {
     enter(&mut d, &mut app);
     d.keys(&mut app, "B");
     enter(&mut d, &mut app);
-    assert!(text(&app).ends_with("box n1 \"B\" at 12,0 size 5x2\n"), "{}", text(&app));
+    assert!(
+        text(&app).ends_with("box n1 \"B\" at 12,0 size 5x2\n"),
+        "{}",
+        text(&app)
+    );
     assert_eq!(app.canvas.views[&v].tool, kawoosh::canvas::Tool::Select);
     // The text tool: `<CR>` twice is no box; one `<CR>` is the text.
     d.keys(&mut app, "t");
@@ -463,7 +548,11 @@ fn the_box_and_text_tools_place_by_a_grid_cursor() {
     enter(&mut d, &mut app);
     d.keys(&mut app, "note");
     enter(&mut d, &mut app);
-    assert!(text(&app).ends_with("text \"note\" at 21,5\n"), "{}", text(&app));
+    assert!(
+        text(&app).ends_with("text \"note\" at 21,5\n"),
+        "{}",
+        text(&app)
+    );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -482,7 +571,11 @@ fn v_extends_the_selection_and_a_group_is_made_once() {
     d.keys(&mut app, "G");
     d.keys(&mut app, "AB");
     enter(&mut d, &mut app);
-    assert!(text(&app).ends_with("group g1 \"AB\" { a b }\n"), "{}", text(&app));
+    assert!(
+        text(&app).ends_with("group g1 \"AB\" { a b }\n"),
+        "{}",
+        text(&app)
+    );
     // The group's boxes again, from nothing selected, `G` again: the
     // one there, selected.
     d.press(&mut app, "<Esc>");
@@ -495,7 +588,11 @@ fn v_extends_the_selection_and_a_group_is_made_once() {
     d.keys(&mut app, "G");
     assert_eq!(text(&app), before, "no second group");
     assert_eq!(selected(&mut app), vec!["g1"]);
-    assert!(app.ed.message.contains("already grouped"), "{}", app.ed.message);
+    assert!(
+        app.ed.message.contains("already grouped"),
+        "{}",
+        app.ed.message
+    );
     // Ungrouped, what it held is selected.
     ex(&mut d, &mut app, "diagram ungroup");
     assert!(!text(&app).contains("group"), "{}", text(&app));

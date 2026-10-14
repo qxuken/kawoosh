@@ -1949,12 +1949,14 @@ impl Kawoosh {
                 stroke.notation().as_str(),
                 "<C-0>" | "<C-=>" | "<C-->" | "<C-+>" | "<C-_>"
             );
-        let chord =
-            (((stroke.ctrl || stroke.alt) && stroke.shift && !raw) || stroke.sup || ctrl_tab || ctrl_font)
-                && self.ed.prompt_view().is_none()
-                && on_term
-                && !escaping
-                && self.pane_chord(&stroke);
+        let chord = (((stroke.ctrl || stroke.alt) && stroke.shift && !raw)
+            || stroke.sup
+            || ctrl_tab
+            || ctrl_font)
+            && self.ed.prompt_view().is_none()
+            && on_term
+            && !escaping
+            && self.pane_chord(&stroke);
         // The prompt takes the keys while it is open, from any pane —
         // the engine sends a key on any view to its field — so one
         // opened from a terminal or Lua pane (`<C-w>:`) works too.

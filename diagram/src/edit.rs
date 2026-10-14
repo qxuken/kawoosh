@@ -178,7 +178,8 @@ pub fn delete(doc: &Doc, sel: &[usize]) -> Vec<Change> {
         }
         match &e.item {
             Item::Edge(edge)
-                if gone_ids.contains(&edge.from.as_str()) || gone_ids.contains(&edge.to.as_str()) =>
+                if gone_ids.contains(&edge.from.as_str())
+                    || gone_ids.contains(&edge.to.as_str()) =>
             {
                 out.push(Change::Remove(i));
             }
@@ -286,7 +287,12 @@ pub fn arrows_of(doc: &Doc, sel: &[usize]) -> Vec<usize> {
 pub fn group(doc: &Doc, sel: &[usize]) -> Option<(Change, String)> {
     let members: Vec<String> = sel
         .iter()
-        .filter_map(|&i| doc.entries.get(i).and_then(|e| e.item.id()).map(String::from))
+        .filter_map(|&i| {
+            doc.entries
+                .get(i)
+                .and_then(|e| e.item.id())
+                .map(String::from)
+        })
         .collect();
     if members.is_empty() {
         return None;
@@ -311,7 +317,9 @@ pub fn copy(doc: &Doc, sel: &[usize]) -> Vec<Item> {
     for (i, e) in doc.entries.iter().enumerate() {
         let keep = match &e.item {
             Item::Node(n) => nodes.contains(&n.id),
-            Item::Edge(edge) => sel.contains(&i) || (nodes.contains(&edge.from) && nodes.contains(&edge.to)),
+            Item::Edge(edge) => {
+                sel.contains(&i) || (nodes.contains(&edge.from) && nodes.contains(&edge.to))
+            }
             _ => sel.contains(&i),
         };
         if keep {
@@ -398,7 +406,10 @@ mod tests {
         );
         // A group moves its boxes; the text stays.
         let out = run(TEXT, |d| move_by(d, &[4], 0, 3));
-        assert!(out.contains("box a \"A\" at 0,3\nbox b \"B\" at 10,3\n"), "{out}");
+        assert!(
+            out.contains("box a \"A\" at 0,3\nbox b \"B\" at 10,3\n"),
+            "{out}"
+        );
         assert!(out.contains("text \"note\" at 0,6"));
     }
 

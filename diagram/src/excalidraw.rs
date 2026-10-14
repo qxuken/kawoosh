@@ -234,9 +234,21 @@ pub fn export(doc: &Doc) -> Value {
                 let (stroke, _) = colors(edge.color);
                 let id = format!("arrow-{i}");
                 let first = w.points[0];
-                let (x0, y0) = (w.points.iter().map(|p| p.x).fold(f32::MAX, f32::min), w.points.iter().map(|p| p.y).fold(f32::MAX, f32::min));
-                let (x1, y1) = (w.points.iter().map(|p| p.x).fold(f32::MIN, f32::max), w.points.iter().map(|p| p.y).fold(f32::MIN, f32::max));
-                let mut m = base(&id, "arrow", Rect::new(first.x, first.y, x1 - x0, y1 - y0), stroke, "transparent");
+                let (x0, y0) = (
+                    w.points.iter().map(|p| p.x).fold(f32::MAX, f32::min),
+                    w.points.iter().map(|p| p.y).fold(f32::MAX, f32::min),
+                );
+                let (x1, y1) = (
+                    w.points.iter().map(|p| p.x).fold(f32::MIN, f32::max),
+                    w.points.iter().map(|p| p.y).fold(f32::MIN, f32::max),
+                );
+                let mut m = base(
+                    &id,
+                    "arrow",
+                    Rect::new(first.x, first.y, x1 - x0, y1 - y0),
+                    stroke,
+                    "transparent",
+                );
                 let points: Vec<Value> = w
                     .points
                     .iter()
@@ -290,10 +302,17 @@ mod tests {
         let v = export(&doc);
         assert_eq!(v, export(&doc), "the same JSON twice");
         let els = v["elements"].as_array().unwrap();
-        let by = |id: &str| els.iter().find(|e| e["id"] == id).unwrap_or_else(|| panic!("{id}"));
+        let by = |id: &str| {
+            els.iter()
+                .find(|e| e["id"] == id)
+                .unwrap_or_else(|| panic!("{id}"))
+        };
         let api = by("box-api");
         assert_eq!(api["type"], "rectangle");
-        assert_eq!((api["x"].as_f64(), api["width"].as_f64()), (Some(0.0), Some(160.0)));
+        assert_eq!(
+            (api["x"].as_f64(), api["width"].as_f64()),
+            (Some(0.0), Some(160.0))
+        );
         assert_eq!(api["strokeColor"], "#1971c2");
         assert_eq!(api["roughness"], 0);
         let bound: Vec<&str> = api["boundElements"]
@@ -304,7 +323,10 @@ mod tests {
             .collect();
         assert_eq!(bound, vec!["arrow-2", "box-api-label"]);
         let label = by("box-api-label");
-        assert_eq!((label["containerId"].as_str(), label["text"].as_str()), (Some("box-api"), Some("API")));
+        assert_eq!(
+            (label["containerId"].as_str(), label["text"].as_str()),
+            (Some("box-api"), Some("API"))
+        );
         let arrow = by("arrow-2");
         assert_eq!(arrow["startBinding"]["elementId"], "box-api");
         assert_eq!(arrow["endBinding"]["elementId"], "box-db");

@@ -95,18 +95,16 @@ impl Reader {
         if is_id(&w) {
             Ok(w)
         } else {
-            Err(format!("`{w}` is not a name: a letter first, then letters, digits, `_` `-` `.`"))
+            Err(format!(
+                "`{w}` is not a name: a letter first, then letters, digits, `_` `-` `.`"
+            ))
         }
     }
 
     fn color(&mut self) -> Result<Color, String> {
         let w = self.word("color")?;
-        Color::from_word(&w).ok_or_else(|| {
-            format!(
-                "no colour `{w}`: {}",
-                Color::ALL.map(Color::word).join(" ")
-            )
-        })
+        Color::from_word(&w)
+            .ok_or_else(|| format!("no colour `{w}`: {}", Color::ALL.map(Color::word).join(" ")))
     }
 }
 
@@ -250,9 +248,7 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
             }
             Ok(Item::Group(g))
         }
-        _ => Err(format!(
-            "`{kind}` is not an item: box, text, arrow, group"
-        )),
+        _ => Err(format!("`{kind}` is not an item: box, text, arrow, group")),
     }
 }
 
@@ -355,11 +351,22 @@ mod tests {
             panic!()
         };
         assert_eq!(
-            (api.id.as_str(), api.label.as_str(), api.x, api.y, api.w, api.h, api.shape),
+            (
+                api.id.as_str(),
+                api.label.as_str(),
+                api.x,
+                api.y,
+                api.w,
+                api.h,
+                api.shape
+            ),
             ("api", "API gateway", 2, 2, 8, 3, Shape::Round)
         );
         // The line's bytes, its `\r` not among them.
-        assert_eq!(&text[doc.entries[0].span.clone()], "box api \"API gateway\" at 2,2 size 8x3 shape round");
+        assert_eq!(
+            &text[doc.entries[0].span.clone()],
+            "box api \"API gateway\" at 2,2 size 8x3 shape round"
+        );
         assert_eq!(doc.entries[0].line, 1);
         let Item::Node(db) = &doc.entries[1].item else {
             panic!()
@@ -369,7 +376,14 @@ mod tests {
             panic!()
         };
         assert_eq!(
-            (e.from.as_str(), e.to.as_str(), e.label.as_str(), e.heads, e.route, e.dashed),
+            (
+                e.from.as_str(),
+                e.to.as_str(),
+                e.label.as_str(),
+                e.heads,
+                e.route,
+                e.dashed
+            ),
             ("api", "db", "reads", Heads::End, Route::Elbow, true)
         );
         let Item::Text(t) = &doc.entries[3].item else {
@@ -379,7 +393,10 @@ mod tests {
         let Item::Group(g) = &doc.entries[4].item else {
             panic!()
         };
-        assert_eq!((g.label.as_str(), g.members.clone(), g.color), ("Backend", vec!["db".to_string()], Some(Color::Gray)));
+        assert_eq!(
+            (g.label.as_str(), g.members.clone(), g.color),
+            ("Backend", vec!["db".to_string()], Some(Color::Gray))
+        );
     }
 
     #[test]
@@ -396,7 +413,10 @@ mod tests {
             lines,
             vec![
                 (1, "`a` is named twice"),
-                (2, "no shape `hex`: rect round ellipse diamond cylinder dot final"),
+                (
+                    2,
+                    "no shape `hex`: rect round ellipse diamond cylinder dot final"
+                ),
                 (3, "no box `nope`"),
                 (4, "`=>` is not an arrow: -> <- <-> --"),
                 (5, "no box or group `ghost`"),
