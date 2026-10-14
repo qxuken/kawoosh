@@ -34,7 +34,12 @@ kawoosh.cmd("timed relative")
 kawoosh.frame()
 kawoosh.test.ok(lines()[1]:match("^%d%d%d%d%-%d%d%-%d%d %d%d:%d%d $"), "dated: " .. lines()[1])
 local h = kawoosh.buf.current()
-kawoosh.test.eq(kawoosh.timed.stamp(h, os.time() + 101 * 60), "T+01:41 ")
+-- From the minute the first stamp names, not the clock now: a minute
+-- turning between the two read `T+01:42 `.
+local y, mo, d, hh, mi = lines()[1]:match("^(%d+)%-(%d+)%-(%d+) (%d+):(%d+)")
+local start = os.time { year = tonumber(y), month = tonumber(mo), day = tonumber(d),
+                        hour = tonumber(hh), min = tonumber(mi), sec = 0 }
+kawoosh.test.eq(kawoosh.timed.stamp(h, start + 101 * 60 + 30), "T+01:41 ")
 kawoosh.press("Astart<CR>next<Esc>")
 kawoosh.test.ok(lines()[2]:match("^T%+00:0%d next$"), "counted: " .. lines()[2])
 kawoosh.cmd("timed off")
