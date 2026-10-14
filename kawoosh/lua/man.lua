@@ -61,7 +61,7 @@ local open = {}
 local index = nil
 -- The buffer a column `:man beside` makes shows while its first page is
 -- read: the column is made at once, so it is laid out — and its width
--- known — by the time the page is.
+-- known — by the time the page is, or soon after.
 local PENDING = "*man*"
 -- The panes `:man beside` made, this session: `q` in a page there
 -- closes the column with the page, which was made for it.
@@ -69,6 +69,12 @@ local columns = {}
 -- How often a page for the man column is read again when the column
 -- turns out another width than it was read at.
 local REFITS = 3
+-- How often it is read again while the column has no width yet: one
+-- just made is drawn the frame after, and its size known the frame
+-- after that — a reader quicker than a frame answered twice before,
+-- spent the refits, and the page stayed at eighty. Not a refit, and
+-- bounded apart, for a column never drawn.
+local UNLAID = 4
 
 -- --------------------------------------------------------------- reading
 
@@ -373,9 +379,9 @@ function man.open(page, section, opts)
                                  text = "reading " .. page .. (section and ("(" .. section .. ")") or "") .. " …" }
     end
   end
-  local tries = 0
-  local function read(width)
-    tries = tries + 1
+  local tries, unlaid = 0, 0
+  local function read(width, refit)
+    if refit ~= false then tries = tries + 1 end
     local argv = command()
     if section then argv[#argv + 1] = section end
     argv[#argv + 1] = page
@@ -409,8 +415,12 @@ function man.open(page, section, opts)
           -- read at — one just made, whose width was not known when the
           -- page was asked for — reads it again at its own.
           local want = into and fitted(into)
-          if not fixed and into and want ~= width and tries < REFITS then
-            return read(want or width)
+          if not fixed and into and not want and unlaid < UNLAID then
+            unlaid = unlaid + 1
+            return read(width, false)
+          end
+          if not fixed and into and want and want ~= width and tries < REFITS then
+            return read(want)
           end
           if into and made then columns[into] = true end
         end
