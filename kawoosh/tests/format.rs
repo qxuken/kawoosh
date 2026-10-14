@@ -971,3 +971,60 @@ fn without_checked(record: &str) -> String {
         .join("\n")
         .replace(",\n}", "\n}")
 }
+
+/// A buffer's formatter is worked out again only when what it was worked
+/// out from moves — its path, its `formatter` setting, the `format`
+/// defs, the formats allowed — not at every settings change. Each
+/// working-out walks the buffer's directories for every def's `when`
+/// files and reads a `package.json` whole at each level: a tab switch
+/// into another project (its layer read again), a picker's `kawoosh.opt`,
+/// any `:set`, cost 2.6 ms a buffer — 105 ms with forty TypeScript files
+/// open under a monorepo's `package.json`, in the `settings` lap
+/// (reported 2026-10-14: "settings 300ms, 670ms" on a tab switch).
+#[test]
+fn a_settings_change_leaves_the_formatters_worked_out() {
+    let dir = project(
+        "resolved",
+        &[
+            (".padrc", "  "),
+            ("a.ts", "x\n"),
+            ("b.ts", "y\n"),
+            ("c.ts", "z\n"),
+        ],
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    def(&mut app, "pad", "cat", &["typescript"], files(&[".padrc"]));
+    for f in ["a.ts", "b.ts", "c.ts"] {
+        open(&mut d, &mut app, &dir, f);
+    }
+    d.frame(&mut app);
+    let worked = app.formatters_worked_out();
+    assert!(worked >= 3, "each buffer's once: {worked}");
+    // Settings no formatter reads: nothing worked out again.
+    ex(&mut d, &mut app, "set relativenumber");
+    app.run_lua_source("t", "kawoosh.opt('picker.share', 0.4)");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(
+        app.formatters_worked_out(),
+        worked,
+        "a settings change no formatter reads"
+    );
+    // The `formatter` setting: every buffer's again.
+    ex(&mut d, &mut app, "set formatter=pad");
+    d.frame(&mut app);
+    assert_eq!(app.formatters_worked_out(), worked + 3, "`formatter` set");
+    // A def changed: every buffer's again.
+    let worked = app.formatters_worked_out();
+    def(
+        &mut app,
+        "pad",
+        "cat -u",
+        &["typescript"],
+        files(&[".padrc"]),
+    );
+    d.frame(&mut app);
+    assert_eq!(app.formatters_worked_out(), worked + 3, "a def changed");
+    std::fs::remove_dir_all(&dir).ok();
+}

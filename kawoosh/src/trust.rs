@@ -128,6 +128,7 @@ impl Kawoosh {
     pub(crate) fn allow_format(&mut self, tool: &str, dir: &Path) {
         let key = format_key(tool, dir);
         self.trust.formats.insert(key.clone());
+        self.forget_worked_out();
         if let Some(store) = &self.store
             && let Err(e) = store.set(NS, &key, "allowed")
         {
@@ -157,6 +158,7 @@ impl Kawoosh {
                 continue;
             }
             self.trust.formats.remove(&key);
+            self.forget_worked_out();
             if let Some(store) = &self.store
                 && let Err(e) = store.del(NS, &key)
             {
