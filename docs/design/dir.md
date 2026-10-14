@@ -137,3 +137,22 @@ an order in every other window.
 
 **Left.** A way to forget a directory's order (it is replaced, never
 dropped), if one is missed.
+
+### 3. `:du here` reads the same "here" as `<C-w>.` and `<C-w>/`
+
+`:du here` (`<C-w>u`) opens the disk-usage pane on the directory in
+front: a file's directory, the directory a listing lists, a terminal's
+shell's, the directory a `:du` pane is on — `Kawoosh::here_dir`, the
+one resolution `:terminal here` and `:dir here` read, so the three
+cannot disagree. Like `:dir here` it is an engine command beside the
+Lua one (`terminals.rs`): it asks `here_dir` and runs `:du PATH`, whose
+pane opens or is taken as `:du` has it. Not `picker.here()`, which
+knows neither a terminal's directory nor a Lua pane's.
+
+- From a `:du` pane it walks the directory the pane is in, as the new
+  root: the way to look at a subtree alone.
+- A directory literally named `here` is `:du ./here`, as with `:dir`.
+- **The key**: `<C-w>u`, `u` for usage as `<leader>wu` is the working
+  directory's — the "here" sibling of a key that exists. `.` and `/`
+  are taken by the terminal and the listing; `<C-w>u` was free (vim
+  has no `CTRL-W u`).

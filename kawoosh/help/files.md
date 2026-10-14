@@ -65,6 +65,7 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `~` | make the listed directory the working directory (`:dir cd`) |
 | `<C-w>.` | a terminal in the listed directory (`:terminal here`) |
 | `<C-w>/` | the listed directory again, in a pane beside (`:dir here`) — two listings to browse side by side, each moving on alone |
+| `<C-w>u` | the disk usage of the listed directory (`:du here`) |
 | `gz` | jump to a directory you use often ([directory jumps](#directory-jumps), zoxide's): the pick is listed here |
 
 Directories are always listed before files. The sort you choose is
@@ -322,6 +323,9 @@ included, staying on PATH's disk. Totals fill in as they are counted;
 one not ready yet shows `…`. It lists one directory at a time, largest
 first, each entry with its size, a bar and its share. Each tab's pane is
 its own: `:du` in another tab walks there without touching the first.
+`:du here` (`<C-w>u`) walks the directory you are in: the file's, the
+listed one, a terminal's, or the one this pane is on — the same places
+`<C-w>.` opens a terminal in. (A folder named `here` is `:du ./here`.)
 
 | keys | what |
 |---|---|
@@ -335,6 +339,7 @@ its own: `:du` in another tab walks there without touching the first.
 | `o` | list the directory in `dir` |
 | `<C-w>.` | a terminal in the directory (`:terminal here`) |
 | `<C-w>/` | the directory listed in `dir`, in a pane beside (`:dir here`) |
+| `<C-w>u` | walk the directory on show from the top (`:du here`) |
 | `r` | count again |
 | `q` `<Esc>` | close |
 

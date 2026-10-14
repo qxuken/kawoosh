@@ -1,6 +1,8 @@
 -- The disk-usage pane (roadmap step 52): `:du [PATH]` (`<leader>wu`,
--- the working directory) opens a column of its own over a sizing walk
--- of PATH — every directory under it sized on the io thread, hidden and
+-- the working directory; `:du here`, `<C-w>u`, the directory in front,
+-- the engine's `here_dir`, docs/design/dir.md Decision 3) opens a
+-- column of its own over a sizing walk of PATH — every directory under
+-- it sized on the io thread, hidden and
 -- ignored files too, on its own disk, each total filled in as its
 -- subtree is done (`kawoosh.du`) — and lists one directory at a time,
 -- the largest first: an entry's size, a bar against the largest, its

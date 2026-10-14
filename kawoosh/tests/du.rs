@@ -434,3 +434,56 @@ fn z_closes_the_disk_usage_pane() {
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// `:du here` (`<C-w>u`) walks the directory the pane in front is on —
+/// a file's, a listing's, the `:du` pane's own — the one `<C-w>.` and
+/// `<C-w>/` read (`here_dir`).
+#[test]
+fn du_here_walks_the_directory_in_front() {
+    let root = std::env::temp_dir().join(format!("kawoosh-du-here-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("sub/inner")).unwrap();
+    std::fs::write(root.join("sub/f.txt"), b"f").unwrap();
+    std::fs::write(root.join("sub/inner/g.txt"), b"gg").unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    let walked = |app: &mut Kawoosh| {
+        lua(
+            app,
+            "local s = kawoosh.du_pane.state(); kawoosh.echo(s and s.root or 'none')",
+        )
+    };
+    let sub = root.join("sub").display().to_string();
+    // From a file: its directory.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", root.join("sub/f.txt").display()),
+    );
+    d.press(&mut app, "<C-w>u");
+    d.frame(&mut app);
+    assert_eq!(walked(&mut app), sub);
+    // From the pane itself, gone into `inner`: that directory.
+    d.press(&mut app, "l");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "du here");
+    d.frame(&mut app);
+    assert_eq!(
+        walked(&mut app),
+        root.join("sub/inner").display().to_string()
+    );
+    d.press(&mut app, "q");
+    d.frame(&mut app);
+    // From a listing: the directory it lists.
+    ex(&mut d, &mut app, &format!("dir {}", root.display()));
+    ex(&mut d, &mut app, "du here");
+    d.frame(&mut app);
+    assert_eq!(walked(&mut app), root.display().to_string());
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
