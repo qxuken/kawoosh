@@ -373,6 +373,11 @@ fn perf_and_frames_measure_only_while_on_show() {
         has("panes") && has("lua publish") && has("status line"),
         "{texts:?}"
     );
+    // What a settings change sets off, each part its own lap.
+    assert!(
+        has("settings") && has("cwd") && has("editorconfig") && has("formatters"),
+        "{texts:?}"
+    );
     // The status line's modules are the bundled `status` plugin's,
     // asked every frame.
     assert!(has("status"), "{texts:?}");

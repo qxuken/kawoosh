@@ -2768,15 +2768,21 @@ impl kui_native::App for Kawoosh {
         self.flush_proc_lines();
         self.sync_native(ui);
         t = self.perf.lap(Io, "processes", t);
+        // Laps of their own, each its owner's: as one `settings` lap a
+        // tab switch read 670 ms with nothing to say which part.
         self.sync_settings();
         self.fire_settings();
+        t = self.perf.lap(Io, "settings", t);
         self.sync_dirs(false);
         self.sync_cwd();
+        t = self.perf.lap(Io, "cwd", t);
         self.sync_editorconfig();
+        t = self.perf.lap(Io, "editorconfig", t);
         self.sync_probes();
         self.sync_format();
+        t = self.perf.lap(Io, "formatters", t);
         self.fire_cwd();
-        t = self.perf.lap(Io, "settings", t);
+        t = self.perf.lap(Io, "cwd", t);
         self.fire_watches();
         self.fire_du();
         t = self.perf.lap(Io, "watches", t);
