@@ -16,7 +16,9 @@
 -- `<C-l>` reads the directory again (a listing with edits is
 -- asked first), `<C-p>` opens a preview of the entry beside the
 -- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
--- list it again by size, mtime, name or type, yazi's keys under `m`;
+-- list it again by size, mtime, name or type, yazi's keys under `m` —
+-- the directory's order from then on, and the one a directory with
+-- none of its own takes, past a restart (docs/design/dir.md D2);
 -- `g.` shows or hides the dot files (`dir.hidden`); `gS` sizes the
 -- directories, everything under each counted (`dir.sizes`; a listing
 -- sorted by size does either way); `gz` opens the
@@ -36,6 +38,9 @@
 -- new buffer outright, so any number of listings can be open at once —
 -- in panes, or in the background for `:b` — each with its own entries.
 -- `:w` in any of them plans every listing's changes as one confirm.
+-- `:dir chmod MODE` and `:dir chown OWNER` set the mode or the owner of
+-- the entries under the carets or a visual selection, at once, `!`
+-- under a directory too (docs/design/dir.md Decision 1).
 --
 -- Identity, not names. Every line a listing opens with is tracked
 -- through the edit journal (by id), so an entry is its line however the
@@ -132,11 +137,43 @@ end
 
 -- The order a directory is listed in, by key — `name`, `size`,
 -- `mtime`, `type` (the extension, then the name) — reversed or not,
--- directories first either way; remembered per directory (`dir.sorts`).
+-- directories first either way (docs/design/dir.md Decision 2): the
+-- order chosen for the directory, else the order chosen last anywhere,
+-- else by name. Both are kept past a restart in the plugin's store
+-- (`kawoosh.store("dir")`: `sort:<dir>` and `sort`, spelled `size` or
+-- `size!` for the reverse), and read from it once a session —
+-- `dir.sorts[d]` the directory's, `false` for none; `dir.last_sort`
+-- the last chosen — so a listing asks the disk nothing to sort.
 local SORT_KEYS = { name = true, size = true, mtime = true, type = true }
+local BY_NAME = { key = "name", reverse = false }
+local kept = kawoosh.store("dir")
+
+local function sort_read(key)
+  local ok, s = pcall(kept.get, key)
+  if not ok or type(s) ~= "string" then return false end
+  local k, bang = s:match("^(%a+)(!?)$")
+  if not k or not SORT_KEYS[k] then return false end
+  return { key = k, reverse = bang == "!" }
+end
 
 local function sort_of(d)
-  return dir.sorts[d] or { key = "name", reverse = false }
+  local s = dir.sorts[d]
+  if s == nil then
+    s = sort_read("sort:" .. d)
+    dir.sorts[d] = s
+  end
+  if s then return s end
+  if dir.last_sort == nil then dir.last_sort = sort_read("sort") end
+  return dir.last_sort or BY_NAME
+end
+
+-- `sort` chosen for `d`: the directory's from now on, and the one a
+-- directory with none of its own is listed in.
+local function sort_chosen(d, sort)
+  dir.sorts[d], dir.last_sort = sort, sort
+  local spelled = sort.key .. (sort.reverse and "!" or "")
+  pcall(kept.set, "sort:" .. d, spelled)
+  pcall(kept.set, "sort", spelled)
 end
 
 local function ext_of(name)
@@ -1179,12 +1216,13 @@ end, {
 
 -- `:dir sort name|size|mtime|type`, `!` for the reverse — yazi's keys
 -- under `m`, `ma` `ms` `mm` `me` and the capitals for the reverse: the
--- listing read again in that order, remembered for the directory. A
+-- listing read again in that order, remembered for the directory and
+-- as the order a directory with none of its own takes (`sort_of`). A
 -- listing with edits is asked first, as `<C-l>` asks.
 for key in pairs(SORT_KEYS) do
   kawoosh.command("dir sort " .. key, function(ctx)
     local here = listed()
-    dir.sorts[here] = { key = key, reverse = ctx.bang }
+    sort_chosen(here, { key = key, reverse = ctx.bang == true })
     refresh(here, false, under_caret())
   end, {
     when = { "language:dir" },
@@ -1311,6 +1349,12 @@ kawoosh.view(PREVIEW, function(ctx)
   if st.is_symlink then facts = facts .. ", a link" end
   if st.modified then facts = facts .. "  " .. when(st.modified) end
   say(facts)
+  -- Its mode as `ls -l` draws it and its owner, where the disk says
+  -- them: what `:dir chmod` and `:dir chown` change.
+  if st.perms then
+    local u, g = st.user or st.uid, st.group or st.gid
+    say(st.perms .. (u and ("  " .. tostring(u) .. ":" .. tostring(g or "")) or ""))
+  end
   local c = preview_of(path, st)
   if c.note then say(c.note) end
   -- A picture: fitted to the pane, never larger than it is.
@@ -1481,6 +1525,155 @@ function dir.watch_sync(also)
       if moved[l.dir] and not kawoosh.buf.modified(l.h) then relist(l.dir, l.h) end
     end
   end)
+end
+
+-- ------------------------------------------------- modes and owners
+
+-- The entries a command on entries acts on (docs/design/dir.md
+-- Decision 1): the one behind the line under each caret — several
+-- carets, several entries — or behind every line a visual selection
+-- covers. The entry the line tracks, not the text it reads: a line
+-- renamed and not written yet is still the file on disk, and one
+-- pasted from another listing is that listing's entry. `../` is no
+-- entry; a line nothing on disk is behind yet (typed in, `NEW`) is
+-- counted in `fresh`. Visual mode is left, as a command on a selection
+-- leaves it.
+local function chosen(h)
+  local st = dir.state[PREFIX .. (lists(h) or "")]
+  if not st then return {}, 0 end
+  local lines = kawoosh.buf.lines(h)
+  local starts, off = {}, 0
+  for i, l in ipairs(lines) do
+    starts[i] = off
+    off = off + #l + 1
+  end
+  -- The line (from 1) holding byte `off`.
+  local function line_at(off)
+    local lo, hi = 1, #starts
+    while lo < hi do
+      local mid = (lo + hi + 1) // 2
+      if starts[mid] <= off then lo = mid else hi = mid - 1 end
+    end
+    return lo
+  end
+  local visual = kawoosh.mode() == "visual"
+  local want, order = {}, {}
+  for _, s in ipairs(kawoosh.buf.selections(h)) do
+    local a, z = s.head, s.head
+    if visual then a, z = math.min(s.anchor, s.head), math.max(s.anchor, s.head) end
+    for ln = line_at(a), line_at(z) do
+      if not want[ln] then
+        want[ln] = true
+        order[#order + 1] = ln
+      end
+    end
+  end
+  if visual then kawoosh.cmd("normal") end
+  table.sort(order)
+  local id_at = {}
+  for id, ln in pairs(kawoosh.buf.tracked_lines(h)) do
+    if ln then id_at[ln] = id end
+  end
+  local paths, seen, fresh = {}, {}, 0
+  for _, ln in ipairs(order) do
+    local who = id_at[ln] and st.ids[id_at[ln]]
+    local text = lines[ln] or ""
+    if who and who.up or text == "../" or text == "" then
+      -- `../`, or a line of nothing: no entry.
+    elseif not who or who.new then
+      fresh = fresh + 1
+    else
+      local p = at(who.dir, who.name)
+      if not seen[p] then
+        seen[p] = true
+        paths[#paths + 1] = p
+      end
+    end
+  end
+  return paths, fresh
+end
+
+local WORDS = {
+  chmod = { what = "a mode: 755, u+x, go-w, a=r", label = "mode" },
+  chown = { what = "an owner: OWNER, OWNER:GROUP, :GROUP", label = "owner" },
+}
+
+-- How a path stands after a change, for the one-entry answer: its
+-- mode as `ls -l` draws it, or its owner and group by name.
+local function standing(which, path)
+  local ok, st = pcall(fs.stat, path)
+  if not ok or not st then return nil end
+  if which == "chmod" then
+    return st.perms and string.format("%s (%o)", st.perms, st.mode) or nil
+  end
+  local u, g = st.user or st.uid, st.group or st.gid
+  return u and (tostring(u) .. ":" .. tostring(g or "")) or nil
+end
+
+-- What a change did, said under `dir` as a write's outcome is: the
+-- path's new standing for one entry, a count for more; each failure in
+-- `:messages`, the first in an error toast, the rest of the entries
+-- changed all the same. Every listing of a directory touched has its
+-- version control's word asked again (`+x` is a change to git), and
+-- the preview's stat is read again.
+local function said(which, spec, paths, report, fresh, recursive)
+  statted = nil
+  local skipped = fresh > 0 and (" · " .. fresh .. " new line(s) skipped: not on disk until :w") or ""
+  for _, f in ipairs(report.failed) do
+    kawoosh.notify(which .. " " .. spec .. ": " .. f.why, { level = "error", source = "dir", show = "log" })
+  end
+  if #report.failed > 0 then
+    kawoosh.notify(#report.failed .. " of " .. (report.done + #report.failed) .. " failed: "
+      .. report.failed[1].why .. skipped, { level = "error", source = "dir" })
+  elseif #paths == 1 and not recursive then
+    local now = standing(which, paths[1])
+    kawoosh.notify((fs.basename(paths[1]) or paths[1]) .. ": " .. (now or (spec .. " set")) .. skipped,
+      { source = "dir" })
+  else
+    kawoosh.notify(which .. " " .. spec .. ": " .. report.done .. " changed" .. skipped, { source = "dir" })
+  end
+  local dirs = {}
+  for _, p in ipairs(paths) do
+    local d = fs.parent(p)
+    if d then dirs[d] = true end
+  end
+  for _, l in ipairs(open_listings()) do
+    if dirs[l.dir] and dir.decorate then dir.decorate(PREFIX .. l.dir, l.dir) end
+  end
+end
+
+-- `:dir chmod MODE` and `:dir chown OWNER[:GROUP]`: the mode or the
+-- owner set on the entries under the carets or the visual selection
+-- (`chosen`), on the io thread (`kawoosh.fs.chmod`, `fs.chown`) —
+-- here, on a host over SFTP (an owner by number there) or through a
+-- host's shell. The link is followed, as `chmod(1)` follows it. `!`
+-- changes everything under a directory too, a link met there left
+-- alone: never without asking for it, since a mode for a tree is a
+-- mode for files that were never on screen, and a recursive change has
+-- no undo.
+for which, w in pairs(WORDS) do
+  kawoosh.command("dir " .. which, function(ctx)
+    local h, d = kawoosh.buf.current(), listed()
+    if not d or d == DRIVES then return end
+    local spec = table.concat(ctx.args, " ")
+    if spec == "" then return kawoosh.echo(which .. ": " .. w.what) end
+    local paths, fresh = chosen(h)
+    if #paths == 0 then
+      return kawoosh.echo(fresh > 0 and "not on disk until :w: write the new line first" or "no entry here")
+    end
+    local recursive = ctx.bang == true
+    local ok, why = fs[which](paths, spec, { recursive = recursive }, function(report)
+      said(which, spec, paths, report, fresh, recursive)
+    end)
+    if not ok then kawoosh.echo(which .. ": " .. tostring(why)) end
+  end, {
+    args = { "text" },
+    when = { "language:dir" },
+    bang = "everything under a directory too, links left alone",
+    doc = which == "chmod"
+      and "set the mode (755, u+x, go-w) of the entries under the carets or the selection"
+      or "set the owner (OWNER, OWNER:GROUP, :GROUP) of the entries under the carets or the selection",
+  })
 end
 
 -- `g.` (oil's): dot files shown or not, every unedited listing read

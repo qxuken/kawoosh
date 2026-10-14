@@ -17,6 +17,7 @@ pub mod durable;
 pub mod fs;
 pub mod line_diff;
 pub mod paths;
+pub mod perms;
 pub mod version;
 
 use std::ops::Range;

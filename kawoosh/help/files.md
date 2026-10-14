@@ -65,10 +65,13 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `~` | make the listed directory the working directory (`:dir cd`) |
 | `<C-w>.` | a terminal in the listed directory (`:terminal here`) |
 | `<C-w>/` | the listed directory again, in a pane beside (`:dir here`) — two listings to browse side by side, each moving on alone |
+| `<C-w>u` | the disk usage of the listed directory (`:du here`) |
 | `gz` | jump to a directory you use often ([directory jumps](#directory-jumps), zoxide's): the pick is listed here |
 
-Directories are always listed before files, and the sort is remembered
-per directory. Because `m` sorts in a listing, it does not set a
+Directories are always listed before files. The sort you choose is
+remembered for that directory, and a directory you have not sorted is
+listed in the order you chose last — by name until you choose one.
+Both are kept when kawoosh restarts. Because `m` sorts in a listing, it does not set a
 [mark](search.md#marks) there.
 
 A listing updates by itself when something else changes the directory,
@@ -77,6 +80,29 @@ untracked and added green, modified in the command colour, a conflict
 red, and what git ignores faint — `.git` too, and a directory git
 ignores as a whole, not one that merely holds ignored files.
 `dir.vcs_enabled = false` leaves the listings plain.
+
+### Permissions and owners
+
+`:dir chmod MODE` sets the mode of the entry under the caret — or of
+every entry under a caret when there are several, or of every line a
+visual selection covers. MODE is what `chmod` takes: octal (`755`,
+`644`) or symbolic (`u+x`, `go-w`, `a=r`, `u=rwx,g=rx,o=`, `+X`). A
+symbolic mode with no `u`, `g` or `o` is for everyone: `+x` is `a+x`,
+whatever your umask says. `:dir chown OWNER`, `OWNER:GROUP` or `:GROUP`
+sets the owner and the group, by name or by number; taking a file from
+another user needs the rights `chown` needs.
+
+A line you renamed but have not written yet still means its file on
+disk; a line you typed in is nothing on disk until `:w`. Links are
+followed. `:dir chmod!` and `:dir chown!` also change everything under a
+directory — a link inside is left alone — and nothing else changes more
+than what you picked. An entry that cannot be changed is named in an
+error and the rest are changed anyway; `<C-p>` shows an entry's mode
+and owner (`rwxr-xr-x  me:staff`).
+
+On a remote host the same commands work over SFTP — an owner by number
+only there, since SFTP has no names — and through the host's own
+`chmod` and `chown` on a host with no SFTP.
 
 ### Several listings at once
 
@@ -297,6 +323,9 @@ included, staying on PATH's disk. Totals fill in as they are counted;
 one not ready yet shows `…`. It lists one directory at a time, largest
 first, each entry with its size, a bar and its share. Each tab's pane is
 its own: `:du` in another tab walks there without touching the first.
+`:du here` (`<C-w>u`) walks the directory you are in: the file's, the
+listed one, a terminal's, or the one this pane is on — the same places
+`<C-w>.` opens a terminal in. (A folder named `here` is `:du ./here`.)
 
 | keys | what |
 |---|---|
@@ -310,6 +339,7 @@ its own: `:du` in another tab walks there without touching the first.
 | `o` | list the directory in `dir` |
 | `<C-w>.` | a terminal in the directory (`:terminal here`) |
 | `<C-w>/` | the directory listed in `dir`, in a pane beside (`:dir here`) |
+| `<C-w>u` | walk the directory on show from the top (`:du here`) |
 | `r` | count again |
 | `q` `<Esc>` | close |
 

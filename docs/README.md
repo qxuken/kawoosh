@@ -116,6 +116,9 @@ commits; 70 integration test files and 31 Lua test scripts.
 
 ### Buffers with a shape
 
+- [dir.md](design/dir.md): the file manager after the listing (mvp.md
+  5b): modes and owners as commands on the entries, the sort kept per
+  directory and the last chosen for the rest, `:du here`.
 - [markdown.md](design/markdown.md): the source, rendered.
 - [secrets.md](design/secrets.md): masks, a private buffer, a register
   that forgets.

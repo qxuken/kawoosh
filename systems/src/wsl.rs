@@ -389,6 +389,7 @@ impl Fs for WslFs {
             is_symlink: link.file_type().is_symlink(),
             size: m.len(),
             modified: modified(&m),
+            ..Default::default()
         })
     }
 
@@ -486,6 +487,43 @@ impl Fs for WslFs {
         } else {
             Err(io::Error::other(format!("chmod {host}: failed")))
         }
+    }
+
+    /// The distro's `chmod`: the share's metadata is Windows', with no
+    /// mode to change.
+    fn chmod(&self, path: &Path, change: &kawoosh_doc::perms::ModeChange) -> io::Result<()> {
+        self.run_on(path, "chmod", &change.spelled())
+    }
+
+    /// The distro's `chown`, its names the distro's.
+    fn chown(&self, path: &Path, owner: &kawoosh_doc::perms::Owner) -> io::Result<()> {
+        self.run_on(path, "chown", &owner.spelled())
+    }
+}
+
+impl WslFs {
+    /// `program arg PATH` in the distro, what it said on failing the
+    /// error.
+    fn run_on(&self, path: &Path, program: &str, arg: &str) -> io::Result<()> {
+        let host = self.host(path);
+        let out = crate::spawn::output(
+            self.wsl
+                .command(&[program, arg, &host])
+                .stdin(std::process::Stdio::null()),
+        )?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let said = String::from_utf8_lossy(&out.stderr);
+        let said = said
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("failed");
+        Err(io::Error::other(format!(
+            "{program} {host}: {}",
+            said.trim()
+        )))
     }
 }
 

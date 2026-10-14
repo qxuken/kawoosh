@@ -182,7 +182,27 @@ pub fn stat(path: &Path) -> io::Result<Stat> {
         is_symlink,
         size: m.len(),
         modified: epoch_secs(&m),
+        ..owned(&m)
     })
+}
+
+/// The mode and the owner of `m`, where the system has them.
+fn owned(m: &std::fs::Metadata) -> Stat {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Stat {
+            mode: Some(m.mode() & 0o7777),
+            uid: Some(m.uid()),
+            gid: Some(m.gid()),
+            ..Stat::default()
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = m;
+        Stat::default()
+    }
 }
 
 fn named(path: &Path, e: io::Error) -> io::Error {
@@ -354,6 +374,242 @@ pub fn create(path: &Path, is_dir: bool) -> io::Result<()> {
         .open(path)
         .map(|_| ())
         .map_err(|e| named(path, e))
+}
+
+// ------------------------------------------------ modes and owners
+
+pub use kawoosh_doc::perms::{ModeChange, Owner, mode_string};
+
+/// `change` made to `path`'s permission bits, the link followed as
+/// `chmod(1)` follows it: here by the bits read and set, on a host by
+/// its file system's way (SFTP's SETSTAT, a shell's `chmod`). Windows
+/// has no such bits, and says so.
+pub fn chmod(path: &Path, change: &ModeChange) -> io::Result<()> {
+    if let Some(h) = on_host(path) {
+        changed_on_host(path);
+        let (fs, p) = h?;
+        return fs.chmod(&p, change).map_err(|e| named(path, e));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let m = std::fs::metadata(path).map_err(|e| named(path, e))?;
+        let mode = change.apply(m.permissions().mode() & 0o7777, m.is_dir());
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .map_err(|e| named(path, e))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = change;
+        Err(named(path, unix_only()))
+    }
+}
+
+/// `path`'s owner and group set as `owner` says, the link followed as
+/// `chown(1)` follows it: a name or a number each, looked up here — on
+/// a host by the host (its shell's `chown`; SFTP by number only).
+/// Taking a file from another user needs the privileges `chown(1)`
+/// does, and its refusal is the answer.
+pub fn chown(path: &Path, owner: &Owner) -> io::Result<()> {
+    if let Some(h) = on_host(path) {
+        changed_on_host(path);
+        let (fs, p) = h?;
+        return fs.chown(&p, owner).map_err(|e| named(path, e));
+    }
+    #[cfg(unix)]
+    {
+        let user = owner.user.as_deref().map(users::user).transpose()?;
+        let gid = match (&owner.group, user) {
+            (Some(g), _) => Some(users::group(g)?),
+            (None, Some((_, login))) if owner.login_group => Some(login.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "the owner has no login group")
+            })?),
+            _ => None,
+        };
+        std::os::unix::fs::chown(path, user.map(|u| u.0), gid).map_err(|e| named(path, e))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = owner;
+        Err(named(path, unix_only()))
+    }
+}
+
+#[cfg(not(unix))]
+fn unix_only() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "modes and owners are unix's: not on this system",
+    )
+}
+
+/// What [`change_attrs`] changes: the bits, or the owner.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Attr {
+    Mode(ModeChange),
+    Owner(Owner),
+}
+
+/// What [`change_attrs`] did: how many paths it changed, and each it
+/// could not, with why (sorted by path).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Changed {
+    pub done: usize,
+    pub failed: Vec<(PathBuf, String)>,
+}
+
+/// `attr` set on each of `paths`, and with `recursive` on everything
+/// under each that is a directory — a link met under it left alone,
+/// neither followed nor changed (`chmod -R`'s way), and one given as a
+/// path not gone into either. A path that fails is said and the rest
+/// go on; a directory is changed before it is read, so `u+rx` opens one
+/// it could not, and one that cannot be read says so.
+pub fn change_attrs(paths: &[PathBuf], attr: &Attr, recursive: bool) -> Changed {
+    let mut out = Changed::default();
+    let one = |p: &Path| match attr {
+        Attr::Mode(m) => chmod(p, m),
+        Attr::Owner(o) => chown(p, o),
+    };
+    for root in paths {
+        let descend = recursive && stat(root).is_ok_and(|s| s.is_dir && !s.is_symlink);
+        let mut stack = vec![(root.clone(), descend)];
+        while let Some((p, descend)) = stack.pop() {
+            match one(&p) {
+                Ok(()) => out.done += 1,
+                Err(e) => out.failed.push((p.clone(), e.to_string())),
+            }
+            if !descend {
+                continue;
+            }
+            match list(&p) {
+                Ok(entries) => {
+                    for e in entries.into_iter().rev().filter(|e| !e.is_symlink) {
+                        stack.push((join(&p, Path::new(&e.name)), e.is_dir));
+                    }
+                }
+                Err(e) => out.failed.push((p.clone(), format!("not gone into: {e}"))),
+            }
+        }
+    }
+    out.failed.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// The name of user `uid` here, when it has one.
+pub fn user_name(uid: u32) -> Option<String> {
+    #[cfg(unix)]
+    return users::user_name(uid);
+    #[cfg(not(unix))]
+    {
+        let _ = uid;
+        None
+    }
+}
+
+/// The name of group `gid` here, when it has one.
+pub fn group_name(gid: u32) -> Option<String> {
+    #[cfg(unix)]
+    return users::group_name(gid);
+    #[cfg(not(unix))]
+    {
+        let _ = gid;
+        None
+    }
+}
+
+/// This machine's users and groups, by name and by number, through
+/// the reentrant `getpw*_r` and `getgr*_r`.
+#[cfg(unix)]
+mod users {
+    use std::ffi::{CStr, CString};
+    use std::io;
+
+    /// `look(buf, len, out)` with a buffer grown while it says ERANGE;
+    /// `read` of the record found, or None.
+    fn with_record<R, T>(
+        look: impl Fn(*mut R, *mut libc::c_char, usize, *mut *mut R) -> libc::c_int,
+        read: impl FnOnce(&R) -> T,
+    ) -> Option<T> {
+        let mut size = 1024usize;
+        loop {
+            let mut buf = vec![0 as libc::c_char; size];
+            // SAFETY: a passwd or group is plain C data; zeroed is a
+            // valid value the call overwrites.
+            let mut rec: R = unsafe { std::mem::zeroed() };
+            let mut out: *mut R = std::ptr::null_mut();
+            let r = look(&mut rec, buf.as_mut_ptr(), size, &mut out);
+            if r == libc::ERANGE && size < 1 << 20 {
+                size *= 4;
+                continue;
+            }
+            if r != 0 || out.is_null() {
+                return None;
+            }
+            return Some(read(&rec));
+        }
+    }
+
+    fn text(p: *const libc::c_char) -> Option<String> {
+        // SAFETY: the record's strings point into the buffer, alive
+        // while `read` runs, NUL-terminated.
+        (!p.is_null()).then(|| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned())
+    }
+
+    pub fn user_name(uid: u32) -> Option<String> {
+        with_record(
+            // SAFETY: the pointers are to live buffers of the sizes given.
+            |r, b, n, o| unsafe { libc::getpwuid_r(uid, r, b, n, o) },
+            |p: &libc::passwd| text(p.pw_name),
+        )
+        .flatten()
+    }
+
+    pub fn group_name(gid: u32) -> Option<String> {
+        with_record(
+            // SAFETY: as above.
+            |r, b, n, o| unsafe { libc::getgrgid_r(gid, r, b, n, o) },
+            |g: &libc::group| text(g.gr_name),
+        )
+        .flatten()
+    }
+
+    /// A user by name, else by number: its uid and its login group
+    /// (None for a number no user has).
+    pub fn user(name: &str) -> io::Result<(u32, Option<u32>)> {
+        if let Ok(c) = CString::new(name)
+            && let Some(ids) = with_record(
+                // SAFETY: as above; `c` outlives the call.
+                |r, b, n, o| unsafe { libc::getpwnam_r(c.as_ptr(), r, b, n, o) },
+                |p: &libc::passwd| (p.pw_uid, p.pw_gid),
+            )
+        {
+            return Ok((ids.0, Some(ids.1)));
+        }
+        let uid: u32 = name
+            .parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::NotFound, format!("no user `{name}`")))?;
+        let login = with_record(
+            // SAFETY: as above.
+            |r, b, n, o| unsafe { libc::getpwuid_r(uid, r, b, n, o) },
+            |p: &libc::passwd| p.pw_gid,
+        );
+        Ok((uid, login))
+    }
+
+    /// A group by name, else by number.
+    pub fn group(name: &str) -> io::Result<u32> {
+        if let Ok(c) = CString::new(name)
+            && let Some(gid) = with_record(
+                // SAFETY: as above; `c` outlives the call.
+                |r, b, n, o| unsafe { libc::getgrnam_r(c.as_ptr(), r, b, n, o) },
+                |g: &libc::group| g.gr_gid,
+            )
+        {
+            return Ok(gid);
+        }
+        name.parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::NotFound, format!("no group `{name}`")))
+    }
 }
 
 /// Copies `from` to `to` — a file, or a directory with everything in
@@ -1207,6 +1463,7 @@ pub(crate) mod fake_host {
                 is_symlink: false,
                 size: 0,
                 modified: None,
+                ..Default::default()
             })
         }
         fn list(&self, dir: &Path) -> io::Result<Vec<Entry>> {
@@ -1589,6 +1846,99 @@ mod tests {
         );
         assert!(err.unwrap_err().to_string().contains("past its end"));
         assert_eq!(read_at(&path, 0, 1).unwrap(), b"M", "nothing written");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `:dir chmod` and `:dir chown`'s disk side: a mode, octal or
+    /// symbolic, on the paths given and — recursive — everything under
+    /// a directory of them but a link, which is left as it is; an owner
+    /// that is ours taken, one that is not refused for that path alone.
+    #[cfg(unix)]
+    #[test]
+    fn modes_and_owners_are_set_and_a_refusal_is_one_paths() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = scratch(
+            "modes",
+            &[
+                ("a.sh", "x"),
+                ("t/u/", ""),
+                ("t/b.txt", "b"),
+                ("t/u/c.txt", "c"),
+            ],
+        );
+        let mode = |p: &str| std::fs::metadata(dir.join(p)).unwrap().permissions().mode() & 0o7777;
+        let set = |p: &str, m: u32| {
+            std::fs::set_permissions(dir.join(p), std::fs::Permissions::from_mode(m)).unwrap()
+        };
+        std::os::unix::fs::symlink(dir.join("a.sh"), dir.join("t/link")).unwrap();
+        for p in ["a.sh", "t/b.txt", "t/u/c.txt"] {
+            set(p, 0o644);
+        }
+        set("t", 0o755);
+        set("t/u", 0o755);
+        let m = |s: &str| Attr::Mode(ModeChange::parse(s).unwrap());
+        let one = change_attrs(&[dir.join("a.sh")], &m("u+x"), false);
+        assert_eq!(
+            one,
+            Changed {
+                done: 1,
+                failed: vec![]
+            }
+        );
+        assert_eq!(mode("a.sh"), 0o744);
+        assert_eq!(stat(&dir.join("a.sh")).unwrap().mode, Some(0o744));
+        // Not recursive: the directory alone.
+        change_attrs(&[dir.join("t")], &m("750"), false);
+        assert_eq!((mode("t"), mode("t/b.txt")), (0o750, 0o644));
+        // Recursive: everything under it, the link left alone (its
+        // target, a.sh, keeps u+x's 744 rather than going to 700).
+        let all = change_attrs(&[dir.join("t")], &m("go-rx,u+X"), true);
+        assert_eq!(all.done, 4, "{all:?}");
+        assert!(all.failed.is_empty(), "{all:?}");
+        assert_eq!(
+            [
+                mode("t"),
+                mode("t/u"),
+                mode("t/b.txt"),
+                mode("t/u/c.txt"),
+                mode("a.sh")
+            ],
+            [0o700, 0o700, 0o600, 0o600, 0o744]
+        );
+        // Owners: our own uid and gid taken, by number and by name; root
+        // refused, the path named, the next path tried all the same.
+        let me = std::fs::metadata(dir.join("a.sh")).unwrap();
+        let mine = Owner::parse(&format!("{}:{}", me.uid(), me.gid())).unwrap();
+        let ours = change_attrs(&[dir.join("a.sh")], &Attr::Owner(mine), false);
+        assert_eq!(
+            ours,
+            Changed {
+                done: 1,
+                failed: vec![]
+            }
+        );
+        if let Some(name) = user_name(me.uid()) {
+            let by_name = Owner::parse(&format!("{name}:")).unwrap();
+            assert_eq!(
+                chown(&dir.join("a.sh"), &by_name).map_err(|e| e.to_string()),
+                Ok(())
+            );
+        }
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } != 0 {
+            let root = Attr::Owner(Owner::parse("0").unwrap());
+            let r = change_attrs(&[dir.join("t/b.txt"), dir.join("a.sh")], &root, false);
+            assert_eq!(r.done, 0);
+            assert_eq!(r.failed.len(), 2, "{r:?}");
+            assert!(r.failed[0].1.contains("a.sh"), "the path named: {r:?}");
+        }
+        let nobody = chown(&dir.join("a.sh"), &Owner::parse("no-such-user-kw").unwrap());
+        assert!(
+            nobody
+                .unwrap_err()
+                .to_string()
+                .contains("no user `no-such-user-kw`")
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

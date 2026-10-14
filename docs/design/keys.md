@@ -73,6 +73,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>!` | a terminal (`:!` runs a shell, so does this), in the working directory or, from a terminal, its shell's |
 | `<C-w>.` | a terminal here (`:terminal here`): the file's directory, the one a listing or `:du` is on, a terminal's shell's — `.` as in the current directory |
 | `<C-w>/` | the directory here, listed in a pane beside (`:dir here`): the same places `<C-w>.` reads — `-` lists it in the pane, `<C-w>-` is vim's shorter, so `/`, the path's own mark. A listing split this way is one buffer a directory, and a move in either pane leaves the other where it was |
+| `<C-w>u` | the disk usage here (`:du here`): the same places `<C-w>.` reads, walked in `:du`'s pane — `u` for usage, as `<leader>wu` is the working directory's |
 | `<C-w>n` | the keyboard onto the toasts |
 | `<C-w>:` | the command line, from a pane without one |
 | `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, in the colours it was printed in, a line the terminal wrapped at its width one line of the buffer, full modal editing, the status saying `COPY`, the caret where the terminal's cursor was (scrolled back past it, on the top row the pane showed); `q`, `<C-S-x>` again, or `<Esc>` once nothing is left to clear gives the pane back |

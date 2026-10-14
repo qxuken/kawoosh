@@ -933,6 +933,13 @@ impl Kawoosh {
                         self.drain_lua();
                     }
                 }
+                IoMsg::FsAttrs { token, changed } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.fs_attrs(token, &changed);
+                        self.drain_lua();
+                    }
+                }
                 IoMsg::FsApplied {
                     token,
                     outcomes,

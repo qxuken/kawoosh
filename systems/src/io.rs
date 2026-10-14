@@ -48,6 +48,12 @@ pub enum IoMsg {
         token: u64,
         result: Result<(), String>,
     },
+    /// What `kawoosh.fs.chmod` or `fs.chown` with a callback did on a
+    /// thread of its own (`fs::change_attrs`).
+    FsAttrs {
+        token: u64,
+        changed: crate::fs::Changed,
+    },
     /// How `kawoosh.fs.apply(changes, …)` went (`fs::apply`): every
     /// change's outcome by its index, `None` while it is under way —
     /// the answer once the changes are settled and only the removals

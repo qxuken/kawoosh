@@ -5612,6 +5612,8 @@ pub fn default_keymap(km: &mut Keymap) {
         // `/` for the directory here, listed beside: `-` lists it in
         // the pane, and `<C-w>-` is vim's shorter.
         ("<C-w>/", "dir here"),
+        // `u` for usage, as `<leader>wu` is the working directory's.
+        ("<C-w>u", "du here"),
         ("<C-w>n", "toast"),
         ("gt", "tab next"),
         ("gT", "tab prev"),

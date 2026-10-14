@@ -227,6 +227,16 @@ pub enum Msg {
         token: u64,
         changes: Vec<kawoosh_systems::fs::Change>,
     },
+    /// `kawoosh.fs.chmod(paths, mode, opts, fn)` and `fs.chown(paths,
+    /// owner, opts, fn)`: the mode or the owner set on each path (and
+    /// everything under it, `recursive`) on a thread of its own, the
+    /// answer to `Runtime::fs_attrs` under `token` (`IoMsg::FsAttrs`).
+    FsAttrs {
+        token: u64,
+        paths: Vec<PathBuf>,
+        attr: kawoosh_systems::fs::Attr,
+        recursive: bool,
+    },
     /// `kawoosh.fs.walk(root, fn)`: every file under the root as git
     /// sees it, walked on a thread of its own, the answer to
     /// `Runtime::walked` under `token` (`IoMsg::Walked`).
@@ -3033,6 +3043,13 @@ impl Runtime {
         self.answer(token, result, "search_replace");
     }
 
+    /// What a `kawoosh.fs.chmod` or `fs.chown` with a callback did: it
+    /// is called with `{ done =, failed = { { path =, why = }, … } }`.
+    pub fn fs_attrs(&self, token: u64, changed: &kawoosh_systems::fs::Changed) {
+        let t = changed_table(&self.lua, changed).map_err(|e| e.to_string());
+        self.answer(token, t, "fs");
+    }
+
     fn answer(&self, token: u64, result: Result<Table, String>, what: &str) {
         let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
             return;
@@ -3890,6 +3907,22 @@ fn sqlite_schema_table(lua: &Lua, schema: kawoosh_systems::sqlite::Schema) -> ml
     }
     t.set("tables", tables)?;
     t.set("bytes", schema.bytes)?;
+    Ok(t)
+}
+
+/// `{ done =, failed = { { path =, why = }, … } }` of what
+/// `fs::change_attrs` did.
+fn changed_table(lua: &Lua, c: &kawoosh_systems::fs::Changed) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set("done", c.done)?;
+    let failed = lua.create_table()?;
+    for (p, why) in &c.failed {
+        let f = lua.create_table()?;
+        f.set("path", kawoosh_systems::fs::display(p))?;
+        f.set("why", why.as_str())?;
+        failed.push(f)?;
+    }
+    t.set("failed", failed)?;
     Ok(t)
 }
 
@@ -7312,16 +7345,101 @@ fn seed(
     fs.set(
         "stat",
         lua.create_function(|lua, p: String| {
-            let st = kfs::stat(&expand(&p)).map_err(io_err)?;
+            let path = expand(&p);
+            let st = kfs::stat(&path).map_err(io_err)?;
             let t = lua.create_table()?;
             t.set("is_dir", st.is_dir)?;
             t.set("is_file", st.is_file)?;
             t.set("is_symlink", st.is_symlink)?;
             t.set("size", st.size)?;
             t.set("modified", st.modified)?;
+            // The permission bits (`0o7777` of them) and `perms`, as
+            // `ls -l` draws them; the owner and group by number, and by
+            // name where this machine names them — a host's numbers are
+            // the host's, so a path on a domain has none.
+            if let Some(m) = st.mode {
+                t.set("mode", m)?;
+                t.set("perms", kfs::mode_string(m))?;
+            }
+            t.set("uid", st.uid)?;
+            t.set("gid", st.gid)?;
+            let here = kfs::domain_of(&path).is_none();
+            if here {
+                t.set("user", st.uid.and_then(kfs::user_name))?;
+                t.set("group", st.gid.and_then(kfs::group_name))?;
+            }
             Ok(t)
         })?,
     )?;
+    // `fs.chmod(paths, mode[, { recursive = }][, fn])` and
+    // `fs.chown(paths, owner[, opts][, fn])` (docs/design/dir.md
+    // Decision 1): `paths` one path or a list; `mode` as `chmod(1)`
+    // takes it — octal (`755`) or symbolic (`u+x,go-w`, no who being
+    // everyone's) — and `owner` as `chown(1)` does (`OWNER`,
+    // `OWNER:GROUP`, `:GROUP`, `OWNER:`). Each path is changed, the
+    // link followed; `recursive` changes everything under a directory
+    // too, a link met there left alone. A path that fails does not stop
+    // the rest: the answer is `{ done =, failed = { { path =, why = },
+    // … } }` — now, or with `fn` on a thread of its own, handed to
+    // `fn(report)`. A mode or owner that does not read returns `nil,
+    // why`, nothing changed.
+    for which in ["chmod", "chown"] {
+        let qq = q(queue);
+        let jj = jobs.clone();
+        fs.set(
+            which,
+            lua.create_function(move |lua, (paths, spec, a, b): (LV, String, LV, LV)| {
+                let attr = if which == "chmod" {
+                    kfs::ModeChange::parse(&spec).map(kfs::Attr::Mode)
+                } else {
+                    kfs::Owner::parse(&spec).map(kfs::Attr::Owner)
+                };
+                let attr = match attr {
+                    Ok(a) => a,
+                    Err(why) => return Ok((LV::Nil, LV::String(lua.create_string(why)?))),
+                };
+                let paths: Vec<PathBuf> = match paths {
+                    LV::String(s) => vec![expand(&s.to_str()?)],
+                    LV::Table(t) => t
+                        .sequence_values::<String>()
+                        .map(|p| p.map(|p| expand(&p)))
+                        .collect::<mlua::Result<_>>()?,
+                    _ => {
+                        return Err(mlua::Error::runtime(format!(
+                            "fs.{which}: a path or a list of them"
+                        )));
+                    }
+                };
+                let (opts, cb) = match (a, b) {
+                    (LV::Table(o), LV::Function(f)) => (Some(o), Some(f)),
+                    (LV::Table(o), _) => (Some(o), None),
+                    (LV::Function(f), _) => (None, Some(f)),
+                    _ => (None, None),
+                };
+                let recursive = match &opts {
+                    Some(o) => o.get::<Option<bool>>("recursive")?.unwrap_or(false),
+                    None => false,
+                };
+                let Some(cb) = cb else {
+                    let done = kfs::change_attrs(&paths, &attr, recursive);
+                    return Ok((LV::Table(changed_table(lua, &done)?), LV::Nil));
+                };
+                let token = {
+                    let mut j = jj.borrow_mut();
+                    let token = j.token();
+                    j.waiting.insert(token, lua.create_registry_value(cb)?);
+                    token
+                };
+                qq.borrow_mut().push(Msg::FsAttrs {
+                    token,
+                    paths,
+                    attr,
+                    recursive,
+                });
+                Ok((LV::Boolean(true), LV::Nil))
+            })?,
+        )?;
+    }
     fs.set(
         "rename",
         lua.create_function(|_, (a, b): (String, String)| {

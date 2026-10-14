@@ -917,6 +917,23 @@ impl Kawoosh {
                     });
                 }
             }
+            Msg::FsAttrs {
+                token,
+                paths,
+                attr,
+                recursive,
+            } => {
+                let job = move || kawoosh_systems::fs::change_attrs(&paths, &attr, recursive);
+                if self.jobs_inline {
+                    rt.fs_attrs(token, &job());
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("fs attrs", move || IoMsg::FsAttrs {
+                        token,
+                        changed: job(),
+                    });
+                }
+            }
             Msg::FsApply { token, changes } => {
                 if self.jobs_inline {
                     let mut settled = None;

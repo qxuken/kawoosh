@@ -29,14 +29,19 @@ pub struct Entry {
 }
 
 /// What a path is: the same facts as an [`Entry`] for one path, the
-/// link followed for all but `is_symlink`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// link followed for all but `is_symlink`; and, where the disk says
+/// them, its permission bits (`mode`, `0o7777` of them) and its owner
+/// and group by number — a host's shell says none.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Stat {
     pub is_dir: bool,
     pub is_file: bool,
     pub is_symlink: bool,
     pub size: u64,
     pub modified: Option<u64>,
+    pub mode: Option<u32>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
 }
 
 /// A host's files. Each call blocks until the host answers; errors are
@@ -71,6 +76,25 @@ pub trait Fs: Send + Sync {
     /// The permission bits set (`0o755`), where the host has them.
     fn set_mode(&self, _path: &Path, _mode: u32) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "no modes here"))
+    }
+    /// `change` made to the path's permission bits (`:dir chmod`, the
+    /// link followed): read with [`Fs::stat`], changed, set with
+    /// [`Fs::set_mode`] — a host whose stat says no mode overrides it
+    /// with its own `chmod`.
+    fn chmod(&self, path: &Path, change: &crate::perms::ModeChange) -> io::Result<()> {
+        let st = self.stat(path)?;
+        let Some(mode) = st.mode else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the host says no mode",
+            ));
+        };
+        self.set_mode(path, change.apply(mode, st.is_dir))
+    }
+    /// The path's owner and group set (`:dir chown`, the link
+    /// followed), where the host has them.
+    fn chown(&self, _path: &Path, _owner: &crate::perms::Owner) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "no owners here"))
     }
     /// False once the connection underneath is gone (a dropped master):
     /// the domain is down, and its next use connects it again.

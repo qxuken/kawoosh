@@ -1430,6 +1430,18 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 k.drain_lua();
             },
         ),
+        // `<C-w>u`: the disk usage here — `<leader>wu`'s, the working
+        // directory's, from where the pane in front is (the same places
+        // `<C-w>.` and `<C-w>/` read). `:du` opens or takes its pane.
+        cmd(
+            Spec::new("du here")
+                .doc("the disk usage of the directory the pane in front is on (`<C-w>u`): the file's, the listing's, the shell's, `:du`'s"),
+            |k, _| {
+                let here = k.here_dir().display().to_string();
+                k.shell_command("du", &[here], None);
+                k.drain_lua();
+            },
+        ),
         cmd(
             Spec::new("shell")
                 .args(Args::rest(&[ArgKind::Text]))

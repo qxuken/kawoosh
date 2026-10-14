@@ -240,6 +240,8 @@ kawoosh.vcs.register("jj", {
 
 - `read(path)`, `write(path, text)`, `exists`, `is_file`, `is_dir`, `stat`, `create(path, is_dir)`, `rename(a, b)`, `copy(a, b)`, `remove(path)`.
 - `list(path)` lists a folder now; `list(path, fn)` reads it in the background and calls `fn(entries)`. `copy(a, b, fn)` and `remove(path, fn)` do the same for a change: made in the background, then `fn(true)`, or `fn(nil, why)`. `walk(root, fn)` lists every file under a folder as git sees it, in the background.
+- `stat(path)` says `is_dir`, `is_file`, `is_symlink`, `size` and `modified`, and where the disk has them `mode` (the permission bits), `perms` (`rwxr-xr-x`), `uid` and `gid` — with `user` and `group`, their names, on this machine.
+- `chmod(paths, mode, opts, fn)` and `chown(paths, owner, opts, fn)` set a mode (`755`, `u+x,go-w`) or an owner (`me`, `me:staff`, `:staff`) on one path or a list, `opts.recursive` on everything under a folder too (links there left alone). The answer is `{ done =, failed = { { path =, why = }, … } }` — returned now, or handed to `fn` from the background when you give one; a mode or owner that does not read returns `nil, why` and changes nothing.
 - Path helpers: `join`, `parent`, `basename`, `relative`, `expand`, `short`, `home`, `cwd`, `chdir`.
 - `watch(name, paths, fn)` calls `fn(changed)` when the files or folders change; `watch(name, nil)` stops it.
 

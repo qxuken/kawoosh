@@ -83,6 +83,7 @@ fn parse_kind(fields: &[&str]) -> Option<Stat> {
         is_symlink: *l == "1",
         size: size.parse().unwrap_or(0),
         modified: secs.parse().ok(),
+        ..Default::default()
     })
 }
 
@@ -342,6 +343,28 @@ impl Fs for ShellFs {
         .map(|_| ())
     }
 
+    /// The host's own `chmod`, the change spelled with its who named
+    /// so the host's umask does not come into it: a shell's stat says
+    /// no mode to change here.
+    fn chmod(&self, path: &Path, change: &kawoosh_doc::perms::ModeChange) -> io::Result<()> {
+        let script = format!(
+            "p={}\nex \"$p\" || exit {NOT_FOUND}\nchmod {} \"$p\"\n",
+            q(path),
+            shell_quote(&change.spelled())
+        );
+        self.on(path, &script, None).map(|_| ())
+    }
+
+    /// The host's own `chown`: its names are the host's to look up.
+    fn chown(&self, path: &Path, owner: &kawoosh_doc::perms::Owner) -> io::Result<()> {
+        let script = format!(
+            "p={}\nex \"$p\" || exit {NOT_FOUND}\nchown {} \"$p\"\n",
+            q(path),
+            shell_quote(&owner.spelled())
+        );
+        self.on(path, &script, None).map(|_| ())
+    }
+
     fn is_alive(&self) -> bool {
         !self.dead.load(Ordering::Relaxed)
     }
@@ -482,6 +505,44 @@ mod tests {
         assert!(!dir.join("moved").exists());
         assert_eq!(
             fs.remove(&at("moved")).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A mode and an owner through the host's own `chmod` and `chown`:
+    /// symbolic as it reads (no who is everyone's, whatever the umask),
+    /// our own owner taken, root's refused with the host's word.
+    #[cfg(unix)]
+    #[test]
+    fn modes_and_owners_go_through_its_shell() {
+        use kawoosh_doc::perms::{ModeChange, Owner};
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = root("modes");
+        let Some(fs) = host(&dir, &[]) else {
+            eprintln!("no sh here: skipped");
+            return;
+        };
+        let f = dir.join("a b.sh");
+        std::fs::write(&f, "x").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mode = || std::fs::metadata(&f).unwrap().permissions().mode() & 0o7777;
+        fs.chmod(&f, &ModeChange::parse("+x").unwrap()).unwrap();
+        assert_eq!(mode(), 0o711, "a+x, not the umask's");
+        fs.chmod(&f, &ModeChange::parse("640").unwrap()).unwrap();
+        assert_eq!(mode(), 0o640);
+        let me = std::fs::metadata(&f).unwrap();
+        let mine = Owner::parse(&format!("{}:{}", me.uid(), me.gid())).unwrap();
+        fs.chown(&f, &mine).unwrap();
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } != 0 {
+            let err = fs.chown(&f, &Owner::parse("0").unwrap()).unwrap_err();
+            assert!(err.to_string().contains("a b.sh"), "{err}");
+        }
+        assert_eq!(
+            fs.chmod(&dir.join("nope"), &ModeChange::parse("644").unwrap())
+                .unwrap_err()
+                .kind(),
             io::ErrorKind::NotFound
         );
         let _ = std::fs::remove_dir_all(&dir);
