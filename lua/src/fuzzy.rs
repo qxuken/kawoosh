@@ -96,7 +96,9 @@ impl Needle {
     }
 }
 
-/// The bonus a match on `hay[j]` earns for what precedes it.
+/// The bonus a match on `hay[j]` earns for what precedes it — read off
+/// the row as written, whatever case the needle matched it in, or a
+/// capital would never be one.
 fn bonus(hay: &[char], j: usize) -> f64 {
     if j == 0 {
         return MATCH_WORD;
@@ -117,9 +119,16 @@ type Tables = (Vec<f64>, Vec<f64>);
 
 /// fzy's dynamic programme: `D[i][j]` the best score with needle `i`
 /// matched at `j`, `M[i][j]` the best with needle `i` matched at or
-/// before `j`. Returns the score, and the tables when asked for, from
+/// before `j`. `hay` is what the needle is matched against (folded when
+/// case does not count), `orig` the row as written, which the bonuses
+/// are read from. Returns the score, and the tables when asked for, from
 /// which the positions are read back.
-fn compute(needle: &[char], hay: &[char], with_tables: bool) -> (f64, Option<Tables>) {
+fn compute(
+    needle: &[char],
+    hay: &[char],
+    orig: &[char],
+    with_tables: bool,
+) -> (f64, Option<Tables>) {
     let n = needle.len();
     let m = hay.len();
     if n == 0 {
@@ -132,7 +141,7 @@ fn compute(needle: &[char], hay: &[char], with_tables: bool) -> (f64, Option<Tab
             with_tables.then(|| (vec![SCORE_MAX; n * m], vec![SCORE_MAX; n * m])),
         );
     }
-    let bonuses: Vec<f64> = (0..m).map(|j| bonus(hay, j)).collect();
+    let bonuses: Vec<f64> = (0..m).map(|j| bonus(orig, j)).collect();
     let mut d = vec![SCORE_MIN; n * m];
     let mut mm = vec![SCORE_MIN; n * m];
     for (i, &nc) in needle.iter().enumerate() {
@@ -232,7 +241,7 @@ impl Matcher {
                 if !nd.has_match(hay) {
                     return None;
                 }
-                let (score, _) = compute(&nd.chars, hay, false);
+                let (score, _) = compute(&nd.chars, hay, &e.chars, false);
                 Some((i, score))
             })
             .collect();
@@ -247,7 +256,7 @@ impl Matcher {
             .map(|(index, score)| {
                 let e = &self.entries[index];
                 let hay = nd.hay(e);
-                let (_, tables) = compute(&nd.chars, hay, true);
+                let (_, tables) = compute(&nd.chars, hay, &e.chars, true);
                 let pos = tables
                     .map(|(d, mm)| positions(nd.chars.len(), hay.len(), &d, &mm))
                     .unwrap_or_default();
@@ -338,6 +347,15 @@ mod tests {
         let hit = &Matcher::new(&items).query(&needle, 10)[0];
         assert_eq!(hit.positions.len(), needle.len(), "every character placed");
         assert!(order(&format!("{dir}delta.rs"), &items).is_empty());
+    }
+
+    /// A capital earns its bonus whatever case the needle is in: the
+    /// bonuses were read off the lower-cased row a needle without a
+    /// capital is matched against, where no capital is left — so `fb`
+    /// found `foobar.rs` as good as `fooBar.rs`.
+    #[test]
+    fn a_capital_counts_for_a_needle_without_one() {
+        assert_eq!(order("fb", &["foobar.rs", "fooBar.rs"])[0], "fooBar.rs");
     }
 
     #[test]
