@@ -233,6 +233,17 @@ pub(crate) enum Then {
 /// the config that chose it and the language (Decision 6).
 pub type ProbeKey = (String, PathBuf, Option<PathBuf>, String);
 
+/// A buffer's probe as worked out, and what from: the buffer's path and
+/// language, and its `formatter` setting — with the `format` defs and
+/// the formats allowed, which empty every one when they move, all that
+/// `probe_key` reads but the files.
+struct Probed {
+    path: PathBuf,
+    language: std::sync::Arc<str>,
+    formatter: Option<Setting>,
+    key: Option<ProbeKey>,
+}
+
 /// What a probe said.
 #[derive(Clone, Debug, PartialEq)]
 enum Probe {
@@ -304,15 +315,20 @@ pub struct FormatState {
     lua_deadlines: HashMap<u64, (std::time::Instant, String)>,
     /// The probes' answers (Decision 6).
     probes: HashMap<ProbeKey, Probe>,
-    /// Each buffer's probe, for the path and settings version it was
-    /// worked out at.
-    probed: HashMap<BufferId, (PathBuf, u64, Option<ProbeKey>)>,
+    /// Each buffer's probe, with what it was worked out from.
+    probed: HashMap<BufferId, Probed>,
     /// The configs the probes' answers came from, on the config watch:
     /// one saved asks again.
     pub watched: Vec<PathBuf>,
     /// The `format` table the answers were had under: a def changed
     /// (its args) asks again.
     defs_seen: Option<Setting>,
+    /// How many times a buffer's probe was worked out (`probe_key`):
+    /// what a test reads to see it is not done for nothing.
+    worked_out: u64,
+    /// The settings' version the defs and the buffers' `formatter` were
+    /// last looked at under.
+    settings_seen: Option<u64>,
     /// `:format install`'s and `:format update`'s terminals, and what is
     /// said once one ends well (`prettier installed`).
     pub(crate) installs: HashMap<crate::terminals::TermId, String>,
@@ -1116,14 +1132,28 @@ impl Kawoosh {
     /// Each frame: every resolved buffer's formatter asked what its
     /// indent is — once per formatter, directory, config and language,
     /// off the frame — and the answer made the buffer's own source over
-    /// its `.editorconfig` (Decision 6). Worked out again when the
-    /// buffer's path or the settings move.
+    /// its `.editorconfig` (Decision 6). Worked out again when what it
+    /// was worked out from moves: the buffer's path or language, its
+    /// `formatter`, the `format` defs, the formats allowed. Not at every
+    /// settings change: working one out walks the buffer's directories
+    /// for every def's `when` files and reads a `package.json` whole at
+    /// each level, 2.6 ms a buffer under a monorepo's — a tab switch
+    /// into another project cost a frame 105 ms with forty files open
+    /// (Decision 6's cost).
     pub(crate) fn sync_probes(&mut self) {
+        // The defs and the buffers' `formatter` looked at when the
+        // settings moved: the `format` table cloned each frame to be
+        // compared was a frame's cost of its own.
         let version = self.ed.settings.version();
-        let defs_now = self.ed.settings.get("format").cloned();
-        if self.format.defs_seen != defs_now {
-            self.format.defs_seen = defs_now;
-            self.format.probes.clear();
+        let moved = self.format.settings_seen != Some(version);
+        if moved {
+            self.format.settings_seen = Some(version);
+            let defs_now = self.ed.settings.get("format");
+            if self.format.defs_seen.as_ref() != defs_now {
+                self.format.defs_seen = defs_now.cloned();
+                self.format.probes.clear();
+                self.format.probed.clear();
+            }
         }
         let ids: Vec<(BufferId, PathBuf)> = self
             .ed
@@ -1135,14 +1165,32 @@ impl Kawoosh {
             .probed
             .retain(|id, _| ids.iter().any(|(i, _)| i == id));
         for (id, path) in ids {
+            let language = self
+                .ed
+                .buffers
+                .get(id)
+                .map(|b| b.language.clone())
+                .unwrap_or_else(|| "".into());
+            let formatter = || self.ed.setting_in(id, "formatter").cloned();
             let key = match self.format.probed.get(&id) {
-                Some((p, v, k)) if *p == path && *v == version => k.clone(),
+                Some(p)
+                    if p.path == path
+                        && p.language == language
+                        && (!moved || p.formatter == formatter()) =>
+                {
+                    p.key.clone()
+                }
                 _ => {
-                    let k = self.probe_key(id);
-                    self.format
-                        .probed
-                        .insert(id, (path.clone(), version, k.clone()));
-                    k
+                    self.format.worked_out += 1;
+                    let key = self.probe_key(id);
+                    let probed = Probed {
+                        path,
+                        language,
+                        formatter: formatter(),
+                        key: key.clone(),
+                    };
+                    self.format.probed.insert(id, probed);
+                    key
                 }
             };
             let tool = key.and_then(|k| {
@@ -1161,6 +1209,12 @@ impl Kawoosh {
                 l.set_tool(tool);
             }
         }
+    }
+
+    /// How many times a buffer's formatter was worked out for its probe
+    /// (`sync_probes`), since the start.
+    pub fn formatters_worked_out(&self) -> u64 {
+        self.format.worked_out
     }
 
     /// The probe buffer `id` would be read by: its formatter's, when it
@@ -1211,6 +1265,12 @@ impl Kawoosh {
             then: Then::Probe(key),
         };
         self.run_formatter(&p, args, snippet, job, None);
+    }
+
+    /// The formats allowed moved (`:format allow`, `:trust revoke`):
+    /// every buffer's probe worked out again, a tool allowed now probed.
+    pub(crate) fn forget_worked_out(&mut self) {
+        self.format.probed.clear();
     }
 
     /// A probed config was saved: every answer asked again.

@@ -342,6 +342,20 @@ departed from the text above, and what it found:
 - **A probe is asked again** when its config is saved (on the config
   watch) and when the `format` table changes — new args may indent
   otherwise.
+- **Which formatter probes a buffer is worked out from what it reads**
+  (2026-10-14): the buffer's path and language, its `formatter`, the
+  `format` table, the formats allowed — not the settings' version. A
+  working-out walks the buffer's directories for every def's `when`
+  files (prettier and prettierd fifteen names each) and reads a
+  `package.json` whole at each level that has one; keyed by the
+  version, every settings change did it for every open buffer — a tab
+  switch into another project (its layer read again), a picker's
+  `kawoosh.opt`, any `:set`. Forty TypeScript files under a monorepo's
+  100 KB `package.json` made such a frame 105 ms (2.6 ms a buffer, all
+  in the Perf tab's `settings` lap; the user saw 300 and 670 ms after a
+  tab switch); now 1.2 ms. The `format` table is compared only when the
+  settings moved, not cloned each frame. Opening a file still works its
+  formatter out once, 0.5–2.6 ms there.
 
 Tests: `kawoosh/tests/format.rs` (the nearest config's formatter, a
 caret on an untouched line kept, one undo, a failure's line, named, off
@@ -359,7 +373,9 @@ Left:
 
 - A config file made after a buffer was opened is seen by `:format`
   and by a save, which choose afresh, but the buffer's indent is not
-  probed again until its path or the settings move.
+  probed again until its path, its `formatter` or the `format` table
+  moves (a settings change elsewhere used to bring it along, at the
+  cost above).
 - A server's `rangeFormatting`.
 - Of the shipped defs, clang-format runs for real in a test where it is
   installed (`the_shipped_clang_format_runs_for_real`: chosen by its

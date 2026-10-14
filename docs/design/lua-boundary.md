@@ -217,6 +217,35 @@ The root alone: a scroller nested deeper is keyed under its parents,
 and a pane with several (the settings pane's index and list) moves them
 from its own state, which a re-run is the price of anyway.
 
+### 12. Lua's collector is left as Lua 5.5 has it: incremental, automatic
+
+Asked 2026-10-14 with the spikes in `status line` and `moments`: "do we
+control lua gc (lua 5.5 generational gc) so it couldn't happen in the
+middle of the frame?" Nothing in kawoosh, kui-lua or mlua sets a mode,
+and Lua 5.5 starts **incremental**, as 5.4 did (`lstate.c`: `gckind =
+KGC_INC`); generational is opt-in, `collectgarbage("generational")`.
+Its steps run inside whatever Lua call allocates, a share of the work
+for each allocation, so they land in any lap that runs Lua.
+
+Measured (`mlua` alone, a status-line-sized call 400 000 times beside a
+heap kept alive): incremental's worst call was 0.5–5 ms at heaps of 7 MB
+to 420 MB, 0–10 calls in 400 000 over 1 ms; generational's was 19 ms at
+35 MB, 62 ms at 150 MB and 65 ms at 340 MB — its major collections stop
+the world. In the app, the files picker over 45 000 files three times
+with visits and moves between (a 23 MB heap): automatic, the `io drain`
+lap went over 2 ms in 8 frames, worst 64.7 ms (the walk landing); with
+the collector stopped, 3 frames, worst 60.2 ms, the heap at 40 MB. No
+status-line or moments spike either way.
+
+So it stays as it is. Generational would bring the pauses the question
+fears. Stopping the collector and paying a frame's debt at its end
+(`LUA_GCSTEP` with the bytes allocated since) moves the same work to
+one place in the same frame, and lets a long call's garbage — a walk's
+tables built and dropped — pile up unbounded until it returns. Should
+a spike ever be the collector's, it is on-CPU work in the lap of the
+plugin that allocated; the Perf tab's `on cpu` column tells that from a
+wait.
+
 ## Rounds
 
 **Round 1, 2026-10-07: the cheap batch** (d290f9f). `ctx.title_h`

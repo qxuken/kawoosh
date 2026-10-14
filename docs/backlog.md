@@ -121,6 +121,19 @@ afternoon.
 
 ## Memory
 
+- **A moments flush that meets another process's lock waits on the
+  frame**: two Kawoosh processes on one `state.db` (the kawoosh
+  project's `run` tool's dev build shares it unless `KAWOOSH_STATE` is
+  set) — a second writer holding the lock 150 ms of every 200 made the
+  `moments` lap 11.5 and 89 ms at 1.3–1.6 ms on a CPU, SQLite's busy
+  handler sleeping 1, 2, 5, 10, 15, 20, 25… ms up to `BUSY_MS` (250).
+  The shape of the 13 and 70 ms reported 2026-10-14, not reproduced
+  with one process (flush 0.4–0.8 ms, its eviction look 0.25 ms). The
+  flush already keeps its deltas for the next tick; not waiting at all
+  on the frame (busy 0 for the flush and a history's save, the session
+  at quit still waiting) is the change, once the `on cpu` column shows
+  a user's spike to be a wait. ([memory.md](design/memory.md) Decision
+  3, "Two processes, one db")
 - **The edit journal pruned**: `Journal::prune` runs only in a test,
   so a buffer's journal grows for its life.
   ([kui.md](design/kui.md), implementation notes;
@@ -131,6 +144,14 @@ afternoon.
 
 ## Lua and plugins
 
+- **The status line's 20 ms worst** (reported 2026-10-14, in a big
+  repository with many untracked files): not reproduced — 0.25 ms
+  worst in a 40 000-file repository with the user's settings and font,
+  under sixteen busy loops, with a 23 MB heap; its Lua is `vcs`'s and
+  `status`'s segments, a text measured per module. The `on cpu`
+  column says next time whether it computed or waited (a page read
+  back in after the window was away). Not the collector
+  ([lua-boundary.md](design/lua-boundary.md) Decision 12).
 - **A listing's ids as payloads only**: `ids` still mirror the tracked
   lines in Lua. ([lua-boundary.md](design/lua-boundary.md), "Open")
 - **Types for LuaLS**: parameters are `any` unless the name says,

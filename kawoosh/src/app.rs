@@ -2757,7 +2757,7 @@ impl kui_native::App for Kawoosh {
         if let Some(rt) = &self.scripting.rt {
             rt.set_profiling(measure);
         }
-        let frame_started = self.perf.start();
+        let frame_started = self.perf.frame_start();
         let mut t = frame_started;
         self.drain_io();
         // Output a budget left behind: parsed on the next frame.
@@ -2768,15 +2768,21 @@ impl kui_native::App for Kawoosh {
         self.flush_proc_lines();
         self.sync_native(ui);
         t = self.perf.lap(Io, "processes", t);
+        // Laps of their own, each its owner's: as one `settings` lap a
+        // tab switch read 670 ms with nothing to say which part.
         self.sync_settings();
         self.fire_settings();
+        t = self.perf.lap(Io, "settings", t);
         self.sync_dirs(false);
         self.sync_cwd();
+        t = self.perf.lap(Io, "cwd", t);
         self.sync_editorconfig();
+        t = self.perf.lap(Io, "editorconfig", t);
         self.sync_probes();
         self.sync_format();
+        t = self.perf.lap(Io, "formatters", t);
         self.fire_cwd();
-        t = self.perf.lap(Io, "settings", t);
+        t = self.perf.lap(Io, "cwd", t);
         self.fire_watches();
         self.fire_du();
         t = self.perf.lap(Io, "watches", t);

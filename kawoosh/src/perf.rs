@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
-use kui_native::{Align, Min, NodeSpec, TextWrap, Ui};
+use kui_native::{Align, Min, NodeSpec, TextStyle, TextWrap, Ui};
 
 use crate::devtab::Tab;
 
@@ -108,6 +108,9 @@ pub fn span_ms(name: &'static str, m: f32) {
 pub const TAB: &str = "perf";
 /// Frames kept for the averages.
 const KEEP: usize = 120;
+/// How wide a name or a value is let be in the tab's tables, in ems of
+/// its text: about forty characters.
+const CUT_EMS: f32 = 22.0;
 /// How often the tab's readings are built again.
 const REFRESH: Duration = Duration::from_millis(250);
 /// How often the process is asked for its footprint.
@@ -144,8 +147,9 @@ impl Phases {
 #[derive(Clone, Debug, Default)]
 struct Reading {
     phases: Phases,
-    /// Each lap through `view`, by name; a name lapped twice is summed.
-    laps: Vec<(&'static str, f32)>,
+    /// Each lap through `view`, by name, and of it the time the thread
+    /// was on a CPU; a name lapped twice is summed.
+    laps: Vec<(&'static str, f32, Option<f32>)>,
     /// The plugins' time since the frame before, the input handled
     /// between them included: ms and calls.
     plugins: Vec<(String, f32, u32)>,
@@ -202,6 +206,8 @@ pub struct Perf {
     frames: VecDeque<Reading>,
     /// The frame under way.
     cur: Reading,
+    /// The thread's time on a CPU at the last lap's end, ms.
+    cpu_at: Option<f64>,
     /// The parser thread's last answer: what it took, and for how many
     /// bytes.
     pub ts_last: Option<(Duration, usize)>,
@@ -261,8 +267,42 @@ pub struct KuiSample {
 }
 
 /// A row of the breakdown: where, then avg, worst and total ms over
-/// the window, and the calls when they are counted.
-type Spent = (String, f32, f32, f32, Option<u32>);
+/// the window, and its last column.
+type Spent = (String, f32, f32, f32, Last);
+
+/// A breakdown row's last column.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Last {
+    /// Nothing counted.
+    None,
+    /// Calls, or frames drawn in.
+    Count(u32),
+    /// Of the worst frame's time, the ms the thread was on a CPU; `None`
+    /// where the platform has no reading.
+    Cpu(Option<f32>),
+}
+
+/// The UI thread's time on a CPU so far, ms — user and system, what it
+/// computed, a page fault's handling with it. A lap's wall time less
+/// this is time the thread was off a CPU: a lock waited on (another
+/// process's on `state.db`), a page read back in, the core given to
+/// another program.
+#[cfg(unix)]
+fn cpu_ms() -> Option<f64> {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `clock_gettime` fills the timespec it is given.
+    let r = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    (r == 0).then(|| ts.tv_sec as f64 * 1e3 + ts.tv_nsec as f64 / 1e6)
+}
+
+/// Windows' thread times tick every 15.6 ms: no reading worth a lap's.
+#[cfg(not(unix))]
+fn cpu_ms() -> Option<f64> {
+    None
+}
 
 impl Perf {
     /// Whether this frame is measured: the tab was on show the frame
@@ -294,16 +334,34 @@ impl Perf {
         self.on.then(Instant::now)
     }
 
-    /// The lap since `t` counted as `name` under `phase`; the next lap
-    /// starts now. Nothing when not measuring.
+    /// The clocks read for the frame's first lap, when measuring: the
+    /// wall's, returned, and the thread's time on a CPU, kept.
+    pub fn frame_start(&mut self) -> Option<Instant> {
+        let t = self.start()?;
+        self.cpu_at = cpu_ms();
+        Some(t)
+    }
+
+    /// The lap since `t` counted as `name` under `phase`, with what of
+    /// it the thread was on a CPU; the next lap starts now. Nothing
+    /// when not measuring.
     pub fn lap(&mut self, phase: Phase, name: &'static str, t: Option<Instant>) -> Option<Instant> {
         let t = t?;
         let now = Instant::now();
         let ms = (now - t).as_secs_f32() * 1e3;
+        let cpu_now = cpu_ms();
+        let cpu = match (self.cpu_at, cpu_now) {
+            (Some(a), Some(b)) => Some((b - a).max(0.0) as f32),
+            _ => None,
+        };
+        self.cpu_at = cpu_now;
         self.cur.phases.0[phase as usize] += ms;
-        match self.cur.laps.iter_mut().find(|(n, _)| *n == name) {
-            Some((_, m)) => *m += ms,
-            None => self.cur.laps.push((name, ms)),
+        match self.cur.laps.iter_mut().find(|(n, ..)| *n == name) {
+            Some((_, m, c)) => {
+                *m += ms;
+                *c = c.zip(cpu).map(|(a, b)| a + b);
+            }
+            None => self.cur.laps.push((name, ms, cpu)),
         }
         Some(now)
     }
@@ -388,8 +446,12 @@ impl Perf {
         let _ = write!(s, "] laps[");
         let mut laps = r.laps.clone();
         laps.sort_by(|a, b| b.1.total_cmp(&a.1));
-        for (i, (n, m)) in laps.iter().filter(|l| l.1 >= 0.05).take(8).enumerate() {
+        // `wall/cpu`: a lap far over its CPU time waited.
+        for (i, (n, m, c)) in laps.iter().filter(|l| l.1 >= 0.05).take(8).enumerate() {
             let _ = write!(s, "{}{n}={m:.2}", if i > 0 { "; " } else { "" });
+            if let Some(c) = c {
+                let _ = write!(s, "/{c:.2}");
+            }
         }
         let _ = write!(s, "] cause[{}]", causes.trim());
         if !r.notes.is_empty() {
@@ -450,16 +512,20 @@ impl Perf {
     /// plugins, each the most total first.
     fn breakdown(&self) -> (Vec<Spent>, Vec<Spent>) {
         let n = self.frames.len().max(1) as f32;
-        let mut systems: Vec<(&'static str, f32, f32)> = Vec::new();
+        // A system's total and worst, and the worst frame's time on a CPU.
+        let mut systems: Vec<(&'static str, f32, f32, Option<f32>)> = Vec::new();
         let mut plugins: Vec<(&str, f32, f32, u32)> = Vec::new();
         for r in &self.frames {
-            for (name, ms) in &r.laps {
+            for (name, ms, cpu) in &r.laps {
                 match systems.iter_mut().find(|(s, ..)| s == name) {
-                    Some((_, total, worst)) => {
+                    Some((_, total, worst, worst_cpu)) => {
                         *total += ms;
-                        *worst = worst.max(*ms);
+                        if *ms > *worst {
+                            *worst = *ms;
+                            *worst_cpu = *cpu;
+                        }
                     }
-                    None => systems.push((name, *ms, *ms)),
+                    None => systems.push((name, *ms, *ms, *cpu)),
                 }
             }
             for (name, ms, calls) in &r.plugins {
@@ -475,12 +541,20 @@ impl Perf {
         }
         let mut systems: Vec<Spent> = systems
             .into_iter()
-            .map(|(name, total, worst)| (name.to_string(), total / n, worst, total, None))
+            .map(|(name, total, worst, cpu)| {
+                (name.to_string(), total / n, worst, total, Last::Cpu(cpu))
+            })
             .collect();
         let mut plugins: Vec<Spent> = plugins
             .into_iter()
             .map(|(name, total, worst, calls)| {
-                (name.to_string(), total / n, worst, total, Some(calls))
+                (
+                    name.to_string(),
+                    total / n,
+                    worst,
+                    total,
+                    Last::Count(calls),
+                )
             })
             .collect();
         for list in [&mut systems, &mut plugins] {
@@ -548,11 +622,11 @@ impl Perf {
                 s.total / n,
                 s.worst,
                 s.total,
-                Some(s.drawn),
+                Last::Count(s.drawn),
             ));
             s.parts.sort_by(|a, b| b.1.total_cmp(&a.1));
             for (name, total, worst) in s.parts {
-                out.push((format!("  {name}"), total / n, worst, total, None));
+                out.push((format!("  {name}"), total / n, worst, total, Last::None));
             }
         }
         out
@@ -801,14 +875,32 @@ impl Kawoosh {
         // A row: every other one washed and a hovered one lit, so a
         // reading is found by eye across the gap; the name column grows.
         let row_spec = move |i: usize| tm.row(&pal, i);
+        // A name or a value wider than this is cut, whole on hover: a
+        // terminal running an agent titles itself with its task, and
+        // whole it took the name column past the panel's edge, the
+        // numbers beside it with it.
+        let cap = CUT_EMS * tm.text;
+        let cut = move |ui: &mut Ui<'_>, text: &str, style: TextStyle| -> bool {
+            if ui.measure_text(text, &style, None).width <= cap {
+                return false;
+            }
+            ui.text_in(
+                NodeSpec::row().width(cap).tooltip(text),
+                text,
+                style.ellipsis(),
+            );
+            true
+        };
         // The name column grows, but never below its longest name: a
         // long value beside it takes the room, not the name.
         let name_cell = move |ui: &mut Ui<'_>, name: &str| {
-            ui.text_in(
-                NodeSpec::row().grow_width().min_width(Min::FIT),
-                name,
-                dim(),
-            );
+            if !cut(ui, name, dim()) {
+                ui.text_in(
+                    NodeSpec::row().grow_width().min_width(Min::FIT),
+                    name,
+                    dim(),
+                );
+            }
         };
         // On the panel's own surface: each section a block of its own —
         // the caption its strip — with room between the blocks, as the
@@ -844,7 +936,7 @@ impl Kawoosh {
                                             ui.with(NodeSpec::row().main_align(Align::End), |ui| {
                                                 ui.text(cell, style())
                                             });
-                                        } else {
+                                        } else if !cut(ui, cell, style()) {
                                             ui.text(cell, style());
                                         }
                                     }
@@ -930,22 +1022,32 @@ impl Kawoosh {
         // and its total over the window, the most total first.
         let spent = |list: Vec<Spent>| -> Vec<Vec<String>> {
             list.into_iter()
-                .map(|(name, avg, worst, total, calls)| {
+                .map(|(name, avg, worst, total, last)| {
                     vec![
                         name,
                         format!("{avg:.3}"),
                         format!("{worst:.2}"),
                         format!("{total:.1}"),
-                        calls.map(|c| count(c as usize)).unwrap_or_default(),
+                        match last {
+                            Last::None => String::new(),
+                            Last::Count(c) => count(c as usize),
+                            Last::Cpu(Some(c)) => format!("{c:.2}"),
+                            Last::Cpu(None) => "—".into(),
+                        },
                     ]
                 })
                 .collect()
         };
         sections.push((
             format!("systems · ms, over {frames} frames"),
-            Some(vec!["system", "avg", "worst", "total", ""]),
+            Some(vec!["system", "avg", "worst", "total", "on cpu"]),
             spent(systems),
-            Some("A lap through the frame each: a system counts the plugins it calls."),
+            Some(
+                "A lap through the frame each: a system counts the plugins it calls. \
+                 `on cpu` is what of its worst frame the thread computed; a worst far \
+                 over it waited — a lock, a page read back in after the window was \
+                 away, the core given to another program — rather than worked.",
+            ),
         ));
         sections.push((
             format!("panes · ms, over {frames} frames"),
@@ -1035,7 +1137,40 @@ impl Kawoosh {
 
 #[cfg(test)]
 mod tests {
-    use super::status_footprint;
+    use super::{Last, Perf, Phase, status_footprint};
+
+    /// A lap's worst frame says what of it the thread computed: a lap
+    /// that waits (a sleep, as a lock waited on is) reads far over its
+    /// time on a CPU, one that works reads about the same.
+    #[cfg(unix)]
+    #[test]
+    fn a_laps_worst_says_what_of_it_was_on_a_cpu() {
+        let mut perf = Perf::default();
+        perf.set_on(true);
+        let started = perf.frame_start();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let t = perf.lap(Phase::Io, "waits", started);
+        let spin = std::time::Instant::now();
+        let mut x = 0u64;
+        while spin.elapsed().as_millis() < 30 {
+            x = std::hint::black_box(x.wrapping_add(1));
+        }
+        perf.lap(Phase::Io, "works", t);
+        perf.end_frame(started, Vec::new(), String::new);
+        let (systems, _) = perf.breakdown();
+        let row = |name: &str| systems.iter().find(|s| s.0 == name).cloned().unwrap();
+        let (_, _, worst, _, Last::Cpu(Some(cpu))) = row("waits") else {
+            panic!("no cpu reading: {:?}", row("waits"));
+        };
+        assert!(
+            worst >= 30.0 && cpu < 5.0,
+            "waited: {worst} ms, {cpu} on a cpu"
+        );
+        let (_, _, worst, _, Last::Cpu(Some(cpu))) = row("works") else {
+            panic!("no cpu reading: {:?}", row("works"));
+        };
+        assert!(cpu > worst * 0.5, "worked: {worst} ms, {cpu} on a cpu");
+    }
 
     #[test]
     fn the_footprint_is_the_anonymous_pages_resident_or_swapped() {
