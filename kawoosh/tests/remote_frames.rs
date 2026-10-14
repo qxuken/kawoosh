@@ -86,6 +86,7 @@ impl Fs for Slow {
             is_symlink: false,
             size: m.len(),
             modified: secs(&m),
+            ..Default::default()
         })
     }
     fn list(&self, p: &Path) -> io::Result<Vec<Entry>> {

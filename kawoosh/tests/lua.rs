@@ -2460,6 +2460,158 @@ fn a_listing_sorts_with_yazis_keys() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `:dir chmod MODE` and `:dir chown OWNER` (docs/design/dir.md
+/// Decision 1) act on the entry under the caret, or every line a
+/// visual selection covers — the entry the line tracks, so a line
+/// renamed and not written is still its file — and `!` on everything
+/// under a directory, a link there left alone. A mode that does not
+/// read changes nothing; an owner that cannot be taken is an error
+/// toast for that entry, the failure in the log. The preview says the
+/// mode and the owner.
+#[cfg(unix)]
+#[test]
+fn a_listing_sets_modes_and_owners_on_its_entries() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let dir = std::env::temp_dir().join(format!("kawoosh-modes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    for f in ["a.sh", "b.txt", "sub/c.txt"] {
+        std::fs::write(dir.join(f), f).unwrap();
+    }
+    std::os::unix::fs::symlink(dir.join("b.txt"), dir.join("sub/link")).unwrap();
+    let set = |p: &str, m: u32| {
+        std::fs::set_permissions(dir.join(p), std::fs::Permissions::from_mode(m)).unwrap()
+    };
+    let mode = |p: &str| std::fs::metadata(dir.join(p)).unwrap().permissions().mode() & 0o7777;
+    for p in ["a.sh", "b.txt", "sub/c.txt"] {
+        set(p, 0o644);
+    }
+    set("sub", 0o755);
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    let said = |app: &Kawoosh, start: &str| -> bool {
+        app.notes
+            .shown
+            .iter()
+            .any(|s| s.text.starts_with(start) && s.source.as_deref() == Some("dir"))
+    };
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.sh", "b.txt"]);
+
+    // The entry under the caret; the answer is its mode as `ls` has it.
+    d.keys(&mut app, "jj");
+    ex(&mut d, &mut app, "dir chmod u+x");
+    assert_eq!(mode("a.sh"), 0o744, "{}", app.ed.message);
+    assert!(said(&app, "a.sh: rwxr--r-- (744)"), "{:?}", app.notes.shown);
+    // The preview says it too, and the owner.
+    d.press(&mut app, "<C-p>");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let me = std::fs::metadata(dir.join("a.sh")).unwrap();
+    let user = kawoosh_systems::fs::user_name(me.uid()).unwrap_or(me.uid().to_string());
+    let texts: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.starts_with(&format!("rwxr--r--  {user}:"))),
+        "{texts:?}"
+    );
+    d.press(&mut app, "<C-p>");
+    // A mode that does not read: said, nothing changed.
+    ex(&mut d, &mut app, "dir chmod u+q");
+    assert!(
+        app.ed.message.starts_with("chmod: `u+q` is not a mode"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(mode("a.sh"), 0o744);
+
+    // Every line a visual selection covers.
+    d.keys(&mut app, "Vj");
+    ex(&mut d, &mut app, "dir chmod 600");
+    assert_eq!((mode("a.sh"), mode("b.txt")), (0o600, 0o600));
+    assert_eq!(
+        app.ed.mode(app.focused_view().unwrap()),
+        kawoosh_editor::Mode::Normal,
+        "visual mode left"
+    );
+    assert!(said(&app, "chmod 600: 2 changed"), "{:?}", app.notes.shown);
+
+    // A line renamed and not written is still its file; a line typed
+    // in is nothing on disk yet.
+    d.keys(&mut app, "Gciwrenamed");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.sh", "renamed.txt"]);
+    ex(&mut d, &mut app, "dir chmod 640");
+    assert_eq!(mode("b.txt"), 0o640);
+    d.keys(&mut app, "onew.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "dir chmod 644");
+    assert_eq!(
+        app.ed.message,
+        "not on disk until :w: write the new line first"
+    );
+    ex(&mut d, &mut app, "dir refresh!");
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.sh", "b.txt"]);
+
+    // A directory alone, then with everything under it; the link under
+    // it left alone, so b.txt, its target, keeps its 640.
+    d.keys(&mut app, "ggj");
+    ex(&mut d, &mut app, "dir chmod 750");
+    assert_eq!((mode("sub"), mode("sub/c.txt")), (0o750, 0o644));
+    ex(&mut d, &mut app, "dir chmod! go-rwx");
+    assert_eq!(
+        (mode("sub"), mode("sub/c.txt"), mode("b.txt")),
+        (0o700, 0o600, 0o640)
+    );
+    assert!(
+        said(&app, "chmod go-rwx: 2 changed"),
+        "{:?}",
+        app.notes.shown
+    );
+
+    // Owners: ours taken by number; root's refused, in a toast and the
+    // log, the entry named.
+    d.keys(&mut app, "j");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir chown {}:{}", me.uid(), me.gid()),
+    );
+    assert!(
+        said(&app, &format!("a.sh: {user}:")),
+        "{:?}",
+        app.notes.shown
+    );
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } != 0 {
+        ex(&mut d, &mut app, "dir chown 0");
+        let toast = app
+            .notes
+            .shown
+            .iter()
+            .find(|s| s.text.starts_with("1 of 1 failed: "))
+            .unwrap_or_else(|| panic!("the failure toast: {:?}", app.notes.shown));
+        assert!(toast.toast && toast.text.contains("a.sh"), "{toast:?}");
+        assert!(
+            app.notes
+                .log
+                .iter()
+                .any(|e| e.text.starts_with("chown 0: ") && e.source.as_deref() == Some("dir")),
+            "the failure in the log"
+        );
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A listing comes back with a session: filled again where it was,
 /// its entries known, writable.
 #[test]

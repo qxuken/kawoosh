@@ -46,6 +46,8 @@ impl Fs for Mirror {
             is_symlink: false,
             size: m.len(),
             modified: secs(&m),
+            mode: mode_of(&m),
+            ..Default::default()
         })
     }
     fn list(&self, p: &Path) -> io::Result<Vec<Entry>> {
@@ -83,6 +85,25 @@ impl Fs for Mirror {
     }
     fn canonicalize(&self, p: &Path) -> io::Result<PathBuf> {
         Ok(p.to_path_buf())
+    }
+    /// Its bits, as SFTP sets them; no owners, as a host that has none.
+    #[cfg(unix)]
+    fn set_mode(&self, p: &Path, mode: u32) -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(self.at(p), std::fs::Permissions::from_mode(mode))
+    }
+}
+
+fn mode_of(m: &std::fs::Metadata) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Some(m.permissions().mode() & 0o7777)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = m;
+        None
     }
 }
 
@@ -216,6 +237,54 @@ fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
         app.ed.message
     );
     assert!(app.ed.buffer_at(Path::new("nowhere:/x.txt")).is_none());
+    kawoosh_doc::fs::unregister(&name);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// `:dir chmod` in a host's listing goes through its domain — the
+/// mode read off the host's stat, changed here, set by its `set_mode`
+/// (SFTP's SETSTAT) — and `:dir chown` on a host that keeps no owners
+/// is refused for that entry, in a toast naming it.
+#[cfg(unix)]
+#[test]
+fn a_hosts_entries_take_a_mode_and_refuse_an_owner_it_has_not() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!("kawoosh-domain-modes-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.sh"), "x").unwrap();
+    std::fs::set_permissions(root.join("a.sh"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    let name = format!("mm{}", std::process::id());
+    kawoosh_doc::fs::register(&name, Arc::new(Mirror(root.clone())));
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {name}:/"));
+    until(&mut d, &mut app, "the listing", |a| {
+        focused_name(a) == format!("dir: {name}:/")
+    });
+    d.keys(&mut app, "j");
+    ex(&mut d, &mut app, "dir chmod u+x");
+    let mode = std::fs::metadata(root.join("a.sh"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(mode, 0o744, "{}", app.ed.message);
+    ex(&mut d, &mut app, "dir chown 0");
+    let toast = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.text.starts_with("1 of 1 failed: "))
+        .unwrap_or_else(|| panic!("the refusal: {:?}", app.notes.shown));
+    assert!(
+        toast.text.contains(&format!("{name}:/a.sh")) && toast.text.contains("no owners here"),
+        "{toast:?}"
+    );
     kawoosh_doc::fs::unregister(&name);
     std::fs::remove_dir_all(&root).ok();
 }

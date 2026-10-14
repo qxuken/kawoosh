@@ -75,6 +75,8 @@ const CHUNK: usize = 32 * 1024;
 #[derive(Clone, Copy, Debug, Default)]
 struct Attrs {
     size: Option<u64>,
+    uid: Option<u32>,
+    gid: Option<u32>,
     perms: Option<u32>,
     mtime: Option<u32>,
 }
@@ -121,8 +123,8 @@ impl Reader<'_> {
             a.size = Some(self.u64()?);
         }
         if flags & ATTR_UIDGID != 0 {
-            self.u32()?;
-            self.u32()?;
+            a.uid = Some(self.u32()?);
+            a.gid = Some(self.u32()?);
         }
         if flags & ATTR_PERMISSIONS != 0 {
             a.perms = Some(self.u32()?);
@@ -705,6 +707,9 @@ fn stat_of(link: Attrs, target: Attrs) -> Stat {
         is_symlink: link.kind() == S_IFLNK,
         size: target.size.unwrap_or(0),
         modified: target.mtime.map(u64::from),
+        mode: target.perms.map(|p| p & 0o7777),
+        uid: target.uid,
+        gid: target.gid,
     }
 }
 
@@ -955,6 +960,46 @@ impl Fs for Sftp {
         self.status(SETSTAT, &body)
     }
 
+    /// By number only: SFTP's SETSTAT takes a uid and a gid, and the
+    /// protocol has no word for a name — a name is refused with the
+    /// numbers to give instead. The half not given is the file's own.
+    fn chown(&self, path: &Path, owner: &kawoosh_doc::perms::Owner) -> io::Result<()> {
+        let number = |what: &str, s: &Option<String>| -> io::Result<Option<u32>> {
+            match s {
+                None => Ok(None),
+                Some(s) => s.parse().map(Some).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!("SFTP sets {what}s by number, not by name: `{s}`"),
+                    )
+                }),
+            }
+        };
+        if owner.login_group {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "SFTP knows no login groups: give OWNER:GROUP by number",
+            ));
+        }
+        let (uid, gid) = (
+            number("owner", &owner.user)?,
+            number("group", &owner.group)?,
+        );
+        let now = self.attrs_of(STAT, path)?;
+        let (Some(uid), Some(gid)) = (uid.or(now.uid), gid.or(now.gid)) else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the host says no owner",
+            ));
+        };
+        let mut body = Vec::new();
+        put_bytes(&mut body, &wire(path));
+        put_u32(&mut body, ATTR_UIDGID);
+        put_u32(&mut body, uid);
+        put_u32(&mut body, gid);
+        self.status(SETSTAT, &body)
+    }
+
     fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         let (t, b) = self.path_call(REALPATH, path)?;
         if t != NAME {
@@ -1083,6 +1128,49 @@ mod tests {
         assert_eq!(s("/a.rs"), "/.a.rs.kawoosh~");
         assert_eq!(s("~/a.rs"), "~/.a.rs.kawoosh~");
         assert_eq!(s("a.rs"), ".a.rs.kawoosh~");
+    }
+
+    /// A mode by SETSTAT, read and changed here; an owner by number —
+    /// ours taken, root's refused by the server — and a name refused
+    /// before anything is sent, with the numbers to give instead.
+    #[cfg(unix)]
+    #[test]
+    fn modes_and_owners_by_setstat() {
+        use kawoosh_doc::perms::{ModeChange, Owner};
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let Some(cmd) = server() else {
+            eprintln!("no sftp-server here: skipped");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("kawoosh-sftp-modes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::fs::canonicalize(&dir).unwrap();
+        let f = dir.join("a.sh");
+        std::fs::write(&f, "x").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let s = Sftp::spawn(cmd).unwrap();
+        let st = s.stat(&f).unwrap();
+        let me = std::fs::metadata(&f).unwrap();
+        assert_eq!(
+            (st.mode, st.uid, st.gid),
+            (Some(0o644), Some(me.uid()), Some(me.gid()))
+        );
+        s.chmod(&f, &ModeChange::parse("u+x,go-r").unwrap())
+            .unwrap();
+        assert_eq!(
+            std::fs::metadata(&f).unwrap().permissions().mode() & 0o7777,
+            0o700
+        );
+        s.chown(&f, &Owner::parse(&format!("{}", me.uid())).unwrap())
+            .unwrap();
+        let named = s.chown(&f, &Owner::parse("someone").unwrap()).unwrap_err();
+        assert!(named.to_string().contains("by number"), "{named}");
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(s.chown(&f, &Owner::parse("0:0").unwrap()).is_err());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
