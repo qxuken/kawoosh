@@ -971,7 +971,7 @@ mod tests {
             vec![(p.dir(&root), p.clone())],
             "a record from before versions were kept still reads"
         );
-        remove(&root, &p).unwrap();
+        remove(&root, &p, Kind::Server).unwrap();
         assert_eq!(find_in(&root, "yaml-language-server"), None);
         let _ = std::fs::remove_dir_all(&root);
     }
