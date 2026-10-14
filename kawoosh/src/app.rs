@@ -972,6 +972,7 @@ impl Kawoosh {
                     self.searched(token, root, result);
                 }
                 IoMsg::Sized { walk, batch } => self.sized(walk, batch),
+                IoMsg::PromptListed { dir, entries } => self.prompt_listed(dir, entries),
                 IoMsg::Walked { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {

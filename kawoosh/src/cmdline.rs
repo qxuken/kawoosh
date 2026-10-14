@@ -28,14 +28,26 @@ use std::rc::Rc;
 
 use kawoosh_editor::commands::set_value;
 use kawoosh_editor::{ArgKind, Mode, Prompt, Selection, Selections, Spec};
+use kawoosh_systems::io::IoMsg;
 
 use crate::commands::{ShellCommand, cmd};
 
 use crate::app::Kawoosh;
 
-/// Each directory a `:` path was completed from and what it held, or
-/// None when it could not be read; kept while the prompt is open.
-pub(crate) type Listed = RefCell<HashMap<PathBuf, Option<Rc<Vec<kawoosh_doc::fs::Entry>>>>>;
+/// Each directory a `:` path was completed from and what it held; kept
+/// while the prompt is open.
+pub(crate) type Listed = RefCell<HashMap<PathBuf, Dir>>;
+
+/// A directory the `:` prompt completes from.
+#[derive(Clone)]
+pub(crate) enum Dir {
+    /// A host's, its listing out on a job: a host over the wire, or one
+    /// as small as OpenWrt's listing in a fork or three an entry, is not
+    /// waited on at a key.
+    Asked,
+    /// What it held, or None when it could not be read.
+    Read(Option<Rc<Vec<kawoosh_doc::fs::Entry>>>),
+}
 
 /// What the command line is completing: the token from `start` to the
 /// caret at `at`, the candidates for it, `index` the current one.
@@ -384,14 +396,25 @@ impl Kawoosh {
         };
         // Listed once while the prompt is open, not at every key: a
         // path typed through `$TMPDIR` or `node_modules` stats each of
-        // thousands of entries, on a host over the wire.
-        let entries = self
+        // thousands of entries, on a host over the wire. A host's on a
+        // job, the candidates there when it lands (`prompt_listed`).
+        let listed = self
             .cmd_dirs
             .borrow_mut()
             .entry(dir.clone())
-            .or_insert_with(|| kawoosh_systems::fs::list(&dir).ok().map(Rc::new))
+            .or_insert_with(|| {
+                if !host || self.jobs_inline {
+                    return Dir::Read(kawoosh_systems::fs::list(&dir).ok().map(Rc::new));
+                }
+                let at = dir.clone();
+                self.io.run("prompt list", move || IoMsg::PromptListed {
+                    entries: kawoosh_systems::fs::list(&at).ok(),
+                    dir: at,
+                });
+                Dir::Asked
+            })
             .clone();
-        let Some(entries) = entries else {
+        let Dir::Read(Some(entries)) = listed else {
             return Vec::new();
         };
         entries
@@ -521,6 +544,21 @@ impl Kawoosh {
             candidates,
             index,
         });
+    }
+
+    /// A host's directory listed for the prompt: kept, and the line
+    /// completed again with it — unless the prompt it was asked for has
+    /// closed since, which cleared what it asked.
+    pub(crate) fn prompt_listed(
+        &mut self,
+        dir: PathBuf,
+        entries: Option<Vec<kawoosh_doc::fs::Entry>>,
+    ) {
+        match self.cmd_dirs.get_mut().get_mut(&dir) {
+            Some(d @ Dir::Asked) => *d = Dir::Read(entries.map(Rc::new)),
+            _ => return,
+        }
+        self.cmdline_refresh();
     }
 }
 
