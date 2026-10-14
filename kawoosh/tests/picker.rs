@@ -178,6 +178,57 @@ fn files_are_walked_filtered_and_opened() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Asked 2026-10-14: "file search should fuzzy find with spaces like
+/// (carnet main should match roles/carnet/tasks/main.yml)". A space in
+/// the query splits it into terms, each matched anywhere in the path
+/// and in any order, every one lit; the file whose name the term spells
+/// whole comes first.
+#[test]
+fn a_space_in_the_query_splits_it_into_terms() {
+    let _serial = serial();
+    let dir = project("terms");
+    for f in [
+        "roles/carnet/tasks/main.yml",
+        "roles/carnet/tasks/maintenance.yml",
+        "roles/carnet/templates/domain.conf.j2",
+        "roles/mailer/tasks/main.yml",
+    ] {
+        let p = dir.join(f);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "- x\n").unwrap();
+    }
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    d.keys(&mut app, "carnet main");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(
+        r.first(),
+        Some(&native("roles/carnet/tasks/main.yml")),
+        "{r:?}"
+    );
+    assert_eq!(r.len(), 3, "the mailer's main.yml has no `carnet`: {r:?}");
+    lua(
+        &mut app,
+        r#"local s = kawoosh.picker.state()
+           assert(#s.positions == 10, "both terms lit: " .. #s.positions)
+           assert(s.positions[1] == 7 and s.positions[7] == 20, table.concat(s.positions, ","))"#,
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        focused_path(&app),
+        Some(dir.join("roles/carnet/tasks/main.yml"))
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `:<Esc>` leaves the prompt open in normal mode, where the leader's
 /// maps run: `<leader>f` from there takes the keyboard to the picker,
 /// and the prompt, whose pane the keyboard left, is gone with it —

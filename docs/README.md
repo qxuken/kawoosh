@@ -93,6 +93,8 @@ commits; 70 integration test files and 31 Lua test scripts.
 - [marks.md](design/marks.md): the outline, marks, folds.
 - [memory.md](design/memory.md): what was yanked, deleted and visited,
   kept.
+- [matching.md](design/matching.md): the pickers' fuzzy matching, a
+  space splitting the query into terms.
 
 ### Code
 

@@ -106,12 +106,14 @@ to connect, group or move several things.
 | `<C-a>` | select everything |
 | `u` · `<C-r>` | undo · redo |
 | `=` · `0` · `+` `_` · `zz` | fit everything in view · 100% · zoom in, out · centre on the selection |
+| {{mac:`⌘=` `⌘-` · `⌘0`}}{{pc:`<C-=>` `<C-->` · `<C-0>`}} | zoom in, out · 100% — in a diagram these zoom the drawing, not the text size they change everywhere else |
+| `g h` `g j` `g k` `g l` | pan the view left, down, up, right by a quarter of it (`3gl` three times as far) |
 | `<Tab>` | the text |
 
 `:`, `<leader>` and `<C-w>` work as everywhere else. Every key is a
 command you can also type: `:diagram shape cylinder`, `:diagram color
 blue`, `:diagram label Payments`, `:diagram heads both`, `:diagram add
-down`, `:diagram box 10 4`, `:diagram zoom 2`.
+down`, `:diagram box 10 4`, `:diagram zoom 2`, `:diagram pan right`.
 
 ## Sharing it
 

@@ -674,3 +674,126 @@ fn ctrl_hjkl_walk_every_thing_and_ctrl_o_goes_out_to_the_group() {
     assert_eq!(app.ed.message, "in no group");
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+/// Asked 2026-10-14: "diagram `<D--/->` should map to a frame resize,
+/// not font change. maybe `g-h/j/k/l` should pan around." In a diagram
+/// ⌘= and ⌘- (⌘+ ⌘_, Ctrl where there is no ⌘) zoom the canvas — the
+/// view of the drawing — as ⌘ and the wheel over it do, and ⌘0 is 100%;
+/// the pane's font is left alone, and the text under the drawing still
+/// takes them as the font's. `g h` `g j` `g k` `g l` pan the view, a
+/// count for more.
+#[test]
+fn cmd_minus_and_equals_zoom_the_canvas_and_g_hjkl_pan() {
+    let path = file("zoomkeys", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let v = app.focused_view().unwrap();
+    let pane = app.layout.focused();
+    let font = app.face_of(pane).face.size;
+    let m = if cfg!(target_os = "macos") { "D" } else { "C" };
+    let zoom = |app: &Kawoosh| app.canvas.views[&v].zoom;
+    let z0 = zoom(&app);
+
+    d.press(&mut app, &format!("<{m}-=>"));
+    d.frame(&mut app);
+    assert!(
+        (zoom(&app) - z0 * 1.25).abs() < 1e-3,
+        "zoomed in: {z0} → {}",
+        zoom(&app)
+    );
+    assert_eq!(
+        app.face_of(pane).face.size,
+        font,
+        "the pane's font left alone"
+    );
+    d.press(&mut app, &format!("<{m}-->"));
+    d.press(&mut app, &format!("<{m}-->"));
+    d.frame(&mut app);
+    assert!(
+        (zoom(&app) - z0 * 0.8).abs() < 1e-3,
+        "zoomed out: {z0} → {}",
+        zoom(&app)
+    );
+    d.press(&mut app, &format!("<{m}-+>"));
+    d.press(&mut app, &format!("<{m}-_>"));
+    d.frame(&mut app);
+    assert!(
+        (zoom(&app) - z0 * 0.8).abs() < 1e-3,
+        "+ and _ too: {}",
+        zoom(&app)
+    );
+    d.press(&mut app, &format!("<{m}-0>"));
+    d.frame(&mut app);
+    assert!((zoom(&app) - 1.0).abs() < 1e-3, "100%: {}", zoom(&app));
+    assert_eq!(app.face_of(pane).face.size, font);
+
+    // `g l` looks further right: the drawing moves left, not down; `g h`
+    // back. `g j` looks down; a count is that much more.
+    let a = at(&app, 0.0, 0.0);
+    d.keys(&mut app, "gl");
+    d.frame(&mut app);
+    let b = at(&app, 0.0, 0.0);
+    let step = a.x - b.x;
+    assert!(step > 50.0, "{a:?} → {b:?}");
+    assert_eq!(a.y, b.y);
+    d.keys(&mut app, "gh");
+    d.frame(&mut app);
+    assert_eq!(at(&app, 0.0, 0.0), a, "back");
+    d.keys(&mut app, "gj");
+    d.frame(&mut app);
+    let down = a.y - at(&app, 0.0, 0.0).y;
+    assert!(down > 30.0, "{down}");
+    d.keys(&mut app, "gk");
+    d.frame(&mut app);
+    assert_eq!(at(&app, 0.0, 0.0), a, "back");
+    d.keys(&mut app, "2gl");
+    d.frame(&mut app);
+    assert!(
+        (a.x - at(&app, 0.0, 0.0).x - 2.0 * step).abs() < 0.5,
+        "a count"
+    );
+    assert_eq!(
+        app.canvas.views[&v].sel,
+        Vec::<usize>::new(),
+        "nothing selected by a pan"
+    );
+    d.keys(&mut app, "2gh");
+    d.frame(&mut app);
+    assert_eq!(at(&app, 0.0, 0.0), a, "back");
+
+    // The toolbar has them, their keys beside them; so has the menu.
+    d.press(&mut app, "<A-/>");
+    d.frame(&mut app);
+    let r = d.rect("diagram zoom in").expect("the toolbar's zoom in");
+    d.click(&mut app, r.x + r.w / 2.0, r.y + r.h / 2.0);
+    assert!((zoom(&app) - 1.25).abs() < 1e-3, "{}", zoom(&app));
+    let t = d.texts_under("diagram zoom in");
+    let key = if cfg!(target_os = "macos") {
+        "⌘="
+    } else {
+        "Ctrl+="
+    };
+    assert!(t.iter().any(|s| s == key), "{t:?}");
+    d.press(&mut app, "<A-/>");
+    let e = at(&app, 2.2, 8.3);
+    d.button_click(&mut app, e.x, e.y, kui_native::MouseButton::Secondary);
+    let rows = menu_labels(&d);
+    for r in ["Zoom In", "Zoom Out"] {
+        assert!(rows.iter().any(|x| x == r), "{r} in {rows:?}");
+    }
+    choose(&mut d, &mut app, &["Zoom Out"]);
+    assert!((zoom(&app) - 1.0).abs() < 1e-3, "{}", zoom(&app));
+
+    // The text under the drawing: the keys are the font's again.
+    d.press(&mut app, "<Tab>");
+    d.frame(&mut app);
+    assert!(!app.diagram_drawn(v));
+    d.press(&mut app, &format!("<{m}-=>"));
+    d.frame(&mut app);
+    assert_eq!(
+        app.face_of(pane).face.size,
+        font + 1.0,
+        "the font, in the text"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}

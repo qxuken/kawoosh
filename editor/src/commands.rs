@@ -6089,9 +6089,29 @@ pub fn default_keymap(km: &mut Keymap) {
         ("+", "diagram zoom in"),
         ("_", "diagram zoom out"),
         ("zz", "diagram center"),
+        // Pan: the view a quarter of itself that way, a count for more.
+        // `g` is a prefix in pane mode already (`gg`, `gt`).
+        ("gh", "diagram pan left"),
+        ("gj", "diagram pan down"),
+        ("gk", "diagram pan up"),
+        ("gl", "diagram pan right"),
         ("<Tab>", "diagram toggle"),
     ] {
         km.bind_local("diagram", Pane, k, c, &[]);
+    }
+    // ⌘= ⌘- over a diagram zoom the drawing, not the pane's font — the
+    // view of it, as ⌘ and the wheel over it do — and ⌘0 is 100%; Ctrl
+    // where there is no ⌘, as the font's keys below (diagrams.md
+    // Decision 11). The text under the drawing keeps the font's.
+    let m = if cfg!(target_os = "macos") { "D" } else { "C" };
+    for (k, c) in [
+        ("=", "diagram zoom in"),
+        ("+", "diagram zoom in"),
+        ("-", "diagram zoom out"),
+        ("_", "diagram zoom out"),
+        ("0", "diagram zoom 1"),
+    ] {
+        km.bind_local("diagram", Pane, &format!("<{m}-{k}>"), c, &[]);
     }
     let i = [
         ("<Esc>", "normal"),

@@ -17,7 +17,9 @@
 -- pick = fn }` or `picker.source("mine", def)` and `picker.open("mine")`
 -- — or in parts, `picker.rows(ctx, hits, opts)` drawing a list into
 -- its own view and `picker.spans(text, positions)` lighting a match.
--- Matching is `kawoosh.matcher` (fzy's scoring, in Rust), the
+-- Matching is `kawoosh.matcher` (fzy's scoring, in Rust; a space
+-- splits the query into terms matched in any order, `carnet main`
+-- finding `roles/carnet/tasks/main.yml`, docs/design/matching.md), the
 -- ranking Lua's: `picker.rank(item, hit)` is the score plus the item's
 -- `boost`, and a config replaces it; an open buffer and a file
 -- attended before are boosted by the memory's rank (memory.md D8,
