@@ -86,9 +86,15 @@ impl Fs for Mirror {
     }
 }
 
+/// `line` run at the `:` prompt, put on it whole: typed a key at a time,
+/// the prompt lists every directory a host path passes through for its
+/// completion — inline here (`jobs_inline`) — and the temp folder's
+/// parent can hold tens of thousands of entries, a few forks each on a
+/// host without `stat`. Off the tests a host's listing is a job's
+/// (`a_hosts_path_completes_off_the_ui_thread`).
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
-    d.keys(app, line);
+    app.ed.set_prompt_text(line);
     d.key(app, "enter", KeyMods::default());
     d.frame(app);
 }
@@ -416,6 +422,53 @@ fn a_host_with_no_sftp_or_base64_still_connects() {
         format!("none|{name}"),
         "the terminal ran, the CLI's variables left out"
     );
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// A host's path at the `:` prompt completes from a listing on a job:
+/// the key returns at once, the candidates there when it lands. Typed
+/// through a crowded directory on a slow host the editor had waited at
+/// each key — through `$TMPDIR`'s parent, sixty thousand entries on a
+/// host without `stat`, for minutes (found 2026-10-14 as this file's
+/// small-host test hanging).
+#[test]
+fn a_hosts_path_completes_off_the_ui_thread() {
+    if !cfg!(unix) {
+        eprintln!("the stand-in ssh is a unix script: skipped");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("kawoosh-complete-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    std::fs::create_dir_all(root.join("proj")).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let (home, proj) = (root.join("home"), root.join("proj"));
+    std::fs::write(home.join(".fake-ssh-small"), "").unwrap();
+    std::fs::write(proj.join("a.txt"), "x\n").unwrap();
+    let name = format!("c{}", std::process::id());
+    let (mut d, mut app) = ssh_app(&name, &home.display().to_string());
+    let file = format!("{name}:{}/a.txt", proj.display());
+    ex(&mut d, &mut app, &format!("e {file}"));
+    until(&mut d, &mut app, "connected and opened", |a| {
+        a.ed.buffer_at(Path::new(&file)).is_some()
+    });
+    app.jobs_inline = false;
+    d.keys(&mut app, ":");
+    app.ed
+        .set_prompt_text(&format!("e {name}:{}/", proj.display()));
+    d.keys(&mut app, "a");
+    let candidates = |a: &Kawoosh| {
+        a.cmd_completion
+            .as_ref()
+            .map(|c| c.candidates.clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(candidates(&app), Vec::<String>::new(), "not waited on");
+    until(&mut d, &mut app, "the listing landed", |a| {
+        candidates(a) == [format!("{name}:{}/a.txt", proj.display())]
+    });
+    d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, &format!("domain disconnect {name}"));
     std::fs::remove_dir_all(&root).ok();
 }

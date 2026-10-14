@@ -64,6 +64,13 @@ pub enum IoMsg {
         token: u64,
         result: Result<Vec<crate::fs::Entry>, String>,
     },
+    /// A host's directory listed on a thread of its own for the `:`
+    /// prompt's path completion (`cmdline.rs`): the directory, and its
+    /// entries or None when it could not be read.
+    PromptListed {
+        dir: std::path::PathBuf,
+        entries: Option<Vec<crate::fs::Entry>>,
+    },
     /// A tree walked on a thread of its own for a plugin
     /// (`kawoosh.fs.walk(root, fn)`): the job's token, and the files
     /// under the root, relative to it, or why not.

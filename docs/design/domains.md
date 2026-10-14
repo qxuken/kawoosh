@@ -748,7 +748,12 @@ that), the same for the WSL distro. What they showed:
   it is open; a save makes its directory only when the write says it
   is missing; the pool keeps a host's workspace roots. What the frame
   still waits for on a host: a stat for a listing, a stat and a head
-  for a file opened (`a_host_is_asked_little_on_the_frame`).
+  for a file opened (`a_host_is_asked_little_on_the_frame`). Not the
+  `:` prompt's completion (2026-10-14): a host's directory is listed
+  on a job, its candidates there when it lands — typed through a
+  crowded directory on a host without `stat`, sixty thousand entries
+  at a few forks each, the window had waited minutes at a key
+  (`a_hosts_path_completes_off_the_ui_thread`).
 - **The host walks itself.** One process: `git ls-files -co
   --exclude-standard` in a repository, else `find` with the SFTP
   walk's rules; the listings only where neither runs. A distro too,
