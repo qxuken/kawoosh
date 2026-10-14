@@ -116,6 +116,21 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     );
     leave(&mut d, &mut app);
 
+    // From visual mode the line starts `'<,'>` (substitute.md Decision
+    // 2), and the command after it completes as on a line of its own.
+    d.keys(&mut app, "v:ali");
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "'<,'>ali");
+    let ghost = app.cmdline_ghost().unwrap_or_default();
+    assert!(ghost.starts_with("gn"), "{ghost:?}");
+    tab(&mut d, &mut app);
+    assert_eq!(
+        app.ed.prompt_text().unwrap_or_default(),
+        format!("'<,'>ali{ghost}")
+    );
+    leave(&mut d, &mut app);
+    d.press(&mut app, "<Esc>");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+
     // A path: the directory's entries, hidden ones only asked for; one
     // candidate taken goes on into what it opens. After the command's
     // word, before a letter, the first is suggested and the row is up.

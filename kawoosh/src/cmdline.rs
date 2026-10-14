@@ -101,6 +101,13 @@ impl Kawoosh {
     /// The token the command line is on and its candidates: command
     /// names for the first word, what the command takes after it.
     pub(crate) fn cmd_candidates(&mut self, line: &str) -> (usize, Vec<String>) {
+        // The selections' range visual mode's `:` puts: the command
+        // after it is completed as one on a line of its own.
+        const SELECTIONS: &str = "'<,'>";
+        if let Some(rest) = line.strip_prefix(SELECTIONS) {
+            let (at, found) = self.cmd_candidates(rest);
+            return (at + SELECTIONS.len(), found);
+        }
         let start = token_start(line);
         let token = &line[start..];
         if start == 0 {

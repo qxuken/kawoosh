@@ -307,7 +307,7 @@ pub fn count_on(text: &Buffer, re: &Regex, threads: usize) -> usize {
 
 /// The byte after the next newline at or after `from`, or the text's
 /// length: where the line holding `from` ends.
-fn line_end(text: &Buffer, from: usize) -> usize {
+pub(crate) fn line_end(text: &Buffer, from: usize) -> usize {
     let len = text.len();
     let mut at = from;
     while let Some((start, span)) = text.span_at(at) {

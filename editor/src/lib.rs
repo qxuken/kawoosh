@@ -3704,6 +3704,14 @@ impl Editor {
             self.run(view, "substitute", &args, None);
             return;
         }
+        // `'<,'>` before any other command: the selections, which every
+        // command acts on already (what `:` from visual mode puts).
+        // The range alone is nothing to run.
+        let line = match line.strip_prefix("'<,'>") {
+            Some(rest) if rest.trim().is_empty() => return,
+            Some(rest) => rest.trim_start(),
+            None => line,
+        };
         // `:!CMD`: the rest a shell line, whole, as vim's.
         if let Some(cmd) = line.strip_prefix('!') {
             self.run(view, "shell", &[cmd.trim().to_string()], None);

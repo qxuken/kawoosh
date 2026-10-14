@@ -1122,6 +1122,54 @@ fn substitute_keeps_every_caret_where_its_text_went() {
     assert_eq!(t.ed.views[t.v].sels.primary, 2);
 }
 
+/// From visual mode `:` puts `'<,'>` on the line, and `'<,'>` is the
+/// selections as they are: `v`'s characters — a match only when it lies
+/// inside one, each its own place for the first-match rule — and `V`'s
+/// lines. Before any other command `'<,'>` is dropped: they act on the
+/// selections already.
+#[test]
+fn substitute_from_visual_mode_is_over_the_selection() {
+    let mut t = T::new("foo foo foo\nfoo foo\n");
+    t.keys("wve:");
+    assert_eq!(t.cmdline(), "'<,'>");
+    t.keys("s/foo/X/<CR>");
+    assert_eq!(
+        t.text(),
+        "foo X foo\nfoo foo\n",
+        "the `foo` selected, not the line's first"
+    );
+    // Over two lines, from the second `foo` to the `f` of the last: the
+    // first in it on each line, then with `g` every one wholly inside.
+    t.keys("ugg0wvj:s/foo/X/<CR>");
+    assert_eq!(t.text(), "foo X foo\nX foo\n");
+    t.keys("ugg0wvj:s/foo/X/g<CR>");
+    assert_eq!(t.text(), "foo X X\nX foo\n", "the last `foo` is not inside");
+    // Part of a match is no match.
+    t.keys("ugg0vl:s/foo/X/<CR>");
+    assert_eq!(t.text(), "foo foo foo\nfoo foo\n");
+    assert_eq!(t.ed.message, "no match: foo");
+    // `V`: the lines.
+    t.keys("<Esc>ggVj:s/foo/X/<CR>");
+    assert_eq!(t.text(), "X foo foo\nX foo\n");
+    // The line erased of its range: the lines the selection touches.
+    t.keys("ugg0wve:<C-u>s/foo/X/<CR>");
+    assert_eq!(t.text(), "X foo foo\nfoo foo\n");
+
+    // `<C-n>`'s selections on the second `foo` and the next: exactly
+    // those (the todo's "replace across multicursor").
+    let mut t = T::new("foo x foo\nfoo y\nfoo z\n");
+    t.keys("ww<C-n><C-n>");
+    assert_eq!(t.sels(), vec![(6, 8), (10, 12)]);
+    t.keys(":s/foo/bar/<CR>");
+    assert_eq!(t.text(), "foo x bar\nbar y\nfoo z\n");
+
+    // Another command: the range dropped, the selections its own.
+    let mut t = T::new("ab ab\nab\n");
+    t.keys("vj$:select within b<CR>");
+    assert_eq!(t.ed.message, "");
+    assert_eq!(t.sels().len(), 3);
+}
+
 #[test]
 fn indent_and_change_line() {
     let mut t = T::new("a\nb");

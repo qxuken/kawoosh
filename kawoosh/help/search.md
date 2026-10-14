@@ -36,7 +36,12 @@ the lines the selections touch when there is no range.
 | none | each line a selection touches |
 | `%` | the whole buffer |
 | `N,M` | lines N to M; `.` is the current line, `$` the last, `+N` `-N` relative |
-| `'<,'>` | the lines the selections cover |
+| `'<,'>` | the selections: `V`'s lines, `v`'s characters (a match only inside one), a caret's line |
+
+`:` in visual mode starts the line with `'<,'>`, so `vi(:s/a/b/g`
+replaces inside the parentheses and nowhere else, and with several
+selections (`<C-n>`) only in those. Before any other command the
+`'<,'>` is dropped: every command acts on the selections already.
 
 The flag `g` replaces every match on a line, not just the first; `i`
 ignores case. In the replacement, `&` is the whole match, `\1`…`\9`
