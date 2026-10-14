@@ -313,6 +313,51 @@ fn perf_is_a_tab_of_readings() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A pane named at length — an agent's terminal titles itself with
+/// its whole task — is cut in the Perf tab's tables, with the name
+/// whole on hover: whole, the name column took the width and the
+/// numbers beside it went out of the panel (reported 2026-10-14).
+#[test]
+fn a_long_pane_name_is_cut_in_the_perf_tab() {
+    let long = format!(
+        "agent {}",
+        "investigating the status line's spikes ".repeat(6)
+    );
+    let mut app = Kawoosh::new(&long, DOC);
+    let mut d = Drive::new(900.0, 600.0);
+    d.frame(&mut app);
+    d.keys(&mut app, ":perf");
+    d.key(&mut app, "enter", KeyMods::default());
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    let nodes = d.core.nodes();
+    let with = |pred: &dyn Fn(&str) -> bool| -> Vec<kui_native::Rect> {
+        nodes
+            .iter()
+            .filter(|n| n.text.as_deref().is_some_and(pred))
+            .map(|n| n.rect)
+            .collect()
+    };
+    // In the panel: from its first caption's left edge (the pane's own
+    // title bar has the name too).
+    let panel = with(&|t| t.starts_with("frame · view"))[0];
+    let names: Vec<_> = with(&|t| t.contains("investigating the status line"))
+        .into_iter()
+        .filter(|r| r.x >= panel.x - 1.0)
+        .collect();
+    assert!(
+        names.len() >= 2,
+        "the pane's row and the focused buffer: {names:?}"
+    );
+    for r in &names {
+        assert!(r.w <= 900.0 * 0.5, "cut: {r:?}");
+    }
+    for h in with(&|t| t == "worst" || t == "total") {
+        assert!(h.x + h.w <= 900.0, "the numbers in the panel: {h:?}");
+    }
+}
+
 /// The Perf and Frames tabs measure only while on show: closed, no
 /// phase is timed, no plugin, no frame ledgered, kui's trace off.
 /// Open, Perf breaks the frame down by system and by plugin.

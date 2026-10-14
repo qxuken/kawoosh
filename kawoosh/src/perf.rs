@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
-use kui_native::{Align, Min, NodeSpec, TextWrap, Ui};
+use kui_native::{Align, Min, NodeSpec, TextStyle, TextWrap, Ui};
 
 use crate::devtab::Tab;
 
@@ -108,6 +108,9 @@ pub fn span_ms(name: &'static str, m: f32) {
 pub const TAB: &str = "perf";
 /// Frames kept for the averages.
 const KEEP: usize = 120;
+/// How wide a name or a value is let be in the tab's tables, in ems of
+/// its text: about forty characters.
+const CUT_EMS: f32 = 22.0;
 /// How often the tab's readings are built again.
 const REFRESH: Duration = Duration::from_millis(250);
 /// How often the process is asked for its footprint.
@@ -872,14 +875,32 @@ impl Kawoosh {
         // A row: every other one washed and a hovered one lit, so a
         // reading is found by eye across the gap; the name column grows.
         let row_spec = move |i: usize| tm.row(&pal, i);
+        // A name or a value wider than this is cut, whole on hover: a
+        // terminal running an agent titles itself with its task, and
+        // whole it took the name column past the panel's edge, the
+        // numbers beside it with it.
+        let cap = CUT_EMS * tm.text;
+        let cut = move |ui: &mut Ui<'_>, text: &str, style: TextStyle| -> bool {
+            if ui.measure_text(text, &style, None).width <= cap {
+                return false;
+            }
+            ui.text_in(
+                NodeSpec::row().width(cap).tooltip(text),
+                text,
+                style.ellipsis(),
+            );
+            true
+        };
         // The name column grows, but never below its longest name: a
         // long value beside it takes the room, not the name.
         let name_cell = move |ui: &mut Ui<'_>, name: &str| {
-            ui.text_in(
-                NodeSpec::row().grow_width().min_width(Min::FIT),
-                name,
-                dim(),
-            );
+            if !cut(ui, name, dim()) {
+                ui.text_in(
+                    NodeSpec::row().grow_width().min_width(Min::FIT),
+                    name,
+                    dim(),
+                );
+            }
         };
         // On the panel's own surface: each section a block of its own —
         // the caption its strip — with room between the blocks, as the
@@ -915,7 +936,7 @@ impl Kawoosh {
                                             ui.with(NodeSpec::row().main_align(Align::End), |ui| {
                                                 ui.text(cell, style())
                                             });
-                                        } else {
+                                        } else if !cut(ui, cell, style()) {
                                             ui.text(cell, style());
                                         }
                                     }
