@@ -55,6 +55,8 @@ commits; 70 integration test files and 31 Lua test scripts.
   buffer, a language.
 - [selections.md](design/selections.md): helix's selections by a
   pattern.
+- [substitute.md](design/substitute.md): `:s` previewed as it is
+  typed, over the selection, with many carets.
 - [pairs.md](design/pairs.md): auto-closing brackets.
 - [comments.md](design/comments.md): `gc`, `gcc`, `gb`.
 - [indent.md](design/indent.md): indentation from the syntax tree.
