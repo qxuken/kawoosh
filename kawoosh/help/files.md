@@ -67,8 +67,10 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `<C-w>/` | the listed directory again, in a pane beside (`:dir here`) — two listings to browse side by side, each moving on alone |
 | `gz` | jump to a directory you use often ([directory jumps](#directory-jumps), zoxide's): the pick is listed here |
 
-Directories are always listed before files, and the sort is remembered
-per directory. Because `m` sorts in a listing, it does not set a
+Directories are always listed before files. The sort you choose is
+remembered for that directory, and a directory you have not sorted is
+listed in the order you chose last — by name until you choose one.
+Both are kept when kawoosh restarts. Because `m` sorts in a listing, it does not set a
 [mark](search.md#marks) there.
 
 A listing updates by itself when something else changes the directory,

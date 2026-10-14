@@ -2460,6 +2460,68 @@ fn a_listing_sorts_with_yazis_keys() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A listing's order is remembered per directory, and a directory with
+/// none of its own takes the order chosen last anywhere — both past a
+/// restart, kept in the state db (docs/design/dir.md Decision 2).
+#[test]
+fn a_listing_s_order_is_its_own_else_the_last_chosen_and_outlasts_a_restart() {
+    let root = std::env::temp_dir().join(format!("kawoosh-sortkept-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (d, files) in [
+        ("a", vec![("a.txt", "aaa"), ("b.txt", "b")]),
+        ("b", vec![("x.txt", "x"), ("y.txt", "yyy"), ("z.txt", "zz")]),
+        ("c", vec![("p.txt", "p"), ("q.txt", "q")]),
+    ] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+        for (f, text) in files {
+            std::fs::write(root.join(d).join(f), text).unwrap();
+        }
+    }
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let db = root.join("state.db");
+    let open = |d: &mut Drive, app: &mut Kawoosh, sub: &str| {
+        ex(d, app, &format!("dir {}", root.join(sub).display()));
+        d.line_rows()
+    };
+    {
+        let mut d = Drive::new(900.0, 500.0);
+        let mut app = app_with_lua(&mut d, "t", "");
+        app.open_store(Some(&db));
+        d.frame(&mut app);
+        assert_eq!(
+            open(&mut d, &mut app, "a"),
+            ["../", "a.txt", "b.txt"],
+            "by name at first"
+        );
+        d.keys(&mut app, "ms");
+        assert_eq!(d.line_rows(), ["../", "b.txt", "a.txt"]);
+        // `b` has no order of its own: the last chosen, by size.
+        assert_eq!(
+            open(&mut d, &mut app, "b"),
+            ["../", "x.txt", "z.txt", "y.txt"]
+        );
+        d.keys(&mut app, "mA");
+        assert_eq!(d.line_rows(), ["../", "z.txt", "y.txt", "x.txt"]);
+        // `c` takes `b`'s, chosen last; `a` keeps its own.
+        assert_eq!(open(&mut d, &mut app, "c"), ["../", "q.txt", "p.txt"]);
+        assert_eq!(open(&mut d, &mut app, "a"), ["../", "b.txt", "a.txt"]);
+        assert_eq!(d.warnings(), Vec::<String>::new());
+    }
+    // Another run on the same state db: the same orders.
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    assert_eq!(open(&mut d, &mut app, "a"), ["../", "b.txt", "a.txt"]);
+    assert_eq!(open(&mut d, &mut app, "c"), ["../", "q.txt", "p.txt"]);
+    assert_eq!(
+        open(&mut d, &mut app, "b"),
+        ["../", "z.txt", "y.txt", "x.txt"]
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// `:dir chmod MODE` and `:dir chown OWNER` (docs/design/dir.md
 /// Decision 1) act on the entry under the caret, or every line a
 /// visual selection covers — the entry the line tracks, so a line

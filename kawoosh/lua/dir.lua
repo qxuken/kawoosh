@@ -16,7 +16,9 @@
 -- `<C-l>` reads the directory again (a listing with edits is
 -- asked first), `<C-p>` opens a preview of the entry beside the
 -- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
--- list it again by size, mtime, name or type, yazi's keys under `m`;
+-- list it again by size, mtime, name or type, yazi's keys under `m` —
+-- the directory's order from then on, and the one a directory with
+-- none of its own takes, past a restart (docs/design/dir.md D2);
 -- `g.` shows or hides the dot files (`dir.hidden`); `gS` sizes the
 -- directories, everything under each counted (`dir.sizes`; a listing
 -- sorted by size does either way); `gz` opens the
@@ -135,11 +137,43 @@ end
 
 -- The order a directory is listed in, by key — `name`, `size`,
 -- `mtime`, `type` (the extension, then the name) — reversed or not,
--- directories first either way; remembered per directory (`dir.sorts`).
+-- directories first either way (docs/design/dir.md Decision 2): the
+-- order chosen for the directory, else the order chosen last anywhere,
+-- else by name. Both are kept past a restart in the plugin's store
+-- (`kawoosh.store("dir")`: `sort:<dir>` and `sort`, spelled `size` or
+-- `size!` for the reverse), and read from it once a session —
+-- `dir.sorts[d]` the directory's, `false` for none; `dir.last_sort`
+-- the last chosen — so a listing asks the disk nothing to sort.
 local SORT_KEYS = { name = true, size = true, mtime = true, type = true }
+local BY_NAME = { key = "name", reverse = false }
+local kept = kawoosh.store("dir")
+
+local function sort_read(key)
+  local ok, s = pcall(kept.get, key)
+  if not ok or type(s) ~= "string" then return false end
+  local k, bang = s:match("^(%a+)(!?)$")
+  if not k or not SORT_KEYS[k] then return false end
+  return { key = k, reverse = bang == "!" }
+end
 
 local function sort_of(d)
-  return dir.sorts[d] or { key = "name", reverse = false }
+  local s = dir.sorts[d]
+  if s == nil then
+    s = sort_read("sort:" .. d)
+    dir.sorts[d] = s
+  end
+  if s then return s end
+  if dir.last_sort == nil then dir.last_sort = sort_read("sort") end
+  return dir.last_sort or BY_NAME
+end
+
+-- `sort` chosen for `d`: the directory's from now on, and the one a
+-- directory with none of its own is listed in.
+local function sort_chosen(d, sort)
+  dir.sorts[d], dir.last_sort = sort, sort
+  local spelled = sort.key .. (sort.reverse and "!" or "")
+  pcall(kept.set, "sort:" .. d, spelled)
+  pcall(kept.set, "sort", spelled)
 end
 
 local function ext_of(name)
@@ -1182,12 +1216,13 @@ end, {
 
 -- `:dir sort name|size|mtime|type`, `!` for the reverse — yazi's keys
 -- under `m`, `ma` `ms` `mm` `me` and the capitals for the reverse: the
--- listing read again in that order, remembered for the directory. A
+-- listing read again in that order, remembered for the directory and
+-- as the order a directory with none of its own takes (`sort_of`). A
 -- listing with edits is asked first, as `<C-l>` asks.
 for key in pairs(SORT_KEYS) do
   kawoosh.command("dir sort " .. key, function(ctx)
     local here = listed()
-    dir.sorts[here] = { key = key, reverse = ctx.bang }
+    sort_chosen(here, { key = key, reverse = ctx.bang == true })
     refresh(here, false, under_caret())
   end, {
     when = { "language:dir" },

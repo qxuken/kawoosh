@@ -95,3 +95,45 @@ kawoosh has not.
 that is about permissions; a host's shell saying the mode (`ls -ln` in
 its stat); a name for SFTP's numbers through the domain's transport
 (`id -u NAME`); `touch` and links (`ln -s`) are other commands.
+
+### 2. The sort is the directory's, else the one chosen last, and it outlasts a restart
+
+The decided behaviour: a directory's order (`ma` `ms` `mm` `me`, the
+capitals reversed; `:dir sort KEY[!]`) is remembered **per
+directory**, and a directory with no order of its own is listed in
+**the order chosen last anywhere** — by name until one is chosen. Both
+persist across restarts.
+
+- **Precedence.** The directory's own order, else the last chosen,
+  else by name. Choosing an order makes it the directory's and the last
+  chosen at once; a directory that has its own keeps it whatever is
+  chosen elsewhere. The last chosen reaches a listing when it is next
+  read (opened, `<C-l>`, its watch); a listing on show elsewhere is not
+  read again for it.
+- **Where: the plugin's store**, `kawoosh.store("dir")` in `state.db`
+  — the key `sort:<dir>` per directory and `sort` for the last chosen,
+  each spelled `size` or `size!` for the reverse. Read once a session
+  (`dir.sorts[d]`, `false` for none; `dir.last_sort`), written when an
+  order is chosen; a listing asks the disk nothing to be sorted.
+- **Not the memory.** memory.md's rows are what was attended, with
+  signals, ranked, aged out past 90 days and shown in `:memory`; an
+  order is the user's word about a directory, like a setting, and
+  memory.md Decision 9 says it outright: a plugin that wants a table
+  wants `kawoosh.store`. Nor the session: a session is a window's
+  layout, and an order chosen for a directory holds in any window.
+- **Bounded by the asking.** A row is written only for a directory an
+  order was chosen in, so the store grows by a few short rows a
+  directory the user sorted by hand; nothing ages them out.
+- **Cost.** Sorting is as it was: each entry's key taken once, then
+  `table.sort`; 16k entries re-sorted by `mm` `ma` `mM` `mA` in 96–104
+  ms a key in the dev build (reading the directory, filling the buffer,
+  the notes, a frame), the same before and after, with a state db
+  attached or not.
+
+*The alternative*: a `dir.sort` setting for the default and the
+per-directory orders in the session. A setting is the user's file to
+edit, not what a key chose a minute ago, and the session would forget
+an order in every other window.
+
+**Left.** A way to forget a directory's order (it is replaced, never
+dropped), if one is missed.
