@@ -4,7 +4,14 @@
 //! appear in order; the score prefers a match at the start of a word,
 //! after a `/`, on a capital, and runs of consecutive matches, and
 //! counts every gap against it — so `sr/lib` finds `src/lib.rs` before
-//! `assets/rlib.o`. Case is smart: a needle with an upper-case letter
+//! `assets/rlib.o` — and, as a term's last character, one that ends a
+//! name, so `main` finds `main/` and `main.yml` before `mainframe`.
+//!
+//! A space splits the needle into terms (fzf's, telescope's and zed's
+//! rule): a row matches when every term does, each anywhere and in any
+//! order, its score the terms' summed and every term's characters lit —
+//! `carnet main` finds `roles/carnet/tasks/main.yml`. `\ ` is a space
+//! to match. Case is smart, term by term: one with an upper-case letter
 //! is matched as written, one without matches either case.
 //!
 //! [`Matcher`] holds a list once and answers queries over it, so the
@@ -23,6 +30,7 @@ const MATCH_SLASH: f64 = 0.9;
 const MATCH_WORD: f64 = 0.8;
 const MATCH_CAPITAL: f64 = 0.7;
 const MATCH_DOT: f64 = 0.6;
+const MATCH_END: f64 = 0.5;
 
 /// A haystack past this is a line, which the caller cuts; a needle is
 /// scored whole — a path typed out is as long as the path — and is
@@ -65,20 +73,21 @@ pub struct Hit {
     pub positions: Vec<usize>,
 }
 
-/// The needle as it is looked for: its characters, and whether case
-/// counts (an upper-case letter in it).
-struct Needle {
+/// One term of the needle as it is looked for: its characters, and
+/// whether case counts (an upper-case letter in it).
+struct Term {
     chars: Vec<char>,
     sensitive: bool,
 }
 
-impl Needle {
-    fn new(s: &str) -> Self {
-        let sensitive = s.chars().any(char::is_uppercase);
-        let chars: Vec<char> = if sensitive {
-            s.chars().collect()
+impl Term {
+    fn new(chars: Vec<char>) -> Self {
+        let sensitive = chars.iter().any(|c| c.is_uppercase());
+        let chars = if sensitive {
+            chars
         } else {
-            s.chars()
+            chars
+                .into_iter()
                 .map(|c| c.to_lowercase().next().unwrap_or(c))
                 .collect()
         };
@@ -94,6 +103,33 @@ impl Needle {
         let mut it = hay.iter();
         self.chars.iter().all(|c| it.any(|h| h == c))
     }
+}
+
+/// The needle split at its spaces into terms, each matched on its own
+/// anywhere in the row: `carnet main` finds `roles/carnet/tasks/main.yml`
+/// and so does `main carnet`. A run of spaces splits once; a backslash
+/// before a space keeps the space in the term (`my\ notes`), and any
+/// other backslash is itself, as a Windows path has them.
+fn terms(s: &str) -> Vec<Term> {
+    let mut out = Vec::new();
+    let mut cur: Vec<char> = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&' ') {
+            cur.push(' ');
+            chars.next();
+        } else if c.is_whitespace() {
+            if !cur.is_empty() {
+                out.push(Term::new(std::mem::take(&mut cur)));
+            }
+        } else {
+            cur.push(c);
+        }
+    }
+    if !cur.is_empty() {
+        out.push(Term::new(cur));
+    }
+    out
 }
 
 /// The bonus a match on `hay[j]` earns for what precedes it — read off
@@ -114,48 +150,71 @@ fn bonus(hay: &[char], j: usize) -> f64 {
     }
 }
 
-/// The two tables of the dynamic programme, `D` and `M`, row-major.
-type Tables = (Vec<f64>, Vec<f64>);
+/// The bonus a match on `orig[j]` earns as a term's last character, for
+/// what follows it: the end of a name — the row's end, anything but a
+/// letter or a digit (`/`, `.`, `_`, a space, `dir!`'s `!`), or a
+/// capital after a lower-case letter. fzy scores where a match starts
+/// and not where it stops, so `main` found `src/mainframe.rs` before
+/// `src/main/a_longer_name.rs`, the shorter row winning on its gaps; a
+/// term is most often a name typed whole.
+fn end_bonus(orig: &[char], j: usize) -> f64 {
+    match orig.get(j + 1) {
+        None => MATCH_END,
+        Some(next) if !next.is_alphanumeric() => MATCH_END,
+        Some(next) if orig[j].is_lowercase() && next.is_uppercase() => MATCH_END,
+        _ => 0.0,
+    }
+}
+
+/// The dynamic programme's two tables, `D` and `M`, row-major: kept
+/// from row to row and term to term, so that a query over forty
+/// thousand allocates once.
+#[derive(Default)]
+struct Tables {
+    d: Vec<f64>,
+    mm: Vec<f64>,
+}
 
 /// fzy's dynamic programme: `D[i][j]` the best score with needle `i`
 /// matched at `j`, `M[i][j]` the best with needle `i` matched at or
-/// before `j`. `hay` is what the needle is matched against (folded when
-/// case does not count), `orig` the row as written, which the bonuses
-/// are read from. Returns the score, and the tables when asked for, from
-/// which the positions are read back.
-fn compute(
-    needle: &[char],
-    hay: &[char],
-    orig: &[char],
-    with_tables: bool,
-) -> (f64, Option<Tables>) {
+/// before `j`, into `t`, from which the positions are read back. `hay`
+/// is what the needle is matched against (folded when case does not
+/// count), `orig` the row as written, which the bonuses are read off —
+/// where a character matches, the only places they count. The needle's
+/// last character earns the end bonus besides.
+fn compute(needle: &[char], hay: &[char], orig: &[char], t: &mut Tables) -> f64 {
     let n = needle.len();
     let m = hay.len();
     if n == 0 {
-        return (SCORE_MIN, None);
+        return SCORE_MIN;
     }
     if n == m {
         // The needle is the haystack: unbeatable.
-        return (
-            SCORE_MAX,
-            with_tables.then(|| (vec![SCORE_MAX; n * m], vec![SCORE_MAX; n * m])),
-        );
+        return SCORE_MAX;
     }
-    let bonuses: Vec<f64> = (0..m).map(|j| bonus(orig, j)).collect();
-    let mut d = vec![SCORE_MIN; n * m];
-    let mut mm = vec![SCORE_MIN; n * m];
+    // Every cell is written below before it is read, so a table is only
+    // grown, never filled.
+    let Tables { d, mm } = t;
+    if d.len() < n * m {
+        d.resize(n * m, SCORE_MIN);
+        mm.resize(n * m, SCORE_MIN);
+    }
     for (i, &nc) in needle.iter().enumerate() {
         let mut prev = SCORE_MIN;
-        let gap = if i == n - 1 { GAP_TRAILING } else { GAP_INNER };
-        for j in 0..m {
+        let last = i == n - 1;
+        let gap = if last { GAP_TRAILING } else { GAP_INNER };
+        for (j, &h) in hay.iter().enumerate() {
             let at = i * m + j;
-            if nc == hay[j] {
+            if nc == h {
                 let mut score = SCORE_MIN;
                 if i == 0 {
-                    score = j as f64 * GAP_LEADING + bonuses[j];
+                    score = j as f64 * GAP_LEADING + bonus(orig, j);
                 } else if j > 0 {
                     let up = (i - 1) * m + (j - 1);
-                    score = (mm[up] + bonuses[j]).max(d[up] + MATCH_CONSECUTIVE);
+                    score = (mm[up] + bonus(orig, j)).max(d[up] + MATCH_CONSECUTIVE);
+                }
+                if last {
+                    score += end_bonus(orig, j);
                 }
                 d[at] = score;
                 prev = score.max(prev + gap);
@@ -167,17 +226,18 @@ fn compute(
             }
         }
     }
-    let score = mm[(n - 1) * m + (m - 1)];
-    (score, with_tables.then_some((d, mm)))
+    mm[(n - 1) * m + (m - 1)]
 }
 
-/// The matched characters' indices, read back from the tables.
-fn positions(needle_len: usize, hay_len: usize, d: &[f64], mm: &[f64]) -> Vec<usize> {
-    let (n, m) = (needle_len, hay_len);
-    let mut out = vec![0usize; n];
+/// The matched characters' indices, read back from the tables `compute`
+/// left in `t` for a needle `needle_len` long over the row `orig`.
+fn positions(needle_len: usize, orig: &[char], t: &Tables) -> Vec<usize> {
+    let (n, m) = (needle_len, orig.len());
     if n == m {
         return (0..n).collect();
     }
+    let (d, mm) = (&t.d, &t.mm);
+    let mut out = vec![0usize; n];
     let mut required = false;
     let mut j = m;
     for i in (0..n).rev() {
@@ -185,7 +245,11 @@ fn positions(needle_len: usize, hay_len: usize, d: &[f64], mm: &[f64]) -> Vec<us
             j -= 1;
             let at = i * m + j;
             if d[at] != SCORE_MIN && (required || d[at] == mm[at]) {
-                required = i > 0 && j > 0 && mm[at] == d[(i - 1) * m + (j - 1)] + MATCH_CONSECUTIVE;
+                // A run into this one, its end bonus counted as
+                // `compute` added it.
+                let end = if i == n - 1 { end_bonus(orig, j) } else { 0.0 };
+                required =
+                    i > 0 && j > 0 && mm[at] == d[(i - 1) * m + (j - 1)] + MATCH_CONSECUTIVE + end;
                 out[i] = j;
                 break;
             }
@@ -215,11 +279,14 @@ impl Matcher {
     }
 
     /// The best `limit` hits for `needle`, best first, ties in the
-    /// list's order; an empty needle is every entry in order with no
-    /// positions, up to the limit.
+    /// list's order; an empty needle (or spaces) is every entry in
+    /// order with no positions, up to the limit. A needle of several
+    /// terms (`terms`) matches an entry every term matches, scored as
+    /// the sum of the terms' scores, every term's characters its
+    /// positions.
     pub fn query(&self, needle: &str, limit: usize) -> Vec<Hit> {
-        let nd = Needle::new(needle);
-        if nd.chars.is_empty() {
+        let terms = terms(needle);
+        if terms.is_empty() {
             return self
                 .entries
                 .iter()
@@ -232,16 +299,19 @@ impl Matcher {
                 })
                 .collect();
         }
+        let mut tables = Tables::default();
         let mut scored: Vec<(usize, f64)> = self
             .entries
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
-                let hay = nd.hay(e);
-                if !nd.has_match(hay) {
+                if !terms.iter().all(|t| t.has_match(t.hay(e))) {
                     return None;
                 }
-                let (score, _) = compute(&nd.chars, hay, &e.chars, false);
+                let score = terms
+                    .iter()
+                    .map(|t| compute(&t.chars, t.hay(e), &e.chars, &mut tables))
+                    .sum::<f64>();
                 Some((i, score))
             })
             .collect();
@@ -255,11 +325,14 @@ impl Matcher {
             .into_iter()
             .map(|(index, score)| {
                 let e = &self.entries[index];
-                let hay = nd.hay(e);
-                let (_, tables) = compute(&nd.chars, hay, &e.chars, true);
-                let pos = tables
-                    .map(|(d, mm)| positions(nd.chars.len(), hay.len(), &d, &mm))
-                    .unwrap_or_default();
+                // Every term's characters; two terms may light the same.
+                let mut pos = Vec::new();
+                for t in &terms {
+                    compute(&t.chars, t.hay(e), &e.chars, &mut tables);
+                    pos.extend(positions(t.chars.len(), &e.chars, &tables));
+                }
+                pos.sort_unstable();
+                pos.dedup();
                 Hit {
                     index,
                     score,
@@ -358,6 +431,85 @@ mod tests {
         assert_eq!(order("fb", &["foobar.rs", "fooBar.rs"])[0], "fooBar.rs");
     }
 
+    /// Asked 2026-10-14: "file search should fuzzy find with spaces like
+    /// (carnet main should match roles/carnet/tasks/main.yml)". A space
+    /// splits the needle into terms, each matched on its own anywhere in
+    /// the row, in any order; a row matches when every term does, and
+    /// every term's characters are lit.
+    #[test]
+    fn a_space_splits_the_needle_into_terms_matched_in_any_order() {
+        let items = [
+            "roles/carnet/tasks/maintenance.yml",
+            "roles/carnet/templates/domain.conf.j2",
+            "roles/mailer/tasks/main.yml",
+            "roles/carnet/tasks/main.yml",
+            "roles/carnet/defaults/vars.yml",
+        ];
+        let hits = order("carnet main", &items);
+        assert_eq!(
+            hits.first(),
+            Some(&"roles/carnet/tasks/main.yml"),
+            "{hits:?}"
+        );
+        assert_eq!(hits.len(), 3, "every term must match: {hits:?}");
+        assert_eq!(
+            order("main carnet", &items).first(),
+            Some(&"roles/carnet/tasks/main.yml"),
+            "in any order"
+        );
+        let m = Matcher::new(items);
+        let h = &m.query("carnet main", 10)[0];
+        assert_eq!(h.index, 3);
+        assert_eq!(
+            h.positions,
+            [6, 7, 8, 9, 10, 11, 19, 20, 21, 22],
+            "both terms lit, in order"
+        );
+        // A run of spaces, and spaces round it, split once.
+        assert_eq!(m.query("  carnet   main ", 10)[0].index, 3);
+        // Nothing but spaces is no needle: every entry, in order.
+        assert_eq!(m.query("   ", 10).len(), 5);
+    }
+
+    /// Smart case is each term's: `cargo LOCK` asks for `LOCK` as
+    /// written and `cargo` in either case. A backslash before a space
+    /// keeps it in the term, for a name that has one.
+    #[test]
+    fn each_term_is_smart_about_case_and_an_escaped_space_is_one() {
+        let m = Matcher::new(["cargo.LOCK", "Cargo.LOCK", "cargo.lock"]);
+        let mut got: Vec<usize> = m.query("cargo LOCK", 10).iter().map(|h| h.index).collect();
+        got.sort();
+        assert_eq!(got, [0, 1]);
+        let m = Matcher::new(["my/notes.md", "my notes.md"]);
+        let hits = m.query(r"my\ notes", 10);
+        assert_eq!(hits.len(), 1, "the space is a character to match");
+        assert_eq!(hits[0].index, 1);
+        assert_eq!(hits[0].positions, [0, 1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    /// A term that ends where a name ends — before anything but a letter
+    /// or a digit, or at the row's end — beats one that runs on into a longer
+    /// word: `main` is the `main` directory's file before `mainframe.rs`,
+    /// though its path is longer. fzy scores where a match starts, not
+    /// where it stops, and a word typed whole is what a term usually is.
+    #[test]
+    fn a_term_ending_a_name_beats_one_running_on() {
+        assert_eq!(
+            order("main", &["src/mainframe.rs", "src/main/a_longer_name.rs"])[0],
+            "src/main/a_longer_name.rs"
+        );
+        assert_eq!(
+            order(
+                "carnet main",
+                &[
+                    "roles/carnetx/mainframe.yml",
+                    "roles/carnet/tasks/long/main.yml"
+                ]
+            )[0],
+            "roles/carnet/tasks/long/main.yml"
+        );
+    }
+
     #[test]
     fn a_long_list_is_a_frames_worth() {
         let items: Vec<String> = (0..40_000)
@@ -373,5 +525,43 @@ mod tests {
             "{:?}",
             t.elapsed()
         );
+        // Two terms cost about two queries, not more.
+        let t = std::time::Instant::now();
+        let hits = m.query("mod12 fi", 200);
+        assert_eq!(hits.len(), 200);
+        assert!(hits[0].positions.len() == 7);
+        assert!(
+            t.elapsed() < std::time::Duration::from_millis(400),
+            "{:?}",
+            t.elapsed()
+        );
+    }
+
+    /// What a query over a realistic tree costs, printed: 45k paths of a
+    /// monorepo's shape, one term and three. `cargo nextest run -p
+    /// kawoosh-lua timing --no-capture` to read it.
+    #[test]
+    fn timing_over_forty_five_thousand_paths() {
+        let dirs = ["roles", "src", "packages", "vendor", "docs", "tests"];
+        let items: Vec<String> = (0..45_000)
+            .map(|i| {
+                format!(
+                    "{}/{}{}/tasks/{}/{}_{}.{}",
+                    dirs[i % dirs.len()],
+                    ["carnet", "mailer", "web", "db"][i % 4],
+                    i % 113,
+                    ["main", "handlers", "templates"][i % 3],
+                    ["main", "index", "util", "service"][i % 4],
+                    i,
+                    ["yml", "rs", "ts"][i % 3]
+                )
+            })
+            .collect();
+        let m = Matcher::new(&items);
+        for q in ["main", "carnetmain", "carnet main", "roles carnet main yml"] {
+            let t = std::time::Instant::now();
+            let n = m.query(q, 200).len();
+            eprintln!("{q:?}: {n} hits in {:?}", t.elapsed());
+        }
     }
 }

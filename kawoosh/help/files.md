@@ -97,6 +97,14 @@ matching rows, and a preview of the row under the cursor. Typing
 filters the rows with fuzzy matching; files you open often and
 recently rank higher.
 
+A space splits the query into words, and a row matches when every
+word does, each anywhere in it and in any order: `carnet main` finds
+`roles/carnet/tasks/main.yml`, and so does `main carnet`. A word spelled
+whole ranks first — `main` puts `main.yml` before `maintenance.yml`. A
+word with a capital in it matches case, one without matches either;
+`\ ` is a space to match. The same goes for the launcher, the commands
+and every other list you type into to narrow.
+
 | keys | picker |
 |---|---|
 | `<leader>f` | files under the working directory (those git does not ignore) |

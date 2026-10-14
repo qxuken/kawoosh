@@ -716,7 +716,10 @@ end
 -- kawoosh.fuzzy(needle, list[, limit]) scores a small list;
 -- kawoosh.matcher(list) holds a big one — `m:query(needle, limit)`
 -- answers `{ index =, score =, positions = }` best first, positions
--- the matched characters' bytes from 1; `m:count()`. Case is smart.
+-- the matched characters' bytes from 1; `m:count()`. A space splits
+-- the needle into terms, each matched anywhere and in any order (`\ `
+-- is a space to match); case is smart, term by term
+-- (docs/design/matching.md).
 -- kawoosh.oldfiles([limit]): the files attended before (the memory's
 -- `file` rows), newest first, `{ path =, line = }` each. kawoosh.holds(fact): whether a fact holds
 -- where the keyboard is. kawoosh.buf.lines_in(from, to[, buffer]): a
