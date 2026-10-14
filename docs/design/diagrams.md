@@ -125,6 +125,8 @@ the capitals move.
 | `<C-a>` | select everything |
 | `u` `<C-r>` | the buffer's undo, redo |
 | `=` · `0` · `+` `_` · `zz` | fit · zoom 1 · zoom in, out · centre on the selection |
+| `⌘=` `⌘-` (`⌘+` `⌘_`) · `⌘0` | zoom in, out · zoom 1 — the font's keys elsewhere (Decision 11) |
+| `g h` `g j` `g k` `g l` | pan: the view a quarter of itself that way, a count for more (Decision 11) |
 | `<A-/>` | the toolbar: the pane's legend (Decision 8) |
 | `<Tab>` | the source |
 
@@ -249,3 +251,40 @@ picks, curved arrows, rotation, images, frames that clip, align and
 distribute, a grid size setting, auto-layout, import from Excalidraw,
 an SVG or PNG export. Each is a line format addition or a command away;
 none changes a decision above.
+
+### 11. ⌘= ⌘- zoom the drawing; `g hjkl` pan
+
+Asked 2026-10-14: "diagram `<D--/->` should map to a frame resize, not
+font change. maybe `g-h/j/k/l` should pan around." ⌘= ⌘- ⌘0 are the
+focused pane's font everywhere (pane-settings.md Decision 5), and over a
+canvas the font is only the labels': ⌘- shrank the words inside boxes
+that stayed their size. The canvas's view is what a user sizes there.
+
+- **⌘= and ⌘+ zoom in, ⌘- and ⌘_ out, ⌘0 is 100%** (Ctrl where there
+  is no ⌘, as the font's keys), local to the `diagram` fact, so they are
+  the font's again in every other pane and in the diagram's own text
+  (`<Tab>`). They run `diagram zoom in` / `out` / `1`, about the view's
+  middle — what `+` `_` `0` ran already, and what ⌘ with the wheel does
+  about the pointer, so the chord and the wheel agree. The pane's own
+  font stays reachable by `:pane font bigger`, the View menu, and ⌘⌥ for
+  the window's.
+- **`g h` `g j` `g k` `g l` pan** (`diagram pan left|down|up|right`): the
+  view a quarter of itself that way, a count for more, the drawing
+  sliding the other way and the selection left alone. A quarter of the
+  view rather than a number of units, so a press moves the same distance
+  on the screen at any zoom, as a map's arrow keys do. `g` was a prefix
+  in pane mode already (`gg`, `gt` `gT`); no diagram key used it, and
+  `G` (group) is not under it.
+- The toolbar's view group has *zoom out* and *zoom in* beside *fit*,
+  their chords beside them, and the menu over nothing has Zoom In and
+  Zoom Out. Pan has no button: four arrows would crowd a strip whose
+  buttons are commands, and the wheel and the middle button pan already.
+
+*Read as the view, not a shape.* "Frame" in this note is a group's frame
+(Decision 1: "a frame round its members"), and "frames that clip" are
+Decision 10's. A group has no place of its own — it is where its members
+are — so a group's frame has no size to change, and a box is resized by
+`<A-hjkl>` and its corner. The view's frame is the one thing a ⌘- that
+"changes the font" was changing the wrong way. Were frames that clip
+built (a frame with a place and a size of its own), ⌘= ⌘- on a selected
+frame would be the other reading, and a question for then.

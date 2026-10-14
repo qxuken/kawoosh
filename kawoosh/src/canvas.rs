@@ -347,6 +347,8 @@ fn menu_rows(
         out.push(MenuItem::separator());
         out.push(row("Select All", "", "diagram all"));
         out.push(row("Fit to View", "=", "diagram fit"));
+        out.push(row("Zoom In", "mod+=", "diagram zoom in"));
+        out.push(row("Zoom Out", "mod+-", "diagram zoom out"));
         out.push(MenuItem::separator());
         out.push(row("Show the Text", "", "diagram toggle"));
         out.push(row("Export to Excalidraw", "", "diagram export"));
@@ -2177,6 +2179,19 @@ impl Pen {
 /// A toolbar button: what it says, its key, the command line it runs.
 type Button = (&'static str, &'static str, &'static str);
 
+/// The zoom's keys as the toolbar spells them: the font's chords, which
+/// over a diagram zoom the drawing (Decision 11).
+const ZOOM_IN_KEY: &str = if cfg!(target_os = "macos") {
+    "⌘="
+} else {
+    "Ctrl+="
+};
+const ZOOM_OUT_KEY: &str = if cfg!(target_os = "macos") {
+    "⌘-"
+} else {
+    "Ctrl+-"
+};
+
 /// The toolbar's buttons in groups, each lit when it fits what is
 /// selected: the same buttons whatever is.
 fn toolbar_groups(what: &Selected) -> Vec<Vec<(Button, bool)>> {
@@ -2216,6 +2231,8 @@ fn toolbar_groups(what: &Selected) -> Vec<Vec<(Button, bool)>> {
         ],
         vec![
             (("fit", "=", "diagram fit"), true),
+            (("zoom out", ZOOM_OUT_KEY, "diagram zoom out"), true),
+            (("zoom in", ZOOM_IN_KEY, "diagram zoom in"), true),
             (("text view", "Tab", "diagram toggle"), true),
             (("export", "", "diagram export"), true),
         ],
@@ -2788,6 +2805,32 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 };
                 let b = c.body;
                 c.zoom_about(Vec2::new(b.x + b.w / 2.0, b.y + b.h / 2.0), factor);
+            },
+        ),
+        cmd(
+            Spec::new("diagram pan")
+                .args(Args::new(&[ArgKind::Text]))
+                .when(on)
+                .doc("the view a quarter of itself left, right, up or down, COUNT times: the drawing slides the other way, the selection stays"),
+            |k, ctx| {
+                let Some(v) = k.canvas_here() else {
+                    return;
+                };
+                let (dx, dy) = match ctx.arg(0) {
+                    Some("left") => (-1.0, 0.0),
+                    Some("right") => (1.0, 0.0),
+                    Some("up") => (0.0, -1.0),
+                    Some("down") => (0.0, 1.0),
+                    w => {
+                        k.ed.message = format!("no way `{}`: left right up down", w.unwrap_or(""));
+                        return;
+                    }
+                };
+                let n = ctx.count.max(1) as f32;
+                let c = k.canvas_of(v);
+                let b = c.body;
+                c.origin.x -= dx * n * b.w / 4.0;
+                c.origin.y -= dy * n * b.h / 4.0;
             },
         ),
         cmd(
