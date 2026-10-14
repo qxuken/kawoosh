@@ -1109,7 +1109,12 @@ pub fn patch(path: &Path, runs: &[(u64, Vec<u8>)]) -> io::Result<()> {
             .and_then(|_| f.write_all(bytes))
             .map_err(|e| named(path, e))?;
     }
-    f.sync_data().map_err(|e| named(path, e))
+    // A mount without macOS's full sync (SMB, NFS) takes `fsync`, one
+    // without any keeps the bytes written (docs/design/disk.md
+    // Decision 3).
+    kawoosh_doc::durable::sync(&f)
+        .map(|_| ())
+        .map_err(|e| named(path, e))
 }
 
 /// Writes `text`, creating the file's directory when it is missing.

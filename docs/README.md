@@ -43,7 +43,8 @@ commits; 70 integration test files and 31 Lua test scripts.
 - [domains.md](design/domains.md): where a process spawns and a path
   lives; ssh as a domain.
 - [disk.md](design/disk.md): a buffer against its file: the watch, a
-  change reloaded or asked about, a growing file followed.
+  change reloaded or asked about, a growing file followed, a save on a
+  mount without macOS's full sync.
 
 ### Keys and editing
 
