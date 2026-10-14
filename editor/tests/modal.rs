@@ -1168,6 +1168,12 @@ fn substitute_from_visual_mode_is_over_the_selection() {
     t.keys("vj$:select within b<CR>");
     assert_eq!(t.ed.message, "");
     assert_eq!(t.sels().len(), 3);
+    // vim's filter through a command is not built, and not run as `:!`.
+    t.keys("<Esc>vj:!sort<CR>");
+    assert_eq!(
+        t.ed.message,
+        "'<,'>! (lines through a command) is not built"
+    );
 }
 
 /// The command line previews a `:s` as it is typed: the matches it

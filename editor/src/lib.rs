@@ -3798,8 +3798,14 @@ impl Editor {
         // `'<,'>` before any other command: the selections, which every
         // command acts on already (what `:` from visual mode puts).
         // The range alone is nothing to run.
+        // A shell line after it is vim's filter of the lines, which is
+        // not built: refused rather than run as a `:!` with no input.
         let line = match line.strip_prefix("'<,'>") {
             Some(rest) if rest.trim().is_empty() => return,
+            Some(rest) if rest.trim_start().starts_with('!') => {
+                self.message = "'<,'>! (lines through a command) is not built".into();
+                return;
+            }
             Some(rest) => rest.trim_start(),
             None => line,
         };

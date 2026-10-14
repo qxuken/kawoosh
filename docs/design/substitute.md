@@ -91,7 +91,10 @@ Erasing the `'<,'>` gives the range none means: the lines the
 selections touch, as before.
 
 `'<,'>` before any other command is dropped: every command acts on the
-selections already (`:'<,'>select within x`, `:'<,'>align =`).
+selections already (`:'<,'>select within x`, `:'<,'>align =`). Before
+a shell line it is refused: `:'<,'>!sort` is vim's filter of the lines
+through the command, not built, and run as a bare `:!` it would be a
+pane waiting on input nobody gives it.
 
 *Beat: vim's `'<,'>` as lines, with `\%V` in the pattern.* Nobody types
 `\%V`, and the regex crate has no such assertion. In vim the selection
