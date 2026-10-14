@@ -911,7 +911,11 @@ impl Kawoosh {
                     self.terms.flowing.insert(id);
                 }
                 IoMsg::DomainUp { name } => self.domain_up(&name),
-                IoMsg::DomainFailed { name, error } => self.domain_failed(&name, &error),
+                IoMsg::DomainFailed {
+                    name,
+                    error,
+                    declined,
+                } => self.domain_failed(&name, &error, declined),
                 IoMsg::DomainFellBack { name, why } => self.domain_fell_back(&name, &why),
                 IoMsg::DomainAsk {
                     name,

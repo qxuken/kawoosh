@@ -174,8 +174,14 @@ pub enum IoMsg {
     /// A domain's master is up and its files are reachable: the domain
     /// is in `kawoosh_doc::fs`'s registry (docs/design/domains.md).
     DomainUp { name: String },
-    /// A domain's connection gave up, and why.
-    DomainFailed { name: String, error: String },
+    /// A domain's connection gave up, and why. `declined`: the user's
+    /// own doing — a question refused, the master's pane closed — which
+    /// the window does not toast back at them.
+    DomainFailed {
+        name: String,
+        error: String,
+        declined: bool,
+    },
     /// A connection asks the user (`crate::ssh`): a host key to trust,
     /// a passphrase, a password. `reply` takes the answer, `None` for
     /// none; the connecting thread waits on it.
@@ -1733,6 +1739,7 @@ impl Io {
                 let failed = |error: String| IoMsg::DomainFailed {
                     name: name.clone(),
                     error,
+                    declined: false,
                 };
                 // The in-process client: its connection made first,
                 // asking the window what it has to (a host key, a
@@ -1769,15 +1776,26 @@ impl Io {
                             wake.wake();
                         }
                         Err(f) => {
-                            let _ = tx.send(failed(f.message().to_string()));
+                            let _ = tx.send(IoMsg::DomainFailed {
+                                name: name.clone(),
+                                error: f.message().to_string(),
+                                declined: matches!(f, crate::ssh::Failure::Declined(_)),
+                            });
                             wake.wake();
                             return;
                         }
                     }
                 }
                 let msg = loop {
+                    // Its pane closed by the user, or the master ended
+                    // by itself, which the window has said with its
+                    // reason (`domain_term_closed`).
                     if cancel.load(Ordering::Relaxed) {
-                        break failed("the connection's pane closed".into());
+                        break IoMsg::DomainFailed {
+                            name: name.clone(),
+                            error: "the connection's pane closed".into(),
+                            declined: true,
+                        };
                     }
                     if transport.is_up() {
                         let sftp = match &transport.client {
@@ -1806,6 +1824,12 @@ impl Io {
                                                 "{name}: no SFTP ({e}); files through the shell"
                                             );
                                             Ok(std::sync::Arc::new(shell))
+                                        }
+                                        // Both met ssh's own failure (no
+                                        // master: each channel connects):
+                                        // the connection's, said once.
+                                        Err(why) if why.ends_with(&e.to_string()) => {
+                                            Err(e.to_string())
                                         }
                                         Err(why) => Err(format!("no SFTP ({e}), and {why}")),
                                     }
@@ -1853,7 +1877,11 @@ impl Io {
                         register_transport(&name, Transport::Wsl(wsl));
                         IoMsg::DomainUp { name }
                     }
-                    Err(error) => IoMsg::DomainFailed { name, error },
+                    Err(error) => IoMsg::DomainFailed {
+                        name,
+                        error,
+                        declined: false,
+                    },
                 };
                 let _ = tx.send(msg);
                 wake.wake();

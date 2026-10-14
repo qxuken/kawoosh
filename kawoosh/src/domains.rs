@@ -655,29 +655,88 @@ impl Kawoosh {
         self.refresh_domain_pick();
     }
 
-    pub(crate) fn domain_failed(&mut self, name: &str, error: &str) {
+    /// A connection that did not come up: the work waiting on it
+    /// dropped, the reason on the message line and, unless the user
+    /// ended it (`declined`: a question refused, the master's pane
+    /// closed), in a toast — a host refused, not reached, a key refused
+    /// is news the corner would lose (domains.md R1). Only a
+    /// domain still connecting: a failure for one already said, or let
+    /// go (`:domain disconnect`), is its thread catching up.
+    pub(crate) fn domain_failed(&mut self, name: &str, error: &str, declined: bool) {
+        if !matches!(self.domains.state.get(name), Some(State::Connecting { .. })) {
+            log::debug!("{name}: {error} (after the connection was let go)");
+            return;
+        }
         self.domains
             .state
             .insert(name.to_string(), State::Failed(error.to_string()));
         self.domains.pending.retain(|(n, _)| n != name);
         self.domains.transports.remove(name);
-        self.ed.message = format!("{name}: {error}");
+        let said = format!("{name}: {error}");
+        if !declined {
+            self.notify_with(
+                crate::notify::Note::new(crate::notify::Level::Error, said.clone())
+                    .source("domain"),
+            );
+        }
+        self.ed.message = said;
         self.refresh_domain_pick();
     }
 
     /// A terminal closed: a master's pane that closed before it was up
-    /// ends the wait for it.
+    /// ends the wait for it. Closed by the user, the thread says so
+    /// quietly; ended by itself — ssh gave up: the connection refused,
+    /// the host not found, the password wrong — the domain fails now,
+    /// with ssh's own last word, which its pane, closing with it, would
+    /// otherwise take away (domains.md R1).
     pub(crate) fn domain_term_closed(&mut self, t: TermId) {
-        for s in self.domains.state.values() {
-            if let State::Connecting {
+        let Some((name, cancel)) = self.domains.state.iter().find_map(|(n, s)| match s {
+            State::Connecting {
                 term: Some(x),
                 cancel,
-            } = s
-                && *x == t
-            {
-                cancel.store(true, Ordering::Relaxed);
-            }
+            } if *x == t => Some((n.clone(), cancel.clone())),
+            _ => None,
+        }) else {
+            return;
+        };
+        cancel.store(true, Ordering::Relaxed);
+        // Still kept: its process ended, not its pane (which lets the
+        // terminal go first).
+        let Some(term) = self.terms.map.get_mut(&t) else {
+            return;
+        };
+        let why = last_word(&term.scrollback_text()).unwrap_or_else(|| match term.exit() {
+            Some(e) => format!("ssh ended ({e}) before it connected"),
+            None => "ssh ended before it connected".into(),
+        });
+        self.domain_failed(&name, &why, false);
+    }
+
+    /// A terminal on a host closing by itself: when its ssh gave up —
+    /// OpenSSH's 255, the connection refused or dropped, the master gone
+    /// — what it said goes in a toast, which the pane, closing, would
+    /// take away (domains.md R1). A shell that ended is no news.
+    pub(crate) fn host_term_closed(&mut self, t: TermId) {
+        let Some(term) = self.terms.map.get_mut(&t) else {
+            return;
+        };
+        let Some(domain) = term.domain().map(str::to_string) else {
+            return;
+        };
+        // 255 is OpenSSH's own failure; a remote command's status is
+        // passed through, and the rare shell that exits 255 itself is
+        // said too.
+        if term.exit() != Some(kawoosh_term::Exit::Code(255)) {
+            return;
         }
+        let why = last_word(&term.scrollback_text()).unwrap_or_else(|| "exited with 255".into());
+        self.notify_with(
+            crate::notify::Note::new(
+                crate::notify::Level::Error,
+                format!("{domain}: the terminal's ssh failed: {why}"),
+            )
+            .source("domain"),
+        );
     }
 
     /// A session's file on a host that is not connected: the path at
@@ -1004,4 +1063,13 @@ impl Carried {
             }
         }
     }
+}
+
+/// The last line a terminal printed, trimmed: what an ssh that gave up
+/// said of why (`ssh: connect to host box port 22: Connection refused`).
+fn last_word(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .map(str::to_string)
 }

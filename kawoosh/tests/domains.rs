@@ -327,18 +327,98 @@ fn a_domain_connects_over_ssh_on_first_use() {
     ex(&mut d, &mut app, &format!("domain disconnect {name}"));
     std::fs::remove_dir_all(&root).ok();
 
-    // A master refused: said, nothing opened.
+    // A master refused: said with ssh's own word, in a toast, nothing
+    // opened.
     let bad = format!("r{}", std::process::id());
     let (mut d, mut app) = ssh_app(&bad, "refuse");
     ex(&mut d, &mut app, &format!("e {bad}:/x.txt"));
     until(&mut d, &mut app, "the failure", |a| {
-        a.ed.message.contains("pane closed") || a.ed.message.contains("did not come up")
+        toasted(
+            a,
+            &format!("{bad}: Permission denied (publickey,password)."),
+        ) == 1
     });
     assert!(
         app.ed
             .buffer_at(Path::new(&format!("{bad}:/x.txt")))
             .is_none()
     );
+}
+
+fn toasted(app: &Kawoosh, words: &str) -> usize {
+    app.notes
+        .shown
+        .iter()
+        .filter(|s| s.toast && s.text.contains(words))
+        .count()
+}
+
+/// A host nothing listens on (asked 2026-10-14: "got refused connection,
+/// but kawoosh did not throw a toast"): the refusal said in a toast with
+/// ssh's own reason, once, however the connection was asked for — a file
+/// opened, a directory made the tab's, `:ssh`, with a master and without
+/// — and nothing opened. The master's pane had closed with the reason in
+/// it, and the message line said only "the connection's pane closed".
+#[test]
+fn a_refused_connection_is_said_in_a_toast() {
+    if !cfg!(unix) {
+        eprintln!("the stand-in ssh is a unix script: skipped");
+        return;
+    }
+    let pid = std::process::id();
+    let why = "ssh: connect to host closed port 22: Connection refused";
+
+    // OpenSSH's client with a master, the default off Windows.
+    let name = format!("c{pid}");
+    let (mut d, mut app) = ssh_app(&name, "closed");
+    ex(&mut d, &mut app, &format!("e {name}:/x.txt"));
+    until(&mut d, &mut app, "the refusal toasted", |a| {
+        toasted(a, why) == 1
+    });
+    assert!(
+        app.ed
+            .buffer_at(Path::new(&format!("{name}:/x.txt")))
+            .is_none()
+    );
+    // The connecting thread catching up says nothing more.
+    for _ in 0..40 {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(toasted(&app, &name), 1, "{:?}", app.notes.shown);
+    assert!(app.ed.message.contains(why), "{}", app.ed.message);
+
+    // A directory asked for, and no master: each channel its own ssh.
+    let name = format!("n{pid}");
+    ex(&mut d, &mut app, "set ssh.master=false");
+    ex(&mut d, &mut app, &format!("set domains.{name}.ssh=closed"));
+    ex(&mut d, &mut app, &format!("cd {name}:/"));
+    // ssh's failure, met by the SFTP channel and the shell alike, is
+    // the connection's: said once, not as a host with no SFTP.
+    until(&mut d, &mut app, "the refusal toasted, no master", |a| {
+        toasted(a, &format!("{name}: {why}")) == 1
+    });
+    assert_eq!(toasted(&app, "no SFTP"), 0, "{:?}", app.notes.shown);
+
+    // `:ssh`, the domain made on the spot.
+    let dir = std::env::temp_dir().join(format!("kawoosh-refused-{pid}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("config"), "").unwrap();
+    // SAFETY: read by the `:ssh` below alone; the stand-in passes `-F` over.
+    unsafe { std::env::set_var("KAWOOSH_SSH_CONFIG", dir.join("config")) };
+    app.store = Some(std::rc::Rc::new(
+        kawoosh_systems::store::Store::in_memory().unwrap(),
+    ));
+    ex(&mut d, &mut app, "set ssh.master=true");
+    ex(&mut d, &mut app, "ssh me@closed");
+    until(&mut d, &mut app, "the refusal toasted, :ssh", |a| {
+        a.notes
+            .shown
+            .iter()
+            .any(|s| s.toast && s.text.starts_with("me-closed") && s.text.contains(why))
+    });
+    unsafe { std::env::remove_var("KAWOOSH_SSH_CONFIG") };
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// A host as small as OpenWrt's — dropbear with no SFTP subsystem,
@@ -652,6 +732,25 @@ fn processes_and_terminals_run_on_the_host() {
         proj.join("done.txt").exists(),
         "the host's $EDITOR returned"
     );
+    // A terminal whose ssh is refused (the stand-in's
+    // `.fake-ssh-refuse-tty`: a host gone down since it was connected)
+    // says why in a toast as its pane closes, rather than vanish with
+    // ssh's word in it. A shell that ended (the `$EDITOR` one above,
+    // 0) said nothing.
+    assert_eq!(toasted(&app, &name), 0, "{:?}", app.notes.shown);
+    std::fs::write(home.join(".fake-ssh-refuse-tty"), "").unwrap();
+    // Run as the command, not typed: the keys would go to whichever
+    // terminal is focused.
+    app.shell_command("term", &[], None);
+    until(&mut d, &mut app, "the terminal's failure toasted", |a| {
+        toasted(
+            a,
+            &format!(
+                "{name}: the terminal's ssh failed: ssh: connect to host box port 22: Connection refused"
+            ),
+        ) == 1
+    });
+    std::fs::remove_file(home.join(".fake-ssh-refuse-tty")).unwrap();
     ex(&mut d, &mut app, &format!("domain disconnect {name}"));
     std::fs::remove_dir_all(&root).ok();
 }

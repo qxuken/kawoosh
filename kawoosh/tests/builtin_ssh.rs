@@ -295,6 +295,58 @@ fn listing(d: &mut Drive, app: &mut Kawoosh) -> String {
     text
 }
 
+fn toasted(app: &Kawoosh, words: &str) -> usize {
+    app.notes
+        .shown
+        .iter()
+        .filter(|s| s.toast && s.text.contains(words))
+        .count()
+}
+
+/// The in-process client on a port nothing listens on — no container
+/// needed, a refusal is this machine's own: said in a toast with the
+/// reason (asked 2026-10-14), once, and not fallen back from. A
+/// question refused with `<Esc>` is the user's and is not toasted
+/// (`auto_falls_back_to_openssh_where_the_builtin_client_cannot`).
+#[test]
+fn a_refused_port_is_said_in_a_toast() {
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("refused");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let pid = std::process::id();
+    let alias = format!("rf-{pid}");
+    let f = config(&dir, &alias, &format!("127.0.0.1:{port}"), "me", None);
+    unsafe { std::env::set_var("KAWOOSH_SSH_CONFIG", &f) };
+    // `auto` too where it is the in-process client; elsewhere it is
+    // OpenSSH's (domains.rs's `a_refused_connection_is_said_in_a_toast`).
+    let clients: &[&str] = if cfg!(windows) {
+        &["builtin", "auto"]
+    } else {
+        &["builtin"]
+    };
+    for client in clients {
+        let name = format!("rf{client}{pid}");
+        let (mut d, mut app) = client_app(&name, &alias, client);
+        ex(&mut d, &mut app, &format!("e {name}:/x"));
+        let said = format!("{name}: 127.0.0.1:{port}: Connection refused");
+        until(&mut d, &mut app, "the refusal toasted", |a| {
+            toasted(a, &said) == 1
+        });
+        for _ in 0..20 {
+            d.frame(&mut app);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(toasted(&app, &name), 1, "{:?}", app.notes.shown);
+        assert!(!app.notes.render_log().contains("using OpenSSH"));
+    }
+    unsafe { std::env::remove_var("KAWOOSH_SSH_CONFIG") };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `ssh.client = "auto"` (the default on Windows): where the built-in
 /// client cannot serve a host, OpenSSH's takes it — a note said once, the
 /// listing saying which client and why — and where the refusal is the
@@ -403,6 +455,8 @@ fn auto_falls_back_to_openssh_where_the_builtin_client_cannot() {
         a.ed.message.contains("the password not given")
     });
     assert!(!app.notes.render_log().contains("using OpenSSH"));
+    // The user's own refusal: the message line, no toast.
+    assert_eq!(toasted(&app, &name), 0, "{:?}", app.notes.shown);
 
     // The network: nothing to fall back for.
     let name = format!("nw{pid}");

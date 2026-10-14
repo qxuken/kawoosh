@@ -407,6 +407,7 @@ impl Kawoosh {
             }
             return;
         }
+        self.host_term_closed(id);
         if let Some(t) = self.terms.map.get_mut(&id) {
             t.is_running();
         }
