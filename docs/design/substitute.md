@@ -114,6 +114,24 @@ mode, which `:s` ends in, with no selection left wide.
 it where it was, which is no vim hand's habit. *Beat: always vim's
 line start.* Several carets cannot all go there.
 
+## Built
+
+2026-10-14, the three a commit each. `editor/src/commands.rs`:
+`SubstitutePlan` (the scope from `substitute_ranges`, the regex, the
+template; `edits` over a window of lines), which `substitute` applies
+and the preview reads, and the carets placed after. `editor/src/lib.rs`:
+`preview_substitute` keeps the plan while the command line reads as a
+`:s` (`parse_substitute_typed` says whether the replacement is begun);
+`substitute_preview(view, lines)` is what a pane asks for the lines it
+draws; `execute` drops `'<,'>` before other commands. The pane
+(`kawoosh/src/panes.rs`) draws the matches as hits or strikes and
+`rows::LineDraw::inserted` the replacements; the command line completes
+past `'<,'>` (`kawoosh/src/cmdline.rs`). Tests: `editor/tests/modal.rs`'
+`substitute_keeps_every_caret_where_its_text_went`,
+`substitute_from_visual_mode_is_over_the_selection`,
+`substitute_is_previewed_as_it_is_typed`; `kawoosh/tests/cmdline.rs`'
+`a_substitution_is_previewed_in_the_pane_as_it_is_typed`.
+
 ## Open
 
 - Whether the view should scroll to the first match when none is in

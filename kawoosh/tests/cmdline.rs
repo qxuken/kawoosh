@@ -632,3 +632,47 @@ fn the_completion_reads_up_to_the_caret() {
     leave(&mut d, &mut app);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// A `:s` is previewed in the pane as it is typed (substitute.md
+/// Decision 1): once the replacement is begun each match the line would
+/// take has its replacement drawn after it, beside the line's own text
+/// and not in it; the buffer is untouched until `<CR>`, and `<Esc>`
+/// takes the replacements off the pane.
+#[test]
+fn a_substitution_is_previewed_in_the_pane_as_it_is_typed() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "alpha beta alpha\nalpha\ngamma\n");
+    d.frame(&mut app);
+    d.keys(&mut app, ":s/alpha");
+    d.frame(&mut app);
+    assert_eq!(d.row_extras()[0], "", "the pattern alone puts nothing in");
+    d.keys(&mut app, "/OMEGA");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows()[0], "alpha beta alpha", "the line's own text");
+    assert_eq!(d.row_extras()[0], "OMEGA", "the first match's replacement");
+    assert_eq!(
+        d.row_extras()[1],
+        "",
+        "not the next line's: `:s` is this line"
+    );
+    // Every line, every match.
+    d.press(&mut app, "<C-u>");
+    d.keys(&mut app, "%s/alpha/OMEGA/g");
+    d.frame(&mut app);
+    assert_eq!(d.row_extras()[0], "OMEGAOMEGA");
+    assert_eq!(d.row_extras()[1], "OMEGA");
+    let view = app.ed.prompt_from().unwrap();
+    assert_eq!(
+        app.ed.buffer_of(view).text(),
+        "alpha beta alpha\nalpha\ngamma\n"
+    );
+    leave(&mut d, &mut app);
+    d.frame(&mut app);
+    assert_eq!(d.row_extras()[0], "");
+    assert_eq!(d.line_rows()[0], "alpha beta alpha");
+    d.keys(&mut app, ":%s/alpha/OMEGA/g");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(d.line_rows()[..3], ["OMEGA beta OMEGA", "OMEGA", "gamma"]);
+    assert_eq!(d.row_extras()[0], "");
+}

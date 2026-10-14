@@ -1170,6 +1170,60 @@ fn substitute_from_visual_mode_is_over_the_selection() {
     assert_eq!(t.sels().len(), 3);
 }
 
+/// The command line previews a `:s` as it is typed: the matches it
+/// would take, then — the replacement begun — each with what replaces
+/// it, over the lines asked for. Nothing is done meanwhile: `<Esc>`
+/// leaves the text (no edit at all, so nothing to undo), the carets and
+/// the search as they were; `<CR>` does what was shown.
+#[test]
+fn substitute_is_previewed_as_it_is_typed() {
+    let mut t = T::new("foo bar foo\nfoo\nbaz\n");
+    let all = 0..t.text().len();
+    t.keys("/baz<CR>gg");
+    let version = t.ed.buffer_of(t.v).version();
+    let shown = |t: &T| {
+        t.ed.substitute_preview(t.v, all.clone())
+            .map(|p| (p.edits, p.replacing))
+    };
+    assert_eq!(shown(&t), None);
+    t.keys(":s/fo");
+    assert_eq!(
+        shown(&t),
+        Some((vec![(0..2, String::new())], false)),
+        "the pattern alone: the line's first match"
+    );
+    t.keys("o/");
+    assert_eq!(shown(&t), Some((vec![(0..3, String::new())], true)));
+    t.keys("X&/g");
+    assert_eq!(
+        shown(&t),
+        Some((vec![(0..3, "Xfoo".into()), (8..11, "Xfoo".into())], true))
+    );
+    t.keys("<C-u>%s/foo/Y/g");
+    let (edits, _) = shown(&t).unwrap();
+    assert_eq!(edits.len(), 3);
+    assert_eq!(
+        t.ed.substitute_preview(t.v, 12..16).unwrap().edits,
+        vec![(12..15, "Y".to_string())],
+        "only the lines asked for"
+    );
+    t.keys("<C-u>%s/(fo/Y/");
+    assert_eq!(shown(&t), None, "a pattern that does not compile yet");
+    t.keys("<C-u>w");
+    assert_eq!(shown(&t), None, "not a substitution");
+    t.keys("<C-u>%s/foo/Y/g<Esc><Esc>");
+    assert_eq!(t.ed.prompt_view(), None);
+    assert_eq!(shown(&t), None);
+    assert_eq!(t.text(), "foo bar foo\nfoo\nbaz\n");
+    assert_eq!(t.ed.buffer_of(t.v).version(), version, "no edit made");
+    assert!(!t.ed.buffer_of(t.v).modified);
+    assert_eq!(t.sels(), vec![(0, 0)]);
+    assert_eq!(t.ed.search.as_ref().unwrap().pattern, "baz");
+    t.keys(":%s/foo/Y/g<CR>");
+    assert_eq!(t.text(), "Y bar Y\nY\nbaz\n");
+    assert_eq!(shown(&t), None);
+}
+
 #[test]
 fn indent_and_change_line() {
     let mut t = T::new("a\nb");

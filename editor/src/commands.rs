@@ -1521,6 +1521,13 @@ fn search(ed: &mut Editor, ctx: &Ctx, forward: bool) {
 /// the pattern or the replacement is the delimiter itself, and the
 /// replacement may stop early (`:s/a/b`).
 pub fn parse_substitute(line: &str) -> Option<Vec<String>> {
+    parse_substitute_typed(line).map(|(args, _)| args)
+}
+
+/// [`parse_substitute`], and whether the replacement is begun — its
+/// delimiter typed (`:s/a/`): what the preview shows the replaced text
+/// for, where `:s/a` is the pattern alone.
+pub fn parse_substitute_typed(line: &str) -> Option<(Vec<String>, bool)> {
     let range_len = line
         .find(|c: char| {
             !matches!(
@@ -1565,9 +1572,10 @@ pub fn parse_substitute(line: &str) -> Option<Vec<String>> {
     if pat.is_empty() {
         return None;
     }
+    let replacing = parts.len() > 1;
     let rep = parts.get(1).cloned().unwrap_or_default();
     let flags = parts.get(2).cloned().unwrap_or_default();
-    Some(vec![range.to_string(), pat, rep, flags])
+    Some((vec![range.to_string(), pat, rep, flags], replacing))
 }
 
 /// The replacement as the regex crate expands it: vim's `&` is the

@@ -39,6 +39,9 @@ pub fn gutter_w(cell_w: f32, lines: usize, marked: bool, blame: usize) -> f32 {
 /// How many escapes a line may have and still draw them dim; see
 /// `emit_line`.
 const DIM_ESCAPES_MAX: usize = 32;
+/// The wash under a `:s` replacement previewed: its colour at a whisper,
+/// enough to tell it from the text around it on any base.
+const INSERTED_ALPHA: f32 = 0.16;
 /// A drawn line this long (bytes) is sliced to the pane's window before
 /// it is emitted — kui's own long-line threshold, past which it shapes a
 /// text in chunks (C19; a `rich_text` too since C42). The slice bounds
@@ -761,6 +764,11 @@ pub struct LineDraw<'a> {
     /// name — drawn as the ghost is: faint, under `role = none`, the
     /// real text shifted and never hidden.
     pub hints: &'a [(usize, &'a str)],
+    /// What a `:s` being typed would put in at a byte — a replacement,
+    /// after the match it replaces, struck (docs/design/substitute.md
+    /// Decision 1) — drawn as a hint is but in the success colour, on
+    /// a wash of it.
+    pub inserted: &'a [(usize, &'a str)],
     /// Spacers before and after the text, logical px: a long line's
     /// cells outside its window (`Drawn::before_cols` / `after_cols` at
     /// the cell width).
@@ -1206,6 +1214,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     let virtual_at: Vec<usize> = ghost_at
         .into_iter()
         .chain(line.hints.iter().map(|(b, _)| (*b).min(len)))
+        .chain(line.inserted.iter().map(|(b, _)| (*b).min(len)))
         .collect();
     let mut cuts: Vec<usize> = vec![0, len];
     cuts.extend(virtual_at.iter().copied());
@@ -1621,20 +1630,30 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             return;
         }
         let ghost = line.ghost.filter(|_| !wraps).map(|(b, g)| (b.min(len), g));
-        // The ghost and the hints in byte order, each a node of its own
-        // between the spans: dim for the ghost, fainter for a hint.
-        let mut virtuals: Vec<(usize, &str, Color)> = Vec::new();
+        // The ghost, the hints and what a `:s` puts in, in byte order,
+        // each a node of its own between the spans: dim for the ghost,
+        // fainter for a hint, the success colour on its wash for a
+        // replacement.
+        let mut virtuals: Vec<(usize, &str, Color, Option<Color>)> = Vec::new();
         if !wraps {
-            virtuals.extend(ghost.map(|(g, t)| (g, t, pal.dim)));
+            virtuals.extend(ghost.map(|(g, t)| (g, t, pal.dim, None)));
             virtuals.extend(
                 line.hints
                     .iter()
-                    .map(|(b, t)| ((*b).min(len), *t, pal.faint)),
+                    .map(|(b, t)| ((*b).min(len), *t, pal.faint, None)),
             );
+            virtuals.extend(line.inserted.iter().map(|(b, t)| {
+                (
+                    (*b).min(len),
+                    *t,
+                    pal.insert,
+                    Some(pal.insert.with_alpha(INSERTED_ALPHA)),
+                )
+            }));
         }
-        virtuals.sort_by_key(|(b, _, _)| *b);
+        virtuals.sort_by_key(|(b, _, _, _)| *b);
         let mut from = 0;
-        for (b, t, color) in &virtuals {
+        for (b, t, color, wash) in &virtuals {
             let at = segs.partition_point(|(r, _)| r.end <= *b);
             flush(ui, &segs[from..at.max(from)]);
             from = at.max(from);
@@ -1651,6 +1670,8 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                             .bg_radius(line.sel_radius)],
                         base,
                     );
+                } else if let Some(wash) = wash {
+                    ui.rich_text(&[Span::new(t).color(*color).bg(*wash)], base);
                 } else {
                     ui.text(t, base.color(*color));
                 }
@@ -1681,7 +1702,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         // when they sit after it.
         let virtual_w: Vec<(usize, f32)> = virtuals
             .iter()
-            .map(|(b, t, _)| (*b, ui.measure_text(t, &base, None).width))
+            .map(|(b, t, _, _)| (*b, ui.measure_text(t, &base, None).width))
             .collect();
         for (r, kind) in line.carets {
             if *kind != Caret::Bar {

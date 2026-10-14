@@ -49,6 +49,12 @@ the groups, `\n` a newline and `\t` a tab. The pattern becomes the
 search, so `n` walks what was replaced. One `u` undoes the whole
 substitution.
 
+As the line is typed the pane shows what it will do: the matches it
+would take washed as the pattern is typed, then, once the replacement's
+`/` is typed, each struck with its replacement after it. Nothing is
+changed until `<CR>`; `<Esc>` leaves the buffer as it was. A row that
+wraps shows the strikes but not the replacements.
+
 ## Project search
 
 `<leader>ss` (or {{mac:⌘⇧F, }}`:search project`, `:grep`) opens the search

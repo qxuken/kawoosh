@@ -165,6 +165,7 @@ pub(crate) fn draw_field(ui: &mut Ui<'_>, s: &FieldScene, keyed: bool, font: cra
                     trailing_at: None,
                     ghost: s.ghost.as_deref().map(|g| (s.head, g)),
                     hints: &[],
+                    inserted: &[],
                     before: 0.0,
                     after: 0.0,
                     marks: &[],
@@ -1777,6 +1778,15 @@ impl Kawoosh {
         } else {
             buf.len()
         };
+        // A `:s` being typed over this view (substitute.md Decision 1):
+        // what it would do in the lines drawn, its matches drawn in place
+        // of the search's.
+        let subst = self.ed.substitute_preview(view, drawn.clone());
+        let search = search.filter(|_| subst.is_none());
+        let (subst_edits, replacing) = match &subst {
+            Some(p) => (p.edits.as_slice(), p.replacing),
+            None => (&[][..], false),
+        };
         let (painted, behind, paint_marks) = self.paints_in(buf_id, drawn);
         washes.splice(0..0, behind);
         let sels = &v.sels;
@@ -2349,6 +2359,52 @@ impl Kawoosh {
                                         .filter(|r| r.start < r.end),
                                 );
                             }
+                            // A `:s`'s matches: washed as hits while it
+                            // is the pattern alone, struck once the
+                            // replacement is begun, with it after each.
+                            let in_row = |r: &Range<usize>| {
+                                r.start < range.end.max(range.start + 1) && r.end > range.start
+                            };
+                            let mut struck: Vec<(Range<usize>, rows::Mark)> = Vec::new();
+                            for (r, _) in subst_edits.iter().filter(|(r, _)| in_row(r)) {
+                                let r = clip(r.start.max(range.start))..clip(r.end.min(range.end));
+                                if r.start >= r.end {
+                                    continue;
+                                }
+                                if replacing {
+                                    struck.push((
+                                        r,
+                                        rows::Mark {
+                                            strike: true,
+                                            color: Some(pal.danger),
+                                            ..Default::default()
+                                        },
+                                    ));
+                                } else {
+                                    hits.push(r);
+                                }
+                            }
+                            let inserted_text: Vec<(usize, String)> = if replacing {
+                                subst_edits
+                                    .iter()
+                                    .filter(|(r, t)| {
+                                        !t.is_empty() && r.end >= range.start && r.end <= range.end
+                                    })
+                                    .map(|(r, t)| {
+                                        let shown = t
+                                            .replace('\r', "")
+                                            .replace('\n', "⏎")
+                                            .replace('\t', &" ".repeat(tabstop));
+                                        (clip(r.end), shown)
+                                    })
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                            let inserted: Vec<(usize, &str)> = inserted_text
+                                .iter()
+                                .map(|(b, t)| (*b, t.as_str()))
+                                .collect();
                             if previewing && ln == cur_line {
                                 let at = clip(primary.head);
                                 if let Some(h) = hits.iter().find(|h| h.start == at) {
@@ -2427,6 +2483,7 @@ impl Kawoosh {
                             } else {
                                 Vec::new()
                             };
+                            syntax_marks.extend(struck);
                             syntax_marks.extend(
                                 paint_marks
                                     .iter()
@@ -2662,6 +2719,7 @@ impl Kawoosh {
                                     trailing_at: note_column.filter(|_| on_note),
                                     ghost: ghost_here,
                                     hints: &row_hints,
+                                    inserted: &inserted,
                                     before: drawn.before_cols as f32 * cell_w,
                                     after: drawn.after_cols as f32 * cell_w,
                                     marks,

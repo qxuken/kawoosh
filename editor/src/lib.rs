@@ -553,6 +553,28 @@ struct PromptState {
     walking: bool,
     /// The field's version the preview last ran at.
     seen: Version,
+    /// The command line's `:s`, worked out as `<CR>` would run it, for
+    /// the view it is over to draw (docs/design/substitute.md).
+    substitute: Option<SubstituteLive>,
+}
+
+/// A `:s` on the command line: its plan over the view the prompt is
+/// over, whether the replacement is begun, and the text's version the
+/// plan's ranges are of.
+#[derive(Clone, Debug)]
+struct SubstituteLive {
+    plan: commands::SubstitutePlan,
+    replacing: bool,
+    version: Version,
+}
+
+/// What a `:s` being typed would do in some lines of the view it is
+/// over: each match and what replaces it, ascending — the replacement
+/// empty, and not to be drawn, until `replacing` (its delimiter typed).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubstitutePreview {
+    pub edits: Vec<(Range<usize>, String)>,
+    pub replacing: bool,
 }
 
 /// What the search prompt was opened over: the view, its selections and
@@ -1348,6 +1370,7 @@ impl Editor {
             walk: None,
             walking: false,
             seen,
+            substitute: None,
         });
         field
     }
@@ -1564,7 +1587,72 @@ impl Editor {
             self.prompt.as_mut().unwrap().seen = version;
             self.preview_search();
             self.preview_select();
+            self.preview_substitute();
         }
+    }
+
+    /// The command line as it reads now, worked out if it is a `:s`
+    /// whose pattern compiles: kept for the view to draw what `<CR>`
+    /// would do ([`Editor::substitute_preview`]). Nothing is applied —
+    /// the text, the carets, the search and the undo history are left
+    /// as they are, so a prompt left with `<Esc>` has nothing to put
+    /// back (docs/design/substitute.md Decision 1).
+    fn preview_substitute(&mut self) {
+        let Some(p) = self.prompt.as_ref() else {
+            return;
+        };
+        if p.kind != Prompt::Command {
+            return;
+        }
+        let (field, from) = (p.field, p.from);
+        let line = self.field_text(field).unwrap_or_default();
+        let line = line.trim().trim_start_matches(':');
+        let live = commands::parse_substitute_typed(line)
+            .filter(|_| self.views.contains_key(from))
+            .and_then(|(args, replacing)| {
+                let plan = commands::SubstitutePlan::new(self, from, &args).ok()?;
+                let version = self.buffers[self.views[from].buffer].version();
+                Some(SubstituteLive {
+                    plan,
+                    replacing,
+                    version,
+                })
+            });
+        if let Some(p) = &mut self.prompt {
+            p.substitute = live;
+        }
+    }
+
+    /// What the `:s` on the command line would do in `window` of `view`
+    /// — whole lines, the ones a pane draws — while it is over `view`
+    /// and its pattern compiles; worked out on each call, so a frame
+    /// pays for the lines it draws, as the search's hits are found. In a
+    /// multibuffer a match outside the excerpts is left out, as `:s`
+    /// leaves it.
+    pub fn substitute_preview(
+        &self,
+        view: ViewId,
+        window: Range<usize>,
+    ) -> Option<SubstitutePreview> {
+        let p = self.prompt.as_ref().filter(|p| p.from == view)?;
+        let live = p.substitute.as_ref()?;
+        let id = self.views.get(view)?.buffer;
+        let buf = self
+            .buffers
+            .get(id)
+            .filter(|b| b.version() == live.version)?;
+        let (found, _) = live.plan.edits(buf.tree(), Some(window));
+        let mut edits: Vec<(Range<usize>, String)> = found
+            .into_iter()
+            .map(|(r, bytes)| (r, String::from_utf8_lossy(&bytes).into_owned()))
+            .collect();
+        if self.is_multi(id) {
+            edits.retain(|(r, t)| self.multi_refuses(id, &[(r.clone(), t.as_str())]).is_none());
+        }
+        Some(SubstitutePreview {
+            edits,
+            replacing: live.replacing,
+        })
     }
 
     /// The buffer already open at `path`, if any.
