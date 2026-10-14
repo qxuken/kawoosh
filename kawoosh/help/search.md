@@ -54,8 +54,11 @@ substitution.
 As the line is typed the pane shows what it will do: the matches it
 would take washed as the pattern is typed, then, once the replacement's
 `/` is typed, each struck with its replacement after it. Nothing is
-changed until `<CR>`; `<Esc>` leaves the buffer as it was. A row that
-wraps shows the strikes but not the replacements.
+changed until `<CR>`; `<Esc>` leaves the buffer as it was. With no
+match in sight the pane is taken to the first in the range, and put
+back on `<Esc>`; the end of the command line says how many changes
+`<CR>` would make ("10000+" past ten thousand). A row that wraps shows
+the strikes but not the replacements.
 
 ## Project search
 

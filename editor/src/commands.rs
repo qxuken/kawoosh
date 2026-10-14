@@ -1749,50 +1749,149 @@ impl SubstitutePlan {
     ) -> (Vec<crate::search::Substitution>, usize) {
         let mut edits = Vec::new();
         let mut lines = 0;
-        for r in &self.scope {
+        for scope in &self.scope {
             let r = match &window {
-                Some(w) => r.start.max(w.start)..r.end.min(w.end),
-                None => r.clone(),
+                Some(w) => scope.start.max(w.start)..scope.end.min(w.end),
+                None => scope.clone(),
             };
-            if r.start >= r.end {
-                continue;
-            }
-            let found = crate::search::substitutions(
-                text,
-                &self.re,
-                r.clone(),
-                self.global,
-                &self.template,
-            );
-            if !self.within {
-                lines += found.lines;
-                edits.extend(found.edits);
-                continue;
-            }
-            // Inside the selection: a match running past its end is
-            // left, and with it, maybe, its line's only one.
-            let before = found.edits.len();
-            let kept: Vec<_> = found
-                .edits
-                .into_iter()
-                .filter(|(m, _)| m.end <= r.end)
-                .collect();
-            lines += if kept.len() == before {
-                found.lines
-            } else {
-                let mut line_to = 0;
-                let mut n = 0;
-                for (m, _) in &kept {
-                    if m.start >= line_to {
-                        n += 1;
-                        line_to = crate::search::line_end(text, m.start);
-                    }
-                }
-                n
-            };
-            edits.extend(kept);
+            let (found, n) = self.edits_in(text, scope, r);
+            lines += n;
+            edits.extend(found);
         }
         (edits, lines)
+    }
+
+    /// The substitutions in `r`, a part of `scope` (whole lines of it),
+    /// and the lines they fall on.
+    fn edits_in(
+        &self,
+        text: &text_buffer::Buffer,
+        scope: &Range<usize>,
+        r: Range<usize>,
+    ) -> (Vec<crate::search::Substitution>, usize) {
+        if r.start >= r.end {
+            return (Vec::new(), 0);
+        }
+        let found = crate::search::substitutions(text, &self.re, r, self.global, &self.template);
+        if !self.within {
+            return (found.edits, found.lines);
+        }
+        // Inside the selection: a match running past its end is left,
+        // and with it, maybe, its line's only one.
+        let before = found.edits.len();
+        let kept: Vec<_> = found
+            .edits
+            .into_iter()
+            .filter(|(m, _)| m.end <= scope.end)
+            .collect();
+        let lines = if kept.len() == before {
+            found.lines
+        } else {
+            lines_of(text, &kept)
+        };
+        (kept, lines)
+    }
+
+    /// What the plan would do, counted from the scope's start until the
+    /// count passes `cap` or the walk has spent `budget`: the command
+    /// line's "N changes on M lines" and the first match, which the view
+    /// is taken to when none is in sight — a key's work however big the
+    /// file. `keep` leaves out a match `:s` would leave (a multibuffer's
+    /// header). The scope is walked a window of whole lines at a time,
+    /// so the first-match rule sees each line whole.
+    pub fn tally(
+        &self,
+        text: &text_buffer::Buffer,
+        cap: usize,
+        budget: std::time::Duration,
+        keep: impl Fn(&Range<usize>, &[u8]) -> bool,
+    ) -> SubstituteTally {
+        let started = std::time::Instant::now();
+        let mut tally = SubstituteTally {
+            whole: true,
+            ..Default::default()
+        };
+        for scope in &self.scope {
+            let mut at = scope.start;
+            while at < scope.end {
+                if tally.changes > cap || started.elapsed() > budget {
+                    tally.whole = false;
+                    tally.changes = tally.changes.min(cap);
+                    return tally;
+                }
+                let end = if scope.end - at <= TALLY_WINDOW {
+                    scope.end
+                } else {
+                    crate::search::line_end(text, at + TALLY_WINDOW).min(scope.end)
+                };
+                let (mut found, mut lines) = self.edits_in(text, scope, at..end);
+                let before = found.len();
+                found.retain(|(m, t)| keep(m, t));
+                if found.len() < before {
+                    lines = lines_of(text, &found);
+                }
+                if tally.first.is_none() {
+                    tally.first = found.first().map(|(m, _)| m.clone());
+                }
+                tally.changes += found.len();
+                tally.lines += lines;
+                at = end;
+            }
+        }
+        if tally.changes > cap {
+            tally.whole = false;
+            tally.changes = cap;
+        }
+        tally
+    }
+}
+
+/// The lines `edits` (ascending) fall on.
+fn lines_of(text: &text_buffer::Buffer, edits: &[crate::search::Substitution]) -> usize {
+    let mut line_to = 0;
+    let mut n = 0;
+    for (m, _) in edits {
+        if m.start >= line_to {
+            n += 1;
+            line_to = crate::search::line_end(text, m.start);
+        }
+    }
+    n
+}
+
+/// How much of the text a tally walks at a time: whole lines, about a
+/// mebibyte, the budget looked at between.
+const TALLY_WINDOW: usize = 1 << 20;
+
+/// What [`SubstitutePlan::tally`] counted: the substitutions and the
+/// lines they fall on, the first, and whether that is all of them
+/// (`whole`) or only as far as the count's bound.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubstituteTally {
+    pub changes: usize,
+    pub lines: usize,
+    pub first: Option<Range<usize>>,
+    pub whole: bool,
+}
+
+impl SubstituteTally {
+    /// The command line's count: "3 changes on 2 lines", "no match",
+    /// or past the bound "10000+ changes".
+    pub fn says(&self) -> String {
+        let s = |n: usize| if n == 1 { "" } else { "s" };
+        if !self.whole {
+            format!("{}+ changes", self.changes)
+        } else if self.changes == 0 {
+            "no match".into()
+        } else {
+            format!(
+                "{} change{} on {} line{}",
+                self.changes,
+                s(self.changes),
+                self.lines,
+                s(self.lines)
+            )
+        }
     }
 }
 

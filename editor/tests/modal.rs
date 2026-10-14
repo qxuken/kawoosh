@@ -1176,6 +1176,43 @@ fn substitute_from_visual_mode_is_over_the_selection() {
     );
 }
 
+/// While a `:s` is typed with no match of it in sight, the view is taken
+/// to the first in the range — the caret left where it is, so the range
+/// stays its — and put back when a match is in sight again or on
+/// `<Esc>`. The command line counts what `<CR>` would change, up to a
+/// bound past which it says so.
+#[test]
+fn substitute_preview_goes_to_the_first_match_and_counts() {
+    let text: String = (0..100)
+        .map(|i| if i == 80 { "target here\n" } else { "x\n" })
+        .collect();
+    let mut t = T::new(&text);
+    t.ed.views[t.v].rows = 10;
+    let says = |t: &T| t.ed.substitute_tally().map(|c| c.says());
+    t.keys(":%s/targ");
+    assert_eq!(t.ed.views[t.v].top, 75, "line 81 in the middle");
+    assert_eq!(t.sels(), vec![(0, 0)], "the caret where it was");
+    assert_eq!(says(&t).as_deref(), Some("1 change on 1 line"));
+    t.keys("<BS><BS><BS><BS>x");
+    assert_eq!(t.ed.views[t.v].top, 0, "a match in sight: back");
+    assert_eq!(says(&t).as_deref(), Some("99 changes on 99 lines"));
+    t.keys("<BS>target");
+    assert_eq!(t.ed.views[t.v].top, 75);
+    t.keys("<Esc><Esc>");
+    assert_eq!(t.ed.prompt_view(), None);
+    assert_eq!(t.ed.views[t.v].top, 0, "put back on <Esc>");
+    assert_eq!(says(&t), None);
+    // Without a range, the caret's line: nothing there, nothing moves.
+    t.keys(":s/target");
+    assert_eq!(t.ed.views[t.v].top, 0);
+    assert_eq!(says(&t).as_deref(), Some("no match"));
+    t.keys("<Esc><Esc>");
+
+    let mut t = T::new(&"a\n".repeat(20_000));
+    t.keys(":%s/a/b/");
+    assert_eq!(says(&t).as_deref(), Some("10000+ changes"));
+}
+
 /// A `:s` from visual mode that fails — no match, a bad pattern — ends
 /// in normal mode as vim's does, each selection a caret at its start as
 /// a substitution that changed something leaves several, the message

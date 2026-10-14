@@ -50,9 +50,9 @@ shows what `<CR>` will do:
   ~~foo~~`bar` — a diff of the line, an empty replacement a strike
   alone. A newline in the replacement is drawn `⏎`.
 
-Nothing else moves: the carets, the scroll, the search `n` walks, the
-undo history, the modified flag. `<Esc>` closes the prompt and the
-paint goes with it — there is nothing to put back. A pattern that does
+Nothing else moves: the carets, the search `n` walks, the undo
+history, the modified flag — and the scroll only as Decision 5 takes
+it. `<Esc>` closes the prompt and the paint goes with it. A pattern that does
 not compile yet (`:s/(a`) previews nothing. Only the lines drawn are
 worked out, each frame, as the search's hits are: a `:%s` over a large
 file costs what is on screen.
@@ -76,9 +76,8 @@ point of previewing a regex.
 
 *Not drawn:* in a row that wraps (soft wrap, rendered markdown) virtual
 text is not drawn — the inlay hints and the ghost are not either — so
-there the matches are struck and the replacement is not shown. The
-view does not move to a match off screen, and nothing says how many
-there are: both open (below).
+there the matches are struck and the replacement is not shown (kept
+so, the user's call of 2026-10-14).
 
 ### 2. From visual mode `:` is `:'<,'>`, and `'<,'>` is the selections
 
@@ -133,7 +132,14 @@ past `'<,'>` (`kawoosh/src/cmdline.rs`). Tests: `editor/tests/modal.rs`'
 `substitute_keeps_every_caret_where_its_text_went`,
 `substitute_from_visual_mode_is_over_the_selection`,
 `substitute_is_previewed_as_it_is_typed`; `kawoosh/tests/cmdline.rs`'
-`a_substitution_is_previewed_in_the_pane_as_it_is_typed`.
+`a_substitution_is_previewed_in_the_pane_as_it_is_typed`. Decision 4:
+`substitute` says and leaves visual mode for `substitute_or_say`'s
+error (`a_failed_substitute_from_visual_mode_ends_in_normal_mode`).
+Decision 5: `SubstitutePlan::tally` (bounded, by windows of lines),
+`preview_substitute` scrolling and `unscroll_prompt`, the pane's
+follow held by `substitute_previewing`, the count in `command_line`
+(`substitute_preview_goes_to_the_first_match_and_counts`,
+`a_substitution_out_of_sight_is_shown_and_counted`).
 
 ### 4. A failed `:s` from visual mode ends in normal mode too
 
@@ -145,12 +151,38 @@ message says why. Before, it stayed in visual mode with the selection
 up, so the next key acted on a selection the user had already sent to
 `:`.
 
+### 5. Out of sight, the view goes to the first match; the strip counts
+
+The user's call, 2026-10-14, on what Open asked. While a `:s` is typed
+and none of its matches in the range is in sight, the view is taken to
+the first one, its line in the middle as a far jump puts it — the feel
+of `/` moving to its match as it is typed. It is the view's scroll that
+moves, not the caret: the caret is what `.` and a bare range read, so
+moving it would change the range being typed. Each key puts the scroll
+back first and decides again, so a line that has a match in sight once
+more returns the view to where it was, and `<Esc>` and `<CR>` put it
+back too (`<CR>` then moves the caret as Decision 3 says, and the view
+follows that). Meanwhile the view does not follow its caret: the caret
+left behind would pull it back on the next key.
+
+The command line's strip says, at its right end and dim, what `<CR>`
+would change: "3 changes on 2 lines", "no match". It is counted once a
+key, not a frame, a window of whole lines at a time from the range's
+start, and stops at 10,000 changes or 8 ms, whichever comes first,
+saying "10000+ changes" (or as many as it reached, with the `+`) — a
+`:%s` over a big file is never counted whole on every key. The same
+walk finds the first match the view is taken to.
+
+*Beat: the message line.* While the prompt is open the strip is the
+prompt's and the message is not drawn; a count put in the message
+would be unseen until the prompt closed, and would overwrite what the
+message last said. *Beat: the completion's ghost after the caret.* The
+ghost is text `<Tab>` takes into the line; a count there would read as
+something to type. The strip's end is where the project search's bar
+puts its count beside its field, so the eye already looks there.
+
 ## Open
 
-- Whether the view should scroll to the first match when none is in
-  sight while the line is typed (neovim's `nosplit` does not; its
-  `split` shows the lines off screen in a window of their own), and
-  whether the line should say how many it will change.
 - The replacement in a wrapping row (Decision 1's *not drawn*): it
   wants the wrapped row's text to carry virtual spans, which its caret
   and `gj` placement read back by byte.

@@ -676,3 +676,39 @@ fn a_substitution_is_previewed_in_the_pane_as_it_is_typed() {
     assert_eq!(d.line_rows()[..3], ["OMEGA beta OMEGA", "OMEGA", "gamma"]);
     assert_eq!(d.row_extras()[0], "");
 }
+
+/// A `:s` with no match in sight takes the pane to its first match in
+/// the range and keeps it there across frames and keys — the caret it
+/// leaves alone does not pull it back — and `<Esc>` puts it back; the
+/// strip says how many changes `<CR>` would make (substitute.md
+/// Decision 5).
+#[test]
+fn a_substitution_out_of_sight_is_shown_and_counted() {
+    let text: String = (0..200)
+        .map(|i| if i == 150 { "target here\n" } else { "x\n" })
+        .collect();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", &text);
+    d.frame(&mut app);
+    let view = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[view].top, 0);
+    d.keys(&mut app, ":%s/target/T");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let top = app.ed.views[view].top;
+    assert!(top > 100 && top <= 150, "line 151 in sight: top {top}");
+    assert!(
+        d.line_rows().iter().any(|r| r == "target here"),
+        "{:?}",
+        d.line_rows()
+    );
+    assert!(
+        texts(&d).iter().any(|t| t == "1 change on 1 line"),
+        "{:?}",
+        texts(&d)
+    );
+    leave(&mut d, &mut app);
+    d.frame(&mut app);
+    assert_eq!(app.ed.views[view].top, 0, "put back");
+    assert!(!texts(&d).iter().any(|t| t == "1 change on 1 line"));
+}

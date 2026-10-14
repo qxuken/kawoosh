@@ -556,6 +556,10 @@ struct PromptState {
     /// The command line's `:s`, worked out as `<CR>` would run it, for
     /// the view it is over to draw (docs/design/substitute.md).
     substitute: Option<SubstituteLive>,
+    /// Where the view the prompt is over was scrolled from — its top
+    /// and its sideways scroll — when the preview took it to a `:s`'s
+    /// first match: put back on the next key, `<Esc>` and `<CR>`.
+    scrolled_from: Option<(ViewId, usize, f32)>,
 }
 
 /// A `:s` on the command line: its plan over the view the prompt is
@@ -566,7 +570,15 @@ struct SubstituteLive {
     plan: commands::SubstitutePlan,
     replacing: bool,
     version: Version,
+    /// What `<CR>` would change, counted on the key that made the line.
+    tally: commands::SubstituteTally,
 }
+
+/// How many substitutions the command line counts before it says
+/// "N+" — and the time it spends at most, a key's share: a `:%s` over a
+/// big file is not counted whole on every key.
+const SUBSTITUTE_COUNT_CAP: usize = 10_000;
+const SUBSTITUTE_COUNT_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
 
 /// What a `:s` being typed would do in some lines of the view it is
 /// over: each match and what replaces it, ascending — the replacement
@@ -1371,6 +1383,7 @@ impl Editor {
             walking: false,
             seen,
             substitute: None,
+            scrolled_from: None,
         });
         field
     }
@@ -1421,6 +1434,7 @@ impl Editor {
     /// was when the prompt opened, not from the preview's match, so the
     /// first match from there is the one the preview showed.
     pub fn submit_prompt(&mut self) {
+        self.unscroll_prompt();
         let Some(p) = self.prompt.take() else {
             return;
         };
@@ -1487,6 +1501,7 @@ impl Editor {
     /// `<BS>` on an empty line, or the shell's click elsewhere — the
     /// view and the search as they were when a search prompt opened.
     pub fn cancel_prompt(&mut self) {
+        self.unscroll_prompt();
         let Some(p) = self.prompt.take() else {
             return;
         };
@@ -1608,22 +1623,98 @@ impl Editor {
             return;
         }
         let (field, from) = (p.field, p.from);
+        self.unscroll_prompt();
         let line = self.field_text(field).unwrap_or_default();
         let line = line.trim().trim_start_matches(':');
         let live = commands::parse_substitute_typed(line)
             .filter(|_| self.views.contains_key(from))
             .and_then(|(args, replacing)| {
                 let plan = commands::SubstitutePlan::new(self, from, &args).ok()?;
-                let version = self.buffers[self.views[from].buffer].version();
+                let id = self.views[from].buffer;
+                let buf = &self.buffers[id];
+                let tally = plan.tally(
+                    buf.tree(),
+                    SUBSTITUTE_COUNT_CAP,
+                    SUBSTITUTE_COUNT_BUDGET,
+                    |m, t| {
+                        !self.is_multi(id)
+                            || self
+                                .multi_refuses(id, &[(m.clone(), &String::from_utf8_lossy(t))])
+                                .is_none()
+                    },
+                );
                 Some(SubstituteLive {
                     plan,
                     replacing,
-                    version,
+                    version: buf.version(),
+                    tally,
                 })
             });
+        let first = live.as_ref().and_then(|l| l.tally.first.clone());
         if let Some(p) = &mut self.prompt {
             p.substitute = live;
         }
+        // No match in sight: the view to the first in the range, its
+        // line in the middle, as a far jump puts it — the caret left
+        // where it is, so the range stays the one typed.
+        let Some(first) = first else {
+            return;
+        };
+        let (top, rows) = (self.views[from].top, self.views[from].rows);
+        if rows == 0 {
+            return;
+        }
+        let buf = &self.buffers[self.views[from].buffer];
+        let count = buf.line_count();
+        let shown = buf.line_start(top.min(count))..if top + rows < count {
+            buf.line_start(top + rows)
+        } else {
+            buf.len()
+        };
+        if self
+            .substitute_preview(from, shown)
+            .is_some_and(|p| !p.edits.is_empty())
+        {
+            return;
+        }
+        let line = buf.line_of(first.start);
+        let to = line
+            .saturating_sub(rows / 2)
+            .min(count.saturating_sub(rows));
+        let v = &mut self.views[from];
+        let left = v.left;
+        v.top = to;
+        v.left = 0.0;
+        if let Some(p) = &mut self.prompt {
+            p.scrolled_from = Some((from, top, left));
+        }
+    }
+
+    /// The view the `:s` preview scrolled to its first match, back where
+    /// it was.
+    fn unscroll_prompt(&mut self) {
+        let Some((view, top, left)) = self.prompt.as_mut().and_then(|p| p.scrolled_from.take())
+        else {
+            return;
+        };
+        if let Some(v) = self.views.get_mut(view) {
+            v.top = top;
+            v.left = left;
+        }
+    }
+
+    /// What the `:s` on the command line would change, as far as it was
+    /// counted, while one is there.
+    pub fn substitute_tally(&self) -> Option<&commands::SubstituteTally> {
+        Some(&self.prompt.as_ref()?.substitute.as_ref()?.tally)
+    }
+
+    /// Whether the command line is previewing a `:s` over `view`: the
+    /// view's scroll is the preview's then, not its caret's to follow.
+    pub fn substitute_previewing(&self, view: ViewId) -> bool {
+        self.prompt
+            .as_ref()
+            .is_some_and(|p| p.from == view && p.substitute.is_some())
     }
 
     /// What the `:s` on the command line would do in `window` of `view`

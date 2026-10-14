@@ -349,6 +349,19 @@ impl Kawoosh {
                             ui.reveal(key);
                         }
                     }
+                    // A `:s` being typed: what `<CR>` would change, at
+                    // the strip's end, counted up to a bound
+                    // (substitute.md Decision 5).
+                    if let Some(tally) = self.ed.substitute_tally() {
+                        ui.leaf(NodeSpec::row().grow_width());
+                        ui.text_in(
+                            NodeSpec::row()
+                                .min_width(kui_native::Min::FIT)
+                                .label("substitute count"),
+                            &tally.says(),
+                            TextStyle::new(small).color(pal.dim).nowrap(),
+                        );
+                    }
                 } else if !self.ed.message.is_empty() {
                     // One line in the strip's fixed height — wrapped, a
                     // long message painted its rest below the window —
@@ -1440,7 +1453,13 @@ impl Kawoosh {
         // under it: the picker opened below shortens it and leaves its
         // text still.
         let caret = (buf_id, self.ed.views[view].sels.primary().head);
-        let follow = self.ed.views[view].drawn_caret != Some(caret) || focused && self.follow_caret;
+        // Not while the command line previews a `:s` over it: the
+        // preview takes the view to a match out of sight and back, and
+        // the caret it leaves alone would pull it back on each key
+        // (substitute.md Decision 5).
+        let follow = (self.ed.views[view].drawn_caret != Some(caret)
+            || focused && self.follow_caret)
+            && !self.ed.substitute_previewing(view);
         self.ed.views[view].drawn_caret = Some(caret);
         let mut md_last = None;
         let mut md_anchored = None;
