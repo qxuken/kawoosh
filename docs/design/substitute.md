@@ -135,6 +135,16 @@ past `'<,'>` (`kawoosh/src/cmdline.rs`). Tests: `editor/tests/modal.rs`'
 `substitute_is_previewed_as_it_is_typed`; `kawoosh/tests/cmdline.rs`'
 `a_substitution_is_previewed_in_the_pane_as_it_is_typed`.
 
+### 4. A failed `:s` from visual mode ends in normal mode too
+
+The user's call, 2026-10-14. A `:s` from visual mode that changes
+nothing — no match, a pattern that does not compile, a read-only
+buffer — ends in normal mode as vim's does, each selection a caret at
+its start as one that changed something leaves several, and the
+message says why. Before, it stayed in visual mode with the selection
+up, so the next key acted on a selection the user had already sent to
+`:`.
+
 ## Open
 
 - Whether the view should scroll to the first match when none is in

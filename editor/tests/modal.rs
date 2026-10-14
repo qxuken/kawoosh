@@ -1176,6 +1176,30 @@ fn substitute_from_visual_mode_is_over_the_selection() {
     );
 }
 
+/// A `:s` from visual mode that fails — no match, a bad pattern — ends
+/// in normal mode as vim's does, each selection a caret at its start as
+/// a substitution that changed something leaves several, the message
+/// still said.
+#[test]
+fn a_failed_substitute_from_visual_mode_ends_in_normal_mode() {
+    let mut t = T::new("foo bar\nbaz foo\n");
+    t.keys("wvj:s/qux/X/<CR>");
+    assert_eq!(t.ed.message, "no match: qux");
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    assert_eq!(t.sels(), vec![(4, 4)]);
+    t.keys("vl:s/(/X/<CR>");
+    assert!(t.ed.message.starts_with("bad pattern"), "{}", t.ed.message);
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    assert_eq!(t.sels(), vec![(4, 4)]);
+    let mut t = T::new("foo x foo\n");
+    t.keys("<C-n><C-n>");
+    assert_eq!(t.sels(), vec![(0, 2), (6, 8)]);
+    t.keys(":s/zzz/y/<CR>");
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    assert_eq!(t.sels(), vec![(0, 0), (6, 6)]);
+    assert_eq!(t.text(), "foo x foo\n");
+}
+
 /// The command line previews a `:s` as it is typed: the matches it
 /// would take, then — the replacement begun — each with what replaces
 /// it, over the lines asked for. Nothing is done meanwhile: `<Esc>`

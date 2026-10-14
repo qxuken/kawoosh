@@ -41,7 +41,9 @@ the lines the selections touch when there is no range.
 `:` in visual mode starts the line with `'<,'>`, so `vi(:s/a/b/g`
 replaces inside the parentheses and nowhere else, and with several
 selections (`<C-n>`) only in those. Before any other command the
-`'<,'>` is dropped: every command acts on the selections already.
+`'<,'>` is dropped: every command acts on the selections already. A
+`:s` from visual mode ends in normal mode, whether it changed anything
+or not.
 
 The flag `g` replaces every match on a line, not just the first; `i`
 ignores case. In the replacement, `&` is the whole match, `\1`…`\9`

@@ -1804,26 +1804,30 @@ impl SubstitutePlan {
 /// at the start of where its text went (docs/design/substitute.md
 /// Decision 3). The pattern becomes the search `n` walks.
 fn substitute(ed: &mut Editor, ctx: &Ctx) {
-    let plan = match SubstitutePlan::new(ed, ctx.view, &ctx.args) {
-        Ok(p) => p,
-        Err(e) => {
-            ed.message = e;
-            return;
-        }
-    };
-    let pat = ctx.args[1].as_str();
-    if let Err(e) = ed.set_search(&plan.pattern, false) {
+    if let Err(e) = substitute_or_say(ed, ctx) {
         ed.message = e;
-        return;
+        // Failed from visual mode — no match, a bad pattern — it ends in
+        // normal mode as vim's does, each selection a caret at its start
+        // as a substitution that changed something leaves several
+        // (docs/design/substitute.md Decision 4).
+        if ed.mode(ctx.view) == Mode::Visual {
+            ed.views[ctx.view].sels.map(|s| Selection::point(s.start()));
+            ed.set_mode(ctx.view, Mode::Normal);
+        }
     }
+}
+
+/// `substitute` itself: what went wrong, the message to say.
+fn substitute_or_say(ed: &mut Editor, ctx: &Ctx) -> Result<(), String> {
+    let plan = SubstitutePlan::new(ed, ctx.view, &ctx.args)?;
+    let pat = ctx.args[1].as_str();
+    ed.set_search(&plan.pattern, false)?;
     let id = view(ed, ctx).buffer;
     if ed.buffers[id].read_only {
-        ed.message = "buffer is read-only".into();
-        return;
+        return Err("buffer is read-only".into());
     }
     if ed.buffers[id].loading.is_some() {
-        ed.message = "still opening".into();
-        return;
+        return Err("still opening".into());
     }
     let started = std::time::Instant::now();
     let (found, lines) = plan.edits(ed.buffers[id].tree(), None);
@@ -1844,12 +1848,11 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
         kept_out = before - edits.len();
     }
     if edits.is_empty() {
-        ed.message = if kept_out > 0 {
+        return Err(if kept_out > 0 {
             format!("no match in the excerpts: {pat}")
         } else {
             format!("no match: {pat}")
-        };
-        return;
+        });
     }
     let count = edits.len();
     let v0 = ed.buffers[id].version();
@@ -1901,6 +1904,7 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
         }
     );
     ed.sync_multis();
+    Ok(())
 }
 
 /// Writes `buf` to `path` through a file beside it, renamed over the
