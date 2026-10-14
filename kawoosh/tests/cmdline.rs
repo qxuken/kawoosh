@@ -116,6 +116,21 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     );
     leave(&mut d, &mut app);
 
+    // From visual mode the line starts `'<,'>` (substitute.md Decision
+    // 2), and the command after it completes as on a line of its own.
+    d.keys(&mut app, "v:ali");
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "'<,'>ali");
+    let ghost = app.cmdline_ghost().unwrap_or_default();
+    assert!(ghost.starts_with("gn"), "{ghost:?}");
+    tab(&mut d, &mut app);
+    assert_eq!(
+        app.ed.prompt_text().unwrap_or_default(),
+        format!("'<,'>ali{ghost}")
+    );
+    leave(&mut d, &mut app);
+    d.press(&mut app, "<Esc>");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+
     // A path: the directory's entries, hidden ones only asked for; one
     // candidate taken goes on into what it opens. After the command's
     // word, before a letter, the first is suggested and the row is up.
@@ -616,4 +631,84 @@ fn the_completion_reads_up_to_the_caret() {
     assert_eq!(app.ed.prompt_caret(), Some("set ".len() + cand.len()));
     leave(&mut d, &mut app);
     assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A `:s` is previewed in the pane as it is typed (substitute.md
+/// Decision 1): once the replacement is begun each match the line would
+/// take has its replacement drawn after it, beside the line's own text
+/// and not in it; the buffer is untouched until `<CR>`, and `<Esc>`
+/// takes the replacements off the pane.
+#[test]
+fn a_substitution_is_previewed_in_the_pane_as_it_is_typed() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "alpha beta alpha\nalpha\ngamma\n");
+    d.frame(&mut app);
+    d.keys(&mut app, ":s/alpha");
+    d.frame(&mut app);
+    assert_eq!(d.row_extras()[0], "", "the pattern alone puts nothing in");
+    d.keys(&mut app, "/OMEGA");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows()[0], "alpha beta alpha", "the line's own text");
+    assert_eq!(d.row_extras()[0], "OMEGA", "the first match's replacement");
+    assert_eq!(
+        d.row_extras()[1],
+        "",
+        "not the next line's: `:s` is this line"
+    );
+    // Every line, every match.
+    d.press(&mut app, "<C-u>");
+    d.keys(&mut app, "%s/alpha/OMEGA/g");
+    d.frame(&mut app);
+    assert_eq!(d.row_extras()[0], "OMEGAOMEGA");
+    assert_eq!(d.row_extras()[1], "OMEGA");
+    let view = app.ed.prompt_from().unwrap();
+    assert_eq!(
+        app.ed.buffer_of(view).text(),
+        "alpha beta alpha\nalpha\ngamma\n"
+    );
+    leave(&mut d, &mut app);
+    d.frame(&mut app);
+    assert_eq!(d.row_extras()[0], "");
+    assert_eq!(d.line_rows()[0], "alpha beta alpha");
+    d.keys(&mut app, ":%s/alpha/OMEGA/g");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(d.line_rows()[..3], ["OMEGA beta OMEGA", "OMEGA", "gamma"]);
+    assert_eq!(d.row_extras()[0], "");
+}
+
+/// A `:s` with no match in sight takes the pane to its first match in
+/// the range and keeps it there across frames and keys — the caret it
+/// leaves alone does not pull it back — and `<Esc>` puts it back; the
+/// strip says how many changes `<CR>` would make (substitute.md
+/// Decision 5).
+#[test]
+fn a_substitution_out_of_sight_is_shown_and_counted() {
+    let text: String = (0..200)
+        .map(|i| if i == 150 { "target here\n" } else { "x\n" })
+        .collect();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", &text);
+    d.frame(&mut app);
+    let view = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[view].top, 0);
+    d.keys(&mut app, ":%s/target/T");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let top = app.ed.views[view].top;
+    assert!(top > 100 && top <= 150, "line 151 in sight: top {top}");
+    assert!(
+        d.line_rows().iter().any(|r| r == "target here"),
+        "{:?}",
+        d.line_rows()
+    );
+    assert!(
+        texts(&d).iter().any(|t| t == "1 change on 1 line"),
+        "{:?}",
+        texts(&d)
+    );
+    leave(&mut d, &mut app);
+    d.frame(&mut app);
+    assert_eq!(app.ed.views[view].top, 0, "put back");
+    assert!(!texts(&d).iter().any(|t| t == "1 change on 1 line"));
 }

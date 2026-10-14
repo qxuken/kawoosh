@@ -117,7 +117,8 @@ when it brings a `textobjects.scm`.
 
 `:s/PAT/REP/g` replaces on the lines every selection touches (the
 caret's line, with one caret), `:%s` in the whole file, `:N,Ms` on lines N
-to M. Searching is covered in [search](search.md).
+to M; from visual mode `:` starts `:'<,'>`, inside the selection. Searching
+is covered in [search](search.md).
 
 ## Jumps
 

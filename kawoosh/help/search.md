@@ -36,13 +36,29 @@ the lines the selections touch when there is no range.
 | none | each line a selection touches |
 | `%` | the whole buffer |
 | `N,M` | lines N to M; `.` is the current line, `$` the last, `+N` `-N` relative |
-| `'<,'>` | the lines the selections cover |
+| `'<,'>` | the selections: `V`'s lines, `v`'s characters (a match only inside one), a caret's line |
+
+`:` in visual mode starts the line with `'<,'>`, so `vi(:s/a/b/g`
+replaces inside the parentheses and nowhere else, and with several
+selections (`<C-n>`) only in those. Before any other command the
+`'<,'>` is dropped: every command acts on the selections already. A
+`:s` from visual mode ends in normal mode, whether it changed anything
+or not.
 
 The flag `g` replaces every match on a line, not just the first; `i`
 ignores case. In the replacement, `&` is the whole match, `\1`…`\9`
 the groups, `\n` a newline and `\t` a tab. The pattern becomes the
 search, so `n` walks what was replaced. One `u` undoes the whole
 substitution.
+
+As the line is typed the pane shows what it will do: the matches it
+would take washed as the pattern is typed, then, once the replacement's
+`/` is typed, each struck with its replacement after it. Nothing is
+changed until `<CR>`; `<Esc>` leaves the buffer as it was. With no
+match in sight the pane is taken to the first in the range, and put
+back on `<Esc>`; the end of the command line says how many changes
+`<CR>` would make ("10000+" past ten thousand). A row that wraps shows
+the strikes but not the replacements.
 
 ## Project search
 

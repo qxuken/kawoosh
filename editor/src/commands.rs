@@ -1521,6 +1521,13 @@ fn search(ed: &mut Editor, ctx: &Ctx, forward: bool) {
 /// the pattern or the replacement is the delimiter itself, and the
 /// replacement may stop early (`:s/a/b`).
 pub fn parse_substitute(line: &str) -> Option<Vec<String>> {
+    parse_substitute_typed(line).map(|(args, _)| args)
+}
+
+/// [`parse_substitute`], and whether the replacement is begun — its
+/// delimiter typed (`:s/a/`): what the preview shows the replaced text
+/// for, where `:s/a` is the pattern alone.
+pub fn parse_substitute_typed(line: &str) -> Option<(Vec<String>, bool)> {
     let range_len = line
         .find(|c: char| {
             !matches!(
@@ -1565,9 +1572,10 @@ pub fn parse_substitute(line: &str) -> Option<Vec<String>> {
     if pat.is_empty() {
         return None;
     }
+    let replacing = parts.len() > 1;
     let rep = parts.get(1).cloned().unwrap_or_default();
     let flags = parts.get(2).cloned().unwrap_or_default();
-    Some(vec![range.to_string(), pat, rep, flags])
+    Some((vec![range.to_string(), pat, rep, flags], replacing))
 }
 
 /// The replacement as the regex crate expands it: vim's `&` is the
@@ -1603,13 +1611,18 @@ fn substitute_template(rep: &str) -> Vec<u8> {
     out
 }
 
-/// The lines an ex range names, as byte ranges of whole lines with
-/// their newlines: `%` every line, `N` / `N,M` (1-based, `.` the
-/// primary's line, `$` the last, `+N` / `-N` from the current), `'<,'>`
-/// the lines the selections cover, and none — the lines every selection
-/// touches, one range each.
-fn substitute_ranges(ed: &Editor, ctx: &Ctx, spec: &str) -> Result<Vec<Range<usize>>, String> {
-    let v = view(ed, ctx);
+/// Where an ex range has `:s` look, as byte ranges in order: whole lines
+/// with their newlines — `%` every line, `N` / `N,M` (1-based, `.` the
+/// primary's line, `$` the last, `+N` / `-N` from the current), and
+/// none the lines every selection touches, one range each — or, for
+/// `'<,'>`, the selections as they are: `V`'s lines, `v`'s characters
+/// (`true` with them: a match must lie inside one), a caret's line.
+fn substitute_ranges(
+    ed: &Editor,
+    view_id: ViewId,
+    spec: &str,
+) -> Result<(Vec<Range<usize>>, bool), String> {
+    let v = &ed.views[view_id];
     let buf = &ed.buffers[v.buffer];
     let last = buf.line_count() - 1;
     let cur = buf.line_of(v.sels.primary().head);
@@ -1641,29 +1654,29 @@ fn substitute_ranges(ed: &Editor, ctx: &Ctx, spec: &str) -> Result<Vec<Range<usi
                 .map_err(|_| format!("bad range: {spec}"))?,
         })
     };
+    let visual = ed.mode(view_id) == Mode::Visual;
+    // A characterwise visual selection: its characters, in order (the
+    // set is kept apart and sorted), each its own scope.
+    if spec == "'<,'>" && visual && !v.visual_linewise {
+        let mut spans: Vec<Range<usize>> = v.sels.iter().map(|s| sel_range(buf, s)).collect();
+        spans.sort_by_key(|r| r.start);
+        return Ok((spans, true));
+    }
+    // What each selection covers: in visual mode the character under
+    // the head too, which may be the first of a line.
     let mut ranges: Vec<Range<usize>> = match spec {
-        "" => v
+        "" | "'<,'>" => v
             .sels
             .iter()
             .map(|s| {
-                let (a, b) = (
-                    buf.line_of(s.start()),
-                    buf.line_of(s.end().saturating_sub(usize::from(!s.is_empty()))),
-                );
-                lines_of(a, b)
-            })
-            .collect(),
-        "%" => vec![lines_of(0, last)],
-        "'<,'>" => v
-            .sels
-            .iter()
-            .map(|s| {
+                let r = if visual { sel_range(buf, s) } else { s.range() };
                 lines_of(
-                    buf.line_of(s.start()),
-                    buf.line_of(s.end().saturating_sub(usize::from(!s.is_empty()))),
+                    buf.line_of(r.start),
+                    buf.line_of(r.end.saturating_sub(usize::from(r.end > r.start))),
                 )
             })
             .collect(),
+        "%" => vec![lines_of(0, last)],
         _ => match spec.split_once(',') {
             Some((a, b)) => vec![lines_of(addr(a)?, addr(b)?)],
             None => {
@@ -1681,64 +1694,250 @@ fn substitute_ranges(ed: &Editor, ctx: &Ctx, spec: &str) -> Result<Vec<Range<usi
             _ => joined.push(r),
         }
     }
-    Ok(joined)
+    Ok((joined, false))
+}
+
+/// What a `:s` line would do over a view, worked out before it does it:
+/// the pattern as the search takes it, the replacement as the regex
+/// crate expands it, `g`, and where it looks — whole lines, or a
+/// characterwise selection's characters (`within`), a match taken only
+/// when it lies inside one. What `:s` applies, and what the command line
+/// previews as it is typed (docs/design/substitute.md).
+#[derive(Clone, Debug)]
+pub struct SubstitutePlan {
+    /// The pattern with its flags: the search `:s` leaves `n` walking.
+    pub pattern: String,
+    pub re: regex::bytes::Regex,
+    template: Vec<u8>,
+    global: bool,
+    scope: Vec<Range<usize>>,
+    within: bool,
+}
+
+impl SubstitutePlan {
+    /// `[range, pat, rep, flags]`, a line as [`parse_substitute`] takes
+    /// it apart, over `view_id` — or the message saying what is wrong.
+    pub fn new(ed: &Editor, view_id: ViewId, args: &[String]) -> Result<Self, String> {
+        let [range, pat, rep, flags] = args else {
+            return Err("usage: :[range]s/pattern/replacement/[gi]".into());
+        };
+        let pattern = if flags.contains('i') {
+            format!("(?i){pat}")
+        } else {
+            pat.to_string()
+        };
+        let re = crate::search::Search::new(&pattern, false)?.re;
+        let (scope, within) = substitute_ranges(ed, view_id, range)?;
+        Ok(Self {
+            pattern,
+            re,
+            template: substitute_template(rep),
+            global: flags.contains('g'),
+            scope,
+            within,
+        })
+    }
+
+    /// The substitutions it makes in `text` — what each replaces and
+    /// with what, ascending — and how many lines they fall on: only
+    /// those in `window` when one is given, whole lines (the lines a
+    /// pane draws), so the first-match rule still sees each line whole.
+    pub fn edits(
+        &self,
+        text: &text_buffer::Buffer,
+        window: Option<Range<usize>>,
+    ) -> (Vec<crate::search::Substitution>, usize) {
+        let mut edits = Vec::new();
+        let mut lines = 0;
+        for scope in &self.scope {
+            let r = match &window {
+                Some(w) => scope.start.max(w.start)..scope.end.min(w.end),
+                None => scope.clone(),
+            };
+            let (found, n) = self.edits_in(text, scope, r);
+            lines += n;
+            edits.extend(found);
+        }
+        (edits, lines)
+    }
+
+    /// The substitutions in `r`, a part of `scope` (whole lines of it),
+    /// and the lines they fall on.
+    fn edits_in(
+        &self,
+        text: &text_buffer::Buffer,
+        scope: &Range<usize>,
+        r: Range<usize>,
+    ) -> (Vec<crate::search::Substitution>, usize) {
+        if r.start >= r.end {
+            return (Vec::new(), 0);
+        }
+        let found = crate::search::substitutions(text, &self.re, r, self.global, &self.template);
+        if !self.within {
+            return (found.edits, found.lines);
+        }
+        // Inside the selection: a match running past its end is left,
+        // and with it, maybe, its line's only one.
+        let before = found.edits.len();
+        let kept: Vec<_> = found
+            .edits
+            .into_iter()
+            .filter(|(m, _)| m.end <= scope.end)
+            .collect();
+        let lines = if kept.len() == before {
+            found.lines
+        } else {
+            lines_of(text, &kept)
+        };
+        (kept, lines)
+    }
+
+    /// What the plan would do, counted from the scope's start until the
+    /// count passes `cap` or the walk has spent `budget`: the command
+    /// line's "N changes on M lines" and the first match, which the view
+    /// is taken to when none is in sight — a key's work however big the
+    /// file. `keep` leaves out a match `:s` would leave (a multibuffer's
+    /// header). The scope is walked a window of whole lines at a time,
+    /// so the first-match rule sees each line whole.
+    pub fn tally(
+        &self,
+        text: &text_buffer::Buffer,
+        cap: usize,
+        budget: std::time::Duration,
+        keep: impl Fn(&Range<usize>, &[u8]) -> bool,
+    ) -> SubstituteTally {
+        let started = std::time::Instant::now();
+        let mut tally = SubstituteTally {
+            whole: true,
+            ..Default::default()
+        };
+        for scope in &self.scope {
+            let mut at = scope.start;
+            while at < scope.end {
+                if tally.changes > cap || started.elapsed() > budget {
+                    tally.whole = false;
+                    tally.changes = tally.changes.min(cap);
+                    return tally;
+                }
+                let end = if scope.end - at <= TALLY_WINDOW {
+                    scope.end
+                } else {
+                    crate::search::line_end(text, at + TALLY_WINDOW).min(scope.end)
+                };
+                let (mut found, mut lines) = self.edits_in(text, scope, at..end);
+                let before = found.len();
+                found.retain(|(m, t)| keep(m, t));
+                if found.len() < before {
+                    lines = lines_of(text, &found);
+                }
+                if tally.first.is_none() {
+                    tally.first = found.first().map(|(m, _)| m.clone());
+                }
+                tally.changes += found.len();
+                tally.lines += lines;
+                at = end;
+            }
+        }
+        if tally.changes > cap {
+            tally.whole = false;
+            tally.changes = cap;
+        }
+        tally
+    }
+}
+
+/// The lines `edits` (ascending) fall on.
+fn lines_of(text: &text_buffer::Buffer, edits: &[crate::search::Substitution]) -> usize {
+    let mut line_to = 0;
+    let mut n = 0;
+    for (m, _) in edits {
+        if m.start >= line_to {
+            n += 1;
+            line_to = crate::search::line_end(text, m.start);
+        }
+    }
+    n
+}
+
+/// How much of the text a tally walks at a time: whole lines, about a
+/// mebibyte, the budget looked at between.
+const TALLY_WINDOW: usize = 1 << 20;
+
+/// What [`SubstitutePlan::tally`] counted: the substitutions and the
+/// lines they fall on, the first, and whether that is all of them
+/// (`whole`) or only as far as the count's bound.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubstituteTally {
+    pub changes: usize,
+    pub lines: usize,
+    pub first: Option<Range<usize>>,
+    pub whole: bool,
+}
+
+impl SubstituteTally {
+    /// The command line's count: "3 changes on 2 lines", "no match",
+    /// or past the bound "10000+ changes".
+    pub fn says(&self) -> String {
+        let s = |n: usize| if n == 1 { "" } else { "s" };
+        if !self.whole {
+            format!("{}+ changes", self.changes)
+        } else if self.changes == 0 {
+            "no match".into()
+        } else {
+            format!(
+                "{} change{} on {} line{}",
+                self.changes,
+                s(self.changes),
+                self.lines,
+                s(self.lines)
+            )
+        }
+    }
 }
 
 /// `:[range]s/pat/rep/[flags]` — flags `g` (every match on a line, not
 /// the first), `i` (case-insensitive). The matches are found on every
 /// core (`search::substitutions`) and applied as one edit, one tree for
-/// the lot however many (`Buffer::replace_many`); the selections follow
-/// the text and the primary lands at the start of the last line changed,
-/// as vim's does. The pattern becomes the search `n` walks.
+/// the lot however many (`Buffer::replace_many`); a lone caret lands at
+/// the start of the last line changed, as vim's does, and several each
+/// at the start of where its text went (docs/design/substitute.md
+/// Decision 3). The pattern becomes the search `n` walks.
 fn substitute(ed: &mut Editor, ctx: &Ctx) {
-    let (range, pat, rep, flags) = match ctx.args.as_slice() {
-        [r, p, s, f] => (r.as_str(), p.as_str(), s.as_str(), f.as_str()),
-        _ => {
-            ed.message = "usage: :[range]s/pattern/replacement/[gi]".into();
-            return;
-        }
-    };
-    let global = flags.contains('g');
-    let pattern = if flags.contains('i') {
-        format!("(?i){pat}")
-    } else {
-        pat.to_string()
-    };
-    if let Err(e) = ed.set_search(&pattern, false) {
+    if let Err(e) = substitute_or_say(ed, ctx) {
         ed.message = e;
-        return;
+        // Failed from visual mode — no match, a bad pattern — it ends in
+        // normal mode as vim's does, each selection a caret at its start
+        // as a substitution that changed something leaves several
+        // (docs/design/substitute.md Decision 4).
+        if ed.mode(ctx.view) == Mode::Visual {
+            ed.views[ctx.view].sels.map(|s| Selection::point(s.start()));
+            ed.set_mode(ctx.view, Mode::Normal);
+        }
     }
-    let re = ed.search.as_ref().unwrap().re.clone();
+}
+
+/// `substitute` itself: what went wrong, the message to say.
+fn substitute_or_say(ed: &mut Editor, ctx: &Ctx) -> Result<(), String> {
+    let plan = SubstitutePlan::new(ed, ctx.view, &ctx.args)?;
+    let pat = ctx.args[1].as_str();
+    ed.set_search(&plan.pattern, false)?;
     let id = view(ed, ctx).buffer;
     if ed.buffers[id].read_only {
-        ed.message = "buffer is read-only".into();
-        return;
+        return Err("buffer is read-only".into());
     }
     if ed.buffers[id].loading.is_some() {
-        ed.message = "still opening".into();
-        return;
+        return Err("still opening".into());
     }
-    let ranges = match substitute_ranges(ed, ctx, range) {
-        Ok(r) => r,
-        Err(e) => {
-            ed.message = e;
-            return;
-        }
-    };
-    let template = substitute_template(rep);
     let started = std::time::Instant::now();
-    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-    let mut lines = 0;
-    for r in ranges {
-        let text = ed.buffers[id].tree();
-        let found = crate::search::substitutions(text, &re, r, global, &template);
-        lines += found.lines;
-        for (range, bytes) in found.edits {
+    let (found, lines) = plan.edits(ed.buffers[id].tree(), None);
+    let mut edits: Vec<(Range<usize>, String)> = found
+        .into_iter()
+        .map(|(range, bytes)| {
             let s = String::from_utf8(bytes)
                 .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
-            edits.push((range, s));
-        }
-    }
+            (range, s)
+        })
+        .collect();
     // In a multibuffer, a match outside the excerpts — a file's name in
     // its header — is not a file's text, and is left.
     let mut kept_out = 0;
@@ -1748,12 +1947,11 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
         kept_out = before - edits.len();
     }
     if edits.is_empty() {
-        ed.message = if kept_out > 0 {
+        return Err(if kept_out > 0 {
             format!("no match in the excerpts: {pat}")
         } else {
             format!("no match: {pat}")
-        };
-        return;
+        });
     }
     let count = edits.len();
     let v0 = ed.buffers[id].version();
@@ -1764,30 +1962,29 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
         ed.buffers[id].replace_many(&refs);
     }
     drop(edits);
-    // The selections follow the text; the primary to the last changed
-    // line's start.
+    // Where the carets land. One alone: the last changed line's start,
+    // vim's. Several: each where its text went — the primary too, or
+    // the set the user built loses its shape (a caret per line on the
+    // same word, the primary alone at its line's start, and the next
+    // `i` types in two places) — as a caret at the start of what it
+    // covered, so no selection is left wide in the normal mode `:s`
+    // ends in, and a caret on a replaced match is on its replacement.
     let (buffers, views) = (&ed.buffers, &mut ed.views);
     let buf = &buffers[id];
     let journal = buf.journal();
-    let primary = views[ctx.view].sels.primary();
-    let last_line_start = {
-        let at = journal
-            .transform_offset(last_start, v0, kawoosh_doc::Bias::Left)
-            .unwrap_or(last_start);
-        buf.line_range(buf.line_of(at)).start
+    let t = |o: usize| {
+        journal
+            .transform_offset(o, v0, kawoosh_doc::Bias::Left)
+            .unwrap_or(o)
     };
-    views[ctx.view].sels.map(|s| {
-        if s == primary {
-            Selection::new(last_line_start, last_line_start)
-        } else {
-            let t = |o: usize| {
-                journal
-                    .transform_offset(o, v0, kawoosh_doc::Bias::Left)
-                    .unwrap_or(o)
-            };
-            Selection::new(t(s.anchor), t(s.head))
-        }
-    });
+    let sels = &mut views[ctx.view].sels;
+    if sels.len() == 1 {
+        let at = t(last_start);
+        let line_start = buf.line_range(buf.line_of(at)).start;
+        sels.map(|_| Selection::point(line_start));
+    } else {
+        sels.map(|s| Selection::point(t(s.start())));
+    }
     if ed.mode(ctx.view) == Mode::Visual {
         ed.set_mode(ctx.view, Mode::Normal);
     }
@@ -1806,6 +2003,7 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
         }
     );
     ed.sync_multis();
+    Ok(())
 }
 
 /// Writes `buf` to `path` through a file beside it, renamed over the
@@ -3289,8 +3487,15 @@ pub fn install(ed: &mut Editor) {
     });
 
     // ---- prompts and ex commands
+    // From visual mode the line starts `'<,'>`, vim's: for `:s` the
+    // selections as they are (docs/design/substitute.md Decision 2),
+    // dropped before any other command, which acts on them already.
     ed.register("command", |ed, ctx| {
+        let visual = ed.mode(ctx.view) == Mode::Visual;
         ed.open_prompt(ctx.view, Prompt::Command);
+        if visual {
+            ed.set_prompt_text("'<,'>");
+        }
     });
     // The prompt's own keys, each a command gated on `prompt`, so the
     // field's other keys are the editor's — motions, operators, undo.

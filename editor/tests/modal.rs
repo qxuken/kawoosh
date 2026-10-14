@@ -1087,6 +1087,215 @@ fn substitute_is_vims_on_a_line_a_range_and_the_file() {
     );
 }
 
+/// `:s` over several carets or selections: every caret follows the
+/// text it was on — the primary too, so the set keeps its shape and a
+/// `ix` after puts the same text at each (one caret alone lands at the
+/// last changed line's start, vim's). From visual mode each selection
+/// becomes a caret at the start of what its text became: normal mode
+/// with no selection left wide, none collapsed onto another's place.
+#[test]
+fn substitute_keeps_every_caret_where_its_text_went() {
+    let mut t = T::new("one two\none two\none two\n");
+    t.keys("w<C-j><C-j>");
+    assert_eq!(t.sels(), vec![(4, 4), (12, 12), (20, 20)]);
+    t.keys(":s/one/1/<CR>");
+    assert_eq!(t.text(), "1 two\n1 two\n1 two\n");
+    assert_eq!(t.sels(), vec![(2, 2), (8, 8), (14, 14)]);
+    assert_eq!(
+        t.head(),
+        14,
+        "the primary on its `two`, not its line's start"
+    );
+    t.keys("ix<Esc>");
+    assert_eq!(t.text(), "1 xtwo\n1 xtwo\n1 xtwo\n");
+
+    // Three `foo`s selected by `<C-n>`, each replaced: a caret at the
+    // start of each `barbaz`, in normal mode, the last still primary.
+    let mut t = T::new("foo x foo\nfoo y\nfoo z\n");
+    t.keys("<C-n><C-n><C-n>");
+    assert_eq!(t.ed.mode(t.v), Mode::Visual);
+    assert_eq!(t.sels(), vec![(0, 2), (6, 8), (10, 12)]);
+    t.keys(":s/foo/barbaz/g<CR>");
+    assert_eq!(t.text(), "barbaz x barbaz\nbarbaz y\nfoo z\n");
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    assert_eq!(t.sels(), vec![(0, 0), (9, 9), (16, 16)]);
+    assert_eq!(t.ed.views[t.v].sels.primary, 2);
+}
+
+/// From visual mode `:` puts `'<,'>` on the line, and `'<,'>` is the
+/// selections as they are: `v`'s characters — a match only when it lies
+/// inside one, each its own place for the first-match rule — and `V`'s
+/// lines. Before any other command `'<,'>` is dropped: they act on the
+/// selections already.
+#[test]
+fn substitute_from_visual_mode_is_over_the_selection() {
+    let mut t = T::new("foo foo foo\nfoo foo\n");
+    t.keys("wve:");
+    assert_eq!(t.cmdline(), "'<,'>");
+    t.keys("s/foo/X/<CR>");
+    assert_eq!(
+        t.text(),
+        "foo X foo\nfoo foo\n",
+        "the `foo` selected, not the line's first"
+    );
+    // Over two lines, from the second `foo` to the `f` of the last: the
+    // first in it on each line, then with `g` every one wholly inside.
+    t.keys("ugg0wvj:s/foo/X/<CR>");
+    assert_eq!(t.text(), "foo X foo\nX foo\n");
+    t.keys("ugg0wvj:s/foo/X/g<CR>");
+    assert_eq!(t.text(), "foo X X\nX foo\n", "the last `foo` is not inside");
+    // Part of a match is no match.
+    t.keys("ugg0vl:s/foo/X/<CR>");
+    assert_eq!(t.text(), "foo foo foo\nfoo foo\n");
+    assert_eq!(t.ed.message, "no match: foo");
+    // `V`: the lines.
+    t.keys("<Esc>ggVj:s/foo/X/<CR>");
+    assert_eq!(t.text(), "X foo foo\nX foo\n");
+    // The line erased of its range: the lines the selection touches.
+    t.keys("ugg0wve:<C-u>s/foo/X/<CR>");
+    assert_eq!(t.text(), "X foo foo\nfoo foo\n");
+
+    // `<C-n>`'s selections on the second `foo` and the next: exactly
+    // those (the todo's "replace across multicursor").
+    let mut t = T::new("foo x foo\nfoo y\nfoo z\n");
+    t.keys("ww<C-n><C-n>");
+    assert_eq!(t.sels(), vec![(6, 8), (10, 12)]);
+    t.keys(":s/foo/bar/<CR>");
+    assert_eq!(t.text(), "foo x bar\nbar y\nfoo z\n");
+
+    // Another command: the range dropped, the selections its own.
+    let mut t = T::new("ab ab\nab\n");
+    t.keys("vj$:select within b<CR>");
+    assert_eq!(t.ed.message, "");
+    assert_eq!(t.sels().len(), 3);
+    // vim's filter through a command is not built, and not run as `:!`.
+    t.keys("<Esc>vj:!sort<CR>");
+    assert_eq!(
+        t.ed.message,
+        "'<,'>! (lines through a command) is not built"
+    );
+}
+
+/// While a `:s` is typed with no match of it in sight, the view is taken
+/// to the first in the range — the caret left where it is, so the range
+/// stays its — and put back when a match is in sight again or on
+/// `<Esc>`. The command line counts what `<CR>` would change, up to a
+/// bound past which it says so.
+#[test]
+fn substitute_preview_goes_to_the_first_match_and_counts() {
+    let text: String = (0..100)
+        .map(|i| if i == 80 { "target here\n" } else { "x\n" })
+        .collect();
+    let mut t = T::new(&text);
+    t.ed.views[t.v].rows = 10;
+    let says = |t: &T| t.ed.substitute_tally().map(|c| c.says());
+    t.keys(":%s/targ");
+    assert_eq!(t.ed.views[t.v].top, 75, "line 81 in the middle");
+    assert_eq!(t.sels(), vec![(0, 0)], "the caret where it was");
+    assert_eq!(says(&t).as_deref(), Some("1 change on 1 line"));
+    t.keys("<BS><BS><BS><BS>x");
+    assert_eq!(t.ed.views[t.v].top, 0, "a match in sight: back");
+    assert_eq!(says(&t).as_deref(), Some("99 changes on 99 lines"));
+    t.keys("<BS>target");
+    assert_eq!(t.ed.views[t.v].top, 75);
+    t.keys("<Esc><Esc>");
+    assert_eq!(t.ed.prompt_view(), None);
+    assert_eq!(t.ed.views[t.v].top, 0, "put back on <Esc>");
+    assert_eq!(says(&t), None);
+    // Without a range, the caret's line: nothing there, nothing moves.
+    t.keys(":s/target");
+    assert_eq!(t.ed.views[t.v].top, 0);
+    assert_eq!(says(&t).as_deref(), Some("no match"));
+    t.keys("<Esc><Esc>");
+
+    let mut t = T::new(&"a\n".repeat(20_000));
+    t.keys(":%s/a/b/");
+    assert_eq!(says(&t).as_deref(), Some("10000+ changes"));
+}
+
+/// A `:s` from visual mode that fails — no match, a bad pattern — ends
+/// in normal mode as vim's does, each selection a caret at its start as
+/// a substitution that changed something leaves several, the message
+/// still said.
+#[test]
+fn a_failed_substitute_from_visual_mode_ends_in_normal_mode() {
+    let mut t = T::new("foo bar\nbaz foo\n");
+    t.keys("wvj:s/qux/X/<CR>");
+    assert_eq!(t.ed.message, "no match: qux");
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    assert_eq!(t.sels(), vec![(4, 4)]);
+    t.keys("vl:s/(/X/<CR>");
+    assert!(t.ed.message.starts_with("bad pattern"), "{}", t.ed.message);
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    assert_eq!(t.sels(), vec![(4, 4)]);
+    let mut t = T::new("foo x foo\n");
+    t.keys("<C-n><C-n>");
+    assert_eq!(t.sels(), vec![(0, 2), (6, 8)]);
+    t.keys(":s/zzz/y/<CR>");
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    assert_eq!(t.sels(), vec![(0, 0), (6, 6)]);
+    assert_eq!(t.text(), "foo x foo\n");
+}
+
+/// The command line previews a `:s` as it is typed: the matches it
+/// would take, then — the replacement begun — each with what replaces
+/// it, over the lines asked for. Nothing is done meanwhile: `<Esc>`
+/// leaves the text (no edit at all, so nothing to undo), the carets and
+/// the search as they were; `<CR>` does what was shown.
+#[test]
+fn substitute_is_previewed_as_it_is_typed() {
+    let mut t = T::new("foo bar foo\nfoo\nbaz\n");
+    let all = 0..t.text().len();
+    t.keys("/baz<CR>gg");
+    let version = t.ed.buffer_of(t.v).version();
+    let shown = |t: &T| {
+        t.ed.substitute_preview(t.v, all.clone())
+            .map(|p| (p.edits, p.replacing))
+    };
+    assert_eq!(shown(&t), None);
+    t.keys(":s/fo");
+    assert_eq!(
+        shown(&t),
+        Some((vec![(0..2, String::new())], false)),
+        "the pattern alone: the line's first match"
+    );
+    t.keys("o/");
+    assert_eq!(shown(&t), Some((vec![(0..3, String::new())], true)));
+    t.keys("X&/g");
+    assert_eq!(
+        shown(&t),
+        Some((vec![(0..3, "Xfoo".into()), (8..11, "Xfoo".into())], true))
+    );
+    t.keys("<C-u>%s/foo/Y/g");
+    let (edits, _) = shown(&t).unwrap();
+    assert_eq!(edits.len(), 3);
+    assert_eq!(
+        t.ed.substitute_preview(t.v, 12..16).unwrap().edits,
+        vec![(12..15, "Y".to_string())],
+        "only the lines asked for"
+    );
+    t.keys("<C-u>%s/(fo/Y/");
+    assert_eq!(shown(&t), None, "a pattern that does not compile yet");
+    t.keys("<C-u>w");
+    assert_eq!(shown(&t), None, "not a substitution");
+    t.keys("<C-u>%s/foo/Y/g<Esc><Esc>");
+    assert_eq!(t.ed.prompt_view(), None);
+    assert_eq!(shown(&t), None);
+    assert_eq!(t.text(), "foo bar foo\nfoo\nbaz\n");
+    assert_eq!(t.ed.buffer_of(t.v).version(), version, "no edit made");
+    assert!(!t.ed.buffer_of(t.v).modified);
+    assert_eq!(t.sels(), vec![(0, 0)]);
+    assert_eq!(t.ed.search.as_ref().unwrap().pattern, "baz");
+    t.keys(":%s/foo/Y/g<CR>");
+    assert_eq!(t.text(), "Y bar Y\nY\nbaz\n");
+    assert_eq!(shown(&t), None);
+    // A line put on the prompt whole (`kawoosh.cmdline`) is previewed
+    // as one typed.
+    t.keys("u:");
+    t.ed.set_prompt_text("%s/foo/Z/g");
+    assert_eq!(shown(&t).unwrap().0.len(), 3);
+}
+
 #[test]
 fn indent_and_change_line() {
     let mut t = T::new("a\nb");
