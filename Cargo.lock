@@ -5735,6 +5735,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-md"
 version = "0.5.3"
+source = "git+https://github.com/qxuken/tree-sitter-markdown?rev=24a0214e71e3ffb84023c988143b2b219455db45#24a0214e71e3ffb84023c988143b2b219455db45"
 dependencies = [
  "cc",
  "tree-sitter-language",

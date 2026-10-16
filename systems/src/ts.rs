@@ -1890,8 +1890,8 @@ mod tests {
     /// backticks punctuation and what is between raw; every other
     /// backtick no span's. Upstream's
     /// grammar closed a span on the tail of a longer run inside it (330,
-    /// 331, 340), and took an HTML tag inside one (343); kawoosh's copy
-    /// is fixed (vendor/tree-sitter-md). The first is the todo's line: two
+    /// 331, 340), and took an HTML tag inside one (343); kawoosh's fork
+    /// is fixed (github.com/qxuken/tree-sitter-markdown). The first is the todo's line: two
     /// single backticks, so one span between them, as GitHub draws it.
     #[test]
     fn markdown_code_spans_pair_as_commonmark_says() {

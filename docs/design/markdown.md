@@ -474,12 +474,16 @@ After a day's use (2026-09-23), five more:
   examples 330, 331, 340, 343). Fixed in the grammar, not in our runs:
   the runs are the grammar's (Decision 2), and where a span ends decides
   what everything after it on the line is, which no correction of the
-  runs can redo. kawoosh keeps tree-sitter-md 0.5.3 in
-  `vendor/tree-sitter-md` through `[patch.crates-io]`, its inline
-  grammar's code span taking a run of another length as one
-  `_unclosed_span` token and no `_html_tag`; `KAWOOSH.md` there says how
-  to remake it, and it goes when upstream has it (not sent upstream: the
-  user's to send). Every code-span example of the spec passes
+  runs can redo. kawoosh takes tree-sitter-md from our fork,
+  github.com/qxuken/tree-sitter-markdown (branch `split_parser`, a rev
+  pinned in `[patch.crates-io]`), its inline grammar's code span taking
+  a run of another length as one `_unclosed_span` token and no
+  `_html_tag`, with corpus tests that pin the delimiters' ranges
+  (`code_spans.txt`, `:cst`). The fork also carries the open upstream
+  fixes worth having, each its own commit under its author: `<!-->`
+  comment blocks (#272), a closing fence at the end of input (#271),
+  `_foobar1_` (#238), and the binding on tree-sitter 0.27 (#265).
+  Upstream has merged no grammar fix since 2026-02. Every code-span example of the spec passes
   (`markdown_code_spans_pair_as_commonmark_says`), the grammar's own
   corpus as before.
 - **A key takes only a ghost it can see.** A rendered row that wraps
