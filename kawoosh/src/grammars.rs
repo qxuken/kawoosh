@@ -220,6 +220,17 @@ fn linked_in(name: &str) -> bool {
 /// listed. What `scripts/macos-app.nu` writes into Info.plist as the
 /// document types Finder offers Kawoosh for.
 pub fn languages_json() -> String {
+    let rows: Vec<serde_json::Value> = languages()
+        .into_iter()
+        .map(|(name, exts)| serde_json::json!({ "name": name, "extensions": exts }))
+        .collect();
+    serde_json::to_string_pretty(&rows).unwrap_or_default()
+}
+
+/// What [`languages_json`] lists: each language and its extensions —
+/// also the types `kawoosh default-editor` would take
+/// (`default_editor.rs`).
+pub fn languages() -> Vec<(String, Vec<String>)> {
     let manifest = Manifest::parse(BUILT_IN).unwrap_or_default();
     let all = LANGUAGES
         .iter()
@@ -236,17 +247,14 @@ pub fn languages_json() -> String {
         );
     let mut seen = HashSet::new();
     let mut names = HashSet::new();
-    let rows: Vec<serde_json::Value> = all
-        .filter_map(|(name, exts): (String, Vec<String>)| {
-            let exts: Vec<String> = exts
-                .into_iter()
-                .filter(|e| seen.insert(e.to_ascii_lowercase()))
-                .collect();
-            (!exts.is_empty() && names.insert(name.clone()))
-                .then(|| serde_json::json!({ "name": name, "extensions": exts }))
-        })
-        .collect();
-    serde_json::to_string_pretty(&rows).unwrap_or_default()
+    all.filter_map(|(name, exts): (String, Vec<String>)| {
+        let exts: Vec<String> = exts
+            .into_iter()
+            .filter(|e| seen.insert(e.to_ascii_lowercase()))
+            .collect();
+        (!exts.is_empty() && names.insert(name.clone())).then_some((name, exts))
+    })
+    .collect()
 }
 
 fn def_of(row: &Row, grammar: Option<Source>) -> LanguageDef {
