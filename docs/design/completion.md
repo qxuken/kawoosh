@@ -304,7 +304,8 @@ settings in `editor/src/settings.rs`, the keys in
 
 As designed: Decision 1's four triggers through every layer (the
 pane's `:setlocal` too — `completion.trigger`, `ghost`, `popup`,
-`sources` and `fuzzy` are pane settings); Decision 2's two axes, the
+`sources`, `fuzzy`, `max_items` and `words.min_length` are pane
+settings); Decision 2's two axes, the
 ghost the only display, `popup` read and not drawn; Decision 3's
 commands and local maps, `<CR>` and the arrows given back; Decision
 4's sources but `snippets` (a no-op until round 3); Decision 5's
@@ -326,12 +327,20 @@ Where the build departs, or says more than the decisions did:
   fuzzy-only match, or one in another case (`Widget` for `wid`), is
   ranked and reachable through `<C-x>`, and is the popup's in round 2.
   Decision 5's "or `<C-n>`'s in a ghost-only look" is left for round 2
-  to settle beside the popup.
+  to settle beside the popup. Once `<C-n>` or `<C-p>` picked a
+  candidate, a landing that ranks again (an index, an outline, an
+  answer) keeps it selected by what it puts, the best only when it is
+  gone; until then a landing selects the best afresh, so a server's
+  answer can still take over from the buffer's words it followed.
 - **The session's end.** A key that moves the caret with no edit ends
   it, even onto the word's own start (`<Home>`); typing or deleting in
   the word follows it; an edit whose length is not the word's is an
   edit elsewhere, and so is any version change no key followed (a
-  server's edit, a reload, checked each frame). A session with no
+  server's edit, a reload, checked each frame). With several carets
+  the session follows the primary one's word, its start carried
+  through the edits since the last key; each caret typing what it
+  types is no edit elsewhere. The servers forgetting the buffer (a
+  restart, their table changed) drops only the request in flight. A session with no
   candidates stays, quiet, for its word rather than asking at every
   key; the server is asked again only when it said its list was
   incomplete (`isIncomplete`, now read). `completion close` keeps the
@@ -344,16 +353,35 @@ Where the build departs, or says more than the decisions did:
   lists the directory (and asks the server where `/` is its trigger,
   or when asked); it offers no words.
 - **The indexes.** `buffer_words`: an io job per buffer whose index is
-  older than it, the first 2 MiB of its text, 50,000 distinct words at
-  most, and the stale index read until the fresh one lands. A word
+  older than it (its text, or its masks), the first 2 MiB of its text,
+  50,000 distinct words at most, every length — one index a buffer,
+  each session reading it at its own `words.min_length` — and the
+  stale index read until the fresh one lands. A word
   the same as the one typed is never offered; one typed earlier and
   left half-done is a word like any other. `buffer_symbols`: the
   outlines of the buffers the syntax thread holds a tree of (those on
   show, or shown since), asked at the tree's version.
+- **Masks are no source.** A buffer's text is read through its masks
+  (secrets.md Decisions 3 and 9: a rule's, a plugin's, a multibuffer's
+  carried, the one `zv` shows too): a word reaching into a mask is not
+  indexed but kept apart, and no source offers it — a server's answer,
+  a symbol, another buffer's word — nor is it a signal or remembered;
+  the job's copy of the text is wiped. A buffer made private leaves
+  the live session at once and its words are wiped; one private by
+  itself (a multibuffer showing a private file) is dropped at the next
+  frame.
 - **The signals.** The texts are the memory's moments of the last ten
   minutes, none a secret's; the searches are the search prompt's last
-  twenty. `*` and the project search do not reach that history yet.
-  Frecency is not kept for a private buffer.
+  twenty, read again whenever its newest entry moves. `*` and the
+  project search do not reach that history yet. Frecency is not kept
+  for a private buffer.
+- **The state db, off the keys.** The workspace's frecency is read
+  from the frame once the workspace is known, the files attended lately
+  every few seconds at most, each on an io job over a read-only
+  connection of its own; a ranking before they land goes without them
+  and is ranked again when they do. An accepted candidate counts at
+  once and is written with the memory's next flush, one transaction
+  for all of them.
 - **`workspace_symbols`** is asked once a session, 150 ms after the
   third character, and narrowed by the rescan as the word grows.
 
@@ -361,6 +389,7 @@ Measured with `kawoosh/tests/completion.rs`'s
 `timing_a_keystroke_and_a_frame` (dev profile, a 20,000-line buffer of
 words, median / p90): a keystroke 0.63 / 5.65 ms before, 0.62 / 0.68
 ms after; a word's start 5.59 / 5.70 ms before (the buffer read on the
-frame), 2.26 / 2.34 ms after (forty thousand indexed words ranked);
-a frame 0.170 / 0.178 ms before, 0.171 / 0.182 ms after, a ghost on
-show.
+frame), 2.26 / 2.34 ms after (forty thousand indexed words ranked;
+2.36 / 2.41 ms once the review's fixes read the masks and keep every
+length); a frame 0.170 / 0.178 ms before, 0.171 / 0.182 ms after, a
+ghost on show.
