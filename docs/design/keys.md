@@ -273,7 +273,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `<leader>vl` (visual) | helix's `<A-s>`: every line of every selection its own selection (`select lines`) |
 | `<A-,>` | helix's: the primary selection gone (`select drop primary`), from normal mode's carets too |
 | `o` (visual) | swap the selection's ends |
-| `<D-c>` (visual) | yank — the register and the clipboard |
+| `<D-c>` | `yank clipboard`: in visual mode yank — the register and the clipboard; in normal mode the newest yank onto the clipboard; a private buffer's marked concealed ([secrets.md](secrets.md) Decision 8) |
 
 Ctrl is *how many* selections, Alt is *this one's shape and place*
 (roadmap.md, decision 1 of 2026-09-20). The Ctrl keys are

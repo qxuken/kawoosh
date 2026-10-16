@@ -822,6 +822,9 @@ pub enum ImageSnap {
 pub struct BufSnap {
     pub name: String,
     pub path: Option<PathBuf>,
+    /// The file it stands for when it is not one — a vault's scratch,
+    /// a picture's pane (`Buffer::about`): what `%` names.
+    pub about: Option<PathBuf>,
     pub language: String,
     pub snapshot: Snapshot,
     pub sels: Vec<(usize, usize)>,
@@ -1908,6 +1911,7 @@ impl Runtime {
                 BufSnap {
                     name: b.name.clone(),
                     path: b.path.clone(),
+                    about: b.about.clone(),
                     language: b.language.to_string(),
                     snapshot: b.snapshot(),
                     sels,
@@ -5590,6 +5594,21 @@ fn seed(
         "path",
         lua.create_function(move |_, h: Option<u64>| {
             with_buf(&pp, h, |b| b.path.as_ref().map(|p| p.display().to_string()))
+        })?,
+    )?;
+    // ---- `kawoosh.buf.file([buffer])`: the file the buffer is, else
+    // the one it stands for (a vault's scratch, `about`) — what `%`
+    // names; nil for neither.
+    let pp = published.clone();
+    buf.set(
+        "file",
+        lua.create_function(move |_, h: Option<u64>| {
+            with_buf(&pp, h, |b| {
+                b.path
+                    .as_ref()
+                    .or(b.about.as_ref())
+                    .map(|p| p.display().to_string())
+            })
         })?,
     )?;
     let pp = published.clone();

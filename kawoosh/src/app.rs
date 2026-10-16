@@ -289,6 +289,9 @@ pub struct Kawoosh {
     pub quit: bool,
     /// Text for the clipboard at the next frame — `on_event` has no `Ui`.
     pub(crate) clip_out: Option<String>,
+    /// A secret for the clipboard at the next frame, written marked
+    /// concealed and transient (`yank clipboard`, secrets.md Decision 8).
+    pub(crate) clip_secret_out: Option<String>,
     pub(crate) awaiting_paste: bool,
     /// The clipboard asked for to see what is on it (`sync_clipboard`),
     /// not to paste: its answer goes to the register.
@@ -522,6 +525,7 @@ impl Kawoosh {
             waiters: HashMap::new(),
             quit: false,
             clip_out: None,
+            clip_secret_out: None,
             awaiting_paste: false,
             clip_probe: false,
             ghost_shown: false,
@@ -2048,6 +2052,9 @@ impl Kawoosh {
         self.sync_facts();
         let v = self.focused_view().unwrap_or_else(|| self.ed.pane_view());
         match self.ed.lookup_keys(v, Mode::Normal, &[note]) {
+            // Gated off here by its own `when` (`!terminal`, as ⌘C in
+            // normal mode is): not kawoosh's here, the program's.
+            Lookup::Exact(bs) if self.ed.gated_off(v, &bs) => false,
             Lookup::Exact(bs) => {
                 self.run_bindings(&bs);
                 true
@@ -2918,6 +2925,9 @@ impl kui_native::App for Kawoosh {
         if let Some(text) = self.clip_out.take() {
             self.clip_last = Some(text.clone());
             ui.set_clipboard(text, None);
+        }
+        if let Some(text) = self.clip_secret_out.take() {
+            ui.set_clipboard_secret(text);
         }
         self.sync_clipboard(ui.core(), false);
         // Secure keyboard entry while a terminal at a password prompt

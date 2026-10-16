@@ -632,3 +632,83 @@ fn key_files_and_vault_passes_are_masked() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// From a vault's scratch `-` lists the vault's own directory, its
+/// line under the caret — the scratch is no file, but it stands for
+/// one (`about`, what `%` names); it used to list the working
+/// directory. And ⌘C puts a secret on the system clipboard, the one
+/// way there is: marked concealed and transient for kui to write, never
+/// the plain clipboard (secrets.md Decision 8) — the selection's from
+/// visual mode, the newest yank's from normal mode.
+#[test]
+#[cfg(unix)]
+fn a_vault_scratch_goes_up_to_its_directory_and_copies_concealed() {
+    let dir = tmp("vault-up");
+    let tool = fake_vault(&dir);
+    std::fs::write(dir.join("ansible.cfg"), "[defaults]\n").unwrap();
+    std::fs::create_dir_all(dir.join("inventory/all")).unwrap();
+    let vault = dir.join("inventory/all/vault.yml");
+    std::fs::write(
+        &vault,
+        "$ANSIBLE_VAULT;1.1;FAKE\ndb_password: s3cret\nuser: me\n",
+    )
+    .unwrap();
+    let (mut d, mut app) = vault_app(&tool);
+    ex(&mut d, &mut app, &format!("e {}", vault.display()));
+    assert!(
+        until(&mut d, &mut app, |a| a.focused_view().is_some_and(|v| a
+            .ed
+            .buffer_of(v)
+            .text()
+            .contains("db_password"))),
+        "decrypted: {}",
+        app.ed.message
+    );
+    let cmd = KeyMods::NONE.with_super();
+    let secrets_out = |d: &mut Drive| -> Vec<String> {
+        d.core
+            .take_menu_actions()
+            .into_iter()
+            .filter_map(|a| match a {
+                kui_native::MenuAction::SetClipboardSecret { text } => Some(text),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // Visual: the selection, concealed.
+    d.keys(&mut app, "V");
+    d.key(&mut app, "c", cmd);
+    d.frame(&mut app);
+    assert_eq!(secrets_out(&mut d), ["db_password: s3cret\n"]);
+    assert_ne!(app.clipboard_last(), Some("db_password: s3cret\n"));
+    assert!(
+        app.ed.memory.head().is_some_and(|m| m.secret),
+        "a secret still"
+    );
+    // Normal: the newest yank.
+    d.keys(&mut app, "jyy");
+    d.frame(&mut app);
+    assert!(
+        secrets_out(&mut d).is_empty(),
+        "`y` alone is the register's"
+    );
+    d.key(&mut app, "c", cmd);
+    d.frame(&mut app);
+    assert_eq!(secrets_out(&mut d), ["user: me\n"]);
+
+    // Up: the vault's directory, not the working directory.
+    d.keys(&mut app, "-");
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .ed
+            .buffer_of(a.focused_view().unwrap())
+            .name
+            .starts_with("dir: ")),
+        "a listing"
+    );
+    let v = app.focused_view().unwrap();
+    let name = app.ed.buffer_of(v).name.clone();
+    assert!(name.ends_with("inventory/all"), "{name}");
+    std::fs::remove_dir_all(&dir).ok();
+}

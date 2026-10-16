@@ -237,6 +237,41 @@ round of its own (F84 reads it); asked for, it is the next step. *Beat:*
 no timer at all — a secret then lives as long as the register, through
 a lunch break, for a put into the wrong buffer much later.
 
+### 8. ⌘C is the one way a secret reaches the clipboard
+
+Asked 2026-10-16, from the todo: "i need a way to yank into clipboard
+from secret buffer. now i need to yank, paste into normal buffer where
+it is visible, then yank normally." Decision 7 left this as its next
+step. The workaround was worse than any copy: the secret was drawn
+unmasked in an ordinary buffer, kept in its history, and then went
+onto the clipboard unmarked anyway.
+
+`yank clipboard`, on ⌘C, in visual and normal mode: in visual mode
+the selection yanked, as `y` does; in normal mode the newest yank.
+When that is a secret it goes to the clipboard through kui's
+`set_clipboard_secret` (F84), marked `org.nspasteboard.ConcealedType`
+and `TransientType`, as a password manager marks what it copies, so
+clipboard managers neither show nor keep it. An ordinary text goes on
+as any yank does. Everything else in Decision 7 holds: a plain `y` and
+every other path keep a secret inside kawoosh, and the register keeps
+it a secret after the copy.
+
+- **Asked each time, by a key of its own.** ⌘C already meant "copy to
+  the clipboard" on a Mac, and nothing reaches the clipboard unless it
+  is pressed. That keeps Decision 1's single flag: no setting lets
+  every secret yank out.
+- **No clear on a timer.** Password managers clear the clipboard after
+  thirty seconds if it still holds what they put there. kui cannot say
+  whether the pasteboard changed since (no change count), so a timed
+  clear could wipe what the user copied in another program meanwhile.
+  The marks keep it out of every manager's history; it stays on the
+  clipboard until the next copy. A clear needs kui to report that
+  count, which is a kui round of its own.
+
+*Beat:* `"+y`. kawoosh names no registers but `"_` (the black hole),
+and the clipboard is not a register here. *Beat:* a confirm on each
+copy. The key is the confirmation.
+
 ## Deliberately not
 
 - **Not encryption at rest.** A vault scratch is never written; a
@@ -362,3 +397,10 @@ shape. Where it departed:
 - **Yanking relaxed** (Decision 7): a secret is put as often as wanted
   into any buffer, and forgotten 120 seconds after its last use; still
   never on the clipboard, in the store or in Lua.
+- **`-` from a vault's scratch listed the working directory.** The
+  scratch is no file, so `dir`'s up read no path and fell back to the
+  cwd. The scratch does stand for one (`about`, which `%` names), and
+  `kawoosh.buf.file([buffer])` is now that door for Lua: the path, else
+  what the buffer stands for. `-` lists the vault's directory with its
+  line under the caret.
+- **A secret onto the clipboard** by ⌘C, marked concealed (Decision 8).

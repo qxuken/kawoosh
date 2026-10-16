@@ -5831,6 +5831,10 @@ pub fn default_keymap(km: &mut Keymap) {
     ] {
         km.bind_when(Normal, k, c, &not_terminal);
     }
+    // ⌘C: the newest yank on the system clipboard, a secret's too
+    // (docs/design/secrets.md Decision 8) — not over a terminal, where
+    // it is kui's copy of the selection or the program's key.
+    km.bind_when(Normal, "<D-c>", "yank clipboard", &not_terminal);
     // A terminal pane's: the shell's prompts (its OSC 133 marks), ⌘↑ ⌘↓
     // as iTerm and Terminal.app have them and ctrl-shift where there is
     // no ⌘, the last command's output copied, and the clipboard pasted
@@ -5905,7 +5909,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("u", "case lower"),
         ("U", "case upper"),
         ("~", "case toggle"),
-        ("<D-c>", "yank"),
+        ("<D-c>", "yank clipboard"),
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),
         // helix's selections by a pattern (docs/design/selections.md):
