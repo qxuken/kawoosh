@@ -415,7 +415,11 @@ impl Laps {
         let n = self.wall.len().max(1) as f64;
         let mut sorted = self.wall.clone();
         sorted.sort_by(f64::total_cmp);
-        let at = |q: f64| sorted.get(((sorted.len() as f64 - 1.0) * q) as usize).copied();
+        let at = |q: f64| {
+            sorted
+                .get(((sorted.len() as f64 - 1.0) * q) as usize)
+                .copied()
+        };
         eprintln!(
             "  {label:<34} {:4} frames  mean {:.3} ms (cpu {:.3})  p50 {:.3}  p95 {:.3}  max {:.3}",
             self.wall.len(),
@@ -505,9 +509,22 @@ fn statusline_lap() {
         std::env::set_var("KAWOOSH_PERF_LOG", &log);
         std::env::set_var("SHELL", "/bin/sh");
     }
-    eprintln!("\n== statusline_lap: {secs} s a phase, log {} ==", log.display());
+    eprintln!(
+        "\n== statusline_lap: {secs} s a phase, log {} ==",
+        log.display()
+    );
     let mut app = Kawoosh::new("t", "");
     let mut d = boot(&mut app, 1600.0, 900.0);
+    // The bundled face, as `main.rs` loads it: what the line is
+    // measured in.
+    let fonts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts/IosevkaNavcon");
+    d.core.load_fonts_dir(&fonts);
+    let family = d
+        .core
+        .system_font_families()
+        .into_iter()
+        .find(|f| f.contains("Iosevka"));
+    app.face.id = family.and_then(|f| d.core.add_system_font(&f));
     app.set_cwd(&repo);
     d.frame(&mut app);
     lua(
@@ -545,11 +562,15 @@ fn statusline_lap() {
 
     let listing = app.layout.focused();
     let t = app
-        .spawn_terminal(Some(&format!("sh {}", root.join("lazy.sh").display())), Some(&repo))
+        .spawn_terminal(
+            Some(&format!("sh {}", root.join("lazy.sh").display())),
+            Some(&repo),
+        )
         .expect("a terminal");
-    let term = app
-        .layout
-        .split(kawoosh::layout::SplitDir::V, kawoosh::layout::Content::Terminal(t));
+    let term = app.layout.split(
+        kawoosh::layout::SplitDir::V,
+        kawoosh::layout::Content::Terminal(t),
+    );
     app.layout.focus(listing);
     frames_for(&mut d, &mut app, 1.0);
     spawned(&mut app);

@@ -7,7 +7,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui_native::Rect;
+use kui_native::{KeyMods, Rect};
 
 /// Where the node showing `text` is.
 fn at_text(d: &Drive, text: &str) -> Option<Rect> {
@@ -340,4 +340,177 @@ fn gaps_share_the_room() {
     let pct = &l[2].1;
     assert!(l[1].1.x < strip.x + strip.w / 2.0, "{l:?}");
     assert!(pct.x + pct.w > strip.x + strip.w - 12.0, "{l:?}");
+}
+
+/// statusline.md Decision 4: the path is fitted again only when the
+/// line's texts, the window's width or the face moved — a quiet frame
+/// measures nothing — and the line follows every one of its inputs:
+/// the caret, the mode, the keys typed, an edit, a Lua module's answer,
+/// the width, a setting, the face, the focus.
+#[test]
+fn the_line_is_fitted_when_its_inputs_move_and_follows_each() {
+    let mut d = Drive::new(560.0, 400.0);
+    let (mut app, _) = project_file(
+        &mut d,
+        "cache",
+        "packages/frontend/source/navigation/index.tsx",
+    );
+    app.run_lua_source(
+        "t",
+        r#"_G.word = "alpha"
+           kawoosh.status("word", function() return _G.word end, { place = "statusline" })"#,
+    );
+    d.frame(&mut app);
+    let has = |d: &mut Drive, s: &str| line_texts(d).iter().any(|t| t == s);
+    let path = |d: &mut Drive| {
+        line_texts(d)
+            .into_iter()
+            .find(|t| t.contains("index.tsx"))
+            .unwrap_or_default()
+    };
+    // Quiet: nothing measured.
+    let fits = app.status_fits();
+    for _ in 0..5 {
+        d.frame(&mut app);
+    }
+    assert_eq!(app.status_fits(), fits, "a quiet frame measures nothing");
+    assert!(
+        has(&mut d, "alpha") && has(&mut d, "1:1"),
+        "{:?}",
+        line_texts(&mut d)
+    );
+
+    // Each input moved, the line with it: fitted again once, then quiet.
+    type Input<'a> = &'a dyn Fn(&mut Drive, &mut Kawoosh);
+    let step = |d: &mut Drive,
+                app: &mut Kawoosh,
+                what: &str,
+                input: Input<'_>,
+                ok: &dyn Fn(&mut Drive) -> bool| {
+        let before = app.status_fits();
+        input(d, app);
+        d.frame(app);
+        assert!(ok(d), "{what}: {:?}", line_texts(d));
+        assert!(app.status_fits() > before, "{what}: fitted again");
+        let after = app.status_fits();
+        d.frame(app);
+        assert_eq!(app.status_fits(), after, "{what}: then quiet again");
+    };
+    step(
+        &mut d,
+        &mut app,
+        "the caret",
+        &|d, app| {
+            d.keys(app, "l");
+        },
+        &|d| has(d, "1:2"),
+    );
+    step(
+        &mut d,
+        &mut app,
+        "the keys typed",
+        &|d, app| {
+            d.keys(app, "2");
+        },
+        &|d| has(d, "2"),
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    step(
+        &mut d,
+        &mut app,
+        "the mode",
+        &|d, app| {
+            d.keys(app, "i");
+        },
+        &|d| has(d, "INS"),
+    );
+    step(
+        &mut d,
+        &mut app,
+        "an edit",
+        &|d, app| {
+            d.keys(app, "x");
+        },
+        &|d| line_texts(d).iter().any(|t| t.contains("[+]")),
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    step(
+        &mut d,
+        &mut app,
+        "a Lua module",
+        &|_, app| {
+            app.run_lua_source("t", r#"_G.word = "a much longer word than before""#);
+        },
+        &|d| has(d, "a much longer word than before"),
+    );
+    let wide = path(&mut d);
+    step(
+        &mut d,
+        &mut app,
+        "the width",
+        &|d, _| {
+            d.viewport = kui_native::Size::new(900.0, 400.0);
+        },
+        &|d| path(d).len() > wide.len(),
+    );
+    step(
+        &mut d,
+        &mut app,
+        "the face",
+        &|_, app| {
+            app.chrome.face.size += 6.0;
+        },
+        &|_| true,
+    );
+    app.chrome.face.size -= 6.0;
+    d.frame(&mut app);
+    step(
+        &mut d,
+        &mut app,
+        "a setting",
+        &|_, app| {
+            app.run_lua_source("t", r#"kawoosh.opt("statusline.path", "name")"#);
+        },
+        &|d| path(d) == "index.tsx [+]",
+    );
+    let t = app.add_headless_terminal();
+    let pane = app.layout.split(
+        kawoosh::layout::SplitDir::V,
+        kawoosh::layout::Content::Terminal(t),
+    );
+    app.layout.focus(pane);
+    d.frame(&mut app);
+    assert!(has(&mut d, "TERM"), "the focus: {:?}", line_texts(&mut d));
+}
+
+/// A place's segments are asked with one `ctx` table, frame after
+/// frame, its `place` set again before each — not a table a segment a
+/// frame for the collector.
+#[test]
+fn a_places_segments_share_one_ctx() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app(&mut d);
+    app.run_lua_source(
+        "t",
+        r#"_G.seen = {}
+           kawoosh.status("a", function(ctx)
+             _G.seen[#_G.seen + 1] = ctx
+             ctx.place = "scribbled"
+             return "a"
+           end, { place = "statusline" })
+           kawoosh.status("b", function(ctx)
+             _G.seen[#_G.seen + 1] = ctx
+             _G.b_place = ctx.place
+             return "b"
+           end, { place = "statusline", order = 1 })"#,
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"local same = #_G.seen >= 4
+           for _, c in ipairs(_G.seen) do same = same and c == _G.seen[1] end
+           kawoosh.echo(tostring(same) .. " " .. tostring(_G.b_place))"#,
+    );
+    assert_eq!(app.ed.message, "true statusline");
 }
