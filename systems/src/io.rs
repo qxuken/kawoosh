@@ -77,6 +77,20 @@ pub enum IoMsg {
         dir: std::path::PathBuf,
         entries: Option<Vec<crate::fs::Entry>>,
     },
+    /// A buffer's words indexed for completion's `buffer_words`
+    /// (`words::index`), with the shortest word kept.
+    CompletionWords {
+        index: crate::words::Index,
+        min_length: usize,
+    },
+    /// A directory listed for a completion's `path` source: the
+    /// session's serial, the directory, its entries or None when it
+    /// could not be read.
+    CompletionListed {
+        token: u64,
+        dir: std::path::PathBuf,
+        entries: Option<Vec<crate::fs::Entry>>,
+    },
     /// A tree walked on a thread of its own for a plugin
     /// (`kawoosh.fs.walk(root, fn)`): the job's token, and the files
     /// under the root, relative to it, or why not.

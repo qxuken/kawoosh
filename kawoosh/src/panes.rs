@@ -1925,12 +1925,12 @@ impl Kawoosh {
             self.note_columns.forget(buf_id);
             None
         };
-        let ghost = self
-            .completion_typed()
-            .filter(|(v, _)| *v == view && focused)
-            .and_then(|(_, typed)| self.lsp.completion.as_ref()?.ghost(&typed));
-        // Whether a row drew it: `<Tab>` and `<CR>` take only a ghost
-        // that is on the screen (`Kawoosh::ghost_shown`).
+        // The completion's ghost, as `completion.ghost` says this frame
+        // (completion.md Decision 2): a borrowed suffix, nothing made.
+        let ghost_of = self.completion_ghost(view).filter(|_| focused);
+        let ghost = ghost_of.as_ref().map(|g| g.text());
+        // Whether a row drew it: its keys hold only for a ghost that is
+        // on the screen (`Kawoosh::ghost_shown`).
         let mut ghost_drawn = false;
         let caret_kind = if mode == Mode::Insert {
             Caret::Bar
@@ -2559,7 +2559,6 @@ impl Kawoosh {
                                     .is_some_and(|n| std::ptr::eq(n.as_str(), t))
                             });
                             let ghost_here = ghost
-                                .as_deref()
                                 .filter(|_| ln == cur_line)
                                 .map(|g| (clip(primary.head), g));
                             let row_hints: Vec<(usize, &str)> = inlay
