@@ -108,6 +108,13 @@ static bool parse_leaf_delimiter(TSLexer *lexer, uint8_t *delimiter_length,
         lexer->result_symbol = close_token;
         return true;
     }
+    if (*delimiter_length > 0 && valid_symbols[close_token] &&
+        valid_symbols[UNCLOSED_SPAN]) {
+        // Inside a span, a run of another length is its text, whole: left to the lexer one
+        // delimiter at a time, the run's tail could close the span
+        lexer->result_symbol = UNCLOSED_SPAN;
+        return true;
+    }
     if (valid_symbols[open_token]) {
         // Parse ahead to check if there is a closing delimiter
         size_t close_level = 0;

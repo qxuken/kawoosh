@@ -456,6 +456,32 @@ After a day's use (2026-09-23), five more:
   `a` for the shortest), still a row; the text keeps its bytes and the
   cells are read off the text. A document with one is parsed whole, its
   tree not kept, since an edit anywhere can change which rows they are.
+- **Code spans are CommonMark's** (2026-10-16). From the todo, about
+  its own line ``- [ ] movements like 'y2t`' - yank up to second '`'``:
+  "is broken? my neovim's markdown plugin draws the same, but can we
+  better?" That line is right as drawn: a backtick run opens a span
+  closed by the next run of its length, so its two single backticks are
+  one span, `` ' - yank up to second ' `` between them, as GitHub and
+  nvim draw it. No drawing of that source is both CommonMark and what
+  was meant, and kawoosh does not guess against the spec; a literal
+  backtick is written escaped, `` \` ``, outside a span. What the line
+  led to was a grammar defect on text near it: tree-sitter-md's scanner
+  closed a span on the tail of a longer run inside it — ``` ` foo `` bar ` ```
+  was a span ending at its inner double backtick, and a stray one after, and in
+  ```` `use ``` for fences` ```` the span ended at the third backtick and
+  the rest of the line paired the wrong ones — and it took an HTML tag
+  inside a span, whose attribute's backtick then closed it (spec 0.31.2
+  examples 330, 331, 340, 343). Fixed in the grammar, not in our runs:
+  the runs are the grammar's (Decision 2), and where a span ends decides
+  what everything after it on the line is, which no correction of the
+  runs can redo. kawoosh keeps tree-sitter-md 0.5.3 in
+  `vendor/tree-sitter-md` through `[patch.crates-io]`, its inline
+  grammar's code span taking a run of another length as one
+  `_unclosed_span` token and no `_html_tag`; `KAWOOSH.md` there says how
+  to remake it, and it goes when upstream has it (not sent upstream: the
+  user's to send). Every code-span example of the spec passes
+  (`markdown_code_spans_pair_as_commonmark_says`), the grammar's own
+  corpus as before.
 - **A key takes only a ghost it can see.** A rendered row that wraps
   draws no completion ghost (Decision 4's "no ghost"), but `<Tab>` and
   `<CR>` still took the completion: `Setex` then Enter put `Setext` in

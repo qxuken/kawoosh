@@ -1493,7 +1493,7 @@
               },
               {
                 "type": "SYMBOL",
-                "name": "_html_tag"
+                "name": "_unclosed_span"
               }
             ]
           }
@@ -1549,6 +1549,10 @@
               {
                 "type": "SYMBOL",
                 "name": "backslash_escape"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "_unclosed_span"
               }
             ]
           }

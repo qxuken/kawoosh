@@ -121,13 +121,15 @@ module.exports = grammar(add_inline_rules({
 
         code_span: $ => seq(
             alias($._code_span_start, $.code_span_delimiter),
-            repeat(choice($._text_base, '[', ']', $._soft_line_break, $._html_tag)),
+            // A backtick run of another length than the opener's is the span's text, whole: its tail
+            // must not close the span (https://spec.commonmark.org/0.31.2/#example-340)
+            repeat(choice($._text_base, '[', ']', $._soft_line_break, $._unclosed_span)),
             alias($._code_span_close, $.code_span_delimiter)
         ),
 
         latex_block: $ => seq(
             alias($._latex_span_start, $.latex_span_delimiter),
-            repeat(choice($._text_base, '[', ']', $._soft_line_break, $._html_tag, $.backslash_escape)),
+            repeat(choice($._text_base, '[', ']', $._soft_line_break, $._html_tag, $.backslash_escape, $._unclosed_span)),
             alias($._latex_span_close, $.latex_span_delimiter),
         ),
 

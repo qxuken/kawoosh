@@ -1883,6 +1883,95 @@ mod tests {
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
+    /// Markdown's code spans are CommonMark's: a backtick run opens a span
+    /// closed by the next run of its length, and one with none is text
+    /// (spec 0.31.2, "Code spans", every example; markdown.md, Built,
+    /// "Code spans are CommonMark's"). Each case's spans as written, their
+    /// backticks punctuation and what is between raw; every other
+    /// backtick no span's. Upstream's
+    /// grammar closed a span on the tail of a longer run inside it (330,
+    /// 331, 340), and took an HTML tag inside one (343); kawoosh's copy
+    /// is fixed (vendor/tree-sitter-md). The first is the todo's line: two
+    /// single backticks, so one span between them, as GitHub draws it.
+    #[test]
+    fn markdown_code_spans_pair_as_commonmark_says() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "- [ ] movements like 'y2t`' - yank up to second '`'",
+                &["`' - yank up to second '`"],
+            ),
+            ("`foo`", &["`foo`"]),
+            ("`` foo ` bar ``", &["`` foo ` bar ``"]),
+            ("` `` `", &["` `` `"]),
+            ("`  ``  `", &["`  ``  `"]),
+            ("` a`", &["` a`"]),
+            ("`\u{a0}b\u{a0}`", &["`\u{a0}b\u{a0}`"]),
+            ("`\u{a0}`\n`  `", &["`\u{a0}`", "`  `"]),
+            ("``\nfoo\nbar  \nbaz\n``", &["``\nfoo\nbar  \nbaz\n``"]),
+            ("``\nfoo \n``", &["``\nfoo \n``"]),
+            ("`foo   bar \nbaz`", &["`foo   bar \nbaz`"]),
+            ("`foo\\`bar`", &["`foo\\`"]),
+            ("``foo`bar``", &["``foo`bar``"]),
+            ("` foo `` bar `", &["` foo `` bar `"]),
+            ("*foo`*`", &["`*`"]),
+            ("[not a `link](/foo`)", &["`link](/foo`"]),
+            ("`<a href=\"`\">`", &["`<a href=\"`"]),
+            ("<a href=\"`\">`", &[]),
+            ("`<https://foo.bar.`baz>`", &["`<https://foo.bar.`"]),
+            ("<https://foo.bar.`baz>`", &[]),
+            ("```foo``", &[]),
+            ("`foo", &[]),
+            ("`foo``bar``", &["``bar``"]),
+            // A longer run inside a span, then more spans on the line.
+            ("`a ``` b` and `c`", &["`a ``` b`", "`c`"]),
+        ];
+        let mut wrong = Vec::new();
+        for (src, spans) in cases {
+            let src = format!("{src}\n");
+            let mut want: Vec<Option<Token>> = vec![None; src.len()];
+            let mut covered = vec![false; src.len()];
+            for span in *spans {
+                let at = src.find(span).unwrap();
+                let ticks = span.bytes().take_while(|b| *b == b'`').count();
+                let end = at + span.len();
+                want[at..end].fill(Some(Token::Raw));
+                want[at..at + ticks].fill(Some(Token::Punctuation));
+                want[end - ticks..end].fill(Some(Token::Punctuation));
+                covered[at..end].fill(true);
+            }
+            let buf = Buffer::new("t", &src);
+            let job = Job {
+                buffer: BufferId::default(),
+                language: "markdown".into(),
+                snapshot: buf.snapshot(),
+                edits: None,
+            };
+            let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job).update();
+            let got = |o: usize| {
+                a.runs
+                    .iter()
+                    .find(|r| r.range.contains(&o))
+                    .map(|r| Token::from_style(r.style))
+            };
+            // A span's every byte; a backtick outside one no span's
+            // (an autolink's is the link's).
+            for (o, b) in src.bytes().enumerate() {
+                let bad = if covered[o] {
+                    got(o) != want[o]
+                } else {
+                    b == b'`' && matches!(got(o), Some(Token::Raw | Token::Punctuation))
+                };
+                if bad {
+                    wrong.push(format!("{src:?} at {o}: {:?}, not {:?}", got(o), want[o]));
+                    break;
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
     /// The injected languages survive the incremental path: an edit in
     /// one paragraph answers for a span around it, the inline runs and
     /// a fence's recomputed there, and the layer reads as a whole parse

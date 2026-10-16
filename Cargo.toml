@@ -92,8 +92,12 @@ criterion = "0.8.2"
 bitflags = { version = "2.13.1", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "deref_mut"] }
 
-# tree-sitter-md 0.5.3, the crates.io package as published, kept here
-# to carry a fix of its inline grammar (vendor/tree-sitter-md/KAWOOSH.md).
+# tree-sitter-md 0.5.3 with its inline grammar's code spans fixed: a
+# backtick run inside a span of another length than its opener is the
+# span's text, and an HTML tag is not looked for inside one (CommonMark
+# 0.31.2 examples 330, 331, 340, 343; docs/design/markdown.md, Built,
+# "Code spans are CommonMark's"). vendor/tree-sitter-md/KAWOOSH.md says
+# what changed and how to remake it; drop this when upstream has it.
 [patch.crates-io]
 tree-sitter-md = { path = "vendor/tree-sitter-md" }
 
