@@ -14,12 +14,13 @@
 //! against a fake: LaunchServices on macOS ([`macos`]), the XDG files on
 //! Linux ([`xdg`]), the registry read through PowerShell on Windows
 //! ([`windows`]), where Settings gives a default and a program cannot.
-//! What `on` took, and from whom, is kept in `default-editor.json`
-//! beside the state db, for `off`.
+//! What `on` took, and from whom, is kept in the state db's `kv`, for
+//! `off`.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use kawoosh_systems::store::Store;
 use serde::{Deserialize, Serialize};
 
 use crate::app::Kawoosh;
@@ -110,50 +111,72 @@ pub struct Taken {
     pub previous: Option<String>,
 }
 
-/// `default-editor.json`: who Kawoosh was to the system, the types `on`
-/// took by their id, and the `.desktop` file it wrote, if it did.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What `on` took, kept in the state db's `kv`: who Kawoosh was to the
+/// system and the `.desktop` file it wrote, if it did, under [`NS`];
+/// the types by their id under [`TYPES`], a row each.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Record {
-    #[serde(default)]
     pub handler: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub desktop: Option<PathBuf>,
-    #[serde(default)]
     pub types: BTreeMap<String, Taken>,
 }
 
+/// The record's `kv` namespaces: its own keys, then a row per type.
+const NS: &str = "default-editor";
+const TYPES: &str = "default-editor.types";
+
+/// The state db's error, said.
+fn db(e: impl std::fmt::Display) -> String {
+    format!("the state db: {e}")
+}
+
 impl Record {
-    /// The record at `path`; none there is an empty one. One that does
-    /// not read is an error, not a fresh start: it is what `off` gives
-    /// back from.
-    pub fn load(path: &Path) -> Result<Self, String> {
-        match std::fs::read_to_string(path) {
-            Ok(s) => serde_json::from_str(&s).map_err(|e| format!("{}: {e}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(format!("{}: {e}", path.display())),
+    /// The record in `store`; none there is an empty one. A row that
+    /// does not read is an error, not a fresh start: it is what `off`
+    /// gives back from.
+    pub fn load(store: &Store) -> Result<Self, String> {
+        let mut types = BTreeMap::new();
+        for id in store.keys(TYPES) {
+            let row = store.get(TYPES, &id).unwrap_or_default();
+            let taken = serde_json::from_str(&row).map_err(|e| db(format!("{TYPES} {id}: {e}")))?;
+            types.insert(id, taken);
         }
+        Ok(Self {
+            handler: store.get(NS, "handler").unwrap_or_default(),
+            desktop: store.get(NS, "desktop").map(PathBuf::from),
+            types,
+        })
     }
 
-    /// Written to `path`, or removed when it holds nothing.
-    pub fn save(&self, path: &Path) -> Result<(), String> {
+    /// Written into `store`: a type given back is its row deleted, and
+    /// a record holding nothing leaves no row.
+    pub fn save(&self, store: &Store) -> Result<(), String> {
+        for id in store.keys(TYPES) {
+            if !self.types.contains_key(&id) {
+                store.del(TYPES, &id).map_err(db)?;
+            }
+        }
+        for (id, taken) in &self.types {
+            let row = serde_json::to_string(taken).map_err(db)?;
+            store.set(TYPES, id, &row).map_err(db)?;
+        }
+        match &self.desktop {
+            Some(p) => store.set(NS, "desktop", &p.to_string_lossy()),
+            None => store.del(NS, "desktop"),
+        }
+        .map_err(db)?;
         if self.types.is_empty() && self.desktop.is_none() {
-            return match std::fs::remove_file(path) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                    Err(format!("{}: {e}", path.display()))
-                }
-                _ => Ok(()),
-            };
+            store.del(NS, "handler")
+        } else {
+            store.set(NS, "handler", &self.handler)
         }
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
-        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        write_whole(path, &text)
+        .map_err(db)
     }
 }
 
 /// `text` into `path` whole: written beside it, then renamed over it.
-fn write_whole(path: &Path, text: &str) -> Result<(), String> {
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+fn write_whole(path: &std::path::Path, text: &str) -> Result<(), String> {
     let tmp = path.with_file_name(format!(
         ".{}.{}.tmp",
         path.file_name()
@@ -167,15 +190,6 @@ fn write_whole(path: &Path, text: &str) -> Result<(), String> {
             let _ = std::fs::remove_file(&tmp);
             format!("{}: {e}", path.display())
         })
-}
-
-/// Where the record is kept: beside the state db.
-pub fn record_path() -> Option<PathBuf> {
-    Some(
-        kawoosh_systems::store::state_path()?
-            .parent()?
-            .join("default-editor.json"),
-    )
 }
 
 /// What was asked.
@@ -272,22 +286,22 @@ fn survey(sys: &dyn System, exts: &[String]) -> Vec<Row> {
 }
 
 /// Runs `req` against `sys` — the candidates the extensions every
-/// language has (`kawoosh --languages`) — keeping what it took in the
-/// record at `record`. What to say, or why nothing was done.
+/// language has (`kawoosh --languages`) — keeping what it took in
+/// `store`. What to say, or why nothing was done.
 pub fn run(
     sys: &mut dyn System,
     req: &Request,
     candidates: &[String],
-    record: &Path,
+    store: &Store,
 ) -> Result<String, String> {
-    let mut rec = Record::load(record)?;
+    let mut rec = Record::load(store)?;
     let said = match req.verb {
         Verb::Status => status(sys, candidates, &rec),
         Verb::On => on(sys, req, candidates, &mut rec)?,
         Verb::Off => off(sys, req, &mut rec)?,
     };
     if !req.dry && req.verb != Verb::Status {
-        rec.save(record)?;
+        rec.save(store)?;
     }
     Ok(said)
 }
@@ -717,21 +731,25 @@ pub fn system(exts: &[String]) -> Result<Box<dyn System>, String> {
     }
 }
 
-/// `args` (after `default-editor`) run on this system; what to say,
-/// or why nothing was done.
-pub fn run_here(args: &[String]) -> Result<String, String> {
+/// `args` (after `default-editor`) run on this system, the record in
+/// `store`; what to say, or why nothing was done.
+pub fn run_here(args: &[String], store: &Store) -> Result<String, String> {
     let req = parse(args)?;
     let candidates = candidates();
     let mut asked = candidates.clone();
     asked.extend(req.exts.iter().cloned());
     let mut sys = system(&asked)?;
-    let record = record_path().ok_or("no data directory (HOME is not set)")?;
-    run(sys.as_mut(), &req, &candidates, &record)
+    run(sys.as_mut(), &req, &candidates, store)
 }
 
-/// `kawoosh default-editor …`: the exit code.
+/// `kawoosh default-editor …`, on the state db a window opens — beside
+/// a running one, as WAL lets: the exit code.
 pub fn cli(args: &[String]) -> i32 {
-    match run_here(args) {
+    let said = kawoosh_systems::store::state_path()
+        .ok_or_else(|| "no data directory (HOME is not set)".to_string())
+        .and_then(|p| Store::open(&p).map_err(db))
+        .and_then(|store| run_here(args, &store));
+    match said {
         Ok(s) => {
             crate::out!("{s}");
             0
@@ -744,11 +762,16 @@ pub fn cli(args: &[String]) -> i32 {
 }
 
 impl Kawoosh {
-    /// `:default-editor`: what the CLI says, in a pane.
+    /// `:default-editor`: what the CLI says, in a pane, the record in
+    /// the window's own store.
     fn default_editor(&mut self, verb: &str, args: &[String]) {
         let mut all = vec![verb.to_string()];
         all.extend(args.iter().cloned());
-        let text = match run_here(&all) {
+        let said = match self.store.clone() {
+            Some(store) => run_here(&all, &store),
+            None => Err("the state db is not open".to_string()),
+        };
+        let text = match said {
             Ok(s) => s,
             Err(e) => format!("default-editor: {e}\n"),
         };
@@ -1584,7 +1607,9 @@ mod tests {
         ])
     }
 
-    fn tmp() -> (PathBuf, PathBuf) {
+    /// A temp dir for the files a test writes, and a store in memory
+    /// for the record.
+    fn tmp() -> (PathBuf, Store) {
         let dir = std::env::temp_dir().join(format!(
             "kawoosh-default-editor-{}-{:?}",
             std::process::id(),
@@ -1592,8 +1617,12 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let rec = dir.join("default-editor.json");
-        (dir, rec)
+        (dir, Store::in_memory().unwrap())
+    }
+
+    /// No row of the record left.
+    fn empty(store: &Store) -> bool {
+        store.keys(NS).is_empty() && store.keys(TYPES).is_empty()
     }
 
     fn req(verb: Verb, exts: &[&str], dry: bool) -> Request {
@@ -1668,7 +1697,7 @@ mod tests {
         let mut sys = fake();
         let said = run(&mut sys, &req(Verb::On, &[], true), &all(), &rec).unwrap();
         assert!(sys.sets.is_empty());
-        assert!(!rec.exists());
+        assert!(empty(&rec));
         assert!(
             said.contains("would be the default for 4 more types"),
             "{said}"
@@ -1701,7 +1730,7 @@ mod tests {
             said.contains("Kawoosh's still — no other app was their default: rs"),
             "{said}"
         );
-        assert!(!rec.exists(), "the record goes with the last type");
+        assert!(empty(&rec), "the record goes with the last type");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1795,11 +1824,50 @@ mod tests {
     #[test]
     fn a_record_that_does_not_read_stops_rather_than_starting_over() {
         let (dir, rec) = tmp();
-        std::fs::write(&rec, "{ not json").unwrap();
+        rec.set(TYPES, "public.json", "{ not json").unwrap();
         let mut sys = fake();
-        assert!(run(&mut sys, &req(Verb::Off, &[], false), &all(), &rec).is_err());
-        assert_eq!(std::fs::read_to_string(&rec).unwrap(), "{ not json");
+        let err = run(&mut sys, &req(Verb::Off, &[], false), &all(), &rec).unwrap_err();
+        assert!(err.contains("default-editor.types public.json"), "{err}");
+        assert_eq!(rec.get(TYPES, "public.json").as_deref(), Some("{ not json"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The record is rows of the state db's `kv`: a type each, the
+    /// handler and the `.desktop` file under the record's own name.
+    #[test]
+    fn the_record_is_kv_rows_and_round_trips() {
+        let store = Store::in_memory().unwrap();
+        let mut rec = Record {
+            handler: "kawoosh.desktop".into(),
+            desktop: Some(PathBuf::from(
+                "/home/u/.local/share/applications/kawoosh.desktop",
+            )),
+            types: BTreeMap::new(),
+        };
+        for (id, prev) in [
+            ("text/rust", None),
+            ("application/json", Some("code.desktop")),
+        ] {
+            rec.types.insert(
+                id.into(),
+                Taken {
+                    exts: vec![id.rsplit('/').next().unwrap().into()],
+                    previous: prev.map(str::to_string),
+                },
+            );
+        }
+        rec.save(&store).unwrap();
+        assert_eq!(store.keys(TYPES), ["application/json", "text/rust"]);
+        assert_eq!(store.keys(NS), ["desktop", "handler"]);
+        assert_eq!(Record::load(&store).unwrap(), rec);
+        // One given back is its row gone; the last takes the rest.
+        rec.types.remove("text/rust");
+        rec.save(&store).unwrap();
+        assert_eq!(store.keys(TYPES), ["application/json"]);
+        rec.types.clear();
+        rec.desktop = None;
+        rec.save(&store).unwrap();
+        assert!(empty(&store));
     }
 
     /// `:default-editor on rs py` is the subcommand with the extensions
@@ -1838,7 +1906,7 @@ mod tests {
 
         /// A home in the temp dir: a mime database with rs, json, svg,
         /// html and a binary type; nothing of the real one touched.
-        fn home(dir: &Path) -> Xdg {
+        fn home(dir: &std::path::Path) -> Xdg {
             let share = dir.join("usr-share");
             std::fs::create_dir_all(share.join("mime")).unwrap();
             std::fs::write(
@@ -1951,7 +2019,7 @@ mod tests {
             assert!(said.contains("Gave back to code.desktop: json"), "{said}");
             assert!(said.contains("Gave back to Linux's own pick: rs"), "{said}");
             assert!(!desktop.exists());
-            assert!(!rec.exists());
+            assert!(empty(&rec));
             std::fs::remove_dir_all(dir).unwrap();
         }
 
@@ -2018,7 +2086,7 @@ mod tests {
             );
             assert!(said.contains("\n   json\n"), "{said}");
             assert!(said.contains("Kawoosh's already: rs"), "{said}");
-            assert!(!rec.exists());
+            assert!(empty(&rec));
             std::fs::remove_dir_all(dir).unwrap();
         }
 

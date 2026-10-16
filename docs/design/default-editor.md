@@ -105,9 +105,13 @@ com.tasqer.editor for public.json".
 
 `on` records, for each type it takes, the handler it took it from —
 `LSCopyDefaultRoleHandlerForContentType`, the default as it stood, the
-system's pick or the user's — in `default-editor.json` beside the state
-db. A second `on` keeps the first record of a type: what was there
-before Kawoosh. `off`, for each recorded type:
+system's pick or the user's — in the state db's `kv`: a row a type under
+`default-editor.types` (its id the key, its extensions and that handler
+the value), and Kawoosh's handler and any `.desktop` file it wrote under
+`default-editor`. The CLI opens the same db a window has open, which
+WAL and the store's busy timeout let it; `:default-editor` uses the
+window's own connection. A second `on` keeps the first record of a
+type: what was there before Kawoosh. `off`, for each recorded type:
 
 - Kawoosh still its default, another app before: that app again;
 - Kawoosh still its default, nothing (or Kawoosh) before: on macOS it
@@ -190,7 +194,7 @@ went back to whom and what stayed.
 2026-10-16. `kawoosh/src/default_editor.rs`: the plan over a `System`
 trait — an extension's type, a type's default, set, clear, the
 handler's `.desktop` file, Settings' page — with the record and the
-report, tested against a fake system. LaunchServices is called through
+report, tested against a fake system and a store in memory. LaunchServices is called through
 CoreServices' C functions declared there (no new crate); Linux's files
 are tested in a temp dir standing for HOME and the XDG dirs; Windows's
 registry read is a PowerShell's output, parsed and tested as text. No
@@ -205,6 +209,11 @@ were run on the user's Mac (read-only): 153 types to take, 102 of them
 Kawoosh's already, 13 left out (`ts mts dts exs svg dae` media, `html
 htm csv` shown, `edn dot pem plist` not text). The real `on`/`off`
 were not run here: they change the user's defaults, theirs to run.
+
+The record was first a `default-editor.json` beside the db, moved into
+`kv` the same day at the user's word: a file beside the db survives
+nothing the db does not, and the store is already safe to open from
+the CLI while a window runs.
 
 Not checked: whether a macOS asks the user to confirm a content type's
 default (no known version does; the read-back says so if one
