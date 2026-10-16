@@ -78,7 +78,7 @@ A buffer's undo tree is kept across restarts, and so is unsaved text: `:q` keeps
 
 ## Secrets
 
-Some text must not be remembered. A *private* buffer has no history or draft on disk, no row in the memory, is not restored with a session, is never sent to a language server, and never reaches the system clipboard.
+Some text must not be remembered. A *private* buffer has no history or draft on disk, no row in the memory, is not restored with a session, is never sent to a language server, and never reaches the system clipboard unless you copy it out (below).
 
 These buffers are private:
 
@@ -88,6 +88,8 @@ These buffers are private:
 - any buffer after `:mask private on` (`:mask private` says whether it is; `off` undoes it).
 
 **Kept inside kawoosh.** A yank or delete from a private buffer is a secret: put it as often as you like, into any buffer, but it never reaches the system clipboard, the memory on disk or a plugin, and it is forgotten `secrets.forget_secs` seconds (120) after you last yanked or put it. After that `p` says the secret is gone rather than putting an older text; `[p` and the memory pane still reach the older ones. Text put into a private buffer becomes a secret too. The memory pane masks a secret's text, and `[p` `]p` step over it.
+
+**Copying a secret out.** {{mac:`⌘c`, }}`:yank clipboard` is the one way a secret reaches the system clipboard: on a selection it yanks it, in normal mode it takes the newest yank (`yy` then {{mac:`⌘c`}}{{pc:`:yank clipboard`}}). The text is marked concealed and transient, as a password manager marks what it copies, so clipboard managers neither show nor keep it; it stays on the clipboard until something else is copied. A plain `y` still keeps a secret inside kawoosh.
 
 **Masks.** In any buffer a rule applies to, the secret part of each line is drawn as eight `•`, whatever its length. `zv` shows the mask under the caret for `secrets.reveal_secs` seconds (10), until the caret leaves it. Masks also apply to the picker's previews and search results.
 
@@ -106,6 +108,6 @@ A rule applies by `files` (globs on the name, or the whole path when the glob ha
 
 **`:secret NAME`** opens `*secret NAME*`, a private scratch of `key: value` lines with the values masked. It is never on disk and is gone when the window closes. `:secret` alone lists the open ones.
 
-**Ansible vaults.** A file starting with `$ANSIBLE_VAULT;` opens decrypted in a private scratch, and `:w` encrypts it back. `ansible-vault` runs from the nearest directory with an `ansible.cfg`; the password file comes from there, `ANSIBLE_VAULT_PASSWORD_FILE`, or `secrets.vault_password_file`, and `secrets.vault_command` replaces the tool. If it cannot decrypt, the file opens as it is and a notice offers *Retry*; `:!ansible-vault view %` runs it in a [terminal](terminal.md), where it can ask for the password.
+**Ansible vaults.** A file starting with `$ANSIBLE_VAULT;` opens decrypted in a private scratch, and `:w` encrypts it back. `ansible-vault` runs from the nearest directory with an `ansible.cfg`; the password file comes from there, `ANSIBLE_VAULT_PASSWORD_FILE`, or `secrets.vault_password_file`, and `secrets.vault_command` replaces the tool. `-` in the scratch lists the vault's directory. If it cannot decrypt, the file opens as it is and a notice offers *Retry*; `:!ansible-vault view %` runs it in a [terminal](terminal.md), where it can ask for the password.
 
 Kawoosh clears the text of closed buffers and forgotten secrets from memory, but cannot promise that no copy remains anywhere (a string made along the way, swap).

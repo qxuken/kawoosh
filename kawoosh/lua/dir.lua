@@ -1059,7 +1059,8 @@ end
 
 -- Up one level: from a listing to its parent with the caret on the
 -- directory left; from a file to its directory with the caret on the
--- file; from anything else to the cwd.
+-- file; from what stands for a file (a vault's scratch) to that file's;
+-- from anything else to the cwd.
 local function up(fresh)
   local here = listed()
   if here == DRIVES then return kawoosh.echo("at the top") end
@@ -1072,7 +1073,7 @@ local function up(fresh)
     end
     return dir.open(parent, fs.basename(here), fresh)
   end
-  local ok, path = pcall(kawoosh.buf.path)
+  local ok, path = pcall(kawoosh.buf.file)
   if ok and path then
     return dir.open(fs.parent(path) or fs.cwd(), fs.basename(path), fresh)
   end

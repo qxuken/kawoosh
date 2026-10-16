@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use kawoosh_doc::{Bias, Buffer, BufferId, Version};
 use kawoosh_editor::masks::{Rule, Rules, line_folds};
-use kawoosh_editor::{ArgKind, Args, Spec};
+use kawoosh_editor::{ArgKind, Args, Mode, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};
 
 use crate::app::Kawoosh;
@@ -333,6 +333,33 @@ fn under_temp(path: &Path) -> bool {
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![
+        // ⌘C: the one way a secret reaches the system clipboard, asked
+        // for by name each time (Decision 8).
+        cmd(
+            Spec::new("yank clipboard")
+                .doc("the selection yanked and on the system clipboard (⌘C) — in normal mode the newest yank; a private buffer's marked concealed and transient, so no clipboard manager shows or keeps it"),
+            |k, _| {
+                let Some(v) = k.focused_view() else { return };
+                let visual = k.ed.mode(v) == Mode::Visual;
+                if visual {
+                    k.ed.run(v, "yank", &[], None);
+                }
+                let Some(head) = k.ed.memory.head() else {
+                    k.ed.message = "yank clipboard: nothing yanked".into();
+                    return;
+                };
+                if head.secret {
+                    k.clip_secret_out = Some(head.text.clone());
+                    k.ed.message =
+                        "a secret on the clipboard, concealed: no clipboard manager shows or keeps it"
+                            .into();
+                } else if !visual {
+                    // A yank's text is the clipboard's already, unless
+                    // something was copied since.
+                    k.clip_out = Some(head.text.clone());
+                }
+            },
+        ),
         cmd(
             Spec::new("mask reveal")
                 .doc("show the mask under the caret for a few seconds (`secrets.reveal_secs`)"),
