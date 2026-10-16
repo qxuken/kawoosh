@@ -87,6 +87,10 @@ afternoon.
 
 ## Code: grammars, servers, formatters
 
+- **Completion, five rounds**: the model and the settings; the popup
+  with its icons and `font.icons`; LSP snippets; the user's snippets
+  over `kawoosh.json`; signature help and `callable`.
+  ([completion.md](design/completion.md), "Build")
 - **`textobjects.scm` shipped by kawoosh-grammars**: kawoosh reads
   them, the builder ships none (builder, compile check, samples).
   ([grammars.md](design/grammars.md), "Text objects, 2026-10-03")

@@ -106,6 +106,9 @@ commits; 70 integration test files and 31 Lua test scripts.
   per project.
 - [lsp-servers.md](design/lsp-servers.md): a server for every language.
 - [lsp-installs.md](design/lsp-installs.md): installs, and qd.
+- [completion.md](design/completion.md): when completion asks, how it
+  shows (a ghost, a popup), what it offers, snippets; designed, built
+  in five rounds.
 - [formatters.md](design/formatters.md): formatters, and what they say
   of indentation.
 - [formatter-installs.md](design/formatter-installs.md): formatters
