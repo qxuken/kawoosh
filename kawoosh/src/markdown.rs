@@ -1625,6 +1625,40 @@ mod tests {
         assert!(!r.grid());
     }
 
+    /// Empty cells count (the grammar's zero-width `pipe_table_cell`s,
+    /// read here off the text): `|| x |` a header of two, `| a || c |`
+    /// a row of three, `|||` two empty cells; a lone `|` has none, and
+    /// is drawn as its source.
+    #[test]
+    fn empty_cells_are_cells() {
+        let rows = [
+            "|| x |".to_string(),
+            "|---|---|".into(),
+            "| a || c |".into(),
+            "|".into(),
+            "|||".into(),
+        ];
+        assert_eq!(table_columns(&rows), 3);
+        let t = |r: &str| vec![(0..r.len() + 1, Block::Table)];
+        let r = render(&rows[0], &[], &t(&rows[0]), Reveal::Folded, 3, &style(), 4);
+        assert_eq!(r.drawn.text, "x");
+        assert_eq!(r.cells, [Cell::Text(0..0), Cell::Text(0..1)]);
+        assert!(r.grid());
+        let r = render(&rows[2], &[], &t(&rows[2]), Reveal::Folded, 3, &style(), 4);
+        assert_eq!(r.drawn.text, "ac");
+        assert_eq!(
+            r.cells,
+            [Cell::Text(0..1), Cell::Text(1..1), Cell::Text(1..2)]
+        );
+        let r = render(&rows[3], &[], &t(&rows[3]), Reveal::Folded, 3, &style(), 4);
+        assert!(r.cells.is_empty());
+        assert!(!r.grid());
+        let r = render(&rows[4], &[], &t(&rows[4]), Reveal::Folded, 3, &style(), 4);
+        assert_eq!(r.drawn.text, "");
+        assert_eq!(r.cells, [Cell::Text(0..0), Cell::Text(0..0)]);
+        assert!(r.grid());
+    }
+
     #[test]
     fn images_and_links() {
         assert_eq!(

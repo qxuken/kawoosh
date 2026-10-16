@@ -447,15 +447,18 @@ After a day's use (2026-09-23), five more:
   met, and a column as wide as the source's `![…](…)` had nothing to do
   with the image drawn under it.
 - **A row of empty cells does not swallow the document.** tree-sitter-md
-  loses its place on a table's row with an empty cell — a lone `|` took
+  lost its place on a table's row with an empty cell — a lone `|` took
   the blank line and the heading after it into the table, `|||` made
   the rest of the document one ERROR, every heading and fence in it
-  gone — which is every row on its way to being typed. The grammar
-  carries stand-ins (`Grammar::stand_ins`, markdown's `stand_ins`):
-  such a row is read by the parser as `|   |` of its own length (`|a`,
-  `a` for the shortest), still a row; the text keeps its bytes and the
-  cells are read off the text. A document with one is parsed whole, its
-  tree not kept, since an edit anywhere can change which rows they are.
+  gone — which is every row on its way to being typed. Fixed in the
+  grammar, in our fork (commit 7f95414, 2026-10-17): an empty cell is a
+  zero-width `pipe_table_cell` just before its closing `|`, a lone `|`
+  is a row with no cells, a delimiter cell needs a `-`, and a row of
+  blank cells no longer starts a second table. Until then the grammar
+  carried stand-ins (`Grammar::stand_ins`), rows the parser read as
+  `|   |` of their own length, and a document with one was parsed whole
+  on every edit; they are gone, and such a document parses
+  incrementally like any other.
 - **Code spans are CommonMark's** (2026-10-16). From the todo, about
   its own line ``- [ ] movements like 'y2t`' - yank up to second '`'``:
   "is broken? my neovim's markdown plugin draws the same, but can we
@@ -475,7 +478,7 @@ After a day's use (2026-09-23), five more:
   the runs are the grammar's (Decision 2), and where a span ends decides
   what everything after it on the line is, which no correction of the
   runs can redo. kawoosh takes tree-sitter-md from our fork,
-  github.com/qxuken/tree-sitter-markdown (branch `split_parser`, a rev
+  github.com/qxuken/tree-sitter-markdown (branch `kawoosh`, a rev
   pinned in `[patch.crates-io]`), its inline grammar's code span taking
   a run of another length as one `_unclosed_span` token and no
   `_html_tag`, with corpus tests that pin the delimiters' ranges
