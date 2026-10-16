@@ -90,6 +90,9 @@ went from is *spent* until something is taken: `p` says the secret is
 gone rather than putting the text under it; `[p` and the memory pane
 still reach the older ones.
 
+*Relaxed 2026-10-16 by Decision 7:* put once is gone; a secret is put
+as often as wanted anywhere in kawoosh.
+
 ### 3. Masks are rules the engine draws, not a hook
 
 `secrets.masks` is a table of named rules in the engine's settings
@@ -188,6 +191,51 @@ What it cannot promise, said plainly in `:help`-shaped words in the
 plugin's header: a copy an allocator left behind when a `Vec` grew, a
 `String` made on the way (a search's match, a `.` repeat's typed text,
 a macro), the swap. The mask is why the text is never in kui.
+
+### 7. A secret is kawoosh's alone, not put once
+
+Asked 2026-10-16, from the todo: yanking in a secret buffer is "often
+unusable". It was so by Decision 2 even as amended: a block yanked from
+a vault went into a playbook once and was gone — the second `p`, a
+`P` over a second selection, a `.` repeat all said *the secret is
+gone* — and one not put within 30 seconds of the yank was forgotten,
+while the user was still finding the file it was for. A key name or a
+whole structure copied out of a `vault.yml` is a secret too, since the
+yank cannot tell a value from its key, so the rule bit on the ordinary
+edits of a secrets file, not only on passwords.
+
+What Decision 2 guards against is a secret *leaving the process*: the
+store's `text` rows, the system clipboard (every program, and any
+clipboard manager), a plugin's Lua strings (never zeroed). A put into a
+buffer is not that: the text lands where the user put it, and the
+buffer it lands in is the user's choice — a private one keeps it as
+private, an ordinary one has it as it has anything typed there. Put
+once spent the register and bought nothing the put itself had not
+already done. So:
+
+- **a put spends nothing**, into any buffer: `p`, `P`, a visual put, a
+  count, `.` — as for any text;
+- **the timer counts from the last use**: a secret is forgotten
+  `secrets.forget_secs` after it was last yanked or put, not after the
+  yank, and the default is 120 seconds, not 30 — the password managers'
+  30 is for the system clipboard, where every program reads; this is
+  the process's own register;
+- **unchanged**: never a `text` row or a moment (not its hash, not the
+  yank of its file), never on the system clipboard, withheld from Lua
+  (`kawoosh.register` nil, `kawoosh.memory()` masked), masked in the
+  memory pane and stepped over by `[p` `]p`, zeroed when it goes; a
+  text put into a private buffer becomes a secret; a concealed paste
+  (Decision 4) is a secret, put again by `p` until its time is up.
+
+*Beat:* put once to a buffer that is not private, as Decision 2's
+amendment had it — the put is the user's own act on their own buffer,
+and spending the register is what made yanking "unusable". *Beat:* a
+secret on the system clipboard marked concealed
+(`org.nspasteboard.ConcealedType`, which managers skip) — still every
+program's to read while it is there, and writing the mark is a kui
+round of its own (F84 reads it); asked for, it is the next step. *Beat:*
+no timer at all — a secret then lives as long as the register, through
+a lunch break, for a put into the wrong buffer much later.
 
 ## Deliberately not
 
@@ -288,3 +336,29 @@ shape. Where it departed:
   kept, so the file's shape still reads. A line that opens a nested
   `{` or `[` is not a value. The cost was the rule: a `files` rule is
   what makes a file private.
+
+### From the todo, 2026-10-16
+
+- **A vault written was left empty.** `:w` in a decrypted vault
+  encrypted the text over the file — the file was right — and then
+  refilled the scratch with it from the tool's exit, through an upvalue
+  `write_back` had set to `nil` the moment the tool started (to let the
+  string go): the refill was `open_scratch { text = nil }`, an empty
+  buffer, clean. The refill was the wrong model too: it replaced the
+  text, so an edit typed while the tool ran was lost with the undo
+  history. Now the exit only says the write landed —
+  `kawoosh.buf.saved(text[, buffer])`, a door for any hook whose write
+  ends after its `on_write` answered: saved if the buffer still holds
+  what was written, line by line, else left modified by what was typed
+  meanwhile; its text is never touched.
+- **A key commented out stays a secret.** `# ansible_become_password:
+  secret_password` was drawn raw while the same line uncommented was
+  masked: a commented-out key is a value kept for later, as secret as
+  it was. `env`, `vault` and `secret` take `#`s and spaces before the
+  key (`^\s*(?:#+\s*)?…`). A comment that reads as a key — `# Note:
+  rotate monthly` in a vault — is masked too, which is the safe side
+  (Risks: a rule too broad). `key` already masked every line but a
+  comment; JSON has none.
+- **Yanking relaxed** (Decision 7): a secret is put as often as wanted
+  into any buffer, and forgotten 120 seconds after its last use; still
+  never on the clipboard, in the store or in Lua.

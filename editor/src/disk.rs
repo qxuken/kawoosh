@@ -411,6 +411,13 @@ impl Editor {
             }
             Err(e) => {
                 self.message = format!("write failed: {e}");
+                // Refused for permission on this machine: the shell may
+                // write it as an administrator, asked first.
+                if e.kind() == std::io::ErrorKind::PermissionDenied
+                    && kawoosh_doc::fs::remote(&path).is_none()
+                {
+                    self.effects.push(crate::Effect::WriteRefused(id));
+                }
                 false
             }
         }
@@ -595,5 +602,110 @@ mod tests {
         );
         assert_eq!(tidied("x\n", true, true, None), "x\n");
         assert!(tidy_edits("a\nb\n", true, true, Some("\n")).is_empty());
+    }
+
+    /// Buffer `id`'s text made `text` as an edit, so it is modified.
+    fn retype(ed: &mut Editor, id: crate::BufferId, text: &str) {
+        let b = &mut ed.buffers[id];
+        let len = b.len();
+        b.replace(0..len, text);
+        assert!(b.modified);
+    }
+
+    /// A directory `dir` set to `mode` for as long as `f` runs, put back
+    /// after — and `None` when it does not refuse a new file even so (a
+    /// root that writes anywhere): the case cannot be made here.
+    #[cfg(unix)]
+    fn with_dir_mode<T>(dir: &std::path::Path, mode: u32, f: impl FnOnce() -> T) -> Option<T> {
+        use std::os::unix::fs::PermissionsExt;
+        let was = std::fs::metadata(dir).unwrap().permissions();
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        let probe = dir.join(".probe");
+        let refuses = std::fs::File::create(&probe).is_err();
+        let _ = std::fs::remove_file(&probe);
+        let got = refuses.then(f);
+        std::fs::set_permissions(dir, was).unwrap();
+        got
+    }
+
+    /// The NAS's case (docs/design/disk.md Decision 4): a file this user
+    /// may write in a directory that refuses a new name — an SMB share
+    /// whose ACL said so, `EACCES` (os error 13) at the sibling. The save
+    /// steps down to writing the file in place, as vim does, cut to the
+    /// new text, its mode its own, nothing left beside it.
+    #[test]
+    #[cfg(unix)]
+    fn a_save_where_nothing_can_be_made_beside_writes_in_place() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp("in-place");
+        let f = dir.join("prometheus.yml");
+        std::fs::write(&f, "scrape_interval: 15s and an old long tail\n").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut ed = Editor::new();
+        let id = ed.add_buffer(Buffer::from_file(&f).unwrap());
+        retype(&mut ed, id, "scrape_interval: 30s\n");
+        let Some(saved) = with_dir_mode(&dir, 0o555, || ed.save(id)) else {
+            return;
+        };
+        saved.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "scrape_interval: 30s\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&f).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert!(!ed.buffers[id].modified);
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "nothing beside it"
+        );
+
+        // A buffer reading the file's mapping is not written in place:
+        // it would read the bytes being written over it.
+        ed.buffers[id].mapped = true;
+        retype(&mut ed, id, "scrape_interval: 45s\n");
+        let refused = with_dir_mode(&dir, 0o555, || ed.save(id)).unwrap();
+        assert_eq!(refused.unwrap_err().kind(), std::io::ErrorKind::Other);
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "scrape_interval: 30s\n"
+        );
+        ed.buffers[id].mapped = false;
+
+        // A file that may not be written either: refused as permission,
+        // which the shell offers to write as an administrator.
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o400)).unwrap();
+        retype(&mut ed, id, "scrape_interval: 60s\n");
+        let refused = with_dir_mode(&dir, 0o555, || ed.save(id)).unwrap();
+        assert_eq!(
+            refused.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "scrape_interval: 30s\n"
+        );
+        assert!(ed.buffers[id].modified);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A file with a second name is written in place, so the other name
+    /// reads the new text too: a rename over it would have parted them.
+    #[test]
+    #[cfg(unix)]
+    fn a_save_keeps_a_hard_link() {
+        let dir = tmp("hard-link");
+        let f = dir.join("a.txt");
+        std::fs::write(&f, "old\n").unwrap();
+        std::fs::hard_link(&f, dir.join("b.txt")).unwrap();
+        let mut ed = Editor::new();
+        let id = ed.add_buffer(Buffer::from_file(&f).unwrap());
+        retype(&mut ed, id, "new\n");
+        ed.save(id).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("b.txt")).unwrap(), "new\n");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

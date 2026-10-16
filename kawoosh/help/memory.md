@@ -87,7 +87,7 @@ These buffers are private:
 - a file opened through `$EDITOR` from the temp directory, while `secrets.private_temp` is on;
 - any buffer after `:mask private on` (`:mask private` says whether it is; `off` undoes it).
 
-**Put once.** A yank or delete from a private buffer is a secret: it is never on the clipboard, one put into another buffer uses it up, and it is forgotten after `secrets.forget_secs` seconds (30) if not put. After that `p` says the secret is gone rather than putting an older text; `[p` and the memory pane still reach the older ones. Puts inside private buffers use up nothing, and text put into a private buffer becomes a secret too. The memory pane masks a secret's text, and `[p` `]p` step over it.
+**Kept inside kawoosh.** A yank or delete from a private buffer is a secret: put it as often as you like, into any buffer, but it never reaches the system clipboard, the memory on disk or a plugin, and it is forgotten `secrets.forget_secs` seconds (120) after you last yanked or put it. After that `p` says the secret is gone rather than putting an older text; `[p` and the memory pane still reach the older ones. Text put into a private buffer becomes a secret too. The memory pane masks a secret's text, and `[p` `]p` step over it.
 
 **Masks.** In any buffer a rule applies to, the secret part of each line is drawn as eight `•`, whatever its length. `zv` shows the mask under the caret for `secrets.reveal_secs` seconds (10), until the caret leaves it. Masks also apply to the picker's previews and search results.
 
@@ -102,7 +102,7 @@ secrets = {
 }
 ```
 
-A rule applies by `files` (globs on the name, or the whole path when the glob has a `/`), by `language`, or everywhere. `pattern` is a regex whose first group is masked; `from` and `to` mask every line between two matches. Shipped rules: `env`, `vault`, `key`, `vault_pass`, `json` (`*.secret.json`, `*.secrets.json`, `secrets.json`: every value, the keys kept), `pem` (private keys, anywhere) and `secret`. A buffer larger than `secrets.scan_max_kb` is not scanned.
+A rule applies by `files` (globs on the name, or the whole path when the glob has a `/`), by `language`, or everywhere. `pattern` is a regex whose first group is masked; `from` and `to` mask every line between two matches. Shipped rules: `env`, `vault`, `key`, `vault_pass`, `json` (`*.secret.json`, `*.secrets.json`, `secrets.json`: every value, the keys kept), `pem` (private keys, anywhere) and `secret`. `env`, `vault` and `secret` mask a key commented out (`# password: …`) as they mask it uncommented. A buffer larger than `secrets.scan_max_kb` is not scanned.
 
 **`:secret NAME`** opens `*secret NAME*`, a private scratch of `key: value` lines with the values masked. It is never on disk and is gone when the window closes. `:secret` alone lists the open ones.
 

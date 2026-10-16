@@ -426,6 +426,10 @@ pub enum Effect {
     /// `:w` found the buffer's file changed on disk since it was read
     /// and did not write: the shell asks what to do.
     DiskConflict(BufferId),
+    /// A save refused for permission — the file itself may not be
+    /// written, nor anything made beside it: the shell offers to write it
+    /// as an administrator (docs/design/disk.md Decision 5).
+    WriteRefused(BufferId),
     /// A search moved in a buffer too big to count its matches on the
     /// frame: the shell counts them on a thread (`search::count` over a
     /// snapshot) and puts the number in the message when it has it.
@@ -657,9 +661,10 @@ pub struct Moment {
     pub from: String,
     pub at: Instant,
     /// Taken from, or put into, a private buffer (docs/design/secrets.md
-    /// Decision 2): never written, never on the system clipboard, put
-    /// once and then forgotten, or forgotten after
-    /// `secrets.forget_secs`; its text zeroed when it goes.
+    /// Decisions 2 and 7): never written, never on the system clipboard,
+    /// never handed to Lua; put as often as wanted within kawoosh, and
+    /// forgotten `secrets.forget_secs` after it was last taken or put;
+    /// its text zeroed when it goes.
     pub secret: bool,
 }
 
@@ -733,9 +738,10 @@ pub struct Memory {
     /// Bumped whenever the moments change: what a snapshot of them is
     /// good for.
     pub version: u64,
-    /// The head was a secret, and it went — put once, or its time up —
-    /// with nothing taken since: `p` says so rather than putting the
-    /// text the secret had covered, which nobody asked for.
+    /// The head was a secret, and it went — its time up, or forgotten
+    /// in the memory pane — with nothing taken since: `p` says so rather
+    /// than putting the text the secret had covered, which nobody asked
+    /// for.
     spent: bool,
 }
 
@@ -860,8 +866,18 @@ impl Memory {
         }
     }
 
-    /// When the oldest secret was taken, if one is held: what the timer
-    /// that forgets it counts from.
+    /// Moment `i` put: a secret in use is kept another
+    /// `secrets.forget_secs` from now (docs/design/secrets.md Decision 7).
+    pub fn used(&mut self, i: usize) {
+        if let Some(m) = self.moments.get_mut(i)
+            && m.secret
+        {
+            m.at = Instant::now();
+        }
+    }
+
+    /// When the oldest secret was last taken or put, if one is held:
+    /// what the timer that forgets it counts from.
     pub fn oldest_secret(&self) -> Option<Instant> {
         self.moments.iter().filter(|m| m.secret).map(|m| m.at).min()
     }
@@ -3664,8 +3680,8 @@ impl Editor {
     }
 
     /// `paste_text` of a text the pasteboard marked a secret (a
-    /// password manager's copy): put once and forgotten, never written
-    /// (docs/design/secrets.md).
+    /// password manager's copy): put as a secret, never written, and
+    /// forgotten on the timer (docs/design/secrets.md).
     pub fn paste_text_marked(&mut self, view: ViewId, text: &str, secret: bool) {
         let view = match self.prompt_view() {
             Some(p) if !self.is_field(view) => p,
@@ -3675,7 +3691,7 @@ impl Editor {
             Mode::Insert => self.text(view, text),
             _ => {
                 // Put into a private buffer, it is a secret from the
-                // start: never written, gone once put.
+                // start: never written, forgotten on the timer.
                 let secret = secret || self.buffers[self.views[view].buffer].private;
                 self.memory.remember(Moment {
                     text: text.to_string(),

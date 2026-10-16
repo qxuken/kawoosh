@@ -152,6 +152,14 @@ writes it again.
 over it, load the disk, or see the diff. `:file` (`:checktime`) checks
 every buffer now.
 
+A save writes a file beside and renames it over, so a failed write
+never leaves half a file. Where nothing may be made beside it — a
+share that lets the file be written and no more — or the rename would
+not keep it as it was (another's file, a hard link), the file is
+written where it stands, as vim does. One you may not write at all is
+offered to be written as an administrator — the system asks for the
+password (`save.as_admin`, `:file admin`); never done unasked.
+
 ## Undo
 
 | keys | what |
