@@ -1241,6 +1241,29 @@ impl Editor {
         }
     }
 
+    /// `view` back in normal mode as `<Esc>` brings it, before it shows
+    /// another buffer: a typing session, a visual selection and a
+    /// waiting operator are the buffer's they began in. A step of its
+    /// own, so the insert's undo entry closes on that buffer and `.`
+    /// and a macro being recorded end the change there. A caller that
+    /// wants insert in the buffer it opened asks for it after.
+    pub fn leave_for_another_buffer(&mut self, view: ViewId) {
+        if matches!(self.mode(view), Mode::Normal | Mode::Pane) && self.pending_op.is_none()
+            || self.is_field(view)
+        {
+            return;
+        }
+        let step = Step::Command {
+            name: "normal".into(),
+            args: Vec::new(),
+            count: None,
+            arg_char: None,
+        };
+        self.step_begin();
+        self.run(view, "normal", &[], None);
+        self.step_end(view, step);
+    }
+
     // ------------------------------------------------------------ fields
 
     /// Opens a field named `name` holding `text`, in insert mode with

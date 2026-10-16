@@ -302,6 +302,33 @@ impl Kawoosh {
         from_buffer.unwrap_or_else(|| self.cwd.clone())
     }
 
+    /// [`Self::here_dir`] as the disk has it: a directory that is gone —
+    /// deleted, or a new file's not made yet — is the closest parent
+    /// that is there, said in a note, so `<C-w>.` `<C-w>/` `<C-w>u` open
+    /// somewhere rather than nowhere (dir.md Decision 4). A host's path
+    /// is taken as it is: asking would wait on the host.
+    pub(crate) fn here_dir_there(&mut self) -> PathBuf {
+        let want = self.here_dir();
+        if kawoosh_doc::paths::domain_of(&want).is_some() {
+            return want;
+        }
+        let mut at = want.clone();
+        while !kawoosh_systems::fs::is_dir(&at) {
+            match kawoosh_systems::fs::parent(&at) {
+                Some(p) if p != at => at = p,
+                _ => return want,
+            }
+        }
+        if at != want {
+            let home = kawoosh_systems::fs::abbreviate_home;
+            self.notify(
+                crate::notify::Level::Info,
+                format!("{} is not there: {} instead", home(&want), home(&at)),
+            );
+        }
+        at
+    }
+
     /// `:!CMD`'s terminal: `cmd` in `cwd`, kept when it ends
     /// ([`Spawned::keep`]).
     pub fn spawn_bang(&mut self, cmd: &str, cwd: &Path) -> Option<TermId> {
@@ -1452,7 +1479,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .doc("a terminal where the pane in front is (`<C-w>.`): the file's directory, the listing's, the shell's"),
             |k, ctx| {
                 let cmd = (!ctx.args.is_empty()).then(|| ctx.args.join(" "));
-                let cwd = k.here_dir();
+                let cwd = k.here_dir_there();
                 if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
                     k.fill_or_open(k.terminal_place(), Content::Terminal(t));
                 }
@@ -1469,7 +1496,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             Spec::new("dir here")
                 .doc("the directory the pane in front is on, listed in a pane beside (`<C-w>/`): the file's, the listing's, the shell's"),
             |k, _| {
-                let here = k.here_dir().display().to_string();
+                let here = k.here_dir_there().display().to_string();
                 let from = k.focused_view().map(|v| k.ed.views[v].clone());
                 let v = k.same_view(from);
                 k.fill_or_open(Place::Column, Content::Editor(v));
@@ -1486,7 +1513,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             Spec::new("du here")
                 .doc("the disk usage of the directory the pane in front is on (`<C-w>u`): the file's, the listing's, the shell's, `:du`'s"),
             |k, _| {
-                let here = k.here_dir().display().to_string();
+                let here = k.here_dir_there().display().to_string();
                 k.shell_command("du", &[here], None);
                 k.drain_lua();
             },

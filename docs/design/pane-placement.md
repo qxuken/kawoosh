@@ -203,6 +203,35 @@ first pane before step 18; the opener, which was right only until the
 user went elsewhere and came back; and noting each `Layout::focus`
 call, which counted a pane opened to be glanced at as visited.
 
+### 6. A pane that shows another buffer is in normal mode there
+
+*Added 2026-10-16, from the todo:* "change of a buffer should change
+mode to normal (unless said otherwise)." The mode is the view's, not
+the editor's (Zed's model), so a pane that went from one buffer to
+another kept insert or visual mode across: typing went on in a buffer
+it had not begun in, a visual selection held offsets of the buffer
+left, and an operator waiting for its motion took one in the new
+buffer. Each of those is the buffer's it began in.
+
+`Kawoosh::show_buffer` — every way a pane comes to show another
+buffer: `:b`, `:e`, a picker, a jump, `<C-o>`, a buffer closed onto the
+next — first brings the view back to normal mode as `<Esc>` would
+(`Editor::leave_for_another_buffer`): the insert's caret steps back, a
+selection collapses, the operator is dropped. It is a step of its own,
+so the typing closes as one undo entry on the buffer it was typed in,
+and `.` and a macro being recorded end the change there.
+
+*Unless said otherwise* is the caller's: one that wants insert in the
+buffer it opened — a Lua plugin's scratch, a template — asks for the
+mode after the switch, as it already must for a buffer opened fresh.
+No setting: the old behaviour was no one's choice, only the absence of
+this one. A field is never shown this way and keeps its insert mode.
+
+*Beat:* an `editor.keep_mode` setting (a mode carried into another
+buffer is wrong for the undo and the selections whatever the setting
+says); leaving the mode in the key handlers of each way in (one is
+always missed — the picker's, the jump's).
+
 ## When built
 
 One round: `Place` and `Layout::open`; the callers of `layout.split`

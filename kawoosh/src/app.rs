@@ -1856,10 +1856,13 @@ impl Kawoosh {
         self.alternate.retain(|v, _| views.contains_key(*v));
         // Shown in a pane, a multibuffer's source is a buffer like any other.
         self.ed.borrowed.remove(&id);
-        let v = &mut self.ed.views[view];
-        if v.buffer == id {
+        if self.ed.views[view].buffer == id {
             return;
         }
+        // Insert and visual are the buffer's they began in
+        // (pane-placement.md Decision 6).
+        self.ed.leave_for_another_buffer(view);
+        let v = &mut self.ed.views[view];
         self.last_pos
             .insert(v.buffer, (v.sels.clone(), v.top, v.left));
         self.alternate.insert(view, v.buffer);

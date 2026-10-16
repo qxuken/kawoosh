@@ -1083,3 +1083,44 @@ fn a_black_hole_before_a_shell_command_is_no_part_of_the_next_change() {
     assert_eq!(text(&app), "c");
     assert_eq!(register(&app), "b", "`.` is `x`, into the register");
 }
+
+/// A pane that shows another buffer is in normal mode there: a typing
+/// session, a visual selection and a waiting operator are the buffer's
+/// they began in. The insert left behind is one undo step on its own
+/// buffer, its caret stepped back as `<Esc>` leaves it.
+#[test]
+fn another_buffer_is_shown_in_normal_mode() {
+    let mut app = Kawoosh::new("t", "hello");
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let first = app.ed.views[v].buffer;
+    let other = app
+        .ed
+        .add_buffer(kawoosh_doc::Buffer::new("u", "other text"));
+
+    // From insert.
+    d.keys(&mut app, "A world");
+    assert_eq!(app.ed.mode(v), Mode::Insert);
+    app.show_buffer(v, other);
+    assert_eq!(app.ed.mode(v), Mode::Normal, "insert stays behind");
+    d.keys(&mut app, "x");
+    assert_eq!(text(&app), "ther text", "keys are normal mode's");
+    app.show_buffer(v, first);
+    assert_eq!(text(&app), "hello world");
+    assert_eq!(sels(&app), [(10, 10)], "the caret stepped back, as <Esc>");
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), "hello", "the typing is one undo step");
+
+    // From visual.
+    d.keys(&mut app, "vl");
+    assert_eq!(app.ed.mode(v), Mode::Visual);
+    app.show_buffer(v, other);
+    assert_eq!(app.ed.mode(v), Mode::Normal, "visual stays behind");
+
+    // A waiting operator.
+    d.keys(&mut app, "d");
+    app.show_buffer(v, first);
+    d.keys(&mut app, "l");
+    assert_eq!(text(&app), "hello", "`d` was the other buffer's");
+}

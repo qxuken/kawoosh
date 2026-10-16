@@ -842,6 +842,10 @@ pub struct RowForm {
     /// right on the first visual line, and the pane asks for the frame
     /// that places it by the new layout.
     pub stale: bool,
+    /// The width the row's text wraps in, as the pane knows it this
+    /// frame (its lines column's): past it a byte measured unwrapped is
+    /// on no visual line of the row.
+    pub room: f32,
     pub wrap: Option<kui_native::TextWrap>,
     pub bg: Option<Color>,
     /// The gutter's width, and what it shows beside the row and
@@ -1687,15 +1691,35 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         // Where byte `b` of a wrapped row is: where kui laid it out last
         // frame, against where it laid the first — the frame that types
         // is a frame behind, and the next catches up.
+        //
+        // A row that drew another text last frame (`stale`), or none,
+        // measures the byte unwrapped: right on the first visual line.
+        // Past the row's room that place is on no line of the row — a
+        // bar hung there (a float, unclipped) stood outside the pane for
+        // the frame, where the text would be unwrapped (2026-10-16). There
+        // the old layout answers, the byte clamped to its text: the row's
+        // own wrap, inside it, a frame behind; with no layout at all, the
+        // measure folded at the room, a char wrap's guess.
         let stale = form.is_some_and(|f| f.stale);
+        let room = form.map_or(f32::INFINITY, |f| f.room).max(1.0);
         let wrapped_at = |ui: &mut Ui<'_>, b: usize| -> (f32, f32) {
-            let placed = text_key
+            let laid = text_key
                 .get()
-                .filter(|_| !stale)
                 .and_then(|k| Some((ui.caret_rect(k, b)?, ui.caret_rect(k, 0)?)));
-            match placed {
-                Some((at, origin)) => (gutter + at.x - origin.x, at.y - origin.y),
-                None => (gutter + ui.measure_text(&text[..b], &base, None).width, 0.0),
+            let by_layout = |(at, origin): (kui_native::Rect, kui_native::Rect)| {
+                (gutter + at.x - origin.x, at.y - origin.y)
+            };
+            if let Some(p) = laid.filter(|_| !stale) {
+                return by_layout(p);
+            }
+            let x = ui.measure_text(&text[..b], &base, None).width;
+            match laid {
+                _ if x <= room => (gutter + x, 0.0),
+                Some(p) => by_layout(p),
+                None => {
+                    let folds = (x / room).floor();
+                    (gutter + x - folds * room, folds * lh)
+                }
             }
         };
         // Bar carets, measured to their byte — past a ghost or a hint
