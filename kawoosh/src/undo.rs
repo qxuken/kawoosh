@@ -41,6 +41,10 @@ const LANE_W: f32 = 12.0;
 const LINE_W: f32 = 1.5;
 const DOT: f32 = 6.0;
 
+/// What the undo pane's rows were read for: the buffer, its version,
+/// its history's key, whether it was private and whether it had masks.
+type Built = (BufferId, Version, (usize, usize, bool), bool, bool);
+
 /// What the panel keeps between frames.
 #[derive(Default)]
 pub struct UndoPanel {
@@ -55,7 +59,11 @@ pub struct UndoPanel {
     graph: Graph,
     /// What `rows` were read at: the buffer, its version, and the
     /// tree's shape — any of them moved, the rows are read again.
-    built: Option<(BufferId, Version, (usize, usize, bool))>,
+    /// What the rows were read for: the buffer, its version, its
+    /// history, and whether it was private and had masks — a buffer
+    /// that becomes either without an edit (saved as `x.env`) is read
+    /// again, its snippets masked.
+    built: Option<Built>,
     /// The cursor's change as lines, and which row it is for.
     hunk: Option<(usize, Option<Hunk>)>,
     /// Scroll the cursor's row into view at the next frame.
@@ -182,12 +190,21 @@ impl Kawoosh {
             return;
         };
         let b = self.ed.views[v].buffer;
-        let key = (b, self.ed.buffers[b].version(), self.ed.history_key(b));
+        let private = self.ed.buffers[b].private;
+        let masked = self.ed.masks.contains_key(&b);
+        let key = (
+            b,
+            self.ed.buffers[b].version(),
+            self.ed.history_key(b),
+            private,
+            masked,
+        );
         if self.undo.built != Some(key) {
             self.undo.rows = self.ed.history(b);
-            // A private buffer's change snippets are no line a mask
-            // rule could read: each a stand-in (secrets.md Decision 9).
-            if self.ed.buffers[b].private {
+            // A change snippet is no line a mask rule could read: in a
+            // private buffer, or one with masks (a key in a YAML file),
+            // each is a stand-in (secrets.md Decision 9).
+            if private || masked {
                 for c in self.undo.rows.iter_mut().filter_map(|r| r.change.as_mut()) {
                     for t in [&mut c.removed_text, &mut c.inserted_text] {
                         if !t.trim().is_empty() {
@@ -205,11 +222,24 @@ impl Kawoosh {
         }
         let cursor = self.undo.cursor;
         if self.undo.hunk.as_ref().map(|(c, _)| *c) != Some(cursor) {
-            // Each side as the buffer's pane would draw it.
+            // Each side as the buffer's pane would draw that state: the
+            // rules over the state's whole text, so an edit inside a key
+            // block is masked by the block it is in (secrets.md
+            // Decision 9).
+            let states = self.ed.history_texts(b, cursor);
             let hunk = self.ed.history_hunk(b, cursor).map(|mut h| {
-                for side in [&mut h.old, &mut h.new] {
-                    let text: String = side.iter().map(|l| format!("{l}\n")).collect();
-                    *side = self.shown_lines_of(b, &text);
+                match &states {
+                    Some((old, new)) => {
+                        let first = h.line - 1;
+                        h.old = self.shown_state_lines(b, old, first, h.old.len());
+                        h.new = self.shown_state_lines(b, new, first, h.new.len());
+                    }
+                    None => {
+                        for side in [&mut h.old, &mut h.new] {
+                            let text: String = side.iter().map(|l| format!("{l}\n")).collect();
+                            *side = self.shown_lines_of(b, &text);
+                        }
+                    }
                 }
                 h
             });

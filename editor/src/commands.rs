@@ -2831,11 +2831,15 @@ pub fn install(ed: &mut Editor) {
     // lands on the next match and nothing is stretched to it.
     ed.register("search word", |ed, ctx| {
         let id = view(ed, ctx).buffer;
+        // The text the pattern is made of, to ask whether a mask covers
+        // any of it.
+        let mut from = 0..0;
         let pattern = if ed.mode(ctx.view) == Mode::Visual {
             let sels = &ed.views[ctx.view].sels;
             let primary = sels.primary();
             let at = sels.iter().position(|s| *s == primary).unwrap_or(0);
             let r = sel_ranges(ed, ctx.view).swap_remove(at);
+            from = r.clone();
             let text = regex::escape(&ed.buffers[id].slice(r));
             ed.set_mode(ctx.view, Mode::Normal);
             ed.views[ctx.view].sels.map(|s| Selection::point(s.start()));
@@ -2846,17 +2850,24 @@ pub fn install(ed: &mut Editor) {
             if a == b {
                 return;
             }
+            from = a..b;
             format!(r"\b{}\b", regex::escape(&buf.slice(a..b)))
         };
         if let Err(e) = ed.set_search(&pattern, false) {
             ed.message = e;
             return;
         }
-        // A private buffer's word is its text: a secret pattern, never
-        // shown (docs/design/secrets.md Decision 9).
-        let private = ed.buffers[id].private;
+        // A private buffer's word is its text, and a word under a mask
+        // in any buffer (a key in a YAML file) is what the mask hides:
+        // a secret pattern, never shown (docs/design/secrets.md
+        // Decision 9). Masks another version's are no answer: secret.
+        let version = ed.buffers[id].version();
+        let masked = ed.masks.get(&id).is_some_and(|(v, ms)| {
+            *v != version || ms.iter().any(|m| m.start < from.end && from.start < m.end)
+        });
+        let secret = ed.buffers[id].private || masked;
         if let Some(s) = ed.search.as_mut() {
-            s.secret = private;
+            s.secret = secret;
         }
         search(ed, ctx, true);
     });

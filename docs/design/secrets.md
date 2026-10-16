@@ -301,7 +301,13 @@ the lines, and the mask is the pane's. So the rule is one:
   a revision, the file on disk — is masked by the rules that apply to
   the buffer (or, for a file not open, to its path), scanned over the
   text shown (`Rules::scan_for`, `Kawoosh::shown_lines_of`,
-  `kawoosh.secrets.mask_text`). Every line is kept — a block's lines
+  `kawoosh.secrets.mask_text`) — scanned whole where the whole is at
+  hand, so a block is found though its first line is far from the
+  lines drawn: an undo state is masked over the state's text
+  (`Kawoosh::shown_state_lines`), a hunk's sides each with its context
+  (a key's body replaced under an unchanged `BEGIN`), a commit's
+  section by every path its headers name, the old and the new (a
+  renamed `prod.env` keeps its rules). Every line is kept — a block's lines
   each a stand-in, as the pane draws them — so a hunk's line numbers
   still index the masked lines, and a diff is taken over the real texts
   and drawn from the masked ones (a value that changed shows as a
@@ -309,12 +315,14 @@ the lines, and the mask is the pane's. So the rule is one:
   gave are the one thing no rule finds again in another text: a private
   buffer with any is masked whole, line by line, there.
 - **What cannot be masked is not drawn.** A change snippet in the undo
-  pane is no line a rule could read: in a private buffer it is a
-  stand-in. A byte's cell has no room for one: `:hex` refuses a private
+  pane is no line a rule could read: in a private buffer, or one with
+  masks, it is a stand-in. A byte's cell has no room for one: `:hex` refuses a private
   file (`:mask private off` first). A pattern `*` took from a private
-  buffer is the text: the search is marked secret (`Search::secret`) and
-  every message shows `/••••••••`. A selection that touches a mask does
-  not seed the project search. A mark records its line's text in a
+  buffer, or from under a mask in any buffer (a key in a plain file),
+  is the text: the search is marked secret (`Search::secret`) and every
+  message shows `/••••••••`, the one a search walked on a thread too. A
+  selection that touches a mask, in any buffer, does not seed the
+  project search. A mark records its line's text in a
   moment: a private buffer keeps no marks, and one made before the file
   was private keeps the text it had.
 
@@ -328,6 +336,18 @@ secret only over a private excerpt's lines — the register would have to
 ask where every range came from, and Decision 1 is one flag asked
 everywhere; the results of a search that found a `.env` keep yanks off
 the clipboard until it is closed, the safe side.
+
+*Reviewed 2026-10-16*, after the merge: the hunk preview's old side
+was scanned without its context, the undo pane's sides without theirs,
+a renamed file's old side by the new name's rules, a colour the user's
+config asked for hid `vcs show`'s headers (`git show` runs with
+`--no-color --no-ext-diff --no-textconv` now), a C-quoted name was read
+with its quotes, the search walked off the frame said its pattern, and
+`*` and the seed asked whether the buffer was private rather than
+whether the text was masked. Each closed, with a test. A multibuffer's
+carried masks are kept by its version, its sources' versions, the
+settings' and a generation the secrets move (`MirrorKey`), not worked
+out each frame.
 
 ## Deliberately not
 
