@@ -842,6 +842,9 @@ pub enum SettingKind {
     Str,
     OneOf(Vec<String>),
     List,
+    /// A string, or a list of them: one thing or several in turn
+    /// (`compile.default`, compile.md Decision 22).
+    Strings,
     Open,
     /// A size the UI resolves against the room it is drawn in: pixels,
     /// a spelling (`"clamp(400px, 80%, 1000px)"`) or the same as data.
