@@ -82,6 +82,8 @@ commits; 70 integration test files and 31 Lua test scripts.
 - [breadcrumbs.md](design/breadcrumbs.md): the outline in the title
   bar.
 - [menus.md](design/menus.md): a right-click's menu and the Mac's bar.
+- [default-editor.md](design/default-editor.md): Kawoosh made the
+  system's default editor for its text types, asked, and given back.
 - [icons.md](design/icons.md): one set of icons and key caps.
 
 ### Search and places
