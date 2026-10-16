@@ -75,7 +75,9 @@ those runs and the line's text and produces three things per row:
   else: the marks hidden (`""`), a list's `-` `*` `+` drawn `•`, `[ ]`
   and `[x]` drawn as the shipped Nerd Font's boxes (`U+F0131`, and
   `U+F0C52` in the links' accent — `☐` `☑` until 2026-09-27, which few
-  monospaced faces have, so a fallback drew them thin and small), a blockquote's `>` a bar in the margin
+  monospaced faces have, so a fallback drew them thin and small), `[-]`
+  opening an item a struck box (`U+F12ED`, the item's text dim; Built,
+  2026-10-16), a blockquote's `>` a bar in the margin
   colour, a fence's opening and closing lines a thin rule with the
   info string dim, a link's destination hidden with its parentheses,
   `---` a rule across the row.
@@ -538,3 +540,37 @@ After a day's use (2026-09-23), five more:
   through it found no row. Accepted: the jump itself, and the one-frame
   lag of the parser behind it (`a_row_above_the_caret_grows_upward`,
   `a_click_above_the_caret_lands_on_its_line`).
+- **`- [-]`, an item set aside** (2026-10-16, from the todo, whose
+  dropped items are `- [-] code folds…`). Not GFM's: tree-sitter-md's
+  block grammar knows `[ ]` and `[xX]` alone and reads `[-]` as the
+  paragraph's text, which the inline grammar makes a shortcut link.
+  *Taken:* the structure query says it — a list item whose first
+  paragraph's `inline` opens with `[-]` and a space or the line's end
+  is `@block.task.dropped` (`Block::TaskDropped`, a `#match?` on the
+  node's text) — and the row draws the `[-]` right after the item's
+  marker as `nf-md-checkbox_blank_off_outline` (`U+F12ED`, a box struck
+  through, `markdown::TASK_DROPPED`). *Beat:* patching the vendored
+  grammar for a `task_list_marker_dropped` — a regenerated parser for
+  a mark CommonMark and GitHub do not have, kept on every grammar
+  update, where one query line says it with the grammar left standard;
+  and a scan of each line for `[-]` after a bullet in the renderer,
+  which would not know the item's other lines. Not `nf-md-minus_box_outline`,
+  the source's own dash in a box: a checkbox draws that for "partly
+  done", which a set-aside item is not.
+  *The text:* the whole item's text dim, every line of it, the box too
+  — the margin's colour, as a bullet's and a quote's bar — and not
+  struck through: a set-aside item usually says why ("navigation
+  covers it"), and a line through the reason reads worse than a dim
+  one. A done item's text is unchanged (its box is the accent); a
+  dropped one's is the one that recedes. A link or code span in it
+  keeps its own mark over the dim.
+  *Where it is a box:* `[-]` opening a `-` `*` `+` or numbered item's
+  first paragraph, nested items too, each its own. Not `[-]` later in
+  an item, not a continuation line opening with it (dim, as the
+  item's, its brackets as text), not `[-]x`, not in a paragraph — there
+  it is what the inline grammar says, a shortcut link's brackets
+  folded. The caret's line is its source as any line's; under `none`
+  the box shows its source with the caret on it, as `[ ]`'s.
+  *No toggle:* there is no key or command that ticks a box — `rx` on
+  the space does — so none cycles `[ ]` → `[x]` → `[-]`; `r-` sets an
+  item aside, `r ` opens it again.
