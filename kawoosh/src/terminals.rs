@@ -975,7 +975,7 @@ impl Kawoosh {
             .terms
             .map
             .get(&t)
-            .and_then(|t| t.foreground())
+            .and_then(|t| t.foreground_now())
             .map(|(g, _)| g);
         self.terms.raw.insert(t, (pgid, on));
         let escape = self.term_escape_key().unwrap_or_default();

@@ -1918,6 +1918,13 @@ impl Kawoosh {
         };
         // The root which-key (`:keys`) stays until a key is pressed.
         self.keys_help = None;
+        // A key goes where the program in front says: asked now, and
+        // the reads below (`term_raw`, `term_key`) are this one.
+        if let Some(t) = self.term_of(self.layout.focused())
+            && let Some(term) = self.terms.map.get(&t)
+        {
+            term.foreground_now();
+        }
         // F12 is the shell's everywhere, kui's devtools — but a raw
         // terminal's program's (terminal-keys.md Decision 2).
         let raw_term = self

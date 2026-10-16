@@ -193,6 +193,20 @@ program had heard until raw sent them; they are xterm's `CSI 5 ; 2 ~`,
 `terminal_raw_names_the_programs_that_make_a_pane_raw` (a real `sleep`
 in front), and the legacy modifiers in `term`'s encoding test.
 
+*Kept, 2026-10-16.* The status line asks `term_raw` every frame a
+terminal is focused, and each ask was a `tcgetpgrp` and a `proc_name`
+— 0.029 ms of a 0.058 ms status line lap with a lazygit stand-in
+redrawing beside it (`lua_costs statusline_lap`), more on a Mac whose
+endpoint-security agent watches the process table. `Terminal::foreground`
+is a read kept now: a quarter second with no output from the pty
+since, a twentieth once it wrote — a program starting or ending draws
+something, and one that does not (`sleep 30`) is seen within the
+quarter. A key asks afresh (`foreground_now`, once in `on_key`, which
+`term_raw` and `term_key` then read), as does `terminal raw` for the
+group it records. After: foreground 0.005 ms a frame, the lap 0.037 ms.
+Tests: `the_program_in_front_is_kept_until_output_or_a_while`,
+`a_silent_program_in_front_is_seen`.
+
 **Decision 6, amended** 2026-10-01, from the todo: "D/A-Backspace/Delete
 moves not implemented". Under the legacy encoding an unbound ⌘ chord
 still reaches nothing, but for the four a Mac edits a line with, which

@@ -188,6 +188,26 @@ impl Default for Palette {
 /// What the parser's hooks keep beside alacritty's `Term`
 /// ([`Hooked`]): the modes alacritty does not know, and the replies
 /// they owe the process.
+/// A read of the program in front: when, what, and whether the pty
+/// wrote since.
+struct FrontRead {
+    at: std::time::Instant,
+    front: Option<(i32, String)>,
+    output_since: bool,
+}
+
+impl FrontRead {
+    /// Whether the read still stands at `now`.
+    fn fresh(&self, now: std::time::Instant) -> bool {
+        let keep = if self.output_since {
+            FRONT_OUTPUT_EVERY
+        } else {
+            FRONT_EVERY
+        };
+        now.duration_since(self.at) < keep
+    }
+}
+
 #[derive(Default)]
 struct Modes {
     /// DEC private mode 2031 (contour's, in kitty and neovim 0.10+): the
@@ -336,6 +356,14 @@ const COMMANDS_MAX: usize = 2000;
 /// that reports none shows on its tab within it.
 const CWD_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
 
+/// How long [`Terminal::foreground`] keeps a read with no output from
+/// the pty since: a program started that prints nothing (`sleep 30`)
+/// is seen in front within it.
+const FRONT_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
+/// How long it keeps one when output came since: a program that
+/// redraws sixty times a second is asked of at most this often.
+const FRONT_OUTPUT_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
+
 pub struct Terminal {
     term: Term<Proxy>,
     parser: Processor,
@@ -369,6 +397,9 @@ pub struct Terminal {
     reported_cwd: Option<std::path::PathBuf>,
     /// [`Terminal::cwd_recent`]'s last read, and when.
     cwd_read: std::cell::RefCell<Option<(std::time::Instant, Option<std::path::PathBuf>)>>,
+    /// [`Terminal::foreground`]'s last read, when, and whether the pty
+    /// wrote since.
+    front_read: std::cell::RefCell<Option<FrontRead>>,
     pub bell: bool,
     exited: bool,
     /// How the process ended, once it was reaped ([`Terminal::exit`]).
@@ -518,6 +549,7 @@ impl Terminal {
                 domain: None,
                 reported_cwd: None,
                 cwd_read: Default::default(),
+                front_read: Default::default(),
                 bell: false,
                 exited: false,
                 exit: None,
@@ -555,6 +587,7 @@ impl Terminal {
             domain: None,
             reported_cwd: None,
             cwd_read: Default::default(),
+            front_read: Default::default(),
             bell: false,
             exited: false,
             exit: None,
@@ -641,6 +674,9 @@ impl Terminal {
     /// each parsed first so a mark lands on the line the cursor is on
     /// when it arrives.
     pub fn feed(&mut self, bytes: &[u8]) {
+        if let Some(r) = self.front_read.get_mut() {
+            r.output_since = true;
+        }
         let mut from = 0;
         for (i, &b) in bytes.iter().enumerate() {
             match self.scan.step(b) {
@@ -1038,11 +1074,39 @@ impl Terminal {
         false
     }
 
+    /// [`Terminal::foreground_now`] as last read: read again once
+    /// [`FRONT_EVERY`] passed, or [`FRONT_OUTPUT_EVERY`] when the pty
+    /// wrote since — a program starting or ending draws something. For
+    /// what is asked every frame (the status line's `RAW`), where each
+    /// ask was a `tcgetpgrp` and a `proc_name`.
+    pub fn foreground(&self) -> Option<(i32, String)> {
+        let now = std::time::Instant::now();
+        if let Some(r) = &*self.front_read.borrow()
+            && r.fresh(now)
+        {
+            return r.front.clone();
+        }
+        self.foreground_now()
+    }
+
+    /// The program in front asked of the system now, and kept for
+    /// [`Terminal::foreground`]: for a key, which goes where the
+    /// program in front says.
+    pub fn foreground_now(&self) -> Option<(i32, String)> {
+        let front = self.ask_foreground();
+        *self.front_read.borrow_mut() = Some(FrontRead {
+            at: std::time::Instant::now(),
+            front: front.clone(),
+            output_since: false,
+        });
+        front
+    }
+
     /// The pty's foreground process group — the program in front, a
     /// shell at its prompt or what it ran — and its name, asked of the
     /// system (terminal-keys.md Decision 2's `terminal.raw`).
     #[cfg(unix)]
-    pub fn foreground(&self) -> Option<(i32, String)> {
+    fn ask_foreground(&self) -> Option<(i32, String)> {
         let pgid = self.pty.as_ref()?.process_group_leader()?;
         Some((pgid, pid_name(pgid as u32)?))
     }
@@ -1051,13 +1115,13 @@ impl Terminal {
     /// (`front`, a pseudo console having no foreground group) — and its
     /// name, lowercase with no `.exe`.
     #[cfg(windows)]
-    pub fn foreground(&self) -> Option<(i32, String)> {
+    fn ask_foreground(&self) -> Option<(i32, String)> {
         let root = self.child.as_ref()?.process_id()?;
         front::front(root, self.job.as_ref()).map(|(pid, name)| (pid as i32, name))
     }
 
     #[cfg(not(any(unix, windows)))]
-    pub fn foreground(&self) -> Option<(i32, String)> {
+    fn ask_foreground(&self) -> Option<(i32, String)> {
         None
     }
 
@@ -2409,6 +2473,73 @@ mod tests {
         assert!(wait(&t, false) && !wait(&t, true), "a raw program is not");
         let (t, _r) = Terminal::spawn(None, Some("/bin/sh -c 'sleep 3'"), None, size, &[]).unwrap();
         assert!(!wait(&t, true), "a shell with echo on is not");
+    }
+
+    /// The program in front is a read kept: a quarter second with no
+    /// output since, a twentieth once the pty wrote — and the pty's
+    /// bytes are what mark it.
+    #[test]
+    fn the_program_in_front_is_kept_until_output_or_a_while() {
+        use std::time::{Duration, Instant};
+        let at = Instant::now();
+        let read = |output_since| FrontRead {
+            at,
+            front: Some((1, "lazygit".into())),
+            output_since,
+        };
+        let ms = |n| at + Duration::from_millis(n);
+        assert!(read(false).fresh(ms(200)), "quiet, kept");
+        assert!(!read(false).fresh(ms(250)), "quiet, read again");
+        assert!(read(true).fresh(ms(40)), "output, kept a frame or three");
+        assert!(!read(true).fresh(ms(50)), "output, read again");
+        let mut t = Terminal::headless(TermSize { rows: 5, cols: 20 });
+        assert_eq!(t.foreground(), None, "no process, none in front");
+        assert!(
+            t.front_read
+                .borrow()
+                .as_ref()
+                .is_some_and(|r| !r.output_since)
+        );
+        t.feed(b"drawn");
+        assert!(
+            t.front_read
+                .borrow()
+                .as_ref()
+                .is_some_and(|r| r.output_since),
+            "the pty's bytes mark the read"
+        );
+        t.foreground_now();
+        assert!(
+            t.front_read
+                .borrow()
+                .as_ref()
+                .is_some_and(|r| !r.output_since)
+        );
+    }
+
+    /// A program taking the front without a word is still seen there,
+    /// the kept read let go after its while.
+    #[cfg(unix)]
+    #[test]
+    fn a_silent_program_in_front_is_seen() {
+        let size = TermSize { rows: 5, cols: 40 };
+        let (t, _r) = Terminal::spawn(
+            Some("/bin/sh"),
+            Some("sleep 0.3; exec cat"),
+            None,
+            size,
+            &[],
+        )
+        .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while t.foreground().is_none_or(|(_, n)| n != "cat") {
+            assert!(
+                std::time::Instant::now() < until,
+                "cat never in front: {:?}",
+                t.foreground()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     #[test]
