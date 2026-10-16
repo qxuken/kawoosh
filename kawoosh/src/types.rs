@@ -187,6 +187,7 @@ pub fn settings_meta(schema: &std::collections::BTreeMap<String, kawoosh_editor:
             K::Int => "integer".into(),
             K::Float => "number".into(),
             K::Str => "string".into(),
+            K::Strings => "string|string[]".into(),
             K::OneOf(words) => words
                 .iter()
                 .map(|w| format!("\"{w}\""))

@@ -65,7 +65,7 @@ impl Kawoosh {
     }
 
     /// Whether the keyboard is on the launcher.
-    fn launcher_focused(&self) -> bool {
+    pub(crate) fn launcher_focused(&self) -> bool {
         self.launcher_pane() == Some(self.layout.focused())
     }
 

@@ -45,13 +45,22 @@ end
 -- kawoosh.compile_default(): `compile.default` as a command line — a
 -- name of `compile.commands` made its command, the line's other words
 -- after it — or nil. Nil too when it has a `%`: a terminal has no file
--- to put there, so the `compile` tool is for a line without one.
+-- to put there, so the `compile` tool is for a line without one; and
+-- for a chain (a list, or a name of one: compile.md Decision 22),
+-- whose steps kawoosh runs in turn and no one shell line says.
 function kawoosh.compile_default()
   local line = kawoosh.opt("compile.default")
   if type(line) ~= "string" or line == "" then return nil end
   local word, rest = line:match("^%s*(%S+)%s*(.-)%s*$")
+  local strict = word:match("^commands:(.+)$")
+  word = strict or word
   local named = (kawoosh.opt("compile.commands") or {})[word]
-  if type(named) == "table" then named = named.cmd end
+  if strict and named == nil then return nil end
+  if type(named) == "table" then
+    if named[1] ~= nil then return nil end
+    named = named.cmd
+  end
+  if type(named) == "table" then return nil end
   if type(named) == "string" then line = rest ~= "" and (named .. " " .. rest) or named end
   if line:find("%", 1, true) then return nil end
   return line

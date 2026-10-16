@@ -277,14 +277,78 @@ pub const RECENT: usize = 10;
 /// What the picker says beside the line run here last (Decision 19).
 const LAST_HERE: &str = "last run here";
 
+/// A command and where it runs: a run's step. Most runs are one; a
+/// chain's steps run in turn, each only once the one before it
+/// finished well, as a shell's `&&` (compile.md Decision 22).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Step {
+    pub cmd: String,
+    pub cwd: PathBuf,
+}
+
+impl Step {
+    pub fn new(cmd: &str, cwd: PathBuf) -> Self {
+        Step {
+            cmd: cmd.to_string(),
+            cwd,
+        }
+    }
+}
+
+/// Steps as one line, what a chain's buffer, row and memory say it
+/// is: `cc main.c && ./a.out`. Read, not run — kawoosh runs the steps,
+/// so no shell has to know `&&`.
+pub fn chain_cmd(steps: &[Step]) -> String {
+    steps
+        .iter()
+        .map(|s| s.cmd.as_str())
+        .collect::<Vec<_>>()
+        .join(" && ")
+}
+
+/// Steps from the memory's JSON: `[{ cmd, cwd }, …]`; none when it has
+/// no list.
+pub(crate) fn steps_of_json(v: Option<&serde_json::Value>) -> Vec<Step> {
+    let Some(list) = v.and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|s| {
+            Some(Step::new(
+                s.get("cmd")?.as_str()?,
+                PathBuf::from(s.get("cwd")?.as_str()?),
+            ))
+        })
+        .collect()
+}
+
+fn steps_json(steps: &[Step]) -> serde_json::Value {
+    steps
+        .iter()
+        .map(|s| serde_json::json!({ "cmd": s.cmd, "cwd": s.cwd.display().to_string() }))
+        .collect::<Vec<_>>()
+        .into()
+}
+
 /// A command's run in a directory, and the buffer showing it. The two
 /// are what a run is: the same command in the same directory runs into
 /// the same buffer again; another command, or the same one somewhere
 /// else, has a buffer of its own (compile.md Decision 10).
 pub struct Run {
     pub buffer: BufferId,
+    /// What it runs, as one line ([`chain_cmd`]), and where its first
+    /// step runs.
     pub cmd: String,
     pub cwd: PathBuf,
+    /// Its steps (one, but for a chain), which are what the run is.
+    pub steps: Vec<Step>,
+    /// The step running, else the last one run.
+    pub at: usize,
+    /// The line each step started has its `$ CMD` on: where a
+    /// location's path is read from that step's directory.
+    pub begun: Vec<usize>,
+    /// When its first step started: what a chain's end says it took.
+    pub chain_started: Instant,
     /// The file the run was asked from: what `%` names in a line asked
     /// from its buffer, where the keys are once it runs.
     pub file: Option<PathBuf>,
@@ -293,7 +357,8 @@ pub struct Run {
     /// The command's, while it runs: for `compile kill` (`<C-c>` in its
     /// buffer) and for its next run, which replaces it.
     pub proc: Option<ProcHandle>,
-    /// When it was started: what its last line says it took.
+    /// When its step was started: what that step's last line says it
+    /// took.
     pub started: Instant,
     /// Its output's reader: the escape sequences out, the colours
     /// they set so far kept.
@@ -381,7 +446,11 @@ impl Compile {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Named {
     pub name: String,
+    /// Its command; a chain's steps joined (`build && run`).
     pub cmd: String,
+    /// A chain's steps, each a `:compile` line (compile.md Decision
+    /// 22); empty for a command.
+    pub steps: Vec<String>,
     /// Where it runs, resolved: a relative `cwd` against the project
     /// whose settings file said it.
     pub cwd: Option<PathBuf>,
@@ -401,6 +470,11 @@ pub struct Offer {
     /// A `:compile` line resolved when the row is taken — a name, the
     /// default — so its `%` is the file then; `None` runs `cmd` as it is.
     pub line: Option<String>,
+    /// `compile.default`'s lines when it is a list, resolved and run in
+    /// turn when the row is taken (compile.md Decision 22).
+    pub chain: Vec<String>,
+    /// A chain run before, as it ran: its steps.
+    pub steps: Vec<Step>,
     /// The settings' name for it.
     pub name: Option<String>,
     /// It takes arguments it has no default for: taken, it goes to the
@@ -451,6 +525,8 @@ impl By {
 pub struct Recent {
     pub cmd: String,
     pub cwd: PathBuf,
+    /// A chain's steps (compile.md Decision 22); empty for a line.
+    pub steps: Vec<Step>,
     pub by: Option<By>,
     /// How many times it ran, each run halved every week since
     /// ([`HALF_LIFE`]), as of `at` — one for a line kept before the
@@ -474,7 +550,19 @@ impl Recent {
         if let Some(at) = self.at {
             v["at"] = at.into();
         }
+        if !self.steps.is_empty() {
+            v["steps"] = steps_json(&self.steps);
+        }
         v
+    }
+
+    /// What running it again runs: its steps, else its line.
+    pub fn steps(&self) -> Vec<Step> {
+        if self.steps.is_empty() {
+            vec![Step::new(&self.cmd, self.cwd.clone())]
+        } else {
+            self.steps.clone()
+        }
     }
 
     /// Its runs as of `now`: how often and how lately — what the picker
@@ -495,6 +583,8 @@ impl Offer {
             from: from.to_string(),
             why: why.to_string(),
             line: None,
+            chain: Vec::new(),
+            steps: Vec::new(),
             name: None,
             needs: false,
             args_at: cmd.len(),
@@ -558,10 +648,12 @@ pub fn with_args(cmd: &str, args: &str) -> String {
 /// What a bare `:compile` runs (compile.md Decisions 2 and 7).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Bare {
-    /// `compile.default`: a `:compile` line — a name, or a command.
-    Default(String),
-    /// The command last compiled in this workspace — the memory's — again.
-    Again(String, PathBuf),
+    /// `compile.default`: a `:compile` line — a name, or a command — or
+    /// a list of them, run in turn (Decision 22).
+    Default(Vec<String>),
+    /// The command last compiled in this workspace — the memory's — again:
+    /// its steps.
+    Again(Vec<Step>),
     /// The first the project's files offer.
     Deduced(Deduced),
     Nothing,
@@ -572,6 +664,9 @@ pub enum Bare {
 pub enum Line {
     /// Run `cmd` in `cwd`.
     Run(String, PathBuf),
+    /// Run these in turn, each once the one before finished well
+    /// (Decision 22).
+    Chain(Vec<Step>),
     /// A named command wanting arguments, called without: the prompt.
     Finish(String),
 }
@@ -830,38 +925,65 @@ impl Kawoosh {
     /// relative `cwd` is the project's whose `.kawoosh/settings.lua`
     /// said it; from any other source — the user's file, an `init.lua`,
     /// `:set` — the caret's project's (its `.kawoosh`, else its
-    /// repository).
+    /// repository); `"root"` is that project itself, as a tool's is the
+    /// root. A list, or a table whose `cmd` is one, is a chain of steps
+    /// (Decision 22).
     pub fn compile_commands(&self) -> Vec<Named> {
         let Some(Setting::Table(t)) = self.ed.settings.get("compile.commands") else {
             return Vec::new();
         };
+        // A chain's steps: `:compile` lines, each a string.
+        let lines = |l: &[Setting]| -> Vec<String> {
+            l.iter()
+                .filter_map(Setting::as_str)
+                .map(str::to_string)
+                .collect()
+        };
         t.iter()
             .filter_map(|(name, v)| {
-                let (cmd, cwd, args, doc) = match v {
-                    Setting::Str(c) => (c.clone(), None, false, String::new()),
-                    Setting::Table(_) => (
-                        v.get("cmd")?.as_str()?.to_string(),
-                        v.get("cwd").and_then(Setting::as_str).map(str::to_string),
-                        v.get("args").and_then(Setting::as_bool).unwrap_or(false),
-                        v.get("doc")
-                            .and_then(Setting::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                    ),
+                let (cmd, steps, cwd, args, doc) = match v {
+                    Setting::Str(c) => (c.clone(), Vec::new(), None, false, String::new()),
+                    Setting::List(l) => (String::new(), lines(l), None, false, String::new()),
+                    Setting::Table(_) => {
+                        let (cmd, steps) = match v.get("cmd")? {
+                            Setting::Str(c) => (c.clone(), Vec::new()),
+                            Setting::List(l) => (String::new(), lines(l)),
+                            _ => return None,
+                        };
+                        (
+                            cmd,
+                            steps,
+                            v.get("cwd").and_then(Setting::as_str).map(str::to_string),
+                            v.get("args").and_then(Setting::as_bool).unwrap_or(false),
+                            v.get("doc")
+                                .and_then(Setting::as_str)
+                                .unwrap_or_default()
+                                .to_string(),
+                        )
+                    }
                     _ => return None,
                 };
                 let cwd = cwd.map(|c| {
+                    let base = || self.named_base(&format!("compile.commands.{name}"));
+                    if c == "root" {
+                        return base();
+                    }
                     let c = kawoosh_doc::paths::expand(Path::new(&c), Path::new(""));
                     if kawoosh_systems::fs::is_absolute(&c) {
                         c
                     } else {
-                        let base = self.named_base(&format!("compile.commands.{name}"));
-                        kawoosh_systems::fs::join(&base, &c)
+                        kawoosh_systems::fs::join(&base(), &c)
                     }
                 });
+                let cmd = if steps.is_empty() {
+                    cmd
+                } else {
+                    steps.join(" && ")
+                };
                 Some(Named {
                     name: name.clone(),
                     cmd,
+                    steps,
                     cwd,
                     args,
                     doc,
@@ -909,21 +1031,116 @@ impl Kawoosh {
     /// `cwd` — else the line itself where its program's kind runs; `%`
     /// put in as the caret's file from that directory.
     pub fn compile_line(&self, line: &str) -> Result<Line, String> {
+        self.resolve_line(line, &mut Vec::new(), None)
+    }
+
+    /// [`Self::compile_line`] inside the chains `seen` are steps of, the
+    /// innermost last, so one naming itself is refused rather than run
+    /// for ever; `within` is where a step runs that does not say (the
+    /// chain's `cwd`). `commands:NAME` is a name and only a name: no
+    /// such command is an error, not a line (Decision 22).
+    fn resolve_line(
+        &self,
+        line: &str,
+        seen: &mut Vec<String>,
+        within: Option<PathBuf>,
+    ) -> Result<Line, String> {
         let line = line.trim();
         let (word, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
-        let named = self.compile_commands().into_iter().find(|n| n.name == word);
-        let cmd = match named {
-            Some(n) if n.args && rest.trim().is_empty() => return Ok(Line::Finish(n.name)),
-            Some(n) => with_args(&n.cmd, rest),
-            None => line.to_string(),
+        let (word, strict) = match word.strip_prefix("commands:") {
+            Some(name) => (name, true),
+            None => (word, false),
         };
-        let cwd = self.compile_dir_of(line);
+        let named = self.compile_commands().into_iter().find(|n| n.name == word);
+        if strict && named.is_none() {
+            return Err(format!("no compile.commands.{word}"));
+        }
+        if let Some(n) = named.as_ref().filter(|n| !n.steps.is_empty()) {
+            if !rest.trim().is_empty() {
+                return Err(format!("{word} is a chain of steps: it takes no arguments"));
+            }
+            if seen.iter().any(|s| s == word) {
+                let path: Vec<&str> = seen.iter().map(String::as_str).chain([word]).collect();
+                return Err(format!(
+                    "compile.commands: a chain in a circle: {}",
+                    path.join(" → ")
+                ));
+            }
+            seen.push(word.to_string());
+            let steps = self.resolve_steps(&n.steps, seen, n.cwd.clone().or(within));
+            seen.pop();
+            return steps.map(Line::Chain);
+        }
+        let (cmd, dir_cmd, cwd) = match named {
+            Some(n) if n.args && rest.trim().is_empty() => return Ok(Line::Finish(n.name)),
+            Some(n) => (with_args(&n.cmd, rest), n.cmd, n.cwd.or(within)),
+            None => (line.to_string(), line.to_string(), within),
+        };
+        let cwd = cwd
+            .or_else(|| {
+                self.deduce_compile()
+                    .dir_for(&dir_cmd)
+                    .map(Path::to_path_buf)
+            })
+            .unwrap_or_else(|| self.compile_dir());
         let cmd = if cmd.contains('%') {
             Editor::expand_percent_from(self.compile_file().as_deref(), &cmd, Some(&cwd))?
         } else {
             cmd
         };
         Ok(Line::Run(cmd, cwd))
+    }
+
+    /// `lines`, a chain's, as the steps they run — a step naming a chain
+    /// its steps in its place; one wanting arguments it was not given
+    /// refused, there being no prompt between two steps.
+    fn resolve_steps(
+        &self,
+        lines: &[String],
+        seen: &mut Vec<String>,
+        within: Option<PathBuf>,
+    ) -> Result<Vec<Step>, String> {
+        let mut steps = Vec::new();
+        for l in lines {
+            match self.resolve_line(l, seen, within.clone())? {
+                Line::Run(cmd, cwd) => steps.push(Step { cmd, cwd }),
+                Line::Chain(s) => steps.extend(s),
+                Line::Finish(name) => {
+                    return Err(format!("{name} wants arguments: a step has to be whole"));
+                }
+            }
+        }
+        if steps.is_empty() {
+            return Err("a chain with no steps".into());
+        }
+        Ok(steps)
+    }
+
+    /// `compile.default`'s lines: the one it is, or its list's.
+    pub fn compile_default(&self) -> Option<Vec<String>> {
+        match self.ed.settings.get("compile.default")? {
+            Setting::Str(s) if !s.trim().is_empty() => Some(vec![s.clone()]),
+            Setting::List(l) => {
+                let lines: Vec<String> = l
+                    .iter()
+                    .filter_map(Setting::as_str)
+                    .map(str::to_string)
+                    .collect();
+                (!lines.is_empty()).then_some(lines)
+            }
+            _ => None,
+        }
+    }
+
+    /// `compile.default` as it will run: its one line as `:compile`
+    /// reads it, its list a chain of them.
+    pub fn default_line(&self, lines: &[String]) -> Result<Line, String> {
+        match lines {
+            [one] => self.compile_line(one),
+            _ => self
+                .resolve_steps(lines, &mut Vec::new(), None)
+                .map(Line::Chain),
+        }
     }
 
     /// The file `%` names in a line asked from here: the caret's; in
@@ -940,6 +1157,7 @@ impl Kawoosh {
     /// outermost project file in the repository.
     pub fn compile_dir_of(&self, line: &str) -> PathBuf {
         let word = line.split_whitespace().next().unwrap_or_default();
+        let word = word.strip_prefix("commands:").unwrap_or(word);
         let (cmd, cwd) = match self.compile_commands().into_iter().find(|n| n.name == word) {
             Some(n) => (n.cmd, n.cwd),
             None => (line.to_string(), None),
@@ -992,6 +1210,7 @@ impl Kawoosh {
             Some(Recent {
                 cmd,
                 cwd,
+                steps: steps_of_json(v.get("steps")),
                 by,
                 runs,
                 at,
@@ -1019,6 +1238,7 @@ impl Kawoosh {
     fn line_by(&self, line: &str) -> By {
         let line = line.trim();
         let word = line.split_whitespace().next().unwrap_or_default();
+        let word = word.strip_prefix("commands:").unwrap_or(word);
         if self.compile_commands().iter().any(|n| n.name == word) {
             self.setting_by(&format!("compile.commands.{word}"))
         } else if self.ed.settings.str("compile.default").map(str::trim) == Some(line) {
@@ -1033,14 +1253,14 @@ impl Kawoosh {
         self.recent_compiles().into_iter().next()
     }
 
-    /// What a bare `:compile` runs from here (compile.md Decisions 2
-    /// and 7).
+    /// What a bare `:compile` runs from here (compile.md Decisions 2,
+    /// 7 and 22).
     pub fn bare_compile(&self) -> Bare {
-        if let Some(c) = self.ed.settings.str("compile.default") {
-            return Bare::Default(c.to_string());
+        if let Some(lines) = self.compile_default() {
+            return Bare::Default(lines);
         }
-        if let Some((cmd, cwd)) = self.last_compile() {
-            return Bare::Again(cmd, cwd);
+        if let Some(r) = self.recent_lines().into_iter().next() {
+            return Bare::Again(r.steps());
         }
         // The first that runs as it is: one wanting arguments is the
         // picker's to offer.
@@ -1064,6 +1284,10 @@ impl Kawoosh {
             Ok(Line::Run(cmd, cwd)) => {
                 let by = self.line_by(line);
                 self.compile_by(&cmd, cwd, Some(by));
+            }
+            Ok(Line::Chain(steps)) => {
+                let by = self.line_by(line);
+                self.compile_steps(steps, Some(by));
             }
             Ok(Line::Finish(name)) => {
                 let line = format!("compile {name} ");
@@ -1120,14 +1344,52 @@ impl Kawoosh {
     /// [`Self::compile_in`], the line remembered as `by`'s (compile.md
     /// Decision 19); `None` keeps what the memory knew.
     pub fn compile_by(&mut self, cmd: &str, cwd: PathBuf, by: Option<By>) {
+        self.compile_steps(vec![Step::new(cmd, cwd)], by);
+    }
+
+    /// `compile.default` run as a bare `:compile` runs it: its line, or
+    /// its list in turn (Decision 22).
+    pub fn compile_default_lines(&mut self, lines: &[String]) {
+        match lines {
+            [one] => self.compile(one),
+            _ => match self.default_line(lines) {
+                Ok(Line::Chain(steps)) => {
+                    let by = self.setting_by("compile.default");
+                    self.compile_steps(steps, Some(by));
+                }
+                Ok(_) => {}
+                Err(e) => self.ed.message = format!("compile.default: {e}"),
+            },
+        }
+    }
+
+    /// The run of `steps` — one, or a chain's (Decision 22) — as
+    /// [`Self::compile_by`] says: one buffer, its steps' output in turn,
+    /// each step under its own `$ CMD`, the next started only once the
+    /// one before finished well; the chain remembered as one line.
+    pub fn compile_steps(&mut self, steps: Vec<Step>, by: Option<By>) {
+        let Some(first) = steps.first().cloned() else {
+            return;
+        };
+        let cmd = chain_cmd(&steps);
+        let cmd = cmd.as_str();
+        let cwd = first.cwd.clone();
+        // The memory's: a chain's steps with it, a line's none.
+        let kept = if steps.len() > 1 {
+            steps.clone()
+        } else {
+            Vec::new()
+        };
         let now = kawoosh_systems::store::now();
         let known = self.recent_lines();
-        let before = known.iter().find(|r| r.cmd == cmd && r.cwd == cwd);
+        let before = known
+            .iter()
+            .find(|r| r.cmd == cmd && r.cwd == cwd && r.steps == kept);
         let by = by.or_else(|| before.and_then(|r| r.by));
         let runs = before.map_or(0.0, |r| r.score(now)) + 1.0;
         let mut lines: Vec<Recent> = known
             .into_iter()
-            .filter(|r| !(r.cmd == cmd && r.cwd == cwd))
+            .filter(|r| !(r.cmd == cmd && r.cwd == cwd && r.steps == kept))
             .map(|mut r| {
                 // A line kept before the memory said when: its one run
                 // counted from now on.
@@ -1140,6 +1402,7 @@ impl Kawoosh {
             Recent {
                 cmd: cmd.to_string(),
                 cwd: cwd.clone(),
+                steps: kept.clone(),
                 by,
                 runs,
                 at: Some(now),
@@ -1155,10 +1418,12 @@ impl Kawoosh {
             lines.remove(least);
         }
         let recent: Vec<serde_json::Value> = lines.iter().map(Recent::json).collect();
-        self.note_tool(
-            "compile",
-            serde_json::json!({ "cmd": cmd, "cwd": cwd.display().to_string(), "recent": recent }),
-        );
+        let mut meta =
+            serde_json::json!({ "cmd": cmd, "cwd": cwd.display().to_string(), "recent": recent });
+        if !kept.is_empty() {
+            meta["steps"] = steps_json(&kept);
+        }
+        self.note_tool("compile", meta);
         // Before the keys move: `r` in its buffer keeps the file.
         let file = self.compile_file();
         let name = buffer_name(cmd, self.compile_where(&cwd).as_deref());
@@ -1169,7 +1434,7 @@ impl Kawoosh {
             .compile
             .runs
             .iter()
-            .position(|r| r.cmd == cmd && r.cwd == cwd)
+            .position(|r| r.steps == steps)
             .map(|i| self.compile.runs.remove(i));
         let buffer = match before {
             Some(mut run) => {
@@ -1192,7 +1457,7 @@ impl Kawoosh {
         );
         let b = &mut self.ed.buffers[buffer];
         b.name = name;
-        b.set_text(&format!("{head}$ {cmd}\n"));
+        b.set_text(&format!("{head}$ {}\n", first.cmd));
         b.mark_saved();
         let version = b.version();
         self.scripting.paints.entry(buffer).or_default().insert(
@@ -1211,27 +1476,17 @@ impl Kawoosh {
                 v.sels = kawoosh_editor::Selections::single(Selection::point(end));
             }
         }
-        self.compile.started += 1;
-        let proc_id = self.compile.started;
-        let spec = ProcSpec {
-            cmd: ProcCmd::Shell(cmd.to_string()),
-            cwd: Some(cwd.clone()),
-            stdin: None,
-            whole: false,
-            split_err: false,
-            env: self.compile_env(),
-        };
-        let (proc, failed) = match self.io.run_command(proc_id, spec) {
-            Ok(p) => (Some(p), None),
-            Err(e) => (None, Some(e)),
-        };
         self.compile.runs.push(Run {
             buffer,
             cmd: cmd.to_string(),
             cwd,
+            steps,
+            at: 0,
+            begun: vec![1],
+            chain_started: Instant::now(),
             file,
-            proc_id,
-            proc,
+            proc_id: 0,
+            proc: None,
             started: Instant::now(),
             plain: Default::default(),
         });
@@ -1239,11 +1494,84 @@ impl Kawoosh {
             buffer: Some(buffer),
             ..Default::default()
         };
+        self.compile_spawn(buffer);
+    }
+
+    /// The step of `buffer`'s run it is at, its process started — what
+    /// it cannot start said in the buffer, and the steps after it not
+    /// run.
+    fn compile_spawn(&mut self, buffer: BufferId) {
+        let env = self.compile_env();
+        let Some(run) = self.compile.runs.iter_mut().find(|r| r.buffer == buffer) else {
+            return;
+        };
+        let step = run.steps[run.at].clone();
+        self.compile.started += 1;
+        let proc_id = self.compile.started;
+        let spec = ProcSpec {
+            cmd: ProcCmd::Shell(step.cmd),
+            cwd: Some(step.cwd),
+            stdin: None,
+            whole: false,
+            split_err: false,
+            env,
+        };
+        let failed = match self.io.run_command(proc_id, spec) {
+            Ok(p) => {
+                run.proc = Some(p);
+                None
+            }
+            Err(e) => Some(e),
+        };
+        run.proc_id = proc_id;
+        run.started = Instant::now();
+        run.plain = Default::default();
         if let Some(e) = failed {
             let line = format!("cannot run: {e}");
             let paints = vec![(0..line.len(), "error".to_string())];
             self.compile_append(buffer, &format!("{line}\n"), paints);
+            self.compile_not_run(buffer);
         }
+    }
+
+    /// The steps after the one `buffer`'s run is at, said not run: a
+    /// step ended badly, and a chain stops there as `&&` does.
+    fn compile_not_run(&mut self, buffer: BufferId) {
+        let Some(run) = self.compile.of(buffer) else {
+            return;
+        };
+        let rest: Vec<String> = run.steps[run.at + 1..]
+            .iter()
+            .map(|s| format!("not run: {}", s.cmd))
+            .collect();
+        for line in rest {
+            let paints = vec![(0..line.len(), "dim".to_string())];
+            self.compile_append(buffer, &format!("{line}\n"), paints);
+        }
+    }
+
+    /// `buffer`'s run on to its next step: a blank line, where it runs
+    /// when that is not where the step before ran, its `$ CMD`, and its
+    /// process started.
+    fn compile_next(&mut self, buffer: BufferId) {
+        let Some(run) = self.compile.runs.iter_mut().find(|r| r.buffer == buffer) else {
+            return;
+        };
+        let (was, step) = (run.steps[run.at].cwd.clone(), run.steps[run.at + 1].clone());
+        run.at += 1;
+        if step.cwd != was {
+            let line = kawoosh_systems::fs::abbreviate_home(&step.cwd);
+            let paints = vec![(1..1 + line.len(), "dim".to_string())];
+            self.compile_append(buffer, &format!("\n{line}\n"), paints);
+        } else {
+            self.compile_append(buffer, "\n", Vec::new());
+        }
+        let line = self.ed.buffers[buffer].line_count().saturating_sub(1);
+        if let Some(run) = self.compile.runs.iter_mut().find(|r| r.buffer == buffer) {
+            run.begun.push(line);
+        }
+        self.compile_append(buffer, &format!("$ {}\n", step.cmd), Vec::new());
+        self.compile_spawn(buffer);
     }
 
     /// The variables a compile's command has over the editor's: the
@@ -1277,9 +1605,11 @@ impl Kawoosh {
     }
 
     /// `buffer`, a run's, on show with the keys: the pane showing it
-    /// already; else one showing a run that has ended, which gives its
-    /// place — one pane of output, not one a command; else a column of
-    /// its own, a run still going left to be watched.
+    /// already; else the focused pane when it holds nothing — the
+    /// launcher, an empty scratch: the place asked for (Decision 21);
+    /// else one showing a run that has ended, which gives its place —
+    /// one pane of output, not one a command; else a column of its own,
+    /// a run still going left to be watched.
     fn compile_show(&mut self, buffer: BufferId) {
         let views: Vec<ViewId> = self
             .layout
@@ -1294,7 +1624,16 @@ impl Kawoosh {
                     .of(shows(self, v))
                     .is_some_and(|r| !r.running())
             });
-            if let Some(v) = ended {
+            let empty = self
+                .focused_view()
+                .filter(|v| self.is_empty_scratch(self.ed.views[*v].buffer));
+            if self.launcher_focused() {
+                let v = self.ed.add_view(buffer);
+                self.fill_or_open(
+                    crate::layout::Place::Column,
+                    crate::layout::Content::Editor(v),
+                );
+            } else if let Some(v) = empty.or(ended) {
                 self.show_buffer(v, buffer);
             }
         }
@@ -1307,6 +1646,39 @@ impl Kawoosh {
         kawoosh_systems::fs::relative(file, &self.cwd)
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| kawoosh_systems::fs::abbreviate_home(file))
+    }
+
+    /// A chain's row (Decision 22), from `from`: one line saying its
+    /// steps as they resolved, where the first runs, each step on a
+    /// line of the preview — refused, what it was written as and why.
+    fn chain_offer(
+        &self,
+        resolved: Result<Line, String>,
+        written: &str,
+        from: &str,
+        doc: &str,
+    ) -> Offer {
+        match resolved {
+            Ok(Line::Chain(steps)) => {
+                let mut o = Offer::of(&chain_cmd(&steps), steps[0].cwd.clone(), from, doc);
+                o.detail = steps
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        format!(
+                            "{}. {}  in {}",
+                            i + 1,
+                            s.cmd,
+                            kawoosh_systems::fs::abbreviate_home(&s.cwd)
+                        )
+                    })
+                    .collect();
+                o
+            }
+            Ok(Line::Run(cmd, cwd)) => Offer::of(&cmd, cwd, from, doc),
+            Ok(Line::Finish(_)) => Offer::of(written, self.compile_dir(), from, doc),
+            Err(e) => Offer::of(written, self.compile_dir(), from, &format!("refused: {e}")),
+        }
     }
 
     /// `compile pick`: `compile.default`, the named commands, the
@@ -1347,35 +1719,56 @@ impl Kawoosh {
         };
         // The settings' rows: the user's own a tier above the project's.
         let tier = |by: By| if by == By::User { 2 } else { 3 };
-        if let Some(d) = self.ed.settings.str("compile.default") {
-            // Named, it is that command's row, marked; else a row of its own.
-            let word = d.split_whitespace().next().unwrap_or_default();
-            if let Some(n) = named.iter().find(|n| n.name == word) {
-                let by = self.setting_by(&format!("compile.commands.{}", n.name));
-                let mut o =
-                    Offer::of(&n.cmd, dir_of(n), "compile.default", &n.doc).at(by, tier(by), 0);
-                o.line = Some(d.to_string());
-                o.name = Some(n.name.clone());
-                o.needs = n.args && d.trim() == n.name;
-                add(&mut rows, o);
-            } else {
-                let cwd = project
-                    .dir_for(d)
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| self.compile_dir());
-                let by = self.setting_by("compile.default");
-                let mut o = Offer::of(d, cwd, "compile.default", "").at(by, tier(by), 0);
-                o.line = Some(d.to_string());
-                add(&mut rows, o);
-            }
-        }
-        for n in &named {
+        // A named command's row; a chain's says its steps (Decision 22).
+        let named_row = |n: &Named, from: &str| {
             let by = self.setting_by(&format!("compile.commands.{}", n.name));
-            let mut o =
-                Offer::of(&n.cmd, dir_of(n), "compile.commands", &n.doc).at(by, tier(by), 0);
+            let mut o = if n.steps.is_empty() {
+                Offer::of(&n.cmd, dir_of(n), from, &n.doc)
+            } else {
+                self.chain_offer(self.compile_line(&n.name), &n.cmd, from, &n.doc)
+            };
+            o = o.at(by, tier(by), 0);
             o.line = Some(n.name.clone());
             o.name = Some(n.name.clone());
-            o.needs = n.args;
+            o.needs = n.args && n.steps.is_empty();
+            o
+        };
+        match self.compile_default().as_deref() {
+            Some([d]) => {
+                // Named, it is that command's row, marked; else a row of its own.
+                let word = d.split_whitespace().next().unwrap_or_default();
+                let word = word.strip_prefix("commands:").unwrap_or(word);
+                if let Some(n) = named.iter().find(|n| n.name == word) {
+                    let mut o = named_row(n, "compile.default");
+                    o.line = Some(d.to_string());
+                    o.needs &= d.trim() == word;
+                    add(&mut rows, o);
+                } else {
+                    let cwd = project
+                        .dir_for(d)
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| self.compile_dir());
+                    let by = self.setting_by("compile.default");
+                    let mut o = Offer::of(d, cwd, "compile.default", "").at(by, tier(by), 0);
+                    o.line = Some(d.to_string());
+                    add(&mut rows, o);
+                }
+            }
+            // A list: a chain of its own, its lines run in turn.
+            Some(lines) => {
+                let by = self.setting_by("compile.default");
+                let written = lines.join(", ");
+                let resolved = self.default_line(lines);
+                let mut o = self
+                    .chain_offer(resolved, &written, "compile.default", "")
+                    .at(by, tier(by), 0);
+                o.chain = lines.to_vec();
+                add(&mut rows, o);
+            }
+            None => {}
+        }
+        for n in &named {
+            let o = named_row(n, "compile.commands");
             if !rows.iter().any(|r| r.name == o.name) {
                 rows.push(o);
             }
@@ -1416,10 +1809,9 @@ impl Kawoosh {
                 (true, false) => (1, "recent"),
             };
             first &= !here;
-            add(
-                &mut rows,
-                Offer::of(&r.cmd, r.cwd, from, "").at(by, tier, place(i)),
-            );
+            let mut o = Offer::of(&r.cmd, r.cwd.clone(), from, "").at(by, tier, place(i));
+            o.steps = r.steps;
+            add(&mut rows, o);
         }
         for d in project.commands.into_iter().chain(packages) {
             let from = self.compile_from(&d.file);
@@ -1590,13 +1982,24 @@ impl Kawoosh {
             self.ed.message = format!("no compile command {n} on offer (:compile pick)");
             return;
         };
+        // A chain's steps are no one line to finish (Decision 22); a
+        // named one's prompt is its name.
+        if edit && o.name.is_none() && !(o.chain.is_empty() && o.steps.is_empty()) {
+            self.ed.message = "a chain of steps: nothing to finish (r runs it again)".into();
+            return;
+        }
         if edit || o.needs {
             let (line, caret) = o.prompt();
             self.compile_prompt(&line, caret);
             return;
         }
+        if !o.chain.is_empty() {
+            self.compile_default_lines(&o.chain);
+            return;
+        }
         match &o.line {
             Some(line) => self.compile(line),
+            None if !o.steps.is_empty() => self.compile_steps(o.steps, Some(o.by)),
             None => self.compile_by(&o.cmd, o.cwd, Some(o.by)),
         }
     }
@@ -1678,9 +2081,12 @@ impl Kawoosh {
                     return;
                 };
                 run.proc = None;
-                let (buffer, cmd) = (run.buffer, run.cmd.clone());
+                let (buffer, mut cmd) = (run.buffer, run.cmd.clone());
+                let all_took = took(run.chain_started.elapsed());
                 let took = took(run.started.elapsed());
-                let (status, paint) = match code {
+                let (chain, more) = (run.steps.len() > 1, run.at + 1 < run.steps.len());
+                let step = run.steps[run.at].cmd.clone();
+                let (mut status, paint) = match code {
                     Some(0) => (format!("finished in {took}"), "added"),
                     Some(c) => (format!("exited with {c} in {took}"), "error"),
                     None => (format!("killed after {took}"), "warning"),
@@ -1688,6 +2094,20 @@ impl Kawoosh {
                 let last = format!("[{status}]");
                 let paints = vec![(1..1 + last.len(), paint.to_string())];
                 self.compile_append(buffer, &format!("\n{last}\n"), paints);
+                // A chain goes on while its steps finish well (Decision
+                // 22), and is said once, at its end.
+                if chain {
+                    if code == Some(0) && more {
+                        self.compile_next(buffer);
+                        return;
+                    }
+                    self.compile_not_run(buffer);
+                    if code == Some(0) {
+                        status = format!("finished in {all_took}");
+                    } else {
+                        cmd = step;
+                    }
+                }
                 // Asynchronous: the corner, not the command line. Which
                 // one, when another still runs.
                 let level = if code == Some(0) {
@@ -1695,7 +2115,7 @@ impl Kawoosh {
                 } else {
                     Level::Warn
                 };
-                let text = if self.compile.running() {
+                let text = if self.compile.running() || (chain && code != Some(0)) {
                     format!("{status}: {cmd}")
                 } else {
                     status
@@ -1733,7 +2153,13 @@ impl Kawoosh {
         while at < text.len() {
             if let Some((path, line, col)) = location_at(&text, at) {
                 let base = match run {
-                    Some(run) => run.cwd.clone(),
+                    // The directory of the step whose output it is.
+                    Some(run) => {
+                        let i = run.begun.iter().rposition(|&l| l <= ln).unwrap_or(0);
+                        run.steps
+                            .get(i)
+                            .map_or_else(|| run.cwd.clone(), |s| s.cwd.clone())
+                    }
                     None => b
                         .path
                         .as_deref()
@@ -1910,25 +2336,34 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 let bare = k.bare_compile();
                 if ctx.query() {
                     k.ed.message = match bare {
-                        Bare::Default(c) => match k.compile_line(&c) {
-                            Ok(Line::Run(cmd, _)) if cmd != c => {
-                                format!("compile.default = {c}: {cmd}")
+                        Bare::Default(lines) => {
+                            let c = lines.join(", ");
+                            match k.default_line(&lines) {
+                                Ok(Line::Run(cmd, _)) if cmd != c => {
+                                    format!("compile.default = {c}: {cmd}")
+                                }
+                                Ok(Line::Chain(steps)) => {
+                                    format!("compile.default = {c}: {}", chain_cmd(&steps))
+                                }
+                                Ok(Line::Finish(name)) => {
+                                    format!("compile.default = {c}: asks for {name}'s arguments")
+                                }
+                                Err(e) => format!("compile.default = {c}: {e}"),
+                                _ => format!("compile.default = {c}"),
                             }
-                            Ok(Line::Finish(name)) => {
-                                format!("compile.default = {c}: asks for {name}'s arguments")
-                            }
-                            Err(e) => format!("compile.default = {c}: {e}"),
-                            _ => format!("compile.default = {c}"),
-                        },
-                        Bare::Again(c, _) => format!("{c} (again: compile.default is not set)"),
+                        }
+                        Bare::Again(steps) => format!(
+                            "{} (again: compile.default is not set)",
+                            chain_cmd(&steps)
+                        ),
                         Bare::Deduced(d) => format!("{} ({})", d.cmd, k.compile_from(&d.file)),
                         Bare::Nothing => NOTHING.into(),
                     };
                     return;
                 }
                 match bare {
-                    Bare::Default(c) => k.compile(&c),
-                    Bare::Again(c, cwd) => k.compile_in(&c, cwd),
+                    Bare::Default(lines) => k.compile_default_lines(&lines),
+                    Bare::Again(steps) => k.compile_steps(steps, None),
                     Bare::Deduced(d) => {
                         let from = k.compile_from(&d.file);
                         k.compile_by(&d.cmd, d.cwd, Some(By::Project));
@@ -1965,8 +2400,8 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("compile again")
                 .doc("the command a *compile* buffer shows — else the last started — run again where it ran (`r` there)"),
-            |k, _| match k.compile_here().map(|r| (r.cmd.clone(), r.cwd.clone())) {
-                Some((cmd, cwd)) => k.compile_in(&cmd, cwd),
+            |k, _| match k.compile_here().map(|r| r.steps.clone()) {
+                Some(steps) => k.compile_steps(steps, None),
                 None => k.ed.message = "compile again: nothing compiled yet".into(),
             },
         ),
@@ -2077,6 +2512,7 @@ mod tests {
         let line = |runs, at| Recent {
             cmd: "make".into(),
             cwd: PathBuf::from("/p"),
+            steps: Vec::new(),
             by: None,
             runs,
             at,

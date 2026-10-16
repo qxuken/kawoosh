@@ -1470,6 +1470,16 @@ impl Kawoosh {
         }
     }
 
+    /// Whether `id` is an empty `*scratch*` — no path, no hook, no
+    /// text, not a field's: what the launcher's `s` and `:enew` make,
+    /// nothing in it to lose. The sweep takes one no pane shows; a
+    /// compile takes the pane showing one (compile.md Decision 21).
+    pub(crate) fn is_empty_scratch(&self, id: BufferId) -> bool {
+        self.ed.buffers.get(id).is_some_and(|b| {
+            b.name == "*scratch*" && b.path.is_none() && b.hook.is_none() && b.is_empty()
+        }) && !self.ed.is_field_buffer(id)
+    }
+
     /// An empty `*scratch*` no pane shows goes — the one a launcher's
     /// `<Esc>` made and a file then replaced, the one `:enew` left
     /// behind — so `:ls` and the pickers list what holds something.
@@ -1485,12 +1495,7 @@ impl Kawoosh {
             self.ed.views.values().map(|v| v.buffer).collect();
         let mut gone: Vec<BufferId> = left
             .into_iter()
-            .filter(|id| {
-                self.ed.buffers.get(*id).is_some_and(|b| {
-                    b.name == "*scratch*" && b.path.is_none() && b.hook.is_none() && b.is_empty()
-                }) && !shown.contains(id)
-                    && !self.ed.is_field_buffer(*id)
-            })
+            .filter(|id| self.is_empty_scratch(*id) && !shown.contains(id))
             .collect();
         gone.sort();
         gone.dedup();
