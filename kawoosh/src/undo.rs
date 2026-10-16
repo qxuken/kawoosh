@@ -185,6 +185,17 @@ impl Kawoosh {
         let key = (b, self.ed.buffers[b].version(), self.ed.history_key(b));
         if self.undo.built != Some(key) {
             self.undo.rows = self.ed.history(b);
+            // A private buffer's change snippets are no line a mask
+            // rule could read: each a stand-in (secrets.md Decision 9).
+            if self.ed.buffers[b].private {
+                for c in self.undo.rows.iter_mut().filter_map(|r| r.change.as_mut()) {
+                    for t in [&mut c.removed_text, &mut c.inserted_text] {
+                        if !t.trim().is_empty() {
+                            *t = kawoosh_editor::masks::STAND_IN.to_string();
+                        }
+                    }
+                }
+            }
             self.undo.graph =
                 Graph::of(&self.undo.rows.iter().map(|r| r.parent).collect::<Vec<_>>());
             self.undo.built = Some(key);
@@ -194,7 +205,15 @@ impl Kawoosh {
         }
         let cursor = self.undo.cursor;
         if self.undo.hunk.as_ref().map(|(c, _)| *c) != Some(cursor) {
-            self.undo.hunk = Some((cursor, self.ed.history_hunk(b, cursor)));
+            // Each side as the buffer's pane would draw it.
+            let hunk = self.ed.history_hunk(b, cursor).map(|mut h| {
+                for side in [&mut h.old, &mut h.new] {
+                    let text: String = side.iter().map(|l| format!("{l}\n")).collect();
+                    *side = self.shown_lines_of(b, &text);
+                }
+                h
+            });
+            self.undo.hunk = Some((cursor, hunk));
         }
     }
 

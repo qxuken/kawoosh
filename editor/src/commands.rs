@@ -1405,7 +1405,7 @@ pub fn search_message(ed: &mut Editor, id: kawoosh_doc::BufferId, wrapped: bool)
         }
         _ => None,
     };
-    let pat = &search.pattern;
+    let pat = search.shown();
     let wrapped = if wrapped { " · wrapped" } else { "" };
     match count {
         Some(n) => format!("/{pat}  {n} match(es){wrapped}"),
@@ -1430,7 +1430,7 @@ fn search(ed: &mut Editor, ctx: &Ctx, forward: bool) {
     ed.search_hl = true;
     use crate::search::{FRAME_BUDGET, Walk, walk_backward, walk_forward};
     let re = &search.re;
-    let pat = &search.pattern;
+    let pat = search.shown();
     let id = view(ed, ctx).buffer;
     let text = ed.buffers[id].tree();
     let len = text.len();
@@ -2851,6 +2851,12 @@ pub fn install(ed: &mut Editor) {
         if let Err(e) = ed.set_search(&pattern, false) {
             ed.message = e;
             return;
+        }
+        // A private buffer's word is its text: a secret pattern, never
+        // shown (docs/design/secrets.md Decision 9).
+        let private = ed.buffers[id].private;
+        if let Some(s) = ed.search.as_mut() {
+            s.secret = private;
         }
         search(ed, ctx, true);
     });

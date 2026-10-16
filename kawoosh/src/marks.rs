@@ -582,11 +582,21 @@ impl Kawoosh {
 
     /// The marks that moved written to their moments.
     fn write_marks(&mut self) {
+        let ed = &self.ed;
         let dirty: Vec<(String, String)> = self
             .marks
             .live
             .iter_mut()
-            .filter(|(_, m)| m.dirty)
+            // A mark made before its file was private keeps the text it
+            // had: the private one's lines are no moment's
+            // (docs/design/secrets.md Decision 1).
+            .filter(|(_, m)| {
+                m.dirty
+                    && !m
+                        .buffer
+                        .and_then(|id| ed.buffers.get(id))
+                        .is_some_and(|b| b.private)
+            })
             .map(|(s, m)| {
                 m.dirty = false;
                 (s.clone(), m.rec.to_meta(m.adrift))
@@ -660,6 +670,12 @@ impl Kawoosh {
             return;
         };
         let id = self.ed.views[v].buffer;
+        // A mark is a moment, its record the line's text: a private
+        // buffer is no one's moment (docs/design/secrets.md Decision 1).
+        if self.ed.buffers[id].private {
+            self.ed.message = "mark: a private buffer keeps no marks".into();
+            return;
+        }
         let Some(path) = self.mark_path(id) else {
             self.ed.message = "mark: this buffer is no file".into();
             return;

@@ -452,10 +452,11 @@ impl Kawoosh {
             return;
         };
         let name = self.ed.buffers[src].name.clone();
+        let label = base.label.clone();
+        let hunk = self.ed.unified_hunk(src, &h, PREVIEW_CONTEXT);
         let text = format!(
-            "--- {name} ({})\n+++ {name}\n{}",
-            base.label,
-            self.ed.unified_hunk(src, &h, PREVIEW_CONTEXT)
+            "--- {name} ({label})\n+++ {name}\n{}",
+            self.shown_hunk(src, &hunk)
         );
         // The caret's hunk: under the buffer, in its column
         // (pane-placement.md Decision 2).
@@ -466,6 +467,43 @@ impl Kawoosh {
             false,
             crate::layout::Place::Under,
         );
+    }
+
+    /// A unified hunk of buffer `src` as its pane would draw its lines
+    /// (docs/design/secrets.md Decision 9): the base's side (`-`) and
+    /// the buffer's (` ` and `+`) each masked by the buffer's rules, the
+    /// `@@` line as it is.
+    fn shown_hunk(&mut self, src: BufferId, hunk: &str) -> String {
+        let lines: Vec<&str> = hunk.lines().collect();
+        let side = |old: bool| -> String {
+            lines
+                .iter()
+                .skip(1)
+                .filter(|l| !l.is_empty() && l.starts_with('-') == old)
+                .map(|l| format!("{}\n", l.get(1..).unwrap_or("")))
+                .collect()
+        };
+        let (old_text, new_text) = (side(true), side(false));
+        let mut old = self.shown_lines_of(src, &old_text).into_iter();
+        let mut new = self.shown_lines_of(src, &new_text).into_iter();
+        let mut out = String::with_capacity(hunk.len());
+        for (i, l) in lines.iter().enumerate() {
+            let shown = match l.chars().next() {
+                _ if i == 0 => None,
+                Some('-') => old.next(),
+                Some(_) => new.next(),
+                None => None,
+            };
+            match shown {
+                Some(t) => {
+                    out.push_str(&l[..1]);
+                    out.push_str(&t);
+                }
+                None => out.push_str(l),
+            }
+            out.push('\n');
+        }
+        out
     }
 
     // ------------------------------------------------------------ conflicts

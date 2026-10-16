@@ -1150,14 +1150,20 @@ impl Kawoosh {
                         if let Some(s) = self.ed.search.as_mut() {
                             s.count = Some((buffer, version, count));
                         }
-                        if self.ed.message.starts_with(&format!("/{pattern}  ")) {
+                        let shown = self
+                            .ed
+                            .search
+                            .as_ref()
+                            .map_or(pattern.as_str(), |s| s.shown())
+                            .to_string();
+                        if self.ed.message.starts_with(&format!("/{shown}  ")) {
                             let wrapped = if self.ed.message.ends_with("· wrapped") {
                                 " · wrapped"
                             } else {
                                 ""
                             };
                             self.ed.message = format!(
-                                "/{pattern}  {count} match(es) in {:.1}s{wrapped}",
+                                "/{shown}  {count} match(es) in {:.1}s{wrapped}",
                                 elapsed.as_secs_f64()
                             );
                         }

@@ -463,20 +463,24 @@ impl Kawoosh {
         for e in &mut js.list {
             settle(ed, e);
         }
-        js.list
-            .iter()
-            .enumerate()
-            .rev()
+        let list: Vec<(usize, Jump)> = js.list.iter().cloned().enumerate().rev().collect();
+        list.into_iter()
             .map(|(index, j)| {
+                // The line as its pane draws it: a private file's
+                // values masked (secrets.md Decision 9).
                 let text = j
                     .buffer
-                    .and_then(|id| ed.buffers.get(id))
-                    .filter(|b| j.line < b.line_count())
-                    .map(|b| b.line_text(j.line))
+                    .filter(|id| {
+                        self.ed
+                            .buffers
+                            .get(*id)
+                            .is_some_and(|b| j.line < b.line_count())
+                    })
+                    .map(|id| self.shown_line(id, j.line))
                     .unwrap_or_default();
                 crate::memory::Row::Jump {
                     index,
-                    jump: j.clone(),
+                    jump: j,
                     text,
                 }
             })

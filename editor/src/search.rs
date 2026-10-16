@@ -58,6 +58,10 @@ pub struct Search {
     /// was taken over: an `n` in the same text says the number again
     /// rather than counting again.
     pub count: Option<(kawoosh_doc::BufferId, kawoosh_doc::Version, usize)>,
+    /// Taken from a private buffer's text (`*` there): the pattern is
+    /// the text, so what says the search shows a stand-in for it
+    /// (docs/design/secrets.md Decision 9).
+    pub secret: bool,
 }
 
 impl Search {
@@ -73,7 +77,17 @@ impl Search {
             ignore_case,
             re,
             count: None,
+            secret: false,
         })
+    }
+
+    /// The pattern as a message shows it: a secret one's a stand-in.
+    pub fn shown(&self) -> &str {
+        if self.secret {
+            crate::masks::STAND_IN
+        } else {
+            &self.pattern
+        }
     }
 
     /// Whether this is the search `pattern` compiled with `ignore_case`.

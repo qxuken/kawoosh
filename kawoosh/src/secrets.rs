@@ -19,7 +19,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{Bias, Buffer, BufferId, Version};
-use kawoosh_editor::masks::{Rule, Rules, line_folds};
+use kawoosh_editor::masks::{Rule, Rules, line_folds, masked_lines};
 use kawoosh_editor::{ArgKind, Args, Mode, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};
 
@@ -251,6 +251,9 @@ impl Kawoosh {
             self.secrets.given.insert(id, (version, carried.clone()));
             out.extend(carried);
         }
+        if self.ed.is_multi(id) {
+            out.extend(self.mirrored_masks(id));
+        }
         out.sort_by_key(|r| (r.start, r.end));
         let mut merged: Vec<Range<usize>> = Vec::with_capacity(out.len());
         for r in out {
@@ -265,6 +268,136 @@ impl Kawoosh {
             merged.retain(|m| !(m.start <= shown.start && shown.end <= m.end));
         }
         merged
+    }
+
+    /// Multibuffer `id`'s excerpts' masks, each source's carried to
+    /// where its lines are here (Decision 9): a search's results, a
+    /// review, a list draw a private file's lines as its pane does. An
+    /// excerpt its source moved under since the last sync, or whose
+    /// source is gone, is a private source's text no mask is known for:
+    /// masked whole, line by line.
+    fn mirrored_masks(&mut self, id: BufferId) -> Vec<Range<usize>> {
+        let Some(m) = self.ed.multis.get(&id) else {
+            return Vec::new();
+        };
+        let excerpts = m.excerpts.clone();
+        let private = self.ed.buffers.get(id).is_some_and(|b| b.private);
+        let mut of: HashMap<BufferId, Vec<Range<usize>>> = HashMap::new();
+        let mut out = Vec::new();
+        for e in excerpts.iter().filter(|e| !e.pending && !e.body.is_empty()) {
+            let src = self
+                .ed
+                .buffers
+                .get(e.source)
+                .filter(|b| !e.dead && b.version() == e.src_ver)
+                .map(|b| b.private);
+            let Some(src_private) = src else {
+                if private {
+                    out.extend(self.whole_lines(id, e.body.clone()));
+                }
+                continue;
+            };
+            let masks = of
+                .entry(e.source)
+                .or_insert_with(|| self.masks_of(e.source));
+            if masks.is_empty() && !src_private {
+                continue;
+            }
+            for r in masks {
+                let (a, z) = (r.start.max(e.src.start), r.end.min(e.src.end));
+                if a < z {
+                    out.push(e.body.start + (a - e.src.start)..e.body.start + (z - e.src.start));
+                }
+            }
+        }
+        out
+    }
+
+    /// Line `ln` (from 0) of buffer `id` as its pane draws it now
+    /// (Decision 9): a list's row of a buffer's line — a jump's.
+    pub(crate) fn shown_line(&mut self, id: BufferId, ln: usize) -> String {
+        let masks = self.masks_of(id);
+        let Some(b) = self.ed.buffers.get(id) else {
+            return String::new();
+        };
+        let r = b.line_range(ln);
+        let text = b.slice(r.clone());
+        let text = text.trim_end_matches('\r');
+        let inside: Vec<Range<usize>> = masks
+            .iter()
+            .filter(|m| m.start < r.end.max(r.start + 1) && m.end > r.start)
+            .map(|m| m.start.max(r.start) - r.start..m.end.min(r.end) - r.start)
+            .collect();
+        if inside.is_empty() {
+            return text.to_string();
+        }
+        masked_lines(text, &inside)
+            .into_iter()
+            .next()
+            .map(|(l, _)| l)
+            .unwrap_or_default()
+    }
+
+    /// Text of buffer `id` that is not its text now — a base, an undo
+    /// state — as lines its pane would draw them (Decision 9): masked by
+    /// the rules that apply to the buffer, scanned over `text`. A
+    /// private buffer a plugin masked by ranges, which no rule finds
+    /// again in another text, has every line that is not empty a
+    /// stand-in.
+    pub(crate) fn shown_lines_of(&mut self, id: BufferId, text: &str) -> Vec<String> {
+        self.sync_secret_rules();
+        let Some(b) = self.ed.buffers.get(id) else {
+            return text.lines().map(str::to_string).collect();
+        };
+        let given = self
+            .secrets
+            .given
+            .get(&id)
+            .is_some_and(|(_, g)| !g.is_empty());
+        let found = if b.private && given {
+            let mut at = 0;
+            let mut whole = Vec::new();
+            for line in text.split_inclusive('\n') {
+                let body = line.trim_end_matches(['\n', '\r']).len();
+                if body > 0 {
+                    whole.push(at..at + body);
+                }
+                at += line.len();
+            }
+            whole
+        } else {
+            let asked = self.secrets.asked.get(&id).map_or(&[][..], |a| a);
+            self.secrets
+                .rules
+                .scan_for(b.path.as_deref(), &b.name, &b.language, asked, text)
+        };
+        masked_lines(text, &found)
+            .into_iter()
+            .map(|(l, _)| l)
+            .collect()
+    }
+
+    /// Buffer `id`'s lines inside `span`, each without its line end, as
+    /// ranges: a text masked whole, line by line.
+    fn whole_lines(&self, id: BufferId, span: Range<usize>) -> Vec<Range<usize>> {
+        let Some(b) = self.ed.buffers.get(id) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let end = span.end.min(b.len());
+        if span.start >= end {
+            return out;
+        }
+        for ln in b.line_of(span.start)..=b.line_of(end.saturating_sub(1)) {
+            let r = b.line_range(ln);
+            let r = r.start.max(span.start)..r.end.min(end);
+            let text = b.slice(r.clone());
+            let body = text.trim_end_matches(['\n', '\r']).len();
+            if body > 0 {
+                out.push(r.start..r.start + body);
+            }
+        }
+        out
     }
 
     /// `text` as a list shows a line of the file at `path`: what the
