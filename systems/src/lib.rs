@@ -29,6 +29,7 @@ pub mod textobjects;
 pub mod tree_watch;
 pub mod ts;
 pub mod watch;
+pub mod words;
 pub mod wsl;
 
 use std::sync::atomic::{AtomicU32, Ordering};

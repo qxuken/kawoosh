@@ -21,6 +21,10 @@ use rusqlite::{Connection, params};
 /// gives up with `SQLITE_BUSY` (memory.md Decision 3).
 pub const BUSY_MS: u64 = 250;
 
+/// How long an accepted completion is remembered unaccepted: past it,
+/// halved some thirteen times, it weighs nothing.
+const COMPLETION_KEEP_SECS: i64 = 90 * 86_400;
+
 pub struct Store {
     conn: Connection,
 }
@@ -174,7 +178,13 @@ impl Store {
                  kind      TEXT    NOT NULL,
                  subject   TEXT    NOT NULL,
                  workspace TEXT    NOT NULL DEFAULT '');
-             CREATE INDEX IF NOT EXISTS recent_at ON recent (at);",
+             CREATE INDEX IF NOT EXISTS recent_at ON recent (at);
+             CREATE TABLE IF NOT EXISTS completion_accepts (
+                 workspace TEXT    NOT NULL,
+                 text      TEXT    NOT NULL,
+                 score     REAL    NOT NULL,
+                 at        INTEGER NOT NULL,
+                 PRIMARY KEY (workspace, text));",
         )?;
         // A db from before the table's name (`drafts`) or before its
         // `clean` column: moved and added in place; one that is current
@@ -275,6 +285,45 @@ impl Store {
                 |r| r.get(0),
             )
             .ok()
+    }
+
+    // ------------------------------------------------------- completion
+
+    /// The candidates accepted in `workspace` (docs/design/completion.md
+    /// Decision 5): each text, its score when last accepted and when.
+    /// Rows a season old are let go as they are read.
+    pub fn completion_accepts(&self, workspace: &str) -> Vec<(String, f64, i64)> {
+        let _ = self.conn.execute(
+            "DELETE FROM completion_accepts WHERE workspace = ?1 AND at < ?2",
+            params![workspace, now() - COMPLETION_KEEP_SECS],
+        );
+        let Ok(mut stmt) = self
+            .conn
+            .prepare("SELECT text, score, at FROM completion_accepts WHERE workspace = ?1")
+        else {
+            return Vec::new();
+        };
+        stmt.query_map(params![workspace], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_default()
+    }
+
+    /// `text` accepted in `workspace`, its score now `score`.
+    pub fn set_completion_accept(
+        &self,
+        workspace: &str,
+        text: &str,
+        score: f64,
+        at: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO completion_accepts (workspace, text, score, at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (workspace, text) DO UPDATE SET score = excluded.score, at = excluded.at",
+            params![workspace, text, score, at],
+        )?;
+        Ok(())
     }
 
     // ---------------------------------------------------------------- moments
