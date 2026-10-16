@@ -37,7 +37,7 @@ Every place that draws a picture-like element:
 | `memory.rs` foot | `⏎ open · y recall · … · ⇥ view · q close` | one text |
 | `memory.rs` jumps | `‹ 2` `› 1` steps; `⏎` for an empty first line | text data |
 | `undo.rs` strip | `⏎ restore · u ⌃r g- g+ step · q close` | one text |
-| `markdown.rs` | task boxes, bullets `•` | Nerd Font glyphs folded over the source |
+| `markdown.rs` | task boxes (open `U+F0131`, done `U+F0C52`, set aside `[-]` `U+F12ED`), bullets `•` | Nerd Font glyphs folded over the source |
 | `graph.rs` | the VCS graph's lanes and dots | `ui.line`, `ui.polygon` |
 | `theme_check.rs` | `✓` `✗` per pair | report text |
 | `search.lua` bar | stage `×`, `›` between stages, `⌥/ keys`, the legend `⏎ search  ⇥ next field …` | glyphs, one paragraph of spans |
@@ -319,7 +319,10 @@ commits — with the same vectors, at a geometry of its own.
 
 - **The markdown task boxes and bullets.** They are folded over the
   source in a buffer's line, which is a paragraph of spans; an icon
-  there needs kui to hold a box inline in a paragraph.
+  there needs kui to hold a box inline in a paragraph. The set-aside
+  box (`- [-]`, 2026-10-16, markdown.md Built) joined them as a glyph
+  of the same face for that reason: `nf-md-checkbox_blank_off_outline`,
+  struck, beside the open and done outlines.
 - **The x-height.** Centred on the line box until kui's
   `measure_text` gives a face's x-height and baseline.
 - **The status line and the title bar's segments** (`● 3`, `▯▮▯`):

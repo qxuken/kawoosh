@@ -179,6 +179,11 @@ const STRUCTURE: &str = r#"
 [(list_marker_dot) (list_marker_parenthesis)] @block.ordered
 (task_list_marker_unchecked) @block.task.open
 (task_list_marker_checked) @block.task.done
+(list_item
+  [(list_marker_minus) (list_marker_plus) (list_marker_star) (list_marker_dot) (list_marker_parenthesis)]
+  .
+  (paragraph . (inline) @block.task.dropped)
+  (#match? @block.task.dropped "^\\[-\\]([ \t]|$)"))
 (atx_heading (atx_h1_marker)) @block.h1
 (atx_heading (atx_h2_marker)) @block.h2
 (atx_heading (atx_h3_marker)) @block.h3

@@ -1189,6 +1189,39 @@ fn reveal_none_shows_a_box_the_caret_is_on() {
     assert!(app.ed.buffer_of(v).text().contains("- [x] a task"));
 }
 
+/// `- [-]`, the todo's item set aside, is a struck box of its own,
+/// nested or not; `[ ]` and `[x]` the boxes they were; `[-]` in a
+/// paragraph is text; the caret's line its source.
+#[test]
+fn a_dropped_task_draws_its_own_box() {
+    let dir = fixture("dropped");
+    std::fs::write(
+        dir.join("doc.md"),
+        "# Todo\n\n- [ ] open\n- [x] done\n- [-] code folds\n  - [-] nested\n\nplain [-] text\n",
+    )
+    .unwrap();
+    let (mut d, mut app) = launch(&dir, 2400.0);
+    let rows = d.line_rows();
+    for want in [
+        "• \u{F0131} open",
+        "• \u{F0C52} done",
+        "• \u{F12ED} code folds",
+        "  • \u{F12ED} nested",
+        "plain - text",
+    ] {
+        assert!(
+            rows.iter().any(|r| r == want),
+            "{want:?} not among {rows:#?}"
+        );
+    }
+    assert!(!rows.iter().any(|r| r.contains("[-]")), "{rows:#?}");
+    d.keys(&mut app, "4j");
+    settle(&mut d, &mut app);
+    let rows = d.line_rows();
+    assert!(rows.iter().any(|r| r == "- [-] code folds"), "{rows:#?}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// A row above the caret's that grows pushes what is above it up, not
 /// the caret down: `=` typed under a paragraph makes it an h1 when the
 /// parser answers, and the caret's row stays where it was on screen,

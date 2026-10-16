@@ -291,6 +291,10 @@ pub fn render(
 /// A task's boxes as the rendered row draws them.
 pub const TASK_OPEN: &str = "\u{F0131}";
 pub const TASK_DONE: &str = "\u{F0C52}";
+/// `nf-md-checkbox_blank_off_outline`, a box struck through: a task set
+/// aside (`[-]`). Not `nf-md-minus_box_outline`, the source's dash in a
+/// box, which a checkbox draws for "partly done".
+pub const TASK_DROPPED: &str = "\u{F12ED}";
 
 fn bold(color: Option<Color>) -> Mark {
     Mark {
@@ -450,6 +454,20 @@ fn prose(
                 if !open {
                     marks.push((r.clone(), dim(style.link)));
                 }
+            }
+            // An item set aside: its text from the `[-]` on, which the
+            // grammar reads as text, every line of it dim — the box
+            // struck where it opens, right after the item's marker (a
+            // continuation line opening with `[-]` is text).
+            Block::TaskDropped => {
+                let opens = text.starts_with("[-]")
+                    && blocks.iter().any(|(m, b)| {
+                        m.end.min(len) == r.start && matches!(b, Block::Bullet | Block::Ordered)
+                    });
+                if opens {
+                    folds.push((r.start..r.start + 3, TASK_DROPPED.into()));
+                }
+                marks.push((r.clone(), dim(style.dim)));
             }
             _ => {}
         }
@@ -1566,6 +1584,85 @@ mod tests {
         let raw = render(src, &syntax, &blocks, Reveal::Source, 0, &style(), 4);
         assert_eq!(raw.drawn.text, src);
         assert_eq!(raw.scale, 1.35);
+    }
+
+    /// `[-]` opening an item is the struck box, the item's text dim;
+    /// `[ ]` and `[x]` the boxes they were; a continuation line of the
+    /// item dim with its `[-]` left as text.
+    #[test]
+    fn a_dropped_task_is_a_struck_box_and_dim() {
+        let src = "- [-] code folds";
+        let blocks = vec![(0..2, Block::Bullet), (2..src.len(), Block::TaskDropped)];
+        // The inline grammar's: `[-]` a shortcut link.
+        let syntax = vec![
+            (2..3, Token::Punctuation),
+            (3..4, Token::Link),
+            (4..5, Token::Punctuation),
+        ];
+        let r = render(src, &syntax, &blocks, Reveal::Folded, 0, &style(), 4);
+        assert_eq!(r.drawn.text, format!("• {TASK_DROPPED} code folds"));
+        let text = r.drawn.text.find("code").unwrap();
+        assert!(
+            r.marks
+                .iter()
+                .any(|(rg, m)| rg.contains(&text) && m.color == Some(style().dim)),
+            "{:?}",
+            r.marks
+        );
+        let icon = r.drawn.text.find(TASK_DROPPED).unwrap();
+        assert!(
+            !r.marks
+                .iter()
+                .any(|(rg, m)| rg.contains(&icon) && m.underline),
+            "not a link's: {:?}",
+            r.marks
+        );
+        // A numbered one.
+        let src = "1. [-]";
+        let r = render(
+            src,
+            &[],
+            &[(0..3, Block::Ordered), (3..6, Block::TaskDropped)],
+            Reveal::Folded,
+            0,
+            &style(),
+            4,
+        );
+        assert_eq!(r.drawn.text, format!("1. {TASK_DROPPED}"));
+        // The item's next line, which opens with `[-]` too.
+        let src = "  [-] more";
+        let r = render(
+            src,
+            &[],
+            &[(0..2, Block::Quote), (2..src.len(), Block::TaskDropped)],
+            Reveal::Folded,
+            0,
+            &style(),
+            4,
+        );
+        assert_eq!(r.drawn.text, src);
+        assert!(r.marks.iter().any(|(_, m)| m.color == Some(style().dim)));
+        // The others as they were.
+        for (b, icon) in [(Block::TaskOpen, TASK_OPEN), (Block::TaskDone, TASK_DONE)] {
+            let r = render(
+                "- [ ] x",
+                &[],
+                &[(0..2, Block::Bullet), (2..5, b)],
+                Reveal::Folded,
+                0,
+                &style(),
+                4,
+            );
+            assert_eq!(r.drawn.text, format!("• {icon} x"));
+            let x = r.drawn.text.find('x').unwrap();
+            assert!(
+                !r.marks
+                    .iter()
+                    .any(|(rg, m)| rg.contains(&x) && m.color == Some(style().dim)),
+                "{:?}",
+                r.marks
+            );
+        }
     }
 
     /// A table's rows as cells: each cell's text kept, the pipes and

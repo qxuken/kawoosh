@@ -2145,6 +2145,52 @@ mod tests {
         assert_eq!(title(&buf), [Block::H2]);
     }
 
+    /// `[-]` opening a list item's text is a dropped task's: the
+    /// item's text from the box on, under a bullet or a number, nested
+    /// too; not `[-]` later in an item, not one in a paragraph, not one
+    /// a letter follows. `[ ]` and `[x]` are the grammar's boxes still.
+    #[test]
+    fn a_dash_in_brackets_opening_an_item_is_a_dropped_task() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let mut buf = Buffer::new(
+            "t",
+            "- [ ] open\n- [x] done\n- [-] dropped\n  - [-] nested\n1. [-] numbered\n- [-]\n- a [-] later\n- [-]x glued\n\nplain [-] text\n",
+        );
+        buf.language = "markdown".into();
+        let job = Job {
+            buffer: BufferId::default(),
+            language: "markdown".into(),
+            snapshot: buf.snapshot(),
+            edits: None,
+        };
+        for u in highlight(&mut parser, &mut g, &mut parsed, &job).updates {
+            buf.apply(u).unwrap();
+        }
+        let block_at = |needle: &str| -> Vec<Block> {
+            let o = buf.text().find(needle).unwrap();
+            buf.runs(STRUCT_LAYER, o..o + 1)
+                .iter()
+                .filter_map(|r| Block::from_style(r.style))
+                .collect()
+        };
+        assert_eq!(block_at("[ ] open"), [Block::TaskOpen]);
+        assert_eq!(block_at("[x] done"), [Block::TaskDone]);
+        for dropped in [
+            "[-] dropped",
+            "dropped",
+            "[-] nested",
+            "[-] numbered",
+            "[-]\n",
+        ] {
+            assert_eq!(block_at(dropped), [Block::TaskDropped], "{dropped:?}");
+        }
+        for not in ["[-] later", "[-]x glued", "[-] text"] {
+            assert!(!block_at(not).contains(&Block::TaskDropped), "{not:?}");
+        }
+    }
+
     /// A table's row with an empty cell, typed a pipe at a time, leaves
     /// the rest of the document parsed: the heading after it a heading
     /// and not the table's (a lone `|`) or an ERROR's (`|||`), the row

@@ -413,6 +413,10 @@ pub enum Block {
     Ordered,
     TaskOpen,
     TaskDone,
+    /// A list item's text that starts with `[-]`: an item set aside, not
+    /// GFM's but the todo's (`- [-] code folds…`), the grammar reading
+    /// it as text.
+    TaskDropped,
     H1,
     H2,
     H3,
@@ -440,6 +444,7 @@ impl Block {
         Block::Ordered,
         Block::TaskOpen,
         Block::TaskDone,
+        Block::TaskDropped,
         Block::H1,
         Block::H2,
         Block::H3,
@@ -464,6 +469,7 @@ impl Block {
             Block::Ordered => "ordered",
             Block::TaskOpen => "task.open",
             Block::TaskDone => "task.done",
+            Block::TaskDropped => "task.dropped",
             Block::H1 => "h1",
             Block::H2 => "h2",
             Block::H3 => "h3",
