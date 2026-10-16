@@ -1,7 +1,8 @@
 //! A private buffer's text is drawn masked wherever it is drawn
 //! (docs/design/secrets.md Decision 9), not only in its own pane: a
 //! multibuffer over it (the project search, a review), its undo pane,
-//! a hunk's preview, `:memory jumps`, the changed files' diff preview.
+//! a hunk's preview, `:memory jumps`, the changed files' diff preview,
+//! a commit `vcs show` shows.
 //! Each fixture is a `.env`-named file whose value no frame may draw.
 
 mod drive;
@@ -368,5 +369,41 @@ fn a_private_file_keeps_no_marks() {
     d.frame(&mut app);
     let shown = drawn(&d);
     assert!(!shown.contains(SECRET), "masked: {shown}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `vcs show` of a commit that changed a private file: the diff's
+/// lines masked by the rules of the file its section names, each side
+/// read whole, so a block (a private key added to a plain file) is
+/// found across its lines.
+#[test]
+fn a_shown_commit_masks_a_private_file() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = repo("show");
+    std::fs::write(
+        dir.join("notes.txt"),
+        "a key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEkeybody9\n-----END RSA PRIVATE KEY-----\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "second"]);
+    let (mut d, mut app) = launch(&dir.join("a.txt"), &dir);
+    ex(&mut d, &mut app, "vcs show HEAD");
+    until(&mut d, &mut app, "the commit", |app, _| {
+        buffer_named(app, "*show HEAD*").is_some()
+    });
+    d.frame(&mut app);
+    let shown = drawn(&d);
+    assert!(
+        shown.contains("-TOKEN=") && shown.contains("+TOKEN=") && shown.contains("+a key:"),
+        "the diff: {shown}"
+    );
+    assert!(
+        !shown.contains(SECRET) && !shown.contains(OLD) && !shown.contains("MIIEkeybody9"),
+        "masked: {shown}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -78,6 +78,101 @@ local function old_shown(h, shown, path)
   return out
 end
 
+-- vcs.shown_patch(text, root): a patch a backend printed (`git show`,
+-- `fossil diff`), its paths from `root`, as a list shows it: each file's section masked by the rules of the file its headers
+-- name (`diff --git`, `diff --cc`, `Index:`, then `+++`, or `---` for a
+-- file deleted). A section's sides are read whole — its old side the
+-- context and `-` lines of all its hunks in order, its new side the
+-- context and `+` — so a block (a `pem` key) is found across its lines;
+-- each line takes its side's masked line, a context line whichever side
+-- masked it. A hunk's lines are counted by its `@@` header, so a line
+-- taken away that reads `--- …` is the hunk's, not a header; a merge's
+-- combined diff (`@@@`, a column per parent) counts the same way. What
+-- is no hunk's (the message, the stat, the headers) is kept.
+function vcs.shown_patch(text, root)
+  local lines = lines_of(text)
+  local path, prefixed
+  local body, old, new = {}, {}, {}
+  local function flush()
+    if #body == 0 then return end
+    local at = path and fs.join(root, path) or nil
+    local function masked(side)
+      if #side == 0 then return {} end
+      return lines_of(kawoosh.secrets.mask_text(table.concat(side, "\n") .. "\n", at))
+    end
+    local o, n = masked(old), masked(new)
+    for _, b in ipairs(body) do
+      local raw = lines[b.at]:sub(b.cols + 1)
+      local m = b.new and n[b.new] or nil
+      if b.old and (m == nil or m == raw) then m = o[b.old] or m end
+      -- A line its side lost (never: `mask_text` keeps every line) is
+      -- masked alone rather than drawn as printed.
+      lines[b.at] = lines[b.at]:sub(1, b.cols) .. (m or kawoosh.secrets.mask_text(raw, at))
+    end
+    body, old, new = {}, {}, {}
+  end
+  -- A header's path: git's `a/`/`b/` taken off, fossil's as it is; a
+  -- tab and what follows (a date) is no part of it.
+  local function named(p)
+    p = p:gsub("\t.*$", "")
+    if prefixed then p = p:gsub("^[ab]/", "") end
+    return p
+  end
+  local i = 1
+  while i <= #lines do
+    local l = lines[i]
+    local ats, counts = l:match("^(@@+) ([^@]+) @@+")
+    if ats then
+      -- `@@ -a,b +c,d @@`: one count per parent, the new side's last.
+      local cols = #ats - 1
+      local left = {}
+      for c in counts:gmatch("[-+]%d+,?(%d*)") do left[#left + 1] = c == "" and 1 or tonumber(c) end
+      if #left ~= cols + 1 then
+        i = i + 1
+      else
+        local function any() for _, c in ipairs(left) do if c > 0 then return true end end end
+        i = i + 1
+        while i <= #lines and any() do
+          local b = lines[i]
+          if b:sub(1, 1) == "\\" then
+            i = i + 1
+          else
+            local marks = b:sub(1, cols)
+            local in_old, in_new = marks:find("[^+]") ~= nil, not marks:find("-", 1, true)
+            for p = 1, cols do
+              if marks:sub(p, p) ~= "+" then left[p] = left[p] - 1 end
+            end
+            if in_new then left[cols + 1] = left[cols + 1] - 1 end
+            local raw = b:sub(cols + 1)
+            local entry = { at = i, cols = cols }
+            if in_old then old[#old + 1] = raw; entry.old = #old end
+            if in_new then new[#new + 1] = raw; entry.new = #new end
+            body[#body + 1] = entry
+            i = i + 1
+          end
+        end
+      end
+    else
+      local git_path = l:match("^diff %-%-git %S+ (.+)$")
+      local cc_path = l:match("^diff %-%-cc (.+)$") or l:match("^diff %-%-combined (.+)$")
+      local index_path = l:match("^Index: (.+)$")
+      if git_path or cc_path or index_path then
+        flush()
+        prefixed = git_path ~= nil
+        path = git_path and named(git_path) or cc_path or index_path
+      elseif l:match("^%-%-%- ") and lines[i + 1] and lines[i + 1]:match("^%+%+%+ ") then
+        local from, to = l:sub(5), lines[i + 1]:sub(5)
+        if to ~= "/dev/null" then path = named(to)
+        elseif from ~= "/dev/null" then path = named(from) end
+        i = i + 1
+      end
+      i = i + 1
+    end
+  end
+  flush()
+  return table.concat(lines, "\n") .. (text:sub(-1) == "\n" and "\n" or "")
+end
+
 local function line_count(text)
   if text == "" then return 0 end
   local n = select(2, text:gsub("\n", ""))
@@ -698,7 +793,9 @@ function vcs.show(rev)
       -- `run`, not `cmd`: a shell command through `cmd` lands after
       -- the scratch is shown, and would split the scratch's pane.
       if not open then kawoosh.run("vsplit") end
-      kawoosh.buf.open_scratch { name = name, text = text, read_only = true, language = "diff" }
+      -- As a list shows it: a commit that touched a `.env` draws its
+      -- values masked (docs/design/secrets.md Decision 9).
+      kawoosh.buf.open_scratch { name = name, text = vcs.shown_patch(text, r.root), read_only = true, language = "diff" }
       if not SHOWN[name] then
         SHOWN[name] = true
         kawoosh.map("n", "q", "close", { buffer = name })
