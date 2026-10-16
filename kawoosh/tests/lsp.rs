@@ -27,6 +27,16 @@ fn msgs(app: &Kawoosh, id: kawoosh_doc::BufferId) -> Vec<String> {
         .collect()
 }
 
+/// Every candidate the live completion's answers hold, matched or not.
+fn answered(app: &Kawoosh) -> Vec<String> {
+    app.completion
+        .session
+        .iter()
+        .flat_map(|s| s.answers.iter())
+        .flat_map(|a| a.items.iter().map(|i| i.label.clone()))
+        .collect()
+}
+
 /// Frames until `pred` holds, letting the server thread answer.
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -141,15 +151,11 @@ fn diagnostics_definition_hover_and_completion() {
     assert_eq!(app.focused_mode(), Mode::Insert);
     d.keys(&mut app, "hel");
     assert!(
-        until(&mut d, &mut app, |a| a.lsp.completion.is_some()),
+        until(&mut d, &mut app, |a| a.completion_ghost_text().is_some()),
         "completion arrived"
     );
-    let (_, typed) = app.completion_typed().unwrap();
-    assert_eq!(typed, "hel");
-    assert_eq!(
-        app.lsp.completion.as_ref().unwrap().ghost("hel").as_deref(),
-        Some("lo_world")
-    );
+    assert_eq!(app.completion.session.as_ref().unwrap().typed, "hel");
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("lo_world"));
     assert!(
         d.core
             .nodes()
@@ -158,10 +164,7 @@ fn diagnostics_definition_hover_and_completion() {
         "ghost drawn"
     );
     d.press(&mut app, "<C-n>");
-    assert_eq!(
-        app.lsp.completion.as_ref().unwrap().ghost("hel").as_deref(),
-        Some("p")
-    );
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("p"));
     d.key(&mut app, "tab", KeyMods::default());
     let v = app.focused_view().unwrap();
     assert!(
@@ -169,28 +172,22 @@ fn diagnostics_definition_hover_and_completion() {
         "{:?}",
         app.ed.buffer_of(v).text()
     );
-    assert!(app.lsp.completion.is_none());
+    assert!(app.completion.session.is_none());
 
     // A `.` asks at once, on the text with the `.` in it: the members,
     // not the candidates of the word before — which would have shown
     // as a ghost and then been replaced, a blink at every member access.
     d.keys(&mut app, ".");
     assert!(
-        until(&mut d, &mut app, |a| a.lsp.completion.is_some()),
+        until(&mut d, &mut app, |a| a.completion_ghost_text().is_some()),
         "member completion arrived"
     );
-    assert_eq!(
-        app.lsp.completion.as_ref().unwrap().ghost("").as_deref(),
-        Some("member_a")
-    );
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("member_a"));
     d.keys(&mut app, "m");
-    assert!(
-        app.lsp.completion.is_some(),
-        "the ghost stays while the word grows"
-    );
     assert_eq!(
-        app.lsp.completion.as_ref().unwrap().ghost("m").as_deref(),
-        Some("ember_a")
+        app.completion_ghost_text().as_deref(),
+        Some("ember_a"),
+        "the ghost stays while the word grows"
     );
     // The prompt's insert mode is not the buffer's: typing `:echo` asks
     // the server for nothing and shows no candidates over the buffer.
@@ -200,7 +197,7 @@ fn diagnostics_definition_hover_and_completion() {
         d.frame(&mut app);
     }
     assert!(
-        app.lsp.completion.is_none(),
+        app.completion.session.is_none(),
         "no completion while the prompt has the keys"
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
@@ -766,18 +763,77 @@ fn rename_references_actions_format_and_diagnostics() {
     for _ in 0..5 {
         d.frame(&mut app);
     }
-    assert!(app.lsp.completion.is_none(), "`:` asked for nothing");
+    assert!(app.completion.session.is_none(), "`:` asked for nothing");
     d.keys(&mut app, ".");
     assert!(
-        until(&mut d, &mut app, |a| a.lsp.completion.is_some()),
+        until(&mut d, &mut app, |a| a.completion_ghost_text().is_some()),
         "`.` asked"
     );
-    assert_eq!(
-        app.lsp.completion.as_ref().unwrap().ghost("").as_deref(),
-        Some("member_a")
-    );
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("member_a"));
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `workspace_symbols`, opted into (completion.md Decision 4): the
+/// server's `workspace/symbol` for the word, asked from three typed
+/// characters once the typing pauses, merged with the rest.
+#[test]
+fn workspace_symbols_are_a_source_when_asked_for() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-wsym-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n}\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| !msgs(a, buf_id).is_empty()),
+        "the server has the text"
+    );
+    let sources = ["lsp", "buffer_words", "workspace_symbols"]
+        .iter()
+        .map(|s| kawoosh_editor::Setting::Str(s.to_string()))
+        .collect();
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "completion.sources",
+        kawoosh_editor::Setting::List(sources),
+    );
+    d.keys(&mut app, "Go");
+    d.keys(&mut app, "wi");
+    for _ in 0..5 {
+        d.frame(&mut app);
+    }
+    let workspace = |a: &Kawoosh| {
+        a.completion.session.as_ref().is_some_and(|s| {
+            s.answers
+                .iter()
+                .any(|a| a.source.name() == "workspace_symbols")
+        })
+    };
+    assert!(!workspace(&app), "two letters ask nothing of the workspace");
+    d.keys(&mut app, "d");
+    assert!(
+        until(&mut d, &mut app, |a| a.completion_ghost_text().is_some()),
+        "{:?}",
+        app.completion.candidates_from()
+    );
+    let got = app.completion.candidates_from();
+    assert!(
+        got.contains(&("widget_fn".to_string(), "workspace_symbols")),
+        "{got:?}"
+    );
+    assert!(
+        got.contains(&("Widget".to_string(), "workspace_symbols")),
+        "{got:?}"
+    );
+    // The ghost continues the word as typed: `Widget` matches, smart
+    // case, but is no continuation of `wid`.
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("get_fn"));
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -827,7 +883,8 @@ fn formatting_a_minified_bundle_lands_at_once() {
 }
 
 /// No server for the language: the buffer's own identifiers complete
-/// the word, nearest first; `<C-x>` puts the candidates in a picker
+/// the word, nearest first — asked for with `<C-Space>`, plain text
+/// asking only when asked (completion.md Decision 1); `<C-x>` puts the candidates in a picker
 /// with the word as its query and the cursor's detail as the preview,
 /// `⏎` there takes one into the text and the keys come back in insert
 /// mode; a word with no candidates offers nothing.
@@ -849,14 +906,16 @@ fn buffer_words_complete_and_the_candidates_picker_browses_them() {
     d.keys(&mut app, "i");
     d.keys(&mut app, "hel");
     d.frame(&mut app);
-    let c = app.lsp.completion.as_ref().expect("the buffer's words");
-    let labels: Vec<&str> = c
-        .filtered
-        .iter()
-        .map(|i| c.items[*i].label.as_str())
-        .collect();
-    assert_eq!(labels, ["hello_world", "helper", "helium"], "nearest first");
-    assert_eq!(c.ghost("hel").as_deref(), Some("lo_world"));
+    assert!(app.completion.session.is_none(), "text asks when asked");
+    d.press(&mut app, "<C-Space>");
+    d.frame(&mut app);
+    // The nearest line first; two on one line in the text's order.
+    assert_eq!(
+        app.completion.candidates(),
+        ["hello_world", "helium", "helper"],
+        "nearest first"
+    );
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("lo_world"));
     // The picker: a row per candidate with its kind and detail, the
     // query the word so far, the keys on the query; the preview is
     // the cursor's detail.
@@ -877,15 +936,15 @@ fn buffer_words_complete_and_the_candidates_picker_browses_them() {
         .iter()
         .filter_map(|n| n.text.clone())
         .collect();
-    assert!(drawn.iter().any(|t| t == "buffer"), "{drawn:?}");
-    // Down one row and `⏎`: `helper` replaces the word, the keys are
+    assert!(drawn.iter().any(|t| t == "word"), "the kind: {drawn:?}");
+    // Down one row and `⏎`: `helium` replaces the word, the keys are
     // back in the text, insert mode still.
     d.press(&mut app, "<C-n>");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(
         app.ed.buffers[buf_id].text(),
-        "helium helper\nhello_world here\n\nhelper"
+        "helium helper\nhello_world here\n\nhelium"
     );
     let v = app.focused_view().unwrap();
     assert_eq!(app.ed.views[v].buffer, buf_id, "back in the text");
@@ -894,19 +953,21 @@ fn buffer_words_complete_and_the_candidates_picker_browses_them() {
         !matches!(app.layout.focused_content(), Some(Content::Lua(_))),
         "the picker is gone"
     );
-    assert!(app.lsp.completion.is_none());
+    assert!(app.completion.session.is_none());
     d.keys(&mut app, "!");
     assert_eq!(
         app.ed.buffers[buf_id].text(),
-        "helium helper\nhello_world here\n\nhelper!",
+        "helium helper\nhello_world here\n\nhelium!",
         "the caret after the candidate"
     );
     d.key(&mut app, "escape", KeyMods::default());
     d.keys(&mut app, "A");
     // A word with no candidates offers nothing; the pane says so.
     d.keys(&mut app, " zq");
+    d.press(&mut app, "<C-Space>");
     d.frame(&mut app);
-    assert!(app.lsp.completion.is_none());
+    assert_eq!(app.ed.message, "no candidates");
+    assert!(app.completion_ghost_text().is_none());
     d.press(&mut app, "<C-x>");
     assert_eq!(app.ed.message, "no candidates");
     d.key(&mut app, "escape", KeyMods::default());
@@ -3488,18 +3549,12 @@ fn a_template_server_beside_the_language_s_own() {
     d.keys(&mut app, "Go");
     d.keys(&mut app, "hel");
     assert!(
-        until(&mut d, &mut app, |a| a.lsp.completion.as_ref().is_some_and(
-            |c| {
-                let labels: Vec<&str> = c.items.iter().map(|i| i.label.as_str()).collect();
-                labels.contains(&"tpl_tag") && labels.contains(&"hello_world")
-            }
-        )),
+        until(&mut d, &mut app, |a| {
+            let labels = answered(a);
+            labels.iter().any(|l| l == "tpl_tag") && labels.iter().any(|l| l == "hello_world")
+        }),
         "both servers' completions: {:?}",
-        app.lsp.completion.as_ref().map(|c| c
-            .items
-            .iter()
-            .map(|i| i.label.clone())
-            .collect::<Vec<_>>())
+        answered(&app)
     );
     std::fs::remove_dir_all(&dir).ok();
 }

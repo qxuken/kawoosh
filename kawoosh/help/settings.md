@@ -261,6 +261,13 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `keys.input_method` | `"text"` | where the platform's input method — accents, dead keys, press-and-hold, an IME — works: `text` is insert mode, prompts, fields, `r`'s and `f`'s character and terminals, so a held `j` repeats in normal mode; `always` is normal mode too |
 | `keys.option_as_alt` | `"left"` | macOS: which {{mac:⌥}}{{pc:Option}} key is Alt for chords such as `<A-u>`: `left`, `right`, `both` or `none`; the other one types accents (`ü`) |
 | `pairs.enabled` | `true` | close brackets and quotes as you type; `pairs.rules` per language |
+| `completion.trigger` | `"typing"` | when completion asks: `typing` as a word starts, `endline_only` only where nothing follows the caret, `manual` only on `<C-Space>`, `off` never; `manual` for Markdown, commit messages and text ([code](code.md#completion)) |
+| `completion.ghost` | `"endline"` | where the candidate's rest is drawn after the caret: `always`, `endline`, `never` |
+| `completion.popup` | `"fallback"` | the list of candidates: not built yet, read as `never` |
+| `completion.sources` | | where candidates come from, in rank order: `lsp`, `path`, `snippets`, `buffer_symbols`, `buffer_words`, `workspace_symbols` |
+| `completion.fuzzy` | `true` | candidates match as a picker's rows do; `false` by the word's beginning |
+| `completion.max_items` | `10` | the most candidates ranked in full |
+| `completion.words.min_length` | `3` | the shortest word `buffer_words` offers |
 | `clipboard.system` | `true` | `p` puts what other programs copied ([memory](memory.md)) |
 | `layout.default` | `"scroll"` | a new tab is a strip of columns (`scroll`) or a tree of splits (`tree`) |
 | `layout.column_width` | `"half"` | a new column's width: `third`, `half`, `two-thirds`, `full`, or a fraction |

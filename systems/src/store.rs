@@ -21,6 +21,10 @@ use rusqlite::{Connection, params};
 /// gives up with `SQLITE_BUSY` (memory.md Decision 3).
 pub const BUSY_MS: u64 = 250;
 
+/// How long an accepted completion is remembered unaccepted: past it,
+/// halved some thirteen times, it weighs nothing.
+const COMPLETION_KEEP_SECS: i64 = 90 * 86_400;
+
 pub struct Store {
     conn: Connection,
 }
@@ -174,7 +178,13 @@ impl Store {
                  kind      TEXT    NOT NULL,
                  subject   TEXT    NOT NULL,
                  workspace TEXT    NOT NULL DEFAULT '');
-             CREATE INDEX IF NOT EXISTS recent_at ON recent (at);",
+             CREATE INDEX IF NOT EXISTS recent_at ON recent (at);
+             CREATE TABLE IF NOT EXISTS completion_accepts (
+                 workspace TEXT    NOT NULL,
+                 text      TEXT    NOT NULL,
+                 score     REAL    NOT NULL,
+                 at        INTEGER NOT NULL,
+                 PRIMARY KEY (workspace, text));",
         )?;
         // A db from before the table's name (`drafts`) or before its
         // `clean` column: moved and added in place; one that is current
@@ -275,6 +285,68 @@ impl Store {
                 |r| r.get(0),
             )
             .ok()
+    }
+
+    // ------------------------------------------------------- completion
+
+    /// The state db at `path` to read, on a thread of its own: no table
+    /// made or moved, no write, the lock waited for as a write's is. A
+    /// job's connection — completion's frecency and ring off the key
+    /// path (completion.md, the round-1 review).
+    pub fn open_read_only(path: &Path) -> rusqlite::Result<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(std::time::Duration::from_millis(BUSY_MS))?;
+        Ok(Self { conn })
+    }
+
+    /// The candidates accepted in `workspace` (docs/design/completion.md
+    /// Decision 5): each text, its score when last accepted and when,
+    /// none a season old.
+    pub fn completion_accepts(&self, workspace: &str) -> Vec<(String, f64, i64)> {
+        let Ok(mut stmt) = self.conn.prepare(
+            "SELECT text, score, at FROM completion_accepts WHERE workspace = ?1 AND at >= ?2",
+        ) else {
+            return Vec::new();
+        };
+        stmt.query_map(params![workspace, now() - COMPLETION_KEEP_SECS], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_default()
+    }
+
+    /// Accepted candidates — `(workspace, text, score, at)` each — in
+    /// one transaction, and the rows a season old let go: batched with
+    /// the memory's flush, never a write per key.
+    pub fn set_completion_accepts(
+        &self,
+        rows: &[(String, String, f64, i64)],
+    ) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let done = (|| {
+            let mut put = self.conn.prepare_cached(
+                "INSERT INTO completion_accepts (workspace, text, score, at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (workspace, text) DO UPDATE SET score = excluded.score, at = excluded.at",
+            )?;
+            for (ws, text, score, at) in rows {
+                put.execute(params![ws, text, score, at])?;
+            }
+            self.conn.execute(
+                "DELETE FROM completion_accepts WHERE at < ?1",
+                params![now() - COMPLETION_KEEP_SECS],
+            )?;
+            Ok(())
+        })();
+        match done {
+            Ok(()) => self.conn.execute_batch("COMMIT"),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
     }
 
     // ---------------------------------------------------------------- moments

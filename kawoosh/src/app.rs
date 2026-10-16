@@ -83,6 +83,9 @@ pub struct Kawoosh {
     /// (docs/design/grammars.md).
     pub grammars: crate::grammars::Grammars,
     pub lsp: LspState,
+    /// Completion's session, its sources' indexes and its frecency
+    /// (docs/design/completion.md).
+    pub completion: crate::completion::State,
     /// `lsp.ensure_installed`'s installs and the registries' checks.
     pub lsp_installs: crate::lsp_installs::Installs,
     pub scripting: Scripting,
@@ -113,6 +116,9 @@ pub struct Kawoosh {
     /// The `log` crate's records, once `Logger::install` ran (main).
     pub log_sink: Option<crate::logger::Sink>,
     pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
+    /// Where the store is on disk, for a job that reads it on a
+    /// connection of its own; none for one in memory.
+    pub(crate) store_path: Option<PathBuf>,
     /// The buffer the app began with — the greeting, on a bare launch:
     /// a restored session replaces it (`restore_session_data`).
     pub(crate) launch: Option<BufferId>,
@@ -301,8 +307,8 @@ pub struct Kawoosh {
     pub(crate) clip_probe: bool,
     /// Whether the focused pane's last frame drew the completion's
     /// ghost: a rendered markdown row that wraps draws none, and a key
-    /// that accepts one it cannot see put an invisible word in the text
-    /// on `<CR>` (`Kawoosh::completion_key`).
+    /// that accepts one it cannot see would put an invisible word in the
+    /// text (`Kawoosh::completion_on_show`, the `completion` fact).
     pub(crate) ghost_shown: bool,
     /// The focused pane's key sink as last drawn (`focus_sink`): where a
     /// click that opened a file sends the keyboard (`on_event_with`).
@@ -443,6 +449,7 @@ impl Kawoosh {
             languages: kawoosh_languages::Registry::builtin(),
             grammars: crate::grammars::Grammars::default(),
             lsp: LspState::new(wake.clone()),
+            completion: crate::completion::State::new(wake.clone()),
             lsp_installs: crate::lsp_installs::Installs::new(wake.named("lsp installs")),
             scripting: Scripting {
                 servers: crate::lsp_rules::builtin(),
@@ -462,6 +469,7 @@ impl Kawoosh {
             messages_shown: 0,
             log_sink: None,
             store: None,
+            store_path: None,
             launch: Some(b),
             commands: ShellCommands::default(),
             histories: crate::history::Histories::new(wake.named("histories")),
@@ -751,6 +759,12 @@ impl Kawoosh {
         for a in crumbs {
             self.crumbs_outline(a);
         }
+        let (symbols, outlines): (Vec<_>, Vec<_>) = outlines
+            .into_iter()
+            .partition(|a| self.completion.asked_outline(a.token));
+        for a in symbols {
+            self.completion_outline(a);
+        }
         if !outlines.is_empty()
             && let Some(rt) = self.scripting.rt.clone()
         {
@@ -993,6 +1007,26 @@ impl Kawoosh {
                 }
                 IoMsg::Sized { walk, batch } => self.sized(walk, batch),
                 IoMsg::PromptListed { dir, entries } => self.prompt_listed(dir, entries),
+                IoMsg::CompletionWords { index, masks } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    self.completion_words_indexed(index, masks);
+                }
+                IoMsg::CompletionStore {
+                    workspace,
+                    accepts,
+                    recent,
+                } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    self.completion_store_read(workspace, accepts, recent);
+                }
+                IoMsg::CompletionListed {
+                    token,
+                    dir,
+                    entries,
+                } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    self.completion_listed(token, dir, entries);
+                }
                 IoMsg::Walked { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {
@@ -1594,6 +1628,7 @@ impl Kawoosh {
         self.release_waiters(id);
         self.last_pos.remove(&id);
         self.ts_sent.remove(&id);
+        self.completion_forget_buffer(id);
         self.secrets.forget(id);
         self.scripting.watched.remove(&id);
         self.scripting.paints.remove(&id);
@@ -2016,10 +2051,9 @@ impl Kawoosh {
             self.ed.key(f, stroke.clone());
             self.cmdline_refresh();
         } else if let Some(v) = self.focused_view().or_else(|| self.ed.prompt_view()) {
-            if self.ed.prompt_view().is_none() && self.completion_key(&stroke) {
-                self.follow_caret = true;
-                return;
-            }
+            // The completion's keys are local to it while it is on show
+            // (completion.md Decision 3): said before the key is looked up.
+            self.sync_completion_fact();
             // A diagram's canvas takes its keys in pane mode, so a vim
             // letter never edits the text it draws (diagrams.md
             // Decision 4).
@@ -2855,6 +2889,7 @@ impl kui_native::App for Kawoosh {
         self.sync_syntax();
         t = self.perf.lap(Syntax, "syntax", t);
         self.sync_lsp();
+        self.sync_completion();
         t = self.perf.lap(Lsp, "lsp", t);
         // Filled again by the panes this frame draws.
         self.multis.visible.clear();

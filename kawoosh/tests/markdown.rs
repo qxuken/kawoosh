@@ -604,6 +604,10 @@ fn a_ghost_mid_line_sits_at_the_caret() {
     // A row that does not wrap draws the ghost: a table's source row
     // wraps with the rest when the pane does.
     ex(&mut d, &mut app, "set markdown.wrap=false");
+    // Markdown asks when asked, and draws no ghost mid-line, unless
+    // told (completion.md Decisions 1 and 2).
+    ex(&mut d, &mut app, "set completion.trigger=typing");
+    ex(&mut d, &mut app, "set completion.ghost=always");
     d.press(&mut app, "7G$");
     d.press(&mut app, "i");
     settle(&mut d, &mut app);

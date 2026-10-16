@@ -800,6 +800,9 @@ pub enum Event {
         version: Version,
         offset: usize,
         items: Vec<CompletionItem>,
+        /// The server said the list is not the whole: a longer word
+        /// asks again.
+        incomplete: bool,
     },
     /// A server said what it does, at `initialize`: what each of its
     /// languages' buffers can ask.
@@ -1054,6 +1057,8 @@ struct Relayed {
 struct Gather {
     left: usize,
     items: BTreeMap<usize, Vec<CompletionItem>>,
+    /// A server said its list is not the whole (`isIncomplete`).
+    incomplete: bool,
     buffer: BufferId,
     version: Version,
     offset: usize,
@@ -3484,6 +3489,7 @@ impl Pool {
             Gather {
                 left: keys.len(),
                 items: BTreeMap::new(),
+                incomplete: false,
                 buffer,
                 version,
                 offset,
@@ -3504,18 +3510,25 @@ impl Pool {
                 Some(id) => {
                     self.completion_of.insert((key, id), group);
                 }
-                None => self.completion_answered(group, key, Vec::new()),
+                None => self.completion_answered(group, key, Vec::new(), false),
             }
         }
     }
 
     /// One of a completion group's answers, from server `key`: kept in
     /// the servers' order, the whole handed up once the last is in.
-    fn completion_answered(&mut self, group: u64, key: usize, items: Vec<CompletionItem>) {
+    fn completion_answered(
+        &mut self,
+        group: u64,
+        key: usize,
+        items: Vec<CompletionItem>,
+        incomplete: bool,
+    ) {
         let Some(g) = self.completions.get_mut(&group) else {
             return;
         };
         g.left = g.left.saturating_sub(1);
+        g.incomplete |= incomplete;
         let order = self
             .homes
             .get(&g.buffer)
@@ -3530,6 +3543,7 @@ impl Pool {
                 version: g.version,
                 offset: g.offset,
                 items: g.items.into_values().flatten().collect(),
+                incomplete: g.incomplete,
             });
         }
     }
@@ -3633,7 +3647,7 @@ impl Pool {
             .collect();
         for ((key, id), group) in waiting {
             self.completion_of.remove(&(key, id));
-            self.completion_answered(group, key, Vec::new());
+            self.completion_answered(group, key, Vec::new(), false);
         }
         let relayed: Vec<((usize, i64), Relayed)> = self
             .relays
@@ -3879,7 +3893,7 @@ impl Pool {
             if message.get("error").is_some()
                 && let Some(group) = self.completion_of.remove(&(key, id))
             {
-                self.completion_answered(group, key, Vec::new());
+                self.completion_answered(group, key, Vec::new(), false);
                 return;
             }
             // A relayed request's answer, carried back to who asked.
@@ -4168,8 +4182,12 @@ impl Pool {
                 }
                 "textDocument/completion" => {
                     let items = completion_items(result);
+                    let incomplete = result
+                        .and_then(|r| r.get("isIncomplete"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     if let Some(group) = self.completion_of.remove(&(key, id)) {
-                        self.completion_answered(group, key, items);
+                        self.completion_answered(group, key, items, incomplete);
                         return;
                     }
                     self.emit_from(
@@ -4179,6 +4197,7 @@ impl Pool {
                             version,
                             offset,
                             items,
+                            incomplete,
                         },
                     );
                 }

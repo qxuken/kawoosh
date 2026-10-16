@@ -53,6 +53,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::grammars::commands());
     v.extend(crate::notify::commands());
     v.extend(crate::lsp::commands());
+    v.extend(crate::completion::commands());
     v.extend(crate::lsp_rules::commands());
     v.extend(crate::lsp_logs::commands());
     v.extend(crate::session::commands());
@@ -365,6 +366,9 @@ impl Kawoosh {
                 "exited",
                 matches!(content, Some(Content::Terminal(t)) if self.terms.done.contains_key(&t)),
             ),
+            // A completion on show: its keys' place (completion.md
+            // Decision 3).
+            (crate::completion::FACT, self.completion_on_show()),
         ];
         for (name, on) in facts {
             self.ed.fact(name, on);

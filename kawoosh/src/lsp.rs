@@ -1,17 +1,11 @@
 //! The lsp system's app side (milestone 6): documents synced from the
 //! buffer's version, diagnostics as a layer with their messages, `gd`,
-//! `K` into a pane, and in-place completion — the current candidate as
-//! ghost text at the caret, cycled with `<C-n>`/`<C-p>`, accepted with
-//! `<Tab>`; no menu (mvp.md Decision 5).
-//!
-//! Round two (roadmap step 7): a completion asks as a word starts and
-//! on the server's trigger characters (`Caps::triggers`, `.` and `:`
-//! for a server that names none), and the buffer's own identifiers
-//! answer when no server does (`word_items`: a language nobody serves,
-//! a server with nothing to say); `<C-x>` in insert mode puts the
+//! `K` into a pane, and the server's half of completion — asked and
+//! answered here, sessions, sources and ranking in `completion.rs`
+//! (docs/design/completion.md); `<C-x>` in insert mode puts the
 //! candidates in a picker to browse — kind, signature, documentation
-//! as the preview (`picker.lua`'s `candidates` source) — `<CR>` there taking
-//! one. `grn` renames (the prompt filled with `lsp rename WORD`),
+//! as the preview (`picker.lua`'s `candidates` source) — `<CR>` there
+//! taking one. `grn` renames (the prompt filled with `lsp rename WORD`),
 //! `grr` lists references as a live multibuffer `]q` walks (`lists.lua`), `gra`
 //! puts the code actions in a picker — searched by title, each one's
 //! edit as a diff in the preview (`picker.lua`'s `actions` source) —
@@ -27,11 +21,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{Buffer, BufferId, Diagnostic, Update, Version};
-use kawoosh_editor::{ArgKind, Args, KeyStroke, Mode, Prompt, Selection, Spec, ViewId};
+use kawoosh_editor::{ArgKind, Args, Mode, Prompt, Selection, Spec, ViewId};
 use kawoosh_lua::{ActionSnap, CandidateSnap};
 use kawoosh_systems::lsp::{
-    Caps, Cmd, CodeAction, CompletionItem, DIAG_LAYER, Event, Location, Lsp, ServerDef, SyncText,
-    TextEdit, WorkspaceEdit, completion_kind_name, offsets_of_positions,
+    Caps, Cmd, CodeAction, DIAG_LAYER, Event, Location, Lsp, ServerDef, SyncText, TextEdit,
+    WorkspaceEdit, offsets_of_positions,
 };
 use kawoosh_systems::{Alarm, WakeHandle};
 use std::rc::Rc;
@@ -45,10 +39,6 @@ use crate::notify::{Level, Note, Show};
 /// typing pauses or insert mode ends, they land once.
 pub const DIAG_QUIET: Duration = Duration::from_millis(600);
 
-/// The most of a buffer the word source reads, and the most words it
-/// offers: a minified bundle is not a dictionary.
-const WORDS_MAX_BYTES: usize = 2 << 20;
-const WORDS_MAX: usize = 500;
 /// The lines of context a code action's diff keeps around a change,
 /// and the most lines it shows in all.
 const DIFF_CONTEXT: usize = 2;
@@ -59,39 +49,6 @@ pub const REFERENCES_BUFFER: &str = "*references*";
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, Place};
-
-pub struct Completion {
-    pub buffer: BufferId,
-    /// Where the word being completed starts.
-    pub start: usize,
-    pub items: Vec<CompletionItem>,
-    /// Indices into `items` matching the typed prefix.
-    pub filtered: Vec<usize>,
-    pub index: usize,
-}
-
-impl Completion {
-    /// The candidate's text past what is already typed — the ghost.
-    pub fn ghost(&self, typed: &str) -> Option<String> {
-        let it = &self.items[*self.filtered.get(self.index)?];
-        it.insert
-            .strip_prefix(typed)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-    }
-
-    fn refilter(&mut self, typed: &str) {
-        let lower = typed.to_lowercase();
-        self.filtered = self
-            .items
-            .iter()
-            .enumerate()
-            .filter(|(_, it)| it.insert.to_lowercase().starts_with(&lower) && it.insert != typed)
-            .map(|(i, _)| i)
-            .collect();
-        self.index = 0;
-    }
-}
 
 pub struct LspState {
     pub lsp: Lsp,
@@ -116,10 +73,6 @@ pub struct LspState {
     /// being typed in, for a buffer no server is sent.
     typed: Option<(BufferId, Version, Option<Instant>)>,
     alarm: Alarm,
-    pub completion: Option<Completion>,
-    /// A completion asked for and not yet answered: the buffer and where
-    /// the word started.
-    requested: Option<(BufferId, usize)>,
     /// The commands off until a restart, and why: not found (None), or
     /// what befell them (`did not start: …`, `stopped: …`), said after
     /// "the LANGUAGE server".
@@ -164,7 +117,7 @@ pub struct LspState {
     pub actions: Vec<CodeAction>,
     actions_for: Option<(BufferId, Version)>,
     /// The pane the keyboard was in when the candidates pane took it.
-    candidates_from: Option<crate::layout::PaneId>,
+    pub(crate) candidates_from: Option<crate::layout::PaneId>,
     /// Each buffer's inlay hints — a byte and its label, padded — at the
     /// version they were answered for; carried through edits after.
     hints: HashMap<BufferId, (Version, Vec<(usize, String)>)>,
@@ -214,8 +167,6 @@ impl LspState {
             plugin_held: HashMap::new(),
             typed: None,
             alarm: Alarm::latest(wake.named("lsp alarm")),
-            completion: None,
-            requested: None,
             said_unavailable: HashMap::new(),
             restarting: HashMap::new(),
             status: Vec::new(),
@@ -262,49 +213,6 @@ impl LspState {
     }
 }
 
-/// The identifiers of the buffer as candidates for the word at
-/// `start`, nearest the caret first — the source when no server
-/// answers. Three characters or longer, each once, the word being
-/// typed left out.
-fn word_items(buf: &Buffer, start: usize, typed: &str) -> Vec<CompletionItem> {
-    let len = buf.len().min(WORDS_MAX_BYTES);
-    let text = buf.slice(0..buf.floor_char(len));
-    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
-    let mut seen: HashSet<&str> = HashSet::new();
-    let mut found: Vec<(usize, &str)> = Vec::new();
-    let mut at = 0;
-    while at < text.len() {
-        let rest = &text[at..];
-        let Some(i) = rest.find(is_ident) else { break };
-        let word_start = at + i;
-        let word_end = text[word_start..]
-            .find(|c: char| !is_ident(c))
-            .map_or(text.len(), |j| word_start + j);
-        let word = &text[word_start..word_end];
-        at = word_end;
-        if word.len() < 3
-            || word.starts_with(|c: char| c.is_ascii_digit())
-            || (word_start == start && word == typed)
-            || !seen.insert(word)
-        {
-            continue;
-        }
-        found.push((word_start.abs_diff(start), word));
-    }
-    found.sort_by_key(|(d, _)| *d);
-    found
-        .into_iter()
-        .take(WORDS_MAX)
-        .map(|(_, w)| CompletionItem {
-            label: w.to_string(),
-            insert: w.to_string(),
-            kind: None,
-            detail: Some("buffer".into()),
-            documentation: None,
-        })
-        .collect()
-}
-
 /// The identifier under the caret: `(its start, its text)`, the word
 /// before when the caret sits just past one.
 fn word_at(buf: &Buffer, caret: usize) -> (usize, String) {
@@ -322,19 +230,6 @@ fn word_at(buf: &Buffer, caret: usize) -> (usize, String) {
         end += c.len_utf8();
     }
     (ls + start, line[start..end].to_string())
-}
-
-/// `(start of the identifier the caret ends, its text)`.
-fn word_before(buf: &Buffer, caret: usize) -> (usize, String) {
-    let ls = buf.line_start(buf.line_of(caret));
-    let line = buf.slice(ls..caret);
-    let start = line
-        .char_indices()
-        .rev()
-        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
-        .map(|(i, c)| i + c.len_utf8())
-        .unwrap_or(0);
-    (ls + start, line[start..].to_string())
 }
 
 impl Kawoosh {
@@ -413,36 +308,11 @@ impl Kawoosh {
                 }
                 Event::Completion {
                     buffer,
+                    version,
                     offset,
                     items,
-                    ..
-                } => {
-                    let Some((b, start)) = self.lsp.requested.take() else {
-                        continue;
-                    };
-                    if b != buffer || self.pane_mode() != Mode::Insert {
-                        continue;
-                    }
-                    let Some(v) = self.focused_view() else {
-                        continue;
-                    };
-                    if self.ed.views[v].buffer != buffer {
-                        continue;
-                    }
-                    let caret = self.ed.views[v].sels.primary().head;
-                    if caret < offset || caret < start {
-                        continue;
-                    }
-                    let typed = self.ed.buffers[buffer].slice(start..caret);
-                    // A server with nothing to say: the buffer's words,
-                    // for a word begun.
-                    let items = if items.is_empty() && !typed.is_empty() {
-                        word_items(&self.ed.buffers[buffer], start, &typed)
-                    } else {
-                        items
-                    };
-                    self.offer_completion(buffer, start, items, &typed);
-                }
+                    incomplete,
+                } => self.completion_lsp_answered(buffer, version, offset, items, incomplete),
                 Event::Capabilities { languages, caps } => {
                     for l in languages {
                         self.lsp.caps.insert(l, caps.clone());
@@ -463,7 +333,9 @@ impl Kawoosh {
                     self.lsp.sent.remove(&buffer);
                 }
                 Event::Symbols { token, result } => {
-                    if let Some((name, then)) = self.lsp.symbol_asks.remove(&token) {
+                    if self.completion.asked_symbols(token) {
+                        self.completion_symbols(token, result);
+                    } else if let Some((name, then)) = self.lsp.symbol_asks.remove(&token) {
                         self.hover_symbol_found(&name, then, result);
                     } else if let Some(rt) = &self.scripting.rt {
                         rt.symbols_answered(token, result);
@@ -1132,8 +1004,10 @@ impl Kawoosh {
             runs: Vec::new(),
         };
         self.apply_diagnostics(id, clear, Vec::new());
-        self.lsp.completion = None;
-        self.lsp.requested = None;
+        // Its server's answer will not come; the completion goes on
+        // with the rest — a server found missing as a word is typed
+        // ended the session under the keys.
+        self.completion.lsp_gone(id);
     }
 
     /// The server `language` names — its `lsp.NAME`, else the one
@@ -2027,34 +1901,27 @@ impl Kawoosh {
     /// there takes one (`lsp accept N`). The keys come back to the
     /// text, in insert mode, when the picker closes.
     fn open_candidates(&mut self) {
-        let Some((_, typed)) = self.completion_typed() else {
+        let Some((typed, items, at)) = self.completion_list() else {
             self.ed.message = "no candidates".into();
             return;
         };
-        let c = self.lsp.completion.as_ref().unwrap();
-        if c.items.is_empty() {
-            self.ed.message = "no candidates".into();
-            return;
-        }
-        let snap: Vec<CandidateSnap> = c
-            .items
-            .iter()
+        let snap: Vec<CandidateSnap> = items
+            .into_iter()
             .enumerate()
             .map(|(i, it)| CandidateSnap {
                 index: i + 1,
-                label: it.label.clone(),
-                insert: it.insert.clone(),
-                kind: it.kind.map(completion_kind_name).unwrap_or("").to_string(),
-                detail: it.detail.clone().unwrap_or_default(),
-                documentation: it.documentation.clone().unwrap_or_default(),
+                insert: it.text().to_string(),
+                label: it.label,
+                kind: it.kind.to_string(),
+                detail: it.detail.unwrap_or_default(),
+                documentation: it.documentation.unwrap_or_default(),
             })
             .collect();
-        let current = c.filtered.get(c.index).map(|i| i + 1).unwrap_or(1);
         let Some(rt) = self.scripting.rt.clone() else {
             self.ed.message = "the candidates picker needs lua".into();
             return;
         };
-        rt.set_candidates(Some(Rc::new(snap)), current);
+        rt.set_candidates(Some(Rc::new(snap)), at + 1);
         self.lsp.candidates_from = Some(self.layout.focused());
         let query = typed.replace('\\', "\\\\").replace('"', "\\\"");
         self.run_lua_source(
@@ -2079,32 +1946,12 @@ impl Kawoosh {
             return;
         };
         rt.set_candidates(None, 0);
-        let Some(c) = self.lsp.completion.take() else {
-            self.ed.message = "the completion is gone".into();
-            return;
-        };
-        let (buffer, start) = (c.buffer, c.start);
-        let target = self
+        let from = self
             .lsp
             .candidates_from
             .take()
-            .and_then(|p| self.view_of(p))
-            .filter(|v| self.ed.views[*v].buffer == buffer)
-            .or_else(|| {
-                self.ed
-                    .views
-                    .iter()
-                    .find(|(_, v)| v.buffer == buffer)
-                    .map(|(k, _)| k)
-            });
-        let Some(v) = target else {
-            self.ed.message = "the buffer being completed is not on show".into();
-            return;
-        };
-        let caret = self.ed.views[v].sels.primary().head;
-        let end = caret.max(start);
-        self.ed.apply_edits(buffer, &[(start..end, snap.insert)]);
-        self.follow_caret = true;
+            .and_then(|p| self.view_of(p));
+        self.completion_take(&snap.insert, from);
     }
 
     /// A request about the caret: the document goes first, so the
@@ -2199,71 +2046,6 @@ impl Kawoosh {
         out
     }
 
-    fn request_completion(&mut self) {
-        let Some((_, buffer, offset)) = self.lsp_at_caret() else {
-            return;
-        };
-        let (start, typed) = word_before(&self.ed.buffers[buffer], offset);
-        // Nobody serves the language: the buffer's words, at once — for
-        // a word begun, not after a `.` with nothing typed yet.
-        let language = self.ed.buffers[buffer].language.to_string();
-        if !self.lsp_serves(&language) {
-            if typed.is_empty() {
-                return;
-            }
-            let items = word_items(&self.ed.buffers[buffer], start, &typed);
-            self.offer_completion(buffer, start, items, &typed);
-            return;
-        }
-        self.lsp.requested = Some((buffer, start));
-        let version = self.ed.buffers[buffer].version();
-        self.positional_cmd(Cmd::Completion {
-            buffer,
-            offset,
-            version,
-        });
-    }
-
-    /// `items` as the completion in progress, filtered by `typed`, or
-    /// none when nothing matches.
-    fn offer_completion(
-        &mut self,
-        buffer: BufferId,
-        start: usize,
-        items: Vec<CompletionItem>,
-        typed: &str,
-    ) {
-        let mut c = Completion {
-            buffer,
-            start,
-            items,
-            filtered: Vec::new(),
-            index: 0,
-        };
-        c.refilter(typed);
-        self.lsp.completion = (!c.filtered.is_empty()).then_some(c);
-    }
-
-    /// The typed prefix of the completion in progress, if the caret is
-    /// still inside the word it started on.
-    pub fn completion_typed(&self) -> Option<(ViewId, String)> {
-        let c = self.lsp.completion.as_ref()?;
-        let v = self.focused_view()?;
-        let view = &self.ed.views[v];
-        if view.buffer != c.buffer {
-            return None;
-        }
-        let caret = view.sels.primary().head;
-        if caret < c.start {
-            return None;
-        }
-        let typed = self.ed.buffers[c.buffer].slice(c.start..caret);
-        if typed.chars().any(|ch| !(ch.is_alphanumeric() || ch == '_')) {
-            return None;
-        }
-        Some((v, typed))
-    }
-
     /// The mode of the focused editor pane's own view — what the LSP's
     /// typing and completion are about — normal while a prompt or a
     /// field has the keys, whatever mode that field is in.
@@ -2274,93 +2056,6 @@ impl Kawoosh {
         self.focused_view()
             .map(|v| self.ed.mode(v))
             .unwrap_or(Mode::Normal)
-    }
-
-    /// Keys a completion in progress takes before the engine sees them.
-    /// Returns true when consumed.
-    pub(crate) fn completion_key(&mut self, stroke: &KeyStroke) -> bool {
-        if self.lsp.completion.is_none() || self.pane_mode() != Mode::Insert {
-            return false;
-        }
-        let Some((v, typed)) = self.completion_typed() else {
-            self.lsp.completion = None;
-            return false;
-        };
-        let note = stroke.notation();
-        let c = self.lsp.completion.as_mut().unwrap();
-        match note.as_str() {
-            "<C-n>" | "<Down>" => {
-                c.index = (c.index + 1) % c.filtered.len().max(1);
-                true
-            }
-            "<C-p>" | "<Up>" => {
-                c.index = (c.index + c.filtered.len().max(1) - 1) % c.filtered.len().max(1);
-                true
-            }
-            // Only a ghost the pane drew: `<CR>` in a rendered markdown
-            // paragraph, which draws none, is a newline.
-            "<Tab>" | "<C-y>" | "<CR>" if self.ghost_shown && c.ghost(&typed).is_some() => {
-                let rest = c.ghost(&typed).unwrap();
-                self.lsp.completion = None;
-                self.ed.insert_text(v, &rest);
-                true
-            }
-            "<C-e>" => {
-                self.lsp.completion = None;
-                true
-            }
-            "<Esc>" => {
-                self.lsp.completion = None;
-                false
-            }
-            _ => false,
-        }
-    }
-
-    /// After an insert-mode key: keep the completion's filter in step
-    /// with the word, or ask for one when a word starts — only for a
-    /// key typed into the text (`was_insert`), not the `i` that opened
-    /// insert mode.
-    pub(crate) fn completion_after_key(&mut self, stroke: &KeyStroke, was_insert: bool) {
-        // The key that opened the candidates picker took the keys
-        // there: the completion is what the picker lists, and stays
-        // until it picks or closes.
-        if self.lsp.candidates_from.is_some() && self.focused_view().is_none() {
-            return;
-        }
-        if self.pane_mode() != Mode::Insert {
-            self.lsp.completion = None;
-            return;
-        }
-        match self.completion_typed() {
-            Some((_, typed)) => {
-                let c = self.lsp.completion.as_mut().unwrap();
-                c.refilter(&typed);
-                if c.filtered.is_empty() {
-                    self.lsp.completion = None;
-                }
-            }
-            None => self.lsp.completion = None,
-        }
-        // A typed identifier char, or one of the server's trigger
-        // characters (`.` and `:` for one that names none), asks.
-        let typed_text = stroke.text.as_deref().unwrap_or("");
-        let triggers = self
-            .focused_view()
-            .map(|v| self.ed.views[v].buffer)
-            .and_then(|b| self.lsp.caps.get(self.ed.buffers[b].language.as_ref()))
-            .map(|c| c.triggers.clone())
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| vec![".".into(), ":".into()]);
-        let trigger = was_insert
-            && !stroke.ctrl
-            && !stroke.alt
-            && (typed_text.chars().all(|c| c.is_alphanumeric() || c == '_')
-                && !typed_text.is_empty()
-                || triggers.iter().any(|t| t == typed_text));
-        if trigger && self.lsp.completion.is_none() && self.lsp.requested.is_none() {
-            self.request_completion();
-        }
     }
 }
 
@@ -2402,8 +2097,8 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("lsp complete")
-                .doc("the completions at the caret: the server's, else the buffer's words"),
-            |k, _| k.request_completion(),
+                .doc("a completion at the caret, from every source, whatever `completion.trigger` says but `off`"),
+            |k, _| k.completion_ask(),
         ),
         cmd(
             Spec::new("lsp candidates")

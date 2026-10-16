@@ -32,6 +32,13 @@ const KEYS: &[(&str, Draws)] = &[
     ("markdown.reveal", Draws::Editor),
     ("markdown.wrap", Draws::Editor),
     ("vcs.signs", Draws::Editor),
+    ("completion.trigger", Draws::Editor),
+    ("completion.ghost", Draws::Editor),
+    ("completion.popup", Draws::Editor),
+    ("completion.sources", Draws::Editor),
+    ("completion.fuzzy", Draws::Editor),
+    ("completion.max_items", Draws::Editor),
+    ("completion.words.min_length", Draws::Editor),
 ];
 
 /// Which panes a pane's setting means something in.

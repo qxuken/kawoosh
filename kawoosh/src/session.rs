@@ -143,13 +143,16 @@ pub enum PaneData {
 
 impl Kawoosh {
     pub fn open_store(&mut self, path: Option<&std::path::Path>) {
-        let store = match path {
-            Some(p) => Store::open(p),
-            None => match kawoosh_systems::store::state_path() {
-                Some(p) => Store::open(&p),
-                None => return,
-            },
+        let Some(path) = path
+            .map(std::path::Path::to_path_buf)
+            .or_else(kawoosh_systems::store::state_path)
+        else {
+            return;
         };
+        let store = Store::open(&path);
+        if store.is_ok() {
+            self.store_path = Some(path);
+        }
         match store {
             Ok(s) => {
                 let s = Rc::new(s);

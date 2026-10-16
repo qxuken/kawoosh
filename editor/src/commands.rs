@@ -6221,6 +6221,19 @@ pub fn default_keymap(km: &mut Keymap) {
     for (k, c) in i {
         km.bind(Insert, k, c);
     }
+    // A completion's keys (docs/design/completion.md Decision 3): local
+    // to the `completion` fact, which holds while one is on show, so
+    // `<Tab>` is a tab and `<C-n>` nothing anywhere else; `<CR>` and
+    // the arrows are never a completion's.
+    for (k, c) in [
+        ("<Tab>", "completion accept"),
+        ("<C-y>", "completion accept"),
+        ("<C-n>", "completion next"),
+        ("<C-p>", "completion prev"),
+        ("<C-e>", "completion close"),
+    ] {
+        km.bind_local("completion", Insert, k, c, &[]);
+    }
     // The text keys every other line on a Mac answers — a buffer's,
     // the prompt's, a field's, all insert mode — erases as `<C-w>` and
     // `<C-u>` are: by a word on ⌥, the word keys on Ctrl where there is

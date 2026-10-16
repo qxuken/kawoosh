@@ -343,6 +343,77 @@ impl Matcher {
     }
 }
 
+/// One needle scored against one row at a time, its tables kept from
+/// row to row: completion's rescan (docs/design/completion.md Decision
+/// 6), which scores the candidates that survived the last key and no
+/// list made for them. The needle is one term, a word being typed; a
+/// row's letters after the last one matched do not count against it,
+/// so a word typed finds every word it begins as good as one another
+/// and the rest of the ranking decides between them.
+pub struct Single {
+    term: Term,
+    tables: Tables,
+    entry: Entry,
+}
+
+impl Single {
+    pub fn new(needle: &str) -> Self {
+        Self {
+            term: Term::new(needle.chars().collect()),
+            tables: Tables::default(),
+            entry: Entry {
+                chars: Vec::new(),
+                lower: Vec::new(),
+                bytes: Vec::new(),
+            },
+        }
+    }
+
+    /// How well the needle matches `row`, None when it does not: fzy's
+    /// score with no trailing gap, infinite for the row itself (in
+    /// either case, for a needle without a capital).
+    pub fn score(&mut self, row: &str) -> Option<f64> {
+        // Most rows miss: ruled out by one pass over the row as it is,
+        // before anything is copied.
+        let t = &self.term;
+        let mut want = t.chars.iter().peekable();
+        for c in row.chars().take(HAYSTACK_MAX) {
+            let Some(&&w) = want.peek() else { break };
+            let c = if t.sensitive {
+                c
+            } else if c.is_ascii() {
+                c.to_ascii_lowercase()
+            } else {
+                c.to_lowercase().next().unwrap_or(c)
+            };
+            if c == w {
+                want.next();
+            }
+        }
+        if want.peek().is_some() || t.chars.is_empty() {
+            return None;
+        }
+        let e = &mut self.entry;
+        e.chars.clear();
+        e.lower.clear();
+        for c in row.chars().take(HAYSTACK_MAX) {
+            e.chars.push(c);
+            e.lower.push(c.to_lowercase().next().unwrap_or(c));
+        }
+        let t = &self.term;
+        let hay = if t.sensitive { &e.chars } else { &e.lower };
+        let (n, m) = (t.chars.len(), hay.len());
+        let whole = compute(&t.chars, hay, &e.chars, &mut self.tables);
+        if n == m {
+            return Some(whole);
+        }
+        // The best with the needle's last letter anywhere: the last
+        // row of `D`, before the trailing gap is counted.
+        let last = &self.tables.d[(n - 1) * m..n * m];
+        Some(last.iter().copied().fold(SCORE_MIN, f64::max))
+    }
+}
+
 /// One query over a list made for it.
 pub fn fuzzy<S: AsRef<str>>(
     needle: &str,
@@ -378,6 +449,21 @@ mod tests {
         );
         // An exact match is unbeatable.
         assert_eq!(order("lib", &["lib.rs", "lib", "liberty"])[0], "lib");
+    }
+
+    /// Completion's scorer: a word typed scores every word it begins
+    /// alike, however long, above a match in a word's middle.
+    #[test]
+    fn a_single_needle_does_not_count_the_rest_of_a_word() {
+        let mut s = Single::new("hel");
+        let a = s.score("hello").unwrap();
+        let b = s.score("helper_of_many_letters").unwrap();
+        assert_eq!(a, b);
+        assert!(s.score("athelstan").unwrap() < a);
+        assert_eq!(s.score("xyz"), None);
+        assert_eq!(s.score("HEL"), Some(f64::INFINITY));
+        let mut s = Single::new("Hel");
+        assert_eq!(s.score("hello"), None, "a capital is matched as written");
     }
 
     #[test]

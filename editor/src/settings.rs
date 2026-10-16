@@ -716,6 +716,34 @@ const DOCS: &[(&str, &str)] = &[
         "the symbols the caret is inside, on the pane's title bar",
     ),
     (
+        "completion.trigger",
+        "when completion asks: `typing` as a word starts and on a trigger character, `endline_only` the same where nothing follows the caret on its line, `manual` only on `<C-Space>`, `off` never",
+    ),
+    (
+        "completion.ghost",
+        "the candidate's rest drawn faintly after the caret: `always`, `endline` only where nothing follows the caret, `never`",
+    ),
+    (
+        "completion.popup",
+        "the list of candidates under the caret: `always`, `fallback` wherever no ghost is drawn, `never` (not built yet: every value is `never`)",
+    ),
+    (
+        "completion.sources",
+        "where candidates come from, each asked and merged, earlier ranking over later: `lsp`, `path`, `snippets`, `buffer_symbols`, `buffer_words`, `workspace_symbols`",
+    ),
+    (
+        "completion.fuzzy",
+        "candidates match fuzzily, as a picker's rows do; `false` by the word's beginning alone",
+    ),
+    (
+        "completion.max_items",
+        "the most candidates ranked in full; the rest are counted",
+    ),
+    (
+        "completion.words.min_length",
+        "the shortest word `buffer_words` offers",
+    ),
+    (
         "statusline.layout",
         "the status line's modules left to right, `\"gap\"` a spring, `\"...\"` the rest",
     ),
@@ -1239,6 +1267,32 @@ impl Settings {
         // after the file's name (docs/design/breadcrumbs.md);
         // `:breadcrumbs` flips one pane.
         defaults.set("editor.breadcrumbs", Setting::Bool(true));
+        // Completion (docs/design/completion.md): when it asks, how it
+        // shows — a ghost, and the popup to come (round 2) — and what
+        // it offers, merged and ranked; read through the pane's scope,
+        // so a language, a project or `:setlocal` says its own. Prose
+        // asks only when asked (Decision 1).
+        defaults.set("completion.trigger", Setting::Str("typing".into()));
+        defaults.set("completion.ghost", Setting::Str("endline".into()));
+        defaults.set("completion.popup", Setting::Str("fallback".into()));
+        defaults.set(
+            "completion.sources",
+            Setting::List(
+                ["lsp", "path", "snippets", "buffer_symbols", "buffer_words"]
+                    .iter()
+                    .map(|s| Setting::Str(s.to_string()))
+                    .collect(),
+            ),
+        );
+        defaults.set("completion.fuzzy", Setting::Bool(true));
+        defaults.set("completion.max_items", Setting::Int(10));
+        defaults.set("completion.words.min_length", Setting::Int(3));
+        for lang in ["markdown", "gitcommit", "text"] {
+            defaults.set(
+                &format!("language.{lang}.completion.trigger"),
+                Setting::Str("manual".into()),
+            );
+        }
         // The status line's modules (docs/design/statusline.md), left
         // to right: kawoosh's own (`mode`, `recording`, `path`, `keys`,
         // `strip`, `selections`, `position`, `percent`), a
@@ -1379,6 +1433,12 @@ impl Settings {
             ("tabs.directory", words(&["auto", "always", "never"])),
             ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
+            (
+                "completion.trigger",
+                words(&["typing", "endline_only", "manual", "off"]),
+            ),
+            ("completion.ghost", words(&["always", "endline", "never"])),
+            ("completion.popup", words(&["always", "fallback", "never"])),
             ("grammars.install", words(&["ask", "auto", "never"])),
             ("markdown.reveal", words(&["line", "span", "none"])),
             ("markdown.navigation", words(&["line", "row"])),
@@ -1953,6 +2013,13 @@ mod tests {
             [
                 "buffers.scope",
                 "clipboard.system",
+                "completion.fuzzy",
+                "completion.ghost",
+                "completion.max_items",
+                "completion.popup",
+                "completion.sources",
+                "completion.trigger",
+                "completion.words.min_length",
                 "diagram.render",
                 "editor.bell",
                 "editor.breadcrumbs",
@@ -1986,6 +2053,7 @@ mod tests {
                 "language.css.tabstop",
                 "language.diff.trim_trailing_whitespace",
                 "language.gitcommit.comment",
+                "language.gitcommit.completion.trigger",
                 "language.gitcommit.trim_trailing_whitespace",
                 "language.go.comment",
                 "language.go.comment_block",
@@ -2005,6 +2073,7 @@ mod tests {
                 "language.lua.comment_block",
                 "language.lua.tabstop",
                 "language.markdown.comment_block",
+                "language.markdown.completion.trigger",
                 "language.markdown.tabstop",
                 "language.markdown.trim_trailing_whitespace",
                 "language.nu.comment",
@@ -2014,6 +2083,7 @@ mod tests {
                 "language.scheme.comment",
                 "language.scheme.tabstop",
                 "language.sql.comment",
+                "language.text.completion.trigger",
                 "language.toml.comment",
                 "language.tsx.comment",
                 "language.tsx.comment_block",

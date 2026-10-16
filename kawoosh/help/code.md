@@ -434,18 +434,62 @@ setting for this: it is the compiler option `noErrorTruncation`, so put
 
 ### Completion
 
-Completion is shown in place: the rest of the best candidate appears
-as faint "ghost" text after the caret, with no menu. It asks as a word
-starts and after the language's trigger characters. With no server, the
-buffer's own words are offered.
+Completion offers what the word you are typing could be. The best
+candidate's rest is drawn faintly after the caret, a "ghost", where
+nothing follows the caret on its line; mid-line nothing is drawn (a list
+of candidates comes in a later version). In code it asks as a word
+starts, after the language server's trigger characters (`.`), and after
+a path's `/`; in Markdown, commit messages and plain text it asks only
+when you press `<C-Space>`.
 
 | keys (insert mode) | what |
 |---|---|
-| `<C-n>` `<Down>` / `<C-p>` `<Up>` | the next, previous candidate |
-| `<Tab>` `<C-y>` `<CR>` | take the candidate |
-| `<C-e>` | drop the completion |
+| `<Tab>` `<C-y>` | take the candidate |
+| `<C-n>` / `<C-p>` | the next, previous candidate |
+| `<C-e>` | close it; typing on in the word asks nothing more |
 | `<C-Space>` | ask for completions now |
 | `<C-x>` | the candidates in a picker, with their kind, signature and documentation |
+
+The first four hold only while a ghost is on show: otherwise `<Tab>` is
+a tab. `<CR>` is always a newline and the arrows always move. They are
+ordinary keymap commands — `completion accept`, `completion next`,
+`completion prev`, `completion close` — bound in a place of their own,
+`completion`, so you rebind them as any key:
+
+```lua
+kawoosh.map("i", "<C-l>", "completion accept", { scope = "completion" })
+kawoosh.unmap("i", "<Tab>", { scope = "completion" })
+```
+
+Candidates come from every source in `completion.sources`, merged:
+the language server (`lsp`), the files after `./`, `../`, `~/` or `/`
+relative to the buffer's file (`path`; on a remote machine, there),
+the functions, types and constants the syntax finds in open buffers
+(`buffer_symbols`), the words of every open buffer (`buffer_words`),
+and, if you add it, the server's workspace symbols from three typed
+characters (`workspace_symbols`). A private buffer's words are never
+offered ([secrets](memory.md#secrets)). Candidates match fuzzily, as in a picker; then
+the source's place in the list decides, then how near (this buffer and
+fewer lines away, then the files you used lately, then other buffers),
+then what you accepted before in this project, then what you yanked or
+searched for lately.
+
+```lua
+return {
+  completion = {
+    trigger = "typing",    -- typing | endline_only | manual | off
+    ghost   = "endline",   -- always | endline | never
+    sources = { "lsp", "path", "snippets", "buffer_symbols", "buffer_words" },
+    fuzzy   = true,        -- false: candidates that begin with the word
+  },
+  language = {
+    markdown = { completion = { trigger = "typing" } },
+  },
+}
+```
+
+`:setlocal completion.trigger=off` turns it off in one pane. `snippets`
+does nothing yet.
 
 ## Formatting
 

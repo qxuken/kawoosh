@@ -180,6 +180,8 @@ impl Kawoosh {
         b.private = private;
         if private {
             self.lsp_close_buffer(id);
+            // No source from now on, its words wiped (Decision 1).
+            self.completion_forget_buffer(id);
         }
     }
 
@@ -293,6 +295,30 @@ impl Kawoosh {
             merged.retain(|m| !(m.start <= shown.start && shown.end <= m.end));
         }
         merged
+    }
+
+    /// Buffer `id`'s masks as an index of its words keeps them out
+    /// (completion.md, the round-1 review): the masks now, the one `zv`
+    /// shows among them, sorted and merged; and what they were worked
+    /// out under — the secrets' generation and the settings' version —
+    /// so an index knows when the masks moved with no edit.
+    pub(crate) fn index_masks(&mut self, id: BufferId) -> (Vec<Range<usize>>, (u64, u64)) {
+        let mut masks = self.masks_of(id);
+        if let Some((b, shown, _)) = &self.secrets.revealed
+            && *b == id
+        {
+            masks.push(shown.clone());
+            masks.sort_by_key(|r| (r.start, r.end));
+            let mut merged: Vec<Range<usize>> = Vec::with_capacity(masks.len());
+            for r in masks {
+                match merged.last_mut() {
+                    Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+                    _ => merged.push(r),
+                }
+            }
+            masks = merged;
+        }
+        (masks, (self.secrets.generation, self.ed.settings.version()))
     }
 
     /// Multibuffer `id`'s excerpts' masks, each source's carried to
