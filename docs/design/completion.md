@@ -2,7 +2,8 @@
 
 Status: designed 2026-10-16/17 with the user, over six rounds of
 questions, from the todo's "add autocompletion settings (including
-disabling)". Not built. The decisions below are the rounds' answers,
+disabling)". Round 1 of the build (the model and the settings) built
+2026-10-17: "Built" at the end says how, and where it departs. The decisions below are the rounds' answers,
 each with the alternative it beat. The build is five rounds (the last
 section), one session each. Words are as [GLOSSARY.md](../../GLOSSARY.md)
 has them.
@@ -290,3 +291,76 @@ No key lists, no brackets setting.
 5. **Signature help and `callable`** (Decision 10's rest).
 
 One session each, in order, each merged before the next.
+
+## Built
+
+### Round 1, 2026-10-17: the model and the settings
+
+`kawoosh/src/completion.rs` (completion's half; lsp.rs keeps asking
+the server and the candidates picker), `lua/src/fuzzy.rs`'s `Single`,
+`systems/src/words.rs`, the state db's `completion_accepts`, the
+settings in `editor/src/settings.rs`, the keys in
+`editor/src/commands.rs` local to the `completion` fact.
+
+As designed: Decision 1's four triggers through every layer (the
+pane's `:setlocal` too — `completion.trigger`, `ghost`, `popup`,
+`sources` and `fuzzy` are pane settings); Decision 2's two axes, the
+ghost the only display, `popup` read and not drawn; Decision 3's
+commands and local maps, `<CR>` and the arrows given back; Decision
+4's sources but `snippets` (a no-op until round 3); Decision 5's
+ranking; Decision 6's model.
+
+Where the build departs, or says more than the decisions did:
+
+- **The tie-breakers bite in buckets.** Compared field by field, a
+  float would leave nothing for the next field to decide, so each is
+  coarse: the match is fzy's score ×10 rounded, with the letters after
+  the last matched one not counted (`Single`) — a word typed finds
+  every word it begins alike; nearness is the same buffer by powers of
+  two of lines away, then the files attended lately (the ring's last
+  forty rows), then other open buffers; frecency is its score ×4
+  rounded, halving in a week. Two words on one line are in the text's
+  order (the index keeps lines, not columns).
+- **The ghost-only look walks what a ghost can show.** `<C-n>` and
+  `<C-p>` go round the candidates that continue the word as typed; a
+  fuzzy-only match, or one in another case (`Widget` for `wid`), is
+  ranked and reachable through `<C-x>`, and is the popup's in round 2.
+  Decision 5's "or `<C-n>`'s in a ghost-only look" is left for round 2
+  to settle beside the popup.
+- **The session's end.** A key that moves the caret with no edit ends
+  it, even onto the word's own start (`<Home>`); typing or deleting in
+  the word follows it; an edit whose length is not the word's is an
+  edit elsewhere, and so is any version change no key followed (a
+  server's edit, a reload, checked each frame). A session with no
+  candidates stays, quiet, for its word rather than asking at every
+  key; the server is asked again only when it said its list was
+  incomplete (`isIncomplete`, now read). `completion close` keeps the
+  session, closed, so typing on in the word asks nothing.
+- **What asks.** A word begun (a letter, a digit, `_`), a server's
+  trigger character (`.` and `:` for one that names none), or a `/`
+  that ends a path. A `/` or `//` alone — division, a comment — is a
+  path's only on `<C-Space>`. Words and symbols are offered for a word
+  begun, never after a trigger with nothing typed. A path's session
+  lists the directory (and asks the server where `/` is its trigger,
+  or when asked); it offers no words.
+- **The indexes.** `buffer_words`: an io job per buffer whose index is
+  older than it, the first 2 MiB of its text, 50,000 distinct words at
+  most, and the stale index read until the fresh one lands. A word
+  the same as the one typed is never offered; one typed earlier and
+  left half-done is a word like any other. `buffer_symbols`: the
+  outlines of the buffers the syntax thread holds a tree of (those on
+  show, or shown since), asked at the tree's version.
+- **The signals.** The texts are the memory's moments of the last ten
+  minutes, none a secret's; the searches are the search prompt's last
+  twenty. `*` and the project search do not reach that history yet.
+  Frecency is not kept for a private buffer.
+- **`workspace_symbols`** is asked once a session, 150 ms after the
+  third character, and narrowed by the rescan as the word grows.
+
+Measured with `kawoosh/tests/completion.rs`'s
+`timing_a_keystroke_and_a_frame` (dev profile, a 20,000-line buffer of
+words, median / p90): a keystroke 0.63 / 5.65 ms before, 0.62 / 0.68
+ms after; a word's start 5.59 / 5.70 ms before (the buffer read on the
+frame), 2.26 / 2.34 ms after (forty thousand indexed words ranked);
+a frame 0.170 / 0.178 ms before, 0.171 / 0.182 ms after, a ghost on
+show.
