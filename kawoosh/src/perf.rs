@@ -371,6 +371,25 @@ impl Perf {
         self.log.is_some()
     }
 
+    /// The frame drawn last's lap `name`: its ms, and of them the ms
+    /// on a CPU — for a harness timing one system frame by frame.
+    pub fn last_lap(&self, name: &str) -> Option<(f32, Option<f32>)> {
+        let r = self.frames.back()?;
+        r.laps
+            .iter()
+            .find(|(n, ..)| *n == name)
+            .map(|(_, m, c)| (*m, *c))
+    }
+
+    /// The frame drawn last's span `name`: its ms summed, and how many.
+    pub fn last_span(&self, name: &str) -> Option<(f32, u32)> {
+        let r = self.frames.back()?;
+        r.spans
+            .iter()
+            .find(|(n, ..)| *n == name)
+            .map(|(_, m, k)| (*m, *k))
+    }
+
     /// The clock read for a pane's draw, when measuring, its [`part`]s
     /// gathered from now until [`Perf::pane`].
     pub fn pane_start(&self) -> Option<Instant> {

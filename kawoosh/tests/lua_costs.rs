@@ -379,6 +379,200 @@ fn vcs_statusline() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+// ------------------------------------------------------ 1b. status line
+
+/// One reading per frame of the "status line" lap and its spans.
+#[derive(Default)]
+struct Laps {
+    wall: Vec<f64>,
+    cpu: Vec<f64>,
+    spans: Vec<(&'static str, f64)>,
+}
+
+impl Laps {
+    fn add(&mut self, app: &Kawoosh) {
+        let Some((wall, cpu)) = app.perf.last_lap("status line") else {
+            return;
+        };
+        self.wall.push(wall as f64);
+        self.cpu.push(cpu.unwrap_or(0.0) as f64);
+        for name in [
+            "status: lua",
+            "status: modules",
+            "status: fit",
+            "status: draw",
+            "term foreground",
+        ] {
+            let m = app.perf.last_span(name).map_or(0.0, |(m, _)| m as f64);
+            match self.spans.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, total)) => *total += m,
+                None => self.spans.push((name, m)),
+            }
+        }
+    }
+
+    fn report(&self, label: &str) {
+        let n = self.wall.len().max(1) as f64;
+        let mut sorted = self.wall.clone();
+        sorted.sort_by(f64::total_cmp);
+        let at = |q: f64| sorted.get(((sorted.len() as f64 - 1.0) * q) as usize).copied();
+        eprintln!(
+            "  {label:<34} {:4} frames  mean {:.3} ms (cpu {:.3})  p50 {:.3}  p95 {:.3}  max {:.3}",
+            self.wall.len(),
+            self.wall.iter().sum::<f64>() / n,
+            self.cpu.iter().sum::<f64>() / n,
+            at(0.5).unwrap_or(0.0),
+            at(0.95).unwrap_or(0.0),
+            at(1.0).unwrap_or(0.0),
+        );
+        let spans: Vec<String> = self
+            .spans
+            .iter()
+            .map(|(name, total)| format!("{name} {:.3}", total / n))
+            .collect();
+        eprintln!("  {:<34} {}", "  of it, ms a frame:", spans.join(", "));
+    }
+}
+
+/// Frames for `secs` of wall time, about 60 a second as the window
+/// draws them, each one's status line lap kept.
+fn frames_for(d: &mut Drive, app: &mut Kawoosh, secs: f64) -> Laps {
+    let mut laps = Laps::default();
+    let until = Instant::now() + Duration::from_secs_f64(secs);
+    while Instant::now() < until {
+        d.advance(0.016);
+        d.frame(app);
+        laps.add(app);
+        std::thread::sleep(Duration::from_millis(14));
+    }
+    laps
+}
+
+/// The processes Lua started since the last ask, by their first two
+/// words, and how many times `vcs.moved` ran.
+fn spawned(app: &mut Kawoosh) -> String {
+    lua(
+        app,
+        r#"local s = {}
+           for k, n in pairs(_G.costs_spawned or {}) do s[#s + 1] = k .. " ×" .. n end
+           table.sort(s)
+           kawoosh.echo("vcs.moved ×" .. (_G.costs_moved or 0) .. "; " .. table.concat(s, ", "))
+           _G.costs_spawned, _G.costs_moved = {}, 0"#,
+    )
+}
+
+/// The status line as the user has it at work (2026-10-16: Perf showed
+/// "status line" at 0.40–0.53 ms a frame, worst 3.5–4.1 ms): the editor
+/// on a `dir:` listing of a git repository, the `vcs` branch module,
+/// and a terminal running a lazygit stand-in — a full-screen program
+/// redrawing ten times a second and rewriting `.git/index` as
+/// lazygit's `git status` does. The "status line" lap is read frame by
+/// frame (`Perf::last_lap`, measured because `KAWOOSH_PERF_LOG` is set,
+/// the log left in the sandbox), with what Lua started meanwhile:
+/// quiet, then churning with the listing focused, then with the
+/// terminal focused.
+#[test]
+#[ignore]
+fn statusline_lap() {
+    let _s = serial();
+    if !has("git", "--version") {
+        eprintln!("statusline_lap: git is not installed, skipped");
+        return;
+    }
+    let secs = env_usize("LUA_COSTS_SECS", 4) as f64;
+    let root = sandbox("statusline");
+    let repo = root.join("work").join("projects").join("app");
+    std::fs::create_dir_all(repo.join("src").join("routes")).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    for i in 0..30 {
+        std::fs::write(repo.join(format!("file_{i}.txt")), format!("{i}\n")).unwrap();
+    }
+    std::fs::write(repo.join("src/routes/index.tsx"), "x\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "first"]);
+    std::fs::write(repo.join("file_3.txt"), "changed\n").unwrap();
+    // The stand-in: the alternate screen, a frame drawn, `git status`
+    // and the index rewritten, ten times a second.
+    std::fs::write(
+        root.join("lazy.sh"),
+        "printf '\\033[?1049h'\ni=0\nwhile :; do\n  i=$((i+1))\n  printf '\\033[H\\033[2J lazygit stand-in, frame %d\\n' $i\n  git status --porcelain >/dev/null 2>&1\n  touch .git/index\n  sleep 0.1\ndone\n",
+    )
+    .unwrap();
+    let log = root.join("perf.log");
+    // SAFETY: serial, before the app's threads start.
+    unsafe {
+        std::env::set_var("KAWOOSH_PERF_LOG", &log);
+        std::env::set_var("SHELL", "/bin/sh");
+    }
+    eprintln!("\n== statusline_lap: {secs} s a phase, log {} ==", log.display());
+    let mut app = Kawoosh::new("t", "");
+    let mut d = boot(&mut app, 1600.0, 900.0);
+    app.set_cwd(&repo);
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"_G.costs_spawned, _G.costs_moved = {}, 0
+           local spawn = kawoosh.spawn
+           kawoosh.spawn = function(argv, o)
+             local k = type(argv) == "table" and ((argv[1] or "") .. " " .. (argv[2] or "")) or tostring(argv)
+             _G.costs_spawned[k] = (_G.costs_spawned[k] or 0) + 1
+             return spawn(argv, o)
+           end
+           local moved = kawoosh.vcs.moved
+           kawoosh.vcs.moved = function(r) _G.costs_moved = _G.costs_moved + 1 return moved(r) end
+           kawoosh.echo("ok")"#,
+    );
+    ex(&mut d, &mut app, "dir");
+    let (_, ok) = frames_until(&mut d, &mut app, 10, |d, _| {
+        texts(d).iter().any(|t| t.contains("main"))
+    });
+    if !ok {
+        eprintln!("no branch on the status line after 10 s: {:?}", texts(&d));
+    }
+    frames_for(&mut d, &mut app, 1.0);
+    spawned(&mut app);
+    let quiet = frames_for(&mut d, &mut app, secs);
+    quiet.report("quiet, listing focused");
+    eprintln!("    {}", spawned(&mut app));
+
+    let listing = app.layout.focused();
+    let t = app
+        .spawn_terminal(Some(&format!("sh {}", root.join("lazy.sh").display())), Some(&repo))
+        .expect("a terminal");
+    let term = app
+        .layout
+        .split(kawoosh::layout::SplitDir::V, kawoosh::layout::Content::Terminal(t));
+    app.layout.focus(listing);
+    frames_for(&mut d, &mut app, 1.0);
+    spawned(&mut app);
+    let churn = frames_for(&mut d, &mut app, secs);
+    churn.report("lazygit churning, listing focused");
+    eprintln!("    {}", spawned(&mut app));
+
+    app.layout.focus(term);
+    frames_for(&mut d, &mut app, 0.5);
+    spawned(&mut app);
+    let on_term = frames_for(&mut d, &mut app, secs);
+    on_term.report("lazygit churning, terminal focused");
+    eprintln!("    {}", spawned(&mut app));
+    eprintln!("    status line texts: {:?}", {
+        let mut t = texts(&d);
+        t.retain(|s| s.contains("main") || s == "RAW" || s == "TERM" || s == "NOR");
+        t
+    });
+
+    // SAFETY: serial.
+    unsafe {
+        std::env::remove_var("KAWOOSH_PERF_LOG");
+    }
+    drop(app);
+    let lines = std::fs::read_to_string(&log).map_or(0, |s| s.lines().count());
+    eprintln!("  perf log: {lines} lines");
+    if std::env::var("LUA_COSTS_KEEP").is_err() {
+        std::fs::remove_dir_all(&root).ok();
+    }
+}
+
 // ------------------------------------------------------------ 2. picker
 
 /// `<leader>f` over a tree of 100k files: `walk_items` builds an item
