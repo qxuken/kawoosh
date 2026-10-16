@@ -554,26 +554,18 @@ fn highlight(
     let mut parse = None;
     let (runs, tree): (Vec<Vec<Run>>, Option<Tree>) = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
-            // What the parser reads instead of lines the grammar gets
-            // wrong (`Grammar::stand_ins`): a text with any is parsed
-            // whole and its tree not kept, so the next parse is whole
-            // too — an edit anywhere can change which lines they are.
-            let stood_in = stand_in(&g, text);
             // The last tree, told the edits, when it is this language's
             // and the journal reached back to it.
             let old = parsed
                 .by_buffer
                 .remove(&job.buffer)
-                .filter(|(lang, _, _)| *lang == job.language && stood_in.is_none())
+                .filter(|(lang, _, _)| *lang == job.language)
                 .and_then(|(_, old_text, mut tree)| {
                     let edits = job.edits.as_ref()?;
                     let edited = tell(&mut tree, edits, &old_text, text);
                     Some((tree, edited))
                 });
-            let mut read = |byte: usize, _: Point| match &stood_in {
-                Some(b) => &b[byte.min(b.len())..],
-                None => text.chunk_at(byte),
-            };
+            let mut read = |byte: usize, _: Point| text.chunk_at(byte);
             match parser.parse_with_options(&mut read, old.as_ref().map(|(t, _)| t), None) {
                 Some(tree) => {
                     if let Some((old_tree, edited)) = &old {
@@ -644,21 +636,15 @@ fn highlight(
                         block_spans = Some(lines);
                     }
                     let handle = tree.clone();
-                    if stood_in.is_none()
-                        && (g.indents.is_some()
-                            || g.textobjects.is_some()
-                            || g.injections.is_some())
-                    {
+                    if g.indents.is_some() || g.textobjects.is_some() || g.injections.is_some() {
                         parse = Some(Parse {
                             text: text.clone(),
                             grammar: g.clone(),
                         });
                     }
-                    if stood_in.is_none() {
-                        parsed
-                            .by_buffer
-                            .insert(job.buffer, (job.language.clone(), text.clone(), tree));
-                    }
+                    parsed
+                        .by_buffer
+                        .insert(job.buffer, (job.language.clone(), text.clone(), tree));
                     (runs, Some(handle))
                 }
                 None => (vec![Vec::new()], None),
@@ -698,34 +684,13 @@ fn highlight(
     }
 }
 
-/// The text as `g` reads it, when it has stand-ins for some of its
-/// lines (`Grammar::stand_ins`); None when it reads the text itself.
-fn stand_in(g: &Grammar, text: &text_buffer::Buffer) -> Option<Vec<u8>> {
-    let f = g.stand_ins?;
-    let mut bytes = text.collect();
-    let subs = f(std::str::from_utf8(&bytes).ok()?);
-    if subs.is_empty() {
-        return None;
-    }
-    for (r, with) in subs {
-        if r.end <= bytes.len() && r.len() == with.len() {
-            bytes[r].copy_from_slice(&with);
-        }
-    }
-    Some(bytes)
-}
-
 /// A [`TextJob`]: the text parsed whole by its language's grammar and
 /// its runs read, nothing kept for later.
 fn highlight_text(parser: &mut Parser, grammars: &mut Grammars, job: &TextJob) -> TextAnswer {
     let text = text_buffer::Buffer::with_text(job.text.as_bytes());
     let runs = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
-            let stood_in = stand_in(&g, &text);
-            let mut read = |byte: usize, _: Point| match &stood_in {
-                Some(b) => &b[byte.min(b.len())..],
-                None => text.chunk_at(byte),
-            };
+            let mut read = |byte: usize, _: Point| text.chunk_at(byte);
             match parser.parse_with_options(&mut read, None, None) {
                 Some(tree) => {
                     capture_runs(parser, grammars, &g, tree.root_node(), &text, 0..text.len())
@@ -2194,7 +2159,8 @@ mod tests {
     /// A table's row with an empty cell, typed a pipe at a time, leaves
     /// the rest of the document parsed: the heading after it a heading
     /// and not the table's (a lone `|`) or an ERROR's (`|||`), the row
-    /// the table's; and the parse after it, back to a plain text, whole.
+    /// the table's; each parse incremental, its tree kept and the same
+    /// as a fresh parse's.
     #[test]
     fn a_row_of_empty_cells_does_not_swallow_the_document() {
         let mut g = Grammars::default();
@@ -2220,6 +2186,8 @@ mod tests {
             for u in highlight(&mut parser, &mut g, &mut parsed, &job).updates {
                 buf.apply(u).unwrap();
             }
+            let kept = parsed.by_buffer.get(&BufferId::default());
+            kept.map(|(_, _, t)| t.root_node().to_sexp())
         };
         let blocks = |buf: &Buffer, o: usize| -> Vec<Block> {
             buf.runs(STRUCT_LAYER, o..o + 1)
@@ -2239,8 +2207,13 @@ mod tests {
         for typed in ["|", "|", "|"] {
             let at = buf.text()[row..].find('\n').unwrap() + row;
             buf.replace(at..at, typed);
-            run(&mut buf);
+            let kept = run(&mut buf);
             let line = &buf.text()[row..buf.text()[row..].find('\n').unwrap() + row];
+            assert_eq!(
+                kept,
+                Some(markdown_tree(&buf.text()).root_node().to_sexp()),
+                "after {line:?}"
+            );
             assert_eq!(block_at(&buf, "## Next"), [Block::H2], "after {line:?}");
             assert_eq!(block_at(&buf, "code"), [Block::Code], "after {line:?}");
             assert!(
@@ -2253,6 +2226,72 @@ mod tests {
         run(&mut buf);
         assert_eq!(block_at(&buf, "## Next"), [Block::H2]);
         assert!(block_at(&buf, "| c").contains(&Block::Table));
+    }
+
+    /// `src` parsed whole as markdown: the tree the thread keeps.
+    fn markdown_tree(src: &str) -> Tree {
+        let mut parsed = Parsed::default();
+        let buf = Buffer::new("t", src);
+        let job = Job {
+            buffer: BufferId::default(),
+            language: "markdown".into(),
+            snapshot: buf.snapshot(),
+            edits: None,
+        };
+        highlight(
+            &mut Parser::new(),
+            &mut Grammars::default(),
+            &mut parsed,
+            &job,
+        );
+        parsed.by_buffer.remove(&BufferId::default()).unwrap().2
+    }
+
+    /// Empty cells are the table's (fork commit 7f95414): `|| x |` a
+    /// header of two, `| a || c |` a row of three, a lone `|` a row of
+    /// none, `|||` one of two, each empty cell a zero-width
+    /// `pipe_table_cell` (a full one is its text and the space after);
+    /// the table ends at the blank line, the heading
+    /// after it is in the outline, and nothing is an ERROR.
+    #[test]
+    fn empty_cells_are_the_tables() {
+        let src = "|| x |\n|---|---|\n| a || c |\n|\n|||\n\n## After\n";
+        let tree = markdown_tree(src);
+        let root = tree.root_node();
+        assert!(!root.has_error(), "{}", root.to_sexp());
+        let mut rows: Vec<(String, Vec<usize>)> = Vec::new();
+        let mut walk = vec![root];
+        while let Some(n) = walk.pop() {
+            if matches!(n.kind(), "pipe_table_header" | "pipe_table_row") {
+                let cells = (0..n.named_child_count())
+                    .filter_map(|i| n.named_child(i as _))
+                    .filter(|c| c.kind() == "pipe_table_cell")
+                    .map(|c| c.byte_range().len())
+                    .collect();
+                let line = src[n.byte_range()].trim_end().to_string();
+                rows.push((line, cells));
+            }
+            walk.extend((0..n.child_count()).rev().filter_map(|i| n.child(i as _)));
+        }
+        assert_eq!(
+            rows,
+            [
+                ("|| x |".to_string(), vec![0, 2]),
+                ("| a || c |".into(), vec![2, 0, 2]),
+                ("|".into(), vec![]),
+                ("|||".into(), vec![0, 0]),
+            ]
+        );
+        let table = root
+            .named_child(0)
+            .and_then(|s| (0..s.named_child_count()).find_map(|i| s.named_child(i as _)))
+            .filter(|n| n.kind() == "pipe_table")
+            .expect("the table first");
+        assert_eq!(
+            &src[table.byte_range()],
+            "|| x |\n|---|---|\n| a || c |\n|\n|||\n"
+        );
+        assert_eq!(outline_lines("markdown", src), ["0 h2 After"]);
     }
 
     /// A language told to the thread highlights with the grammar it

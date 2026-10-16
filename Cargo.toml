@@ -90,13 +90,14 @@ bitflags = { version = "2.13.1", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "deref_mut"] }
 
 # tree-sitter-md from our fork, github.com/qxuken/tree-sitter-markdown,
-# branch split_parser: upstream 0.5.3, which has merged no grammar fix
+# branch kawoosh: upstream 0.5.3, which has merged no grammar fix
 # since 2026-02, with its inline grammar's code spans fixed (CommonMark
 # 0.31.2 examples 330, 331, 340, 343; docs/design/markdown.md, Built,
 # "Code spans are CommonMark's") and upstream's open fixes we took, each
-# a commit of its own. Regenerated with tree-sitter-cli 0.27.1.
+# a commit of its own, and empty pipe-table cells (7f95414).
+# Regenerated with tree-sitter-cli 0.27.1.
 [patch.crates-io]
-tree-sitter-md = { git = "https://github.com/qxuken/tree-sitter-markdown", rev = "24a0214e71e3ffb84023c988143b2b219455db45" }
+tree-sitter-md = { git = "https://github.com/qxuken/tree-sitter-markdown", rev = "7f954148e874b5a6a70134d39ad4a759c3741074" }
 
 [profile.release]
 # Symbols, one codegen unit and fat LTO: 48 MB down to 39 MB. Half of
