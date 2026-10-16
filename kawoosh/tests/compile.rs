@@ -829,3 +829,60 @@ kawoosh.compile_kind("mix", {
     assert!(!cmds(&app).iter().any(|(c, _)| c.starts_with("make")));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The panes of the tab on show.
+fn pane_count(app: &Kawoosh) -> usize {
+    let mut ps = Vec::new();
+    app.layout.tab().panes(&mut ps);
+    ps.len()
+}
+
+/// A compile asked from a pane that holds nothing — an empty scratch
+/// (`:enew`, the launcher's `s`), the launcher itself — takes that pane
+/// rather than a column beside it, and the scratch goes; a scratch with
+/// text in it keeps its pane (compile.md Decision 21).
+#[cfg(unix)]
+#[test]
+fn a_compile_from_an_empty_scratch_takes_its_pane() {
+    let dir = project("scratch", "return {}");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    ex(&mut d, &mut app, "enew");
+    let scratch = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
+    assert_eq!(scratch, "*scratch*");
+    let (pane, panes) = (app.layout.focused(), pane_count(&app));
+    ex(&mut d, &mut app, "compile echo one");
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("$ echo one\none"), "{out}");
+    assert_eq!(compile_pane(&app), Some(pane), "in the scratch's pane");
+    assert_eq!(pane_count(&app), panes, "no column more");
+    assert!(keys_in_compile(&app));
+    d.frame(&mut app);
+    assert!(
+        !app.ed.buffers.values().any(|b| b.name == "*scratch*"),
+        "the empty scratch swept"
+    );
+
+    // A scratch with something in it is kept, and its pane too.
+    ex(&mut d, &mut app, "enew");
+    d.keys(&mut app, "ikept");
+    d.key(&mut app, "escape", KeyMods::default());
+    let (pane, panes) = (app.layout.focused(), pane_count(&app));
+    ex(&mut d, &mut app, "compile echo two");
+    finished(&mut d, &mut app);
+    assert_ne!(compile_pane(&app), Some(pane), "not over the text");
+    assert_eq!(pane_count(&app), panes + 1, "a column of its own");
+
+    // The launcher asked from a split is filled as by any opener.
+    ex(&mut d, &mut app, "only");
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    let (pane, panes) = (app.layout.focused(), pane_count(&app));
+    assert_eq!(app.launcher_pane(), Some(pane), "a launcher");
+    ex(&mut d, &mut app, "compile echo three");
+    finished(&mut d, &mut app);
+    assert_eq!(compile_pane(&app), Some(pane), "in the launcher's pane");
+    assert_eq!(pane_count(&app), panes);
+    assert!(app.launcher_pane().is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}

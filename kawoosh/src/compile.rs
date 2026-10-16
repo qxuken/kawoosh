@@ -1277,9 +1277,11 @@ impl Kawoosh {
     }
 
     /// `buffer`, a run's, on show with the keys: the pane showing it
-    /// already; else one showing a run that has ended, which gives its
-    /// place — one pane of output, not one a command; else a column of
-    /// its own, a run still going left to be watched.
+    /// already; else the focused pane when it holds nothing — the
+    /// launcher, an empty scratch: the place asked for (Decision 21);
+    /// else one showing a run that has ended, which gives its place —
+    /// one pane of output, not one a command; else a column of its own,
+    /// a run still going left to be watched.
     fn compile_show(&mut self, buffer: BufferId) {
         let views: Vec<ViewId> = self
             .layout
@@ -1294,7 +1296,16 @@ impl Kawoosh {
                     .of(shows(self, v))
                     .is_some_and(|r| !r.running())
             });
-            if let Some(v) = ended {
+            let empty = self
+                .focused_view()
+                .filter(|v| self.is_empty_scratch(self.ed.views[*v].buffer));
+            if self.launcher_focused() {
+                let v = self.ed.add_view(buffer);
+                self.fill_or_open(
+                    crate::layout::Place::Column,
+                    crate::layout::Content::Editor(v),
+                );
+            } else if let Some(v) = empty.or(ended) {
                 self.show_buffer(v, buffer);
             }
         }

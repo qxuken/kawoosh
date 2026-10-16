@@ -588,7 +588,10 @@ apps/web*` when it runs somewhere other than the working directory.
 The same command in the same place runs into its buffer again; another
 leaves the first's output, and the first itself if it still runs,
 alone. A command that has ended gives its pane to the next one; one
-still running keeps it, and the next opens beside it. A map or a
+still running keeps it, and the next opens beside it. Run from a pane
+that holds nothing — an empty `*scratch*` (`:enew`, the launcher's
+`s`) or the launcher itself — the command takes that pane instead,
+and the empty scratch goes. A map or a
 `when` knows every one of them as `*compile*`
 (`buffer = "*compile*"`).
 

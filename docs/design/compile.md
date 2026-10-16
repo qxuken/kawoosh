@@ -15,7 +15,8 @@ for its command, then a buffer a command and directory, the same day
 2026-10-06 (Decision 12); the end said once, a location's pane and
 the session the same day (Decision 13); the note's "Not built"
 2026-10-07 (Decisions 14–18); the picker's order and cargo's release
-profile 2026-10-09 (Decisions 19 and 20). The calls
+profile 2026-10-09 (Decisions 19 and 20); a compile in an empty
+pane 2026-10-16 (Decision 21). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -819,6 +820,35 @@ Beaten: each release row beside its dev one (the top would be two
 builds before a test); `--release` on every row (a `check` or `clippy`
 under it reads the same code bar `cfg(debug_assertions)`, and a `test
 --release` is rare enough to type, or to name).
+
+### 21. A compile asked from an empty pane takes it
+
+*Added 2026-10-16, from the todo:* "compile in a empty scratch should
+replace it's content". From the launcher's `s`, or `:enew`, the pane
+holds an empty `*scratch*`; a `:compile` there opened a column beside
+it, leaving a pane of nothing next to the output.
+
+**A pane that holds nothing is the place asked for.** When the run is
+not on show already, `compile_show` puts it in the focused pane if that
+pane is the launcher (filled as every opener fills it, `fill_or_open`)
+or shows an empty scratch — before an ended run's pane gives its place
+(Decision 11), and before a column of its own. The scratch, left by its
+view, goes with the next sweep, as one a file replaced does.
+
+- **Empty** is what the sweep already calls one (`is_empty_scratch`,
+  shared with `sweep_scratches`): named `*scratch*`, no path, no hook,
+  no text, not a field's buffer. A scratch with a word in it keeps its
+  pane; so does one a plugin made (its hook), and a file, however
+  short.
+- **Only the focused pane**: an empty scratch elsewhere on screen is not
+  taken. The keys say where the user is; another pane's emptiness says
+  nothing about where the output should go.
+
+Beaten: the ended run's pane first (Decision 11's one pane of output) —
+from a launcher split off a compile pane, the run went back into the old
+pane and left the launcher asking, which is the column-beside problem
+again; replacing any unmodified scratch (an `*scratch*` with text
+pasted and not saved is still something).
 
 ## Not built
 
