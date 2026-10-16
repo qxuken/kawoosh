@@ -5,7 +5,10 @@ It takes the arguments kawoosh gives `ssh` and does locally what the real
 one would do on a host whose files are this machine's:
 
   -M -S CTL ... HOST       the master: says so, makes CTL, and stays until
-                           CTL is gone (`-O exit`). A host named `refuse`
+                           CTL is gone: told to (`-O exit`), it ends well;
+                           CTL taken away by a test, the connection
+                           dropped, it says so as OpenSSH does and exits
+                           255. A host named `refuse`
                            fails as a wrong password would; one named
                            `ask` asks for a password first (`secret`).
   -S CTL -O check HOST     0 while the master is up.
@@ -14,7 +17,9 @@ one would do on a host whose files are this machine's:
                            when CTL goes, as a channel dies with its
                            master.
   -S CTL [-T|-t] [-R SPEC] HOST -- CMD
-                           CMD run here, by sh. With `-R PORT:SOCKET`, TCP
+                           CMD run here, by sh — a terminal's (`-t`) ended
+                           with its master, as a channel is: killed, the
+                           drop said, 255. With `-R PORT:SOCKET`, TCP
                            on 127.0.0.1:PORT is forwarded to the unix
                            socket, as the real one forwards a host's port.
 
@@ -146,6 +151,7 @@ def main():
         sys.exit(0 if ctl and os.path.exists(ctl) else 255)
     if opts["O"] == "exit":
         if ctl and os.path.exists(ctl):
+            open(ctl + ".exit", "w").close()
             os.remove(ctl)
         sys.exit(0)
     if host.rsplit("@", 1)[-1] == "closed":
@@ -166,7 +172,11 @@ def main():
         print("fake ssh: master up for %s" % host, flush=True)
         while os.path.exists(ctl):
             time.sleep(0.05)
-        sys.exit(0)
+        if os.path.exists(ctl + ".exit"):
+            os.remove(ctl + ".exit")
+            sys.exit(0)
+        print("Connection to %s closed by remote host." % host, flush=True)
+        sys.exit(255)
     # Every channel goes through the master.
     if not (ctl and os.path.exists(ctl)):
         sys.stderr.write("Control socket connect(%s): No such file or directory\n" % ctl)
@@ -206,6 +216,18 @@ def main():
     for spec in opts["R"]:
         forward(spec)
     line = " ".join(cmd) if cmd else "/bin/sh -l"
+    if opts.get("t"):
+        # A terminal's channel ends with its master.
+        import subprocess
+        child = subprocess.Popen(["/bin/sh", "-c", line], env=env)
+        while child.poll() is None:
+            if not os.path.exists(ctl):
+                child.kill()
+                child.wait()
+                sys.stderr.write("Shared connection to %s closed.\r\n" % host)
+                sys.exit(255)
+            time.sleep(0.05)
+        sys.exit(child.returncode)
     if opts["R"]:
         # Stay while the forward is wanted: the command is a child.
         import subprocess

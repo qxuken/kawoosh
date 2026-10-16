@@ -11,7 +11,9 @@
 //! the domain's files (`Io::connect_domain`). What asked is done then:
 //! the file opened, the directory made the tab's. `:domain` lists the
 //! domains and how each stands; `:domain connect NAME`, `:domain
-//! disconnect NAME`. Quitting tells every master to go, since
+//! disconnect NAME`. A connection that ends by itself is said where it
+//! shows and its shells kept, and `:domain reconnect` brings them back
+//! (domains.md R2). Quitting tells every master to go, since
 //! `ControlPersist` would otherwise keep it past kawoosh.
 //!
 //! `ssh.command` names the binary (`ssh`), which is what the tests
@@ -56,6 +58,11 @@ pub enum State {
     Up { term: Option<TermId> },
     /// The last try failed, and why.
     Failed(String),
+    /// It was up, and its connection ended by itself — the files'
+    /// channel gone, the master ended — with ssh's word on it when it
+    /// said one (domains.md R2). Nothing of it is held; the next use,
+    /// `:domain reconnect` or `r` in a shell it took down connects again.
+    Dropped(Option<String>),
 }
 
 /// What waits for a domain to come up.
@@ -389,6 +396,104 @@ impl Kawoosh {
         true
     }
 
+    /// `:domain reconnect [NAME]` (R2): the domain connected afresh —
+    /// whatever is left of its connection let go first, so one that
+    /// hangs (the network gone, ssh not yet told) is made again too —
+    /// its shells back in their panes once it is up. NAME defaults to
+    /// the host the pane in front is on: its file's, its listing's, its
+    /// shell's, else the tab's directory's.
+    pub(crate) fn domain_reconnect(&mut self, name: Option<&str>) {
+        let name = match name {
+            Some(n) => n.to_string(),
+            None => {
+                let dir = self.here_dir();
+                match kawoosh_systems::fs::domain_of(&dir) {
+                    Some((n, _)) => n.to_string(),
+                    None => {
+                        self.ed.message =
+                            "domain reconnect: not on a host here (:domain reconnect NAME)".into();
+                        return;
+                    }
+                }
+            }
+        };
+        if self.domain_kind(&name).is_none() {
+            self.ed.message = format!("no domain named {name}");
+            return;
+        }
+        match self.domains.state.get(&name) {
+            Some(State::Connecting { .. }) => return self.domain_connect(&name),
+            // Let go as a drop is, so its shells, ending with it, stay
+            // for it to bring back.
+            Some(State::Up { .. }) => {
+                self.forget_domain(&name);
+                self.domains
+                    .state
+                    .insert(name.clone(), State::Dropped(None));
+            }
+            _ => {}
+        }
+        self.domain_connect(&name);
+    }
+
+    /// A domain that was up lost its connection by itself (R2): its
+    /// files' channel ended ([`IoMsg::DomainDropped`]), its master
+    /// ended, or a shell on it ended with ssh's failure while the
+    /// master no longer answers. What is left of the connection is let
+    /// go, so nothing on the host half works — no terminal spawned
+    /// through a master that is gone, no file asked of a channel that
+    /// is — and it is said where it shows: a corner line and the log,
+    /// not a toast (nobody asked; quiet-eviction's rule), the status
+    /// line of a buffer on it, `:domain` and the picker, and each
+    /// shell it took down, kept in its pane. Once: a domain not up is
+    /// not dropped again.
+    ///
+    /// [`IoMsg::DomainDropped`]: kawoosh_systems::io::IoMsg::DomainDropped
+    pub(crate) fn domain_dropped(&mut self, name: &str, why: Option<String>) {
+        let Some(State::Up { term }) = self.domains.state.get(name) else {
+            return;
+        };
+        // The master's own last line, once it has ended: what ssh said
+        // of the drop (`Connection to box closed by remote host.`).
+        let master = *term;
+        let why = why.or_else(|| {
+            let t = self.terms.map.get_mut(&master?)?;
+            t.exit()?;
+            last_word(&t.scrollback_text())
+        });
+        self.forget_domain(name);
+        self.domains
+            .state
+            .insert(name.to_string(), State::Dropped(why.clone()));
+        let said = match &why {
+            Some(w) => format!("{name}: disconnected — {w} (:domain reconnect)"),
+            None => format!("{name}: disconnected (:domain reconnect)"),
+        };
+        self.notify_with(
+            crate::notify::Note::new(crate::notify::Level::Info, said).source("domain"),
+        );
+        self.refresh_domain_pick();
+    }
+
+    /// The domain `path` is on when its connection ended by itself
+    /// (R2): what a buffer on it says in the status line.
+    pub(crate) fn dropped_domain<'a>(&self, path: Option<&'a Path>) -> Option<&'a str> {
+        let (d, _) = kawoosh_systems::fs::domain_of(path?)?;
+        matches!(self.domains.state.get(d), Some(State::Dropped(_))).then_some(d)
+    }
+
+    /// Whether `name`'s connection still answers: its files' channel
+    /// alive and, with a master, the master (`ssh -O check`) — asked
+    /// when a shell on it ended with ssh's failure, to tell the shell's
+    /// own from the connection's.
+    fn connection_alive(&self, name: &str) -> bool {
+        kawoosh_doc::fs::is_registered(name)
+            && match self.domains.transports.get(name) {
+                Some(Transport::Ssh(s)) => s.is_up(),
+                _ => true,
+            }
+    }
+
     /// `:domain connect NAME`: the master in a terminal in the dock and
     /// the wait for it on a thread; a domain up or on its way is left as
     /// it is, its pane shown.
@@ -528,7 +633,7 @@ impl Kawoosh {
         if matches!(self.domains.state.get(name), Some(State::Up { .. }))
             && !kawoosh_doc::fs::is_registered(name)
         {
-            self.forget_domain(name);
+            self.domain_dropped(name, None);
         }
     }
 
@@ -690,6 +795,24 @@ impl Kawoosh {
     /// with ssh's own last word, which its pane, closing with it, would
     /// otherwise take away (domains.md R1).
     pub(crate) fn domain_term_closed(&mut self, t: TermId) {
+        // An up domain's master ending with ssh's own failure (255) is
+        // the connection gone (R2); one ending well is its shell on the
+        // host left, `ControlPersist` keeping the master behind it.
+        let up = self.domains.state.iter().find_map(|(n, s)| match s {
+            State::Up { term: Some(x) } if *x == t => Some(n.clone()),
+            _ => None,
+        });
+        if let Some(name) = up {
+            if self
+                .terms
+                .map
+                .get_mut(&t)
+                .is_some_and(|term| term.exit() == Some(kawoosh_term::Exit::Code(255)))
+            {
+                self.domain_dropped(&name, None);
+            }
+            return;
+        }
         let Some((name, cancel)) = self.domains.state.iter().find_map(|(n, s)| match s {
             State::Connecting {
                 term: Some(x),
@@ -712,24 +835,65 @@ impl Kawoosh {
         self.domain_failed(&name, &why, false);
     }
 
-    /// A terminal on a host closing by itself: when its ssh gave up —
-    /// OpenSSH's 255, the connection refused or dropped, the master gone
-    /// — what it said goes in a toast, which the pane, closing, would
-    /// take away (domains.md R1). A shell that ended is no news.
-    pub(crate) fn host_term_closed(&mut self, t: TermId) {
+    /// A terminal on a host ended by itself; true when its pane stays.
+    /// When its ssh gave up — OpenSSH's 255, or no status at all (the
+    /// in-process client's channel cut) — it is the connection's or its
+    /// own: with the domain's connection gone (dropped, being made
+    /// again), the shell is kept in its pane, its output there and a
+    /// line under it, and comes back there once the domain is up again
+    /// (R2); with the connection still answering, what ssh said goes in
+    /// a toast as the pane closes, which would take it away (R1); with
+    /// the domain disconnected by the user, it closes and says nothing.
+    /// A shell that ended is no news.
+    pub(crate) fn host_term_ended(&mut self, t: TermId) -> bool {
         let Some(term) = self.terms.map.get_mut(&t) else {
-            return;
+            return false;
         };
         let Some(domain) = term.domain().map(str::to_string) else {
-            return;
+            return false;
         };
         // 255 is OpenSSH's own failure; a remote command's status is
         // passed through, and the rare shell that exits 255 itself is
-        // said too.
-        if term.exit() != Some(kawoosh_term::Exit::Code(255)) {
-            return;
+        // taken for it.
+        let exit = term.exit();
+        if matches!(exit, Some(kawoosh_term::Exit::Code(c)) if c != 255) {
+            return false;
         }
-        let why = last_word(&term.scrollback_text()).unwrap_or_else(|| "exited with 255".into());
+        let why = last_word(&term.scrollback_text());
+        let cwd = term.cwd();
+        let gone = match self.domains.state.get(&domain) {
+            None => return false,
+            Some(State::Up { .. }) => !self.connection_alive(&domain),
+            Some(_) => true,
+        };
+        if gone {
+            self.domain_dropped(&domain, why);
+            let Some(term) = self.terms.map.get_mut(&t) else {
+                return false;
+            };
+            let status = exit
+                .as_ref()
+                .map_or_else(|| "ended".to_string(), ToString::to_string);
+            let mut tail = String::new();
+            if term.is_alt_screen() {
+                tail.push_str("\x1b[?1049l");
+            }
+            tail.push_str("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25l");
+            tail.push_str(&format!(
+                "\x1b[0m\r\n\x1b[2m[{domain}: disconnected, ssh {status} — r reconnects]\x1b[0m"
+            ));
+            term.feed(tail.as_bytes());
+            term.scroll_to_bottom();
+            self.terms.done.insert(t, exit);
+            let tool = self.terms.spawned.get(&t).and_then(|s| s.tool.clone());
+            let cwd =
+                cwd.unwrap_or_else(|| kawoosh_systems::fs::on_domain(&domain, Path::new("~")));
+            self.domains
+                .terminals
+                .push((domain, t, crate::terminals::Pending { cwd, tool }));
+            return true;
+        }
+        let why = why.unwrap_or_else(|| "exited with 255".into());
         self.notify_with(
             crate::notify::Note::new(
                 crate::notify::Level::Error,
@@ -737,6 +901,7 @@ impl Kawoosh {
             )
             .source("domain"),
         );
+        false
     }
 
     /// A session's file on a host that is not connected: the path at
@@ -791,10 +956,12 @@ impl Kawoosh {
              terminal and process goes through (kawoosh's own, or ssh's master), open until it is \
              disconnected or kawoosh quits; for WSL, the distro answered and its files are its \
              share's, nothing held open.\n\
-             not connected: nothing open; the first use of a NAME:/path connects it.\n\n\
+             not connected: nothing open; the first use of a NAME:/path connects it.\n\
+             disconnected: it was connected, and its connection ended by itself; nothing of it is \
+             held, and its shells wait in their panes.\n\n\
              :domain connect NAME, :domain disconnect NAME (an ssh master told to exit; a distro \
-             forgotten here, still running) — or <leader>wh, the domains' picker: <C-o> connects, \
-             <C-x> disconnects.\n",
+             forgotten here, still running), :domain reconnect [NAME] (afresh, the shells back) — \
+             or <leader>wh, the domains' picker: <C-o> connects, <C-x> disconnects.\n",
         );
         out
     }
@@ -806,6 +973,8 @@ impl Kawoosh {
             ("up", _) => "connected".into(),
             ("down", _) => "not connected".into(),
             ("connecting", _) => "connecting…".into(),
+            ("dropped", Some(e)) => format!("disconnected: {e}"),
+            ("dropped", None) => "disconnected".into(),
             (s, Some(e)) => format!("{s}: {e}"),
             (s, None) => s.into(),
         }
@@ -858,14 +1027,18 @@ impl Kawoosh {
                 "failed: {}. <C-o> or :domain connect {name} tries again.",
                 e.unwrap_or_default()
             ),
+            ("dropped", e) => format!(
+                "disconnected: the connection ended by itself{}. <C-o> or :domain reconnect {name} connects again, and the shells it took down start where they were; so does the first use of {name}:/path.",
+                e.map(|e| format!(" ({e})")).unwrap_or_default()
+            ),
             _ => format!(
                 "not connected: nothing is open to it. <C-o> or :domain connect {name} connects; so does the first use of {name}:/path."
             ),
         }
     }
 
-    /// How a domain stands — `down`, `connecting`, `up`, `failed` — and
-    /// why it failed.
+    /// How a domain stands — `down`, `connecting`, `up`, `failed`,
+    /// `dropped` — and why it failed or dropped.
     fn domain_state(&self, name: &str) -> (&'static str, Option<String>) {
         match self.domains.state.get(name) {
             None => ("down", None),
@@ -873,6 +1046,7 @@ impl Kawoosh {
             Some(State::Up { .. }) if kawoosh_doc::fs::is_registered(name) => ("up", None),
             Some(State::Up { .. }) => ("down", None),
             Some(State::Failed(e)) => ("failed", Some(e.clone())),
+            Some(State::Dropped(why)) => ("dropped", why.clone()),
         }
     }
 
@@ -1004,6 +1178,12 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 Some(n) => k.domain_connect(n),
                 None => k.ed.message = "connect which domain?".into(),
             },
+        ),
+        cmd(
+            Spec::new("domain reconnect")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("connect domain NAME afresh — by default the host the pane in front is on — its shells back in their panes"),
+            |k, ctx| k.domain_reconnect(ctx.args.first().map(String::as_str)),
         ),
         cmd(
             Spec::new("domain disconnect")

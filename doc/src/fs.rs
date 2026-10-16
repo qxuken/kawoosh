@@ -147,6 +147,15 @@ pub fn unregister(name: &str) {
         .remove(name);
 }
 
+/// `name`'s files as registered, alive or not.
+pub fn registered(name: &str) -> Option<Arc<dyn Fs>> {
+    domains()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(name)
+        .cloned()
+}
+
 /// Whether `name` is connected: registered, and its connection alive.
 pub fn is_registered(name: &str) -> bool {
     domains()

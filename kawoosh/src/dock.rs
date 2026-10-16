@@ -113,7 +113,7 @@ impl Kawoosh {
             crate::domains::State::Connecting { term, .. } | crate::domains::State::Up { term } => {
                 *term == Some(t)
             }
-            crate::domains::State::Failed(_) => false,
+            crate::domains::State::Failed(_) | crate::domains::State::Dropped(_) => false,
         })
     }
 

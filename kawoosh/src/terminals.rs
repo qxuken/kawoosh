@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::Buffer;
-use kawoosh_editor::keymap::{LEADER, parse_notation};
+use kawoosh_editor::keymap::{LEADER, parse_notation, stroke_of};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec};
 use kawoosh_systems::io::PtyOutput;
 use kawoosh_term::{TermSize, Terminal, encode_key, encode_super_key};
@@ -407,7 +407,9 @@ impl Kawoosh {
             }
             return;
         }
-        self.host_term_closed(id);
+        if self.host_term_ended(id) {
+            return;
+        }
         if let Some(t) = self.terms.map.get_mut(&id) {
             t.is_running();
         }
@@ -476,6 +478,17 @@ impl Kawoosh {
         let Some(old) = self.term_of(pane) else {
             return;
         };
+        // A shell its host's connection took down (domains.md R2): the
+        // host connected again, and the shell back in this pane then.
+        if let Some(name) = self
+            .domains
+            .terminals
+            .iter()
+            .find(|(_, t, _)| *t == old)
+            .map(|(n, _, _)| n.clone())
+        {
+            return self.domain_reconnect(Some(&name));
+        }
         let again = match self.terms.spawned.get(&old).cloned() {
             Some(Spawned {
                 argv: Some(argv),
@@ -562,7 +575,11 @@ impl Kawoosh {
         let spawned = match &host {
             Some((name, dir)) => {
                 let Some(launch) = self.remote_terminal_argv(name, dir, cmd, size) else {
-                    self.ed.message = format!("{name}: not connected (:domain connect {name})");
+                    self.ed.message = if self.dropped_domain(Some(&cwd)).is_some() {
+                        format!("{name}: disconnected (:domain reconnect {name})")
+                    } else {
+                        format!("{name}: not connected (:domain connect {name})")
+                    };
                     return None;
                 };
                 // The local end runs from a local directory.
@@ -612,7 +629,12 @@ impl Kawoosh {
                 term.set_scrollback(self.scrollback_setting());
                 let exited = term.exit_waiter();
                 let id = match id {
+                    // A pane's own number: a session's, or a shell back
+                    // in the pane its host's connection took it from,
+                    // whose end is over.
                     Some(id) => {
+                        self.terms.forget(id);
+                        self.terms.done.remove(&id);
                         self.terms.map.insert(id, term);
                         id
                     }
@@ -940,6 +962,40 @@ impl Kawoosh {
         };
     }
 
+    /// `terminal send KEYS`: keys in map notation typed into the focused
+    /// terminal, in the legacy encoding — the way to the escape's own key
+    /// (`<C-\>`, the tty's quit), which the escape never types
+    /// (terminal-keys.md Decision 1, amended 2026-10-16).
+    fn term_send(&mut self, keys: &str) {
+        let Some(id) = self.focused_term() else {
+            return;
+        };
+        let Some(t) = self.terms.map.get_mut(&id) else {
+            return;
+        };
+        let mut bytes = Vec::new();
+        for tok in parse_notation(keys) {
+            let k = stroke_of(&tok);
+            let text = (!k.ctrl && !k.alt && k.code.chars().count() == 1).then(|| k.code.clone());
+            match encode_key(
+                &k.code,
+                text.as_deref(),
+                k.ctrl,
+                k.alt,
+                k.shift,
+                t.app_cursor_keys(),
+            ) {
+                Some(b) => bytes.extend(b),
+                None => {
+                    self.ed.message = format!("terminal send: {tok} has no bytes");
+                    return;
+                }
+            }
+        }
+        t.scroll_to_bottom();
+        t.input(&bytes);
+    }
+
     /// The terminal's escape (`terminal.escape`, `<C-\>` by default)
     /// as a stroke's notation; none when the setting is empty or not
     /// one key.
@@ -955,6 +1011,14 @@ impl Kawoosh {
     /// `press` as kui delivered it, for kitty's keyboard protocol.
     pub(crate) fn term_key(&mut self, id: TermId, stroke: KeyStroke, press: &KeyPress) {
         let note = stroke.notation();
+        // The escape held down is one escape: the OS's repeats of it are
+        // nothing, never a second press (terminal-keys.md Decision 1,
+        // amended 2026-10-16) — read as the escape twice, a held `<C-\>`
+        // typed itself, the tty's VQUIT, and the job in front dumped.
+        let escape = self.term_escape_key();
+        if press.repeat && escape.as_deref() == Some(note.as_str()) {
+            return;
+        }
         // No process to hear them: every key is normal mode's, as after
         // the escape — `r` again, `q` closes, `<C-S-x>` copy mode.
         if self.terms.done.contains_key(&id) {
@@ -966,7 +1030,7 @@ impl Kawoosh {
             self.term_escaped(id, &stroke, keys);
             return;
         }
-        if self.term_escape_key().as_deref() == Some(note.as_str()) {
+        if escape.as_deref() == Some(note.as_str()) {
             self.terms.escape = Some(Vec::new());
             return;
         }
@@ -1093,33 +1157,18 @@ impl Kawoosh {
     /// normal mode's keys, the sequence looked up as it grows — a
     /// binding runs, a prefix waits with the which-key open on it,
     /// anything else is said to be unbound. First after the escape,
-    /// `<C-n>` is copy mode (vim's `<C-\><C-n>`), `:` the command line,
-    /// the escape again the key itself to the pty, `<Esc>` nothing.
+    /// `<C-n>` is copy mode (vim's `<C-\><C-n>`), `:` the command line;
+    /// `<Esc>` or the escape again lets it go, the pty hearing nothing —
+    /// the key itself is `:terminal send`'s to type, on purpose.
     fn term_escaped(&mut self, id: TermId, stroke: &KeyStroke, mut keys: Vec<String>) {
         let note = stroke.notation();
-        if note == "<Esc>" {
+        if note == "<Esc>" || self.term_escape_key().as_deref() == Some(note.as_str()) {
             return;
         }
         if keys.is_empty() {
             match note.as_str() {
                 "<C-n>" => return self.scrollback_to_buffer(id),
                 ":" => return self.open_cmdline(),
-                _ if self.term_escape_key().as_deref() == Some(note.as_str()) => {
-                    if let Some(t) = self.terms.map.get_mut(&id)
-                        && let Some(bytes) = encode_key(
-                            &stroke.code,
-                            stroke.text.as_deref(),
-                            stroke.ctrl,
-                            stroke.alt,
-                            stroke.shift,
-                            t.app_cursor_keys(),
-                        )
-                    {
-                        t.scroll_to_bottom();
-                        t.input(&bytes);
-                    }
-                    return;
-                }
                 _ => {}
             }
         }
@@ -1468,7 +1517,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("terminal again")
                 .when(&["exited"])
-                .doc("the line a finished `:!` pane ran, run again in its place (`r` there)"),
+                .doc("the line a finished `:!` pane ran, run again in its place (`r` there); a shell its host's connection took down, back once the host is connected again"),
             |k, _| k.term_again(),
         ),
         cmd(
@@ -1494,6 +1543,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .args(Args::new(&[ArgKind::Text]))
                 .doc("every key but the escape {{mac:and ⌘ }}to the terminal's program, or back; `on` / `off`, bare flips it (`<C-\\>r`)"),
             |k, ctx| k.toggle_raw(ctx.args.first().map(String::as_str)),
+        ),
+        cmd(
+            Spec::new("terminal send")
+                .when(&["terminal"])
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("KEYS in map notation typed into the terminal — `<C-\\>`, which the escape never types"),
+            |k, ctx| k.term_send(&ctx.args.join(" ")),
         ),
         cmd(
             Spec::new("terminal page up")

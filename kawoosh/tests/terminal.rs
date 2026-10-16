@@ -77,8 +77,8 @@ fn a_terminal_pane_draws_cells_and_takes_the_escape() {
 
 /// The terminal's escape (terminal-keys.md Decision 1): `<C-w>` is the
 /// shell's; after `<C-\>` the keys are normal mode's — the which-key
-/// open on them, the leader's groups, `:` — `<C-\>` again is the key
-/// to the pty, `<Esc>` lets it go, a key bound to nothing says so; and
+/// open on them, the leader's groups, `:` — `<C-\>` again or `<Esc>`
+/// lets it go, a key bound to nothing says so; and
 /// `terminal.escape` names another key, or none.
 #[test]
 fn the_escape_takes_normal_modes_keys_and_is_a_setting() {
@@ -112,10 +112,11 @@ fn the_escape_takes_normal_modes_keys_and_is_a_setting() {
     d.keys(&mut app, "q");
     d.frame(&mut app);
     assert!(on_term(&app), "back on the terminal");
-    // Twice: the key itself to the pty.
+    // Twice: let go, the pty hearing nothing (`:terminal send` types it).
     d.press(&mut app, "<C-\\>");
     d.press(&mut app, "<C-\\>");
-    assert_eq!(sent(&mut app), b"\x1c");
+    assert!(app.terms.escape.is_none());
+    assert!(sent(&mut app).is_empty());
     // `<Esc>` lets it go, and the next key is the shell's again.
     d.press(&mut app, "<C-\\>");
     d.key(&mut app, "escape", KeyMods::default());
@@ -2096,4 +2097,71 @@ fn the_grid_fits_its_pane_at_any_scale() {
             "the grid {c:?} inside its pane {p:?}, {scale}×"
         );
     }
+}
+
+/// The escape never reaches the program (terminal-keys.md Decision 1,
+/// amended 2026-10-16): a `<C-\>` that came through was the tty's VQUIT
+/// and SIGQUIT the job in front — a held escape's auto-repeat was read
+/// as the escape twice, which typed the key. In every mode — kept, raw,
+/// a program that pushed kitty's flags (event types, every key) — its
+/// press, its repeats, its release and a second press write nothing;
+/// `terminal send` is the one way to type it.
+#[test]
+fn the_escape_never_reaches_the_program() {
+    use kui_native::{KeyCode, KeyPress};
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    let sent = |app: &mut Kawoosh| app.terms.map.get_mut(&t).unwrap().take_sent();
+    let esc = KeyPress::new(KeyCode::Char('\\'), KeyMods::NONE.with_ctrl());
+    let held = KeyPress {
+        repeat: true,
+        ..esc.clone()
+    };
+    let check = |app: &mut Kawoosh, d: &mut Drive, mode: &str| {
+        sent(app);
+        // Held: the press, the OS's repeats, the release.
+        d.input(app, InputEvent::KeyDown(esc.clone()));
+        for _ in 0..4 {
+            d.input(app, InputEvent::KeyDown(held.clone()));
+        }
+        d.input(app, InputEvent::KeyUp(esc.clone().released()));
+        assert_eq!(sent(app), b"", "{mode}: a held escape");
+        assert_eq!(app.terms.escape, Some(Vec::new()), "{mode}: still open");
+        // Twice: the second closes it.
+        d.input(app, InputEvent::KeyDown(esc.clone()));
+        d.input(app, InputEvent::KeyUp(esc.clone().released()));
+        assert_eq!(sent(app), b"", "{mode}: the escape twice");
+        assert!(app.terms.escape.is_none(), "{mode}: closed by the second");
+        // A press with nothing after it, let go by `<Esc>`.
+        d.input(app, InputEvent::KeyDown(esc.clone()));
+        d.input(app, InputEvent::KeyUp(esc.clone().released()));
+        d.key(app, "escape", KeyMods::default());
+        assert_eq!(sent(app), b"", "{mode}: the escape let go");
+    };
+    check(&mut app, &mut d, "kept");
+    d.press(&mut app, "<C-\\>");
+    d.keys(&mut app, "r");
+    d.frame(&mut app);
+    assert!(shows_raw(&d));
+    check(&mut app, &mut d, "raw");
+    d.press(&mut app, "<C-\\>");
+    d.keys(&mut app, "r");
+    d.frame(&mut app);
+    assert!(!shows_raw(&d));
+    app.feed_terminal(t, b"\x1b[>3u");
+    check(&mut app, &mut d, "kitty, event types");
+    app.feed_terminal(t, b"\x1b[>11u");
+    check(&mut app, &mut d, "kitty, every key");
+    app.feed_terminal(t, b"\x1b[<2u");
+    assert_eq!(app.terms.map[&t].keyboard_flags(), 0);
+    // The key itself, on purpose: `:terminal send`.
+    sent(&mut app);
+    d.press(&mut app, "<C-\\>");
+    d.keys(&mut app, ":terminal send <C-\\>");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(sent(&mut app), b"\x1c");
+    assert_eq!(d.warnings(), Vec::<String>::new());
 }

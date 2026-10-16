@@ -46,7 +46,10 @@ vim has it; `<C-\>:` the command line; `<C-\><Space>…` the leader's
 groups, out of reach from a terminal until now; `<C-\><C-w>l` a pane
 move; `<C-\><C-\>` a literal `<C-\>` (the shell's SIGQUIT — seldom
 typed on purpose, which is why it is the one to take). `<C-w>` goes back
-to the pty: the shell's delete-word, a vim's windows.
+to the pty: the shell's delete-word, a vim's windows. *Amended
+2026-10-16* (below): the escape never reaches the program —
+`<C-\><C-\>` lets the escape go, and the literal key is
+`:terminal send <C-\>`'s.
 
 ### 2. Two levels: kept, and raw
 
@@ -214,3 +217,35 @@ does: something selected on screen, and ⌘C is the copy alone, the
 program hearing neither its press nor its release; nothing selected,
 and it is the program's. Raw changes nothing about it — ⌘ is kawoosh's
 there too. Test: `cmd_c_copies_a_selection_or_reaches_the_program_never_both`.
+
+**Decision 1, amended** 2026-10-16, from the todo: "While
+ansible-playbook run i pressed `<C-\>` python crashed (with playbook
+process). Did we sending something or what?" We did. The byte `<C-\>`
+encodes to, 0x1c, is the tty's VQUIT: a pty in cooked mode turns it
+into SIGQUIT for its foreground process group, and Python's default for
+that is to dump and die — the playbook with it. The escape's own press
+never went to the pty in any mode; what did was its *repeat*. kui
+reports the OS's key repeat as presses with `repeat` set, `on_key`
+passed them on like any other, and `term_escaped` read a press of the
+escape while it was open as "the escape twice": the key itself, to the
+pty. A `<C-\>` held past the repeat delay — 375 ms on the user's Mac,
+easily reached while reading the which-key it opens — typed 0x1c on
+every second repeat, 30 ms apart. Two of them for four repeats, in the
+test that found it. A release could not do it (only a press the program
+was sent is released to it, `Terminals::held`), nor kitty's encoder
+(the escape is taken before it), nor raw (the escape stays kawoosh's).
+
+Now the escape never reaches the program, in any mode. Its repeats are
+nothing: held down, it is one press (`term_key`, before anything else
+looks at the key). Pressed again while open it lets the escape go, as
+`<Esc>` does — a second press is far more often a slip, or a "did it
+take?", than a wish to quit the job in front. The key itself is typed
+on purpose with `:terminal send KEYS` (map notation, the legacy
+encoding: `:terminal send <C-\>`), `when = terminal`, so `<C-\>:` reaches
+it from the pane. *Beat:* a timeout on the repeat alone — the double
+press would still kill a job. Test: `kawoosh/tests/terminal.rs`'s
+`the_escape_never_reaches_the_program` (kept, raw, kitty's event types
+and every-key flags: a held escape, its release, a second press, a
+press let go by `<Esc>` — nothing written; then `:terminal send`), and
+`keymap.rs`'s round trip for `stroke_of`, the inverse of a stroke's
+notation that `:terminal send` reads the keys with.

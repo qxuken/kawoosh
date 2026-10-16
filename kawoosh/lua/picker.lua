@@ -2289,7 +2289,10 @@ picker.source("tools", {
 -- that means in the preview. `<CR>` opens a tab on one, its home listed
 -- — connected first when it is down; `<C-o>` connects it and stays;
 -- `<C-x>` disconnects it, the row saying so once it has.
-local DOMAIN_STATE = { up = "connected", down = "not connected", connecting = "connecting…", failed = "failed" }
+local DOMAIN_STATE = {
+  up = "connected", down = "not connected", connecting = "connecting…", failed = "failed",
+  dropped = "disconnected",
+}
 
 picker.source("domains", {
   title = "domains", placeholder = "a machine · <C-o> connects · <C-x> disconnects",
@@ -2303,7 +2306,7 @@ picker.source("domains", {
     for _, d in ipairs(kawoosh.domains() or {}) do
       local state = (DOMAIN_STATE[d.state] or d.state) .. (d.open > 0 and (" · " .. d.open .. " open") or "")
       items[#items + 1] = {
-        text = d.name, what = d.label, state = state, name = d.name,
+        text = d.name, what = d.label, state = state, name = d.name, dropped = d.state == "dropped",
         boost = d.state == "up" and 0.5 or 0,
         preview = { title = d.name .. " — " .. d.label, lines = {
           d.means, "", "found in " .. d.from, d.name .. ":~ in a new tab on <CR>",
@@ -2316,7 +2319,7 @@ picker.source("domains", {
     ["<C-o>"] = function(item)
       if not item then return end
       picker.close()
-      kawoosh.run("domain connect " .. item.name)
+      kawoosh.run((item.dropped and "domain reconnect " or "domain connect ") .. item.name)
     end,
     -- The picker stays: the row reads `not connected` once it is.
     ["<C-x>"] = function(item)
