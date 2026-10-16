@@ -428,6 +428,10 @@ impl Kawoosh {
         if !tail.is_empty() {
             m.parts.push((tail, pal.fg));
         }
+        // On a host whose connection ended by itself (domains.md R2).
+        if let Some(d) = self.dropped_domain(buf.path.as_deref()) {
+            m.parts.push((format!(" [{d}: disconnected]"), pal.danger));
+        }
         m.path = true;
         m
     }

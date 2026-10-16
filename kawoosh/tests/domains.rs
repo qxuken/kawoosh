@@ -989,6 +989,148 @@ fn a_session_on_a_host_restores_lazily_and_a_drop_reconnects() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// A connection that drops by itself (domains.md R2; the todo: "when
+/// ssh disconnects we should indicate it and add reconnect command for
+/// current dir. funny thing is, i still can spawn terminals if i had
+/// some other buffer open"): the master gone, the domain is said to be
+/// disconnected — a corner line and the log, no toast, the status line
+/// of a file on it, `:domain` — nothing of it is held, so a terminal
+/// asked for there says so rather than half work; the shell it took
+/// down stays in its pane, and `:domain reconnect` from the file brings
+/// the host back and the shell with it, in that pane.
+#[test]
+fn a_dropped_connection_is_said_and_reconnects() {
+    if !sftp_server() {
+        eprintln!("no sftp-server here: skipped");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("kawoosh-drop-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    std::fs::create_dir_all(root.join("proj")).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let (home, proj) = (root.join("home"), root.join("proj"));
+    std::fs::write(proj.join("a.txt"), "on the host\n").unwrap();
+    let name = format!("q{}", std::process::id());
+    let (mut d, mut app) = ssh_app(&name, &home.display().to_string());
+    let there = format!("{name}:{}", proj.display());
+    let file = format!("{there}/a.txt");
+    ex(&mut d, &mut app, &format!("cd {there}"));
+    until(&mut d, &mut app, "connected, the tab there", |a| {
+        a.ed.cwd == Path::new(&there)
+    });
+    // A shell on the host, in its own pane; then the file in front.
+    app.shell_command("term", &[], None);
+    let t = app.terms.map.keys().copied().max().expect("the terminal");
+    // Through the master already: its prompt printed.
+    until(&mut d, &mut app, "the host's shell's prompt", |a| {
+        a.terms
+            .map
+            .get(&t)
+            .is_some_and(|t| t.domain().is_some() && !t.scrollback_text().trim().is_empty())
+    });
+    // `:` from the shell's pane: after the escape.
+    d.press(&mut app, "<C-\\>");
+    ex(&mut d, &mut app, &format!("e {file}"));
+    until(&mut d, &mut app, "the host's file", |a| {
+        a.focused_view()
+            .is_some_and(|v| a.ed.buffer_of(v).text() == "on the host\n")
+    });
+    let shells = |a: &Kawoosh| {
+        a.layout
+            .all_panes()
+            .into_iter()
+            .filter(|p| a.layout.content(*p) == Some(kawoosh::layout::Content::Terminal(t)))
+            .count()
+    };
+    assert_eq!(shells(&app), 1);
+    let corner = |a: &Kawoosh, words: &str| {
+        a.notes
+            .shown
+            .iter()
+            .any(|s| !s.toast && s.text.contains(words))
+    };
+    // The connection drops: the master ends by itself, and the
+    // channels through it.
+    let ctl = std::fs::read_dir(kawoosh_systems::io::socket_path().parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| p.to_string_lossy().ends_with(&format!("-{name}.ctl")))
+        .expect("the control file");
+    std::fs::remove_file(&ctl).unwrap();
+    // Said once, with ssh's word when it said one first: the master's,
+    // or the shell's channel's, whichever ended first.
+    let dropped = format!("{name}: disconnected");
+    until(&mut d, &mut app, "the drop said", |a| corner(a, &dropped));
+    let said: Vec<_> = app
+        .notes
+        .shown
+        .iter()
+        .filter(|s| s.text.contains(&dropped))
+        .collect();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0]
+            .text
+            .ends_with("closed by remote host. (:domain reconnect)")
+            || said[0].text.ends_with("closed. (:domain reconnect)"),
+        "{said:?}"
+    );
+    assert_eq!(toasted(&app, &name), 0, "no toast: {:?}", app.notes.shown);
+    until(&mut d, &mut app, "the shell's end", |a| {
+        a.terms.done.contains_key(&t)
+    });
+    assert_eq!(shells(&app), 1, "the shell kept in its pane");
+    d.frame(&mut app);
+    let texts: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains(&format!("[{name}: disconnected]"))),
+        "the file's status line says so: {texts:?}"
+    );
+    ex(&mut d, &mut app, "domain");
+    let listing = app.ed.buffer_of(app.focused_view().unwrap()).text();
+    assert!(listing.contains("\tdisconnected: "), "{listing}");
+    ex(&mut d, &mut app, "q");
+    // Nothing of it held: a terminal there is refused, and says why.
+    let before = app.terms.map.len();
+    app.shell_command("term", &[], None);
+    assert_eq!(
+        app.terms.map.len(),
+        before,
+        "no terminal through a dropped master"
+    );
+    assert_eq!(
+        app.ed.message,
+        format!("{name}: disconnected (:domain reconnect {name})")
+    );
+    // Reconnected from the file, its host the default: the shell back in
+    // its pane, running again.
+    ex(&mut d, &mut app, "domain reconnect");
+    until(&mut d, &mut app, "connected again, the shell back", |a| {
+        kawoosh_doc::fs::is_registered(&name)
+            && !a.terms.done.contains_key(&t)
+            && a.terms.map.get(&t).is_some_and(|t| t.domain().is_some())
+    });
+    assert_eq!(shells(&app), 1, "in the same pane");
+    d.frame(&mut app);
+    assert!(
+        !d.core.nodes().iter().any(|n| n
+            .text
+            .as_deref()
+            .is_some_and(|t| t.contains("disconnected]"))),
+        "the status line connected again"
+    );
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// WSL (domains.md, "WSL, and the picker"), against the real default
 /// distro where there is one: `wsl:` connects with no settings and no
 /// pane; a file of the distro's is opened, written and read back through

@@ -407,7 +407,9 @@ impl Kawoosh {
             }
             return;
         }
-        self.host_term_closed(id);
+        if self.host_term_ended(id) {
+            return;
+        }
         if let Some(t) = self.terms.map.get_mut(&id) {
             t.is_running();
         }
@@ -476,6 +478,17 @@ impl Kawoosh {
         let Some(old) = self.term_of(pane) else {
             return;
         };
+        // A shell its host's connection took down (domains.md R2): the
+        // host connected again, and the shell back in this pane then.
+        if let Some(name) = self
+            .domains
+            .terminals
+            .iter()
+            .find(|(_, t, _)| *t == old)
+            .map(|(n, _, _)| n.clone())
+        {
+            return self.domain_reconnect(Some(&name));
+        }
         let again = match self.terms.spawned.get(&old).cloned() {
             Some(Spawned {
                 argv: Some(argv),
@@ -562,7 +575,11 @@ impl Kawoosh {
         let spawned = match &host {
             Some((name, dir)) => {
                 let Some(launch) = self.remote_terminal_argv(name, dir, cmd, size) else {
-                    self.ed.message = format!("{name}: not connected (:domain connect {name})");
+                    self.ed.message = if self.dropped_domain(Some(&cwd)).is_some() {
+                        format!("{name}: disconnected (:domain reconnect {name})")
+                    } else {
+                        format!("{name}: not connected (:domain connect {name})")
+                    };
                     return None;
                 };
                 // The local end runs from a local directory.
@@ -612,7 +629,12 @@ impl Kawoosh {
                 term.set_scrollback(self.scrollback_setting());
                 let exited = term.exit_waiter();
                 let id = match id {
+                    // A pane's own number: a session's, or a shell back
+                    // in the pane its host's connection took it from,
+                    // whose end is over.
                     Some(id) => {
+                        self.terms.forget(id);
+                        self.terms.done.remove(&id);
                         self.terms.map.insert(id, term);
                         id
                     }
@@ -1495,7 +1517,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("terminal again")
                 .when(&["exited"])
-                .doc("the line a finished `:!` pane ran, run again in its place (`r` there)"),
+                .doc("the line a finished `:!` pane ran, run again in its place (`r` there); a shell its host's connection took down, back once the host is connected again"),
             |k, _| k.term_again(),
         ),
         cmd(

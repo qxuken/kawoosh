@@ -90,7 +90,9 @@ line), processes (`-T`, for compile, tools and language servers), and
 the SFTP subsystem (`ssh -s -S … box sftp`) for files.
 `ControlPersist` lets the pane close without dropping the master;
 `:domain disconnect box` is `ssh -O exit`. A dropped master is noticed
-by the next channel failing, and that reopens the pane.
+by the next channel failing, and that reopens the pane. *Amended
+2026-10-16* (R2): a drop is noticed as it happens and said, and
+`:domain reconnect` brings the host and its shells back.
 
 *Beat:* `russh` or `ssh2` in-process — their own config parsing, agent,
 known hosts and jump hosts, when the user's `~/.ssh/config` is the
@@ -1135,3 +1137,92 @@ password now said with ssh's word, a terminal refused
 `builtin_ssh.rs`'s `a_refused_port_is_said_in_a_toast` (a port of
 127.0.0.1 nothing listens on, no container needed), and the `<Esc>`
 case not toasted.
+
+## Built, a dropped connection said
+
+**2026-10-16, asked.** "when ssh disconnects we should indicate it and
+add reconnect command for current dir. funny thing is, i still can
+spawn terminals if i had some other buffer open".
+
+### R2. Disconnected is a state: the connection ended by itself
+
+What it was. A domain that was up stayed `Up` after its connection
+went: nothing looked until something asked. A file's use asked
+(`domain_gate` → `forget_dropped`: the SFTP channel's process gone,
+`Fs::is_alive`) and quietly connected again; `:domain` read it as `not
+connected`; the master's pane closing after it was up was nobody's
+news (`domain_term_closed` looked only at a domain connecting); and a
+terminal asked the *transport's* registry, which nothing let go of, so
+a shell spawned through the master — dead, or alive behind an SFTP
+channel that was not — while the files said the host was down. The
+shells it took down closed their panes, each with an R1 toast.
+
+**What disconnected means.** A domain that was up whose connection is
+known to have ended without the user ending it — `State::Dropped`, with
+ssh's word on it when it said one. Known, not guessed, and no round
+trip spent on a timer: one of three signals, whichever comes first.
+
+1. *Its files' channel ended* — the SFTP process exited (OpenSSH with
+   or without a master), the shell runner died (a host with no SFTP),
+   the in-process client's connection closed. A watch per connected
+   ssh domain on its own thread (`io::watch_connection`) reads
+   `Fs::is_alive` once a second — a child's `try_wait` and a flag,
+   nothing sent — and sends `IoMsg::DomainDropped` once; it ends
+   quietly when the registry no longer holds the files it watched.
+2. *Its master ended with ssh's failure* (255): every channel through
+   it ends with it. A master ending well is the user leaving the shell
+   on the host; `ControlPersist` keeps the connection behind it.
+3. *A shell on it ended with ssh's failure* (255, or no status — the
+   in-process client's channel cut) while the connection no longer
+   answers: the files gone or `ssh -O check` refused. Asked then and
+   only then (one spawn, on a rare event), to tell the shell's own
+   failure — R1, a toast as it closes — from the connection's.
+
+ssh is the one that notices a network gone, so it is asked to: OpenSSH's
+master and every connection of its own carry `ServerAliveInterval=30`,
+`ServerAliveCountMax=3`, as the in-process client keeps its keepalive
+(on the command line, over `~/.ssh/config`'s). Without it a master on a
+dead network waits on TCP for hours, and none of the three comes.
+*Beat:* a periodic `ssh -O check` — a process a domain every few
+seconds, and still blind to a master that hangs; ssh's own keepalive
+is the check, done where the connection is.
+
+**On a drop** (`domain_dropped`, once — a domain not up is not dropped
+again): what is left of the connection is let go, as `:domain
+disconnect` lets it go — the files, the transport, the walks, the
+master told to exit — so nothing on the host half works. A terminal
+asked for there is refused with `box: disconnected (:domain reconnect
+box)`, the user's "i still can spawn terminals" closed. It is said
+where it shows, and not in a toast — nobody asked, quiet-eviction's
+rule: a corner line and the log, `box: disconnected — Connection to box
+closed by remote host. (:domain reconnect)`; ` [box: disconnected]` in
+the status line of a file on the host, in the danger colour; `:domain`
+and the picker `disconnected: why`, the picker's `<C-o>` reconnecting.
+A shell that ended with it stays in its pane (as a finished `:!` pane
+does): its output, and `[box: disconnected, ssh exited with 255 — r
+reconnects]` under it; it waits in `Domains::terminals`, the queue a
+session's shells wait in, and comes back in that pane, as the same
+terminal, once the domain is up. A shell of a domain the user
+disconnected closes and says nothing — the user ended it.
+
+**`:domain reconnect [NAME]`** — NAME the host the pane in front is on
+(`here_dir`: its file's, its listing's, its shell's, else the tab's),
+which is the todo's "for current dir" — connects afresh: a domain still
+`Up` is let go first, as a drop is, so one whose network went and whose
+ssh has not been told yet is made again too, its shells kept for it.
+`r` in a shell a drop kept is the same for its host. The first use of a
+file on the host connects again as before. *Beat:* reconnecting by
+itself — a password asked out of nowhere in a dock pane, while the user
+may be on a train; the next use, or the command, is asked for. *Beat:*
+a toast with *Reconnect* — one with actions stays until taken, R1's
+reason.
+
+Tests: `domains.rs`'s `a_dropped_connection_is_said_and_reconnects`
+(the stand-in's master ends with "Connection to … closed by remote
+host." and 255 when its control file is taken away, and a terminal's
+channel ends with it): said once in the corner, no toast, the file's
+status line and `:domain`, a terminal there refused, the shell kept in
+its pane and back in it, running, after `:domain reconnect` from the
+file; `a_session_on_a_host_restores_lazily_and_a_drop_reconnects`
+unchanged (the use after a drop connects again); R1's terminal refused
+on a host still connected still toasts.

@@ -917,6 +917,7 @@ impl Kawoosh {
                     declined,
                 } => self.domain_failed(&name, &error, declined),
                 IoMsg::DomainFellBack { name, why } => self.domain_fell_back(&name, &why),
+                IoMsg::DomainDropped { name } => self.domain_dropped(&name, None),
                 IoMsg::DomainAsk {
                     name,
                     question,
@@ -1493,6 +1494,9 @@ impl Kawoosh {
                 self.terms.forget(t);
                 self.terms.spawned.remove(&t);
                 self.terms.done.remove(&t);
+                // A shell waiting on its host is not brought back to a
+                // pane that is gone.
+                self.domains.terminals.retain(|(_, id, _)| *id != t);
                 self.lsp.installs.remove(&t);
                 self.format.installs.remove(&t);
             }

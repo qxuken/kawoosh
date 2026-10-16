@@ -191,6 +191,11 @@ pub enum IoMsg {
     /// A connection asks the user (`crate::ssh`): a host key to trust,
     /// a passphrase, a password. `reply` takes the answer, `None` for
     /// none; the connecting thread waits on it.
+    /// A domain that was up lost its connection by itself: its files'
+    /// channel ended — the master gone, the host unreachable, the
+    /// in-process client's connection closed (docs/design/domains.md
+    /// R2). Sent once, by the watch [`Io::connect_domain`] keeps on it.
+    DomainDropped { name: String },
     /// The in-process client could not serve a domain and OpenSSH's
     /// took it (`ssh.client = "auto"`): why, in a few words.
     DomainFellBack { name: String, why: String },
@@ -700,6 +705,21 @@ fn config_args() -> Vec<String> {
     }
 }
 
+/// What makes OpenSSH notice a connection whose network is gone: a
+/// keepalive every 30 s, three unanswered the end — as the in-process
+/// client keeps its own (`ssh::connect`'s). Without it a master on a
+/// dead network waits on TCP for hours, and nothing on it is said to
+/// be down (docs/design/domains.md R2). On the command line, so it
+/// wins over `~/.ssh/config`'s.
+fn keepalive() -> [String; 4] {
+    [
+        "-o".into(),
+        "ServerAliveInterval=30".into(),
+        "-o".into(),
+        "ServerAliveCountMax=3".into(),
+    ]
+}
+
 /// The line an ssh host's login shell is handed for `script` — POSIX sh
 /// — whatever that shell is ([`Ssh::remote_argv`]).
 pub fn ssh_line(script: &str) -> String {
@@ -769,6 +789,10 @@ impl Ssh {
             (false, false) => vec!["-o".into(), "BatchMode=yes".into()],
             (false, true) => Vec::new(),
         });
+        // A connection of its own notices its own drop.
+        if !self.master {
+            v.extend(keepalive());
+        }
         v
     }
 
@@ -777,6 +801,7 @@ impl Ssh {
     pub fn master_argv(&self) -> Vec<String> {
         let mut v = vec![self.ssh.clone()];
         v.extend(config_args());
+        v.extend(keepalive());
         v.extend([
             "-M".into(),
             "-S".into(),
@@ -1844,7 +1869,8 @@ impl Io {
                         break match files {
                             Ok(fs) => {
                                 install_host_shim(fs.as_ref());
-                                kawoosh_doc::fs::register(&name, fs);
+                                kawoosh_doc::fs::register(&name, fs.clone());
+                                watch_connection(name.clone(), fs, tx.clone(), wake.clone());
                                 register_transport(&name, Transport::Ssh(transport.clone()));
                                 // The runner's connection made now, while
                                 // nothing waits on it.
@@ -2012,6 +2038,43 @@ pub fn edit(sock: &std::path::Path, args: &[String], mut wait: bool) -> anyhow::
         )?;
     }
     Ok(())
+}
+
+/// How often a connected domain's files' channel is looked at
+/// ([`watch_connection`]): a child's `try_wait` and a flag, nothing sent.
+const DROP_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The watch on a domain's connection, on a thread of its own: once its
+/// files' channel is no longer alive ([`kawoosh_doc::fs::Fs::is_alive`]),
+/// [`IoMsg::DomainDropped`], once. It ends quietly when `fs` is no longer
+/// what `name` is registered as — disconnected, or connected again.
+fn watch_connection(
+    name: String,
+    fs: std::sync::Arc<dyn kawoosh_doc::fs::Fs>,
+    tx: Sender<IoMsg>,
+    wake: WakeHandle,
+) {
+    let spawned = thread::Builder::new()
+        .name(format!("domain-watch-{name}"))
+        .spawn(move || {
+            loop {
+                thread::sleep(DROP_EVERY);
+                let same = kawoosh_doc::fs::registered(&name).is_some_and(|r| {
+                    std::ptr::addr_eq(std::sync::Arc::as_ptr(&r), std::sync::Arc::as_ptr(&fs))
+                });
+                if !same {
+                    return;
+                }
+                if !fs.is_alive() {
+                    let _ = tx.send(IoMsg::DomainDropped { name });
+                    wake.wake();
+                    return;
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("watching a domain's connection: {e}");
+    }
 }
 
 #[cfg(test)]
