@@ -49,6 +49,30 @@ fn motion(ed: &mut Editor, ctx: &Ctx, f: impl Fn(&Buffer, usize, usize) -> usize
     v.goal_col = None;
 }
 
+/// [`motion`] for a motion that can find nothing — `f` `t` and their
+/// repeats — `f` saying None: that head stays, is kept in
+/// `Editor::missed` for the operator waiting on it, and when every head
+/// missed the bell rings.
+fn motion_or_miss(ed: &mut Editor, ctx: &Ctx, f: impl Fn(&Buffer, usize, usize) -> Option<usize>) {
+    let ext = extend(ed, ctx.view);
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let v = &mut ed.views[ctx.view];
+    let mut missed = Vec::new();
+    v.sels.map(|s| match f(buf, s.head, ctx.count) {
+        Some(to) => s.with_head(to.min(buf.len()), ext),
+        None => {
+            missed.push(s.head);
+            s
+        }
+    });
+    v.goal_col = None;
+    if missed.len() == v.sels.items.len() {
+        ed.bell = true;
+    }
+    ed.missed = missed;
+}
+
 fn vertical(ed: &mut Editor, ctx: &Ctx, dy: i64) {
     let ext = extend(ed, ctx.view);
     let id = view(ed, ctx).buffer;
@@ -2763,7 +2787,7 @@ pub fn install(ed: &mut Editor) {
             move |ed, ctx| {
                 let Some(c) = ctx.arg_char else { return };
                 ed.last_find = Some((c, forward, till));
-                motion(ed, ctx, |b, o, n| {
+                motion_or_miss(ed, ctx, |b, o, n| {
                     let ln = b.line_of(o);
                     let range = b.line_range(ln);
                     let text = b.slice(range.clone());
@@ -2791,15 +2815,12 @@ pub fn install(ed: &mut Editor) {
                             }
                         }
                     }
-                    match found {
-                        Some(i) if till && forward => {
-                            let abs = range.start + i;
-                            b.prev_char(abs)
-                        }
-                        Some(i) if till => b.next_char(range.start + i),
-                        Some(i) => range.start + i,
-                        None => o,
-                    }
+                    let i = range.start + found?;
+                    Some(match (till, forward) {
+                        (true, true) => b.prev_char(i),
+                        (true, false) => b.next_char(i),
+                        _ => i,
+                    })
                 });
             },
         );
@@ -2813,8 +2834,8 @@ pub fn install(ed: &mut Editor) {
                 return;
             };
             let forward = fwd != back;
-            motion(ed, ctx, move |b, o, n| {
-                find_across(b, o, c, forward, till, n).unwrap_or(o)
+            motion_or_miss(ed, ctx, move |b, o, n| {
+                find_across(b, o, c, forward, till, n)
             });
         });
     }

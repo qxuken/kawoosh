@@ -984,6 +984,12 @@ pub struct Editor {
     /// nothing — and the shell may ring for it (`editor.bell`, roadmap
     /// step 29); the shell takes it each frame.
     pub bell: bool,
+    /// The heads the motion just run left where they were because it
+    /// found nothing — an `f` whose character is not on the line, the
+    /// COUNT more than the line has — which an operator waiting on it
+    /// leaves alone (vim's failed motion: `d3t`` on a line with two
+    /// takes nothing, where it took the character under the caret).
+    pub(crate) missed: Vec<usize>,
     /// The buffers the focused tab counts as its own while
     /// `buffers.scope` is `tab` (roadmap step 30) — a file under the
     /// tab's directory, or one shown in the tab — kept by the shell;
@@ -1174,6 +1180,7 @@ impl Editor {
             search: None,
             search_hl: true,
             bell: false,
+            missed: Vec::new(),
             tab_buffers: None,
             flash: None,
             message: String::new(),
@@ -2567,6 +2574,7 @@ impl Editor {
         }
         self.open_checkpoint(ctx.view);
         let op_before = self.pending_op;
+        self.missed.clear();
         cmd.run(self, &ctx);
         // An operator waiting on a motion: the motion just extended every
         // selection, so apply the operator now (mvp.md D4: operators
@@ -2581,12 +2589,25 @@ impl Editor {
                     self.pending_op = None;
                     let id = self.views[ctx.view].buffer;
                     let buf = &self.buffers[id];
-                    let ranges = self.views[ctx.view]
-                        .sels
-                        .iter()
-                        .map(|s| commands_op_range(buf, s, kind, 1))
-                        .collect();
-                    commands::apply_operator(self, ctx.view, op, ranges);
+                    let missed = std::mem::take(&mut self.missed);
+                    let sels = &self.views[ctx.view].sels;
+                    let gone = |s: &Selection| s.is_empty() && missed.contains(&s.head);
+                    // Every head missed: the operator is dropped, as vim
+                    // drops it; a caret of several that missed takes
+                    // nothing.
+                    if !sels.iter().all(gone) {
+                        let ranges = sels
+                            .iter()
+                            .map(|s| {
+                                if gone(s) {
+                                    (s.head..s.head, false)
+                                } else {
+                                    commands_op_range(buf, s, kind, 1)
+                                }
+                            })
+                            .collect();
+                        commands::apply_operator(self, ctx.view, op, ranges);
+                    }
                 }
                 Kind::TextObject => {
                     self.pending_op = None;
