@@ -201,7 +201,8 @@ REV*` diff buffer; the status line names it in full.
 picker of commits, `short  time  author  summary`, the preview the
 commit's patch, `<CR>` opening it as `*show REV*` — a read-only `diff`
 buffer, where `<CR>` on a `+` line opens the file there. `vcs show REV`
-is the same by hand.
+is the same by hand. A file's section is masked by its rules, as a list
+shows a file's lines (secrets.md Decision 9).
 
 ### 9. Worktrees are tabs
 

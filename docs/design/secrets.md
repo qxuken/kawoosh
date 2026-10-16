@@ -495,10 +495,20 @@ breadcrumbs (symbol names — a YAML's keys, never its values); hover,
 diagnostics, references and completion (a private buffer is never a
 server's, Decision 1). `kawoosh/tests/secrets_drawn.rs` pins each.
 
-Not done, and known: `vcs show`'s `*show*` buffer is git's output, not a
-buffer's text, and a commit that touched a tracked `.env` is drawn as
-git printed it — a diff whose files a rule names wants masking by its
-`+++` headers, a step of its own. And a hunk's sides are scanned alone:
-a `pem` block whose `BEGIN` line is outside the hunk and its context
-is not found in it (the `key` rule, a line rule, masks a private key
-file whole either way).
+`vcs show`'s `*show*` buffer, the backend's patch, is masked by its
+files' headers (`vcs.shown_patch`): each file's section by the rules of
+the file its `diff --git`/`diff --cc`/`Index:` and `+++` lines name (its
+`---` for a file deleted), the section's old side (context and `-`
+lines of all its hunks) and new side (context and `+`) each scanned
+whole, so a block added to a file is found across its lines; a hunk's
+lines are counted by its `@@` header, so a line taken away that reads
+`--- …` is no header. The message and the stat are kept: a commit's
+message is no file's. `git show` is run with `a/`/`b/` prefixes and
+`core.quotePath=false` whatever the user's config, so the path is the
+file's. The `vcs log` picker's preview is the commit's summary alone;
+fossil's `diff --checkin` is the same `*show*` buffer.
+
+Not done, and known: a hunk's sides are scanned alone, a `*show*`
+section's sides a hunk's run together: a `pem` block whose `BEGIN` line
+is outside the hunk and its context is not found in it (the `key` rule,
+a line rule, masks a private key file whole either way).
