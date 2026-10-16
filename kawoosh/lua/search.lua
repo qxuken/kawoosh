@@ -725,9 +725,10 @@ end, "the keyboard down to the search's results")
 -- Whether `len` bytes from offset `at` of the focused buffer, on one
 -- line, touch what its pane masks (docs/design/secrets.md Decision 9):
 -- the line as drawn (`shown_lines`) and as it is part where the first
--- mask starts, and a selection reaching past that is a secret's.
+-- mask starts, and a selection reaching past that is a secret's. Any
+-- buffer's: a mask is not a private buffer's alone (a key in a YAML
+-- file).
 local function masked(at, len)
-  if not kawoosh.buf.private() then return false end
   local before = kawoosh.buf.slice(0, at)
   local ln = select(2, before:gsub("\n", "")) + 1
   local col = #(before:match("[^\n]*$") or "")

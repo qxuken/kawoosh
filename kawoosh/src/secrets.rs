@@ -27,6 +27,17 @@ use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::notify::Level;
 
+/// What a multibuffer's carried masks were worked out for: its
+/// version, whether it was private, the settings' version, the
+/// secrets' generation, and each excerpt's source with that source's
+/// version (none when gone).
+type MirrorKey = (Version, bool, u64, u64, Vec<(BufferId, Option<Version>)>);
+
+/// An excerpt as its masks are carried by, without its text: its
+/// source, the source's version it was synced at, whether it is pending
+/// or dead, its lines here and there.
+type Span = (BufferId, Version, bool, bool, Range<usize>, Range<usize>);
+
 /// The shell's secrets: the rules, each buffer's masks, the reveal.
 pub struct Secrets {
     rules: Rules,
@@ -43,6 +54,14 @@ pub struct Secrets {
     given: HashMap<BufferId, (Version, Vec<Range<usize>>)>,
     /// The mask shown by `zv`, until when.
     revealed: Option<(BufferId, Range<usize>, Instant)>,
+    /// Moves whenever a buffer's masks change by anything but its text
+    /// and the settings — a rule asked for, ranges given, a reveal —
+    /// for the multibuffers' cache.
+    generation: u64,
+    /// Each multibuffer's carried masks, and what they were carried
+    /// for ([`MirrorKey`]): a search's results are not worked out
+    /// again each frame while nothing under them moved.
+    mirrored: HashMap<BufferId, (MirrorKey, Vec<Range<usize>>)>,
     /// Wakes the frame that forgets a secret or hides a reveal.
     alarm: Alarm,
     /// The path a `--wait` caller is having opened, while it is.
@@ -59,6 +78,8 @@ impl Secrets {
             asked: HashMap::new(),
             given: HashMap::new(),
             revealed: None,
+            generation: 0,
+            mirrored: HashMap::new(),
             alarm: Alarm::soonest(wake),
             waited: None,
         }
@@ -69,6 +90,8 @@ impl Secrets {
         self.scans.remove(&id);
         self.asked.remove(&id);
         self.given.remove(&id);
+        self.mirrored.remove(&id);
+        self.generation += 1;
         if self.revealed.as_ref().is_some_and(|r| r.0 == id) {
             self.revealed = None;
         }
@@ -167,6 +190,7 @@ impl Kawoosh {
             asked.push(rule.to_string());
         }
         self.secrets.scans.remove(&id);
+        self.secrets.generation += 1;
     }
 
     /// A plugin's ranges on buffer `id` (`kawoosh.buf.mask`), replacing
@@ -180,6 +204,7 @@ impl Kawoosh {
         } else {
             self.secrets.given.insert(id, (b.version(), ranges));
         }
+        self.secrets.generation += 1;
     }
 
     /// Every buffer's masks into the editor for Lua to read a buffer
@@ -280,33 +305,74 @@ impl Kawoosh {
         let Some(m) = self.ed.multis.get(&id) else {
             return Vec::new();
         };
-        let excerpts = m.excerpts.clone();
-        let private = self.ed.buffers.get(id).is_some_and(|b| b.private);
+        let Some(b) = self.ed.buffers.get(id) else {
+            return Vec::new();
+        };
+        let private = b.private;
+        let key: MirrorKey = (
+            b.version(),
+            private,
+            self.ed.settings.version(),
+            self.secrets.generation,
+            m.excerpts
+                .iter()
+                .map(|e| (e.source, self.ed.buffers.get(e.source).map(|s| s.version())))
+                .collect(),
+        );
+        if let Some((k, masks)) = self.secrets.mirrored.get(&id)
+            && *k == key
+        {
+            return masks.clone();
+        }
+        // What each excerpt is, without its text: the gaps' strings are
+        // no part of it.
+        let excerpts: Vec<Span> = m
+            .excerpts
+            .iter()
+            .map(|e| {
+                (
+                    e.source,
+                    e.src_ver,
+                    e.pending,
+                    e.dead,
+                    e.body.clone(),
+                    e.src.clone(),
+                )
+            })
+            .collect();
+        let out = self.mirror(id, private, &excerpts);
+        self.secrets.mirrored.insert(id, (key, out.clone()));
+        out
+    }
+
+    /// [`Self::mirrored_masks`] worked out.
+    fn mirror(&mut self, id: BufferId, private: bool, excerpts: &[Span]) -> Vec<Range<usize>> {
         let mut of: HashMap<BufferId, Vec<Range<usize>>> = HashMap::new();
         let mut out = Vec::new();
-        for e in excerpts.iter().filter(|e| !e.pending && !e.body.is_empty()) {
-            let src = self
+        for (source, src_ver, pending, dead, body, src) in excerpts {
+            if *pending || body.is_empty() {
+                continue;
+            }
+            let found = self
                 .ed
                 .buffers
-                .get(e.source)
-                .filter(|b| !e.dead && b.version() == e.src_ver)
+                .get(*source)
+                .filter(|b| !*dead && b.version() == *src_ver)
                 .map(|b| b.private);
-            let Some(src_private) = src else {
+            let Some(src_private) = found else {
                 if private {
-                    out.extend(self.whole_lines(id, e.body.clone()));
+                    out.extend(self.whole_lines(id, body.clone()));
                 }
                 continue;
             };
-            let masks = of
-                .entry(e.source)
-                .or_insert_with(|| self.masks_of(e.source));
+            let masks = of.entry(*source).or_insert_with(|| self.masks_of(*source));
             if masks.is_empty() && !src_private {
                 continue;
             }
             for r in masks {
-                let (a, z) = (r.start.max(e.src.start), r.end.min(e.src.end));
+                let (a, z) = (r.start.max(src.start), r.end.min(src.end));
                 if a < z {
-                    out.push(e.body.start + (a - e.src.start)..e.body.start + (z - e.src.start));
+                    out.push(body.start + (a - src.start)..body.start + (z - src.start));
                 }
             }
         }
@@ -344,6 +410,51 @@ impl Kawoosh {
     /// private buffer a plugin masked by ranges, which no rule finds
     /// again in another text, has every line that is not empty a
     /// stand-in.
+    /// Lines `first..first + n` of `state` — a text buffer `id` had or
+    /// will have, not its text now (an undo state) — masked as its pane
+    /// would draw that state: the rules scan the whole state, so a
+    /// block whose first line is far above the lines (an edit inside a
+    /// key) is found. A state past `secrets.scan_max_kb` is scanned by
+    /// the lines alone, as a pane would not scan it at all.
+    pub(crate) fn shown_state_lines(
+        &mut self,
+        id: BufferId,
+        state: &text_buffer::Buffer,
+        first: usize,
+        n: usize,
+    ) -> Vec<String> {
+        let max = self
+            .ed
+            .settings
+            .int("secrets.scan_max_kb")
+            .unwrap_or(1024)
+            .max(0) as usize
+            * 1024;
+        let line_text = |ln: usize| -> Option<String> {
+            let r = state.get_line_range(ln)?;
+            let mut bytes = state.collect_range(r);
+            if bytes.last() == Some(&b'\n') {
+                bytes.pop();
+            }
+            Some(String::from_utf8_lossy(&bytes).into_owned())
+        };
+        if state.len() > max {
+            let text: String = (first..first + n)
+                .filter_map(line_text)
+                .map(|l| l + "\n")
+                .collect();
+            return self.shown_lines_of(id, &text);
+        }
+        let whole = String::from_utf8_lossy(&state.collect_range(0..state.len())).into_owned();
+        let mut shown = self.shown_lines_of(id, &whole);
+        // `str::lines` leaves no line after a final newline; a hunk at
+        // the end may name it.
+        shown.resize(shown.len().max(first + n), String::new());
+        shown.drain(..first);
+        shown.truncate(n);
+        shown
+    }
+
     pub(crate) fn shown_lines_of(&mut self, id: BufferId, text: &str) -> Vec<String> {
         self.sync_secret_rules();
         let Some(b) = self.ed.buffers.get(id) else {
@@ -418,7 +529,9 @@ impl Kawoosh {
             self.ed.views[v].buffer,
             self.ed.views[v].sels.primary().head,
         );
-        self.secrets.revealed = None;
+        if self.secrets.revealed.take().is_some() {
+            self.secrets.generation += 1;
+        }
         let masks = self.masks_of(id);
         let Some(m) = masks.into_iter().find(|m| m.start <= head && head <= m.end) else {
             self.ed.message = "no mask under the caret".into();
@@ -432,6 +545,7 @@ impl Kawoosh {
             .max(1) as u64;
         let until = Instant::now() + Duration::from_secs(secs);
         self.secrets.revealed = Some((id, m, until));
+        self.secrets.generation += 1;
         self.secrets.alarm.set(until);
     }
 
@@ -447,6 +561,7 @@ impl Kawoosh {
                 .map(|v| self.ed.views[v].sels.primary().head);
             if now >= until || !caret.is_some_and(|h| m.start <= h && h <= m.end) {
                 self.secrets.revealed = None;
+                self.secrets.generation += 1;
             }
         }
         let secs = self

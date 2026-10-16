@@ -91,14 +91,22 @@ end
 -- is no hunk's (the message, the stat, the headers) is kept.
 function vcs.shown_patch(text, root)
   local lines = lines_of(text)
-  local path, prefixed
+  -- The section's files: every path its headers name, old and new — a
+  -- renamed `prod.env` is masked by its rules as by the new name's.
+  local paths, prefixed = {}, false
   local body, old, new = {}, {}, {}
+  -- `text` masked by the rules of every file the section names, or by
+  -- the rules that apply anywhere when it names none.
+  local function mask(text)
+    if #paths == 0 then return kawoosh.secrets.mask_text(text) end
+    for _, p in ipairs(paths) do text = kawoosh.secrets.mask_text(text, fs.join(root, p)) end
+    return text
+  end
   local function flush()
     if #body == 0 then return end
-    local at = path and fs.join(root, path) or nil
     local function masked(side)
       if #side == 0 then return {} end
-      return lines_of(kawoosh.secrets.mask_text(table.concat(side, "\n") .. "\n", at))
+      return lines_of(mask(table.concat(side, "\n") .. "\n"))
     end
     local o, n = masked(old), masked(new)
     for _, b in ipairs(body) do
@@ -107,16 +115,49 @@ function vcs.shown_patch(text, root)
       if b.old and (m == nil or m == raw) then m = o[b.old] or m end
       -- A line its side lost (never: `mask_text` keeps every line) is
       -- masked alone rather than drawn as printed.
-      lines[b.at] = lines[b.at]:sub(1, b.cols) .. (m or kawoosh.secrets.mask_text(raw, at))
+      lines[b.at] = lines[b.at]:sub(1, b.cols) .. (m or mask(raw))
     end
     body, old, new = {}, {}, {}
   end
-  -- A header's path: git's `a/`/`b/` taken off, fossil's as it is; a
-  -- tab and what follows (a date) is no part of it.
-  local function named(p)
-    p = p:gsub("\t.*$", "")
-    if prefixed then p = p:gsub("^[ab]/", "") end
+  -- A path git C-quoted (`"we\"ird.env"`: a `"`, a `\`, a control
+  -- character in it, whatever `core.quotePath`) as it is spelled.
+  local escapes = { n = "\n", t = "\t", r = "\r", a = "\a", b = "\b", f = "\f", v = "\v" }
+  local function unquoted(p)
+    local q = p:match('^"(.*)"$')
+    if not q then return p end
+    local out, i = {}, 1
+    while i <= #q do
+      local c = q:sub(i, i)
+      if c == "\\" then
+        local oct = q:match("^%d%d%d", i + 1)
+        if oct then
+          out[#out + 1] = string.char(tonumber(oct, 8))
+          i = i + 4
+        else
+          local e = q:sub(i + 1, i + 1)
+          out[#out + 1] = escapes[e] or e
+          i = i + 2
+        end
+      else
+        out[#out + 1] = c
+        i = i + 1
+      end
+    end
+    return table.concat(out)
+  end
+  -- A header's path: unquoted, git's `a/`/`b/` taken off (`strip`
+  -- false for `rename from`, which has none), fossil's as it is; a tab
+  -- and what follows (a date) is no part of it.
+  local function named(p, strip)
+    p = unquoted((p:gsub("\t.*$", "")))
+    if prefixed and strip ~= false then p = p:gsub("^[ab]/", "") end
     return p
+  end
+  local function add(p, strip)
+    if not p or p == "/dev/null" then return end
+    p = named(p, strip)
+    for _, q in ipairs(paths) do if q == p then return end end
+    paths[#paths + 1] = p
   end
   local i = 1
   while i <= #lines do
@@ -156,14 +197,20 @@ function vcs.shown_patch(text, root)
       local git_path = l:match("^diff %-%-git %S+ (.+)$")
       local cc_path = l:match("^diff %-%-cc (.+)$") or l:match("^diff %-%-combined (.+)$")
       local index_path = l:match("^Index: (.+)$")
+      local moved = l:match("^rename from (.+)$") or l:match("^rename to (.+)$")
+        or l:match("^copy from (.+)$") or l:match("^copy to (.+)$")
       if git_path or cc_path or index_path then
         flush()
-        prefixed = git_path ~= nil
-        path = git_path and named(git_path) or cc_path or index_path
+        paths = {}
+        -- git's headers carry `a/` and `b/` (`git.show` asks for them),
+        -- a combined diff's `---` `+++` too; fossil's none.
+        prefixed = (git_path or cc_path) ~= nil
+        if git_path then add(git_path) else add(cc_path or index_path, false) end
+      elseif moved then
+        add(moved, false)
       elseif l:match("^%-%-%- ") and lines[i + 1] and lines[i + 1]:match("^%+%+%+ ") then
-        local from, to = l:sub(5), lines[i + 1]:sub(5)
-        if to ~= "/dev/null" then path = named(to)
-        elseif from ~= "/dev/null" then path = named(from) end
+        add(l:sub(5))
+        add(lines[i + 1]:sub(5))
         i = i + 1
       end
       i = i + 1
@@ -1324,7 +1371,11 @@ end
 -- the user's `diff.noprefix`: the masks find a file's rules by its
 -- `+++ b/PATH` (`vcs.shown_patch`), and `<CR>` its file.
 function git.show(root, rev, done)
-  run({ "git", "-c", "core.quotePath=false", "show", "--stat", "--patch", "--format=medium",
+  -- No colour, no external differ, no textconv whatever the user's
+  -- config: a line that starts with an escape matches no header, and
+  -- the patch would be drawn as printed (secrets.md Decision 9).
+  run({ "git", "-c", "core.quotePath=false", "show", "--no-color", "--no-ext-diff",
+        "--no-textconv", "--stat", "--patch", "--format=medium",
         "--src-prefix=a/", "--dst-prefix=b/", rev, "--" }, root, function(text, code, err)
     if code ~= 0 then return done(nil, failure(err, text, "git show failed")) end
     done(text)

@@ -407,3 +407,163 @@ fn a_shown_commit_masks_a_private_file() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A key in a plain file, committed, then its body replaced: what a
+/// review of the masks found drawn raw (2026-10-16).
+const KEY_OLD: &str = "MIIEoldbody1";
+const KEY_NEW: &str = "MIIEnewbody2";
+
+fn key_text(body: &str) -> String {
+    format!(
+        "a key:\n-----BEGIN RSA PRIVATE KEY-----\n{body}\n-----END RSA PRIVATE KEY-----\ntail\n"
+    )
+}
+
+/// `hunk preview` of a key's body replaced in a plain file: the
+/// `BEGIN` line is the hunk's context, and the side taken away is
+/// masked as the side put in — it was scanned without its context, and
+/// the old key drawn.
+#[test]
+fn a_hunk_preview_masks_a_key_body_replaced() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = tmp("hunk-key");
+    git(&dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("notes.txt"), key_text(KEY_OLD)).unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "first"]);
+    std::fs::write(dir.join("notes.txt"), key_text(KEY_NEW)).unwrap();
+    let (mut d, mut app) = launch(&dir.join("notes.txt"), &dir);
+    let id = focused_buffer(&app);
+    until(&mut d, &mut app, "the base", |app, _| {
+        app.ed.base(id).is_some_and(|b| b.version.is_some())
+    });
+    d.keys(&mut app, "jj");
+    ex(&mut d, &mut app, "hunk preview");
+    until(&mut d, &mut app, "the preview", |app, _| {
+        buffer_named(app, "*hunk*").is_some()
+    });
+    d.frame(&mut app);
+    let shown = drawn(&d);
+    assert!(
+        shown.contains("-••••••••") && shown.contains("+••••••••"),
+        "the hunk: {shown}"
+    );
+    assert!(
+        !shown.contains(KEY_OLD) && !shown.contains(KEY_NEW),
+        "masked: {shown}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The undo pane over a key's body replaced: each state's lines are
+/// masked by the block they are in, though the edit's lines hold no
+/// `BEGIN`; the change's snippet too.
+#[test]
+fn the_undo_pane_masks_a_key_body_edited() {
+    let dir = tmp("undo-key");
+    let file = dir.join("notes.txt");
+    std::fs::write(&file, key_text(KEY_OLD)).unwrap();
+    let (mut d, mut app) = launch(&file, &dir);
+    d.keys(&mut app, "jjcc");
+    d.keys(&mut app, KEY_NEW);
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "undo history");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let shown = drawn(&d);
+    assert!(shown.contains("••••••••"), "the hunk's lines: {shown}");
+    assert!(
+        !shown.contains(KEY_OLD) && !shown.contains(KEY_NEW),
+        "masked: {shown}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `*` on a word under a mask in a file that is not private (a key in
+/// a plain file): a secret search, the pattern never said.
+#[test]
+fn a_star_search_on_a_key_in_a_plain_file_does_not_draw_it() {
+    let dir = tmp("star-key");
+    let file = dir.join("notes.txt");
+    std::fs::write(&file, key_text(KEY_OLD)).unwrap();
+    let (mut d, mut app) = launch(&file, &dir);
+    assert!(!app.ed.buffers[focused_buffer(&app)].private);
+    d.keys(&mut app, "jj*");
+    d.frame(&mut app);
+    assert!(!app.ed.message.contains(KEY_OLD), "{}", app.ed.message);
+    assert!(!drawn(&d).contains(KEY_OLD));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A secret search that finds nothing off the frame (a buffer past the
+/// frame's budget is walked on a thread) says the stand-in, as the
+/// frame's own "not found" does.
+#[test]
+fn a_secret_search_not_found_off_the_frame_says_no_pattern() {
+    let dir = tmp("star-thread");
+    let env = dir.join("prod.env");
+    std::fs::write(&env, format!("TOKEN={SECRET}\n")).unwrap();
+    let (mut d, mut app) = launch(&env, &dir);
+    d.keys(&mut app, "f=l*");
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let id = focused_buffer(&app);
+    let (pattern, ic) = {
+        let s = app.ed.search.as_ref().unwrap();
+        assert!(s.secret);
+        (s.pattern.clone(), s.ignore_case)
+    };
+    let version = app.ed.buffers[id].version();
+    let head = app.ed.views[v].sels.primary().head;
+    app.ed
+        .search_landed(id, version, &pattern, ic, v, head, None);
+    assert!(
+        app.ed.message.starts_with("not found"),
+        "{}",
+        app.ed.message
+    );
+    assert!(!app.ed.message.contains(SECRET), "{}", app.ed.message);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `vcs show` of a commit that renamed `prod.env` and changed it, in a
+/// repository whose config colours every diff: the section is masked
+/// by the old name's rules as by the new name's (`prod.env.bak` is no
+/// `.env`), and the colour does not hide its headers.
+#[test]
+fn a_shown_commit_masks_a_renamed_file_whatever_the_colour() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = repo("show-rename");
+    git(&dir, &["config", "color.ui", "always"]);
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "second"]);
+    git(&dir, &["mv", "prod.env", "prod.env.bak"]);
+    // One line of three changed: git finds the rename.
+    std::fs::write(
+        dir.join("prod.env.bak"),
+        format!("HOST=db\nTOKEN={SECRET}\nPORT=2\n"),
+    )
+    .unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "third"]);
+    let (mut d, mut app) = launch(&dir.join("a.txt"), &dir);
+    ex(&mut d, &mut app, "vcs show HEAD");
+    until(&mut d, &mut app, "the commit", |app, _| {
+        buffer_named(app, "*show HEAD*").is_some()
+    });
+    d.frame(&mut app);
+    let shown = drawn(&d);
+    assert!(
+        shown.contains("rename to prod.env.bak") && shown.contains("+PORT="),
+        "the diff: {shown}"
+    );
+    assert!(!shown.contains(SECRET), "masked: {shown}");
+    std::fs::remove_dir_all(&dir).ok();
+}

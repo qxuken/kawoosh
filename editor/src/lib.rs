@@ -3172,6 +3172,19 @@ impl Editor {
     /// Row `index`'s change as lines ([`Hunk::between`] the parent's
     /// text and the row's). `None` for the root.
     pub fn history_hunk(&self, buffer: BufferId, index: usize) -> Option<Hunk> {
+        let (old, new) = self.history_texts(buffer, index)?;
+        Some(Hunk::between(&old, &new))
+    }
+
+    /// The two texts row `index` of [`Editor::history`] lies between —
+    /// its parent's and its own (the typing in progress's: the text
+    /// now) — shared pieces, no copy: what a hunk of it is masked by
+    /// as a whole (docs/design/secrets.md Decision 9).
+    pub fn history_texts(
+        &self,
+        buffer: BufferId,
+        index: usize,
+    ) -> Option<(text_buffer::Buffer, text_buffer::Buffer)> {
         let buf = self.buffers.get(buffer)?;
         let h = self.history.get(&buffer)?;
         let (old, new) = if let Some(n) = h.nodes.get(index) {
@@ -3181,7 +3194,7 @@ impl Editor {
         } else {
             return None;
         };
-        Some(Hunk::between(old, new))
+        Some((old.clone(), new.clone()))
     }
 
     /// Steps the view's buffer to row `index` of [`Editor::history`] and
@@ -3906,7 +3919,10 @@ impl Editor {
                 self.message = commands::search_message(self, buffer, wrapped);
             }
             None => {
-                self.message = format!("not found: {pattern}");
+                // A secret pattern (`*` on a masked value) said as a
+                // stand-in, as the frame's own "not found" says it.
+                let shown = self.search.as_ref().map_or(pattern, |s| s.shown());
+                self.message = format!("not found: {shown}");
                 self.bell = true;
             }
         }

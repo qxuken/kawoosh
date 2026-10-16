@@ -470,20 +470,23 @@ impl Kawoosh {
     }
 
     /// A unified hunk of buffer `src` as its pane would draw its lines
-    /// (docs/design/secrets.md Decision 9): the base's side (`-`) and
-    /// the buffer's (` ` and `+`) each masked by the buffer's rules, the
+    /// (docs/design/secrets.md Decision 9): the base's side (` ` and
+    /// `-`) and the buffer's (` ` and `+`) each masked by the buffer's
+    /// rules as a whole text, the context on both — a key block whose
+    /// `BEGIN` line is context is found on the side it was taken from
+    /// too — a context line masked where either side masks it, the
     /// `@@` line as it is.
     fn shown_hunk(&mut self, src: BufferId, hunk: &str) -> String {
         let lines: Vec<&str> = hunk.lines().collect();
-        let side = |old: bool| -> String {
+        let side = |skip: char| -> String {
             lines
                 .iter()
                 .skip(1)
-                .filter(|l| !l.is_empty() && l.starts_with('-') == old)
+                .filter(|l| !l.is_empty() && !l.starts_with(skip))
                 .map(|l| format!("{}\n", l.get(1..).unwrap_or("")))
                 .collect()
         };
-        let (old_text, new_text) = (side(true), side(false));
+        let (old_text, new_text) = (side('+'), side('-'));
         let mut old = self.shown_lines_of(src, &old_text).into_iter();
         let mut new = self.shown_lines_of(src, &new_text).into_iter();
         let mut out = String::with_capacity(hunk.len());
@@ -491,7 +494,15 @@ impl Kawoosh {
             let shown = match l.chars().next() {
                 _ if i == 0 => None,
                 Some('-') => old.next(),
-                Some(_) => new.next(),
+                Some('+') => new.next(),
+                Some(_) => {
+                    let (o, n) = (old.next(), new.next());
+                    let raw = l.get(1..).unwrap_or("");
+                    match (o, n) {
+                        (Some(o), Some(n)) if n == raw => Some(o),
+                        (o, n) => n.or(o),
+                    }
+                }
                 None => None,
             };
             match shown {
