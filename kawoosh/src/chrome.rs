@@ -615,12 +615,23 @@ impl Kawoosh {
 
     /// The same, each by its name.
     pub(crate) fn status_segments(&self, ui: &mut Ui<'_>, place: &str) -> Vec<(String, Block)> {
+        self.status_segments_named(ui, place).0
+    }
+
+    /// The same, with the names of every segment at `place`, showing
+    /// or not: one walk of the segments.
+    pub(crate) fn status_segments_named(
+        &self,
+        ui: &mut Ui<'_>,
+        place: &str,
+    ) -> (Vec<(String, Block)>, Vec<String>) {
         let Some(rt) = &self.scripting.rt else {
-            return Vec::new();
+            return Default::default();
         };
         let theme = ui.theme();
         let pal = self.pal;
-        rt.status(place)
+        let (segments, names) = rt.status_at(place);
+        let blocks = segments
             .into_iter()
             .map(|s| {
                 let parts = s
@@ -640,7 +651,8 @@ impl Kawoosh {
                     .collect();
                 (s.name, Block { parts, run: s.run })
             })
-            .collect()
+            .collect();
+        (blocks, names)
     }
 }
 

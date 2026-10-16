@@ -107,6 +107,8 @@ kawoosh.vcs.register("git", {
   worktrees = function(root, done) … end,     -- done{ { path =, branch = }, … }
   worktree_add = function(root, path, branch, done) … end,
   stage = function(root, path, patch, done) … end, -- the index patched (Decision 12): done(true) or done(false, why)
+  watch = function(root) … end,               -- the paths whose change means "ask again", or { head =, index = } (Decision 13)
+  index_ids = function(root, paths, done) … end, -- done{ [path] = entry }: what each file is in the index (Decision 13)
 })
 ```
 
@@ -383,6 +385,58 @@ and a change's old and new lines do not pair, so "these two lines of
 the five" has no one meaning; visual mode takes the hunks the
 selection touches, whole, as `hunk reset` does. Beaten: **a second
 backend door for unstaging**. To the index both are a patch.
+
+### 13. The index moving is not the repository moving
+
+2026-10-16, from the user's work Mac: with lazygit open in a terminal
+pane the Perf tab's "status line" stood at 0.4–0.5 ms a frame, and the
+investigation found `git.watch` naming `HEAD`, `index` and
+`logs/HEAD` as one set. lazygit's `git status` rewrites the index as
+often as it refreshes, so every half-second poll `vcs.moved` dropped
+the head — the next frame's `vcs` module spawned `git rev-parse`, the
+branch gone from the line until it answered — and read every open
+file's base again, two `git show`s each under the index.
+
+A backend's `watch` may answer `{ head = { … }, index = { … } }`
+rather than one list; git's does (`HEAD` and `logs/HEAD`; `index`).
+A poll that saw only the index's paths move is `vcs.index_moved`:
+
+- the head stands — no process for the branch;
+- a base against HEAD (`vcs.base = "head"`) stands;
+- a base against the index is read again only for the files whose
+  entry moved: the backend's `index_ids(root, paths, done)` answers
+  each file's entry at once — git's is one `ls-files -s -z` from the
+  root, `--literal-pathspecs` — compared with what it said the last
+  time. A file seen for the first time, or one the backend could not
+  name (spelled otherwise than git spells the root), is read again. A
+  backend without `index_ids` reads every one, as before;
+- one look per root at a time: written again while one is under way,
+  it looks once more after — at most a look a poll, the poll the
+  debounce (half a second, `systems/src/watch.rs`).
+
+A move of `HEAD` or `logs/HEAD` is `vcs.moved` as before, but the head
+is read in place: the branch read before stays on the line until the
+new one answers, and a move while a read is under way reads once more
+before answering.
+
+`lua_costs statusline_lap` (a lazygit stand-in touching `.git/index`
+ten times a second beside a `dir:` listing), processes in 4 s:
+
+| | before | after |
+|---|---|---|
+| the listing focused | 8 `vcs.moved`, 8 `git rev-parse` | none |
+| a changed file focused, its base the index | 8 `git rev-parse`, 16 `git show` | 8 `git ls-files` |
+
+Each was a `posix_spawn` on the UI thread (0.3 ms here, more where an
+endpoint-security agent authorises every exec).
+
+Beaten: **reading `.git/HEAD` in-process** instead of `git rev-parse`.
+After the split the head is read when HEAD moves — a commit, a
+checkout — not twice a second; reading it ourselves means resolving a
+ref through loose files, `packed-refs` and a worktree's `commondir`,
+git's job, for a spawn a commit. Beaten: **a quiet period before
+reacting** (wait until the index stops moving): lazygit never stops,
+so the gutter would never follow a `git add` made in it.
 
 ## Keys
 

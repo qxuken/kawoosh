@@ -209,6 +209,9 @@ pub struct Kawoosh {
     pub(crate) show_tab: Option<&'static str>,
     /// The long lines on show, indexed for their cells (`rows::LineCells`).
     pub(crate) line_cells: rows::LineCellsCache,
+    /// The status line's path as last fitted, and what for
+    /// (`statusline.rs`).
+    pub(crate) status_fitted: std::cell::RefCell<crate::statusline::Fitted>,
     /// Where each buffer's notes start when they are a column.
     pub(crate) note_columns: rows::NoteColumns,
     /// The Perf tab's readings: the frame's phases, the systems' reports.
@@ -499,6 +502,7 @@ impl Kawoosh {
             pane_settings,
             pane_faces: HashMap::new(),
             line_cells: Default::default(),
+            status_fitted: Default::default(),
             note_columns: Default::default(),
             perf: Default::default(),
             frames: crate::frames::Frames::with_wake(&wake),
@@ -1918,6 +1922,13 @@ impl Kawoosh {
         };
         // The root which-key (`:keys`) stays until a key is pressed.
         self.keys_help = None;
+        // A key goes where the program in front says: asked now, and
+        // the reads below (`term_raw`, `term_key`) are this one.
+        if let Some(t) = self.term_of(self.layout.focused())
+            && let Some(term) = self.terms.map.get(&t)
+        {
+            term.foreground_now();
+        }
         // F12 is the shell's everywhere, kui's devtools — but a raw
         // terminal's program's (terminal-keys.md Decision 2).
         let raw_term = self

@@ -832,3 +832,93 @@ fn until_buffer(d: &mut Drive, app: &mut Kawoosh, path: &Path) -> kawoosh_doc::B
         .map(|(id, _)| id)
         .unwrap()
 }
+
+/// What each file is in the index (docs/design/vcs.md Decision 13),
+/// asked in one `ls-files`: an entry for a tracked file, a `[` in its
+/// name taken as that name, nothing for an untracked one; a `git add`
+/// moves the entry. And the index rewritten as lazygit's `git status`
+/// rewrites it — the same entries — asks git for no head.
+#[test]
+fn the_index_entries_are_asked_in_one_go_and_the_index_alone_keeps_the_head() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = repo("index-ids");
+    std::fs::write(dir.join("[x].txt"), "x\n").unwrap();
+    std::fs::write(dir.join("x.txt"), "plain x\n").unwrap();
+    git(&dir, &["add", "[x].txt", "x.txt"]);
+    git(&dir, &["commit", "-q", "-m", "brackets"]);
+    std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+    let file = dir.join("a.txt");
+    let (mut d, mut app) = launch(&file, &dir);
+    let ask = |app: &mut Kawoosh| {
+        app.run_lua_source(
+            "ids",
+            r#"local root = kawoosh.fs.cwd()
+               local ps = {}
+               for _, n in ipairs({ "a.txt", "[x].txt", "new.txt" }) do ps[#ps + 1] = kawoosh.fs.join(root, n) end
+               kawoosh.vcs.backends.git.index_ids(root, ps, function(ids)
+                 local out = {}
+                 for i, p in ipairs(ps) do out[i] = ids[p] == nil and "nil" or ids[p] == "" and "none" or ids[p] end
+                 kawoosh.echo("ids " .. table.concat(out, " | "))
+               end)"#,
+        );
+    };
+    ask(&mut app);
+    until(&mut d, &mut app, "the entries", |app| {
+        app.ed.message.starts_with("ids ")
+    });
+    let first: Vec<String> = app.ed.message[4..].split(" | ").map(String::from).collect();
+    assert_eq!(first.len(), 3, "{}", app.ed.message);
+    assert!(
+        first[0].starts_with("100644 ") && first[0].ends_with(" 0;"),
+        "{first:?}"
+    );
+    assert!(
+        first[1].starts_with("100644 "),
+        "the bracketed file: {first:?}"
+    );
+    assert_eq!(
+        first[1].matches(';').count(),
+        1,
+        "that file only, not x.txt: {first:?}"
+    );
+    assert_eq!(first[2], "none", "untracked");
+    git(&dir, &["add", "a.txt"]);
+    app.ed.message.clear();
+    ask(&mut app);
+    until(&mut d, &mut app, "the entries again", |app| {
+        app.ed.message.starts_with("ids ")
+    });
+    let second: Vec<String> = app.ed.message[4..].split(" | ").map(String::from).collect();
+    assert_ne!(second[0], first[0], "a.txt staged: its entry moved");
+    assert_eq!(second[1], first[1]);
+
+    // The index rewritten with the same entries: the watch hears it,
+    // and no `git rev-parse` runs for the branch.
+    app.run_lua_source(
+        "count",
+        r#"_G.heads, _G.looks = 0, 0
+           local git = kawoosh.vcs.backends.git
+           local head, ids = git.head, git.index_ids
+           git.head = function(...) _G.heads = _G.heads + 1 return head(...) end
+           git.index_ids = function(...) _G.looks = _G.looks + 1 return ids(...) end"#,
+    );
+    let bytes = std::fs::read(dir.join(".git/index")).unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(dir.join(".git/index"), &bytes).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        app.run_lua_source("t", "kawoosh.echo(tostring(_G.looks))");
+        if app.ed.message != "0" {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the index never looked at");
+        std::thread::sleep(Duration::from_millis(10));
+        d.frame(&mut app);
+    }
+    app.run_lua_source("t", "kawoosh.echo(tostring(_G.heads))");
+    assert_eq!(app.ed.message, "0", "no head read for the index");
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -1438,6 +1438,9 @@ pub struct Runtime {
     /// The native extensions loaded into this runtime
     /// (docs/design/native.md), their handles and the last error.
     native: NativeCell,
+    /// The `ctx` each place's status segments are asked with, by place:
+    /// one table a place, not one a segment a frame for the collector.
+    status_ctx: RefCell<Vec<(String, Table)>>,
 }
 
 type DiagKey = (u64, Vec<(BufferId, kawoosh_doc::Version)>);
@@ -1495,6 +1498,7 @@ impl Runtime {
                 pane: std::cell::Cell::new(0),
                 prof,
                 native,
+                status_ctx: RefCell::new(Vec::new()),
             },
             ext,
         ))
@@ -2342,27 +2346,51 @@ impl Runtime {
     /// with its colour's word, and what a click runs. A segment whose
     /// `fn` fails is taken away and says why once.
     pub fn status(&self, place: &str) -> Vec<StatusSegment> {
+        self.status_at(place).0
+    }
+
+    /// [`Runtime::status`] and [`Runtime::status_names`] in one walk of
+    /// the segments: what the status line asks every frame.
+    pub fn status_at(&self, place: &str) -> (Vec<StatusSegment>, Vec<String>) {
         let Ok(kawoosh) = self.lua.globals().get::<Table>("kawoosh") else {
-            return Vec::new();
+            return Default::default();
         };
         let Ok(all) = kawoosh.get::<Table>("_status") else {
-            return Vec::new();
+            return Default::default();
         };
         let mut found: Vec<(f64, String, Table)> = all
             .pairs::<String, Table>()
             .flatten()
-            .filter(|(_, t)| t.get::<String>("place").is_ok_and(|p| p == place))
+            .filter(|(_, t)| {
+                t.get::<mlua::LuaString>("place")
+                    .is_ok_and(|p| p.as_bytes() == place.as_bytes())
+            })
             .map(|(name, t)| (t.get::<f64>("order").unwrap_or(0.0), name, t))
             .collect();
         found.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        let names = found.iter().map(|(_, name, _)| name.clone()).collect();
+        // One `ctx` for the place, its `place` set again in case a
+        // segment wrote over it.
+        let ctx = {
+            let mut kept = self.status_ctx.borrow_mut();
+            match kept.iter().find(|(p, _)| p == place) {
+                Some((_, t)) => t.clone(),
+                None => {
+                    let Ok(t) = self.lua.create_table() else {
+                        return (Vec::new(), names);
+                    };
+                    kept.push((place.to_string(), t.clone()));
+                    t
+                }
+            }
+        };
         let mut out = Vec::new();
         for (_, name, t) in found {
             let Ok(f) = t.get::<mlua::Function>("fn") else {
                 continue;
             };
-            let ctx = self.lua.create_table().unwrap();
             let _ = ctx.set("place", place);
-            let got = match self.timed(&f, || f.call::<LV>(ctx)) {
+            let got = match self.timed(&f, || f.call::<LV>(&ctx)) {
                 Ok(v) => v,
                 Err(e) => {
                     let _ = all.set(name.as_str(), LV::Nil);
@@ -2403,7 +2431,7 @@ impl Runtime {
                 run: t.get::<String>("run").ok(),
             });
         }
-        out
+        (out, names)
     }
 
     /// The names of the segments `kawoosh.status` put at `place`,

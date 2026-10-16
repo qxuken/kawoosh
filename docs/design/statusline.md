@@ -113,6 +113,78 @@ layout says it:
 `kawoosh.status("position", …, { place = "statusline" })` replaces
 `line:col`.
 
+### 4. Measured only when it moved
+
+2026-10-16. The user's work Mac showed "status line" at 0.40–0.53 ms a
+frame in the Perf tab, worst 3.5–4.1 ms, while its Lua modules took
+0.02 ms each. The line is built every frame (a Lua module is asked each
+frame, Decision 3, and says what it shows now), so what can stand is
+what follows from the texts:
+
+- **The fitting is kept.** The path's room is the width less every
+  other module's measured text; then `fit_path` measures a trial a
+  directory. Kept with what it was done for — the window's width, the
+  face, and a hash of every module's texts where they stand (the
+  springs, `apart`, the path's flag; not the colours, which bear on no
+  width) — the same again is the same head and name, nothing measured.
+  A frame where the caret moved, a key was typed, the mode, a Lua
+  module's answer, a setting or the width changed fits once more, its
+  texts being others. The one input outside the key is a font file
+  replaced under the same face: the next change of any text refits.
+- **One walk of the Lua modules.** `Runtime::status_at` answers the
+  segments and the names of every one at the place together (the names
+  were a second walk of `_status`), and the place's `ctx` is one table
+  kept for it, `place` set again before each segment, rather than a
+  table a segment a frame for the collector to reap inside the lap.
+- **A terminal's program in front is a read kept**
+  (terminal-keys.md Decision 2, "Kept"): `RAW` asked `tcgetpgrp` and
+  `proc_name` every frame a terminal was focused.
+- **The branch is not dropped** by lazygit rewriting the index
+  (vcs.md Decision 13): it was a `git rev-parse` twice a second.
+
+The lap has its parts as spans — `status: lua`, `status: modules`,
+`status: fit`, `status: draw`, and `term foreground` inside `modules` —
+in the Perf tab and `KAWOOSH_PERF_LOG`.
+
+Measured with `lua_costs statusline_lap` (`cargo test -p kawoosh
+--release --test lua_costs -- statusline_lap --ignored --nocapture`):
+the editor on a `dir:` listing of a git repository, the `vcs` module,
+a terminal running a lazygit stand-in that redraws and touches
+`.git/index` ten times a second; 4 s a phase, here (M-series, release,
+the bundled face), mean ms a frame of the lap:
+
+| | before | after |
+|---|---|---|
+| quiet, the listing focused | 0.103 (lua 0.054, fit 0.015) | 0.078 (lua 0.046, fit 0.002) |
+| lazygit churning, the listing focused | 0.045 (fit 0.007) | 0.032 (fit 0.001) |
+| lazygit churning, the terminal focused | 0.058 (foreground 0.029) | 0.033 (foreground 0.005) |
+| lazygit churning, a changed file focused | 0.046 | 0.037 |
+
+What is left is mostly the `vcs` module's own Lua (`kawoosh.buf.hunk_counts`,
+the root of the focused directory) and the call into it. The quiet
+phase is the slowest though it does the least: with nothing else
+running the thread sits on a slower core (every span is about twice
+the busy phases'), which a reading on another machine shares.
+
+**Telling a stall from a steady cost** on a machine where the harness
+cannot run: start kawoosh from a terminal with the log on,
+
+```nu
+with-env { KAWOOSH_PERF_LOG: ("~/kawoosh-perf.log" | path expand) } { ^/Applications/Kawoosh.app/Contents/MacOS/kawoosh }
+```
+
+work as usual for a minute, quit, and read the lap's `wall/cpu` pairs
+(a lap is logged once it reaches 0.05 ms):
+
+```nu
+open ~/kawoosh-perf.log | lines | parse --regex 'status line=(?<wall>[\d.]+)/(?<cpu>[\d.]+)' | into float wall cpu | insert off {|r| $r.wall - $r.cpu } | sort-by wall --reverse | first 20
+```
+
+A steady cost is wall ≈ cpu on most lines; a stall is a rare line far
+over its cpu (`3.80/0.30`) — the thread off a core: preempted, a page
+read back, a lock — which no change to the line's work removes. The
+same line's `spans[…]` says which part a slow frame was in.
+
 ## Built
 
 2026-09-29, as decided. `kawoosh/src/statusline.rs`: the modules, each

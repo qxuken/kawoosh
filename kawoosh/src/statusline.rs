@@ -147,6 +147,13 @@ impl Kawoosh {
         }
     }
 
+    /// How many times the line's path was fitted — its modules
+    /// measured — since the start: a frame that changed nothing on the
+    /// line measures nothing.
+    pub fn status_fits(&self) -> u64 {
+        self.status_fitted.borrow().fits
+    }
+
     /// The line: the layout's modules left to right, its springs
     /// sharing what they leave, the path fitted to what the others
     /// leave of the window's width.
@@ -154,15 +161,13 @@ impl Kawoosh {
         let pal = self.pal;
         let style = rows::mono(self.chrome.face, &pal);
         let layout = self.statusline_layout();
-        let lua: Vec<(String, Block)> = self.status_segments(ui, "statusline");
+        let t = crate::perf::span_start();
         // A Lua module the layout names is its own there, even while it
         // shows nothing: `position` taken by Lua is not `line:col`.
-        let lua_names: Vec<String> = self
-            .scripting
-            .rt
-            .as_ref()
-            .map(|rt| rt.status_names("statusline"))
-            .unwrap_or_default();
+        let (lua, lua_names): (Vec<(String, Block)>, Vec<String>) =
+            self.status_segments_named(ui, "statusline");
+        crate::perf::span("status: lua", t);
+        let t = crate::perf::span_start();
         let lua_module = |b: &Block| {
             let mut m = Module::of(b.parts.clone());
             m.run = b.run.clone();
@@ -184,19 +189,45 @@ impl Kawoosh {
             }
         }
         items.retain(|m| m.as_ref().is_none_or(|m| !m.is_empty()));
+        crate::perf::span("status: modules", t);
+        let t = crate::perf::span_start();
         // The path's room: the width less the padding, every other
-        // module and the spacing between them all.
+        // module and the spacing between them all. Fitted for the
+        // modules' texts, the width and the face as they stood last
+        // frame, the fitting stands — nothing measured.
         if items.iter().flatten().any(|m| m.path) {
-            let mut used = 2.0 * PAD + SPACING * items.len().saturating_sub(1) as f32;
-            for m in items.iter().flatten().filter(|m| !m.path) {
-                used += ui.measure_text(&m.joined(), &style, None).width;
-                used += m.apart.unwrap_or(0.0) * m.parts.len().saturating_sub(1) as f32;
+            let key = FitKey {
+                width: ui.viewport().w,
+                face: self.chrome.face,
+                texts: texts_hash(&items),
+            };
+            let mut fitted = self.status_fitted.borrow_mut();
+            if fitted.key != Some(key) {
+                let mut used = 2.0 * PAD + SPACING * items.len().saturating_sub(1) as f32;
+                for m in items.iter().flatten().filter(|m| !m.path) {
+                    used += ui.measure_text(&m.joined(), &style, None).width;
+                    used += m.apart.unwrap_or(0.0) * m.parts.len().saturating_sub(1) as f32;
+                }
+                let room = key.width - used;
+                fitted.paths = items
+                    .iter()
+                    .flatten()
+                    .filter(|m| m.path)
+                    .map(|m| fit_path_module(ui, m, room, style))
+                    .collect();
+                fitted.key = Some(key);
+                fitted.fits += 1;
             }
-            let room = ui.viewport().w - used;
-            for m in items.iter_mut().flatten().filter(|m| m.path) {
-                self.fit_path_module(ui, m, room, style);
+            let paths = items.iter_mut().flatten().filter(|m| m.path);
+            for (m, fit) in paths.zip(&fitted.paths) {
+                if let Some((head, name)) = fit {
+                    m.parts[0] = (head.clone(), pal.dim);
+                    m.parts[1] = (name.clone(), pal.fg);
+                }
             }
         }
+        crate::perf::span("status: fit", t);
+        let t = crate::perf::span_start();
         ui.with_keyed(
             "statusline",
             NodeSpec::row()
@@ -222,27 +253,7 @@ impl Kawoosh {
                 }
             },
         );
-    }
-
-    /// The path module's parts fitted to `room` px: the head dim, the
-    /// name as it was, what follows it (`[+]`) kept.
-    fn fit_path_module(
-        &self,
-        ui: &mut Ui<'_>,
-        m: &mut Module,
-        room: f32,
-        style: kui_native::TextStyle,
-    ) {
-        let [(prefix, _), (path, _), rest @ ..] = m.parts.as_slice() else {
-            return;
-        };
-        let tail: String = rest.iter().map(|(t, _)| t.as_str()).collect();
-        let (head, name) = fit_path(prefix, path, |s| {
-            ui.measure_text(&format!("{s}{tail}"), &style, None).width <= room
-        });
-        let mut parts = vec![(head, self.pal.dim), (name, self.pal.fg)];
-        parts.extend(rest.iter().cloned());
-        m.parts = parts;
+        crate::perf::span("status: draw", t);
     }
 
     /// kawoosh's own module `name`, `None` for a name it has not.
@@ -451,6 +462,68 @@ impl Kawoosh {
             None => (String::new(), kawoosh_systems::fs::abbreviate_home(path)),
         }
     }
+}
+
+/// The path module's head and name fitted to `room` px, what follows
+/// them (`[+]`) kept in the reckoning; none for parts not `[prefix,
+/// path, tail…]`.
+fn fit_path_module(
+    ui: &mut Ui<'_>,
+    m: &Module,
+    room: f32,
+    style: kui_native::TextStyle,
+) -> Option<(String, String)> {
+    let [(prefix, _), (path, _), rest @ ..] = m.parts.as_slice() else {
+        return None;
+    };
+    let tail: String = rest.iter().map(|(t, _)| t.as_str()).collect();
+    Some(fit_path(prefix, path, |s| {
+        ui.measure_text(&format!("{s}{tail}"), &style, None).width <= room
+    }))
+}
+
+/// What the path was fitted for: the window's width, the face the line
+/// is measured in, and every module's text where it stands
+/// ([`texts_hash`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FitKey {
+    width: f32,
+    face: crate::look::Face,
+    texts: u64,
+}
+
+/// The path's fitting as last done (statusline.md Decision 4): its key,
+/// each path module's head and name, and how many times it was done —
+/// for a test to tell a frame that measured from one that did not.
+#[derive(Default)]
+pub(crate) struct Fitted {
+    key: Option<FitKey>,
+    paths: Vec<Option<(String, String)>>,
+    pub(crate) fits: u64,
+}
+
+/// The line's texts as they bear on the fitting: each item a spring or
+/// a module, its parts' texts, whether it is the path, how far apart
+/// its parts are drawn. The colours do not bear on a width.
+fn texts_hash(items: &[Option<Module>]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    items.len().hash(&mut h);
+    for item in items {
+        match item {
+            None => 0u8.hash(&mut h),
+            Some(m) => {
+                1u8.hash(&mut h);
+                m.path.hash(&mut h);
+                m.apart.map(f32::to_bits).hash(&mut h);
+                m.parts.len().hash(&mut h);
+                for (t, _) in &m.parts {
+                    t.hash(&mut h);
+                }
+            }
+        }
+    }
+    h.finish()
 }
 
 /// A module, the `i`th thing on the line: one part a text, more a rich
