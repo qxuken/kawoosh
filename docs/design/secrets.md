@@ -55,8 +55,9 @@ blocks (a clone of the piece tree is a snapshot) and goes when they
 do. What is private: a file a mask rule names (Decision 3 — its history
 would carry what the mask hides), a vault scratch or vault file
 (Decision 5), a `--wait` open of a file under the temp directory
-(`secrets.private_temp`, on), and what a plugin marks
-(`kawoosh.buf.set_private(h)`, `open_scratch { private = true }`).
+(`secrets.private_temp`, on), what a plugin marks
+(`kawoosh.buf.set_private(h)`, `open_scratch { private = true }`), and a
+multibuffer while it shows a private buffer's lines (Decision 9).
 
 *Beat:* a per-kind setting on each path (`history.skip`, `lsp.skip`, a
 clipboard filter) — five settings to get right for every secret, and
@@ -272,6 +273,62 @@ it a secret after the copy.
 and the clipboard is not a register here. *Beat:* a confirm on each
 copy. The key is the confirmation.
 
+### 9. A buffer's text is drawn as its pane draws it, wherever it is drawn
+
+Audited 2026-10-16, after the picker's preview drew a vault's values
+(Built, "From the todo"): every place outside a buffer's own pane that
+draws its text drew it raw — the project search's results and a review
+(multibuffers mirror their files' text, and drew it with their own
+masks, which were none), the base's lines a review shows over a hunk,
+the undo pane's hunk and its change snippets, `hunk preview`'s
+`*hunk*` pane, `:memory jumps`' rows, the changed files' diff preview,
+`*` on a masked value (its pattern in the message), a visual selection
+seeding the project search's field, `:hex`'s text column, and a mark's
+record (`:memory marks`, and the store). Each had made its own copy of
+the lines, and the mask is the pane's. So the rule is one:
+
+- **The text a buffer has now is drawn through its masks**, as its pane
+  has them — a rule by its files, a rule a plugin asked for, ranges a
+  plugin gave. Lua reads it so with `kawoosh.buf.shown_lines`, never
+  `lines`, `text` or `slice` when it draws; the shell with
+  `Kawoosh::shown_line`. A **multibuffer** is drawn with each excerpt's
+  source's masks carried to where its lines are (`mirrored_masks`), and
+  is **private while it shows a private buffer's lines**, so a yank from
+  the results is a secret as one from the file is (Decision 1's list
+  grows by one). An excerpt not synced yet, or whose file is gone, is
+  masked whole, line by line.
+- **A buffer's text that is not its text now** — a base, an undo state,
+  a revision, the file on disk — is masked by the rules that apply to
+  the buffer (or, for a file not open, to its path), scanned over the
+  text shown (`Rules::scan_for`, `Kawoosh::shown_lines_of`,
+  `kawoosh.secrets.mask_text`). Every line is kept — a block's lines
+  each a stand-in, as the pane draws them — so a hunk's line numbers
+  still index the masked lines, and a diff is taken over the real texts
+  and drawn from the masked ones (a value that changed shows as a
+  changed line, `-KEY=••••••••` over `+KEY=••••••••`). Ranges a plugin
+  gave are the one thing no rule finds again in another text: a private
+  buffer with any is masked whole, line by line, there.
+- **What cannot be masked is not drawn.** A change snippet in the undo
+  pane is no line a rule could read: in a private buffer it is a
+  stand-in. A byte's cell has no room for one: `:hex` refuses a private
+  file (`:mask private off` first). A pattern `*` took from a private
+  buffer is the text: the search is marked secret (`Search::secret`) and
+  every message shows `/••••••••`. A selection that touches a mask does
+  not seed the project search. A mark records its line's text in a
+  moment: a private buffer keeps no marks, and one made before the file
+  was private keeps the text it had.
+
+*Beat:* each place masking for itself, as the picker had — it is how
+the eleven were missed; a new view that draws a buffer reaches for the
+one door. *Beat:* refusing a private buffer everywhere outside its pane
+(no search result, no undo pane) — the search over a project with a
+`.env` in it is when the user needs to see its keys most, and the
+masks already say what to hide. *Beat:* a yank from a multibuffer a
+secret only over a private excerpt's lines — the register would have to
+ask where every range came from, and Decision 1 is one flag asked
+everywhere; the results of a search that found a `.env` keep yanks off
+the clipboard until it is closed, the safe side.
+
 ## Deliberately not
 
 - **Not encryption at rest.** A vault scratch is never written; a
@@ -418,3 +475,30 @@ shape. Where it departed:
   all as the pane has them. A private buffer whose masks are another
   version's (edited since this frame's) is masked whole, line by line.
   The picker reads every buffer through it.
+
+### Every view audited, 2026-10-16
+
+Decision 9, from an audit of every Lua view and plugin and the engine's
+own views. Changed: the multibuffers (masks carried, privacy too), the
+review's base lines (`vcs.layout`), the changed files' preview (which
+also asked for its diff again for ever: a reload makes the items anew,
+and the diff was kept on its item; now it is kept per picker by path),
+the undo pane, `hunk preview`, `:memory jumps`, `*`, the project
+search's seed, `:hex`, marks. `kawoosh.secrets.mask_text` keeps every
+line, a block's too, where it had joined a block into one stand-in.
+Checked and left: `pairs.lua`, `node_actions.lua`, `timed.lua`,
+`man.lua`, `dir.lua` (read their own buffers' text to act on it, not to
+draw it; `dir`'s preview already masked); `vcs.lua`'s blame (the text
+goes to `git blame --contents -`, the column draws labels); the picker
+(`shown_lines` already); the inspector (kinds and positions, no text);
+breadcrumbs (symbol names — a YAML's keys, never its values); hover,
+diagnostics, references and completion (a private buffer is never a
+server's, Decision 1). `kawoosh/tests/secrets_drawn.rs` pins each.
+
+Not done, and known: `vcs show`'s `*show*` buffer is git's output, not a
+buffer's text, and a commit that touched a tracked `.env` is drawn as
+git printed it — a diff whose files a rule names wants masking by its
+`+++` headers, a step of its own. And a hunk's sides are scanned alone:
+a `pem` block whose `BEGIN` line is outside the hunk and its context
+is not found in it (the `key` rule, a line rule, masks a private key
+file whole either way).

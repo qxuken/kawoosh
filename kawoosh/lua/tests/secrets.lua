@@ -24,9 +24,11 @@ kawoosh.test.ok(kawoosh.secrets.private("/p/.env"), "a rule names .env")
 kawoosh.test.ok(not kawoosh.secrets.private("/p/main.rs"))
 kawoosh.test.eq(kawoosh.secrets.mask_text("TOKEN=abc", "/p/.env"), "TOKEN=••••••••", "one length for every secret")
 kawoosh.test.eq(kawoosh.secrets.mask_text("TOKEN=abc", "/p/notes.txt"), "TOKEN=abc")
+-- Each of a block's lines a stand-in, as the pane draws them: a list's
+-- line numbers stay the file's (docs/design/secrets.md Decision 9).
 kawoosh.test.eq(
   kawoosh.secrets.mask_text("a\n-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----\nb"),
-  "a\n••••••••\nb",
+  "a\n••••••••\n••••••••\n••••••••\nb",
   "a key block anywhere"
 )
 

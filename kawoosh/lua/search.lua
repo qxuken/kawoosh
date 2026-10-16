@@ -722,6 +722,22 @@ on("results", function()
   kawoosh.field_focus(VIEW, nil)
 end, "the keyboard down to the search's results")
 
+-- Whether `len` bytes from offset `at` of the focused buffer, on one
+-- line, touch what its pane masks (docs/design/secrets.md Decision 9):
+-- the line as drawn (`shown_lines`) and as it is part where the first
+-- mask starts, and a selection reaching past that is a secret's.
+local function masked(at, len)
+  if not kawoosh.buf.private() then return false end
+  local before = kawoosh.buf.slice(0, at)
+  local ln = select(2, before:gsub("\n", "")) + 1
+  local col = #(before:match("[^\n]*$") or "")
+  local raw = kawoosh.buf.line(ln) or ""
+  local shown = kawoosh.buf.shown_lines(ln, ln)[1] or ""
+  local same = 0
+  while same < #raw and raw:byte(same + 1) == shown:byte(same + 1) do same = same + 1 end
+  return raw ~= shown and col + len > same
+end
+
 -- The visual selection's first line — a match is on one line — and
 -- visual mode left; nil outside it.
 local function selected()
@@ -736,6 +752,10 @@ local function selected()
   local text = kawoosh.buf.slice(a, z + 1)
   kawoosh.cmd("normal")
   text = text:match("^[^\n]*") or ""
+  if text ~= "" and masked(a, #text) then
+    kawoosh.echo("a masked value is no pattern: the field would show it")
+    return nil
+  end
   return text ~= "" and text or nil
 end
 

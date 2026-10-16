@@ -387,6 +387,7 @@ impl Editor {
         m.ver = b.version();
         self.history.insert(id, Default::default());
         self.multis.insert(id, m);
+        self.mirror_private(id);
         for (vid, at) in carets {
             let to = at.and_then(|(src, off)| self.multi_offset(id, src, off));
             let v = &mut self.views[vid];
@@ -950,6 +951,28 @@ impl Editor {
         let ids: Vec<BufferId> = self.multis.keys().copied().collect();
         for id in ids {
             self.sync_multi(id);
+            self.mirror_private(id);
+        }
+    }
+
+    /// Multibuffer `id` private while it shows a private buffer's lines
+    /// (docs/design/secrets.md Decision 9): a yank from it is a secret,
+    /// as one from the file is. An excerpt whose source is gone keeps
+    /// its text, and with it what the multibuffer was.
+    fn mirror_private(&mut self, id: BufferId) {
+        let Some(m) = self.multis.get(&id) else {
+            return;
+        };
+        let was = self.buffers.get(id).is_some_and(|b| b.private);
+        let private = m.excerpts.iter().any(|e| {
+            if e.dead {
+                was
+            } else {
+                self.buffers.get(e.source).is_some_and(|b| b.private)
+            }
+        });
+        if let Some(b) = self.buffers.get_mut(id) {
+            b.private = private;
         }
     }
 

@@ -133,19 +133,48 @@ impl Rules {
 
     /// `text`, a line (or lines) of the file at `path` in `language`,
     /// with what the rules that apply to it mask drawn as `•`.
+    /// Every line kept: a block's lines are each a stand-in, so a
+    /// list's line numbers stay the file's.
     pub fn mask_text(&self, path: Option<&Path>, language: &str, text: &str) -> String {
-        let mut found = Vec::new();
-        for r in &self.rules {
-            if r.applies(path, "", language, &[]) {
-                r.scan(text, &mut found);
-            }
-        }
+        let found = self.scan_for(path, "", language, &[], text);
         if found.is_empty() {
             return text.to_string();
         }
+        let mut out = String::with_capacity(text.len());
+        for (line, end) in masked_lines(text, &found) {
+            out.push_str(&line);
+            out.push_str(end);
+        }
+        out
+    }
+
+    /// What the rules that apply to a buffer — by its path, its name,
+    /// its language, and those a plugin asked for it — mask in `text`,
+    /// sorted and merged: a buffer's text that is not its text now (a
+    /// base, an undo state) masked as its pane would mask it.
+    pub fn scan_for(
+        &self,
+        path: Option<&Path>,
+        name: &str,
+        language: &str,
+        asked: &[String],
+        text: &str,
+    ) -> Vec<Range<usize>> {
+        let mut found = Vec::new();
+        for r in &self.rules {
+            if r.applies(path, name, language, asked) {
+                r.scan(text, &mut found);
+            }
+        }
         found.sort_by_key(|r| (r.start, r.end));
-        found.dedup_by(|b, a| b.start < a.end);
-        masked_text(text, &found)
+        let mut merged: Vec<Range<usize>> = Vec::with_capacity(found.len());
+        for r in found {
+            match merged.last_mut() {
+                Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+                _ => merged.push(r),
+            }
+        }
+        merged
     }
 }
 
@@ -236,6 +265,35 @@ pub fn line_folds(
     out
 }
 
+/// `text`'s lines under `masks` (sorted ranges of `text`) as a pane
+/// draws them ([`line_folds`]): what a mask covers of a line stands in
+/// as [`STAND_IN`], a block's empty line stays empty, and each line
+/// comes with its line end (`"\n"`, `"\r\n"`, or none for the last), so
+/// a list of them keeps the text's line numbers.
+pub fn masked_lines<'a>(text: &'a str, masks: &[Range<usize>]) -> Vec<(String, &'a str)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        let end = &line[body.len()..];
+        let folds = line_folds(masks, at..at + body.len(), body);
+        let mut shown = String::with_capacity(body.len());
+        let mut i = 0;
+        for (r, stand_in) in folds {
+            if r.start < i || r.end > body.len() {
+                continue;
+            }
+            shown.push_str(&body[i..r.start]);
+            shown.push_str(&stand_in);
+            i = r.end;
+        }
+        shown.push_str(&body[i..]);
+        out.push((shown, end));
+        at += line.len();
+    }
+    out
+}
+
 /// `text` with `masks` (ranges of it) drawn as `•`: what a list shows
 /// of a line a rule masks (the picker's grep rows).
 pub fn masked_text(text: &str, masks: &[Range<usize>]) -> String {
@@ -298,5 +356,40 @@ mod tests {
             r.mask_text(None, "secret", "# old: hunter22"),
             format!("# old: {STAND_IN}")
         );
+    }
+
+    /// A block masked in a text keeps the text's lines, each a stand-in
+    /// and a block's empty line empty, as the pane draws them: a list
+    /// of the lines (a preview, a diff's side) is not shifted by it.
+    #[test]
+    fn a_masked_block_keeps_its_lines() {
+        let r = bundled();
+        let text = "a\n-----BEGIN RSA PRIVATE KEY-----\nMIIE\n\nabcd\r\n-----END RSA PRIVATE KEY-----\nb\n";
+        let shown = r.mask_text(None, "text", text);
+        let lines: Vec<&str> = shown.split('\n').collect();
+        assert_eq!(
+            lines,
+            [
+                "a",
+                STAND_IN,
+                STAND_IN,
+                "",
+                &format!("{STAND_IN}\r"),
+                STAND_IN,
+                "b",
+                ""
+            ],
+            "{shown}"
+        );
+        let found = r.scan_for(None, "", "text", &[], text);
+        assert_eq!(found.len(), 1, "merged: {found:?}");
+        let rows: Vec<String> = masked_lines(text, &found)
+            .into_iter()
+            .map(|(l, _)| l)
+            .collect();
+        assert_eq!(rows.len(), 7);
+        assert_eq!(rows[0], "a");
+        assert_eq!(rows[3], "");
+        assert_eq!(rows[6], "b");
     }
 }
