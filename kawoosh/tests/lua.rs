@@ -1860,6 +1860,50 @@ fn a_directory_here_is_listed_beside() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `<C-w>/` from a file whose directory is not there — a new file's not
+/// made yet, or one deleted under it — lists the closest parent that
+/// is, and says so (dir.md Decision 4).
+#[test]
+fn a_directory_here_that_is_gone_lists_its_closest_parent() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dirgone-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("old")).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    std::fs::write(dir.join("old/f.txt"), "x").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    let listed = |app: &Kawoosh| app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
+    let top = format!("dir: {}", dir.display());
+    let said = |app: &Kawoosh| {
+        app.notes
+            .shown
+            .iter()
+            .any(|s| s.text.contains("is not there"))
+    };
+
+    // A new file two directories deep that are not made yet.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("new/deeper/g.txt").display()),
+    );
+    d.press(&mut app, "<C-w>/");
+    assert_eq!(listed(&app), top, "the closest directory that is there");
+    assert!(said(&app), "the user told");
+    ex(&mut d, &mut app, "only");
+
+    // A file whose directory went away under it.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("old/f.txt").display()),
+    );
+    std::fs::remove_dir_all(dir.join("old")).unwrap();
+    d.press(&mut app, "<C-w>/");
+    assert_eq!(listed(&app), top);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A line yanked in one listing and pasted in another is that entry
 /// copied — a file, or a directory with everything in it — from the
 /// listing that still has it, which need not have changes of its own;

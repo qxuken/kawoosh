@@ -2033,7 +2033,7 @@ impl Kawoosh {
                 "root" | "cwd" => self.cwd.clone(),
                 other => PathBuf::from(other),
             })
-            .unwrap_or_else(|| self.here_dir());
+            .unwrap_or_else(|| self.here_dir_there());
         let Some(t) = self.spawn_terminal(Some(&def.cmd), Some(&cwd)) else {
             return;
         };

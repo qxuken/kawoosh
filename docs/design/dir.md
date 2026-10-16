@@ -156,3 +156,23 @@ knows neither a terminal's directory nor a Lua pane's.
   directory's — the "here" sibling of a key that exists. `.` and `/`
   are taken by the terminal and the listing; `<C-w>u` was free (vim
   has no `CTRL-W u`).
+
+### 4. "Here" that is gone is its closest parent that is there
+
+*Added 2026-10-16, from the todo:* "if `:dir here` buffer dir does not
+exist (anymore, or not yet) let's notify user but open closest
+existing parent." A file whose directory was deleted under it, or a
+new file (`:e new/dir/f.txt`) whose directories are not made yet, gave
+`<C-w>/` a listing of nothing, and `<C-w>.` a shell that failed to
+start in it.
+
+`Kawoosh::here_dir_there` climbs from `here_dir` (Decision 3) to the
+closest directory that is there and says so in a note — `~/a/b is not
+there: ~/a instead`. All three `here` commands — `:dir here`, `:du
+here`, `:terminal here` — and a tool's terminal with no `cwd` read it,
+so they still cannot disagree. A host's path is taken as it is:
+finding out would wait on the host on the UI thread, and its listing
+says what it found.
+
+`a_directory_here_that_is_gone_lists_its_closest_parent` in
+`kawoosh/tests/lua.rs`.
