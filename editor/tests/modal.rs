@@ -2297,8 +2297,14 @@ fn dot_repeats_the_last_change() {
     let mut t = T::new("abab\n");
     t.keys("rxl.");
     assert_eq!(t.text(), "xxab\n");
-    t.keys("0dfa.");
-    assert_eq!(t.text(), "\n");
+    t.keys("0dfa");
+    assert_eq!(t.text(), "b\n");
+    t.keys(".");
+    assert_eq!(
+        t.text(),
+        "b\n",
+        "no `a` left: the repeat's find fails and takes nothing, as vim's"
+    );
 
     // A visual change replays from `v`: the same shape from the caret.
     let mut t = T::new("a\nb\nc\nd\ne\n");
@@ -2520,4 +2526,67 @@ fn thread_cpu() -> std::time::Duration {
     let ticks = |f: FILETIME| (f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64;
     // FILETIME counts 100 ns.
     std::time::Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+}
+
+/// `f` `t` `F` `T` take their COUNT as the Nth occurrence on the line,
+/// a backtick as the character like any other, in normal mode, visual
+/// mode and under an operator — the todo's "`y2t`` — yank up to second
+/// '`'" (2026-10-16).
+#[test]
+fn find_and_till_count_the_nth_occurrence() {
+    let line = "- [ ] movements like 'y2t`' - yank up to second '`'";
+    let ticks: Vec<usize> = line.match_indices('`').map(|(i, _)| i).collect();
+    let (first, second) = (ticks[0], ticks[1]);
+    let mut t = T::new(line);
+    t.keys("2f`");
+    assert_eq!(t.head(), second);
+    let mut t = T::new(line);
+    t.keys("2t`");
+    assert_eq!(t.head(), second - 1);
+    t.keys("0t`");
+    assert_eq!(t.head(), first - 1);
+    let mut t = T::new(line);
+    t.keys("y2t`");
+    assert_eq!(t.ed.memory.head().unwrap().text, &line[..second]);
+    assert_eq!(t.head(), 0);
+    let mut t = T::new(line);
+    t.keys("2yt`");
+    assert_eq!(
+        t.ed.memory.head().unwrap().text,
+        &line[..second],
+        "a count before the operator the same"
+    );
+    let mut t = T::new(line);
+    t.keys("d2t`");
+    assert_eq!(t.text(), &line[second..]);
+    let mut t = T::new(line);
+    t.keys("d2f`");
+    assert_eq!(t.text(), &line[second + 1..]);
+    let mut t = T::new(line);
+    t.keys("v2t`y");
+    assert_eq!(t.ed.memory.head().unwrap().text, &line[..second]);
+    let mut t = T::new(line);
+    t.keys("v2f`d");
+    assert_eq!(t.text(), &line[second + 1..]);
+    // Backward from the line's end.
+    let mut t = T::new(line);
+    t.keys("$2F`");
+    assert_eq!(t.head(), first);
+    t.keys("$2T`");
+    assert_eq!(t.head(), first + 1);
+    let mut t = T::new(line);
+    t.keys("$d2T`");
+    assert_eq!(t.text(), format!("{}'", &line[..first + 1]));
+    // More than the line has: nothing moves, nothing is taken (vim's
+    // failed motion).
+    let mut t = T::new(line);
+    t.keys("3f`");
+    assert_eq!(t.head(), 0);
+    t.keys("d3t`");
+    assert_eq!(t.text(), line, "a failed motion takes nothing");
+    t.keys("d3f`");
+    assert_eq!(t.text(), line);
+    assert!(t.ed.bell, "and rings");
+    t.keys("$d;");
+    assert_eq!(t.text(), line, "nor `;` with none after");
 }
