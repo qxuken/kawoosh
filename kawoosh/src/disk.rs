@@ -19,12 +19,18 @@
 //!
 //! `:w` over a changed file asks the same question as a confirm; `:w!`
 //! writes over it. `:file` checks every buffer now (vim's `:checktime`).
+//!
+//! A save refused for permission — neither the file nor anything beside
+//! it may be written — is offered to be written as an administrator, a
+//! confirm first (docs/design/disk.md Decision 5): `save.as_admin` runs
+//! off the frame, the system asking for the password itself.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
-use kawoosh_doc::{BufferId, Stamp};
+use kawoosh_doc::{BufferId, Stamp, Version};
 use kawoosh_editor::disk::Disk;
 use kawoosh_editor::{ArgKind, Args, Ctx, Spec};
 use kawoosh_systems::WakeHandle;
@@ -51,16 +57,36 @@ pub struct DiskWatch {
     /// The file's stamp when it was last acted on or asked about, so a
     /// change is answered once however many frames see it.
     told: HashMap<BufferId, Option<Stamp>>,
+    /// Writes as an administrator on their way, by buffer, and their
+    /// answers.
+    admin: HashSet<BufferId>,
+    admin_tx: Sender<AdminWrote>,
+    admin_rx: Receiver<AdminWrote>,
+    wake: WakeHandle,
+}
+
+/// A write as an administrator answered: the buffer, its version when it
+/// was asked for, its file, and what the program said.
+struct AdminWrote {
+    id: BufferId,
+    version: Version,
+    path: PathBuf,
+    result: Result<(), String>,
 }
 
 impl DiskWatch {
     pub fn new(wake: WakeHandle, beat: Beat) -> Self {
+        let (admin_tx, admin_rx) = channel();
         Self {
-            watch: Watcher::spawn(wake, beat),
+            watch: Watcher::spawn(wake.clone(), beat),
             followed: HashMap::new(),
             watched: HashSet::new(),
             toasts: HashMap::new(),
             told: HashMap::new(),
+            admin: HashSet::new(),
+            admin_tx,
+            admin_rx,
+            wake,
         }
     }
 }
@@ -70,6 +96,7 @@ impl Kawoosh {
     /// saw acted on — and, `back`, everything checked, for the window
     /// has come back to the front (its `focused` event).
     pub(crate) fn sync_disk(&mut self, back: bool) {
+        self.admin_answered();
         // The files the buffers stand on; handed to the watch only when
         // the set moved, which a frame checks without allocating.
         let files = || {
@@ -270,6 +297,129 @@ impl Kawoosh {
         }
     }
 
+    /// `:w` refused for permission (`Effect::WriteRefused`): writing it
+    /// as an administrator offered, never done unasked — when
+    /// `save.as_admin` names a program.
+    pub(crate) fn offer_admin_write(&mut self, id: BufferId) {
+        let Some(path) = self.ed.buffers.get(id).and_then(|b| b.path.clone()) else {
+            return;
+        };
+        if self.admin_command().is_empty() || self.disk.admin.contains(&id) {
+            return;
+        }
+        let name = self.ed.buffers[id].name.clone();
+        let p = path.display();
+        self.confirm_with(Confirm {
+            title: format!("Write {name} as an administrator?"),
+            lines: vec![
+                p.to_string(),
+                "You may not write it, nor make a file beside it. The system asks".into(),
+                "for an administrator's password, and the text is written over".into(),
+                "the file where it stands, its owner and mode kept.".into(),
+            ],
+            actions: vec![
+                ("Write as administrator".into(), format!("file admin {p}")),
+                ("Cancel".into(), String::new()),
+            ],
+            chosen: 0,
+        });
+    }
+
+    /// `save.as_admin` as a list of words; empty when it names nothing.
+    fn admin_command(&self) -> Vec<String> {
+        match self.ed.settings.get("save.as_admin") {
+            Some(kawoosh_editor::Setting::List(l)) => l
+                .iter()
+                .filter_map(|a| a.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// `file admin PATH`: the buffer written over its file by
+    /// `save.as_admin`, on a thread — the program waits on a password
+    /// dialog. The text goes through a file of its own in a directory
+    /// only this user reads, removed when the program is done; the
+    /// buffer is saved by the answer if it is still what was written.
+    fn admin_write(&mut self, id: BufferId) {
+        let argv = self.admin_command();
+        let Some(b) = self.ed.buffers.get(id) else {
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            return;
+        };
+        if argv.is_empty() {
+            self.ed.message = "save.as_admin names no program".into();
+            return;
+        }
+        if b.mapped {
+            self.ed.message = format!(
+                "{}: read from the file's mapping, so it cannot be written in place",
+                b.name
+            );
+            return;
+        }
+        if !self.disk.admin.insert(id) {
+            return;
+        }
+        let mut text = Vec::with_capacity(b.len());
+        if let Err(e) = b.write_to(&mut text) {
+            self.disk.admin.remove(&id);
+            self.ed.message = format!("write as administrator failed: {e}");
+            return;
+        }
+        let version = b.version();
+        self.ed.message = format!("writing \"{}\" as an administrator…", path.display());
+        let (tx, wake) = (self.disk.admin_tx.clone(), self.disk.wake.clone());
+        let spawned = std::thread::Builder::new()
+            .name("admin write".into())
+            .spawn(move || {
+                let result = write_as_admin(&argv, &path, &mut text);
+                let _ = tx.send(AdminWrote {
+                    id,
+                    version,
+                    path,
+                    result,
+                });
+                wake.wake();
+            });
+        if spawned.is_err() {
+            self.disk.admin.remove(&id);
+            self.ed.message = "write as administrator failed: no thread".into();
+        }
+    }
+
+    /// The writes as an administrator that have answered: a buffer still
+    /// as it was written is saved, and its file's stamp taken either way,
+    /// so its own write is not asked about as a change.
+    fn admin_answered(&mut self) {
+        while let Ok(w) = self.disk.admin_rx.try_recv() {
+            self.disk.admin.remove(&w.id);
+            let Some(b) = self.ed.buffers.get_mut(w.id) else {
+                continue;
+            };
+            let p = w.path.display();
+            match w.result {
+                Ok(()) => {
+                    if b.version() == w.version {
+                        b.mark_saved();
+                    }
+                    b.disk = Stamp::of(&w.path);
+                    self.ed.message = format!("\"{p}\" written as an administrator");
+                    self.ed.effects.push(kawoosh_editor::Effect::Wrote(w.id));
+                    self.drain_effects();
+                }
+                Err(e) => {
+                    self.notify(
+                        Level::Warn,
+                        format!("{p}: not written as an administrator: {e}"),
+                    );
+                }
+            }
+        }
+    }
+
     /// `:file`: every buffer against its file now.
     fn check_all_disk(&mut self) {
         let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
@@ -355,6 +505,15 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
+            Spec::new("file admin")
+                .args(path())
+                .doc("write the buffer over PATH as an administrator, the system asking for the password (save.as_admin)"),
+            |k, ctx| {
+                let Some(id) = k.disk_buffer(ctx) else { return };
+                k.admin_write(id);
+            },
+        ),
+        cmd(
             Spec::new("file diff")
                 .args(path())
                 .doc("the buffer against PATH on disk, as a diff beside"),
@@ -364,6 +523,57 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
     ]
+}
+
+// ------------------------------------------- written as an administrator
+
+/// Runs `argv` — `save.as_admin`, `{text}` a file holding `text`, `{file}`
+/// the file — and answers what it said when it failed. The text's file
+/// is made in a directory of its own only this user may enter, removed
+/// with it after; `text` is zeroed, since it may be a private buffer's.
+fn write_as_admin(argv: &[String], file: &Path, text: &mut [u8]) -> Result<(), String> {
+    use std::io::Write;
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("kawoosh-admin-{}-{n}", std::process::id()));
+    let held = dir.join("text");
+    let result = (|| {
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(&dir).map_err(|e| e.to_string())?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut f = options.open(&held).map_err(|e| e.to_string())?;
+        f.write_all(text).map_err(|e| e.to_string())?;
+        drop(f);
+        let words: Vec<String> = argv
+            .iter()
+            .map(|a| {
+                a.replace("{text}", &held.to_string_lossy())
+                    .replace("{file}", &file.to_string_lossy())
+            })
+            .collect();
+        let mut command = std::process::Command::new(&words[0]);
+        command.args(&words[1..]);
+        let out = kawoosh_systems::spawn::output(&mut command)
+            .map_err(|e| format!("{}: {e}", words[0]))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let said = String::from_utf8_lossy(&out.stderr);
+        Err(said
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| out.status.to_string()))
+    })();
+    text.fill(0);
+    let _ = std::fs::remove_dir_all(&dir);
+    result
 }
 
 // ------------------------------------------------------------ the diff

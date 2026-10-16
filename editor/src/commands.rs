@@ -2010,7 +2010,10 @@ fn substitute_or_say(ed: &mut Editor, ctx: &Ctx) -> Result<(), String> {
 /// target once whole: the text streams out piece by piece (a big file is
 /// never one string), a crash mid-write leaves the old file, and a
 /// buffer whose text is the file's own mapping keeps reading the old
-/// inode rather than the bytes being written over it.
+/// inode rather than the bytes being written over it. Written in place
+/// instead when the rename would not keep the file as it was or cannot
+/// be made at all (docs/design/disk.md Decision 4) — never a mapped
+/// buffer's file.
 pub(crate) fn save_beside(
     buf: &kawoosh_doc::Buffer,
     path: &std::path::Path,
@@ -2039,7 +2042,28 @@ pub(crate) fn save_beside(
     }
     // A link is written through, not replaced; the file's mode stays.
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let mode = std::fs::metadata(&path).ok().map(|m| m.permissions());
+    let meta = std::fs::metadata(&path).ok();
+    let mode = meta.as_ref().map(|m| m.permissions());
+    let in_place = || {
+        // A buffer reading the file's mapping would read the bytes being
+        // written over it.
+        if buf.mapped {
+            return Err(std::io::Error::other(
+                "nothing may be made beside the file, and the buffer reads its text from the file's mapping, so it cannot be written in place",
+            ));
+        }
+        kawoosh_doc::durable::write_in_place(&path, |mut out| buf.write_to(&mut out))
+    };
+    // A file the rename would not keep as it was — another's, or one
+    // with hard links — is written where it is (docs/design/disk.md
+    // Decision 4).
+    if !buf.mapped
+        && meta
+            .as_ref()
+            .is_some_and(kawoosh_doc::durable::kept_in_place)
+    {
+        return in_place();
+    }
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -2072,7 +2096,13 @@ pub(crate) fn save_beside(
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
-    result
+    match result {
+        // Nothing may be made or renamed beside the file — a directory
+        // that refuses a new name, an SMB share whose ACL lets the file
+        // be written and no more: the file itself, as vim writes it.
+        Err(e) if meta.is_some() && e.kind() == std::io::ErrorKind::PermissionDenied => in_place(),
+        r => r,
+    }
 }
 
 /// `:w`: the buffer written — now, or once formatted when its

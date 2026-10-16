@@ -1066,6 +1066,7 @@ impl Kawoosh {
                         && b.loading.is_some()
                     {
                         b.attach(text);
+                        b.mapped = mapped;
                         // A host's file: its stamp from the read, and its
                         // history from last time, as `buffer_for` gives a
                         // file read on the frame.
@@ -2162,6 +2163,7 @@ impl Kawoosh {
                     }
                 }
                 Effect::DiskConflict(id) => self.confirm_disk_write(id),
+                Effect::WriteRefused(id) => self.offer_admin_write(id),
                 Effect::CountMatches(b) => self.count_matches(b),
                 Effect::SearchContinue {
                     buffer,

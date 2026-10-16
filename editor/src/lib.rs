@@ -426,6 +426,10 @@ pub enum Effect {
     /// `:w` found the buffer's file changed on disk since it was read
     /// and did not write: the shell asks what to do.
     DiskConflict(BufferId),
+    /// A save refused for permission — the file itself may not be
+    /// written, nor anything made beside it: the shell offers to write it
+    /// as an administrator (docs/design/disk.md Decision 5).
+    WriteRefused(BufferId),
     /// A search moved in a buffer too big to count its matches on the
     /// frame: the shell counts them on a thread (`search::count` over a
     /// snapshot) and puts the number in the message when it has it.

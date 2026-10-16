@@ -501,6 +501,36 @@ fn formatter_defaults(defaults: &mut Setting) {
     }
 }
 
+/// `save.as_admin`'s default: the program that writes `{text}` over
+/// `{file}` as an administrator, asking for the password itself — on
+/// macOS through `do shell script … with administrator privileges`, the
+/// paths given as arguments so no quoting is spliced into the script; on
+/// Linux through `pkexec`, polkit's dialog. None elsewhere.
+#[cfg(target_os = "macos")]
+pub const ADMIN_WRITE: &[&str] = &[
+    "/usr/bin/osascript",
+    "-e",
+    "on run argv",
+    "-e",
+    "do shell script \"/bin/cat \" & quoted form of item 1 of argv & \" > \" & quoted form of item 2 of argv with administrator privileges",
+    "-e",
+    "end run",
+    "{text}",
+    "{file}",
+];
+#[cfg(all(unix, not(target_os = "macos")))]
+pub const ADMIN_WRITE: &[&str] = &[
+    "pkexec",
+    "/bin/sh",
+    "-c",
+    "cat \"$1\" > \"$2\"",
+    "sh",
+    "{text}",
+    "{file}",
+];
+#[cfg(not(unix))]
+pub const ADMIN_WRITE: &[&str] = &[];
+
 /// What each of the engine's defaults does, a line each
 /// (docs/design/settings.md Decision 2). A word setting's choices
 /// follow a colon, each with its meaning, as the help's table spells
@@ -656,6 +686,10 @@ const DOCS: &[(&str, &str)] = &[
     (
         "terminal.raw",
         "programs a terminal pane is raw for while one is in front: every key but the escape {{mac:and ⌘ }}theirs",
+    ),
+    (
+        "save.as_admin",
+        "the command a save refused for permission is offered to run as an administrator: `{text}` the text's file, `{file}` the file; empty, never offered",
     ),
     (
         "editor.bell",
@@ -1163,6 +1197,20 @@ impl Settings {
         // Decision 3): a column of its own, or `under` the focused pane.
         defaults.set("terminal.place", Setting::Str("column".into()));
         defaults.set("editor.bell", Setting::Bool(false));
+        // A save the file system refused for permission is offered to be
+        // written as an administrator (docs/design/disk.md Decision 5):
+        // this program and its arguments, `{text}` a private file holding
+        // the text and `{file}` the file — macOS's own password dialog,
+        // polkit's on Linux; empty, never offered.
+        defaults.set(
+            "save.as_admin",
+            Setting::List(
+                ADMIN_WRITE
+                    .iter()
+                    .map(|a| Setting::Str((*a).into()))
+                    .collect(),
+            ),
+        );
         // The directory in a tab's label (roadmap step 50): `auto` while
         // the tabs are in more than one (workspaces.md Decision 6),
         // `always`, or `never`. A tab on a terminal is where its shell
@@ -1996,6 +2044,7 @@ mod tests {
                 "picker.split",
                 "picker.wrap",
                 "relativenumber",
+                "save.as_admin",
                 "scrolloff",
                 "secrets.forget_secs",
                 "secrets.masks.env.files",

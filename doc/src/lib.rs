@@ -344,6 +344,11 @@ pub struct Buffer {
     /// moment, not in a session, not sent to a server, and a yank from
     /// it a secret in the register, never on the system clipboard.
     pub private: bool,
+    /// Its text reads the file's own mapping (a big file opened on the io
+    /// thread), and so may its undo states: a save never writes that
+    /// file in place, which would change the text under the buffer
+    /// (docs/design/disk.md Decision 4).
+    pub mapped: bool,
     /// The file a buffer that is not one stands for — a vault decrypted
     /// into a scratch — which `%` names in a command line.
     pub about: Option<PathBuf>,
@@ -386,6 +391,7 @@ impl Buffer {
             modified: false,
             read_only: false,
             private: false,
+            mapped: false,
             about: None,
             loading: None,
             disk: None,

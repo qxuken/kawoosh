@@ -421,3 +421,80 @@ fn write_all_names_what_it_did_not_write() {
     assert!(app.ed.message.contains("a.txt"), "{}", app.ed.message);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A file neither writable nor replaceable — `0400` in a directory that
+/// takes no new name — is refused as permission, and `:w` offers to
+/// write it as an administrator (docs/design/disk.md Decision 5): asked,
+/// never done unasked. Answered, `save.as_admin` runs — a stand-in here
+/// that gives the file back its write bit, as root needs none — with the
+/// text in a file of its own, gone after; the buffer is saved.
+#[test]
+#[cfg(unix)]
+fn a_save_refused_for_permission_is_offered_as_an_administrator() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tmp("admin");
+    let share = dir.join("share");
+    std::fs::create_dir_all(&share).unwrap();
+    let f = share.join("prometheus.yml");
+    std::fs::write(&f, "token: old\n").unwrap();
+    let tool = dir.join("fake-admin");
+    let log = dir.join("held");
+    std::fs::write(
+        &tool,
+        format!(
+            "#!/bin/sh\necho \"$1\" > '{}'\nchmod u+w \"$2\" && cat \"$1\" > \"$2\"\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o400)).unwrap();
+    std::fs::set_permissions(&share, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let put_back = || {
+        std::fs::set_permissions(&share, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    // A root writes anyway: the case cannot be made.
+    if std::fs::File::create(share.join(".probe")).is_ok() {
+        put_back();
+        std::fs::remove_dir_all(&dir).ok();
+        return;
+    }
+    let (mut d, mut app) = launch(&f);
+    let word = |w: &str| kawoosh_editor::Setting::Str(w.into());
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "save.as_admin",
+        kawoosh_editor::Setting::List(vec![
+            word(&tool.to_string_lossy()),
+            word("{text}"),
+            word("{file}"),
+        ]),
+    );
+    d.keys(&mut app, "x");
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert!(app.ed.message.contains("denied"), "{}", app.ed.message);
+    assert_eq!(disk(&f), "token: old\n", "not written unasked");
+    let texts = d.confirm_texts();
+    assert!(
+        texts.iter().any(|t| t == "Write as administrator"),
+        "{texts:?}"
+    );
+    d.keys(&mut app, "y");
+    let until = Instant::now() + Duration::from_secs(10);
+    while modified(&app) && Instant::now() < until {
+        d.frame(&mut app);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    put_back();
+    assert_eq!(disk(&f), "oken: old\n");
+    assert!(!modified(&app), "{}", app.ed.message);
+    assert!(
+        app.ed.message.contains("administrator"),
+        "{}",
+        app.ed.message
+    );
+    let held = std::fs::read_to_string(&log).unwrap();
+    assert!(!Path::new(held.trim()).exists(), "the text's file is gone");
+    std::fs::remove_dir_all(&dir).ok();
+}

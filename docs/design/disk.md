@@ -106,6 +106,90 @@ program writing there, and the step down would be said again at every
 line a save on that mount would add each time, and nothing to do
 about it.
 
+### 4. A save the rename cannot make is written in place
+
+Asked 2026-10-16: `/Volumes/appdata/prometheus/etc/prometheus.yml`
+(the same `smbfs` NAS as Decision 3) would not save — `Permission
+denied (os error 13)` — where neovim wrote it without a word. Measured
+by its metadata alone (the file holds tokens): the file is
+`-rwx------` this user's, `access(W_OK)` yes; its directory is
+`drwx------` this user's too, yet `access(W_OK)` no — the share's ACL,
+which the server answers for, lets the file be written and nothing be
+made in the directory. The save's sibling (`.prometheus.yml.kawoosh~`)
+is a new name there: refused. vim with `backupcopy=auto` copies the
+file aside when it can and writes the file itself either way, so it
+never needed one.
+
+The rename is kept as the way: a failed write leaves the old file, and
+a big file's buffer reads its mapping, which a write in place would
+change under it. It steps down to a write in place
+(`kawoosh_doc::durable::write_in_place`) when:
+
+- the sibling or the rename is refused for permission (`EACCES`,
+  `EPERM`) and the file is there — the NAS's case, and a directory a
+  user may not write in holding a file they may;
+- the rename would not keep the file as it was
+  (`durable::kept_in_place`): one owned by someone else would become
+  this user's, one with hard links would leave them the old text. vim's
+  `backupcopy=auto` asks the same two.
+
+In place is the file opened for writing as it stands (never made, so a
+name that is not there stays the caller's error), the text written
+over from its start, the file cut to what was written, and synced as
+Decision 3 does — never empty between, and its mode, owner, links and
+extended attributes untouched. What it gives up is the rename's
+atomicity: a write that fails part way leaves the new bytes over the
+start of the old. The buffer still has the text whole, and `:w` again
+writes it; vim takes the same risk where it cannot back up. A buffer
+read from the file's mapping (`Buffer::mapped`, a file past 64 MB
+opened on the io thread) is never written in place: its text and its
+undo states would read the bytes being written — that save fails with
+the reason, and `:w PATH` writes elsewhere.
+
+*Beat:* a backup copy elsewhere first (vim's `backupdir`, `~/tmp`) —
+the buffer is the copy that matters, and a second copy of a file of
+tokens in the home is a leak of its own. *Beat:* in place always — the
+rename's guarantee is worth keeping wherever it can be had.
+
+### 5. A file the user may not write is offered as an administrator
+
+When the file itself refuses the write too — `0400`, root's, a share's
+ACL saying no — the save fails as permission and `:w` puts up a
+confirm (`Effect::WriteRefused`): *Write as administrator* or *Cancel*.
+Never done unasked: a password dialog that appears on a save is a
+surprise, and an elevated write is a decision about that file, not a
+setting. Answered, `:file admin PATH` runs `save.as_admin` on a
+thread, the frame not waiting on the dialog:
+
+- the program and its words are data, `{text}` a file holding the
+  text and `{file}` the file. macOS's default is `osascript` with
+  `do shell script "/bin/cat " & quoted form of item 1 of argv & " > "
+  & … with administrator privileges`, the paths handed in as `argv` so
+  nothing is spliced into the script; Linux's is `pkexec /bin/sh -c 'cat
+  "$1" > "$2"'`, polkit's dialog; Windows has none, and nothing is
+  offered. An empty list switches the offer off.
+- `cat >` writes the file where it stands, as Decision 4 does: its
+  owner and mode are its own. A file not there yet is made root's.
+- the text goes through a file in a directory made `0700` under the
+  temp directory, the file `0600`, removed when the program is done;
+  the copy in memory is zeroed (a private buffer's text, secrets.md
+  Decision 6). The file system may keep its blocks — the same promise
+  as the file being written.
+- the answer saves the buffer if it is still the version written, and
+  takes the file's stamp either way, so the write is not asked about
+  as a change on disk. A refusal — a cancelled dialog says `User
+  canceled.` — is a warning with what the program said.
+
+Not for a host's file (its domain has its own permissions, and an
+administrator here is not one there), nor for a mapped buffer, nor
+from `:wa`, which lists what it could not write as before.
+
+*Beat:* vim's `:w !sudo tee %` — `sudo` wants a terminal to ask on,
+and kawoosh's spawns have none (secrets.md, a session of their own);
+`sudo -A` needs an askpass program the user would have to have.
+*Beat:* the text on the program's stdin — `do shell script` gives its
+command none of osascript's.
+
 ## Not built
 
 - **Following the tail in the view**: a buffer followed keeps its
