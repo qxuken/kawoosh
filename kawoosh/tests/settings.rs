@@ -1395,7 +1395,7 @@ return {
         "---@class kawoosh.Settings",
         "---@field tabstop? integer",
         "---@class kawoosh.Settings.compile",
-        "---@field default? string what a bare `:compile` runs",
+        "---@field default? string|string[] what a bare `:compile` runs",
         "---@field commands? table<string, any>",
         "---@field backend? \"auto\"|\"zoxide\"|\"memory\" where the directory jumps come from",
         "---@class kawoosh.Settings.theme\n---@field [string] any",

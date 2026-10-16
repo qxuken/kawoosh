@@ -16,7 +16,7 @@ for its command, then a buffer a command and directory, the same day
 the session the same day (Decision 13); the note's "Not built"
 2026-10-07 (Decisions 14–18); the picker's order and cargo's release
 profile 2026-10-09 (Decisions 19 and 20); a compile in an empty
-pane 2026-10-16 (Decision 21). The calls
+pane and chains of steps 2026-10-16 (Decisions 21 and 22). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -849,6 +849,100 @@ from a launcher split off a compile pane, the run went back into the old
 pane and left the launcher asking, which is the column-beside problem
 again; replacing any unmodified scratch (an `*scratch*` with text
 pasted and not saved is still something).
+
+### 22. Chains of steps: a list runs in turn, stopping at the first that fails
+
+*Added 2026-10-16, from the user's project settings:*
+
+```lua
+compile = {
+  default = {"commands:build", "commands:run"},
+  commands = {
+    run = { cmd = "./a.out", cwd = "root" },
+    build = { cmd = "cc -std=c23 ./main.c …", cwd = "root" },
+  },
+}
+```
+
+— what `make && ./a.out` is, written as data. A list where a line was
+is a **chain**: its steps run in turn, each started only once the one
+before exited 0.
+
+**Where a list goes.** `compile.default` may be one (declared
+`string|string[]`, a new `SettingKind::Strings`, so the settings file
+neither warns nor fails its types), and so may a named command:
+`commands.NAME = { "build", "run" }`, or a table whose `cmd` is a list,
+keeping `cwd` and `doc`. A list default needs no name of its own; a
+named chain is called as any name (`:compile check`) and can be a step
+of another.
+
+**A step is a `:compile` line**, as the default always was: a name of
+`compile.commands` — a chain's name puts its steps there, flattened —
+else a command run where its program's kind runs (Decision 4), `%` the
+file. So a step can be an inline line: `{ "build", "./a.out --test" }`.
+
+- **`commands:NAME`, as the user wrote it, and plain `NAME` both
+  work.** The plain name is the rule a line already had (names first,
+  Decision 7) and the one recommended; `commands:NAME` is the strict
+  form: a name and only a name, so a typo is `no compile.commands.NAME`
+  rather than a shell saying `command not found` one step in. It works
+  on any `:compile` line, not only in a chain.
+- **A chain's `cwd`** is where its steps run that do not say their own
+  — inline lines and names without a `cwd` alike. A named step with its
+  own keeps it.
+- **`cwd = "root"`** is the project's root — the base a relative `cwd`
+  is joined to — as a tool's `"root"` is. The user's settings used it,
+  borrowed from `tools`, and it would have been the folder `root`
+  under the project. A directory really called `root` is `"./root"`.
+- **Refused before anything runs**: a chain naming itself, however far
+  round (`a → b → a`, said so); arguments after a chain's name (to which
+  step?); a step naming a command with `args = true` and nothing after
+  it (there is no prompt between two steps); an empty list.
+
+**One run, one buffer.** A chain is one run (Decision 11) whose
+identity is its steps — the same chain again goes into its buffer
+again — named for its steps joined with ` && ` (`*compile: cc … &&
+./a.out*`), the head's directory the first step's. Each step is set
+out as a lone run is: a blank line, its directory when it differs from
+the step before's, `$ CMD`, its output, its own `[finished in …]`.
+Locations read their paths from the directory of the step whose output
+they are in (`Run::begun`). A failing step's last line says how; the
+steps after it are listed `not run: CMD`, dim, and not started.
+
+- **kawoosh runs the steps**, not a shell given `a && b`: the user's
+  shell is nushell, where `&&` is not an operator, and Windows' is not
+  sh either; and a step at a time is what gives each its head, its time
+  and its directory.
+- **`<C-c>` mid-chain** stops the step running — killed, so the chain
+  stops there, as a shell's `&&` would on a signal.
+- **`r`, a bare `:compile` again, the picker's row** run the chain from
+  its first step; one mid-chain is stopped first, as any run is. A
+  late exit of the stopped step is not the new run's (its process id
+  is not the run's now), so it cannot start a step.
+- **Said once, at the end**: the corner's note is the chain's — finished
+  in the whole chain's time, or the failing step's end naming that step.
+
+**The memory keeps a chain as one line**, with its steps (`steps` in
+the row's JSON): run again it is the whole chain as it ran, not its
+last step. The picker lists it as one row — the default's, or the
+name's, which the line run merges into (Decision 19) — its command the
+steps joined, each step on a line of the preview (`1. cc …  in
+~/proj`); a chain that would be refused is listed as written with the
+refusal for its why. `<C-e>` on a named chain's row puts `compile
+NAME ` in the prompt, which then refuses arguments; on the default's or
+a remembered chain's, it says there is nothing to finish — the joined
+line is for reading, and run as one shell line it would not be the
+chain. The `compile` tool (Decision 14) is not offered for a chain:
+there is no one shell line to put in a terminal.
+
+Beaten: one buffer per step, shown in turn (the build's warnings gone
+from view the moment `./a.out` starts — the opposite of `make &&
+./a.out` in a terminal); a step stopping only on a "hard" failure, or a
+`continue_on_error` per step (not asked, and `;` inside a step's own
+line says it when wanted); joining the steps into one shell line (see
+above); `commands:NAME` required for a name in a list (then `"build"`
+would be a name in `default = "build"` and a shell command in `default
+= { "build" }`).
 
 ## Not built
 

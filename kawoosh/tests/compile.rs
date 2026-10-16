@@ -886,3 +886,170 @@ fn a_compile_from_an_empty_scratch_takes_its_pane() {
     assert!(app.launcher_pane().is_none());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A chain (compile.md Decision 22): `compile.default` a list of
+/// `:compile` lines — `commands:NAME` as the user wrote it, a bare name,
+/// a command — run in turn into one buffer, each under its own `$ CMD`
+/// and its own last line; `cwd = "root"` the project's root, as a
+/// tool's. The picker lists it as one row; `r` runs it again from its
+/// first step; the memory keeps it as one line, run again whole.
+#[cfg(unix)]
+#[test]
+fn a_chain_runs_its_steps_in_turn() {
+    let dir = project(
+        "chain",
+        r#"return {
+  compile = {
+    default = { "commands:build", "commands:run", "echo inline" },
+    deduce = false,
+    commands = {
+      run = { cmd = "cat out.txt", cwd = "root" },
+      build = { cmd = "echo built > out.txt; echo building", cwd = "root" },
+    },
+  },
+}"#,
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    assert_eq!(
+        d.warnings(),
+        Vec::<String>::new(),
+        "a list default is declared"
+    );
+
+    ex(&mut d, &mut app, "compile?");
+    assert!(
+        app.ed
+            .message
+            .ends_with("echo built > out.txt; echo building && cat out.txt && echo inline"),
+        "{}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "compile");
+    let out = finished(&mut d, &mut app);
+    let order = [
+        "$ echo built > out.txt; echo building\nbuilding\n\n[finished in",
+        "$ cat out.txt\nbuilt\n\n[finished in",
+        "$ echo inline\ninline\n\n[finished in",
+    ];
+    let mut at = 0;
+    for part in order {
+        let found = out[at..].find(part);
+        assert!(found.is_some(), "{part:?} after {at} in {out}");
+        at += found.unwrap() + part.len();
+    }
+    assert_eq!(app.compile.runs.len(), 1, "one run");
+    assert_eq!(
+        compile_buffers(&app).len(),
+        1,
+        "one buffer: {:?}",
+        compile_buffers(&app)
+    );
+    assert_eq!(app.compile.cwd().as_deref(), Some(dir.as_path()), "root");
+    assert!(!out.contains("not run"), "{out}");
+
+    // `r`: again from the first step, into the same buffer.
+    let started = app.compile.started;
+    d.keys(&mut app, "r");
+    let out = finished(&mut d, &mut app);
+    assert_eq!(app.compile.started, started + 3, "three steps again");
+    assert_eq!(out.matches("$ cat out.txt").count(), 1, "{out}");
+    assert_eq!(app.compile.runs.len(), 1);
+
+    // The picker: one row for the chain, its steps in the preview, the
+    // names' rows besides; the memory's line the same chain, once.
+    ex(&mut d, &mut app, "compile pick");
+    let chain = "echo built > out.txt; echo building && cat out.txt && echo inline";
+    let rows: Vec<(&str, &str)> = app
+        .compile
+        .offer
+        .iter()
+        .map(|o| (o.cmd.as_str(), o.from.as_str()))
+        .collect();
+    // Run last, the default's row says so (Decision 19), and is still
+    // the default's: taken, its lines resolved again.
+    assert_eq!(rows[0], (chain, "last run here"), "{rows:?}");
+    assert_eq!(app.compile.offer[0].chain.len(), 3);
+    assert_eq!(rows.iter().filter(|r| r.0 == chain).count(), 1, "{rows:?}");
+    assert_eq!(app.compile.offer[0].detail.len(), 3);
+    assert!(app.compile.offer[0].detail[1].starts_with("2. cat out.txt"));
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+
+    // With no default, a bare `:compile` runs the last line again: the
+    // whole chain, not its last step.
+    ex(&mut d, &mut app, "set compile.default=");
+    ex(&mut d, &mut app, "compile?");
+    assert_eq!(
+        app.ed.message,
+        format!("{chain} (again: compile.default is not set)")
+    );
+    assert_eq!(app.recent_lines()[0].steps.len(), 3);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A step that ends badly stops the chain there, as `&&` does: the
+/// steps after it are said not run and are not started; `<C-c>` mid-chain
+/// is such an end. A named command can be a chain itself, its steps
+/// names or lines; one naming itself, however far round, is refused.
+#[cfg(unix)]
+#[test]
+fn a_failing_step_stops_the_chain() {
+    let dir = project(
+        "chain-fail",
+        r#"return {
+  compile = {
+    deduce = false,
+    commands = {
+      bad = "echo first; exit 3",
+      both = { "bad", "echo never" },
+      slow = { "sleep 30", "echo after" },
+      a = { "b" },
+      b = { cmd = { "echo b", "a" } },
+    },
+  },
+}"#,
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+
+    ex(&mut d, &mut app, "compile both");
+    let out = finished(&mut d, &mut app);
+    assert!(
+        out.contains("$ echo first; exit 3\nfirst\n\n[exited with 3"),
+        "{out}"
+    );
+    assert!(out.contains("not run: echo never"), "{out}");
+    assert!(
+        !out.contains("$ echo never") && !out.contains("\nnever"),
+        "{out}"
+    );
+
+    // `<C-c>` while the first step runs: killed, the second not run.
+    ex(&mut d, &mut app, "compile slow");
+    assert!(app.compile.running());
+    d.press(&mut app, "<C-c>");
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("[killed after"), "{out}");
+    assert!(out.contains("not run: echo after"), "{out}");
+    assert!(!out.contains("\nafter"), "{out}");
+
+    // A chain in a circle: refused, nothing run.
+    let started = app.compile.started;
+    ex(&mut d, &mut app, "compile a");
+    assert_eq!(app.compile.started, started, "nothing ran");
+    assert!(app.ed.message.contains("a → b → a"), "{}", app.ed.message);
+
+    // `commands:NAME` names a command and nothing else.
+    ex(&mut d, &mut app, "compile commands:nope");
+    assert_eq!(app.ed.message, "no compile.commands.nope");
+    // A chain takes no arguments.
+    ex(&mut d, &mut app, "compile both extra");
+    assert!(
+        app.ed.message.contains("takes no arguments"),
+        "{}",
+        app.ed.message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

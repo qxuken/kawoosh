@@ -622,12 +622,48 @@ compile = {
 
 `:compile NAME ARGS` runs a named command with ARGS after it. One with
 `args = true`, called with nothing after it, opens the prompt for you
-to finish instead of running. `cwd` sets where it runs. `<Tab>` after
+to finish instead of running. `cwd` sets where it runs: a path from
+the project, or `"root"` for the project itself. `commands:NAME` says
+a name and only a name — no such command is an error, where a bare
+word that names nothing runs as a command. `<Tab>` after
 `:compile ` completes the names, then paths; after a nushell command
 your project offers, a parameter's completions first — `target:
 string@targets` offers what `targets` answers (read from the file when
 its body is a list, else asked of `nu` once while the file is
 unchanged), `string@[debug release]` those two.
+
+### Chains of steps
+
+A list runs its steps in turn, each only once the one before finished
+well — `make && ./a.out` without a shell having to know `&&`:
+
+```lua
+compile = {
+  default = { "build", "run" },      -- or "commands:build", "commands:run"
+  commands = {
+    build = { cmd = "cc -std=c23 main.c", cwd = "root" },
+    run = { cmd = "./a.out", cwd = "root" },
+    check = { "build", "./a.out --selftest" },   -- a named chain
+    all = { cmd = { "check", "make docs" }, cwd = "root", doc = "everything" },
+  },
+}
+```
+
+Each step is a `:compile` line: a name — a chain's name puts its steps
+there — or a command, `%` the file. A named chain's `cwd` is where its
+steps run that do not say their own. A chain takes no arguments, and a
+step naming a command that wants them is refused, as is a chain that
+names itself, however far round.
+
+The steps run into one buffer, each under its own `$ CMD` and ending
+on its own `[finished in …]` line. A step that fails stops the chain:
+the steps after it are listed as `not run`. `<C-c>` stops the step
+running, and so the chain; `r` runs the chain again from its first
+step. The picker lists a chain as one row, its steps joined with `&&`,
+each on a line of the preview; the memory keeps it as one line, so a
+bare `:compile` with no `compile.default` runs the whole chain again.
+A chain has no `compile` tool (`:tool compile`), there being no one
+shell line to run.
 
 ### Commands your project offers
 

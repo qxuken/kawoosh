@@ -1131,7 +1131,11 @@ impl Kawoosh {
                         meta.as_ref()
                             .and_then(|m| m.get(k)?.as_str().map(str::to_string))
                     };
+                    let steps =
+                        crate::compile::steps_of_json(meta.as_ref().and_then(|m| m.get("steps")));
                     match (field("cmd"), field("cwd")) {
+                        // A chain, as it ran (compile.md Decision 22).
+                        _ if !steps.is_empty() => self.compile_steps(steps, None),
                         (Some(c), Some(cwd)) => self.compile_in(&c, PathBuf::from(cwd)),
                         (Some(c), None) => self.compile(&c),
                         (None, _) => {

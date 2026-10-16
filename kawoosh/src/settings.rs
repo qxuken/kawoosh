@@ -192,13 +192,13 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
     for (path, kind, doc) in [
         (
             "compile.default",
-            K::Str,
-            "what a bare `:compile` runs: a `:compile` line, a name of `compile.commands` or a command, `%` the file",
+            K::Strings,
+            "what a bare `:compile` runs: a `:compile` line — a name of `compile.commands` (`commands:NAME` to say only a name), or a command, `%` the file — or a list of them run in turn, each once the one before finished well",
         ),
         (
             "compile.commands",
             K::Open,
-            "`:compile NAME`'s commands: a command line, or `{ cmd, cwd, args, doc }`",
+            "`:compile NAME`'s commands: a command line, a list of `:compile` lines run in turn (a chain), or `{ cmd, cwd, args, doc }` — `cmd` either, `cwd` a path from the project or `\"root\"`",
         ),
         (
             "compile.deduce",

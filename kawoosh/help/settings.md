@@ -299,7 +299,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `terminal.raw` | `{}` | programs a terminal pane is raw for while one is in front: every key but the escape {{mac:and ⌘ }}theirs ([terminal](terminal.md)) |
 | `lsp.inlay_hints` | `false` | types and parameter names drawn in the line |
 | `lsp` | | language servers and their rules ([code](code.md)) |
-| `compile.default`, `compile.commands` | | what `<leader>cc` and `:compile NAME` run ([code](code.md)) |
+| `compile.default`, `compile.commands` | | what `<leader>cc` and `:compile NAME` run — a line, or a list of them run in turn ([code](code.md)) |
 | `tools` | | named programs to launch in terminal panes, a project's `run` among them; each a `place`: `column`, `under` or `dock` ([terminal](terminal.md#tools)) |
 | `memory.scope` | `"workspace"` | the memory pane shows this `workspace`'s rows or `global`, every one's ([memory](memory.md#the-memory-pane)) |
 | `memory.text.max_mb` | `8` | how much copied text is kept across restarts; `0` for none |
