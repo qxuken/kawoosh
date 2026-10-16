@@ -136,7 +136,8 @@ function M.config_dir(path)
 end
 
 -- Writes the scratch back to its vault: encrypted from stdin over the
--- file. The buffer is marked written when the tool says so.
+-- file. The buffer is marked saved when the tool says it wrote, if it
+-- is still what was written (`kawoosh.buf.saved`).
 local function write_back(path)
   return function(lines)
     local text = table.concat(lines, "\n") .. "\n"
@@ -148,18 +149,17 @@ local function write_back(path)
       on_lines = function(ls) for _, l in ipairs(ls) do out[#out + 1] = l end end,
       on_exit = function(code)
         if code == 0 then
-          -- Filled with what it holds: written, not modified.
-          kawoosh.buf.open_scratch {
-            name = vault_name(path), text = text, language = "yaml", private = true,
-            on_write = write_back(path), show = false, about = path,
-          }
+          -- Written: saved if it still holds what went, its text left
+          -- alone — refilling it lost an edit typed meanwhile, and once
+          -- emptied it, `text` let go of before the tool was done.
+          kawoosh.buf.saved(text, vault_name(path))
           kawoosh.echo("encrypted " .. path)
         else
           kawoosh.echo("ansible-vault: " .. (out[#out] or ("exit " .. tostring(code))))
         end
+        text = nil
       end,
     })
-    text = nil
     return false
   end
 end

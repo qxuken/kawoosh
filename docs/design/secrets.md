@@ -288,3 +288,18 @@ shape. Where it departed:
   kept, so the file's shape still reads. A line that opens a nested
   `{` or `[` is not a value. The cost was the rule: a `files` rule is
   what makes a file private.
+
+### From the todo, 2026-10-16
+
+- **A vault written was left empty.** `:w` in a decrypted vault
+  encrypted the text over the file — the file was right — and then
+  refilled the scratch with it from the tool's exit, through an upvalue
+  `write_back` had set to `nil` the moment the tool started (to let the
+  string go): the refill was `open_scratch { text = nil }`, an empty
+  buffer, clean. The refill was the wrong model too: it replaced the
+  text, so an edit typed while the tool ran was lost with the undo
+  history. Now the exit only says the write landed —
+  `kawoosh.buf.saved(text[, buffer])`, a door for any hook whose write
+  ends after its `on_write` answered: saved if the buffer still holds
+  what was written, line by line, else left modified by what was typed
+  meanwhile; its text is never touched.

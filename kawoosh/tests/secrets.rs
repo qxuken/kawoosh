@@ -311,7 +311,7 @@ fn fake_vault(dir: &std::path::Path) -> std::path::PathBuf {
     std::fs::write(
         &tool,
         format!(
-            "#!/bin/sh\necho run >> '{}'\n[ -f ansible.cfg ] || {{ echo 'ERROR! no vault secrets found' >&2; exit 1; }}\ncase \"$1\" in\n  view) tail -n +2 \"$2\" ;;\n  encrypt) {{ echo '$ANSIBLE_VAULT;1.1;FAKE'; cat; }} > \"$3\" ;;\nesac\n",
+            "#!/bin/sh\necho run >> '{}'\n[ -f ansible.cfg ] || {{ echo 'ERROR! no vault secrets found' >&2; exit 1; }}\ncase \"$1\" in\n  view) tail -n +2 \"$2\" ;;\n  encrypt) sleep 0.2; {{ echo '$ANSIBLE_VAULT;1.1;FAKE'; cat; }} > \"$3\" ;;\nesac\n",
             runs.display()
         ),
     )
@@ -393,6 +393,29 @@ fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
         .ed
         .buffer_of(a.focused_view().unwrap())
         .modified));
+    // The buffer holds what it held: the write used to refill it with
+    // the text it had let go of, and leave it empty.
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), "db_password: s3cret!\n");
+
+    // An edit typed while the tool encrypts is kept, and the buffer is
+    // modified by it: what was written is the text before it.
+    ex(&mut d, &mut app, "w");
+    d.keys(&mut app, "A?");
+    d.key(&mut app, "escape", KeyMods::default());
+    app.ed.message.clear();
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.message.contains("encrypted")),
+        "{}",
+        app.ed.message
+    );
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), "db_password: s3cret!?\n");
+    assert!(app.ed.buffer_of(v).modified, "the edit is not written");
+    assert_eq!(
+        std::fs::read_to_string(&vault).unwrap(),
+        "$ANSIBLE_VAULT;1.1;FAKE\ndb_password: s3cret!\n"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

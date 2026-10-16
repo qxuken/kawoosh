@@ -539,6 +539,10 @@ end
 -- no memory, not in a session, not sent to a server, a yank from it a
 -- secret in the register (put once, never on the clipboard);
 -- kawoosh.buf.private([buffer]) says whether it is.
+-- kawoosh.buf.saved(text[, buffer]): a hooked buffer's write landed
+-- later than its `on_write` answered (`false`, a tool still running):
+-- saved if it still holds `text` (line by line), else left modified by
+-- what was typed meanwhile. Its text is left as it is.
 -- kawoosh.buf.mask_with(rule[, buffer]): a `secrets.masks` rule by
 -- name on the buffer whatever its path — a vault decrypted into a
 -- scratch. kawoosh.buf.mask(ranges[, buffer]): `{ {a, b}, … }`, byte

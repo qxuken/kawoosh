@@ -489,6 +489,14 @@ pub enum Msg {
         name: Option<String>,
         private: bool,
     },
+    /// `kawoosh.buf.saved(text[, buffer])`: a hooked buffer's write has
+    /// landed — saved, if it still holds `text` (line by line), else
+    /// left modified by what was typed since.
+    Saved {
+        buffer: Option<u64>,
+        name: Option<String>,
+        text: String,
+    },
     /// `kawoosh.buf.mask_with(rule[, buffer])`: a `secrets.masks` rule
     /// by name on a buffer whatever its path — a decrypted vault.
     MaskWith {
@@ -6500,6 +6508,15 @@ fn seed(
                 name,
                 private: private.unwrap_or(true),
             });
+            Ok(())
+        })?,
+    )?;
+    let (qq, pp) = (q(queue), published.clone());
+    buf.set(
+        "saved",
+        lua.create_function(move |_, (text, which): (String, Option<LV>)| {
+            let (buffer, name) = which_buffer(&pp, which)?;
+            qq.borrow_mut().push(Msg::Saved { buffer, name, text });
             Ok(())
         })?,
     )?;

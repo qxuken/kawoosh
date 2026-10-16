@@ -1241,6 +1241,17 @@ impl Kawoosh {
                 Some(id) => self.set_private(id, private),
                 None => self.ed.message = "set_private: no such buffer".into(),
             },
+            Msg::Saved { buffer, name, text } => match self.lua_buffer(buffer, name) {
+                // Line by line: a hook is handed lines, so the text it
+                // wrote ends in one newline whatever the buffer's did.
+                Some(id) => {
+                    let b = &mut self.ed.buffers[id];
+                    if b.text().lines().eq(text.lines()) {
+                        b.mark_saved();
+                    }
+                }
+                None => self.ed.message = "saved: no such buffer".into(),
+            },
             Msg::MaskWith { buffer, name, rule } => match self.lua_buffer(buffer, name) {
                 Some(id) => self.mask_with(id, &rule),
                 None => self.ed.message = "mask_with: no such buffer".into(),
