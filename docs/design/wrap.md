@@ -111,6 +111,32 @@ day) keeps every space its room; once kawoosh builds on it, `word` is
 drawn with it — done the same night, once F106 and F107 were both on
 kui main.
 
+### 6. A caret on a row new to kui stays on the row
+
+*Added 2026-10-16, from the todo:* "cursor blinks outside of pane for
+a one frame for a wrapped line, it blinks where text would be if line
+weren't cropped, markdown and not." A wrapped row's carets are placed
+where kui laid their bytes out last frame. On a frame the row's text
+is new to kui — the frame that types, a markdown row turning to its
+source as the caret comes — that layout is another text's, and the
+byte was measured unwrapped instead (`RowForm::stale`, 2026-10-08):
+right on the first visual line, but past the pane's width on every
+later one, where the insert bar, a float that nothing clips, stood for
+that frame.
+
+The measure is now taken only while it lands inside the row's room
+(`RowForm::room`, the lines column's width). Past it, the row's old
+layout answers, the byte clamped to the text it held: the row's own
+wrap, inside it, a frame behind — for a letter typed, the very place,
+as the letter after it moved there. A row with no layout at all (its
+first frame) folds the measure at the room. The frame after places it
+by the new layout, as before.
+
+*Beat:* a kui call answering where a byte lands in a text wrapped at a
+width, without a node — the sound model, worth a kui round when a
+frame-behind caret shows; and clipping the bar to the pane, which
+would have hidden it for the frame rather than placed it.
+
 ## Built
 
 2026-09-28, as decided. `kawoosh/src/wrap.rs`: `soft_wrap` (the

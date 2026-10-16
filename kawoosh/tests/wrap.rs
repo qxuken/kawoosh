@@ -232,3 +232,48 @@ fn a_diagnostic_takes_no_width_from_a_wrapped_line() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The bar caret on a wrapped line stays in the pane on the frame that
+/// types, as on every other: that frame the row's text is new to kui,
+/// and the byte measured unwrapped — the place the text would have
+/// were the line not wrapped — stood the bar past the pane's edge for
+/// it (2026-10-16). The bars drawn each frame are kui's 2 px quads.
+#[test]
+fn the_bar_caret_stays_in_the_pane_on_the_frame_that_types() {
+    let text = format!("{}\nshort", "word ".repeat(60));
+    let mut app = Kawoosh::new("t", &text);
+    let mut d = Drive::new(600.0, 400.0);
+    settle(&mut d, &mut app);
+    ex(&mut d, &mut app, "set editor.wrap=word");
+    settle(&mut d, &mut app);
+    let lh = app.face.line_height;
+    let pane = *app.layout.rects.get(&app.layout.focused()).unwrap();
+    let bars = |d: &mut Drive| -> Vec<(f32, f32)> {
+        let (dl, _) = d.core.output();
+        let s = dl.scale;
+        dl.quads
+            .iter()
+            .filter(|q| {
+                q.kind == kui_native::QuadKind::Solid
+                    && (q.rect.w - 2.0 * s).abs() < 0.5
+                    && (q.rect.h - (lh - 4.0) * s).abs() < 0.5
+            })
+            .map(|q| (q.rect.x / s, q.rect.y / s))
+            .collect()
+    };
+    // Into insert at the line's end, on its last visual line; then a
+    // frame for each letter typed, each looked at as it is drawn.
+    d.keys(&mut app, "A");
+    settle(&mut d, &mut app);
+    for c in ["x", "y", "z"] {
+        d.keys(&mut app, c);
+        let drawn = bars(&mut d);
+        assert!(!drawn.is_empty(), "a bar after `{c}`");
+        for (x, y) in drawn {
+            assert!(
+                x >= pane.x && x <= pane.x + pane.w && y >= pane.y && y <= pane.y + pane.h,
+                "the bar at ({x}, {y}) after `{c}`, the pane {pane:?}"
+            );
+        }
+    }
+}

@@ -2613,6 +2613,7 @@ impl Kawoosh {
                                         scale: *scale,
                                         family,
                                         stale,
+                                        room: width,
                                         // Wrapping, a table's cells wrap
                                         // in their columns too.
                                         wrap: md_wrap.then_some(if in_table {
@@ -2684,6 +2685,7 @@ impl Kawoosh {
                                             scale: 1.0,
                                             family: None,
                                             stale,
+                                            room: width,
                                             wrap: (!long).then_some(w),
                                             bg: None,
                                             gutter: Some((
