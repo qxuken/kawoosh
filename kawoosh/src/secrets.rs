@@ -182,6 +182,25 @@ impl Kawoosh {
         }
     }
 
+    /// Every buffer's masks into the editor for Lua to read a buffer
+    /// through (`Editor::masks`): a picker's preview of an open buffer
+    /// masks what its pane does — a rule by its files, one a plugin
+    /// asked for (a vault's), ranges a plugin gave. Once a frame,
+    /// before Lua runs; a scan is kept per version, so a buffer that
+    /// did not change costs a lookup.
+    pub(crate) fn publish_masks(&mut self) {
+        let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
+        for id in ids {
+            let masks = self.masks_of(id);
+            let version = self.ed.buffers[id].version();
+            if masks.is_empty() {
+                self.ed.masks.remove(&id);
+            } else {
+                self.ed.masks.insert(id, (version, masks));
+            }
+        }
+    }
+
     /// Buffer `id`'s masks now, sorted and merged, less the one
     /// revealed.
     pub(crate) fn masks_of(&mut self, id: BufferId) -> Vec<Range<usize>> {

@@ -825,6 +825,10 @@ pub struct BufSnap {
     /// The file it stands for when it is not one — a vault's scratch,
     /// a picture's pane (`Buffer::about`): what `%` names.
     pub about: Option<PathBuf>,
+    /// Its masks at its version, sorted and merged (`Editor::masks`);
+    /// `None` when they are another version's — a private buffer is
+    /// then read whole-line masked, the safe side.
+    pub masks: Option<Vec<std::ops::Range<usize>>>,
     pub language: String,
     pub snapshot: Snapshot,
     pub sels: Vec<(usize, usize)>,
@@ -1912,6 +1916,11 @@ impl Runtime {
                     name: b.name.clone(),
                     path: b.path.clone(),
                     about: b.about.clone(),
+                    masks: match ed.masks.get(&id) {
+                        Some((v, m)) if *v == b.version() => Some(m.clone()),
+                        Some(_) => None,
+                        None => Some(Vec::new()),
+                    },
                     language: b.language.to_string(),
                     snapshot: b.snapshot(),
                     sels,
@@ -5910,6 +5919,51 @@ fn seed(
                         }
                     }
                     out.push(b.snapshot.slice(r))?;
+                }
+                Ok(out)
+            })?
+        })?,
+    )?;
+    // ---- `kawoosh.buf.shown_lines(from, to[, buffer])`: lines `from`
+    // to `to` (from 1) as the pane draws them: what a mask hides is
+    // `••••••••` (secrets.md Decision 3), so a preview of an open
+    // buffer hides what its pane does. A private buffer whose masks
+    // are not this version's yet is masked whole, line by line.
+    let pp = published.clone();
+    buf.set(
+        "shown_lines",
+        lua.create_function(move |lua, (from, to, h): (usize, usize, Option<u64>)| {
+            with_buf(&pp, h, |b| -> mlua::Result<Table> {
+                let out = lua.create_table()?;
+                let count = b.snapshot.text.newline_count() + 1;
+                let stand_in = kawoosh_editor::masks::STAND_IN;
+                for ln in from.max(1)..=to.min(count) {
+                    let Some(mut r) = b.snapshot.text.get_line_range(ln - 1) else {
+                        break;
+                    };
+                    for nl in *b"\n\r" {
+                        if r.end > r.start && b.snapshot.text.byte_at(r.end - 1) == Some(nl) {
+                            r.end -= 1;
+                        }
+                    }
+                    let line = match &b.masks {
+                        None if b.private && r.end > r.start => stand_in.to_string(),
+                        None => b.snapshot.slice(r),
+                        Some(masks) => {
+                            let inside: Vec<std::ops::Range<usize>> = masks
+                                .iter()
+                                .filter(|m| m.start < r.end && m.end > r.start)
+                                .map(|m| m.start.max(r.start) - r.start..m.end.min(r.end) - r.start)
+                                .collect();
+                            let text = b.snapshot.slice(r);
+                            if inside.is_empty() {
+                                text
+                            } else {
+                                kawoosh_editor::masks::masked_text(&text, &inside)
+                            }
+                        }
+                    };
+                    out.push(line)?;
                 }
                 Ok(out)
             })?

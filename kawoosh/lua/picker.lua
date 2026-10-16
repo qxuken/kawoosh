@@ -210,15 +210,16 @@ local file_cache = {}
 
 -- A file's first lines (or all of them, up to `PREVIEW_LINES` past
 -- `around`), read once per size and mtime.
--- A private buffer's lines as a list shows them: what the mask rules
--- for it hide drawn as `•` (docs/design/secrets.md); any other
--- buffer's as they are.
-local function shown_lines(h, lines)
-  if not kawoosh.buf.private(h) then return lines end
-  local path, language = kawoosh.buf.path(h), kawoosh.buf.language(h)
-  local out = {}
-  for i, l in ipairs(lines) do out[i] = kawoosh.secrets.mask_text(l, path, language) end
-  return out
+-- A buffer's lines `from` to `to` as its pane draws them: what its
+-- masks hide drawn as `•` (docs/design/secrets.md Decision 3) — a
+-- rule by its files, a rule a plugin asked for (a vault's scratch,
+-- which has no path), ranges a plugin gave. The whole buffer without
+-- a range, as `kawoosh.buf.lines` has it: the empty line after a final
+-- newline is no line.
+local function shown_lines(h, from, to)
+  local lines = kawoosh.buf.shown_lines(from or 1, to or math.maxinteger, h)
+  if not from and lines[#lines] == "" and #lines > 1 then lines[#lines] = nil end
+  return lines
 end
 
 -- A host's files read for the preview while a picker is open, by path:
@@ -291,8 +292,8 @@ local function preview_of(item)
     if not ok then return { title = "gone", lines = {} } end
     title = name
     local from = math.max((item.line or 1) - 10, 1)
-    local ok2, got = pcall(kawoosh.buf.lines_in, from, from + PREVIEW_LINES, item.buffer)
-    lines = shown_lines(item.buffer, ok2 and got or {})
+    local ok2, got = pcall(shown_lines, item.buffer, from, from + PREVIEW_LINES)
+    lines = ok2 and got or {}
     local pok, path = pcall(kawoosh.buf.path, item.buffer)
     return { title = title, lines = lines, from = from, at = item.line, path = pok and path or nil }
   elseif item.path then
@@ -2079,7 +2080,7 @@ picker.source("symbols", {
     local h = ctx.buffer
     -- A private buffer's lines as a list shows them (the heads read
     -- from them, and the colours).
-    local lines = h and shown_lines(h, kawoosh.buf.lines(h)) or nil
+    local lines = h and shown_lines(h) or nil
     buffer_symbols(h, function(items, err)
       if not items then return done(nil, err) end
       local rows = symbol_rows(items, nil, lines)
@@ -2166,7 +2167,7 @@ picker.source("lines", {
   items = function(ctx)
     local h = ctx.buffer
     if not h then return {} end
-    local lines = shown_lines(h, kawoosh.buf.lines(h))
+    local lines = shown_lines(h)
     local items = {}
     local width = #tostring(#lines)
     for i, l in ipairs(lines) do

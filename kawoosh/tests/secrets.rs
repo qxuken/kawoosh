@@ -712,3 +712,51 @@ fn a_vault_scratch_goes_up_to_its_directory_and_copies_concealed() {
     assert!(name.ends_with("inventory/all"), "{name}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A picker shows an open vault as its pane does: the buffers picker's
+/// preview and the lines picker's rows mask the values. The scratch
+/// has no path, and its rule is the one the plugin asked for
+/// (`mask_with`), which the preview's own rule lookup never saw — the
+/// values were drawn, and so were in kui (2026-10-16, a screenshot).
+#[test]
+#[cfg(unix)]
+fn a_picker_masks_an_open_vault_as_its_pane_does() {
+    let dir = tmp("vault-preview");
+    let tool = fake_vault(&dir);
+    std::fs::write(dir.join("ansible.cfg"), "[defaults]\n").unwrap();
+    let vault = dir.join("vault.yml");
+    std::fs::write(&vault, "$ANSIBLE_VAULT;1.1;FAKE\ndb_password: s3cret\n").unwrap();
+    let plain = dir.join("site.yml");
+    std::fs::write(&plain, "- hosts: all\n").unwrap();
+    let (mut d, mut app) = vault_app(&tool);
+    ex(&mut d, &mut app, &format!("e {}", vault.display()));
+    assert!(
+        until(&mut d, &mut app, |a| a.focused_view().is_some_and(|v| a
+            .ed
+            .buffer_of(v)
+            .text()
+            .contains("db_password"))),
+        "decrypted: {}",
+        app.ed.message
+    );
+    // The lines picker, on the vault.
+    d.keys(&mut app, " /");
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    let shown = drawn(&d);
+    assert!(shown.contains("db_password:"), "the rows: {shown}");
+    assert!(!shown.contains("s3cret"), "the lines picker: {shown}");
+    d.press(&mut app, "<C-c>");
+    // The buffers picker from another file: the vault's row first, its
+    // preview beside.
+    ex(&mut d, &mut app, &format!("e {}", plain.display()));
+    d.keys(&mut app, "  ");
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    let shown = drawn(&d);
+    assert!(shown.contains("db_password:"), "the preview: {shown}");
+    assert!(!shown.contains("s3cret"), "the buffers preview: {shown}");
+    std::fs::remove_dir_all(&dir).ok();
+}
