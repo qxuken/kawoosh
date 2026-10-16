@@ -231,6 +231,12 @@ other to the kawoosh started last:
                                  (update, outdated, remove, list)
   kawoosh pick SOURCE [QUERY]    the picker on SOURCE (dirs, files, …);
                                  prints what is picked, or exits 1
+
+Asked once, from anywhere:
+  kawoosh default-editor [status|on|off] [EXT...] [--dry-run]
+                                 make Kawoosh the system's default editor
+                                 for the text types it knows (on), give
+                                 them back (off), or say which it is
   kawoosh-edit [+LINE] PATH...   edit --wait as one program: $EDITOR
 
 Options:
@@ -308,6 +314,11 @@ fn main() -> anyhow::Result<()> {
         // (docs/design/formatter-installs.md).
         Some("format") => {
             std::process::exit(kawoosh::format_cli::run(&args[1..]));
+        }
+        // `kawoosh default-editor on`: the system's default for the
+        // text types, only when asked (docs/design/default-editor.md).
+        Some("default-editor") => {
+            std::process::exit(kawoosh::default_editor::cli(&args[1..]));
         }
         // What follows is a path, dash or not, as after `--`.
         Some(REUSE) => {

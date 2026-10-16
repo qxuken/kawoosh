@@ -28,6 +28,41 @@ hands it — Open With, a file dropped on the Dock icon, `open -a Kawoosh
 FILE` — opens in the running window as `kawoosh edit` opens it, a
 directory as a listing.
 
+### Kawoosh as the default editor
+
+Kawoosh takes no file type from the app that opens it until you ask:
+
+| command | what |
+|---|---|
+| `kawoosh default-editor` | which types Kawoosh is the default for, which app has the others, and which it leaves out |
+| `kawoosh default-editor on` | make it the default for the text types it knows — each one's app before is recorded |
+| `kawoosh default-editor on EXT…` | only those extensions, whatever they are (`on md json`) |
+| `kawoosh default-editor off` | give each type back to the app it had before (`off EXT…`: only those) |
+| `--dry-run` | after `on` or `off`: say what would change, change nothing |
+
+`:default-editor`, `:default-editor on` and `:default-editor off` do the
+same from inside, what they say in a pane.
+
+The text types are those the system calls text, or has no type for at
+all (`.rs`, `.go`, `.nu` on macOS); an extension the system knows as
+something else is left out and said so — `.ts` is a video to macOS,
+`.svg` a picture, `.html` a page Safari shows — and is taken only when
+named. `off` gives a type back only while Kawoosh is still its default;
+one you gave to another app since is left as it is.
+
+- **macOS**: run it from Kawoosh.app
+  (`/Applications/Kawoosh.app/Contents/MacOS/kawoosh default-editor on`,
+  or the `kawoosh` linked into your PATH): it sets the type's default as
+  Finder's Get Info → Change All… does. A type no other app had stays
+  Kawoosh's after `off`: macOS has no "no default".
+- **Windows**: only Settings gives a type its default, so `on` and `off`
+  open Settings at Kawoosh's page in Default apps and list the types to
+  give it there. Kawoosh must be installed (`scripts/windows-app.nu
+  --install`).
+- **Linux**: it writes `~/.config/mimeapps.list`, and
+  `~/.local/share/applications/kawoosh.desktop` when there is no
+  `kawoosh.desktop` (removed again with the last type `off` gives back).
+
 Inside the editor:
 
 | keys | what |

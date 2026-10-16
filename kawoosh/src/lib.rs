@@ -21,6 +21,7 @@ pub mod compile;
 pub mod confirm;
 pub mod cwd_watch;
 pub mod deduce;
+pub mod default_editor;
 pub mod devtab;
 pub mod diff;
 pub mod disk;
