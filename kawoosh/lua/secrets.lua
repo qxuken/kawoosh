@@ -6,8 +6,9 @@
 -- `secret` language — `key: value` lines, the values drawn as `•` by
 -- the `secret` rule, `zv` showing one — that is never on disk, not in
 -- a session, and gone with the window. `:secret` bare lists the open
--- ones. A yank from it is put once and forgotten, never on the system
--- clipboard.
+-- ones. A yank from it is a secret: put as often as wanted within
+-- kawoosh, never on the system clipboard, forgotten a while after its
+-- last use.
 --
 -- A file whose first line is `$ANSIBLE_VAULT;` opens decrypted:
 -- `ansible-vault view` fills a private scratch named for the file, its

@@ -652,7 +652,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "secrets.forget_secs",
-        "seconds before a secret in the register is forgotten",
+        "seconds a secret stays in the register after it was last yanked or put",
     ),
     (
         "secrets.reveal_secs",
@@ -1085,8 +1085,9 @@ impl Settings {
         // Secrets (docs/design/secrets.md): the masks, named rules a
         // user adds to or switches off (`secrets.masks.env = false`);
         // a file a `files` rule names is private. A key commented out
-        // (`# password: …`) is masked as the line uncommented is. A secret in the
-        // register is forgotten after `forget_secs`; `zv` shows a mask
+        // (`# password: …`) is masked as the line uncommented is. A
+        // secret in the register is forgotten `forget_secs` after it was
+        // last yanked or put; `zv` shows a mask
         // for `reveal_secs`; a `--wait` open under the temp directory
         // is private; a buffer past `scan_max_kb` is not scanned.
         {
@@ -1174,7 +1175,7 @@ impl Settings {
             ]);
             defaults.set("secrets.masks", masks);
         }
-        defaults.set("secrets.forget_secs", Setting::Int(30));
+        defaults.set("secrets.forget_secs", Setting::Int(120));
         defaults.set("secrets.reveal_secs", Setting::Int(10));
         defaults.set("secrets.private_temp", Setting::Bool(true));
         defaults.set("secrets.scan_max_kb", Setting::Int(1024));

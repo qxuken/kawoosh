@@ -1,7 +1,7 @@
 //! Secrets (docs/design/secrets.md): a file a mask rule names is
 //! private and its values drawn as `•`; a yank from it is a secret in
-//! the register — never on the clipboard, never in the store, put once
-//! and forgotten; `zv` shows one mask for a while; nothing of the
+//! the register — never on the clipboard, never in the store, put as
+//! often as wanted and forgotten a while after its last use; `zv` shows one mask for a while; nothing of the
 //! buffer is a history row or a moment.
 
 mod drive;
@@ -46,7 +46,7 @@ fn launch(db: &std::path::Path) -> (Drive, Kawoosh) {
 
 /// A `.env` opened is private: its values are `•` on the screen, the
 /// keys as they are; a yank of a line is a secret — no clipboard, no
-/// `text` row — put once and gone; an edit leaves no history row and
+/// `text` row — put as often as wanted, in it and out of it; an edit leaves no history row and
 /// the file is no moment.
 #[test]
 fn a_private_file_keeps_nothing_and_draws_its_values_masked() {
@@ -94,21 +94,22 @@ fn a_private_file_keeps_nothing_and_draws_its_values_masked() {
             .starts_with("TOKEN=hunter22\nTOKEN=hunter22\nTOKEN=hunter22\n")
     );
     assert!(app.ed.memory.head().is_some_and(|m| m.secret));
-    // Out of it, once, and then `p` says so rather than putting what
-    // the secret covered.
+    // Out of it as often too (secrets.md Decision 7): it is still
+    // kawoosh's alone — kept a secret, never on the clipboard.
     ex(&mut d, &mut app, "enew");
     let out = app.focused_view().unwrap();
     d.keys(&mut app, "p");
     d.frame(&mut app);
     assert_eq!(app.ed.buffer_of(out).text(), "\nTOKEN=hunter22");
-    assert_eq!(app.ed.memory.len(), before, "the secret went with its put");
     d.keys(&mut app, "p");
-    assert_eq!(app.ed.buffer_of(out).text(), "\nTOKEN=hunter22");
-    assert!(
-        app.ed.message.contains("secret is gone"),
-        "{}",
-        app.ed.message
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed.buffer_of(out).text(),
+        "\nTOKEN=hunter22\nTOKEN=hunter22"
     );
+    assert_eq!(app.ed.memory.len(), before + 1, "the secret stays");
+    assert!(app.ed.memory.head().is_some_and(|m| m.secret));
+    assert_ne!(app.clipboard_last(), Some("TOKEN=hunter22\n"));
     // A text yanked outside and put inside is a secret from then on,
     // and still there for the next put.
     d.keys(&mut app, "ggyy");
@@ -181,9 +182,10 @@ fn zv_reveals_the_mask_under_the_caret_until_it_leaves() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// A secret nothing puts is forgotten after `secrets.forget_secs`; a
-/// text put into a private buffer is a secret from then on — kept for
-/// the next put there, and forgotten on the same timer.
+/// A secret nothing puts is forgotten after `secrets.forget_secs`, and
+/// one put is kept that long again from the put; a text put into a
+/// private buffer is a secret from then on — kept for the next put, and
+/// forgotten on the same timer.
 #[test]
 fn a_secret_is_forgotten_on_a_timer_and_a_put_into_a_private_buffer_is_one() {
     let dir = tmp("forget");
@@ -195,6 +197,15 @@ fn a_secret_is_forgotten_on_a_timer_and_a_put_into_a_private_buffer_is_one() {
     ex(&mut d, &mut app, "set secrets.forget_secs=1");
     d.keys(&mut app, "yy");
     assert!(app.ed.memory.head().is_some_and(|m| m.secret));
+    // In use, kept: a put at 0.7 s carries it past the first second.
+    std::thread::sleep(Duration::from_millis(700));
+    d.keys(&mut app, "p");
+    std::thread::sleep(Duration::from_millis(500));
+    d.frame(&mut app);
+    assert!(
+        app.ed.memory.head().is_some_and(|m| m.secret),
+        "a put keeps it"
+    );
     std::thread::sleep(Duration::from_millis(1100));
     d.frame(&mut app);
     assert!(
@@ -464,8 +475,9 @@ fn a_vault_that_does_not_decrypt_says_why_once() {
 }
 
 /// A paste the pasteboard marked concealed (a password manager's copy,
-/// kui F84) is put once as a secret and forgotten; an unmarked one is
-/// an ordinary clipboard moment.
+/// kui F84) is put as a secret — not a `text` moment, put again by `p`
+/// until its time is up; an unmarked one is an ordinary clipboard
+/// moment.
 #[test]
 fn a_concealed_paste_is_a_secret() {
     let mut d = Drive::new(1000.0, 600.0);
@@ -483,14 +495,18 @@ fn a_concealed_paste_is_a_secret() {
     let v = app.focused_view().unwrap();
     assert!(app.ed.buffer_of(v).text().contains("hunter22"), "put");
     assert!(
-        app.ed.memory.moments().iter().all(|m| m.text != "hunter22"),
-        "and not kept"
+        app.ed
+            .memory
+            .moments()
+            .iter()
+            .all(|m| m.text != "hunter22" || m.secret),
+        "a secret"
     );
     d.keys(&mut app, "p");
-    assert!(
-        app.ed.message.contains("secret is gone"),
-        "{}",
-        app.ed.message
+    assert_eq!(
+        app.ed.buffer_of(v).text().matches("hunter22").count(),
+        2,
+        "put again"
     );
     ex(&mut d, &mut app, "paste clipboard");
     d.input(

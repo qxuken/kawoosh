@@ -537,7 +537,7 @@ end
 -- Secrets (docs/design/secrets.md), the buffer as `annotate` takes it:
 -- kawoosh.buf.set_private([private = true][, buffer]): no history row,
 -- no memory, not in a session, not sent to a server, a yank from it a
--- secret in the register (put once, never on the clipboard);
+-- secret in the register (never on the clipboard, forgotten after a while);
 -- kawoosh.buf.private([buffer]) says whether it is.
 -- kawoosh.buf.saved(text[, buffer]): a hooked buffer's write landed
 -- later than its `on_write` answered (`false`, a tool still running):

@@ -2199,8 +2199,7 @@ fn has_register(ed: &mut Editor) -> bool {
         ed.message = "the _ register is always empty".into();
         false
     } else if ed.memory.spent() {
-        ed.message =
-            "the register's secret is gone — put once, or its time was up: yank it again".into();
+        ed.message = "the register's secret is gone — its time was up: yank it again".into();
         false
     } else if ed.memory.head().is_none() {
         ed.message = "nothing to paste".into();
@@ -2210,21 +2209,20 @@ fn has_register(ed: &mut Editor) -> bool {
     }
 }
 
-/// Whether a put into buffer `id` spends the register's head
-/// (docs/design/secrets.md Decision 2, amended 2026-09-27): a secret
-/// leaving for a buffer that is not private is put once; inside a
-/// private buffer nothing leaves, so a put spends nothing there, and
-/// what is put becomes a secret if it was not one.
-fn spend_on_put(ed: &mut Editor, id: kawoosh_doc::BufferId) -> bool {
+/// The register's head as a put into buffer `id` leaves it
+/// (docs/design/secrets.md Decision 7): a put spends nothing — a secret
+/// is put as often as wanted, anywhere in kawoosh — and a secret put is
+/// in use, so its time to be forgotten starts again. What is put into a
+/// private buffer becomes a secret if it was not one.
+fn on_put(ed: &mut Editor, id: kawoosh_doc::BufferId) {
     let n = ed.memory.len();
     if n == 0 {
-        return false;
+        return;
     }
     if ed.buffers[id].private {
         ed.memory.make_secret(n - 1);
-        return false;
     }
-    ed.memory.head().is_some_and(|m| m.secret)
+    ed.memory.used(n - 1);
 }
 
 /// `p` / `P` on a visual selection: every selection replaced with the
@@ -2238,7 +2236,7 @@ fn paste_over(ed: &mut Editor, ctx: &Ctx, keep: bool) {
         return;
     }
     let id = view(ed, ctx).buffer;
-    let once = spend_on_put(ed, id);
+    on_put(ed, id);
     let Some(head) = ed.memory.head() else {
         return;
     };
@@ -2275,10 +2273,6 @@ fn paste_over(ed: &mut Editor, ctx: &Ctx, keep: bool) {
         })
         .collect();
     let texts: Vec<String> = ranges.iter().map(|(r, _)| buf.slice(r.clone())).collect();
-    if once {
-        let n = ed.memory.len() - 1;
-        ed.memory.forget(n);
-    }
     if !keep {
         set_register(ed, id, &ranges, &texts, lines, crate::Took::Delete);
     }
@@ -2391,7 +2385,7 @@ fn put(ed: &mut Editor, view: ViewId, count: usize, after: bool, walk: Option<(V
         return;
     }
     let id = ed.views[view].buffer;
-    let once = spend_on_put(ed, id);
+    on_put(ed, id);
     let Some(head) = ed.memory.head() else {
         return;
     };
@@ -2460,12 +2454,9 @@ fn put(ed: &mut Editor, view: ViewId, count: usize, after: bool, walk: Option<(V
             Selection::point(m::first_nonblank(buf, ln.min(buf.line_count() - 1)))
         });
     }
-    if once {
-        let head = ed.memory.len() - 1;
-        ed.memory.forget(head);
-        text_buffer::wipe_string(&mut text);
-        ed.last_put = None;
-    } else if ed.buffers[id].version() != version {
+    // The copy made to put goes zeroed, as a secret's text does.
+    text_buffer::wipe_string(&mut text);
+    if ed.buffers[id].version() != version {
         let (order, at) = walk.unwrap_or_else(|| {
             let n = ed.memory.len();
             ((0..n).rev().filter_map(|i| ed.memory.id(i)).collect(), 0)

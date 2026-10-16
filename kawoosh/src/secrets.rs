@@ -301,7 +301,7 @@ impl Kawoosh {
             .ed
             .settings
             .int("secrets.forget_secs")
-            .unwrap_or(30)
+            .unwrap_or(120)
             .max(1) as u64;
         let keep = Duration::from_secs(secs);
         if let Some(before) = now.checked_sub(keep) {
