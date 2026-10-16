@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["text-buffer", "doc", "editor", "term", "systems", "lua", "kawoosh", "languages", "diagram"]
+# Third-party crates kept here with a fix of ours (`[patch.crates-io]`
+# below), not the workspace's own.
+exclude = ["vendor"]
 
 [workspace.package]
 publish = false
@@ -88,6 +91,11 @@ criterion = "0.8.2"
 
 bitflags = { version = "2.13.1", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "deref_mut"] }
+
+# tree-sitter-md 0.5.3, the crates.io package as published, kept here
+# to carry a fix of its inline grammar (vendor/tree-sitter-md/KAWOOSH.md).
+[patch.crates-io]
+tree-sitter-md = { path = "vendor/tree-sitter-md" }
 
 [profile.release]
 # Symbols, one codegen unit and fat LTO: 48 MB down to 39 MB. Half of
