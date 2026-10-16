@@ -456,8 +456,9 @@ fn spawned(app: &mut Kawoosh) -> String {
         r#"local s = {}
            for k, n in pairs(_G.costs_spawned or {}) do s[#s + 1] = k .. " ×" .. n end
            table.sort(s)
-           kawoosh.echo("vcs.moved ×" .. (_G.costs_moved or 0) .. "; " .. table.concat(s, ", "))
-           _G.costs_spawned, _G.costs_moved = {}, 0"#,
+           kawoosh.echo("vcs.moved ×" .. (_G.costs_moved or 0) .. ", index_moved ×" .. (_G.costs_index or 0)
+             .. "; " .. table.concat(s, ", "))
+           _G.costs_spawned, _G.costs_moved, _G.costs_index = {}, 0, 0"#,
     )
 }
 
@@ -520,6 +521,13 @@ fn statusline_lap() {
            end
            local moved = kawoosh.vcs.moved
            kawoosh.vcs.moved = function(r) _G.costs_moved = _G.costs_moved + 1 return moved(r) end
+           local index_moved = kawoosh.vcs.index_moved
+           if index_moved then
+             kawoosh.vcs.index_moved = function(r)
+               _G.costs_index = (_G.costs_index or 0) + 1
+               return index_moved(r)
+             end
+           end
            kawoosh.echo("ok")"#,
     );
     ex(&mut d, &mut app, "dir");
@@ -560,6 +568,16 @@ fn statusline_lap() {
         t.retain(|s| s.contains("main") || s == "RAW" || s == "TERM" || s == "NOR");
         t
     });
+
+    // A changed file open beside the listing, its base against the
+    // index: what the index moving costs in processes.
+    app.layout.focus(listing);
+    ex(&mut d, &mut app, "e file_3.txt");
+    frames_for(&mut d, &mut app, 1.0);
+    spawned(&mut app);
+    let on_file = frames_for(&mut d, &mut app, secs);
+    on_file.report("lazygit churning, a file focused");
+    eprintln!("    {}", spawned(&mut app));
 
     // SAFETY: serial.
     unsafe {

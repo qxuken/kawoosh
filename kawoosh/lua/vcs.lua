@@ -21,7 +21,9 @@
 --     show = function(root, rev, done) … end,
 --     worktrees = function(root, done) … end,
 --     worktree_add = function(root, path, branch, done) … end,
---     watch = function(root) … end,                 -- the paths whose change means "ask again"
+--     watch = function(root) … end,                 -- the paths whose change means "ask again": a list,
+--                                                   -- or { head = {…}, index = {…} } (Decision 13)
+--     index_ids = function(root, paths, done) … end, -- done{ [path] = id }: each file's entry in the index
 --     stage = function(root, path, patch, done) … end, -- the index patched: done(true) or done(false, why)
 --   })
 
@@ -328,15 +330,35 @@ local pending_bases = {}
 -- The buffers with the blame column on.
 local blamed = {}
 
+-- The backends by root, as settled for any directory under it.
+local by_root = {}
+
 local function settle(dir, v)
   roots[dir] = v
+  if v then by_root[v.root] = v end
   local waiting = probing[dir] or {}
   probing[dir] = nil
   if v and v.backend.watch and not v.watched then
     v.watched = true
     local ok, paths = pcall(v.backend.watch, v.root)
-    if ok and type(paths) == "table" and #paths > 0 then
-      fs.watch("vcs:" .. v.root, paths, function() vcs.moved(v.root) end)
+    if ok and type(paths) == "table" then
+      -- `{ head =, index = }`: the index's paths alone moving is the
+      -- index moved (Decision 13); a plain list is the repository.
+      local all, index = {}, {}
+      for _, p in ipairs(paths) do all[#all + 1] = p end
+      for _, p in ipairs(paths.head or {}) do all[#all + 1] = p end
+      for _, p in ipairs(paths.index or {}) do
+        all[#all + 1] = p
+        index[p] = true
+      end
+      if #all > 0 then
+        fs.watch("vcs:" .. v.root, all, function(changed)
+          for _, p in ipairs(changed or {}) do
+            if not index[p] then return vcs.moved(v.root) end
+          end
+          vcs.index_moved(v.root)
+        end)
+      end
     end
   end
   for _, cb in ipairs(waiting) do
@@ -391,31 +413,54 @@ end
 -- A head that could not be read stays unread (`false`) until the
 -- repository moves: asked again at every frame, a failure was a spawn a
 -- frame (a host's root spelled as a local path: 500 in three seconds).
--- Asked while a read is under way, the asker waits for that read.
-local heads_waiting = {}
-function vcs.head(r, done)
-  local h = heads[r.root]
-  if h ~= nil then return done(h or nil) end
-  if not r.backend.head then return done(nil) end
+-- Asked while a read is under way, the asker waits for that read; the
+-- repository moving meanwhile (`again`) reads once more before they
+-- are answered, the read under way perhaps from before the move.
+local heads_waiting, heads_again = {}, {}
+local function read_head(r, done, again)
   local waiting = heads_waiting[r.root]
   if waiting then
     waiting[#waiting + 1] = done
+    if again then heads_again[r.root] = true end
     return
   end
   heads_waiting[r.root] = { done }
-  r.backend.head(r.root, function(head)
-    heads[r.root] = head or false
-    local all = heads_waiting[r.root] or {}
-    heads_waiting[r.root] = nil
-    for _, cb in ipairs(all) do cb(head) end
-  end)
+  local function ask()
+    heads_again[r.root] = nil
+    r.backend.head(r.root, function(head)
+      if heads_again[r.root] then return ask() end
+      heads[r.root] = head or false
+      local all = heads_waiting[r.root] or {}
+      heads_waiting[r.root] = nil
+      for _, cb in ipairs(all) do cb(head) end
+    end)
+  end
+  ask()
 end
 
+function vcs.head(r, done)
+  local h = heads[r.root]
+  if h ~= nil and not heads_waiting[r.root] then return done(h or nil) end
+  if not r.backend.head then return done(nil) end
+  read_head(r, done)
+end
+
+-- What each buffer's file was in the index when last looked at (the
+-- backend's `index_ids`), by handle; and the roots whose index is being
+-- looked at, `"again"` when it moved meanwhile.
+local index_ids, index_checking = {}, {}
+
 -- vcs.moved(root): the repository at `root` changed (a commit, a
--- checkout): its head is read again, and every buffer under it with
--- a base is given its base again.
+-- checkout): its head is read again — the one read before kept on the
+-- line until the new one comes, rather than the branch blinking out —
+-- and every buffer under it with a base is given its base again.
 function vcs.moved(root)
-  heads[root] = nil
+  local r = by_root[root]
+  if r and r.backend.head then
+    read_head(r, function() end, true)
+  else
+    heads[root] = nil
+  end
   for _, h in ipairs(file_buffers()) do
     local p = kawoosh.buf.path(h)
     if p and is_under(p, root) then
@@ -423,6 +468,62 @@ function vcs.moved(root)
       if kawoosh.buf.base_label(h) or h == kawoosh.buf.current() then vcs.refresh(h) end
       if blamed[h] then vcs.blame_on(h) end
     end
+  end
+end
+
+-- vcs.index_moved(root): only the index at `root` was written — a
+-- `git add`, or `git status` refreshing its stat data, which lazygit
+-- does as often as it draws (Decision 13). The head stands; a base
+-- against HEAD (`vcs.base = "head"`) stands; a base against the index
+-- is read again only for the files whose entry moved, asked of the
+-- backend in one go (`index_ids`) — without that, every one, as
+-- `vcs.moved` does. One look at a time per root: moved while one is
+-- under way, it looks once more after.
+function vcs.index_moved(root)
+  if kawoosh.opt("vcs.base") == "head" or not enabled() then return end
+  if index_checking[root] then
+    index_checking[root] = "again"
+    return
+  end
+  local under, paths = {}, {}
+  for _, h in ipairs(file_buffers()) do
+    local p = kawoosh.buf.path(h)
+    if p and is_under(p, root) then
+      if kawoosh.buf.base_label(h) or h == kawoosh.buf.current() then
+        under[#under + 1] = { h = h, path = p }
+        paths[#paths + 1] = p
+      else
+        fetched[h] = nil
+      end
+    end
+  end
+  if #under == 0 then return end
+  local r = by_root[root]
+  local function refresh_all()
+    for _, u in ipairs(under) do vcs.refresh(u.h) end
+  end
+  if not (r and r.backend.index_ids) then return refresh_all() end
+  index_checking[root] = true
+  local ok = pcall(r.backend.index_ids, root, paths, function(ids)
+    local again = index_checking[root] == "again"
+    index_checking[root] = nil
+    if not ids then
+      refresh_all()
+    else
+      for _, u in ipairs(under) do
+        -- None for a path the backend could not ask about: read again.
+        local id = ids[u.path]
+        if (id == nil or index_ids[u.h] ~= id) and has_buffer(u.h) then
+          index_ids[u.h] = id
+          vcs.refresh(u.h)
+        end
+      end
+    end
+    if again then vcs.index_moved(root) end
+  end)
+  if not ok then
+    index_checking[root] = nil
+    refresh_all()
   end
 end
 
@@ -1200,7 +1301,39 @@ end
 function git.watch(root)
   local g = gitdirs[root]
   if not g then return {} end
-  return { fs.join(g, "HEAD"), fs.join(g, "index"), fs.join(fs.join(g, "logs"), "HEAD") }
+  return { head = { fs.join(g, "HEAD"), fs.join(fs.join(g, "logs"), "HEAD") },
+           index = { fs.join(g, "index") } }
+end
+
+-- Each file's entry in the index — its mode, blob and stage, every
+-- stage of a conflict — by the path asked with, `""` for none: one
+-- `ls-files` for them all, from the root. A path not under the root as
+-- git spells it (a link, `/tmp` against `/private/tmp`) is left out,
+-- and so read again each time.
+function git.index_ids(root, paths, done)
+  -- Literal: a `[` or `*` in a name is that file, not a pattern.
+  local argv = { "git", "--literal-pathspecs", "-c", "core.quotePath=false", "ls-files", "-s", "-z", "--" }
+  local words, by_rel = #argv, {}
+  for _, p in ipairs(paths) do
+    local rel = fs.relative(p, root)
+    if rel and rel ~= "." then
+      rel = rel:gsub("\\", "/")
+      by_rel[rel] = p
+      argv[#argv + 1] = rel
+    end
+  end
+  if #argv == words then return done({}) end
+  run(argv, root, function(text, code)
+    if code ~= 0 then return done(nil) end
+    local ids = {}
+    for _, p in pairs(by_rel) do ids[p] = "" end
+    for entry in text:gmatch("([^\0]+)") do
+      local id, rel = entry:match("^(%d+ %x+ %d)\t(.+)$")
+      local p = rel and by_rel[rel]
+      if p then ids[p] = ids[p] .. id .. ";" end
+    end
+    done(ids)
+  end)
 end
 
 function git.head(root, done)
