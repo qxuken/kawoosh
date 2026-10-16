@@ -571,7 +571,10 @@ end
 -- to the field focused last, else `field`. nil takes the header off.
 -- kawoosh.secrets.private(path): whether a rule names the file;
 -- kawoosh.secrets.mask_text(text, path[, language]): the text with
--- what the rules for that file mask drawn as `•` — a list's line.
+-- what the rules for that file mask drawn as `•` — a list's line, or
+-- a file's text read from disk or from version control; every line is
+-- kept (a block's lines each a stand-in), so its lines still number as
+-- the file's.
 --
 -- kawoosh.buf.annotate(notes[, buffer]): text after a line's end that
 -- is not the buffer's — what an entry is, beside its name — `{ [id] =
@@ -727,7 +730,13 @@ end
 -- kawoosh.oldfiles([limit]): the files attended before (the memory's
 -- `file` rows), newest first, `{ path =, line = }` each. kawoosh.holds(fact): whether a fact holds
 -- where the keyboard is. kawoosh.buf.lines_in(from, to[, buffer]): a
--- window of a buffer's lines.
+-- window of a buffer's lines. kawoosh.buf.shown_lines(from, to[,
+-- buffer]): lines `from` to `to` as the buffer's pane draws them, what
+-- its masks hide as `••••••••` (a private buffer whose masks are not
+-- this version's yet masked whole, line by line). A plugin that draws a
+-- buffer's text — a preview, a row, a float — reads it through this
+-- one, never `lines`, `text` or `slice` (docs/design/secrets.md
+-- Decision 9).
 -- kawoosh.pane(): the pane the keyboard was in when the command at
 -- hand was run — a command's `ctx.pane`, for code with no `ctx` (a
 -- picker's source). kawoosh.pane_size(pane): an editor pane's text

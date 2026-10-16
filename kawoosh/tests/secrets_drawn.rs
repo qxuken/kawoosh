@@ -231,6 +231,61 @@ fn a_hunk_preview_masks_a_private_file() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The changed files' picker previews a private file's diff masked,
+/// the buffer open and edited or not.
+#[test]
+fn the_changed_files_preview_masks_a_private_file() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = repo("changes");
+    let (mut d, mut app) = launch(&dir.join("prod.env"), &dir);
+    // The base read on a thread: inline, its answer would land before
+    // the preview said it was reading, and the picker ask again.
+    app.jobs_inline = false;
+    // Edited and not saved: the preview reads the buffer.
+    d.keys(&mut app, "ggA");
+    d.keys(&mut app, "x");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "vcs status");
+    until(&mut d, &mut app, "the diff preview", |_, d| {
+        drawn(d).contains("+TOKEN=")
+    });
+    let shown = drawn(&d);
+    assert!(shown.contains("-TOKEN="), "the base's line: {shown}");
+    assert!(
+        !shown.contains(SECRET) && !shown.contains(OLD),
+        "masked: {shown}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A review (`vcs diff`) of a private file: its lines masked, as the
+/// multibuffer it is draws its sources.
+#[test]
+fn a_review_masks_a_private_file() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = repo("review");
+    let (mut d, mut app) = launch(&dir.join("a.txt"), &dir);
+    ex(&mut d, &mut app, "vcs diff");
+    until(&mut d, &mut app, "the review", |app, _| {
+        buffer_named(app, "*vcs diff*")
+            .is_some_and(|id| app.ed.buffers[id].text().contains("TOKEN="))
+    });
+    d.frame(&mut app);
+    let shown = drawn(&d);
+    assert!(shown.contains("TOKEN="), "the line: {shown}");
+    assert!(
+        !shown.contains(SECRET) && !shown.contains(OLD),
+        "masked: {shown}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `*` on a masked value: the search it starts does not draw the value
 /// (a prompt, a message, a count).
 #[test]
@@ -253,6 +308,42 @@ fn a_star_search_on_a_mask_does_not_draw_it() {
     let v = app.focused_view().unwrap();
     let head = app.ed.views[v].sels.primary().head;
     assert_eq!(head, "TOKEN=hunter22\nOTHER=".len(), "on the second");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A visual selection over a masked value does not become the project
+/// search's pattern, which its field would draw.
+#[test]
+fn a_masked_selection_is_no_search_pattern() {
+    let dir = tmp("seed");
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    let env = dir.join("prod.env");
+    std::fs::write(&env, format!("TOKEN={SECRET}\n")).unwrap();
+    let (mut d, mut app) = launch(&env, &dir);
+    d.keys(&mut app, "f=lve");
+    ex(&mut d, &mut app, "search project");
+    d.frame(&mut app);
+    let shown = drawn(&d);
+    assert!(!shown.contains(SECRET), "masked: {shown}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `:hex` on a private file: its bytes are its text, and no stand-in
+/// fits a byte's cell — the pane is not opened, and says why.
+#[test]
+fn hex_refuses_a_private_file() {
+    let dir = tmp("hex");
+    let env = dir.join("prod.env");
+    std::fs::write(&env, format!("TOKEN={SECRET}\n")).unwrap();
+    let (mut d, mut app) = launch(&env, &dir);
+    ex(&mut d, &mut app, "hex");
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    let shown = drawn(&d);
+    assert!(!shown.contains(SECRET), "the text column: {shown}");
+    assert!(app.lua_view_pane("hex").is_none(), "no bytes pane");
+    assert!(app.ed.message.contains("private"), "{}", app.ed.message);
     std::fs::remove_dir_all(&dir).ok();
 }
 

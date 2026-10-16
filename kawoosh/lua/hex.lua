@@ -920,6 +920,16 @@ function hex.open(path)
   path = fs.expand(path)
   if fs.is_dir(path) then return kawoosh.echo("a directory: " .. path) end
   if not size_of(path) then return kawoosh.echo("no such file: " .. path) end
+  -- A private file's bytes are its text, and no stand-in fits a byte's
+  -- cell (docs/design/secrets.md Decision 9): its open buffer says,
+  -- else the mask rules that name it.
+  local private = kawoosh.secrets.private(path)
+  for _, h in ipairs(kawoosh.buf.list()) do
+    if kawoosh.buf.path(h) == path then private = kawoosh.buf.private(h) end
+  end
+  if private then
+    return kawoosh.echo(fs.basename(path) .. " is private: its bytes are not shown (:mask private off first)")
+  end
   pending = path
   kawoosh.view_open(VIEW, { share = SHARE })
 end

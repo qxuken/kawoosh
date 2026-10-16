@@ -58,6 +58,26 @@ local function lines_of(text)
   return out
 end
 
+-- A text of the file at `path` that is not its buffer's text now — a
+-- base, a revision — as a list shows its lines: what the file's mask
+-- rules hide drawn as `••••••••`, every line kept, so a hunk's line
+-- numbers still index it (docs/design/secrets.md Decision 9).
+local function shown_lines_of(text, path)
+  if not path then return lines_of(text) end
+  return lines_of(kawoosh.secrets.mask_text(text, path))
+end
+
+-- The lines a hunk took away, as a list shows them: from `shown` (the
+-- old text's lines through `shown_lines_of`) when it is there, else
+-- each line masked by the rules of the file at `path`.
+local function old_shown(h, shown, path)
+  local out = {}
+  for k, l in ipairs(h.old) do
+    out[k] = shown and shown[h.old_line + k - 1] or (path and kawoosh.secrets.mask_text(l, path)) or l
+  end
+  return out
+end
+
 local function line_count(text)
   if text == "" then return 0 end
   local n = select(2, text:gsub("\n", ""))
@@ -468,7 +488,10 @@ function vcs.layout(files)
         -- nothing to show but its lines, which the run shows anyway.
         if #h.old > 0 then
           if h.line > at and h.line - 1 <= f.lines then parts[#parts + 1] = src(f, at, h.line - 1) end
-          parts[#parts + 1] = { text = table.concat(h.old, "\n") .. "\n", color = "deleted" }
+          -- The base's lines are a gap, the caller's text: masked
+          -- here, as the excerpts are by their buffers' masks.
+          local old = old_shown(h, f.old_shown, f.about or f.path)
+          parts[#parts + 1] = { text = table.concat(old, "\n") .. "\n", color = "deleted" }
           at = math.max(at, h.line)
         end
       end
@@ -533,7 +556,8 @@ local function worktree_review(r, files, rev, what, name)
         text = ""
       end
       local rel = fs.relative(f.path, r.root) or f.path
-      out[#out + 1] = { rel = rel, path = f.path, hunks = kawoosh.diff(base, text), lines = line_count(text) }
+      out[#out + 1] = { rel = rel, path = f.path, hunks = kawoosh.diff(base, text), lines = line_count(text),
+                        old_shown = shown_lines_of(base, f.path) }
       if not rev then
         -- The buffer's own base, which `vcs.refresh` gives with what
         -- is staged under it; a file not open gets it in the buffer
@@ -574,7 +598,8 @@ local function revision_review(r, files, from, to, name)
         local scratch = "vcs:" .. to .. ":" .. rel
         kawoosh.buf.open_scratch { name = scratch, text = new, read_only = true, about = f.path, show = false }
         kawoosh.buf.base(old, from, scratch)
-        out[#out + 1] = { rel = rel, name = scratch, hunks = kawoosh.diff(old, new), lines = line_count(new) }
+        out[#out + 1] = { rel = rel, name = scratch, about = f.path, hunks = kawoosh.diff(old, new),
+                          lines = line_count(new), old_shown = shown_lines_of(old, f.path) }
         left = left - 1
         if left == 0 then open_review(name, out, what) end
       end)
@@ -720,7 +745,11 @@ local STATE_LETTER = { modified = "M", added = "A", deleted = "D", untracked = "
 -- The changed files, each previewed as its diff.
 picker.source("vcs status", {
   title = "changed files",
-  load = function(_, done)
+  load = function(ctx, done)
+    -- The diffs read while this picker is open, by path: a reload
+    -- (the one a diff read asks for) makes the items again, and a diff
+    -- kept on its item was asked for again, for ever.
+    ctx.diffs = ctx.diffs or {}
     vcs.root(here(), function(r)
       if not r then return done(nil, "no version control here") end
       if not r.backend.status then return done(nil, r.name .. " here has no status") end
@@ -731,7 +760,8 @@ picker.source("vcs status", {
             -- Staged or not, where the backend says (git's X and Y).
             local sub = f.staged and (f.unstaged and "partly staged" or "staged") or nil
             items[#items + 1] = { text = (STATE_LETTER[f.state] or " ") .. "  " .. (fs.relative(f.path, r.root) or f.path),
-                                  sub = sub, path = f.path, state = f.state, staged = f.staged, root = r }
+                                  sub = sub, path = f.path, state = f.state, staged = f.staged, root = r,
+                                  diffs = ctx.diffs }
           end
         end
         table.sort(items, function(a, b) return a.text:sub(4) < b.text:sub(4) end)
@@ -740,15 +770,18 @@ picker.source("vcs status", {
     end)
   end,
   preview = function(item)
-    if item.diff then return item.diff end
+    local diffs = item.diffs or {}
+    local key = item.path .. (item.staged and " staged" or "")
+    if diffs[key] then return diffs[key] end
     local r = item.root
-    -- `old` against `new` as `@@` sections onto `out`.
-    local function sections(out, old, new_text)
-      local new = lines_of(new_text)
+    -- `old` against `new` as `@@` sections onto `out`, each side's
+    -- lines as a list shows them (`old_lines`, `new_lines`): the
+    -- hunks are the texts', the lines drawn masked.
+    local function sections(out, old, new_text, old_lines, new_lines)
       for _, hk in ipairs(kawoosh.diff(old, new_text)) do
         out[#out + 1] = "@@ -" .. hk.old_line .. "," .. (hk.old_end - hk.old_line) .. " +" .. hk.line .. "," .. (hk.end_line - hk.line) .. " @@"
-        for _, l in ipairs(hk.old) do out[#out + 1] = "-" .. l end
-        for i = hk.line, hk.end_line - 1 do out[#out + 1] = "+" .. (new[i] or "") end
+        for _, l in ipairs(old_shown(hk, old_lines, item.path)) do out[#out + 1] = "-" .. l end
+        for i = hk.line, hk.end_line - 1 do out[#out + 1] = "+" .. (new_lines[i] or "") end
       end
     end
     -- What is staged (HEAD against the index) first when there is
@@ -757,16 +790,20 @@ picker.source("vcs status", {
       local text = fs.is_file(item.path) and (fs.read(item.path) or "") or ""
       local h = buffer_of(item.path)
       if h and kawoosh.buf.modified(h) then text = kawoosh.buf.text(h) end
+      -- The file's lines now as its pane draws them when it is open
+      -- (a mask a plugin gave, a rule asked for), else by its rules.
+      local now = h and kawoosh.buf.shown_lines(1, math.maxinteger, h) or shown_lines_of(text, item.path)
+      local based = shown_lines_of(base, item.path)
       local out = {}
       if head then
         out[#out + 1] = "--- HEAD"
         out[#out + 1] = "+++ index (staged)"
-        sections(out, head, base)
+        sections(out, head, base, shown_lines_of(head, item.path), based)
         out[#out + 1] = "--- index"
         out[#out + 1] = "+++ working tree"
       end
-      sections(out, base, text)
-      item.diff = { title = item.text:sub(4), lines = out, path = "changes.diff" }
+      sections(out, base, text, based, now)
+      diffs[key] = { title = item.text:sub(4), lines = out, path = "changes.diff" }
       picker.reload()
     end
     if item.state == "untracked" or not r.backend.base then
