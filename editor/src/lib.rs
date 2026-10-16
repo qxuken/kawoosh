@@ -1025,6 +1025,11 @@ pub struct Editor {
     /// Buffers opened only for a multibuffer: not listed while nothing
     /// but multibuffers shows them (search.md Decision 5).
     pub borrowed: std::collections::HashSet<BufferId>,
+    /// Each buffer's masks as the shell worked them out, at the version
+    /// they are for (docs/design/secrets.md Decision 3): what Lua reads
+    /// a buffer through (`kawoosh.buf.shown_lines`), so a picker's
+    /// preview hides what the pane hides. A buffer with none is absent.
+    pub masks: HashMap<BufferId, (Version, Vec<Range<usize>>)>,
     /// Borrowed buffers no multibuffer holds any more, for the shell to
     /// close ([`Editor::take_released`]).
     released: Vec<BufferId>,
@@ -1183,6 +1188,7 @@ impl Editor {
             blames: HashMap::new(),
             multis: HashMap::new(),
             borrowed: Default::default(),
+            masks: HashMap::new(),
             released: Vec::new(),
             jumping: false,
             indenter: None,

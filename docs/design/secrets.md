@@ -404,3 +404,17 @@ shape. Where it departed:
   what the buffer stands for. `-` lists the vault's directory with its
   line under the caret.
 - **A secret onto the clipboard** by ⌘C, marked concealed (Decision 8).
+- **A picker drew an open vault's values.** The buffers picker's
+  preview and the lines picker's rows masked a private buffer by the
+  rules its path and language name — a vault's scratch has no path, its
+  language is YAML, and its rule is the one `secrets.lua` asked for by
+  name (`mask_with`), which the lookup never saw. The values were drawn,
+  and so were in kui. Now Lua reads an open buffer as its pane draws
+  it: the shell puts every buffer's masks in the editor once a frame,
+  at their version (`Editor::masks`, `Kawoosh::publish_masks`), the
+  snapshot carries them, and `kawoosh.buf.shown_lines(from, to[,
+  buffer])` gives the lines with what they hide as `••••••••` — a rule
+  by files, a rule asked for, ranges a plugin gave (`kawoosh.buf.mask`),
+  all as the pane has them. A private buffer whose masks are another
+  version's (edited since this frame's) is masked whole, line by line.
+  The picker reads every buffer through it.

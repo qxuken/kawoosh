@@ -2839,6 +2839,8 @@ impl kui_native::App for Kawoosh {
         self.sync_flash();
         self.sync_notifications();
         t = self.perf.lap(Chrome, "notifications", t);
+        self.publish_masks();
+        t = self.perf.lap(Lua, "masks", t);
         self.fire_changes();
         t = self.perf.lap(Lua, "lua changes", t);
         self.sync_lists();
