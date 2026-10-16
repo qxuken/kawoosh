@@ -78,10 +78,18 @@ pub enum IoMsg {
         entries: Option<Vec<crate::fs::Entry>>,
     },
     /// A buffer's words indexed for completion's `buffer_words`
-    /// (`words::index`), with the shortest word kept.
+    /// (`words::index`), under its masks' key.
     CompletionWords {
         index: crate::words::Index,
-        min_length: usize,
+        masks: (u64, u64),
+    },
+    /// What completion read of the state db on a job of its own
+    /// (`Store::open_read_only`): a workspace's accepted candidates, the
+    /// ring's newest rows — each when asked for.
+    CompletionStore {
+        workspace: String,
+        accepts: Option<Vec<(String, f64, i64)>>,
+        recent: Option<Vec<crate::store::RingRow>>,
     },
     /// A directory listed for a completion's `path` source: the
     /// session's serial, the directory, its entries or None when it

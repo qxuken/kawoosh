@@ -73,8 +73,10 @@ const RECENT_TEXT: Duration = Duration::from_secs(10 * 60);
 const RECENT_SEARCHES: usize = 20;
 /// How often the files attended lately are read again from the ring.
 const ATTENDED_EVERY: Duration = Duration::from_secs(5);
-/// How many of the ring's rows say what was attended lately.
+/// How many of the ring's rows say what was attended lately, of the
+/// workspace's, and how many are read to find them.
 const ATTENDED_ROWS: usize = 40;
+const RECENT_ROWS: usize = 400;
 /// Frecency halves in a week.
 const FRECENCY_HALF_LIFE: f64 = 7.0 * 86_400.0;
 /// The outline asks' tokens count up from here, apart from every other
@@ -308,6 +310,10 @@ pub struct Session {
     /// How many of `ranking`'s first are sorted.
     sorted: usize,
     selected: Option<usize>,
+    /// The user moved the selection (`completion next` / `prev`): kept
+    /// by identity through a re-rank, where the best is chosen afresh
+    /// until then.
+    chosen: bool,
     asks: Asks,
 }
 
@@ -363,11 +369,34 @@ impl Session {
             });
     }
 
+    /// The candidate putting `text` selected again after a re-rank — an
+    /// answer or an index landed between two keys — where it is still
+    /// one that continues the word; the best, where it is gone.
+    fn reselect_keeping(&mut self, text: Option<&str>) {
+        let find = |s: &Session| {
+            let t = text?;
+            s.ranking.iter().position(|r| {
+                r.continues && s.answers[r.answer as usize].items[r.item as usize].text() == t
+            })
+        };
+        match find(self) {
+            Some(i) if i < self.sorted => self.selected = Some(i),
+            // Past the sorted top: all of it sorted, so a walk from it
+            // goes on in order.
+            Some(_) => {
+                self.sort_all();
+                self.selected = find(self);
+            }
+            None => self.reselect(),
+        }
+    }
+
     /// The next (or previous) candidate that continues the word, round.
     fn step(&mut self, forward: bool) {
         let Some(at) = self.selected else {
             return;
         };
+        self.chosen = true;
         self.sort_all();
         let n = self.ranking.len();
         for i in 1..n {
@@ -389,8 +418,11 @@ impl Session {
 /// through as one is accepted.
 #[derive(Default)]
 struct Frecency {
+    /// The workspace the scores are of.
     workspace: Option<String>,
     scores: HashMap<String, (f64, i64)>,
+    /// The workspace whose rows were asked of the state db, read or not.
+    asked: Option<String>,
 }
 
 impl Frecency {
@@ -399,6 +431,25 @@ impl Frecency {
             .get(text)
             .map(|(s, at)| s * 0.5f64.powf((now - at).max(0) as f64 / FRECENCY_HALF_LIFE))
             .unwrap_or(0.0)
+    }
+
+    /// The state db's rows for the workspace, landed: under what was
+    /// accepted since they were asked for.
+    fn load(&mut self, workspace: String, rows: Vec<(String, f64, i64)>) {
+        if self.workspace.as_deref() != Some(workspace.as_str()) {
+            self.scores.clear();
+        }
+        for (text, score, at) in rows {
+            match self.scores.get_mut(&text) {
+                Some((s, now)) => {
+                    *s += score * 0.5f64.powf((*now - at).max(0) as f64 / FRECENCY_HALF_LIFE)
+                }
+                None => {
+                    self.scores.insert(text, (score, at));
+                }
+            }
+        }
+        self.workspace = Some(workspace);
     }
 
     /// One more acceptance of `text` now: its new score.
@@ -417,21 +468,50 @@ struct Signals {
     texts_read: Option<Instant>,
     /// The words of the texts yanked or pasted lately.
     texts: HashSet<String>,
-    searches_len: usize,
+    /// The search history as last read: its length and its newest
+    /// entry, which both move with a search once it is at its cap.
+    searches_seen: Option<(usize, Option<String>)>,
     /// The words of the last searches.
     searched: HashSet<String>,
     attended_read: Option<Instant>,
+    /// The ring asked of the state db and not landed yet.
+    attended_asked: bool,
     /// The buffers of the files attended and edited lately.
     attended: HashSet<BufferId>,
 }
+
+/// A buffer's words, wiped when the last holder lets them go: they
+/// may be a private buffer's (secrets.md Decision 1).
+fn wipe_items(mut items: Rc<[Item]>) {
+    if let Some(items) = Rc::get_mut(&mut items) {
+        for it in items.iter_mut() {
+            text_buffer::wipe_string(&mut it.label);
+            if let Some(s) = it.insert.as_mut() {
+                text_buffer::wipe_string(s);
+            }
+        }
+    }
+}
+
+/// What a buffer's masks were worked out under (`index_masks`): the
+/// secrets' generation and the settings' version.
+type MaskKey = (u64, u64);
 
 /// What completion keeps between keys.
 pub struct State {
     pub session: Option<Session>,
     next_serial: u64,
-    /// Each buffer's words at a version, with the shortest kept.
-    words: HashMap<BufferId, (Version, usize, Rc<[Item]>)>,
-    words_asked: HashMap<BufferId, Version>,
+    /// Each buffer's words at a version and under its masks' key
+    /// (`index_masks`), every length.
+    words: HashMap<BufferId, (Version, MaskKey, Rc<[Item]>)>,
+    words_asked: HashMap<BufferId, (Version, MaskKey)>,
+    /// Each buffer's words inside its masks: never a candidate.
+    masked: HashMap<BufferId, Masked>,
+    /// How many word indexes were asked for: a test's count.
+    pub indexed: usize,
+    /// Accepted candidates not written yet — `(workspace, text, score,
+    /// at)` — for the memory's next flush.
+    pending_accepts: Vec<(String, String, f64, i64)>,
     /// Each buffer's outline names at the version of the tree.
     symbols: HashMap<BufferId, (Version, Rc<[Item]>)>,
     symbol_asks: HashMap<u64, (BufferId, Version)>,
@@ -452,6 +532,9 @@ impl State {
             next_serial: 0,
             words: HashMap::new(),
             words_asked: HashMap::new(),
+            masked: HashMap::new(),
+            indexed: 0,
+            pending_accepts: Vec::new(),
             symbols: HashMap::new(),
             symbol_asks: HashMap::new(),
             next_ask: 0,
@@ -473,13 +556,12 @@ impl State {
         self.workspace_asks.contains_key(&token)
     }
 
-    /// A buffer gone: its indexes, and the session on it.
-    pub fn forget(&mut self, id: BufferId) {
-        self.words.remove(&id);
-        self.words_asked.remove(&id);
-        self.symbols.remove(&id);
-        if self.session.as_ref().is_some_and(|s| s.anchor.buffer == id) {
-            self.session = None;
+    /// The servers no longer hold buffer `id`: a request in flight for
+    /// it is not waited on.
+    pub fn lsp_gone(&mut self, id: BufferId) {
+        if let Some(s) = self.session.as_mut().filter(|s| s.anchor.buffer == id) {
+            s.asks.lsp = None;
+            s.asks.lsp_incomplete = false;
         }
     }
 
@@ -530,7 +612,33 @@ struct RankCtx<'a> {
     config: &'a Config,
     frecency: &'a Frecency,
     signals: &'a Signals,
+    /// Every open buffer's masked words: never a candidate.
+    masked: &'a HashMap<BufferId, Masked>,
     now: i64,
+}
+
+/// A buffer's words inside its masks (secrets.md Decision 3), wiped
+/// when they go.
+#[derive(Default)]
+pub(crate) struct Masked(HashSet<String>);
+
+impl Masked {
+    fn contains(&self, text: &str) -> bool {
+        self.0.contains(text)
+    }
+}
+
+impl Drop for Masked {
+    fn drop(&mut self) {
+        for mut w in std::mem::take(&mut self.0) {
+            text_buffer::wipe_string(&mut w);
+        }
+    }
+}
+
+/// Whether `text` is inside a mask of any open buffer.
+fn is_masked(masked: &HashMap<BufferId, Masked>, text: &str) -> bool {
+    masked.values().any(|m| m.contains(text))
 }
 
 /// `text` against the typed word: its tier (higher is better) and
@@ -607,6 +715,16 @@ impl Session {
             return None;
         }
         let text = item.text();
+        match answer.source {
+            // Indexed at every length: the session's shortest here.
+            Source::BufferWords if text.chars().count() < ctx.config.min_length => return None,
+            // A hidden entry for a word that starts with `.`.
+            Source::Path if text.starts_with('.') && !self.typed.starts_with('.') => return None,
+            _ => {}
+        }
+        if is_masked(ctx.masked, text) {
+            return None;
+        }
         let (tier, continues) = score(matcher, &self.typed, text, ctx.config.fuzzy)?;
         let source = ctx.config.rank(answer.source).unwrap_or(u8::MAX);
         let frecency = (ctx.frecency.value(text, ctx.now) * 4.0)
@@ -767,6 +885,44 @@ fn outline_kind(kind: &str) -> &'static str {
 }
 
 impl Kawoosh {
+    /// Buffer `id` no source any more — gone, or private now (secrets.md
+    /// Decision 1): its indexes dropped and their words wiped, its
+    /// answers out of the live session, which ends when it was the
+    /// buffer's.
+    pub(crate) fn completion_forget_buffer(&mut self, id: BufferId) {
+        let c = &mut self.completion;
+        c.words_asked.remove(&id);
+        c.symbol_asks.retain(|_, (b, _)| *b != id);
+        let mut dropped: Vec<Rc<[Item]>> = Vec::new();
+        dropped.extend(c.words.remove(&id).map(|(_, _, items)| items));
+        dropped.extend(c.symbols.remove(&id).map(|(_, items)| items));
+        c.masked.remove(&id);
+        let mut rank = false;
+        if let Some(s) = c.session.as_mut() {
+            if s.anchor.buffer == id {
+                c.session = None;
+            } else if s.answers.iter().any(|a| a.buffer == Some(id)) {
+                // Answers are indexed by place in the ranking: a fresh
+                // ranking over the answers left.
+                let (keep, gone): (Vec<Answer>, Vec<Answer>) =
+                    s.answers.drain(..).partition(|a| a.buffer != Some(id));
+                s.answers = keep;
+                s.asks.lsp_at = s.answers.iter().position(|a| a.source == Source::Lsp);
+                s.ranking.clear();
+                s.sorted = 0;
+                s.selected = None;
+                dropped.extend(gone.into_iter().map(|a| a.items));
+                rank = true;
+            }
+        }
+        for items in dropped {
+            wipe_items(items);
+        }
+        if rank {
+            self.completion_rank(None);
+        }
+    }
+
     /// The completion setting `key` as the pane showing `view` reads it.
     fn completion_value(&self, view: ViewId, key: &str) -> Option<Setting> {
         match self.pane_of_view(view) {
@@ -918,21 +1074,36 @@ impl Kawoosh {
         }
         let buf = &self.ed.buffers[s.anchor.buffer];
         let caret = self.ed.views[view].sels.primary().head;
-        let typed = (caret >= s.anchor.start
+        // The word's start carried through the edits since the last key:
+        // another caret's typing above it moves it.
+        let start = if buf.version() == s.seen.0 {
+            Some(s.anchor.start)
+        } else {
+            buf.journal()
+                .transform_offset(s.anchor.start, s.seen.0, kawoosh_doc::Bias::Left)
+                .ok()
+        };
+        let Some(start) = start else {
+            self.completion.session = None;
+            return;
+        };
+        let typed = (caret >= start
             && buf.line_of(caret) == s.caret_line as usize
-            && buf.line_of(s.anchor.start) == s.caret_line as usize)
-            .then(|| buf.slice(s.anchor.start..caret))
+            && buf.line_of(start) == s.caret_line as usize)
+            .then(|| buf.slice(start..caret))
             .filter(|t| t.chars().all(|c| s.word.allows(c)));
         // An edit elsewhere: the text grew or shrank by other than the
-        // word did. A move with no edit — an arrow, `<Home>` — leaves
-        // the word, even to its start.
+        // word did — at each caret, when there are several, each typing
+        // as the primary one does. A move with no edit — an arrow,
+        // `<Home>` — leaves the word, even to its start.
+        let carets = self.ed.views[view].sels.len() as isize;
         let edited = buf.version() != s.seen.0;
         let elsewhere = typed.as_ref().is_some_and(|t| {
-            edited
-                && buf.len() as isize - s.seen.1 as isize
-                    != t.len() as isize - s.typed.len() as isize
+            let grew = buf.len() as isize - s.seen.1 as isize;
+            let word = t.len() as isize - s.typed.len() as isize;
+            edited && grew != word && grew != word * carets
         }) || (!edited && caret != s.seen.2);
-        let (Some(typed), false) = (typed, elsewhere) else {
+        let (Some(typed), false) = (typed.clone(), elsewhere) else {
             self.completion.session = None;
             return;
         };
@@ -940,10 +1111,14 @@ impl Kawoosh {
         let config = self.completion_config(view);
         let s = self.completion.session.as_mut().unwrap();
         s.seen = (version, len, caret);
+        s.anchor.start = start;
         if typed == s.typed {
             return;
         }
-        let longer = typed.starts_with(&s.typed);
+        // A path's first `.` brings its hidden entries in: all of it
+        // scored again, not the survivors.
+        let hidden = s.word == WordKind::Path && s.typed.is_empty() && typed.starts_with('.');
+        let longer = typed.starts_with(&s.typed) && !hidden;
         s.typed = typed;
         if s.closed {
             return;
@@ -953,6 +1128,7 @@ impl Kawoosh {
             session,
             frecency,
             signals,
+            masked,
             ..
         } = &mut self.completion;
         let s = session.as_mut().unwrap();
@@ -960,6 +1136,7 @@ impl Kawoosh {
             config: &config,
             frecency,
             signals,
+            masked,
             now,
         };
         if longer {
@@ -987,6 +1164,19 @@ impl Kawoosh {
     /// ends — a server's edit, a reload — and the workspace's symbols
     /// are asked once the typing paused.
     pub(crate) fn sync_completion(&mut self) {
+        self.completion_frecency_due();
+        // A buffer private since it answered — a multibuffer showing a
+        // private file's lines now — is no source (secrets.md Decision 1).
+        let gone: Vec<BufferId> = self
+            .completion
+            .session
+            .iter()
+            .flat_map(|s| s.answers.iter().filter_map(|a| a.buffer))
+            .filter(|b| self.ed.buffers.get(*b).is_none_or(|b| b.private))
+            .collect();
+        for b in gone {
+            self.completion_forget_buffer(b);
+        }
         let Some(s) = &self.completion.session else {
             return;
         };
@@ -1061,6 +1251,7 @@ impl Kawoosh {
             ranking: Vec::new(),
             sorted: 0,
             selected: None,
+            chosen: false,
             asks: Asks::default(),
         };
         self.completion.session = Some(session);
@@ -1126,7 +1317,7 @@ impl Kawoosh {
                 self.completion_index_symbols();
             }
             if words {
-                self.completion_index_words(config.min_length);
+                self.completion_index_words();
             }
         } else {
             self.completion_rank(None);
@@ -1150,12 +1341,12 @@ impl Kawoosh {
             return;
         }
         let config = self.completion_config(view);
-        self.completion_load_frecency();
         let now = kawoosh_systems::store::now();
         let State {
             session,
             frecency,
             signals,
+            masked,
             ..
         } = &mut self.completion;
         let Some(s) = session.as_mut() else {
@@ -1164,15 +1355,25 @@ impl Kawoosh {
         if s.closed {
             return;
         }
+        let selected = s
+            .selected_item()
+            .filter(|_| s.chosen)
+            .map(|i| i.text().to_string());
         let ctx = RankCtx {
             config: &config,
             frecency,
             signals,
+            masked,
             now,
         };
         match a {
             Some(a) => s.rescan_answer(&ctx, a),
             None => s.rescan_all(&ctx),
+        }
+        // A landing re-ranks under the user: what they selected stays
+        // selected.
+        if let Some(t) = &selected {
+            s.reselect_keeping(Some(t));
         }
     }
 
@@ -1304,11 +1505,11 @@ impl Kawoosh {
         if s.serial != serial || s.dir.as_deref() != Some(dir.as_path()) {
             return;
         }
-        let hidden = s.typed.starts_with('.');
+        // Hidden entries too: a word that starts with `.` is offered
+        // them when it is ranked.
         let items: Rc<[Item]> = entries
             .unwrap_or_default()
             .into_iter()
-            .filter(|e| hidden || !e.name.starts_with('.'))
             .map(|e| Item {
                 label: if e.is_dir {
                     format!("{}/", e.name)
@@ -1330,50 +1531,63 @@ impl Kawoosh {
     }
 
     /// Every open buffer's words brought to its version, off the frame:
-    /// an io job per buffer whose index is older and not asked for at
-    /// its version. A private buffer is never read.
-    fn completion_index_words(&mut self, min_length: usize) {
+    /// an io job per buffer whose index is older — its text or its
+    /// masks moved — and not asked for as it now is. A private buffer
+    /// is never read; a word inside a mask is kept out (secrets.md
+    /// Decision 3). One index a buffer, every length: each session
+    /// reads it at its own shortest.
+    fn completion_index_words(&mut self) {
         let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
+        let buffers = &self.ed.buffers;
         self.completion
             .words
-            .retain(|b, _| self.ed.buffers.contains_key(*b));
+            .retain(|b, _| buffers.contains_key(*b));
         self.completion
             .words_asked
-            .retain(|b, _| self.ed.buffers.contains_key(*b));
+            .retain(|b, _| buffers.contains_key(*b));
+        self.completion
+            .masked
+            .retain(|b, _| buffers.contains_key(*b));
         for id in ids {
             let b = &self.ed.buffers[id];
             if b.private || self.ed.is_field_buffer(id) {
-                self.completion.words.remove(&id);
+                if let Some((_, _, items)) = self.completion.words.remove(&id) {
+                    wipe_items(items);
+                }
+                self.completion.masked.remove(&id);
                 continue;
             }
             let v = b.version();
+            let (masks, key) = self.index_masks(id);
             let fresh = self
                 .completion
                 .words
                 .get(&id)
-                .is_some_and(|(iv, min, _)| *iv == v && *min == min_length);
-            if fresh || self.completion.words_asked.get(&id) == Some(&v) {
+                .is_some_and(|(iv, k, _)| *iv == v && *k == key);
+            if fresh || self.completion.words_asked.get(&id) == Some(&(v, key)) {
                 continue;
             }
-            self.completion.words_asked.insert(id, v);
-            let snapshot = b.snapshot();
+            self.completion.words_asked.insert(id, (v, key));
+            self.completion.indexed += 1;
+            let snapshot = self.ed.buffers[id].snapshot();
             if self.jobs_inline {
-                let index = words::index(id, &snapshot, min_length);
-                self.completion_words_indexed(index, min_length);
+                let index = words::index(id, &snapshot, &masks);
+                self.completion_words_indexed(index, key);
                 continue;
             }
             self.pending_jobs += 1;
             self.io
                 .run("completion words", move || IoMsg::CompletionWords {
-                    index: words::index(id, &snapshot, min_length),
-                    min_length,
+                    index: words::index(id, &snapshot, &masks),
+                    masks: key,
                 });
         }
     }
 
-    /// A buffer's words indexed: kept, and merged into the live session
-    /// in place of the buffer's older ones.
-    pub(crate) fn completion_words_indexed(&mut self, index: words::Index, min_length: usize) {
+    /// A buffer's words indexed: kept, its masked words beside them,
+    /// and merged into the live session in place of the buffer's older
+    /// ones — re-ranked, the selection kept.
+    pub fn completion_words_indexed(&mut self, index: words::Index, key: MaskKey) {
         let id = index.buffer;
         let Some(b) = self.ed.buffers.get(id) else {
             return;
@@ -1381,9 +1595,12 @@ impl Kawoosh {
         if b.private {
             return;
         }
-        if self.completion.words_asked.get(&id) == Some(&index.version) {
+        if self.completion.words_asked.get(&id) == Some(&(index.version, key)) {
             self.completion.words_asked.remove(&id);
         }
+        let mut masked = Masked::default();
+        masked.0.extend(index.masked);
+        self.completion.masked.insert(id, masked);
         let items: Rc<[Item]> = index
             .words
             .into_iter()
@@ -1396,9 +1613,13 @@ impl Kawoosh {
                 lines: w.lines,
             })
             .collect();
-        self.completion
+        if let Some((_, _, old)) = self
+            .completion
             .words
-            .insert(id, (index.version, min_length, items.clone()));
+            .insert(id, (index.version, key, items.clone()))
+        {
+            wipe_items(old);
+        }
         let live = self
             .completion
             .session
@@ -1459,9 +1680,28 @@ impl Kawoosh {
         if self.ed.buffers.get(id).is_none_or(|b| b.private) {
             return;
         }
+        // A name inside a mask is no symbol to offer (secrets.md
+        // Decision 3): where it starts, against the masks now.
+        let (masks, _) = self.index_masks(id);
+        let buf = &self.ed.buffers[id];
+        let inside = |line: u32, character: u32| {
+            if masks.is_empty() || line as usize >= buf.line_count() {
+                return false;
+            }
+            let ls = buf.line_start(line as usize);
+            let text = buf.line_text(line as usize);
+            let col = text
+                .char_indices()
+                .nth(character as usize)
+                .map_or(text.len(), |(i, _)| i);
+            crate::secrets::mask_at(&masks, ls + col).is_some()
+        };
         let mut at: HashMap<String, usize> = HashMap::new();
         let mut items: Vec<Item> = Vec::new();
         for o in a.result.unwrap_or_default() {
+            if inside(o.line, o.character) {
+                continue;
+            }
             match at.get(&o.name) {
                 Some(&i) => {
                     let mut lines = items[i].lines.to_vec();
@@ -1580,14 +1820,20 @@ impl Kawoosh {
                 if m.secret || m.at.elapsed() > RECENT_TEXT {
                     continue;
                 }
-                for w in words::words_of(&m.text[..m.text.len().min(64 << 10)], 3) {
+                // The first 64 KiB, cut where a character starts.
+                let mut end = m.text.len().min(64 << 10);
+                while !m.text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                for w in words::words_of(&m.text[..end], 3) {
                     sig.texts.insert(w.text);
                 }
             }
         }
         let searches = &self.ed.search_history;
-        if sig.searches_len != searches.len() {
-            sig.searches_len = searches.len();
+        let seen = (searches.len(), searches.last().cloned());
+        if sig.searches_seen.as_ref() != Some(&seen) {
+            sig.searches_seen = Some(seen);
             sig.searched.clear();
             for s in searches.iter().rev().take(RECENT_SEARCHES) {
                 for w in words::words_of(s, 1) {
@@ -1595,53 +1841,142 @@ impl Kawoosh {
                 }
             }
         }
-        let due = sig
-            .attended_read
-            .is_none_or(|t| t.elapsed() > ATTENDED_EVERY);
+        let due = !sig.attended_asked
+            && sig
+                .attended_read
+                .is_none_or(|t| t.elapsed() > ATTENDED_EVERY);
         if due {
-            let rows = self.recent_rows(ATTENDED_ROWS, Some(self.moments.workspace()));
-            let attended: HashSet<BufferId> = rows
+            self.completion_read_store(None, true);
+        }
+    }
+
+    /// The state db read for completion off the key path: a workspace's
+    /// accepted candidates, the ring's newest rows, or both — on an io
+    /// job over a read-only connection of its own; at once in a test
+    /// (`jobs_inline`) or for a store with no file.
+    fn completion_read_store(&mut self, accepts: Option<String>, recent: bool) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        if let Some(ws) = &accepts {
+            self.completion.frecency.asked = Some(ws.clone());
+        }
+        if recent {
+            self.completion.signals.attended_asked = true;
+        }
+        let workspace = accepts.clone().unwrap_or_default();
+        let read = move |s: &kawoosh_systems::store::Store| {
+            (
+                accepts.as_deref().map(|ws| s.completion_accepts(ws)),
+                recent.then(|| s.recent(RECENT_ROWS)),
+            )
+        };
+        match self.store_path.clone().filter(|_| !self.jobs_inline) {
+            Some(path) => {
+                self.pending_jobs += 1;
+                self.io.run("completion store", move || {
+                    let (accepts, recent) =
+                        match kawoosh_systems::store::Store::open_read_only(&path) {
+                            Ok(s) => read(&s),
+                            Err(e) => {
+                                log::warn!("state db: completion: {e}");
+                                (None, None)
+                            }
+                        };
+                    IoMsg::CompletionStore {
+                        workspace,
+                        accepts,
+                        recent,
+                    }
+                });
+            }
+            None => {
+                let (accepts, recent) = read(&store);
+                self.completion_store_read(workspace, accepts, recent);
+            }
+        }
+    }
+
+    /// What the state db said: the workspace's frecency, the files
+    /// attended lately (the ring's rows with the ones not flushed yet);
+    /// the live session ranked again with them, its selection kept.
+    pub(crate) fn completion_store_read(
+        &mut self,
+        workspace: String,
+        accepts: Option<Vec<(String, f64, i64)>>,
+        recent: Option<Vec<kawoosh_systems::store::RingRow>>,
+    ) {
+        if let Some(rows) = accepts
+            && self.completion.frecency.asked.as_deref() == Some(workspace.as_str())
+        {
+            self.completion.frecency.load(workspace, rows);
+        }
+        if let Some(rows) = recent {
+            let ws = self.moments.workspace().to_string();
+            let mut ring = self.moments.pending_ring();
+            ring.reverse();
+            let attended: HashSet<BufferId> = ring
                 .iter()
+                .chain(rows.iter())
+                .filter(|r| r.key.workspace == ws && r.key.kind != "text")
+                .take(ATTENDED_ROWS)
                 .filter_map(|r| self.buffer_of_subject(&r.key))
                 .collect();
             let sig = &mut self.completion.signals;
             sig.attended = attended;
             sig.attended_read = Some(Instant::now());
+            sig.attended_asked = false;
+        }
+        if self.completion.session.is_some() {
+            self.completion_rank(None);
         }
     }
 
-    /// The workspace's frecency, read from the state db the first time
-    /// it ranks.
-    fn completion_load_frecency(&mut self) {
-        let ws = self.moments.workspace().to_string();
-        if self.completion.frecency.workspace.as_deref() == Some(ws.as_str()) {
+    /// The workspace's frecency asked for once the workspace is known
+    /// and not yet read: from the frame, not at a key.
+    fn completion_frecency_due(&mut self) {
+        if self.store.is_none() {
             return;
         }
-        let scores = self
-            .store
-            .as_ref()
-            .map(|s| s.completion_accepts(&ws))
-            .unwrap_or_default();
-        self.completion.frecency = Frecency {
-            workspace: Some(ws),
-            scores: scores.into_iter().map(|(t, s, at)| (t, (s, at))).collect(),
-        };
+        let ws = self.moments.workspace();
+        if self.completion.frecency.asked.as_deref() != Some(ws) {
+            let ws = ws.to_string();
+            self.completion_read_store(Some(ws), false);
+        }
     }
 
     /// `text` accepted in `buffer`: once more in the workspace's
-    /// frecency, written through. Not from a private buffer.
+    /// frecency now, written with the memory's next flush. Not from a
+    /// private buffer, nor a masked word.
     fn completion_remember(&mut self, buffer: BufferId, text: &str) {
-        if self.ed.buffers.get(buffer).is_none_or(|b| b.private) {
+        if self.ed.buffers.get(buffer).is_none_or(|b| b.private)
+            || is_masked(&self.completion.masked, text)
+        {
             return;
         }
-        self.completion_load_frecency();
+        let ws = self.moments.workspace().to_string();
+        if self.completion.frecency.workspace.as_deref() != Some(ws.as_str()) {
+            self.completion.frecency.workspace = Some(ws.clone());
+        }
         let now = kawoosh_systems::store::now();
         let score = self.completion.frecency.bump(text, now);
-        if let Some(store) = &self.store {
-            let ws = self.moments.workspace();
-            if let Err(e) = store.set_completion_accept(ws, text, score, now) {
-                log::warn!("state db: completion: {e}");
-            }
+        if self.store.is_some() {
+            self.completion
+                .pending_accepts
+                .push((ws, text.to_string(), score, now));
+            self.moments.note_pending();
+        }
+    }
+
+    /// The accepted candidates since the last flush into the state db,
+    /// in one transaction; kept for the next when it was busy.
+    pub(crate) fn flush_completion_accepts(&mut self, store: &kawoosh_systems::store::Store) {
+        if self.completion.pending_accepts.is_empty() {
+            return;
+        }
+        match store.set_completion_accepts(&self.completion.pending_accepts) {
+            Ok(()) => self.completion.pending_accepts.clear(),
+            Err(e) => log::warn!("state db: completion: {e}"),
         }
     }
 
@@ -1940,6 +2275,7 @@ mod tests {
             ranking: Vec::new(),
             sorted: 0,
             selected: None,
+            chosen: false,
             asks: Asks::default(),
         };
         let mut frecency = Frecency::default();
@@ -1949,6 +2285,7 @@ mod tests {
                 config,
                 frecency: f,
                 signals,
+                masked: Box::leak(Box::default()),
                 now: 1000,
             }
         }

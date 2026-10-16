@@ -102,6 +102,7 @@ fn open(file: &std::path::Path) -> (Drive, Kawoosh) {
     let mut app = Kawoosh::from_file(file);
     app.jobs_inline = true;
     let mut d = Drive::new(900.0, 500.0);
+    app.wait_for_open();
     d.settle(&mut app);
     (d, app)
 }
@@ -405,6 +406,12 @@ fn an_accepted_candidate_ranks_higher_next_time() {
             "accepted before"
         );
         assert_eq!(app.completion_ghost_text().as_deref(), Some("per"));
+        // Written with the memory's flush, not at the key.
+        let ws = app.moments.workspace().to_string();
+        let rows = |app: &Kawoosh| app.store.as_ref().unwrap().completion_accepts(&ws);
+        assert!(rows(&app).is_empty(), "nothing written at the key");
+        app.flush_moments();
+        assert_eq!(rows(&app).len(), 1, "one row, its score");
     }
     let (mut d, mut app) = open(&dir.join("main.rs"));
     app.open_store(Some(&db));
@@ -457,5 +464,269 @@ fn a_word_yanked_lately_ranks_higher() {
     d.press(&mut app, "Go");
     d.keys(&mut app, "hel");
     assert_eq!(app.completion.candidates(), ["helper", "helium"]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `path` opened in the pane and the pane back on `back`: an open
+/// buffer that is not on show.
+fn open_beside(d: &mut Drive, app: &mut Kawoosh, path: &std::path::Path, back: &std::path::Path) {
+    ex(d, app, &format!("e {}", path.display()));
+    ex(d, app, &format!("e {}", back.display()));
+}
+
+/// A landing between two keys — an index, an outline, an answer —
+/// re-ranks under the user: the candidate `<C-n>` selected is still the
+/// one `<Tab>` takes.
+#[test]
+fn the_selection_stays_through_a_landing() {
+    let dir = tmp("landing");
+    std::fs::write(dir.join("main.rs"), "helium helper\n").unwrap();
+    std::fs::write(dir.join("far.txt"), "help_far\n").unwrap();
+    let (mut d, mut app) = open(&dir.join("main.rs"));
+    open_beside(&mut d, &mut app, &dir.join("far.txt"), &dir.join("main.rs"));
+    let far = app.ed.buffer_at(&dir.join("far.txt")).unwrap();
+    d.press(&mut app, "Go");
+    d.keys(&mut app, "hel");
+    d.press(&mut app, "<C-n>");
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("per"));
+    // Another buffer's words land, as from their job.
+    let snapshot = app.ed.buffers[far].snapshot();
+    let index = kawoosh_systems::words::index(far, &snapshot, &[]);
+    app.completion_words_indexed(index, (0, 0));
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("per"), "kept");
+    d.press(&mut app, "<Tab>");
+    assert!(text(&app).ends_with("\nhelper"), "{:?}", text(&app));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A session waits on its words: the index built on its job lands
+/// after the key, and the session is ranked again with it. And the
+/// servers told the buffer anew as the word is typed — their table
+/// changed, as when the shell's PATH arrives at startup and they start
+/// again — ends nothing: forgetting the buffer for the servers ended
+/// the session under the keys (the load test's empty list).
+#[test]
+fn a_session_is_ranked_again_when_its_words_land() {
+    let dir = tmp("land");
+    std::fs::write(dir.join("main.rs"), "helium helper\n").unwrap();
+    let mut app = Kawoosh::from_file(&dir.join("main.rs"));
+    let mut d = Drive::new(900.0, 500.0);
+    app.wait_for_open();
+    d.press(&mut app, "Go");
+    d.keys(&mut app, "hel");
+    let serial = app.completion.session.as_ref().map(|s| s.serial);
+    assert!(serial.is_some());
+    // The words on their job, not landed yet; the servers' table moves.
+    app.add_lsp_server(kawoosh_systems::lsp::ServerDef {
+        language: "rust".into(),
+        command: "kawoosh-another-server".into(),
+        ..Default::default()
+    });
+    d.settle(&mut app);
+    assert_eq!(
+        app.completion.session.as_ref().map(|s| s.serial),
+        serial,
+        "the same session"
+    );
+    assert_eq!(app.completion.candidates(), ["helium", "helper"]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A yank of a long text of letters past ASCII, then a word started:
+/// the memory's signal cuts the text where a character starts.
+#[test]
+fn a_long_text_yanked_is_cut_on_a_character() {
+    let dir = tmp("cut");
+    std::fs::write(dir.join("main.rs"), format!("x{}\n", "я".repeat(40_000))).unwrap();
+    let (mut d, mut app) = open(&dir.join("main.rs"));
+    d.press(&mut app, "ggyG");
+    d.press(&mut app, "Go");
+    d.keys(&mut app, "a");
+    assert!(app.completion.session.is_some());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A word inside a mask (secrets.md Decision 3) — a PEM key pasted in a
+/// README, which is no private buffer — is never offered, from its
+/// buffer or anywhere.
+#[test]
+fn a_masked_word_is_never_offered() {
+    let dir = tmp("masked");
+    std::fs::write(
+        dir.join("README.md"),
+        "the key:\n-----BEGIN PRIVATE KEY-----\nMIIEvSecretKeyMaterial\n-----END PRIVATE KEY-----\nMIIEvPublicWord\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("main.rs"), "\n").unwrap();
+    let (mut d, mut app) = open(&dir.join("main.rs"));
+    open_beside(
+        &mut d,
+        &mut app,
+        &dir.join("README.md"),
+        &dir.join("main.rs"),
+    );
+    let readme = app.ed.buffer_at(&dir.join("README.md")).unwrap();
+    assert!(!app.ed.buffers[readme].private);
+    d.press(&mut app, "i");
+    d.keys(&mut app, "MII");
+    d.settle(&mut app);
+    assert_eq!(app.completion.candidates(), ["MIIEvPublicWord"]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Typing at several carets is one session: it follows the primary
+/// caret's word, not ended and asked again at each key.
+#[test]
+fn several_carets_keep_one_session() {
+    let dir = tmp("carets");
+    std::fs::write(dir.join("main.rs"), "helium helper\n\n\n").unwrap();
+    let (mut d, mut app) = open(&dir.join("main.rs"));
+    d.press(&mut app, "j<C-j>i");
+    assert_eq!(app.ed.views[app.focused_view().unwrap()].sels.len(), 2);
+    d.keys(&mut app, "h");
+    let serial = app.completion.session.as_ref().map(|s| s.serial);
+    assert!(serial.is_some());
+    let indexed = app.completion.indexed;
+    d.keys(&mut app, "el");
+    assert_eq!(app.completion.session.as_ref().map(|s| s.serial), serial);
+    assert_eq!(app.completion.indexed, indexed, "nothing indexed again");
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("ium"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The search signal moves with each search, the history at its cap
+/// too.
+#[test]
+fn a_search_counts_with_the_history_full() {
+    let dir = tmp("searched");
+    std::fs::write(dir.join("main.rs"), "helium helper\n").unwrap();
+    let (mut d, mut app) = open(&dir.join("main.rs"));
+    app.ed.search_history = (0..200).map(|i| format!("old{i}")).collect();
+    d.press(&mut app, "Go");
+    d.keys(&mut app, "hel");
+    assert_eq!(app.completion.candidates(), ["helium", "helper"]);
+    d.press(&mut app, "<Esc>u");
+    d.keys(&mut app, "/helper");
+    d.press(&mut app, "<CR>");
+    assert_eq!(app.ed.search_history.len(), 200, "at its cap");
+    d.press(&mut app, "Go");
+    d.keys(&mut app, "hel");
+    assert_eq!(
+        app.completion.candidates(),
+        ["helper", "helium"],
+        "searched lately"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A path's hidden entries are the answer's too: a word that starts
+/// with `.` is offered them, after `./` asked with nothing typed.
+#[test]
+fn a_dot_brings_the_hidden_entries() {
+    let dir = tmp("dot");
+    std::fs::write(dir.join(".gitignore"), "").unwrap();
+    std::fs::write(dir.join("main.rs"), "\n").unwrap();
+    let (mut d, mut app) = open(&dir.join("main.rs"));
+    d.press(&mut app, "i");
+    d.keys(&mut app, "// ./");
+    assert_eq!(app.completion.candidates(), ["main.rs"]);
+    d.keys(&mut app, ".");
+    assert_eq!(app.completion.candidates(), [".gitignore", "main.rs"]);
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("gitignore"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A buffer made private is no source from then on: its words leave a
+/// live session at once.
+#[test]
+fn a_buffer_made_private_leaves_the_session() {
+    let dir = tmp("private");
+    std::fs::write(dir.join("main.rs"), "\n").unwrap();
+    std::fs::write(dir.join("notes.txt"), "helium_secret\n").unwrap();
+    let (mut d, mut app) = open(&dir.join("main.rs"));
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.settle(&mut app);
+    open_beside(
+        &mut d,
+        &mut app,
+        &dir.join("notes.txt"),
+        &dir.join("main.rs"),
+    );
+    d.press(&mut app, "i");
+    d.keys(&mut app, "hel");
+    assert_eq!(app.completion.candidates(), ["helium_secret"]);
+    app.run_lua_source("t", r#"kawoosh.buf.set_private(true, "notes.txt")"#);
+    d.frame(&mut app);
+    let notes = app.ed.buffer_at(&dir.join("notes.txt")).unwrap();
+    assert!(app.ed.buffers[notes].private);
+    assert!(app.completion.session.is_some(), "the session goes on");
+    assert!(
+        app.completion.candidates().is_empty(),
+        "{:?}",
+        app.completion.candidates()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// One index a buffer, whatever shortest word each language reads it
+/// at: going between two languages with their own does not index every
+/// buffer again.
+#[test]
+fn languages_with_their_own_shortest_share_an_index() {
+    let dir = tmp("shortest");
+    std::fs::write(dir.join("a.rs"), "heliumx hex\n").unwrap();
+    std::fs::write(dir.join("b.py"), "helpful he\n").unwrap();
+    std::fs::write(dir.join("c.txt"), "quiet words\n").unwrap();
+    let (mut d, mut app) = open(&dir.join("a.rs"));
+    open_beside(&mut d, &mut app, &dir.join("c.txt"), &dir.join("a.rs"));
+    ex(
+        &mut d,
+        &mut app,
+        "set language.python.completion.words.min_length=5",
+    );
+    let typed = |d: &mut Drive, app: &mut Kawoosh| {
+        d.press(app, "Go");
+        d.keys(app, "he");
+        let c = app.completion.candidates();
+        d.press(app, "<Esc>u");
+        c
+    };
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("b.py").display()),
+    );
+    assert_eq!(
+        typed(&mut d, &mut app),
+        ["helpful", "heliumx"],
+        "five and more"
+    );
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("a.rs").display()),
+    );
+    assert_eq!(
+        typed(&mut d, &mut app),
+        ["heliumx", "hex", "helpful"],
+        "three and more"
+    );
+    let indexed = app.completion.indexed;
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("b.py").display()),
+    );
+    typed(&mut d, &mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("a.rs").display()),
+    );
+    typed(&mut d, &mut app);
+    // Each word's start indexes the two buffers edited since; the one
+    // untouched is read as it was, whichever shortest asks.
+    assert_eq!(app.completion.indexed - indexed, 4);
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -116,6 +116,9 @@ pub struct Kawoosh {
     /// The `log` crate's records, once `Logger::install` ran (main).
     pub log_sink: Option<crate::logger::Sink>,
     pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
+    /// Where the store is on disk, for a job that reads it on a
+    /// connection of its own; none for one in memory.
+    pub(crate) store_path: Option<PathBuf>,
     /// The buffer the app began with — the greeting, on a bare launch:
     /// a restored session replaces it (`restore_session_data`).
     pub(crate) launch: Option<BufferId>,
@@ -466,6 +469,7 @@ impl Kawoosh {
             messages_shown: 0,
             log_sink: None,
             store: None,
+            store_path: None,
             launch: Some(b),
             commands: ShellCommands::default(),
             histories: crate::history::Histories::new(wake.named("histories")),
@@ -1003,9 +1007,17 @@ impl Kawoosh {
                 }
                 IoMsg::Sized { walk, batch } => self.sized(walk, batch),
                 IoMsg::PromptListed { dir, entries } => self.prompt_listed(dir, entries),
-                IoMsg::CompletionWords { index, min_length } => {
+                IoMsg::CompletionWords { index, masks } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
-                    self.completion_words_indexed(index, min_length);
+                    self.completion_words_indexed(index, masks);
+                }
+                IoMsg::CompletionStore {
+                    workspace,
+                    accepts,
+                    recent,
+                } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    self.completion_store_read(workspace, accepts, recent);
                 }
                 IoMsg::CompletionListed {
                     token,
@@ -1616,6 +1628,7 @@ impl Kawoosh {
         self.release_waiters(id);
         self.last_pos.remove(&id);
         self.ts_sent.remove(&id);
+        self.completion_forget_buffer(id);
         self.secrets.forget(id);
         self.scripting.watched.remove(&id);
         self.scripting.paints.remove(&id);

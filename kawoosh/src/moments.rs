@@ -257,6 +257,14 @@ impl Moments {
         })
     }
 
+    /// Something of the shell's own to write with the next flush (an
+    /// accepted completion): the flush is asked for as for a happening.
+    pub(crate) fn note_pending(&mut self) {
+        self.changed_at = Instant::now();
+        self.eventful = true;
+        self.dirty_since.get_or_insert(Instant::now());
+    }
+
     /// A subject attended: a visit and a ring row, unless the last
     /// visit was to it within [`SAME_VISIT`].
     pub fn visit(&mut self, key: MomentKey) {
@@ -622,6 +630,9 @@ impl Kawoosh {
         let Some(store) = self.store.clone() else {
             return;
         };
+        // The completions accepted since, in one transaction of their
+        // own (completion.md, the round-1 review): never a write per key.
+        self.flush_completion_accepts(&store);
         // The dwell up to now, which no frame may have counted.
         self.count_dwell();
         if self.moments.pending.borrow().deltas.is_empty()

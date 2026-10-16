@@ -1004,7 +1004,10 @@ impl Kawoosh {
             runs: Vec::new(),
         };
         self.apply_diagnostics(id, clear, Vec::new());
-        self.completion.forget(id);
+        // Its server's answer will not come; the completion goes on
+        // with the rest — a server found missing as a word is typed
+        // ended the session under the keys.
+        self.completion.lsp_gone(id);
     }
 
     /// The server `language` names — its `lsp.NAME`, else the one
