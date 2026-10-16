@@ -252,3 +252,51 @@ pub fn masked_text(text: &str, masks: &[Range<usize>]) -> String {
     out.push_str(&text[at..]);
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bundled rules, as a fresh editor has them.
+    fn bundled() -> Rules {
+        let s = crate::Settings::new();
+        let rules = Rules::read(s.get("secrets.masks"));
+        assert!(rules.errors.is_empty(), "{:?}", rules.errors);
+        rules
+    }
+
+    /// A key commented out still holds its secret: `#`, any spaces, then
+    /// the key is masked as the line uncommented is — a vault's, a
+    /// `.env`'s, a `secret` scratch's. A comment that names no key stays.
+    #[test]
+    fn a_commented_out_key_is_still_a_secret() {
+        let r = bundled();
+        let vault = Some(Path::new("/p/group_vars/all/vault.yml"));
+        for line in [
+            "ansible_become_password: secret_password",
+            "# ansible_become_password: secret_password",
+            "#ansible_become_password: secret_password",
+            "  ## ansible_become_password: secret_password",
+        ] {
+            assert_eq!(
+                r.mask_text(vault, "yaml", line),
+                line.replace("secret_password", STAND_IN),
+                "{line}"
+            );
+        }
+        assert_eq!(
+            r.mask_text(vault, "yaml", "# the become password, below"),
+            "# the become password, below"
+        );
+        let env = Some(Path::new("/p/.env"));
+        assert_eq!(
+            r.mask_text(env, "text", "# export API_TOKEN=abc123"),
+            format!("# export API_TOKEN={STAND_IN}")
+        );
+        assert_eq!(r.mask_text(env, "text", "# a comment"), "# a comment");
+        assert_eq!(
+            r.mask_text(None, "secret", "# old: hunter22"),
+            format!("# old: {STAND_IN}")
+        );
+    }
+}

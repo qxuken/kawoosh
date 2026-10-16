@@ -303,3 +303,11 @@ shape. Where it departed:
   ends after its `on_write` answered: saved if the buffer still holds
   what was written, line by line, else left modified by what was typed
   meanwhile; its text is never touched.
+- **A key commented out stays a secret.** `# ansible_become_password:
+  secret_password` was drawn raw while the same line uncommented was
+  masked: a commented-out key is a value kept for later, as secret as
+  it was. `env`, `vault` and `secret` take `#`s and spaces before the
+  key (`^\s*(?:#+\s*)?…`). A comment that reads as a key — `# Note:
+  rotate monthly` in a vault — is masked too, which is the safe side
+  (Risks: a rule too broad). `key` already masked every line but a
+  comment; JSON has none.

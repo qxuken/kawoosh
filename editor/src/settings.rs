@@ -1084,7 +1084,8 @@ impl Settings {
         defaults.set("lsp.inlay_hints", Setting::Bool(false));
         // Secrets (docs/design/secrets.md): the masks, named rules a
         // user adds to or switches off (`secrets.masks.env = false`);
-        // a file a `files` rule names is private. A secret in the
+        // a file a `files` rule names is private. A key commented out
+        // (`# password: …`) is masked as the line uncommented is. A secret in the
         // register is forgotten after `forget_secs`; `zv` shows a mask
         // for `reveal_secs`; a `--wait` open under the temp directory
         // is private; a buffer past `scan_max_kb` is not scanned.
@@ -1103,7 +1104,7 @@ impl Settings {
                         ),
                         (
                             "pattern",
-                            s(r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_.]*\s*=\s*(.+)$"),
+                            s(r"^\s*(?:#+\s*)?(?:export\s+)?[A-Za-z_][A-Za-z0-9_.]*\s*=\s*(.+)$"),
                         ),
                     ]),
                 ),
@@ -1114,7 +1115,10 @@ impl Settings {
                             "files",
                             Setting::List(vec![s("vault.yml"), s("vault.yaml")]),
                         ),
-                        ("pattern", s(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*(\S.*)$")),
+                        (
+                            "pattern",
+                            s(r"^\s*(?:#+\s*)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*(\S.*)$"),
+                        ),
                     ]),
                 ),
                 (
@@ -1164,7 +1168,7 @@ impl Settings {
                     "secret",
                     rule(vec![
                         ("language", s("secret")),
-                        ("pattern", s(r"^[^:#]+:\s*(\S.*)$")),
+                        ("pattern", s(r"^(?:\s*#+)?[^:#]+:\s*(\S.*)$")),
                     ]),
                 ),
             ]);
