@@ -1320,8 +1320,12 @@ function git.log(root, path, done)
   end)
 end
 
+-- The files named as they are spelled and from `a/` and `b/` whatever
+-- the user's `diff.noprefix`: the masks find a file's rules by its
+-- `+++ b/PATH` (`vcs.shown_patch`), and `<CR>` its file.
 function git.show(root, rev, done)
-  run({ "git", "show", "--stat", "--patch", "--format=medium", rev, "--" }, root, function(text, code, err)
+  run({ "git", "-c", "core.quotePath=false", "show", "--stat", "--patch", "--format=medium",
+        "--src-prefix=a/", "--dst-prefix=b/", rev, "--" }, root, function(text, code, err)
     if code ~= 0 then return done(nil, failure(err, text, "git show failed")) end
     done(text)
   end)
