@@ -30,8 +30,8 @@ Almost every key goes to the program in the terminal, `<C-w>`, `<C-l>`, `<C-r>` 
 |---|---|
 | `<C-\>` then keys | normal mode's keys, the which-key showing what can follow: `<C-\><C-w>l` a pane move, `<C-\><Space>f` the files, `<C-\>:` the command line, `<C-\><Space>mm` the memory |
 | `<C-\><C-n>` | copy mode (below), as in vim |
-| `<C-\><C-\>` | sends `<C-\>` itself to the program |
-| `<C-\><Esc>` | nothing: the keys are the program's again |
+| `<C-\><Esc>`, `<C-\><C-\>` | nothing: the keys are the program's again. Holding `<C-\>` down is one press: the program never hears it |
+| `:terminal send KEYS` | types KEYS, in map notation, into the terminal: `:terminal send <C-\>` is the shell's quit (SIGQUIT), on purpose |
 | `<C-\>r` | raw on or off for the program in front (`:terminal raw`): every key but `<C-\>` {{mac:and ⌘ }}goes to it |
 | `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | focus the pane left, below, above, right |
 | `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>` | the pane narrower, wider, shorter, taller |

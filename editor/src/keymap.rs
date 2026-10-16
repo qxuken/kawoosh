@@ -203,6 +203,76 @@ fn named_key(code: &str) -> Option<&'static str> {
     })
 }
 
+/// The key one token of [`parse_notation`] names — `<C-\>`, `<CR>`,
+/// `<A-J>`, `j` — as a press of it reports it: the inverse of
+/// [`KeyStroke::notation`], for a line that types keys
+/// (`:terminal send`).
+pub fn stroke_of(token: &str) -> KeyStroke {
+    let Some(inner) = token
+        .strip_prefix('<')
+        .and_then(|s| s.strip_suffix('>'))
+        .filter(|s| !s.is_empty())
+    else {
+        return KeyStroke::plain(token);
+    };
+    let mut parts: Vec<&str> = inner.split('-').collect();
+    // `<C-->`: the minus key under a modifier.
+    if parts.len() > 1 && parts.last() == Some(&"") {
+        parts.pop();
+        parts.pop();
+        parts.push("-");
+    }
+    let base = parts.pop().unwrap_or_default();
+    let mut k = KeyStroke::plain("");
+    for m in parts {
+        match m {
+            "C" => k.ctrl = true,
+            "A" | "M" => k.alt = true,
+            "D" => k.sup = true,
+            "S" => k.shift = true,
+            _ => {}
+        }
+    }
+    let chord = k.ctrl || k.alt || k.sup;
+    // The names [`named_key`] gives, back to their codes; an F key's is
+    // its own name in lower case.
+    let named = [
+        "escape",
+        "enter",
+        "tab",
+        "backspace",
+        "delete",
+        "space",
+        "up",
+        "down",
+        "left",
+        "right",
+        "home",
+        "end",
+        "pageup",
+        "pagedown",
+        "insert",
+    ]
+    .into_iter()
+    .find(|c| named_key(c) == Some(base));
+    k.code = match named {
+        Some(code) => code.to_string(),
+        None if base.len() > 1
+            && base.starts_with('F')
+            && base[1..].bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            base.to_ascii_lowercase()
+        }
+        // A chord's capital is its letter with Shift, as it is pressed.
+        None if chord && base.len() == 1 && base.as_bytes()[0].is_ascii_uppercase() => {
+            k.shift = true;
+            base.to_ascii_lowercase()
+        }
+        None => base.to_string(),
+    };
+    k
+}
+
 /// The token a `<leader>` in a map is kept as: what it stands for is
 /// the keymap's to say at lookup ([`Keymap::set_leader`]), so a leader
 /// set after the map was made — from a settings file, reloaded on
@@ -1099,6 +1169,12 @@ mod tests {
         assert_eq!(parse_notation("<leader>t"), [LEADER, "t"]);
         assert_eq!(parse_notation("<Esc>"), ["<Esc>"]);
         assert_eq!(parse_notation("<cr>"), ["<CR>"]);
+        // And back: each token as the press it names.
+        for note in [
+            "j", "<C-\\>", "<CR>", "<S-Tab>", "<A-J>", "<C-d>", "<D-->", "<F9>", "<Space>",
+        ] {
+            assert_eq!(stroke_of(note).notation(), note);
+        }
     }
 
     /// `<leader>` is resolved when a key is looked up, not when the map
