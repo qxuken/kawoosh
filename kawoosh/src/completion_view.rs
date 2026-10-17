@@ -78,11 +78,19 @@ pub fn draw(
         anchor: kui_native::FloatAnchor::Node(place.anchor),
         ..FloatConfig::parent()
     };
+    // The labels start under the word's: the popup's border, pad and
+    // icon column to the left of it.
+    let lead = if popup.is_some() {
+        -(PAD + 1.0 + icons.cell_at(face.size) * 2.5)
+    } else {
+        0.0
+    };
     let float = if above {
         on.at(Align::Start, Align::Start)
             .self_at(Align::Start, Align::End)
+            .offset(lead, 0.0)
     } else {
-        on.at(Align::Start, Align::End)
+        on.at(Align::Start, Align::End).offset(lead, 0.0)
     };
     let cell = icons.cell_at(face.size);
     ui.with_keyed(
@@ -113,12 +121,38 @@ fn card() -> NodeSpec {
 fn rows(ui: &mut Ui<'_>, pal: &Pal, face: Face, icons: &Icons, p: &Popup, cell: f32, place: Place) {
     let base = crate::rows::mono(face, pal);
     let detail = base.color(pal.faint).ellipsis();
+    // Its width the widest row's — measured once a build, kept on it —
+    // its detail cut at half the room, the whole within the room.
+    let detail_max = (place.room * 0.5).max(cell * 8.0);
+    let width = match p.width.get() {
+        Some(w) => w,
+        None => {
+            let w = p
+                .rows
+                .iter()
+                .map(|r| {
+                    let label = ui.measure_text(&r.label, &base, None).width;
+                    // The pads, the icon and its gap; a detail's two
+                    // gaps and the spring between.
+                    let d = r.detail.as_deref().map_or(0.0, |d| {
+                        cell * 3.0 + ui.measure_text(d, &base, None).width.min(detail_max)
+                    });
+                    cell * 3.0 + label + d
+                })
+                .fold(0.0f32, f32::max)
+                .ceil()
+                + 2.0 * (PAD + 1.0);
+            p.width.set(Some(w));
+            w
+        }
+    };
+    let width = width.min(place.room.max(cell * 16.0));
     ui.with_keyed(
         "completion popup",
         card()
             .bg(pal.panel)
             .border(1.0, pal.border)
-            .max_width(place.room.max(cell * 16.0)),
+            .width(width),
         |ui| {
             for (i, r) in p.rows.iter().enumerate() {
                 let mut spec = NodeSpec::row()
@@ -138,9 +172,7 @@ fn rows(ui: &mut Ui<'_>, pal: &Pal, face: Face, icons: &Icons, p: &Popup, cell: 
                     if let Some(d) = &r.detail {
                         ui.leaf(NodeSpec::row().grow_width().min_width(cell));
                         ui.with(
-                            NodeSpec::row()
-                                .max_width((place.room * 0.5).max(cell * 8.0))
-                                .clip(),
+                            NodeSpec::row().max_width(detail_max).clip(),
                             |ui| ui.text(d, detail),
                         );
                     }

@@ -195,8 +195,10 @@ fn the_popup_flips_above_near_the_panes_foot() {
         popup.y >= row.y + row.h - 0.5,
         "below: popup {popup:?}, row {row:?}"
     );
-    // The word's start: the popup's first row starts under it.
-    assert!((popup.x - row.x).abs() < 0.5, "at the word: {popup:?} {row:?}");
+    // The word's start: the labels start under it, the icon column
+    // to its left.
+    let (_, _, cell) = app.icons_family();
+    assert!(popup.x < row.x && row.x - popup.x < cell * 4.0, "at the word: {popup:?} {row:?}");
     d.press(&mut app, "<Esc>u");
     // At the foot: over it.
     d.press(&mut app, "Go");

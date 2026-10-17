@@ -396,6 +396,8 @@ pub struct Popup {
     /// The first's place among the candidates, and how many there are.
     pub top: usize,
     pub count: usize,
+    /// Its width as first drawn: the rows measured once a build.
+    pub width: Cell<Option<f32>>,
 }
 
 impl Session {
@@ -2273,6 +2275,7 @@ impl Kawoosh {
             rows,
             top: s.top,
             count: s.ranking.len(),
+            width: Cell::new(None),
         });
         *s.rows.borrow_mut() = Some((s.changes, p.clone()));
         Some(p)
@@ -2470,7 +2473,8 @@ impl Kawoosh {
             .trim()
             .to_string();
         let head = detail.map(|d| d.trim().to_string()).filter(|d| !d.is_empty());
-        if body.is_empty() && head.is_none() {
+        // A detail alone is the row's already: no panel for it.
+        if body.is_empty() {
             self.completion.session.as_mut().unwrap().docs.panel = None;
             return;
         }
