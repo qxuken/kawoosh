@@ -216,6 +216,31 @@ impl Item {
         self.insert.as_deref().unwrap_or(&self.label)
     }
 
+    /// A function's candidate as `completion.callable = "name"` puts
+    /// it: its name, no brackets, no fields — whatever the server's
+    /// snippet or text had after it.
+    fn callable_name(&mut self) {
+        if !crate::signature::callable_kind(self.kind) {
+            return;
+        }
+        let Some(name) = crate::signature::call_name(self.text()) else {
+            return;
+        };
+        let name: Rc<str> = Rc::from(name);
+        self.insert = (*name != *self.label).then_some(name);
+        self.snippet = None;
+        self.as_is = false;
+    }
+
+    /// Whether accepting it with `completion.callable = "args"` puts
+    /// its brackets and asks for its parameters: a function's whose
+    /// text has none and whose server sent no snippet with them.
+    fn called(&self) -> bool {
+        crate::signature::callable_kind(self.kind)
+            && !self.text().contains('(')
+            && self.snippet.as_ref().is_none_or(|b| !b.contains('('))
+    }
+
     fn of_lsp(it: CompletionItem) -> Item {
         let insert = (it.insert != it.label).then(|| Rc::from(it.insert));
         let snippet = it.snippet.map(Rc::from);
@@ -350,6 +375,10 @@ pub struct Session {
     /// by identity through a re-rank, where the best is chosen afresh
     /// until then.
     chosen: bool,
+    /// The popup is being walked: since `completion next` / `prev`, until
+    /// the word is typed in again — the information panel is the
+    /// candidate's documentation meanwhile, not a signature (Decision 10).
+    pub walking: bool,
     asks: Asks,
     /// Counts every change to the ranking and the selection: what the
     /// popup's rows were built at.
@@ -531,6 +560,7 @@ impl Session {
             return;
         };
         self.chosen = true;
+        self.walking = true;
         self.changes += 1;
         self.sort_all();
         let n = self.ranking.len();
@@ -785,10 +815,15 @@ pub(crate) fn mask_words(masked: &HashMap<BufferId, Masked>, text: &str) -> Stri
     if masked.values().all(|m| m.0.is_empty()) {
         return text.to_string();
     }
+    mask_words_by(text, |w| is_masked(masked, w))
+}
+
+/// `text` with every word `hidden` says is a secret's drawn as `•`.
+pub(crate) fn mask_words_by(text: &str, hidden: impl Fn(&str) -> bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut word = String::new();
     let flush = |word: &mut String, out: &mut String| {
-        if is_masked(masked, word) {
+        if !word.is_empty() && hidden(word) {
             out.extend(std::iter::repeat_n('•', word.chars().count()));
         } else {
             out.push_str(word);
@@ -1102,7 +1137,7 @@ fn path_context(line: &str, asked: bool) -> Option<(String, usize)> {
 
 /// The start of the identifier the caret ends, in the caret's line up
 /// to it.
-fn ident_start(line: &str) -> usize {
+pub(crate) fn ident_start(line: &str) -> usize {
     line.char_indices()
         .rev()
         .find(|(_, c)| !words::is_word_char(*c))
@@ -1175,7 +1210,7 @@ impl Kawoosh {
     }
 
     /// The completion setting `key` as the pane showing `view` reads it.
-    fn completion_value(&self, view: ViewId, key: &str) -> Option<Setting> {
+    pub(crate) fn completion_value(&self, view: ViewId, key: &str) -> Option<Setting> {
         match self.pane_of_view(view) {
             Some(p) => self.pane_value(p, key),
             None => self
@@ -1185,7 +1220,7 @@ impl Kawoosh {
         }
     }
 
-    fn completion_word(&self, view: ViewId, key: &str) -> Option<String> {
+    pub(crate) fn completion_word(&self, view: ViewId, key: &str) -> Option<String> {
         self.completion_value(view, key)
             .and_then(|v| v.as_str().map(str::to_string))
     }
@@ -1377,6 +1412,7 @@ impl Kawoosh {
         }
         let longer = typed.starts_with(&s.typed) && !hidden && !fresh;
         s.typed = typed;
+        s.walking = false;
         if s.closed {
             return;
         }
@@ -1515,6 +1551,7 @@ impl Kawoosh {
             sorted: 0,
             selected: None,
             chosen: false,
+            walking: false,
             asks: Asks::default(),
             changes: 0,
             top: 0,
@@ -1795,7 +1832,18 @@ impl Kawoosh {
         }
         s.asks.lsp = None;
         s.asks.lsp_incomplete = incomplete;
-        let items: Rc<[Item]> = items.into_iter().map(Item::of_lsp).collect();
+        let view = s.view;
+        let name_only = !self.callable_args(view);
+        let items: Rc<[Item]> = items
+            .into_iter()
+            .map(Item::of_lsp)
+            .map(|mut it| {
+                if name_only {
+                    it.callable_name();
+                }
+                it
+            })
+            .collect();
         self.completion_answer(Answer {
             source: Source::Lsp,
             buffer: None,
@@ -2535,8 +2583,16 @@ impl Kawoosh {
         self.ed.fact(crate::snippet::FACT, snippet);
         let on = self.completion_on_show();
         self.ed.fact(FACT, on);
-        let docs = on && self.completion_docs_on_show();
+        let signature = self.signature_on_show();
+        self.ed.fact(crate::signature::FACT, signature);
+        let docs = self.docs_fact();
         self.ed.fact(DOCS_FACT, docs);
+    }
+
+    /// The `completion_docs` fact: the panel's scroll keys, whichever it
+    /// holds, while it is on show with a completion or alone.
+    pub(crate) fn docs_fact(&self) -> bool {
+        (self.completion_on_show() || self.signature_on_show()) && self.panel_on_show()
     }
 
     // ------------------------------------------------------- the panel
@@ -2751,6 +2807,8 @@ impl Kawoosh {
         let s = self.completion.session.as_mut().unwrap();
         s.docs.panel = Some(Rc::new(crate::completion_view::Panel {
             head,
+            lit: None,
+            of: None,
             body,
             scroll: Cell::new(0),
             room: Cell::new(0),
@@ -2773,20 +2831,22 @@ impl Kawoosh {
         s.docs.panel.clone()
     }
 
-    /// Whether the panel is on show where the keys are: the
+    /// Whether the information panel is on show where the keys are —
+    /// the documentation or a signature — drawn last frame: the
     /// `completion_docs` fact, its scroll keys' place.
-    pub(crate) fn completion_docs_on_show(&self) -> bool {
-        self.completion_on_show()
+    pub(crate) fn panel_on_show(&self) -> bool {
+        self.panel_shown
             && self
                 .focused_view()
-                .is_some_and(|v| self.completion_panel(v).is_some())
+                .is_some_and(|v| self.info_panel(v).is_some())
     }
 
-    /// The panel's text as drawn, for a test: its head and its body.
+    /// The panel's text as drawn, for a test: its head and its body —
+    /// the documentation's, or a signature's.
     pub fn completion_panel_text(&self) -> Option<(Option<String>, String)> {
         let v = self.focused_view()?;
-        self.completion_panel(v)
-            .map(|p| (p.head.clone(), p.body.clone()))
+        self.info_panel(v)
+            .map(|(p, _)| (p.head.clone(), p.body.clone()))
     }
 
     /// `completion docs`: the panel for the selection now, whatever
@@ -2808,12 +2868,7 @@ impl Kawoosh {
 
     /// `completion docs down` / `up`: the panel scrolled half its height.
     fn completion_docs_scroll(&mut self, down: bool) {
-        let Some(p) = self
-            .completion
-            .session
-            .as_ref()
-            .and_then(|s| s.docs.panel.clone())
-        else {
+        let Some((p, _)) = self.focused_view().and_then(|v| self.info_panel(v)) else {
             return;
         };
         let step = (crate::completion_view::PANEL_LINES / 2.0) as usize;
@@ -2851,7 +2906,12 @@ impl Kawoosh {
         };
         let item = &s.answers[r.answer as usize].items[r.item as usize];
         let text = item.text().to_string();
-        let (snippet, as_is) = (item.snippet.clone(), item.as_is);
+        let call = item.called() && self.callable_args(view);
+        // A call's brackets are put after its name, not a snippet's.
+        let (snippet, as_is) = match call {
+            true => (None, false),
+            false => (item.snippet.clone(), item.as_is),
+        };
         let typed_len = s.typed.len();
         self.completion.session = None;
         if let WordKind::Choice { .. } = word {
@@ -2898,6 +2958,9 @@ impl Kawoosh {
         }
         self.completion_remember(buffer, &text);
         self.follow_caret = true;
+        if call {
+            self.signature_call(view, buffer, r.continues);
+        }
         // A directory asks again, for what is in it.
         if word == WordKind::Path && text.ends_with('/') {
             self.completion_start(view, false, false);
@@ -2995,11 +3058,14 @@ impl Kawoosh {
             self.snippet_choose(text);
             return true;
         }
-        let snippet = s
+        let taken = s
             .answers
             .iter()
             .flat_map(|a| a.items.iter())
-            .find(|i| i.text() == text)
+            .find(|i| i.text() == text);
+        let call = taken.is_some_and(Item::called) && self.callable_args(v);
+        let snippet = taken
+            .filter(|_| !call)
             .and_then(|i| Some((i.snippet.clone()?, i.as_is)));
         if let Some((body, as_is)) = snippet {
             let put =
@@ -3013,6 +3079,9 @@ impl Kawoosh {
             .apply_edits(buffer, &[(start..end, text.to_string())]);
         self.completion_remember(buffer, text);
         self.follow_caret = true;
+        if call {
+            self.signature_call(v, buffer, false);
+        }
         true
     }
 
@@ -3070,6 +3139,7 @@ impl Kawoosh {
             sorted: 0,
             selected: None,
             chosen: false,
+            walking: false,
             asks: Asks::default(),
             changes: 0,
             top: 0,
@@ -3238,6 +3308,7 @@ mod tests {
             sorted: 0,
             selected: None,
             chosen: false,
+            walking: false,
             asks: Asks::default(),
             changes: 0,
             top: 0,

@@ -5,8 +5,8 @@
 //! picker lights them, its detail faint at the right — and the one
 //! information panel, beside the popup or, with no popup, above the
 //! caret's line. Never two panels stacked: the panel holds the selected
-//! candidate's documentation now, and the signature (round 5) will be
-//! the other thing it holds.
+//! candidate's documentation while the popup is walked, the signature
+//! of the call the caret is in otherwise (`signature.rs`).
 //!
 //! What is drawn comes built: [`crate::completion::Popup`] is the rows
 //! on show alone, [`Panel`] the selection's text alone.
@@ -27,12 +27,17 @@ const RADIUS: f32 = 4.0;
 pub const PANEL_COLS: f32 = 64.0;
 pub const PANEL_LINES: f32 = 14.0;
 
-/// What the information panel shows: a candidate's documentation now,
-/// a signature in round 5 — one panel either way.
+/// What the information panel shows: a candidate's documentation or a
+/// call's signature — one panel either way.
 pub struct Panel {
     /// A line in the editor's face over the text: the candidate's
-    /// detail (a signature, a type).
+    /// detail (a signature, a type), or the call's signature.
     pub head: Option<String>,
+    /// The head's bytes lit: the parameter the caret is in.
+    pub lit: Option<std::ops::Range<usize>>,
+    /// Which of how many signatures it is, where there are several
+    /// (overloads): `1/3` before the head.
+    pub of: Option<(usize, usize)>,
     /// The text, its lines as they are; masked words drawn as `•`.
     pub body: String,
     /// Lines scrolled past, and how many there are to scroll past as
@@ -44,7 +49,8 @@ pub struct Panel {
 /// Where the popup hangs: the mark the caret's row left at the word's
 /// start (a line tall), the row's height, over the row or under it, and
 /// the pane's room across from the mark — to its right edge and back to
-/// its left — which the popup and its panel are kept inside.
+/// its left — which the popup and its panel are kept inside; and the
+/// room over the row and under it, which a panel alone is weighed by.
 #[derive(Clone, Copy, Debug)]
 pub struct Place {
     pub anchor: kui_native::Key,
@@ -52,6 +58,18 @@ pub struct Place {
     pub above: bool,
     pub room: f32,
     pub left: f32,
+    pub over: f32,
+    pub below: f32,
+    /// The panel's height as the last frame laid it out, where it drew
+    /// one.
+    pub panel_h: Option<f32>,
+}
+
+/// How tall `panel` is at most, its body's lines unwrapped: what a
+/// panel alone is weighed by before a frame laid one out.
+fn panel_height(panel: &Panel, lh: f32) -> f32 {
+    let body = panel.body.lines().count().min(PANEL_LINES as usize) as f32;
+    (panel.head.is_some() as u8 as f32 + body) * lh + GAP + 2.0 * (PAD + 3.0)
 }
 
 /// The popup's height for `rows` rows of `lh`: what the flip weighs
@@ -63,7 +81,8 @@ pub fn popup_height(rows: usize, lh: f32) -> f32 {
 /// The popup and its panel, as one float hung from `place`'s mark —
 /// declared outside the caret's row, so no text of it is the line's.
 /// Either may be missing: no popup is the panel alone, above the
-/// caret's line.
+/// caret's line. Answers the panel's height as the last frame laid it
+/// out, for the next frame's `Place`.
 pub fn draw(
     ui: &mut Ui<'_>,
     pal: &Pal,
@@ -72,10 +91,17 @@ pub fn draw(
     popup: Option<&Popup>,
     panel: Option<&Panel>,
     place: Place,
-) {
-    // The panel alone sits above the caret's line; the popup's follows
-    // it.
-    let above = place.above || popup.is_none();
+) -> Option<f32> {
+    // The panel alone sits above the caret's line — under it where
+    // the pane's top leaves too little room over it and more below; the
+    // popup's follows it.
+    let above = match (popup, panel) {
+        (None, Some(p)) => {
+            let h = place.panel_h.unwrap_or_else(|| panel_height(p, place.lh));
+            h <= place.over || place.over >= place.below
+        }
+        _ => place.above,
+    };
     let on = FloatConfig {
         anchor: kui_native::FloatAnchor::Node(place.anchor),
         ..FloatConfig::parent()
@@ -119,6 +145,7 @@ pub fn draw(
     } else {
         on.at(Align::Start, Align::End).offset(lead, 0.0)
     };
+    let mut panel_h = None;
     ui.with_keyed(
         "completion",
         NodeSpec::row()
@@ -127,16 +154,17 @@ pub fn draw(
             .float(float),
         |ui| {
             if panel_left && let Some(panel) = panel {
-                draw_panel(ui, pal, face, panel, cell, panel_w);
+                panel_h = draw_panel(ui, pal, face, panel, cell, panel_w);
             }
             if let (Some(p), Some(w)) = (popup, popup_w) {
                 rows(ui, pal, face, icons, p, cell, w, place);
             }
             if !panel_left && let Some(panel) = panel {
-                draw_panel(ui, pal, face, panel, cell, panel_w);
+                panel_h = draw_panel(ui, pal, face, panel, cell, panel_w);
             }
         },
     );
+    panel_h
 }
 
 /// The popup's width: its widest row's — measured once a build, kept on
@@ -253,7 +281,14 @@ fn label(ui: &mut Ui<'_>, text: &str, lit: &[usize], base: TextStyle, accent: Co
     ui.rich_text(&spans, base);
 }
 
-fn draw_panel(ui: &mut Ui<'_>, pal: &Pal, face: Face, panel: &Panel, cell: f32, width: f32) {
+fn draw_panel(
+    ui: &mut Ui<'_>,
+    pal: &Pal,
+    face: Face,
+    panel: &Panel,
+    cell: f32,
+    width: f32,
+) -> Option<f32> {
     let base = crate::rows::mono(face, pal);
     let body = TextStyle::new(face.size)
         .line_height(face.line_height)
@@ -263,17 +298,43 @@ fn draw_panel(ui: &mut Ui<'_>, pal: &Pal, face: Face, panel: &Panel, cell: f32, 
         Some(id) => body.font(id),
         None => body.mono(),
     };
-    ui.with_keyed(
+    // Laid out with a report, so `layout_of` has its height next frame:
+    // what a panel alone is weighed by against the room over the row.
+    let card_key = ui.with_keyed(
         "completion docs",
         card()
             .bg(pal.panel)
             .border(1.0, pal.border)
             .pad_xy(cell, PAD + 2.0)
             .gap(GAP)
-            .width(width),
+            .width(width)
+            .on_layout(kui_native::Value::map([("kind", "panel".into())])),
         |ui| {
             if let Some(h) = &panel.head {
-                ui.text(h, base.color(pal.dim).wrap(TextWrap::Word));
+                let style = base.color(pal.dim).wrap(TextWrap::Word);
+                let lit = panel
+                    .lit
+                    .clone()
+                    .filter(|r| h.is_char_boundary(r.start) && h.is_char_boundary(r.end));
+                let of = panel.of.map(|(i, n)| format!("{i}/{n}  "));
+                if lit.is_none() && of.is_none() {
+                    ui.text(h, style);
+                } else {
+                    let mut spans: Vec<Span<'_>> = Vec::new();
+                    if let Some(of) = &of {
+                        spans.push(Span::new(of).color(pal.faint));
+                    }
+                    match &lit {
+                        Some(r) => {
+                            spans.push(Span::new(&h[..r.start]));
+                            spans.push(Span::new(&h[r.clone()]).color(pal.accent).bold());
+                            spans.push(Span::new(&h[r.end..]));
+                        }
+                        None => spans.push(Span::new(h)),
+                    }
+                    spans.retain(|s| !s.text.is_empty());
+                    ui.rich_text(&spans, style);
+                }
             }
             if !panel.body.is_empty() {
                 let k = ui.with_keyed(
@@ -299,4 +360,5 @@ fn draw_panel(ui: &mut Ui<'_>, pal: &Pal, face: Face, panel: &Panel, cell: f32, 
             }
         },
     );
+    ui.layout_of(card_key).map(|r| r.h)
 }

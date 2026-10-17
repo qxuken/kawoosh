@@ -89,6 +89,9 @@ pub struct Kawoosh {
     /// The snippet live in the text, if one is (completion.md Decision
     /// 7): one at a time, gone when it ends.
     pub snippet: Option<crate::snippet::Live>,
+    /// The signature of the call the caret is in, while one is on show
+    /// or asked for (completion.md Decision 10).
+    pub signature: crate::signature::State,
     /// The user's snippets by language (completion.md Decision 8),
     /// shared with Lua (`user_snippets.rs`).
     pub user_snippets: crate::user_snippets::Shared,
@@ -319,6 +322,13 @@ pub struct Kawoosh {
     /// Whether the focused pane drew the completion's popup last frame:
     /// its keys hold only for a popup on the screen.
     pub(crate) popup_shown: bool,
+    /// Whether the focused pane drew the information panel last frame,
+    /// and whether it was a signature: their keys hold only then.
+    pub(crate) panel_shown: bool,
+    pub(crate) signature_shown: bool,
+    /// The information panel's height as last laid out: where a panel
+    /// alone goes, over the caret's row or under it.
+    pub(crate) panel_h: Option<f32>,
     /// The focused pane's key sink as last drawn (`focus_sink`): where a
     /// click that opened a file sends the keyboard (`on_event_with`).
     pub(crate) sink: Option<kui_native::Key>,
@@ -460,6 +470,7 @@ impl Kawoosh {
             lsp: LspState::new(wake.clone()),
             completion: crate::completion::State::new(wake.clone()),
             snippet: None,
+            signature: crate::signature::State::default(),
             user_snippets: Default::default(),
             lsp_installs: crate::lsp_installs::Installs::new(wake.named("lsp installs")),
             scripting: Scripting {
@@ -553,6 +564,9 @@ impl Kawoosh {
             clip_probe: false,
             ghost_shown: false,
             popup_shown: false,
+            panel_shown: false,
+            signature_shown: false,
+            panel_h: None,
             sink: None,
             clip_last: None,
             clip_editor_seen: true,
@@ -2085,6 +2099,13 @@ impl Kawoosh {
             let was_insert = self.pane_mode() == Mode::Insert;
             self.ed.key(v, stroke.clone());
             self.completion_after_key(&stroke, was_insert);
+            self.signature_after_key(
+                stroke
+                    .text
+                    .as_deref()
+                    .filter(|_| !stroke.ctrl && !stroke.alt),
+                was_insert,
+            );
             self.cmdline_refresh();
         } else if let Some(t) = self.term_of(self.layout.focused()) {
             self.term_key(t, stroke, &press);
@@ -2910,6 +2931,7 @@ impl kui_native::App for Kawoosh {
         t = self.perf.lap(Syntax, "syntax", t);
         self.sync_lsp();
         self.sync_completion();
+        self.sync_signature();
         t = self.perf.lap(Lsp, "lsp", t);
         // Filled again by the panes this frame draws.
         self.multis.visible.clear();
