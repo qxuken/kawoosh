@@ -77,6 +77,14 @@ pub enum IoMsg {
         dir: std::path::PathBuf,
         entries: Option<Vec<crate::fs::Entry>>,
     },
+    /// A shell line's completer answered the `:` prompt
+    /// (`shell_complete.rs`, compile.md Decision 23): the ask's serial,
+    /// and each value with its description — none when it failed, timed
+    /// out, said too much or said it in no shape known.
+    LineCompleted {
+        serial: u64,
+        values: Option<Vec<(String, String)>>,
+    },
     /// A buffer's words indexed for completion's `buffer_words`
     /// (`words::index`), under its masks' key.
     CompletionWords {

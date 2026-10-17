@@ -152,6 +152,12 @@ pub struct Kawoosh {
     /// The directories the `:` prompt's paths were completed from, each
     /// listed once while it is open (`cmdline.rs`).
     pub(crate) cmd_dirs: crate::cmdline::Listed,
+    /// The compile picker's lines as `:compile`'s candidates, read once
+    /// while the `:` prompt is open (`cmdline.rs`).
+    pub(crate) cmd_compile_lines: Option<std::rc::Rc<Vec<String>>>,
+    /// A shell line's completer's answers while the `:` prompt is open
+    /// (`shell_complete.rs`).
+    pub(crate) line_complete: crate::shell_complete::ShellComplete,
     /// The working directory: where terminals and `:e` relative paths
     /// start; `:cd` and the file manager move it.
     pub cwd: PathBuf,
@@ -498,6 +504,8 @@ impl Kawoosh {
             lua_types: None,
             cmd_completion: None,
             cmd_dirs: Default::default(),
+            cmd_compile_lines: None,
+            line_complete: Default::default(),
             cwd: std::env::current_dir().unwrap_or_default(),
             dark: true,
             devtools: false,
@@ -1037,6 +1045,7 @@ impl Kawoosh {
                 }
                 IoMsg::Sized { walk, batch } => self.sized(walk, batch),
                 IoMsg::PromptListed { dir, entries } => self.prompt_listed(dir, entries),
+                IoMsg::LineCompleted { serial, values } => self.line_completed(serial, values),
                 IoMsg::CompletionWords { index, masks } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     self.completion_words_indexed(index, masks);
