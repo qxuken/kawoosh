@@ -2,8 +2,9 @@
 
 Status: designed 2026-10-16/17 with the user, over six rounds of
 questions, from the todo's "add autocompletion settings (including
-disabling)". Round 1 of the build (the model and the settings) built
-2026-10-17: "Built" at the end says how, and where it departs. The decisions below are the rounds' answers,
+disabling)". Rounds 1–3 of the build (the model and the settings; the
+popup; LSP snippets) built 2026-10-17: "Built" at the end says how, and
+where each departs. The decisions below are the rounds' answers,
 each with the alternative it beat. The build is five rounds (the last
 section), one session each. Words are as [GLOSSARY.md](../../GLOSSARY.md)
 has them.
@@ -528,3 +529,125 @@ With neither a ghost nor the popup on show, nothing is asked and no
 panel shows. The harness loads the shipped icons' family
 (`fonts::load_symbols`), so the icons' tests pass on a machine without
 it installed and read nothing of the home.
+
+### Round 3, 2026-10-17: LSP snippets as selections
+
+`systems/src/snippet.rs` (the grammar: parsed, expanded),
+`kawoosh/src/snippet.rs` (the live snippet: its fields, its keys, its
+ends, its variables), the editor's typing over a selection
+(`Editor::erase_selected`) and its count of moves through history
+(`history_moves`), completion.rs's accept and the choice session,
+`rows::Mark::underline_color` for the faint fields. Tests:
+`kawoosh/tests/snippets.rs`, the grammar's in `snippet.rs`,
+`fake_lsp.py --snippets`.
+
+As designed: Decision 7 whole — `snippetSupport: true` (with
+`insertReplaceSupport` kept, `insertTextModeSupport` added), an
+accepted snippet kawoosh's own selections, a repeated field several
+carets, `$0` the last caret, a choice's options the popup's, `snippet
+next` / `snippet prev` on `<C-l>` / `<C-k>` local to a `snippet` fact
+that holds only while one is live, `<Tab>` left alone, one at a time,
+every end, nothing remembered, the fields not reached faintly
+underlined.
+
+Where the build departs, or says more than the decision did:
+
+- **The grammar, read leniently.** LSP 3.17's whole, as VS Code reads
+  it: tabstops, placeholders nested to any depth, choices (`\,` `\|`),
+  `$0`, variables with a default or a transform, a field's transform
+  (`${1/(.*)/${1:/upcase}/g}`, the format's cases and its `+ ? -`
+  forms, the flags `g i m s` on Rust's regex — one that does not
+  compile leaves the value), the escapes. A `$` that begins no
+  construct is the text it is and the rest is read on from after it, so
+  a body that is not written right is put as written around what is,
+  never refused; nesting past 64 is text, an expansion visits at most
+  100,000 nodes (fields whose defaults mirror each other double at each
+  step), and nothing panics.
+- **A snippet is matched by its label.** Round 1 matched a candidate
+  by what it puts; a snippet's body (`#[test]\nfn ${1:name}() …`) is
+  not what the user types, its label (`tfn`) is. It is offered when the
+  label is typed whole, and dropped only when its plain text — each
+  field its default — is what is typed. The plain text is what the
+  dedup, the frecency and the ghost read; a ghost shows its first line
+  alone.
+- **Typing over a selection is the editor's.** In insert mode a typed
+  text, `<CR>`, a paste, `<BS>` and `<Del>` erase every selection with
+  text in it first (the deletes, only that) — not a snippet's special
+  case: a drag's selection in insert mode is typed over the same.
+- **Where it goes.** In place of the word typed: at every caret where
+  the candidate continues the word, at the primary one otherwise (the
+  first field's selections then replace the other carets). Each caret
+  gets a copy; field N is its places in every copy, a caret each, and
+  the snippet's text is the copies — a caret, or an edit, outside all
+  of them ends it. The lines after the first are indented as the line
+  it goes into and a line's leading tabs are the indent unit, unless
+  the server sent `insertTextMode` 1 (`asIs`).
+- **The fields follow the journal**, edit by edit: the field being
+  filled, and the fields it is nested in, grow with what is typed at
+  their edges; every other keeps out of it, so typing at a field's end
+  never spills into the next. Which field holds which is the body's
+  nesting, kept as each field's parent — not guessed from the ranges,
+  which an emptied inner field shares with its outer one. A field
+  nested in the one being filled whose place there the typing emptied
+  is gone (VS Code's rule), and `<C-l>` passes it. Bytes throughout: a
+  multi-byte character is one edit like another.
+- **An undo or a redo ends it** (the call this round was left to make).
+  In insert mode the snippet came in with the typing session an undo
+  takes back whole, and what the history puts back is its own text,
+  not a snippet's to follow; a redo brings back no snippet, nothing
+  remembers one. `Editor::history_moves` counts every move through a
+  history, so the snippet tells an undo from typing.
+- **The ends, said exactly.** An edit outside it is one not wholly
+  inside its text: a `<BS>` reaching before its start ends it too. A
+  buffer switch is its view showing another buffer (`show_buffer`
+  leaves insert mode as well), and another pane taking the keys ends
+  it — the candidates picker over its pane excepted, as the
+  completion's session is. Reaching `$0` ends it, the carets there (a
+  `${0:text}` selected); a body with no field but `$0` puts the carets
+  there and leaves nothing live; a body with no `$0` ends at its text's
+  end.
+- **A choice is the popup's whatever `completion.popup` says**: no
+  ghost can offer it, and under `never` it was reachable only through
+  `<C-x>`. Its options are a completion session of their own
+  (`WordKind::Choice`): every option, in its order, until the field is
+  typed in, then narrowed as a word is. Taking one puts it in every
+  place of the field, the carets after it; the snippet stays on the
+  field.
+- **A transform's places are written when its field is left** by
+  `<C-l>` or `<C-k>`, as VS Code writes them — not as the field is
+  typed in, and not when the snippet ends any other way.
+- **The variables** are VS Code's: `TM_SELECTED_TEXT`,
+  `TM_CURRENT_LINE`, `TM_CURRENT_WORD`, `TM_LINE_INDEX`,
+  `TM_LINE_NUMBER`, `TM_FILENAME`, `TM_FILENAME_BASE`, `TM_DIRECTORY`,
+  `TM_FILEPATH`, `RELATIVE_FILEPATH`, `CLIPBOARD`, `WORKSPACE_NAME`,
+  `WORKSPACE_FOLDER`, `CURSOR_INDEX`, `CURSOR_NUMBER`, `LINE_COMMENT`,
+  `BLOCK_COMMENT_START`, `BLOCK_COMMENT_END`, the `CURRENT_*` dates and
+  times (local, `localtime_r`), `RANDOM`, `RANDOM_HEX`, `UUID`. One
+  nobody knows is its name in a field after the body's own (VS Code's
+  rule). The texts that could carry a mask out are empty when they
+  would: the selection, the line and the word in a private buffer or
+  under a mask; `CLIPBOARD` — the register's newest, which the system
+  clipboard is adopted into — when it is a secret's or holds a word
+  inside any open buffer's mask or one a rule masks.
+- **Drawn.** A field not reached yet with text in it is underlined in
+  the dim colour (`Mark::underline_color`); an empty one (`$2`) has
+  nothing to underline. The field being filled is the selections.
+- **Left for later.** A candidate's `textEdit` range is still not read
+  — the word typed is replaced, as since round 1; `additionalTextEdits`
+  (an auto-import) are not applied — applied later, they land outside
+  the snippet and must go in before it is live, or be carried.
+  `completion.callable`'s `args` (round 5) and the user's snippets
+  (round 4) come through the same door, `snippet_accept` (a body and
+  the places it goes; `snippet_expand` at the carets).
+- **Found on the way, not this round's:** `cc` on a buffer of one empty
+  line (`"\n"`) puts its text after the newline.
+
+Measured with `kawoosh/tests/snippets.rs`'s
+`timing_a_keystroke_in_a_snippet` (dev profile, a 20,000-line buffer
+of words, `gamm` typed after `f(` mid-line in the default look, so the
+popup is up either way; median / p90, three runs): with no snippet
+0.47–0.49 / 0.53–0.55 ms, inside a live snippet's field 0.48–0.50 /
+0.54–0.55 ms — the fields carried through a key's edits cost nothing
+measurable. A field in two places, each key typing at two carets, is
+0.55–0.57 / 0.62–0.66 ms: what two carets cost.
+
