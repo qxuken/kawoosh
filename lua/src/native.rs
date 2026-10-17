@@ -907,8 +907,17 @@ pub fn seed(
         })?,
     )?;
     let n = native.clone();
-    // `kawoosh.extensions()`: the native extensions loaded, in the
-    // order they were, each `{ namespace, name, path, abi, protocol }`.
+    // `kawoosh.extensions(): kawoosh.Extension[]`: the native extensions
+    // loaded, in the order they were, each `{ namespace, name, path, abi,
+    // protocol, draws }`.
+    //
+    // @class kawoosh.Extension
+    // @field namespace string what it was loaded as
+    // @field name string
+    // @field path string the library's file
+    // @field abi integer the `kw_ext_abi` it declares
+    // @field protocol integer the protocol this kawoosh speaks
+    // @field draws boolean it exports `kui_ext_abi` too: it draws through kui
     k.set(
         "extensions",
         lua.create_function(move |lua, ()| {

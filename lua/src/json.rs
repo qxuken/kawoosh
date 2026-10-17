@@ -211,8 +211,9 @@ fn table(mt: &Table, t: &Table, at: &mut At) -> Result<J, String> {
 /// `kawoosh.json` on `k`: `decode`, `encode`, `null`, `array`.
 pub fn install(lua: &Lua, k: &Table) -> mlua::Result<()> {
     let json = lua.create_table()?;
-    // `kawoosh.json.decode(text)`: the value, or `nil, why` — a text
-    // that is not a string as much as one that is not JSON.
+    // `kawoosh.json.decode(text: string): any, string?`: the value, or
+    // `nil, why` — a text that is not a string as much as one that is
+    // not JSON.
     json.set(
         "decode",
         lua.create_function(|lua, text: LV| {
@@ -230,8 +231,11 @@ pub fn install(lua: &Lua, k: &Table) -> mlua::Result<()> {
             }
         })?,
     )?;
-    // `kawoosh.json.encode(value[, { pretty = true }])`: the text, or
-    // `nil, why`.
+    // `kawoosh.json.encode(value: any, opts?: kawoosh.json.EncodeOpts): string?, string?`:
+    // the text, or `nil, why`.
+    //
+    // @class kawoosh.json.EncodeOpts
+    // @field pretty? boolean indented, a member a line
     json.set(
         "encode",
         lua.create_function(|lua, (v, opts): (LV, Option<Table>)| {

@@ -109,7 +109,7 @@ local picker = kawoosh.picker
 ---A file of a review, as `vcs.layout` lays it out.
 ---@class kawoosh.vcs.ReviewFile
 ---@field rel string its path from the root, the header's
----@field hunks kawoosh.Hunk[] as `kawoosh.diff` makes them
+---@field hunks kawoosh.buf.Hunk[] as `kawoosh.diff` makes them
 ---@field lines integer the new text's line count
 ---@field path? string the file, shown from its buffer
 ---@field name? string or the scratch buffer holding the new text
