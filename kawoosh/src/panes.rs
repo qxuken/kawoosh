@@ -1829,6 +1829,7 @@ impl Kawoosh {
             None => (&[][..], false),
         };
         let (painted, behind, paint_marks) = self.paints_in(buf_id, drawn);
+        let snippet_marks = self.snippet_marks(view);
         washes.splice(0..0, behind);
         let sels = &v.sels;
         let primary = sels.primary();
@@ -1990,6 +1991,7 @@ impl Kawoosh {
                     bg: None,
                     mono: false,
                     icon: false,
+                    underline_color: None,
                 })
             })
             .collect();
@@ -2537,6 +2539,24 @@ impl Kawoosh {
                                 Vec::new()
                             };
                             syntax_marks.extend(struck);
+                            // A live snippet's fields not reached yet,
+                            // faintly underlined (completion.md Decision 7).
+                            syntax_marks.extend(
+                                snippet_marks
+                                    .iter()
+                                    .filter(|r| r.start < range.end && r.end > range.start)
+                                    .map(|r| {
+                                        let r = clip(r.start.max(range.start))
+                                            ..clip(r.end.min(range.end));
+                                        let m = rows::Mark {
+                                            underline: true,
+                                            underline_color: Some(pal.dim),
+                                            ..Default::default()
+                                        };
+                                        (r, m)
+                                    })
+                                    .filter(|(r, _)| r.start < r.end),
+                            );
                             syntax_marks.extend(
                                 paint_marks
                                     .iter()
