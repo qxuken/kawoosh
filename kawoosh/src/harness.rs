@@ -278,6 +278,56 @@ impl Harness {
         out
     }
 
+    /// The completion popup's rows as last drawn, top to bottom: each
+    /// row's texts joined — its icon's glyph, its label, its detail —
+    /// and whether it is the selected one (its background). Empty when
+    /// no popup is up.
+    pub fn completion_rows(&self) -> Vec<String> {
+        let nodes = self.core.nodes();
+        let Some(at) = nodes
+            .iter()
+            .position(|n| n.label.as_deref() == Some("completion popup"))
+        else {
+            return Vec::new();
+        };
+        let depth = nodes[at].depth;
+        let mut out = Vec::new();
+        let mut j = at + 1;
+        while j < nodes.len() && nodes[j].depth > depth {
+            if nodes[j].depth == depth + 1 {
+                out.push(String::new());
+            }
+            if let (Some(t), Some(row)) = (&nodes[j].text, out.last_mut()) {
+                row.push_str(t);
+            }
+            j += 1;
+        }
+        out
+    }
+
+    /// The window rect of the node labelled `label` in the last frame.
+    pub fn rect_labelled(&self, label: &str) -> Option<kui_native::Rect> {
+        self.core
+            .nodes()
+            .into_iter()
+            .find(|n| n.label.as_deref() == Some(label))
+            .map(|n| n.rect)
+    }
+
+    /// The text nodes under the node labelled `label`, in tree order.
+    pub fn texts_under(&self, label: &str) -> Vec<String> {
+        let nodes = self.core.nodes();
+        let Some(at) = nodes.iter().position(|n| n.label.as_deref() == Some(label)) else {
+            return Vec::new();
+        };
+        let depth = nodes[at].depth;
+        nodes[at + 1..]
+            .iter()
+            .take_while(|n| n.depth > depth)
+            .filter_map(|n| n.text.clone())
+            .collect()
+    }
+
     /// The text nodes of the confirm float, top to bottom: the title,
     /// the lines, the buttons; none when no confirm is up.
     pub fn confirm_texts(&self) -> Vec<String> {

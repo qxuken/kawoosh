@@ -19,6 +19,7 @@ pub mod cmdline;
 pub mod commands;
 pub mod compile;
 pub mod completion;
+pub mod completion_view;
 pub mod confirm;
 pub mod cwd_watch;
 pub mod deduce;

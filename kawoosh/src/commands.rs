@@ -369,6 +369,7 @@ impl Kawoosh {
             // A completion on show: its keys' place (completion.md
             // Decision 3).
             (crate::completion::FACT, self.completion_on_show()),
+            (crate::completion::DOCS_FACT, self.completion_docs_on_show()),
         ];
         for (name, on) in facts {
             self.ed.fact(name, on);

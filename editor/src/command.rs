@@ -408,6 +408,7 @@ pub fn fact_words(fact: &str) -> Option<String> {
         "rows" => "a pane whose `j` and `k` move by row on screen",
         "diagram" => "a diagram's canvas",
         "completion" => "a completion on show",
+        "completion_docs" => "a completion's documentation on show",
         _ => "",
     };
     if !words.is_empty() {

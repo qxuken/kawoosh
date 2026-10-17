@@ -9,7 +9,9 @@ use kawoosh_editor::{Layer, Setting};
 
 /// What a keystroke and a frame cost while a completion is live, over
 /// a buffer of twenty thousand lines of words — the numbers in the
-/// commit messages of completion.md's round 1. Run by hand:
+/// commit messages of completion.md's rounds: round 1's ghost alone
+/// (`popup = "never"`), and round 2's popup open beside it (`always`),
+/// its documentation panel up. Run by hand:
 /// `cargo test -p kawoosh --test completion timing -- --ignored --nocapture`.
 #[test]
 #[ignore]
@@ -28,56 +30,64 @@ fn timing_a_keystroke_and_a_frame() {
         })
         .collect();
     std::fs::write(&file, text).unwrap();
-    // The words indexed on their job, as in the window: a word's start
-    // ranks the index as it stands, the fresh one lands after.
-    let mut app = Kawoosh::from_file(&file);
-    // Asked as a word starts, as in code (plain text asks when asked).
-    app.ed.settings.set(
-        Layer::Session,
-        "completion.trigger",
-        Setting::Str("typing".into()),
-    );
-    let mut d = Drive::new(900.0, 500.0);
-    d.frame(&mut app);
-    d.press(&mut app, "G");
-    d.press(&mut app, "o");
-    let mut keys = Vec::new();
-    let mut word_starts = Vec::new();
-    for round in 0..40 {
-        for (i, ch) in [" ", "g", "a", "m", "m"].iter().enumerate() {
-            let t = std::time::Instant::now();
-            d.keys(&mut app, ch);
-            let took = t.elapsed();
-            d.settle(&mut app);
-            if i == 1 {
-                word_starts.push(took);
-            } else if round > 0 {
-                keys.push(took);
+    for popup in ["never", "always"] {
+        // The words indexed on their job, as in the window: a word's
+        // start ranks the index as it stands, the fresh one lands after.
+        let mut app = Kawoosh::from_file(&file);
+        // Asked as a word starts, as in code (plain text asks when asked).
+        app.ed.settings.set(
+            Layer::Session,
+            "completion.trigger",
+            Setting::Str("typing".into()),
+        );
+        app.ed.settings.set(
+            Layer::Session,
+            "completion.popup",
+            Setting::Str(popup.into()),
+        );
+        let mut d = Drive::new(900.0, 500.0);
+        d.frame(&mut app);
+        d.press(&mut app, "G");
+        d.press(&mut app, "o");
+        let mut keys = Vec::new();
+        let mut word_starts = Vec::new();
+        for round in 0..40 {
+            for (i, ch) in [" ", "g", "a", "m", "m"].iter().enumerate() {
+                let t = std::time::Instant::now();
+                d.keys(&mut app, ch);
+                let took = t.elapsed();
+                d.settle(&mut app);
+                if i == 1 {
+                    word_starts.push(took);
+                } else if round > 0 {
+                    keys.push(took);
+                }
             }
         }
+        // The nearest `gamma_…`: the last line's.
+        assert_eq!(
+            app.completion_ghost_text().as_deref(),
+            Some("a_4"),
+            "a ghost on show"
+        );
+        assert_eq!(app.completion_popup_on(), popup == "always");
+        let mut frames = Vec::new();
+        for _ in 0..200 {
+            let t = std::time::Instant::now();
+            d.frame(&mut app);
+            frames.push(t.elapsed());
+        }
+        let med = |v: &mut Vec<std::time::Duration>| {
+            v.sort();
+            (v[v.len() / 2], v[v.len() * 9 / 10])
+        };
+        let (k, k90) = med(&mut keys);
+        let (w, w90) = med(&mut word_starts);
+        let (f, f90) = med(&mut frames);
+        println!(
+            "popup {popup}: keystroke {k:?} (p90 {k90:?}); word start {w:?} (p90 {w90:?}); frame {f:?} (p90 {f90:?})"
+        );
     }
-    // The nearest `gamma_…`: the last line's.
-    assert_eq!(
-        app.completion_ghost_text().as_deref(),
-        Some("a_4"),
-        "a ghost on show"
-    );
-    let mut frames = Vec::new();
-    for _ in 0..200 {
-        let t = std::time::Instant::now();
-        d.frame(&mut app);
-        frames.push(t.elapsed());
-    }
-    let med = |v: &mut Vec<std::time::Duration>| {
-        v.sort();
-        (v[v.len() / 2], v[v.len() * 9 / 10])
-    };
-    let (k, k90) = med(&mut keys);
-    let (w, w90) = med(&mut word_starts);
-    let (f, f90) = med(&mut frames);
-    println!(
-        "keystroke {k:?} (p90 {k90:?}); word start {w:?} (p90 {w90:?}); frame {f:?} (p90 {f90:?})"
-    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -183,14 +193,16 @@ fn the_trigger_is_a_languages_and_a_panes() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// `completion.ghost` (Decision 2): `endline` draws nothing mid-line —
-/// the session lives, its keys do not, and `<Tab>` is a tab — `always`
-/// draws it anywhere, `never` nowhere.
+/// `completion.ghost` (Decision 2), in the ghost-only look (`popup =
+/// "never"`): `endline` draws nothing mid-line — the session lives,
+/// its keys do not, and `<Tab>` is a tab — `always` draws it anywhere,
+/// `never` nowhere.
 #[test]
 fn the_ghost_is_drawn_where_completion_ghost_says() {
     let dir = tmp("ghost");
     std::fs::write(dir.join("main.rs"), "let helper_value = 1;\nlet y = ();\n").unwrap();
     let (mut d, mut app) = open(&dir.join("main.rs"));
+    ex(&mut d, &mut app, "setlocal completion.popup=never");
     d.press(&mut app, "jf(a");
     d.keys(&mut app, "hel");
     assert!(app.completion.session.is_some(), "asked");

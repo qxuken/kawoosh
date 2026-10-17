@@ -310,6 +310,9 @@ pub struct Kawoosh {
     /// that accepts one it cannot see would put an invisible word in the
     /// text (`Kawoosh::completion_on_show`, the `completion` fact).
     pub(crate) ghost_shown: bool,
+    /// Whether the focused pane drew the completion's popup last frame:
+    /// its keys hold only for a popup on the screen.
+    pub(crate) popup_shown: bool,
     /// The focused pane's key sink as last drawn (`focus_sink`): where a
     /// click that opened a file sends the keyboard (`on_event_with`).
     pub(crate) sink: Option<kui_native::Key>,
@@ -541,6 +544,7 @@ impl Kawoosh {
             awaiting_paste: false,
             clip_probe: false,
             ghost_shown: false,
+            popup_shown: false,
             sink: None,
             clip_last: None,
             clip_editor_seen: true,
