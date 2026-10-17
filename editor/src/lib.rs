@@ -94,6 +94,11 @@ pub struct View {
     /// typing in insert mode, and two panes on one buffer can differ.
     pub mode: Mode,
     pub visual_linewise: bool,
+    /// The selections a snippet's field made (completion.md Decision
+    /// 7): while they are the view's exactly, insert mode's typing goes
+    /// over them. Any other selection in insert mode — one an undo put
+    /// back, a drag's — is typed at its caret, as ever.
+    pub fill: Option<Selections>,
 }
 
 impl View {
@@ -109,6 +114,7 @@ impl View {
             goal_col: None,
             mode: Mode::Normal,
             visual_linewise: false,
+            fill: None,
         }
     }
 }
@@ -1256,6 +1262,11 @@ impl Editor {
             v.mode = mode;
             if mode != Mode::Visual {
                 v.visual_linewise = false;
+            }
+            // A field's selections are typed over only in the insert
+            // mode they were made in.
+            if mode != Mode::Insert {
+                v.fill = None;
             }
         }
     }
@@ -3138,6 +3149,8 @@ impl Editor {
         for v in self.views.values_mut().filter(|v| v.buffer == id) {
             v.sels
                 .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
+            // What an undo puts back is no field to type over.
+            v.fill = None;
         }
         true
     }
@@ -4129,19 +4142,25 @@ impl Editor {
         self.sync_multis();
     }
 
-    /// Insert mode's typing over a selection — a snippet's field
-    /// (completion.md Decision 7), a drag: every selection with text in
-    /// it erased, its caret where the text was, as a key that types, a
-    /// line break, a paste or a delete does before (or in place of)
-    /// what it does. False when no selection had any text, or outside
-    /// insert mode.
+    /// Insert mode's typing over a snippet's field (completion.md
+    /// Decision 7): while the view's selections are the ones the field
+    /// made ([`View::fill`]), each with text in it is erased, its caret
+    /// where the text was, as a key that types, a line break, a paste
+    /// or a delete does before (or in place of) what it does. Only
+    /// those: a selection an undo put back, or a drag's, is no field.
+    /// False when nothing was erased.
     pub fn erase_selected(&mut self, view: ViewId) -> bool {
-        let Some(v) = self.views.get(view) else {
+        let Some(v) = self.views.get_mut(view) else {
             return false;
         };
-        if v.mode != Mode::Insert || v.sels.iter().all(Selection::is_empty) {
+        let fill = v.fill.take();
+        if v.mode != Mode::Insert
+            || fill.as_ref() != Some(&v.sels)
+            || v.sels.iter().all(Selection::is_empty)
+        {
             return false;
         }
+        let v = &self.views[view];
         let edits = v
             .sels
             .iter()

@@ -570,10 +570,14 @@ Where the build departs, or says more than the decision did:
   field its default — is what is typed. The plain text is what the
   dedup, the frecency and the ghost read; a ghost shows its first line
   alone.
-- **Typing over a selection is the editor's.** In insert mode a typed
-  text, `<CR>`, a paste, `<BS>` and `<Del>` erase every selection with
-  text in it first (the deletes, only that) — not a snippet's special
-  case: a drag's selection in insert mode is typed over the same.
+- **Typing goes over a field's selections, and only those.** In insert
+  mode a typed text, `<CR>`, a paste, `<BS>` and `<Del>` erase the
+  selections first (the deletes, only that) while they are exactly the
+  ones a field made (`View::fill`, dropped as insert mode ends, by an
+  undo, and as the snippet ends). Made editor-wide at first, it typed
+  over the selection an undo puts back (`vlld u iX` gave `Xlo world`),
+  found by the review; a drag's selection is typed at its caret, as
+  before.
 - **Where it goes.** In place of the word typed: at every caret where
   the candidate continues the word, at the primary one otherwise (the
   first field's selections then replace the other carets). Each caret

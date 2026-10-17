@@ -184,6 +184,61 @@ fn nested_placeholders() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Typing goes over a snippet's field alone: a selection an undo put
+/// back is typed at its caret — by a key, `<Del>`, `<CR>` or a macro —
+/// and so is a field's once its snippet ended.
+#[test]
+fn only_a_fields_selection_is_typed_over() {
+    let (dir, mut d, mut app) = open("undone", "main.rs", "hello world\n");
+    // Each: what is done before, what is typed in insert mode after the
+    // undo, and the text a typing at the caret leaves (nothing erased).
+    let base = "hello world\n";
+    let erased_nothing = |app: &Kawoosh, typed: &str, what: &str| {
+        let t = text(app);
+        let mut left = t.clone();
+        for c in typed.chars() {
+            if let Some(i) = left.find(c) {
+                left.remove(i);
+            }
+        }
+        assert_eq!(left, base, "{what}: {t:?}");
+    };
+    for (before, what) in [("vlld", "a visual delete"), ("viwcfoo<Esc>", "a visual change")] {
+        d.press(&mut app, &format!("<Esc>gg0{before}u"));
+        assert_eq!(text(&app), base, "{what}: undone");
+        d.press(&mut app, "iX");
+        erased_nothing(&app, "X", what);
+        d.press(&mut app, "<Esc>u");
+        // `<BS>`, `<Del>`, `<CR>` right after `i`: one character, one
+        // character, a line break — never the range.
+        d.press(&mut app, &format!("<Esc>gg0{before}ui<Del>"));
+        assert_eq!(text(&app).len(), base.len() - 1, "{what}: <Del>");
+        d.press(&mut app, &format!("<Esc>uu<Esc>gg0{before}ui<CR>"));
+        erased_nothing(&app, "\n", &format!("{what}: <CR>"));
+        d.press(&mut app, "<Esc>u");
+        assert_eq!(text(&app), base, "{what}: back");
+    }
+    // A macro's insert replayed over a selection an undo put back (`.`
+    // after the undo repeats the undone change itself).
+    d.press(&mut app, "<Esc>gg0qaiZ<Esc>qu");
+    assert_eq!(text(&app), base);
+    d.press(&mut app, "gg0vlldu@a");
+    erased_nothing(&app, "Z", "a macro");
+    d.press(&mut app, "u");
+    // A field selected, the snippet ended by `<Esc>`: `i` types at the
+    // caret, the field's text kept.
+    d.press(&mut app, "<Esc>Go");
+    app.snippet_expand("f(${1:arg})");
+    d.settle(&mut app);
+    assert_eq!(selected(&app), ["arg"]);
+    d.press(&mut app, "<Esc>");
+    d.settle(&mut app);
+    d.press(&mut app, "iW");
+    let t = text(&app);
+    assert!(t.replacen('W', "", 1).ends_with("f(arg)"), "{t:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A transform of a field writes its places as the field is left.
 #[test]
 fn a_transform_is_written_as_its_field_is_left() {

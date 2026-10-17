@@ -361,7 +361,7 @@ impl Kawoosh {
         body: &str,
         as_is: bool,
     ) -> bool {
-        self.snippet = None;
+        self.snippet_drop();
         if ranges.is_empty() || !self.ed.buffers.contains_key(buffer) {
             return false;
         }
@@ -447,6 +447,16 @@ impl Kawoosh {
         true
     }
 
+    /// The live snippet ended: gone, and its field's selections no
+    /// longer typed over (`View::fill`).
+    fn snippet_drop(&mut self) {
+        if let Some(live) = self.snippet.take()
+            && let Some(v) = self.ed.views.get_mut(live.view)
+        {
+            v.fill = None;
+        }
+    }
+
     /// `body` put at the focused pane's carets (each selection's text
     /// replaced) and live, as an accepted snippet is: what a test
     /// drives, and the door the user's own snippets will come through
@@ -483,6 +493,8 @@ impl Kawoosh {
             v.sels = Selections { items, primary: 0 };
             v.sels.normalize();
             v.goal_col = None;
+            // Typing goes over these, and only these (`View::fill`).
+            v.fill = Some(v.sels.clone());
         }
         self.follow_caret = true;
         if last {
@@ -585,17 +597,18 @@ impl Kawoosh {
             return;
         };
         let buf = &self.ed.buffers[buffer];
-        let edits: Vec<Edit> = match buf.journal().edits_since(since) {
-            Ok(e) => e.cloned().collect(),
-            Err(_) => {
-                self.snippet = None;
-                return;
-            }
-        };
         let version = buf.version();
+        let Ok(edits) = buf
+            .journal()
+            .edits_since(since)
+            .map(|e| e.cloned().collect::<Vec<Edit>>())
+        else {
+            self.snippet_drop();
+            return;
+        };
         let live = self.snippet.as_mut().unwrap();
         if !live.follow(&edits, current) {
-            self.snippet = None;
+            self.snippet_drop();
             return;
         }
         for ((p, t), start) in puts.iter().zip(starts) {
@@ -632,7 +645,7 @@ impl Kawoosh {
         // the keys back in its pane).
         let picking = self.lsp.candidates_from.is_some() && self.focused_view().is_none();
         if !in_insert || !(self.focused_view() == Some(view) || picking) {
-            self.snippet = None;
+            self.snippet_drop();
             return;
         }
         if !self.snippet_follow_edits() {
@@ -644,7 +657,7 @@ impl Kawoosh {
             .iter()
             .all(|s| live.has(s.anchor) && live.has(s.head));
         if !inside {
-            self.snippet = None;
+            self.snippet_drop();
         }
     }
 
@@ -656,28 +669,27 @@ impl Kawoosh {
         let Some(live) = self.snippet.as_mut() else {
             return false;
         };
-        let Some(buf) = self.ed.buffers.get(live.buffer) else {
-            self.snippet = None;
-            return false;
+        let followed = match self.ed.buffers.get(live.buffer) {
+            None => false,
+            Some(buf) if buf.version() == live.seen => return true,
+            Some(buf) => {
+                self.ed.history_moves == live.moves
+                    && match buf.journal().edits_since(live.seen) {
+                        Ok(edits) => {
+                            let edits: Vec<Edit> = edits.cloned().collect();
+                            let at = live.at;
+                            let ok = live.follow(&edits, Some(at));
+                            live.seen = buf.version();
+                            ok
+                        }
+                        Err(_) => false,
+                    }
+            }
         };
-        if buf.version() == live.seen {
-            return true;
-        }
-        let followed = self.ed.history_moves == live.moves
-            && match buf.journal().edits_since(live.seen) {
-                Ok(edits) => {
-                    let edits: Vec<Edit> = edits.cloned().collect();
-                    let at = live.at;
-                    live.follow(&edits, Some(at))
-                }
-                Err(_) => false,
-            };
         if !followed {
-            self.snippet = None;
-            return false;
+            self.snippet_drop();
         }
-        live.seen = buf.version();
-        true
+        followed
     }
 
     /// The places of `view`'s live snippet not reached yet, with text
