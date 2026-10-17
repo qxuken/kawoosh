@@ -17,34 +17,6 @@ use kawoosh::notify::Level;
 use kawoosh_systems::WakeHandle;
 use kui_native::Core;
 
-/// Where the bundled faces are: `fonts/` beside the binary (a folder
-/// shipped as is, Windows), `../Resources/fonts/` from it (the macOS
-/// app, `scripts/macos-app.nu`), else the source tree's `assets/fonts/`
-/// — a `cargo run`.
-fn fonts_dir() -> std::path::PathBuf {
-    // Resolved: `kawoosh` on the PATH is a link into the app.
-    let exe = std::env::current_exe().and_then(|e| kawoosh_systems::fs::canonicalize(&e));
-    let shipped = exe.ok().and_then(|exe| {
-        let dir = exe.parent()?;
-        [
-            dir.join("fonts"),
-            dir.join("..").join("Resources").join("fonts"),
-        ]
-        .into_iter()
-        .find(|d| d.is_dir())
-    });
-    // Joined a part at a time, so the path is written in the platform's
-    // separators rather than `kawoosh\../assets/fonts`.
-    shipped.unwrap_or_else(|| {
-        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        crate_dir
-            .parent()
-            .unwrap_or(crate_dir)
-            .join("assets")
-            .join("fonts")
-    })
-}
-
 /// The bundled faces — every file in `fonts/` — loaded onto a core
 /// the launcher then opens the window on (`Launcher::core`): Iosevka,
 /// which every mono run names by `FontId`, so a machine with no Iosevka
@@ -58,7 +30,7 @@ fn fonts_dir() -> std::path::PathBuf {
 /// The shipped families come back too (`fonts::load_shipped`), for the
 /// fonts pane's order.
 fn load_fonts(core: &mut Core) -> (Option<kui_native::FontId>, HashSet<String>) {
-    let shipped = kawoosh::fonts::load_shipped(core, &fonts_dir());
+    let shipped = kawoosh::fonts::load_shipped(core, &kawoosh::fonts::shipped_dir());
     let bundled = core
         .system_font_families()
         .into_iter()

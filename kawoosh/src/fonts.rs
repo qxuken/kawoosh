@@ -166,6 +166,42 @@ fn font_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Where the bundled faces are: `fonts/` beside the binary (a folder
+/// shipped as is, Windows), `../Resources/fonts/` from it (the macOS
+/// app, `scripts/macos-app.nu`), else the source tree's `assets/fonts/`
+/// — a `cargo run`, a test.
+pub fn shipped_dir() -> PathBuf {
+    // Resolved: `kawoosh` on the PATH is a link into the app.
+    let exe = std::env::current_exe().and_then(|e| kawoosh_systems::fs::canonicalize(&e));
+    let shipped = exe.ok().and_then(|exe| {
+        let dir = exe.parent()?;
+        [
+            dir.join("fonts"),
+            dir.join("..").join("Resources").join("fonts"),
+        ]
+        .into_iter()
+        .find(|d| d.is_dir())
+    });
+    // Joined a part at a time, so the path is written in the platform's
+    // separators rather than `kawoosh\../assets/fonts`.
+    shipped.unwrap_or_else(|| {
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        crate_dir
+            .parent()
+            .unwrap_or(crate_dir)
+            .join("assets")
+            .join("fonts")
+    })
+}
+
+/// The icons' family kawoosh ships (`Symbols Nerd Font Mono`, the
+/// default `font.icons`) loaded onto `core`: what the harness loads so a
+/// test draws the icons as the app does on a machine with no Nerd Font
+/// installed, without the other shipped families.
+pub fn load_symbols(core: &mut kui_native::Core) {
+    load_shipped(core, &shipped_dir().join("NerdFontsSymbolsOnly"));
+}
+
 /// The font files kawoosh ships under `dir` loaded onto `core`, a file
 /// at a time as the user's are, for the families they hold: the fonts
 /// pane lists these after the user's and before the machine's, even one

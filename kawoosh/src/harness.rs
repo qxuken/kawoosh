@@ -52,6 +52,9 @@ impl Harness {
     pub fn new(w: f32, h: f32) -> Self {
         let mut core = Core::new();
         core.set_diagnostics(true);
+        // The icons' family the app ships, as `main.rs` loads it: a test
+        // draws `font.icons` whether the machine has it installed or not.
+        crate::fonts::load_symbols(&mut core);
         Self(Drive::new(core, w, h).framing())
     }
 
