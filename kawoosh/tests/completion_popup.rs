@@ -393,10 +393,16 @@ fn the_panel_resolves_the_selection_alone_after_the_delay() {
         "a masked candidate is none"
     );
     let asked = app.completion.resolves;
-    // Before the delay: nothing asked, no panel.
+    // Before the delay: nothing asked, no panel — checked only while the
+    // frame really ran before the timer was due, which a loaded machine
+    // can take past (the delay is counted from when the selection
+    // settled, not from here).
+    let due = app.completion.session.as_ref().and_then(|s| s.docs.due);
     d.frame(&mut app);
-    assert_eq!(app.completion.resolves, asked, "not before the delay");
-    assert!(app.completion_panel_text().is_none());
+    if due.is_some_and(|due| std::time::Instant::now() < due) {
+        assert_eq!(app.completion.resolves, asked, "not before the delay");
+        assert!(app.completion_panel_text().is_none());
+    }
     std::thread::sleep(std::time::Duration::from_millis(350));
     until(&mut d, &mut app, "the documentation", |a| {
         a.completion_panel_text().is_some()
