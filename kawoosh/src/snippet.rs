@@ -478,6 +478,15 @@ impl Kawoosh {
         let Some(live) = self.snippet.as_mut() else {
             return;
         };
+        // A field with no place left (none had one, or the typing took
+        // them all) is never reached: the next one that has, else the end.
+        let Some(i) = (i..live.fields.len()).find(|&j| {
+            let f = &live.fields[j];
+            !f.ranges.is_empty() && (!f.gone || j + 1 == live.fields.len())
+        }) else {
+            self.snippet_drop();
+            return;
+        };
         live.at = i;
         let f = &mut live.fields[i];
         f.visited = true;

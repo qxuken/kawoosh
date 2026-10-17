@@ -203,7 +203,10 @@ fn only_a_fields_selection_is_typed_over() {
         }
         assert_eq!(left, base, "{what}: {t:?}");
     };
-    for (before, what) in [("vlld", "a visual delete"), ("viwcfoo<Esc>", "a visual change")] {
+    for (before, what) in [
+        ("vlld", "a visual delete"),
+        ("viwcfoo<Esc>", "a visual change"),
+    ] {
         d.press(&mut app, &format!("<Esc>gg0{before}u"));
         assert_eq!(text(&app), base, "{what}: undone");
         d.press(&mut app, "iX");
@@ -236,6 +239,26 @@ fn only_a_fields_selection_is_typed_over() {
     d.press(&mut app, "iW");
     let t = text(&app);
     assert!(t.replacen('W', "", 1).ends_with("f(arg)"), "{t:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A field with only a transform of it in the body is no field: the
+/// first that has a place is selected, and none panics.
+#[test]
+fn a_transform_only_field_is_passed() {
+    let (dir, mut d, mut app) = open("transform-only", "main.rs", "\n");
+    d.press(&mut app, "i");
+    app.snippet_expand("${1/(.*)/${1:/upcase}/} ${2:a}");
+    d.settle(&mut app);
+    assert_eq!(text(&app), " a\n");
+    assert_eq!(selected(&app), ["a"]);
+    d.press(&mut app, "<C-l>");
+    assert!(!live(&app));
+    app.snippet_expand("x${1/x/y/}");
+    d.settle(&mut app);
+    assert!(!live(&app));
+    d.keys(&mut app, "z");
+    assert_eq!(text(&app), " axz\n");
     std::fs::remove_dir_all(&dir).ok();
 }
 

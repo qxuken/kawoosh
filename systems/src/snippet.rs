@@ -683,7 +683,13 @@ pub fn expand(
         .iter()
         .position(|f| f.index == 0)
         .map(|i| numbered.remove(i));
-    let mut fields = numbered;
+    // A field with no place to type in — only a transform of it in the
+    // body (`${1/(.*)/$1/}`) — is no field: its transform's text stays
+    // as text.
+    let mut fields: Vec<Field> = numbered
+        .into_iter()
+        .filter(|f| !f.ranges.is_empty())
+        .collect();
     for f in &mut fields {
         f.ranges.sort_by_key(|r| (r.start, r.end));
         f.mirrors.sort_by_key(|(r, _)| (r.start, r.end));
@@ -1143,6 +1149,15 @@ mod tests {
         assert_eq!(e.text, "«ключ» → 値ключ");
         assert_eq!(places(&e)[0], (1, vec!["ключ", "ключ"]));
         assert_eq!(places(&e)[1], (2, vec!["値"]));
+    }
+
+    #[test]
+    fn a_field_with_only_a_transform_is_no_field() {
+        let e = x("${1/(.*)/${1:/upcase}/} ${2:a}");
+        assert_eq!(e.text, " a");
+        assert_eq!(places(&e), [(2, vec!["a"]), (0, vec![""])]);
+        let e = x("${1/x/y/}");
+        assert_eq!(places(&e), [(0, vec![""])]);
     }
 
     #[test]
