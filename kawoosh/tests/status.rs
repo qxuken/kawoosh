@@ -113,8 +113,31 @@ fn the_clock_and_the_counts() {
            kawoosh.opt("status.diagnostics", true)"#,
     );
     d.frame(&mut app);
-    assert!(texts(&d).iter().any(|x| x == "● 3  ▲ 5"), "{:?}", texts(&d));
-    let Rect { x, y, w, h } = at_text(&d, "● 3  ▲ 5").unwrap();
+    // Codicons' error and warning, each a glyph of `font.icons` in a box
+    // a cell wide (completion.md Decision 9), the counts text beside.
+    let t = texts(&d);
+    let error = t
+        .iter()
+        .position(|x| x == "\u{EA87}")
+        .expect("the error icon");
+    assert_eq!(
+        t[error + 1..error + 5],
+        [" 3", "  ", "\u{EA6C}", " 5"],
+        "{t:?}"
+    );
+    let (_, _, cell) = app.icons_family();
+    let nodes = d.core.nodes();
+    let glyph = nodes
+        .iter()
+        .find(|n| n.text.as_deref() == Some("\u{EA87}"))
+        .unwrap();
+    let boxed = nodes.iter().find(|n| Some(n.key) == glyph.parent).unwrap();
+    assert!(
+        (boxed.rect.w - cell).abs() < 0.5,
+        "a cell: {:?} {cell}",
+        boxed.rect
+    );
+    let Rect { x, y, w, h } = at_text(&d, " 5").unwrap();
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     d.frame(&mut app);
     assert!(
@@ -513,4 +536,41 @@ fn a_places_segments_share_one_ctx() {
            kawoosh.echo(tostring(same) .. " " .. tostring(_G.b_place))"#,
     );
     assert_eq!(app.ed.message, "true statusline");
+}
+
+/// The strip's marks on the status line are icons: Nerd Fonts' squares,
+/// the focused column filled, each a glyph of `font.icons` in a box one
+/// cell wide (completion.md Decision 9), never the text's family.
+#[test]
+fn the_strips_marks_are_icons_a_cell_wide() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app(&mut d);
+    d.keys(&mut app, ":");
+    d.keys(&mut app, "vsplit");
+    d.key(&mut app, "enter", kui_native::KeyMods::default());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let (_, _, cell) = app.icons_family();
+    let nodes = d.core.nodes();
+    let marks: Vec<_> = nodes
+        .iter()
+        .filter(|n| matches!(n.text.as_deref(), Some("\u{F0763}" | "\u{F0764}")))
+        .collect();
+    assert_eq!(marks.len(), 2, "a mark a column");
+    assert_eq!(
+        marks
+            .iter()
+            .filter(|n| n.text.as_deref() == Some("\u{F0764}"))
+            .count(),
+        1,
+        "the focused one filled"
+    );
+    for m in marks {
+        let boxed = nodes.iter().find(|n| Some(n.key) == m.parent).unwrap();
+        assert!(
+            (boxed.rect.w - cell).abs() < 0.5,
+            "a cell: {:?} {cell}",
+            boxed.rect
+        );
+    }
 }

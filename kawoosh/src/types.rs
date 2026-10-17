@@ -185,6 +185,7 @@ pub fn settings_meta(schema: &std::collections::BTreeMap<String, kawoosh_editor:
         match k {
             K::Bool => "boolean".into(),
             K::Int => "integer".into(),
+            K::IntOrFalse => "integer|false".into(),
             K::Float => "number".into(),
             K::Str => "string".into(),
             K::Strings => "string|string[]".into(),

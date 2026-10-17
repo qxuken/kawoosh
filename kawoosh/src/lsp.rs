@@ -313,6 +313,11 @@ impl Kawoosh {
                     items,
                     incomplete,
                 } => self.completion_lsp_answered(buffer, version, offset, items, incomplete),
+                Event::Resolved {
+                    token,
+                    detail,
+                    documentation,
+                } => self.completion_resolved(token, detail, documentation),
                 Event::Capabilities { languages, caps } => {
                     for l in languages {
                         self.lsp.caps.insert(l, caps.clone());
@@ -1456,6 +1461,7 @@ impl Kawoosh {
                 definition: true,
                 hover: true,
                 completion: true,
+                resolve: false,
                 commands: Vec::new(),
                 pull: false,
                 // Asked only of a server that said so: an answer it

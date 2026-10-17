@@ -100,6 +100,11 @@ pub struct FieldScene {
 /// scrolled sideways under the field as little as keeps the primary
 /// caret in view, from where the last frame left it (`Kawoosh::
 /// field_line`'s drawing, for the app's fields and a Lua view's alike).
+/// The strip's marks on the status line: a column (`md-square_outline`)
+/// and the focused one (`md-square`).
+pub const STRIP_COLUMN: char = '\u{F0763}';
+pub const STRIP_FOCUSED: char = '\u{F0764}';
+
 pub(crate) fn draw_field(ui: &mut Ui<'_>, s: &FieldScene, keyed: bool, font: crate::look::Face) {
     let pal = s.pal;
     let scroller = ui.child_key("field");
@@ -173,6 +178,8 @@ pub(crate) fn draw_field(ui: &mut Ui<'_>, s: &FieldScene, keyed: bool, font: cra
                     band: None,
                     sel_radius: s.sel_radius,
                     text_key: None,
+                    icon_font: None,
+                    hang: None,
                 },
             );
         },
@@ -709,15 +716,23 @@ impl Kawoosh {
     }
 
     /// Where the keyboard is along a strip, for the status line: a
-    /// mark per column, the focused one filled — `▯▮▯` — so a column
-    /// off the viewport is not out of mind. Empty for a tree.
+    /// mark per column, the focused one filled — Nerd Fonts' squares,
+    /// drawn a cell each in `font.icons` (completion.md Decision 9) —
+    /// so a column off the viewport is not out of mind. Empty for a
+    /// tree.
     pub(crate) fn strip_marks(&self) -> String {
         let Some(s) = self.layout.tab().strip() else {
             return String::new();
         };
         let at = s.column_of(self.layout.tab().focused);
         (0..s.columns.len())
-            .map(|i| if Some(i) == at { '▮' } else { '▯' })
+            .map(|i| {
+                if Some(i) == at {
+                    STRIP_FOCUSED
+                } else {
+                    STRIP_COLUMN
+                }
+            })
             .collect()
     }
 
@@ -1752,6 +1767,13 @@ impl Kawoosh {
             md_columns = tables.columns;
         }
         let md_cell_h: HashMap<usize, f32> = md_cells.iter().map(|(l, t)| (*l, t.height)).collect();
+        // The completion's popup rows, built (and masked) before the
+        // frame borrows the view: once a change, the rows on show alone.
+        let popup_of = if focused {
+            self.completion_popup(view)
+        } else {
+            None
+        };
         let v = &self.ed.views[view];
         t = crate::perf::part("rendered rows", t);
         let buf = &self.ed.buffers[buf_id];
@@ -1927,8 +1949,19 @@ impl Kawoosh {
         };
         // The completion's ghost, as `completion.ghost` says this frame
         // (completion.md Decision 2): a borrowed suffix, nothing made.
-        let ghost_of = self.completion_ghost(view).filter(|_| focused);
-        let ghost = ghost_of.as_ref().map(|g| g.text());
+        let display = self.completion_display(view).filter(|_| focused);
+        let ghost_of = display.as_ref().and_then(|d| d.ghost.as_ref());
+        let ghost = ghost_of.map(|g| g.text());
+        // Its popup and its panel (Decisions 2 and 10), hung from the
+        // caret's row at the word's start: the rows on show alone, built
+        // once a change; the selection's text alone.
+        let popup_of = popup_of.filter(|_| display.as_ref().is_some_and(|d| d.popup));
+        let panel_of = display.as_ref().and_then(|_| self.completion_panel(view));
+        let hang_at = (popup_of.is_some() || panel_of.is_some())
+            .then(|| self.completion.session.as_ref().map(|s| s.anchor.start))
+            .flatten();
+        let hang_mark = std::cell::Cell::new(None);
+        let icon_font = self.icons.borrow().font;
         // Whether a row drew it: its keys hold only for a ghost that is
         // on the screen (`Kawoosh::ghost_shown`).
         let mut ghost_drawn = false;
@@ -1956,6 +1989,7 @@ impl Kawoosh {
                     color: None,
                     bg: None,
                     mono: false,
+                    icon: false,
                 })
             })
             .collect();
@@ -2754,6 +2788,10 @@ impl Kawoosh {
                                     // A tall row's text, for `gj` `gk`; a
                                     // table's rows do not wrap.
                                     text_key: (tall && !in_table).then_some(&text_key),
+                                    icon_font,
+                                    hang: hang_at
+                                        .filter(|_| ln == cur_line)
+                                        .map(|at| (clip(at), &hang_mark)),
                                 },
                             );
                             if let Some(k) = text_key.get() {
@@ -3019,6 +3057,54 @@ impl Kawoosh {
                 }
             },
         );
+        // The completion's popup and its panel (Decisions 2 and 10),
+        // hung from the mark the caret's row left at the word's start:
+        // under the row, or over it where the pane's foot leaves too
+        // little room below and more above — the mark where it was last
+        // frame, else where its line falls.
+        let mut popup_drawn = false;
+        if let Some(mark) = hang_mark.get() {
+            let lh = font.line_height;
+            let title_h = self.chrome.pane_title_h;
+            let rows = popup_of.as_ref().map_or(0, |p| p.rows.len());
+            let need = crate::completion_view::popup_height(rows, lh);
+            let (above, room, left) = match self.layout.rects.get(&pane).copied() {
+                Some(p) => {
+                    let (x, y) = ui.layout_of(mark).map_or(
+                        (
+                            p.x,
+                            p.y + title_h + cur_line.saturating_sub(top) as f32 * lh,
+                        ),
+                        |a| (a.x, a.y),
+                    );
+                    let below = p.y + p.h - (y + lh);
+                    let over = y - (p.y + title_h);
+                    (
+                        below < need && over > below,
+                        (p.x + p.w - x - 4.0).max(0.0),
+                        (x - p.x - 2.0).max(0.0),
+                    )
+                }
+                None => (false, width, 0.0),
+            };
+            let icons = self.icons.borrow();
+            crate::completion_view::draw(
+                ui,
+                &pal,
+                font,
+                &icons,
+                popup_of.as_deref(),
+                panel_of.as_deref(),
+                crate::completion_view::Place {
+                    anchor: mark,
+                    lh,
+                    above,
+                    room,
+                    left,
+                },
+            );
+            popup_drawn = popup_of.is_some();
+        }
         t = crate::perf::part("rows", t);
         self.ed.views[view].left = left;
         match left_room {
@@ -3028,6 +3114,7 @@ impl Kawoosh {
         self.line_cells = cells;
         if focused {
             self.ghost_shown = ghost_drawn;
+            self.popup_shown = popup_drawn;
         }
         // The rendered rows' heights as kui laid them out last frame: a
         // row that measured otherwise than the pane scrolled by asks

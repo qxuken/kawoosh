@@ -6234,6 +6234,15 @@ pub fn default_keymap(km: &mut Keymap) {
     ] {
         km.bind_local("completion", Insert, k, c, &[]);
     }
+    // Its information panel's scroll, local to the panel on show (the
+    // `completion_docs` fact): `<C-f>` and `<C-b>` are nothing else's
+    // there.
+    for (k, c) in [
+        ("<C-f>", "completion docs down"),
+        ("<C-b>", "completion docs up"),
+    ] {
+        km.bind_local("completion_docs", Insert, k, c, &[]);
+    }
     // The text keys every other line on a Mac answers — a buffer's,
     // the prompt's, a field's, all insert mode — erases as `<C-w>` and
     // `<C-u>` are: by a word on ⌥, the word keys on Ctrl where there is

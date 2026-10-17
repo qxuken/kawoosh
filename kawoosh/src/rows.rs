@@ -788,6 +788,13 @@ pub struct LineDraw<'a> {
     /// Where to leave the key of a wrapped row's text node, for what
     /// asks kui about its layout next frame (`gj` `gk`, wrap.md).
     pub text_key: Option<&'a std::cell::Cell<Option<kui_native::Key>>>,
+    /// The family an icon's mark is set in (`font.icons`).
+    pub icon_font: Option<kui_native::FontId>,
+    /// A byte to mark for what hangs from it — the completion's popup at
+    /// its word's start (`completion_view`): an empty box at the byte's
+    /// place, a line tall, whose key is left in the cell for a float
+    /// declared elsewhere to anchor to.
+    pub hang: Option<(usize, &'a std::cell::Cell<Option<kui_native::Key>>)>,
 }
 
 /// What a rendered row adds to a span's look, over the syntax's.
@@ -802,6 +809,9 @@ pub struct Mark {
     /// In the editor's face where the row's is another (a code span in
     /// prose drawn under `font.prose`).
     pub mono: bool,
+    /// An icon kawoosh folded over the source (a task's box): set in
+    /// `font.icons`, never the row's face (completion.md Decision 9).
+    pub icon: bool,
 }
 
 impl Mark {
@@ -816,6 +826,7 @@ impl Mark {
             color: other.color.or(self.color),
             bg: other.bg.or(self.bg),
             mono: self.mono || other.mono,
+            icon: self.icon || other.icon,
         }
     }
 }
@@ -1590,6 +1601,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                             None => s.mono(),
                         };
                     }
+                    if l.mark.icon
+                        && let Some(id) = line.icon_font
+                    {
+                        s = s.family(kui_native::FontFamily::Custom(id));
+                    }
                     s
                 })
                 .chain(end)
@@ -1745,6 +1761,34 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 .map(|(_, w)| w)
                 .sum::<f32>();
             caret_bar(ui, pal.accent, line.caret_on, x, lh);
+        }
+        if let Some((b, mark)) = line.hang {
+            let b = b.min(len);
+            let (x, y) = if wraps {
+                wrapped_at(ui, b)
+            } else {
+                let x = before
+                    + gutter
+                    + ui.measure_text(&text[..b], &base, None).width
+                    + virtual_w
+                        .iter()
+                        .filter(|(v, _)| b > *v)
+                        .map(|(_, w)| w)
+                        .sum::<f32>();
+                (x, 0.0)
+            };
+            // Laid out with a report, so `layout_of` has its place
+            // next frame: where the popup's room and flip are read.
+            mark.set(Some(
+                ui.leaf_keyed(
+                    "hang",
+                    NodeSpec::row()
+                        .size(0.0, lh)
+                        .role(Role::None)
+                        .on_layout(kui_native::Value::map([("kind", "hang".into())]))
+                        .float(FloatConfig::parent().offset(x, y)),
+                ),
+            ));
         }
         // The block carets a rounded selection runs under: each its
         // characters again over the selection, inverted in the caret's

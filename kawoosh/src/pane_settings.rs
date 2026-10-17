@@ -38,6 +38,7 @@ const KEYS: &[(&str, Draws)] = &[
     ("completion.sources", Draws::Editor),
     ("completion.fuzzy", Draws::Editor),
     ("completion.max_items", Draws::Editor),
+    ("completion.docs", Draws::Editor),
     ("completion.words.min_length", Draws::Editor),
 ];
 
@@ -172,6 +173,8 @@ fn fits(path: &str, value: Setting, kind: Option<&SettingKind>) -> Result<Settin
             Ok(Setting::Float(*f))
         }
         (Some(SettingKind::Int), _) => bad("a whole number"),
+        (Some(SettingKind::IntOrFalse), Setting::Int(_) | Setting::Bool(false)) => Ok(value),
+        (Some(SettingKind::IntOrFalse), _) => bad("a whole number, or false"),
         (Some(SettingKind::Float), Setting::Int(n)) => Ok(Setting::Float(*n as f64)),
         (Some(SettingKind::Float), Setting::Float(_)) => Ok(value),
         (Some(SettingKind::Float), _) => bad("a number"),

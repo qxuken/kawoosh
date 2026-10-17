@@ -42,6 +42,7 @@
 //! (`<C-n>` `<C-p>`), `completion close` (`<C-e>`). `<CR>` and the
 //! arrows are a newline and a move.
 
+use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -62,6 +63,9 @@ use crate::commands::{ShellCommand, cmd};
 /// The fact that holds while a completion is on show: its keys' place
 /// (docs/design/local-maps.md).
 pub const FACT: &str = "completion";
+/// The fact that holds while the information panel is on show: its
+/// scroll keys' place.
+pub const DOCS_FACT: &str = "completion_docs";
 
 /// How long the workspace's symbols wait for the typing to pause.
 const WORKSPACE_DEBOUNCE: Duration = Duration::from_millis(150);
@@ -100,7 +104,7 @@ pub enum GhostAxis {
     Never,
 }
 
-/// `completion.popup`. Read; drawn from round 2.
+/// `completion.popup`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PopupAxis {
     Always,
@@ -182,6 +186,20 @@ pub struct Item {
     /// The lines it is on in its buffer, ascending (words, symbols):
     /// how near it is.
     pub lines: Box<[u32]>,
+    /// How to ask its server for what it left out
+    /// (`completionItem/resolve`), where it left the documentation out.
+    pub resolve: Option<kawoosh_systems::lsp::Resolve>,
+    /// What its server filled in once asked: kept on the item, so a
+    /// candidate walked back to is not asked again (Decision 6).
+    pub filled: RefCell<Option<Filled>>,
+}
+
+/// A candidate's detail and documentation as `completionItem/resolve`
+/// filled them in.
+#[derive(Clone, Debug, Default)]
+pub struct Filled {
+    pub detail: Option<String>,
+    pub documentation: Option<String>,
 }
 
 impl Item {
@@ -199,6 +217,8 @@ impl Item {
             detail: it.detail,
             documentation: it.documentation,
             lines: Box::new([]),
+            resolve: it.resolve,
+            filled: RefCell::new(None),
         }
     }
 }
@@ -315,6 +335,75 @@ pub struct Session {
     /// until then.
     chosen: bool,
     asks: Asks,
+    /// Counts every change to the ranking and the selection: what the
+    /// popup's rows were built at.
+    changes: u64,
+    /// The popup's first row on show, the selection kept in view, and
+    /// how many rows it shows (`completion.max_items` as last ranked).
+    top: usize,
+    window: usize,
+    /// The popup came up for this word in a `fallback` look: it stays
+    /// while the word is typed on and walked, rather than giving way to
+    /// a ghost under the user's keys.
+    popup_up: Cell<bool>,
+    /// The popup's rows as last built, at `changes`: built for the rows on
+    /// show alone, once a change (Decision 6).
+    rows: RefCell<Option<(u64, Rc<Popup>)>>,
+    /// The documentation: the selected candidate's, asked after
+    /// `completion.docs` ms, kept on the item.
+    pub docs: Docs,
+    /// The resolves in flight, by token: the candidate each was asked
+    /// for — its answer's items and its place in them — which its
+    /// answer fills whatever is selected when it lands.
+    resolving: HashMap<u64, (Rc<[Item]>, u32)>,
+}
+
+/// The information panel's state for a session (Decision 10's first
+/// half): which candidate it is about, when it is due, what it shows.
+#[derive(Default)]
+pub struct Docs {
+    /// The selection the timer runs for, by where it came from and what
+    /// it puts: an answer landing in place of its source's earlier one
+    /// is the same candidate still.
+    pub about: Option<(Source, String)>,
+    /// `completion docs` asked for the panel: each selection walked to
+    /// shows its own at once, until asked away.
+    pub pinned: bool,
+    /// When the panel is due for it; none once shown or when
+    /// `completion.docs` is `false`.
+    pub due: Option<Instant>,
+    /// Shown: past its delay, or asked for with `completion docs`.
+    pub shown: bool,
+    /// The resolve in flight: its token.
+    pub asking: Option<u64>,
+    /// How far the panel is scrolled, in lines (`<C-f>` / `<C-b>`).
+    pub scroll: usize,
+    /// The panel as built for the selection: its text masked once, as
+    /// it landed, not each frame.
+    pub panel: Option<Rc<crate::completion_view::Panel>>,
+}
+
+/// One of the popup's rows on show.
+pub struct Row {
+    /// The icon of its kind (`icons::kind_icon`).
+    pub icon: String,
+    pub label: String,
+    /// The label's bytes the typed word matched, lit as a picker's.
+    pub lit: Vec<usize>,
+    /// Its detail, one line, faint at the right; masked words drawn as
+    /// `•`.
+    pub detail: Option<String>,
+    pub selected: bool,
+}
+
+/// The popup's rows on show and where they stand among the candidates.
+pub struct Popup {
+    pub rows: Vec<Row>,
+    /// The first's place among the candidates, and how many there are.
+    pub top: usize,
+    pub count: usize,
+    /// Its width as first drawn: the rows measured once a build.
+    pub width: Cell<Option<f32>>,
 }
 
 impl Session {
@@ -335,6 +424,9 @@ impl Session {
     }
 
     fn sort_top(&mut self, k: usize) {
+        self.changes += 1;
+        self.top = 0;
+        self.window = k.max(1);
         let k = k.min(self.ranking.len());
         if k == 0 {
             self.sorted = 0;
@@ -354,9 +446,15 @@ impl Session {
         }
     }
 
-    /// The best candidate that continues the word, sorting past the
-    /// top when none of it does.
-    fn reselect(&mut self) {
+    /// The best candidate: the first, where a popup may show it
+    /// (`all`); in a ghost-only look the best that continues the word,
+    /// sorting past the top when none of it does.
+    fn reselect(&mut self, all: bool) {
+        self.changes += 1;
+        if all {
+            self.selected = (!self.ranking.is_empty()).then_some(0);
+            return;
+        }
         self.selected = self.ranking[..self.sorted]
             .iter()
             .position(|r| r.continues)
@@ -371,12 +469,14 @@ impl Session {
 
     /// The candidate putting `text` selected again after a re-rank — an
     /// answer or an index landed between two keys — where it is still
-    /// one that continues the word; the best, where it is gone.
-    fn reselect_keeping(&mut self, text: Option<&str>) {
+    /// one the look can show (`all`: any, else one that continues the
+    /// word); the best, where it is gone.
+    fn reselect_keeping(&mut self, text: Option<&str>, all: bool) {
         let find = |s: &Session| {
             let t = text?;
             s.ranking.iter().position(|r| {
-                r.continues && s.answers[r.answer as usize].items[r.item as usize].text() == t
+                (all || r.continues)
+                    && s.answers[r.answer as usize].items[r.item as usize].text() == t
             })
         };
         match find(self) {
@@ -387,16 +487,20 @@ impl Session {
                 self.sort_all();
                 self.selected = find(self);
             }
-            None => self.reselect(),
+            None => self.reselect(all),
         }
+        self.changes += 1;
+        self.keep_in_view(self.window);
     }
 
-    /// The next (or previous) candidate that continues the word, round.
-    fn step(&mut self, forward: bool) {
+    /// The next (or previous) candidate, round: every one beside the
+    /// popup (`all`), else the next a ghost can show.
+    fn step(&mut self, forward: bool, all: bool) {
         let Some(at) = self.selected else {
             return;
         };
         self.chosen = true;
+        self.changes += 1;
         self.sort_all();
         let n = self.ranking.len();
         for i in 1..n {
@@ -405,10 +509,26 @@ impl Session {
             } else {
                 (at + n - i) % n
             };
-            if self.ranking[j].continues {
+            if all || self.ranking[j].continues {
                 self.selected = Some(j);
                 return;
             }
+        }
+    }
+
+    /// The popup's window moved to hold the selection, `rows` tall:
+    /// up to it, or down to it.
+    fn keep_in_view(&mut self, rows: usize) {
+        let Some(sel) = self.selected else {
+            self.top = 0;
+            return;
+        };
+        let rows = rows.max(1);
+        self.window = rows;
+        if sel < self.top {
+            self.top = sel;
+        } else if sel >= self.top + rows {
+            self.top = sel + 1 - rows;
         }
     }
 }
@@ -523,6 +643,10 @@ pub struct State {
     alarm: Alarm,
     /// Unknown words in `completion.sources`, said once each.
     said_unknown: HashSet<String>,
+    /// The resolves asked, counted: each one's token.
+    next_resolve: u64,
+    /// How many resolves were asked: a test's count.
+    pub resolves: usize,
 }
 
 impl State {
@@ -543,6 +667,8 @@ impl State {
             signals: Signals::default(),
             alarm: Alarm::latest(wake.named("completion")),
             said_unknown: HashSet::new(),
+            next_resolve: 0,
+            resolves: 0,
         }
     }
 
@@ -607,6 +733,42 @@ impl Ghost {
     }
 }
 
+/// What a pane draws of the completion this frame (Decision 6): a
+/// small value — a ghost (a borrowed suffix), the popup, both, none.
+pub struct Display {
+    pub ghost: Option<Ghost>,
+    pub popup: bool,
+}
+
+/// `text` with every word inside a mask of an open buffer (secrets.md
+/// Decision 3) drawn as `•`: a server's detail, a candidate's
+/// documentation, never a masked text on the screen.
+pub(crate) fn mask_words(masked: &HashMap<BufferId, Masked>, text: &str) -> String {
+    if masked.values().all(|m| m.0.is_empty()) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        if is_masked(masked, word) {
+            out.extend(std::iter::repeat_n('•', word.chars().count()));
+        } else {
+            out.push_str(word);
+        }
+        word.clear();
+    };
+    for c in text.chars() {
+        if words::is_word_char(c) {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
 /// What ranking reads beside the session.
 struct RankCtx<'a> {
     config: &'a Config,
@@ -639,6 +801,19 @@ impl Drop for Masked {
 /// Whether `text` is inside a mask of any open buffer.
 fn is_masked(masked: &HashMap<BufferId, Masked>, text: &str) -> bool {
     masked.values().any(|m| m.contains(text))
+}
+
+/// Whether `text`, or any word in it, is inside a mask of an open
+/// buffer: a label that quotes a secret (a server's string literal) as
+/// much as one that is it.
+fn holds_masked(masked: &HashMap<BufferId, Masked>, text: &str) -> bool {
+    if masked.values().all(|m| m.0.is_empty()) {
+        return false;
+    }
+    is_masked(masked, text)
+        || text
+            .split(|c: char| !words::is_word_char(c))
+            .any(|w| !w.is_empty() && is_masked(masked, w))
 }
 
 /// `text` against the typed word: its tier (higher is better) and
@@ -722,7 +897,10 @@ impl Session {
             Source::Path if text.starts_with('.') && !self.typed.starts_with('.') => return None,
             _ => {}
         }
-        if is_masked(ctx.masked, text) {
+        // Neither what it puts nor what it shows holds a masked word.
+        if holds_masked(ctx.masked, text)
+            || (item.label != text && holds_masked(ctx.masked, &item.label))
+        {
             return None;
         }
         let (tier, continues) = score(matcher, &self.typed, text, ctx.config.fuzzy)?;
@@ -768,7 +946,7 @@ impl Session {
         self.ranking = out;
         self.dedup();
         self.sort_top(ctx.config.max_items);
-        self.reselect();
+        self.reselect(ctx.config.popup != PopupAxis::Never);
     }
 
     /// The survivors alone scored again: a longer word only drops
@@ -781,7 +959,7 @@ impl Session {
             .filter_map(|r| self.rank_one(&mut matcher, ctx, r.answer as usize, r.item as usize))
             .collect();
         self.sort_top(ctx.config.max_items);
-        self.reselect();
+        self.reselect(ctx.config.popup != PopupAxis::Never);
     }
 
     /// Answer `a` scored and merged in, in place of what it had.
@@ -795,7 +973,7 @@ impl Session {
         }
         self.dedup();
         self.sort_top(ctx.config.max_items);
-        self.reselect();
+        self.reselect(ctx.config.popup != PopupAxis::Never);
     }
 
     /// One candidate per text: the best-ranked of those that put the
@@ -1192,6 +1370,7 @@ impl Kawoosh {
         if s.asks.workspace_due.is_some_and(|d| Instant::now() >= d) {
             self.completion_ask_workspace();
         }
+        self.completion_docs_follow();
     }
 
     // ---------------------------------------------------------- starting
@@ -1253,6 +1432,13 @@ impl Kawoosh {
             selected: None,
             chosen: false,
             asks: Asks::default(),
+            changes: 0,
+            top: 0,
+            window: 10,
+            popup_up: Cell::new(false),
+            rows: RefCell::new(None),
+            docs: Docs::default(),
+            resolving: HashMap::new(),
         };
         self.completion.session = Some(session);
         self.completion_note_signals();
@@ -1373,7 +1559,7 @@ impl Kawoosh {
         // A landing re-ranks under the user: what they selected stays
         // selected.
         if let Some(t) = &selected {
-            s.reselect_keeping(Some(t));
+            s.reselect_keeping(Some(t), config.popup != PopupAxis::Never);
         }
     }
 
@@ -1521,6 +1707,8 @@ impl Kawoosh {
                 detail: None,
                 documentation: None,
                 lines: Box::new([]),
+                resolve: None,
+                filled: RefCell::new(None),
             })
             .collect();
         self.completion_answer(Answer {
@@ -1611,6 +1799,8 @@ impl Kawoosh {
                 detail: None,
                 documentation: None,
                 lines: w.lines,
+                resolve: None,
+                filled: RefCell::new(None),
             })
             .collect();
         if let Some((_, _, old)) = self
@@ -1719,6 +1909,8 @@ impl Kawoosh {
                         detail: o.detail.or(Some(o.kind)),
                         documentation: None,
                         lines: Box::new([o.line]),
+                        resolve: None,
+                        filled: RefCell::new(None),
                     });
                 }
             }
@@ -1791,6 +1983,8 @@ impl Kawoosh {
                 insert: None,
                 documentation: None,
                 lines: Box::new([]),
+                resolve: None,
+                filled: RefCell::new(None),
             })
             .collect();
         self.completion_answer(Answer {
@@ -1982,12 +2176,14 @@ impl Kawoosh {
 
     // ----------------------------------------------------------- showing
 
-    /// What `view` draws of the completion this frame (Decision 2): the
-    /// selected candidate's rest as a ghost, where `completion.ghost`
-    /// allows it — `endline` only with nothing after the caret — and
-    /// the candidate continues the word. Nothing is allocated: the
-    /// ghost borrows its answer.
-    pub(crate) fn completion_ghost(&self, view: ViewId) -> Option<Ghost> {
+    /// What `view` draws of the completion this frame (Decision 2):
+    /// the selected candidate's rest as a ghost where `completion.ghost`
+    /// allows it — `endline` only with nothing after the caret — and it
+    /// continues the word; the popup where `completion.popup` says —
+    /// `always`, or in a `fallback` look wherever no ghost is drawn (a
+    /// fuzzy-only match, mid-line, the ghost off), and then for the rest
+    /// of the word. Nothing is allocated: the ghost borrows its answer.
+    pub(crate) fn completion_display(&self, view: ViewId) -> Option<Display> {
         let s = self.completion.session.as_ref()?;
         if s.view != view || s.closed || self.focused_view() != Some(view) {
             return None;
@@ -1996,25 +2192,47 @@ impl Kawoosh {
             return None;
         }
         let r = s.ranking.get(s.selected?)?;
-        if !r.continues {
-            return None;
-        }
         let caret = self.ed.views[view].sels.primary().head;
         if caret != s.anchor.start + s.typed.len() {
             return None;
         }
-        match self.completion_ghost_axis(view) {
-            GhostAxis::Never => return None,
-            GhostAxis::Endline if !at_line_end(&self.ed.buffers[s.anchor.buffer], caret) => {
-                return None;
-            }
-            _ => {}
+        let at_end = at_line_end(&self.ed.buffers[s.anchor.buffer], caret);
+        let ghost_ok = r.continues
+            && match self.completion_ghost_axis(view) {
+                GhostAxis::Never => false,
+                GhostAxis::Endline => at_end,
+                GhostAxis::Always => true,
+            };
+        let axis = self.completion_popup_axis(view);
+        let popup = match axis {
+            PopupAxis::Always => true,
+            PopupAxis::Never => false,
+            PopupAxis::Fallback => s.popup_up.get() || !ghost_ok,
+        };
+        if popup && axis == PopupAxis::Fallback {
+            s.popup_up.set(true);
         }
-        Some(Ghost {
+        // A fallback's popup is in place of the ghost, not beside it.
+        let ghost = (ghost_ok && !(popup && axis == PopupAxis::Fallback)).then(|| Ghost {
             items: s.answers[r.answer as usize].items.clone(),
             item: r.item as usize,
             from: s.typed.len(),
-        })
+        });
+        Some(Display { ghost, popup })
+    }
+
+    /// The ghost `view` draws this frame, if any.
+    pub(crate) fn completion_ghost(&self, view: ViewId) -> Option<Ghost> {
+        self.completion_display(view).and_then(|d| d.ghost)
+    }
+
+    /// `completion.popup` for `view`.
+    fn completion_popup_axis(&self, view: ViewId) -> PopupAxis {
+        match self.completion_word(view, "completion.popup").as_deref() {
+            Some("always") => PopupAxis::Always,
+            Some("never") => PopupAxis::Never,
+            _ => PopupAxis::Fallback,
+        }
     }
 
     /// The ghost the focused pane would draw, as text: for a test.
@@ -2023,39 +2241,437 @@ impl Kawoosh {
         self.completion_ghost(v).map(|g| g.text().to_string())
     }
 
+    /// Whether the focused pane shows the popup this frame: for a test.
+    pub fn completion_popup_on(&self) -> bool {
+        self.focused_view()
+            .and_then(|v| self.completion_display(v))
+            .is_some_and(|d| d.popup)
+    }
+
+    /// The popup's rows for `view`, built for the rows on show alone
+    /// and again only once the ranking or the selection changed
+    /// (Decision 6): each its kind's icon, its label with the typed
+    /// word's letters lit, its detail. None where no popup is drawn.
+    pub(crate) fn completion_popup(&mut self, view: ViewId) -> Option<Rc<Popup>> {
+        if !self.completion_display(view)?.popup {
+            return None;
+        }
+        let s = self.completion.session.as_ref()?;
+        if let Some((g, p)) = &*s.rows.borrow()
+            && *g == s.changes
+        {
+            return Some(p.clone());
+        }
+        let max = self.completion_max_items(view);
+        let end = (s.top + max).min(s.sorted.max(s.selected.map_or(0, |i| i + 1)));
+        let end = end.min(s.ranking.len());
+        let fuzzy = self
+            .completion_value(view, "completion.fuzzy")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let mut matcher = (fuzzy && !s.typed.is_empty()).then(|| Single::new(&s.typed));
+        // Masked as the panel is: what the rules mask in the buffer
+        // being completed, and any word inside a mask of an open buffer.
+        let (path, language) = self
+            .ed
+            .buffers
+            .get(s.anchor.buffer)
+            .map(|b| (b.path.clone(), b.language.to_string()))
+            .unwrap_or_default();
+        self.sync_secret_rules();
+        let s = self.completion.session.as_ref()?;
+        let rules = &self.secrets.rules;
+        let masked = &self.completion.masked;
+        let mask = |t: &str| mask_words(masked, &rules.mask_text(path.as_deref(), &language, t));
+        let rows = s.ranking[s.top.min(end)..end]
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let item = &s.answers[r.answer as usize].items[r.item as usize];
+                let lit = match matcher.as_mut() {
+                    Some(m) => m.positions(&item.label).unwrap_or_default(),
+                    // By the word's beginning: its letters.
+                    None => item
+                        .label
+                        .char_indices()
+                        .take(s.typed.chars().count())
+                        .map(|(b, _)| b)
+                        .collect(),
+                };
+                let detail = item
+                    .detail
+                    .as_deref()
+                    .and_then(|d| d.lines().map(str::trim).find(|l| !l.is_empty()))
+                    .map(mask);
+                let label = mask(&item.label);
+                // A label masked is no longer the text the match lit.
+                let lit = if label == item.label { lit } else { Vec::new() };
+                Row {
+                    icon: crate::icons::kind_icon(item.kind),
+                    label,
+                    lit,
+                    detail,
+                    selected: s.selected == Some(s.top + i),
+                }
+            })
+            .collect();
+        let p = Rc::new(Popup {
+            rows,
+            top: s.top,
+            count: s.ranking.len(),
+            width: Cell::new(None),
+        });
+        *s.rows.borrow_mut() = Some((s.changes, p.clone()));
+        Some(p)
+    }
+
+    /// `completion.max_items` for `view`.
+    fn completion_max_items(&self, view: ViewId) -> usize {
+        self.completion_value(view, "completion.max_items")
+            .and_then(|v| v.as_int())
+            .unwrap_or(10)
+            .max(1) as usize
+    }
+
     /// Whether a completion is on show where the keys are: the
-    /// `completion` fact, its keys' place. A ghost the pane did not draw
-    /// (a rendered markdown row draws none) is not on show.
+    /// `completion` fact, its keys' place. A ghost or a popup the pane
+    /// did not draw (a rendered markdown row draws neither) is not on
+    /// show.
     pub(crate) fn completion_on_show(&self) -> bool {
-        self.ghost_shown
-            && self
-                .focused_view()
-                .is_some_and(|v| self.completion_ghost(v).is_some())
+        let Some(d) = self.focused_view().and_then(|v| self.completion_display(v)) else {
+            return false;
+        };
+        (self.ghost_shown && d.ghost.is_some()) || (self.popup_shown && d.popup)
     }
 
     /// The fact said as it stands, before a key is looked up.
     pub(crate) fn sync_completion_fact(&mut self) {
         let on = self.completion_on_show();
         self.ed.fact(FACT, on);
+        let docs = on && self.completion_docs_on_show();
+        self.ed.fact(DOCS_FACT, docs);
+    }
+
+    // ------------------------------------------------------- the panel
+
+    /// `completion.docs` for `view`: how long a selection waits before
+    /// its documentation shows, none for `false` (`completion docs`
+    /// alone shows it).
+    fn completion_docs_delay(&self, view: ViewId) -> Option<Duration> {
+        match self.completion_value(view, "completion.docs") {
+            Some(Setting::Bool(false)) => None,
+            Some(v) => Some(Duration::from_millis(
+                v.as_int().unwrap_or(200).max(0) as u64
+            )),
+            None => Some(Duration::from_millis(200)),
+        }
+    }
+
+    /// The selected candidate, by where it came from and what it puts.
+    fn completion_selected_id(&self) -> Option<(Source, &str)> {
+        let s = self.completion.session.as_ref()?;
+        let r = s.ranking.get(s.selected?)?;
+        let a = &s.answers[r.answer as usize];
+        Some((a.source, a.items[r.item as usize].text()))
+    }
+
+    /// Once a frame: the panel follows the selection — a new one waits
+    /// `completion.docs` ms (none once `completion docs` pinned it),
+    /// then shows what its candidate has, asking its server for the rest
+    /// (`completionItem/resolve`) for it alone.
+    fn completion_docs_follow(&mut self) {
+        let Some(view) = self.completion.session.as_ref().map(|s| s.view) else {
+            return;
+        };
+        // Only a selection on show — a ghost or the popup — has a panel
+        // to follow it: with neither, nothing is asked of the server.
+        let on = self
+            .completion_display(view)
+            .is_some_and(|d| d.ghost.is_some() || d.popup);
+        let same = {
+            let s = self.completion.session.as_ref().unwrap();
+            let id = on.then(|| self.completion_selected_id()).flatten();
+            match (&s.docs.about, id) {
+                (Some((src, t)), Some((src2, t2))) => *src == src2 && t == t2,
+                (None, None) => true,
+                _ => false,
+            }
+        };
+        let now = Instant::now();
+        if !same {
+            let id = on
+                .then(|| self.completion_selected_id())
+                .flatten()
+                .map(|(src, t)| (src, t.to_string()));
+            let delay = self.completion_docs_delay(view);
+            let s = self.completion.session.as_mut().unwrap();
+            // Pinned for the word: kept through a frame with nothing on
+            // show (a landing between keys), until asked away.
+            let pinned = s.docs.pinned;
+            let due = if pinned {
+                Some(now)
+            } else {
+                delay.map(|d| now + d)
+            };
+            s.docs = Docs {
+                due: id.as_ref().and(due),
+                about: id,
+                pinned,
+                ..Docs::default()
+            };
+            if let Some(due) = s.docs.due {
+                self.completion.alarm.set(due);
+            }
+        }
+        let s = self.completion.session.as_mut().unwrap();
+        if s.docs.due.is_some_and(|d| now >= d) {
+            s.docs.due = None;
+            self.completion_docs_show();
+        }
+    }
+
+    /// The panel shown for the selection: what its candidate has — the
+    /// server's documentation sent with it, or filled in before — else
+    /// its server asked for it, once.
+    fn completion_docs_show(&mut self) {
+        let Some((src, text)) = self
+            .completion_selected_id()
+            .map(|(s, t)| (s, t.to_string()))
+        else {
+            return;
+        };
+        let s = self.completion.session.as_mut().unwrap();
+        s.docs.about = Some((src, text));
+        s.docs.due = None;
+        s.docs.shown = true;
+        let r = s.ranking[s.selected.unwrap()];
+        let item = &s.answers[r.answer as usize].items[r.item as usize];
+        let ask = item
+            .resolve
+            .clone()
+            .filter(|_| item.filled.borrow().is_none() && item.documentation.is_none());
+        match ask {
+            Some(resolve) => {
+                // Asked already — before a walk away and back — and not
+                // answered yet: its answer shows it.
+                let items = s.answers[r.answer as usize].items.clone();
+                let pending = s
+                    .resolving
+                    .iter()
+                    .find(|(_, (i, at))| Rc::ptr_eq(i, &items) && *at == r.item)
+                    .map(|(t, _)| *t);
+                if let Some(t) = pending {
+                    s.docs.asking = Some(t);
+                    return;
+                }
+                self.completion.next_resolve += 1;
+                let token = self.completion.next_resolve;
+                self.completion.resolves += 1;
+                let s = self.completion.session.as_mut().unwrap();
+                s.docs.asking = Some(token);
+                s.resolving.insert(token, (items, r.item));
+                let buffer = s.anchor.buffer;
+                self.positional_cmd(Cmd::Resolve {
+                    buffer,
+                    token,
+                    resolve,
+                });
+            }
+            None => self.completion_build_panel(),
+        }
+    }
+
+    /// A candidate filled in by its server: kept on the item it was
+    /// asked for — whatever is selected when the answer lands, a key
+    /// having moved the selection in the frame it arrives — and the
+    /// panel built when that item is the one on show.
+    pub fn completion_resolved(
+        &mut self,
+        token: u64,
+        detail: Option<String>,
+        documentation: Option<String>,
+    ) {
+        let Some(s) = self.completion.session.as_mut() else {
+            return;
+        };
+        let Some((items, at)) = s.resolving.remove(&token) else {
+            return;
+        };
+        if let Some(item) = items.get(at as usize) {
+            *item.filled.borrow_mut() = Some(Filled {
+                detail,
+                documentation,
+            });
+        }
+        if s.docs.asking == Some(token) {
+            s.docs.asking = None;
+        }
+        let on_it = s.selected.and_then(|i| s.ranking.get(i)).is_some_and(|r| {
+            Rc::ptr_eq(&s.answers[r.answer as usize].items, &items) && r.item == at
+        });
+        if on_it && s.docs.shown {
+            self.completion_build_panel();
+        }
+    }
+
+    /// The panel's text for the selection, built once as it lands: its
+    /// detail over its documentation, the fences of a code block left
+    /// out, and every text masked — what the rules mask in the buffer
+    /// being completed, and any word inside a mask of an open buffer
+    /// (secrets.md Decision 9) — so no frame draws a secret.
+    fn completion_build_panel(&mut self) {
+        let Some(s) = self.completion.session.as_ref() else {
+            return;
+        };
+        let Some(r) = s.selected.and_then(|i| s.ranking.get(i)) else {
+            return;
+        };
+        let item = &s.answers[r.answer as usize].items[r.item as usize];
+        let filled = item.filled.borrow().clone().unwrap_or_default();
+        let detail = filled.detail.or_else(|| item.detail.clone());
+        let docs = filled.documentation.or_else(|| item.documentation.clone());
+        let buffer = s.anchor.buffer;
+        let body: String = docs
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("```"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+        let head = detail
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty());
+        // A detail alone is the row's already: no panel for it.
+        if body.is_empty() {
+            self.completion.session.as_mut().unwrap().docs.panel = None;
+            return;
+        }
+        let (path, language) = self
+            .ed
+            .buffers
+            .get(buffer)
+            .map(|b| (b.path.clone(), b.language.to_string()))
+            .unwrap_or_default();
+        let mask = |k: &mut Kawoosh, t: &str| {
+            let t = k.mask_text(path.as_deref(), &language, t);
+            mask_words(&k.completion.masked, &t)
+        };
+        let head = head.map(|h| mask(self, &h));
+        let body = mask(self, &body);
+        let s = self.completion.session.as_mut().unwrap();
+        s.docs.panel = Some(Rc::new(crate::completion_view::Panel {
+            head,
+            body,
+            scroll: Cell::new(0),
+            room: Cell::new(0),
+        }));
+    }
+
+    /// The panel `view` draws this frame: the selection's, once shown.
+    pub(crate) fn completion_panel(
+        &self,
+        view: ViewId,
+    ) -> Option<Rc<crate::completion_view::Panel>> {
+        let d = self.completion_display(view)?;
+        if d.ghost.is_none() && !d.popup {
+            return None;
+        }
+        let s = self.completion.session.as_ref()?;
+        if !s.docs.shown {
+            return None;
+        }
+        s.docs.panel.clone()
+    }
+
+    /// Whether the panel is on show where the keys are: the
+    /// `completion_docs` fact, its scroll keys' place.
+    pub(crate) fn completion_docs_on_show(&self) -> bool {
+        self.completion_on_show()
+            && self
+                .focused_view()
+                .is_some_and(|v| self.completion_panel(v).is_some())
+    }
+
+    /// The panel's text as drawn, for a test: its head and its body.
+    pub fn completion_panel_text(&self) -> Option<(Option<String>, String)> {
+        let v = self.focused_view()?;
+        self.completion_panel(v)
+            .map(|p| (p.head.clone(), p.body.clone()))
+    }
+
+    /// `completion docs`: the panel for the selection now, whatever
+    /// `completion.docs` says; again, put away.
+    fn completion_docs(&mut self) {
+        let Some(s) = self.completion.session.as_mut() else {
+            self.ed.message = "no completion".into();
+            return;
+        };
+        if s.docs.shown {
+            s.docs.shown = false;
+            s.docs.pinned = false;
+            s.docs.due = None;
+            return;
+        }
+        s.docs.pinned = true;
+        self.completion_docs_show();
+    }
+
+    /// `completion docs down` / `up`: the panel scrolled half its height.
+    fn completion_docs_scroll(&mut self, down: bool) {
+        let Some(p) = self
+            .completion
+            .session
+            .as_ref()
+            .and_then(|s| s.docs.panel.clone())
+        else {
+            return;
+        };
+        let step = (crate::completion_view::PANEL_LINES / 2.0) as usize;
+        let at = p.scroll.get();
+        p.scroll.set(if down {
+            (at + step).min(p.room.get())
+        } else {
+            at.saturating_sub(step)
+        });
     }
 
     // -------------------------------------------------------------- keys
 
-    /// `completion accept`: the selected candidate's rest typed in.
+    /// `completion accept`: the selected candidate into the text — its
+    /// rest typed in where it continues the word (at every caret), the
+    /// word replaced by it where it matched otherwise (a fuzzy match,
+    /// another case).
     fn completion_accept(&mut self) {
         let Some(s) = &self.completion.session else {
             self.ed.message = "no completion".into();
             return;
         };
-        let (view, buffer, word) = (s.view, s.anchor.buffer, s.word);
-        let Some(ghost) = self.completion_ghost(view) else {
+        let (view, buffer, word, start) = (s.view, s.anchor.buffer, s.word, s.anchor.start);
+        let on_show = self
+            .completion_display(view)
+            .is_some_and(|d| d.ghost.is_some() || d.popup);
+        if !on_show {
+            self.ed.message = "no candidate to accept".into();
+            return;
+        }
+        let s = self.completion.session.as_ref().unwrap();
+        let Some(r) = s.selected.and_then(|i| s.ranking.get(i)).copied() else {
             self.ed.message = "no candidate to accept".into();
             return;
         };
-        let text = ghost.items[ghost.item].text().to_string();
-        let rest = ghost.text().to_string();
+        let text = s.answers[r.answer as usize].items[r.item as usize]
+            .text()
+            .to_string();
+        let typed_len = s.typed.len();
         self.completion.session = None;
-        self.ed.insert_text(view, &rest);
+        if r.continues {
+            self.ed.insert_text(view, &text[typed_len..]);
+        } else {
+            let caret = self.ed.views[view].sels.primary().head;
+            self.ed
+                .apply_edits(buffer, &[(start..caret.max(start), text.clone())]);
+        }
         self.completion_remember(buffer, &text);
         self.follow_caret = true;
         // A directory asks again, for what is in it.
@@ -2064,12 +2680,22 @@ impl Kawoosh {
         }
     }
 
-    /// `completion next` / `prev`.
+    /// `completion next` / `prev`: beside the popup every candidate, in
+    /// the ghost-only look the next a ghost can show.
     fn completion_step(&mut self, forward: bool) {
-        match self.completion.session.as_mut() {
-            Some(s) => s.step(forward),
-            None => self.ed.message = "no completion".into(),
-        }
+        let Some(view) = self.completion.session.as_ref().map(|s| s.view) else {
+            self.ed.message = "no completion".into();
+            return;
+        };
+        let display = self.completion_display(view);
+        let axis = self.completion_popup_axis(view);
+        let max = self.completion_max_items(view);
+        // In a fallback look the popup is the way to what a ghost cannot
+        // show: a walk from the ghost onto a fuzzy-only match brings it.
+        let all = display.as_ref().is_some_and(|d| d.popup) || axis != PopupAxis::Never;
+        let s = self.completion.session.as_mut().unwrap();
+        s.step(forward, all);
+        s.keep_in_view(max);
     }
 
     /// `completion close`: nothing shown, and nothing asked again by
@@ -2080,6 +2706,8 @@ impl Kawoosh {
             s.ranking.clear();
             s.sorted = 0;
             s.selected = None;
+            s.changes += 1;
+            s.docs = Docs::default();
         }
     }
 
@@ -2175,6 +2803,24 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .doc("the completion closed; typing on in the word asks nothing"),
             |k, _| k.completion_close(),
         ),
+        cmd(
+            Spec::new("completion docs").when(&[FACT]).doc(
+                "the selected candidate's documentation beside the completion now; again, put away",
+            ),
+            |k, _| k.completion_docs(),
+        ),
+        cmd(
+            Spec::new("completion docs down")
+                .when(&[DOCS_FACT])
+                .doc("the completion's documentation scrolled down half its height"),
+            |k, _| k.completion_docs_scroll(true),
+        ),
+        cmd(
+            Spec::new("completion docs up")
+                .when(&[DOCS_FACT])
+                .doc("the completion's documentation scrolled up half its height"),
+            |k, _| k.completion_docs_scroll(false),
+        ),
     ]
 }
 
@@ -2214,6 +2860,8 @@ mod tests {
             detail: None,
             documentation: None,
             lines: lines.into(),
+            resolve: None,
+            filled: RefCell::new(None),
         };
         let a = Answer {
             source: Source::BufferWords,
@@ -2244,6 +2892,8 @@ mod tests {
             detail: None,
             documentation: None,
             lines: Box::new([]),
+            resolve: None,
+            filled: RefCell::new(None),
         };
         let mut s = Session {
             serial: 1,
@@ -2277,6 +2927,13 @@ mod tests {
             selected: None,
             chosen: false,
             asks: Asks::default(),
+            changes: 0,
+            top: 0,
+            window: 10,
+            popup_up: Cell::new(false),
+            rows: RefCell::new(None),
+            docs: Docs::default(),
+            resolving: HashMap::new(),
         };
         let mut frecency = Frecency::default();
         let signals = Signals::default();
@@ -2314,11 +2971,22 @@ mod tests {
         // case aside.
         let prefix = Config {
             fuzzy: false,
+            popup: PopupAxis::Never,
             ..config.clone()
         };
         s.typed = "HE".into();
         s.rescan_all(&ctx(&prefix, &frecency, &signals));
         assert_eq!(texts(&mut s), ["help", "helium", "hello"]);
-        assert!(s.selected_item().is_none(), "none continues `HE` as typed");
+        assert!(
+            s.selected_item().is_none(),
+            "the ghost-only look: none continues `HE` as typed"
+        );
+        // Where a popup may show, the first is selected, a ghost or not.
+        let popup = Config {
+            popup: PopupAxis::Fallback,
+            ..prefix.clone()
+        };
+        s.rescan_all(&ctx(&popup, &frecency, &signals));
+        assert_eq!(s.selected_item().map(Item::text), Some("help"));
     }
 }

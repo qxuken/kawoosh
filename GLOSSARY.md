@@ -19,7 +19,8 @@ The words kawoosh's notes and code use for its ideas, one meaning each.
   snippet, word…), shown by one icon wherever it appears.
 - **Ghost** — a candidate's rest drawn faintly after the caret, as if
   typed, until accepted or gone.
-- **Popup** — the list of candidates beside the caret.
+- **Popup** — the list of candidates under the caret (over it near the
+  pane's foot), a row each: its kind's icon, its label, its detail.
 - **Information panel** — the one panel beside the popup or above the
   caret: a candidate's documentation, or a signature.
 - **Signature** — a function's parameters while its call's arguments

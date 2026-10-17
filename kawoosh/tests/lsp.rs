@@ -817,8 +817,14 @@ fn workspace_symbols_are_a_source_when_asked_for() {
     };
     assert!(!workspace(&app), "two letters ask nothing of the workspace");
     d.keys(&mut app, "d");
+    // `Widget` may rank first, in another case: the popup's, no ghost
+    // (completion.md Decision 2), so the candidates are waited on.
     assert!(
-        until(&mut d, &mut app, |a| a.completion_ghost_text().is_some()),
+        until(&mut d, &mut app, |a| a
+            .completion
+            .candidates_from()
+            .iter()
+            .any(|(t, s)| t == "widget_fn" && *s == "workspace_symbols")),
         "{:?}",
         app.completion.candidates_from()
     );
@@ -832,8 +838,21 @@ fn workspace_symbols_are_a_source_when_asked_for() {
         "{got:?}"
     );
     // The ghost continues the word as typed: `Widget` matches, smart
-    // case, but is no continuation of `wid`.
-    assert_eq!(app.completion_ghost_text().as_deref(), Some("get_fn"));
+    // case, but is no continuation of `wid` — beside the popup it may
+    // be the first row, in the ghost-only look it is passed over.
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "completion.popup",
+        kawoosh_editor::Setting::Str("never".into()),
+    );
+    d.press(&mut app, "<BS>");
+    d.keys(&mut app, "d");
+    assert!(
+        until(&mut d, &mut app, |a| a.completion_ghost_text().as_deref()
+            == Some("get_fn")),
+        "{:?}",
+        app.completion_ghost_text()
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -412,6 +412,22 @@ impl Single {
         let last = &self.tables.d[(n - 1) * m..n * m];
         Some(last.iter().copied().fold(SCORE_MIN, f64::max))
     }
+
+    /// Where the needle matched `row`: the byte offsets of its matched
+    /// characters, as a picker lights them — asked for the popup's rows
+    /// on show alone, never in the rescan.
+    pub fn positions(&mut self, row: &str) -> Option<Vec<usize>> {
+        self.score(row)?;
+        let e = &self.entry;
+        let n = self.term.chars.len();
+        let at = positions(n, &e.chars, &self.tables);
+        let bytes: Vec<usize> = row.char_indices().map(|(b, _)| b).collect();
+        Some(
+            at.into_iter()
+                .filter_map(|i| bytes.get(i).copied())
+                .collect(),
+        )
+    }
 }
 
 /// One query over a list made for it.

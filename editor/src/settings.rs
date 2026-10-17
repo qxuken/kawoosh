@@ -203,6 +203,9 @@ impl Setting {
                 "false" => Setting::Bool(false),
                 _ => Setting::Str(text.to_string()),
             },
+            // `false` too: a number that can be off (`completion.docs`);
+            // the kind's check refuses it anywhere else.
+            Some(Setting::Int(_)) if text == "false" => Setting::Bool(false),
             Some(Setting::Int(_)) => text
                 .parse()
                 .map(Setting::Int)
@@ -725,7 +728,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "completion.popup",
-        "the list of candidates under the caret: `always`, `fallback` wherever no ghost is drawn, `never` (not built yet: every value is `never`)",
+        "the list of candidates under the caret, flipping above near the pane's foot: `always`, `fallback` wherever no ghost is drawn (mid-line, a fuzzy-only match, the ghost off), `never`",
     ),
     (
         "completion.sources",
@@ -737,7 +740,11 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "completion.max_items",
-        "the most candidates ranked in full; the rest are counted",
+        "the popup's rows, and the most candidates ranked in full; the rest are counted",
+    ),
+    (
+        "completion.docs",
+        "milliseconds a selected candidate waits before its documentation shows beside the popup (above the caret's line with no popup); `false` shows it only on `completion docs`",
     ),
     (
         "completion.words.min_length",
@@ -807,6 +814,10 @@ const DOCS: &[(&str, &str)] = &[
         "a family for a markdown buffer's rendered prose — `sans`, `serif`, or an installed family; empty keeps the editor's face. Code spans, code blocks, tables and the caret's line stay in the editor's face",
     ),
     (
+        "font.icons",
+        "the family every icon kawoosh draws itself is set in — a kind's in the completion and the pickers, a status mark — each fitted to one cell and centred on its line; never the text's",
+    ),
+    (
         "font.chrome_size",
         "the size of the tabs', title bars', strips' and every pane's text, a pane's secondary text a step under it and its notes two; `0` follows `font.size` up to 16",
     ),
@@ -873,6 +884,9 @@ pub enum SettingKind {
     /// A string, or a list of them: one thing or several in turn
     /// (`compile.default`, compile.md Decision 22).
     Strings,
+    /// A whole number, or `false` for none: a wait that can be off
+    /// (`completion.docs`, completion.md Decision 11).
+    IntOrFalse,
     Open,
     /// A size the UI resolves against the room it is drawn in: pixels,
     /// a spelling (`"clamp(400px, 80%, 1000px)"`) or the same as data.
@@ -1286,6 +1300,7 @@ impl Settings {
         );
         defaults.set("completion.fuzzy", Setting::Bool(true));
         defaults.set("completion.max_items", Setting::Int(10));
+        defaults.set("completion.docs", Setting::Int(200));
         defaults.set("completion.words.min_length", Setting::Int(3));
         for lang in ["markdown", "gitcommit", "text"] {
             defaults.set(
@@ -1375,6 +1390,9 @@ impl Settings {
         // A markdown buffer's rendered prose in a face of its own
         // (markdown.md Decision 5, amended): empty is the editor's.
         defaults.set("font.prose", Setting::Str(String::new()));
+        // The icons' family (completion.md Decision 9): the shipped
+        // symbols (fonts.md Decision 6).
+        defaults.set("font.icons", Setting::Str("Symbols Nerd Font Mono".into()));
         // The chrome's text (tabs, title bars, the strips): `0` follows
         // `font.size` up to a cap, a number is its own size.
         defaults.set("font.chrome_size", Setting::Int(0));
@@ -1462,6 +1480,11 @@ impl Settings {
         // The comment tokens are a language's, with no bare default
         // (plain text has none); declared bare so `language.x.comment`
         // is a known key and `:set comment=#` a session's.
+        s.declare(
+            "completion.docs",
+            SettingKind::IntOrFalse,
+            "milliseconds a selected candidate waits before its documentation shows beside the popup (above the caret's line with no popup); `false` shows it only on `completion docs`",
+        );
         s.declare(
             "comment",
             SettingKind::Str,
@@ -2013,6 +2036,7 @@ mod tests {
             [
                 "buffers.scope",
                 "clipboard.system",
+                "completion.docs",
                 "completion.fuzzy",
                 "completion.ghost",
                 "completion.max_items",
@@ -2033,6 +2057,7 @@ mod tests {
                 "font.chrome_size",
                 "font.family",
                 "font.features",
+                "font.icons",
                 "font.line_height",
                 "font.prose",
                 "font.size",

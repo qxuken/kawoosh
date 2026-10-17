@@ -229,6 +229,13 @@ move a column. A terminal's glyphs stay its program's.
 *Beat:* the fallback as built — a patched Nerd Font as `font.family`
 drew its own icons first, at its own widths.
 
+*Amended 2026-10-17, the user, after round 2:* "if something belongs
+to kawoosh ui itself, like close icon, i think it belongs to vector
+api". The pictures of kawoosh's own interface — the tab's close, the
+chevrons, the folds, the done mark, the key caps — stay icons.md's
+vectors; `font.icons` is for the icons that are data — a kind's, a
+character in a status segment, a task's box.
+
 ### 10. One information panel, and signature help called for
 
 At most two panels: the popup, and one information panel beside it —
@@ -393,3 +400,131 @@ frame), 2.26 / 2.34 ms after (forty thousand indexed words ranked;
 2.36 / 2.41 ms once the review's fixes read the masks and keep every
 length); a frame 0.170 / 0.178 ms before, 0.171 / 0.182 ms after, a
 ghost on show.
+
+### Round 2, 2026-10-17: the popup, the icons, the panel
+
+`kawoosh/src/completion.rs` (the display, the rows, the panel's
+model), `kawoosh/src/completion_view.rs` (drawn), `rows::LineDraw::hang`
+(the mark the popup hangs from), `kawoosh/src/icons.rs` (`KINDS`,
+`kind_icon`, `cell_icon`, `text_with_icons`, `font.icons` on the set),
+`fuzzy::Single::positions`, `completionItem/resolve` in
+`systems/src/lsp.rs`, `picker.lua`'s `icon =`. Tests:
+`kawoosh/tests/completion_popup.rs`; the strip's and the counts'
+icons in `tests/status.rs`, the task boxes' mark in `markdown.rs`.
+
+As designed: Decision 2's popup and the pairs (each ghost × popup at a
+line's end and mid-line is a test), at most `completion.max_items`
+rows, flipping above near the pane's foot; Decision 6's display (one
+small value a frame), rows built for the rows on show only and the lit
+ranges read for them alone, the documentation asked for the selection
+only after `completion.docs` ms and kept on the item; Decision 9's one
+table of kinds in the popup, the `<C-x>` picker and both symbol
+pickers, `font.icons`; Decision 10's first half, one panel, beside the
+popup or above the caret's line with no popup, `<C-f>` / `<C-b>`.
+
+Where the build departs, or says more than the decisions did:
+
+- **`<C-n>` and fuzzy-only matches (round 1's open question),
+  settled.** Beside the popup `completion next` / `prev` walk every
+  row, a fuzzy-only one or one in another case too, the window
+  following the selection. From a ghost in a `fallback` look, a walk
+  onto a candidate no ghost can show brings the popup — Decision 2's
+  "whenever no ghost is drawn" — and the popup then stays for the
+  word, rather than giving way to a ghost under the keys as the walk
+  comes back onto a continuation. In the ghost-only look (`popup =
+  "never"`) they walk what a ghost can show, as round 1 built: a
+  fuzzy-only match selected there would show nothing; it is `<C-x>`'s.
+  Decision 5's "or `<C-n>`'s in a ghost-only look" is so only where a
+  popup may come.
+- **The selection.** Where a popup may show (`always`, `fallback`) the
+  first candidate is selected, so a fuzzy-only best is the popup's and
+  no ghost of a lower one stands in for it; in the ghost-only look the
+  best that continues the word, as in round 1. A `fallback` popup is
+  in place of the ghost, never beside it; `always` + a ghost axis that
+  draws is both (the selected candidate's ghost with the popup).
+- **Accepting a fuzzy match** replaces the word typed with the
+  candidate (at the primary caret); one that continues the word types
+  its rest at every caret, as the ghost did.
+- **Where it hangs.** The caret's row leaves an empty mark, a line
+  tall, at the word's start; the popup is a float anchored to that
+  mark by key and declared outside the row, so none of its text is the
+  line's (kui warns of a text deeper than four levels under a `line`
+  row, and a query by the row would find it). It hangs left of the mark
+  by its border, pad and icon column, so the labels start under the
+  word. The flip reads where the mark was last frame (where its line
+  falls when it is new) against the pane's rect: over the row when the
+  room below is less than the popup and the room above more.
+- **Its width** is its widest row's, measured once a build (kui gave a
+  growing row in a fitting column no width), within the room to the
+  pane's right; a detail is cut at half that room.
+- **The panel shows documentation.** A candidate with a detail and no
+  documentation has no panel — its row shows the detail already. Its
+  text is built once as it lands, its head the detail, a code block's
+  fences left out (round 2 draws the text plain, not rendered
+  markdown). `completion docs` pins the panel for the word: each
+  candidate walked to shows its own at once, until asked away. The
+  panel follows the selection by where it came from and what it puts,
+  so an answer landing in place of its source's earlier one keeps it.
+  `completion docs` has no key (Decision 3 named none); `<C-f>` and
+  `<C-b>` are local to a fact of their own, `completion_docs`, holding
+  only while the panel is on show, so they are insert mode's own
+  otherwise. `completion.docs` is a whole number or `false`
+  (`SettingKind::IntOrFalse`, `:set completion.docs=false` read as
+  `false`).
+- **Masks.** A row's detail and the panel's text are masked — what the
+  rules mask in the buffer being completed (`mask_text`) and any word
+  inside a mask of an open buffer drawn as `•`; a masked candidate is
+  no row (round 1 drops it from the ranking).
+- **Signature help's room.** The panel is `completion_view::Panel` —
+  a head and a body — which round 5's signature fills as the
+  documentation does; nothing else draws a panel.
+- **The icons are a cell, fitted.** Decision 9's box one cell wide is
+  the editor's cell at the text's size, and a glyph is set so its
+  advance fits it — Symbols Nerd Font Mono's glyphs are an em wide, so
+  at the cell of a face half an em wide they are drawn at half the
+  text's size, as kui's terminal fits a wide glyph to its cell (F120).
+  kui needed no round: a span names a family (`Span::family`), and a
+  box a cell wide with the glyph centred in it is plain layout; a
+  glyph inside a paragraph cannot be centred on its line at a smaller
+  size, so every icon kawoosh draws itself is a box of its own beside
+  the text (`text_with_icons` for chrome text), but the markdown task
+  box (below).
+- **The sweep.** Moved onto `font.icons`: the kinds' codicons; a Lua
+  icon's `glyph` part (`kawoosh.icon`, which also takes `cell = true`);
+  every Private Use Area character in the title bar's and the status
+  line's segments — `status.diagnostics` counts after codicons' error
+  and warning (were `●` `▲`), the strip's marks Nerd Fonts' squares
+  (were `▯▮▯`); the markdown task boxes, a span of their own in
+  `font.icons` at the text's size, not a cell: each stands for the
+  three cells of `[ ]`, and fitted to one they would be specks.
+  Kept, as the user confirmed (Decision 9's amendment): the vector
+  icons of icons.md Decision 1 — the tab's close, the chevrons, the
+  folds, the done mark, the dots, the key caps — kawoosh's own
+  interface, on the vector API; in no family and in boxes of their
+  own, nothing a font does moves them. Typography stays
+  text (`…`, `→` in a sentence, a grid's `│`, a field's `▏` caret),
+  the theme lab's samples show the face, and a terminal's glyphs stay
+  its program's.
+
+Measured with `kawoosh/tests/completion.rs`'s
+`timing_a_keystroke_and_a_frame` (dev profile, a 20,000-line buffer of
+words, median / p90), the ghost alone (`popup = "never"`, round 1's
+look) against the popup open beside it (`always`): a keystroke 0.60 /
+0.68 ms → 0.63 / 0.73 ms, a word's start 2.42 / 2.65 ms → 2.56 / 2.78
+ms, a frame 0.173 / 0.185 ms → 0.177 / 0.190 ms. Round 1 as merged,
+on the same machine before any of this: a keystroke 0.63 / 0.67 ms, a
+word's start 2.38 / 2.45 ms, a frame 0.171 / 0.182 ms.
+
+**After a review and a load test, the same day.** A resolve's answer
+fills the candidate it was asked for (`Session::resolving`), whatever
+`<C-n>` selected in the frame it landed. A row's label and detail are
+masked both ways, as the panel is, and a candidate whose label quotes
+a masked word is no row. The mark the popup hangs from reports its
+layout, so the flip and the room are read from where the caret's row
+is (soft wraps, tall rows, headers); the popup moves left to stay
+inside its pane and its panel goes to whichever side has room. The
+window follows the selection down as well as up through a landing.
+With neither a ghost nor the popup on show, nothing is asked and no
+panel shows. The harness loads the shipped icons' family
+(`fonts::load_symbols`), so the icons' tests pass on a machine without
+it installed and read nothing of the home.

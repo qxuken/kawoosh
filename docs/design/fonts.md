@@ -325,6 +325,15 @@ Font) draws them first.
 wider than a cell everywhere, and nothing kawoosh draws is proportional
 text that would want them.
 
+*Amended 2026-10-17 (completion.md Decision 9):* `font.icons`, default
+this family, is named outright wherever kawoosh draws an icon itself —
+the kinds' codicons, a status segment's icon, a task's box — rather
+than found as the fallback: a patched Nerd Font as `font.family` drew
+its own icons first, at its own widths. An icon beside text sits in a
+box one cell wide, the em-wide glyph fitted to it (icons.md, "Kinds and
+`font.icons`"). The fallback list (Decision 9) still names the symbols
+first for every other text.
+
 Families to pick from ship the same way (the user's word, the same day:
 "we can ship Intel and Fira, they should have license"): Intel One Mono
 (OFL, its eight faces and `OFL.txt`, 1.3 MB) in

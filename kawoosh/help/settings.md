@@ -263,10 +263,11 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `pairs.enabled` | `true` | close brackets and quotes as you type; `pairs.rules` per language |
 | `completion.trigger` | `"typing"` | when completion asks: `typing` as a word starts, `endline_only` only where nothing follows the caret, `manual` only on `<C-Space>`, `off` never; `manual` for Markdown, commit messages and text ([code](code.md#completion)) |
 | `completion.ghost` | `"endline"` | where the candidate's rest is drawn after the caret: `always`, `endline`, `never` |
-| `completion.popup` | `"fallback"` | the list of candidates: not built yet, read as `never` |
+| `completion.popup` | `"fallback"` | the list of candidates under the caret: `always`, `fallback` wherever no ghost is drawn, `never` |
 | `completion.sources` | | where candidates come from, in rank order: `lsp`, `path`, `snippets`, `buffer_symbols`, `buffer_words`, `workspace_symbols` |
 | `completion.fuzzy` | `true` | candidates match as a picker's rows do; `false` by the word's beginning |
-| `completion.max_items` | `10` | the most candidates ranked in full |
+| `completion.max_items` | `10` | the list's rows, and the most candidates ranked in full |
+| `completion.docs` | `200` | milliseconds a selected candidate waits before its documentation shows; `false` only on `completion docs` |
 | `completion.words.min_length` | `3` | the shortest word `buffer_words` offers |
 | `clipboard.system` | `true` | `p` puts what other programs copied ([memory](memory.md)) |
 | `layout.default` | `"scroll"` | a new tab is a strip of columns (`scroll`) or a tree of splits (`tree`) |
@@ -283,6 +284,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `picker.preview` | `true` | a preview beside the picker's list |
 | `multi.expand` | `5` | lines a multibuffer's excerpt grows by: `zo` `zk` `zj` `<S-CR>`, a click on `⋯` ([search](search.md#more-lines-around-an-excerpt)) |
 | `font.family`, `font.size` | `""`, `13` | the font ([look](look.md#fonts)) |
+| `font.icons` | `"Symbols Nerd Font Mono"` | the family every icon kawoosh draws itself is set in — the kinds' in the completion and the pickers, the status marks — each a cell wide, never the text's ([look](look.md#icons-and-keys)) |
 | `theme.name`, `theme.dark`, `theme.light` | `"rose-pine"`, `""`, `""` | the theme family, and a dark and a light theme apart from it ([look](look.md#themes)) |
 | `theme.appearance` | `"system"` | `system`, `dark` or `light` |
 | `markdown.render` | `true` | draw markdown rendered |

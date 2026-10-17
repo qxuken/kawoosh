@@ -202,10 +202,11 @@ impl Kawoosh {
                 texts: texts_hash(&items),
             };
             let mut fitted = self.status_fitted.borrow_mut();
+            let icons = self.icons.borrow();
             if fitted.key != Some(key) {
                 let mut used = 2.0 * PAD + SPACING * items.len().saturating_sub(1) as f32;
                 for m in items.iter().flatten().filter(|m| !m.path) {
-                    used += ui.measure_text(&m.joined(), &style, None).width;
+                    used += crate::icons::text_width(ui, &icons, &m.joined(), &style);
                     used += m.apart.unwrap_or(0.0) * m.parts.len().saturating_sub(1) as f32;
                 }
                 let room = key.width - used;
@@ -245,7 +246,7 @@ impl Kawoosh {
                 let style = style.ellipsis();
                 for (i, item) in items.iter().enumerate() {
                     match item {
-                        Some(m) => draw_module(ui, i, m, style, &pal),
+                        Some(m) => draw_module(ui, i, m, style, &pal, &self.icons.borrow()),
                         None => {
                             ui.leaf_keyed(&format!("g{i}"), NodeSpec::row().grow_width());
                         }
@@ -534,9 +535,17 @@ fn draw_module(
     m: &Module,
     style: kui_native::TextStyle,
     pal: &crate::palette::Pal,
+    icons: &crate::icons::Icons,
 ) {
     let draw = |ui: &mut Ui<'_>| {
         let parts: Vec<&(String, Color)> = m.parts.iter().filter(|(t, _)| !t.is_empty()).collect();
+        // An icon in it — the strip's marks, a segment's — is
+        // `font.icons`'s, a cell wide (completion.md Decision 9).
+        if m.apart.is_none() && crate::icons::has_icons(parts.iter().map(|(t, _)| t.as_str())) {
+            let parts: Vec<(&str, Color)> = parts.iter().map(|(t, c)| (t.as_str(), *c)).collect();
+            crate::icons::text_with_icons(ui, icons, &parts, style);
+            return;
+        }
         match (parts.as_slice(), m.apart) {
             ([(t, c)], _) => ui.text(t, style.color(*c)),
             (_, Some(gap)) => {

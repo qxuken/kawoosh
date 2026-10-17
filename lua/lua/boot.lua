@@ -1218,7 +1218,7 @@ local READS = {
   _legend_drawn = "legend_drawn",
   _clock = "clock", now = "clock",
   -- pure of their arguments
-  icon = "none", icon_names = "none", metrics = "none", fuzzy = "none",
+  icon = "none", icon_names = "none", kind_icon = "none", metrics = "none", fuzzy = "none",
   matcher = "none", json = "none", diff = "none", highlight = "none",
   echo = "none", test = "none", _prof_enter = "none", _prof_leave = "none",
   _plugin_of = "none",

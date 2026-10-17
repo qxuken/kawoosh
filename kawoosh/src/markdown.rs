@@ -311,6 +311,16 @@ fn dim(color: Color) -> Mark {
     }
 }
 
+/// A box folded over a task's source: set in `font.icons` (completion.md
+/// Decision 9), in `color` where it has one.
+fn icon(color: Option<Color>) -> Mark {
+    Mark {
+        color,
+        icon: true,
+        ..Mark::default()
+    }
+}
+
 fn to_drawn(drawn: &Drawn, marks: &[(Range<usize>, Mark)]) -> Vec<(Range<usize>, Mark)> {
     marks
         .iter()
@@ -447,13 +457,13 @@ fn prose(
             // `nf-md-checkbox_outline`), which ship with kawoosh and fill a
             // cell at the font's size: `☐` `☑` are in few monospaced faces,
             // so they came thin and small from whatever fallback had them.
-            // Open in the text's colour, done in the links' accent.
+            // Set in `font.icons` (an icon mark), never the row's face — a
+            // patched one drew its own. Open in the text's colour, done in
+            // the links' accent.
             Block::TaskOpen | Block::TaskDone => {
                 let open = *b == Block::TaskOpen;
                 folds.push((r.clone(), if open { TASK_OPEN } else { TASK_DONE }.into()));
-                if !open {
-                    marks.push((r.clone(), dim(style.link)));
-                }
+                marks.push((r.clone(), icon((!open).then_some(style.link))));
             }
             // An item set aside: its text from the `[-]` on, which the
             // grammar reads as text, every line of it dim — the box
@@ -466,6 +476,7 @@ fn prose(
                     });
                 if opens {
                     folds.push((r.start..r.start + 3, TASK_DROPPED.into()));
+                    marks.push((r.start..r.start + 3, icon(None)));
                 }
                 marks.push((r.clone(), dim(style.dim)));
             }
@@ -1617,6 +1628,11 @@ mod tests {
             "not a link's: {:?}",
             r.marks
         );
+        assert!(
+            r.marks.iter().any(|(rg, m)| rg.contains(&icon) && m.icon),
+            "in `font.icons`: {:?}",
+            r.marks
+        );
         // A numbered one.
         let src = "1. [-]";
         let r = render(
@@ -1654,7 +1670,15 @@ mod tests {
                 4,
             );
             assert_eq!(r.drawn.text, format!("• {icon} x"));
+            // Set in `font.icons` (completion.md Decision 9).
+            let at = r.drawn.text.find(icon).unwrap();
+            assert!(
+                r.marks.iter().any(|(rg, m)| rg.contains(&at) && m.icon),
+                "{:?}",
+                r.marks
+            );
             let x = r.drawn.text.find('x').unwrap();
+            assert!(!r.marks.iter().any(|(rg, m)| rg.contains(&x) && m.icon));
             assert!(
                 !r.marks
                     .iter()
