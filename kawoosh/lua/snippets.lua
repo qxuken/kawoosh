@@ -35,6 +35,33 @@ local function say(text)
   kawoosh.notify(text, { level = "warn", source = "snippets", show = "log" })
 end
 
+-- Said once a session: a package's entry refused each time it is read.
+local said = {}
+local function say_once(text)
+  if said[text] then return end
+  said[text] = true
+  say(text)
+end
+
+-- The loader's reads in flight, at most `MAX_READS`, the rest waiting
+-- their turn: a package naming ten thousand files reads four at a time,
+-- not ten thousand threads at once.
+local MAX_READS = 4
+local in_flight, waiting = 0, {}
+local function read_json(path, cb)
+  if in_flight >= MAX_READS then
+    waiting[#waiting + 1] = { path, cb }
+    return
+  end
+  in_flight = in_flight + 1
+  fs.read_json(path, function(data, err)
+    in_flight = in_flight - 1
+    local next_read = table.remove(waiting, 1)
+    if next_read then read_json(next_read[1], next_read[2]) end
+    cb(data, err)
+  end)
+end
+
 -- A snippet file's language by its name: `rust.json` is rust's, a
 -- `*.code-snippets` file `all`'s; nil for any other file.
 local function lang_of(path)
@@ -59,7 +86,7 @@ local function read_file(file, lang, done)
   local origin = origin_of(file, lang)
   local n = (reading[origin] or 0) + 1
   reading[origin] = n
-  fs.read_json(file, function(data, err)
+  read_json(file, function(data, err)
     if reading[origin] ~= n then return done(0) end
     if data == nil then
       if not fs.exists(file) then S._set(origin, lang, nil) end
@@ -75,22 +102,36 @@ local function read_file(file, lang, done)
 end
 
 -- A package's languages and their files, as its `package.json` says:
--- `{ [lang] = { file, … } }`; nil and why when it names none.
+-- `{ [lang] = { file, … } }`, each file once a language; nil and why
+-- when it names none. A path is the package's own: one written absolute,
+-- or reaching out of the package's folder with `..`, is refused and
+-- said once (VS Code warns of it too) — a package is data, and its
+-- entries do not name the rest of the disk.
 local function package_manifest(pkg, data)
   local c = type(data) == "table" and data.contributes
   local list = type(c) == "table" and c.snippets
   if type(list) ~= "table" then return nil, "no contributes.snippets" end
   local dir = fs.parent(pkg)
-  local m = {}
+  local m, seen = {}, {}
   for _, e in ipairs(list) do
     if type(e) == "table" and type(e.path) == "string" then
-      local langs = type(e.language) == "table" and e.language or { e.language }
       local file = fs.expand(fs.join(dir, e.path))
-      for _, l in ipairs(langs) do
-        if type(l) == "string" and l ~= "" then
-          l = l:lower()
-          m[l] = m[l] or {}
-          table.insert(m[l], file)
+      local inside = not e.path:match("^[~/\\]") and not e.path:match("^%a:")
+        and fs.relative(file, dir) ~= nil
+      if not inside then
+        say_once(fs.short(pkg) .. ": " .. e.path .. " is outside the package; not read")
+      else
+        local langs = type(e.language) == "table" and e.language or { e.language }
+        for _, l in ipairs(langs) do
+          if type(l) == "string" and l ~= "" then
+            l = l:lower()
+            local key = l .. "\n" .. file
+            if not seen[key] then
+              seen[key] = true
+              m[l] = m[l] or {}
+              table.insert(m[l], file)
+            end
+          end
         end
       end
     end
@@ -124,7 +165,7 @@ local function manifest(path, lang, cb)
     pkg = path
   end
   if pkg then
-    return fs.read_json(pkg, function(data, err)
+    return read_json(pkg, function(data, err)
       if data == nil then return cb(nil, err, pkg) end
       local m, why = package_manifest(pkg, data)
       if not m then return cb(nil, fs.short(pkg) .. ": " .. why, pkg) end
@@ -210,7 +251,10 @@ local function load_lang(r, names)
 end
 
 -- Root `r`'s manifest read again, what it no longer names dropped, and
--- every language asked for read again from it.
+-- every language asked for read again from it. A manifest that does not
+-- read now — a typo, a `package.json` caught half-saved or between its
+-- removal and its rename back, a listing that failed — leaves what the
+-- root put until it reads again; only a path gone takes all of it.
 local function refresh(r)
   r.gen = r.gen + 1
   local g = r.gen
@@ -218,10 +262,17 @@ local function refresh(r)
   manifest(r.path, nil, function(m, why, pkg)
     if roots[r.path] ~= r or r.gen ~= g then return end
     r.reading = false
-    if not m then
-      if fs.exists(r.path) then say("snippets.paths: " .. why) end
-      m = {}
+    local gone = not fs.exists(r.path)
+    if not gone and r.pkg and not pkg then
+      m, why = nil, fs.short(r.pkg) .. ": gone, or not there yet"
     end
+    if not m and not gone then
+      say("snippets.paths: " .. why)
+      r.manifest = r.manifest or {}
+      rewatch()
+      return
+    end
+    m = m or {}
     r.manifest, r.pkg = m, pkg
     local keep = {}
     for l, files in pairs(m) do
@@ -244,7 +295,8 @@ on_change = function(changed)
     for _, path in ipairs(order) do
       local r = roots[path]
       if p == r.path or p == r.pkg then
-        refresh(r)
+        -- With no language asked for yet, read when one is.
+        if next(wanted) then refresh(r) else r.manifest = nil end
       else
         for _, o in pairs(r.loaded) do
           if o.file == p then
