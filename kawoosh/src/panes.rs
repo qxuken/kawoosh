@@ -1767,6 +1767,13 @@ impl Kawoosh {
             md_columns = tables.columns;
         }
         let md_cell_h: HashMap<usize, f32> = md_cells.iter().map(|(l, t)| (*l, t.height)).collect();
+        // The completion's popup rows, built (and masked) before the
+        // frame borrows the view: once a change, the rows on show alone.
+        let popup_of = if focused {
+            self.completion_popup(view)
+        } else {
+            None
+        };
         let v = &self.ed.views[view];
         t = crate::perf::part("rendered rows", t);
         let buf = &self.ed.buffers[buf_id];
@@ -1948,10 +1955,7 @@ impl Kawoosh {
         // Its popup and its panel (Decisions 2 and 10), hung from the
         // caret's row at the word's start: the rows on show alone, built
         // once a change; the selection's text alone.
-        let popup_of = display
-            .as_ref()
-            .filter(|d| d.popup)
-            .and_then(|_| self.completion_popup(view));
+        let popup_of = popup_of.filter(|_| display.as_ref().is_some_and(|d| d.popup));
         let panel_of = display.as_ref().and_then(|_| self.completion_panel(view));
         let hang_at = (popup_of.is_some() || panel_of.is_some())
             .then(|| self.completion.session.as_ref().map(|s| s.anchor.start))

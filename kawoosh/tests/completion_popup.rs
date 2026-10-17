@@ -634,3 +634,58 @@ fn a_late_resolve_fills_the_candidate_it_was_asked_for() {
     assert_eq!(app.completion.resolves, asked, "kept on its item");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A row never draws a secret: a candidate whose label holds a word
+/// inside a mask is no row, though what it puts is another text (a
+/// server's quoted string), and a label or a detail the rules mask is
+/// drawn masked, as the panel is.
+#[test]
+fn a_rows_label_and_detail_are_masked() {
+    let dir = tmp("rows-masked");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::write(
+        dir.join("README.md"),
+        "-----BEGIN PRIVATE KEY-----\nMIIEvSecretKeyMaterial\n-----END PRIVATE KEY-----\n",
+    )
+    .unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n}\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
+    let mut s = fake_lsp("rust");
+    s.args.push("--secret-items".into());
+    app.add_lsp_server(ServerDef {
+        roots: vec!["Cargo.toml".into()],
+        ..s
+    });
+    let mut d = Drive::new(1200.0, 600.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.wait_for_open();
+    d.settle(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.opt("secrets.masks.stripe", { pattern = [[(sk_live_\w+)]] })"#,
+    );
+    assert!(app.ed.settings.get("secrets.masks.stripe").is_some(), "{}", app.ed.message);
+    ex(&mut d, &mut app, &format!("e {}", dir.join("README.md").display()));
+    ex(&mut d, &mut app, &format!("e {}", file.display()));
+    ex(&mut d, &mut app, "setlocal completion.popup=always");
+    d.press(&mut app, "o");
+    d.keys(&mut app, "hel");
+    until(&mut d, &mut app, "the server's candidates", |a| {
+        a.completion.candidates().iter().any(|c| c == "help_live")
+    });
+    assert!(
+        !app.completion.candidates().iter().any(|c| c == "help_mii"),
+        "a label holding a masked word is no candidate: {:?}",
+        app.completion.candidates()
+    );
+    d.settle(&mut app);
+    let rows = d.completion_rows().join("\n");
+    assert!(rows.contains("help"), "{rows}");
+    assert!(!rows.contains("sk_live_9f"), "masked: {rows}");
+    assert!(!rows.contains("MIIEv"), "{rows}");
+    std::fs::remove_dir_all(&dir).ok();
+}

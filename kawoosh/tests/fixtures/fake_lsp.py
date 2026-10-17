@@ -78,7 +78,10 @@ with no documentation and a `data` each, and `completionItem/resolve`
 answers the item with detail `fn LABEL()` and documentation "docs for
 LABEL", a second paragraph naming MIIEvSecretKeyMaterial; with
 `--resolve-never` too it never answers a resolve, for a test that hands
-the answer in itself."""
+the answer in itself. With `--secret-items` its candidates are two
+whose labels hold a secret beside the text they put — `"MIIEvSecret…"`
+(a masked word, quoted) putting `help_mii`, and `help sk_live_9f`
+putting `help_live` with the detail `key sk_live_9f`."""
 import json
 import re, sys
 
@@ -383,6 +386,10 @@ while True:
         p = m["params"]
         if char_before(p["textDocument"]["uri"], p["position"]) == ".":
             items = [{"label": "member_a", "kind": 2}, {"label": "member_b", "kind": 2}]
+        elif "--secret-items" in sys.argv:
+            items = [{"label": '"MIIEvSecretKeyMaterial"', "insertText": "help_mii", "kind": 21},
+                     {"label": "help sk_live_9f", "insertText": "help_live", "kind": 21,
+                      "detail": "key sk_live_9f"}]
         elif "--resolve" in sys.argv:
             items = [{"label": l, "kind": k, "data": {"n": i}} for i, (l, k) in
                      enumerate([("hello_world", 3), ("help", 3), ("MIIEvSecretKeyMaterial", 6)])]

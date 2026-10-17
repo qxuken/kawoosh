@@ -40,7 +40,7 @@ type Span = (BufferId, Version, bool, bool, Range<usize>, Range<usize>);
 
 /// The shell's secrets: the rules, each buffer's masks, the reveal.
 pub struct Secrets {
-    rules: Rules,
+    pub(crate) rules: Rules,
     /// The settings version the rules were read at.
     rules_seen: Option<u64>,
     /// Rules that failed to read, said once each.

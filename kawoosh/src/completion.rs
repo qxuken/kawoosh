@@ -798,6 +798,19 @@ fn is_masked(masked: &HashMap<BufferId, Masked>, text: &str) -> bool {
     masked.values().any(|m| m.contains(text))
 }
 
+/// Whether `text`, or any word in it, is inside a mask of an open
+/// buffer: a label that quotes a secret (a server's string literal) as
+/// much as one that is it.
+fn holds_masked(masked: &HashMap<BufferId, Masked>, text: &str) -> bool {
+    if masked.values().all(|m| m.0.is_empty()) {
+        return false;
+    }
+    is_masked(masked, text)
+        || text
+            .split(|c: char| !words::is_word_char(c))
+            .any(|w| !w.is_empty() && is_masked(masked, w))
+}
+
 /// `text` against the typed word: its tier (higher is better) and
 /// whether it continues the word; None when it does not match.
 fn score(
@@ -879,7 +892,8 @@ impl Session {
             Source::Path if text.starts_with('.') && !self.typed.starts_with('.') => return None,
             _ => {}
         }
-        if is_masked(ctx.masked, text) {
+        // Neither what it puts nor what it shows holds a masked word.
+        if holds_masked(ctx.masked, text) || (item.label != text && holds_masked(ctx.masked, &item.label)) {
             return None;
         }
         let (tier, continues) = score(matcher, &self.typed, text, ctx.config.fuzzy)?;
@@ -2230,7 +2244,7 @@ impl Kawoosh {
     /// and again only once the ranking or the selection changed
     /// (Decision 6): each its kind's icon, its label with the typed
     /// word's letters lit, its detail. None where no popup is drawn.
-    pub(crate) fn completion_popup(&self, view: ViewId) -> Option<Rc<Popup>> {
+    pub(crate) fn completion_popup(&mut self, view: ViewId) -> Option<Rc<Popup>> {
         if !self.completion_display(view)?.popup {
             return None;
         }
@@ -2248,6 +2262,19 @@ impl Kawoosh {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
         let mut matcher = (fuzzy && !s.typed.is_empty()).then(|| Single::new(&s.typed));
+        // Masked as the panel is: what the rules mask in the buffer
+        // being completed, and any word inside a mask of an open buffer.
+        let (path, language) = self
+            .ed
+            .buffers
+            .get(s.anchor.buffer)
+            .map(|b| (b.path.clone(), b.language.to_string()))
+            .unwrap_or_default();
+        self.sync_secret_rules();
+        let s = self.completion.session.as_ref()?;
+        let rules = &self.secrets.rules;
+        let masked = &self.completion.masked;
+        let mask = |t: &str| mask_words(masked, &rules.mask_text(path.as_deref(), &language, t));
         let rows = s.ranking[s.top.min(end)..end]
             .iter()
             .enumerate()
@@ -2267,10 +2294,13 @@ impl Kawoosh {
                     .detail
                     .as_deref()
                     .and_then(|d| d.lines().map(str::trim).find(|l| !l.is_empty()))
-                    .map(|d| mask_words(&self.completion.masked, d));
+                    .map(&mask);
+                let label = mask(&item.label);
+                // A label masked is no longer the text the match lit.
+                let lit = if label == item.label { lit } else { Vec::new() };
                 Row {
                     icon: crate::icons::kind_icon(item.kind),
-                    label: item.label.clone(),
+                    label,
                     lit,
                     detail,
                     selected: s.selected == Some(s.top + i),
