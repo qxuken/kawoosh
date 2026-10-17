@@ -1,6 +1,7 @@
 # Icons and key caps: one set, drawn, reused everywhere
 
-Status: decided 2026-10-02. Asked, after trying the app: "we probably
+Status: decided 2026-10-02; the kinds' icons and `font.icons` added
+2026-10-17 (completion.md Decision 9, "Kinds and `font.icons`" below). Asked, after trying the app: "we probably
 should crate set of an icons to display keys, close buttons, other
 elements drawn by pictures. and reuse it everywhere". Each decision
 keeps the alternative it beat.
@@ -333,6 +334,71 @@ commits — with the same vectors, at a geometry of its own.
   message line (`⏎ opens this one`) — strings, not drawings.
 - **Words on Linux and Windows** for the modifiers (`Ctrl`, `Alt`).
 - **A spinner** for "running" (the corner's `…`, `searching…`).
+
+## Kinds and `font.icons` (completion.md Decision 9)
+
+Decided with completion (2026-10-16/17), built in its round 2.
+
+**One table of kinds** (`icons::KINDS`): what a candidate or a symbol
+is, to Nerd Fonts' codicons — VS Code's own glyphs. LSP's completion
+kinds and symbol kinds share their names (a space is a `-`:
+`enum-member`, `type-parameter`); kawoosh adds `word` (a buffer's
+word), `symbol` (an outline's name of no kind it knows, and any kind
+the table lacks), `type`, `macro`.
+
+| kind | codicon |
+|---|---|
+| `method` `function` `constructor` | `symbol-method` U+EA8C |
+| `field` | `symbol-field` U+EB5F |
+| `variable` | `symbol-variable` U+EA88 |
+| `class` | `symbol-class` U+EB5B |
+| `struct` | `symbol-structure` U+EA91 |
+| `interface` | `symbol-interface` U+EB61 |
+| `module` `namespace` `object` | `symbol-namespace` U+EA8B |
+| `property` | `symbol-property` U+EB65 |
+| `enum` `value` | `symbol-enum` U+EA95 |
+| `enum-member` | `symbol-enum-member` U+EB5E |
+| `constant` | `symbol-constant` U+EB5D |
+| `keyword` | `symbol-keyword` U+EB62 |
+| `snippet` | `symbol-snippet` U+EB66 |
+| `text` `word` `key` | `symbol-key` U+EA93 (VS Code's `symbol-text`) |
+| `file` | `symbol-file` U+EB60 |
+| `folder` | `folder` U+EA83 |
+| `reference` | `references` U+EB36 |
+| `color` | `symbol-color` U+EB5C |
+| `unit` | `symbol-ruler` U+EA96 |
+| `event` | `symbol-event` U+EA86 |
+| `operator` | `symbol-operator` U+EB64 |
+| `type-parameter` `type` | `symbol-parameter` U+EA92 |
+| `package` | `package` U+EB29 |
+| `string` | `symbol-string` U+EB8D |
+| `number` | `symbol-numeric` U+EA90 |
+| `boolean` `null` | `symbol-boolean` U+EA8F |
+| `array` | `symbol-array` U+EA8A |
+| `symbol` `macro` | `symbol-misc` U+EB63 |
+
+Each is an icon of the set (`{ glyph = … }`), so `kawoosh.icons.function
+= { … }` is every function's; `kawoosh.kind_icon(kind)` names a kind's
+icon. The completion's popup, the `<C-x>` candidates picker and the
+`symbols` and `workspace_symbols` pickers draw them (a picker source's
+`icon = "kind"`), and so do `path` (`file`, `folder`), `buffer_words`
+(`word`) and, from round 3, `snippets`.
+
+**`font.icons`** (default the shipped `Symbols Nerd Font Mono`) is the
+family every glyph kawoosh draws itself is set in, never the text's:
+a `glyph` part of any icon; a Private Use Area character in the title
+bar's or the status line's segments (`status.diagnostics`' codicons,
+the strip's squares), drawn by `text_with_icons` as a box each; a
+markdown task's box (a span in the family, at the text's size: it
+stands for three cells). An icon beside text is in a box one cell of
+the editor's face wide (`cell_icon`, `kawoosh.icon(…, { cell = true })`),
+centred on its line, the glyph set so its advance fits the cell — an
+em-wide symbol at a half-em cell is drawn at half the text's size, as
+kui's terminal fits a wide glyph to its cell. A family not installed is
+a toast once and the shipped symbols stay.
+
+The vector icons above (Decision 1) stay vectors: they are in no
+family and sit in boxes of their own, so no font moves them.
 
 ## Built
 
