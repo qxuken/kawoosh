@@ -320,6 +320,177 @@ fn overloads_are_walked_and_kept() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The overload chosen is the call's: going into another call of
+/// several overloads shows the one its server says, not the index
+/// chosen outside, and sends no other call's answer back with the ask;
+/// coming back out, the outer call's choice is there again.
+#[test]
+fn the_chosen_overload_is_the_calls_own() {
+    let (dir, mut d, mut app) = open("overload-calls", "fn main() {\n    \n}\n", &[], false);
+    d.press(&mut app, "jA");
+    d.keys(&mut app, "over(");
+    d.press(&mut app, "<C-g>");
+    until(&mut d, &mut app, "over's", |a| {
+        head(a).is_some_and(|h| h.starts_with("over("))
+    });
+    d.settle(&mut app);
+    d.press(&mut app, "<C-n>");
+    assert_eq!(app.signature_text_shown().unwrap().of, Some((2, 2)));
+    d.keys(&mut app, "max(");
+    until(&mut d, &mut app, "max's", |a| {
+        head(a).is_some_and(|h| h.starts_with("max("))
+    });
+    let shown = app.signature_text_shown().unwrap();
+    assert_eq!(shown.of, Some((1, 2)), "the server's, not over's choice");
+    assert_eq!(shown.head, "max(a: i32, b: i32)");
+    d.keys(&mut app, ")");
+    until(&mut d, &mut app, "over's again", |a| {
+        head(a).is_some_and(|h| h.starts_with("over("))
+    });
+    assert_eq!(
+        app.signature_text_shown().unwrap().of,
+        Some((2, 2)),
+        "over's own choice back"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A context is built for an ask that goes out only: a key while one is
+/// in flight copies nothing of the answer on show.
+#[test]
+fn a_key_while_one_is_asked_builds_nothing() {
+    let (dir, mut d, mut app) = open(
+        "contexts",
+        "fn main() {\n    \n}\n",
+        &["--signature-never"],
+        false,
+    );
+    d.press(&mut app, "jA");
+    d.keys(&mut app, "pair(");
+    d.press(&mut app, "<C-g>");
+    let (b, off, v) = app.signature_asking().unwrap();
+    app.signature_answered(b, v, off, Ok(Some(pair_help(Some(0)))));
+    d.settle(&mut app);
+    assert!(head(&app).is_some());
+    // The next key asks, building one; the keys after it, while that is
+    // in flight, build none.
+    let built = app.signature.contexts;
+    d.keys(&mut app, "1");
+    assert_eq!(app.signature.contexts, built + 1);
+    d.keys(&mut app, "23, 4");
+    d.settle(&mut app);
+    assert_eq!(app.signature.contexts, built + 1, "nothing built in flight");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// LSP 3.17: an answer that says no `activeParameter` lights the first
+/// parameter, as one past the parameters does.
+#[test]
+fn an_omitted_active_parameter_lights_the_first() {
+    let (dir, mut d, mut app) = open(
+        "no-active",
+        "fn main() {\n    \n}\n",
+        &["--signature-never"],
+        false,
+    );
+    d.press(&mut app, "jA");
+    d.keys(&mut app, "pair(");
+    d.press(&mut app, "<C-g>");
+    let (b, off, v) = app.signature_asking().unwrap();
+    app.signature_answered(b, v, off, Ok(Some(pair_help(None))));
+    d.settle(&mut app);
+    assert_eq!(lit(&app).as_deref(), Some("a: i32"));
+    d.keys(&mut app, "1");
+    let (b, off, v) = app.signature_asking().unwrap();
+    app.signature_answered(b, v, off, Ok(Some(pair_help(Some(9)))));
+    d.settle(&mut app);
+    assert_eq!(lit(&app).as_deref(), Some("a: i32"), "past the parameters");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// With several carets, a function taken by a match that does not
+/// continue the word goes in at the primary caret alone, and is filled
+/// there — its fields, or the caret after its brackets.
+#[test]
+fn a_fuzzy_call_at_several_carets_is_filled_where_it_went() {
+    let (dir, mut d, mut app) = open("carets", "fn main() {\n    \n    \n}\n", &[], false);
+    ex(&mut d, &mut app, "setlocal completion.callable=args");
+    ex(&mut d, &mut app, "setlocal completion.trigger=typing");
+    for (typed, want, line) in [
+        ("pr", "pair", "    pair(a, b)"),
+        ("ne", "none", "    none()"),
+    ] {
+        d.press(&mut app, "<Esc>");
+        d.press(&mut app, "ggj\"_cc");
+        d.press(&mut app, "<Esc>j\"_cc<Esc>k");
+        d.press(&mut app, "<C-j>A");
+        assert_eq!(app.ed.views[app.focused_view().unwrap()].sels.len(), 2);
+        d.keys(&mut app, typed);
+        until(&mut d, &mut app, want, |a| from_server(a, want));
+        let mut n = 0;
+        while app.completion.selected_text() != Some(want) {
+            d.press(&mut app, "<C-n>");
+            n += 1;
+            assert!(n < 10, "{want}: {:?}", app.completion.candidates());
+        }
+        d.press(&mut app, "<Tab>");
+        until(&mut d, &mut app, "filled", |a| {
+            a.signature_asking().is_none() && (a.snippet.is_some() || want == "none")
+        });
+        d.settle(&mut app);
+        let t = text(&app);
+        let v = app.focused_view().unwrap();
+        let primary = app.ed.views[v].sels.primary().head;
+        let ln = app.ed.buffer_of(v).line_of(primary);
+        assert_eq!(t.lines().nth(ln), Some(line), "{t}");
+        if want == "pair" {
+            assert_eq!(selected(&app)[0], "a", "{:?}", selected(&app));
+            d.press(&mut app, "<Esc>");
+            app.snippet = None;
+        } else {
+            assert!(
+                t[..primary].ends_with("none()"),
+                "the caret after: {t:?} at {primary}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A panel alone is placed by its own height: one too tall for the room
+/// over the caret's row goes under it, and a short one after it, which
+/// the room holds, over it — not placed by the one before.
+#[test]
+fn a_panel_alone_is_placed_by_its_own_height() {
+    let (dir, mut d, mut app) = open("heights", "//\n//\nfn main() {\n    \n}\n", &[], false);
+    d.press(&mut app, "3GA");
+    d.keys(&mut app, "pair(");
+    d.press(&mut app, "<C-g>");
+    until(&mut d, &mut app, "pair's", |a| head(a).is_some());
+    d.settle(&mut app);
+    let tall = d.rect_labelled("completion docs").unwrap();
+    let hang = d.rect_labelled("hang").unwrap();
+    assert!(
+        tall.y >= hang.y + hang.h - 0.5,
+        "too tall for over it: {tall:?} {hang:?}"
+    );
+    d.press(&mut app, "<C-e>");
+    d.settle(&mut app);
+    d.keys(&mut app, "none(");
+    d.press(&mut app, "<C-g>");
+    until(&mut d, &mut app, "none's", |a| {
+        head(a).as_deref() == Some("fn none()")
+    });
+    d.settle(&mut app);
+    let short = d.rect_labelled("completion docs").unwrap();
+    let hang = d.rect_labelled("hang").unwrap();
+    assert!(
+        short.y + short.h <= hang.y + 0.5,
+        "over it: {short:?} {hang:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A call inside a call: the inner one's signature as its `(` is typed,
 /// the outer one's again as the caret leaves it, gone as it leaves the
 /// outer.
@@ -336,7 +507,7 @@ fn an_inner_call_comes_back_to_the_outer() {
     until(&mut d, &mut app, "none's", |a| {
         head(a).as_deref() == Some("fn none()")
     });
-    assert_eq!(app.signature.live.as_ref().unwrap().opens.len(), 2);
+    assert_eq!(app.signature.live.as_ref().unwrap().calls.len(), 2);
     d.keys(&mut app, ")");
     until(&mut d, &mut app, "pair's again", |a| {
         head(a).is_some_and(|h| h.contains("pair"))
@@ -456,14 +627,16 @@ fn above_the_line_with_no_popup() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-fn pair_help(active: usize) -> kawoosh_systems::lsp::SignatureHelp {
-    kawoosh_systems::lsp::signature_help(Some(&serde_json::json!({
+fn pair_help(active: Option<usize>) -> kawoosh_systems::lsp::SignatureHelp {
+    let mut v = serde_json::json!({
         "signatures": [{ "label": "fn pair(a: i32, b: &str) -> bool",
                          "parameters": [{ "label": "a: i32" }, { "label": "b: &str" }] }],
-        "activeSignature": 0,
-        "activeParameter": active
-    })))
-    .unwrap()
+        "activeSignature": 0
+    });
+    if let Some(a) = active {
+        v["activeParameter"] = a.into();
+    }
+    kawoosh_systems::lsp::signature_help(Some(&v)).unwrap()
 }
 
 /// An answer for a place the caret left, or a version that moved, is
@@ -487,7 +660,7 @@ fn a_late_answer_is_dropped() {
     d.keys(&mut app, "1");
     assert_eq!(app.signature.asks, asks, "one in flight");
     // Its answer lands for the place left: dropped, the caret's asked.
-    app.signature_answered(b, v, off, Ok(Some(pair_help(0))));
+    app.signature_answered(b, v, off, Ok(Some(pair_help(Some(0)))));
     d.settle(&mut app);
     assert!(head(&app).is_none(), "dropped as it landed");
     assert_eq!(app.signature.asks, asks + 1, "the caret's place asked");
@@ -495,11 +668,11 @@ fn a_late_answer_is_dropped() {
     assert_eq!(off2, off + 1);
     assert_ne!(v2, v);
     // An answer nobody waits on is nothing.
-    app.signature_answered(b, v, off, Ok(Some(pair_help(1))));
+    app.signature_answered(b, v, off, Ok(Some(pair_help(Some(1)))));
     assert!(head(&app).is_none());
     assert_eq!(app.signature_asking(), Some((b2, off2, v2)));
     // The one asked, for where the caret is: shown.
-    app.signature_answered(b2, v2, off2, Ok(Some(pair_help(0))));
+    app.signature_answered(b2, v2, off2, Ok(Some(pair_help(Some(0)))));
     d.settle(&mut app);
     assert_eq!(lit(&app).as_deref(), Some("a: i32"));
     // A refusal keeps what is on show.
@@ -526,7 +699,7 @@ fn a_late_answer_is_dropped() {
     assert!(text(&app).contains("    pair()\n"), "{}", text(&app));
     let (b4, off4, v4) = app.signature_asking().unwrap();
     d.keys(&mut app, "x");
-    app.signature_answered(b4, v4, off4, Ok(Some(pair_help(0))));
+    app.signature_answered(b4, v4, off4, Ok(Some(pair_help(Some(0)))));
     d.settle(&mut app);
     assert!(
         text(&app).contains("    pair(x)\n"),

@@ -98,7 +98,8 @@ active parameter the commas at its depth since — `pair` (one
 signature, its parameters by string, each documented, the signature's
 documentation two paragraphs), `over` (two overloads, their parameters
 by UTF-16 offsets, the first with an `é`), `secret` (whose label and
-documentation name MIIEvSecretKeyMaterial), `none` (no parameters); any
+documentation name MIIEvSecretKeyMaterial), `none` (no parameters), `max`
+(two overloads); any
 other name, or no call, is `null`. Asked again (`isRetrigger`), the
 overload in `activeSignatureHelp` is the one it answers. Its
 candidates are then `pair` and `none` (functions, plain, each
@@ -184,6 +185,8 @@ SIGS = {
                 "documentation": "uses MIIEvSecretKeyMaterial",
                 "parameters": [{"label": "key: MIIEvSecretKeyMaterial"}]}],
     "none": [{"label": "fn none()", "parameters": []}],
+    "max": [{"label": "max(a: i32, b: i32)", "parameters": [{"label": "a: i32"}, {"label": "b: i32"}]},
+            {"label": "max(a: f64, b: f64)", "parameters": [{"label": "a: f64"}, {"label": "b: f64"}]}],
 }
 root_uri = None
 first_uri = None

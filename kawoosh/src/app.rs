@@ -326,9 +326,6 @@ pub struct Kawoosh {
     /// and whether it was a signature: their keys hold only then.
     pub(crate) panel_shown: bool,
     pub(crate) signature_shown: bool,
-    /// The information panel's height as last laid out: where a panel
-    /// alone goes, over the caret's row or under it.
-    pub(crate) panel_h: Option<f32>,
     /// The focused pane's key sink as last drawn (`focus_sink`): where a
     /// click that opened a file sends the keyboard (`on_event_with`).
     pub(crate) sink: Option<kui_native::Key>,
@@ -566,7 +563,6 @@ impl Kawoosh {
             popup_shown: false,
             panel_shown: false,
             signature_shown: false,
-            panel_h: None,
             sink: None,
             clip_last: None,
             clip_editor_seen: true,

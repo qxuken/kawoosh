@@ -3121,7 +3121,7 @@ impl Kawoosh {
                 None => (false, width, 0.0, f32::MAX, 0.0),
             };
             let icons = self.icons.borrow();
-            let panel_h = crate::completion_view::draw(
+            crate::completion_view::draw(
                 ui,
                 &pal,
                 font,
@@ -3136,11 +3136,8 @@ impl Kawoosh {
                     left,
                     over,
                     below,
-                    panel_h: self.panel_h,
                 },
             );
-            drop(icons);
-            self.panel_h = panel_h;
             popup_drawn = popup_of.is_some();
             panel_drawn = panel_of.is_some();
         }

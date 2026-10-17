@@ -36,7 +36,7 @@ use std::rc::Rc;
 
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{Mode, Selection, Spec, ViewId};
-use kawoosh_systems::lsp::{Cmd, SignatureContext, SignatureHelp};
+use kawoosh_systems::lsp::{Cmd, SignatureContext, SignatureHelp, SignatureInfo};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -62,22 +62,35 @@ pub enum When {
 pub struct Live {
     pub view: ViewId,
     pub buffer: BufferId,
-    /// The `(` of each call the caret is in since it opened, outermost
-    /// first: the caret leaving the last goes back to the one before,
-    /// leaving the first ends it.
-    pub opens: Vec<usize>,
+    /// Each call the caret is in since it opened, outermost first: the
+    /// caret leaving the last goes back to the one before, leaving the
+    /// first ends it.
+    pub calls: Vec<Call>,
+    /// Counts the calls made, so each has an id of its own.
+    next_call: u64,
     /// The version and the caret it was last brought to.
     seen: (Version, usize),
     /// Opened by `signature`, not by typing: "no signature here" said.
     manual: bool,
-    /// The server's last answer, for the place the caret was at.
+    /// The server's last answer, for the place the caret was at, and
+    /// the call it was for (its id): until the call the caret is in has
+    /// its own, it is another call's — no overload of it is chosen, and
+    /// it is not sent back with an ask.
     pub help: Option<Rc<SignatureHelp>>,
-    /// The overload on show, and whether the user chose it (kept over
-    /// the server's through its answers).
+    help_for: Option<u64>,
+    /// The overload on show.
     pub active: usize,
-    chosen: bool,
     /// The panel, built once an answer or a choice: masked once.
     pub panel: Option<Rc<Panel>>,
+}
+
+/// One call the caret is in: its `(`, and the overload the user chose
+/// in it (`signature next` / `prev`), kept over the server's through its
+/// answers for this call alone.
+pub struct Call {
+    pub open: usize,
+    id: u64,
+    chosen: Option<usize>,
 }
 
 /// A function accepted with `completion.callable = "args"`: `name()`
@@ -88,7 +101,10 @@ pub struct Fill {
     view: ViewId,
     buffer: BufferId,
     version: Version,
-    /// Every caret, between the brackets, as the selections hold them.
+    /// Every caret as the selections hold them: any moved, and nothing
+    /// is filled.
+    heads: Vec<usize>,
+    /// The carets the name and its brackets went in at, between them.
     carets: Vec<usize>,
 }
 
@@ -111,6 +127,9 @@ pub struct State {
     asking: Option<(BufferId, usize, Version)>,
     /// How many were asked: a test's count.
     pub asks: usize,
+    /// How many asks' contexts were built: a test's count, none for a
+    /// key while one is in flight.
+    pub contexts: usize,
 }
 
 /// The `(` of the innermost call `caret` is in: the last unmatched one
@@ -145,6 +164,18 @@ fn encloses(between: &[u8]) -> bool {
         }
     }
     true
+}
+
+/// The parameter the caret is in, of overload `sig` of `h`: its own
+/// `activeParameter`, else the answer's, else — said by neither, or
+/// past its parameters — the first, where it has any (LSP 3.17: kawoosh
+/// declares no `noActiveParameterSupport`).
+pub(crate) fn active_parameter(h: &SignatureHelp, sig: &SignatureInfo) -> Option<usize> {
+    let n = sig.parameters.len();
+    sig.active_parameter
+        .or(h.active_parameter)
+        .filter(|&i| i < n)
+        .or((n > 0).then_some(0))
 }
 
 /// A documentation's first paragraph: its code blocks left out (the
@@ -320,12 +351,17 @@ impl Kawoosh {
         self.signature.live = Some(Live {
             view,
             buffer,
-            opens: vec![open],
+            calls: vec![Call {
+                open,
+                id: 0,
+                chosen: None,
+            }],
+            next_call: 1,
             seen: (self.ed.buffers[buffer].version(), caret),
             manual,
             help: None,
+            help_for: None,
             active: 0,
-            chosen: false,
             panel: None,
         });
         true
@@ -361,6 +397,8 @@ impl Kawoosh {
     /// What the next ask carries: asked again while one is on show, the
     /// key's character where it is a trigger, the server's last answer
     /// with the overload on show.
+    /// Built only for an ask that goes out: the answer is shared, not
+    /// copied, and is sent back only when it is this call's.
     fn signature_context(&self, typed: Option<&str>) -> SignatureContext {
         let live = self.signature.live.as_ref();
         let character = typed.filter(|t| {
@@ -371,9 +409,8 @@ impl Kawoosh {
         });
         let active = live.and_then(|l| {
             let h = l.help.as_ref()?;
-            let mut raw = (*h.raw).clone();
-            raw["activeSignature"] = serde_json::json!(l.active);
-            Some(std::sync::Arc::new(raw))
+            let this = l.calls.last().map(|c| c.id) == l.help_for;
+            this.then(|| (h.raw.clone(), l.active))
         });
         SignatureContext {
             trigger_kind: if character.is_some() { 2 } else { 3 },
@@ -381,6 +418,18 @@ impl Kawoosh {
             is_retrigger: live.is_some_and(|l| l.help.is_some()),
             active,
         }
+    }
+
+    /// The caret's place asked again while one is on show, unless an
+    /// ask is in flight (its answer lands for a place left, and asks
+    /// then).
+    fn signature_ask_again(&mut self, typed: Option<&str>) {
+        if self.signature.asking.is_some() {
+            return;
+        }
+        self.signature.contexts += 1;
+        let context = self.signature_context(typed);
+        self.signature_ask(context, false);
     }
 
     /// A signature answered — handed in by a test as by the server. Only
@@ -415,8 +464,7 @@ impl Kawoosh {
             .is_some_and(|l| l.buffer == buffer)
         {
             if !here {
-                let context = self.signature_context(None);
-                self.signature_ask(context, false);
+                self.signature_ask_again(None);
             } else {
                 match &help {
                     Err(e) => log::debug!("signature help: {e}"),
@@ -427,11 +475,15 @@ impl Kawoosh {
                         }
                     }
                     Ok(Some(h)) => {
+                        // The call the caret is in: the place is the one
+                        // asked, so the call is too.
                         let l = self.signature.live.as_mut().unwrap();
-                        l.active = match l.chosen && l.active < h.signatures.len() {
-                            true => l.active,
-                            false => h.active_signature,
-                        };
+                        let call = l.calls.last();
+                        l.active = call
+                            .and_then(|c| c.chosen)
+                            .filter(|&i| i < h.signatures.len())
+                            .unwrap_or(h.active_signature);
+                        l.help_for = call.map(|c| c.id);
                         l.help = Some(Rc::new(h.clone()));
                         self.signature_build_panel();
                     }
@@ -513,7 +565,7 @@ impl Kawoosh {
             let still = focused == Some(f.view)
                 && self.ed.views.get(f.view).is_some_and(|v| {
                     v.buffer == f.buffer
-                        && v.sels.iter().map(|s| s.head).eq(f.carets.iter().copied())
+                        && v.sels.iter().map(|s| s.head).eq(f.heads.iter().copied())
                 })
                 && self
                     .ed
@@ -546,21 +598,23 @@ impl Kawoosh {
             return;
         }
         // Each `(` carried through the edits, kept while it is one.
-        let mut opens: Vec<usize> = if version == l.seen.0 {
-            l.opens.clone()
-        } else {
-            l.opens
-                .iter()
-                .filter_map(|&o| {
-                    buf.journal()
-                        .transform_offset(o, l.seen.0, kawoosh_doc::Bias::Right)
-                        .ok()
-                })
-                .filter(|&o| o < buf.len() && buf.slice(o..o + 1) == "(")
-                .collect()
-        };
+        let seen = l.seen.0;
+        let mut calls: Vec<(usize, u64, Option<usize>)> = l
+            .calls
+            .iter()
+            .filter_map(|c| {
+                let o = match version == seen {
+                    true => c.open,
+                    false => buf
+                        .journal()
+                        .transform_offset(c.open, seen, kawoosh_doc::Bias::Right)
+                        .ok()?,
+                };
+                (o < buf.len() && buf.slice(o..o + 1) == "(").then_some((o, c.id, c.chosen))
+            })
+            .collect();
         let buffer = l.buffer;
-        while let Some(&o) = opens.last() {
+        while let Some(&(o, ..)) = calls.last() {
             let inside = caret > o && caret - o <= SCAN && {
                 let (between, _) = self.signature_text(buffer, o + 1, caret);
                 encloses(&between)
@@ -568,25 +622,31 @@ impl Kawoosh {
             if inside {
                 break;
             }
-            opens.pop();
+            calls.pop();
         }
-        let Some(&top) = opens.last() else {
+        let Some(&(top, ..)) = calls.last() else {
             self.signature.live = None;
             return;
         };
         // A call the caret went into since: kept, so leaving it comes
-        // back to this one.
+        // back to this one; nothing chosen in it yet.
         let (text, base) = self.signature_text(buffer, top + 1, caret);
-        if let Some(inner) = innermost_open(&text, base, caret)
-            && inner > top
-        {
-            opens.push(inner);
-        }
-        let context = self.signature_context(typed);
+        let inner = innermost_open(&text, base, caret).filter(|&i| i > top);
         let l = self.signature.live.as_mut().unwrap();
-        l.opens = opens;
+        l.calls = calls
+            .into_iter()
+            .map(|(open, id, chosen)| Call { open, id, chosen })
+            .collect();
+        if let Some(open) = inner {
+            l.calls.push(Call {
+                open,
+                id: l.next_call,
+                chosen: None,
+            });
+            l.next_call += 1;
+        }
         l.seen = (version, caret);
-        self.signature_ask(context, false);
+        self.signature_ask_again(typed);
     }
 
     // ---------------------------------------------------------- shown
@@ -608,10 +668,7 @@ impl Kawoosh {
         };
         let buffer = l.buffer;
         let n = h.signatures.len();
-        // The server's parameter is its active signature's: another
-        // overload chosen reads its own, else the same place.
-        let param = sig.active_parameter.or(h.active_parameter);
-        let p = param.and_then(|i| sig.parameters.get(i));
+        let p = active_parameter(&h, sig).and_then(|i| sig.parameters.get(i));
         let lit = p.and_then(|p| p.range.clone());
         let mut body: Vec<String> = Vec::new();
         for doc in [
@@ -650,6 +707,7 @@ impl Kawoosh {
             body,
             scroll: std::cell::Cell::new(0),
             room: std::cell::Cell::new(0),
+            placed_h: std::cell::Cell::new(None),
         }));
     }
 
@@ -732,7 +790,7 @@ impl Kawoosh {
         let caret = self.ed.views[view].sels.primary().head;
         let ln = buf.line_of(caret);
         let ls = buf.line_start(ln);
-        let open = *l.opens.last()?;
+        let open = l.calls.last()?.open;
         if open >= ls && open <= caret {
             let before = buf.slice(ls..open);
             return Some(ls + crate::completion::ident_start(before.trim_end()));
@@ -778,6 +836,11 @@ impl Kawoosh {
         let Some(n) = l.help.as_ref().map(|h| h.signatures.len()) else {
             return;
         };
+        // Another call's answer still on show: its overloads are not
+        // this call's to choose among.
+        let Some(call) = l.calls.last_mut().filter(|c| Some(c.id) == l.help_for) else {
+            return;
+        };
         if n < 2 {
             return;
         }
@@ -786,7 +849,7 @@ impl Kawoosh {
         } else {
             (l.active + n - 1) % n
         };
-        l.chosen = true;
+        call.chosen = Some(l.active);
         self.signature_build_panel();
     }
 
@@ -812,17 +875,19 @@ impl Kawoosh {
         {
             return;
         }
-        if every {
+        let carets: Vec<usize> = if every {
             self.ed.insert_text(view, "()");
             self.ed.views[view]
                 .sels
                 .map(|s| Selection::point(s.head.saturating_sub(1)));
+            self.ed.views[view].sels.iter().map(|s| s.head).collect()
         } else {
             self.ed.apply_edits(buffer, &[(caret..caret, "()".into())]);
             let sels = &mut self.ed.views[view].sels;
             let p = sels.primary;
             sels.items[p] = Selection::point(caret + 1);
-        }
+            vec![caret + 1]
+        };
         self.follow_caret = true;
         if !self.signature_askable(buffer) {
             return;
@@ -831,7 +896,8 @@ impl Kawoosh {
             view,
             buffer,
             version: self.ed.buffers[buffer].version(),
-            carets: self.ed.views[view].sels.iter().map(|s| s.head).collect(),
+            heads: self.ed.views[view].sels.iter().map(|s| s.head).collect(),
+            carets,
         });
         if self.signature_when(view) == When::Auto && self.signature.live.is_none() {
             self.signature_open(view, false);
@@ -867,7 +933,10 @@ impl Kawoosh {
         if sig.parameters.is_empty() {
             self.ed.views[f.view]
                 .sels
-                .map(|s| Selection::point(s.head + 1));
+                .map(|s| match f.carets.contains(&s.head) {
+                    true => Selection::point(s.head + 1),
+                    false => s,
+                });
             return;
         }
         let fields: Vec<String> = sig
@@ -948,6 +1017,29 @@ mod tests {
         assert_eq!(call_name("foo(a, b)"), Some("foo"));
         assert_eq!(call_name("foo"), None);
         assert_eq!(call_name("(x)"), None);
+    }
+
+    /// LSP 3.17: an `activeParameter` said by neither the signature nor
+    /// the answer, or past the parameters, is the first.
+    #[test]
+    fn an_active_parameter_not_said_is_the_first() {
+        let h = |sig: serde_json::Value, top: Option<u64>| {
+            let mut v = serde_json::json!({ "signatures": [sig] });
+            if let Some(t) = top {
+                v["activeParameter"] = t.into();
+            }
+            kawoosh_systems::lsp::signature_help(Some(&v)).unwrap()
+        };
+        let two = serde_json::json!({ "label": "f(a, b)", "parameters": [{ "label": "a" }, { "label": "b" }] });
+        let at = |h: &SignatureHelp| active_parameter(h, &h.signatures[0]);
+        assert_eq!(at(&h(two.clone(), None)), Some(0));
+        assert_eq!(at(&h(two.clone(), Some(1))), Some(1));
+        assert_eq!(at(&h(two.clone(), Some(7))), Some(0));
+        let mut own = two.clone();
+        own["activeParameter"] = 1.into();
+        assert_eq!(at(&h(own, Some(0))), Some(1), "the signature's own first");
+        let none = serde_json::json!({ "label": "g()", "parameters": [] });
+        assert_eq!(at(&h(none, None)), None);
     }
 
     #[test]

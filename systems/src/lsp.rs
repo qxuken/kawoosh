@@ -806,7 +806,10 @@ pub struct SignatureContext {
     pub trigger_kind: u8,
     pub trigger_character: Option<String>,
     pub is_retrigger: bool,
-    pub active: Option<std::sync::Arc<Value>>,
+    /// The server's last answer for this call, shared as it landed, and
+    /// the overload on show: written as its `activeSignature` when the
+    /// ask is sent, off the frame.
+    pub active: Option<(std::sync::Arc<Value>, usize)>,
 }
 
 impl SignatureContext {
@@ -818,8 +821,10 @@ impl SignatureContext {
         if let Some(t) = &self.trigger_character {
             c["triggerCharacter"] = json!(t);
         }
-        if let Some(a) = &self.active {
-            c["activeSignatureHelp"] = (**a).clone();
+        if let Some((a, at)) = &self.active {
+            let mut help = (**a).clone();
+            help["activeSignature"] = json!(at);
+            c["activeSignatureHelp"] = help;
         }
         c
     }

@@ -44,6 +44,8 @@ pub struct Panel {
     /// the panel was last laid out (`<C-f>` stops there).
     pub scroll: std::cell::Cell<usize>,
     pub room: std::cell::Cell<usize>,
+    /// The height a panel alone was last placed by (`draw`).
+    pub placed_h: std::cell::Cell<Option<f32>>,
 }
 
 /// Where the popup hangs: the mark the caret's row left at the word's
@@ -60,16 +62,23 @@ pub struct Place {
     pub left: f32,
     pub over: f32,
     pub below: f32,
-    /// The panel's height as the last frame laid it out, where it drew
-    /// one.
-    pub panel_h: Option<f32>,
 }
 
-/// How tall `panel` is at most, its body's lines unwrapped: what a
-/// panel alone is weighed by before a frame laid one out.
-fn panel_height(panel: &Panel, lh: f32) -> f32 {
-    let body = panel.body.lines().count().min(PANEL_LINES as usize) as f32;
-    (panel.head.is_some() as u8 as f32 + body) * lh + GAP + 2.0 * (PAD + 3.0)
+/// How tall `panel` is, `width` wide, before a frame laid it out: its
+/// head's and its body's lines wrapped at about `cell` a character,
+/// together at most [`PANEL_LINES`] — what a panel alone is weighed by
+/// the first frame it shows.
+fn panel_height(panel: &Panel, lh: f32, cell: f32, width: f32) -> f32 {
+    let inner = (width - 2.0 * cell).max(cell);
+    let lines = |t: &str| -> usize {
+        t.lines()
+            .map(|l| ((l.chars().count() as f32 * cell / inner).ceil() as usize).max(1))
+            .sum()
+    };
+    let head = panel.head.as_deref().map_or(0, lines);
+    let body = lines(&panel.body);
+    let n = (head + body).min(PANEL_LINES as usize) as f32;
+    n * lh + GAP + 2.0 * (PAD + 3.0)
 }
 
 /// The popup's height for `rows` rows of `lh`: what the flip weighs
@@ -81,8 +90,7 @@ pub fn popup_height(rows: usize, lh: f32) -> f32 {
 /// The popup and its panel, as one float hung from `place`'s mark —
 /// declared outside the caret's row, so no text of it is the line's.
 /// Either may be missing: no popup is the panel alone, above the
-/// caret's line. Answers the panel's height as the last frame laid it
-/// out, for the next frame's `Place`.
+/// caret's line.
 pub fn draw(
     ui: &mut Ui<'_>,
     pal: &Pal,
@@ -91,17 +99,7 @@ pub fn draw(
     popup: Option<&Popup>,
     panel: Option<&Panel>,
     place: Place,
-) -> Option<f32> {
-    // The panel alone sits above the caret's line — under it where
-    // the pane's top leaves too little room over it and more below; the
-    // popup's follows it.
-    let above = match (popup, panel) {
-        (None, Some(p)) => {
-            let h = place.panel_h.unwrap_or_else(|| panel_height(p, place.lh));
-            h <= place.over || place.over >= place.below
-        }
-        _ => place.above,
-    };
+) {
     let on = FloatConfig {
         anchor: kui_native::FloatAnchor::Node(place.anchor),
         ..FloatConfig::parent()
@@ -138,6 +136,27 @@ pub fn draw(
         // The panel alone, within the pane.
         lead = lead.min(place.room - panel_w).max(-place.left);
     }
+    // The panel alone sits above the caret's line — under it where the
+    // pane's top leaves too little room over it and more below; the
+    // popup's follows it. Its height is the one the last frame laid out
+    // (its key known before it is declared), else an estimate; while
+    // the height placed by is not the one laid out, a frame more, so the
+    // place settles with no other wake.
+    let above = match (popup, panel) {
+        (None, Some(p)) => {
+            let card = ui.child_key("completion").str("completion docs");
+            let h = ui
+                .layout_of(card)
+                .map(|r| r.h)
+                .unwrap_or_else(|| panel_height(p, place.lh, cell, panel_w));
+            if p.placed_h.get() != Some(h) {
+                p.placed_h.set(Some(h));
+                ui.request_frame();
+            }
+            h <= place.over || place.over >= place.below
+        }
+        _ => place.above,
+    };
     let float = if above {
         on.at(Align::Start, Align::Start)
             .self_at(Align::Start, Align::End)
@@ -145,7 +164,6 @@ pub fn draw(
     } else {
         on.at(Align::Start, Align::End).offset(lead, 0.0)
     };
-    let mut panel_h = None;
     ui.with_keyed(
         "completion",
         NodeSpec::row()
@@ -154,17 +172,16 @@ pub fn draw(
             .float(float),
         |ui| {
             if panel_left && let Some(panel) = panel {
-                panel_h = draw_panel(ui, pal, face, panel, cell, panel_w);
+                draw_panel(ui, pal, face, panel, cell, panel_w);
             }
             if let (Some(p), Some(w)) = (popup, popup_w) {
                 rows(ui, pal, face, icons, p, cell, w, place);
             }
             if !panel_left && let Some(panel) = panel {
-                panel_h = draw_panel(ui, pal, face, panel, cell, panel_w);
+                draw_panel(ui, pal, face, panel, cell, panel_w);
             }
         },
     );
-    panel_h
 }
 
 /// The popup's width: its widest row's — measured once a build, kept on
@@ -281,14 +298,7 @@ fn label(ui: &mut Ui<'_>, text: &str, lit: &[usize], base: TextStyle, accent: Co
     ui.rich_text(&spans, base);
 }
 
-fn draw_panel(
-    ui: &mut Ui<'_>,
-    pal: &Pal,
-    face: Face,
-    panel: &Panel,
-    cell: f32,
-    width: f32,
-) -> Option<f32> {
+fn draw_panel(ui: &mut Ui<'_>, pal: &Pal, face: Face, panel: &Panel, cell: f32, width: f32) {
     let base = crate::rows::mono(face, pal);
     let body = TextStyle::new(face.size)
         .line_height(face.line_height)
@@ -300,65 +310,74 @@ fn draw_panel(
     };
     // Laid out with a report, so `layout_of` has its height next frame:
     // what a panel alone is weighed by against the room over the row.
-    let card_key = ui.with_keyed(
+    ui.with_keyed(
         "completion docs",
         card()
             .bg(pal.panel)
             .border(1.0, pal.border)
             .pad_xy(cell, PAD + 2.0)
-            .gap(GAP)
             .width(width)
             .on_layout(kui_native::Value::map([("kind", "panel".into())])),
         |ui| {
-            if let Some(h) = &panel.head {
-                let style = base.color(pal.dim).wrap(TextWrap::Word);
-                let lit = panel
-                    .lit
-                    .clone()
-                    .filter(|r| h.is_char_boundary(r.start) && h.is_char_boundary(r.end));
-                let of = panel.of.map(|(i, n)| format!("{i}/{n}  "));
-                if lit.is_none() && of.is_none() {
-                    ui.text(h, style);
-                } else {
-                    let mut spans: Vec<Span<'_>> = Vec::new();
-                    if let Some(of) = &of {
-                        spans.push(Span::new(of).color(pal.faint));
+            // The head and the body scroll together, at most
+            // `PANEL_LINES` tall: a signature of a hundred parameters is
+            // no taller than its documentation may be.
+            let k = ui.with_keyed(
+                "completion docs body",
+                NodeSpec::column()
+                    .grow_width()
+                    .height(Sizing::Fit)
+                    .max_height(face.line_height * PANEL_LINES)
+                    .gap(GAP)
+                    .scroll_y()
+                    .scrollbar(kui_native::ScrollbarMode::Hidden)
+                    .clip(),
+                |ui| {
+                    if let Some(h) = &panel.head {
+                        head(ui, pal, panel, h, base.color(pal.dim).wrap(TextWrap::Word));
                     }
-                    match &lit {
-                        Some(r) => {
-                            spans.push(Span::new(&h[..r.start]));
-                            spans.push(Span::new(&h[r.clone()]).color(pal.accent).bold());
-                            spans.push(Span::new(&h[r.end..]));
-                        }
-                        None => spans.push(Span::new(h)),
+                    if !panel.body.is_empty() {
+                        ui.text(&panel.body, body);
                     }
-                    spans.retain(|s| !s.text.is_empty());
-                    ui.rich_text(&spans, style);
-                }
+                },
+            );
+            if let Some(g) = ui.scroll_geometry(k) {
+                panel
+                    .room
+                    .set((g.max_offset.y / face.line_height).ceil() as usize);
             }
-            if !panel.body.is_empty() {
-                let k = ui.with_keyed(
-                    "completion docs body",
-                    NodeSpec::column()
-                        .grow_width()
-                        .height(Sizing::Fit)
-                        .max_height(face.line_height * PANEL_LINES)
-                        .scroll_y()
-                        .scrollbar(kui_native::ScrollbarMode::Hidden)
-                        .clip(),
-                    |ui| ui.text(&panel.body, body),
-                );
-                if let Some(g) = ui.scroll_geometry(k) {
-                    panel
-                        .room
-                        .set((g.max_offset.y / face.line_height).ceil() as usize);
-                }
-                ui.set_scroll(
-                    k,
-                    kui_native::Vec2::new(0.0, panel.scroll.get() as f32 * face.line_height),
-                );
-            }
+            ui.set_scroll(
+                k,
+                kui_native::Vec2::new(0.0, panel.scroll.get() as f32 * face.line_height),
+            );
         },
     );
-    ui.layout_of(card_key).map(|r| r.h)
+}
+
+/// The panel's head: which of how many overloads, faint, then the text
+/// with its lit bytes bold in the accent.
+fn head(ui: &mut Ui<'_>, pal: &Pal, panel: &Panel, h: &str, style: TextStyle) {
+    let lit = panel
+        .lit
+        .clone()
+        .filter(|r| r.end <= h.len() && h.is_char_boundary(r.start) && h.is_char_boundary(r.end));
+    let of = panel.of.map(|(i, n)| format!("{i}/{n}  "));
+    if lit.is_none() && of.is_none() {
+        ui.text(h, style);
+        return;
+    }
+    let mut spans: Vec<Span<'_>> = Vec::new();
+    if let Some(of) = &of {
+        spans.push(Span::new(of).color(pal.faint));
+    }
+    match &lit {
+        Some(r) => {
+            spans.push(Span::new(&h[..r.start]));
+            spans.push(Span::new(&h[r.clone()]).color(pal.accent).bold());
+            spans.push(Span::new(&h[r.end..]));
+        }
+        None => spans.push(Span::new(h)),
+    }
+    spans.retain(|s| !s.text.is_empty());
+    ui.rich_text(&spans, style);
 }

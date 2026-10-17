@@ -2812,6 +2812,7 @@ impl Kawoosh {
             body,
             scroll: Cell::new(0),
             room: Cell::new(0),
+            placed_h: Cell::new(None),
         }));
     }
 
