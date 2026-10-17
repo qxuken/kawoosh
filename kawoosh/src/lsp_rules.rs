@@ -222,11 +222,15 @@ impl Kawoosh {
             }
             def.private = private.clone();
             // The Lua API's types stay on the Lua server's library
-            // however often a config redefines it (`types.rs`).
+            // however often a config redefines it (`types.rs`) — and a
+            // file of them, opened by a go-to-definition, is the
+            // running server's, not a workspace of its own
+            // (lsp-rules.md Decision 11).
             if name == "lua"
                 && let Some(dir) = &self.lua_types
             {
                 crate::types::with_library(&mut def.settings, dir);
+                def.libraries.push(dir.clone());
             }
             out.push(def);
         }

@@ -287,7 +287,9 @@ the project's `.kawoosh/settings.lua`, where `lsp = { NAME = {
 enabled = false } }` keeps it off in a project that is no place for it.
 
 A server runs per project: two Rust projects open are two
-rust-analyzers, each with its own log.
+rust-analyzers, each with its own log. A file of a server's library —
+the Lua API's types, reached by `gd` from your config — is opened under
+the server already running, not a new one of its own.
 
 ### Several servers for a language
 

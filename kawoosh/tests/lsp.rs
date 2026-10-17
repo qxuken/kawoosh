@@ -3701,3 +3701,35 @@ fn two_instances_of_one_server_keep_their_own_logs() {
     );
     std::fs::remove_dir_all(&base).ok();
 }
+
+/// A file under a server's library — the Lua API's types, opened by a
+/// go-to-definition from a config — goes to the instance running, not
+/// to one started in its folder (lsp-rules.md Decision 11).
+#[test]
+fn a_library_file_goes_to_the_running_instance() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-library-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let file = project(&base, "config");
+    let library = base.join("types");
+    std::fs::create_dir_all(&library).unwrap();
+    let types = library.join("api.rs");
+    std::fs::write(&types, "fn api() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    let mut def = fake_server();
+    def.libraries = vec![library.clone()];
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)),
+        "the config's server holds its file"
+    );
+    app.open_in_editor(&types, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 2)),
+        "the library file joined it: {:?}",
+        app.lsp.status
+    );
+    assert_eq!(app.lsp.status.len(), 1, "no server of its own");
+    std::fs::remove_dir_all(&base).ok();
+}

@@ -94,6 +94,12 @@ pub struct ServerDef {
     /// unless `lsp.languages` says otherwise: Vue's has TypeScript's
     /// (lsp-servers.md Decision 9).
     pub with: Vec<String>,
+    /// Folders it reads as a library of its workspace rather than as a
+    /// workspace of their own: a file under one goes to an instance
+    /// already running, the one last sent a buffer, in place of one
+    /// started in the folder — the Lua API's types, which a
+    /// go-to-definition from a config opens (lsp-rules.md Decision 11).
+    pub libraries: Vec<PathBuf>,
 }
 
 /// What a server's notification `method` asks of another — the server
@@ -143,6 +149,7 @@ impl Default for ServerDef {
             init: Value::Null,
             relay: Vec::new(),
             with: Vec::new(),
+            libraries: Vec::new(),
         }
     }
 }
@@ -1879,6 +1886,9 @@ struct Server {
     results: HashMap<String, String>,
     pulling: bool,
     pull_again: bool,
+    /// When it was last sent a buffer: of two instances a library file
+    /// could go to, the one in use.
+    used: std::time::Instant,
 }
 
 impl Server {
@@ -2044,6 +2054,7 @@ impl Server {
             results: HashMap::new(),
             pulling: false,
             pull_again: false,
+            used: std::time::Instant::now(),
         })
     }
 
@@ -2825,6 +2836,9 @@ impl Pool {
     }
 
     fn server_of(&mut self, def: &ServerDef, path: &Path) -> Option<usize> {
+        if let Some(key) = self.library_server(def, path) {
+            return Some(key);
+        }
         let mut def = def.clone();
         let root = self.root_of(&def, path);
         let k = (root.clone(), def.command.clone(), def.args.clone());
@@ -2927,6 +2941,22 @@ impl Pool {
         self.keys.insert(k, key);
         self.status();
         Some(key)
+    }
+
+    /// The instance a file of one of `def`'s libraries goes to: of the
+    /// ones running as `def` does, the one last sent a buffer. None for
+    /// a file under no library, or with none running — then it is a
+    /// workspace's as any file is.
+    fn library_server(&self, def: &ServerDef, path: &Path) -> Option<usize> {
+        if !def.libraries.iter().any(|l| path.starts_with(l)) {
+            return None;
+        }
+        self.keys
+            .iter()
+            .filter(|((_, c, a), _)| *c == def.command && *a == def.args)
+            .filter_map(|(_, &key)| Some((self.servers.get(key)?.as_ref()?.used, key)))
+            .max()
+            .map(|(_, key)| key)
     }
 
     fn handle_cmd(&mut self, cmd: Cmd) {
@@ -3088,8 +3118,12 @@ impl Pool {
                     text: &whole,
                     span: span.as_ref(),
                 };
+                let now = std::time::Instant::now();
                 for key in keys {
                     self.sync_to(key, &sync);
+                    if let Some(server) = self.servers[key].as_mut() {
+                        server.used = now;
+                    }
                 }
                 self.texts.insert(buffer, (v, whole));
             }

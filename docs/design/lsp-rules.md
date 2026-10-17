@@ -465,6 +465,34 @@ command, and every instance of one server shared one stream.
   when there are two or more; `:lsp logs all` every one's, by server and
   root. `:lsp logs clear` forgets them all.
 
+### 11. A library's file is the running server's
+
+*Added 2026-10-17*, from the `:lsp` pane: a lua-language-server rooted
+at this build's types folder, holding 0 documents. The Lua server's
+settings put that folder on `Lua.workspace.library` (`types.rs`); a
+go-to-definition from a config into `kawoosh.lua` opened the file, and
+the file's workspace root — no marker above
+`~/.local/share/kawoosh/types/kawoosh-HASH`, no repository — was its
+own folder: a second lua-language-server, with nothing of the
+config's, started there.
+
+- **A definition says its libraries** (`ServerDef::libraries`): folders
+  it reads as part of a workspace, not as one. The shell puts the types
+  folder there for `lsp.lua`, beside the library setting.
+- **A file under one goes to an instance running as the definition
+  does** — of several, the one last sent a buffer (`Pool::library_server`)
+  — so the types opened from the config are the config's server's, and
+  that server, which has read them, answers in them. With none running
+  the file is a workspace's as any file is.
+
+Beaten: the folder made a workspace root of its own with a marker
+(still a second server); a rule that a file a server's answer pointed
+to is that server's (a session restoring the file, or `:e` on it,
+would not know); rust's registry and toolchain sources the same way —
+a file there is found under its crate's `Cargo.toml`, and whether
+rust-analyzer should be one per crate there is its own question, not
+looked at here.
+
 ## Not built
 
 - ~~**A loaded file changed on disk by another program** is not read
