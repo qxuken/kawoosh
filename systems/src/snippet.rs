@@ -627,6 +627,9 @@ pub struct Field {
     /// The places a transform of it fills, rewritten from its text when
     /// it is left.
     pub mirrors: Vec<(Range<usize>, Transform)>,
+    /// The field whose placeholder it is laid out in (`${1:a ${2:b}}`:
+    /// 2's is 1), which grows as it is typed in.
+    pub parent: Option<u32>,
 }
 
 /// A body laid out: its text, and its fields in the order they are
@@ -669,6 +672,7 @@ pub fn expand(
         fields: HashMap::new(),
         unknown: Vec::new(),
         primary: HashSet::new(),
+        within: Vec::new(),
         budget: BUDGET,
     };
     x.main(nodes);
@@ -690,14 +694,16 @@ pub fn expand(
             ranges: vec![r],
             choices: None,
             mirrors: Vec::new(),
+            parent: None,
         });
     }
     let end = x.out.len();
     fields.push(zero.unwrap_or(Field {
         index: 0,
-        ranges: vec![end..end],
+        ranges: std::iter::once(end..end).collect(),
         choices: None,
         mirrors: Vec::new(),
+        parent: None,
     }));
     // `$0` only mirrored by a transform has no place of its own: the end.
     if let Some(z) = fields.last_mut()
@@ -755,6 +761,8 @@ struct Expander<'a, 'v> {
     /// The fields whose placeholder (or choice) has been laid out: a
     /// later one of the same number is a mirror.
     primary: HashSet<u32>,
+    /// The placeholders being laid out, innermost last.
+    within: Vec<u32>,
     budget: usize,
 }
 
@@ -792,11 +800,13 @@ impl Expander<'_, '_> {
     }
 
     fn field(&mut self, index: u32) -> &mut Field {
+        let parent = self.within.last().copied().filter(|p| *p != index);
         self.fields.entry(index).or_insert_with(|| Field {
             index,
             ranges: Vec::new(),
             choices: None,
             mirrors: Vec::new(),
+            parent,
         })
     }
 
@@ -812,7 +822,11 @@ impl Expander<'_, '_> {
                 Node::Text(t) => self.emit(t),
                 Node::Placeholder { index, children } if self.primary.insert(*index) => {
                     let start = self.out.len();
+                    // Made before its children, so it is theirs.
+                    self.field(*index);
+                    self.within.push(*index);
                     self.main(children);
+                    self.within.pop();
                     let r = start..self.out.len();
                     self.field(*index).ranges.push(r);
                 }
@@ -929,6 +943,8 @@ impl Expander<'_, '_> {
 }
 
 #[cfg(test)]
+// A field of one place is what these mean.
+#[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
 
@@ -981,6 +997,8 @@ mod tests {
                 (0, vec![""])
             ]
         );
+        let parents: Vec<Option<u32>> = e.fields.iter().map(|f| f.parent).collect();
+        assert_eq!(parents, [None, Some(1), Some(2), None]);
     }
 
     #[test]
