@@ -666,7 +666,7 @@ pub(crate) fn stamp(t: SystemTime) -> String {
 
 /// Seconds east of UTC at `secs`, from the C library's local time.
 #[cfg(unix)]
-fn utc_offset(secs: i64) -> i64 {
+pub(crate) fn utc_offset(secs: i64) -> i64 {
     let t: libc::time_t = secs as libc::time_t;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     // SAFETY: `localtime_r` writes the `tm` it is given and reads a
@@ -676,7 +676,7 @@ fn utc_offset(secs: i64) -> i64 {
 }
 
 #[cfg(not(unix))]
-fn utc_offset(_secs: i64) -> i64 {
+pub(crate) fn utc_offset(_secs: i64) -> i64 {
     0
 }
 

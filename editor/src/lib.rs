@@ -94,6 +94,11 @@ pub struct View {
     /// typing in insert mode, and two panes on one buffer can differ.
     pub mode: Mode,
     pub visual_linewise: bool,
+    /// The selections a snippet's field made (completion.md Decision
+    /// 7): while they are the view's exactly, insert mode's typing goes
+    /// over them. Any other selection in insert mode — one an undo put
+    /// back, a drag's — is typed at its caret, as ever.
+    pub fill: Option<Selections>,
 }
 
 impl View {
@@ -109,6 +114,7 @@ impl View {
             goal_col: None,
             mode: Mode::Normal,
             visual_linewise: false,
+            fill: None,
         }
     }
 }
@@ -1016,6 +1022,11 @@ pub struct Editor {
     /// Whether a command made an undo node since the step began
     /// (`settle_checkpoint`): what makes the steps so far a change.
     edited: bool,
+    /// Counts every move through an undo history — an undo, a redo, a
+    /// seek, a multibuffer's — so what follows a buffer's edits (a live
+    /// snippet, completion.md Decision 7) knows its text was put back,
+    /// not typed.
+    pub history_moves: u64,
     /// What is said to be wrong where ([`diagnostics`]): each buffer's
     /// list its layer's runs index, and the files no buffer holds.
     pub diagnostics: diagnostics::Diagnostics,
@@ -1190,6 +1201,7 @@ impl Editor {
             locals: HashMap::new(),
             repeat: Default::default(),
             edited: false,
+            history_moves: 0,
             diagnostics: Default::default(),
             bases: HashMap::new(),
             blames: HashMap::new(),
@@ -1250,6 +1262,11 @@ impl Editor {
             v.mode = mode;
             if mode != Mode::Visual {
                 v.visual_linewise = false;
+            }
+            // A field's selections are typed over only in the insert
+            // mode they were made in.
+            if mode != Mode::Insert {
+                v.fill = None;
             }
         }
     }
@@ -3119,6 +3136,7 @@ impl Editor {
             h.nodes[*w.1].child = Some(*w.0);
         }
         h.current = target;
+        self.history_moves += 1;
         let root = h.nodes[target].root.clone();
         let sels = h.nodes[target].sels.clone();
         let buf = &mut self.buffers[id];
@@ -3131,6 +3149,8 @@ impl Editor {
         for v in self.views.values_mut().filter(|v| v.buffer == id) {
             v.sels
                 .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
+            // What an undo puts back is no field to type over.
+            v.fill = None;
         }
         true
     }
@@ -4122,10 +4142,41 @@ impl Editor {
         self.sync_multis();
     }
 
+    /// Insert mode's typing over a snippet's field (completion.md
+    /// Decision 7): while the view's selections are the ones the field
+    /// made ([`View::fill`]), each with text in it is erased, its caret
+    /// where the text was, as a key that types, a line break, a paste
+    /// or a delete does before (or in place of) what it does. Only
+    /// those: a selection an undo put back, or a drag's, is no field.
+    /// False when nothing was erased.
+    pub fn erase_selected(&mut self, view: ViewId) -> bool {
+        let Some(v) = self.views.get_mut(view) else {
+            return false;
+        };
+        let fill = v.fill.take();
+        if v.mode != Mode::Insert
+            || fill.as_ref() != Some(&v.sels)
+            || v.sels.iter().all(Selection::is_empty)
+        {
+            return false;
+        }
+        let v = &self.views[view];
+        let edits = v
+            .sels
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.is_empty())
+            .map(|(i, s)| (i, s.range(), String::new()))
+            .collect();
+        self.edit_each(view, edits, |start, _| Selection::point(start));
+        true
+    }
+
     pub fn insert_text(&mut self, view: ViewId, text: &str) {
         if text.is_empty() {
             return;
         }
+        self.erase_selected(view);
         let mut text = text.to_string();
         if self.is_field(view) {
             text = text.replace('\n', " ");

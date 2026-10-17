@@ -812,6 +812,10 @@ pub struct Mark {
     /// An icon kawoosh folded over the source (a task's box): set in
     /// `font.icons`, never the row's face (completion.md Decision 9).
     pub icon: bool,
+    /// The underline's colour where it is not the text's: a live
+    /// snippet's fields not reached yet, faint (completion.md
+    /// Decision 7).
+    pub underline_color: Option<Color>,
 }
 
 impl Mark {
@@ -827,6 +831,7 @@ impl Mark {
             bg: other.bg.or(self.bg),
             mono: self.mono || other.mono,
             icon: self.icon || other.icon,
+            underline_color: other.underline_color.or(self.underline_color),
         }
     }
 }
@@ -1583,6 +1588,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                             .underline_style(kui_native::UnderlineStyle::Wavy);
                     } else if l.mark.underline {
                         s = s.underline();
+                        if let Some(c) = l.mark.underline_color {
+                            s = s.underline_color(c);
+                        }
                     }
                     if l.mark.bold {
                         s = s.bold();

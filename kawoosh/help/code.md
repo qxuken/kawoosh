@@ -506,10 +506,51 @@ return {
 }
 ```
 
-`:setlocal completion.trigger=off` turns it off in one pane. `snippets`
-does nothing yet. The kinds' icons — in the list, the `<C-x>` picker
-and the symbol pickers — are Nerd Fonts' codicons, drawn in
-`font.icons` ([look](look.md#icons-and-keys)).
+`:setlocal completion.trigger=off` turns it off in one pane. The
+`snippets` source (your own snippets) does nothing yet. The kinds'
+icons — in the list, the `<C-x>` picker and the symbol pickers — are
+Nerd Fonts' codicons, drawn in `font.icons` ([look](look.md#icons-and-keys)).
+
+#### Snippets
+
+A language server's snippet — a `for` loop, a function with its
+parameters — is a candidate like any other, matched by its name. Taken,
+it puts its text with its fields in it, and the first field is
+selected: type, and what you type replaces it. A field that appears
+twice is a caret in each place, so both change as you type. Only a
+field's selection is typed over: any other selection in insert mode
+(one an undo put back) is typed at its caret. A choice
+field (`pub`, `pub(crate)`, `priv`) opens the list of its options at
+once: `<C-n>` `<C-p>` walk them, `<Tab>` takes one. The fields you have
+not reached yet are faintly underlined.
+
+| keys (insert mode, while a snippet is live) | what |
+|---|---|
+| `<C-l>` | the next field; from the last, the caret where the snippet ends and the snippet done |
+| `<C-k>` | the field before |
+
+`<Tab>` is never a snippet's: it takes a candidate, or is a tab. There
+is one snippet at a time, and it is gone when it ends: at its last
+field, when you leave insert mode, when the caret leaves its text by
+anything but `<C-l>` `<C-k>` (typing on after its last character
+included, unless the field you are filling ends there), when something
+is edited outside it, when
+its pane shows another buffer or another pane takes the keys, on an
+undo or a redo, and when another snippet is taken. With none live,
+`<C-l>` and `<C-k>` do nothing; nothing brings you back into a snippet
+you left. They are the commands `snippet next` and `snippet prev`,
+bound in the place `snippet`:
+
+```lua
+kawoosh.map("i", "<C-j>", "snippet next", { scope = "snippet" })
+```
+
+A snippet's lines are indented as the line it goes into, and its tabs
+are your indentation. Its variables are VS Code's — `$TM_FILENAME`,
+`$TM_SELECTED_TEXT`, `$CLIPBOARD`, `$CURRENT_YEAR`, `$UUID` and the rest;
+one that would put text a mask hides (the clipboard holding a secret,
+a line with a key on it) puts nothing ([secrets](memory.md#secrets)). A
+snippet that is not written right is put as the text it is.
 
 ## Formatting
 
