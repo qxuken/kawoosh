@@ -1777,12 +1777,15 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                         .sum::<f32>();
                 (x, 0.0)
             };
+            // Laid out with a report, so `layout_of` has its place
+            // next frame: where the popup's room and flip are read.
             mark.set(Some(
                 ui.leaf_keyed(
                     "hang",
                     NodeSpec::row()
                         .size(0.0, lh)
                         .role(Role::None)
+                        .on_layout(kui_native::Value::map([("kind", "hang".into())]))
                         .float(FloatConfig::parent().offset(x, y)),
                 ),
             ));

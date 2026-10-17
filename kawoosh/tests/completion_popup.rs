@@ -689,3 +689,61 @@ fn a_rows_label_and_detail_are_masked() {
     assert!(!rows.contains("MIIEv"), "{rows}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The popup stays inside its pane: by a caret near the pane's right
+/// edge it moves left of the word rather than run over the next pane,
+/// and under soft-wrapped lines its flip reads where the caret's row
+/// really is, not where its line would be unwrapped.
+#[test]
+fn the_popup_stays_inside_its_pane() {
+    let dir = tmp("inside");
+    let long = "x".repeat(96);
+    std::fs::write(
+        dir.join("main.rs"),
+        format!("helper_function_with_a_long_name helium\n{long}\n"),
+    )
+    .unwrap();
+    let (mut d, mut app) = open(&dir.join("main.rs"), 500.0);
+    ex(&mut d, &mut app, "setlocal completion.popup=always");
+    d.press(&mut app, "jA");
+    d.keys(&mut app, " hel");
+    for _ in 0..3 {
+        d.settle(&mut app);
+    }
+    let pane = app.layout.rects[&app.layout.focused()];
+    let popup = d.rect_labelled("completion popup").expect("drawn");
+    assert!(
+        popup.x + popup.w <= pane.x + pane.w + 0.5,
+        "inside on the right: popup {popup:?}, pane {pane:?}"
+    );
+    assert!(popup.x >= pane.x - 0.5, "inside on the left: {popup:?} {pane:?}");
+    std::fs::remove_dir_all(&dir).ok();
+
+    // Wrapped lines above the caret near the pane's foot.
+    let dir = tmp("inside-wrapped");
+    let para = "word ".repeat(80);
+    let mut text = String::from("helper_function helium\n");
+    for _ in 0..6 {
+        text.push_str(&para);
+        text.push('\n');
+    }
+    std::fs::write(dir.join("notes.txt"), text).unwrap();
+    let (mut d, mut app) = open(&dir.join("notes.txt"), 420.0);
+    ex(&mut d, &mut app, "setlocal editor.wrap=word");
+    ex(&mut d, &mut app, "setlocal completion.popup=always");
+    ex(&mut d, &mut app, "setlocal completion.trigger=typing");
+    d.press(&mut app, "Go");
+    d.keys(&mut app, "hel");
+    for _ in 0..3 {
+        d.settle(&mut app);
+    }
+    let pane = app.layout.rects[&app.layout.focused()];
+    let popup = d.rect_labelled("completion popup").expect("drawn");
+    let row = d.rect_labelled("hang").expect("the caret's row");
+    assert!(
+        popup.y + popup.h <= pane.y + pane.h + 0.5,
+        "inside at the foot: popup {popup:?}, pane {pane:?}, row {row:?}"
+    );
+    assert!(popup.y + popup.h <= row.y + 0.5, "flipped over the row");
+    std::fs::remove_dir_all(&dir).ok();
+}

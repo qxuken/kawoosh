@@ -3068,7 +3068,7 @@ impl Kawoosh {
             let title_h = self.chrome.pane_title_h;
             let rows = popup_of.as_ref().map_or(0, |p| p.rows.len());
             let need = crate::completion_view::popup_height(rows, lh);
-            let (above, room) = match self.layout.rects.get(&pane).copied() {
+            let (above, room, left) = match self.layout.rects.get(&pane).copied() {
                 Some(p) => {
                     let (x, y) = ui.layout_of(mark).map_or(
                         (
@@ -3079,9 +3079,13 @@ impl Kawoosh {
                     );
                     let below = p.y + p.h - (y + lh);
                     let over = y - (p.y + title_h);
-                    (below < need && over > below, (p.x + p.w - x - 4.0).max(0.0))
+                    (
+                        below < need && over > below,
+                        (p.x + p.w - x - 4.0).max(0.0),
+                        (x - p.x - 2.0).max(0.0),
+                    )
                 }
-                None => (false, width),
+                None => (false, width, 0.0),
             };
             let icons = self.icons.borrow();
             crate::completion_view::draw(
@@ -3096,6 +3100,7 @@ impl Kawoosh {
                     lh,
                     above,
                     room,
+                    left,
                 },
             );
             popup_drawn = popup_of.is_some();

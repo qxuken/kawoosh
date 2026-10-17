@@ -43,13 +43,15 @@ pub struct Panel {
 
 /// Where the popup hangs: the mark the caret's row left at the word's
 /// start (a line tall), the row's height, over the row or under it, and
-/// the room it has across.
+/// the pane's room across from the mark — to its right edge and back to
+/// its left — which the popup and its panel are kept inside.
 #[derive(Clone, Copy, Debug)]
 pub struct Place {
     pub anchor: kui_native::Key,
     pub lh: f32,
     pub above: bool,
     pub room: f32,
+    pub left: f32,
 }
 
 /// The popup's height for `rows` rows of `lh`: what the flip weighs
@@ -78,13 +80,38 @@ pub fn draw(
         anchor: kui_native::FloatAnchor::Node(place.anchor),
         ..FloatConfig::parent()
     };
+    let cell = icons.cell_at(face.size);
+    let popup_w = popup.map(|p| popup_width(ui, pal, face, p, cell, place));
     // The labels start under the word's: the popup's border, pad and
-    // icon column to the left of it.
-    let lead = if popup.is_some() {
-        -(PAD + 1.0 + icons.cell_at(face.size) * 2.5)
-    } else {
-        0.0
+    // icon column to the left of it — and further left where the pane's
+    // right edge is nearer than its width, never past its left.
+    let mut lead = match popup_w {
+        Some(w) => {
+            let lead = -(PAD + 1.0 + cell * 2.5);
+            lead.min(place.room - w).max(-place.left)
+        }
+        None => 0.0,
     };
+    // The panel beside the popup where the room to its right holds it,
+    // else on its left where that does, else beside it as wide as the
+    // room leaves.
+    let panel_want = (cell * PANEL_COLS).min((place.room + place.left).max(cell * 24.0));
+    let right_room = place.room - (lead + popup_w.map_or(0.0, |w| w + GAP));
+    let panel_left = popup_w.is_some()
+        && panel.is_some()
+        && right_room < panel_want
+        && place.left + lead >= panel_want + GAP;
+    let panel_w = if panel_left {
+        panel_want
+    } else {
+        panel_want.min(right_room.max(cell * 24.0))
+    };
+    if panel_left {
+        lead -= panel_w + GAP;
+    } else if popup_w.is_none() {
+        // The panel alone, within the pane.
+        lead = lead.min(place.room - panel_w).max(-place.left);
+    }
     let float = if above {
         on.at(Align::Start, Align::Start)
             .self_at(Align::Start, Align::End)
@@ -92,7 +119,6 @@ pub fn draw(
     } else {
         on.at(Align::Start, Align::End).offset(lead, 0.0)
     };
-    let cell = icons.cell_at(face.size);
     ui.with_keyed(
         "completion",
         NodeSpec::row()
@@ -100,30 +126,24 @@ pub fn draw(
             .cross_align(if above { Align::End } else { Align::Start })
             .float(float),
         |ui| {
-            if let Some(p) = popup {
-                rows(ui, pal, face, icons, p, cell, place);
+            if panel_left && let Some(panel) = panel {
+                draw_panel(ui, pal, face, panel, cell, panel_w);
             }
-            if let Some(panel) = panel {
-                draw_panel(ui, pal, face, panel, cell, place);
+            if let (Some(p), Some(w)) = (popup, popup_w) {
+                rows(ui, pal, face, icons, p, cell, w, place);
+            }
+            if !panel_left && let Some(panel) = panel {
+                draw_panel(ui, pal, face, panel, cell, panel_w);
             }
         },
     );
 }
 
-fn card() -> NodeSpec {
-    NodeSpec::column()
-        .pad(PAD)
-        .radius(RADIUS)
-        .shadow_blur(8.0)
-        .shadow_offset(0.0, 2.0)
-}
-
-fn rows(ui: &mut Ui<'_>, pal: &Pal, face: Face, icons: &Icons, p: &Popup, cell: f32, place: Place) {
+/// The popup's width: its widest row's — measured once a build, kept on
+/// it — its detail cut at half the room, the whole within the pane.
+fn popup_width(ui: &mut Ui<'_>, pal: &Pal, face: Face, p: &Popup, cell: f32, place: Place) -> f32 {
     let base = crate::rows::mono(face, pal);
-    let detail = base.color(pal.faint).ellipsis();
-    // Its width the widest row's — measured once a build, kept on it —
-    // its detail cut at half the room, the whole within the room.
-    let detail_max = (place.room * 0.5).max(cell * 8.0);
+    let detail_max = detail_max(cell, place);
     let width = match p.width.get() {
         Some(w) => w,
         None => {
@@ -146,7 +166,35 @@ fn rows(ui: &mut Ui<'_>, pal: &Pal, face: Face, icons: &Icons, p: &Popup, cell: 
             w
         }
     };
-    let width = width.min(place.room.max(cell * 16.0));
+    width.min((place.room + place.left).max(cell * 16.0))
+}
+
+fn detail_max(cell: f32, place: Place) -> f32 {
+    ((place.room + place.left) * 0.5).max(cell * 8.0)
+}
+
+fn card() -> NodeSpec {
+    NodeSpec::column()
+        .pad(PAD)
+        .radius(RADIUS)
+        .shadow_blur(8.0)
+        .shadow_offset(0.0, 2.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rows(
+    ui: &mut Ui<'_>,
+    pal: &Pal,
+    face: Face,
+    icons: &Icons,
+    p: &Popup,
+    cell: f32,
+    width: f32,
+    place: Place,
+) {
+    let base = crate::rows::mono(face, pal);
+    let detail = base.color(pal.faint).ellipsis();
+    let detail_max = detail_max(cell, place);
     ui.with_keyed(
         "completion popup",
         card().bg(pal.panel).border(1.0, pal.border).width(width),
@@ -205,9 +253,8 @@ fn label(ui: &mut Ui<'_>, text: &str, lit: &[usize], base: TextStyle, accent: Co
     ui.rich_text(&spans, base);
 }
 
-fn draw_panel(ui: &mut Ui<'_>, pal: &Pal, face: Face, panel: &Panel, cell: f32, place: Place) {
+fn draw_panel(ui: &mut Ui<'_>, pal: &Pal, face: Face, panel: &Panel, cell: f32, width: f32) {
     let base = crate::rows::mono(face, pal);
-    let width = (cell * PANEL_COLS).min(place.room.max(cell * 24.0));
     let body = TextStyle::new(face.size)
         .line_height(face.line_height)
         .color(pal.fg)
