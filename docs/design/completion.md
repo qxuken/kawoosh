@@ -1,10 +1,11 @@
 # Completion: when it asks, how it shows, what it offers
 
-Status: designed 2026-10-16/17 with the user, over six rounds of
+Status: built. Designed 2026-10-16/17 with the user, over six rounds of
 questions, from the todo's "add autocompletion settings (including
-disabling)". Rounds 1–4 of the build (the model and the settings; the
-popup; LSP snippets; the user's snippets) built 2026-10-17: "Built" at
-the end says how, and where each departs. The decisions below are the rounds' answers,
+disabling)". The five rounds of the build (the model and the settings;
+the popup; LSP snippets; the user's snippets; signature help and
+`callable`) built 2026-10-17: "Built" at the end says how, and where
+each departs. The decisions below are the rounds' answers,
 each with the alternative it beat. The build is five rounds (the last
 section), one session each. Words are as [GLOSSARY.md](../../GLOSSARY.md)
 has them.
@@ -859,3 +860,124 @@ snippet came from); the loader's files watched for a `load_json` call;
 the VS Code id table grown as friendly-snippets' languages meet
 kawoosh's.
 
+### Round 5, 2026-10-17: signature help and `callable`
+
+`kawoosh/src/signature.rs` (the signature live, its asks, the one
+panel's choice, `callable = "args"`'s fill), `textDocument/signatureHelp`
+in `systems/src/lsp.rs` (`Cmd::SignatureHelp`, `Event::SignatureHelp`,
+`signature_help`, the server's `signatureHelpProvider`),
+`completion_view::Panel`'s lit head and overload count, completion.rs's
+`callable = "name"` and the accept's brackets. Tests:
+`kawoosh/tests/signature.rs`, the reading's in `systems/src/lsp.rs`,
+`fake_lsp.py --signature`.
+
+As designed: Decision 10's rest — `completion.signature` `manual`
+(`<C-g>`, the keymap command `signature`, again to put it away), `auto`
+(also on the server's trigger characters, `(` and `,` for one that
+names none) and `off`; the parameter the caret is in lit, following the
+arguments as `,` is typed; closed when the caret leaves the
+parentheses, on `<C-e>`, on `<C-g>` again; one panel, never two;
+`completion.callable` `name` and `args`. Both settings are pane
+settings, as every completion setting.
+
+Where the build departs, or says more than the decision did:
+
+- **The overloads' key: `<C-n>` / `<C-p>`, only while no completion is
+  on show.** They are `signature next` / `prev`, local to a fact of
+  their own, `signature`, holding while a signature is drawn and no
+  completion is (a ghost or the popup takes those keys). `<C-e>` is
+  `signature close` there too: with both on show it closes the
+  completion first, then the signature. The head says which of how many
+  (`1/3`, faint, before it); the one the user chose is kept over the
+  server's through the answers that follow, and is sent back
+  (`activeSignatureHelp`) so a server can keep it too.
+- **Asked again at every key inside the call** that moves the caret or
+  changes the text — not only on `,` — so the lit parameter follows
+  arrows and deletes over a comma as well, and an inner call's
+  signature replaces the outer's. One ask in flight: a key while one is
+  asks nothing; an answer for a place the caret left, or a version that
+  moved, is dropped as it lands (nothing changes under a key) and the
+  place the caret is at asked then. The context is LSP's: `Invoked` for
+  `<C-g>`, `TriggerCharacter` for one of the server's trigger or
+  retrigger characters typed, `ContentChange` otherwise, `isRetrigger`
+  once one is on show. A refusal (rust-analyzer's "content modified")
+  keeps what is on show; a server's `null` — no call there — ends it,
+  and says "no signature here" when `<C-g>` asked. A server that
+  declares no `signatureHelpProvider` is never asked; one that exits
+  answers its asks in flight as refused.
+- **The parentheses are kawoosh's to find**: the last unmatched `(`
+  within 64 KiB before the caret, every `(` and `)` counted — one in a
+  string or a comment too; no syntax tree is read for it. The calls the
+  caret goes into after it opened are kept, each carried through the
+  edits: leaving an inner call goes back to the outer one, asked again;
+  leaving the first ends it. Leaving insert mode or the pane, the view
+  showing another buffer, and the buffer going private end it too. A
+  private buffer is never asked.
+- **The panel's text.** Its head is the signature's label, the
+  parameter lit (bold, the accent) — a string label found after the one
+  before it, from after the label's first `(`, so `a` in `f(a: A, ab:
+  B)` is not `ab`'s; an offset pair read in UTF-16 units. Its body is
+  the parameter's documentation's first paragraph over the signature's,
+  their code blocks left out. Built once an answer or a choice, masked
+  then, not each frame.
+- **One panel, said exactly.** The candidate's documentation while the
+  popup is walked — from `completion next` / `prev` until the word is
+  typed in again — or once `completion docs` asked for it, where the
+  candidate has documentation; the signature otherwise; the
+  documentation as in round 2 with no signature on show. `<C-f>` /
+  `<C-b>` scroll whichever it holds.
+- **Where it hangs.** Beside the popup as round 2's panel; alone —
+  `popup = "never"`, a ghost alone, no completion — from the start of
+  the call's name where its `(` is on the caret's line, else the line's
+  indent, over the caret's line; under it where the room over the row
+  is less than the panel's height and less than the room below (the
+  pane's first lines). The height is the panel's as the last frame laid
+  it out (`on_layout`, read with `layout_of`), its lines counted the
+  first frame. Round 2's documentation panel alone goes under the same
+  way.
+- **Masked**: the label and the body drawn through the buffer's rules
+  (`mask_text`), the completion's masked words, and every word inside
+  any open buffer's masks now (`masks_of`, as a snippet's variables are
+  checked) — a signature needs no completion, whose indexes know only
+  the buffers they indexed. The lit range is kept where masking the
+  label's three pieces gives what masking the whole did; else nothing is
+  lit.
+- **`callable = "name"`** is applied to a server's function, method and
+  constructor candidates as they land: what their text has before its
+  first `(`, the snippet dropped — so the ghost, the ranking, the dedup
+  and the frecency read the name too, not only the accept. The other
+  sources put names already.
+- **`callable = "args"`: the server's snippet where it has brackets,
+  else built from the signature** (the call this round was left to
+  make). A candidate whose snippet or text has a `(` is put as round 3
+  puts a snippet. Otherwise its name and `()`, the carets inside — not
+  when a `(` already follows the caret — and the server asked for the
+  signature there, whatever `completion.signature` says (with `auto` it
+  opens, as for a `(` typed). The answer fills the brackets, at every
+  caret, with `${1:a}, ${2:b})$0` through round 3's `snippet_accept`,
+  only while the text and the carets are as they were left: any key
+  first and nothing is filled. A field's default is the parameter's
+  name where its label says one before a `:` or `=` (`a: i32`, `b?:
+  string`, `mut c: u8`), else the label as written (`int a`, `a int`):
+  which language puts the name where is not kawoosh's to know. Built
+  from the candidate's detail instead was the other way — the same
+  parsing, per language, of text that is only sometimes a signature.
+  No parameters: the carets after the brackets.
+- **Round 3's test** of a server's `textEdit` snippet (`zedit`, a
+  function's) sets `callable = "args"`: by default it is now put as its
+  name.
+
+Measured with `kawoosh/tests/signature.rs`'s
+`timing_a_keystroke_with_the_signature` (dev profile, a 20,000-line
+buffer, `x`, `y`, `,`, a space and `<BS>` typed inside `pair(`, the
+fake server answering between keys; median / p90, three runs): with
+no signature 0.78–0.87 / 1.14–1.15 ms, with one on show — each key
+asking again, its answer landing and the panel built, masked, in the
+frames between — 0.79–0.84 / 1.15–1.27 ms: a key costs what it did; the
+ask is a message to the server's thread, the panel built once an
+answer, not a key.
+
+*Left for later:* the parentheses read from the syntax tree, so a `(`
+in a string or a comment is not a call's; a candidate's `textEdit`
+range and `additionalTextEdits` (round 3's); a `:snippets` command
+(round 4's).

@@ -453,6 +453,7 @@ text it asks only when you press `<C-Space>`.
 | `<C-f>` / `<C-b>` | scroll the candidate's documentation |
 | `<C-Space>` | ask for completions now |
 | `<C-x>` | the candidates in a picker, with their kind, signature and documentation |
+| `<C-g>` | the signature of the call the caret is in ([below](#signatures)); again, put away |
 
 Beside the list `<C-n>` walks every row; from a ghost it walks onto a
 candidate the ghost cannot show and the list opens; with the list
@@ -499,6 +500,8 @@ return {
     fuzzy     = true,        -- false: candidates that begin with the word
     docs      = 200,         -- ms before the documentation; false: on `completion docs`
     max_items = 10,          -- the list's rows
+    signature = "manual",    -- manual (<C-g>) | auto (also on `(` and `,`) | off
+    callable  = "name",      -- name | args: a function's parameters as fields
   },
   language = {
     markdown = { completion = { trigger = "typing" } },
@@ -510,6 +513,44 @@ return {
 `snippets` source offers your own snippets ([below](#your-own-snippets)). The kinds'
 icons — in the list, the `<C-x>` picker and the symbol pickers — are
 Nerd Fonts' codicons, drawn in `font.icons` ([look](look.md#icons-and-keys)).
+
+#### Signatures
+
+Inside a call, `<C-g>` asks the language server for its signature and
+shows it in the one panel — beside the list while a completion is on
+show, else above the caret's line (under it at the pane's top): the
+parameter the caret is in lit, its documentation's first paragraph and
+the function's under it. It follows the caret: type `,` and the next
+parameter is lit; go into a call inside it and that call's signature
+shows, and leaving it brings the outer one back. It closes when the
+caret leaves the parentheses, on `<Esc>`, on `<C-e>`, or on `<C-g>`
+again. With `completion.signature = "auto"` it also opens as `(` or
+`,` is typed (whatever characters the server names); `"off"` never
+shows it.
+
+| keys (insert mode, while a signature is on show and no completion is) | what |
+|---|---|
+| `<C-n>` / `<C-p>` | the next, previous overload (`1/3` before it says which) |
+| `<C-e>` | put it away |
+| `<C-f>` / `<C-b>` | scroll its documentation |
+
+While a completion is on show these keys are the completion's: `<C-e>`
+closes the completion first, then the signature. The panel is one, never
+two: walking the list with `<C-n>` shows the selected candidate's
+documentation in it, and typing on brings the signature back. Its text
+is drawn through the masks, as everything is ([secrets](memory.md#secrets)).
+The commands are `signature`, `signature next`, `signature prev` and
+`signature close`, the last three in the place `signature`.
+
+Taking a function from the list puts its name alone
+(`completion.callable = "name"`), whatever brackets or fields the server
+sent. With `"args"` it puts its brackets and its parameters as snippet
+fields: the server's own snippet where it sends one, else the name and
+`()` with the caret inside, the parameters filled in as fields once the
+server says the signature — `a` for `a: i32`, the parameter as written
+where its label puts no `:` — unless you typed first. A function of no
+parameters leaves the caret after the brackets; a `(` already after the
+caret takes no more.
 
 #### Snippets
 

@@ -583,9 +583,7 @@ fn callable_name_against_args() {
         d.press(app, "<Esc>");
         d.press(app, "o");
         d.keys(app, typed);
-        until(d, app, want, |a| {
-            from_server(a, want)
-        });
+        until(d, app, want, |a| from_server(a, want));
         let mut n = 0;
         while app.completion.selected_text() != Some(want) {
             d.press(app, "<C-n>");
@@ -665,9 +663,7 @@ fn callable_name_against_args() {
     d.keys(&mut app, "(x)");
     d.press(&mut app, "<Home><Right><Right><Right><Right>");
     d.keys(&mut app, "pai");
-    until(&mut d, &mut app, "pair", |a| {
-        from_server(a, "pair")
-    });
+    until(&mut d, &mut app, "pair", |a| from_server(a, "pair"));
     while app.completion.selected_text() != Some("pair") {
         d.press(&mut app, "<C-n>");
     }
