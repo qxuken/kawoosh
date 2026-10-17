@@ -2302,7 +2302,7 @@ impl Kawoosh {
                     .detail
                     .as_deref()
                     .and_then(|d| d.lines().map(str::trim).find(|l| !l.is_empty()))
-                    .map(&mask);
+                    .map(mask);
                 let label = mask(&item.label);
                 // A label masked is no longer the text the match lit.
                 let lit = if label == item.label { lit } else { Vec::new() };
