@@ -338,8 +338,10 @@ pub struct Session {
     /// Counts every change to the ranking and the selection: what the
     /// popup's rows were built at.
     changes: u64,
-    /// The popup's first row on show, the selection kept in view.
+    /// The popup's first row on show, the selection kept in view, and
+    /// how many rows it shows (`completion.max_items` as last ranked).
     top: usize,
+    window: usize,
     /// The popup came up for this word in a `fallback` look: it stays
     /// while the word is typed on and walked, rather than giving way to
     /// a ghost under the user's keys.
@@ -424,6 +426,7 @@ impl Session {
     fn sort_top(&mut self, k: usize) {
         self.changes += 1;
         self.top = 0;
+        self.window = k.max(1);
         let k = k.min(self.ranking.len());
         if k == 0 {
             self.sorted = 0;
@@ -487,7 +490,7 @@ impl Session {
             None => self.reselect(all),
         }
         self.changes += 1;
-        self.keep_in_view(usize::MAX);
+        self.keep_in_view(self.window);
     }
 
     /// The next (or previous) candidate, round: every one beside the
@@ -513,16 +516,18 @@ impl Session {
         }
     }
 
-    /// The popup's window moved to hold the selection, `rows` tall.
+    /// The popup's window moved to hold the selection, `rows` tall:
+    /// up to it, or down to it.
     fn keep_in_view(&mut self, rows: usize) {
         let Some(sel) = self.selected else {
             self.top = 0;
             return;
         };
         let rows = rows.max(1);
+        self.window = rows;
         if sel < self.top {
             self.top = sel;
-        } else if rows != usize::MAX && sel >= self.top + rows {
+        } else if sel >= self.top + rows {
             self.top = sel + 1 - rows;
         }
     }
@@ -1427,6 +1432,7 @@ impl Kawoosh {
             asks: Asks::default(),
             changes: 0,
             top: 0,
+            window: 10,
             popup_up: Cell::new(false),
             rows: RefCell::new(None),
             docs: Docs::default(),
@@ -2915,10 +2921,10 @@ mod tests {
             asks: Asks::default(),
             changes: 0,
             top: 0,
+            window: 10,
             popup_up: Cell::new(false),
             rows: RefCell::new(None),
             docs: Docs::default(),
-            resolving: HashMap::new(),
             resolving: HashMap::new(),
         };
         let mut frecency = Frecency::default();

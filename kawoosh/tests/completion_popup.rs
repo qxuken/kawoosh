@@ -747,3 +747,39 @@ fn the_popup_stays_inside_its_pane() {
     assert!(popup.y + popup.h <= row.y + 0.5, "flipped over the row");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The window keeps the selection on show through a landing: after a
+/// dozen `<C-n>` an index landing re-ranks, and the selected row — the
+/// one `<Tab>` takes — is still among the rows drawn.
+#[test]
+fn the_window_keeps_the_selection_through_a_landing() {
+    let dir = tmp("window-landing");
+    let body: String = (0..30).map(|i| format!("helper_{i:02} ")).collect();
+    std::fs::write(dir.join("main.rs"), body + "\n").unwrap();
+    std::fs::write(dir.join("far.txt"), "help_far\n").unwrap();
+    let (mut d, mut app) = open(&dir.join("main.rs"), 600.0);
+    ex(&mut d, &mut app, &format!("e {}", dir.join("far.txt").display()));
+    ex(&mut d, &mut app, &format!("e {}", dir.join("main.rs").display()));
+    let far = app.ed.buffer_at(&dir.join("far.txt")).unwrap();
+    ex(&mut d, &mut app, "setlocal completion.max_items=5");
+    ex(&mut d, &mut app, "setlocal completion.popup=always");
+    d.press(&mut app, "Go");
+    d.keys(&mut app, "hel");
+    d.settle(&mut app);
+    for _ in 0..12 {
+        d.press(&mut app, "<C-n>");
+    }
+    let selected = app.completion.selected_text().unwrap().to_string();
+    // Another buffer's words land, as from their job.
+    let snapshot = app.ed.buffers[far].snapshot();
+    let index = kawoosh_systems::words::index(far, &snapshot, &[]);
+    app.completion_words_indexed(index, (0, 0));
+    d.settle(&mut app);
+    assert_eq!(app.completion.selected_text(), Some(selected.as_str()), "kept");
+    let rows = d.completion_rows();
+    assert!(
+        rows.iter().any(|r| r.ends_with(&selected)),
+        "{selected} on show: {rows:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
