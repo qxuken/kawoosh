@@ -328,15 +328,16 @@ mod tests {
         }
         assert!(meta.twice.is_empty(), "declared twice: {:?}", meta.twice);
         let n = meta.untyped.len();
-        assert!(
-            n <= UNTYPED,
-            "{n} untyped, more than UNTYPED = {UNTYPED}: type what is new —\n{}",
-            meta.untyped.join("\n")
-        );
-        assert!(
-            n == UNTYPED,
-            "{n} untyped, fewer than UNTYPED = {UNTYPED}: lower it to {n}"
-        );
+        match n.cmp(&UNTYPED) {
+            std::cmp::Ordering::Greater => panic!(
+                "{n} untyped, more than UNTYPED = {UNTYPED}: type what is new —\n{}",
+                meta.untyped.join("\n")
+            ),
+            std::cmp::Ordering::Less => {
+                panic!("{n} untyped, fewer than UNTYPED = {UNTYPED}: lower it to {n}")
+            }
+            std::cmp::Ordering::Equal => {}
+        }
     }
 
     /// A build's folder is the same every launch and another build's is

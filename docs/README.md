@@ -148,6 +148,10 @@ commits; 70 integration test files and 31 Lua test scripts.
   draw; the map of the API.
 - [lua-boundary.md](design/lua-boundary.md): where Lua ends and Rust
   begins, the bundled plugins reviewed.
+- [lua-types.md](design/lua-types.md): the API's types for
+  lua-language-server, said at the source — typed Rust signatures,
+  `---@param` in the Lua, classes beside their functions — and the
+  ratchet holding the untyped at zero.
 - [native.md](design/native.md): native extensions, a C ABI the kui
   way; rounds one to four built (Windows the fourth), and the
   extension pack (`scripts/pack.nu`).

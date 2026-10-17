@@ -158,9 +158,16 @@ afternoon.
   ([lua-boundary.md](design/lua-boundary.md) Decision 12).
 - **A listing's ids as payloads only**: `ids` still mirror the tracked
   lines in Lua. ([lua-boundary.md](design/lua-boundary.md), "Open")
-- **Types for LuaLS**: parameters are `any` unless the name says,
-  every one after the first optional, an undocumented Rust function
-  `(...)`. (roadmap.md, "Lua and plugins"; `lua/src/meta.rs`)
+- **What typing the API found** (2026-10-17, comments only were
+  changed): `buf.line_count` counts a trailing newline's empty line
+  and `buf.lines`/`buf.line` do not, and `buf.line(0)` answers line 1;
+  `buf.private` takes a handle only where its siblings take a name too;
+  `picker.spans` needs `theme` as a third argument and errors without
+  it; `search.lua` passes `kawoosh.search_replace` a callback its doc
+  does not have; `vcs.root(fs.parent(path))` can index `roots[nil]` at
+  the file system's root; `kawoosh.store(ns).set` keeps a table's Rust
+  `Debug` text; `kawoosh.icon`'s `color` takes an integer only, not a
+  `#rrggbb`. Each small. ([lua-types.md](design/lua-types.md), "Built")
 - **Native extensions, round five**: a `kawoosh-ext` crate for Rust
   authors, when the first asks. Rounds one (the loader, `kw_call`,
   `kw_fn`, `:extensions`), two (native panes, `kw_wake`), three (the

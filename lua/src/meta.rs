@@ -8,7 +8,7 @@
 //!   is defined on, its doc — `---@param` and `---@return` lines among
 //!   it — from the comment above;
 //! - one set in Rust: the typed signature that starts its doc comment,
-//!   `` `kawoosh.buf.close(buffer?: integer, opts?: kawoosh.CloseOpts)` ``,
+//!   `` `kawoosh.buf.close(buffer: integer, opts?: kawoosh.buf.CloseOpts)` ``,
 //!   its answers after the parentheses (`` `kawoosh.buf.name(buffer?:
 //!   integer): string?` ``), `@param` / `@return` lines in the doc over
 //!   it;
@@ -16,7 +16,7 @@
 //!   beside the function taking it, at the head of a plugin — lifted out
 //!   and declared once; a class named as a walked table (`kawoosh.picker`)
 //!   is that table's header, and the fields it declares are the walk's
-//!   no more (`sources`, typed `table<string, kawoosh.PickerSource>`).
+//!   no more (`sources`, typed `table<string, kawoosh.picker.Source>`).
 //!
 //! What nothing says is declared all the same — `any`, so a call is
 //! never flagged for it — and listed in [`Meta::untyped`], which a test
@@ -938,14 +938,15 @@ mod tests {
         }
         assert!(meta.twice.is_empty(), "declared twice: {:?}", meta.twice);
         let n = meta.untyped.len();
-        assert!(
-            n <= CORE_UNTYPED,
-            "{n} untyped, more than CORE_UNTYPED = {CORE_UNTYPED}: type what is new —\n{}",
-            meta.untyped.join("\n")
-        );
-        assert!(
-            n == CORE_UNTYPED,
-            "{n} untyped, fewer than CORE_UNTYPED = {CORE_UNTYPED}: lower it to {n}"
-        );
+        match n.cmp(&CORE_UNTYPED) {
+            std::cmp::Ordering::Greater => panic!(
+                "{n} untyped, more than CORE_UNTYPED = {CORE_UNTYPED}: type what is new —\n{}",
+                meta.untyped.join("\n")
+            ),
+            std::cmp::Ordering::Less => {
+                panic!("{n} untyped, fewer than CORE_UNTYPED = {CORE_UNTYPED}: lower it to {n}")
+            }
+            std::cmp::Ordering::Equal => {}
+        }
     }
 }
