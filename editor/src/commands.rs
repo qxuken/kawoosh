@@ -6242,6 +6242,13 @@ pub fn default_keymap(km: &mut Keymap) {
     ] {
         km.bind_local("completion", Insert, k, c, &[]);
     }
+    // A live snippet's fields (completion.md Decision 7), local to the
+    // `snippet` fact, which holds only while one is live: with none,
+    // `<C-l>` and `<C-k>` are nobody's in insert mode, and `<Tab>` is
+    // never a snippet's.
+    for (k, c) in [("<C-l>", "snippet next"), ("<C-k>", "snippet prev")] {
+        km.bind_local("snippet", Insert, k, c, &[]);
+    }
     // Its information panel's scroll, local to the panel on show (the
     // `completion_docs` fact): `<C-f>` and `<C-b>` are nothing else's
     // there.

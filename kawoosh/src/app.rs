@@ -86,6 +86,9 @@ pub struct Kawoosh {
     /// Completion's session, its sources' indexes and its frecency
     /// (docs/design/completion.md).
     pub completion: crate::completion::State,
+    /// The snippet live in the text, if one is (completion.md Decision
+    /// 7): one at a time, gone when it ends.
+    pub snippet: Option<crate::snippet::Live>,
     /// `lsp.ensure_installed`'s installs and the registries' checks.
     pub lsp_installs: crate::lsp_installs::Installs,
     pub scripting: Scripting,
@@ -453,6 +456,7 @@ impl Kawoosh {
             grammars: crate::grammars::Grammars::default(),
             lsp: LspState::new(wake.clone()),
             completion: crate::completion::State::new(wake.clone()),
+            snippet: None,
             lsp_installs: crate::lsp_installs::Installs::new(wake.named("lsp installs")),
             scripting: Scripting {
                 servers: crate::lsp_rules::builtin(),

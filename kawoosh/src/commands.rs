@@ -54,6 +54,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::notify::commands());
     v.extend(crate::lsp::commands());
     v.extend(crate::completion::commands());
+    v.extend(crate::snippet::commands());
     v.extend(crate::lsp_rules::commands());
     v.extend(crate::lsp_logs::commands());
     v.extend(crate::session::commands());
@@ -370,6 +371,8 @@ impl Kawoosh {
             // Decision 3).
             (crate::completion::FACT, self.completion_on_show()),
             (crate::completion::DOCS_FACT, self.completion_docs_on_show()),
+            // A snippet live: its keys' place (completion.md Decision 7).
+            (crate::snippet::FACT, self.snippet_on()),
         ];
         for (name, on) in facts {
             self.ed.fact(name, on);

@@ -192,6 +192,12 @@ pub struct Item {
     /// What its server filled in once asked: kept on the item, so a
     /// candidate walked back to is not asked again (Decision 6).
     pub filled: RefCell<Option<Filled>>,
+    /// A snippet's body, expanded where it is accepted (Decision 7);
+    /// `insert` is its plain text.
+    pub snippet: Option<Rc<str>>,
+    /// Its lines put as they are, not indented as the line they go into
+    /// (LSP's `insertTextMode` `asIs`).
+    pub as_is: bool,
 }
 
 /// A candidate's detail and documentation as `completionItem/resolve`
@@ -210,6 +216,7 @@ impl Item {
 
     fn of_lsp(it: CompletionItem) -> Item {
         let insert = (it.insert != it.label).then_some(it.insert);
+        let snippet = it.snippet.map(Rc::from);
         Item {
             label: it.label,
             insert,
@@ -219,6 +226,8 @@ impl Item {
             lines: Box::new([]),
             resolve: it.resolve,
             filled: RefCell::new(None),
+            snippet,
+            as_is: it.as_is,
         }
     }
 }
@@ -248,6 +257,10 @@ enum WordKind {
     /// A path's last segment: anything but a separator or what ends a
     /// path in text.
     Path,
+    /// A snippet's choice field (Decision 7): its text, whatever is in
+    /// it on its line. `fresh` until it is typed in: every option
+    /// offered, in its order, before any narrows them.
+    Choice { fresh: bool },
 }
 
 impl WordKind {
@@ -255,6 +268,7 @@ impl WordKind {
         match self {
             WordKind::Ident => words::is_word_char(c),
             WordKind::Path => !ends_path(c) && c != '/',
+            WordKind::Choice { .. } => c != '\n' && c != '\r',
         }
     }
 }
@@ -446,6 +460,13 @@ impl Session {
         }
     }
 
+    /// Whether the selection may be any candidate, not only one a ghost
+    /// can show: where a popup may come, and always for a choice field's
+    /// options, which are a popup's whatever the look.
+    fn walks_all(&self, config: &Config) -> bool {
+        config.popup != PopupAxis::Never || matches!(self.word, WordKind::Choice { .. })
+    }
+
     /// The best candidate: the first, where a popup may show it
     /// (`all`); in a ghost-only look the best that continues the word,
     /// sorting past the top when none of it does.
@@ -626,7 +647,7 @@ pub struct State {
     words: HashMap<BufferId, (Version, MaskKey, Rc<[Item]>)>,
     words_asked: HashMap<BufferId, (Version, MaskKey)>,
     /// Each buffer's words inside its masks: never a candidate.
-    masked: HashMap<BufferId, Masked>,
+    pub(crate) masked: HashMap<BufferId, Masked>,
     /// How many word indexes were asked for: a test's count.
     pub indexed: usize,
     /// Accepted candidates not written yet — `(workspace, text, score,
@@ -728,8 +749,11 @@ pub struct Ghost {
 }
 
 impl Ghost {
+    /// Its rest up to its line's end: a snippet's further lines are not
+    /// drawn after the caret.
     pub fn text(&self) -> &str {
-        &self.items[self.item].text()[self.from..]
+        let rest = &self.items[self.item].text()[self.from..];
+        rest.split(['\n', '\r']).next().unwrap_or("")
     }
 }
 
@@ -806,7 +830,7 @@ fn is_masked(masked: &HashMap<BufferId, Masked>, text: &str) -> bool {
 /// Whether `text`, or any word in it, is inside a mask of an open
 /// buffer: a label that quotes a secret (a server's string literal) as
 /// much as one that is it.
-fn holds_masked(masked: &HashMap<BufferId, Masked>, text: &str) -> bool {
+pub(crate) fn holds_masked(masked: &HashMap<BufferId, Masked>, text: &str) -> bool {
     if masked.values().all(|m| m.0.is_empty()) {
         return false;
     }
@@ -886,7 +910,8 @@ impl Session {
     ) -> Option<Ranked> {
         let answer = &self.answers[a];
         let item = &answer.items[i];
-        if self.typed.is_empty() && !answer.source.offers_empty() {
+        let choice = matches!(self.word, WordKind::Choice { .. });
+        if self.typed.is_empty() && !answer.source.offers_empty() && !choice {
             return None;
         }
         let text = item.text();
@@ -903,7 +928,41 @@ impl Session {
         {
             return None;
         }
-        let (tier, continues) = score(matcher, &self.typed, text, ctx.config.fuzzy)?;
+        // A choice field's options, before it is typed in: all, in order.
+        if let WordKind::Choice { fresh } = self.word
+            && (fresh || self.typed.is_empty())
+        {
+            let key = Key {
+                tier: Reverse(0),
+                source: 0,
+                near: 0,
+                frecency: Reverse(0),
+                signals: Reverse(0),
+                order: i as u32,
+                answer: a as u16,
+            };
+            return Some(Ranked {
+                key,
+                answer: a as u16,
+                item: i as u32,
+                continues: false,
+            });
+        }
+        // A snippet is matched by its label, what the user knows it by
+        // (`tfn` for a test function), and offered when the label is all
+        // typed; a ghost still shows only a text that continues the word.
+        let (tier, continues) = match &item.snippet {
+            None => score(matcher, &self.typed, text, ctx.config.fuzzy)?,
+            Some(_) if text == self.typed => return None,
+            Some(_) => {
+                let tier = match item.label == self.typed {
+                    true => i32::MAX,
+                    false => score(matcher, &self.typed, &item.label, ctx.config.fuzzy)?.0,
+                };
+                let continues = text.len() > self.typed.len() && text.starts_with(&self.typed);
+                (tier, continues)
+            }
+        };
         let source = ctx.config.rank(answer.source).unwrap_or(u8::MAX);
         let frecency = (ctx.frecency.value(text, ctx.now) * 4.0)
             .round()
@@ -946,7 +1005,7 @@ impl Session {
         self.ranking = out;
         self.dedup();
         self.sort_top(ctx.config.max_items);
-        self.reselect(ctx.config.popup != PopupAxis::Never);
+        self.reselect(self.walks_all(ctx.config));
     }
 
     /// The survivors alone scored again: a longer word only drops
@@ -959,7 +1018,7 @@ impl Session {
             .filter_map(|r| self.rank_one(&mut matcher, ctx, r.answer as usize, r.item as usize))
             .collect();
         self.sort_top(ctx.config.max_items);
-        self.reselect(ctx.config.popup != PopupAxis::Never);
+        self.reselect(self.walks_all(ctx.config));
     }
 
     /// Answer `a` scored and merged in, in place of what it had.
@@ -973,7 +1032,7 @@ impl Session {
         }
         self.dedup();
         self.sort_top(ctx.config.max_items);
-        self.reselect(ctx.config.popup != PopupAxis::Never);
+        self.reselect(self.walks_all(ctx.config));
     }
 
     /// One candidate per text: the best-ranked of those that put the
@@ -1186,6 +1245,7 @@ impl Kawoosh {
     /// typed into the text (`was_insert`), not the `i` that opened
     /// insert mode.
     pub(crate) fn completion_after_key(&mut self, stroke: &KeyStroke, was_insert: bool) {
+        self.sync_snippet();
         // The key that opened the candidates picker took the keys
         // there: the session is what the picker lists, and stays until
         // it picks or closes.
@@ -1296,7 +1356,12 @@ impl Kawoosh {
         // A path's first `.` brings its hidden entries in: all of it
         // scored again, not the survivors.
         let hidden = s.word == WordKind::Path && s.typed.is_empty() && typed.starts_with('.');
-        let longer = typed.starts_with(&s.typed) && !hidden;
+        // A choice typed in narrows its options from all of them.
+        let fresh = matches!(s.word, WordKind::Choice { fresh: true });
+        if fresh {
+            s.word = WordKind::Choice { fresh: false };
+        }
+        let longer = typed.starts_with(&s.typed) && !hidden && !fresh;
         s.typed = typed;
         if s.closed {
             return;
@@ -1342,6 +1407,7 @@ impl Kawoosh {
     /// ends — a server's edit, a reload — and the workspace's symbols
     /// are asked once the typing paused.
     pub(crate) fn sync_completion(&mut self) {
+        self.sync_snippet();
         self.completion_frecency_due();
         // A buffer private since it answered — a multibuffer showing a
         // private file's lines now — is no source (secrets.md Decision 1).
@@ -1709,6 +1775,8 @@ impl Kawoosh {
                 lines: Box::new([]),
                 resolve: None,
                 filled: RefCell::new(None),
+                snippet: None,
+                as_is: false,
             })
             .collect();
         self.completion_answer(Answer {
@@ -1801,6 +1869,8 @@ impl Kawoosh {
                 lines: w.lines,
                 resolve: None,
                 filled: RefCell::new(None),
+                snippet: None,
+                as_is: false,
             })
             .collect();
         if let Some((_, _, old)) = self
@@ -1911,6 +1981,8 @@ impl Kawoosh {
                         lines: Box::new([o.line]),
                         resolve: None,
                         filled: RefCell::new(None),
+                        snippet: None,
+                        as_is: false,
                     });
                 }
             }
@@ -1985,6 +2057,8 @@ impl Kawoosh {
                 lines: Box::new([]),
                 resolve: None,
                 filled: RefCell::new(None),
+                snippet: None,
+                as_is: false,
             })
             .collect();
         self.completion_answer(Answer {
@@ -2196,6 +2270,14 @@ impl Kawoosh {
         if caret != s.anchor.start + s.typed.len() {
             return None;
         }
+        // A choice field's options are a popup whatever the look says
+        // (Decision 7): no ghost could offer them.
+        if matches!(s.word, WordKind::Choice { .. }) {
+            return Some(Display {
+                ghost: None,
+                popup: true,
+            });
+        }
         let at_end = at_line_end(&self.ed.buffers[s.anchor.buffer], caret);
         let ghost_ok = r.continues
             && match self.completion_ghost_axis(view) {
@@ -2346,6 +2428,8 @@ impl Kawoosh {
 
     /// The fact said as it stands, before a key is looked up.
     pub(crate) fn sync_completion_fact(&mut self) {
+        let snippet = self.snippet_on();
+        self.ed.fact(crate::snippet::FACT, snippet);
         let on = self.completion_on_show();
         self.ed.fact(FACT, on);
         let docs = on && self.completion_docs_on_show();
@@ -2660,11 +2744,35 @@ impl Kawoosh {
             self.ed.message = "no candidate to accept".into();
             return;
         };
-        let text = s.answers[r.answer as usize].items[r.item as usize]
-            .text()
-            .to_string();
+        let item = &s.answers[r.answer as usize].items[r.item as usize];
+        let text = item.text().to_string();
+        let (snippet, as_is) = (item.snippet.clone(), item.as_is);
         let typed_len = s.typed.len();
         self.completion.session = None;
+        if let WordKind::Choice { .. } = word {
+            self.snippet_choose(&text);
+            return;
+        }
+        if let Some(body) = snippet {
+            // In place of the word typed: at every caret where it
+            // continues the word, else at the primary one.
+            let sels = &self.ed.views[view].sels;
+            let ranges: Vec<std::ops::Range<usize>> = if r.continues {
+                let mut heads: Vec<usize> = sels.iter().map(|s| s.head).collect();
+                heads.sort_unstable();
+                heads
+                    .into_iter()
+                    .map(|h| h.saturating_sub(typed_len)..h)
+                    .collect()
+            } else {
+                let caret = sels.primary().head;
+                std::iter::once(start..caret.max(start)).collect()
+            };
+            if self.snippet_accept(view, buffer, &ranges, &body, as_is) {
+                self.completion_remember(buffer, &text);
+            }
+            return;
+        }
         if r.continues {
             self.ed.insert_text(view, &text[typed_len..]);
         } else {
@@ -2767,11 +2875,95 @@ impl Kawoosh {
         };
         let caret = self.ed.views[v].sels.primary().head;
         let end = caret.max(start);
+        if let WordKind::Choice { .. } = s.word {
+            self.snippet_choose(text);
+            return true;
+        }
+        let snippet = s
+            .answers
+            .iter()
+            .flat_map(|a| a.items.iter())
+            .find(|i| i.text() == text)
+            .and_then(|i| Some((i.snippet.clone()?, i.as_is)));
+        if let Some((body, as_is)) = snippet {
+            let put =
+                self.snippet_accept(v, buffer, std::slice::from_ref(&(start..end)), &body, as_is);
+            if put {
+                self.completion_remember(buffer, text);
+            }
+            return put;
+        }
         self.ed
             .apply_edits(buffer, &[(start..end, text.to_string())]);
         self.completion_remember(buffer, text);
         self.follow_caret = true;
         true
+    }
+
+    /// A choice field's options offered at `field` in `view`: a session
+    /// of its own, its popup up at once (Decision 7).
+    pub(crate) fn completion_choices(
+        &mut self,
+        view: ViewId,
+        field: std::ops::Range<usize>,
+        options: &[String],
+    ) {
+        self.completion.session = None;
+        let Some(buffer) = self.ed.views.get(view).map(|v| v.buffer) else {
+            return;
+        };
+        let buf = &self.ed.buffers[buffer];
+        let items: Rc<[Item]> = options
+            .iter()
+            .map(|o| Item {
+                label: o.clone(),
+                insert: None,
+                kind: "value",
+                detail: None,
+                documentation: None,
+                lines: Box::new([]),
+                resolve: None,
+                filled: RefCell::new(None),
+                snippet: None,
+                as_is: false,
+            })
+            .collect();
+        let caret = self.ed.views[view].sels.primary().head;
+        self.completion.next_serial += 1;
+        self.completion.session = Some(Session {
+            serial: self.completion.next_serial,
+            anchor: Anchor {
+                buffer,
+                start: field.start,
+                version: buf.version(),
+            },
+            view,
+            word: WordKind::Choice { fresh: true },
+            dir: None,
+            typed: buf.slice(field.clone()),
+            manual: true,
+            closed: false,
+            seen: (buf.version(), buf.len(), caret),
+            caret_line: buf.line_of(field.start) as u32,
+            answers: vec![Answer {
+                source: Source::Snippets,
+                buffer: None,
+                items,
+            }],
+            ranking: Vec::new(),
+            sorted: 0,
+            selected: None,
+            chosen: false,
+            asks: Asks::default(),
+            changes: 0,
+            top: 0,
+            window: 10,
+            popup_up: Cell::new(true),
+            rows: RefCell::new(None),
+            docs: Docs::default(),
+            resolving: HashMap::new(),
+        });
+        self.completion_rank(None);
     }
 }
 
@@ -2862,6 +3054,8 @@ mod tests {
             lines: lines.into(),
             resolve: None,
             filled: RefCell::new(None),
+            snippet: None,
+            as_is: false,
         };
         let a = Answer {
             source: Source::BufferWords,
@@ -2894,6 +3088,8 @@ mod tests {
             lines: Box::new([]),
             resolve: None,
             filled: RefCell::new(None),
+            snippet: None,
+            as_is: false,
         };
         let mut s = Session {
             serial: 1,

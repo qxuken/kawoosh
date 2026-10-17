@@ -409,6 +409,7 @@ pub fn fact_words(fact: &str) -> Option<String> {
         "diagram" => "a diagram's canvas",
         "completion" => "a completion on show",
         "completion_docs" => "a completion's documentation on show",
+        "snippet" => "a snippet being filled",
         _ => "",
     };
     if !words.is_empty() {
