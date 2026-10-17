@@ -825,7 +825,8 @@ completes as a path. Once you type a picker's line far enough, the line
 completes whole (`cargo b` to `cargo build --release`). After the first
 word: a nushell command's parameter first — `target: string@targets`
 offers what `targets` answers (read from the file when its body is a
-list, else asked of `nu` once while the file is unchanged),
+list, else asked of `nu` once while the file is unchanged, in the
+background — the line completes as it answers),
 `string@[debug release]` those two — then the program's own arguments
 from [carapace](https://carapace.sh) when it is on your PATH (`git
 co` to `checkout`, `commit`; a flag's description beside the

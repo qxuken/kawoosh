@@ -18,7 +18,8 @@ the session the same day (Decision 13); the note's "Not built"
 profile 2026-10-09 (Decisions 19 and 20); a compile in an empty
 pane and chains of steps 2026-10-16 (Decisions 21 and 22); the
 line completed in the command line, carapace for a program's own
-arguments, 2026-10-17 (Decision 23). The calls
+arguments, 2026-10-17 (Decision 23), and Decision 16's `nu` asked
+on Decision 23's job the same day. The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -608,10 +609,26 @@ its value as it is counted. Answers come in order of cost:
    and does not run its `main` — read from the last line (the file's
    own top level may print before it), as a list of values, of `{
    value }` records, or a record of `completions`. Kept by file and
-   completer while the file's stamp holds, so it is once per change; a
-   second at most, a completer that hangs costing that once. The
-   prompt's candidates are made on every key, so a process per key
+   completer while the file's stamp holds, so it is once per change.
+   The prompt's candidates are made on every key, so a process per key
    was not an option.
+
+   *Amended 2026-10-17*, from "Not built" once Decision 23 had its job:
+   nu is **asked on a job, never waited for at a key** — before, the
+   frame waited for it, a second at most, once per change, the last
+   process a key of the prompt waited on. The ask goes out through
+   `Io::run`, counted in `pending_jobs`; until nu answers the parameter
+   offers nothing of its own (the paths after it still come), and the
+   line is completed again as it lands. It is bounded as Decision 23's
+   completer is, one rule for both (`shell_complete::bounded`): two
+   seconds, then stopped, past 1 MiB stopped and dropped; a failure is
+   kept as no values, so a completer that hangs costs its patience once
+   per change, and off the frame. The answer is kept by file, completer
+   and the file's stamp across prompts, as before. One still out when
+   its prompt closes is forgotten with the prompt, so it is dropped as
+   it lands (each ask has a serial) and the next prompt asks again; one
+   asked at a stamp the file has since left is dropped the same way.
+   Values from the file (1.) still need no process and no wait.
 
 A value with a space or a shell's character is double-quoted — inside
 a `nu -c '…'` too, where a single quote would end the line's — and one
@@ -1069,5 +1086,6 @@ the first word (a request per prompt for rows the picker has).
 - A bare `:compile` again by Decision 19's "here": the last line run in
   the caret's workspace, not the last run anywhere (Decision 2 as it
   stands).
-- Decision 16's `nu` completer is still asked on the frame (a second at
-  most, once per file change); Decision 23's job would take it off.
+- ~~Decision 16's `nu` completer is still asked on the frame (a second at
+  most, once per file change); Decision 23's job would take it off.~~
+  Decision 16, amended.
