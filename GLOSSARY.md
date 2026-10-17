@@ -29,5 +29,9 @@ The words kawoosh's notes and code use for its ideas, one meaning each.
   live from when it is accepted until it ends, one at a time.
 - **Field** — a place in a snippet to fill, visited in turn; a field
   that repeats is filled in every place at once.
+- **Prefix** — what one of the user's snippets is offered by as it is
+  typed: its label; a snippet may have several.
+- **Snippet package** — a folder of snippet files whose `package.json`
+  names each language's file, as friendly-snippets is laid out.
 - **Frecency** — how often and how recently a candidate was accepted,
   per workspace, as a ranking's tie-breaker.

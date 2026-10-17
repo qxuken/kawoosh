@@ -21,7 +21,9 @@ const SOURCE: &str = concat!(
     "\n",
     include_str!("nodes.rs"),
     "\n",
-    include_str!("native.rs")
+    include_str!("native.rs"),
+    "\n",
+    include_str!("json.rs")
 );
 /// How deep the walk goes below `kawoosh`.
 const DEPTH: usize = 4;

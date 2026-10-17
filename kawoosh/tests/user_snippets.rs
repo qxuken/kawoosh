@@ -612,3 +612,64 @@ fn a_private_buffer_is_never_offered_nor_expanded_into() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// What the user's snippets cost a word's start and a keystroke, with
+/// none, and with three thousand for the buffer's language (more than
+/// friendly-snippets has for any one) — the numbers in completion.md's
+/// round 4. Run by hand:
+/// `cargo test -p kawoosh --test user_snippets timing -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn timing_a_word_and_a_keystroke_with_many_snippets() {
+    let dir = tmp("timing");
+    let words: String = (0..20_000)
+        .map(|i| format!("alpha_{i} beta_{} gamma_{}\n", i % 97, i % 31))
+        .collect();
+    for count in [0, 3000] {
+        let (mut d, mut app) = open(&dir, "main.rs", &words);
+        lua(
+            &mut app,
+            &format!(
+                r#"local t = {{}}
+                for i = 1, {count} do
+                  t["snippet " .. i] = {{ prefix = "gam" .. i, body = "gamma_${{1:" .. i .. "}}($2)$0",
+                                         description = "number " .. i }}
+                end
+                kawoosh.snippets.add("rust", t)"#
+            ),
+        );
+        d.press(&mut app, "Go");
+        let (mut starts, mut keys) = (Vec::new(), Vec::new());
+        for round in 0..30 {
+            let t = std::time::Instant::now();
+            d.keys(&mut app, "g");
+            let start = t.elapsed();
+            d.settle(&mut app);
+            for ch in ["a", "m", "m"] {
+                let t = std::time::Instant::now();
+                d.keys(&mut app, ch);
+                let took = t.elapsed();
+                d.settle(&mut app);
+                if round > 0 {
+                    keys.push(took);
+                }
+            }
+            if round > 0 {
+                starts.push(start);
+            }
+            d.press(&mut app, "<Esc>");
+            d.press(&mut app, "o");
+        }
+        starts.sort();
+        keys.sort();
+        let at = |v: &[std::time::Duration], q: usize| v[v.len() * q / 10];
+        println!(
+            "{count} snippets: word start {:?} (p90 {:?}), keystroke {:?} (p90 {:?})",
+            at(&starts, 5),
+            at(&starts, 9),
+            at(&keys, 5),
+            at(&keys, 9)
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

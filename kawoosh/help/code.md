@@ -507,7 +507,7 @@ return {
 ```
 
 `:setlocal completion.trigger=off` turns it off in one pane. The
-`snippets` source (your own snippets) does nothing yet. The kinds'
+`snippets` source offers your own snippets ([below](#your-own-snippets)). The kinds'
 icons — in the list, the `<C-x>` picker and the symbol pickers — are
 Nerd Fonts' codicons, drawn in `font.icons` ([look](look.md#icons-and-keys)).
 
@@ -551,6 +551,50 @@ are your indentation. Its variables are VS Code's — `$TM_FILENAME`,
 one that would put text a mask hides (the clipboard holding a secret,
 a line with a key on it) puts nothing ([secrets](memory.md#secrets)). A
 snippet that is not written right is put as the text it is.
+
+#### Your own snippets
+
+Your snippets are VS Code's snippet format, written in Lua in `init.lua`:
+
+```lua
+kawoosh.snippets.add("rust", {
+  ["for loop"] = {
+    prefix = "for",                                  -- or a list: { "for", "fl" }
+    body = { "for ${1:x} in ${2:iter} {", "\t$0", "}" }, -- a string, or its lines
+    description = "a for loop",
+  },
+})
+```
+
+Each is offered by its prefix as you type, matched as any candidate is,
+with its description beside it and what it puts in the documentation
+panel, and taken it is a snippet as above: `$1` and `${1:default}` its
+fields, `${1|a,b|}` a choice, `$0` where it ends, the variables
+(`$TM_FILENAME`, `$CURRENT_YEAR`, …). `"all"` as the language offers
+them everywhere; a name added again replaces the one before;
+`kawoosh.snippets.add` answers how many it took and, when some were
+not taken (no prefix, no body, a body over 1 MiB), why each.
+
+Snippet files work as they are, VS Code's or a package such as
+friendly-snippets. Name them in your settings:
+
+```lua
+return {
+  snippets = { paths = { "~/snippets", "~/src/friendly-snippets" } },
+}
+```
+
+A path is a folder of VS Code snippet files (`rust.json` holds Rust's,
+a `*.code-snippets` file every language's, or those its snippets'
+`scope` names), a package (its `package.json`'s `contributes.snippets`
+names each language's file), or one file; `~` or absolute, else under
+your config folder. Nothing is read until a buffer of a language asks
+for a completion, and then only that language's files and the files
+for every language; they are watched, so saving one reads it again.
+`kawoosh.snippets.load_json(path[, lang][, fn])` reads any of these at
+once, every language, in the background, then calls `fn(count, why)`.
+Comments and trailing commas in the files are fine; what goes wrong is
+said in the log (`:messages`). No snippets ship with kawoosh.
 
 ## Formatting
 
