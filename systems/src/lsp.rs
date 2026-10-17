@@ -743,7 +743,16 @@ impl Caps {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompletionItem {
     pub label: String,
+    /// What it puts, as plain text: a snippet's with each field its
+    /// default (`snippet::plain`), what the candidate is matched and
+    /// ghosted by.
     pub insert: String,
+    /// A snippet's body as the server sent it (`insertTextFormat` 2),
+    /// expanded where it is accepted (completion.md Decision 7).
+    pub snippet: Option<String>,
+    /// `insertTextMode` 1, `asIs`: its lines are not indented as the
+    /// line they go into.
+    pub as_is: bool,
     pub kind: Option<u64>,
     /// The server's one-liner: a signature, a type, a path.
     pub detail: Option<String>,
@@ -2666,7 +2675,7 @@ impl Pool {
                         "publishDiagnostics": { "relatedInformation": false },
                         "definition": { "linkSupport": true },
                         "hover": { "contentFormat": ["markdown", "plaintext"] },
-                        "completion": { "completionItem": { "snippetSupport": false, "insertReplaceSupport": true, "documentationFormat": ["markdown", "plaintext"], "resolveSupport": { "properties": ["documentation", "detail"] } } },
+                        "completion": { "completionItem": { "snippetSupport": true, "insertReplaceSupport": true, "insertTextModeSupport": { "valueSet": [1, 2] }, "documentationFormat": ["markdown", "plaintext"], "resolveSupport": { "properties": ["documentation", "detail"] } } },
                         "synchronization": { "didSave": true },
                         "rename": { "prepareSupport": false },
                         "references": {},
@@ -5028,14 +5037,12 @@ fn completion_items(result: Option<&Value>, resolves: Option<usize>) -> Vec<Comp
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .unwrap_or_else(|| label.clone());
-            // Snippets are not supported: keep the text up to the first
-            // placeholder.
-            let insert = match insert.find(['$', '{']) {
-                Some(i) if it.get("insertTextFormat").and_then(Value::as_u64) == Some(2) => {
-                    insert[..i].trim_end_matches('(').to_string()
-                }
-                _ => insert,
+            // A snippet is kept as sent, and matched by its plain text.
+            let (insert, snippet) = match it.get("insertTextFormat").and_then(Value::as_u64) {
+                Some(2) => (crate::snippet::plain(&insert), Some(insert)),
+                _ => (insert, None),
             };
+            let as_is = it.get("insertTextMode").and_then(Value::as_u64) == Some(1);
             // `documentation` is a string or a `MarkupContent`.
             let documentation = it.get("documentation").and_then(|d| {
                 d.as_str()
@@ -5052,6 +5059,8 @@ fn completion_items(result: Option<&Value>, resolves: Option<usize>) -> Vec<Comp
             Some(CompletionItem {
                 label,
                 insert,
+                snippet,
+                as_is,
                 kind: it.get("kind").and_then(Value::as_u64),
                 detail: it.get("detail").and_then(Value::as_str).map(str::to_string),
                 documentation,
@@ -5498,8 +5507,10 @@ mod tests {
             { "label": "len", "insertText": "len()" }
         ]});
         let items = completion_items(Some(&list), None);
-        assert_eq!(items[0].insert, "push");
+        assert_eq!(items[0].insert, "push()");
+        assert_eq!(items[0].snippet.as_deref(), Some("push(${1})"));
         assert_eq!(items[1].insert, "len()");
+        assert_eq!(items[1].snippet, None);
         assert_eq!(
             completion_items(Some(&json!([{ "label": "a" }])), None)[0].insert,
             "a"
