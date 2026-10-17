@@ -137,8 +137,8 @@ pub fn parse(out: &[u8]) -> Option<Vec<(String, String)>> {
 
 /// Asks `completer` for `words`' next word starting `current`, in
 /// `dir`: `COMPLETER PROG export PROG ARGS… CURRENT`. None when it
-/// could not start, outlasted [`PATIENCE`] (stopped then), printed past
-/// [`CAP`] (stopped too) or printed no answer. Run on a job: it waits.
+/// could not start, outlasted [`PATIENCE`], printed past [`CAP`] or
+/// printed no answer. Run on a job: it waits.
 pub fn ask(
     completer: &str,
     dir: &Path,
@@ -156,11 +156,20 @@ pub fn ask(
         .arg(&program)
         .args(&words[1..])
         .arg(current)
-        .current_dir(dir)
+        .current_dir(dir);
+    parse(&bounded(&mut command)?)
+}
+
+/// What `command` prints, given nothing to read: None when it could
+/// not start, outlasted [`PATIENCE`] (stopped then) or printed past
+/// [`CAP`] (stopped too). A completer's run — this module's, and a
+/// nushell parameter's (`compile::nu_answer`). Run on a job: it waits.
+pub fn bounded(command: &mut std::process::Command) -> Option<Vec<u8>> {
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let mut child = kawoosh_systems::spawn::spawn(&mut command).ok()?;
+    let mut child = kawoosh_systems::spawn::spawn(command).ok()?;
     let Some(stdout) = child.stdout.take() else {
         child.kill().ok();
         child.wait().ok();
@@ -188,7 +197,7 @@ pub fn ask(
     if out.len() > CAP {
         return None;
     }
-    parse(&out)
+    Some(out)
 }
 
 impl Kawoosh {
