@@ -755,6 +755,14 @@ const DOCS: &[(&str, &str)] = &[
         "the shortest word `buffer_words` offers",
     ),
     (
+        "completion.signature",
+        "the signature of the call the caret is in, its parameter lit: `manual` on `<C-g>`, `auto` also as `(` and `,` are typed (the server's trigger characters), `off` never",
+    ),
+    (
+        "completion.callable",
+        "what accepting a function puts: `name` its name alone, `args` its brackets and its parameters as snippet fields",
+    ),
+    (
         "statusline.layout",
         "the status line's modules left to right, `\"gap\"` a spring, `\"...\"` the rest",
     ),
@@ -1306,6 +1314,8 @@ impl Settings {
         defaults.set("completion.max_items", Setting::Int(10));
         defaults.set("completion.docs", Setting::Int(200));
         defaults.set("completion.words.min_length", Setting::Int(3));
+        defaults.set("completion.signature", Setting::Str("manual".into()));
+        defaults.set("completion.callable", Setting::Str("name".into()));
         // The user's snippets' files: folders, packages laid out as
         // friendly-snippets, VS Code files (completion.md Decision 8).
         // None ship.
@@ -1465,6 +1475,8 @@ impl Settings {
             ),
             ("completion.ghost", words(&["always", "endline", "never"])),
             ("completion.popup", words(&["always", "fallback", "never"])),
+            ("completion.signature", words(&["manual", "auto", "off"])),
+            ("completion.callable", words(&["name", "args"])),
             ("grammars.install", words(&["ask", "auto", "never"])),
             ("markdown.reveal", words(&["line", "span", "none"])),
             ("markdown.navigation", words(&["line", "row"])),
@@ -2044,11 +2056,13 @@ mod tests {
             [
                 "buffers.scope",
                 "clipboard.system",
+                "completion.callable",
                 "completion.docs",
                 "completion.fuzzy",
                 "completion.ghost",
                 "completion.max_items",
                 "completion.popup",
+                "completion.signature",
                 "completion.sources",
                 "completion.trigger",
                 "completion.words.min_length",
