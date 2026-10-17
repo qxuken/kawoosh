@@ -17,6 +17,7 @@ mod nodes;
 mod prof;
 
 pub use fuzzy::{Hit, Matcher};
+pub use meta::Meta;
 pub use native::{KW_ABI_VERSION, KW_PROTOCOL, KwEdit, NativeCell};
 pub use prof::{Spent, clock_secs};
 

@@ -22,6 +22,20 @@ use serde_json::{Value, json};
 
 use crate::app::Kawoosh;
 
+/// The shell's doors into `kawoosh` (`lua_door` in each): their doc
+/// comments type what they seed, as `lua`'s own do (lua-types.md).
+const DOORS: &[&str] = &[
+    include_str!("du.rs"),
+    include_str!("fonts.rs"),
+    include_str!("grammars.rs"),
+    include_str!("icons.rs"),
+    include_str!("legends.rs"),
+    include_str!("look.rs"),
+    include_str!("pane_settings.rs"),
+    include_str!("settings_pane.rs"),
+    include_str!("user_snippets.rs"),
+];
+
 /// The file in a build's folder naming the executable it is for.
 const EXE_FILE: &str = "exe";
 /// What the folder held before builds had one each: taken out.
@@ -135,7 +149,10 @@ impl Kawoosh {
             return;
         };
         let files = [
-            ("kawoosh.lua", rt.luals_meta(crate::plugins::BUNDLED)),
+            (
+                "kawoosh.lua",
+                rt.luals_meta(crate::plugins::BUNDLED, DOORS).text,
+            ),
             ("kui.lua", kui_lua::luals_meta()),
             ("settings.lua", settings_meta(&self.ed.settings.schema())),
         ];
@@ -281,6 +298,45 @@ pub(crate) fn with_library(settings: &mut Value, dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The parameters and answers left untyped in the whole API's meta —
+    /// the core, the shell's doors, the bundled plugins: a number that
+    /// only goes down (docs/design/lua-types.md Decision 5). A new
+    /// function with nothing typed raises it and fails here; typing one
+    /// lowers it, and the number is lowered with it.
+    const UNTYPED: usize = 1022;
+
+    /// The ratchet over the whole API, as a launch writes it. With
+    /// `KAWOOSH_META_OUT` naming a directory the three files are written
+    /// there too, for lua-language-server to check
+    /// (`scripts/lua-types.nu`).
+    #[test]
+    fn the_api_is_typed() {
+        let mut app = Kawoosh::new("*scratch*", "");
+        app.jobs_inline = true;
+        app.attach_lua().unwrap();
+        let rt = app.scripting.rt.clone().unwrap();
+        let meta = rt.luals_meta(crate::plugins::BUNDLED, DOORS);
+        if let Some(out) = std::env::var_os("KAWOOSH_META_OUT") {
+            let out = PathBuf::from(out);
+            std::fs::create_dir_all(&out).unwrap();
+            std::fs::write(out.join("kawoosh.lua"), &meta.text).unwrap();
+            std::fs::write(out.join("kui.lua"), kui_lua::luals_meta()).unwrap();
+            let settings = settings_meta(&app.ed.settings.schema());
+            std::fs::write(out.join("settings.lua"), settings).unwrap();
+        }
+        assert!(meta.twice.is_empty(), "declared twice: {:?}", meta.twice);
+        let n = meta.untyped.len();
+        assert!(
+            n <= UNTYPED,
+            "{n} untyped, more than UNTYPED = {UNTYPED}: type what is new —\n{}",
+            meta.untyped.join("\n")
+        );
+        assert!(
+            n == UNTYPED,
+            "{n} untyped, fewer than UNTYPED = {UNTYPED}: lower it to {n}"
+        );
+    }
 
     /// A build's folder is the same every launch and another build's is
     /// another; what is stale is a folder whose executable is gone and
