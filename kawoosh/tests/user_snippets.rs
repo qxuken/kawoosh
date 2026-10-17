@@ -366,6 +366,21 @@ fn a_watched_edit_reads_the_file_again() {
     }
     assert_eq!(names(&app, "rust"), ["while loop"]);
 
+    // The package's manifest caught half-saved: what it put stays.
+    let manifest = std::fs::read_to_string(pkg.join("package.json")).unwrap();
+    std::fs::write(pkg.join("package.json"), "{ \"contributes\": ").unwrap();
+    for _ in 0..12 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        d.frame(&mut app);
+    }
+    assert_eq!(
+        names(&app, "rust"),
+        ["while loop"],
+        "kept through a bad manifest"
+    );
+    assert_eq!(names(&app, "all"), ["date"]);
+    std::fs::write(pkg.join("package.json"), &manifest).unwrap();
+
     // The package names the file no more: its snippets go.
     std::fs::write(
         pkg.join("package.json"),
@@ -373,6 +388,46 @@ fn a_watched_edit_reads_the_file_again() {
     )
     .unwrap();
     wait(&mut d, &mut app, &[]);
+    assert_eq!(names(&app, "all"), ["date"]);
+    // The path gone: all it put goes.
+    std::fs::remove_dir_all(&pkg).unwrap();
+    for _ in 0..100 {
+        if names(&app, "all").is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        d.frame(&mut app);
+    }
+    assert!(names(&app, "all").is_empty(), "{:?}", names(&app, "all"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A path's watch moving before any language asked reads nothing: the
+/// manifest is read when one does.
+#[test]
+fn a_watched_change_before_any_ask_reads_nothing() {
+    let dir = tmp("unasked");
+    let pkg = dir.join("friendly");
+    friendly_package(&pkg);
+    let (mut d, mut app) = open(&dir, "notes.txt", "\n");
+    lua(&mut app, COUNTING);
+    lua(
+        &mut app,
+        &format!("kawoosh.opt('snippets.paths', {{ {} }})", q(&pkg)),
+    );
+    d.settle(&mut app);
+    let manifest = std::fs::read_to_string(pkg.join("package.json")).unwrap();
+    std::fs::write(pkg.join("package.json"), manifest + "\n").unwrap();
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        d.frame(&mut app);
+    }
+    assert_eq!(lua(&mut app, "OUT = #READS"), "0");
+    // Prose asks when asked: then the manifest and `all`'s file.
+    d.press(&mut app, "i");
+    d.keys(&mut app, "iso");
+    d.press(&mut app, "<C-Space>");
+    d.settle(&mut app);
     assert_eq!(names(&app, "all"), ["date"]);
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -613,6 +668,194 @@ fn a_private_buffer_is_never_offered_nor_expanded_into() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A source's answer landing in place of a longer one — a file read
+/// again with fewer snippets — while one of the old answer's later
+/// items is selected: the selection is read before the answer moves,
+/// never through the old indexes into the new items (it panicked).
+#[test]
+fn an_answer_landing_shorter_under_the_selection() {
+    let dir = tmp("shorter");
+    let (mut d, mut app) = open(&dir, "main.rs", "\n");
+    lua(
+        &mut app,
+        r#"kawoosh.snippets._set("f", "rust", {
+          a = { prefix = "zzq", body = "zz-a" },
+          b = { prefix = "zzr", body = "zz-b" },
+          c = { prefix = "zz", body = "zz-c" },
+        })"#,
+    );
+    d.press(&mut app, "i");
+    d.keys(&mut app, "zz");
+    d.settle(&mut app);
+    assert_eq!(
+        app.completion.selected_text(),
+        Some("zz-c"),
+        "the third item, best"
+    );
+    lua(
+        &mut app,
+        r#"kawoosh.snippets._set("f", "rust", { a = { prefix = "zzq", body = "zz-a" } })"#,
+    );
+    d.settle(&mut app);
+    assert_eq!(app.completion.candidates(), ["zz-a"]);
+    // Chosen with `<C-n>`, then the answer shrinks again: kept by what it puts.
+    lua(
+        &mut app,
+        r#"kawoosh.snippets._set("f", "rust", {
+          a = { prefix = "zzq", body = "zz-a" }, b = { prefix = "zzr", body = "zz-b" },
+          c = { prefix = "zz", body = "zz-c" } })"#,
+    );
+    d.settle(&mut app);
+    // Chosen with `<C-n>` twice: the old answer's second item, past the
+    // end of the one that lands.
+    d.press(&mut app, "<C-n><C-n>");
+    assert_eq!(app.completion.selected_text(), Some("zz-b"));
+    lua(
+        &mut app,
+        r#"kawoosh.snippets._set("f", "rust", { c = { prefix = "zz", body = "zz-c" } })"#,
+    );
+    d.settle(&mut app);
+    assert_eq!(app.completion.candidates(), ["zz-c"]);
+    assert_eq!(
+        app.completion.selected_text(),
+        Some("zz-c"),
+        "gone: the best"
+    );
+    lua(
+        &mut app,
+        r#"kawoosh.snippets._set("f", "rust", {
+          a = { prefix = "zzq", body = "zz-a" }, b = { prefix = "zzr", body = "zz-b" },
+          c = { prefix = "zz", body = "zz-c" } })"#,
+    );
+    d.settle(&mut app);
+    d.press(&mut app, "<C-n>");
+    let chosen = app.completion.selected_text().map(str::to_string);
+    lua(
+        &mut app,
+        r#"kawoosh.snippets._set("f", "rust", { b = { prefix = "zzr", body = "zz-b" }, a = { prefix = "zzq", body = "zz-a" } })"#,
+    );
+    d.settle(&mut app);
+    assert_eq!(app.completion.candidates().len(), 2);
+    assert_eq!(app.completion.selected_text().map(str::to_string), chosen);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `kawoosh.fs.read_json` and `kawoosh.notify` wrapped to count: the
+/// reads asked, the most in flight at once, what was said.
+const COUNTING: &str = r#"
+    READS, FLIGHT, PEAK, SAID = {}, 0, 0, {}
+    local read, notify = kawoosh.fs.read_json, kawoosh.notify
+    kawoosh.fs.read_json = function(path, fn)
+      READS[#READS + 1] = path
+      if not fn then return read(path) end
+      FLIGHT = FLIGHT + 1
+      if FLIGHT > PEAK then PEAK = FLIGHT end
+      return read(path, function(v, why) FLIGHT = FLIGHT - 1; fn(v, why) end)
+    end
+    kawoosh.notify = function(text, opts) SAID[#SAID + 1] = text; return notify(text, opts) end
+"#;
+
+/// A package's entries are its own: one written absolute or reaching out
+/// with `..` is refused and said once, however often it is read; a file
+/// that is no regular file (`/dev/zero` behind a link) is refused, not
+/// read without end; an entry named ten thousand times is read once,
+/// and the reads go at most four at a time.
+#[test]
+fn a_package_reads_only_its_own_regular_files_a_few_at_a_time() {
+    let dir = tmp("confined");
+    let pkg = dir.join("pkg");
+    std::fs::create_dir_all(pkg.join("snippets")).unwrap();
+    let outside = r#"{ "out": { "prefix": "outx", "body": "outside" } }"#;
+    std::fs::write(dir.join("outside.json"), outside).unwrap();
+    for i in 0..12 {
+        std::fs::write(
+            pkg.join(format!("snippets/r{i}.json")),
+            format!(r#"{{ "r{i}": {{ "prefix": "rr{i}", "body": "r{i}" }} }}"#),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        pkg.join("snippets/go.json"),
+        r#"{ "g": { "prefix": "gg", "body": "g" } }"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("/dev/zero", pkg.join("snippets/zero.json")).unwrap();
+    let mut entries = vec![
+        format!(
+            r#"{{ "language": "rust", "path": {:?} }}"#,
+            dir.join("outside.json").display().to_string()
+        ),
+        r#"{ "language": "rust", "path": "../outside.json" }"#.to_string(),
+        r#"{ "language": "rust", "path": "./snippets/../../outside.json" }"#.to_string(),
+        r#"{ "language": "rust", "path": "./snippets/zero.json" }"#.to_string(),
+    ];
+    entries.extend(
+        (0..12).map(|i| format!(r#"{{ "language": "rust", "path": "./snippets/r{i}.json" }}"#)),
+    );
+    entries.extend(
+        (0..10_000).map(|_| r#"{ "language": "rust", "path": "./snippets/go.json" }"#.to_string()),
+    );
+    std::fs::write(
+        pkg.join("package.json"),
+        format!(
+            r#"{{ "contributes": {{ "snippets": [{}] }} }}"#,
+            entries.join(",")
+        ),
+    )
+    .unwrap();
+    let (mut d, mut app) = open(&dir, "main.rs", "\n");
+    lua(&mut app, COUNTING);
+    app.jobs_inline = false;
+    lua(
+        &mut app,
+        &format!("kawoosh.opt('snippets.paths', {{ {} }})", q(&pkg)),
+    );
+    d.settle(&mut app);
+    d.press(&mut app, "i");
+    d.keys(&mut app, "rr");
+    for _ in 0..400 {
+        d.frame(&mut app);
+        if names(&app, "rust").len() == 13 && lua(&mut app, "OUT = FLIGHT") == "0" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let mut want: Vec<String> = (0..12).map(|i| format!("r{i}")).collect();
+    want.push("g".into());
+    want.sort();
+    let mut got = names(&app, "rust");
+    got.sort();
+    assert_eq!(got, want, "nothing from outside, go.json once");
+    let reads = lua(&mut app, "OUT = #READS .. ' ' .. PEAK");
+    assert_eq!(
+        reads, "15 4",
+        "package.json, 12 files, go.json and zero.json once; four at a time"
+    );
+    let said = lua(&mut app, "OUT = table.concat(SAID, '\\n')");
+    assert_eq!(said.matches("outside the package").count(), 3, "{said}");
+    assert!(said.contains("zero.json: not a regular file"), "{said}");
+    // Read again (the package edited): nothing said twice.
+    let before = said.matches("outside the package").count();
+    app.jobs_inline = true;
+    std::fs::write(
+        pkg.join("package.json"),
+        std::fs::read_to_string(pkg.join("package.json")).unwrap() + "\n",
+    )
+    .unwrap();
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        d.frame(&mut app);
+    }
+    let said = lua(&mut app, "OUT = table.concat(SAID, '\\n')");
+    assert_eq!(
+        said.matches("outside the package").count(),
+        before,
+        "said once"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// What the user's snippets cost a word's start and a keystroke, with
 /// none, and with three thousand for the buffer's language (more than
 /// friendly-snippets has for any one) — the numbers in completion.md's
@@ -672,4 +915,58 @@ fn timing_a_word_and_a_keystroke_with_many_snippets() {
         );
     }
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The frame the first lazy load lands in, for a package of real size —
+/// a rust file of 1,500 snippets, about friendly-snippets' largest — and
+/// for one file at the 10,000-snippet cap: the longest frame from the
+/// key that asks until the snippets are there. Run by hand:
+/// `cargo test -p kawoosh --test user_snippets first_lazy_load -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn timing_the_first_lazy_load() {
+    for count in [1_500usize, 10_000] {
+        let dir = tmp(&format!("lazyload-{count}"));
+        let pkg = dir.join("pkg");
+        std::fs::create_dir_all(pkg.join("snippets")).unwrap();
+        let mut body = String::from("{\n");
+        for i in 0..count {
+            body.push_str(&format!(
+                "  \"snippet {i}\": {{ \"prefix\": [\"sn{i}\", \"snip{i}\"], \"body\": [\"fn ${{1:name_{i}}}(${{2:arg}}: ${{3:Type}}) -> ${{4:Out}} {{\", \"\\t${{5:todo!()}}\", \"}}$0\"], \"description\": \"a function, number {i}, with its arguments\" }}{}\n",
+                if i + 1 < count { "," } else { "" }
+            ));
+        }
+        body.push('}');
+        std::fs::write(pkg.join("snippets/rust.json"), &body).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{ "contributes": { "snippets": [ { "language": "rust", "path": "./snippets/rust.json" } ] } }"#,
+        )
+        .unwrap();
+        let (mut d, mut app) = open(&dir, "main.rs", "\n");
+        app.jobs_inline = false;
+        lua(
+            &mut app,
+            &format!("kawoosh.opt('snippets.paths', {{ {} }})", q(&pkg)),
+        );
+        d.settle(&mut app);
+        d.press(&mut app, "i");
+        let t = std::time::Instant::now();
+        d.keys(&mut app, "sn");
+        let mut longest = t.elapsed();
+        let start = std::time::Instant::now();
+        while names(&app, "rust").len() < count && start.elapsed().as_secs() < 30 {
+            let t = std::time::Instant::now();
+            d.frame(&mut app);
+            longest = longest.max(t.elapsed());
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(names(&app, "rust").len(), count);
+        println!(
+            "{count} snippets ({} KiB): loaded in {:?}, the longest frame {longest:?}",
+            body.len() / 1024,
+            start.elapsed()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

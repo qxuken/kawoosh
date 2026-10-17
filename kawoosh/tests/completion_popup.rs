@@ -380,6 +380,11 @@ fn the_panel_resolves_the_selection_alone_after_the_delay() {
     ex(&mut d, &mut app, &format!("e {}", file.display()));
     ex(&mut d, &mut app, "setlocal completion.popup=always");
     ex(&mut d, &mut app, "setlocal completion.docs=300");
+    // Counted from before the word: on a loaded machine the typing can
+    // outlast the delay after the server's answer lands, and the one
+    // resolve go out before the candidates are looked at (a 1-in-48 flake
+    // read the count after it).
+    let asked = app.completion.resolves;
     d.press(&mut app, "o");
     d.keys(&mut app, "hel");
     until(&mut d, &mut app, "the server's candidates", |a| {
@@ -392,7 +397,6 @@ fn the_panel_resolves_the_selection_alone_after_the_delay() {
             .any(|c| c.starts_with("MIIEv")),
         "a masked candidate is none"
     );
-    let asked = app.completion.resolves;
     // Before the delay: nothing asked, no panel — checked only while the
     // frame really ran before the timer was due, which a loaded machine
     // can take past (the delay is counted from when the selection
