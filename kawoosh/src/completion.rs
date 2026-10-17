@@ -423,6 +423,14 @@ pub struct Popup {
 }
 
 impl Session {
+    /// What the user selected with `completion next` / `prev`, by what
+    /// it puts: kept through a re-rank.
+    fn chosen_text(&self) -> Option<String> {
+        self.chosen
+            .then(|| self.selected_item().map(|i| i.text().to_string()))
+            .flatten()
+    }
+
     /// The selected candidate, if one continues the word.
     fn selected_item(&self) -> Option<&Item> {
         let r = self.ranking.get(self.selected?)?;
@@ -1600,6 +1608,18 @@ impl Kawoosh {
 
     /// The session ranked again: every answer, or answer `a` alone.
     fn completion_rank(&mut self, a: Option<usize>) {
+        let keep = self
+            .completion
+            .session
+            .as_ref()
+            .and_then(Session::chosen_text);
+        self.completion_rank_keeping(a, keep);
+    }
+
+    /// The session ranked again, `keep` — what the user selected,
+    /// read before the answers moved under the ranking's indexes —
+    /// selected again where it still is.
+    fn completion_rank_keeping(&mut self, a: Option<usize>, keep: Option<String>) {
         let Some(view) = self.completion.session.as_ref().map(|s| s.view) else {
             return;
         };
@@ -1621,10 +1641,7 @@ impl Kawoosh {
         if s.closed {
             return;
         }
-        let selected = s
-            .selected_item()
-            .filter(|_| s.chosen)
-            .map(|i| i.text().to_string());
+        let selected = keep;
         let ctx = RankCtx {
             config: &config,
             frecency,
@@ -1649,6 +1666,9 @@ impl Kawoosh {
         let Some(s) = self.completion.session.as_mut() else {
             return;
         };
+        // Read before the answer is swapped: the ranking's indexes are
+        // into the answer it replaces, which may have had more items.
+        let keep = s.chosen_text();
         let at = s
             .answers
             .iter()
@@ -1666,7 +1686,14 @@ impl Kawoosh {
         if s.answers[a].source == Source::Lsp {
             s.asks.lsp_at = Some(a);
         }
-        self.completion_rank(Some(a));
+        if at.is_some() {
+            // Nothing reads the old indexes from here: the selection
+            // among them is gone until the rescan picks one.
+            s.ranking.retain(|r| r.answer as usize != a);
+            s.sorted = s.sorted.min(s.ranking.len());
+            s.selected = None;
+        }
+        self.completion_rank_keeping(Some(a), keep);
     }
 
     // ----------------------------------------------------------- sources
