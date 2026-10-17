@@ -237,6 +237,9 @@ impl Kawoosh {
         if let Err(e) = crate::legends::lua_door(rt.lua(), self.legends.clone()) {
             log::error!("kawoosh.legends: {e}");
         }
+        if let Err(e) = crate::user_snippets::lua_door(rt.lua(), self.user_snippets.clone()) {
+            log::error!("kawoosh.snippets: {e}");
+        }
         if let Err(e) = crate::pane_settings::lua_door(rt.lua(), self.pane_settings.clone()) {
             log::error!("kawoosh.pane_opt: {e}");
         }

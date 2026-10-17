@@ -89,6 +89,9 @@ pub struct Kawoosh {
     /// The snippet live in the text, if one is (completion.md Decision
     /// 7): one at a time, gone when it ends.
     pub snippet: Option<crate::snippet::Live>,
+    /// The user's snippets by language (completion.md Decision 8),
+    /// shared with Lua (`user_snippets.rs`).
+    pub user_snippets: crate::user_snippets::Shared,
     /// `lsp.ensure_installed`'s installs and the registries' checks.
     pub lsp_installs: crate::lsp_installs::Installs,
     pub scripting: Scripting,
@@ -457,6 +460,7 @@ impl Kawoosh {
             lsp: LspState::new(wake.clone()),
             completion: crate::completion::State::new(wake.clone()),
             snippet: None,
+            user_snippets: Default::default(),
             lsp_installs: crate::lsp_installs::Installs::new(wake.named("lsp installs")),
             scripting: Scripting {
                 servers: crate::lsp_rules::builtin(),

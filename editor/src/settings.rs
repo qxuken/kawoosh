@@ -739,6 +739,10 @@ const DOCS: &[(&str, &str)] = &[
         "candidates match fuzzily, as a picker's rows do; `false` by the word's beginning alone",
     ),
     (
+        "snippets.paths",
+        "the user's snippets: folders of VS Code snippet files (`rust.json`, `*.code-snippets`), packages laid out as friendly-snippets (a `package.json` naming each language's file), or single files — `~` or absolute, else under the config directory; a language's are read the first time a buffer of it completes, and an edit reads them again",
+    ),
+    (
         "completion.max_items",
         "the popup's rows, and the most candidates ranked in full; the rest are counted",
     ),
@@ -1302,6 +1306,10 @@ impl Settings {
         defaults.set("completion.max_items", Setting::Int(10));
         defaults.set("completion.docs", Setting::Int(200));
         defaults.set("completion.words.min_length", Setting::Int(3));
+        // The user's snippets' files: folders, packages laid out as
+        // friendly-snippets, VS Code files (completion.md Decision 8).
+        // None ship.
+        defaults.set("snippets.paths", Setting::List(Vec::new()));
         for lang in ["markdown", "gitcommit", "text"] {
             defaults.set(
                 &format!("language.{lang}.completion.trigger"),
@@ -2168,6 +2176,7 @@ mod tests {
                 "secrets.reveal_secs",
                 "secrets.scan_max_kb",
                 "shiftwidth",
+                "snippets.paths",
                 "statusline.layout",
                 "statusline.path",
                 "tabs.directory",

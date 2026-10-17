@@ -668,6 +668,9 @@ pub struct State {
     next_resolve: u64,
     /// How many resolves were asked: a test's count.
     pub resolves: usize,
+    /// The user's snippets' generation the live session's answer was
+    /// made at: a change since offers again.
+    snippets_seen: u64,
 }
 
 impl State {
@@ -690,6 +693,7 @@ impl State {
             said_unknown: HashSet::new(),
             next_resolve: 0,
             resolves: 0,
+            snippets_seen: 0,
         }
     }
 
@@ -1412,6 +1416,7 @@ impl Kawoosh {
     pub(crate) fn sync_completion(&mut self) {
         self.sync_snippet();
         self.completion_frecency_due();
+        self.completion_snippets_follow();
         // A buffer private since it answered — a multibuffer showing a
         // private file's lines now — is no source (secrets.md Decision 1).
         let gone: Vec<BufferId> = self
@@ -1551,12 +1556,16 @@ impl Kawoosh {
                         }),
                 );
             }
+            // The user's snippets, as they stand; a language asked for
+            // the first time has its files read, landing in place.
+            if config.sources.contains(&Source::Snippets) {
+                local.extend(self.completion_user_snippets(buffer));
+            }
             // A buffer gone private since it was indexed is no source
             // (secrets.md Decision 1).
             local.retain(|a| {
                 a.buffer
-                    .and_then(|b| self.ed.buffers.get(b))
-                    .is_some_and(|b| !b.private)
+                    .is_none_or(|b| self.ed.buffers.get(b).is_some_and(|b| !b.private))
             });
             let s = self.completion.session.as_mut().unwrap();
             s.answers.extend(local);
@@ -1659,6 +1668,68 @@ impl Kawoosh {
     }
 
     // ----------------------------------------------------------- sources
+
+    /// The user's snippets for a buffer's language and `all`'s, as one
+    /// answer (Decision 8), its language marked asked for: the loader
+    /// reads its files at the next frame.
+    fn completion_user_snippets(&mut self, buffer: BufferId) -> Option<Answer> {
+        let lang = self.ed.buffers.get(buffer)?.language.to_string();
+        let names = crate::user_snippets::names_for(&self.languages, &lang);
+        let mut store = self.user_snippets.borrow_mut();
+        store.want(&lang);
+        self.completion.snippets_seen = store.generation;
+        let items = store.items(&lang, &names);
+        (!items.is_empty()).then_some(Answer {
+            source: Source::Snippets,
+            buffer: None,
+            items,
+        })
+    }
+
+    /// Per frame: the languages asked for told to the loader, and the
+    /// live session offered the user's snippets again when they changed
+    /// — a file read, a watched one edited, `kawoosh.snippets.add`.
+    fn completion_snippets_follow(&mut self) {
+        let pending = self.user_snippets.borrow_mut().take_pending();
+        if !pending.is_empty()
+            && let Some(rt) = self.scripting.rt.clone()
+        {
+            rt.publish(&self.ed, self.focused_view());
+            for lang in &pending {
+                let names = match lang.as_str() {
+                    crate::user_snippets::ALL => vec![lang.clone()],
+                    _ => crate::user_snippets::names_for(&self.languages, lang),
+                };
+                rt.snippets_want(lang, &names);
+            }
+            self.drain_lua();
+        }
+        let generation = self.user_snippets.borrow().generation;
+        if generation == self.completion.snippets_seen {
+            return;
+        }
+        self.completion.snippets_seen = generation;
+        let Some(s) = &self.completion.session else {
+            return;
+        };
+        if s.word != WordKind::Ident || s.closed {
+            return;
+        }
+        let (view, buffer) = (s.view, s.anchor.buffer);
+        if !self
+            .completion_config(view)
+            .sources
+            .contains(&Source::Snippets)
+        {
+            return;
+        }
+        let answer = self.completion_user_snippets(buffer).unwrap_or(Answer {
+            source: Source::Snippets,
+            buffer: None,
+            items: Rc::from(Vec::new()),
+        });
+        self.completion_answer(answer);
+    }
 
     /// The server asked about the caret, one request in flight.
     fn completion_ask_lsp(&mut self) {

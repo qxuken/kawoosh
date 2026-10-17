@@ -2613,6 +2613,20 @@ impl Runtime {
         self.hook("_cwd", (path.display().to_string(), how), "on_cwd");
     }
 
+    /// Tells the snippets' loader a buffer of `lang` asked for its
+    /// snippets the first time (`kawoosh._snippets_want`, completion.md
+    /// Decision 8): `names`, those it finds them under.
+    pub fn snippets_want(&self, lang: &str, names: &[String]) {
+        let names = match self
+            .lua
+            .create_sequence_from(names.iter().map(String::as_str))
+        {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        self.hook("_snippets_want", (lang, names), "snippets");
+    }
+
     /// Hands a socket's `kawoosh pick SOURCE [QUERY]` to the picker,
     /// which answers `token` through `kawoosh._answer`.
     pub fn pick_hook(&self, token: u64, source: &str, query: &str) {
