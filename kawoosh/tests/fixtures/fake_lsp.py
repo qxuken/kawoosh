@@ -90,7 +90,22 @@ field twice), `znest` (a placeholder in a placeholder), `zvars`
 (`$TM_FILENAME`), `zbroken` (an unclosed placeholder), `zasis` (three
 lines, `insertTextMode` asIs), `zedit` (a `textEdit` putting
 `zedit(${1:arg})`); `zchoice` puts a choice and a placeholder, its body
-nothing like its label."""
+nothing like its label. With `--signature` it says signatures
+(completion.md Decision 10): `signatureHelpProvider` with `(` and `,`
+as its triggers; the call around the position is the last unmatched
+`(` before it in the text it holds, the name the word before it, the
+active parameter the commas at its depth since — `pair` (one
+signature, its parameters by string, each documented, the signature's
+documentation two paragraphs), `over` (two overloads, their parameters
+by UTF-16 offsets, the first with an `é`), `secret` (whose label and
+documentation name MIIEvSecretKeyMaterial), `none` (no parameters); any
+other name, or no call, is `null`. Asked again (`isRetrigger`), the
+overload in `activeSignatureHelp` is the one it answers. Its
+candidates are then `pair` and `none` (functions, plain, each
+documented) and, told
+`snippetSupport`, `pair_snip(…)` (a function whose snippet puts
+`pair_snip(${1:a}, ${2:b})$0`). With `--signature-never` too it never
+answers a signature, for a test that hands the answer in itself."""
 import json
 import re, sys
 
@@ -157,6 +172,19 @@ for i, a in enumerate(sys.argv):
     if a in ("--watch", "--watch-rel"):
         rid, kind, glob = sys.argv[i + 1:i + 4]
         WATCHES.setdefault(rid, []).append((a == "--watch-rel", int(kind), glob))
+# `--signature`'s signatures, by the name of the call.
+SIGS = {
+    "pair": [{"label": "fn pair(a: i32, b: &str) -> bool",
+              "documentation": {"kind": "markdown", "value": "Pairs two things.\n\nMore about pairing."},
+              "parameters": [{"label": "a: i32", "documentation": "the first"},
+                             {"label": "b: &str", "documentation": "the second\n\nand more"}]}],
+    "over": [{"label": "over(é: u8)", "parameters": [{"label": [5, 10]}]},
+             {"label": "over(x: u8, y: u8)", "parameters": [{"label": [5, 10]}, {"label": [12, 17]}]}],
+    "secret": [{"label": "fn secret(key: MIIEvSecretKeyMaterial)",
+                "documentation": "uses MIIEvSecretKeyMaterial",
+                "parameters": [{"label": "key: MIIEvSecretKeyMaterial"}]}],
+    "none": [{"label": "fn none()", "parameters": []}],
+}
 root_uri = None
 first_uri = None
 notes = []
@@ -299,7 +327,9 @@ while True:
                       {"save": True} if "--save" in sys.argv else {}))}
                if {"--incremental", "--save", "--save-text"} & set(sys.argv) else {}),
             **({"diagnosticProvider": {"interFileDependencies": True, "workspaceDiagnostics": True}}
-               if "--workspace-pull" in sys.argv else {})}}})
+               if "--workspace-pull" in sys.argv else {}),
+            **({"signatureHelpProvider": {"triggerCharacters": ["(", ","]}}
+               if "--signature" in sys.argv else {})}}})
     elif method == "initialized":
         if WATCHES:
             send({"jsonrpc": "2.0", "id": 5000, "method": "client/registerCapability", "params": {
@@ -398,6 +428,14 @@ while True:
         p = m["params"]
         if char_before(p["textDocument"]["uri"], p["position"]) == ".":
             items = [{"label": "member_a", "kind": 2}, {"label": "member_b", "kind": 2}]
+        elif "--signature" in sys.argv:
+            items = [{"label": "pair", "kind": 3, "detail": "fn pair(a: i32, b: &str) -> bool",
+                      "documentation": "docs of pair"},
+                     {"label": "none", "kind": 3, "documentation": "docs of none"}]
+            if snippet_support:
+                items.append({"label": "pair_snip(…)", "kind": 3, "filterText": "pair_snip",
+                              "documentation": "docs of pair_snip",
+                              "insertText": "pair_snip(${1:a}, ${2:b})$0", "insertTextFormat": 2})
         elif "--snippets" in sys.argv and not snippet_support:
             items = [{"label": "nosnippets", "kind": 3}]
         elif "--snippets" in sys.argv:
@@ -426,6 +464,32 @@ while True:
             items = [{"label": "hello_world", "kind": 3, "insertText": "hello_world"},
                      {"label": "help", "kind": 3}]
         send({"jsonrpc": "2.0", "id": mid, "result": {"isIncomplete": False, "items": items}})
+    elif method == "textDocument/signatureHelp" and "--signature-never" in sys.argv:
+        pass
+    elif method == "textDocument/signatureHelp":
+        p = m["params"]
+        text = docs.get(p["textDocument"]["uri"], "")
+        at = offset_of(text, p["position"])
+        depth, commas, open_at = 0, 0, None
+        for i in range(at - 1, -1, -1):
+            c = text[i]
+            if c == ")":
+                depth += 1
+            elif c == "(" and depth == 0:
+                open_at = i
+                break
+            elif c == "(":
+                depth -= 1
+            elif c == "," and depth == 0:
+                commas += 1
+        name = re.search(r"(\w*)$", text[:open_at]).group(1) if open_at is not None else ""
+        sigs = SIGS.get(name)
+        ctx = p.get("context") or {}
+        active = 0
+        if ctx.get("isRetrigger") and ctx.get("activeSignatureHelp"):
+            active = ctx["activeSignatureHelp"].get("activeSignature", 0)
+        send({"jsonrpc": "2.0", "id": mid, "result": None if not sigs else
+              {"signatures": sigs, "activeSignature": active, "activeParameter": commas}})
     elif method == "completionItem/resolve" and "--resolve-never" in sys.argv:
         pass
     elif method == "completionItem/resolve":
