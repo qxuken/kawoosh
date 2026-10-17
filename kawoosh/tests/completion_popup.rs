@@ -565,3 +565,72 @@ fn the_candidates_and_symbols_pickers_carry_kind_icons() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A resolve's answer is its candidate's, whatever is selected when it
+/// lands: an answer for the first that lands after `<C-n>` moved to the
+/// second — in the frame of the key, before the panel follows — fills
+/// the first, never the second; the second shows its own. The server
+/// answers no resolve here: the test hands each answer in.
+#[test]
+fn a_late_resolve_fills_the_candidate_it_was_asked_for() {
+    let dir = tmp("late");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n}\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
+    let mut server = resolving_server(&dir);
+    server.args.push("--resolve-never".into());
+    app.add_lsp_server(server);
+    let mut d = Drive::new(1200.0, 600.0);
+    app.wait_for_open();
+    d.settle(&mut app);
+    ex(&mut d, &mut app, "setlocal completion.popup=always");
+    ex(&mut d, &mut app, "setlocal completion.docs=0");
+    d.press(&mut app, "o");
+    d.keys(&mut app, "hel");
+    until(&mut d, &mut app, "the server's candidates", |a| {
+        a.completion.candidates().len() >= 2
+    });
+    until(&mut d, &mut app, "a resolve asked", |a| {
+        a.completion.session.as_ref().is_some_and(|s| s.docs.asking.is_some())
+    });
+    let token = |a: &Kawoosh| a.completion.session.as_ref().and_then(|s| s.docs.asking);
+    let first_token = token(&app).unwrap();
+    let first = app.completion.selected_text().unwrap().to_string();
+    // The key moves the selection; the first's answer lands before the
+    // frame's panel follows it.
+    app.shell_command("completion next", &[], None);
+    let second = app.completion.selected_text().unwrap().to_string();
+    assert_ne!(first, second);
+    app.completion_resolved(
+        first_token,
+        Some(format!("fn {first}()")),
+        Some(format!("docs for {first}")),
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(
+        app.completion_panel_text()
+            .is_none_or(|(h, _)| h.as_deref() != Some(format!("fn {first}()").as_str())),
+        "the second never shows the first's: {:?}",
+        app.completion_panel_text()
+    );
+    let second_token = token(&app).expect("the second asked for");
+    app.completion_resolved(
+        second_token,
+        Some(format!("fn {second}()")),
+        Some(format!("docs for {second}")),
+    );
+    d.frame(&mut app);
+    let (head, _) = app.completion_panel_text().unwrap();
+    assert_eq!(head.as_deref(), Some(format!("fn {second}()").as_str()));
+    // Back on the first: filled when its answer landed, not asked again.
+    let asked = app.completion.resolves;
+    d.press(&mut app, "<C-p>");
+    d.frame(&mut app);
+    let (head, _) = app.completion_panel_text().expect("the first's, kept");
+    assert_eq!(head.as_deref(), Some(format!("fn {first}()").as_str()));
+    assert_eq!(app.completion.resolves, asked, "kept on its item");
+    std::fs::remove_dir_all(&dir).ok();
+}

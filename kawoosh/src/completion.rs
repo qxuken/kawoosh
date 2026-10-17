@@ -350,6 +350,10 @@ pub struct Session {
     /// The documentation: the selected candidate's, asked after
     /// `completion.docs` ms, kept on the item.
     pub docs: Docs,
+    /// The resolves in flight, by token: the candidate each was asked
+    /// for — its answer's items and its place in them — which its
+    /// answer fills whatever is selected when it lands.
+    resolving: HashMap<u64, (Rc<[Item]>, u32)>,
 }
 
 /// The information panel's state for a session (Decision 10's first
@@ -1412,6 +1416,7 @@ impl Kawoosh {
             popup_up: Cell::new(false),
             rows: RefCell::new(None),
             docs: Docs::default(),
+            resolving: HashMap::new(),
         };
         self.completion.session = Some(session);
         self.completion_note_signals();
@@ -2405,7 +2410,16 @@ impl Kawoosh {
             .filter(|_| item.filled.borrow().is_none() && item.documentation.is_none());
         match ask {
             Some(resolve) => {
-                if s.docs.asking.is_some() {
+                // Asked already — before a walk away and back — and not
+                // answered yet: its answer shows it.
+                let items = s.answers[r.answer as usize].items.clone();
+                let pending = s
+                    .resolving
+                    .iter()
+                    .find(|(_, (i, at))| Rc::ptr_eq(i, &items) && *at == r.item)
+                    .map(|(t, _)| *t);
+                if let Some(t) = pending {
+                    s.docs.asking = Some(t);
                     return;
                 }
                 self.completion.next_resolve += 1;
@@ -2413,6 +2427,7 @@ impl Kawoosh {
                 self.completion.resolves += 1;
                 let s = self.completion.session.as_mut().unwrap();
                 s.docs.asking = Some(token);
+                s.resolving.insert(token, (items, r.item));
                 let buffer = s.anchor.buffer;
                 self.positional_cmd(Cmd::Resolve {
                     buffer,
@@ -2424,9 +2439,11 @@ impl Kawoosh {
         }
     }
 
-    /// A candidate filled in by its server: kept on the item, and the
-    /// panel built when it is still the one asked about.
-    pub(crate) fn completion_resolved(
+    /// A candidate filled in by its server: kept on the item it was
+    /// asked for — whatever is selected when the answer lands, a key
+    /// having moved the selection in the frame it arrives — and the
+    /// panel built when that item is the one on show.
+    pub fn completion_resolved(
         &mut self,
         token: u64,
         detail: Option<String>,
@@ -2435,19 +2452,23 @@ impl Kawoosh {
         let Some(s) = self.completion.session.as_mut() else {
             return;
         };
-        if s.docs.asking != Some(token) {
-            return;
-        }
-        s.docs.asking = None;
-        let Some(r) = s.selected.and_then(|i| s.ranking.get(i)).copied() else {
+        let Some((items, at)) = s.resolving.remove(&token) else {
             return;
         };
-        let item = &s.answers[r.answer as usize].items[r.item as usize];
-        *item.filled.borrow_mut() = Some(Filled {
-            detail,
-            documentation,
-        });
-        if s.docs.shown {
+        if let Some(item) = items.get(at as usize) {
+            *item.filled.borrow_mut() = Some(Filled {
+                detail,
+                documentation,
+            });
+        }
+        if s.docs.asking == Some(token) {
+            s.docs.asking = None;
+        }
+        let on_it = s
+            .selected
+            .and_then(|i| s.ranking.get(i))
+            .is_some_and(|r| Rc::ptr_eq(&s.answers[r.answer as usize].items, &items) && r.item == at);
+        if on_it && s.docs.shown {
             self.completion_build_panel();
         }
     }
@@ -2867,6 +2888,8 @@ mod tests {
             popup_up: Cell::new(false),
             rows: RefCell::new(None),
             docs: Docs::default(),
+            resolving: HashMap::new(),
+            resolving: HashMap::new(),
         };
         let mut frecency = Frecency::default();
         let signals = Signals::default();

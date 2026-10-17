@@ -76,7 +76,9 @@ in when asked (completion.md Decision 10): `resolveProvider` declared,
 its candidates — hello_world, help and MIIEvSecretKeyMaterial — sent
 with no documentation and a `data` each, and `completionItem/resolve`
 answers the item with detail `fn LABEL()` and documentation "docs for
-LABEL", a second paragraph naming MIIEvSecretKeyMaterial."""
+LABEL", a second paragraph naming MIIEvSecretKeyMaterial; with
+`--resolve-never` too it never answers a resolve, for a test that hands
+the answer in itself."""
 import json
 import re, sys
 
@@ -388,6 +390,8 @@ while True:
             items = [{"label": "hello_world", "kind": 3, "insertText": "hello_world"},
                      {"label": "help", "kind": 3}]
         send({"jsonrpc": "2.0", "id": mid, "result": {"isIncomplete": False, "items": items}})
+    elif method == "completionItem/resolve" and "--resolve-never" in sys.argv:
+        pass
     elif method == "completionItem/resolve":
         it = dict(m["params"])
         it["detail"] = "fn %s()" % it["label"]
