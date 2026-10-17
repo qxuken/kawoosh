@@ -943,6 +943,12 @@ pub(crate) fn lua_door(lua: &mlua::Lua, icons: Shared) -> mlua::Result<()> {
             icon_node(lua, &at.borrow(), &name, opts)
         })?,
     )?;
+    k.set(
+        "kind_icon",
+        lua.create_function(|_, kind: Option<String>| {
+            Ok(kind_icon(kind.as_deref().unwrap_or("")))
+        })?,
+    )?;
     let at = icons.clone();
     k.set(
         "icon_names",

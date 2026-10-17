@@ -459,3 +459,65 @@ fn with_no_popup_the_panel_is_above_the_line() {
     assert!(panel.y + panel.h <= row.y + 0.5, "above: {panel:?} {row:?}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The glyph texts a frame drew under a Lua pane — a picker's rows —
+/// with each one's box: the kind icons are a glyph each in a box of
+/// their own.
+fn glyphs(d: &Drive, glyph: char) -> Vec<kui_native::Rect> {
+    let nodes = d.core.nodes();
+    nodes
+        .iter()
+        .filter(|n| n.text.as_deref() == Some(glyph.to_string().as_str()))
+        .filter_map(|n| nodes.iter().find(|p| Some(p.key) == n.parent))
+        .map(|p| p.rect)
+        .collect()
+}
+
+/// Decision 9 in the pickers: the `<C-x>` candidates picker's rows and
+/// the symbols picker's start with their kinds' icons, the same cell
+/// wide box as the popup's.
+#[test]
+fn the_candidates_and_symbols_pickers_carry_kind_icons() {
+    let dir = tmp("pickers");
+    std::fs::write(dir.join("main.rs"), "fn helper_fn() {}\n// helium\n").unwrap();
+    let mut app = Kawoosh::from_file(&dir.join("main.rs"));
+    app.jobs_inline = true;
+    let mut d = Drive::new(1000.0, 600.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.wait_for_open();
+    d.settle(&mut app);
+    let (_, _, cell) = app.icons_family();
+    d.press(&mut app, "Go");
+    d.keys(&mut app, "hel");
+    d.settle(&mut app);
+    d.press(&mut app, "<C-x>");
+    d.settle(&mut app);
+    let words = glyphs(&d, '\u{EA93}');
+    let functions = glyphs(&d, '\u{EA8C}');
+    assert!(!words.is_empty(), "a word's icon in the candidates");
+    assert!(!functions.is_empty(), "a function's icon in the candidates");
+    for r in words.iter().chain(&functions) {
+        assert!((r.w - cell).abs() < 1.0, "a cell wide: {r:?} against {cell}");
+    }
+    for _ in 0..3 {
+        d.press(&mut app, "<Esc>");
+        d.settle(&mut app);
+    }
+    d.keys(&mut app, ":picker symbols");
+    d.press(&mut app, "<CR>");
+    d.settle(&mut app);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while glyphs(&d, '\u{EA8C}').is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the symbols' icons: {:?} / {:?}",
+            app.ed.message,
+            d.core.nodes().iter().filter_map(|n| n.text.clone()).collect::<Vec<_>>()
+        );
+        app.wait_for_jobs();
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

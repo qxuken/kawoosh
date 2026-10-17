@@ -504,6 +504,10 @@ end
 -- row's key is put in it by its index — what `env.is_hovered` asks by.
 -- With `opts.hover` a kind, each row hears the pointer as
 -- `{ kind = "hover", phase, by, tag = { kind = opts.hover, i = i } }`.
+-- With `opts.icon` a field, each row starts with the icon of the kind
+-- that field names (`kawoosh.kind_icon`), a cell of the editor's face
+-- wide, in `font.icons` (completion.md Decision 9): a candidate's, a
+-- symbol's.
 function picker.rows(ctx, hits, opts)
   local t = ctx.env.theme
   local top = opts.top or 1
@@ -557,11 +561,15 @@ function picker.rows(ctx, hits, opts)
     local color = off and t.muted or t.fg
     local indent = opts.indent and opts.indent(it) or nil
     local step = indent and indent > 0 and string.rep("  ", indent) or nil
+    local icon = opts.icon and it[opts.icon] and kawoosh.icon(kawoosh.kind_icon(it[opts.icon]),
+      { cell = true, size = SIZE, color = selected and t.accent or t.muted }) or nil
     if columns then
       local ps = pieces_of(it, columns)
       for j, c in ipairs(columns) do
         local spans = {}
-        if j == 1 and step then spans[1] = { step } end
+        -- A row's icon after its indent: the indent a text of its own.
+        local lead_step = j == 1 and icon and step or nil
+        if j == 1 and step and not lead_step then spans[1] = { step } end
         -- The column's own colour for its field: the item's, when the
         -- column names one and the row is not off.
         local own = c.color and not off and it[c.color] or nil
@@ -593,7 +601,9 @@ function picker.rows(ctx, hits, opts)
         end
         local fixed = fixed_width(c, widths, j, opts.width)
         local cell = row { width = c.grow and "grow" or fixed or "fit", min_width = not fixed and c.min or nil,
-          clip = true, cross_align = "center" }
+          clip = true, cross_align = "center", gap = j == 1 and icon and 6 or nil }
+        if lead_step then cell[#cell + 1] = text(lead_step, { family = c.family, size = SIZE, wrap = "none" }) end
+        if j == 1 and icon then cell[#cell + 1] = icon end
         if #spans > 0 then
           cell[#cell + 1] = text(spans, { family = c.family, size = SIZE, wrap = wrap })
         end
@@ -614,6 +624,7 @@ function picker.rows(ctx, hits, opts)
       if off then
         spans[#spans + 1] = { "  " .. it.can, color = t.danger }
       end
+      if icon then r[#r + 1] = icon end
       r[#r + 1] = text(spans, { family = "mono", size = SIZE, wrap = wrap })
     end
     inner[#inner + 1] = r
@@ -1080,7 +1091,8 @@ end
 -- name, or on a definition given whole — `{ title =, items = {…} |
 -- load = fn(ctx, done) | search = fn(query, job), pick = fn(item,
 -- how), answer = fn(item), preview = fn(item), keys = { ["<C-x>"] =
--- fn(item) }, columns = {…} (as `picker.rows` takes them), wide =
+-- fn(item) }, columns = {…} (as `picker.rows` takes them), icon =
+-- FIELD (each row's kind icon, `picker.rows`'s `icon`), wide =
 -- true (a row's `sub` matched too, after its text, as a row with
 -- columns is on its cells after its name), query = fn(query, ctx)
 -- (the text matched for what was typed), launcher = true (a module of
@@ -1267,7 +1279,7 @@ kawoosh.view(VIEW, function(ctx)
   P.left_row = nil
   local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows, wrap = P.wrap, lines = lines_of,
                                           columns = P.src.columns, widths = P.widths, width = P.list_w,
-                                          indent = indent, hover = "row" })
+                                          indent = indent, hover = "row", icon = P.src.icon })
   if #P.hits == 0 and not P.loading then
     list[#list + 1] = row { pad = { x = 8, y = 4 }, text((P.query ~= "" and "no matches") or P.src.empty or "nothing here", { size = SIZE, color = t.muted }) }
   end
@@ -1458,7 +1470,7 @@ local CANDIDATE_COLUMNS = {
 }
 picker.source("candidates", {
   title = "candidates", placeholder = "a candidate",
-  columns = CANDIDATE_COLUMNS,
+  columns = CANDIDATE_COLUMNS, icon = "kind",
   items = function()
     local cs = kawoosh.lsp.candidates()
     local items = {}
@@ -2070,7 +2082,7 @@ end
 -- pane following the cursor.
 picker.source("symbols", {
   title = "symbols", placeholder = "a symbol in this buffer",
-  tree = true, follow = true,
+  tree = true, follow = true, icon = "kind",
   columns = {
     { "text", grow = true, family = "mono", lead = "head", color = "color" },
     { "tag", dim = "short", muted = true, min = 70, max = 200, share = 0.25 },
@@ -2141,7 +2153,7 @@ kawoosh.command("marks", function() picker.open("marks") end, { doc = "the marks
 -- the server of the buffer the picker was opened from as it is typed.
 picker.source("workspace_symbols", {
   title = "workspace symbols", placeholder = "a symbol anywhere",
-  follow = true,
+  follow = true, icon = "kind",
   columns = {
     { "text", grow = true },
     { "kind", muted = true, min = 70, max = 160, share = 0.2 },
