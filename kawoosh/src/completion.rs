@@ -898,7 +898,9 @@ impl Session {
             _ => {}
         }
         // Neither what it puts nor what it shows holds a masked word.
-        if holds_masked(ctx.masked, text) || (item.label != text && holds_masked(ctx.masked, &item.label)) {
+        if holds_masked(ctx.masked, text)
+            || (item.label != text && holds_masked(ctx.masked, &item.label))
+        {
             return None;
         }
         let (tier, continues) = score(matcher, &self.typed, text, ctx.config.fuzzy)?;
@@ -2381,7 +2383,11 @@ impl Kawoosh {
         let Some(view) = self.completion.session.as_ref().map(|s| s.view) else {
             return;
         };
-        let on = self.completion_display(view).is_some();
+        // Only a selection on show — a ghost or the popup — has a panel
+        // to follow it: with neither, nothing is asked of the server.
+        let on = self
+            .completion_display(view)
+            .is_some_and(|d| d.ghost.is_some() || d.popup);
         let same = {
             let s = self.completion.session.as_ref().unwrap();
             let id = on.then(|| self.completion_selected_id()).flatten();
@@ -2500,10 +2506,9 @@ impl Kawoosh {
         if s.docs.asking == Some(token) {
             s.docs.asking = None;
         }
-        let on_it = s
-            .selected
-            .and_then(|i| s.ranking.get(i))
-            .is_some_and(|r| Rc::ptr_eq(&s.answers[r.answer as usize].items, &items) && r.item == at);
+        let on_it = s.selected.and_then(|i| s.ranking.get(i)).is_some_and(|r| {
+            Rc::ptr_eq(&s.answers[r.answer as usize].items, &items) && r.item == at
+        });
         if on_it && s.docs.shown {
             self.completion_build_panel();
         }
@@ -2568,7 +2573,10 @@ impl Kawoosh {
         &self,
         view: ViewId,
     ) -> Option<Rc<crate::completion_view::Panel>> {
-        self.completion_display(view)?;
+        let d = self.completion_display(view)?;
+        if d.ghost.is_none() && !d.popup {
+            return None;
+        }
         let s = self.completion.session.as_ref()?;
         if !s.docs.shown {
             return None;

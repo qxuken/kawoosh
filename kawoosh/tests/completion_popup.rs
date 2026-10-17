@@ -593,7 +593,10 @@ fn a_late_resolve_fills_the_candidate_it_was_asked_for() {
         a.completion.candidates().len() >= 2
     });
     until(&mut d, &mut app, "a resolve asked", |a| {
-        a.completion.session.as_ref().is_some_and(|s| s.docs.asking.is_some())
+        a.completion
+            .session
+            .as_ref()
+            .is_some_and(|s| s.docs.asking.is_some())
     });
     let token = |a: &Kawoosh| a.completion.session.as_ref().and_then(|s| s.docs.asking);
     let first_token = token(&app).unwrap();
@@ -668,8 +671,16 @@ fn a_rows_label_and_detail_are_masked() {
         "t",
         r#"kawoosh.opt("secrets.masks.stripe", { pattern = [[(sk_live_\w+)]] })"#,
     );
-    assert!(app.ed.settings.get("secrets.masks.stripe").is_some(), "{}", app.ed.message);
-    ex(&mut d, &mut app, &format!("e {}", dir.join("README.md").display()));
+    assert!(
+        app.ed.settings.get("secrets.masks.stripe").is_some(),
+        "{}",
+        app.ed.message
+    );
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("README.md").display()),
+    );
     ex(&mut d, &mut app, &format!("e {}", file.display()));
     ex(&mut d, &mut app, "setlocal completion.popup=always");
     d.press(&mut app, "o");
@@ -716,7 +727,10 @@ fn the_popup_stays_inside_its_pane() {
         popup.x + popup.w <= pane.x + pane.w + 0.5,
         "inside on the right: popup {popup:?}, pane {pane:?}"
     );
-    assert!(popup.x >= pane.x - 0.5, "inside on the left: {popup:?} {pane:?}");
+    assert!(
+        popup.x >= pane.x - 0.5,
+        "inside on the left: {popup:?} {pane:?}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 
     // Wrapped lines above the caret near the pane's foot.
@@ -758,8 +772,16 @@ fn the_window_keeps_the_selection_through_a_landing() {
     std::fs::write(dir.join("main.rs"), body + "\n").unwrap();
     std::fs::write(dir.join("far.txt"), "help_far\n").unwrap();
     let (mut d, mut app) = open(&dir.join("main.rs"), 600.0);
-    ex(&mut d, &mut app, &format!("e {}", dir.join("far.txt").display()));
-    ex(&mut d, &mut app, &format!("e {}", dir.join("main.rs").display()));
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("far.txt").display()),
+    );
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("main.rs").display()),
+    );
     let far = app.ed.buffer_at(&dir.join("far.txt")).unwrap();
     ex(&mut d, &mut app, "setlocal completion.max_items=5");
     ex(&mut d, &mut app, "setlocal completion.popup=always");
@@ -775,11 +797,49 @@ fn the_window_keeps_the_selection_through_a_landing() {
     let index = kawoosh_systems::words::index(far, &snapshot, &[]);
     app.completion_words_indexed(index, (0, 0));
     d.settle(&mut app);
-    assert_eq!(app.completion.selected_text(), Some(selected.as_str()), "kept");
+    assert_eq!(
+        app.completion.selected_text(),
+        Some(selected.as_str()),
+        "kept"
+    );
     let rows = d.completion_rows();
     assert!(
         rows.iter().any(|r| r.ends_with(&selected)),
         "{selected} on show: {rows:?}"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// With nothing on show — no popup (`popup = "never"`) and no ghost
+/// (mid-line under `endline`) — the selection is no one's to read: no
+/// panel, and nothing asked of the server for it.
+#[test]
+fn nothing_on_show_asks_for_no_documentation() {
+    let dir = tmp("docs-hidden");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n    let x = ();\n}\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
+    app.add_lsp_server(resolving_server(&dir));
+    let mut d = Drive::new(1200.0, 600.0);
+    app.wait_for_open();
+    d.settle(&mut app);
+    ex(&mut d, &mut app, "setlocal completion.popup=never");
+    ex(&mut d, &mut app, "setlocal completion.docs=0");
+    d.press(&mut app, "jf(a");
+    d.keys(&mut app, "hel");
+    until(&mut d, &mut app, "the server's candidates", |a| {
+        a.completion.candidates().iter().any(|c| c == "hello_world")
+    });
+    for _ in 0..10 {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(app.completion_ghost_text(), None, "mid-line: no ghost");
+    assert!(!app.completion_popup_on());
+    assert_eq!(app.completion.resolves, 0, "nothing asked");
+    assert!(app.completion_panel_text().is_none(), "no panel");
+    assert!(d.rect_labelled("completion docs").is_none());
     std::fs::remove_dir_all(&dir).ok();
 }
