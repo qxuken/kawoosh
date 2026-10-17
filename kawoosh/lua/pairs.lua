@@ -29,6 +29,9 @@
 -- `pairs.enabled` is) and off the prompt and a view's field — where
 -- they are gated off, a key types as it would.
 
+---Auto-closing brackets: what a language changes by default.
+---@class kawoosh.pairs
+---@field languages table<string, table> by language: `{ ["'"] = false }` drops a pair, `{ { "<", ">" } }` adds one
 local M = {}
 kawoosh.pairs = M
 
@@ -43,7 +46,10 @@ kawoosh.setting("pairs.rules", { type = "table", doc = "pairs by language, `defa
 
 -- The pairs for `language`: the defaults, the settings' `default`, then
 -- the language's — built-in, then the settings'.
+---@param language? string
+---@return { [1]: string, [2]: string }[] # each an opener and its closer
 function M.rules(language)
+
   local set, order = {}, {}
 local function apply(t)
     if type(t) ~= "table" then return end

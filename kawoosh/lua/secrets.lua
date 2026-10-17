@@ -85,6 +85,10 @@ local function secret_names()
   return out
 end
 
+-- secrets_plugin.open(name): a private scratch `*secret NAME*` opened,
+-- its values masked, never on disk.
+---@param name string
+---@return nil
 function M.open(name)
   kawoosh.buf.open_scratch {
     name = PREFIX .. name .. "*",
@@ -124,6 +128,8 @@ local function vault_name(path) return "vault: " .. path end
 
 -- Where `ansible-vault` is run for `path`: the nearest directory above
 -- it with an `ansible.cfg`, else the file's own.
+---@param path string
+---@return string
 function M.config_dir(path)
   local here = fs.parent(path) or "."
   local d = here
@@ -165,6 +171,11 @@ local function write_back(path)
   end
 end
 
+-- secrets_plugin.open_vault(path): an Ansible vault decrypted into a
+-- private scratch, `:w` there encrypting it back over the file; the
+-- ciphertext opened instead when the tool cannot decrypt it.
+---@param path string
+---@return nil
 function M.open_vault(path)
   local name = vault_name(path)
   kawoosh.buf.open_scratch { name = name, text = "", language = "yaml", private = true, about = path }
@@ -210,7 +221,10 @@ function M.open_vault(path)
 end
 
 -- Whether `path` is an Ansible vault: its first line says so.
+---@param path string
+---@return boolean
 function M.is_vault(path)
+
   local ok, head = pcall(fs.head, path, 15)
   return ok and head == "$ANSIBLE_VAULT;"
 end

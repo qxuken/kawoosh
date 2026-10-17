@@ -51,6 +51,24 @@ kawoosh.setting("man.width", {
 -- no files of its own.
 kawoosh.language(LANG, {})
 
+---What `man.render` read off a page, besides its text. Bytes from 0,
+---end exclusive; lines from 1.
+---@class kawoosh.man.Info
+---@field spans kawoosh.OverstrikeSpan[] the styled runs
+---@field heads { line: integer, offset: integer }[] the section heads: a line all bold from its first column
+---@field subheads { line: integer, offset: integer }[] the same, indented
+---@field refs { [1]: integer, [2]: integer, page: string, section: string }[] the references to other pages, `name(N)`
+---@field header? { [1]: integer, [2]: integer } the first line, when it names the page
+---@field footer? { [1]: integer, [2]: integer } the last line, when it names the page
+
+---What `man.open` takes.
+---@class kawoosh.man.OpenOpts
+---@field pane? integer the pane the keys are in, whose width the page is rendered to
+---@field width? integer columns of your own
+---@field show? boolean false fills the buffer without showing it
+---@field beside? boolean read into the man column, made beside when there is none
+---@field done? fun(name: string?, why?: string) told the buffer's name, or nil and why
+
 local man = {}
 kawoosh.man = man
 
@@ -108,6 +126,9 @@ end
 -- references to other pages (`{ from, to, page, section }`), and
 -- `header`/`footer`, the byte ranges of the page's first and last
 -- lines when they name it (`LS(1) … LS(1)`).
+---@param raw string what `man` printed, its overstrikes and SGR in it
+---@return string text
+---@return kawoosh.man.Info info
 function man.render(raw)
   -- The overstrikes and SGR read off by the engine (`kawoosh.overstrike`):
   -- the text, its styled runs, and its all-bold lines.
@@ -185,6 +206,9 @@ end
 -- man.parse(words): what `:man`'s arguments name — `{ "ls" }`,
 -- `{ "1", "ls" }`, `{ "ls(1)" }`, `{ "ls.1" }` — as the page and its
 -- section (nil for none); nil for nothing.
+---@param words string|string[] the arguments, or a line of them
+---@return string? page
+---@return string? section
 function man.parse(words)
   if type(words) == "string" then
     local w = {}
@@ -218,6 +242,10 @@ end
 -- man.reference_at(line, col): the reference `name(N)` the character
 -- at `col` (from 1, in characters) is on, as `page, section`; else the
 -- word there, with no section; nil on a space.
+---@param line string
+---@param col integer from 1, in characters
+---@return string? page
+---@return string? section
 function man.reference_at(line, col)
   local byte = utf8.offset(line, col) or (#line + 1)
   local pos = 1
@@ -302,6 +330,8 @@ end
 -- being made (it shows `*man*`), else `from` (the pane the keys are
 -- in) when it shows a page, else a column `:man beside` made that shows
 -- one, else the first pane that does.
+---@param from? integer a pane's id
+---@return integer? pane
 function man.column(from)
   local panes = kawoosh.panes()
   local mine, any
@@ -364,6 +394,10 @@ end
 -- it; `opts.beside = true` reads it into the man column instead
 -- (`man.column`, a column of its own made beside when there is none);
 -- `opts.done(name)` is told the buffer's name, or `done(nil, why)`.
+---@param page string
+---@param section? string
+---@param opts? kawoosh.man.OpenOpts
+---@return nil
 function man.open(page, section, opts)
   opts = opts or {}
   if type(page) ~= "string" or page == "" then return kawoosh.echo("man: which page?") end
@@ -439,6 +473,7 @@ end
 
 -- man.pages(): the pages open, by buffer name — `{ page =, section =,
 -- width = }` each.
+---@return table<string, { page: string, section?: string, width: integer }>
 function man.pages()
   local there = {}
   for _, h in ipairs(kawoosh.buf.list()) do
@@ -475,7 +510,11 @@ end)
 -- man.index(fn): every page `man -k .` lists — `{ page =, section =,
 -- doc = }` each, by name — handed to `fn(list)`, or `fn(nil, why)`;
 -- read once a session unless `again`.
+---@param fn fun(list: { page: string, section: string, doc: string }[]?, why?: string)
+---@param again? boolean read again, not the session's
+---@return nil
 function man.index(fn, again)
+
   if index and not again then return fn(index) end
   local argv = command()
   argv[#argv + 1] = "-k"

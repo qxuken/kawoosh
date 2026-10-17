@@ -16,6 +16,9 @@
 -- mapped when `:timed` turns it on and unmapped with `:timed off`, so
 -- every other buffer keeps pairs' `<CR>` and the engine's `o` untouched.
 
+---Timed rows: the buffers that are timed.
+---@class kawoosh.timed
+---@field on table<integer, "clock"|"relative"> the buffers that are timed, and how
 local M = {}
 kawoosh.timed = M
 
@@ -42,7 +45,11 @@ local function start_of(lines)
 end
 
 -- The stamp a new line in buffer `h` starts with, now.
+---@param h integer a buffer
+---@param now? integer seconds, `os.time()` by default
+---@return string
 function M.stamp(h, now)
+
   now = now or os.time()
   local how = M.on[h]
   if how == "relative" then

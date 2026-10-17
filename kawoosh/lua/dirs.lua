@@ -31,6 +31,19 @@
 
 local fs = kawoosh.fs
 local picker = kawoosh.picker
+---A directory as a backend lists it.
+---@class kawoosh.dirs.Row
+---@field path string
+---@field score number its frecency: higher first
+
+---Where the directory jumps come from (`kawoosh.dirs.backends`).
+---@class kawoosh.dirs.Backend
+---@field list fun(done: fun(rows: kawoosh.dirs.Row[]?, err?: string)) every directory it knows, handed to `done`
+---@field add fun(path: string) a visit counted
+
+---The directory jumps: the backends by name, `dirs.backend` choosing.
+---@class kawoosh.dirs
+---@field backends table<string, kawoosh.dirs.Backend> `zoxide`, `memory`, a config's
 local dirs = { backends = {} }
 kawoosh.dirs = dirs
 
@@ -101,6 +114,7 @@ kawoosh.setting("dirs.zoxide", { type = "string", doc = "the zoxide binary, run 
 -- load before a window opened from the Dock has its shell's PATH, and
 -- a zoxide installed since is found; while that PATH is still being
 -- asked for, `auto` counts on it.
+---@return kawoosh.dirs.Backend
 function dirs.backend()
   local name = kawoosh.opt("dirs.backend") or "auto"
   if name == "auto" then
@@ -111,7 +125,10 @@ end
 
 -- dirs.visit(path): a directory attended — counted by the memory,
 -- and by the backend too when that is another.
+---@param path? string nothing when it is no directory
+---@return nil
 function dirs.visit(path)
+
   if not path or path == "" or not fs.is_dir(path) then return end
   local backend = dirs.backend()
   dirs.backends.memory.add(path)

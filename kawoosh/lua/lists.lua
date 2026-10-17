@@ -21,6 +21,24 @@ local fs = kawoosh.fs
 
 kawoosh.setting("places.context", { type = "integer", doc = "lines shown above and below each place in a list — the diagnostics, the references" })
 
+---A file of a list (`lists.layout`): its places, in the order shown.
+---@class kawoosh.lists.File
+---@field path string
+---@field rel string the header's spelling of it
+---@field count string|integer the header's count: `2 errors, 1 warning`, `3`
+---@field lines? integer how long the file is, when a buffer holds it: no excerpt runs past it
+---@field places kawoosh.lists.Place[] sorted by line in place
+
+---A place in a file: its lines, and notes written under the first.
+---@class kawoosh.lists.Place
+---@field line integer from 1
+---@field end_line? integer from 1
+---@field notes? { text: string, color?: string, severity?: integer }[] each a text ending in a newline, in a colour role (`error`, `warning`, …)
+
+---The lists of places: the diagnostics' list, while one is open.
+---@class kawoosh.lists
+---@field diag? { scope: "workspace"|"buffer", buffer?: integer, root: string } the diagnostics' list: what it lists
+---@field stale boolean the diagnostics moved while the keyboard was in their list
 local M = { diag = nil, stale = false }
 kawoosh.lists = M
 
@@ -75,6 +93,8 @@ end
 -- places' lines with the context around them — runs that meet made one,
 -- a `⋯` between those that do not — and a place's notes (a
 -- diagnostic's message) under its line, cutting the excerpt there.
+---@param files kawoosh.lists.File[] in order
+---@return (string|kawoosh.MultiLines)[] # `kawoosh.multibuffer`'s parts: a header, a file's lines, a note
 function M.layout(files)
   local c = context()
   local parts = {}
@@ -173,6 +193,8 @@ end
 -- The list made from the diagnostics as they are: shown and given the
 -- keyboard the first time, refilled where it is after — each caret on
 -- its file's place, `]q` going on where it was.
+---@param first? boolean shown and given the keyboard
+---@return nil
 function M.remake(first)
   if not M.diag then return end
   local files = diagnostic_files()
@@ -190,7 +212,10 @@ end
 
 -- M.diagnostics(scope): the list opened — `"workspace"` (the tab's
 -- working directory's) or `"buffer"` (the file's).
+---@param scope "workspace"|"buffer"
+---@return nil
 function M.diagnostics(scope)
+
   M.diag = { scope = scope, buffer = kawoosh.buf.current(), root = fs.cwd() }
   M.remake(true)
 end
