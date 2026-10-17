@@ -6,7 +6,12 @@
 //! and Lua's — and an argument to what the command declares it takes
 //! (`kawoosh_editor::ArgKind`): a path for `:e`, `:w`, `:cd`, `:vs`,
 //! `:dir`; a buffer for `:b`; a tool, a view, an option, a command, a
-//! font family (`:font`, the rest of the line, monospaced first).
+//! font family (`:font`, the rest of the line, monospaced first);
+//! `:compile` its line — the names, the picker's lines, a program's
+//! arguments from its completer (`shell_complete.rs`), paths — and
+//! `:!`, `:shell`, `:terminal` their program's arguments (compile.md
+//! Decision 23). A path's `%` completes to its spellings, each with
+//! what it names as the candidate's detail.
 //! Past an option's path (`:set font.family=`, `:set font.family `)
 //! its value completes: the families for `font.family` (monospaced
 //! first, the OS's `.`-faces left out), a one-of's
@@ -121,12 +126,16 @@ pub(crate) struct Found {
     pub start: usize,
     pub candidates: Vec<String>,
     pub details: HashMap<String, String>,
+    /// The candidates so far, to keep each once: a directory of
+    /// thousands is not searched for every entry.
+    seen: HashSet<String>,
 }
 
 impl Found {
     fn new(start: usize, candidates: Vec<String>) -> Self {
         Found {
             start,
+            seen: candidates.iter().cloned().collect(),
             candidates,
             details: HashMap::new(),
         }
@@ -134,7 +143,7 @@ impl Found {
 
     /// A candidate, and what is said of it; once.
     fn said(&mut self, candidate: String, about: String) {
-        if self.candidates.contains(&candidate) {
+        if !self.seen.insert(candidate.clone()) {
             return;
         }
         if !about.is_empty() {
@@ -723,6 +732,7 @@ impl Kawoosh {
             start,
             candidates,
             mut details,
+            ..
         } = self.cmd_candidates(&line[..at]);
         // The same token as before, cycled off its first: the candidate
         // current stays current where it still is — a completer's answer
