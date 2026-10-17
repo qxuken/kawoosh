@@ -479,6 +479,42 @@ fn every_end_and_no_jump_back() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Typing on past a snippet's end is typing after it: the snippet ends
+/// there, and `<C-l>` never reaches back into it. Where the field being
+/// filled is at the end, typing there is the field's.
+#[test]
+fn typing_past_the_end_ends_it() {
+    let (dir, mut d, mut app) = open("past-end", "main.rs", "\n");
+    d.press(&mut app, "i");
+    app.snippet_expand("foo(${1:a}, ${2:b})");
+    d.settle(&mut app);
+    d.keys(&mut app, "x");
+    d.press(&mut app, "<End>");
+    d.keys(&mut app, ";");
+    d.press(&mut app, "<CR>");
+    d.keys(&mut app, "let z = 1;");
+    d.settle(&mut app);
+    assert!(!live(&app), "typed past its end");
+    let v = app.focused_view().unwrap();
+    assert!(app.snippet_marks(v).is_empty(), "`b` no longer marked");
+    let (t, at) = (text(&app), carets(&app));
+    d.press(&mut app, "<C-l>");
+    assert_eq!((text(&app), carets(&app)), (t, at), "no jump back to `b`");
+    assert_eq!(text(&app), "foo(x, b);\nlet z = 1;\n");
+    // A field at the end: typing there is the field's.
+    d.press(&mut app, "<Esc>o");
+    app.snippet_expand("let ${1:x} = ${2:value}");
+    d.settle(&mut app);
+    d.press(&mut app, "<C-l>");
+    d.keys(&mut app, "v");
+    d.keys(&mut app, "al");
+    assert!(live(&app), "the last field at the end grows");
+    let l = app.snippet.as_ref().unwrap();
+    let buf = app.ed.buffer_of(l.view);
+    assert_eq!(buf.slice(l.fields[1].ranges[0].clone()), "val");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A malformed body is put as the text it is, never a panic, and
 /// nothing is live where it names no field.
 #[test]

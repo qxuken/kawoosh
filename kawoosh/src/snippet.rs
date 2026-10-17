@@ -107,8 +107,34 @@ fn holds(outer: &Range<usize>, inner: &Range<usize>) -> bool {
 
 impl Live {
     /// Whether offset `o` is in its text, either edge included.
+    ///
+    /// An edge is its text's only where the field being filled touches
+    /// it: a caret past the last character with no field there has left
+    /// it, and typing on there is typing after it (the LuaSnip
+    /// complaint: `<C-l>` must not reach back into it).
     fn has(&self, o: usize) -> bool {
-        self.spans.iter().any(|s| s.start <= o && o <= s.end)
+        self.spans.iter().any(|s| {
+            (s.start < o && o < s.end) || ((o == s.start || o == s.end) && self.touches(o))
+        })
+    }
+
+    /// Whether a place of the field being filled starts or ends at `o`.
+    fn touches(&self, o: usize) -> bool {
+        self.fields
+            .get(self.at)
+            .is_some_and(|f| f.ranges.iter().any(|r| r.start == o || r.end == o))
+    }
+
+    /// Whether edit `e` lands inside its text: within a span, and at an
+    /// edge only where the field being filled touches it (`own`, the
+    /// snippet's own edits, may land at any).
+    fn takes(&self, e: &Edit, own: bool) -> bool {
+        self.spans.iter().any(|s| {
+            holds(s, &e.range)
+                && (own
+                    || ((e.range.start > s.start || self.touches(s.start))
+                        && (e.range.end < s.end || self.touches(s.end))))
+        })
     }
 
     /// Whether field `inner` is nested, at any depth, in field `outer`.
@@ -139,7 +165,7 @@ impl Live {
             .map(|i| current.is_some_and(|c| i == c || self.nested_in(c, i)))
             .collect();
         for e in edits {
-            if !self.spans.iter().any(|s| holds(s, &e.range)) {
+            if !self.takes(e, current.is_none()) {
                 return false;
             }
             for s in &mut self.spans {
