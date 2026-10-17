@@ -409,6 +409,14 @@ pub enum Cmd {
         offset: usize,
         version: Version,
     },
+    /// A candidate's documentation filled in by its server
+    /// (`completionItem/resolve`), answered as `Event::Resolved` with
+    /// `token`.
+    Resolve {
+        buffer: BufferId,
+        token: u64,
+        resolve: Resolve,
+    },
     /// Replace the server table (the shell's: Lua's and the builtin
     /// ones, each language's settings over it). A running server takes
     /// its new `settings` and rules as they come; a new command or
@@ -642,6 +650,9 @@ pub struct Caps {
     pub definition: bool,
     pub hover: bool,
     pub completion: bool,
+    /// It fills in a candidate's documentation when asked
+    /// (`completionProvider.resolveProvider`, `completionItem/resolve`).
+    pub resolve: bool,
     /// The commands `workspace/executeCommand` runs on it.
     pub commands: Vec<String>,
     /// It gives diagnostics when asked (`diagnosticProvider`), not only
@@ -697,6 +708,7 @@ impl Caps {
             definition: self.definition || other.definition,
             pull: self.pull || other.pull,
             runnables: self.runnables || other.runnables,
+            resolve: self.resolve || other.resolve,
             workspace_pull: self.workspace_pull || other.workspace_pull,
             incremental: self.incremental && other.incremental,
             save: self.save.or(other.save),
@@ -737,6 +749,18 @@ pub struct CompletionItem {
     pub detail: Option<String>,
     /// The server's documentation, plain or markdown.
     pub documentation: Option<String>,
+    /// How to ask for what it left out, where its server fills a
+    /// candidate in (`completionItem/resolve`) and the documentation was
+    /// not sent with it.
+    pub resolve: Option<Resolve>,
+}
+
+/// A candidate as its server sent it, and which server: what
+/// `completionItem/resolve` sends back to be filled in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Resolve {
+    pub server: usize,
+    pub item: std::sync::Arc<Value>,
 }
 
 /// The name of a `CompletionItemKind` (LSP 3.17's table).
@@ -803,6 +827,13 @@ pub enum Event {
         /// The server said the list is not the whole: a longer word
         /// asks again.
         incomplete: bool,
+    },
+    /// A candidate filled in (`Cmd::Resolve`'s `token`): its detail and
+    /// documentation, either none when the server had nothing more.
+    Resolved {
+        token: u64,
+        detail: Option<String>,
+        documentation: Option<String>,
     },
     /// A server said what it does, at `initialize`: what each of its
     /// languages' buffers can ask.
@@ -927,6 +958,7 @@ impl Event {
             Event::Definition { .. } => "lsp definition",
             Event::Hover { .. } => "lsp hover",
             Event::Completion { .. } => "lsp completion",
+            Event::Resolved { .. } => "lsp resolved",
             Event::Capabilities { .. } => "lsp capabilities",
             Event::WorkspaceEdit { .. } => "lsp workspace edit",
             Event::Locations { .. } => "lsp locations",
@@ -2634,7 +2666,7 @@ impl Pool {
                         "publishDiagnostics": { "relatedInformation": false },
                         "definition": { "linkSupport": true },
                         "hover": { "contentFormat": ["markdown", "plaintext"] },
-                        "completion": { "completionItem": { "snippetSupport": false, "insertReplaceSupport": true } },
+                        "completion": { "completionItem": { "snippetSupport": false, "insertReplaceSupport": true, "documentationFormat": ["markdown", "plaintext"], "resolveSupport": { "properties": ["documentation", "detail"] } } },
                         "synchronization": { "didSave": true },
                         "rename": { "prepareSupport": false },
                         "references": {},
@@ -2887,6 +2919,29 @@ impl Pool {
                 offset,
                 version,
             } => self.complete(buffer, offset, version),
+            Cmd::Resolve {
+                buffer,
+                token,
+                resolve,
+            } => {
+                let item = (*resolve.item).clone();
+                let asked = self.servers.get_mut(resolve.server).and_then(Option::as_mut).map(
+                    |server| {
+                        server.request(
+                            "completionItem/resolve",
+                            item,
+                            (buffer, Version::INITIAL, token as usize),
+                        )
+                    },
+                );
+                if asked.is_none() {
+                    self.emit(Event::Resolved {
+                        token,
+                        detail: None,
+                        documentation: None,
+                    });
+                }
+            }
             Cmd::Rename {
                 buffer,
                 offset,
@@ -3935,6 +3990,15 @@ impl Pool {
                             result: Err(text),
                         },
                     ),
+                    // A candidate with nothing more to say.
+                    "completionItem/resolve" => self.emit_from(
+                        key,
+                        Event::Resolved {
+                            token: offset as u64,
+                            detail: None,
+                            documentation: None,
+                        },
+                    ),
                     // Hints are asked for as the view moves; one refused
                     // is nothing to say.
                     "textDocument/inlayHint" | "textDocument/diagnostic" => {}
@@ -4171,6 +4235,25 @@ impl Pool {
                         );
                     }
                 }
+                "completionItem/resolve" => {
+                    let documentation = result.and_then(|r| r.get("documentation")).and_then(|d| {
+                        d.as_str()
+                            .or_else(|| d.get("value").and_then(Value::as_str))
+                            .map(str::to_string)
+                    });
+                    let detail = result
+                        .and_then(|r| r.get("detail"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    self.emit_from(
+                        key,
+                        Event::Resolved {
+                            token: offset as u64,
+                            detail,
+                            documentation,
+                        },
+                    );
+                }
                 "textDocument/hover" => {
                     let text = hover_text(result);
                     // Nothing to say here: the next server's turn.
@@ -4181,7 +4264,12 @@ impl Pool {
                     self.emit_from(key, Event::Hover { buffer, text });
                 }
                 "textDocument/completion" => {
-                    let items = completion_items(result);
+                    let resolves = server
+                        .caps
+                        .as_ref()
+                        .is_some_and(|c| c.resolve)
+                        .then_some(key);
+                    let items = completion_items(result, resolves);
                     let incomplete = result
                         .and_then(|r| r.get("isIncomplete"))
                         .and_then(Value::as_bool)
@@ -4470,6 +4558,10 @@ fn capabilities(result: Option<&Value>) -> Caps {
         completion: caps
             .and_then(|c| c.get("completionProvider"))
             .is_some_and(|v| !v.is_null()),
+        resolve: caps
+            .and_then(|c| c.pointer("/completionProvider/resolveProvider"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         commands: caps
             .and_then(|c| c.pointer("/executeCommandProvider/commands"))
             .and_then(Value::as_array)
@@ -4913,7 +5005,7 @@ fn hover_text(result: Option<&Value>) -> String {
     one(contents)
 }
 
-fn completion_items(result: Option<&Value>) -> Vec<CompletionItem> {
+fn completion_items(result: Option<&Value>, resolves: Option<usize>) -> Vec<CompletionItem> {
     let Some(result) = result else {
         return Vec::new();
     };
@@ -4948,12 +5040,18 @@ fn completion_items(result: Option<&Value>) -> Vec<CompletionItem> {
                     .or_else(|| d.get("value").and_then(Value::as_str))
                     .map(str::to_string)
             });
+            // Kept to ask for the rest, only where it is missing.
+            let resolve = resolves.filter(|_| documentation.is_none()).map(|server| Resolve {
+                server,
+                item: std::sync::Arc::new(it.clone()),
+            });
             Some(CompletionItem {
                 label,
                 insert,
                 kind: it.get("kind").and_then(Value::as_u64),
                 detail: it.get("detail").and_then(Value::as_str).map(str::to_string),
                 documentation,
+                resolve,
             })
         })
         .collect()
@@ -5395,11 +5493,11 @@ mod tests {
             { "label": "push", "kind": 2, "textEdit": { "newText": "push(${1})", "range": {} }, "insertTextFormat": 2 },
             { "label": "len", "insertText": "len()" }
         ]});
-        let items = completion_items(Some(&list));
+        let items = completion_items(Some(&list), None);
         assert_eq!(items[0].insert, "push");
         assert_eq!(items[1].insert, "len()");
         assert_eq!(
-            completion_items(Some(&json!([{ "label": "a" }])))[0].insert,
+            completion_items(Some(&json!([{ "label": "a" }])), None)[0].insert,
             "a"
         );
     }

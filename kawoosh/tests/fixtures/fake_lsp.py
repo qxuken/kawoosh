@@ -71,7 +71,12 @@ N: TEXT", N the ranged changes it has had and TEXT the text it holds as
 JSON (lsp-rules.md Decision 8). With `--save` it asks to hear of saves,
 with `--save-text` with the text; a `didSave` is an information
 diagnostic at 0:0, "saved with TEXT" (as JSON) or "saved without its
-text" (lsp-rules.md Decision 9)."""
+text" (lsp-rules.md Decision 9). With `--resolve` it fills candidates
+in when asked (completion.md Decision 10): `resolveProvider` declared,
+its candidates — hello_world, help and MIIEvSecretKeyMaterial — sent
+with no documentation and a `data` each, and `completionItem/resolve`
+answers the item with detail `fn LABEL()` and documentation "docs for
+LABEL", a second paragraph naming MIIEvSecretKeyMaterial."""
 import json
 import re, sys
 
@@ -261,7 +266,8 @@ while True:
         if "initializationOptions" in m["params"]:
             notes.append("init: " + json.dumps(m["params"]["initializationOptions"], sort_keys=True))
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
-            "completionProvider": {"triggerCharacters": ["."]},
+            "completionProvider": dict({"triggerCharacters": ["."]},
+                                       **({"resolveProvider": True} if "--resolve" in sys.argv else {})),
             "hoverProvider": True, "definitionProvider": True,
             "renameProvider": True, "referencesProvider": True,
             "codeActionProvider": True,
@@ -375,10 +381,19 @@ while True:
         p = m["params"]
         if char_before(p["textDocument"]["uri"], p["position"]) == ".":
             items = [{"label": "member_a", "kind": 2}, {"label": "member_b", "kind": 2}]
+        elif "--resolve" in sys.argv:
+            items = [{"label": l, "kind": k, "data": {"n": i}} for i, (l, k) in
+                     enumerate([("hello_world", 3), ("help", 3), ("MIIEvSecretKeyMaterial", 6)])]
         else:
             items = [{"label": "hello_world", "kind": 3, "insertText": "hello_world"},
                      {"label": "help", "kind": 3}]
         send({"jsonrpc": "2.0", "id": mid, "result": {"isIncomplete": False, "items": items}})
+    elif method == "completionItem/resolve":
+        it = dict(m["params"])
+        it["detail"] = "fn %s()" % it["label"]
+        it["documentation"] = {"kind": "markdown",
+                               "value": "docs for %s\n\nsee MIIEvSecretKeyMaterial" % it["label"]}
+        send({"jsonrpc": "2.0", "id": mid, "result": it})
     elif method == "textDocument/hover":
         send({"jsonrpc": "2.0", "id": mid, "result": {"contents": {"kind": "markdown",
               "value": "the hover\n\nreturns Widget"}}})
