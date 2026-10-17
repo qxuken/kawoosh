@@ -552,6 +552,16 @@ fn malformed_snippets_are_their_text() {
         assert!(!live(&app), "{body}: no field");
         assert_eq!(carets(&app), [want.len()], "{body}: the caret at its end");
     }
+    // Too big to lay out — a default mirrored past a megabyte: its
+    // text, at once.
+    let big = format!("${{1:{}}}{}", "x".repeat(64 << 10), "$1".repeat(50_000));
+    d.press(&mut app, "<Esc>\"_cc");
+    let started = std::time::Instant::now();
+    assert!(app.snippet_expand(&big));
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    d.settle(&mut app);
+    assert!(!live(&app), "too big: no field");
+    assert_eq!(text(&app), format!("{big}\n"));
     // A field after a broken one is still a field.
     d.press(&mut app, "<Esc>\"_cc");
     app.snippet_expand("${1:a ${2:b}");

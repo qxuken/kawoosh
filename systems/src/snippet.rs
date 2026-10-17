@@ -30,6 +30,10 @@ pub const MAX_DEPTH: usize = 64;
 /// The most nodes one expansion visits: a body whose fields' defaults
 /// mirror one another can say a great deal in a few bytes.
 pub const BUDGET: usize = 100_000;
+/// The most bytes one expansion puts, a mirror's copies and a
+/// variable's value counted: past it the body is too big, and is put
+/// as the text it is.
+pub const MAX_TEXT: usize = 1 << 20;
 
 /// One piece of a body.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -644,23 +648,26 @@ pub struct Expanded {
 /// A body's plain text: every field its default, every variable its
 /// default or nothing — what a candidate shows and is matched by
 /// before it is expanded where it goes.
-pub fn plain(src: &str) -> String {
+/// None when it is too big to lay out ([`expand`]).
+pub fn plain(src: &str) -> Option<String> {
     expand(
         &parse(src),
         &mut |_| Some(String::new()),
         &Indent::default(),
     )
-    .text
+    .map(|e| e.text)
 }
 
 /// `nodes` laid out, `vars` answering each variable's value — `None`
 /// for a variable it does not know, which is put as its name in a field
-/// of its own.
+/// of its own. None when laying it out would visit more than [`BUDGET`]
+/// nodes or put more than [`MAX_TEXT`] bytes — mirrors of a big default,
+/// defaults that double: such a body is put as the text it is.
 pub fn expand(
     nodes: &[Node],
     vars: &mut dyn FnMut(&str) -> Option<String>,
     indent: &Indent,
-) -> Expanded {
+) -> Option<Expanded> {
     let mut defaults: HashMap<u32, Default<'_>> = HashMap::new();
     find_defaults(nodes, &mut defaults, 0);
     let mut x = Expander {
@@ -674,8 +681,12 @@ pub fn expand(
         primary: HashSet::new(),
         within: Vec::new(),
         budget: BUDGET,
+        over: false,
     };
     x.main(nodes);
+    if x.over || x.out.len() > MAX_TEXT {
+        return None;
+    }
     let mut numbered: Vec<Field> = x.fields.into_values().collect();
     numbered.sort_by_key(|f| f.index);
     let after = numbered.last().map_or(1, |f| f.index.saturating_add(1));
@@ -717,10 +728,10 @@ pub fn expand(
     {
         z.ranges.push(end..end);
     }
-    Expanded {
+    Some(Expanded {
         text: x.out,
         fields,
-    }
+    })
 }
 
 /// What a field's places put when it is not the one that says: its
@@ -770,10 +781,16 @@ struct Expander<'a, 'v> {
     /// The placeholders being laid out, innermost last.
     within: Vec<u32>,
     budget: usize,
+    /// Past [`BUDGET`] or [`MAX_TEXT`]: nothing more is laid out, and
+    /// the expansion is none.
+    over: bool,
 }
 
 impl Expander<'_, '_> {
     fn emit(&mut self, s: &str) {
+        if !self.room(self.out.len(), s.len()) {
+            return;
+        }
         let mut chars = s.chars().peekable();
         while let Some(c) = chars.next() {
             match c {
@@ -798,10 +815,21 @@ impl Expander<'_, '_> {
     }
 
     fn spend(&mut self) -> bool {
-        if self.budget == 0 {
+        if self.budget == 0 || self.over {
+            self.over = true;
             return false;
         }
         self.budget -= 1;
+        true
+    }
+
+    /// Whether `more` bytes fit after `have`; past [`MAX_TEXT`] the
+    /// expansion stops, too big.
+    fn room(&mut self, have: usize, more: usize) -> bool {
+        if self.over || have.saturating_add(more) > MAX_TEXT {
+            self.over = true;
+            return false;
+        }
         true
     }
 
@@ -871,6 +899,9 @@ impl Expander<'_, '_> {
                     transform,
                 } => match (self.vars)(name) {
                     Some(v) if !v.is_empty() || transform.is_some() => {
+                        if !self.room(self.out.len(), v.len()) {
+                            return;
+                        }
                         let v = match transform {
                             Some(t) => t.apply(&v),
                             None => v,
@@ -912,18 +943,23 @@ impl Expander<'_, '_> {
 
     fn plain(&mut self, nodes: &[Node], stack: &mut Vec<u32>, out: &mut String) {
         for n in nodes {
-            if !self.spend() {
+            if !self.spend() || !self.room(out.len(), 0) {
                 return;
             }
             match n {
-                Node::Text(t) => out.push_str(t),
+                Node::Text(t) if self.room(out.len(), t.len()) => out.push_str(t),
+                Node::Text(_) => return,
                 Node::Tabstop {
                     index,
                     transform: Some(t),
                 } => {
                     let mut text = String::new();
                     self.plain_of(*index, stack, &mut text);
-                    out.push_str(&t.apply(&text));
+                    let put = t.apply(&text);
+                    if !self.room(out.len(), put.len()) {
+                        return;
+                    }
+                    out.push_str(&put);
                 }
                 Node::Tabstop { index, .. }
                 | Node::Placeholder { index, .. }
@@ -933,10 +969,19 @@ impl Expander<'_, '_> {
                     default,
                     transform,
                 } => match (self.vars)(name) {
-                    Some(v) if !v.is_empty() || transform.is_some() => match transform {
-                        Some(t) => out.push_str(&t.apply(&v)),
-                        None => out.push_str(&v),
-                    },
+                    Some(v) if !v.is_empty() || transform.is_some() => {
+                        if !self.room(out.len(), v.len()) {
+                            return;
+                        }
+                        let v = match transform {
+                            Some(t) => t.apply(&v),
+                            None => v,
+                        };
+                        if !self.room(out.len(), v.len()) {
+                            return;
+                        }
+                        out.push_str(&v);
+                    }
                     known => match default {
                         Some(d) => self.plain(d, stack, out),
                         None if known.is_none() => out.push_str(name),
@@ -955,7 +1000,7 @@ mod tests {
     use super::*;
 
     fn x(src: &str) -> Expanded {
-        expand(&parse(src), &mut |_| None, &Indent::default())
+        expand(&parse(src), &mut |_| None, &Indent::default()).expect("not too big")
     }
 
     fn places(e: &Expanded) -> Vec<(u32, Vec<&str>)> {
@@ -1068,8 +1113,17 @@ mod tests {
         for i in 1..30 {
             body.push_str(&format!("${{{i}:${}${}}}", i + 1, i + 1));
         }
-        let e = x(&body);
-        assert!(e.text.len() < 1 << 22, "{}", e.text.len());
+        let none = |src: &str| expand(&parse(src), &mut |_| None, &Indent::default()).is_none();
+        assert!(none(&body), "too big: none");
+        // A big default mirrored many times: 3 GB if laid out whole.
+        let started = std::time::Instant::now();
+        let big = format!("${{1:{}}}{}", "x".repeat(64 << 10), "$1".repeat(50_000));
+        assert!(none(&big));
+        assert_eq!(plain(&big), None);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        // A variable's value past the cap, too.
+        let mut huge = |_: &str| Some("v".repeat(MAX_TEXT + 1));
+        assert!(expand(&parse("$CLIPBOARD"), &mut huge, &Indent::default()).is_none());
         // A field inside its own default is nothing there.
         assert_eq!(x("${1:a$1}").text, "aa");
     }
@@ -1087,7 +1141,8 @@ mod tests {
             ),
             &mut vars,
             &Indent::default(),
-        );
+        )
+        .unwrap();
         assert_eq!(e.text, "main.rs none  NOPE dflt ");
         // The unknown variable is a field after the body's own, before 0.
         assert_eq!(
@@ -1105,7 +1160,8 @@ mod tests {
             ),
             &mut vars,
             &Indent::default(),
-        );
+        )
+        .unwrap();
         assert_eq!(e.text, "MyFile abc a[B]c");
         let f = &e.fields[0];
         assert_eq!(f.mirrors.len(), 1);
@@ -1137,7 +1193,7 @@ mod tests {
             unit: "  ".into(),
             eol: "\r\n".into(),
         };
-        let e = expand(&parse("if ${1:c} {\n\t\t$0\n}"), &mut |_| None, &indent);
+        let e = expand(&parse("if ${1:c} {\n\t\t$0\n}"), &mut |_| None, &indent).unwrap();
         assert_eq!(e.text, "if c {\r\n        \r\n    }");
         assert_eq!(&e.text[e.fields[1].ranges[0].clone()], "");
         assert_eq!(e.fields[1].ranges[0].start, 16);
@@ -1163,9 +1219,9 @@ mod tests {
     #[test]
     fn plain_is_the_defaults() {
         assert_eq!(
-            plain("fn ${1:name}(${2}) -> ${3:T} {\n\t$0\n}"),
-            "fn name() -> T {\n\t\n}"
+            plain("fn ${1:name}(${2}) -> ${3:T} {\n\t$0\n}").as_deref(),
+            Some("fn name() -> T {\n\t\n}")
         );
-        assert_eq!(plain("$TM_FILENAME${CLIPBOARD:x}"), "x");
+        assert_eq!(plain("$TM_FILENAME${CLIPBOARD:x}").as_deref(), Some("x"));
     }
 }

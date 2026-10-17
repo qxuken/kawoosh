@@ -412,7 +412,30 @@ impl Kawoosh {
                 unit: unit.clone(),
                 eol: String::new(),
             };
-            expanded.push(grammar::expand(&nodes, &mut |n| vars.get(n), &indent));
+            match grammar::expand(&nodes, &mut |n| vars.get(n), &indent) {
+                Some(e) => expanded.push(e),
+                // Too big to lay out (`snippet::MAX_TEXT`): the text it
+                // is, as a malformed one is, with nothing live.
+                None => {
+                    let edits: Vec<(Range<usize>, String)> = ranges
+                        .iter()
+                        .map(|r| (r.clone(), body.to_string()))
+                        .collect();
+                    let Some(starts) = self.ed.apply_edits_at(buffer, &edits) else {
+                        return false;
+                    };
+                    if let Some(v) = self.ed.views.get_mut(view) {
+                        let items = starts
+                            .iter()
+                            .map(|s| Selection::point(s + body.len()))
+                            .collect();
+                        v.sels = Selections { items, primary: 0 };
+                        v.sels.normalize();
+                    }
+                    self.follow_caret = true;
+                    return true;
+                }
+            }
         }
         let edits: Vec<(Range<usize>, String)> = ranges
             .iter()

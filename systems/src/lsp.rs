@@ -5037,10 +5037,15 @@ fn completion_items(result: Option<&Value>, resolves: Option<usize>) -> Vec<Comp
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .unwrap_or_else(|| label.clone());
-            // A snippet is kept as sent, and matched by its plain text.
-            let (insert, snippet) = match it.get("insertTextFormat").and_then(Value::as_u64) {
-                Some(2) => (crate::snippet::plain(&insert), Some(insert)),
-                _ => (insert, None),
+            // A snippet is kept as sent, and matched by its plain text;
+            // one too big to lay out (`snippet::MAX_TEXT`) is its text.
+            let plain = match it.get("insertTextFormat").and_then(Value::as_u64) {
+                Some(2) => crate::snippet::plain(&insert),
+                _ => None,
+            };
+            let (insert, snippet) = match plain {
+                Some(plain) => (plain, Some(insert)),
+                None => (insert, None),
             };
             let as_is = it.get("insertTextMode").and_then(Value::as_u64) == Some(1);
             // `documentation` is a string or a `MarkupContent`.
@@ -5511,6 +5516,12 @@ mod tests {
         assert_eq!(items[0].snippet.as_deref(), Some("push(${1})"));
         assert_eq!(items[1].insert, "len()");
         assert_eq!(items[1].snippet, None);
+        // Too big to lay out: its text, no snippet.
+        let big = format!("${{1:{}}}{}", "x".repeat(64 << 10), "$1".repeat(50_000));
+        let list = json!([{ "label": "big", "insertText": big, "insertTextFormat": 2 }]);
+        let items = completion_items(Some(&list), None);
+        assert_eq!(items[0].snippet, None);
+        assert_eq!(items[0].insert, big);
         assert_eq!(
             completion_items(Some(&json!([{ "label": "a" }])), None)[0].insert,
             "a"
