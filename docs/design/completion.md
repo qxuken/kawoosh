@@ -889,8 +889,8 @@ Where the build departs, or says more than the decision did:
   `signature close` there too: with both on show it closes the
   completion first, then the signature. The head says which of how many
   (`1/3`, faint, before it); the one the user chose is kept over the
-  server's through the answers that follow, and is sent back
-  (`activeSignatureHelp`) so a server can keep it too.
+  server's through the answers that follow for the same call, and is
+  sent back (`activeSignatureHelp`) so a server can keep it too.
 - **Asked again at every key inside the call** that moves the caret or
   changes the text — not only on `,` — so the lit parameter follows
   arrows and deletes over a comma as well, and an inner call's
@@ -976,6 +976,31 @@ asking again, its answer landing and the panel built, masked, in the
 frames between — 0.79–0.84 / 1.15–1.27 ms: a key costs what it did; the
 ask is a message to the server's thread, the panel built once an
 answer, not a key.
+
+**After a review, the same day.** The overload the user chose is a
+call's, kept with its `(` (`signature::Call`): going into another call
+shows the one its server says, and coming back out shows the outer
+call's choice again; an answer still on show for another call is not
+sent back with an ask (`activeSignatureHelp`), nor are its overloads
+walked. An `activeParameter` said by neither the signature nor the
+answer, or past the parameters, is the first (LSP 3.17's default —
+kawoosh declares no `noActiveParameterSupport`). With several carets a
+function taken by a match that does not continue the word went in at
+the primary caret alone but its fill waited on all of them, and never
+came: it is filled, or its caret moved past `)`, where it went. A panel
+alone is placed by the height the last frame laid it out at, read by
+its key before it is declared — none for a panel that was not there,
+which the first build placed by the one before it — else its head's and
+body's lines wrapped at the panel's width; while the height placed by
+is not the one laid out a frame more is asked, so the place settles
+with nothing else waking a frame. Its head scrolls with its body, the
+two at most `PANEL_LINES` tall, so a long signature is not taller than
+documentation may be. And a key while an ask is in flight built the
+next ask's context anyway, copying the answer on show with all its
+documentation: the context is built only for an ask that goes out, the
+answer shared, its `activeSignature` written on the server's thread. A
+keystroke with the signature on show measured again: 0.76–0.81 /
+1.11–1.12 ms, against 0.75–0.77 / 1.09–1.12 ms with none.
 
 *Left for later:* the parentheses read from the syntax tree, so a `(`
 in a string or a comment is not a call's; a candidate's `textEdit`
