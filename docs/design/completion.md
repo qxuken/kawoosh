@@ -514,3 +514,17 @@ look) against the popup open beside it (`always`): a keystroke 0.60 /
 ms, a frame 0.173 / 0.185 ms → 0.177 / 0.190 ms. Round 1 as merged,
 on the same machine before any of this: a keystroke 0.63 / 0.67 ms, a
 word's start 2.38 / 2.45 ms, a frame 0.171 / 0.182 ms.
+
+**After a review and a load test, the same day.** A resolve's answer
+fills the candidate it was asked for (`Session::resolving`), whatever
+`<C-n>` selected in the frame it landed. A row's label and detail are
+masked both ways, as the panel is, and a candidate whose label quotes
+a masked word is no row. The mark the popup hangs from reports its
+layout, so the flip and the room are read from where the caret's row
+is (soft wraps, tall rows, headers); the popup moves left to stay
+inside its pane and its panel goes to whichever side has room. The
+window follows the selection down as well as up through a landing.
+With neither a ghost nor the popup on show, nothing is asked and no
+panel shows. The harness loads the shipped icons' family
+(`fonts::load_symbols`), so the icons' tests pass on a machine without
+it installed and read nothing of the home.
