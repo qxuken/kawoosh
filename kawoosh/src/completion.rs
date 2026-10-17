@@ -179,10 +179,12 @@ impl Config {
 pub struct Item {
     pub label: String,
     /// What accepting puts in place of the word, when not the label.
-    pub insert: Option<String>,
+    pub insert: Option<Rc<str>>,
     pub kind: &'static str,
     pub detail: Option<String>,
-    pub documentation: Option<String>,
+    /// Shared: a user's snippet's is its plain text, one for every
+    /// candidate its prefixes make.
+    pub documentation: Option<Rc<str>>,
     /// The lines it is on in its buffer, ascending (words, symbols):
     /// how near it is.
     pub lines: Box<[u32]>,
@@ -215,14 +217,14 @@ impl Item {
     }
 
     fn of_lsp(it: CompletionItem) -> Item {
-        let insert = (it.insert != it.label).then_some(it.insert);
+        let insert = (it.insert != it.label).then(|| Rc::from(it.insert));
         let snippet = it.snippet.map(Rc::from);
         Item {
             label: it.label,
             insert,
             kind: it.kind.map(completion_kind_name).unwrap_or("text"),
             detail: it.detail,
-            documentation: it.documentation,
+            documentation: it.documentation.map(Rc::from),
             lines: Box::new([]),
             resolve: it.resolve,
             filled: RefCell::new(None),
@@ -627,7 +629,7 @@ fn wipe_items(mut items: Rc<[Item]>) {
     if let Some(items) = Rc::get_mut(&mut items) {
         for it in items.iter_mut() {
             text_buffer::wipe_string(&mut it.label);
-            if let Some(s) = it.insert.as_mut() {
+            if let Some(s) = it.insert.as_mut().and_then(Rc::get_mut) {
                 text_buffer::wipe_string(s);
             }
         }
@@ -2687,7 +2689,9 @@ impl Kawoosh {
         let item = &s.answers[r.answer as usize].items[r.item as usize];
         let filled = item.filled.borrow().clone().unwrap_or_default();
         let detail = filled.detail.or_else(|| item.detail.clone());
-        let docs = filled.documentation.or_else(|| item.documentation.clone());
+        let docs = filled
+            .documentation
+            .or_else(|| item.documentation.as_deref().map(str::to_string));
         let buffer = s.anchor.buffer;
         let body: String = docs
             .unwrap_or_default()

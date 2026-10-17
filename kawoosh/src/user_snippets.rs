@@ -39,16 +39,30 @@ const VSCODE: &[(&str, &str)] = &[
     ("plaintext", "text"),
 ];
 
-/// One snippet as it was given.
-#[derive(Debug)]
+/// The most prefixes one snippet is offered by, and the most languages
+/// its `scope` names: past them, the rest are passed over.
+pub const MAX_PREFIXES: usize = 16;
+pub const MAX_SCOPES: usize = 32;
+/// The longest prefix: a word typed, not a text.
+pub const MAX_PREFIX_LEN: usize = 256;
+/// The most snippets one `add` or one file puts: each is read, laid out
+/// (`plain`) and stored on the frame.
+pub const MAX_PER_PUT: usize = 10_000;
+/// How much of a description a row's detail shows: one line.
+const DETAIL_LEN: usize = 200;
+
+/// One snippet as it was given, its texts shared by every language its
+/// scope names and every candidate its prefixes make.
+#[derive(Clone, Debug)]
 struct Def {
     origin: Rc<str>,
-    name: String,
+    name: Rc<str>,
     prefixes: Vec<String>,
     body: Rc<str>,
     /// The body's plain text: what it puts before it is expanded.
-    plain: String,
-    description: Option<String>,
+    plain: Rc<str>,
+    /// The description's first line, cut, for a row's detail.
+    detail: Option<String>,
 }
 
 /// A snippet read from a Lua table, and the languages its `scope`
@@ -61,6 +75,9 @@ struct Read {
 #[derive(Default)]
 pub struct Store {
     langs: HashMap<String, Vec<Def>>,
+    /// The languages each origin put snippets under: what a file read
+    /// again replaces, without a look through every language.
+    origins: HashMap<Rc<str>, HashSet<String>>,
     /// Moves with every change: completion offers again when it does.
     pub generation: u64,
     /// The candidates of a buffer's language (its own and `all`'s), as
@@ -75,22 +92,42 @@ pub type Shared = Rc<RefCell<Store>>;
 
 impl Store {
     /// `read` put under `lang` from `origin`; with `replace`, everything
-    /// `origin` put before taken out first.
+    /// `origin` put before taken out first. Linear in what is put and
+    /// in the languages it lands in: a name added again (origin `""`) is
+    /// found by one pass over its language, not one per snippet.
     fn put(&mut self, origin: &str, lang: &str, read: Vec<Read>, replace: bool) {
-        if replace {
-            for defs in self.langs.values_mut() {
-                defs.retain(|d| &*d.origin != origin);
+        if replace && let Some(langs) = self.origins.remove(origin) {
+            for l in langs {
+                if let Some(defs) = self.langs.get_mut(&l) {
+                    defs.retain(|d| &*d.origin != origin);
+                }
             }
         }
         let lang = lang.to_lowercase();
+        let mut by_lang: HashMap<String, Vec<Def>> = HashMap::new();
         for Read { def, scope } in read {
-            for l in scope.unwrap_or_else(|| vec![lang.clone()]) {
-                let defs = self.langs.entry(l).or_default();
-                if origin.is_empty() {
-                    defs.retain(|d| !(d.origin.is_empty() && d.name == def.name));
+            match scope {
+                Some(scope) => {
+                    for l in scope {
+                        by_lang.entry(l).or_default().push(def.clone());
+                    }
                 }
-                defs.push(clone_def(&def));
+                None => by_lang.entry(lang.clone()).or_default().push(def),
             }
+        }
+        for (l, new) in by_lang {
+            if let Some(first) = new.first() {
+                self.origins
+                    .entry(first.origin.clone())
+                    .or_default()
+                    .insert(l.clone());
+            }
+            let defs = self.langs.entry(l).or_default();
+            if origin.is_empty() {
+                let names: HashSet<&str> = new.iter().map(|d| &*d.name).collect();
+                defs.retain(|d| !(d.origin.is_empty() && names.contains(&*d.name)));
+            }
+            defs.extend(new);
         }
         self.langs.retain(|_, d| !d.is_empty());
         self.generation += 1;
@@ -142,7 +179,7 @@ impl Store {
                         label: p.clone(),
                         insert: Some(d.plain.clone()),
                         kind: "snippet",
-                        detail: Some(d.description.clone().unwrap_or_else(|| d.name.clone())),
+                        detail: Some(d.detail.clone().unwrap_or_else(|| cut(&d.name))),
                         documentation: Some(d.plain.clone()),
                         lines: Box::new([]),
                         resolve: None,
@@ -164,20 +201,19 @@ impl Store {
     pub fn names(&self, lang: &str) -> Vec<String> {
         self.langs
             .get(&lang.to_lowercase())
-            .map(|d| d.iter().map(|d| d.name.clone()).collect())
+            .map(|d| d.iter().map(|d| d.name.to_string()).collect())
             .unwrap_or_default()
     }
 }
 
-fn clone_def(d: &Def) -> Def {
-    Def {
-        origin: d.origin.clone(),
-        name: d.name.clone(),
-        prefixes: d.prefixes.clone(),
-        body: d.body.clone(),
-        plain: d.plain.clone(),
-        description: d.description.clone(),
+/// `text`'s first line, at most [`DETAIL_LEN`] bytes of it.
+fn cut(text: &str) -> String {
+    let line = text.lines().next().unwrap_or("");
+    let mut end = line.len().min(DETAIL_LEN);
+    while !line.is_char_boundary(end) {
+        end -= 1;
     }
+    line[..end].to_string()
 }
 
 /// The names a buffer of `lang` finds its snippets under: its own, its
@@ -231,34 +267,51 @@ fn text_or_lines(v: LV, sep: &str) -> Result<Option<String>, String> {
 }
 
 /// `t`'s snippets, each as VS Code's shape has it, and why each one
-/// that is not was passed over.
+/// that is not was passed over: the first [`MAX_PER_PUT`] by name, the
+/// rest said in one line.
 fn read_table(t: &Table, origin: &Rc<str>) -> (Vec<Read>, Vec<String>) {
     let mut out = Vec::new();
     let mut problems = Vec::new();
+    let mut pairs: Vec<(String, LV)> = Vec::new();
     for pair in t.pairs::<LV, LV>() {
         let Ok((k, v)) = pair else {
             continue;
         };
-        let name = match &k {
-            LV::String(s) => s.to_string_lossy(),
-            LV::Integer(i) => i.to_string(),
-            other => {
-                problems.push(format!(
-                    "a {} key: a snippet's name is a string",
-                    kind(other)
-                ));
-                continue;
-            }
-        };
+        match &k {
+            LV::String(s) => pairs.push((s.to_string_lossy(), v)),
+            LV::Integer(i) => pairs.push((i.to_string(), v)),
+            other => problems.push(format!(
+                "a {} key: a snippet's name is a string",
+                kind(other)
+            )),
+        }
+    }
+    // Pairs come in no order: by name, so the same file offers the same.
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    if pairs.len() > MAX_PER_PUT {
+        problems.push(format!(
+            "{} snippets past the first {MAX_PER_PUT} passed over",
+            pairs.len() - MAX_PER_PUT
+        ));
+        pairs.truncate(MAX_PER_PUT);
+    }
+    for (name, v) in pairs {
         match read_one(&name, v, origin) {
             Ok(r) => out.push(r),
             Err(why) => problems.push(format!("{name}: {why}")),
         }
     }
-    // Pairs come in no order: by name, so the same file offers the same.
-    out.sort_by(|a, b| a.def.name.cmp(&b.def.name));
     problems.sort();
     (out, problems)
+}
+
+/// `list` trimmed, empty ones and repeats dropped, at most `max`.
+fn distinct(list: impl IntoIterator<Item = String>, max: usize) -> Vec<String> {
+    let mut seen = HashSet::new();
+    list.into_iter()
+        .filter(|p| !p.is_empty() && seen.insert(p.clone()))
+        .take(max)
+        .collect()
 }
 
 fn read_one(name: &str, v: LV, origin: &Rc<str>) -> Result<Read, String> {
@@ -278,11 +331,16 @@ fn read_one(name: &str, v: LV, origin: &Rc<str>) -> Result<Read, String> {
         LV::Nil => Vec::new(),
         other => return Err(format!("prefix: a {}", kind(&other))),
     };
-    let prefixes: Vec<String> = prefixes
-        .into_iter()
-        .map(|p| p.trim().to_string())
-        .filter(|p| !p.is_empty())
-        .collect();
+    if let Some(p) = prefixes.iter().find(|p| p.len() > MAX_PREFIX_LEN) {
+        return Err(format!(
+            "a prefix of {} bytes (at most {MAX_PREFIX_LEN})",
+            p.len()
+        ));
+    }
+    let prefixes = distinct(
+        prefixes.into_iter().map(|p| p.trim().to_string()),
+        MAX_PREFIXES,
+    );
     if prefixes.is_empty() {
         return Err("no prefix".into());
     }
@@ -293,17 +351,18 @@ fn read_one(name: &str, v: LV, origin: &Rc<str>) -> Result<Read, String> {
         return Err("its body is over 1 MiB".into());
     }
     let plain = kawoosh_systems::snippet::plain(&body).ok_or("its body expands past 1 MiB")?;
-    let description = text_or_lines(get("description")?, "\n")
+    let detail = text_or_lines(get("description")?, "\n")
         .map_err(|e| format!("description: {e}"))?
-        .filter(|d| !d.trim().is_empty());
+        .map(|d| cut(d.trim()))
+        .filter(|d| !d.is_empty());
     let scope = match get("scope")? {
         LV::String(s) => {
-            let l: Vec<String> = s
-                .to_string_lossy()
-                .split(',')
-                .map(|l| l.trim().to_lowercase())
-                .filter(|l| !l.is_empty())
-                .collect();
+            let l = distinct(
+                s.to_string_lossy()
+                    .split(',')
+                    .map(|l| l.trim().to_lowercase()),
+                MAX_SCOPES,
+            );
             (!l.is_empty()).then_some(l)
         }
         _ => None,
@@ -311,11 +370,11 @@ fn read_one(name: &str, v: LV, origin: &Rc<str>) -> Result<Read, String> {
     Ok(Read {
         def: Def {
             origin: origin.clone(),
-            name: name.to_string(),
+            name: Rc::from(name),
             prefixes,
             body: Rc::from(body),
-            plain,
-            description,
+            plain: Rc::from(plain),
+            detail,
         },
         scope,
     })
@@ -479,6 +538,95 @@ mod tests {
             items[0].text(),
             "${1:unclosed",
             "a malformed body is its text"
+        );
+    }
+
+    /// One snippet cannot make a candidate per repeat: its prefixes and
+    /// its scope's languages are told apart and capped, and every
+    /// candidate shares its texts.
+    #[test]
+    fn repeats_are_one_and_the_texts_shared() {
+        let lua = Lua::new();
+        let store = store_with(
+            &lua,
+            r#"
+            local prefix, scope = {}, {}
+            for i = 1, 50000 do prefix[i] = "x" end
+            for i = 1, 100 do prefix[#prefix + 1] = "p" .. i end
+            for i = 1, 1000 do scope[i] = "go" end
+            for i = 1, 100 do scope[#scope + 1] = "l" .. i end
+            local n, why = kawoosh.snippets._add("rust", {
+              many = { prefix = prefix, body = string.rep("b", 500000), scope = table.concat(scope, ",") },
+              long = { prefix = string.rep("q", 300), body = "x" },
+            })
+            assert(n == 1, n)
+            assert(why[1]:match("^long: a prefix of 300 bytes"), why[1])
+            "#,
+        );
+        let mut s = store.borrow_mut();
+        assert_eq!(s.langs.len(), MAX_SCOPES, "go once, and the cap");
+        let items = s.items("go", &["go".into()]);
+        assert_eq!(items.len(), MAX_PREFIXES, "x once, and the cap");
+        let first = items[0].insert.as_ref().unwrap();
+        assert!(
+            items
+                .iter()
+                .all(|i| Rc::ptr_eq(i.insert.as_ref().unwrap(), first)
+                    && Rc::ptr_eq(i.documentation.as_ref().unwrap(), first))
+        );
+    }
+
+    /// One `add` or one file puts at most `MAX_PER_PUT`, the first by
+    /// name, and says how many it passed over; a name added again is
+    /// replaced however many there are.
+    #[test]
+    fn a_put_is_capped_and_names_replace_at_scale() {
+        let lua = Lua::new();
+        let store = store_with(
+            &lua,
+            r#"
+            local t = {}
+            for i = 1, 10050 do t[string.format("s%05d", i)] = { prefix = "p" .. i, body = "b" } end
+            local n, why = kawoosh.snippets._add("rust", t)
+            assert(n == 10000, n)
+            assert(why[1] == "50 snippets past the first 10000 passed over", why[1])
+            local again = {}
+            for i = 1, 10000 do again[string.format("s%05d", i)] = { prefix = "q" .. i, body = "c" } end
+            kawoosh.snippets._add("rust", again)
+            "#,
+        );
+        let mut s = store.borrow_mut();
+        assert_eq!(s.names("rust").len(), 10_000);
+        let items = s.items("rust", &["rust".into()]);
+        assert!(items.iter().all(|i| i.text() == "c"));
+    }
+
+    /// Adding is linear in what is added: twice the snippets, about
+    /// twice the time (it was a pass over the language per snippet).
+    /// Run by hand: `cargo test -p kawoosh --lib add_scales -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn add_scales_linearly() {
+        let time = |n: usize| {
+            let lua = Lua::new();
+            let store: Shared = Default::default();
+            lua.globals()
+                .set("kawoosh", lua.create_table().unwrap())
+                .unwrap();
+            lua_door(&lua, store).unwrap();
+            lua.load(format!(
+                "T = {{}} for i = 1, {n} do T['s' .. i] = {{ prefix = 'p' .. i, body = 'b' }} end"
+            ))
+            .exec()
+            .unwrap();
+            let t = std::time::Instant::now();
+            lua.load("kawoosh.snippets._add('rust', T)").exec().unwrap();
+            t.elapsed()
+        };
+        let (a, b) = (time(2_500), time(10_000));
+        println!(
+            "2,500: {a:?}, 10,000: {b:?}, ratio {:.1}",
+            b.as_secs_f64() / a.as_secs_f64()
         );
     }
 }
