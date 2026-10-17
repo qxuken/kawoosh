@@ -1957,10 +1957,20 @@ impl Kawoosh {
         // caret's row at the word's start: the rows on show alone, built
         // once a change; the selection's text alone.
         let popup_of = popup_of.filter(|_| display.as_ref().is_some_and(|d| d.popup));
-        let panel_of = display.as_ref().and_then(|_| self.completion_panel(view));
-        let hang_at = (popup_of.is_some() || panel_of.is_some())
-            .then(|| self.completion.session.as_ref().map(|s| s.anchor.start))
-            .flatten();
+        // One panel (Decision 10): the candidate's documentation while
+        // the popup is walked, a signature otherwise.
+        let info = self.info_panel(view).filter(|_| focused);
+        let panel_is_signature = info.as_ref().is_some_and(|(_, sig)| *sig);
+        let panel_of = info.map(|(p, _)| p);
+        // From the word's start while a completion shows; a signature
+        // alone hangs from its call.
+        let hang_at = if popup_of.is_some() || (panel_of.is_some() && !panel_is_signature) {
+            self.completion.session.as_ref().map(|s| s.anchor.start)
+        } else if panel_of.is_some() {
+            self.signature_hang(view)
+        } else {
+            None
+        };
         let hang_mark = std::cell::Cell::new(None);
         let icon_font = self.icons.borrow().font;
         // Whether a row drew it: its keys hold only for a ghost that is
@@ -3083,12 +3093,13 @@ impl Kawoosh {
         // little room below and more above — the mark where it was last
         // frame, else where its line falls.
         let mut popup_drawn = false;
+        let mut panel_drawn = false;
         if let Some(mark) = hang_mark.get() {
             let lh = font.line_height;
             let title_h = self.chrome.pane_title_h;
             let rows = popup_of.as_ref().map_or(0, |p| p.rows.len());
             let need = crate::completion_view::popup_height(rows, lh);
-            let (above, room, left) = match self.layout.rects.get(&pane).copied() {
+            let (above, room, left, over, below) = match self.layout.rects.get(&pane).copied() {
                 Some(p) => {
                     let (x, y) = ui.layout_of(mark).map_or(
                         (
@@ -3103,9 +3114,11 @@ impl Kawoosh {
                         below < need && over > below,
                         (p.x + p.w - x - 4.0).max(0.0),
                         (x - p.x - 2.0).max(0.0),
+                        over,
+                        below,
                     )
                 }
-                None => (false, width, 0.0),
+                None => (false, width, 0.0, f32::MAX, 0.0),
             };
             let icons = self.icons.borrow();
             crate::completion_view::draw(
@@ -3121,9 +3134,12 @@ impl Kawoosh {
                     above,
                     room,
                     left,
+                    over,
+                    below,
                 },
             );
             popup_drawn = popup_of.is_some();
+            panel_drawn = panel_of.is_some();
         }
         t = crate::perf::part("rows", t);
         self.ed.views[view].left = left;
@@ -3135,6 +3151,8 @@ impl Kawoosh {
         if focused {
             self.ghost_shown = ghost_drawn;
             self.popup_shown = popup_drawn;
+            self.panel_shown = panel_drawn;
+            self.signature_shown = panel_drawn && panel_is_signature;
         }
         // The rendered rows' heights as kui laid them out last frame: a
         // row that measured otherwise than the pane scrolled by asks

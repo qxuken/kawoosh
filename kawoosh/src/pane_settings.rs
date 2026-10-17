@@ -40,6 +40,8 @@ const KEYS: &[(&str, Draws)] = &[
     ("completion.max_items", Draws::Editor),
     ("completion.docs", Draws::Editor),
     ("completion.words.min_length", Draws::Editor),
+    ("completion.signature", Draws::Editor),
+    ("completion.callable", Draws::Editor),
 ];
 
 /// Which panes a pane's setting means something in.

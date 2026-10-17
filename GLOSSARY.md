@@ -25,6 +25,8 @@ The words kawoosh's notes and code use for its ideas, one meaning each.
   caret: a candidate's documentation, or a signature.
 - **Signature** — a function's parameters while its call's arguments
   are typed, the one being typed lit.
+- **Overload** — one of several signatures a call's function has; the
+  information panel shows one at a time.
 - **Snippet** — a candidate that puts a shaped text with fields in it;
   live from when it is accepted until it ends, one at a time.
 - **Field** — a place in a snippet to fill, visited in turn; a field

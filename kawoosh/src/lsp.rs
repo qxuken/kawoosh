@@ -318,6 +318,12 @@ impl Kawoosh {
                     detail,
                     documentation,
                 } => self.completion_resolved(token, detail, documentation),
+                Event::SignatureHelp {
+                    buffer,
+                    version,
+                    offset,
+                    help,
+                } => self.signature_answered(buffer, version, offset, help),
                 Event::Capabilities { languages, caps } => {
                     for l in languages {
                         self.lsp.caps.insert(l, caps.clone());
@@ -1013,6 +1019,7 @@ impl Kawoosh {
         // with the rest — a server found missing as a word is typed
         // ended the session under the keys.
         self.completion.lsp_gone(id);
+        self.signature_lsp_gone(id);
     }
 
     /// The server `language` names — its `lsp.NAME`, else the one
@@ -1462,6 +1469,9 @@ impl Kawoosh {
                 hover: true,
                 completion: true,
                 resolve: false,
+                signature: true,
+                signature_triggers: Vec::new(),
+                signature_retriggers: Vec::new(),
                 commands: Vec::new(),
                 pull: false,
                 // Asked only of a server that said so: an answer it

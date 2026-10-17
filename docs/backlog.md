@@ -87,11 +87,10 @@ afternoon.
 
 ## Code: grammars, servers, formatters
 
-- **Completion, four rounds left** (round 1, the model and the
-  settings, built 2026-10-17): the popup with its icons and
-  `font.icons`; LSP snippets; the user's snippets over `kawoosh.json`;
-  signature help and `callable`. ([completion.md](design/completion.md),
-  "Build")
+- **Completion, after its five rounds** (all built 2026-10-17): a
+  candidate's `textEdit` range and `additionalTextEdits` (an
+  auto-import); a `:snippets` command; the signature's parentheses read
+  from the syntax tree. ([completion.md](design/completion.md), "Built")
 - **`textobjects.scm` shipped by kawoosh-grammars**: kawoosh reads
   them, the builder ships none (builder, compile check, samples).
   ([grammars.md](design/grammars.md), "Text objects, 2026-10-03")

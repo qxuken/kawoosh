@@ -409,6 +409,15 @@ pub enum Cmd {
         offset: usize,
         version: Version,
     },
+    /// The signature of the call around `offset`
+    /// (`textDocument/signatureHelp`, completion.md Decision 10),
+    /// answered as `Event::SignatureHelp` for the same place.
+    SignatureHelp {
+        buffer: BufferId,
+        offset: usize,
+        version: Version,
+        context: SignatureContext,
+    },
     /// A candidate's documentation filled in by its server
     /// (`completionItem/resolve`), answered as `Event::Resolved` with
     /// `token`.
@@ -653,6 +662,12 @@ pub struct Caps {
     /// It fills in a candidate's documentation when asked
     /// (`completionProvider.resolveProvider`, `completionItem/resolve`).
     pub resolve: bool,
+    /// It says a call's signature (`signatureHelpProvider`), asked as
+    /// its trigger characters are typed, and asked again on its
+    /// retrigger characters while one is on show.
+    pub signature: bool,
+    pub signature_triggers: Vec<String>,
+    pub signature_retriggers: Vec<String>,
     /// The commands `workspace/executeCommand` runs on it.
     pub commands: Vec<String>,
     /// It gives diagnostics when asked (`diagnosticProvider`), not only
@@ -685,6 +700,11 @@ impl Caps {
                 .filter(|t| !self.triggers.contains(t))
                 .cloned(),
         );
+        let both = |a: &Vec<String>, b: &Vec<String>| {
+            let mut out = a.clone();
+            out.extend(b.iter().filter(|t| !a.contains(t)).cloned());
+            out
+        };
         let mut commands = self.commands.clone();
         commands.extend(
             other
@@ -709,6 +729,9 @@ impl Caps {
             pull: self.pull || other.pull,
             runnables: self.runnables || other.runnables,
             resolve: self.resolve || other.resolve,
+            signature: self.signature || other.signature,
+            signature_triggers: both(&self.signature_triggers, &other.signature_triggers),
+            signature_retriggers: both(&self.signature_retriggers, &other.signature_retriggers),
             workspace_pull: self.workspace_pull || other.workspace_pull,
             incremental: self.incremental && other.incremental,
             save: self.save.or(other.save),
@@ -724,6 +747,7 @@ impl Caps {
             "textDocument/definition" => self.definition,
             "textDocument/hover" => self.hover,
             "textDocument/completion" => self.completion,
+            "textDocument/signatureHelp" => self.signature,
             "textDocument/rename" => self.rename,
             "textDocument/references" => self.references,
             "textDocument/codeAction" => self.code_action,
@@ -770,6 +794,176 @@ pub struct CompletionItem {
 pub struct Resolve {
     pub server: usize,
     pub item: std::sync::Arc<Value>,
+}
+
+/// What a signature is asked with (LSP's `SignatureHelpContext`): how
+/// it was asked — `1` invoked (`<C-g>`), `2` a trigger character typed,
+/// `3` the text changed — the character, and whether one is on show
+/// already, with the server's last answer for it, so the overload the
+/// user chose stays chosen.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SignatureContext {
+    pub trigger_kind: u8,
+    pub trigger_character: Option<String>,
+    pub is_retrigger: bool,
+    /// The server's last answer for this call, shared as it landed, and
+    /// the overload on show: written as its `activeSignature` when the
+    /// ask is sent, off the frame.
+    pub active: Option<(std::sync::Arc<Value>, usize)>,
+}
+
+impl SignatureContext {
+    fn to_json(&self) -> Value {
+        let mut c = json!({
+            "triggerKind": self.trigger_kind,
+            "isRetrigger": self.is_retrigger,
+        });
+        if let Some(t) = &self.trigger_character {
+            c["triggerCharacter"] = json!(t);
+        }
+        if let Some((a, at)) = &self.active {
+            let mut help = (**a).clone();
+            help["activeSignature"] = json!(at);
+            c["activeSignatureHelp"] = help;
+        }
+        c
+    }
+}
+
+/// A server's `SignatureHelp`: the signatures of the call around the
+/// caret, the one it means and the parameter the caret is in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SignatureHelp {
+    pub signatures: Vec<SignatureInfo>,
+    pub active_signature: usize,
+    pub active_parameter: Option<usize>,
+    /// As it was sent: what the next ask carries back
+    /// (`activeSignatureHelp`), the active signature set to the one on
+    /// show.
+    pub raw: std::sync::Arc<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignatureInfo {
+    pub label: String,
+    pub documentation: Option<String>,
+    pub parameters: Vec<ParameterInfo>,
+    /// Its own active parameter, over the answer's (LSP 3.16).
+    pub active_parameter: Option<usize>,
+}
+
+impl SignatureInfo {
+    /// Parameter `i`'s text in the label, where it was found.
+    pub fn range_text(&self, i: usize) -> Option<&str> {
+        let r = self.parameters.get(i)?.range.clone()?;
+        self.label.get(r)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParameterInfo {
+    /// Where it is in its signature's label, in bytes: a label given as
+    /// a string is found there, after the label's first `(`; none when
+    /// it is not there.
+    pub range: Option<std::ops::Range<usize>>,
+    /// The label as the server wrote it.
+    pub label: String,
+    pub documentation: Option<String>,
+}
+
+/// A documentation as LSP sends one: a string or a `MarkupContent`.
+fn doc_text(v: Option<&Value>) -> Option<String> {
+    let v = v?;
+    v.as_str()
+        .or_else(|| v.get("value").and_then(Value::as_str))
+        .map(str::to_string)
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// UTF-16 offset `units` into `s` as a byte offset, on a character's
+/// start; past the end is the end.
+fn utf16_to_byte(s: &str, units: usize) -> usize {
+    let mut n = 0;
+    for (i, c) in s.char_indices() {
+        if n >= units {
+            return i;
+        }
+        n += c.len_utf16();
+    }
+    s.len()
+}
+
+/// A `textDocument/signatureHelp` result read: none for `null` or no
+/// signatures.
+pub fn signature_help(result: Option<&Value>) -> Option<SignatureHelp> {
+    let r = result.filter(|r| !r.is_null())?;
+    let sigs = r.get("signatures")?.as_array()?;
+    let index = |v: Option<&Value>| v.and_then(Value::as_u64).map(|n| n as usize);
+    let signatures: Vec<SignatureInfo> = sigs
+        .iter()
+        .filter_map(|s| {
+            let label = s.get("label")?.as_str()?.to_string();
+            let open = label.find('(').map_or(0, |i| i + 1);
+            let mut from = open;
+            let parameters = s
+                .get("parameters")
+                .and_then(Value::as_array)
+                .map(|ps| {
+                    ps.iter()
+                        .map(|p| {
+                            let (range, text) = match p.get("label") {
+                                Some(Value::String(t)) => {
+                                    // Each found after the one before.
+                                    let at = label
+                                        .get(from..)
+                                        .and_then(|rest| rest.find(t.as_str()))
+                                        .map(|i| from + i);
+                                    let range = at.map(|a| a..a + t.len());
+                                    if let Some(r) = &range {
+                                        from = r.end;
+                                    }
+                                    (range.filter(|r| !r.is_empty()), t.clone())
+                                }
+                                Some(Value::Array(ab)) if ab.len() == 2 => {
+                                    let a =
+                                        utf16_to_byte(&label, ab[0].as_u64().unwrap_or(0) as usize);
+                                    let b =
+                                        utf16_to_byte(&label, ab[1].as_u64().unwrap_or(0) as usize);
+                                    let range = (a < b).then_some(a..b);
+                                    let text = range.clone().map(|r| label[r].to_string());
+                                    (range, text.unwrap_or_default())
+                                }
+                                _ => (None, String::new()),
+                            };
+                            ParameterInfo {
+                                range,
+                                label: text,
+                                documentation: doc_text(p.get("documentation")),
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(SignatureInfo {
+                documentation: doc_text(s.get("documentation")),
+                parameters,
+                active_parameter: index(s.get("activeParameter")),
+                label,
+            })
+        })
+        .collect();
+    if signatures.is_empty() {
+        return None;
+    }
+    let active_signature = index(r.get("activeSignature"))
+        .filter(|&i| i < signatures.len())
+        .unwrap_or(0);
+    Some(SignatureHelp {
+        active_parameter: index(r.get("activeParameter")),
+        signatures,
+        active_signature,
+        raw: std::sync::Arc::new(r.clone()),
+    })
 }
 
 /// The name of a `CompletionItemKind` (LSP 3.17's table).
@@ -836,6 +1030,15 @@ pub enum Event {
         /// The server said the list is not the whole: a longer word
         /// asks again.
         incomplete: bool,
+    },
+    /// The signature of the call at `offset` (`Cmd::SignatureHelp`):
+    /// none where the server knows of no call there, an error when it
+    /// refused or is gone.
+    SignatureHelp {
+        buffer: BufferId,
+        version: Version,
+        offset: usize,
+        help: Result<Option<SignatureHelp>, String>,
     },
     /// A candidate filled in (`Cmd::Resolve`'s `token`): its detail and
     /// documentation, either none when the server had nothing more.
@@ -968,6 +1171,7 @@ impl Event {
             Event::Hover { .. } => "lsp hover",
             Event::Completion { .. } => "lsp completion",
             Event::Resolved { .. } => "lsp resolved",
+            Event::SignatureHelp { .. } => "lsp signature help",
             Event::Capabilities { .. } => "lsp capabilities",
             Event::WorkspaceEdit { .. } => "lsp workspace edit",
             Event::Locations { .. } => "lsp locations",
@@ -2676,6 +2880,7 @@ impl Pool {
                         "definition": { "linkSupport": true },
                         "hover": { "contentFormat": ["markdown", "plaintext"] },
                         "completion": { "completionItem": { "snippetSupport": true, "insertReplaceSupport": true, "insertTextModeSupport": { "valueSet": [1, 2] }, "documentationFormat": ["markdown", "plaintext"], "resolveSupport": { "properties": ["documentation", "detail"] } } },
+                        "signatureHelp": { "signatureInformation": { "documentationFormat": ["markdown", "plaintext"], "parameterInformation": { "labelOffsetSupport": true }, "activeParameterSupport": true }, "contextSupport": true },
                         "synchronization": { "didSave": true },
                         "rename": { "prepareSupport": false },
                         "references": {},
@@ -2928,6 +3133,36 @@ impl Pool {
                 offset,
                 version,
             } => self.complete(buffer, offset, version),
+            Cmd::SignatureHelp {
+                buffer,
+                offset,
+                version,
+                context,
+            } => {
+                let method = "textDocument/signatureHelp";
+                // Only a server that says it does: one that does not
+                // would refuse it, every key.
+                let asked = self.homes.get(&buffer).is_some_and(|h| {
+                    h.iter().any(|&k| {
+                        self.answers(k, method)
+                            && self.servers[k]
+                                .as_ref()
+                                .is_some_and(|s| s.doc_of(buffer).is_some())
+                    })
+                });
+                if asked {
+                    self.positional(method, buffer, offset, version, Some(context.to_json()));
+                } else {
+                    // Nobody to ask: said at once, so the asker waits on
+                    // nothing.
+                    self.emit(Event::SignatureHelp {
+                        buffer,
+                        version,
+                        offset,
+                        help: Ok(None),
+                    });
+                }
+            }
             Cmd::Resolve {
                 buffer,
                 token,
@@ -3847,8 +4082,14 @@ impl Pool {
             None => status,
         };
         // Who waits on an answer hears there is none.
-        for (_, (method, _, _, offset)) in server.pending.drain() {
+        for (_, (method, buffer, version, offset)) in server.pending.drain() {
             match method {
+                "textDocument/signatureHelp" => self.emit(Event::SignatureHelp {
+                    buffer,
+                    version,
+                    offset,
+                    help: Err(format!("the server exited ({why})")),
+                }),
                 "textDocument/documentSymbol" | "workspace/symbol" => self.emit(Event::Symbols {
                     token: offset as u64,
                     result: Err(format!("the server exited ({why})")),
@@ -3999,6 +4240,16 @@ impl Pool {
                         Event::Runnables {
                             token: offset as u64,
                             result: Err(text),
+                        },
+                    ),
+                    // Refused: what is on show stays.
+                    "textDocument/signatureHelp" => self.emit_from(
+                        key,
+                        Event::SignatureHelp {
+                            buffer,
+                            version,
+                            offset,
+                            help: Err(text),
                         },
                     ),
                     // A candidate with nothing more to say.
@@ -4265,6 +4516,15 @@ impl Pool {
                         },
                     );
                 }
+                "textDocument/signatureHelp" => self.emit_from(
+                    key,
+                    Event::SignatureHelp {
+                        buffer,
+                        version,
+                        offset,
+                        help: Ok(signature_help(result)),
+                    },
+                ),
                 "textDocument/hover" => {
                     let text = hover_text(result);
                     // Nothing to say here: the next server's turn.
@@ -4524,8 +4784,22 @@ fn capabilities(result: Option<&Value>) -> Caps {
                 .collect()
         })
         .unwrap_or_default();
+    let strings = |path: &str| -> Vec<String> {
+        caps.and_then(|c| c.pointer(path))
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     Caps {
         triggers,
+        signature: provides("signatureHelpProvider"),
+        signature_triggers: strings("/signatureHelpProvider/triggerCharacters"),
+        signature_retriggers: strings("/signatureHelpProvider/retriggerCharacters"),
         rename: provides("renameProvider"),
         references: provides("referencesProvider"),
         code_action: provides("codeActionProvider"),
@@ -5183,6 +5457,57 @@ fn placed_diagnostics(params: &Value) -> Vec<Placed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A signature's parameters found in its label: a string after the
+    /// one before it (so `a` in `fn f(a: A, ab: B)` is not `ab`'s), an
+    /// offset pair in UTF-16 units read as bytes; `null` and no
+    /// signatures are none.
+    #[test]
+    fn a_signatures_parameters_are_placed_in_its_label() {
+        let h = signature_help(Some(&json!({
+            "signatures": [
+                { "label": "fn f(a: A, ab: B) -> a", "documentation": "Does f.",
+                  "parameters": [{ "label": "a: A", "documentation": { "kind": "markdown", "value": "the a" } },
+                                 { "label": "ab: B" }] },
+                { "label": "g(é: u8, x: u8)", "activeParameter": 1,
+                  "parameters": [{ "label": [2, 7] }, { "label": [9, 14] }, { "label": "missing" }] }
+            ],
+            "activeSignature": 1,
+            "activeParameter": 0
+        })))
+        .unwrap();
+        assert_eq!(h.active_signature, 1);
+        assert_eq!(h.active_parameter, Some(0));
+        let f = &h.signatures[0];
+        assert_eq!(f.documentation.as_deref(), Some("Does f."));
+        fn at(s: &SignatureInfo, i: usize) -> Option<&str> {
+            s.range_text(i)
+        }
+        assert_eq!(at(f, 0), Some("a: A"));
+        assert_eq!(at(f, 1), Some("ab: B"));
+        assert_eq!(f.parameters[0].documentation.as_deref(), Some("the a"));
+        let g = &h.signatures[1];
+        assert_eq!(g.active_parameter, Some(1));
+        assert_eq!(at(g, 0), Some("é: u8"), "UTF-16 units, not bytes");
+        assert_eq!(at(g, 1), Some("x: u8"));
+        assert_eq!(at(g, 2), None);
+        assert!(signature_help(Some(&Value::Null)).is_none());
+        assert!(signature_help(Some(&json!({ "signatures": [] }))).is_none());
+        // An active signature past the list is the first.
+        let one = signature_help(Some(&json!({
+            "signatures": [{ "label": "h()" }], "activeSignature": 4
+        })))
+        .unwrap();
+        assert_eq!(one.active_signature, 0);
+        let caps = capabilities(Some(&json!({ "capabilities": {
+            "signatureHelpProvider": { "triggerCharacters": ["(", ","], "retriggerCharacters": [")"] }
+        }})));
+        assert!(caps.signature);
+        assert_eq!(caps.signature_triggers, ["(", ","]);
+        assert_eq!(caps.signature_retriggers, [")"]);
+        assert!(caps.answers("textDocument/signatureHelp"));
+        assert!(!Caps::default().answers("textDocument/signatureHelp"));
+    }
 
     /// What a server asks of a save, by its `textDocumentSync`: a kind
     /// alone is a save without the text; options say it, or ask none.

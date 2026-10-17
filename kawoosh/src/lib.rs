@@ -83,6 +83,7 @@ pub mod session;
 pub mod settings;
 pub mod settings_edit;
 pub mod settings_pane;
+pub mod signature;
 pub mod snippet;
 pub mod ssh_cmd;
 pub mod statusline;

@@ -6205,6 +6205,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-S-v>", "paste clipboard"),
         ("<C-Space>", "lsp complete"),
         ("<C-x>", "lsp candidates"),
+        ("<C-g>", "signature"),
         ("<C-u>", "delete to start"),
         ("<C-S-u>", "delete line"),
         ("<C-s>", "write"),
@@ -6241,6 +6242,17 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-e>", "completion close"),
     ] {
         km.bind_local("completion", Insert, k, c, &[]);
+    }
+    // A signature on show (completion.md Decision 10), local to the
+    // `signature` fact, which holds only while one is drawn and no
+    // completion is: its overloads on `<C-n>` / `<C-p>`, closed on
+    // `<C-e>` — a completion's keys while one is on show beside it.
+    for (k, c) in [
+        ("<C-n>", "signature next"),
+        ("<C-p>", "signature prev"),
+        ("<C-e>", "signature close"),
+    ] {
+        km.bind_local("signature", Insert, k, c, &[]);
     }
     // A live snippet's fields (completion.md Decision 7), local to the
     // `snippet` fact, which holds only while one is live: with none,

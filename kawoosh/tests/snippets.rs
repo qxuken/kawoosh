@@ -794,7 +794,10 @@ fn a_servers_snippet_end_to_end() {
     );
     assert_eq!(selected(&app), ["name"]);
 
-    // A textEdit's body; a broken one; one put as it is.
+    // A textEdit's body; a broken one; one put as it is. `zedit` is a
+    // function's, put as its name alone unless `completion.callable`
+    // says `args` (round 5).
+    ex(&mut d, &mut app, "setlocal completion.callable=args");
     for (typed, want) in [
         ("zed", "    zedit(arg)"),
         ("zbr", "    zbroken(${1:unclosed"),
