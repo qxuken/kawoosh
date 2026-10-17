@@ -640,7 +640,13 @@ Where the build departs, or says more than the decision did:
   (round 4) come through the same door, `snippet_accept` (a body and
   the places it goes; `snippet_expand` at the carets).
 - **Found on the way, not this round's:** `cc` on a buffer of one empty
-  line (`"\n"`) puts its text after the newline.
+  line (`"\n"`) puts its text after the newline. And round 2's sticky
+  popup races a landing: in the `fallback` look a frame drawn while the
+  ranking selects a candidate no ghost can show (before the server's
+  answer lands) sets `Session::popup_up`, and the popup then stays for
+  the word in place of the ghost the answer would give —
+  `lsp.rs`'s `diagnostics_definition_hover_and_completion` fails so
+  about one run in fifty under 48 parallel copies, on main as here.
 
 Measured with `kawoosh/tests/snippets.rs`'s
 `timing_a_keystroke_in_a_snippet` (dev profile, a 20,000-line buffer
