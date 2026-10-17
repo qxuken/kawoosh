@@ -587,7 +587,7 @@ return {
 A path is a folder of VS Code snippet files (`rust.json` holds Rust's,
 a `*.code-snippets` file every language's, or those its snippets'
 `scope` names), a package (its `package.json`'s `contributes.snippets`
-names each language's file), or one file; `~` or absolute, else under
+names each language's file, inside the package's folder), or one file; `~` or absolute, else under
 your config folder. Nothing is read until a buffer of a language asks
 for a completion, and then only that language's files and the files
 for every language; they are watched, so saving one reads it again.

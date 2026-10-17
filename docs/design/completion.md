@@ -808,6 +808,52 @@ thousand for the buffer's language (more than friendly-snippets has for
 any one) 8.00 / 8.38 ms and 0.92 / 0.99 ms — their labels scored with
 the rest. Round 1's 2.4 ms word start was measured without Lua.
 
+**After a review and a load test, the same day.** A read is bounded
+by what it reads, not by what a file says of itself: only a regular
+file is read (opened without waiting, asked what it is before a byte is
+read — not `/dev/zero`, which says it is empty and never ends, nor a
+FIFO, whose open waits for a writer, nor a link to either), through a
+cap of 16 MiB and a byte. A value of more than 250,000 values
+(`json::MAX_NODES`) is refused, since each is a Lua value made on the
+frame: the worst at the cap, every value a table, is 29 ms. A
+package's `contributes.snippets` paths are its own — one written
+absolute or reaching out of its folder with `..` is refused and said
+once a session (VS Code warns of it too): a package is data, and its
+entries do not name the rest of the disk; a link inside it is
+followed, and is read only if it is a regular file. A manifest that
+does not read now — a typo, a `package.json` caught half-saved or
+between its removal and its rename back, a listing that failed —
+leaves what its path put until it reads again; only a path gone takes
+all of it (it dropped the whole package). An entry named twice is read
+once, and the loader's reads go four at a time, the rest waiting their
+turn; `IoRunner::run` no longer panics when the system gives no
+thread — the job runs where it was asked. A watch event on a path
+before any language asked reads nothing until one does. A snippet's
+texts are shared (`Item::insert` and `documentation` are `Rc<str>`),
+its prefixes told apart and capped at 16 (each at most 256 bytes), its
+scope's languages at 32, and its detail is the description's first line
+cut to 200 bytes; one `add` or one file puts at most 10,000, the first
+by name, saying how many it passed over. `add` is linear: a name added
+again is found by one pass over its language, a file read again by the
+languages it put snippets under (2,500 snippets 2.6 ms, 10,000 10.2
+ms). The first lazy load of a rust file of 1,500 snippets (300 KiB,
+about friendly-snippets' largest) lands in a frame of 12.7 ms; one at
+the 10,000 cap (2 MiB) in 59 ms. The reader's comma rule is a comma
+after a value: `[,]` and `{,}` are errors.
+
+Found on the way, in round 1's code: an answer landing in place of a
+longer one (a snippet file read again with fewer, a server's list)
+re-ranked by reading the selection through the old ranking's indexes
+into the new items, and panicked when the selected one was past their
+end. The selection is read before the answer moves, and the old
+answer's places leave the ranking with it. And round 2's
+`the_panel_resolves_the_selection_alone_after_the_delay` read its count
+of resolves after the server's candidates landed; on a loaded machine
+the typing can outlast the 300 ms delay, so the one resolve had gone
+out before the count was read (made to happen with a slow frame there,
+it fails so every time). It counts from before the word now; the
+product sends one either way.
+
 *Left for later:* a `:snippets` command (list, reload, open the file a
 snippet came from); the loader's files watched for a `load_json` call;
 the VS Code id table grown as friendly-snippets' languages meet
