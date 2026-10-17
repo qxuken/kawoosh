@@ -1016,6 +1016,11 @@ pub struct Editor {
     /// Whether a command made an undo node since the step began
     /// (`settle_checkpoint`): what makes the steps so far a change.
     edited: bool,
+    /// Counts every move through an undo history — an undo, a redo, a
+    /// seek, a multibuffer's — so what follows a buffer's edits (a live
+    /// snippet, completion.md Decision 7) knows its text was put back,
+    /// not typed.
+    pub history_moves: u64,
     /// What is said to be wrong where ([`diagnostics`]): each buffer's
     /// list its layer's runs index, and the files no buffer holds.
     pub diagnostics: diagnostics::Diagnostics,
@@ -1190,6 +1195,7 @@ impl Editor {
             locals: HashMap::new(),
             repeat: Default::default(),
             edited: false,
+            history_moves: 0,
             diagnostics: Default::default(),
             bases: HashMap::new(),
             blames: HashMap::new(),
@@ -3119,6 +3125,7 @@ impl Editor {
             h.nodes[*w.1].child = Some(*w.0);
         }
         h.current = target;
+        self.history_moves += 1;
         let root = h.nodes[target].root.clone();
         let sels = h.nodes[target].sels.clone();
         let buf = &mut self.buffers[id];
@@ -4122,10 +4129,35 @@ impl Editor {
         self.sync_multis();
     }
 
+    /// Insert mode's typing over a selection — a snippet's field
+    /// (completion.md Decision 7), a drag: every selection with text in
+    /// it erased, its caret where the text was, as a key that types, a
+    /// line break, a paste or a delete does before (or in place of)
+    /// what it does. False when no selection had any text, or outside
+    /// insert mode.
+    pub fn erase_selected(&mut self, view: ViewId) -> bool {
+        let Some(v) = self.views.get(view) else {
+            return false;
+        };
+        if v.mode != Mode::Insert || v.sels.iter().all(Selection::is_empty) {
+            return false;
+        }
+        let edits = v
+            .sels
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.is_empty())
+            .map(|(i, s)| (i, s.range(), String::new()))
+            .collect();
+        self.edit_each(view, edits, |start, _| Selection::point(start));
+        true
+    }
+
     pub fn insert_text(&mut self, view: ViewId, text: &str) {
         if text.is_empty() {
             return;
         }
+        self.erase_selected(view);
         let mut text = text.to_string();
         if self.is_field(view) {
             text = text.replace('\n', " ");

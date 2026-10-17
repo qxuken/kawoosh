@@ -3044,6 +3044,10 @@ pub fn install(ed: &mut Editor) {
     // `X` stops at the line start; insert's Backspace goes on past it,
     // the line joined to the one above, as vim's `backspace=eol`.
     ed.register("delete char back", |ed, ctx| {
+        // Over a selection in insert mode, the selection.
+        if ed.erase_selected(ctx.view) {
+            return;
+        }
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let joins = ed.mode(ctx.view) == Mode::Insert;
@@ -3244,6 +3248,7 @@ pub fn install(ed: &mut Editor) {
     });
     // A newline at every caret (`break_lines`).
     ed.register("insert newline", |ed, ctx| {
+        ed.erase_selected(ctx.view);
         if ed.is_field(ctx.view) {
             return ed.insert_text(ctx.view, "\n");
         }
@@ -3311,6 +3316,9 @@ pub fn install(ed: &mut Editor) {
         apply_operator(ed, ctx.view, "erase", ranges);
     });
     ed.register("delete forward", |ed, ctx| {
+        if ed.erase_selected(ctx.view) {
+            return;
+        }
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let ranges = ed.views[ctx.view]
