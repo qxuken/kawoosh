@@ -1777,13 +1777,15 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                         .sum::<f32>();
                 (x, 0.0)
             };
-            mark.set(Some(ui.leaf_keyed(
-                "hang",
-                NodeSpec::row()
-                    .size(0.0, lh)
-                    .role(Role::None)
-                    .float(FloatConfig::parent().offset(x, y)),
-            )));
+            mark.set(Some(
+                ui.leaf_keyed(
+                    "hang",
+                    NodeSpec::row()
+                        .size(0.0, lh)
+                        .role(Role::None)
+                        .float(FloatConfig::parent().offset(x, y)),
+                ),
+            ));
         }
         // The block carets a rounded selection runs under: each its
         // characters again over the selection, inverted in the caret's

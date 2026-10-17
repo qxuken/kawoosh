@@ -116,8 +116,15 @@ fn the_clock_and_the_counts() {
     // Codicons' error and warning, each a glyph of `font.icons` in a box
     // a cell wide (completion.md Decision 9), the counts text beside.
     let t = texts(&d);
-    let error = t.iter().position(|x| x == "\u{EA87}").expect("the error icon");
-    assert_eq!(t[error + 1..error + 5], [" 3", "  ", "\u{EA6C}", " 5"], "{t:?}");
+    let error = t
+        .iter()
+        .position(|x| x == "\u{EA87}")
+        .expect("the error icon");
+    assert_eq!(
+        t[error + 1..error + 5],
+        [" 3", "  ", "\u{EA6C}", " 5"],
+        "{t:?}"
+    );
     let (_, _, cell) = app.icons_family();
     let nodes = d.core.nodes();
     let glyph = nodes
@@ -125,7 +132,11 @@ fn the_clock_and_the_counts() {
         .find(|n| n.text.as_deref() == Some("\u{EA87}"))
         .unwrap();
     let boxed = nodes.iter().find(|n| Some(n.key) == glyph.parent).unwrap();
-    assert!((boxed.rect.w - cell).abs() < 0.5, "a cell: {:?} {cell}", boxed.rect);
+    assert!(
+        (boxed.rect.w - cell).abs() < 0.5,
+        "a cell: {:?} {cell}",
+        boxed.rect
+    );
     let Rect { x, y, w, h } = at_text(&d, " 5").unwrap();
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     d.frame(&mut app);
@@ -556,6 +567,10 @@ fn the_strips_marks_are_icons_a_cell_wide() {
     );
     for m in marks {
         let boxed = nodes.iter().find(|n| Some(n.key) == m.parent).unwrap();
-        assert!((boxed.rect.w - cell).abs() < 0.5, "a cell: {:?} {cell}", boxed.rect);
+        assert!(
+            (boxed.rect.w - cell).abs() < 0.5,
+            "a cell: {:?} {cell}",
+            boxed.rect
+        );
     }
 }

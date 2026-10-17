@@ -2925,15 +2925,17 @@ impl Pool {
                 resolve,
             } => {
                 let item = (*resolve.item).clone();
-                let asked = self.servers.get_mut(resolve.server).and_then(Option::as_mut).map(
-                    |server| {
+                let asked = self
+                    .servers
+                    .get_mut(resolve.server)
+                    .and_then(Option::as_mut)
+                    .map(|server| {
                         server.request(
                             "completionItem/resolve",
                             item,
                             (buffer, Version::INITIAL, token as usize),
                         )
-                    },
-                );
+                    });
                 if asked.is_none() {
                     self.emit(Event::Resolved {
                         token,
@@ -5041,10 +5043,12 @@ fn completion_items(result: Option<&Value>, resolves: Option<usize>) -> Vec<Comp
                     .map(str::to_string)
             });
             // Kept to ask for the rest, only where it is missing.
-            let resolve = resolves.filter(|_| documentation.is_none()).map(|server| Resolve {
-                server,
-                item: std::sync::Arc::new(it.clone()),
-            });
+            let resolve = resolves
+                .filter(|_| documentation.is_none())
+                .map(|server| Resolve {
+                    server,
+                    item: std::sync::Arc::new(it.clone()),
+                });
             Some(CompletionItem {
                 label,
                 insert,

@@ -468,7 +468,8 @@ impl Session {
         let find = |s: &Session| {
             let t = text?;
             s.ranking.iter().position(|r| {
-                (all || r.continues) && s.answers[r.answer as usize].items[r.item as usize].text() == t
+                (all || r.continues)
+                    && s.answers[r.answer as usize].items[r.item as usize].text() == t
             })
         };
         match find(self) {
@@ -2317,7 +2318,7 @@ impl Kawoosh {
         match self.completion_value(view, "completion.docs") {
             Some(Setting::Bool(false)) => None,
             Some(v) => Some(Duration::from_millis(
-                v.as_int().unwrap_or(200).max(0) as u64,
+                v.as_int().unwrap_or(200).max(0) as u64
             )),
             None => Some(Duration::from_millis(200)),
         }
@@ -2360,7 +2361,11 @@ impl Kawoosh {
             // Pinned for the word: kept through a frame with nothing on
             // show (a landing between keys), until asked away.
             let pinned = s.docs.pinned;
-            let due = if pinned { Some(now) } else { delay.map(|d| now + d) };
+            let due = if pinned {
+                Some(now)
+            } else {
+                delay.map(|d| now + d)
+            };
             s.docs = Docs {
                 due: id.as_ref().and(due),
                 about: id,
@@ -2472,7 +2477,9 @@ impl Kawoosh {
             .join("\n")
             .trim()
             .to_string();
-        let head = detail.map(|d| d.trim().to_string()).filter(|d| !d.is_empty());
+        let head = detail
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty());
         // A detail alone is the row's already: no panel for it.
         if body.is_empty() {
             self.completion.session.as_mut().unwrap().docs.panel = None;
@@ -2500,7 +2507,10 @@ impl Kawoosh {
     }
 
     /// The panel `view` draws this frame: the selection's, once shown.
-    pub(crate) fn completion_panel(&self, view: ViewId) -> Option<Rc<crate::completion_view::Panel>> {
+    pub(crate) fn completion_panel(
+        &self,
+        view: ViewId,
+    ) -> Option<Rc<crate::completion_view::Panel>> {
         self.completion_display(view)?;
         let s = self.completion.session.as_ref()?;
         if !s.docs.shown {
@@ -2729,9 +2739,9 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             |k, _| k.completion_close(),
         ),
         cmd(
-            Spec::new("completion docs")
-                .when(&[FACT])
-                .doc("the selected candidate's documentation beside the completion now; again, put away"),
+            Spec::new("completion docs").when(&[FACT]).doc(
+                "the selected candidate's documentation beside the completion now; again, put away",
+            ),
             |k, _| k.completion_docs(),
         ),
         cmd(

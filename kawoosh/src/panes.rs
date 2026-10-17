@@ -1952,9 +1952,7 @@ impl Kawoosh {
             .as_ref()
             .filter(|d| d.popup)
             .and_then(|_| self.completion_popup(view));
-        let panel_of = display
-            .as_ref()
-            .and_then(|_| self.completion_panel(view));
+        let panel_of = display.as_ref().and_then(|_| self.completion_panel(view));
         let hang_at = (popup_of.is_some() || panel_of.is_some())
             .then(|| self.completion.session.as_ref().map(|s| s.anchor.start))
             .flatten();
@@ -3069,7 +3067,10 @@ impl Kawoosh {
             let (above, room) = match self.layout.rects.get(&pane).copied() {
                 Some(p) => {
                     let (x, y) = ui.layout_of(mark).map_or(
-                        (p.x, p.y + title_h + cur_line.saturating_sub(top) as f32 * lh),
+                        (
+                            p.x,
+                            p.y + title_h + cur_line.saturating_sub(top) as f32 * lh,
+                        ),
                         |a| (a.x, a.y),
                     );
                     let below = p.y + p.h - (y + lh);

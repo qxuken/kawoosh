@@ -354,10 +354,7 @@ impl Icons {
     /// its line the glyph's size, so the em box is the line's and the
     /// glyph sits in the middle of the box it is centred in.
     pub fn glyph_style(&self, size: f32, color: Color) -> TextStyle {
-        let s = TextStyle::new(size)
-            .line_height(size)
-            .color(color)
-            .nowrap();
+        let s = TextStyle::new(size).line_height(size).color(color).nowrap();
         match self.font {
             Some(id) => s.family(FontFamily::Custom(id)),
             None => s,

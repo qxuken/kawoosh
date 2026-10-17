@@ -66,8 +66,16 @@ fn the_popup_is_shown_for_each_ghost_and_popup_pair() {
         ("never", "never", (false, false), (false, false)),
     ];
     for (ghost, popup, end, mid) in table {
-        ex(&mut d, &mut app, &format!("setlocal completion.ghost={ghost}"));
-        ex(&mut d, &mut app, &format!("setlocal completion.popup={popup}"));
+        ex(
+            &mut d,
+            &mut app,
+            &format!("setlocal completion.ghost={ghost}"),
+        );
+        ex(
+            &mut d,
+            &mut app,
+            &format!("setlocal completion.popup={popup}"),
+        );
         for (place, want) in [("end", end), ("mid", mid)] {
             if place == "end" {
                 d.press(&mut app, "Go");
@@ -84,7 +92,11 @@ fn the_popup_is_shown_for_each_ghost_and_popup_pair() {
             );
             assert_eq!(got, want, "{pair}: (ghost, popup)");
             let rows = d.completion_rows();
-            assert_eq!(!rows.is_empty(), want.1, "{pair}: the popup drawn: {rows:?}");
+            assert_eq!(
+                !rows.is_empty(),
+                want.1,
+                "{pair}: the popup drawn: {rows:?}"
+            );
             if want.1 {
                 assert_eq!(rows.len(), 2, "{pair}: a row a candidate: {rows:?}");
             }
@@ -198,7 +210,10 @@ fn the_popup_flips_above_near_the_panes_foot() {
     // The word's start: the labels start under it, the icon column
     // to its left.
     let (_, _, cell) = app.icons_family();
-    assert!(popup.x < row.x && row.x - popup.x < cell * 4.0, "at the word: {popup:?} {row:?}");
+    assert!(
+        popup.x < row.x && row.x - popup.x < cell * 4.0,
+        "at the word: {popup:?} {row:?}"
+    );
     d.press(&mut app, "<Esc>u");
     // At the foot: over it.
     d.press(&mut app, "Go");
@@ -258,11 +273,13 @@ fn rows_carry_their_kinds_icon_in_font_icons() {
     d.settle(&mut app);
     let rows = d.completion_rows();
     assert!(
-        rows.iter().any(|r| r.starts_with('\u{EA8C}') && r.contains("helper_fn")),
+        rows.iter()
+            .any(|r| r.starts_with('\u{EA8C}') && r.contains("helper_fn")),
         "a function's icon: {rows:?}"
     );
     assert!(
-        rows.iter().any(|r| r.starts_with('\u{EA93}') && r.contains("helium")),
+        rows.iter()
+            .any(|r| r.starts_with('\u{EA93}') && r.contains("helium")),
         "a word's icon: {rows:?}"
     );
     let (font, family, cell) = app.icons_family();
@@ -355,7 +372,11 @@ fn the_panel_resolves_the_selection_alone_after_the_delay() {
     app.wait_for_open();
     d.settle(&mut app);
     // The README open, so its mask's word is known.
-    ex(&mut d, &mut app, &format!("e {}", dir.join("README.md").display()));
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("README.md").display()),
+    );
     ex(&mut d, &mut app, &format!("e {}", file.display()));
     ex(&mut d, &mut app, "setlocal completion.popup=always");
     ex(&mut d, &mut app, "setlocal completion.docs=300");
@@ -365,7 +386,10 @@ fn the_panel_resolves_the_selection_alone_after_the_delay() {
         a.completion.candidates().iter().any(|c| c == "hello_world")
     });
     assert!(
-        !app.completion.candidates().iter().any(|c| c.starts_with("MIIEv")),
+        !app.completion
+            .candidates()
+            .iter()
+            .any(|c| c.starts_with("MIIEv")),
         "a masked candidate is none"
     );
     let asked = app.completion.resolves;
@@ -381,19 +405,30 @@ fn the_panel_resolves_the_selection_alone_after_the_delay() {
     let selected = app.completion.selected_text().unwrap().to_string();
     let (head, body) = app.completion_panel_text().unwrap();
     assert_eq!(head.as_deref(), Some(format!("fn {selected}()").as_str()));
-    assert!(body.starts_with(&format!("docs for {selected}")), "{body:?}");
+    assert!(
+        body.starts_with(&format!("docs for {selected}")),
+        "{body:?}"
+    );
     assert!(!body.contains("MIIEvSecretKeyMaterial"), "masked: {body:?}");
     assert!(body.contains('•'), "{body:?}");
     d.settle(&mut app);
     let drawn = d.texts_under("completion docs").join("\n");
     assert!(drawn.contains("docs for"), "drawn beside: {drawn:?}");
     assert!(!drawn.contains("MIIEvSecretKeyMaterial"));
-    let all: String = d.core.nodes().iter().filter_map(|n| n.text.clone()).collect();
+    let all: String = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
     assert!(!all.contains("MIIEvSecretKeyMaterial"), "no frame draws it");
     // One panel: beside the popup, never a second.
     let popup = d.rect_labelled("completion popup").unwrap();
     let panel = d.rect_labelled("completion docs").unwrap();
-    assert!(panel.x >= popup.x + popup.w - 0.5, "beside: {popup:?} {panel:?}");
+    assert!(
+        panel.x >= popup.x + popup.w - 0.5,
+        "beside: {popup:?} {panel:?}"
+    );
     assert_eq!(
         d.core
             .nodes()
@@ -500,7 +535,10 @@ fn the_candidates_and_symbols_pickers_carry_kind_icons() {
     assert!(!words.is_empty(), "a word's icon in the candidates");
     assert!(!functions.is_empty(), "a function's icon in the candidates");
     for r in words.iter().chain(&functions) {
-        assert!((r.w - cell).abs() < 1.0, "a cell wide: {r:?} against {cell}");
+        assert!(
+            (r.w - cell).abs() < 1.0,
+            "a cell wide: {r:?} against {cell}"
+        );
     }
     for _ in 0..3 {
         d.press(&mut app, "<Esc>");
@@ -515,7 +553,11 @@ fn the_candidates_and_symbols_pickers_carry_kind_icons() {
             std::time::Instant::now() < deadline,
             "the symbols' icons: {:?} / {:?}",
             app.ed.message,
-            d.core.nodes().iter().filter_map(|n| n.text.clone()).collect::<Vec<_>>()
+            d.core
+                .nodes()
+                .iter()
+                .filter_map(|n| n.text.clone())
+                .collect::<Vec<_>>()
         );
         app.wait_for_jobs();
         d.frame(&mut app);

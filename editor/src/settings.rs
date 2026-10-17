@@ -1392,10 +1392,7 @@ impl Settings {
         defaults.set("font.prose", Setting::Str(String::new()));
         // The icons' family (completion.md Decision 9): the shipped
         // symbols (fonts.md Decision 6).
-        defaults.set(
-            "font.icons",
-            Setting::Str("Symbols Nerd Font Mono".into()),
-        );
+        defaults.set("font.icons", Setting::Str("Symbols Nerd Font Mono".into()));
         // The chrome's text (tabs, title bars, the strips): `0` follows
         // `font.size` up to a cap, a number is its own size.
         defaults.set("font.chrome_size", Setting::Int(0));

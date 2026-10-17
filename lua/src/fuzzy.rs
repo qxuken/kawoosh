@@ -422,7 +422,11 @@ impl Single {
         let n = self.term.chars.len();
         let at = positions(n, &e.chars, &self.tables);
         let bytes: Vec<usize> = row.char_indices().map(|(b, _)| b).collect();
-        Some(at.into_iter().filter_map(|i| bytes.get(i).copied()).collect())
+        Some(
+            at.into_iter()
+                .filter_map(|i| bytes.get(i).copied())
+                .collect(),
+        )
     }
 }
 

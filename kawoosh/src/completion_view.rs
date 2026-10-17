@@ -149,10 +149,7 @@ fn rows(ui: &mut Ui<'_>, pal: &Pal, face: Face, icons: &Icons, p: &Popup, cell: 
     let width = width.min(place.room.max(cell * 16.0));
     ui.with_keyed(
         "completion popup",
-        card()
-            .bg(pal.panel)
-            .border(1.0, pal.border)
-            .width(width),
+        card().bg(pal.panel).border(1.0, pal.border).width(width),
         |ui| {
             for (i, r) in p.rows.iter().enumerate() {
                 let mut spec = NodeSpec::row()
@@ -171,10 +168,9 @@ fn rows(ui: &mut Ui<'_>, pal: &Pal, face: Face, icons: &Icons, p: &Popup, cell: 
                     label(ui, &r.label, &r.lit, base, pal.accent);
                     if let Some(d) = &r.detail {
                         ui.leaf(NodeSpec::row().grow_width().min_width(cell));
-                        ui.with(
-                            NodeSpec::row().max_width(detail_max).clip(),
-                            |ui| ui.text(d, detail),
-                        );
+                        ui.with(NodeSpec::row().max_width(detail_max).clip(), |ui| {
+                            ui.text(d, detail)
+                        });
                     }
                 });
             }

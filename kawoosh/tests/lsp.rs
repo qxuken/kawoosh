@@ -848,7 +848,8 @@ fn workspace_symbols_are_a_source_when_asked_for() {
     d.press(&mut app, "<BS>");
     d.keys(&mut app, "d");
     assert!(
-        until(&mut d, &mut app, |a| a.completion_ghost_text().as_deref() == Some("get_fn")),
+        until(&mut d, &mut app, |a| a.completion_ghost_text().as_deref()
+            == Some("get_fn")),
         "{:?}",
         app.completion_ghost_text()
     );
