@@ -868,6 +868,54 @@ fn each_caret_replaces_its_own_word() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A choice field's options are all its popup offers: typed in, it asks
+/// no source — not the workspace's symbols, three letters in.
+#[test]
+fn a_choice_asks_no_source() {
+    let dir = tmp("choice-asks");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
+    app.add_lsp_server(snippet_server());
+    let mut d = Drive::new(900.0, 500.0);
+    app.wait_for_open();
+    d.settle(&mut app);
+    let sources = ["lsp", "workspace_symbols"]
+        .iter()
+        .map(|s| kawoosh_editor::Setting::Str(s.to_string()))
+        .collect();
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "completion.sources",
+        kawoosh_editor::Setting::List(sources),
+    );
+    // The server up and answering.
+    d.press(&mut app, "o");
+    d.keys(&mut app, "zfo");
+    until(&mut d, &mut app, "the server", |a| {
+        !a.completion.candidates().is_empty()
+    });
+    d.press(&mut app, "<Esc>\"_cc");
+    app.snippet_expand("${1|widget_a,pub|} x");
+    d.settle(&mut app);
+    d.keys(&mut app, "wid");
+    let end = std::time::Instant::now() + std::time::Duration::from_millis(600);
+    while std::time::Instant::now() < end {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    d.settle(&mut app);
+    assert_eq!(
+        app.completion.candidates(),
+        ["widget_a"],
+        "the options alone, no `Widget` or `widget_fn`"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A keystroke inside a live snippet against one with none, on a
 /// 20,000-line buffer of words: run with `-- --ignored --nocapture`.
 #[test]

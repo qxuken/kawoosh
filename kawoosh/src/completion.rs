@@ -1389,8 +1389,11 @@ impl Kawoosh {
         }
         // The server's list was not the whole: asked again for the
         // longer word, one request in flight.
-        let again = s.asks.lsp_incomplete && s.asks.lsp.is_none();
-        let workspace = config.sources.contains(&Source::WorkspaceSymbols)
+        // A choice field's options are all it offers: it asks nothing.
+        let asks = !matches!(s.word, WordKind::Choice { .. });
+        let again = asks && s.asks.lsp_incomplete && s.asks.lsp.is_none();
+        let workspace = asks
+            && config.sources.contains(&Source::WorkspaceSymbols)
             && !s.asks.workspace_asked
             && s.typed.chars().count() >= WORKSPACE_MIN;
         if workspace {
@@ -2009,7 +2012,7 @@ impl Kawoosh {
             return;
         };
         s.asks.workspace_due = None;
-        if s.asks.workspace_asked || s.closed {
+        if s.asks.workspace_asked || s.closed || matches!(s.word, WordKind::Choice { .. }) {
             return;
         }
         s.asks.workspace_asked = true;
