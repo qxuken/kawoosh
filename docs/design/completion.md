@@ -229,6 +229,13 @@ move a column. A terminal's glyphs stay its program's.
 *Beat:* the fallback as built — a patched Nerd Font as `font.family`
 drew its own icons first, at its own widths.
 
+*Amended 2026-10-17, the user, after round 2:* "if something belongs
+to kawoosh ui itself, like close icon, i think it belongs to vector
+api". The pictures of kawoosh's own interface — the tab's close, the
+chevrons, the folds, the done mark, the key caps — stay icons.md's
+vectors; `font.icons` is for the icons that are data — a kind's, a
+character in a status segment, a task's box.
+
 ### 10. One information panel, and signature help called for
 
 At most two panels: the popup, and one information panel beside it —
@@ -490,11 +497,11 @@ Where the build departs, or says more than the decisions did:
   (were `▯▮▯`); the markdown task boxes, a span of their own in
   `font.icons` at the text's size, not a cell: each stands for the
   three cells of `[ ]`, and fitted to one they would be specks.
-  Kept: the vector icons of icons.md Decision 1 — the tab's close, the
-  chevrons, the folds, the done mark, the dots, the key caps — which
-  are in no family and in boxes of their own already, so nothing a
-  font does moves them; `kawoosh.icons.close = { { glyph = "\u{EA76}" } }`
-  puts a codicon there, in `font.icons`, if wanted. Typography stays
+  Kept, as the user confirmed (Decision 9's amendment): the vector
+  icons of icons.md Decision 1 — the tab's close, the chevrons, the
+  folds, the done mark, the dots, the key caps — kawoosh's own
+  interface, on the vector API; in no family and in boxes of their
+  own, nothing a font does moves them. Typography stays
   text (`…`, `→` in a sentence, a grid's `│`, a field's `▏` caret),
   the theme lab's samples show the face, and a terminal's glyphs stay
   its program's.

@@ -397,8 +397,10 @@ em-wide symbol at a half-em cell is drawn at half the text's size, as
 kui's terminal fits a wide glyph to its cell. A family not installed is
 a toast once and the shipped symbols stay.
 
-The vector icons above (Decision 1) stay vectors: they are in no
-family and sit in boxes of their own, so no font moves them.
+The vector icons above (Decision 1) stay vectors — the user's word
+the same day: "if something belongs to kawoosh ui itself, like close
+icon, i think it belongs to vector api". kawoosh's own interface is
+drawn; `font.icons` is for the icons that are data.
 
 ## Built
 
