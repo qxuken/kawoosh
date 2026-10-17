@@ -99,6 +99,13 @@ pub enum IoMsg {
         dir: std::path::PathBuf,
         entries: Option<Vec<crate::fs::Entry>>,
     },
+    /// A file read and parsed as JSON on a thread of its own for a
+    /// plugin (`kawoosh.fs.read_json(path, fn)`, `json::read_file`):
+    /// the job's token, and the value or why not.
+    JsonRead {
+        token: u64,
+        result: Result<serde_json::Value, String>,
+    },
     /// A tree walked on a thread of its own for a plugin
     /// (`kawoosh.fs.walk(root, fn)`): the job's token, and the files
     /// under the root, relative to it, or why not.

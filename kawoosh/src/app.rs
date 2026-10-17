@@ -992,6 +992,14 @@ impl Kawoosh {
                         self.drain_lua();
                     }
                 }
+                IoMsg::JsonRead { token, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.publish(&self.ed, self.focused_view());
+                        rt.json_read(token, result);
+                        self.drain_lua();
+                    }
+                }
                 IoMsg::Filtered { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     self.filtered(token, result);

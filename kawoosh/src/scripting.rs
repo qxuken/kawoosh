@@ -898,6 +898,17 @@ impl Kawoosh {
                     });
                 }
             }
+            Msg::ReadJson { token, path } => {
+                if self.jobs_inline {
+                    rt.json_read(token, kawoosh_systems::json::read_file(&path));
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("read json", move || IoMsg::JsonRead {
+                        token,
+                        result: kawoosh_systems::json::read_file(&path),
+                    });
+                }
+            }
             Msg::FsJob { token, op } => {
                 let job = move || {
                     let r = match op {
