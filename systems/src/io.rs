@@ -85,6 +85,13 @@ pub enum IoMsg {
         serial: u64,
         values: Option<Vec<(String, String)>>,
     },
+    /// A nushell parameter's completer answered the `:` prompt
+    /// (`compile::nu_answer`, compile.md Decision 16): the ask's serial,
+    /// and its values — none when nu failed, timed out or said no list.
+    NuCompleted {
+        serial: u64,
+        values: Option<Vec<String>>,
+    },
     /// A buffer's words indexed for completion's `buffer_words`
     /// (`words::index`), under its masks' key.
     CompletionWords {

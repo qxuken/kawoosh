@@ -193,40 +193,20 @@ pub(crate) fn quote_arg(v: &str) -> String {
 /// What nushell completer `name` of `file` answers: a list of values,
 /// of `{ value }` records, or a record of `completions`; read from the
 /// last line printed, the file's own top level printing before it.
-fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
-    use std::io::Read;
+/// Bounded as a shell line's completer is (`shell_complete::bounded`);
+/// run on a job, it waits.
+pub(crate) fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
     let dir = file.parent()?;
     let script = format!(
         "source '{}'; {name} | to json -r",
         file.file_name()?.to_string_lossy().replace('\'', "")
     );
-    let mut command = std::process::Command::new("nu");
+    let mut command = kawoosh_systems::io::command("nu");
     command
         .args(["--no-config-file", "-c", &script])
-        .current_dir(dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
-    let mut child = kawoosh_systems::spawn::spawn(&mut command).ok()?;
-    let mut stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut out = String::new();
-        stdout.read_to_string(&mut out).ok();
-        out
-    });
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
-            _ => {
-                child.kill().ok();
-                child.wait().ok();
-                return None;
-            }
-        }
-    }
-    let out = reader.join().ok()?;
+        .current_dir(dir);
+    let out = crate::shell_complete::bounded(&mut command)?;
+    let out = String::from_utf8_lossy(&out);
     let json: serde_json::Value =
         serde_json::from_str(out.lines().rev().find(|l| !l.trim().is_empty())?).ok()?;
     let list = json
@@ -243,6 +223,14 @@ fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
             })
             .collect(),
     )
+}
+
+/// A nushell completer's answer (compile.md Decision 16).
+pub enum NuAnswer {
+    /// Out on a job, by serial.
+    Asked(u64),
+    /// Its values; none when nu failed, hung or said no list.
+    Got(Rc<Vec<String>>),
 }
 
 /// How much of a command the buffer's name says.
@@ -386,9 +374,10 @@ pub struct Compile {
     pub asked: Option<(u64, String)>,
     pub tokens: u64,
     /// Nushell completers' answers (compile.md Decision 16), by file and
-    /// completer, with the file's stamp they were asked at.
-    pub completions:
-        std::collections::HashMap<(PathBuf, String), (Option<SystemTime>, Vec<String>)>,
+    /// completer, with the file's stamp they were asked at; and the asks
+    /// handed out.
+    pub completions: std::collections::HashMap<(PathBuf, String), (Option<SystemTime>, NuAnswer)>,
+    pub nu_asks: u64,
 }
 
 impl Compile {
@@ -865,13 +854,13 @@ impl Kawoosh {
                 _ => (token, ""),
             };
             let values = match completion {
-                deduce::Completion::Values(v) => v,
+                deduce::Completion::Values(v) => Rc::new(v),
                 deduce::Completion::Command(name) => self.nu_completions(&nu.file, &name),
             };
             return values
-                .into_iter()
+                .iter()
                 .filter(|v| v.starts_with(typed))
-                .map(|v| format!("{}{close}", quote_arg(&v)))
+                .map(|v| format!("{}{close}", quote_arg(v)))
                 .collect();
         }
         Vec::new()
@@ -879,21 +868,58 @@ impl Kawoosh {
 
     /// Completer `name`'s answer in nushell file `file`, run there —
     /// `source` defines the file's commands and does not run its `main`
-    /// — and kept while the file is unchanged; a second at most, so a
-    /// completer that hangs costs that once.
-    fn nu_completions(&mut self, file: &Path, name: &str) -> Vec<String> {
+    /// — and kept while the file is unchanged. Nothing until nu answers,
+    /// asked on a job now when it has not been; a completer that hangs
+    /// costs its patience once per change, and no key waits for it.
+    fn nu_completions(&mut self, file: &Path, name: &str) -> Rc<Vec<String>> {
         let stamp = std::fs::metadata(file).and_then(|m| m.modified()).ok();
         let key = (file.to_path_buf(), name.to_string());
-        if let Some((at, values)) = self.compile.completions.get(&key)
-            && *at == stamp
-        {
-            return values.clone();
+        match self.compile.completions.get(&key) {
+            Some((at, NuAnswer::Got(values))) if *at == stamp => return values.clone(),
+            Some((at, NuAnswer::Asked(_))) if *at == stamp => return Rc::default(),
+            _ => {}
         }
-        let values = nu_answer(file, name).unwrap_or_default();
+        self.compile.nu_asks += 1;
+        let serial = self.compile.nu_asks;
         self.compile
             .completions
-            .insert(key, (stamp, values.clone()));
-        values
+            .insert(key.clone(), (stamp, NuAnswer::Asked(serial)));
+        self.pending_jobs += 1;
+        let (file, name) = key;
+        self.io.run("nu complete", move || IoMsg::NuCompleted {
+            serial,
+            values: nu_answer(&file, &name),
+        });
+        Rc::default()
+    }
+
+    /// nu answered ask `serial`: kept under it, and the line completed
+    /// again. Dropped when the prompt it was asked for has closed
+    /// ([`Kawoosh::nu_asks_dropped`]) or the file changed since.
+    pub(crate) fn nu_completed(&mut self, serial: u64, values: Option<Vec<String>>) {
+        self.pending_jobs = self.pending_jobs.saturating_sub(1);
+        let Some((_, slot)) = self
+            .compile
+            .completions
+            .values_mut()
+            .find(|(_, a)| matches!(a, NuAnswer::Asked(s) if *s == serial))
+        else {
+            return;
+        };
+        if values.is_none() {
+            log::debug!("compile: a nushell completer gave no answer");
+        }
+        *slot = NuAnswer::Got(Rc::new(values.unwrap_or_default()));
+        self.cmdline_refresh();
+    }
+
+    /// The `:` prompt closed: the nushell completers still out are
+    /// forgotten, so their answers are dropped as they land; the answers
+    /// in stay, by the file's stamp.
+    pub(crate) fn nu_asks_dropped(&mut self) {
+        self.compile
+            .completions
+            .retain(|_, (_, a)| matches!(a, NuAnswer::Got(_)));
     }
 
     /// The scripts of the packages around (compile.md Decision 9): the
