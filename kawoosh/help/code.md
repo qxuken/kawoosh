@@ -517,7 +517,9 @@ A language server's snippet — a `for` loop, a function with its
 parameters — is a candidate like any other, matched by its name. Taken,
 it puts its text with its fields in it, and the first field is
 selected: type, and what you type replaces it. A field that appears
-twice is a caret in each place, so both change as you type. A choice
+twice is a caret in each place, so both change as you type. Only a
+field's selection is typed over: any other selection in insert mode
+(one an undo put back) is typed at its caret. A choice
 field (`pub`, `pub(crate)`, `priv`) opens the list of its options at
 once: `<C-n>` `<C-p>` walk them, `<Tab>` takes one. The fields you have
 not reached yet are faintly underlined.
@@ -530,7 +532,9 @@ not reached yet are faintly underlined.
 `<Tab>` is never a snippet's: it takes a candidate, or is a tab. There
 is one snippet at a time, and it is gone when it ends: at its last
 field, when you leave insert mode, when the caret leaves its text by
-anything but `<C-l>` `<C-k>`, when something is edited outside it, when
+anything but `<C-l>` `<C-k>` (typing on after its last character
+included, unless the field you are filling ends there), when something
+is edited outside it, when
 its pane shows another buffer or another pane takes the keys, on an
 undo or a redo, and when another snippet is taken. With none live,
 `<C-l>` and `<C-k>` do nothing; nothing brings you back into a snippet

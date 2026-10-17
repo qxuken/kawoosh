@@ -535,7 +535,8 @@ it installed and read nothing of the home.
 `systems/src/snippet.rs` (the grammar: parsed, expanded),
 `kawoosh/src/snippet.rs` (the live snippet: its fields, its keys, its
 ends, its variables), the editor's typing over a selection
-(`Editor::erase_selected`) and its count of moves through history
+for a field (`Editor::erase_selected`, `View::fill`) and its count of
+moves through history
 (`history_moves`), completion.rs's accept and the choice session,
 `rows::Mark::underline_color` for the faint fields. Tests:
 `kawoosh/tests/snippets.rs`, the grammar's in `snippet.rs`,
@@ -606,7 +607,10 @@ Where the build departs, or says more than the decision did:
   buffer switch is its view showing another buffer (`show_buffer`
   leaves insert mode as well), and another pane taking the keys ends
   it — the candidates picker over its pane excepted, as the
-  completion's session is. Reaching `$0` ends it, the carets there (a
+  completion's session is. An edge of its text is its own only where
+  the field being filled touches it: a caret after its last character
+  with no field there has left it, and typing on there ends it. Reaching
+  `$0` ends it, the carets there (a
   `${0:text}` selected); a body with no field but `$0` puts the carets
   there and leaves nothing live; a body with no `$0` ends at its text's
   end.
@@ -660,4 +664,22 @@ popup is up either way; median / p90, three runs): with no snippet
 0.54–0.55 ms — the fields carried through a key's edits cost nothing
 measurable. A field in two places, each key typing at two carets, is
 0.55–0.57 / 0.62–0.66 ms: what two carets cost.
+
+**After a review and a load test, the same day.** Typing goes over a
+field's selections only (`View::fill`): made editor-wide first, an
+undo's restored selection was erased by the next key (above). A field
+with only a transform in the body has no place and is no field — it
+selected nothing, and the next key panicked. An edge of the snippet's
+text is its own only where the field being filled touches it, so
+typing on past its end ends it and `<C-l>` cannot reach back (the
+LuaSnip complaint, which the first build still let through). Copies at
+several carets pair their fields by number, not by place in the first
+copy (a variable's default can hold a field one copy has and another
+not), and each caret replaces its own word, measured there. An
+expansion stops past 1 MiB (`snippet::MAX_TEXT`, a mirror's copies and
+a variable's value counted) or the node budget and is too big: a
+server's candidate is then its text, an accepted body is put as
+written, nothing live. A choice field's session asks no source. Round
+2's panel test checks "not before the delay" only while its frame ran
+before the timer was due.
 
