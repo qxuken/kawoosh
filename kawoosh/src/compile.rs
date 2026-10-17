@@ -174,7 +174,7 @@ fn carets(line: &str) -> Option<Range<usize>> {
 /// A completion as a word of the command line: double-quoted when it
 /// has what a shell would split or read — inside a `nu -c '…'` too,
 /// where a single quote would end the line's.
-fn quote_arg(v: &str) -> String {
+pub(crate) fn quote_arg(v: &str) -> String {
     if !v.is_empty() && !v.contains(|c: char| c.is_whitespace() || "\"'$`\\;|&<>()*?#".contains(c))
     {
         return v.to_string();
@@ -1145,7 +1145,7 @@ impl Kawoosh {
 
     /// The file `%` names in a line asked from here: the caret's; in
     /// `*compile*`, the one its run was asked from.
-    fn compile_file(&self) -> Option<PathBuf> {
+    pub(crate) fn compile_file(&self) -> Option<PathBuf> {
         if let Some(run) = self.compile_shown() {
             return run.file.clone();
         }
@@ -1686,6 +1686,58 @@ impl Kawoosh {
     /// offer, one row per command, as the picker's `compile` source
     /// (`kawoosh.compile_offer()`) — each in its tier (Decision 19).
     pub fn offer_compile(&mut self) {
+        let rows = self.compile_rows();
+        // What the caret's server says can run there, asked now and
+        // added as it answers.
+        let ask = self.runnables_at();
+        if rows.is_empty() && ask.is_none() {
+            self.ed.message = NOTHING.into();
+            return;
+        }
+        if self.scripting.rt.is_none() {
+            self.ed.message = "the compile picker needs lua".into();
+            return;
+        }
+        self.compile.offer = rows;
+        self.publish_offer();
+        self.run_lua_source("compile", "kawoosh.picker.open(\"compile\")");
+        self.compile.asked = None;
+        if let Some((buffer, offset, server)) = ask {
+            self.compile.tokens += 1;
+            let token = self.compile.tokens;
+            self.compile.asked = Some((token, server));
+            self.positional_cmd(kawoosh_systems::lsp::Cmd::Runnables {
+                buffer,
+                offset,
+                token,
+            });
+        }
+    }
+
+    /// The lines the compile picker offers, as the command line
+    /// completes `:compile`'s (compile.md Decision 23): in the picker's
+    /// order, each a line `:compile` runs as it is — not a name's row
+    /// (the names complete as names), nor a chain's (its steps joined
+    /// are no one line).
+    pub(crate) fn compile_lines(&self) -> Vec<String> {
+        let mut rows = Compile {
+            offer: self.compile_rows(),
+            ..Compile::default()
+        };
+        let mut out: Vec<String> = Vec::new();
+        for i in rows.shown() {
+            let o = &mut rows.offer[i];
+            if o.name.is_none() && o.chain.is_empty() && o.steps.is_empty() && !out.contains(&o.cmd)
+            {
+                out.push(std::mem::take(&mut o.cmd));
+            }
+        }
+        out
+    }
+
+    /// The picker's rows but a server's, each in its tier (Decision 19):
+    /// what `offer_compile` lists first.
+    fn compile_rows(&self) -> Vec<Offer> {
         let mut rows: Vec<Offer> = Vec::new();
         let add = |rows: &mut Vec<Offer>, o: Offer| {
             // Once where it runs: two packages' `yarn run build` are two.
@@ -1821,31 +1873,7 @@ impl Kawoosh {
             o.detail = d.detail;
             add(&mut rows, o);
         }
-        // What the caret's server says can run there, asked now and
-        // added as it answers.
-        let ask = self.runnables_at();
-        if rows.is_empty() && ask.is_none() {
-            self.ed.message = NOTHING.into();
-            return;
-        }
-        if self.scripting.rt.is_none() {
-            self.ed.message = "the compile picker needs lua".into();
-            return;
-        }
-        self.compile.offer = rows;
-        self.publish_offer();
-        self.run_lua_source("compile", "kawoosh.picker.open(\"compile\")");
-        self.compile.asked = None;
-        if let Some((buffer, offset, server)) = ask {
-            self.compile.tokens += 1;
-            let token = self.compile.tokens;
-            self.compile.asked = Some((token, server));
-            self.positional_cmd(kawoosh_systems::lsp::Cmd::Runnables {
-                buffer,
-                offset,
-                token,
-            });
-        }
+        rows
     }
 
     /// The offer as `kawoosh.compile_offer()` reads it: each row its
