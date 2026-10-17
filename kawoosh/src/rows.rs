@@ -788,6 +788,8 @@ pub struct LineDraw<'a> {
     /// Where to leave the key of a wrapped row's text node, for what
     /// asks kui about its layout next frame (`gj` `gk`, wrap.md).
     pub text_key: Option<&'a std::cell::Cell<Option<kui_native::Key>>>,
+    /// The family an icon's mark is set in (`font.icons`).
+    pub icon_font: Option<kui_native::FontId>,
     /// A byte to mark for what hangs from it — the completion's popup at
     /// its word's start (`completion_view`): an empty box at the byte's
     /// place, a line tall, whose key is left in the cell for a float
@@ -807,6 +809,9 @@ pub struct Mark {
     /// In the editor's face where the row's is another (a code span in
     /// prose drawn under `font.prose`).
     pub mono: bool,
+    /// An icon kawoosh folded over the source (a task's box): set in
+    /// `font.icons`, never the row's face (completion.md Decision 9).
+    pub icon: bool,
 }
 
 impl Mark {
@@ -821,6 +826,7 @@ impl Mark {
             color: other.color.or(self.color),
             bg: other.bg.or(self.bg),
             mono: self.mono || other.mono,
+            icon: self.icon || other.icon,
         }
     }
 }
@@ -1594,6 +1600,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                             Some(id) => s.family(kui_native::FontFamily::Custom(id)),
                             None => s.mono(),
                         };
+                    }
+                    if l.mark.icon
+                        && let Some(id) = line.icon_font
+                    {
+                        s = s.family(kui_native::FontFamily::Custom(id));
                     }
                     s
                 })

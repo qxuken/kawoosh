@@ -168,7 +168,7 @@ impl Kawoosh {
                         },
                     );
                     ui.leaf(NodeSpec::row().grow_width());
-                    draw_blocks(ui, &blocks, font, &pal, tab_h);
+                    draw_blocks(ui, &blocks, font, &pal, &self.icons.borrow(), tab_h);
                 });
             },
         );
@@ -518,7 +518,7 @@ impl Kawoosh {
                 |ui| {
                     tabs(ui);
                     ui.leaf(NodeSpec::column().width(1.0).grow_height().bg(pal.border));
-                    draw_blocks(ui, &segs, font, &pal, tab_h);
+                    draw_blocks(ui, &segs, font, &pal, &self.icons.borrow(), tab_h);
                 },
             );
         }
@@ -543,6 +543,7 @@ fn draw_blocks(
     blocks: &[Block],
     font: crate::look::Face,
     pal: &crate::palette::Pal,
+    icon_set: &icons::Icons,
     tab_h: f32,
 ) {
     for (i, b) in blocks.iter().enumerate() {
@@ -568,6 +569,13 @@ fn draw_blocks(
                 .label(run.as_str());
         }
         ui.with_keyed(&format!("block{i}"), spec, |ui| {
+            // An icon in a segment (`● 3`'s) is `font.icons`'s, a cell.
+            if icons::has_icons(b.parts.iter().map(|(t, _)| t.as_str())) {
+                let parts: Vec<(&str, kui_native::Color)> =
+                    b.parts.iter().map(|(t, c)| (t.as_str(), *c)).collect();
+                icons::text_with_icons(ui, icon_set, &parts, rows::mono(font, pal));
+                return;
+            }
             let spans: Vec<Span<'_>> = b
                 .parts
                 .iter()

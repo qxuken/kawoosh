@@ -6,7 +6,8 @@
 -- title bar's right, the minute's turn (the second's, with `%S`) waking
 -- the window to draw it — for a desktop whose taskbar is hidden;
 -- `status.diagnostics = true` shows the workspace's errors and warnings
--- (`● 3 ▲ 5`), nothing when there are none, a click opening the list.
+-- (codicons' error and warning before each count, drawn in `font.icons`
+-- a cell wide), nothing when there are none, a click opening the list.
 --
 -- Hackable: `kawoosh.status(name, fn, opts)` adds one of your own; the
 -- same name replaces one of these.
@@ -38,13 +39,17 @@ end, {
   end,
 })
 
+-- `cod-error` and `cod-warning`: an icon's character in a segment is
+-- set in `font.icons`, one cell wide.
+local ERROR, WARNING = "\u{EA87}", "\u{EA6C}"
+
 kawoosh.status("diagnostics", function()
   if kawoosh.opt("status.diagnostics") ~= true then return nil end
   local n = kawoosh.lsp.counts()
   local parts = {}
-  if n.errors > 0 then parts[#parts + 1] = { text = "● " .. n.errors, color = "danger" } end
+  if n.errors > 0 then parts[#parts + 1] = { text = ERROR .. " " .. n.errors, color = "danger" } end
   if n.warnings > 0 then
-    parts[#parts + 1] = { text = (#parts > 0 and "  " or "") .. "▲ " .. n.warnings, color = "warning" }
+    parts[#parts + 1] = { text = (#parts > 0 and "  " or "") .. WARNING .. " " .. n.warnings, color = "warning" }
   end
   return #parts > 0 and parts or nil
 end, { order = 10, run = "diagnostics" })

@@ -100,6 +100,11 @@ pub struct FieldScene {
 /// scrolled sideways under the field as little as keeps the primary
 /// caret in view, from where the last frame left it (`Kawoosh::
 /// field_line`'s drawing, for the app's fields and a Lua view's alike).
+/// The strip's marks on the status line: a column (`md-square_outline`)
+/// and the focused one (`md-square`).
+pub const STRIP_COLUMN: char = '\u{F0763}';
+pub const STRIP_FOCUSED: char = '\u{F0764}';
+
 pub(crate) fn draw_field(ui: &mut Ui<'_>, s: &FieldScene, keyed: bool, font: crate::look::Face) {
     let pal = s.pal;
     let scroller = ui.child_key("field");
@@ -173,6 +178,7 @@ pub(crate) fn draw_field(ui: &mut Ui<'_>, s: &FieldScene, keyed: bool, font: cra
                     band: None,
                     sel_radius: s.sel_radius,
                     text_key: None,
+                    icon_font: None,
                     hang: None,
                 },
             );
@@ -710,15 +716,23 @@ impl Kawoosh {
     }
 
     /// Where the keyboard is along a strip, for the status line: a
-    /// mark per column, the focused one filled — `▯▮▯` — so a column
-    /// off the viewport is not out of mind. Empty for a tree.
+    /// mark per column, the focused one filled — Nerd Fonts' squares,
+    /// drawn a cell each in `font.icons` (completion.md Decision 9) —
+    /// so a column off the viewport is not out of mind. Empty for a
+    /// tree.
     pub(crate) fn strip_marks(&self) -> String {
         let Some(s) = self.layout.tab().strip() else {
             return String::new();
         };
         let at = s.column_of(self.layout.tab().focused);
         (0..s.columns.len())
-            .map(|i| if Some(i) == at { '▮' } else { '▯' })
+            .map(|i| {
+                if Some(i) == at {
+                    STRIP_FOCUSED
+                } else {
+                    STRIP_COLUMN
+                }
+            })
             .collect()
     }
 
@@ -1945,6 +1959,7 @@ impl Kawoosh {
             .then(|| self.completion.session.as_ref().map(|s| s.anchor.start))
             .flatten();
         let hang_mark = std::cell::Cell::new(None);
+        let icon_font = self.icons.borrow().font;
         // Whether a row drew it: its keys hold only for a ghost that is
         // on the screen (`Kawoosh::ghost_shown`).
         let mut ghost_drawn = false;
@@ -1972,6 +1987,7 @@ impl Kawoosh {
                     color: None,
                     bg: None,
                     mono: false,
+                    icon: false,
                 })
             })
             .collect();
@@ -2770,6 +2786,7 @@ impl Kawoosh {
                                     // A tall row's text, for `gj` `gk`; a
                                     // table's rows do not wrap.
                                     text_key: (tall && !in_table).then_some(&text_key),
+                                    icon_font,
                                     hang: hang_at
                                         .filter(|_| ln == cur_line)
                                         .map(|at| (clip(at), &hang_mark)),

@@ -483,6 +483,60 @@ pub fn cell_icon(ui: &mut Ui<'_>, icons: &Icons, name: &str, size: f32, color: C
     });
 }
 
+/// Whether `c` is an icon's character rather than text's: Unicode's
+/// Private Use Areas, where Nerd Fonts put every icon — a status
+/// segment's, the strip's marks — so kawoosh's chrome sets it in
+/// `font.icons`, never the text's family (completion.md Decision 9).
+pub fn is_icon_char(c: char) -> bool {
+    matches!(c, '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}')
+}
+
+/// Whether any of `parts` holds an icon's character.
+pub fn has_icons<'a>(parts: impl IntoIterator<Item = &'a str>) -> bool {
+    parts.into_iter().any(|t| t.chars().any(is_icon_char))
+}
+
+/// A line of chrome text in its parts' colours, every icon's character
+/// in it a glyph of `font.icons` in a box one cell wide, centred on the
+/// line, the text between in `style`: a status segment's `● 3`, the
+/// strip's marks. A row of nodes, one line, no wrap.
+pub fn text_with_icons(ui: &mut Ui<'_>, icons: &Icons, parts: &[(&str, Color)], style: TextStyle) {
+    let side = icons.cell_at(style.size);
+    ui.with(NodeSpec::row().cross_align(Align::Center), |ui| {
+        for (t, c) in parts {
+            let mut run = 0;
+            for (b, ch) in t.char_indices() {
+                if !is_icon_char(ch) {
+                    continue;
+                }
+                if run < b {
+                    ui.text(&t[run..b], style.color(*c));
+                }
+                let glyph = &t[b..b + ch.len_utf8()];
+                ui.with(icon_box(side), |ui| {
+                    let size = side / icons.advance.max(0.1);
+                    ui.text(glyph, icons.glyph_style(size, *c));
+                });
+                run = b + ch.len_utf8();
+            }
+            if run < t.len() {
+                ui.text(&t[run..], style.color(*c));
+            }
+        }
+    });
+}
+
+/// How wide [`text_with_icons`] draws `text`: its text measured, a cell
+/// an icon.
+pub fn text_width(ui: &mut Ui<'_>, icons: &Icons, text: &str, style: &TextStyle) -> f32 {
+    if !text.chars().any(is_icon_char) {
+        return ui.measure_text(text, style, None).width;
+    }
+    let cells = text.chars().filter(|c| is_icon_char(*c)).count() as f32;
+    let rest: String = text.chars().filter(|c| !is_icon_char(*c)).collect();
+    ui.measure_text(&rest, style, None).width + cells * icons.cell_at(style.size)
+}
+
 impl crate::app::Kawoosh {
     /// The family every glyph kawoosh draws is set in (`font.icons`) as
     /// resolved — its handle and its name — and an icon's cell beside
