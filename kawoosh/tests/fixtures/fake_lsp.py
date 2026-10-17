@@ -81,11 +81,21 @@ LABEL", a second paragraph naming MIIEvSecretKeyMaterial; with
 the answer in itself. With `--secret-items` its candidates are two
 whose labels hold a secret beside the text they put — `"MIIEvSecret…"`
 (a masked word, quoted) putting `help_mii`, and `help sk_live_9f`
-putting `help_live` with the detail `key sk_live_9f`."""
+putting `help_live` with the detail `key sk_live_9f`. With `--snippets`
+its candidates are snippets (`insertTextFormat` 2, completion.md
+Decision 7) — but only when the client said `snippetSupport: true`;
+told otherwise, it offers `nosnippets` alone. Each body but one starts
+with its label: `zfor` (a for loop with `$0` inside), `zpair` (one
+field twice), `znest` (a placeholder in a placeholder), `zvars`
+(`$TM_FILENAME`), `zbroken` (an unclosed placeholder), `zasis` (three
+lines, `insertTextMode` asIs), `zedit` (a `textEdit` putting
+`zedit(${1:arg})`); `zchoice` puts a choice and a placeholder, its body
+nothing like its label."""
 import json
 import re, sys
 
 docs = {}
+snippet_support = False
 ended = False
 last_uri = None
 print("fake server starting", file=sys.stderr, flush=True)
@@ -268,6 +278,8 @@ while True:
         break
     if method == "initialize":
         root_uri = m["params"].get("rootUri")
+        snippet_support = bool(m["params"].get("capabilities", {}).get("textDocument", {})
+                               .get("completion", {}).get("completionItem", {}).get("snippetSupport"))
         if "initializationOptions" in m["params"]:
             notes.append("init: " + json.dumps(m["params"]["initializationOptions"], sort_keys=True))
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
@@ -386,6 +398,23 @@ while True:
         p = m["params"]
         if char_before(p["textDocument"]["uri"], p["position"]) == ".":
             items = [{"label": "member_a", "kind": 2}, {"label": "member_b", "kind": 2}]
+        elif "--snippets" in sys.argv and not snippet_support:
+            items = [{"label": "nosnippets", "kind": 3}]
+        elif "--snippets" in sys.argv:
+            snip = lambda label, body, **kw: dict({"label": label, "kind": 15,
+                                                   "insertText": body, "insertTextFormat": 2}, **kw)
+            pos = p["position"]
+            items = [snip("zfor", "zfor ${1:x} in ${2:iter} {\n\t$0\n}"),
+                     snip("zpair", "zpair(${1:a}, ${1:a})$0"),
+                     snip("zchoice", "${1|pub,pub(crate),priv|} fn ${2:name}()"),
+                     snip("znest", "znest(${1:first ${2:second}})"),
+                     snip("zvars", "zvars // $TM_FILENAME"),
+                     snip("zbroken", "zbroken(${1:unclosed"),
+                     snip("zasis", "zasis {\n\tb\n}", insertTextMode=1),
+                     {"label": "zedit", "kind": 3, "insertTextFormat": 2,
+                      "textEdit": {"newText": "zedit(${1:arg})", "range": {
+                          "start": {"line": pos["line"], "character": max(0, pos["character"] - 2)},
+                          "end": pos}}}]
         elif "--secret-items" in sys.argv:
             items = [{"label": '"MIIEvSecretKeyMaterial"', "insertText": "help_mii", "kind": 21},
                      {"label": "help sk_live_9f", "insertText": "help_live", "kind": 21,
