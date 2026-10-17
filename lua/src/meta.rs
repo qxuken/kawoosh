@@ -591,10 +591,15 @@ fn rust_docs(src: &str) -> HashMap<String, Sig> {
 }
 
 /// A doc block's function: the backticked signature its first line
-/// starts, which may run on over the lines after.
+/// starts with (after `lib.rs`'s `---- ` section marks), which may run
+/// on over the lines after. A doc that only mentions one (``What
+/// `kawoosh.grammars.list()` answers``) is not one.
 fn rust_sig(block: &[&str]) -> Option<(String, Sig)> {
     let first = block.first()?;
-    let at = first.find("`kawoosh.")?;
+    let at = first.len() - first.trim_start_matches(['-', ' ']).len();
+    if !first[at..].starts_with("`kawoosh.") {
+        return None;
+    }
     let text = block.join("\n");
     let rest = &text[at + 1..];
     let end = rest.find('`')?;
@@ -748,7 +753,7 @@ mod tests {
     /// that only goes down (lua-types.md Decision 5). A new function
     /// with nothing typed raises it and fails here; typing one lowers
     /// it, and the number is lowered with it.
-    const CORE_UNTYPED: usize = 493;
+    const CORE_UNTYPED: usize = 0;
 
     #[test]
     fn an_untyped_doc_names_the_parameters() {
@@ -817,6 +822,9 @@ mod tests {
             "/// `kawoosh.f(a, b)`: notes.\nA,\n/// `kawoosh.f(a: integer): nil`: the binding.\nlet x;\n",
         );
         assert!(docs["kawoosh.f"].doc.contains("the binding"));
+        // Only a doc a signature starts is a function's.
+        assert!(rust_sig(&["What `kawoosh.g()` answers."]).is_none());
+        assert!(rust_sig(&["---- `kawoosh.g(): nil`: a section's first."]).is_some());
     }
 
     /// Class blocks are lifted out of a doc and declared once; one named

@@ -304,7 +304,7 @@ mod tests {
     /// only goes down (docs/design/lua-types.md Decision 5). A new
     /// function with nothing typed raises it and fails here; typing one
     /// lowers it, and the number is lowered with it.
-    const UNTYPED: usize = 1006;
+    const UNTYPED: usize = 0;
 
     /// The ratchet over the whole API, as a launch writes it. With
     /// `KAWOOSH_META_OUT` naming a directory the three files are written

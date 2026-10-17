@@ -10,5 +10,47 @@ kawoosh.map("n", "<leader>y", function(ctx)
 end, { language = "dir", when = { "!terminal" } })
 kawoosh.map("x", "<leader>x", "write") -- expect: param-type-mismatch
 kawoosh.unmap("n", "<leader>y", { language = "dir" })
-kawoosh.buf.close(kawoosh.buf.current(), { force = true })
+local current = kawoosh.buf.current()
+if current then kawoosh.buf.close(current, { force = true }) end
+kawoosh.buf.close(kawoosh.buf.current()) -- expect: param-type-mismatch
 kawoosh.buf.close(1, { force = 1 }) -- expect: assign-type-mismatch
+
+-- A process, its lines and its end.
+local token = kawoosh.spawn({ "git", "status", "--short" }, {
+  cwd = "~/projects",
+  on_lines = function(lines)
+    for _, l in ipairs(lines) do kawoosh.notify(l, { level = "info", show = "log" }) end
+  end,
+  on_exit = function(code) if code ~= 0 then kawoosh.notify("failed", { level = "error" }) end end,
+})
+kawoosh.kill(token)
+kawoosh.spawn("ls", { cwd = 1 }) -- expect: assign-type-mismatch
+kawoosh.notify("hi", { level = "loud" }) -- expect: assign-type-mismatch
+
+-- The file system, at once and on a thread.
+for _, e in ipairs(kawoosh.fs.list(kawoosh.fs.cwd()) or {}) do
+  if e.is_dir then kawoosh.open(kawoosh.fs.join(kawoosh.fs.cwd(), e.name)) end
+end
+kawoosh.fs.list("/tmp", function(entries)
+  local n = entries and #entries or 0
+  kawoosh.notify(("%d entries"):format(n))
+end)
+
+-- The caret, a node over it, an edit.
+local c = kawoosh.buf.cursor()
+local node = kawoosh.node.at(c.offset)
+if node then kawoosh.notify(node.type .. " at line " .. node.line) end
+kawoosh.buf.edits({ { c.offset, c.offset, "x" } })
+kawoosh.buf.edits({ { from = c.offset } }) -- expect: missing-fields
+
+-- A picker source of one's own, and one that is not.
+kawoosh.picker.source("mine", {
+  title = "Mine",
+  items = function(ctx)
+    return { { text = "here: " .. ctx.cwd, path = ctx.cwd } }
+  end,
+})
+kawoosh.picker.source("broken", { title = 1 }) -- expect: assign-type-mismatch
+
+-- A hook.
+kawoosh.on_write(function(path) kawoosh.notify("wrote " .. path) end)
