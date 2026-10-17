@@ -267,6 +267,8 @@ pub struct Look {
     missing: Option<String>,
     /// The `font.prose` family last noted as missing, so the toast is once.
     missing_prose: Option<String>,
+    /// The `font.icons` family last noted as missing.
+    missing_icons: Option<String>,
     /// The families kui can see and the face on show, shared with the
     /// `kawoosh.fonts` door (`fonts.rs`).
     pub fonts: crate::fonts::SharedFonts,
@@ -589,6 +591,57 @@ impl Kawoosh {
                 }
             },
         };
+        // The icons' family (completion.md Decision 9): every glyph
+        // kawoosh draws itself is set in it, never the text's; a
+        // family that resolves to nothing is a toast, once, and the
+        // shipped symbols stand.
+        let named = s.str("font.icons").unwrap_or("").trim().to_string();
+        let named = if named.is_empty() {
+            crate::icons::ICONS_FAMILY.to_string()
+        } else {
+            named
+        };
+        let (family, font) = match ui.core().add_system_font(&named) {
+            Some(id) => (named, Some(id)),
+            None => {
+                if self.look.missing_icons.as_deref() != Some(named.as_str()) {
+                    notes.push(format!(
+                        "font.icons: no family \"{named}\" — the shipped {}",
+                        crate::icons::ICONS_FAMILY
+                    ));
+                    self.look.missing_icons = Some(named);
+                }
+                let shipped = crate::icons::ICONS_FAMILY.to_string();
+                let id = ui.core().add_system_font(&shipped);
+                (shipped, id)
+            }
+        };
+        // A glyph's advance in it and the editor face's cell, as shares
+        // of their sizes: an icon a cell wide is set to fit the cell.
+        let probe = |ui: &mut Ui<'_>, text: &str, family: Option<kui_native::FontFamily>| {
+            let mut st = kui_native::TextStyle::new(100.0).nowrap();
+            if let Some(f) = family {
+                st = st.family(f);
+            }
+            ui.measure_text(text, &st, None).width / 100.0
+        };
+        let advance = probe(ui, "\u{EA8C}", font.map(kui_native::FontFamily::Custom));
+        let face_family = match self.face.id {
+            Some(id) => kui_native::FontFamily::Custom(id),
+            None => kui_native::FontFamily::Mono,
+        };
+        let cell = probe(ui, "0", Some(face_family));
+        {
+            let mut set = self.icons.borrow_mut();
+            set.font = font;
+            set.family = family;
+            if advance > 0.0 {
+                set.advance = advance;
+            }
+            if cell > 0.0 {
+                set.cell = cell;
+            }
+        }
         let chrome = match s.get("font.chrome_size").and_then(Setting::as_float) {
             Some(n) if n > 0.0 => (n as f32).clamp(SIZE_RANGE.0, SIZE_RANGE.1),
             _ => size.min(CHROME_MAX),

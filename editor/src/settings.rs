@@ -807,6 +807,10 @@ const DOCS: &[(&str, &str)] = &[
         "a family for a markdown buffer's rendered prose — `sans`, `serif`, or an installed family; empty keeps the editor's face. Code spans, code blocks, tables and the caret's line stay in the editor's face",
     ),
     (
+        "font.icons",
+        "the family every icon kawoosh draws itself is set in — a kind's in the completion and the pickers, a status mark — each fitted to one cell and centred on its line; never the text's",
+    ),
+    (
         "font.chrome_size",
         "the size of the tabs', title bars', strips' and every pane's text, a pane's secondary text a step under it and its notes two; `0` follows `font.size` up to 16",
     ),
@@ -1375,6 +1379,12 @@ impl Settings {
         // A markdown buffer's rendered prose in a face of its own
         // (markdown.md Decision 5, amended): empty is the editor's.
         defaults.set("font.prose", Setting::Str(String::new()));
+        // The icons' family (completion.md Decision 9): the shipped
+        // symbols (fonts.md Decision 6).
+        defaults.set(
+            "font.icons",
+            Setting::Str("Symbols Nerd Font Mono".into()),
+        );
         // The chrome's text (tabs, title bars, the strips): `0` follows
         // `font.size` up to a cap, a number is its own size.
         defaults.set("font.chrome_size", Setting::Int(0));
@@ -2033,6 +2043,7 @@ mod tests {
                 "font.chrome_size",
                 "font.family",
                 "font.features",
+                "font.icons",
                 "font.line_height",
                 "font.prose",
                 "font.size",

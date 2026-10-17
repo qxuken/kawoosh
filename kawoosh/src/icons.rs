@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use kawoosh_editor::keymap::{LEADER, parse_notation};
-use kui_native::{Align, Color, NodeSpec, Stroke, TextStyle, Ui, Vec2};
+use kui_native::{Align, Color, FontFamily, FontId, NodeSpec, Stroke, TextStyle, Ui, Vec2};
 
 /// One piece of an icon, in a box of side 1, `y` down.
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +72,69 @@ pub const NAMES: &[&str] = &[
     "cmd",
     "missing",
 ];
+
+/// The kinds of things a candidate or a symbol is, each with its icon:
+/// Nerd Fonts' codicons, VS Code's own glyphs (completion.md Decision
+/// 9). LSP's completion kinds and symbol kinds share the names (a
+/// space in one, `enum member`, is a `-` here); `word`, `symbol`,
+/// `type` and `macro` are kawoosh's own — a buffer's word, an outline's
+/// name of no kind it knows. In the set as icons of their own, so
+/// `kawoosh.icons.function = { … }` is every function's.
+pub const KINDS: &[(&str, char)] = &[
+    ("text", '\u{EA93}'),
+    ("method", '\u{EA8C}'),
+    ("function", '\u{EA8C}'),
+    ("constructor", '\u{EA8C}'),
+    ("field", '\u{EB5F}'),
+    ("variable", '\u{EA88}'),
+    ("class", '\u{EB5B}'),
+    ("interface", '\u{EB61}'),
+    ("module", '\u{EA8B}'),
+    ("property", '\u{EB65}'),
+    ("unit", '\u{EA96}'),
+    ("value", '\u{EA95}'),
+    ("enum", '\u{EA95}'),
+    ("keyword", '\u{EB62}'),
+    ("snippet", '\u{EB66}'),
+    ("color", '\u{EB5C}'),
+    ("file", '\u{EB60}'),
+    ("reference", '\u{EB36}'),
+    ("folder", '\u{EA83}'),
+    ("enum-member", '\u{EB5E}'),
+    ("constant", '\u{EB5D}'),
+    ("struct", '\u{EA91}'),
+    ("event", '\u{EA86}'),
+    ("operator", '\u{EB64}'),
+    ("type-parameter", '\u{EA92}'),
+    ("namespace", '\u{EA8B}'),
+    ("package", '\u{EB29}'),
+    ("string", '\u{EB8D}'),
+    ("number", '\u{EA90}'),
+    ("boolean", '\u{EA8F}'),
+    ("array", '\u{EA8A}'),
+    ("object", '\u{EA8B}'),
+    ("key", '\u{EA93}'),
+    ("null", '\u{EA8F}'),
+    ("word", '\u{EA93}'),
+    ("symbol", '\u{EB63}'),
+    ("type", '\u{EA92}'),
+    ("macro", '\u{EB63}'),
+];
+
+/// The icon of a kind as a source or a server names it — `enum
+/// member`, `Function` — or `symbol`'s for one the table lacks.
+pub fn kind_icon(kind: &str) -> String {
+    let name = kind.trim().to_ascii_lowercase().replace(' ', "-");
+    if KINDS.iter().any(|(k, _)| *k == name) {
+        name
+    } else {
+        "symbol".into()
+    }
+}
+
+/// The family every glyph kawoosh draws itself is set in when
+/// `font.icons` names none it has (fonts.md Decision 6).
+pub const ICONS_FAMILY: &str = "Symbols Nerd Font Mono";
 
 fn line(points: &[[f32; 2]]) -> Part {
     Part::Stroke {
@@ -195,7 +258,13 @@ pub fn default_shape(name: &str) -> Option<Shape> {
             [0.22, 0.78],
             [0.22, 0.22],
         ])],
-        _ => return None,
+        kind => {
+            let (_, c) = KINDS.iter().find(|(k, _)| *k == kind)?;
+            vec![Part::Glyph {
+                text: c.to_string(),
+                scale: 1.0,
+            }]
+        }
     })
 }
 
@@ -205,6 +274,19 @@ pub struct Icons {
     own: BTreeMap<String, Shape>,
     /// The theme's foreground, as the frame last set it.
     pub fg: Color,
+    /// The family every glyph is set in (`font.icons`, completion.md
+    /// Decision 9) — never the text's, so a patched `font.family`
+    /// cannot draw its own at its own width — and its name, which a
+    /// Lua view's text names it by.
+    pub font: Option<FontId>,
+    pub family: String,
+    /// A glyph's advance in that family as a share of its size: a
+    /// glyph is set so its advance is the box's side, one cell where
+    /// the box is a cell (Symbols Nerd Font Mono's are an em).
+    pub advance: f32,
+    /// The editor face's cell as a share of its size: an icon a cell
+    /// wide at a text's size is that share of it.
+    pub cell: f32,
 }
 
 impl Default for Icons {
@@ -212,6 +294,10 @@ impl Default for Icons {
         Self {
             own: BTreeMap::new(),
             fg: crate::palette::Pal::default().fg,
+            font: None,
+            family: ICONS_FAMILY.into(),
+            advance: 1.0,
+            cell: 0.5,
         }
     }
 }
@@ -246,9 +332,46 @@ impl Icons {
         }
     }
 
+    /// `name` at `size`: [`resolve`]'s, a glyph set so its advance is
+    /// at most the side (`advance`), never past its box.
+    pub fn resolve(&self, name: &str, size: f32) -> Vec<Prim> {
+        let mut prims = resolve(&self.shape(name), size);
+        for p in &mut prims {
+            if let Prim::Glyph { size, .. } = p {
+                *size /= self.advance.max(0.1);
+            }
+        }
+        prims
+    }
+
+    /// One cell of the editor's face at text size `size`: the side of
+    /// an icon's box beside that text (completion.md Decision 9).
+    pub fn cell_at(&self, size: f32) -> f32 {
+        (size * self.cell).round().max(1.0)
+    }
+
+    /// The text style a glyph is set in at `size`: the icons' family,
+    /// its line the glyph's size, so the em box is the line's and the
+    /// glyph sits in the middle of the box it is centred in.
+    pub fn glyph_style(&self, size: f32, color: Color) -> TextStyle {
+        let s = TextStyle::new(size)
+            .line_height(size)
+            .color(color)
+            .nowrap();
+        match self.font {
+            Some(id) => s.family(FontFamily::Custom(id)),
+            None => s,
+        }
+    }
+
     /// Every name: the shipped ones, then the user's own.
     pub fn names(&self) -> Vec<String> {
-        let mut out: Vec<String> = NAMES.iter().map(|s| s.to_string()).collect();
+        let mut out: Vec<String> = NAMES
+            .iter()
+            .copied()
+            .chain(KINDS.iter().map(|(k, _)| *k))
+            .map(|s| s.to_string())
+            .collect();
         for k in self.own.keys() {
             if !out.contains(k) {
                 out.push(k.clone());
@@ -320,7 +443,7 @@ pub fn icon_box(size: f32) -> NodeSpec {
 
 /// Draws `name` into the box open now, which is `size` square.
 pub fn draw(ui: &mut Ui<'_>, icons: &Icons, name: &str, size: f32, color: Color) {
-    for p in resolve(&icons.shape(name), size) {
+    for p in icons.resolve(name, size) {
         match p {
             Prim::Line {
                 points,
@@ -338,7 +461,7 @@ pub fn draw(ui: &mut Ui<'_>, icons: &Icons, name: &str, size: f32, color: Color)
                 ui.leaf(NodeSpec::row().size(d, d).radius(d / 2.0).bg(color));
             }
             Prim::Glyph { text, size } => {
-                ui.text(&text, TextStyle::new(size).color(color).nowrap());
+                ui.text(&text, icons.glyph_style(size, color));
             }
         }
     }
@@ -347,6 +470,27 @@ pub fn draw(ui: &mut Ui<'_>, icons: &Icons, name: &str, size: f32, color: Color)
 /// `name` in a box of its own, `size` square, in the row open now.
 pub fn icon(ui: &mut Ui<'_>, icons: &Icons, name: &str, size: f32, color: Color) {
     ui.with(icon_box(size), |ui| draw(ui, icons, name, size, color));
+}
+
+/// `name` beside text of size `size`, in a box one cell of the
+/// editor's face wide, centred on the line its row centres it on
+/// (completion.md Decision 9): a kind's codicon in the popup, a
+/// picker's row. Labelled `icon NAME`, which a test finds it by.
+pub fn cell_icon(ui: &mut Ui<'_>, icons: &Icons, name: &str, size: f32, color: Color) {
+    let side = icons.cell_at(size);
+    ui.with_keyed(&format!("icon {name}"), icon_box(side), |ui| {
+        draw(ui, icons, name, side, color)
+    });
+}
+
+impl crate::app::Kawoosh {
+    /// The family every glyph kawoosh draws is set in (`font.icons`) as
+    /// resolved — its handle and its name — and an icon's cell beside
+    /// the editor's text: for a test.
+    pub fn icons_family(&self) -> (Option<FontId>, String, f32) {
+        let set = self.icons.borrow();
+        (set.font, set.family.clone(), set.cell_at(self.face.size))
+    }
 }
 
 // ------------------------------------------------------------------ keys
@@ -696,6 +840,7 @@ fn icon_node(
     opts: Option<mlua::Table>,
 ) -> mlua::Result<mlua::Table> {
     let mut size = 13.0;
+    let mut cell = false;
     let mut color = icons.fg.to_hex() as i64;
     let node = lua.create_table()?;
     if let Some(o) = &opts {
@@ -703,6 +848,7 @@ fn icon_node(
             let (k, v) = pair?;
             match k.as_string().map(|s| s.to_string_lossy()).as_deref() {
                 Some("size") => size = lua_f32(&v).unwrap_or(size),
+                Some("cell") => cell = v.as_boolean().unwrap_or(false),
                 Some("color") => {
                     if let Some(c) = v.as_i64() {
                         color = c;
@@ -712,14 +858,20 @@ fn icon_node(
             }
         }
     }
-    let size = size.round();
+    // A cell of the editor's face at that text size, beside the text
+    // (completion.md Decision 9), where it is not the text's size.
+    let size = if cell {
+        icons.cell_at(size)
+    } else {
+        size.round()
+    };
     node.set("type", "row")?;
     node.set("width", size)?;
     node.set("height", size)?;
     node.set("main_align", "center")?;
     node.set("cross_align", "center")?;
     let vec = |p: &Vec2| lua.create_sequence_from([p.x, p.y]);
-    for (i, p) in resolve(&icons.shape(name), size).into_iter().enumerate() {
+    for (i, p) in icons.resolve(name, size).into_iter().enumerate() {
         let t = lua.create_table()?;
         match p {
             Prim::Line {
@@ -759,6 +911,8 @@ fn icon_node(
                 t.set("type", "text")?;
                 t.set("value", text)?;
                 t.set("size", size)?;
+                t.set("line_height", size)?;
+                t.set("family", icons.family.as_str())?;
                 t.set("color", color)?;
                 t.set("wrap", "none")?;
             }
