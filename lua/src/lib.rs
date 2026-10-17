@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 pub mod fuzzy;
+pub mod json;
 mod meta;
 pub mod native;
 mod nodes;
@@ -218,6 +219,13 @@ pub enum Msg {
     FsJob {
         token: u64,
         op: FsOp,
+    },
+    /// `kawoosh.fs.read_json(path, fn)`: the file read and parsed on a
+    /// thread of its own, the answer to `Runtime::json_read` under
+    /// `token` (`IoMsg::JsonRead`).
+    ReadJson {
+        token: u64,
+        path: PathBuf,
     },
     /// `kawoosh.fs.apply(changes, { settled =, done = })`: a write's
     /// changes applied on a thread of their own in the order that loses
@@ -2605,6 +2613,20 @@ impl Runtime {
         self.hook("_cwd", (path.display().to_string(), how), "on_cwd");
     }
 
+    /// Tells the snippets' loader a buffer of `lang` asked for its
+    /// snippets the first time (`kawoosh._snippets_want`, completion.md
+    /// Decision 8): `names`, those it finds them under.
+    pub fn snippets_want(&self, lang: &str, names: &[String]) {
+        let names = match self
+            .lua
+            .create_sequence_from(names.iter().map(String::as_str))
+        {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        self.hook("_snippets_want", (lang, names), "snippets");
+    }
+
     /// Hands a socket's `kawoosh pick SOURCE [QUERY]` to the picker,
     /// which answers `token` through `kawoosh._answer`.
     pub fn pick_hook(&self, token: u64, source: &str, query: &str) {
@@ -2813,6 +2835,29 @@ impl Runtime {
         let result =
             result.and_then(|entries| entries_table(&self.lua, entries).map_err(|e| e.to_string()));
         self.answer(token, result, "fs.list");
+    }
+
+    /// A file read for `kawoosh.fs.read_json(path, fn)`: the callback
+    /// called with the value, or `nil` and why.
+    pub fn json_read(&self, token: u64, result: Result<serde_json::Value, String>) {
+        let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
+            return;
+        };
+        let Ok(f) = self.lua.registry_value::<mlua::Function>(&key) else {
+            return;
+        };
+        let _ = self.lua.remove_registry_value(key);
+        let args = match result.and_then(|v| json::to_lua(&self.lua, &v).map_err(|e| e.to_string()))
+        {
+            Ok(v) => (v, LV::Nil),
+            Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
+        };
+        self.touched.set(true);
+        if let Err(e) = self.timed(&f, || f.call::<()>(args)) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("fs.read_json: {e}")));
+        }
     }
 
     /// A text highlighted for `kawoosh.highlight`: the callback called
@@ -4677,30 +4722,10 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- kawoosh.json: JSON read and written, for a program that
-    // answers in it (`qd status --json`).
-    let json = lua.create_table()?;
-    // `kawoosh.json.decode(text)`: JSON as Lua data — an array a
-    // list, an object a table, `null` nil — or `nil, why`.
-    json.set(
-        "decode",
-        lua.create_function(|lua, text: String| {
-            match serde_json::from_str::<serde_json::Value>(&text) {
-                Ok(v) => Ok((json_to_lua(lua, &v)?, LV::Nil)),
-                Err(e) => Ok((LV::Nil, LV::String(lua.create_string(e.to_string())?))),
-            }
-        })?,
-    )?;
-    // `kawoosh.json.encode(value)`: Lua data as JSON text — a list an
-    // array, a table with string keys an object.
-    json.set(
-        "encode",
-        lua.create_function(|_, v: LV| {
-            let j = lua_to_json(&v)?;
-            serde_json::to_string(&j).map_err(mlua::Error::external)
-        })?,
-    )?;
-    k.set("json", json)?;
+    // ---- kawoosh.json: JSON read and written (json.rs), for a
+    // program that answers in it (`qd status --json`), a file of data,
+    // the user's snippets.
+    json::install(lua, &k)?;
     let qq = q(queue);
     k.set(
         "echo",
@@ -7690,6 +7715,36 @@ fn seed(
     fs.set(
         "read",
         lua.create_function(|_, p: String| kfs::read(&expand(&p)).map_err(io_err))?,
+    )?;
+    // `kawoosh.fs.read_json(path)`: the file read and parsed as JSON
+    // (`kawoosh.json`'s rules; comments and trailing commas passed
+    // over; at most 16 MiB), answered as `value, nil` or `nil, why`;
+    // `fs.read_json(path, fn)` reads and parses it on a thread of its
+    // own and calls `fn(value)` — or `fn(nil, why)` — when it is done.
+    // A host's path is read over its connection, as `fs.read` reads it.
+    let qq = q(queue);
+    let jj = jobs.clone();
+    fs.set(
+        "read_json",
+        lua.create_function(move |lua, (p, cb): (String, Option<mlua::Function>)| {
+            let Some(cb) = cb else {
+                return Ok(match kawoosh_systems::json::read_file(&expand(&p)) {
+                    Ok(v) => (json::to_lua(lua, &v)?, LV::Nil),
+                    Err(e) => (LV::Nil, LV::String(lua.create_string(e)?)),
+                });
+            };
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::ReadJson {
+                token,
+                path: expand(&p),
+            });
+            Ok((LV::Nil, LV::Nil))
+        })?,
     )?;
     // `kawoosh.fs.head(path, n)`: a file's first `n` bytes, as text
     // (lossy), without reading the rest — what an opener checks a

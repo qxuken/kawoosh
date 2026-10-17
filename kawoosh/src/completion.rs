@@ -179,10 +179,12 @@ impl Config {
 pub struct Item {
     pub label: String,
     /// What accepting puts in place of the word, when not the label.
-    pub insert: Option<String>,
+    pub insert: Option<Rc<str>>,
     pub kind: &'static str,
     pub detail: Option<String>,
-    pub documentation: Option<String>,
+    /// Shared: a user's snippet's is its plain text, one for every
+    /// candidate its prefixes make.
+    pub documentation: Option<Rc<str>>,
     /// The lines it is on in its buffer, ascending (words, symbols):
     /// how near it is.
     pub lines: Box<[u32]>,
@@ -215,14 +217,14 @@ impl Item {
     }
 
     fn of_lsp(it: CompletionItem) -> Item {
-        let insert = (it.insert != it.label).then_some(it.insert);
+        let insert = (it.insert != it.label).then(|| Rc::from(it.insert));
         let snippet = it.snippet.map(Rc::from);
         Item {
             label: it.label,
             insert,
             kind: it.kind.map(completion_kind_name).unwrap_or("text"),
             detail: it.detail,
-            documentation: it.documentation,
+            documentation: it.documentation.map(Rc::from),
             lines: Box::new([]),
             resolve: it.resolve,
             filled: RefCell::new(None),
@@ -421,6 +423,14 @@ pub struct Popup {
 }
 
 impl Session {
+    /// What the user selected with `completion next` / `prev`, by what
+    /// it puts: kept through a re-rank.
+    fn chosen_text(&self) -> Option<String> {
+        self.chosen
+            .then(|| self.selected_item().map(|i| i.text().to_string()))
+            .flatten()
+    }
+
     /// The selected candidate, if one continues the word.
     fn selected_item(&self) -> Option<&Item> {
         let r = self.ranking.get(self.selected?)?;
@@ -627,7 +637,7 @@ fn wipe_items(mut items: Rc<[Item]>) {
     if let Some(items) = Rc::get_mut(&mut items) {
         for it in items.iter_mut() {
             text_buffer::wipe_string(&mut it.label);
-            if let Some(s) = it.insert.as_mut() {
+            if let Some(s) = it.insert.as_mut().and_then(Rc::get_mut) {
                 text_buffer::wipe_string(s);
             }
         }
@@ -668,6 +678,9 @@ pub struct State {
     next_resolve: u64,
     /// How many resolves were asked: a test's count.
     pub resolves: usize,
+    /// The user's snippets' generation the live session's answer was
+    /// made at: a change since offers again.
+    snippets_seen: u64,
 }
 
 impl State {
@@ -690,6 +703,7 @@ impl State {
             said_unknown: HashSet::new(),
             next_resolve: 0,
             resolves: 0,
+            snippets_seen: 0,
         }
     }
 
@@ -1412,6 +1426,7 @@ impl Kawoosh {
     pub(crate) fn sync_completion(&mut self) {
         self.sync_snippet();
         self.completion_frecency_due();
+        self.completion_snippets_follow();
         // A buffer private since it answered — a multibuffer showing a
         // private file's lines now — is no source (secrets.md Decision 1).
         let gone: Vec<BufferId> = self
@@ -1551,12 +1566,16 @@ impl Kawoosh {
                         }),
                 );
             }
+            // The user's snippets, as they stand; a language asked for
+            // the first time has its files read, landing in place.
+            if config.sources.contains(&Source::Snippets) {
+                local.extend(self.completion_user_snippets(buffer));
+            }
             // A buffer gone private since it was indexed is no source
             // (secrets.md Decision 1).
             local.retain(|a| {
                 a.buffer
-                    .and_then(|b| self.ed.buffers.get(b))
-                    .is_some_and(|b| !b.private)
+                    .is_none_or(|b| self.ed.buffers.get(b).is_some_and(|b| !b.private))
             });
             let s = self.completion.session.as_mut().unwrap();
             s.answers.extend(local);
@@ -1589,6 +1608,18 @@ impl Kawoosh {
 
     /// The session ranked again: every answer, or answer `a` alone.
     fn completion_rank(&mut self, a: Option<usize>) {
+        let keep = self
+            .completion
+            .session
+            .as_ref()
+            .and_then(Session::chosen_text);
+        self.completion_rank_keeping(a, keep);
+    }
+
+    /// The session ranked again, `keep` — what the user selected,
+    /// read before the answers moved under the ranking's indexes —
+    /// selected again where it still is.
+    fn completion_rank_keeping(&mut self, a: Option<usize>, keep: Option<String>) {
         let Some(view) = self.completion.session.as_ref().map(|s| s.view) else {
             return;
         };
@@ -1610,10 +1641,7 @@ impl Kawoosh {
         if s.closed {
             return;
         }
-        let selected = s
-            .selected_item()
-            .filter(|_| s.chosen)
-            .map(|i| i.text().to_string());
+        let selected = keep;
         let ctx = RankCtx {
             config: &config,
             frecency,
@@ -1638,6 +1666,9 @@ impl Kawoosh {
         let Some(s) = self.completion.session.as_mut() else {
             return;
         };
+        // Read before the answer is swapped: the ranking's indexes are
+        // into the answer it replaces, which may have had more items.
+        let keep = s.chosen_text();
         let at = s
             .answers
             .iter()
@@ -1655,10 +1686,79 @@ impl Kawoosh {
         if s.answers[a].source == Source::Lsp {
             s.asks.lsp_at = Some(a);
         }
-        self.completion_rank(Some(a));
+        if at.is_some() {
+            // Nothing reads the old indexes from here: the selection
+            // among them is gone until the rescan picks one.
+            s.ranking.retain(|r| r.answer as usize != a);
+            s.sorted = s.sorted.min(s.ranking.len());
+            s.selected = None;
+        }
+        self.completion_rank_keeping(Some(a), keep);
     }
 
     // ----------------------------------------------------------- sources
+
+    /// The user's snippets for a buffer's language and `all`'s, as one
+    /// answer (Decision 8), its language marked asked for: the loader
+    /// reads its files at the next frame.
+    fn completion_user_snippets(&mut self, buffer: BufferId) -> Option<Answer> {
+        let lang = self.ed.buffers.get(buffer)?.language.to_string();
+        let names = crate::user_snippets::names_for(&self.languages, &lang);
+        let mut store = self.user_snippets.borrow_mut();
+        store.want(&lang);
+        self.completion.snippets_seen = store.generation;
+        let items = store.items(&lang, &names);
+        (!items.is_empty()).then_some(Answer {
+            source: Source::Snippets,
+            buffer: None,
+            items,
+        })
+    }
+
+    /// Per frame: the languages asked for told to the loader, and the
+    /// live session offered the user's snippets again when they changed
+    /// — a file read, a watched one edited, `kawoosh.snippets.add`.
+    fn completion_snippets_follow(&mut self) {
+        let pending = self.user_snippets.borrow_mut().take_pending();
+        if !pending.is_empty()
+            && let Some(rt) = self.scripting.rt.clone()
+        {
+            rt.publish(&self.ed, self.focused_view());
+            for lang in &pending {
+                let names = match lang.as_str() {
+                    crate::user_snippets::ALL => vec![lang.clone()],
+                    _ => crate::user_snippets::names_for(&self.languages, lang),
+                };
+                rt.snippets_want(lang, &names);
+            }
+            self.drain_lua();
+        }
+        let generation = self.user_snippets.borrow().generation;
+        if generation == self.completion.snippets_seen {
+            return;
+        }
+        self.completion.snippets_seen = generation;
+        let Some(s) = &self.completion.session else {
+            return;
+        };
+        if s.word != WordKind::Ident || s.closed {
+            return;
+        }
+        let (view, buffer) = (s.view, s.anchor.buffer);
+        if !self
+            .completion_config(view)
+            .sources
+            .contains(&Source::Snippets)
+        {
+            return;
+        }
+        let answer = self.completion_user_snippets(buffer).unwrap_or(Answer {
+            source: Source::Snippets,
+            buffer: None,
+            items: Rc::from(Vec::new()),
+        });
+        self.completion_answer(answer);
+    }
 
     /// The server asked about the caret, one request in flight.
     fn completion_ask_lsp(&mut self) {
@@ -2616,7 +2716,9 @@ impl Kawoosh {
         let item = &s.answers[r.answer as usize].items[r.item as usize];
         let filled = item.filled.borrow().clone().unwrap_or_default();
         let detail = filled.detail.or_else(|| item.detail.clone());
-        let docs = filled.documentation.or_else(|| item.documentation.clone());
+        let docs = filled
+            .documentation
+            .or_else(|| item.documentation.as_deref().map(str::to_string));
         let buffer = s.anchor.buffer;
         let body: String = docs
             .unwrap_or_default()

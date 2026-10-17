@@ -94,6 +94,7 @@ pub mod trust;
 pub mod types;
 pub mod undo;
 pub mod update;
+pub mod user_snippets;
 pub mod vcs;
 pub mod whichkey;
 pub mod wrap;

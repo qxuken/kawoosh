@@ -2,9 +2,9 @@
 
 Status: designed 2026-10-16/17 with the user, over six rounds of
 questions, from the todo's "add autocompletion settings (including
-disabling)". Rounds 1–3 of the build (the model and the settings; the
-popup; LSP snippets) built 2026-10-17: "Built" at the end says how, and
-where each departs. The decisions below are the rounds' answers,
+disabling)". Rounds 1–4 of the build (the model and the settings; the
+popup; LSP snippets; the user's snippets) built 2026-10-17: "Built" at
+the end says how, and where each departs. The decisions below are the rounds' answers,
 each with the alternative it beat. The build is five rounds (the last
 section), one session each. Words are as [GLOSSARY.md](../../GLOSSARY.md)
 has them.
@@ -682,4 +682,180 @@ server's candidate is then its text, an accepted body is put as
 written, nothing live. A choice field's session asks no source. Round
 2's panel test checks "not before the delay" only while its frame ran
 before the timer was due.
+
+### Round 4, 2026-10-17: the user's snippets, over a JSON door
+
+`systems/src/json.rs` (JSON read: comments, trailing commas, the caps),
+`lua/src/json.rs` (`kawoosh.json`: Lua and JSON both ways),
+`kawoosh.fs.read_json` in `lua/src/lib.rs` (`IoMsg::JsonRead`),
+`kawoosh/src/user_snippets.rs` (the store by language, the candidates,
+`kawoosh.snippets`' Rust half), the `snippets` source in completion.rs,
+`kawoosh/lua/snippets.lua` (bundled: `load_json`, `snippets.paths`,
+the watch). Tests: `kawoosh/tests/user_snippets.rs`, the store's and
+the JSON's own.
+
+As designed: Decision 8 whole — `kawoosh.snippets.add` in VS Code's
+shape as Lua, `"all"` for every language; two general doors under it,
+`kawoosh.json.decode` / `encode` and `kawoosh.fs.read_json(path)` with
+its form `read_json(path, function(value, err) … end)`, the callback
+last, read and parsed on the io thread; `load_json` over them, a VS
+Code file or a package laid out as friendly-snippets; `snippets.paths`,
+a language's read the first time a buffer of it asks, watched; bodies
+the LSP grammar, accepted through round 3's `snippet_accept`. No
+snippets ship.
+
+Where the build departs, or says more than the decision did:
+
+- **`kawoosh.json` was there, thin** (`qd status --json`, the sqlite and
+  hex panes' kept state): `null` was nil everywhere, `[]` and `{}` the
+  same empty table, a bad value raised. Now decided: an array is a list
+  carrying `kawoosh.json.array` as its metatable, so `[]` is written
+  back as `[]`; `null` inside an array is `kawoosh.json.null` (a light
+  userdata holding no address), so the items keep their places; an
+  object's `null` member is a key left out — read as nil, what a field
+  read wants — and `null` alone is `kawoosh.json.null`, so a nil back
+  is only ever an error. Written: the array metatable, or keys `1..n`
+  and nothing else, is an array; string keys an object, its keys
+  sorted so the same table is the same text; an empty table with no
+  metatable `{}`; a table with both kinds of key, a list with a hole,
+  a key neither a string nor a whole number, `nan`/`inf`, a string not
+  UTF-8, a function or userdata, nesting past 128 (a table holding
+  itself) — each an error naming where (`$.a[2]: a function is not
+  JSON`). Errors are `nil, why`, never raised, a non-string to
+  `decode` too. `encode(value, { pretty = true })` indents. The three
+  plugins reading it (qd's status, the sqlite and hex panes' kept
+  state) read lists of objects and an object's fields, which read nil
+  for a `null` as before; none reads a `null` inside an array.
+- **Read as VS Code reads its own files.** A user's snippets file is
+  written with `//` comments (VS Code's new-file template is mostly
+  comments) and trailing commas: both are passed over, and a byte
+  order mark, wherever JSON is read — `decode` and `read_json` alike —
+  rather than a second, lenient door. Written JSON is strict.
+- **The bounds.** A text over 16 MiB (`json::MAX_TEXT`) is refused —
+  `read_json` asks the file's size first and reads nothing — and
+  nesting past 128 is serde's error; friendly-snippets' largest file
+  is a few hundred KiB. The Lua data is made on the frame from the
+  parsed value (a Lua state is one thread's); the read and the parse
+  are the io thread's.
+- **`read_json` answers `nil, why`, now as well**, not raising as
+  `fs.read` does: the two forms say an error the same way. A host's
+  path is read over its connection, as `fs.read` reads one.
+- **A snippet's candidates.** One per prefix (a prefix list is several
+  ways to the same snippet; the dedup keeps the best-ranked), labelled
+  by it, putting its plain text, its detail the description (else the
+  snippet's name), its documentation the plain text — what it puts,
+  in the panel. `kawoosh.snippets.add` answers how many it took and,
+  when some were not, a list of why each (no prefix, no body, a body
+  that is not a string or its lines, a body over 1 MiB or one whose
+  plain text is — round 3's `MAX_TEXT`); they go to the log as well.
+  A name added again under a language replaces it; a malformed body
+  is offered and put as written (round 3's lenient grammar). A
+  snippet's `scope` (VS Code's `"rust,go"` in a `*.code-snippets`
+  file) puts it under those languages in place of the one it was added
+  under; `isFileTemplate`, `include` and `exclude` are not read.
+- **Languages.** Kept as written, lowercased. A buffer reads its
+  language's, its aliases', the VS Code ids that mean it (a short
+  table: `shellscript` bash, `typescriptreact` tsx, `javascriptreact`
+  javascript, `plaintext` text) and `all`'s — one answer of the source,
+  built once a change and shared (`Rc<[Item]>`) by every session in
+  that language.
+- **"The first time a buffer of it asks"** is the first completion in
+  a buffer of the language with `snippets` among its sources: it is
+  marked, and the next frame tells the loader
+  (`kawoosh._snippets_want(lang, names)`), `all` with the first. What
+  is there is offered at once; what the loader reads lands as the
+  source's answer in place of the one the session had, re-ranked under
+  the user's selection as any landing is.
+- **The loader is Lua** (`snippets.lua`, bundled), as the decision's
+  "ten lines over it" wanted, if more than ten: `load_json(path[, lang][,
+  fn])` reads a package (its folder or its `package.json`), a folder of
+  VS Code files (`rust.json` rust's, a `*.code-snippets` file `all`'s)
+  or one file (its language the argument, else its name's), every
+  language it has, and calls `fn(count, why)` once every file landed.
+  What a file put is known by its path and the language it was read
+  for, and replaced whole when it is read again (`kawoosh.snippets._set`).
+  `kawoosh.snippets.names(lang)` lists a language's.
+- **`snippets.paths`.** A path is `~`, absolute or a host's as
+  written, else under the config directory. Nothing is read until a
+  language is asked for; then each path's manifest (its `package.json`
+  or its listing) and that language's files, off the frame — but for
+  the stat that says whether a path is a folder, on the frame as every
+  `fs.is_dir` is. The paths, the `package.json`s and every file read
+  are on the watch (`kawoosh.fs.watch`, polled twice a second): a
+  manifest changed is read again with every language asked for, a file
+  changed is read again. A read that lands after a newer one began puts
+  nothing; a file gone takes its snippets, one that does not read
+  (half-saved) leaves what it put until it does; a path taken out of
+  the setting takes all it put. Files read by a `load_json` call are
+  not watched — only `snippets.paths`'.
+- **Quiet.** What goes wrong — a file that does not parse, a snippet
+  passed over, a path that does not read — is said in the log
+  (`show = "log"`), never a toast; `load_json` with a callback hands
+  it the first error instead.
+- **A private buffer.** The user's snippets are not a buffer's text, so
+  they are offered in a private buffer as anywhere; expanded there,
+  round 3's rule holds (the line, the selection and the word are empty
+  in a private buffer or under a mask). A snippet whose text or label
+  quotes a word inside a mask of an open buffer is no row, as any
+  candidate (round 1).
+
+Measured with `kawoosh/tests/user_snippets.rs`'s
+`timing_a_word_and_a_keystroke_with_many_snippets` (dev profile, Lua
+attached with the bundled plugins, a 20,000-line buffer of words,
+`gamm` typed at a line's start; median / p90): with no snippets a
+word's start 7.42 / 7.58 ms and a keystroke 0.62 / 0.67 ms; with three
+thousand for the buffer's language (more than friendly-snippets has for
+any one) 8.00 / 8.38 ms and 0.92 / 0.99 ms — their labels scored with
+the rest. Round 1's 2.4 ms word start was measured without Lua.
+
+**After a review and a load test, the same day.** A read is bounded
+by what it reads, not by what a file says of itself: only a regular
+file is read (opened without waiting, asked what it is before a byte is
+read — not `/dev/zero`, which says it is empty and never ends, nor a
+FIFO, whose open waits for a writer, nor a link to either), through a
+cap of 16 MiB and a byte. A value of more than 250,000 values
+(`json::MAX_NODES`) is refused, since each is a Lua value made on the
+frame: the worst at the cap, every value a table, is 29 ms. A
+package's `contributes.snippets` paths are its own — one written
+absolute or reaching out of its folder with `..` is refused and said
+once a session (VS Code warns of it too): a package is data, and its
+entries do not name the rest of the disk; a link inside it is
+followed, and is read only if it is a regular file. A manifest that
+does not read now — a typo, a `package.json` caught half-saved or
+between its removal and its rename back, a listing that failed —
+leaves what its path put until it reads again; only a path gone takes
+all of it (it dropped the whole package). An entry named twice is read
+once, and the loader's reads go four at a time, the rest waiting their
+turn; `IoRunner::run` no longer panics when the system gives no
+thread — the job runs where it was asked. A watch event on a path
+before any language asked reads nothing until one does. A snippet's
+texts are shared (`Item::insert` and `documentation` are `Rc<str>`),
+its prefixes told apart and capped at 16 (each at most 256 bytes), its
+scope's languages at 32, and its detail is the description's first line
+cut to 200 bytes; one `add` or one file puts at most 10,000, the first
+by name, saying how many it passed over. `add` is linear: a name added
+again is found by one pass over its language, a file read again by the
+languages it put snippets under (2,500 snippets 2.6 ms, 10,000 10.2
+ms). The first lazy load of a rust file of 1,500 snippets (300 KiB,
+about friendly-snippets' largest) lands in a frame of 12.7 ms; one at
+the 10,000 cap (2 MiB) in 59 ms. The reader's comma rule is a comma
+after a value: `[,]` and `{,}` are errors.
+
+Found on the way, in round 1's code: an answer landing in place of a
+longer one (a snippet file read again with fewer, a server's list)
+re-ranked by reading the selection through the old ranking's indexes
+into the new items, and panicked when the selected one was past their
+end. The selection is read before the answer moves, and the old
+answer's places leave the ranking with it. And round 2's
+`the_panel_resolves_the_selection_alone_after_the_delay` read its count
+of resolves after the server's candidates landed; on a loaded machine
+the typing can outlast the 300 ms delay, so the one resolve had gone
+out before the count was read (made to happen with a slow frame there,
+it fails so every time). It counts from before the word now; the
+product sends one either way.
+
+*Left for later:* a `:snippets` command (list, reload, open the file a
+snippet came from); the loader's files watched for a `load_json` call;
+the VS Code id table grown as friendly-snippets' languages meet
+kawoosh's.
 

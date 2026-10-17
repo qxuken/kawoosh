@@ -237,6 +237,12 @@ impl Kawoosh {
         if let Err(e) = crate::legends::lua_door(rt.lua(), self.legends.clone()) {
             log::error!("kawoosh.legends: {e}");
         }
+        // This runtime's plugins and `init.lua` put their own snippets
+        // and are told the languages asked for afresh.
+        self.user_snippets.borrow_mut().reset();
+        if let Err(e) = crate::user_snippets::lua_door(rt.lua(), self.user_snippets.clone()) {
+            log::error!("kawoosh.snippets: {e}");
+        }
         if let Err(e) = crate::pane_settings::lua_door(rt.lua(), self.pane_settings.clone()) {
             log::error!("kawoosh.pane_opt: {e}");
         }
@@ -895,6 +901,17 @@ impl Kawoosh {
                     self.io.run("list", move || IoMsg::Listed {
                         token,
                         result: kawoosh_systems::fs::list(&path).map_err(|e| e.to_string()),
+                    });
+                }
+            }
+            Msg::ReadJson { token, path } => {
+                if self.jobs_inline {
+                    rt.json_read(token, kawoosh_systems::json::read_file(&path));
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("read json", move || IoMsg::JsonRead {
+                        token,
+                        result: kawoosh_systems::json::read_file(&path),
                     });
                 }
             }

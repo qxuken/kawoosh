@@ -11,6 +11,7 @@ pub mod held_dir;
 pub mod indent;
 pub mod io;
 pub mod job;
+pub mod json;
 pub mod lsp;
 pub mod overstrike;
 pub mod picture;

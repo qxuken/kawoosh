@@ -1920,7 +1920,7 @@ impl Kawoosh {
                 label: it.label,
                 kind: it.kind.to_string(),
                 detail: it.detail.unwrap_or_default(),
-                documentation: it.documentation.unwrap_or_default(),
+                documentation: it.documentation.as_deref().unwrap_or_default().to_string(),
             })
             .collect();
         let Some(rt) = self.scripting.rt.clone() else {

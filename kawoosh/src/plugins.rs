@@ -29,6 +29,8 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:theme_lab", include_str!("../lua/theme_lab.lua")),
     ("kawoosh:grammars", include_str!("../lua/grammars.lua")),
     ("kawoosh:pairs", include_str!("../lua/pairs.lua")),
+    // The user's snippets from files (completion.md Decision 8).
+    ("kawoosh:snippets", include_str!("../lua/snippets.lua")),
     // After picker: `:node actions` opens one.
     (
         "kawoosh:node_actions",

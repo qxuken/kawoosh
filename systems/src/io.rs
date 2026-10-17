@@ -99,6 +99,13 @@ pub enum IoMsg {
         dir: std::path::PathBuf,
         entries: Option<Vec<crate::fs::Entry>>,
     },
+    /// A file read and parsed as JSON on a thread of its own for a
+    /// plugin (`kawoosh.fs.read_json(path, fn)`, `json::read_file`):
+    /// the job's token, and the value or why not.
+    JsonRead {
+        token: u64,
+        result: Result<serde_json::Value, String>,
+    },
     /// A tree walked on a thread of its own for a plugin
     /// (`kawoosh.fs.walk(root, fn)`): the job's token, and the files
     /// under the root, relative to it, or why not.
@@ -1277,17 +1284,31 @@ impl Io {
     /// Runs `job` on a thread of its own and delivers what it returns,
     /// waking the loop for it — a count over a snapshot, anything that
     /// is one answer the frame should not wait for.
+    ///
+    /// A thread the system will not give (too many at once) is no panic
+    /// on the frame: the job runs where it was asked, late but answered.
     pub fn run(&self, name: &'static str, job: impl FnOnce() -> IoMsg + Send + 'static) {
         let tx = self.tx.clone();
         let wake = self.wake.named(name);
-        thread::Builder::new()
-            .name(name.into())
-            .spawn(move || {
-                if tx.send(job()).is_ok() {
-                    wake.wake();
-                }
-            })
-            .expect("spawning a job thread");
+        let slot = std::sync::Arc::new(Mutex::new(Some(job)));
+        let theirs = slot.clone();
+        let spawned = thread::Builder::new().name(name.into()).spawn(move || {
+            let job = theirs.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(job) = job
+                && tx.send(job()).is_ok()
+            {
+                wake.wake();
+            }
+        });
+        if let Err(e) = spawned {
+            log::warn!("{name}: no thread for the job ({e}); run here");
+            let job = slot.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(job) = job
+                && self.tx.send(job()).is_ok()
+            {
+                self.wake.named(name).wake();
+            }
+        }
     }
 
     /// Runs `job` on a thread of its own, handing it `send`: every message
