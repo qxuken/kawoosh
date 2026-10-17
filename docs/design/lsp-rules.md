@@ -448,6 +448,23 @@ used here asks for them); the text read back from the disk for
 `includeText` (the pool's copy is what was written, and a read is a
 round trip on a host).
 
+### 10. Each instance's logs its own
+
+*Added 2026-10-17*, from the `:lsp` pane: two rust-analyzers —
+`kawoosh` and `kui` — showed the same "said" lines, and each lua-language-server
+listed both instances' "Log path". What a server said was kept by its
+command, and every instance of one server shared one stream.
+
+- **Kept by instance**: the command and the root it serves
+  (`Event::Message`'s `root`, `ServerLogs` keyed by both). `:lsp info`'s
+  block for each instance shows that instance's tail.
+- **`:lsp logs`** bare shows the instance serving the caret's file — the
+  language's server whose root is nearest above it — or, for a file
+  under none (a library's), every instance of that server; `:lsp logs
+  LANGUAGE` every instance of its server, a line labelled with its root
+  when there are two or more; `:lsp logs all` every one's, by server and
+  root. `:lsp logs clear` forgets them all.
+
 ## Not built
 
 - ~~**A loaded file changed on disk by another program** is not read

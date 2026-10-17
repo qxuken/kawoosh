@@ -1135,9 +1135,12 @@ pub enum Event {
     Status(Vec<(PathBuf, String, usize, usize)>),
     /// `window/showMessage` (`log` false) or `window/logMessage` (`log`
     /// true): `kind` is the protocol's MessageType, 1 error … 4 log —
-    /// and 5, below it, for a line of the server's stderr.
+    /// and 5, below it, for a line of the server's stderr. `server` is
+    /// its command, `root` the project the instance serves: two
+    /// instances of one server say things apart.
     Message {
         server: String,
+        root: PathBuf,
         kind: u64,
         text: String,
         log: bool,
@@ -2540,12 +2543,13 @@ impl Pool {
                 },
             );
         }
-        let name = server.name.clone();
+        let (name, root) = (server.name.clone(), server.root.clone());
         for (language, found, took) in loaded.capped {
             self.emit_from(
                 key,
                 Event::Message {
                     server: name.clone(),
+                    root: root.clone(),
                     kind: 3,
                     text: format!(
                         "loaded {took} of {found} {language} files (lsp.{language}.load_max)"
@@ -4143,9 +4147,10 @@ impl Pool {
             return;
         }
         server.last_stderr = Some(line.trim().to_string());
-        let name = server.name.clone();
+        let (name, root) = (server.name.clone(), server.root.clone());
         self.emit(Event::Message {
             server: name,
+            root,
             kind: 5,
             text: line,
             log: true,
@@ -4700,11 +4705,12 @@ impl Pool {
                     .unwrap_or("")
                     .to_string();
                 let kind = params.get("type").and_then(Value::as_u64).unwrap_or(3);
-                let server = server.name.clone();
+                let (server, root) = (server.name.clone(), server.root.clone());
                 self.emit_from(
                     key,
                     Event::Message {
                         server,
+                        root,
                         kind,
                         text,
                         log: m == "window/logMessage",

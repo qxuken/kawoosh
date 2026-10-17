@@ -106,7 +106,10 @@ candidates are then `pair` and `none` (functions, plain, each
 documented) and, told
 `snippetSupport`, `pair_snip(…)` (a function whose snippet puts
 `pair_snip(${1:a}, ${2:b})$0`). With `--signature-never` too it never
-answers a signature, for a test that hands the answer in itself."""
+answers a signature, for a test that hands the answer in itself.
+Instances (lsp-rules.md Decision 10): `initialize` says on stderr
+"fake server in NAME", NAME its root's last folder, so two instances
+say apart."""
 import json
 import re, sys
 
@@ -276,6 +279,9 @@ while True:
         break
     method = m.get("method")
     mid = m.get("id")
+    if method == "initialize":
+        root = path_of(m["params"].get("rootUri") or "").rstrip("/")
+        print("fake server in " + root.rsplit("/", 1)[-1], file=sys.stderr, flush=True)
     if method is None:
         # A response to a request of ours: `--ask`'s is said back.
         if ASK and mid == 4000:

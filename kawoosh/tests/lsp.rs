@@ -2286,8 +2286,13 @@ fn lsp_logs_keep_what_a_server_said() {
         until(&mut d, &mut app, |a| a
             .lsp
             .logs
-            .of(&server)
-            .any(|l| l.text == "fake server starting")),
+            .instances()
+            .filter(|(s, _)| *s == server)
+            .any(|(s, r)| a
+                .lsp
+                .logs
+                .of(s, r)
+                .any(|l| l.text == "fake server starting"))),
         "the stderr line kept"
     );
     assert!(
@@ -3576,4 +3581,123 @@ fn a_template_server_beside_the_language_s_own() {
         answered(&app)
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A project folder under `base` named `name`: a `Cargo.toml` and a
+/// `src/main.rs`, whose path is returned.
+fn project(base: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let dir = base.join(name);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n}\n").unwrap();
+    file
+}
+
+/// What the instances of `server` whose root's last folder is `name`
+/// said.
+fn said_in(app: &Kawoosh, server: &str, name: &str) -> Vec<String> {
+    app.lsp
+        .logs
+        .instances()
+        .filter(|(s, r)| *s == server && r.file_name().is_some_and(|f| f == name))
+        .flat_map(|(s, r)| app.lsp.logs.of(s, r).map(|l| l.text.clone()))
+        .collect()
+}
+
+/// Two instances of one server — one per project root — keep what each
+/// said apart (lsp-rules.md Decision 10): the `:lsp info` pane shows
+/// each its own tail, bare `:lsp logs` the caret's instance, `:lsp logs
+/// LANGUAGE` both by root, `:lsp logs all` every one by server and root.
+#[test]
+fn two_instances_of_one_server_keep_their_own_logs() {
+    let server = fake_server().command;
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-instances-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let alpha = project(&base, "alpha");
+    let beta = project(&base, "beta");
+
+    let mut app = Kawoosh::from_file(&alpha);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.len() == 1),
+        "alpha's server"
+    );
+    app.open_in_editor(&beta, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.len() == 2
+            && said_in(a, &server, "alpha")
+                .contains(&"fake server in alpha".to_string())
+            && said_in(a, &server, "beta")
+                .contains(&"fake server in beta".to_string())),
+        "two instances, each saying its root: {:?}",
+        app.lsp.logs.instances().collect::<Vec<_>>()
+    );
+    assert!(
+        !said_in(&app, &server, "alpha").contains(&"fake server in beta".to_string()),
+        "alpha's log is alpha's alone"
+    );
+    assert!(!said_in(&app, &server, "beta").contains(&"fake server in alpha".to_string()));
+
+    // The status pane: each instance's block has its own tail.
+    ex(&mut d, &mut app, "lsp info");
+    let shown = |a: &Kawoosh| a.ed.buffer_of(a.focused_view().unwrap()).text();
+    let info = shown(&app);
+    let blocks: Vec<&str> = info
+        .split("\n\n")
+        .filter(|b| !b.trim().is_empty())
+        .collect();
+    assert_eq!(blocks.len(), 2, "{info}");
+    for (name, other) in [("alpha", "beta"), ("beta", "alpha")] {
+        let block = blocks
+            .iter()
+            .find(|b| b.lines().nth(1).is_some_and(|l| l.ends_with(name)))
+            .unwrap_or_else(|| panic!("{name}'s block: {info}"));
+        assert!(block.contains(&format!("fake server in {name}")), "{block}");
+        assert!(
+            !block.contains(&format!("fake server in {other}")),
+            "{block}"
+        );
+    }
+    d.keys(&mut app, "q");
+
+    // Bare: the instance serving the caret's file, beta's.
+    ex(&mut d, &mut app, "lsp logs");
+    let text = shown(&app);
+    assert!(text.contains("  stderr  fake server in beta\n"), "{text}");
+    assert!(!text.contains("fake server in alpha"), "{text}");
+    d.keys(&mut app, "q");
+
+    // The language's: both, each line by its root.
+    ex(&mut d, &mut app, "lsp logs rust");
+    let text = shown(&app);
+    let root_of = |name: &str| {
+        let r = app
+            .lsp
+            .status
+            .iter()
+            .find(|s| s.0.file_name().is_some_and(|f| f == name))
+            .unwrap();
+        kawoosh_systems::fs::abbreviate_home(&r.0)
+    };
+    let (ra, rb) = (root_of("alpha"), root_of("beta"));
+    assert!(
+        text.contains(&format!("  {ra}  stderr  fake server in alpha\n")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("  {rb}  stderr  fake server in beta\n")),
+        "{text}"
+    );
+    d.keys(&mut app, "q");
+
+    // Every one's: by server and root.
+    ex(&mut d, &mut app, "lsp logs all");
+    let text = shown(&app);
+    assert!(
+        text.contains(&format!("  {server} {ra}  stderr  fake server in alpha\n")),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&base).ok();
 }
