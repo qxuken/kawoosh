@@ -2758,12 +2758,23 @@ impl Kawoosh {
             // continues the word, else at the primary one.
             let sels = &self.ed.views[view].sels;
             let ranges: Vec<std::ops::Range<usize>> = if r.continues {
-                let mut heads: Vec<usize> = sels.iter().map(|s| s.head).collect();
-                heads.sort_unstable();
-                heads
-                    .into_iter()
-                    .map(|h| h.saturating_sub(typed_len)..h)
-                    .collect()
+                // Each caret's own word, measured there: another caret's
+                // may be shorter (`self.ba` beside `xyzba`).
+                let buf = &self.ed.buffers[buffer];
+                let primary = sels.primary().head;
+                let mut words: Vec<std::ops::Range<usize>> = sels
+                    .iter()
+                    .map(|s| {
+                        let h = s.head;
+                        if h == primary {
+                            return start..h.max(start);
+                        }
+                        let ls = buf.line_start(buf.line_of(h));
+                        ls + ident_start(&buf.slice(ls..h))..h
+                    })
+                    .collect();
+                words.sort_by_key(|r| (r.start, r.end));
+                words
             } else {
                 let caret = sels.primary().head;
                 std::iter::once(start..caret.max(start)).collect()

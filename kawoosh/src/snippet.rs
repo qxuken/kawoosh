@@ -422,35 +422,56 @@ impl Kawoosh {
         let Some(starts) = self.ed.apply_edits_at(buffer, &edits) else {
             return false;
         };
-        // Every place's fields joined: field N is its places in each.
+        // Every place's fields joined, by number: field N is its places
+        // in each copy. A variable's default can hold a field one copy
+        // has and another not (`${TM_CURRENT_WORD:${1:x}}`), so the
+        // fields are every copy's, in the order a copy visits them.
         let shift = |k: usize, r: &Range<usize>| starts[k] + r.start..starts[k] + r.end;
-        let first = &expanded[0];
-        let place = |index: u32| first.fields.iter().position(|f| f.index == index);
-        let fields: Vec<LiveField> = first
-            .fields
+        let mut order: Vec<u32> = Vec::new();
+        for e in &expanded {
+            for f in &e.fields {
+                if !order.contains(&f.index) {
+                    order.push(f.index);
+                }
+            }
+        }
+        // Numbered ascending, `$0` last, as `expand` orders each copy.
+        order.sort_by_key(|i| (*i == 0, *i));
+        let place = |index: u32| order.iter().position(|i| *i == index);
+        let fields: Vec<LiveField> = order
             .iter()
-            .enumerate()
-            .map(|(i, f)| LiveField {
-                index: f.index,
-                ranges: expanded
+            .map(|&index| {
+                let of =
+                    |e: &'_ grammar::Expanded| e.fields.iter().find(|f| f.index == index).cloned();
+                let first = expanded
                     .iter()
-                    .enumerate()
-                    .flat_map(|(k, e)| e.fields[i].ranges.iter().map(move |r| shift(k, r)))
-                    .collect(),
-                choices: f.choices.clone().map(Rc::from),
-                mirrors: expanded
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(k, e)| {
-                        e.fields[i]
-                            .mirrors
-                            .iter()
-                            .map(move |(r, t)| (shift(k, r), t.clone()))
-                    })
-                    .collect(),
-                parent: f.parent.and_then(place),
-                visited: false,
-                gone: false,
+                    .find_map(of)
+                    .expect("a field is some copy's");
+                LiveField {
+                    index,
+                    ranges: expanded
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(k, e)| {
+                            of(e)
+                                .into_iter()
+                                .flat_map(move |f| f.ranges.into_iter().map(move |r| shift(k, &r)))
+                        })
+                        .collect(),
+                    choices: first.choices.clone().map(Rc::from),
+                    mirrors: expanded
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(k, e)| {
+                            of(e).into_iter().flat_map(move |f| {
+                                f.mirrors.into_iter().map(move |(r, t)| (shift(k, &r), t))
+                            })
+                        })
+                        .collect(),
+                    parent: first.parent.and_then(place),
+                    visited: false,
+                    gone: false,
+                }
             })
             .collect();
         let spans = expanded

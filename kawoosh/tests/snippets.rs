@@ -304,6 +304,25 @@ fn several_carets_each_get_a_copy() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A field one copy has and another not — a variable's default holding
+/// it, the variable known at one caret — is paired by its number, never
+/// by its place in the first copy.
+#[test]
+fn copies_pair_their_fields_by_number() {
+    let (dir, mut d, mut app) = open("pair-by-number", "main.rs", "abc\n\n");
+    d.press(&mut app, "gg<C-j>A");
+    assert_eq!(carets(&app).len(), 2);
+    app.snippet_expand("[${TM_CURRENT_WORD:${1:x}}|${2:y}]");
+    d.settle(&mut app);
+    assert_eq!(text(&app), "abc[abc|y]\n[x|y]\n");
+    assert_eq!(selected(&app), ["x"], "field 1: the second copy's alone");
+    d.press(&mut app, "<C-l>");
+    assert_eq!(selected(&app), ["y", "y"], "field 2: both copies'");
+    d.keys(&mut app, "z");
+    assert_eq!(text(&app), "abc[abc|z]\n[x|z]\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A choice field offers its options in the popup at once, whatever
 /// the look says; `<C-n>` walks them, `<Tab>` takes one into every
 /// place of the field; typing narrows them.
@@ -794,6 +813,48 @@ fn a_servers_snippet_end_to_end() {
         text(&app)
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Accepted at two carets whose words differ in length, each caret's
+/// own word is replaced, nothing before it.
+#[test]
+fn each_caret_replaces_its_own_word() {
+    let dir = tmp("own-word");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "self.z\nzp\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
+    app.add_lsp_server(snippet_server());
+    let mut d = Drive::new(900.0, 500.0);
+    app.wait_for_open();
+    d.settle(&mut app);
+    d.press(&mut app, "gg<C-j>A");
+    let v = app.focused_view().unwrap();
+    let primary = app.ed.views[v].sels.primary().head;
+    assert_eq!(
+        app.ed.buffer_of(v).line_of(primary),
+        1,
+        "the `zp` line's caret leads"
+    );
+    d.keys(&mut app, "a");
+    until(&mut d, &mut app, "zpair", |a| {
+        a.completion
+            .candidates()
+            .iter()
+            .any(|c| c.starts_with("zpair("))
+    });
+    d.settle(&mut app);
+    d.press(&mut app, "<Tab>");
+    d.settle(&mut app);
+    assert_eq!(text(&app), "self.zpair(a, a)\nzpair(a, a)\n");
+    assert_eq!(
+        selected(&app).len(),
+        4,
+        "a field in two places, at two carets"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
