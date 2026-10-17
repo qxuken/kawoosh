@@ -3,7 +3,8 @@
 //! fake carapace on a PATH of the test's own here — answering, hanging,
 //! printing garbage or too much — asked off the frame, its answers kept
 //! by question for the prompt's life and shown only for the line that
-//! asked them.
+//! asked them; and a nushell parameter's completer, a fake `nu` there,
+//! asked the same way (Decision 16).
 //!
 //! Every test sets PATH, HOME and TMPDIR, which are the process's: they
 //! take one lock, so under `cargo test` (a thread a test) one runs at a
@@ -432,4 +433,104 @@ fn no_completer_on_the_path_or_turned_off_asks_nothing() {
         assert_eq!(s.calls(), Vec::<String>::new());
         leave(&mut d, &mut app);
     }
+}
+
+/// A fake `nu` for a nushell parameter's completer (compile.md Decision
+/// 16): the script it was given goes to `nu-calls` beside it, a line
+/// each; it answers by the completer the script names.
+const FAKE_NU: &str = r#"#!/bin/sh
+here=${0%/*}
+echo "$3" >> "$here/nu-calls"
+case "$3" in
+  *"; files |"*) echo 'the file printing at its top level'; printf '["alpha.txt","beta.txt"]\n' ;;
+  *"; lag |"*) /bin/sleep 0.3; printf '["late"]\n' ;;
+  *"; hang |"*) exec /bin/sleep 30 ;;
+esac
+"#;
+
+/// The completers a fake `nu` answers, as code (so nu is asked) behind
+/// a script's three positionals.
+const BUILD_NU: &str = r#"
+def files [] { ["alpha.txt", "beta.txt"] | each {|f| $f } }
+def lag [] { ["late"] | each {|f| $f } }
+def hang [] { [] | each {|f| $f } }
+def "main build" [file: string@files, other?: string@lag, third?: string@hang] { }
+"#;
+
+/// compile.md Decision 16 on Decision 23's footing: a nushell
+/// parameter's completer is asked on a job, no key waiting for nu; the
+/// answer kept by file, completer and the file's stamp, across prompts;
+/// one that lands after its prompt closed dropped and asked again.
+#[test]
+fn a_nushell_completer_is_asked_off_the_frame() {
+    let s = Sandbox::new("nu", false, "return {}");
+    let nu = s.bin.join("nu");
+    std::fs::write(&nu, FAKE_NU).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&nu, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let build = s.project.join("build.nu");
+    std::fs::write(&build, BUILD_NU).unwrap();
+    let asked = |name: &str| {
+        std::fs::read_to_string(s.bin.join("nu-calls"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.contains(&format!("; {name} |")))
+            .count()
+    };
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = s.open(&mut d);
+
+    // Asked as the parameter starts; the line completed as nu answers,
+    // read from its last line.
+    d.keys(&mut app, ":compile nu build.nu build al");
+    answered(&mut d, &mut app);
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("pha.txt"));
+    assert_eq!(asked("files"), 1);
+    leave(&mut d, &mut app);
+    // Kept while the file is unchanged: the next prompt has it at once.
+    d.keys(&mut app, ":compile nu build.nu build be");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("ta.txt"));
+    assert_eq!(asked("files"), 1);
+    leave(&mut d, &mut app);
+
+    // Out as its prompt closes: dropped as it lands, so the next prompt
+    // asks again, and is answered.
+    d.keys(&mut app, ":compile nu build.nu build x la");
+    leave(&mut d, &mut app);
+    app.wait_for_jobs();
+    d.keys(&mut app, ":compile nu build.nu build x la");
+    answered(&mut d, &mut app);
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("te"));
+    assert_eq!(asked("lag"), 2);
+    leave(&mut d, &mut app);
+
+    // One that hangs: the keys do not wait for it, and it is given up
+    // on after its patience, once — no values kept for it, and it is
+    // not asked again while the file holds.
+    let at = Instant::now();
+    d.keys(&mut app, ":compile nu build.nu build x y h");
+    let typed = at.elapsed();
+    assert!(typed < Duration::from_millis(1500), "{typed:?}");
+    answered(&mut d, &mut app);
+    assert!(at.elapsed() >= Duration::from_millis(1500));
+    assert_eq!(app.cmdline_ghost(), None);
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":compile nu build.nu build x y h");
+    answered(&mut d, &mut app);
+    assert_eq!(asked("hang"), 1);
+    leave(&mut d, &mut app);
+
+    // The file changed: asked again.
+    std::fs::write(&build, format!("# changed\n{BUILD_NU}")).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&build)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() + Duration::from_secs(5))
+        .unwrap();
+    d.keys(&mut app, ":compile nu build.nu build al");
+    answered(&mut d, &mut app);
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("pha.txt"));
+    assert_eq!(asked("files"), 2);
+    leave(&mut d, &mut app);
 }
