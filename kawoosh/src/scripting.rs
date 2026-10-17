@@ -237,6 +237,9 @@ impl Kawoosh {
         if let Err(e) = crate::legends::lua_door(rt.lua(), self.legends.clone()) {
             log::error!("kawoosh.legends: {e}");
         }
+        // This runtime's plugins and `init.lua` put their own snippets
+        // and are told the languages asked for afresh.
+        self.user_snippets.borrow_mut().reset();
         if let Err(e) = crate::user_snippets::lua_door(rt.lua(), self.user_snippets.clone()) {
             log::error!("kawoosh.snippets: {e}");
         }

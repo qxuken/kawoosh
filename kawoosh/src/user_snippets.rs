@@ -97,6 +97,16 @@ impl Store {
         self.cache.clear();
     }
 
+    /// Everything forgotten for a new Lua runtime, whose `init.lua`
+    /// and loader put their own: no snippet, no language asked for —
+    /// the generation moved on, so a live session offers again.
+    pub fn reset(&mut self) {
+        *self = Store {
+            generation: self.generation + 1,
+            ..Store::default()
+        };
+    }
+
     /// Whether `lang` is asked for the first time: the loader is told
     /// at the next frame.
     pub fn want(&mut self, lang: &str) {
@@ -235,7 +245,7 @@ fn read_table(t: &Table, origin: &Rc<str>) -> (Vec<Read>, Vec<String>) {
             other => {
                 problems.push(format!(
                     "a {} key: a snippet's name is a string",
-                    kind(&other)
+                    kind(other)
                 ));
                 continue;
             }
