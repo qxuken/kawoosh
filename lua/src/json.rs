@@ -325,4 +325,19 @@ mod tests {
         "#;
         assert_eq!(run(src), "[null,\"é\"]");
     }
+
+    /// The worst a read at the value cap costs the frame: every value a
+    /// table. Run by hand:
+    /// `cargo test -p kawoosh-lua --lib timing_the_cap -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn timing_the_cap() {
+        let n = kawoosh_systems::json::MAX_NODES - 1;
+        let text = format!("[{}]", vec!["[]"; n].join(","));
+        let v = kawoosh_systems::json::parse(&text).unwrap();
+        let lua = Lua::new();
+        let t = std::time::Instant::now();
+        to_lua(&lua, &v).unwrap();
+        println!("{n} tables made in {:?}", t.elapsed());
+    }
 }
