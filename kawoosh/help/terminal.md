@@ -12,7 +12,7 @@ A terminal pane runs your shell, or any program, inside kawoosh, beside your buf
 | `<C-w>.`, `:terminal here [CMD]` | a terminal where the pane in front is: a file's directory, the directory a listing or `:du` is on, a terminal's shell's |
 | `<C-w>u`, `:du here` | the disk usage of the same directory ([files](files.md#disk-usage)) |
 | `t` in the launcher | a new split (`<C-w>v`, `<C-w>s`) or tab opens on the launcher; `t` there makes it a terminal |
-| `:!CMD` | CMD in a terminal below; `%` is the file, `%:h` its directory, `%:t` its name, quoted for the shell |
+| `:!CMD` | CMD in a terminal below; `%` is the file, `%:h` its directory, `%:t` its name, quoted for the shell. `<Tab>` completes CMD's arguments from carapace and paths, as `:compile`'s ([code](code.md#compile-commands)) |
 
 A `:!CMD` pane stays when CMD ends, how it ended printed under its output (`[finished]`, `[exited with 2]`) and `DONE` on the status line. With no program left to hear them its keys are normal mode's: `r` runs the line again in the same pane and directory (`:terminal again`), `q` closes the pane, `<C-S-x>` makes the output a buffer. A shell, or a `:terminal CMD`, that ends takes its pane with it.
 
