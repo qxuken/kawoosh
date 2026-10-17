@@ -30,6 +30,96 @@
 local fs = kawoosh.fs
 local picker = kawoosh.picker
 
+---What a version control system answers, by name (`kawoosh.vcs.register`): every field a function, each one optional — what a backend lacks it does not have, and a command that needs it says so. Paths are absolute; `root` is what `probe` answered.
+---@class kawoosh.vcs.Backend
+---@field probe? fun(dir: string, done: fun(root: string?)) whether this system owns `dir`: `done(root)`, or `done(nil)` for the next backend
+---@field head? fun(root: string, done: fun(head: kawoosh.vcs.Head?)) the branch and revision checked out
+---@field base? fun(root: string, path: string, rev: string?, done: fun(text: string?, why: string?)) a file's text at `rev` (`"HEAD"`, a revision), nil `rev` the index; `done(nil, why)` when it has none
+---@field status? fun(root: string, done: fun(files: kawoosh.vcs.File[]?), opts?: kawoosh.vcs.StatusOpts) the changed, untracked and ignored files
+---@field changed? fun(root: string, from: string, to: string?, done: fun(files: kawoosh.vcs.File[]?)) the files changed between two revisions, nil `to` the working tree
+---@field merge_base? fun(root: string, a: string, b: string, done: fun(rev: string?)) where `a` and `b` parted
+---@field refs? fun(root: string, done: fun(refs: string[]?)) the branches and tags, by short name
+---@field blame? fun(root: string, path: string, text: string, done: fun(rows: kawoosh.vcs.BlameRow[]?, why: string?)) who last changed each line of `text`, the buffer's text as it is
+---@field log? fun(root: string, path: string?, done: fun(commits: kawoosh.vcs.Commit[]?, why: string?)) the commits that touched `path` (a file or a directory), nil the whole project's, newest first
+---@field show? fun(root: string, rev: string, done: fun(text: string?, why: string?)) a commit as a patch, its paths from `a/` and `b/`
+---@field worktrees? fun(root: string, done: fun(list: kawoosh.vcs.Worktree[]?)) the worktrees of the repository
+---@field worktree_add? fun(root: string, path: string, branch: string, done: fun(ok: boolean, why: string?)) a worktree made at `path` on `branch`, made from HEAD when there is none
+---@field watch? fun(root: string): kawoosh.vcs.Watch the paths whose change means "ask again"
+---@field index_ids? fun(root: string, paths: string[], done: fun(ids: table<string, string>?)) each file's entry in the index by the path asked with, `""` for none; nil when it could not ask
+---@field stage? fun(root: string, path: string, patch: string, done: fun(ok: boolean, why: string?)) the index patched (a hunk staged or unstaged): `patch` is the hunks alone, no file header
+
+---What a backend's `head` answers.
+---@class kawoosh.vcs.Head
+---@field branch? string the branch checked out; nil detached
+---@field rev? string the revision checked out, whole
+
+---A file a backend's `status` or `changed` names.
+---@class kawoosh.vcs.File
+---@field path string absolute
+---@field state kawoosh.vcs.State
+---@field staged? boolean something of it is staged (git's X)
+---@field unstaged? boolean something of it is changed since the index (git's Y)
+
+---What a file is to version control.
+---@alias kawoosh.vcs.State
+---| "modified"
+---| "added"
+---| "deleted"
+---| "untracked"
+---| "conflict"
+---| "ignored"
+
+---What a backend's `status` may be asked.
+---@class kawoosh.vcs.StatusOpts
+---@field under? string only what is under this directory (a listing's)
+---@field untracked? "normal"|"all" an untracked directory as one entry, or every file in it (the default)
+
+---A run of lines a backend's `blame` gives to one revision.
+---@class kawoosh.vcs.BlameRow
+---@field line integer the first line, from 1
+---@field count integer how many lines
+---@field rev string the revision; all zeros for lines not committed
+---@field author? string
+---@field time? integer when, in seconds since the epoch
+---@field summary? string the commit's first line
+
+---A commit as a backend's `log` gives it.
+---@class kawoosh.vcs.Commit
+---@field rev string the revision, whole
+---@field short? string its short spelling; the first eight characters of `rev` when nil
+---@field author? string
+---@field time? integer when, in seconds since the epoch
+---@field summary string the commit's first line
+
+---A worktree as a backend's `worktrees` gives it.
+---@class kawoosh.vcs.Worktree
+---@field path string
+---@field branch? string nil detached
+
+---What a backend's `watch` answers: a list of paths whose change is the repository moved, or the head's and the index's apart — the index's alone moving is only the index written (docs/design/vcs.md Decision 13).
+---@alias kawoosh.vcs.Watch string[]|{ head?: string[], index?: string[] }
+
+---A directory's backend, as `vcs.root` and `vcs.of` answer it.
+---@class kawoosh.vcs.Root
+---@field name string the backend's name (`"git"`)
+---@field root string the repository's root
+---@field backend kawoosh.vcs.Backend
+---@field watched? boolean the root's watch is set
+
+---A file of a review, as `vcs.layout` lays it out.
+---@class kawoosh.vcs.ReviewFile
+---@field rel string its path from the root, the header's
+---@field hunks kawoosh.Hunk[] as `kawoosh.diff` makes them
+---@field lines integer the new text's line count
+---@field path? string the file, shown from its buffer
+---@field name? string or the scratch buffer holding the new text
+---@field about? string the file a scratch is of, whose mask rules apply
+---@field old_shown? string[] the old text's lines as a list shows them, masked
+
+---Version control (`kawoosh.vcs`): the backends, and what the editor asks of them.
+---@class kawoosh.vcs
+---@field backends table<string, kawoosh.vcs.Backend> by name: `vcs.register(name, backend)`
+
 local vcs = { backends = {} }
 kawoosh.vcs = vcs
 
@@ -91,6 +181,9 @@ end
 -- taken away that reads `--- …` is the hunk's, not a header; a merge's
 -- combined diff (`@@@`, a column per parent) counts the same way. What
 -- is no hunk's (the message, the stat, the headers) is kept.
+---@param text string the patch as printed
+---@param root string the directory its paths are from
+---@return string
 function vcs.shown_patch(text, root)
   local lines = lines_of(text)
   -- The section's files: every path its headers name, old and new — a
@@ -232,6 +325,8 @@ end
 local function trim(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
 
 -- `3d`, `2w`, `5mo`, `2y`, `now`: how long ago `time` was.
+---@param time integer|string? seconds since the epoch
+---@return string
 function vcs.ago(time)
   local d = os.time() - (tonumber(time) or 0)
   if d < 60 then return "now" end
@@ -313,6 +408,9 @@ end
 
 -- vcs.register(name, backend): a backend by name; the same name
 -- replaces one.
+---@param name string
+---@param backend kawoosh.vcs.Backend
+---@return nil
 function vcs.register(name, backend)
   vcs.backends[name] = backend
 end
@@ -370,6 +468,9 @@ end
 -- vcs.root(dir, done): `done(r)` with `{ name =, root =, backend = }`
 -- for the backend that owns `dir`, or `done(nil)` — the backends
 -- asked in `vcs.backends`' order, once per directory.
+---@param dir string
+---@param done fun(r: kawoosh.vcs.Root?)
+---@return nil
 function vcs.root(dir, done)
   local hit = roots[dir]
   if hit ~= nil then return done(hit or nil) end
@@ -402,6 +503,8 @@ end
 
 -- vcs.of(dir): the backend and root of `dir` as probed already —
 -- `{ name =, root =, backend = }` — or nil (asked, if not yet).
+---@param dir string
+---@return kawoosh.vcs.Root?
 function vcs.of(dir)
   local hit = roots[dir]
   if hit == nil then vcs.root(dir, function() end) end
@@ -438,6 +541,11 @@ local function read_head(r, done, again)
   ask()
 end
 
+-- vcs.head(r, done): `done(head)` with the head of `r` (a root as
+-- `vcs.root` answers it), as last read — see `read_head` above.
+---@param r kawoosh.vcs.Root
+---@param done fun(head: kawoosh.vcs.Head?)
+---@return nil
 function vcs.head(r, done)
   local h = heads[r.root]
   if h ~= nil and not heads_waiting[r.root] then return done(h or nil) end
@@ -454,6 +562,8 @@ local index_ids, index_checking = {}, {}
 -- checkout): its head is read again — the one read before kept on the
 -- line until the new one comes, rather than the branch blinking out —
 -- and every buffer under it with a base is given its base again.
+---@param root string
+---@return nil
 function vcs.moved(root)
   local r = by_root[root]
   if r and r.backend.head then
@@ -479,6 +589,8 @@ end
 -- backend in one go (`index_ids`) — without that, every one, as
 -- `vcs.moved` does. One look at a time per root: moved while one is
 -- under way, it looks once more after.
+---@param root string
+---@return nil
 function vcs.index_moved(root)
   if kawoosh.opt("vcs.base") == "head" or not enabled() then return end
   if index_checking[root] then
@@ -601,6 +713,10 @@ local function fetch_base(path, holder)
   end)
 end
 
+-- vcs.refresh(buffer): the buffer's base asked of its backend again
+-- — see `fetch_base` above.
+---@param h integer the buffer
+---@return nil
 function vcs.refresh(h)
   if not enabled() or not has_buffer(h) then return end
   local path = kawoosh.buf.path(h)
@@ -697,6 +813,8 @@ local function context() return math.max(tonumber(kawoosh.opt("places.context"))
 -- `deleted` colour, its new lines with the context around them, runs
 -- that meet made one, `⋯` between those that do not. A file is
 -- `{ rel =, hunks =, lines =, path = | name = }`.
+---@param files kawoosh.vcs.ReviewFile[]
+---@return kawoosh.MultiPart[] parts # `kawoosh.multibuffer`'s
 function vcs.layout(files)
   local c = context()
   local parts = {}
@@ -854,6 +972,9 @@ end
 -- against the base; `from` alone, the working tree against where
 -- `from` and HEAD parted (the user's "this branch against main");
 -- both, two revisions.
+---@param from? string a revision; nil the working tree against the base
+---@param to? string a second revision
+---@return nil
 function vcs.review(from, to)
   with_root(function(r)
     if from == nil then
@@ -893,6 +1014,8 @@ end
 
 -- vcs.blame_on(buffer): the column on, from the backend's blame of the
 -- buffer's text as it is.
+---@param h integer the buffer
+---@return nil
 function vcs.blame_on(h)
   local path = kawoosh.buf.path(h)
   if not path then return kawoosh.echo("not a file") end
@@ -916,6 +1039,9 @@ function vcs.blame_on(h)
   end)
 end
 
+-- vcs.blame_off(buffer): the column off.
+---@param h integer the buffer
+---@return nil
 function vcs.blame_off(h)
   blamed[h] = nil
   kawoosh.buf.blame(false, h)
@@ -926,6 +1052,8 @@ end
 local SHOWN = {}
 
 -- vcs.show(rev): the commit as a `*show REV*` diff buffer.
+---@param rev string
+---@return nil
 function vcs.show(rev)
   with_root(function(r)
     if not can(r, "show") then return end
@@ -1269,8 +1397,12 @@ end
 -- Each root's git directory (a worktree's is elsewhere), from the probe.
 local gitdirs = {}
 
+---@type kawoosh.vcs.Backend
 local git = {}
 
+---@param dir string
+---@param done fun(root: string?)
+---@return nil
 function git.probe(dir, done)
   -- Not installed: owns nothing, and no spawn to fail in the message
   -- line. `nil` (the PATH still being asked for) tries anyway.
@@ -1298,6 +1430,8 @@ function git.probe(dir, done)
   end)
 end
 
+---@param root string
+---@return kawoosh.vcs.Watch
 function git.watch(root)
   local g = gitdirs[root]
   if not g then return {} end
@@ -1310,6 +1444,10 @@ end
 -- `ls-files` for them all, from the root. A path not under the root as
 -- git spells it (a link, `/tmp` against `/private/tmp`) is left out,
 -- and so read again each time.
+---@param root string
+---@param paths string[]
+---@param done fun(ids: table<string, string>?)
+---@return nil
 function git.index_ids(root, paths, done)
   -- Literal: a `[` or `*` in a name is that file, not a pattern.
   local argv = { "git", "--literal-pathspecs", "-c", "core.quotePath=false", "ls-files", "-s", "-z", "--" }
@@ -1336,6 +1474,9 @@ function git.index_ids(root, paths, done)
   end)
 end
 
+---@param root string
+---@param done fun(head: kawoosh.vcs.Head?)
+---@return nil
 function git.head(root, done)
   run({ "git", "rev-parse", "--abbrev-ref", "HEAD", "HEAD" }, root, function(text, code)
     if code ~= 0 then return done(nil) end
@@ -1344,6 +1485,11 @@ function git.head(root, done)
   end)
 end
 
+---@param root string
+---@param path string
+---@param rev string? nil the index
+---@param done fun(text: string?, why: string?)
+---@return nil
 function git.base(root, path, rev, done)
   run({ "git", "show", (rev or "") .. ":./" .. fs.basename(path) }, fs.parent(path), function(text, code)
     if code ~= 0 then return done(nil, "not in " .. (rev or "the index")) end
@@ -1357,6 +1503,10 @@ end
 -- `ignored`, for a listing to paint faint: `traditional`, so a
 -- directory holding nothing but ignored files (`.claude/` with only
 -- its `worktrees/` excluded) is named as the one entry it is.
+---@param root string
+---@param done fun(files: kawoosh.vcs.File[]?)
+---@param opts? kawoosh.vcs.StatusOpts
+---@return nil
 function git.status(root, done, opts)
   opts = opts or {}
   local argv = { "git", "-c", "core.quotePath=false", "status", "--porcelain=v1", "--ignored=traditional",
@@ -1398,6 +1548,11 @@ end
 -- at the root. `--whitespace=nowarn`: a user's `apply.whitespace =
 -- error` would refuse a line's trailing blank the working tree has
 -- already.
+---@param root string
+---@param path string
+---@param patch string
+---@param done fun(ok: boolean, why: string?)
+---@return nil
 function git.stage(root, path, patch, done)
   run({ "git", "rev-parse", "--show-prefix" }, fs.parent(path), function(prefix, c1, e1)
     if c1 ~= 0 then return done(false, failure(e1, prefix, "not in the repository")) end
@@ -1410,6 +1565,11 @@ function git.stage(root, path, patch, done)
   end)
 end
 
+---@param root string
+---@param from string
+---@param to string?
+---@param done fun(files: kawoosh.vcs.File[]?)
+---@return nil
 function git.changed(root, from, to, done)
   local argv = { "git", "-c", "core.quotePath=false", "diff", "--name-status", "--no-renames", from }
   if to then argv[#argv + 1] = to end
@@ -1427,6 +1587,11 @@ function git.changed(root, from, to, done)
   end)
 end
 
+---@param root string
+---@param a string
+---@param b string
+---@param done fun(rev: string?)
+---@return nil
 function git.merge_base(root, a, b, done)
   run({ "git", "merge-base", a, b }, root, function(text, code)
     if code ~= 0 then return done(nil) end
@@ -1434,6 +1599,9 @@ function git.merge_base(root, a, b, done)
   end)
 end
 
+---@param root string
+---@param done fun(refs: string[]?)
+---@return nil
 function git.refs(root, done)
   run({ "git", "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes", "refs/tags" }, root,
     function(text, code)
@@ -1442,6 +1610,11 @@ function git.refs(root, done)
     end)
 end
 
+---@param root string
+---@param path string
+---@param text string
+---@param done fun(rows: kawoosh.vcs.BlameRow[]?, why: string?)
+---@return nil
 function git.blame(root, path, text, done)
   run({ "git", "blame", "--porcelain", "--contents", "-", "--", fs.basename(path) }, fs.parent(path),
     function(out, code, err)
@@ -1476,6 +1649,10 @@ end
 -- A file's log asked from its directory, by its name there: an absolute
 -- path spelled otherwise than the root (`C:\REPO\SUB\b.txt`) matches
 -- nothing from the root, and git says nothing of it.
+---@param root string
+---@param path string?
+---@param done fun(commits: kawoosh.vcs.Commit[]?, why: string?)
+---@return nil
 function git.log(root, path, done)
   local argv = { "git", "log", "--format=%H\31%h\31%an\31%at\31%s", "-n", "300" }
   local cwd = root
@@ -1503,6 +1680,10 @@ end
 -- The files named as they are spelled and from `a/` and `b/` whatever
 -- the user's `diff.noprefix`: the masks find a file's rules by its
 -- `+++ b/PATH` (`vcs.shown_patch`), and `<CR>` its file.
+---@param root string
+---@param rev string
+---@param done fun(text: string?, why: string?)
+---@return nil
 function git.show(root, rev, done)
   -- No colour, no external differ, no textconv whatever the user's
   -- config: a line that starts with an escape matches no header, and
@@ -1515,6 +1696,9 @@ function git.show(root, rev, done)
   end)
 end
 
+---@param root string
+---@param done fun(list: kawoosh.vcs.Worktree[]?)
+---@return nil
 function git.worktrees(root, done)
   run({ "git", "worktree", "list", "--porcelain" }, root, function(text, code)
     if code ~= 0 then return done(nil) end
@@ -1533,6 +1717,11 @@ function git.worktrees(root, done)
   end)
 end
 
+---@param root string
+---@param path string
+---@param branch string
+---@param done fun(ok: boolean, why: string?)
+---@return nil
 function git.worktree_add(root, path, branch, done)
   git.refs(root, function(refs)
     local exists = false
@@ -1574,8 +1763,12 @@ vcs.register("git", git)
 -- diff. No merge base, no worktrees: `vcs diff main` says so. No
 -- `stage`: fossil has no index, a commit takes the files as they are
 -- (`fossil commit FILE` for some of them).
+---@type kawoosh.vcs.Backend
 local fossil = {}
 
+---@param dir string
+---@param done fun(root: string?)
+---@return nil
 function fossil.probe(dir, done)
   if fs.on_path("fossil") == false then return done(nil) end
   run({ "fossil", "info" }, dir, function(text, code)
@@ -1586,6 +1779,9 @@ function fossil.probe(dir, done)
   end)
 end
 
+---@param root string
+---@param done fun(head: kawoosh.vcs.Head?)
+---@return nil
 function fossil.head(root, done)
   run({ "fossil", "info" }, root, function(text, code)
     if code ~= 0 then return done(nil) end
@@ -1596,6 +1792,11 @@ function fossil.head(root, done)
   end)
 end
 
+---@param root string
+---@param path string
+---@param rev string? nil or `"HEAD"` the checkout
+---@param done fun(text: string?, why: string?)
+---@return nil
 function fossil.base(root, path, rev, done)
   local argv = { "fossil", "cat" }
   if rev and rev ~= "HEAD" then
@@ -1615,6 +1816,9 @@ local FOSSIL_STATES = { EDITED = "modified", ADDED = "added", DELETED = "deleted
 -- `--differ`: the changes and the extra (untracked) files together —
 -- `--extra` alone is `fossil extras`; `--classify`: each line headed
 -- by its kind.
+---@param root string
+---@param done fun(files: kawoosh.vcs.File[]?)
+---@return nil
 function fossil.status(root, done)
   run({ "fossil", "changes", "--differ", "--classify" }, root, function(text, code)
     if code ~= 0 then return done(nil) end
@@ -1634,6 +1838,11 @@ function fossil.status(root, done)
   end)
 end
 
+---@param root string
+---@param from string
+---@param to string?
+---@param done fun(files: kawoosh.vcs.File[]?)
+---@return nil
 function fossil.changed(root, from, to, done)
   local argv = { "fossil", "diff", "--brief", "--from", from }
   if to then
@@ -1653,6 +1862,11 @@ function fossil.changed(root, from, to, done)
   end)
 end
 
+---@param root string
+---@param path string
+---@param _ string the text, unread: fossil blames the file as checked out
+---@param done fun(rows: kawoosh.vcs.BlameRow[]?, why: string?)
+---@return nil
 function fossil.blame(root, path, _, done)
   run({ "fossil", "blame", fs.basename(path) }, fs.parent(path), function(text, code, err)
     if code ~= 0 then return done(nil, failure(err, nil, "fossil blame failed")) end
@@ -1675,6 +1889,10 @@ function fossil.blame(root, path, _, done)
   end)
 end
 
+---@param root string
+---@param path string?
+---@param done fun(commits: kawoosh.vcs.Commit[]?, why: string?)
+---@return nil
 function fossil.log(root, path, done)
   local argv = { "fossil", "timeline", "-n", "200", "-t", "ci", "-F", "%H\31%d\31%a\31%c" }
   if path then
@@ -1697,6 +1915,10 @@ function fossil.log(root, path, done)
   end)
 end
 
+---@param root string
+---@param rev string
+---@param done fun(text: string?, why: string?)
+---@return nil
 function fossil.show(root, rev, done)
   run({ "fossil", "diff", "--checkin", rev }, root, function(text, code, err)
     if code ~= 0 then return done(nil, failure(err, text, "fossil diff failed")) end

@@ -106,6 +106,10 @@ end
 
 -- "0x1F0", "1f0h", "496", "+16", "-0x10", "50%": an offset, absolute or
 -- from `at`; nil for what is none of them.
+---@param text string|number? what was typed
+---@param at? integer the byte a `+` or `-` counts from
+---@param size? integer the file's size, for a percent
+---@return integer? offset # a byte from 0; nil for what is no offset
 function hex.parse_offset(text, at, size)
   text = tostring(text or ""):gsub("[%s_]", "")
   local sign, body = text:match("^([+-]?)(.+)$")
@@ -130,6 +134,9 @@ end
 
 -- What to find: `0x` and hex digits, spaced or not, are those bytes
 -- (`0xDEADBEEF`, `0x de ad be ef`); anything else is its own text.
+---@param text string? what was typed
+---@return string? bytes
+---@return string? why # when there are no bytes
 function hex.parse_needle(text)
   text = tostring(text or "")
   local digits = text:match("^0[xX]([%x%s]+)$")
@@ -143,6 +150,8 @@ function hex.parse_needle(text)
 end
 
 -- Whether `path` is a file that is not text: a NUL in its head.
+---@param path string
+---@return boolean
 function hex.is_binary(path)
   local ok, head = pcall(fs.bytes, path, 0, SNIFF)
   return ok and head:find("\0", 1, true) ~= nil
@@ -916,6 +925,8 @@ end, {
 -- ------------------------------------------------------------- the door
 
 -- hex.open(path): the bytes pane over `path`, opened or turned to it.
+---@param path string
+---@return nil
 function hex.open(path)
   path = fs.expand(path)
   if fs.is_dir(path) then return kawoosh.echo("a directory: " .. path) end
@@ -934,6 +945,43 @@ function hex.open(path)
   kawoosh.view_open(VIEW, { share = SHARE })
 end
 
+-- hex.changes(path): a file's changes not written yet, `{ { at =,
+-- new =, disk = }, … }` in the file's order.
+---@param path string
+---@return { at: integer, new: integer, disk: integer }[] # each byte's offset from 0, the byte it is to be and the one the disk had
+function hex.changes(path)
+  local E = changes(fs.expand(path))
+  local out = {}
+  for i, at in ipairs(sorted(E)) do out[i] = { at = at, new = E.map[at].new, disk = E.map[at].disk } end
+  return out
+end
+
+-- hex.panes(): the panes that have a state, by id.
+---@return integer[]
+function hex.panes()
+  local out = {}
+  for p in pairs(states) do out[#out + 1] = p end
+  table.sort(out)
+  return out
+end
+
+---What `kawoosh.hex.state` answers.
+---@class kawoosh.hex.State
+---@field path string
+---@field size integer bytes, as last read
+---@field cursor integer the cursor's byte, from 0
+---@field top integer the first row on show, from 0
+---@field columns integer bytes a row
+---@field rows integer rows on show
+---@field anchor? integer the selection's other end, a byte from 0
+---@field side "hex"|"text" the half the keys are in
+---@field mode? "one"|"replace" while bytes are taken (`r`, `R`)
+---@field changed integer bytes changed and not written
+---@field order "little"|"big" the byte order the foot reads numbers in
+---@field needle? string the bytes last asked for
+---@field lines? string[] the grid's rows as drawn, the columns' names first
+---@field measured boolean the rows were counted from the grid's own box
+
 -- hex.state([pane]): what a pane shows — `path`, `size`, `cursor`,
 -- `top` (the first row on show), `columns`, `rows`, `anchor`, `side`
 -- (`"hex"`, `"text"`: the half the keys are in), `mode` (`"one"`,
@@ -943,22 +991,8 @@ end
 -- the grid's own box, not guessed from the pane's) — or nil when it
 -- is not open: the pane
 -- last drawn with the keyboard when none is named.
--- hex.changes(path): a file's changes not written yet, `{ { at =,
--- new =, disk = }, … }` in the file's order.
-function hex.changes(path)
-  local E = changes(fs.expand(path))
-  local out = {}
-  for i, at in ipairs(sorted(E)) do out[i] = { at = at, new = E.map[at].new, disk = E.map[at].disk } end
-  return out
-end
-
-function hex.panes()
-  local out = {}
-  for p in pairs(states) do out[#out + 1] = p end
-  table.sort(out)
-  return out
-end
-
+---@param pane? integer the pane's id
+---@return kawoosh.hex.State?
 function hex.state(pane)
   local st = states[pane or last]
   if not st then return nil end

@@ -102,6 +102,38 @@ kawoosh.setting("dir.sizes", { type = "boolean", doc = "whether listings size th
 kawoosh.setting("dir.vcs_enabled", { type = "boolean", doc = "whether listings are painted by version control" })
 
 local fs = kawoosh.fs
+---How a directory is listed: by `name`, `size`, `mtime` or `type` (the extension, then the name), directories first either way.
+---@class kawoosh.dir.Sort
+---@field key "name"|"size"|"mtime"|"type"
+---@field reverse boolean
+
+---The entry behind a tracked line of a listing: one on disk (`dir`, `name`, `meta`), the `../` line (`up`), or a line typed in (`new`).
+---@class kawoosh.dir.Entry
+---@field dir? string the directory it is in
+---@field name? string its name as listed, a directory's with its `/`
+---@field meta? string what the line's note says of it: size, mtime
+---@field up? true the `../` line
+---@field new? true a line no entry is behind: a file to create
+
+---What a listing buffer holds (`kawoosh.dir.state`, by the buffer's name).
+---@class kawoosh.dir.Listing
+---@field dir string the directory listed
+---@field ids table<integer, kawoosh.dir.Entry> each tracked line's entry, by id
+---@field byname? table<string, integer> the listing's own entries' ids, by line text
+---@field odd? table<integer, boolean> the ids tracked since the fill: lines pasted or typed in
+---@field noted? table<integer, boolean> the ids whose note says more than what the entry is
+---@field waits? table<integer, { path: string, modified?: integer }> the directories the sizing walk has yet to size, by id
+
+---The file manager (`kawoosh.dir`), for a config to reach.
+---@class kawoosh.dir
+---@field state table<string, kawoosh.dir.Listing> each listing buffer's, by its name (`dir: PATH`)
+---@field followed? integer the listing buffer the preview follows
+---@field sorts table<string, kawoosh.dir.Sort|false> each directory's order as read from the store, `false` for none
+---@field last_sort? kawoosh.dir.Sort|false the order chosen last anywhere; `false` for none
+---@field walks table<string, { walk: integer, done: boolean }> each directory's sizing walk (`kawoosh.du.walk`'s number) while a listing of it sizes
+---@field images table<string, boolean> the extensions the preview draws as a picture, lower case
+---@field nav? integer the newest `dir.open` asked: an older one's read lands nowhere
+
 -- `state[name]` is what the listing buffer `name` holds: its directory
 -- and `ids` — for each tracked line of the buffer, by id, the entry
 -- behind it: `{ dir, name, meta }`, the listing's own entries and every
@@ -422,6 +454,11 @@ end
 -- `reread`, it is read again. The listing the keyboard is in is reused
 -- — renamed and refilled — unless it has edits or `fresh` asks for a
 -- buffer of its own.
+---@param path string a directory, or a file to list the directory of; `<drives>` the drives on Windows
+---@param from? string the entry's name to put the caret on
+---@param fresh? boolean a buffer of its own, not the listing reused
+---@param reread? boolean read again, its edits dropped
+---@return nil
 function dir.open(path, from, fresh, reread)
   if path == DRIVES then return open_drives(fresh) end
   path = fs.expand(path)
@@ -478,6 +515,9 @@ end
 -- Lists `d` again in its buffer `h` where it is — another pane, the
 -- background — without touching the focused pane, the caret kept on
 -- its entry.
+---@param d string the directory
+---@param h integer the listing buffer
+---@return nil
 local function relist(d, h)
   listing(d, function(lines, meta, waits)
     if not lines or lists(h) ~= d then return end
@@ -868,6 +908,7 @@ end
 -- moves and copies between them last — applied on `Apply`. Returning
 -- false keeps the buffer modified until then; with nothing to do the
 -- listings with edits are read again and the write is done as it is.
+---@return boolean done # false keeps the buffer modified until `Apply`
 function dir.write()
   local here = listed()
   local st = dir.state[PREFIX .. (here or "")]
@@ -930,6 +971,9 @@ end
 -- the count said under `dir` — what a pane over the tree deletes
 -- through (the disk-usage pane, `du.lua`). `done()` runs once they are
 -- applied; `Cancel` runs nothing.
+---@param paths string[] absolute
+---@param done? fun() once they are applied
+---@return nil
 function dir.remove(paths, done)
   local bydir, groups = {}, {}
   for _, p in ipairs(paths) do
@@ -979,6 +1023,7 @@ end
 -- line whose story is over, or that was just given its entry. Told by
 -- `on_change`, so the listing says what it means as it is edited; only
 -- the lines whose note changes are touched.
+---@return nil
 function dir.changed()
   local groups, between, _, _, listings = pending()
   local stories = {}
@@ -1025,6 +1070,9 @@ end
 -- listed again in its order, unless it has edits. Until then the
 -- listing keeps its order under the caret; a directory the walk could
 -- not read says no size. A walk no listing wants any more is let go.
+---@param d string the directory walked
+---@param done boolean the walk is over
+---@return nil
 function dir.sized(d, done)
   local w = dir.walks[d]
   if not w then return end
@@ -1268,6 +1316,8 @@ local PREVIEW_LINES = 400
 dir.images = { png = true, apng = true, jpg = true, jpeg = true, gif = true, webp = true, bmp = true,
   svg = true, svgz = true }
 
+---@param path string
+---@return boolean
 function dir.is_image(path)
   local ext = path:match("%.([%w]+)$")
   return ext ~= nil and dir.images[ext:lower()] == true
@@ -1439,6 +1489,9 @@ local RANK = { conflict = 5, modified = 4, added = 3, untracked = 2, ignored = 1
 -- climb: a directory holding ignored files (`*_templ.go`, a
 -- `node_modules/` deep inside) is not ignored itself — only an entry
 -- git names (`data/`) is.
+---@param d string the directory listed
+---@param files kawoosh.vcs.File[] a backend's, absolute
+---@return table<string, kawoosh.vcs.State> states by entry name, a directory's without its `/`
 function dir.states_of(d, files)
   local states = {}
   for _, f in ipairs(files) do
@@ -1461,6 +1514,9 @@ end
 -- Asks the backend that owns `d` about listing `name` and paints its
 -- lines, read as they are when the answer comes (edited meanwhile or
 -- not).
+---@param name string the listing buffer's name
+---@param d string the directory it lists
+---@return nil
 function dir.decorate(name, d)
   if kawoosh.opt("dir.vcs_enabled") == false or not kawoosh.vcs then return end
   kawoosh.vcs.root(d, function(r)
@@ -1501,6 +1557,8 @@ end
 -- on disk — an entry made, removed, renamed by anything — is read again
 -- where it is, unless the listing has edits of its own (its plan comes
 -- first; `<C-l>` asks).
+---@param also? string a directory watched too: one whose listing is not in the snapshot yet
+---@return nil
 function dir.watch_sync(also)
   local dirs, seen = {}, {}
   if also then

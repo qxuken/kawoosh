@@ -51,6 +51,50 @@ kawoosh.setting("sqlite.cell_width", {
   doc = "the widest a column of the database pane's grid is drawn, in characters; 40 by default",
 })
 
+---A database pane's own state, as the comment under `kawoosh.sqlite_pane` says it; what the door's functions take as `st`.
+---@class kawoosh.sqlite_pane.Pane
+---@field path string the file
+---@field pane integer the pane's id
+---@field schema? { tables: { name: string, kind: string, rows?: integer, without_rowid?: boolean }[], bytes?: integer } `kawoosh.sqlite.schema`'s answer, nil until read
+---@field ti integer the tables' cursor, from 1
+---@field focus "tables"|"grid" which half has the keys
+---@field source? { table?: string, order?: string, desc?: boolean, sql?: string } what the grid shows: a table browsed, or a query
+---@field res? table the result shown: `columns`, `rows`, `truncated`, `rowid`, `widths`, `numeric`, `shown`
+---@field cur { r: integer, c: integer } the grid's cursor: the row and the shown column, from 1
+---@field top integer the first row on show, from 0
+---@field left integer the first column on show, from 1
+---@field more? boolean a browsed table has rows past the page
+---@field loading? boolean
+---@field total? integer the browsed table's rows
+---@field status? { text: string, kind: string } the foot's
+---@field undo table[] the changes made this run
+---@field editing? table what the line is editing
+---@field lines string[] what the last frame drew
+
+---What `kawoosh.sqlite_pane.state` answers.
+---@class kawoosh.sqlite_pane.State
+---@field path string
+---@field tables string[] the tables' and views' names
+---@field table? string the one browsed
+---@field sql? string a query shown instead
+---@field order? string the column a browsed table is ordered by
+---@field desc? boolean
+---@field focus "tables"|"grid"
+---@field cursor { row: integer, col: integer } from 1, the column among those shown
+---@field top integer the first row on show, from 0
+---@field left integer the first column on show, from 1
+---@field rows integer rows fetched
+---@field total? integer
+---@field columns string[] the columns shown
+---@field lines string[] the grid as drawn, the header first
+---@field value? string the cursor's cell as drawn
+---@field status? string
+---@field error? string
+---@field editing boolean
+---@field changes integer made this run
+---@field loading boolean
+---@field more boolean a browsed table has rows past the page
+
 local pane = {}
 kawoosh.sqlite_pane = pane
 
@@ -253,6 +297,10 @@ end
 -- pane.browse(name): the table's rows in the grid, from its first;
 -- `keep` leaves the foot's status as it is (a refresh after a change
 -- said its count).
+---@param name string the table or view
+---@param st? kawoosh.sqlite_pane.Pane the pane's state; the one at hand when nil
+---@param keep? boolean the foot's status left as it is
+---@return nil
 function pane.browse(name, st, keep)
   st = st or S
   if not st then return end
@@ -292,6 +340,8 @@ end
 
 -- pane.refresh(st): the file's tables read again, and what the grid
 -- shows with them.
+---@param st? kawoosh.sqlite_pane.Pane the pane's state; the one at hand when nil
+---@return nil
 function pane.refresh(st)
   st = st or S
   if not st then return end
@@ -347,6 +397,9 @@ end
 
 -- pane.run(sql): the SQL run, its rows in the grid — or, for a
 -- statement without rows, its changes said and the tables read again.
+---@param sql string
+---@param st? kawoosh.sqlite_pane.Pane the pane's state; the one at hand when nil
+---@return nil
 function pane.run(sql, st)
   st = st or S
   if not st then return end
@@ -867,6 +920,8 @@ end, {
 
 -- pane.sort(i): the browsed table ordered by its `i`th shown column,
 -- the other way when it is already.
+---@param i? integer the shown column, from 1; the cursor's when nil
+---@return nil
 function pane.sort(i)
   if not (S and S.res and S.source and S.source.table) then
     if S then set_status(S, "a query's rows are as it ordered them", "error") end
@@ -885,6 +940,8 @@ end
 -- --------------------------------------------------------------- the door
 
 -- pane.open(path): the database pane over `path`, opened or turned to it.
+---@param path string
+---@return nil
 function pane.open(path)
   path = fs.expand(path)
   if fs.is_dir(path) then return kawoosh.echo("a directory: " .. path) end
@@ -894,6 +951,8 @@ function pane.open(path)
   kawoosh.view_open(VIEW, { share = SHARE })
 end
 
+-- pane.panes(): the panes that have a state, by id.
+---@return integer[]
 function pane.panes()
   local out = {}
   for p in pairs(states) do out[#out + 1] = p end
@@ -908,6 +967,8 @@ end
 -- first), `value` (the cursor's cell as drawn), `status`, `error`,
 -- `editing`, `changes` (made this run), `loading` — or nil when it is
 -- not open: the pane last drawn with the keyboard when none is named.
+---@param p? integer the pane's id
+---@return kawoosh.sqlite_pane.State?
 function pane.state(p)
   local st = states[p or last]
   if not st then return nil end
