@@ -50,6 +50,38 @@ local function timed(fn, ...)
   return left(pcall(fn, ...))
 end
 
+---@alias kawoosh.Mode
+---| "n" # normal
+---| "normal"
+---| "i" # insert
+---| "insert"
+---| "v" # visual
+---| "visual"
+---| "o" # operator pending
+---| "op"
+---| "operator"
+---| "p" # pane mode
+---| "pane"
+
+---What a command's function is given.
+---@class kawoosh.Ctx
+---@field count integer the count typed, 1 when none
+---@field counted boolean a count was typed: `1j` and not `j`
+---@field args string[] the arguments, a "path" one absolute
+---@field form "run"|"bang"|"query" how it was spelled: `:x`, `:x!`, `:x?`
+---@field bang boolean
+---@field query boolean
+---@field pane integer the id of the pane the keyboard is in
+
+---@class kawoosh.CommandOpts
+---@field args? string[] one kind per position: "path", "buffer", "command", "option", "tool", "view", "text", the last with "..." for the rest
+---@field aliases? string[] the ex spellings, `{ "o" }`
+---@field bang? string what `!` means; without one `:name!` is refused
+---@field query? string what `?` means
+---@field when? string[] facts that must hold, `{ "language:dir", "!terminal" }`
+---@field doc? string one line on what it does
+---@field jump? boolean the move it makes is a jump however near
+
 -- kawoosh.command(name, fn[, opts]): a named command, callable from a
 -- keymap, the command line, or Rust. A name of two words is a
 -- subcommand (`"dir cd"` runs as `:dir cd`, completes under `:dir`).
@@ -78,6 +110,10 @@ end
 --           tab's list for `<C-o>` (docs/design/jumps.md).
 -- `kawoosh.commands()` lists every command's spec as such a table;
 -- `kawoosh.can(name)` is true, or the reason it cannot run now.
+---@param name string
+---@param fn fun(ctx: kawoosh.Ctx)
+---@param opts? kawoosh.CommandOpts
+---@return nil
 function kawoosh.command(name, fn, opts)
   kawoosh._commands[name] = fn
   kawoosh._register(name, opts)
@@ -121,6 +157,15 @@ local function scope_of(opts)
   return nil
 end
 
+---Where a map holds (docs/design/local-maps.md), and when.
+---@class kawoosh.MapOpts
+---@field when? string[] facts that must hold where the key is pressed
+---@field view? string a view's pane
+---@field field? string with `view`, its field
+---@field buffer? integer|string|true a handle, a name, `true` the current one
+---@field language? string
+---@field scope? string any fact as the place
+
 -- kawoosh.map(mode, keys, cmd[, opts]): `cmd` is a command name (with
 -- args, as the command line would spell it) or a function, which
 -- becomes one. A map belongs to a place when `opts` names one — `view`
@@ -132,6 +177,11 @@ end
 -- listing's `<CR>` and nothing anywhere else. A key can be bound more
 -- than once in one place: the newest binding whose `opts.when` holds
 -- and whose command can run is the one that runs.
+---@param mode kawoosh.Mode
+---@param keys string `<leader>ff`, `<C-w>v`, `gx`
+---@param cmd string|fun(ctx: kawoosh.Ctx) a command line, or a function made one
+---@param opts? kawoosh.MapOpts
+---@return nil
 function kawoosh.map(mode, keys, cmd, opts)
   if type(cmd) == "function" then
     kawoosh._nonce = kawoosh._nonce + 1
@@ -165,6 +215,10 @@ end
 -- global ones, or those of the place `opts` names as `kawoosh.map`'s do
 -- — the longer ones beneath it staying. A binding whose `when` does not
 -- hold where the key is pressed does not shadow those either.
+---@param mode kawoosh.Mode
+---@param keys string
+---@param opts? kawoosh.MapOpts the place, as `kawoosh.map`'s
+---@return nil
 function kawoosh.unmap(mode, keys, opts)
   kawoosh._unmap(mode, keys, scope_of(opts))
 end

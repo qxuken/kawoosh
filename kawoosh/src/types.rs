@@ -304,12 +304,12 @@ mod tests {
     /// only goes down (docs/design/lua-types.md Decision 5). A new
     /// function with nothing typed raises it and fails here; typing one
     /// lowers it, and the number is lowered with it.
-    const UNTYPED: usize = 1022;
+    const UNTYPED: usize = 1006;
 
     /// The ratchet over the whole API, as a launch writes it. With
     /// `KAWOOSH_META_OUT` naming a directory the three files are written
     /// there too, for lua-language-server to check
-    /// (`scripts/lua-types.nu`).
+    /// (`scripts/lua-types.nu`), and `untyped.txt`, the list.
     #[test]
     fn the_api_is_typed() {
         let mut app = Kawoosh::new("*scratch*", "");
@@ -324,6 +324,7 @@ mod tests {
             std::fs::write(out.join("kui.lua"), kui_lua::luals_meta()).unwrap();
             let settings = settings_meta(&app.ed.settings.schema());
             std::fs::write(out.join("settings.lua"), settings).unwrap();
+            std::fs::write(out.join("untyped.txt"), meta.untyped.join("\n")).unwrap();
         }
         assert!(meta.twice.is_empty(), "declared twice: {:?}", meta.twice);
         let n = meta.untyped.len();

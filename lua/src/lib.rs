@@ -192,11 +192,15 @@ pub enum Msg {
         buffer: u64,
         split: Option<String>,
     },
-    /// `kawoosh.buf.close(buffer, { force =, if_hidden = })`: the
-    /// buffer closed as `:bd` closes it, every pane on it moved to
+    /// `kawoosh.buf.close(buffer: integer, opts?: kawoosh.buf.CloseOpts): nil`:
+    /// the buffer closed as `:bd` closes it, every pane on it moved to
     /// another; one with unsaved changes stays unless `force`, and the
     /// message says so. With `if_hidden`, one a pane still shows stays,
     /// quietly — what a buffer left behind asks.
+    ///
+    /// @class kawoosh.buf.CloseOpts
+    /// @field force? boolean closed with unsaved changes too
+    /// @field if_hidden? boolean only when no pane shows it
     CloseBuffer {
         buffer: u64,
         force: bool,

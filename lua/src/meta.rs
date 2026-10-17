@@ -395,12 +395,22 @@ fn uncomment_lua(l: &str) -> &str {
 }
 
 /// Each line of a Lua source as a comment's text, `None` for code.
-fn lua_comments(src: &str) -> impl Iterator<Item = Option<&str>> {
+/// A `---` line that is no annotation is a description: kept for a
+/// class block right under it, its text marked so.
+fn lua_comments(src: &str) -> impl Iterator<Item = Option<String>> {
     src.lines().map(|l| {
         let l = l.trim_start();
-        l.starts_with("--").then(|| uncomment_lua(l))
+        let text = uncomment_lua(l);
+        if l.starts_with("---") && !l.starts_with("----") && !text.starts_with(['@', '|']) {
+            Some(format!("{DESCRIBED}{text}"))
+        } else {
+            l.starts_with("--").then(|| text.to_string())
+        }
     })
 }
+
+/// What marks a description line among a Lua chunk's comments.
+const DESCRIBED: &str = "\u{1}";
 
 /// A Rust line's comment text: `///` on an item, `//` on a `let` in
 /// `seed` (a doc comment there is one rustc warns of); `//!` is the
@@ -414,8 +424,8 @@ fn rust_comment(line: &str) -> Option<&str> {
     Some(d.strip_prefix(' ').unwrap_or(d))
 }
 
-fn rust_comments(src: &str) -> impl Iterator<Item = Option<&str>> {
-    src.lines().map(rust_comment)
+fn rust_comments(src: &str) -> impl Iterator<Item = Option<String>> {
+    src.lines().map(|l| rust_comment(l).map(str::to_string))
 }
 
 /// The `---@class` and `---@alias` blocks of the sources: a `@class`
@@ -443,6 +453,11 @@ enum Line<'a> {
 fn line_kind(l: &str) -> Line<'_> {
     for head in ["@class ", "@alias "] {
         if let Some(rest) = l.strip_prefix(head) {
+            // `@class (exact) NAME`: the modifier is not the name.
+            let rest = match rest.trim_start().strip_prefix('(') {
+                Some(r) => r.split_once(')').map_or(r, |(_, r)| r).trim_start(),
+                None => rest,
+            };
             let name = rest
                 .split(|c: char| c.is_whitespace() || c == ':')
                 .next()
@@ -458,22 +473,37 @@ fn line_kind(l: &str) -> Line<'_> {
 }
 
 impl Classes {
-    fn read<'a>(&mut self, lines: impl Iterator<Item = Option<&'a str>>) {
+    fn read(&mut self, lines: impl Iterator<Item = Option<String>>) {
         let mut open: Option<(String, Vec<String>)> = None;
+        // The description lines right above, for a block starting next.
+        let mut described: Vec<String> = Vec::new();
         for l in lines.chain(std::iter::once(None)) {
-            let kind = l.map(line_kind);
-            match (kind, l) {
-                (Some(Line::Body), Some(l)) if open.is_some() => {
+            let Some(l) = l else {
+                self.close(open.take());
+                described.clear();
+                continue;
+            };
+            if let Some(d) = l.strip_prefix(DESCRIBED) {
+                self.close(open.take());
+                described.push(format!("---{d}\n"));
+                continue;
+            }
+            match line_kind(&l) {
+                Line::Body if open.is_some() => {
                     if let Some((_, block)) = open.as_mut() {
                         block.push(format!("---{l}\n"));
                     }
-                    continue;
                 }
-                (Some(Line::Head(name)), Some(l)) => {
+                Line::Head(name) => {
                     self.close(open.take());
-                    open = Some((name.to_string(), vec![format!("---{l}\n")]));
+                    let mut block = std::mem::take(&mut described);
+                    block.push(format!("---{l}\n"));
+                    open = Some((name.to_string(), block));
                 }
-                _ => self.close(open.take()),
+                _ => {
+                    self.close(open.take());
+                    described.clear();
+                }
             }
         }
     }
@@ -718,7 +748,7 @@ mod tests {
     /// that only goes down (lua-types.md Decision 5). A new function
     /// with nothing typed raises it and fails here; typing one lowers
     /// it, and the number is lowered with it.
-    const CORE_UNTYPED: usize = 509;
+    const CORE_UNTYPED: usize = 493;
 
     #[test]
     fn an_untyped_doc_names_the_parameters() {
@@ -795,11 +825,12 @@ mod tests {
     fn classes_are_declared_once() {
         let mut c = Classes::default();
         c.read(lua_comments(
-            "---@class kawoosh.Opts\n---@field a? integer what a is\n---@field b string\nlocal x = 1\n\
+            "---What f takes.\n---@class kawoosh.Opts\n---@field a? integer what a is\n---@field b string\nlocal x = 1\n\
              ---@alias kawoosh.Mode\n---| \"n\"\n---| \"i\"\n\
              -- notes\n---@class kawoosh.Opts\n---@field c integer\n",
         ));
         assert_eq!(c.twice, ["kawoosh.Opts"]);
+        assert!(c.blocks["kawoosh.Opts"][0] == "---What f takes.\n");
         assert_eq!(
             c.fields("kawoosh.Opts"),
             HashSet::from(["a".to_string(), "b".to_string()])
@@ -889,6 +920,14 @@ mod tests {
     fn the_core_api_is_typed() {
         let (rt, _ext) = Runtime::new().unwrap();
         let meta = rt.luals_meta(&[], &[]);
+        // `KAWOOSH_META_OUT` names a directory for the core's meta and
+        // list, as the whole API's test writes its own.
+        if let Some(out) = std::env::var_os("KAWOOSH_META_OUT") {
+            let out = std::path::PathBuf::from(out);
+            std::fs::create_dir_all(&out).unwrap();
+            std::fs::write(out.join("core-kawoosh.lua"), &meta.text).unwrap();
+            std::fs::write(out.join("core-untyped.txt"), meta.untyped.join("\n")).unwrap();
+        }
         assert!(meta.twice.is_empty(), "declared twice: {:?}", meta.twice);
         let n = meta.untyped.len();
         assert!(
