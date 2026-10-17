@@ -231,9 +231,25 @@ end
 -- resolved. An opener shows what it opens itself (`open_scratch`, a
 -- view); one that asked `kawoosh.open` of the same path would be asked
 -- again.
+---@param fn fun(path: string): boolean? true when it took the path
+---@return nil
 function kawoosh.on_open(fn)
   kawoosh._openers[#kawoosh._openers + 1] = fn
 end
+
+---A tab as `kawoosh.tab_title`'s function is given it.
+---@class kawoosh.TabTitle
+---@field index integer from 1, as the strip numbers it
+---@field active boolean
+---@field title string the label kawoosh would draw: `N: name`, the directory as `tabs.directory` says, ` ●` when modified
+---@field dir string the last part of `cwd`
+---@field cwd string where the tab is: its own directory, or a terminal's shell's
+---@field kind string its focused pane's: `editor`, `terminal`, `lua`, `undo`, `memory`
+---@field name string that pane's buffer, terminal title or view
+---@field path? string its file
+---@field modified boolean
+---@field bell boolean
+---@field panes integer how many panes the tab has
 
 -- kawoosh.tab_title(fn): the tab strip's labels written by
 -- `fn(tab)`, wezterm's `format-tab-title` — `tab` is `{ index, active,
@@ -246,9 +262,28 @@ end
 -- the label, or nil for kawoosh's; `kawoosh.tab_title(nil)` takes it
 -- off, and so does an error, said once. Called for every tab, every
 -- frame the strip is drawn: keep it to strings.
+---@param fn? fun(tab: kawoosh.TabTitle): string? the label, nil for kawoosh's; nil takes the hook off
+---@return nil
 function kawoosh.tab_title(fn)
   kawoosh._tab_title = fn
 end
+
+kawoosh._status = {}
+
+---What a status segment's function is given.
+---@class kawoosh.StatusCtx
+---@field place "title"|"tabs"|"statusline" where it is drawn
+
+---A part of a status segment.
+---@class kawoosh.StatusPart
+---@field text string
+---@field color? "fg"|"dim"|"accent"|"ok"|"warning"|"danger" `fg` when left out
+
+---@class kawoosh.StatusOpts
+---@field place? "title"|"tabs"|"statusline" the title bar's right (the default), the tab strip's, or a status line module
+---@field order? number before the higher, then by name
+---@field every? number|fun(): number? seconds between draws on the wall clock's beat, or a function answering how often now (nil for not at all)
+---@field run? string a command line a click runs
 
 -- kawoosh.status(name, fn[, opts]): a segment on the right of the title
 -- bar (`place = "title"`, the default) or of the tab strip (`"tabs"`),
@@ -263,7 +298,10 @@ end
 -- nil for not at all; `opts.run` is a command line a click
 -- runs. The same name replaces it; `kawoosh.status(name, nil)` takes it
 -- away.
-kawoosh._status = {}
+---@param name string
+---@param fn? fun(ctx: kawoosh.StatusCtx): string|kawoosh.StatusPart|kawoosh.StatusPart[]|nil what it shows now; nil takes the segment away
+---@param opts? kawoosh.StatusOpts
+---@return nil
 function kawoosh.status(name, fn, opts)
   if fn == nil then
     kawoosh._status[name] = nil
@@ -274,25 +312,35 @@ function kawoosh.status(name, fn, opts)
                             every = opts.every, run = opts.run }
 end
 
+kawoosh._memory_openers = {}
+
+---A plugin's moment as its opener is given it (`kawoosh.on_memory_open`).
+---@class kawoosh.MemoryOpenRow
+---@field kind string `<plugin>.<kind>`
+---@field subject string
+---@field meta table the row's meta, `{}` when it has none
+
 -- kawoosh.on_memory_open(kind, fn): how a moment of a plugin's own
 -- kind (`<plugin>.<kind>`, memory.md Decision 9) is opened from the
 -- memory pane — `fn(row)`, `row` its `kind`, `subject` and `meta` (a
 -- table), the keyboard on the editor pane the memory pane came from.
 -- A kind with no opener says it has nothing to open.
-kawoosh._memory_openers = {}
+---@param kind string `<plugin>.<kind>`
+---@param fn fun(row: kawoosh.MemoryOpenRow)
+---@return nil
 function kawoosh.on_memory_open(kind, fn)
   kawoosh._memory_openers[kind] = fn
 end
 
--- kawoosh.on_settings(fn): `fn()` whenever the settings changed — a
--- file reloaded on save, `:set`, `kawoosh.opt` — once a frame, with
--- `kawoosh.opt` reading the new tree; and once at registration, so a
--- plugin reads what is set now the same way it reads what changes.
 -- kawoosh.fs.watch(name, paths, fn): the paths — files or directories
 -- — polled twice a second, `fn(changed)` with those whose stamp moved
 -- (written, made, gone; a directory's when an entry is added, removed
 -- or renamed). A plugin's set by `name`, replaced by each call;
 -- `kawoosh.fs.watch(name, nil)` stops it.
+---@param name string the plugin's set
+---@param paths? string[] files or directories; nil stops the set
+---@param fn? fun(changed: string[]) given the paths whose stamp moved
+---@return nil
 function kawoosh.fs.watch(name, paths, fn)
   kawoosh._watches[name] = paths and fn or nil
   kawoosh._fs_watch(name, paths or {})
@@ -305,6 +353,12 @@ function kawoosh._watched(name, paths)
   if not ok then kawoosh.echo("fs.watch " .. name .. ": " .. tostring(err)) end
 end
 
+-- kawoosh.on_settings(fn): `fn()` whenever the settings changed — a
+-- file reloaded on save, `:set`, `kawoosh.opt` — once a frame, with
+-- `kawoosh.opt` reading the new tree; and once at registration, so a
+-- plugin reads what is set now the same way it reads what changes.
+---@param fn fun()
+---@return nil
 function kawoosh.on_settings(fn)
   kawoosh._settings_hooks[#kawoosh._settings_hooks + 1] = fn
   local ok, err = timed(fn)
@@ -319,6 +373,7 @@ function kawoosh._settings()
   end
 end
 
+kawoosh._cwd_hooks = {}
 -- kawoosh.on_cwd(fn): `fn(path, how)` whenever the working directory
 -- moved, once a frame, after it moved; not for the directory kawoosh
 -- started in. The working directory is the focused tab's
@@ -327,7 +382,8 @@ end
 -- in another directory), "moved" (the directory, or one above it, was
 -- renamed or moved, and the tab went along) or "gone" (it was deleted,
 -- and the tab went up to the nearest directory still there).
-kawoosh._cwd_hooks = {}
+---@param fn fun(path: string, how: "cd"|"tab"|"moved"|"gone")
+---@return nil
 function kawoosh.on_cwd(fn)
   kawoosh._cwd_hooks[#kawoosh._cwd_hooks + 1] = fn
 end
@@ -339,16 +395,12 @@ function kawoosh._cwd(path, how)
   end
 end
 
+kawoosh._diagnostics_hooks = {}
 -- kawoosh.on_diagnostics(fn): `fn()` after a frame in which the
 -- diagnostics moved — a server's word, a file's kept ones taken by the
 -- buffer that opened it — with `kawoosh.lsp.diagnostics` reading them.
--- kawoosh.on_focus(fn): `fn(buffer)` when the keyboard goes to an
--- editor pane on another buffer (docs/design/lists.md Decision 5).
--- kawoosh.on_places(fn): `fn(title, items)` with a server's list —
--- `references`, `implementations`, `declarations` — each `{ path, line,
--- col, end_line, end_col }` from 1; a hook that returns true made the
--- list, and the engine's plain one is not made.
-kawoosh._diagnostics_hooks = {}
+---@param fn fun()
+---@return nil
 function kawoosh.on_diagnostics(fn)
   kawoosh._diagnostics_hooks[#kawoosh._diagnostics_hooks + 1] = fn
 end
@@ -372,7 +424,8 @@ kawoosh._tree_gen = 0
 -- buffers on show are parsed, and nothing is published for it while no
 -- hook is set. It runs in the frame: read what changed, not the whole
 -- tree. Returns a function that takes the hook off.
--- @return fun(): boolean off true when it took the hook off
+---@param fn fun(root: kawoosh.Node, changed: { from: integer, to: integer }[]) byte ranges from 0, `to` exclusive
+---@return fun(): boolean off true when it took the hook off
 function kawoosh.on_tree(fn)
   local entry = { fn = fn }
   local hooks = kawoosh._tree_hooks
@@ -405,6 +458,10 @@ function kawoosh._tree(trees)
   end
 end
 kawoosh._focus_hooks = {}
+-- kawoosh.on_focus(fn): `fn(buffer)` when the keyboard goes to an
+-- editor pane on another buffer (docs/design/lists.md Decision 5).
+---@param fn fun(buffer: integer)
+---@return nil
 function kawoosh.on_focus(fn)
   kawoosh._focus_hooks[#kawoosh._focus_hooks + 1] = fn
 end
@@ -414,10 +471,12 @@ function kawoosh._focus(buffer)
     if not ok then kawoosh.echo("on_focus: " .. tostring(err)) end
   end
 end
+kawoosh._write_hooks = {}
 -- kawoosh.on_write(fn): `fn(path, buffer)` after a file buffer is
 -- written — what a version control backend reads the file's state
 -- again on (docs/design/vcs.md).
-kawoosh._write_hooks = {}
+---@param fn fun(path: string, buffer: integer)
+---@return nil
 function kawoosh.on_write(fn)
   kawoosh._write_hooks[#kawoosh._write_hooks + 1] = fn
 end
@@ -428,12 +487,21 @@ function kawoosh._wrote(path, buffer)
   end
 end
 
+---What `kawoosh.on_stage`'s function is told beside the patch.
+---@class kawoosh.StageOpts
+---@field buffer integer the file's buffer
+---@field label string what its base is called
+---@field count integer how many hunks
+---@field unstage boolean `hunk unstage`'s patch, to take out of the index
+
 -- kawoosh.on_stage(fn): `fn(path, patch, opts)` for `hunk stage` and
 -- `hunk unstage` (docs/design/vcs.md Decision 12): the file's path,
 -- the patch the editor made against its base — the `@@` sections
 -- alone — and `opts` `{ buffer =, label =, count =, unstage = }`, the
 -- base's label and how many hunks. One function, a second replacing
 -- the first: the bundled `vcs.lua` hands it to its backend's `stage`.
+---@param fn fun(path: string, patch: string, opts: kawoosh.StageOpts)
+---@return nil
 function kawoosh.on_stage(fn)
   kawoosh._stage_hook = fn
 end
@@ -446,6 +514,21 @@ function kawoosh._stage(path, patch, opts)
 end
 
 kawoosh._places_hooks = {}
+
+---A place in a server's list (`kawoosh.on_places`), lines and columns from 1, columns as the server counts them.
+---@class kawoosh.PlaceItem
+---@field path string
+---@field line integer
+---@field col integer
+---@field end_line integer
+---@field end_col integer
+
+-- kawoosh.on_places(fn): `fn(title, items)` with a server's list —
+-- `references`, `implementations`, `declarations` — each `{ path, line,
+-- col, end_line, end_col }` from 1; a hook that returns true made the
+-- list, and the engine's plain one is not made.
+---@param fn fun(title: string, items: kawoosh.PlaceItem[]): boolean? true when it made the list
+---@return nil
 function kawoosh.on_places(fn)
   kawoosh._places_hooks[#kawoosh._places_hooks + 1] = fn
 end
@@ -464,11 +547,13 @@ end
 -- line); with `prompt`, only while its shell sits at an empty prompt —
 -- marked by OSC 133 and nothing typed since — else refused with a
 -- message saying why.
---
+
 -- kawoosh.on_restore(fn): `fn(name, buffer)` for every scratch buffer a
 -- session brings back — empty, named as it was — so the plugin that
 -- made it can fill it again (`open_scratch` by that name, `show =
 -- false`).
+---@param fn fun(name: string, buffer: integer)
+---@return nil
 function kawoosh.on_restore(fn)
   kawoosh._restorers[#kawoosh._restorers + 1] = fn
 end
@@ -484,12 +569,39 @@ end
 -- also a notification under the `extension` source: nothing at the
 -- places looked, no `kw_ext_abi`, another ABI, a namespace taken.
 -- `:extensions` lists what is loaded.
+---@param namespace string
+---@param where? string the library, a directory holding it, or its path without the extension
+---@return boolean? ok true when it loaded
+---@return string? why the reason it did not
 function kawoosh.extension(namespace, where)
   if where ~= nil then where = kawoosh.fs.expand(tostring(where)) end
   local ok, err = kawoosh._extension(tostring(namespace), where)
   if not ok then kawoosh.notify(err, { level = "error", source = "extension" }) end
   return ok, err
 end
+
+---How loud a notification is.
+---@alias kawoosh.NotifyLevel
+---| "trace"
+---| "debug" # the log's alone
+---| "info" # a dim corner line; the default
+---| "warn" # a toast
+---| "warning"
+---| "error" # a toast
+---| "err"
+
+---An action on a notification or a confirm: its label and what it runs.
+---@class kawoosh.NotifyAction
+---@field label? string `action N` when left out
+---@field run? string|fun(ctx: kawoosh.Ctx) a command line, or a function made a command; none is a plain "no"
+---@field command? string|fun(ctx: kawoosh.Ctx) `run`'s other spelling
+
+---@class kawoosh.NotifyOpts
+---@field level? kawoosh.NotifyLevel info when left out
+---@field source? string who says so
+---@field show? "toast"|"corner"|"log" where it goes; else the level decides
+---@field timeout? number|false milliseconds; 0 or false keeps it until acted on
+---@field actions? kawoosh.NotifyAction[] a toast with actions stays until one is clicked, unless it has a `timeout` too
 
 -- kawoosh.notify(text[, opts]): a notification. `opts` is a level name
 -- ("debug", "info", "warn", "error"; info when omitted) or a table:
@@ -501,6 +613,9 @@ end
 -- until one is clicked, unless it has a `timeout` too: then it is an
 -- offer, gone when its time is up and put away by a click or `x` as a
 -- plain toast is. Every notification is in `:messages`.
+---@param text string
+---@param opts? kawoosh.NotifyLevel|kawoosh.NotifyOpts
+---@return nil
 function kawoosh.notify(text, opts)
   if type(opts) == "string" then opts = { level = opts } end
   opts = opts or {}
@@ -510,6 +625,12 @@ function kawoosh.notify(text, opts)
   kawoosh._notify(tostring(text), opts.level, opts.source, opts.show, timeout, labels, commands)
 end
 
+---@class kawoosh.ConfirmOpts
+---@field title? string the question
+---@field lines? string[] what would happen, one each, shown in mono
+---@field actions? kawoosh.NotifyAction[] the first is `<CR>`'s and `y`'s unless `default` names another
+---@field default? integer the action `<CR>` takes, from 1
+
 -- kawoosh.confirm{ title=, lines=, actions=, default= }: a question the
 -- user answers before anything happens — one modal float over the
 -- window with the keys on it. `title` is the question, `lines` what
@@ -518,12 +639,90 @@ end
 -- names another (from 1); `h` `l` `<Tab>` move between them, a digit
 -- takes that one, and `<Esc>`, `n`, `q` or a press outside answer
 -- with none. An action without `run` is a plain "no".
+---@param opts kawoosh.ConfirmOpts
+---@return nil
 function kawoosh.confirm(opts)
   local labels, commands = actions_of(opts.actions, "lua.confirm.")
   local lines = {}
   for i, l in ipairs(opts.lines or {}) do lines[i] = tostring(l) end
   kawoosh._confirm(tostring(opts.title or "?"), lines, labels, commands, opts.default)
 end
+
+---The buffer a launcher's pane was split from (`ctx.origin`).
+---@class kawoosh.ViewOrigin
+---@field buffer integer
+---@field name string
+---@field path? string
+
+---`ctx.field`'s: a one-line input drawn through the editor.
+---@class kawoosh.FieldOpts
+---@field name string the field's name in its view
+---@field placeholder? string drawn while it is empty and off the keys
+---@field size? number the text size, the scale's `text` unless given
+---@field width? "grow"|"fit"|number the room its row has, as wide as its line (the default), or px
+
+---`ctx.keys`'s: a notation's caps.
+---@class kawoosh.KeysOpts
+---@field size? number the scale's `note` unless given
+---@field color? kui.Color
+---@field border? kui.Color
+
+---A legend's item: its keys — a notation, or a list for keys that do one thing — and its words.
+---@alias kawoosh.LegendItem [string|string[], string]
+
+---`ctx.legend`'s and `ctx.legend_toggle`'s.
+---@class kawoosh.LegendOpts
+---@field size? number the scale's `note` unless given
+---@field color? kui.Color the caps'
+---@field border? kui.Color
+---@field word? kui.Color the words'
+---@field width? "fit"|number as wide as its row unless given
+---@field full? boolean always whole, no hint for it
+---@field toggle? boolean false: the view draws the way to it itself (`ctx.legend_toggle`)
+
+---What a view's function is given.
+---@class kawoosh.ViewCtx
+---@field pane integer
+---@field focused? boolean the pane has the keyboard
+---@field width number logical px
+---@field height number logical px, the title bar counted
+---@field title_h number the pane's title bar's height
+---@field share? number the pane's fraction of the split it is in; nil when it is the whole window
+---@field origin? kawoosh.ViewOrigin a launcher's: the buffer it was split from
+---@field env table kui's env: `theme`, `tokens`, `now`, …
+---@field name string the view's name
+---@field metrics kawoosh.Metrics the panes' one scale this frame
+---@field field fun(opts: kawoosh.FieldOpts): kui.Node a one-line input, the node to put in the tree
+---@field field_text fun(name: string): string a field's line
+---@field icon fun(name: string, opts?: kawoosh.IconOpts): kui.Node `kawoosh.icon` in the view's foreground, at the scale's text size unless given
+---@field keys fun(notation: string, opts?: kawoosh.KeysOpts): kui.Node caps
+---@field legend fun(items: kawoosh.LegendItem[], opts?: kawoosh.LegendOpts): kui.Node? a key legend, nil while the pane's is compact
+---@field legend_toggle fun(opts?: kawoosh.LegendOpts): kui.Node the way to the legend, drawn by the view
+---@field legend_full fun(): boolean whether the pane's legend is whole
+
+---What a view's `on_event` hears: a click's payload, as its node gave it, beside kui's fields.
+---@class kawoosh.ViewEvent
+---@field kind? string a payload's own, or kui's: "key", "drag", "scroll", …
+---@field slot? string the view's slot, `lua/NAME@PANE`
+---@field key? string a key's notation, `<C-d>`
+---@field code? string a key's code
+---@field text? string what a key types
+---@field ctrl? boolean
+---@field alt? boolean
+---@field shift? boolean
+---@field tag? table a drag's or a scroll's tag, as its node gave it
+---@field phase? string a drag's: "start", "move", "end", …
+---@field x? number the pointer, logical px
+---@field y? number
+---@field dx? number a drag's from the press point, a scroll's delta
+---@field dy? number
+---@field [string] any
+
+---@class kawoosh.ViewSpec
+---@field session? boolean false keeps the view out of a session
+---@field here? fun(pane: integer): string? the directory the pane shows, if any: where `:terminal here` starts
+---@field scroll? string the label of the view's root node when that node scrolls, for `:view scroll`
+---@field native? string the namespace of the native extension that draws it
 
 -- kawoosh.view(name, fn[, on_event[, opts]]): a pane whose content is
 -- what `fn` returns — a kui table tree (row, column, text, edit,
@@ -540,6 +739,11 @@ end
 -- from the keys (`j`, `<C-d>`, `G` mapped to it) as the wheel does,
 -- without running the view — a key that runs plugin code has every
 -- view on the screen run again (lua-boundary.md Decision 11).
+---@param name string
+---@param fn? fun(ctx: kawoosh.ViewCtx): kui.Node the tree; nil for a native view (`opts.native`)
+---@param on_event? fun(ev: kawoosh.ViewEvent): boolean? a key it returns true for is its own
+---@param opts? kawoosh.ViewSpec
+---@return nil
 function kawoosh.view(name, fn, on_event, opts)
   -- `{ native = NAMESPACE }`: the view a native extension draws
   -- (docs/design/native.md Decision 4) — its pane is the slot
@@ -559,6 +763,27 @@ function kawoosh.view(name, fn, on_event, opts)
   kawoosh._scrollers[name] = opts and opts.scroll or nil
 end
 
+---What `kawoosh.tool` registers.
+---@class kawoosh.ToolOpts
+---@field cmd string the command line it runs
+---@field cwd? string where it starts
+---@field place? "column"|"beside"|"under"|"below"|"dock" where it opens: a column of its own (the default), under the focused pane, or the dock
+---@field dock? boolean `place = "dock"`'s other spelling
+---@field restore? boolean a session starts it again in the directory it was left in
+---@field key? string its letter in the launcher
+
+---A tool as `kawoosh.tools()` lists it.
+---@class kawoosh.Tool
+---@field name string
+---@field cmd string
+---@field cwd? string
+---@field place "column"|"under"|"dock" as the editor reads it
+---@field dock boolean
+---@field restore boolean
+---@field key? string
+
+local register_tool = kawoosh.tool
+local PLACES = { under = "under", below = "under", column = "column", beside = "column", dock = "dock" }
 -- kawoosh.tool(name, { cmd =, cwd =, place =, dock =, restore =, key = }):
 -- a launch target for `:tool NAME` and the tools picker — `place` is
 -- where it opens, `"column"` (a column of its own, the default; also
@@ -569,8 +794,9 @@ end
 -- `kawoosh.tools()` lists them, by name, each with what was registered,
 -- `place` in the first spelling — as the editor reads it
 -- (`layout::Place::parse`), which takes the message after this returns.
-local register_tool = kawoosh.tool
-local PLACES = { under = "under", below = "under", column = "column", beside = "column", dock = "dock" }
+---@param name string
+---@param t kawoosh.ToolOpts
+---@return nil
 function kawoosh.tool(name, t)
   local place = PLACES[t.place] or (t.dock and "dock" or "column")
   kawoosh._tools[name] = { cmd = t.cmd, cwd = t.cwd, place = place, dock = place == "dock",
@@ -578,6 +804,8 @@ function kawoosh.tool(name, t)
   register_tool(name, t)
 end
 
+-- kawoosh.tools(): the tools registered, by name.
+---@return kawoosh.Tool[]
 function kawoosh.tools()
   local out = {}
   for name, t in pairs(kawoosh._tools) do
@@ -803,6 +1031,23 @@ end
 -- every tab, `{ index =, cwd =, active = }` each, `index` what `:tab
 -- goto N` takes.
 
+---What `kawoosh.buf.open_scratch` takes.
+---@class kawoosh.buf.ScratchOpts
+---@field name string the buffer's name; one open by it is refilled
+---@field text? string "" when left out
+---@field on_write? fun(lines: string[]): boolean? handles `:w`; false when the write is not done yet
+---@field on_change? fun(name: string) told once a frame that the text changed
+---@field read_only? boolean
+---@field language? string
+---@field reuse? integer a scratch buffer's handle, renamed and refilled
+---@field line? integer where the caret goes, from 1
+---@field show? boolean false fills it where it is, or makes it in the background
+---@field public private? boolean out of the store, the memory, the session and the clipboard
+---@field about? string the file it stands for, `%` in a command line
+---@field payloads? table<integer, string> by line from 1: what the line is, to the plugin (with `on_write`)
+---@field restore? boolean a session brings its pane back, empty, for `kawoosh.on_restore`
+---@field pane? integer|"column" shown in pane N of the tab in front, or a new column beside the focused pane
+
 -- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, on_change=fn,
 -- read_only=bool, language=, reuse=handle, line=n, private=bool,
 -- about=path }: a buffer that is not a file; `private` keeps it out of
@@ -831,6 +1076,8 @@ end
 -- gone; `pane = "column"` in a new column beside the focused pane
 -- (docs/design/pane-placement.md), as a launcher with the keys fills
 -- itself instead.
+---@param t kawoosh.buf.ScratchOpts
+---@return nil
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   if t.on_change then kawoosh._changers[t.name] = t.on_change end
@@ -840,6 +1087,14 @@ function kawoosh.buf.open_scratch(t)
 end
 
 -- ---------------------------------------------------------------- fields
+
+---The panes' one scale, logical px (`kawoosh.metrics`).
+---@class kawoosh.Metrics
+---@field text number a pane's text: its rows, its fields
+---@field small number a step under: secondary text, a chip, a pane's title
+---@field note number two under: a note, a count, a tag, a key legend
+---@field row number a line of `text` with the chrome's air: a row's height
+---@field font number the editor's font size, for a line of buffer text
 
 -- kawoosh.metrics(env): the panes' one scale (plugin-panes.md,
 -- "Sizes"), read off the length tokens the editor declares
@@ -853,6 +1108,8 @@ end
 --   row    a line of `text` with the chrome's air: a row's height
 --   font   the editor's font size, for a line of buffer text
 -- `ctx.metrics` is this for the view's frame.
+---@param env? table kui's env; nil for the defaults
+---@return kawoosh.Metrics
 function kawoosh.metrics(env)
   local l = env and env.tokens and env.tokens.lengths or {}
   local text = l.chrome or 13
@@ -887,12 +1144,20 @@ end
 
 -- kawoosh.field_text(view, name): a view's field's line, "" before it
 -- is opened. `kawoosh.field_set(view, name, text)` puts a line on it.
+---@param view_name string
+---@param name string the field's name in the view
+---@return string
 function kawoosh.field_text(view_name, name)
   local st = kawoosh._field("lua:" .. view_name .. "/" .. name)
   return st and st.text or ""
 end
 
 local field_set = kawoosh.field_set
+-- kawoosh.field_set(view, name, text): a line put on a view's field.
+---@param view_name string
+---@param name string the field's name in the view
+---@param text string
+---@return nil
 function kawoosh.field_set(view_name, name, text)
   field_set("lua:" .. view_name .. "/" .. name, text)
 end
@@ -900,6 +1165,9 @@ end
 -- kawoosh.field_focus(view, name): the view's keys go to the field —
 -- the editor's own keys, insert mode to type, `<Esc>` to normal mode,
 -- `<Esc>` again back to the view. `nil` for back to the view.
+---@param view_name string
+---@param name? string the field's name in the view; nil for back to the view
+---@return nil
 function kawoosh.field_focus(view_name, name)
   kawoosh._field_focus(view_name, name and ("lua:" .. view_name .. "/" .. name) or nil)
 end
@@ -1169,11 +1437,26 @@ end
 -- draws the frames and publishes the state again before resuming — so
 -- the line after `kawoosh.press("dd")` reads the buffer as it is then.
 -- Outside a test they raise, since there is no harness to yield to.
+--
+-- kawoosh.press(keys): the keys pressed, as a keymap spells them.
+---@param keys string `dd`, `<C-w>v`, `:w<CR>`
+---@return nil
 function kawoosh.press(keys) coroutine.yield({ press = keys }) end
+-- kawoosh.frame([n]): `n` frames drawn, one when left out.
+---@param n? integer
+---@return nil
 function kawoosh.frame(n) coroutine.yield({ frame = n or 1 }) end
+-- kawoosh.sleep([ms]): the test waits, ten milliseconds when left out.
+---@param ms? number milliseconds
+---@return nil
 function kawoosh.sleep(ms) coroutine.yield({ sleep = ms or 10 }) end
--- kawoosh.wait(fn[, frames]): frames until `fn()` holds, ten
--- milliseconds apart for a thread to answer; fails past `frames`.
+-- kawoosh.wait(fn[, frames[, what]]): frames until `fn()` holds, ten
+-- milliseconds apart for a thread to answer; fails past `frames` (300),
+-- the error saying `what` it waited for.
+---@param fn fun(): any
+---@param frames? integer 300 when left out
+---@param what? string
+---@return true
 function kawoosh.wait(fn, frames, what)
   frames = frames or 300
   for _ = 1, frames do
@@ -1184,14 +1467,29 @@ function kawoosh.wait(fn, frames, what)
 end
 
 kawoosh.test = {}
+-- kawoosh.test.eq(got, want[, what]): fails unless `got == want`, the
+-- message naming `what` and both values.
+---@param got any
+---@param want any
+---@param what? string
+---@return nil
 function kawoosh.test.eq(got, want, what)
   if got ~= want then
     error(string.format("%s: expected %s, got %s", what or "eq", kawoosh._show(want), kawoosh._show(got)), 2)
   end
 end
+-- kawoosh.test.ok(cond[, what]): fails unless `cond` is truthy.
+---@param cond any
+---@param what? string the message
+---@return nil
 function kawoosh.test.ok(cond, what)
   if not cond then error(what or "expected true", 2) end
 end
+-- kawoosh.test.has(list, item[, what]): fails unless `item` is in `list`.
+---@param list? any[]
+---@param item any
+---@param what? string
+---@return nil
 function kawoosh.test.has(list, item, what)
   for _, x in ipairs(list or {}) do if x == item then return end end
   error(string.format("%s: %s not in %s", what or "has", kawoosh._show(item), kawoosh._show(list)), 2)

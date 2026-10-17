@@ -508,14 +508,33 @@ fn short_of<'a>(d: &'a Door, name: &'a str) -> &'a str {
 /// `kawoosh.settings` (Decision 9).
 pub(crate) fn lua_door(lua: &Lua, door: SharedDoor) -> mlua::Result<()> {
     let t = lua.create_table()?;
+    // `kawoosh.settings.version(): integer`: counted up with every copy
+    // of the settings the pane reads, so it rebuilds its rows once.
     let at = door.clone();
     t.set(
         "version",
         lua.create_function(move |_, ()| Ok(at.borrow().generation))?,
     )?;
-    // list(): every row — `path`, `kind`, `choices`, `doc`, `default`,
-    // `value`, `origin` ({ layer, file, short }), `set` (each layer's
-    // value that has one), `entries` (an open table's names).
+    // `kawoosh.settings.list(): kawoosh.settings.Row[]`: every setting,
+    // as the settings pane lists it.
+    //
+    // @alias kawoosh.settings.Layer "default"|"user"|"project"|"session"
+    //
+    // @class kawoosh.settings.Row
+    // @field path string `font.size`
+    // @field kind "boolean"|"integer"|"integer|false"|"number"|"string"|"choice"|"list"|"table"|"size"
+    // @field choices? string[] a `choice`'s words
+    // @field doc string
+    // @field default? any the default layer's value
+    // @field value? any the value in effect
+    // @field origin? kawoosh.settings.Origin where the value in effect comes from
+    // @field set table<kawoosh.settings.Layer, any> each of `user`, `project`, `session` that has a value
+    // @field entries? string[] a `table`'s own keys that are not rows of their own
+    //
+    // @class kawoosh.settings.Origin
+    // @field layer kawoosh.settings.Layer
+    // @field file? string the file, when a layer's value is one's
+    // @field short? string the file's name for a person
     let at = door.clone();
     t.set(
         "list",
@@ -568,9 +587,15 @@ pub(crate) fn lua_door(lua: &Lua, door: SharedDoor) -> mlua::Result<()> {
             Ok(out)
         })?,
     )?;
-    // layers(path): the value in each layer that has one, the one that
-    // wins first — `{ layer, value, file, short, line }`, `file` and
-    // `line` (1-based) for a settings file's.
+    // `kawoosh.settings.layers(path: string): kawoosh.settings.LayerValue[]`:
+    // the value in each layer that has one, the one that wins first.
+    //
+    // @class kawoosh.settings.LayerValue
+    // @field layer kawoosh.settings.Layer
+    // @field value any
+    // @field file? string a settings file's
+    // @field short? string the file's name for a person
+    // @field line? integer the key's line in a `.lua` settings file, from 1
     let at = door.clone();
     t.set(
         "layers",
@@ -603,9 +628,21 @@ pub(crate) fn lua_door(lua: &Lua, door: SharedDoor) -> mlua::Result<()> {
             Ok(out)
         })?,
     )?;
-    // files(): `user`, `init`, `project` — each `{ path, short, exists }`
-    // — `project_all` and `project_init`, lists of the same, and
-    // `reloaded`, the last reload's note.
+    // `kawoosh.settings.files(): kawoosh.settings.Files`: the files each
+    // layer reads, and the last reload's note.
+    //
+    // @class kawoosh.settings.Files
+    // @field user? kawoosh.settings.File
+    // @field init? kawoosh.settings.File
+    // @field project? kawoosh.settings.File the file a project change goes to: the innermost there, else the working directory's; none on a host
+    // @field project_all kawoosh.settings.File[] every project settings file there is, outermost first
+    // @field project_init kawoosh.settings.File[] the project `init.lua` files there are
+    // @field reloaded? string the last reload's note
+    //
+    // @class kawoosh.settings.File
+    // @field path string
+    // @field short string its name for a person
+    // @field exists boolean
     let at = door.clone();
     t.set(
         "files",
@@ -644,8 +681,8 @@ pub(crate) fn lua_door(lua: &Lua, door: SharedDoor) -> mlua::Result<()> {
             Ok(out)
         })?,
     )?;
-    // check(path, value): nil when `value` is one the setting takes,
-    // else why not.
+    // `kawoosh.settings.check(path: string, value: any): string?`: nil
+    // when `value` is one the setting takes, else why not.
     let at = door.clone();
     t.set(
         "check",
@@ -658,8 +695,9 @@ pub(crate) fn lua_door(lua: &Lua, door: SharedDoor) -> mlua::Result<()> {
             Ok(check(&kind, v).err())
         })?,
     )?;
-    // line(path, value): `path = value` as a settings file keeps it,
-    // on one line — `font = { size = 14 }` — for a pane's copy.
+    // `kawoosh.settings.line(path: string, value: any): string`:
+    // `path = value` as a settings file keeps it, on one line — `font =
+    // { size = 14 }` — for a pane's copy.
     t.set(
         "line",
         lua.create_function(|_, (path, value): (String, LV)| {
@@ -676,8 +714,12 @@ pub(crate) fn lua_door(lua: &Lua, door: SharedDoor) -> mlua::Result<()> {
                 .as_deref(),
         ))
     };
-    // write(path, value, { scope }): into the scope's file, at the
-    // next frame; the echo line says how it went.
+    // `kawoosh.settings.write(path: string, value: any, opts?: kawoosh.settings.ScopeOpts): nil`:
+    // into the scope's file, at the next frame; the echo line says how
+    // it went.
+    //
+    // @class kawoosh.settings.ScopeOpts
+    // @field scope? "user"|"project"|"session" the user's file when left out
     let at = door.clone();
     t.set(
         "write",
@@ -692,7 +734,8 @@ pub(crate) fn lua_door(lua: &Lua, door: SharedDoor) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // reset(path, { scope }): the key out of the scope's file.
+    // `kawoosh.settings.reset(path: string, opts?: kawoosh.settings.ScopeOpts): nil`:
+    // the key out of the scope's file, at the next frame.
     let at = door.clone();
     t.set(
         "reset",
@@ -706,7 +749,12 @@ pub(crate) fn lua_door(lua: &Lua, door: SharedDoor) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // open(path, { scope, add }): the scope's file at the key.
+    // `kawoosh.settings.open(path: string, opts?: kawoosh.settings.OpenOpts): nil`:
+    // the scope's file at the key, in the focused pane, at the next
+    // frame.
+    //
+    // @class kawoosh.settings.OpenOpts: kawoosh.settings.ScopeOpts
+    // @field add? boolean the key written first with the value in effect when the file has none
     let at = door.clone();
     t.set(
         "open",

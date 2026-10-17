@@ -510,14 +510,8 @@ fn order(all: &mut [Family], bundled: Option<&str>) {
     all.sort_by_key(|f| (f.origin, bundled != Some(f.name.as_str())));
 }
 
-/// `kawoosh.fonts` (docs/design/fonts.md Decision 2): `families()`,
-/// each `{ name, mono, weights, italic, bundled, origin }` — `origin`
-/// `"user"`, `"shipped"` or `"system"`, the order they come in, the
-/// editor's shipped face first of its own; `current()`, the face on show — `family`, `name`, `size`,
-/// `line_height`, `row`, `cell`, `features`, `chrome`, `font` (a handle
-/// for a text's `font =`), the family's `mono`, `weights` and `italic`,
-/// `version`, and `generation` (counted up when the families are read
-/// again). A view draws a family by its name (`family = NAME`).
+/// `kawoosh.fonts` (docs/design/fonts.md Decision 2): `families()` and
+/// `current()`. A view draws a family by its name (`family = NAME`).
 pub(crate) fn lua_door(lua: &mlua::Lua, fonts: SharedFonts) -> mlua::Result<()> {
     let door = lua.create_table()?;
     let family_table =
@@ -534,6 +528,17 @@ pub(crate) fn lua_door(lua: &mlua::Lua, fonts: SharedFonts) -> mlua::Result<()> 
             t.set("origin", fam.origin.as_str())?;
             Ok(t)
         };
+    // `kawoosh.fonts.families(): kawoosh.fonts.Family[]`: the families
+    // kui can see, in the order they come in — the user's, then the
+    // shipped (the editor's face first of its own), then the machine's.
+    //
+    // @class kawoosh.fonts.Family
+    // @field name string
+    // @field mono boolean every face fixed-pitch, as the font says
+    // @field weights integer[] the weights its faces come in, sorted
+    // @field italic boolean
+    // @field bundled boolean the face the editor ships as its own
+    // @field origin "user"|"shipped"|"system" the user's fonts folder, what kawoosh ships, or the machine's
     let at = fonts.clone();
     door.set(
         "families",
@@ -547,6 +552,23 @@ pub(crate) fn lua_door(lua: &mlua::Lua, fonts: SharedFonts) -> mlua::Result<()> 
             Ok(out)
         })?,
     )?;
+    // `kawoosh.fonts.current(): kawoosh.fonts.Current`: the face on show.
+    //
+    // @class kawoosh.fonts.Current
+    // @field family string `font.family` as set; empty for the face kawoosh ships
+    // @field name string the family it resolved to; empty where kui's generic mono stands
+    // @field size number
+    // @field line_height number `font.line_height`, the ratio
+    // @field row number the row's height, px
+    // @field cell number a cell's width, px
+    // @field features string `font.features` as set
+    // @field chrome number the chrome's text size
+    // @field font? integer a handle for a text's `font =`
+    // @field mono? boolean the family's, when it is known
+    // @field weights? integer[] the family's
+    // @field italic? boolean the family's
+    // @field version integer counted up whenever the face on show changes
+    // @field generation integer counted up when the families are read again
     let at = fonts.clone();
     door.set(
         "current",

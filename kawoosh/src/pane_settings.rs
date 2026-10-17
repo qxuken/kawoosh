@@ -386,12 +386,11 @@ impl Kawoosh {
     }
 }
 
-/// `kawoosh.pane_opt(pane, path)`: pane `pane`'s own value at `path`,
-/// `nil` when it holds none; `kawoosh.pane_opt(pane, path, value)` sets
-/// it, an error when it is not a pane's setting or not of its kind;
-/// `kawoosh.pane_unset(pane, path)` takes it out, whether there was one.
-/// `kawoosh._legend(pane[, full])` is `keys.legend` through the same
-/// store (legends.rs).
+/// `kawoosh.pane_opt(pane: integer, path: string, value?: any): any`:
+/// pane `pane`'s own value at `path`, `nil` when it holds none; with
+/// `value`, sets it (answering nil), an error when it is not a pane's
+/// setting or not of its kind. `kawoosh._legend(pane[, full])` is
+/// `keys.legend` through the same store (legends.rs).
 pub(crate) fn lua_door(lua: &mlua::Lua, store: Shared) -> mlua::Result<()> {
     let k: mlua::Table = lua.globals().get("kawoosh")?;
     let s = store.clone();
@@ -415,6 +414,8 @@ pub(crate) fn lua_door(lua: &mlua::Lua, store: Shared) -> mlua::Result<()> {
             },
         )?,
     )?;
+    // `kawoosh.pane_unset(pane: integer, path: string): boolean`: pane
+    // `pane`'s own value at `path` taken out, whether there was one.
     let s = store.clone();
     k.set(
         "pane_unset",

@@ -295,13 +295,36 @@ pub struct Shown {
 /// `name`, `title`, `dark`, `roles` (every kui role by name), `syntax`
 /// (a hue per token by name), `styles` (a token's that is not plain, as
 /// a kui span's flags: `{ italic = true }`) and `ansi` (the sixteen), colours as
-/// `0xRRGGBBAA`; `families`, each `{ name, dark, light }`; and
-/// `current()`, what is on show — `family`, `dark` and `light` (a
-/// variant's name, or `system`), `base` (`dark` or `light`),
-/// `appearance` and `version`, counted up at each rebuild — as of the
-/// last frame the look was built; `check([NAME])`, the theme check
-/// (docs/design/themes.md Decision 7) of the look on show, or of a
-/// variant as it ships.
+/// `0xRRGGBBAA`; `families`, each `{ name, dark, light }`; `current()`
+/// and `check([NAME])`.
+///
+/// @class kawoosh.themes.variants
+/// @field [integer] kawoosh.themes.Variant
+///
+/// @class kawoosh.themes.families
+/// @field [integer] kawoosh.themes.Family
+///
+/// A theme as it ships, colours as `0xRRGGBBAA`.
+/// @class kawoosh.themes.Variant
+/// @field name string
+/// @field title string
+/// @field dark boolean
+/// @field roles table<string, integer> every kui role by name
+/// @field syntax table<string, integer> a hue per token by name
+/// @field styles table<string, kawoosh.themes.Style> a token's that is not plain
+/// @field ansi integer[] the sixteen
+///
+/// @class kawoosh.themes.Family
+/// @field name string
+/// @field dark string the variant on a dark base
+/// @field light string the variant on a light base
+///
+/// A token's style, as a kui span's flags: each there when on.
+/// @class kawoosh.themes.Style
+/// @field bold? true
+/// @field italic? true
+/// @field underline? true
+/// @field strikethrough? true
 pub(crate) fn lua_door(
     lua: &mlua::Lua,
     shown: std::rc::Rc<std::cell::RefCell<Shown>>,
@@ -340,6 +363,28 @@ pub(crate) fn lua_door(
         families.set(i + 1, t)?;
     }
     door.set("families", families)?;
+    // `kawoosh.themes.check(name?: string): kawoosh.themes.Check`: the
+    // theme check (docs/design/themes.md Decision 7) of the look on show,
+    // or of variant `name` as it ships; an error for a name there is not.
+    //
+    // @class kawoosh.themes.Check
+    // @field title string
+    // @field dark boolean
+    // @field roles table<string, integer> every kui role by name
+    // @field hit integer a search hit's wash
+    // @field syntax table<string, integer> a hue per token by name
+    // @field styles table<string, kawoosh.themes.Style>
+    // @field ansi integer[] the sixteen
+    // @field checks kawoosh.themes.Contrast[]
+    //
+    // @class kawoosh.themes.Contrast
+    // @field group "text"|"code"|"selection"|"search"|"caret"|"chrome"|"states"|"terminal" what part of the editor it is
+    // @field what string what is drawn over what, in words
+    // @field fg integer the two colours as they meet, opaque
+    // @field bg integer
+    // @field ratio number the contrast it has
+    // @field need number the contrast it needs
+    // @field ok boolean it clears its floor, to the hundredth
     let at = shown.clone();
     door.set(
         "check",
@@ -354,6 +399,16 @@ pub(crate) fn lua_door(
             subject_table(lua, &subject)
         })?,
     )?;
+    // `kawoosh.themes.current(): kawoosh.themes.Current`: what is on
+    // show, as of the last frame the look was built.
+    //
+    // @class kawoosh.themes.Current
+    // @field family string
+    // @field dark string the variant on a dark base, or `system`
+    // @field light string the variant on a light base, or `system`
+    // @field base "dark"|"light" the base on show
+    // @field appearance string `theme.appearance`: `system`, `dark` or `light`
+    // @field version integer counted up at each rebuild
     door.set(
         "current",
         lua.create_function(move |lua, ()| {
