@@ -42,15 +42,22 @@ const SWITCHES: [(&str, &str); 3] = [
 ];
 
 /// The keys of `lsp` that are not servers.
-const RESERVED: [&str; 4] = [
+const RESERVED: [&str; 5] = [
     "inlay_hints",
+    "idle_stop_secs",
     "languages",
     "ensure_installed",
     "check_updates",
 ];
 
 /// The keys of `lsp.NAME` that are rules, for `:lsp info`.
-const RULES: [&str; 4] = ["enabled", "load_all", "load_max", "inlay_hints"];
+const RULES: [&str; 5] = [
+    "enabled",
+    "load_all",
+    "load_max",
+    "inlay_hints",
+    "idle_stop_secs",
+];
 
 impl Kawoosh {
     /// The pool's table made again when the settings moved, or the base
@@ -220,6 +227,13 @@ impl Kawoosh {
             if let Some(n) = field("load_max").and_then(Setting::as_int) {
                 def.load_max = n.max(0) as usize;
             }
+            // `lsp.NAME.idle_stop_secs`, else `lsp.idle_stop_secs`; 0
+            // or less keeps it running (lsp-rules.md Decision 12).
+            let idle = field("idle_stop_secs")
+                .and_then(Setting::as_int)
+                .or_else(|| self.ed.settings.int("lsp.idle_stop_secs"))
+                .unwrap_or(0);
+            def.idle_stop = (idle > 0).then(|| std::time::Duration::from_secs(idle as u64));
             def.private = private.clone();
             // The Lua API's types stay on the Lua server's library
             // however often a config redefines it (`types.rs`) — and a

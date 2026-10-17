@@ -287,9 +287,13 @@ the project's `.kawoosh/settings.lua`, where `lsp = { NAME = {
 enabled = false } }` keeps it off in a project that is no place for it.
 
 A server runs per project: two Rust projects open are two
-rust-analyzers, each with its own log. A file of a server's library —
-the Lua API's types, reached by `gd` from your config — is opened under
-the server already running, not a new one of its own.
+rust-analyzers, each with its own log. One that has held no open file
+for five minutes is shut down, said in `:messages`, and started again
+when a file of its project opens; `lsp.idle_stop_secs` sets how long
+(`0` keeps it running), `lsp.NAME.idle_stop_secs` for one server. A
+file of a server's library — the Lua API's types, reached by `gd` from
+your config — is opened under the server already running, not a new
+one of its own.
 
 ### Several servers for a language
 
@@ -339,6 +343,7 @@ return {
 | `load_all` | send the server every file of its languages in the project, so diagnostics, references and renames cover files you have not opened |
 | `load_max` | the most files `load_all` sends (2000) |
 | `inlay_hints` | inlay hints for this server's languages; unset, `lsp.inlay_hints` decides |
+| `idle_stop_secs` | seconds the server may hold no open file before it is shut down; unset, `lsp.idle_stop_secs` (300) decides; `0` keeps it running |
 | `cmd` `args` | the program and its arguments, saying the words `init` does (`--tsdk={typescript}`); a change restarts the server |
 | `roots` | the marker files that find the project root |
 | `languages` | the languages this server serves |

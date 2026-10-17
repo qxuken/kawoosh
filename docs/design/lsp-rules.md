@@ -493,6 +493,50 @@ a file there is found under its crate's `Cargo.toml`, and whether
 rust-analyzer should be one per crate there is its own question, not
 looked at here.
 
+### 12. A server holding no buffer is shut down
+
+*Added 2026-10-17*, from the `:lsp` pane showing a lua-language-server
+rooted at the Lua types' folder with 0 documents: started for a file
+looked at, it ran until kawoosh quit. Nothing stopped a server but a
+rule switched off, `:lsp restart` or its own crash.
+
+- **When.** An instance that has held no buffer for
+  `lsp.idle_stop_secs` — 300 by default, `lsp.NAME.idle_stop_secs` for
+  one server, `0` for never — is shut down. Its idle clock starts when
+  the last buffer it held closes (`close_on`) and stops when it is sent
+  one. A buffer is held from its first sync until it is closed (`:bd`),
+  on show or not: switching away from a project's file keeps its
+  server. A file `load_all` sent it is not a buffer, so a project whose
+  every file is closed lets its server go, the loaded files'
+  diagnostics taken back with it (`unpublish`). Five minutes, not one:
+  closing a project's last file and opening another should not pay for
+  a second start — rust-analyzer indexes the whole workspace again —
+  and a server started for one file glanced at is still gone well
+  before the day is.
+- **Never while it is starting** (its `initialize` unanswered) **or
+  while a request of ours is out** — a hover, a workspace pull, a
+  relayed request: the answer is waited for, and the stop comes with
+  the loop that reads it. A server that never answers is never stopped
+  this way; `:lsp restart` is still there.
+- **How.** `shutdown`, then `exit` once it is answered (or refused);
+  the instance is let go of at once, so a file of its root opened
+  meanwhile starts another, and its exit is no crash (`Exited` is not
+  said, the three-exits count not moved). Still there
+  [`STOP_GRACE`](../../systems/src/lsp.rs) — three seconds — after the
+  `shutdown`, it is killed.
+- **Said in the log**, as the server's own line — "no buffer open for
+  300 s; shutting down (lsp.idle_stop_secs)", and "did not exit 3 s
+  after shutdown; killed" — never the corner or a toast: no one is
+  waiting on a server that serves nothing (lsp-servers.md Decision 4).
+- **The pool keeps time.** Its loop waits on the soonest server due
+  (`Pool::next_due`) beside its channels, and checks it whatever woke
+  it, so a server's flood of stderr does not hold another's stop back.
+
+Beaten: a stop on the buffer's close (a `:bd` and `:e` of the same
+project would restart rust-analyzer); one minute (the same, a little
+later); a cap on the instances of one server instead (the one stopped
+would not be the one idle).
+
 ## Not built
 
 - ~~**A loaded file changed on disk by another program** is not read

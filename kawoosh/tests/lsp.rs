@@ -3702,6 +3702,130 @@ fn two_instances_of_one_server_keep_their_own_logs() {
     std::fs::remove_dir_all(&base).ok();
 }
 
+/// A server holding no buffer for `lsp.idle_stop_secs` is shut down —
+/// `shutdown`, then `exit`, which it heeds — and said so in the log, not
+/// the corner; a file of its root opened again starts it as usual
+/// (lsp-rules.md Decision 12).
+#[test]
+fn a_server_holding_no_buffer_stops_and_starts_again() {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let server = fake_server().command;
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-idle-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let file = project(&base, "proj");
+    let notes = base.join("notes.txt");
+    std::fs::write(&notes, "notes\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&notes);
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.idle_stop_secs", Setting::Int(1));
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    app.open_in_editor(&file, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)),
+        "the server holds the file"
+    );
+    // Held, it stays past its period.
+    let held = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+    while std::time::Instant::now() < held {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(app.lsp.status.len(), 1, "a server holding a buffer stays");
+
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).name,
+        "notes.txt"
+    );
+    let said = "no buffer open for 1 s; shutting down (lsp.idle_stop_secs)";
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.is_empty()
+            && said_in(a, &server, "proj")
+                .contains(&"fake server exiting".to_string())),
+        "stopped, exiting as told: {:?}",
+        said_in(&app, &server, "proj")
+    );
+    assert!(said_in(&app, &server, "proj").contains(&said.to_string()));
+    let logged = app
+        .notes
+        .log
+        .iter()
+        .find(|e| e.text == said)
+        .expect("logged");
+    assert_eq!(logged.source.as_deref(), Some(server.as_str()));
+    assert!(!noted(&app, said), "the log's alone, not the corner");
+    assert!(
+        !app.notes
+            .log
+            .iter()
+            .any(|e| e.text.contains("started again") || e.text.contains("exited")),
+        "no crash said: {:?}",
+        app.notes.log.iter().map(|e| &e.text).collect::<Vec<_>>()
+    );
+
+    // Opened again: started again, as for any file.
+    app.open_in_editor(&file, None, None);
+    let v = app.focused_view().unwrap();
+    let id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)
+            && msgs(a, id) == ["boom"]),
+        "a new instance: {:?}",
+        app.lsp.status
+    );
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// A server with a request of ours out is not stopped, however long it
+/// has held no buffer: its answer is waited for.
+#[test]
+fn a_server_with_a_request_in_flight_is_not_stopped() {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-inflight-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let file = project(&base, "proj");
+    let notes = base.join("notes.txt");
+    std::fs::write(&notes, "notes\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&notes);
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.idle_stop_secs", Setting::Int(1));
+    let mut def = fake_server();
+    def.args.push("--hover-never".into());
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    app.open_in_editor(&file, None, None);
+    let v = app.focused_view().unwrap();
+    let id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, id) == ["boom"]),
+        "the server is up and holds the file"
+    );
+    ex(&mut d, &mut app, "lsp hover");
+    ex(&mut d, &mut app, "bd");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 0)),
+        "it holds no buffer"
+    );
+    let past = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < past {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(
+        app.lsp.status.len(),
+        1,
+        "still running, its hover unanswered"
+    );
+    std::fs::remove_dir_all(&base).ok();
+}
+
 /// A file under a server's library — the Lua API's types, opened by a
 /// go-to-definition from a config — goes to the instance running, not
 /// to one started in its folder (lsp-rules.md Decision 11).

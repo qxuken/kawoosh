@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::thread;
 
-use crossbeam_channel::{Receiver, Sender, select, unbounded};
+use crossbeam_channel::{Receiver, Sender, after, never, select, unbounded};
 use kawoosh_doc::diagnostic::Placed;
 use kawoosh_doc::{BufferId, Diagnostic, Run, Update, Version};
 use serde_json::{Value, json};
@@ -94,6 +94,11 @@ pub struct ServerDef {
     /// unless `lsp.languages` says otherwise: Vue's has TypeScript's
     /// (lsp-servers.md Decision 9).
     pub with: Vec<String>,
+    /// How long an instance of it may hold no buffer before it is shut
+    /// down (`lsp.idle_stop_secs`, lsp-rules.md Decision 12); `None`
+    /// keeps it while kawoosh runs. A file of its root opened later
+    /// starts it again.
+    pub idle_stop: Option<std::time::Duration>,
     /// Folders it reads as a library of its workspace rather than as a
     /// workspace of their own: a file under one goes to an instance
     /// already running, the one last sent a buffer, in place of one
@@ -149,6 +154,7 @@ impl Default for ServerDef {
             init: Value::Null,
             relay: Vec::new(),
             with: Vec::new(),
+            idle_stop: None,
             libraries: Vec::new(),
         }
     }
@@ -1886,12 +1892,31 @@ struct Server {
     results: HashMap<String, String>,
     pulling: bool,
     pull_again: bool,
+    /// Its definition's `idle_stop`; when it came to hold no buffer,
+    /// `None` while it holds one; and, once asked to shut down, when it
+    /// is killed if it has not exited (lsp-rules.md Decision 12).
+    idle_stop: Option<std::time::Duration>,
+    idle_since: Option<std::time::Instant>,
+    stopping: Option<std::time::Instant>,
     /// When it was last sent a buffer: of two instances a library file
     /// could go to, the one in use.
     used: std::time::Instant,
 }
 
 impl Server {
+    /// When it is next to be acted on of itself: killed, asked to shut
+    /// down and not gone; or shut down, idle — not while it starts or a
+    /// request of ours is out, whose answer brings the pool round again.
+    fn due(&self) -> Option<std::time::Instant> {
+        if let Some(at) = self.stopping {
+            return Some(at);
+        }
+        if !self.initialized || !self.pending.is_empty() {
+            return None;
+        }
+        Some(self.idle_since? + self.idle_stop?)
+    }
+
     /// The folders a loose glob of its watches is read under, spelled
     /// with `/`: its root — its one workspace folder — and the folders
     /// its other watches name.
@@ -2054,6 +2079,10 @@ impl Server {
             results: HashMap::new(),
             pulling: false,
             pull_again: false,
+            idle_stop: def.idle_stop,
+            // Sent its first buffer at once, it holds one.
+            idle_since: Some(std::time::Instant::now()),
+            stopping: None,
             used: std::time::Instant::now(),
         })
     }
@@ -2175,6 +2204,10 @@ pub const CRASHES: usize = 3;
 pub const CRASH_WINDOW: std::time::Duration = std::time::Duration::from_secs(180);
 
 const PROGRESS_PACE: std::time::Duration = std::time::Duration::from_millis(125);
+
+/// How long a server asked to shut down has to exit before it is
+/// killed.
+pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// When a paced wake is due, at most one every `every`.
 #[derive(Debug)]
@@ -2332,7 +2365,19 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         watching: Vec::new(),
     };
     loop {
+        // An idle server's time is checked whatever woke the loop, so a
+        // busy one's messages do not hold another's stop back.
+        let now = std::time::Instant::now();
+        let due = pool.next_due();
+        if due.is_some_and(|t| t <= now) {
+            pool.stop_idle(now);
+        }
+        let timer = match pool.next_due() {
+            Some(t) => after(t.saturating_duration_since(now)),
+            None => never(),
+        };
         select! {
+            recv(timer) -> _ => {}
             recv(cmd_rx) -> cmd => {
                 let Ok(cmd) = cmd else { return };
                 pool.handle_cmd(cmd);
@@ -2413,6 +2458,105 @@ impl Pool {
             .collect();
         list.sort();
         self.emit(Event::Status(list));
+    }
+
+    /// The soonest a server is due to be stopped or killed.
+    fn next_due(&self) -> Option<std::time::Instant> {
+        self.servers.iter().flatten().filter_map(Server::due).min()
+    }
+
+    /// Each server due at `now`: one that held no buffer for its
+    /// `idle_stop` asked to shut down — `shutdown`, then `exit` once
+    /// answered (`handle_message`) — and let go of, so a file of its
+    /// root opened later starts another; one asked [`STOP_GRACE`] ago
+    /// and still there, killed. Each said in the log, never the corner:
+    /// nobody is waiting on a server that serves nothing.
+    fn stop_idle(&mut self, now: std::time::Instant) {
+        for key in 0..self.servers.len() {
+            let Some(server) = self.servers[key].as_mut() else {
+                continue;
+            };
+            if !server.due().is_some_and(|t| t <= now) {
+                continue;
+            }
+            let (name, root) = (server.name.clone(), server.root.clone());
+            let text = if server.stopping.is_some() {
+                self.servers[key] = None;
+                self.forget_servers(&[key]);
+                format!(
+                    "did not exit {} s after shutdown; killed",
+                    STOP_GRACE.as_secs()
+                )
+            } else {
+                let idle = server.idle_stop.unwrap_or_default();
+                server.next_id += 1;
+                let id = server.next_id;
+                server
+                    .pending
+                    .insert(id, ("shutdown", BufferId::default(), Version::INITIAL, 0));
+                server.send(json!({ "jsonrpc": "2.0", "id": id, "method": "shutdown" }));
+                server.stopping = Some(now + STOP_GRACE);
+                self.keys.retain(|_, k| *k != key);
+                self.unpublish(key);
+                format!(
+                    "no buffer open for {} s; shutting down (lsp.idle_stop_secs)",
+                    idle.as_secs()
+                )
+            };
+            self.emit(Event::Message {
+                server: name,
+                root,
+                kind: 3,
+                text,
+                log: true,
+            });
+            self.status();
+        }
+    }
+
+    /// What server `key` published taken back: each file's diagnostics
+    /// said again without its — a `load_all` file's, which no buffer
+    /// holds, would otherwise stay after it.
+    fn unpublish(&mut self, key: usize) {
+        let uris: Vec<String> = self
+            .published
+            .iter()
+            .filter(|(_, by)| by.contains_key(&key))
+            .map(|(u, _)| u.clone())
+            .collect();
+        for uri in uris {
+            let Some(by) = self.published.get_mut(&uri) else {
+                continue;
+            };
+            by.remove(&key);
+            let all: Vec<Value> = by
+                .values()
+                .filter_map(Value::as_array)
+                .flatten()
+                .cloned()
+                .collect();
+            if by.is_empty() {
+                self.published.remove(&uri);
+            }
+            if let Some(path) = path_of_uri(&uri) {
+                let diagnostics = placed_diagnostics(&json!({ "uri": uri, "diagnostics": all }));
+                self.emit_from(key, Event::FileDiagnostics { path, diagnostics });
+            }
+        }
+    }
+
+    /// Server `key`'s idle clock: started when it came to hold no
+    /// buffer, stopped while it holds one.
+    fn note_held(&mut self, key: usize) {
+        let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+            return;
+        };
+        let holds = server.documents.values().any(|d| d.buffer.is_some());
+        if holds {
+            server.idle_since = None;
+        } else if server.idle_since.is_none() {
+            server.idle_since = Some(std::time::Instant::now());
+        }
     }
 
     /// Server `key`'s loaded files brought to what the rules say: the
@@ -2979,6 +3123,7 @@ impl Pool {
                     if let Some(d) = def {
                         server.answers = d.answers.clone();
                         server.relay = d.relay.clone();
+                        server.idle_stop = d.idle_stop;
                     }
                     if let Some(d) = def
                         && d.settings != server.settings
@@ -3122,6 +3267,7 @@ impl Pool {
                 for key in keys {
                     self.sync_to(key, &sync);
                     if let Some(server) = self.servers[key].as_mut() {
+                        server.idle_since = None;
                         server.used = now;
                     }
                 }
@@ -3757,6 +3903,7 @@ impl Pool {
                 }
             }
         }
+        self.note_held(key);
     }
 
     /// Servers `keys` gone: no buffer's any more, what they published
@@ -4114,6 +4261,11 @@ impl Pool {
         let Some(mut server) = self.servers.get_mut(key).and_then(Option::take) else {
             return;
         };
+        // Asked to: it did as told (`stop_idle`), and it is no crash.
+        if server.stopping.is_some() {
+            self.forget_servers(&[key]);
+            return;
+        }
         let status = exit_status(&mut server.child);
         let why = match &server.last_stderr {
             Some(line) => format!("{status}: {line}"),
@@ -4202,6 +4354,11 @@ impl Pool {
             let Some((method, buffer, version, offset)) = server.pending.remove(&id) else {
                 return;
             };
+            // Shut down as asked, answered or refused: told to exit.
+            if method == "shutdown" {
+                server.send(json!({ "jsonrpc": "2.0", "method": "exit" }));
+                return;
+            }
             let result = message.get("result");
             // A server that refused to start (typescript-language-server
             // with no TypeScript to run) is not one that does nothing:
