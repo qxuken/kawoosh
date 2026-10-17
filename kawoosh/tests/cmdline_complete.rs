@@ -26,7 +26,7 @@ static ENV: Mutex<()> = Mutex::new(());
 /// The fake: what it was asked goes to `calls` beside it, a line each;
 /// it answers by the program asked about.
 const FAKE: &str = r#"#!/bin/sh
-here=$(/usr/bin/dirname "$0")
+here=${0%/*}
 echo "$*" >> "$here/calls"
 case "$1" in
   git)
@@ -165,12 +165,17 @@ fn a_line_s_arguments_complete_from_its_completer() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = s.open(&mut d);
 
-    // Asked as the word starts, off the frame: nothing until it answers.
+    // Asked as the word starts, on a job; the line completed again as
+    // it answers (whether it beats the next frame is the machine's).
     d.keys(&mut app, ":compile git ");
-    assert!(!candidates(&app).contains(&"commit".to_string()));
     answered(&mut d, &mut app);
     let c = candidates(&app);
-    assert_eq!(c[..3], ["commit", "checkout", "clean"], "{c:?}");
+    assert_eq!(
+        c[..3],
+        ["commit", "checkout", "clean"],
+        "{c:?} {:?}",
+        s.calls()
+    );
     assert_eq!(
         detail(&app).as_deref(),
         Some("Record changes to the repository")
@@ -194,11 +199,14 @@ fn a_line_s_arguments_complete_from_its_completer() {
     // A flag: asked from `-`, the flags narrowed here.
     d.keys(&mut app, " --a");
     answered(&mut d, &mut app);
-    assert_eq!(candidates(&app), ["--amend", "--author"]);
+    assert_eq!(candidates(&app), ["--amend", "--author"], "{:?}", s.calls());
     assert_eq!(detail(&app).as_deref(), Some("amend previous commit"));
-    assert_eq!(
-        s.calls().last().map(String::as_str),
-        Some("git export git commit -")
+    // Asked from `-`; the space before asked too, its answer out at
+    // the same time, so in either order.
+    assert!(
+        s.calls().iter().any(|c| c == "git export git commit -"),
+        "{:?}",
+        s.calls()
     );
     leave(&mut d, &mut app);
 
