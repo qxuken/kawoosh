@@ -184,6 +184,48 @@ fn nested_placeholders() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A transform of a field writes its places as the field is left.
+#[test]
+fn a_transform_is_written_as_its_field_is_left() {
+    let (dir, mut d, mut app) = open("transform", "main.rs", "\n");
+    d.press(&mut app, "i");
+    app.snippet_expand("let ${1:name} = \"${1/(.*)/${1:/upcase}/}\"; ${2:rest}");
+    d.settle(&mut app);
+    assert_eq!(text(&app), "let name = \"NAME\"; rest\n");
+    d.keys(&mut app, "кот_x");
+    assert_eq!(
+        text(&app),
+        "let кот_x = \"NAME\"; rest\n",
+        "not as it is typed"
+    );
+    d.press(&mut app, "<C-l>");
+    assert_eq!(text(&app), "let кот_x = \"КОТ_X\"; rest\n");
+    assert_eq!(selected(&app), ["rest"], "the next field's place carried");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Accepted at several carets, a snippet is a copy at each; a field is
+/// its places in every copy, and one walk moves them all.
+#[test]
+fn several_carets_each_get_a_copy() {
+    let (dir, mut d, mut app) = open("carets", "main.rs", "one\ntwo\n");
+    d.press(&mut app, "gg<C-j>A");
+    assert_eq!(carets(&app).len(), 2);
+    app.snippet_expand(" f(${1:a}, ${2:b})");
+    d.settle(&mut app);
+    assert_eq!(text(&app), "one f(a, b)\ntwo f(a, b)\n");
+    assert_eq!(selected(&app), ["a", "a"]);
+    d.keys(&mut app, "x");
+    d.press(&mut app, "<C-l>");
+    assert_eq!(selected(&app), ["b", "b"]);
+    d.keys(&mut app, "yy");
+    d.press(&mut app, "<C-l>");
+    assert!(!live(&app));
+    assert_eq!(text(&app), "one f(x, yy)\ntwo f(x, yy)\n");
+    assert_eq!(carets(&app), [12, 25], "the last carets, one a copy");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A choice field offers its options in the popup at once, whatever
 /// the look says; `<C-n>` walks them, `<Tab>` takes one into every
 /// place of the field; typing narrows them.

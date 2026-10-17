@@ -366,14 +366,14 @@ impl Kawoosh {
             return false;
         }
         let nodes = grammar::parse(body);
-        let shared = self.snippet_vars(buffer);
+        let shared = self.snippet_vars(buffer, body);
         let unit = match as_is {
             true => String::new(),
             false => self.ed.indent_unit_in(buffer),
         };
         let mut expanded = Vec::with_capacity(ranges.len());
         for (k, r) in ranges.iter().enumerate() {
-            let vars = self.snippet_vars_at(&shared, buffer, view, r.clone(), k);
+            let vars = self.snippet_vars_at(&shared, buffer, view, r.clone(), k, body);
             let buf = &self.ed.buffers[buffer];
             let ls = buf.line_start(buf.line_of(r.start));
             let lead = buf.slice(ls..r.start);
@@ -534,7 +534,8 @@ impl Kawoosh {
             .enumerate()
             .map(|(m, (_, t))| (Place::Mirror(at, m), t.apply(&text)))
             .collect();
-        self.snippet_put(puts);
+        // The field left does not grow with what lands beside it.
+        self.snippet_put(puts, None);
     }
 
     /// The choice taken from the popup: every place of the field being
@@ -548,7 +549,8 @@ impl Kawoosh {
         let puts = (0..live.fields[at].ranges.len())
             .map(|r| (Place::Field(at, r), text.to_string()))
             .collect();
-        self.snippet_put(puts);
+        // The field and those it is nested in hold what is chosen.
+        self.snippet_put(puts, Some(at));
         let Some(live) = self.snippet.as_ref() else {
             return;
         };
@@ -565,8 +567,9 @@ impl Kawoosh {
     }
 
     /// The snippet's own edits: each place made its text, every other
-    /// range carried past them.
-    fn snippet_put(&mut self, puts: Vec<(Place, String)>) {
+    /// range carried past them, field `current` growing as typing grows
+    /// it.
+    fn snippet_put(&mut self, puts: Vec<(Place, String)>, current: Option<usize>) {
         let Some(live) = self.snippet.as_ref() else {
             return;
         };
@@ -591,7 +594,7 @@ impl Kawoosh {
         };
         let version = buf.version();
         let live = self.snippet.as_mut().unwrap();
-        if !live.follow(&edits, None) {
+        if !live.follow(&edits, current) {
             self.snippet = None;
             return;
         }
@@ -693,8 +696,9 @@ impl Kawoosh {
         out
     }
 
-    /// What every place of a snippet in `buffer` shares.
-    fn snippet_vars(&mut self, buffer: BufferId) -> Vars {
+    /// What every place of snippet `body` in `buffer` shares. A text a
+    /// mask could hide is read only when the body names its variable.
+    fn snippet_vars(&mut self, buffer: BufferId, body: &str) -> Vars {
         let buf = &self.ed.buffers[buffer];
         let path = buf.path.clone();
         let filename = path
@@ -722,7 +726,10 @@ impl Kawoosh {
             })
             .unwrap_or_default();
         let tokens = self.ed.comment_tokens_in(buffer);
-        let clipboard = self.snippet_clipboard(buffer);
+        let clipboard = match body.contains("CLIPBOARD") {
+            true => self.snippet_clipboard(buffer),
+            false => String::new(),
+        };
         Vars {
             filename,
             directory,
@@ -793,7 +800,8 @@ impl Kawoosh {
         false
     }
 
-    /// The variables of the place `r` (the word replaced) at caret `k`.
+    /// The variables of the place `r` (the word replaced) at caret `k`,
+    /// the texts a mask could hide read only where `body` names them.
     fn snippet_vars_at(
         &mut self,
         shared: &Vars,
@@ -801,6 +809,7 @@ impl Kawoosh {
         view: ViewId,
         r: Range<usize>,
         k: usize,
+        body: &str,
     ) -> Vars {
         let buf = &self.ed.buffers[buffer];
         let private = buf.private;
@@ -830,8 +839,17 @@ impl Kawoosh {
             .and_then(|v| v.sels.items.get(k).copied())
             .filter(|s| !s.is_empty())
             .map(|s| (s.range(), buf.slice(s.range())));
+        let named = |v: &str| body.contains(v);
+        let (line, word, selected) = (
+            named("TM_CURRENT_LINE").then_some(line),
+            named("TM_CURRENT_WORD").then_some(word),
+            selected.filter(|_| named("TM_SELECTED_TEXT")),
+        );
         // A text of the buffer is put only where no mask covers it.
-        let masks = self.masks_of(buffer);
+        let masks = match line.is_some() || word.is_some() || selected.is_some() {
+            true => self.masks_of(buffer),
+            false => Vec::new(),
+        };
         let mut text = |range: Range<usize>, t: String| -> String {
             let masked = masks
                 .iter()
@@ -842,8 +860,8 @@ impl Kawoosh {
                 t
             }
         };
-        let line = text(line_range, line);
-        let word = text(word.0, word.1);
+        let line = line.map(|l| text(line_range, l)).unwrap_or_default();
+        let word = word.map(|(r, w)| text(r, w)).unwrap_or_default();
         let selected = selected.map(|(r, t)| text(r, t)).unwrap_or_default();
         Vars {
             filename: shared.filename.clone(),
