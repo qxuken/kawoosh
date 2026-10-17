@@ -103,6 +103,11 @@ fn every_panes_text_follows_the_chromes_size() {
             if n.kind != NodeKind::Text || t.trim().is_empty() || n.rect.h <= 0.0 {
                 continue;
             }
+            // An icon (`font.icons`) is fitted to a cell of the text
+            // beside it, not set at a step of the scale.
+            if t.chars().all(kawoosh::icons::is_icon_char) {
+                continue;
+            }
             if n.rect.h + 0.5 < floor {
                 found.push(format!(
                     ":{cmd}: {t:?} {:.1} px tall, under {floor:.1}",

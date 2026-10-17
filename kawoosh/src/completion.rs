@@ -2904,11 +2904,22 @@ mod tests {
         // case aside.
         let prefix = Config {
             fuzzy: false,
+            popup: PopupAxis::Never,
             ..config.clone()
         };
         s.typed = "HE".into();
         s.rescan_all(&ctx(&prefix, &frecency, &signals));
         assert_eq!(texts(&mut s), ["help", "helium", "hello"]);
-        assert!(s.selected_item().is_none(), "none continues `HE` as typed");
+        assert!(
+            s.selected_item().is_none(),
+            "the ghost-only look: none continues `HE` as typed"
+        );
+        // Where a popup may show, the first is selected, a ghost or not.
+        let popup = Config {
+            popup: PopupAxis::Fallback,
+            ..prefix.clone()
+        };
+        s.rescan_all(&ctx(&popup, &frecency, &signals));
+        assert_eq!(s.selected_item().map(Item::text), Some("help"));
     }
 }
