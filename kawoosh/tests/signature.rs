@@ -478,9 +478,16 @@ fn a_panel_alone_is_placed_by_its_own_height() {
     d.settle(&mut app);
     d.keys(&mut app, "none(");
     d.press(&mut app, "<C-g>");
+    // From the first frame it is drawn in: not placed by the one before.
     until(&mut d, &mut app, "none's", |a| {
         head(a).as_deref() == Some("fn none()")
     });
+    let short = d.rect_labelled("completion docs").unwrap();
+    let hang = d.rect_labelled("hang").unwrap();
+    assert!(
+        short.y + short.h <= hang.y + 0.5,
+        "over it at once: {short:?} {hang:?}"
+    );
     d.settle(&mut app);
     let short = d.rect_labelled("completion docs").unwrap();
     let hang = d.rect_labelled("hang").unwrap();
