@@ -47,14 +47,15 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.frame(app);
 }
 
-/// Frames until `f` holds, a few seconds at most.
+/// Frames until `f` holds, 30 seconds at most: a process (git) answers
+/// late under load, 48 copies of these tests at once.
 fn until(
     d: &mut Drive,
     app: &mut Kawoosh,
     what: &str,
     mut f: impl FnMut(&mut Kawoosh, &Drive) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while !f(app, d) {
         assert!(
             Instant::now() < deadline,
