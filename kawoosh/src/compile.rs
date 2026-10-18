@@ -914,17 +914,25 @@ impl Kawoosh {
             );
             return Rc::default();
         }
+        // One count with a shell line's completers; no thread, no ask —
+        // asked again at a later key, never run on the frame.
+        if !self.line_complete.room() {
+            return Rc::default();
+        }
         self.compile.nu_asks += 1;
         let serial = self.compile.nu_asks;
-        self.compile
-            .completions
-            .insert(key.clone(), (stamp, NuAnswer::Asked(serial)));
-        self.pending_jobs += 1;
-        let (file, name) = key;
-        self.io.run("nu complete", move || IoMsg::NuCompleted {
+        let (file, name) = key.clone();
+        if !self.io.try_run("nu complete", move || IoMsg::NuCompleted {
             serial,
             values: nu_answer(&file, &name),
-        });
+        }) {
+            return Rc::default();
+        }
+        self.compile
+            .completions
+            .insert(key, (stamp, NuAnswer::Asked(serial)));
+        self.line_complete.running += 1;
+        self.pending_jobs += 1;
         Rc::default()
     }
 
@@ -944,16 +952,21 @@ impl Kawoosh {
     }
 
     /// nu answered ask `serial`: kept under it, and the line completed
-    /// again. Dropped when the prompt it was asked for has closed
-    /// ([`Kawoosh::nu_asks_dropped`]) or the file changed since.
+    /// again. An ask outlives the prompt that made it — the answer is
+    /// the file's, by its stamp, and the next prompt's to show; while it
+    /// runs no prompt asks again. Dropped when the file changed since.
     pub(crate) fn nu_completed(&mut self, serial: u64, values: Option<Vec<String>>) {
         self.pending_jobs = self.pending_jobs.saturating_sub(1);
+        let freed = self.line_complete.ended();
         let Some((_, slot)) = self
             .compile
             .completions
             .values_mut()
             .find(|(_, a)| matches!(a, NuAnswer::Asked(s) if *s == serial))
         else {
+            if freed {
+                self.cmdline_refresh();
+            }
             return;
         };
         if values.is_none() {
@@ -961,15 +974,6 @@ impl Kawoosh {
         }
         *slot = NuAnswer::Got(Rc::new(values.unwrap_or_default()));
         self.cmdline_refresh();
-    }
-
-    /// The `:` prompt closed: the nushell completers still out are
-    /// forgotten, so their answers are dropped as they land; the answers
-    /// in stay, by the file's stamp.
-    pub(crate) fn nu_asks_dropped(&mut self) {
-        self.compile
-            .completions
-            .retain(|_, (_, a)| matches!(a, NuAnswer::Got(_)));
     }
 
     /// The scripts of the packages around (compile.md Decision 9): the

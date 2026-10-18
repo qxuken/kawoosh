@@ -725,7 +725,6 @@ impl Kawoosh {
             self.cmd_dirs.get_mut().clear();
             self.cmd_compile_lines = None;
             self.line_complete.clear();
-            self.nu_asks_dropped();
             return;
         }
         let line = self.ed.prompt_text().unwrap_or_default();

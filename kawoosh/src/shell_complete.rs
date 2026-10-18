@@ -35,9 +35,10 @@ pub const PATIENCE: Duration = Duration::from_secs(2);
 pub const CAP: usize = 1 << 20;
 /// The most values one answer gives.
 pub const MOST: usize = 2000;
-/// Questions out at once: past it a new one waits for a later key, or
-/// for an answer, which completes the line again.
-const IN_FLIGHT: usize = 4;
+/// Completers running at once — this module's and a nushell parameter's
+/// (`compile::nu_answer`), one count: past it a new question waits for
+/// a later key, or for one to end, which completes the line again.
+pub(crate) const IN_FLIGHT: usize = 4;
 
 /// A question put to the completer.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -65,6 +66,9 @@ pub struct ShellComplete {
     /// Whether the completer was found on the PATH, by name, looked up
     /// once a prompt.
     found: Option<(String, bool)>,
+    /// Completers running, carapace's and nu's, whichever prompt asked
+    /// them: what [`IN_FLIGHT`] bounds. Not the prompt's, so not cleared.
+    pub(crate) running: usize,
 }
 
 impl ShellComplete {
@@ -75,11 +79,17 @@ impl ShellComplete {
         self.found = None;
     }
 
-    fn in_flight(&self) -> usize {
-        self.answers
-            .values()
-            .filter(|a| matches!(a, Answer::Asked(_)))
-            .count()
+    /// Whether another completer may start now.
+    pub(crate) fn room(&self) -> bool {
+        self.running < IN_FLIGHT
+    }
+
+    /// A completer ended: whether it freed a place a question was
+    /// waiting for, so the line should be completed again.
+    pub(crate) fn ended(&mut self) -> bool {
+        let full = !self.room();
+        self.running = self.running.saturating_sub(1);
+        full
     }
 }
 
@@ -289,19 +299,28 @@ impl Kawoosh {
                     .collect();
             }
             Some(Answer::Asked(_)) => return Vec::new(),
-            None if self.line_complete.in_flight() >= IN_FLIGHT => return Vec::new(),
+            None if !self.line_complete.room() => return Vec::new(),
             None => {}
         }
         self.line_complete.serial += 1;
         let serial = self.line_complete.serial;
+        let job = key.clone();
+        // No thread, no question: asked again at a later key, never run
+        // on the frame.
+        if !self
+            .io
+            .try_run("line complete", move || IoMsg::LineCompleted {
+                serial,
+                values: ask(&job.completer, &job.dir, &job.words, &job.stem),
+            })
+        {
+            return Vec::new();
+        }
         self.line_complete
             .answers
-            .insert(key.clone(), Answer::Asked(serial));
+            .insert(key, Answer::Asked(serial));
+        self.line_complete.running += 1;
         self.pending_jobs += 1;
-        self.io.run("line complete", move || IoMsg::LineCompleted {
-            serial,
-            values: ask(&key.completer, &key.dir, &key.words, &key.stem),
-        });
         Vec::new()
     }
 
@@ -310,12 +329,16 @@ impl Kawoosh {
     /// Dropped when the prompt it was asked for has closed.
     pub(crate) fn line_completed(&mut self, serial: u64, values: Option<Vec<(String, String)>>) {
         self.pending_jobs = self.pending_jobs.saturating_sub(1);
+        let freed = self.line_complete.ended();
         let Some(slot) = self
             .line_complete
             .answers
             .values_mut()
             .find(|a| matches!(a, Answer::Asked(s) if *s == serial))
         else {
+            if freed {
+                self.cmdline_refresh();
+            }
             return;
         };
         if values.is_none() {
