@@ -68,6 +68,37 @@ fn rows(d: &Drive) -> Vec<String> {
         .collect()
 }
 
+/// A head chip as it reads, its caps' text and its word — `g ignored`
+/// for `<A-g>` on a Mac (the ⌥ an icon), `alt+g ignored` on a PC — or
+/// none drawn.
+fn chip(d: &Drive, word: &str) -> Option<String> {
+    let nodes = d.core.nodes();
+    let at = nodes.iter().rposition(|n| n.text.as_deref() == Some(word))?;
+    let chip = nodes[at].parent?;
+    let under = |n: &kui_native::NodeInfo| {
+        let mut p = n.parent;
+        while let Some(k) = p {
+            if k == chip {
+                return true;
+            }
+            p = nodes.iter().find(|m| m.key == k).and_then(|m| m.parent);
+        }
+        false
+    };
+    let words: Vec<&str> = nodes
+        .iter()
+        .filter(|n| under(n))
+        .filter_map(|n| n.text.as_deref())
+        .collect();
+    Some(words.join(" "))
+}
+
+/// What [`chip`] reads for `<A-KEY>` and its word.
+fn alt_chip(key: &str, word: &str) -> String {
+    let alt = if cfg!(target_os = "macos") { "" } else { "alt+" };
+    format!("{alt}{key} {word}")
+}
+
 fn picker_open(app: &Kawoosh) -> bool {
     app.lua_view_pane("picker").is_some()
 }
@@ -1601,7 +1632,7 @@ fn place(app: &mut Kawoosh) -> String {
 /// Asked 2026-10-18: "picker preview should detect where it has enough
 /// space" (picker.md Decisions 1 and 2). By the picker's own laid-out
 /// size, every frame: beside the list in a wide one, below it in a
-/// narrow, tall one, none in a small one — the head says `⌥P preview`
+/// narrow, tall one, none in a small one — the head says `⌥p preview`
 /// then and `<A-p>` draws it anyway — and a resize moves it. `right`
 /// and `below` are where they say; `true` is the old `auto`.
 #[test]
@@ -1670,9 +1701,10 @@ fn the_preview_goes_where_the_picker_has_room() {
     assert_eq!(place(&mut app), "none");
     assert!(d.rect("picker divider").is_none(), "no divider");
     assert!(!preview(&d), "no preview");
-    assert!(
-        texts(&d).iter().any(|s| s == "⌥P preview"),
-        "the way to it: {:?}",
+    assert_eq!(
+        chip(&d, "preview"),
+        Some(alt_chip("p", "preview")),
+        "the way to it, its key as typed: {:?}",
         texts(&d)
     );
     let row = d.rect("row README.md").unwrap();
@@ -1687,7 +1719,7 @@ fn the_preview_goes_where_the_picker_has_room() {
     d.frame(&mut app);
     assert_eq!(place(&mut app), "none");
     assert!(
-        !texts(&d).iter().any(|s| s == "⌥P preview"),
+        chip(&d, "preview").is_none(),
         "put away says nothing"
     );
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
@@ -1737,7 +1769,7 @@ fn the_preview_goes_where_the_picker_has_room() {
     d.frame(&mut app);
     assert_eq!(place(&mut app), "none");
     assert!(
-        !texts(&d).iter().any(|s| s == "⌥P preview"),
+        chip(&d, "preview").is_none(),
         "off says nothing"
     );
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
@@ -1796,7 +1828,11 @@ fn files_here_inside_an_ignored_directory_and_the_ignored_key() {
         &mut app,
         r#"assert(kawoosh.picker.state().ignored == true)"#,
     );
-    assert!(texts(&d).iter().any(|s| s == "⌥G ignored"));
+    assert_eq!(
+        chip(&d, "ignored"),
+        Some(alt_chip("g", "ignored")),
+        "<A-g> a lowercase g, not ⌥⇧g"
+    );
     d.press(&mut app, "<C-c>");
     // From the project: git's view, then everything but `.git`.
     d.keys(&mut app, " f");
@@ -1859,6 +1895,35 @@ fn files_here_inside_an_ignored_directory_and_the_ignored_key() {
     d.frame(&mut app);
     assert_eq!(rows(&d), ["as git sees it"], "the late answers dropped");
     d.press(&mut app, "<C-c>");
+    // A read again keeps the rows and the count it had until its answer
+    // lands: `reading…` only while there is nothing yet, never blinked
+    // in for the frame a quick walk takes.
+    lua(
+        &mut app,
+        r#"_G.loads = {}
+           kawoosh.picker.open { name = "slow", ignored = true,
+             load = function(ctx, done) table.insert(_G.loads, done) end }"#,
+    );
+    d.frame(&mut app);
+    assert!(texts(&d).iter().any(|s| s == "reading…"), "a first read says so");
+    lua(&mut app, r#"_G.loads[1]({ { text = "a" }, { text = "b" } })"#);
+    d.press(&mut app, "<Down>");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), ["a", "b"]);
+    d.key(&mut app, "g", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    lua(&mut app, r#"assert(kawoosh.picker.state().loading)"#);
+    assert!(
+        !texts(&d).iter().any(|s| s == "reading…"),
+        "{:?}",
+        texts(&d)
+    );
+    assert_eq!(rows(&d), ["a", "b"], "the rows kept meanwhile");
+    lua(&mut app, r#"_G.loads[2]({ { text = "c" } })"#);
+    d.press(&mut app, "<Down>");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), ["c"]);
+    d.press(&mut app, "<C-c>");
     // A source whose rows stopped at a cap: the count says so.
     lua(
         &mut app,
@@ -1874,7 +1939,7 @@ fn files_here_inside_an_ignored_directory_and_the_ignored_key() {
     );
     lua(&mut app, r#"assert(kawoosh.picker.state().capped == true)"#);
     assert!(
-        !texts(&d).iter().any(|s| s == "⌥G ignored"),
+        chip(&d, "ignored").is_none(),
         "no key where the source has none"
     );
     d.press(&mut app, "<C-c>");
