@@ -1682,6 +1682,12 @@ fn the_preview_goes_where_the_picker_has_room() {
     d.frame(&mut app);
     d.frame(&mut app);
     assert_eq!(place(&mut app), "none", "forced only while it was open");
+    // Wide but short: no room for a preview's least lines beside,
+    // nor for the list and a preview stacked.
+    d.viewport = kui_native::Size::new(1000.0, 260.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "none", "a one-line preview is none");
     // The window wide again: beside, without a key.
     d.viewport = kui_native::Size::new(1000.0, 700.0);
     d.frame(&mut app);

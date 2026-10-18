@@ -947,9 +947,10 @@ end
 -- whose body (the pane under its query row, as laid out) is `w` by `h`
 -- px — `"right"`, `"below"`, or nil for none. `right` and `below` are
 -- where they say, `off` none; `auto` beside the list when the width
--- holds both at their least, else below it when the height does,
--- else none — and `forced` (`<A-p>` with none) the one of the two
--- with the more room, whatever it is.
+-- holds both at their least and the height the preview's least lines,
+-- else below it when the height holds both, else none — and `forced`
+-- (`<A-p>` with none) the one of the two with the more room, whatever
+-- it is.
 ---@param w number
 ---@param h number
 ---@param mode "auto"|"right"|"below"|"off"
@@ -959,8 +960,8 @@ function picker.place(w, h, mode, forced)
   if mode == "off" then return nil end
   if mode == "right" or mode == "below" then return mode end
   local m = least()
-  local across = w / (m.list_w + DIVIDER + m.preview_w)
-  local down = h / (m.list_h + DIVIDER + m.preview_h)
+  local across = math.min(w / (m.list_w + DIVIDER + m.preview_w), h / math.max(m.list_h, m.preview_h))
+  local down = math.min(h / (m.list_h + DIVIDER + m.preview_h), w / math.max(m.list_w, m.preview_w))
   if across >= 1 then return "right" end
   if down >= 1 then return "below" end
   if forced then return across >= down and "right" or "below" end
@@ -1623,7 +1624,11 @@ kawoosh.view(VIEW, function(ctx)
     body[#body + 1] = splitter(ctx.env, { key = "picker divider", thickness = DIVIDER,
       dir = place == "below" and "column" or "row", on_drag = { kind = "divide" } })
     body[#body + 1] = picker.preview(ctx, pv, prows, P.pv_top, room)
-  elseif not P.src.follow and previewing() then
+  else
+    -- None drawn, none kept: `picker.state().preview` is what is drawn.
+    P.preview_for, P.preview = nil, nil
+  end
+  if not place and not P.src.follow and previewing() then
     -- No room for one: the way to it anyway, `<A-p>`, at the head's end.
     head[#head + 1] = row { on_click = { kind = "preview" }, height = ROW_H, cross_align = "center",
       text("⌥P preview", { size = SMALL, color = t.faint, wrap = "none" }) }

@@ -36,13 +36,15 @@ query row: `ctx.width`, `ctx.height`, the view's own size, never the
 window's), every frame, so a pane resized, a column narrowed or the
 window dragged moves it on the next frame (`picker.place`):
 
-1. **beside the list** when the width holds both at their least: the
+1. **beside the list** when the width holds both at their least — the
    list `LIST_COLS` = 30 characters of its text and the preview
    `PREVIEW_COLS` = 40 of its own, each with its padding, and the
-   divider — about 560 px at the 13 px face;
-2. else **below the list** when the height holds both: `LIST_ROWS` = 4
-   rows and `PREVIEW_MIN` = 4 lines under the preview's title — about
-   190 px of body;
+   divider: about 560 px at the 13 px face — and the height holds the
+   preview's least, `PREVIEW_MIN` = 4 lines under its title (about
+   110 px);
+2. else **below the list** when the height holds both — `LIST_ROWS` = 4
+   rows and the preview's 4 lines: about 190 px of body — and the width
+   holds the wider of the two;
 3. else **none**, and the head ends in a faint `⌥P preview`.
 
 The least are in characters of the faces as they are (`kawoosh.metrics`),
@@ -60,8 +62,9 @@ picker opens under a pane, in a column of any width, at any
 `picker.share` of a height — only its own laid-out size says what fits.
 *Beat:* fitting at the current share (the list's 0.3 of a width): a
 drag of the divider would move the preview below mid-drag.
-*Beat:* a ratio (beside when wider than tall): a wide, very short picker
-would get a one-line preview beside rather than none.
+*Beat:* a ratio (beside when wider than tall), or width alone: a wide,
+very short picker would get a one-line preview beside rather than none
+(seen in the window, 2026-10-18, a picker at `share` 0.15).
 
 ### 2. `<A-p>` shows a preview there is no room for
 

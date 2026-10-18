@@ -178,8 +178,9 @@ and the divider you leave are kept for the next picker.
 
 The preview goes where the picker has room for it, decided again as
 the pane or the window is resized: beside the list when the picker is
-wide enough for both (about 30 characters of list and 40 of preview),
-below the list when it is tall enough instead (4 rows and 4 lines),
+wide enough for both (about 30 characters of list and 40 of preview)
+and tall enough for 4 lines of preview, below the list when it is tall
+enough for 4 rows and 4 lines instead,
 and nowhere when it is neither — the head then ends in `⌥P preview`.
 `picker.preview` set to `right`, `below` or `off` puts it there always.
 The divider under a list drags too.
