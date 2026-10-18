@@ -4,11 +4,11 @@ The drawing is the user's (roadmap step 35).
 
 | File | What it is | Where it goes |
 |---|---|---|
-| `kawoosh-icon.svg` | the icon, full bleed on a 100×100 rounded square | the source of `kawoosh.ico` |
+| `kawoosh-icon.svg` | the icon, full bleed on a 100×100 rounded square | the source of `kawoosh.ico`; on Linux the hicolor theme's `scalable/apps/kawoosh.svg` (`scripts/linux-app.nu`) |
 | `kawoosh-icon-macos.svg` | the same on macOS's grid: inset to 80.5%, with the drop shadow | the source of `kawoosh.icns` |
 | `kawoosh.icns` | exported from `kawoosh-icon-macos.svg` | Kawoosh.app's `Contents/Resources` (`scripts/macos-app.nu`) |
 | `kawoosh.ico` | 16–256 px | linked into `kawoosh.exe` (`kawoosh/build.rs`, `kawoosh/kawoosh.rc`) |
-| `kawoosh-128.png` | 128 px, rendered from `kawoosh-icon.svg` (`resvg -w 128 -h 128`) | the window's icon on X11, decoded at startup (`kawoosh/src/main.rs`) |
+| `kawoosh-128.png` | 128 px, rendered from `kawoosh-icon.svg` (`resvg -w 128 -h 128`) | the window's icon on X11, decoded at startup (`kawoosh/src/main.rs`); the hicolor theme's `128x128/apps/kawoosh.png`, which `kawoosh.desktop`'s `Icon=kawoosh` names (`scripts/linux-app.nu`) |
 | `favicon.ico` | 16–64 px, exported from `kawoosh-icon.svg` | a web page's, when there is one |
 | `kawoosh-mono.svg` | one colour, a plate under it | where colour is not wanted |
 | `kawoosh-glyph.svg` | the glyph alone in `currentColor`, cropped to it | a tray or menu-bar item — a daemon's, later |

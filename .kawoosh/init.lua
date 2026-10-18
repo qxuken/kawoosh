@@ -12,6 +12,10 @@ local install = {
     cmd = "nu scripts/macos-app.nu /Applications",
     doc = "/Applications/Kawoosh.app",
   },
+  linux = {
+    cmd = "nu scripts/linux-app.nu --install",
+    doc = "~/.local: bin/kawoosh, its fonts, a launcher entry and icon",
+  },
 }
 
 local here = install[kawoosh.os]

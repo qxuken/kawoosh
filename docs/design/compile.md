@@ -255,11 +255,12 @@ can: `kawoosh.os` is `"mac"`, `"linux"` or `"windows"` — the names a
 server's install lines are keyed with — so one name runs this system's
 line. This repository's `.kawoosh/init.lua` names `install` so
 (`scripts/windows-app.nu --install`, `scripts/macos-app.nu
-/Applications`):
+/Applications`, `scripts/linux-app.nu --install`):
 
 ```lua
 local install = { mac = "nu scripts/macos-app.nu /Applications",
-                  windows = "nu scripts/windows-app.nu --install" }
+                  windows = "nu scripts/windows-app.nu --install",
+                  linux = "nu scripts/linux-app.nu --install" }
 kawoosh.opt("compile.commands.install", install[kawoosh.os])
 ```
 

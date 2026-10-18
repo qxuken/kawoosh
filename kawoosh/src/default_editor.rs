@@ -731,6 +731,16 @@ pub fn system(exts: &[String]) -> Result<Box<dyn System>, String> {
     }
 }
 
+/// `kawoosh --desktop-entry`: the `kawoosh.desktop` that runs this
+/// binary, declaring the types the build's languages are on this
+/// machine — what `scripts/linux-app.nu` installs beside it.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn desktop_entry() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let x = xdg::Xdg::from_env(exe.clone()).ok_or("no home directory (HOME is not set)")?;
+    Ok(xdg::entry(&exe, &x.declared(&candidates())))
+}
+
 /// `args` (after `default-editor`) run on this system, the record in
 /// `store`; what to say, or why nothing was done.
 pub fn run_here(args: &[String], store: &Store) -> Result<String, String> {
@@ -1316,16 +1326,48 @@ pub mod xdg {
                 return Ok(None);
             }
             let path = self.data_home.join("applications").join(DESKTOP);
-            let text = format!(
-                "[Desktop Entry]\nType=Application\nName=Kawoosh\nComment=A modal editor with terminals\nExec={} --reuse %f\nTerminal=false\nCategories=Development;TextEditor;\nMimeType={};\n",
-                quoted(&self.exe),
-                ids.join(";")
-            );
+            let text = entry(&self.exe, ids);
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }
             super::write_whole(&path, &text)?;
             Ok(Some(path))
+        }
+    }
+
+    /// `kawoosh.desktop` for `exe`, declaring the MIME types `ids`: what
+    /// `on` writes when there is none, and what `scripts/linux-app.nu`
+    /// installs (`kawoosh --desktop-entry`). `Icon` names the icon the
+    /// script puts in the hicolor theme; `StartupWMClass` is the X11
+    /// window's class, the binary's name, so a dock groups the window
+    /// under the entry. `TextEditor` is a category the spec has go with
+    /// `Utility`.
+    pub fn entry(exe: &Path, ids: &[String]) -> String {
+        let mut text = format!(
+            "[Desktop Entry]\nType=Application\nName=Kawoosh\nComment=A modal editor with terminals\nIcon=kawoosh\nExec={} --reuse %f\nTerminal=false\nStartupWMClass=kawoosh\nCategories=Utility;TextEditor;Development;\n",
+            quoted(exe)
+        );
+        // An empty `MimeType=` is an error to desktop-file-validate.
+        if !ids.is_empty() {
+            text.push_str(&format!("MimeType={};\n", ids.join(";")));
+        }
+        text
+    }
+
+    impl Xdg {
+        /// The MIME types of `exts` an installed Kawoosh declares, each
+        /// once, in order: text, and text another kind of app shows —
+        /// in Open with for them, as Kawoosh.app is for every language
+        /// on macOS, and the default of none another app claims.
+        pub fn declared(&self, exts: &[String]) -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            for e in exts {
+                let t = self.type_of(e);
+                if matches!(t.kind, Kind::Text | Kind::Shown) && !out.contains(&t.id) {
+                    out.push(t.id);
+                }
+            }
+            out
         }
     }
 
@@ -1993,6 +2035,7 @@ mod tests {
                 "{d}"
             );
             assert!(d.contains("MimeType=text/rust;application/json;\n"), "{d}");
+            assert!(d.contains("Icon=kawoosh\n"), "{d}");
             let after = std::fs::read_to_string(&list).unwrap();
             assert_eq!(
                 xdg::get(&after, "Default Applications", "text/rust").as_deref(),
@@ -2020,6 +2063,25 @@ mod tests {
             assert!(said.contains("Gave back to Linux's own pick: rs"), "{said}");
             assert!(!desktop.exists());
             assert!(empty(&rec));
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+
+        /// The installed entry declares text and what a browser shows,
+        /// each type once; no picture, no certificate, nothing untyped.
+        #[test]
+        fn the_installed_entry_declares_the_text_types() {
+            let (dir, _) = tmp();
+            let x = home(&dir);
+            let ids = x.declared(&s(&["rs", "json", "svg", "html", "pem", "kdl", "RS"]));
+            assert_eq!(ids, s(&["text/rust", "application/json", "text/html"]));
+            let d = xdg::entry(std::path::Path::new("/home/u/.local/bin/kawoosh"), &ids);
+            assert!(d.starts_with("[Desktop Entry]\n"), "{d}");
+            assert!(
+                d.contains("MimeType=text/rust;application/json;text/html;\n"),
+                "{d}"
+            );
+            // None declared: no `MimeType` line, which may not be empty.
+            assert!(!xdg::entry(std::path::Path::new("/k"), &[]).contains("MimeType"));
             std::fs::remove_dir_all(dir).unwrap();
         }
 
