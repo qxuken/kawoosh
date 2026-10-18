@@ -21,7 +21,9 @@
 -- bar, `:search here` from the file's directory (`<leader>sS`). In the
 -- bar: `<CR>` runs, `<Tab>` `<S-Tab>` go between the fields, `<A-r>`
 -- `<A-c>` `<A-w>` `<A-g>` flip regex, case, whole word and ignored
--- files, `<A-a>` adds a stage after the cursor's (not ⌥N nor ⌥I:
+-- files (an include naming an ignored path from the root —
+-- `node_modules/foo` — searches it with `ignored` off, search.md
+-- Decision 14), `<A-a>` adds a stage after the cursor's (not ⌥N nor ⌥I:
 -- macOS's dead keys eat the key after them), `<A-k>` cycles its kind, `<A-x>` takes it out, `<A-h>` `<A-l>` move between stages,
 -- `<C-j>` (or `<Esc>` in normal mode) puts the keyboard in the results
 -- and `<C-c>` closes the panel. In the results `<CR>` (`g<Space>`, every
@@ -63,7 +65,7 @@ end
 ---@field regex boolean
 ---@field case "smart"|"sensitive"
 ---@field word boolean
----@field ignored boolean ignored and hidden files searched too
+---@field ignored boolean ignored and hidden files searched too (an include that names an ignored path searches that one without it)
 ---@field answer? kawoosh.search_ui.Answer once run
 ---@field err? string why it failed
 
@@ -73,6 +75,8 @@ end
 ---@field files { path: string, rel: string, lines: { line: integer, text: string, cols: integer[][] }[] }[] `line` from 1; `cols` each match's `{ from, to }`, bytes from 1, `to` its last
 ---@field matches integer
 ---@field limited? boolean stopped: there were more
+---@field capped? boolean the walk stopped at its files' cap: some were not read
+---@field walked? integer the files the walk listed to search
 
 ---What a kind of stage's `run` is given besides the stage.
 ---@class kawoosh.search_ui.RunCtx
@@ -98,6 +102,7 @@ end
 ---@field back? table the walk back through earlier searches (`search.earlier`)
 ---@field replaced? boolean a replace made the count stale
 ---@field shown? table what a replace takes: the pattern the results show
+---@field max_walk? integer the most files a search walks, nil for the engine's 200 000
 local search = { stages = {}, cur = 1, kinds = {}, order = {}, gen = 0, root = nil, token = nil }
 -- The module, for a config or a plugin (`kawoosh.search_ui.kind`).
 kawoosh.search_ui = search
@@ -137,9 +142,12 @@ local function paths_of(prev)
   return out
 end
 
+-- `search.max_walk`: the most files a search walks, nil for the
+-- engine's 200 000 (Decision 14).
 local function query_of(st, ctx, files)
   return { pattern = st.find, regex = st.regex, case = st.case, word = st.word, include = st.include,
-           exclude = st.exclude, ignored = st.ignored, root = ctx.root, files = files }
+           exclude = st.exclude, ignored = st.ignored, root = ctx.root, files = files,
+           max_walk = search.max_walk }
 end
 
 -- Which of the answer's files the stage's globs want, by index.
@@ -537,19 +545,25 @@ function search.replace(one)
                          end)
 end
 
+-- The bar's count (the view's, below), for the state too.
+local status_text
+
 -- search.state(): the bar as it stands — `stages` (each `kind`,
 -- `find`, `include`, `exclude`, the flags, `files` and `matches` of
--- its answer, `err`), `cur`, `running`, `root`, and `replaced` when a
--- replace has made the count stale — for a test, a status line.
----@return { stages: { kind: string, find: string, include: string, exclude: string, regex: boolean, case: string, word: boolean, ignored: boolean, err?: string, files?: integer, matches?: integer }[], cur: integer, running?: integer, root?: string, replaced: boolean }
+-- its answer, `capped` when its walk stopped at the cap, `err`),
+-- `cur`, `running`, `root`, `status` (the count as the bar draws it),
+-- and `replaced` when a replace has made the count stale — for a
+-- test, a status line.
+---@return { stages: { kind: string, find: string, include: string, exclude: string, regex: boolean, case: string, word: boolean, ignored: boolean, err?: string, files?: integer, matches?: integer, capped?: boolean }[], cur: integer, running?: integer, root?: string, replaced: boolean, status: string }
 function search.state()
   local out = { cur = search.cur, running = search.running, root = search.root,
-                replaced = search.replaced or false, stages = {} }
+                replaced = search.replaced or false, status = (status_text()), stages = {} }
   for i, st in ipairs(search.stages) do
     out.stages[i] = { kind = st.kind, find = st.find, include = st.include, exclude = st.exclude,
                       regex = st.regex, case = st.case, word = st.word, ignored = st.ignored, err = st.err,
                       files = st.answer and #st.answer.files or nil,
-                      matches = st.answer and st.answer.matches or nil }
+                      matches = st.answer and st.answer.matches or nil,
+                      capped = st.answer and st.answer.capped or nil }
   end
   return out
 end
@@ -563,22 +577,40 @@ local function chip(t, label, on, kind)
     text(label, { family = "mono", size = SMALL, color = on and t.bg or t.muted, wrap = "none" }) }
 end
 
-local function status(t)
+-- The bar's count, and the colour it is drawn in: `searching…`, a
+-- stage's error, the matches and files — and, when a walk stopped at
+-- its cap (the first stage's, which a later one searches inside), how
+-- many files it read (Decision 14).
+function status_text()
   local st = search.stages[search.cur]
   local last = search.stages[#search.stages]
-  if search.running then return text("searching…", { size = SMALL, color = t.muted, wrap = "none" }) end
+  if search.running then return "searching…", "muted" end
+  if not last then return "⏎ to search", "faint" end
   for _, s in ipairs(search.stages) do
-    if s.err then return text(s.err, { size = SMALL, color = t.danger, wrap = "none" }) end
+    if s.err then return s.err, "danger" end
   end
   local a = last.answer or st.answer
-  if not a then return text("⏎ to search", { size = SMALL, color = t.faint, wrap = "none" }) end
+  if not a then return "⏎ to search", "faint" end
   -- The count is the answer's from before: the results show the text.
-  if search.replaced then return text("replaced · ⏎ to search again", { size = SMALL, color = t.muted, wrap = "none" }) end
+  if search.replaced then return "replaced · ⏎ to search again", "muted" end
   local files = #a.files
   local s = a.matches .. (a.matches == 1 and " match" or " matches") .. " in " .. files ..
             (files == 1 and " file" or " files")
-  if a.limited then s = s .. " (stopped: more)" end
-  return text(s, { size = SMALL, color = t.muted, wrap = "none" })
+  local capped
+  for _, stage in ipairs(search.stages) do
+    if stage.answer and stage.answer.capped then capped = stage.answer end
+  end
+  if capped then
+    s = s .. " (stopped: the walk's first " .. (capped.walked or capped.searched) .. " files)"
+  elseif a.limited then
+    s = s .. " (stopped: more)"
+  end
+  return s, "muted"
+end
+
+local function status(t)
+  local s, color = status_text()
+  return text(s, { size = SMALL, color = t[color], wrap = "none" })
 end
 
 -- The stages, a row of their own once there is more than one to walk:
