@@ -845,6 +845,11 @@ co` to `checkout`, `commit`; a flag's description beside the
 candidates), then paths from where the line runs. `%` completes to
 `%`, `%:h` and `%:t`, each with the path it names, and `%:h/` lists the
 file's directory. A named command's arguments are not asked of carapace.
+In a project you have not trusted, carapace runs where it can read
+nothing of it: you get every program's flags and subcommands, and what
+reads the project — `git checkout`'s branches, a Makefile's targets —
+once you trust the directory with `:trust allow DIR` (or its
+`.kawoosh/init.lua` is trusted).
 `cmdline.complete_with` names another completer that speaks
 carapace's `export`, or `false` turns it off; a project's settings can
 only turn it off. `:!`, `:shell` and `:terminal CMD` complete their

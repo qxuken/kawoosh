@@ -284,9 +284,21 @@ impl Kawoosh {
             return Vec::new();
         }
         let stem = stem(current).to_string();
+        // A completer reads where it runs — some read the project's
+        // files, a make completer its Makefile, which `$(shell …)` makes
+        // code: in a directory not trusted, it runs where nothing is, and
+        // offers flags and subcommands only (compile.md Decision 23).
+        let dir = if self.dir_trusted(dir) {
+            dir.to_path_buf()
+        } else {
+            match neutral_dir() {
+                Some(d) => d,
+                None => return Vec::new(),
+            }
+        };
         let key = Ask {
             completer,
-            dir: dir.to_path_buf(),
+            dir,
             words,
             stem,
         };
@@ -347,6 +359,15 @@ impl Kawoosh {
         *slot = Answer::Got(Rc::new(values.unwrap_or_default()));
         self.cmdline_refresh();
     }
+}
+
+/// An empty directory of kawoosh's own, for a completer to run in where
+/// the project is not trusted: made once, under the temp directory.
+/// None when it cannot be made.
+pub(crate) fn neutral_dir() -> Option<PathBuf> {
+    let dir = std::env::temp_dir().join("kawoosh-neutral");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
 }
 
 #[cfg(test)]

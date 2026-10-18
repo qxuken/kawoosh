@@ -1096,23 +1096,29 @@ at the strip's end for the current candidate, cut to a third of the
 window with an ellipsis. The strip had no details before; one line of
 the current one's keeps the row of candidates as it was.
 
-**What carapace reads is not gated by trust** (*decided 2026-10-17
-after a review*, which asked whether it should be). carapace runs in
-the directory the line will run in, and a few of its completers read
-the project in ways that run its code — make's evaluates the
-Makefile, `$(shell …)` and all; a build tool's may load its build
-file. kawoosh's trust is for kawoosh running a repository's file as
-code: a project's `init.lua`, a nushell completer's `source`
-(Decision 16), a project's own formatter. carapace is not that: it
-is a program the user installed and named (a project cannot name
-one), run with the arguments the user's shell would give it at a
-`<Tab>`, and what any of its thousand completers does is carapace's,
-which kawoosh cannot tell apart — gating it would mean gating every
-program's arguments in every unconfigured clone, `git`'s too. The
-difference from the shell is the eagerness: it is asked as a word
-starts, not at a `<Tab>`. `cmdline.complete_with = false` turns it
-off. This is the user's to overturn; a gate would be a directory
-record (`:trust allow DIR`, by path, as `:format allow` is).
+**What carapace reads is the trusted project's only** (*decided
+2026-10-18 by the user*, after the review asked and the first call
+left it ungated). carapace runs in a directory, and a few of its
+completers read the project there in ways that run its code — make's
+evaluates the Makefile, `$(shell …)` and all; a build tool's may load
+its build file — and it is asked as a word starts, not at a `<Tab>`.
+So where it runs follows trust: in a directory trusted — by `:trust
+allow DIR`, a record by path covering everything under it (as
+`:format allow` is), or by the project's `.kawoosh/init.lua` trusted
+as it stands — it runs in the directory the line will run in; in one
+not trusted, in an empty directory of kawoosh's own
+(`kawoosh-neutral` under the temp directory), where it still offers
+every program's flags and subcommands but reads nothing of the
+project (`git checkout`'s branches wait for the trust). `:trust?` says
+when the directory is trusted; a bare `:trust revoke` forgets the
+working directory's records with the files'. `cmdline.complete_with =
+false` turns carapace off altogether.
+
+*Beat:* no gate (the first call: carapace is a program the user
+installed and named, run as a shell's `<Tab>` would) — the eagerness
+makes it run at every word in every fresh clone; *a gate that switches
+it off* until trusted — `git`'s subcommands are worth having anywhere,
+and nothing of them reads the project.
 
 Beaten: carapace's `_carapace` bridge or a shell's own completion
 (fish's `complete -C`, nu's external completer) — carapace's `export`

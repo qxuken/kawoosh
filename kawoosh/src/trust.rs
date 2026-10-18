@@ -103,6 +103,16 @@ pub struct Trust {
     /// The formatters allowed this run ([`format_key`]), mirrored into
     /// the store when there is one.
     formats: std::collections::HashSet<String>,
+    /// The directories trusted this run ([`dir_key`]), mirrored into
+    /// the store when there is one.
+    dirs: std::collections::HashSet<String>,
+}
+
+/// The record of directory `dir` trusted, and everything under it
+/// (compile.md Decision 23): what a completer may read there. By path:
+/// a directory has no text to hash.
+pub fn dir_key(dir: &Path) -> String {
+    format!("dir:{}", dir.display())
 }
 
 /// The record of formatter `tool` allowed to run unasked in `dir`
@@ -164,6 +174,79 @@ impl Kawoosh {
             }
             self.trust.formats.remove(&key);
             self.forget_worked_out();
+            if let Some(store) = &self.store
+                && let Err(e) = store.del(NS, &key)
+            {
+                log::warn!("trust: {e}");
+            }
+            n += 1;
+        }
+        n
+    }
+
+    /// Whether `dir` is trusted: it or a directory above it trusted by
+    /// `:trust allow DIR`, or a project `.kawoosh/init.lua` for it
+    /// trusted as it stands. What a shell line's completer may read
+    /// (compile.md Decision 23): elsewhere it runs where nothing is.
+    pub(crate) fn dir_trusted(&self, dir: &Path) -> bool {
+        if self.dir_recorded(dir) {
+            return true;
+        }
+        project_init_files(dir).iter().any(|p| {
+            std::fs::read_to_string(p).is_ok_and(|src| self.standing(p, &src) == Standing::Trusted)
+        })
+    }
+
+    /// Whether `dir` or a directory above it is trusted by its own
+    /// record (`:trust allow DIR`).
+    fn dir_recorded(&self, dir: &Path) -> bool {
+        dir.ancestors().any(|d| {
+            let key = dir_key(d);
+            self.trust.dirs.contains(&key)
+                || self
+                    .store
+                    .as_ref()
+                    .is_some_and(|s| s.get(NS, &key).is_some())
+        })
+    }
+
+    /// Records directory `dir` as trusted, everything under it with it.
+    fn trust_dir(&mut self, dir: &Path) {
+        let key = dir_key(dir);
+        self.trust.dirs.insert(key.clone());
+        match &self.store {
+            Some(store) => {
+                if let Err(e) = store.set(NS, &key, "trusted") {
+                    log::warn!("trust: {e}");
+                }
+                self.ed.message = format!("trusted {} and what is under it", self.short_name(dir));
+            }
+            None => {
+                self.ed.message = format!(
+                    "trusted {} and what is under it, for this run",
+                    self.short_name(dir)
+                );
+            }
+        }
+    }
+
+    /// Forgets the directory records at `dir` and under it; how many.
+    fn revoke_dirs(&mut self, dir: &Path) -> usize {
+        let mut keys: Vec<String> = self.trust.dirs.iter().cloned().collect();
+        if let Some(store) = &self.store {
+            keys.extend(store.keys(NS).into_iter().filter(|k| k.starts_with("dir:")));
+        }
+        keys.sort();
+        keys.dedup();
+        let mut n = 0;
+        for key in keys {
+            if !key
+                .strip_prefix("dir:")
+                .is_some_and(|d| Path::new(d).starts_with(dir))
+            {
+                continue;
+            }
+            self.trust.dirs.remove(&key);
             if let Some(store) = &self.store
                 && let Err(e) = store.del(NS, &key)
             {
@@ -350,11 +433,19 @@ impl Kawoosh {
         let files = self.project_code();
         if query {
             let formats = self.formats_allowed_under(&self.cwd.clone());
-            let formats = match formats {
+            let mut formats = match formats {
                 0 => String::new(),
                 1 => "1 formatter allowed".into(),
                 n => format!("{n} formatters allowed"),
             };
+            if self.dir_recorded(&self.cwd.clone()) {
+                let dir = "the directory trusted";
+                formats = if formats.is_empty() {
+                    dir.into()
+                } else {
+                    format!("{dir}, {formats}")
+                };
+            }
             if files.is_empty() {
                 self.ed.message = match formats.is_empty() {
                     true => format!(
@@ -385,11 +476,26 @@ impl Kawoosh {
                     self.ed.message = "trust allow: no path".into();
                     return;
                 }
-                self.trust_allow(&path);
+                let path = self.resolve(&path);
+                if path.is_dir() {
+                    self.trust_dir(&path);
+                } else {
+                    self.trust_allow(&path);
+                }
             }
             Some("revoke") => {
                 let paths: Vec<PathBuf> = if args.len() > 1 {
-                    vec![PathBuf::from(args[1..].join(" "))]
+                    let path = self.resolve(&PathBuf::from(args[1..].join(" ")));
+                    if path.is_dir() {
+                        let n = self.revoke_dirs(&path);
+                        self.ed.message = match n {
+                            0 => "nothing was trusted".into(),
+                            1 => "1 record revoked".into(),
+                            n => format!("{n} records revoked"),
+                        };
+                        return;
+                    }
+                    vec![path]
                 } else {
                     let mut paths = project_init_candidates(&self.cwd);
                     paths.extend(self.compile_nu_files());
@@ -398,6 +504,7 @@ impl Kawoosh {
                 let mut n = self.trust_revoke(&paths);
                 if args.len() <= 1 {
                     n += self.revoke_formats(&self.cwd.clone(), None);
+                    n += self.revoke_dirs(&self.cwd.clone());
                 }
                 self.ed.message = match n {
                     0 => "nothing was trusted".into(),
@@ -443,7 +550,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         Spec::new("trust")
             .args(Args::rest(&[ArgKind::Text]))
             .query("say where the project's init.lua and nushell files stand")
-            .doc("run the project's .kawoosh/init.lua, let its nushell files' completers run, and remember their text as trusted; `allow PATH`, `revoke [PATH]`"),
+            .doc("run the project's .kawoosh/init.lua, let its nushell files' completers run, and remember their text as trusted; `allow PATH` (a directory: completers may read it and what is under it), `revoke [PATH]`"),
         |k, ctx| k.trust_command(&ctx.args, ctx.query()),
     )]
 }

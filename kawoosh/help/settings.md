@@ -74,7 +74,7 @@ A project's `.kawoosh/settings.lua` applies as soon as you work under it. A proj
 |---|---|
 | `:trust` | trust and run the working directory's untrusted `init.lua` files, and trust its nushell files (`build.nu`) so `:compile` can complete from them |
 | `:trust?` | say which files there are — `init.lua` and nushell files — and whether each is trusted |
-| `:trust allow PATH` | trust one file |
+| `:trust allow PATH` | trust one file, or a directory: completers (carapace) may read it and everything under it |
 | `:trust revoke [PATH]` | forget the trust given |
 
 ## Languages and .editorconfig

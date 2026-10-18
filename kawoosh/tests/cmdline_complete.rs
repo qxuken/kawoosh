@@ -39,6 +39,7 @@ case "$1" in
   slow) echo $$ > "$here/slow.pid"; exec /bin/sleep 30 ;;
   orphan) /bin/sleep 30 & echo $! > "$here/orphan.pid"; printf '{"values":[{"value":"o"}]}' ;;
   garbage) echo 'Error: not a completion, and {not json' ;;
+  where) printf '{"values":[{"value":"%s"}]}' "$(basename "$PWD")" ;;
   huge) exec /usr/bin/yes '{"values":[{"value":"x"}]}' ;;
   *) ;;
 esac
@@ -628,4 +629,46 @@ fn gone(pid: i32) -> bool {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     false
+}
+
+/// A completer reads where it runs (a make completer the Makefile,
+/// whose `$(shell …)` is code): in a project not trusted it runs in an
+/// empty directory of kawoosh's own, and in the project once
+/// `:trust allow DIR` trusts it (compile.md Decision 23).
+#[test]
+fn a_completer_runs_in_the_project_only_once_it_is_trusted() {
+    let s = Sandbox::new("trust-dir", true, "return {}");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = s.open(&mut d);
+    d.keys(&mut app, ":compile where ");
+    answered(&mut d, &mut app);
+    let c = candidates(&app);
+    assert!(
+        c.iter().any(|c| c == "kawoosh-neutral"),
+        "{c:?} {:?}",
+        s.calls()
+    );
+    assert!(!c.iter().any(|c| c == "project"), "{c:?}");
+    leave(&mut d, &mut app);
+
+    d.keys(&mut app, ":");
+    d.keys(&mut app, &format!("trust allow {}", s.project.display()));
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(app.ed.message.starts_with("trusted"), "{}", app.ed.message);
+    d.keys(&mut app, ":compile where ");
+    answered(&mut d, &mut app);
+    let c = candidates(&app);
+    assert!(c.iter().any(|c| c == "project"), "{c:?} {:?}", s.calls());
+    leave(&mut d, &mut app);
+
+    d.keys(&mut app, ":");
+    d.keys(&mut app, &format!("trust revoke {}", s.project.display()));
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    d.keys(&mut app, ":compile where ");
+    answered(&mut d, &mut app);
+    let c = candidates(&app);
+    assert!(c.iter().any(|c| c == "kawoosh-neutral"), "revoked: {c:?}");
+    leave(&mut d, &mut app);
 }
