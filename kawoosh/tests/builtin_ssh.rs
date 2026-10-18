@@ -332,7 +332,13 @@ fn a_refused_port_is_said_in_a_toast() {
         let name = format!("rf{client}{pid}");
         let (mut d, mut app) = client_app(&name, &alias, client);
         ex(&mut d, &mut app, &format!("e {name}:/x"));
-        let said = format!("{name}: 127.0.0.1:{port}: Connection refused");
+        // The system's own words for it.
+        let why = if cfg!(windows) {
+            "No connection could be made because the target machine actively refused it"
+        } else {
+            "Connection refused"
+        };
+        let said = format!("{name}: 127.0.0.1:{port}: {why}");
         until(&mut d, &mut app, "the refusal toasted", |a| {
             toasted(a, &said) == 1
         });

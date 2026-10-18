@@ -473,9 +473,10 @@ fn du_here_walks_the_directory_in_front() {
     d.frame(&mut app);
     ex(&mut d, &mut app, "du here");
     d.frame(&mut app);
+    // Joined a part at a time: `sub/inner` keeps its `/` on Windows.
     assert_eq!(
         walked(&mut app),
-        root.join("sub/inner").display().to_string()
+        root.join("sub").join("inner").display().to_string()
     );
     d.press(&mut app, "q");
     d.frame(&mut app);

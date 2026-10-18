@@ -538,6 +538,7 @@ fn write_as_admin(argv: &[String], file: &Path, text: &mut [u8]) -> Result<(), S
     let dir = std::env::temp_dir().join(format!("kawoosh-admin-{}-{n}", std::process::id()));
     let held = dir.join("text");
     let result = (|| {
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);

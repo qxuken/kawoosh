@@ -131,7 +131,7 @@ return {
     languages = { "c", "cpp", "objc" },
     cmd = "clangd",
     roots = { "compile_commands.json", ".clangd", "CMakeLists.txt", "Makefile" },
-    install = { mac = "xcode-select --install", windows = "winget install LLVM.LLVM" },
+    install = { mac = "xcode-select --install", linux = "brew install llvm", windows = "winget install LLVM.LLVM" },
   },
   {
     name = "bash",

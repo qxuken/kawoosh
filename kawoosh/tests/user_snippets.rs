@@ -781,6 +781,14 @@ fn a_package_reads_only_its_own_regular_files_a_few_at_a_time() {
     .unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink("/dev/zero", pkg.join("snippets/zero.json")).unwrap();
+    // No device to name on Windows: a folder is no regular file either.
+    #[cfg(not(unix))]
+    std::fs::create_dir(pkg.join("snippets/zero.json")).unwrap();
+    let not_read = if cfg!(unix) {
+        "zero.json: not a regular file"
+    } else {
+        "zero.json: a directory"
+    };
     let mut entries = vec![
         format!(
             r#"{{ "language": "rust", "path": {:?} }}"#,
@@ -834,7 +842,7 @@ fn a_package_reads_only_its_own_regular_files_a_few_at_a_time() {
     );
     let said = lua(&mut app, "OUT = table.concat(SAID, '\\n')");
     assert_eq!(said.matches("outside the package").count(), 3, "{said}");
-    assert!(said.contains("zero.json: not a regular file"), "{said}");
+    assert!(said.contains(not_read), "{said}");
     // Read again (the package edited): nothing said twice.
     let before = said.matches("outside the package").count();
     app.jobs_inline = true;

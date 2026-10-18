@@ -626,11 +626,11 @@ fn under_temp(path: &Path) -> bool {
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![
-        // ⌘C: the one way a secret reaches the system clipboard, asked
-        // for by name each time (Decision 8).
+        // ⌘C (`<C-S-c>` off a Mac): the one way a secret reaches the
+        // system clipboard, asked for by name each time (Decision 8).
         cmd(
             Spec::new("yank clipboard")
-                .doc("the selection yanked and on the system clipboard (⌘C) — in normal mode the newest yank; a private buffer's marked concealed and transient, so no clipboard manager shows or keeps it"),
+                .doc("the selection yanked and on the system clipboard ({{mac:⌘C}}{{pc:`<C-S-c>`}}) — in normal mode the newest yank; a private buffer's marked concealed and transient, so no clipboard manager shows or keeps it"),
             |k, _| {
                 let Some(v) = k.focused_view() else { return };
                 let visual = k.ed.mode(v) == Mode::Visual;

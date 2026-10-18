@@ -16,6 +16,14 @@ fn the_bundled_plugins_lua_tests_pass() {
         .collect();
     files.sort();
     assert!(!files.is_empty(), "no scripts under {}", dir.display());
+    // No server this machine installed into kawoosh's folder: opened for
+    // a script's `.ts`, typescript-language-server ran in its directory,
+    // which Windows then would not let the script remove.
+    let servers =
+        std::env::temp_dir().join(format!("kawoosh-luatest-servers-{}", std::process::id()));
+    // SAFETY: before the scripts' threads; nextest runs this test as a
+    // process of its own.
+    unsafe { std::env::set_var("KAWOOSH_SERVERS", &servers) };
     let failures: Vec<String> = std::thread::scope(|s| {
         let runs: Vec<_> = files
             .iter()

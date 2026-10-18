@@ -337,11 +337,12 @@ fn main() -> anyhow::Result<()> {
     app.share_wake(wake);
     let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
     app.open_store(None);
-    // Opened outside a terminal — from Finder, the Dock — the PATH is
-    // launchd's: a shell is asked for its own on a thread, and the
-    // children get it (`shell_env`), the config's own among them. From
-    // a terminal it is the shell's already.
-    app.config.ask_shell = cfg!(target_os = "macos") && std::env::var_os("TERM").is_none();
+    // Opened outside a terminal — from Finder, the Dock, a Linux
+    // desktop's launcher — the PATH is launchd's or the session's, with
+    // nothing the shell's rc files add: a shell is asked for its own on
+    // a thread, and the children get it (`shell_env`), the config's own
+    // among them. From a terminal it is the shell's already.
+    app.config.ask_shell = cfg!(unix) && std::env::var_os("TERM").is_none();
     app.load_config();
     // After the config, so what `init.lua` and the plugins added is in
     // the types lua-language-server reads.

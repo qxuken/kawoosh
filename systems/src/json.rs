@@ -98,7 +98,12 @@ fn read_capped(path: &Path) -> Result<Vec<u8>, String> {
     // was opened is asked what it is before a byte is read.
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::custom_flags(&mut opts, libc::O_NONBLOCK);
-    let f = opts.open(path).map_err(|e| e.to_string())?;
+    // Windows will not open a directory as a file ("Access is denied"):
+    // said as what it is, as elsewhere.
+    let f = opts.open(path).map_err(|e| match std::fs::metadata(path) {
+        Ok(m) if m.is_dir() => not_a_file(true),
+        _ => e.to_string(),
+    })?;
     let meta = f.metadata().map_err(|e| e.to_string())?;
     if !meta.is_file() {
         return Err(not_a_file(meta.is_dir()));

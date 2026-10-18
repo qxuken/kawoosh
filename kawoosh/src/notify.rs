@@ -675,7 +675,45 @@ pub(crate) fn utc_offset(secs: i64) -> i64 {
     if ok { tm.tm_gmtoff as i64 } else { 0 }
 }
 
-#[cfg(not(unix))]
+/// Seconds east of UTC at `secs`, by the time zone's rules for that
+/// moment — its daylight saving then, not now's.
+#[cfg(windows)]
+pub(crate) fn utc_offset(secs: i64) -> i64 {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{
+        FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime,
+    };
+    /// 1970-01-01 in seconds after 1601-01-01, where a FILETIME counts from.
+    const EPOCH: i64 = 11_644_473_600;
+    let Ok(ticks) = u64::try_from((secs + EPOCH) * 10_000_000) else {
+        return 0;
+    };
+    let utc_file = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    // SAFETY: plain-data structs, all zeroes a valid value of each.
+    let (mut utc, mut local): (SYSTEMTIME, SYSTEMTIME) = unsafe { std::mem::zeroed() };
+    let mut local_file = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    // SAFETY: each call reads and writes only the structs it is given,
+    // all ours and alive past it; a null zone is the current one's.
+    let ok = unsafe {
+        FileTimeToSystemTime(&utc_file, &mut utc) != 0
+            && SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) != 0
+            && SystemTimeToFileTime(&local, &mut local_file) != 0
+    };
+    if !ok {
+        return 0;
+    }
+    let local_ticks =
+        (u64::from(local_file.dwHighDateTime) << 32) | u64::from(local_file.dwLowDateTime);
+    (local_ticks as i64 - ticks as i64) / 10_000_000
+}
+
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn utc_offset(_secs: i64) -> i64 {
     0
 }

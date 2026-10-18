@@ -1771,7 +1771,10 @@ fn a_flood_of_output_is_parsed_over_frames_and_closes_after_it() {
         if app.terms.done.contains_key(&t) {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        // A frame's worth apart: a Linux pty hands its reader a few KB
+        // at a time, and frames a millisecond apart parsed all of it
+        // each time (0 of 230 left any behind).
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
     assert!(app.terms.done.contains_key(&t), "the line ended");
     assert!(

@@ -146,7 +146,9 @@ fn a_deleted_directory_sends_its_tabs_up() {
     let dir = root.join("a").join("proj");
     std::fs::create_dir_all(&dir).unwrap();
     let (mut d, mut app) = launch(&dir);
-    std::fs::remove_dir_all(root.join("a")).unwrap();
+    // Waited out on Windows while a process the launch started there —
+    // the vcs plugin's `git` — holds it as its working directory.
+    kawoosh_systems::fs::remove(&root.join("a")).unwrap();
     until(&mut d, &mut app, |a| a.ed.cwd == root);
     assert_eq!(app.ed.cwd, root);
     assert_eq!(app.layout.tab().cwd.as_deref(), Some(root.as_path()));
@@ -171,7 +173,8 @@ fn a_file_managers_rename_of_the_cwd_moves_the_tab() {
     std::fs::create_dir_all(&dir).unwrap();
     let (mut d, mut app) = launch(&dir);
     let to = root.join("named");
-    std::fs::rename(&dir, &to).unwrap();
+    // Waited out as the deletion above is.
+    kawoosh_systems::fs::rename(&dir, &to).unwrap();
     app.run_lua_source(
         "t",
         &format!(

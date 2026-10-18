@@ -34,4 +34,13 @@ kawoosh.press("G<CR>")
 kawoosh.frame()
 kawoosh.test.eq(kawoosh.buf.name(), "b.txt")
 kawoosh.test.eq(listings(), 1, "an edited listing stays")
-kawoosh.fs.remove(dir)
+-- On Windows a process the listing started there (vcs's `git`) holds
+-- the directory while it runs, slow past `remove`'s second of waiting
+-- when every test runs at once: waited out longer here.
+local removed, why = pcall(kawoosh.fs.remove, dir)
+for _ = 1, 20 do
+  if removed then break end
+  kawoosh.sleep(250)
+  removed, why = pcall(kawoosh.fs.remove, dir)
+end
+assert(removed, why)

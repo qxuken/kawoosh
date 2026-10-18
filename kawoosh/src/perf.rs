@@ -1156,7 +1156,9 @@ impl Kawoosh {
 
 #[cfg(test)]
 mod tests {
-    use super::{Last, Perf, Phase, status_footprint};
+    use super::status_footprint;
+    #[cfg(unix)]
+    use super::{Last, Perf, Phase};
 
     /// A lap's worst frame says what of it the thread computed: a lap
     /// that waits (a sleep, as a lock waited on is) reads far over its

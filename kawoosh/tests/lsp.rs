@@ -3866,6 +3866,7 @@ fn a_library_file_goes_to_the_running_instance() {
 
 /// The pid the fake server said last in the instances whose root's last
 /// folder is `name`: the newest one's.
+#[cfg(unix)]
 fn pid_in(app: &Kawoosh, server: &str, name: &str) -> Option<u32> {
     said_in(app, server, name)
         .iter()
@@ -3891,6 +3892,7 @@ fn process_left(pid: u32) -> bool {
 /// arguments — stopped after 1 s idle, then the project's file opened
 /// until the server holds it: the app, the drive, the file and the
 /// server's command.
+#[cfg(unix)]
 fn idle_project(
     base: &std::path::Path,
     extra: &[&str],

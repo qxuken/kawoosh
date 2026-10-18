@@ -656,8 +656,9 @@ pub enum Bare {
     /// The command last compiled in this workspace — the memory's — again:
     /// its steps.
     Again(Vec<Step>),
-    /// The first the project's files offer.
-    Deduced(Deduced),
+    /// The first the project's files offer — boxed, a Windows `PathBuf`
+    /// making it the enum's size many times over.
+    Deduced(Box<Deduced>),
     Nothing,
 }
 
@@ -1350,7 +1351,7 @@ impl Kawoosh {
             .into_iter()
             .find(|d| !d.needs)
         {
-            Some(d) => Bare::Deduced(d),
+            Some(d) => Bare::Deduced(Box::new(d)),
             None => Bare::Nothing,
         }
     }

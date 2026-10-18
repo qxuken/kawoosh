@@ -966,7 +966,11 @@ mod tests {
         remove(&dir);
     }
 
+    /// Where the recursive watch is the native one: inotify's misses a
+    /// file written into a folder before notify has added that folder's
+    /// watch, which is why Linux watches a folder at a time.
     #[test]
+    #[cfg(any(windows, target_os = "macos"))]
     fn changes_are_heard_recursively() {
         changes_are_heard(Mode::Recursive);
     }

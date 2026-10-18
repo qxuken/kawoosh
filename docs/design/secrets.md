@@ -247,7 +247,9 @@ step. The workaround was worse than any copy: the secret was drawn
 unmasked in an ordinary buffer, kept in its history, and then went
 onto the clipboard unmarked anyway.
 
-`yank clipboard`, on ⌘C, in visual and normal mode: in visual mode
+`yank clipboard`, on ⌘C (`<C-S-c>` off a Mac, as `<C-S-v>` pastes;
+added 2026-10-18, when a PC had only the command's name), in visual
+and normal mode: in visual mode
 the selection yanked, as `y` does; in normal mode the newest yank.
 When that is a secret it goes to the clipboard through kui's
 `set_clipboard_secret` (F84), marked `org.nspasteboard.ConcealedType`

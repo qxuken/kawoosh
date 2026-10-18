@@ -230,9 +230,13 @@ fn opener(url: &str) -> Opener<'_> {
 /// Hands `url` to the OS's opener.
 pub fn open_in_os(url: &str) -> Result<(), String> {
     match opener(url) {
+        // Waited for on a thread of its own: dropped, each link opened
+        // would leave a zombie until kawoosh exits.
         Opener::Program(program, url) => {
             kawoosh_systems::spawn::spawn(kawoosh_systems::io::command(program).arg(url))
-                .map(|_| ())
+                .map(|mut child| {
+                    std::thread::spawn(move || child.wait());
+                })
                 .map_err(|e| format!("{program}: {e}"))
         }
         Opener::Shell(url) => shell_open(url),

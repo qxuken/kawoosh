@@ -605,6 +605,7 @@ mod tests {
     }
 
     /// Buffer `id`'s text made `text` as an edit, so it is modified.
+    #[cfg(unix)]
     fn retype(ed: &mut Editor, id: crate::BufferId, text: &str) {
         let b = &mut ed.buffers[id];
         let len = b.len();

@@ -309,14 +309,21 @@ pub fn remove(path: &Path) -> io::Result<()> {
         return fs.remove(&p).map_err(|e| named(path, e));
     }
     let meta = std::fs::symlink_metadata(path).map_err(|e| named(path, e))?;
-    waiting_out_sharing(|| {
+    let removed = waiting_out_sharing(|| {
         if meta.is_dir() {
             std::fs::remove_dir_all(path)
         } else {
             std::fs::remove_file(path)
         }
-    })
-    .map_err(|e| match meta.is_dir().then(|| left_in(path)).flatten() {
+    });
+    let removed = match removed {
+        Err(e) if meta.is_dir() => {
+            remove_what_can_go(path);
+            std::fs::remove_dir(path).map_err(|_| e)
+        }
+        r => r,
+    };
+    removed.map_err(|e| match meta.is_dir().then(|| left_in(path)).flatten() {
         // A directory partly removed: what is left, and a file of it —
         // the one a running program or another holder most likely has.
         Some((n, first)) => io::Error::new(
@@ -330,6 +337,24 @@ pub fn remove(path: &Path) -> io::Result<()> {
         ),
         None => named(path, e),
     })
+}
+
+/// Everything under `dir` that can go, gone, past what cannot: std's
+/// `remove_dir_all` stops at the first entry refused, and which one
+/// that is depends on the order the system lists a directory in —
+/// ext4's hash order on Linux left most of a folder behind one held
+/// file. A link is removed, never followed.
+fn remove_what_can_go(dir: &Path) {
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if e.file_type().is_ok_and(|t| t.is_dir()) {
+            remove_what_can_go(&p);
+            let _ = std::fs::remove_dir(&p);
+        } else {
+            // A directory link on Windows goes as a directory.
+            let _ = std::fs::remove_file(&p).or_else(|_| std::fs::remove_dir(&p));
+        }
+    }
 }
 
 /// The files still under `dir` (links counted as files, not followed)

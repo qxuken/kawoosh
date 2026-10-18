@@ -2,7 +2,9 @@
 //!
 //! An app opened from Finder, the Dock or Spotlight has launchd's PATH —
 //! `/usr/bin:/bin:/usr/sbin:/sbin` — and a language server in
-//! `~/.cargo/bin` or `/opt/homebrew/bin` is not found. [`resolve`] asks
+//! `~/.cargo/bin` or `/opt/homebrew/bin` is not found; one opened from a
+//! Linux desktop's launcher has the session's, without what `.bashrc` or
+//! nushell's `env.nu` adds. [`resolve`] asks
 //! a shell for its PATH on a thread of its own, while the window comes
 //! up; [`path`] is it, for each child to be given (`io::command`, the
 //! terminals). [`refresh`] asks again: an install from a terminal pane
@@ -35,7 +37,7 @@ pub fn resolve(shell: OsString) {
             let found = ask(&shell, PATIENCE);
             match &found {
                 Some(p) => log::debug!("PATH from {}: {}", shell.display(), p.display()),
-                None => log::warn!("{}: no PATH from it; launchd's kept", shell.display()),
+                None => log::warn!("{}: no PATH from it; the launcher's kept", shell.display()),
             }
             *PATH.write().unwrap_or_else(|e| e.into_inner()) = found;
             let _ = ANSWERED.set(());
