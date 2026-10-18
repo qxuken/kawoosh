@@ -1182,6 +1182,10 @@ impl Settings {
             };
             let masks = rule(vec![
                 (
+                    // A key's value, to its line's end; quoted, to its
+                    // closing quote, over lines if it runs on (`"`'s
+                    // escapes counted, an escaped newline among them);
+                    // a line no key's, no comment, not blank, whole.
                     "env",
                     rule(vec![
                         (
@@ -1189,8 +1193,10 @@ impl Settings {
                             Setting::List(vec![s(".env"), s(".env.*"), s("*.env")]),
                         ),
                         (
-                            "pattern",
-                            s(r"^\s*(?:#+\s*)?(?:export\s+)?[A-Za-z_][A-Za-z0-9_.]*\s*=\s*(.+)$"),
+                            "quoted",
+                            s(
+                                r"(?m)^\x{FEFF}?[ \t]*(?:#+[ \t]*)?(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_.]*[ \t]*=[ \t]*",
+                            ),
                         ),
                     ]),
                 ),
@@ -2221,7 +2227,7 @@ mod tests {
                 "scrolloff",
                 "secrets.forget_secs",
                 "secrets.masks.env.files",
-                "secrets.masks.env.pattern",
+                "secrets.masks.env.quoted",
                 "secrets.masks.json.files",
                 "secrets.masks.json.pattern",
                 "secrets.masks.key.files",

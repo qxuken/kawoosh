@@ -66,6 +66,38 @@ Two transform modes, and the distinction matters:
   colour over the typed text is the `Invalidate` policy below — keep drawing,
   let the provider correct — and `transform_range` stays for a caller that wants
   the failure (the row cache).
+- `Move` (2026-10-18, from the todo: "`<A-j/k>` line moves inside dotenv
+  files flicker both lines") — an edit may say which of the text it replaced
+  it put back, unchanged, elsewhere in its range (`Buffer::replace_moving`,
+  `Journal::record_moving`, `Editor::edit_each_moving`). `<A-j>` rewrites its
+  line and the next as the two swapped: one replacement, so every run over
+  both lines was swallowed and both were drawn plain until the parser
+  answered, a frame or two a keystroke and the whole time a line was held
+  moving. The layers carry a moved text's runs to where it went
+  (`carry_moving`), and so does `apply` with an answer to a version before
+  the move, which would otherwise splice the plain lines back over the
+  carried ones. A run around the whole edit (a string the lines are in)
+  stretches over it as before, its parts not moved again inside it. A late
+  answer's span grows over the whole edit, as a scope does, and so over
+  text a move brought in from outside it, which the answer never read;
+  there the layer keeps its own runs (found under load: an answer for one
+  line wiped the line swapped with it) — only for an edit the span grows
+  over, and whatever it carries is cut to its span, which `splice`
+  takes as given (review: a move elsewhere since the answer was asked
+  for put its lines' runs in twice). A cursor's moves at once are one
+  `replace_many_moving`, a walk over the runs the edits reach, as
+  `replace_many` is. A run starting with the edit is moved, not
+  stretched: only a run that begins before it is around it. A move
+  whose text is not what it says, or that is not inside the edit, is left
+  out — a wrong one costs the colours, never puts a run on other text.
+  *Beat:* the move journaled as a delete and an insert, the block itself
+  untouched — the other line is still new text, still plain, and a late
+  answer's span covering it wipes it the same. *Beat:* a `Move` field on
+  `Edit` — every edit pays for what a handful do; the journal keeps the few
+  beside their versions and prunes them with the edits. Not carried yet:
+  an undo of a move (`restore` takes the one span between the two texts) and
+  a coordinate carried by `transform_offset` (a plugin's mask ranges grow
+  over both lines, the safe side).
 
 Boundary behaviour is bias-driven and worth stating explicitly, because it is
 the part that is easy to get subtly wrong: a range **excludes** text inserted at

@@ -219,6 +219,11 @@ windowing (`LONG_LINE_BYTES`), the caret measure and every column
 assumption at once; the markdown buffer is one language, whose rows
 already need their own drawing.
 
+*2026-10-18:* typing in a task item with `markdown.reveal = span`
+drew the bar off by the box's width for a frame per letter: the caret
+was measured in the row's face, the box is `font.icons`' glyph. The bar
+is measured in the faces the row draws (wrap.md Decision 7).
+
 ### 5. The mono face, at sizes
 
 Headings are the mono face at a ratio, not a proportional face: a

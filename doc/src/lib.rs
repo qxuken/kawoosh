@@ -28,7 +28,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 pub use diagnostic::Diagnostic;
 use slotmap::new_key_type;
-pub use version::{Bias, Changed, Edit, Journal, Stale, Version};
+pub use version::{Bias, Changed, Edit, Journal, Move, Stale, Version};
 
 new_key_type! {
     /// A buffer's identity in the editor's table.
@@ -216,6 +216,39 @@ impl Layer {
                 shift_runs(&mut runs, edit);
                 out.extend(chunked(&runs));
             }
+        }
+        self.chunks = out;
+    }
+
+    /// [`Self::shift_many`] over edits that moved text: the chunks an edit
+    /// reaches into are walked as one ([`carry_moving_many`]), since a run
+    /// it moved may land before one it did not; the chunks between the
+    /// edits move by the delta of the edits before them.
+    fn shift_many_moving(&mut self, edits: &[(Edit, Vec<Move>)]) {
+        let mut before = Vec::with_capacity(edits.len() + 1);
+        before.push(0isize);
+        for (e, _) in edits {
+            before.push(before[before.len() - 1] + e.new_len as isize - e.removed() as isize);
+        }
+        let mut out = Vec::with_capacity(self.chunks.len());
+        let mut reached: Vec<Run> = Vec::new();
+        for mut c in self.chunks.drain(..) {
+            let lo = edits.partition_point(|(e, _)| e.range.end <= c.start());
+            if edits.get(lo).is_some_and(|(e, _)| e.range.start < c.end()) {
+                reached.extend(c.absolute());
+                continue;
+            }
+            if !reached.is_empty() {
+                out.extend(chunked(&carry_moving_many(
+                    std::mem::take(&mut reached),
+                    edits,
+                )));
+            }
+            c.shift(before[lo]);
+            out.push(c);
+        }
+        if !reached.is_empty() {
+            out.extend(chunked(&carry_moving_many(reached, edits)));
         }
         self.chunks = out;
     }
@@ -846,6 +879,101 @@ impl Buffer {
         v
     }
 
+    /// [`Self::replace`], where `moves` say which of the text replaced is
+    /// in `text` again, unchanged, and where ([`Move`]): the layers carry
+    /// those parts' runs to their new place — a line moved keeps its
+    /// colours — and so does a producer's late answer. A move that is not
+    /// inside the edit on both sides is left out, as is one whose text
+    /// differs, so a wrong one costs the colours, never a run on the
+    /// wrong text.
+    pub fn replace_moving(&mut self, range: Range<usize>, text: &str, moves: &[Move]) -> Version {
+        self.replace_many_moving(&[(range, text, moves)])
+    }
+
+    /// [`Self::replace_many`] with what each replacement moved, as
+    /// [`Self::replace_moving`] takes it: a line moved at every cursor
+    /// (`<A-j>`), each edit journaled with its moves and the layers
+    /// shifted in one pass over the runs the edits reach. Edits that are
+    /// not ascending and disjoint go one at a time.
+    pub fn replace_many_moving(&mut self, edits: &[(Range<usize>, &str, &[Move])]) -> Version {
+        let len = self.len();
+        let edits: Vec<(Range<usize>, &str, Vec<Move>)> = edits
+            .iter()
+            .map(|(r, t, m)| {
+                let range = r.start.min(len)..r.end.min(len).max(r.start.min(len));
+                let moves = self.valid_moves(&range, t, m);
+                (range, *t, moves)
+            })
+            .collect();
+        if edits.iter().all(|(_, _, m)| m.is_empty()) {
+            let plain: Vec<(Range<usize>, &str)> =
+                edits.iter().map(|(r, t, _)| (r.clone(), *t)).collect();
+            return self.replace_many(&plain);
+        }
+        let disjoint = edits
+            .windows(2)
+            .all(|w| w[0].0.end <= w[1].0.start && w[0].0.start < w[1].0.start);
+        if !disjoint {
+            let mut v = self.version();
+            for (r, t, m) in edits.iter().rev() {
+                v = self.replace_many_moving(&[(r.clone(), t, m)]);
+            }
+            return v;
+        }
+        let mut v = self.version();
+        for (range, text, moves) in edits.iter().rev() {
+            if !range.is_empty() {
+                self.text.erase(range.start, range.len());
+            }
+            if !text.is_empty() {
+                self.text.insert(range.start, text.as_bytes());
+            }
+            v = self.journal.record_moving(
+                Edit {
+                    range: range.clone(),
+                    new_len: text.len(),
+                },
+                moves.clone(),
+            );
+        }
+        let shifts: Vec<(Edit, Vec<Move>)> = edits
+            .into_iter()
+            .map(|(range, text, moves)| {
+                (
+                    Edit {
+                        range,
+                        new_len: text.len(),
+                    },
+                    moves,
+                )
+            })
+            .collect();
+        for (_, layer) in &mut self.layers {
+            layer.shift_many_moving(&shifts);
+        }
+        self.modified = true;
+        self.settle();
+        v
+    }
+
+    /// The moves of a replacement of `range` by `text` that hold: inside
+    /// the edit on both sides, and the same text at both places.
+    fn valid_moves(&self, range: &Range<usize>, text: &str, moves: &[Move]) -> Vec<Move> {
+        moves
+            .iter()
+            .filter(|m| {
+                let len = m.from.len();
+                let at = m.to.wrapping_sub(range.start);
+                range.start <= m.from.start
+                    && m.from.end <= range.end
+                    && m.to >= range.start
+                    && at + len <= text.len()
+                    && self.text.collect_range(m.from.clone()) == text.as_bytes()[at..at + len]
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Several replacements at once — a multicursor keystroke — given
     /// ascending and disjoint in the text as it is (an insertion may
     /// share a point with the edit before it). Applied to the text from
@@ -954,11 +1082,67 @@ impl Buffer {
     /// answer leaves no hole where the next one will paint — and the
     /// span's old runs are replaced.
     pub fn apply(&mut self, update: Update) -> Result<(), Stale> {
-        let span = self.journal.clamp_range(update.span, update.version)?;
-        let edits: Vec<Edit> = self.journal.edits_since(update.version)?.cloned().collect();
         let mut fresh = update.runs;
         fresh.sort_by_key(|r| r.range.start);
-        carry_runs(&mut fresh, &edits);
+        // Across a line moved since it was asked for, the answer's runs
+        // for the moved text go with it, as the layer's own did. Its span
+        // grows over the whole edit, as a scope does, and so over text a
+        // move brought in from outside it, which the answer never read:
+        // there the layer keeps its own runs, carried with that text.
+        let Some(edits) = self.journal.moved_since(update.version)? else {
+            let span = self.journal.clamp_range(update.span, update.version)?;
+            let edits: Vec<Edit> = self.journal.edits_since(update.version)?.cloned().collect();
+            carry_runs(&mut fresh, &edits);
+            self.layer_mut(update.layer).splice(&span, fresh);
+            return Ok(());
+        };
+        let mut span = update.span;
+        let mut kept: Vec<Run> = Vec::new();
+        for (e, moves) in edits {
+            kept = carry_moving(kept, e, moves);
+            fresh = carry_moving(fresh, e, moves);
+            let start = e.transform_offset(span.start, Bias::Left);
+            let end = e.transform_offset(span.end, Bias::Right);
+            let grown = start..end.max(start);
+            // Only an edit the span grows over brings text into it: one
+            // elsewhere moves what the answer never covered, and stays
+            // the layer's.
+            let over = e.new_len > 0
+                && grown.start <= e.range.start
+                && e.range.start + e.new_len <= grown.end;
+            for m in moves.iter().filter(|_| over) {
+                let outside = [
+                    m.from.start..m.from.end.min(span.start),
+                    m.from.start.max(span.end)..m.from.end,
+                ];
+                for part in outside.into_iter().filter(|p| p.start < p.end) {
+                    let at = m.to + (part.start - m.from.start);
+                    kept.push(Run {
+                        range: at..at + part.len(),
+                        style: 0,
+                        tag: 0,
+                    });
+                }
+            }
+            span = grown;
+        }
+        for k in kept {
+            fresh.extend(
+                self.runs(update.layer, k.range.clone())
+                    .into_iter()
+                    .filter_map(|r| {
+                        let range = r.range.start.max(k.range.start)..r.range.end.min(k.range.end);
+                        (range.start < range.end).then_some(Run { range, ..r })
+                    }),
+            );
+        }
+        // `splice` takes runs inside its span: whatever an answer had
+        // outside it is cut there, never spliced over the layer's own.
+        fresh.retain_mut(|r| {
+            r.range = r.range.start.max(span.start)..r.range.end.min(span.end);
+            r.range.start < r.range.end
+        });
+        fresh.sort_by_key(|r| r.range.start);
         self.layer_mut(update.layer).splice(&span, fresh);
         Ok(())
     }
@@ -1280,6 +1464,78 @@ fn shift_runs_many_from(runs: &mut Vec<Run>, edits: &[Edit], ei: &mut usize, del
         }
     }
     runs.truncate(write);
+}
+
+/// `runs` carried over one edit that moved text, sorted: a run's part
+/// inside a [`Move`]'s `from` goes where that text went, and the rest is
+/// carried as any run is — stretched over the edit, cut by it, dropped
+/// when it swallowed the run. A run around the whole edit (a string the
+/// moved lines are inside) covers the new text whole, and its parts are
+/// not moved again inside it.
+fn carry_moving(runs: Vec<Run>, edit: &Edit, moves: &[Move]) -> Vec<Run> {
+    let mut out = Vec::with_capacity(runs.len());
+    for r in runs {
+        let start = edit.transform_offset(r.range.start, Bias::Right);
+        let end = edit.transform_offset(r.range.end, Bias::Left);
+        // Around it when its own carry covers the new text whole: a run
+        // starting with the edit is cut at its start, and is moved.
+        let around = r.range.start < edit.range.start && r.range.end >= edit.range.end;
+        if !around {
+            for m in moves {
+                let a = r.range.start.max(m.from.start);
+                let b = r.range.end.min(m.from.end);
+                if a < b {
+                    out.push(Run {
+                        range: m.to + (a - m.from.start)..m.to + (b - m.from.start),
+                        ..r.clone()
+                    });
+                }
+            }
+        }
+        if end > start {
+            out.push(Run {
+                range: start..end,
+                ..r
+            });
+        }
+    }
+    out.sort_by_key(|r| r.range.start);
+    out
+}
+
+/// [`carry_moving`] over several ascending, disjoint edits of one text
+/// (a `replace_many_moving`): a run no edit reaches moves by the delta of
+/// the edits before it; one an edit reaches is carried over those it
+/// reaches, the last first, each in the text as it was.
+fn carry_moving_many(runs: Vec<Run>, edits: &[(Edit, Vec<Move>)]) -> Vec<Run> {
+    let mut before = Vec::with_capacity(edits.len() + 1);
+    before.push(0isize);
+    for (e, _) in edits {
+        before.push(before[before.len() - 1] + e.new_len as isize - e.removed() as isize);
+    }
+    let shift = |o: usize, d: isize| (o as isize + d) as usize;
+    let mut out = Vec::with_capacity(runs.len());
+    for r in runs {
+        let lo = edits.partition_point(|(e, _)| e.range.end <= r.range.start);
+        let hi = edits.partition_point(|(e, _)| e.range.start < r.range.end);
+        if lo >= hi {
+            out.push(Run {
+                range: shift(r.range.start, before[lo])..shift(r.range.end, before[lo]),
+                ..r
+            });
+            continue;
+        }
+        let mut pieces = vec![r];
+        for (e, moves) in edits[lo..hi].iter().rev() {
+            pieces = carry_moving(pieces, e, moves);
+        }
+        out.extend(pieces.into_iter().map(|p| Run {
+            range: shift(p.range.start, before[lo])..shift(p.range.end, before[lo]),
+            ..p
+        }));
+    }
+    out.sort_by_key(|r| r.range.start);
+    out
 }
 
 /// A late answer's `runs` (sorted) carried across the edits made since
@@ -1728,6 +1984,160 @@ mod tests {
         assert_eq!((e.range, e.new_len), (2..2, 2));
         let e = diff_edit(b"aXa", b"a");
         assert_eq!((e.range, e.new_len), (1..3, 0));
+    }
+
+    /// Two lines swapped (`<A-j>`) keep their runs, each at its line's new
+    /// place, and so does an answer to the text before the swap that
+    /// lands after it; a run around the swap stretches over it, once.
+    #[test]
+    fn a_move_carries_the_runs_of_the_text_it_moved() {
+        let run = |range: Range<usize>, style| Run {
+            range,
+            style,
+            tag: 0,
+        };
+        let styles = |b: &Buffer| -> Vec<(Range<usize>, u32)> {
+            b.runs("syntax", 0..100)
+                .into_iter()
+                .map(|r| (r.range, r.style))
+                .collect()
+        };
+        let mut b = Buffer::new("t", "x\naaa\nbb\ny");
+        let v = b.version();
+        let before = vec![run(2..5, 1), run(6..8, 2), run(9..10, 3)];
+        b.set_layer("syntax", before.clone());
+        let swap = |b: &mut Buffer| {
+            b.replace_moving(
+                2..8,
+                "bb\naaa",
+                &[Move { from: 2..5, to: 5 }, Move { from: 6..8, to: 2 }],
+            );
+        };
+        swap(&mut b);
+        assert_eq!(b.text(), "x\nbb\naaa\ny");
+        let after = vec![(2..4, 2), (5..8, 1), (9..10, 3)];
+        assert_eq!(styles(&b), after, "each line's run went with it");
+        // The parser's answer to the text before: the same, carried.
+        b.apply(Update {
+            layer: "syntax",
+            version: v,
+            span: 0..10,
+            runs: before,
+        })
+        .unwrap();
+        assert_eq!(styles(&b), after, "a late answer moves with the lines");
+        // An answer that read only one of the lines: its span grows over
+        // the swap, and the other line, which it never read, keeps the
+        // runs the layer carried with it.
+        let mut e = Buffer::new("t", "x\naaa\nbb\ny");
+        let v = e.version();
+        e.set_layer("syntax", vec![run(2..5, 1), run(6..8, 2)]);
+        swap(&mut e);
+        e.apply(Update {
+            layer: "syntax",
+            version: v,
+            span: 6..8,
+            runs: vec![run(6..8, 5)],
+        })
+        .unwrap();
+        assert_eq!(
+            styles(&e),
+            vec![(2..4, 5), (5..8, 1)],
+            "the line it read takes its answer, the other keeps its runs"
+        );
+        // A move whose text is not what it says is left out: the runs go
+        // as a plain replacement's do, none on the wrong text.
+        let mut c = Buffer::new("t", "aaa\nbb");
+        c.set_layer("syntax", vec![run(0..3, 1)]);
+        c.replace_moving(0..6, "bb\nccc", &[Move { from: 0..3, to: 3 }]);
+        assert!(styles(&c).is_empty(), "{:?}", styles(&c));
+        // A run around the edit (a string the lines are in) covers the
+        // new text whole, not once more inside it.
+        let mut d = Buffer::new("t", "\"aaa\nbb\"");
+        d.set_layer("syntax", vec![run(0..8, 7)]);
+        d.replace_moving(
+            1..7,
+            "bb\naaa",
+            &[Move { from: 1..4, to: 4 }, Move { from: 5..7, to: 1 }],
+        );
+        assert_eq!(styles(&d), vec![(0..8, 7)]);
+    }
+
+    /// A late answer is spliced inside its span only: a move elsewhere
+    /// since it was asked for keeps the layer's runs as they are (no run
+    /// twice, none out of order), and two cursors' moves, one batch,
+    /// keep each line's runs, an answer that read one block landing over
+    /// that block alone.
+    #[test]
+    fn a_late_answer_keeps_to_its_span_across_moves() {
+        let run = |range: Range<usize>, style| Run {
+            range,
+            style,
+            tag: 0,
+        };
+        let styles = |b: &Buffer| -> Vec<(Range<usize>, u32)> {
+            let runs: Vec<(Range<usize>, u32)> = b
+                .runs("syntax", 0..100)
+                .into_iter()
+                .map(|r| (r.range, r.style))
+                .collect();
+            assert!(
+                runs.windows(2).all(|w| w[0].0.end <= w[1].0.start),
+                "ascending, apart: {runs:?}"
+            );
+            runs
+        };
+        // Typed on line 1, then line 3 moved before the answer came.
+        let mut b = Buffer::new("t", "x\naaa\nbb\ny");
+        let v = b.version();
+        b.set_layer("syntax", vec![run(0..1, 9), run(2..5, 1), run(6..8, 2)]);
+        b.replace_moving(
+            2..8,
+            "bb\naaa",
+            &[Move { from: 2..5, to: 5 }, Move { from: 6..8, to: 2 }],
+        );
+        b.apply(Update {
+            layer: "syntax",
+            version: v,
+            span: 0..1,
+            runs: vec![run(0..1, 7)],
+        })
+        .unwrap();
+        assert_eq!(styles(&b), vec![(0..1, 7), (2..4, 2), (5..8, 1)]);
+        // Two cursors, each swapping its line with the next.
+        let mut c = Buffer::new("t", "aa\nb\ncc\nd");
+        let v = c.version();
+        c.set_layer(
+            "syntax",
+            vec![run(0..2, 1), run(3..4, 2), run(5..7, 3), run(8..9, 4)],
+        );
+        c.replace_many_moving(&[
+            (
+                0..4,
+                "b\naa",
+                &[Move { from: 0..2, to: 2 }, Move { from: 3..4, to: 0 }][..],
+            ),
+            (
+                5..9,
+                "d\ncc",
+                &[Move { from: 5..7, to: 7 }, Move { from: 8..9, to: 5 }][..],
+            ),
+        ]);
+        assert_eq!(c.text(), "b\naa\nd\ncc");
+        let moved = vec![(0..1, 2), (2..4, 1), (5..6, 4), (7..9, 3)];
+        assert_eq!(styles(&c), moved, "each line's run went with it");
+        c.apply(Update {
+            layer: "syntax",
+            version: v,
+            span: 0..4,
+            runs: vec![run(0..2, 5), run(3..4, 6)],
+        })
+        .unwrap();
+        assert_eq!(
+            styles(&c),
+            vec![(0..1, 6), (2..4, 5), (5..6, 4), (7..9, 3)],
+            "the answer for the first block lands there alone"
+        );
     }
 
     #[test]

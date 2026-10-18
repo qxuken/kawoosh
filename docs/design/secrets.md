@@ -532,3 +532,88 @@ Not done, and known: a hunk's sides are scanned alone, a `*show*`
 section's sides a hunk's run together: a `pem` block whose `BEGIN` line
 is outside the hunk and its context is not found in it (the `key` rule,
 a line rule, masks a private key file whole either way).
+
+### Line moves and a value over lines, 2026-10-18
+
+From the todo: "`<A-j/k>` line moves inside dotenv files flicker both
+lines", in a `.env` whose value is quoted over several lines
+(`NFQWS2_OPT="` … `"`).
+
+- **No frame drew a mask's value.** A buffer's rule masks are scanned
+  whole for each version before its rows are drawn (`masks_of`, kept
+  per version), so the frame that draws an edit draws it with that
+  edit's masks: checked frame by frame across `<A-j>` `<A-k>`, `dd`
+  `p` `P`, `u` `<C-r>` and a paste. The scan is ~8 µs a version for a
+  `.env` the user's size, 6.7 ms at `scan_max_kb` (1 MiB): no reason
+  to carry the rule masks through the journal instead.
+- **The flicker was the colours**: the move rewrote both lines in one
+  edit and their syntax runs went with it, both lines plain until the
+  parser answered — every language, seen first in `.env` because its
+  grammar had just been installed. An edit now says what it moved, and
+  the runs go with the text (core.md Decision 1, `Move`).
+- **What was drawn was the value's other lines.** `env` was a line
+  rule: on `NFQWS2_OPT="` it masked the quote, and the lines inside the
+  quotes — the value — matched no key and were drawn as they are, on
+  every frame. `env` is a `quoted` rule now: its regex matches a key up
+  to where its value starts, and the value is read by its quotes, not
+  by a pattern — one opening with `"` runs to the first `"` no `\`
+  escapes (an escaped newline, a shell's continuation, among them), one
+  with `'` or `` ` `` to the next such quote, either over lines and then
+  to the end of the closing line; any other to its line's end. An
+  opening quote never closed masks to the end of the file — the safe
+  side. *Second review:* a commented key's value ends with its line
+  (`# A="` unclosed masked the rest of the file), a byte order mark may
+  stand before the first key, and the scanner has a floor: in a file of
+  keys a line that is no key's, no comment and not blank can only be
+  inside a value, and is masked whole whatever the quotes said. A quote
+  misread — a Windows path's `C:\dir\"`, python-dotenv's `\'`, a `\`
+  continuation, `KEY=pre"…` — shifts the scan, never what is drawn.
+
+*Beat:* rules of their own (`env_quoted`, built first) — they named the
+same files, so `secrets.masks.env = false` no longer made a `.env` plain
+or not private: one rule for one kind of file is what a user switches
+off by name. *Beat:* a `from`/`to` block pair of regexes (built second,
+taken back on review) — a regex cannot count backslashes: `KEY="a \`
+never opened (`\.` takes no newline), and a closing `\\"` was missed,
+the block running on to the next value's opening quote and leaving
+that value's lines raw. A scanner of a few lines reads quotes as a
+shell does.
+
+- **A line read alone, from a review.** A list that shows a file's
+  lines one at a time — the grep picker's rows, a review's old lines
+  without the old text at hand (`old_shown`), `vcs show`'s hunks — drew
+  the inside of a quoted value raw: read alone, `--hostlist=…` is no
+  key's. Where the line's place is known and the file is on disk (a
+  grep row: `rg` read the disk), the file is read, within
+  `secrets.scan_max_kb`, kept per path by its length and time, and
+  scanned whole (`mask_text(text, path, { line = N })`,
+  `Rules::mask_line`): a line a mask from above runs over is a stand-in,
+  any other masked as a line of its own. Where it is not — a hunk of a
+  revision, the old side of a change — the text is a part
+  (`{ part = true }`, `Rule::scan_part`): before its first key a
+  `quoted` rule masks every line whole, since any may be inside a value
+  opened above it, and a block whose `to` comes before any `from` is
+  masked from the start. `vcs show` reads each section's sides whole,
+  as before, and each hunk as a part; a line the whole side left as it
+  is takes its hunk's. Only for a file a rule of its own spans lines in
+  (`spans_lines`): a `.env` is read for its grep rows, a `.rs` never.
+  The safe side: a comment before a hunk's first key is masked too.
+
+  *Second review:* a part ended at its first key-looking line, and a
+  line inside the value after it showed raw (`FOO=bar` inside a quoted
+  value; a key's base64 padding `ZXhhbXBsZQ==`). The floor masks the
+  lines after it that are no key's; and `vcs show` now reads both sides
+  of each such file whole from the backend (`base` at `REV^` and
+  `REV`), masking each hunk line by its place in the file, as the grep
+  rows are — a part only where a side cannot be had (a merge's combined
+  diff, a backend without `base`). A grep row is checked against the
+  line the read file has there, and taken as a part when it differs (a
+  file changed since `rg` read it); the file is scanned once per stamp
+  and settings version, its masks and line starts kept beside it
+  (`Rules::scan_file`, `mask_line_in`): ten thousand rows of a 1 MiB
+  `.env` take 7 ms after its scan (6–24 ms by its shape), where each
+  row had rescanned it (13 ms a row). A buffer's scan with the floor:
+  10 µs a version for a `.env` the user's size. Still read as parts,
+  and known: a line inside a value that reads as a key (`FOO=bar`, a
+  padding line) shows its name where no whole text is at hand.
+

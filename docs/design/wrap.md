@@ -137,6 +137,36 @@ width, without a node — the sound model, worth a kui round when a
 frame-behind caret shows; and clipping the bar to the pane, which
 would have hidden it for the frame rather than placed it.
 
+### 7. A bar caret is measured in the faces its row draws
+
+*Added 2026-10-18, from the todo:* "cursor jumps ahead for one frame
+each new character typed inside a markdown checkmark list". With
+`markdown.reveal = span` the caret's row keeps its task box folded to
+the Nerd Font's glyph, set in `font.icons`. On the frame that types,
+Decision 6's measure took the text before the byte in the row's base
+face: the box came out the width of the base face's fallback for that
+glyph, not the icon font's, and the bar stood off by the difference
+(the user saw it ahead; the tests' face draws it behind). A row that does not
+wrap (`markdown.wrap` off, a code row with a ghost) was measured so on
+every frame, not just one.
+
+The measure now takes the row's own spans up to the byte
+(`measure_rich_text`): each in the face it is drawn in — an icon's
+family, a code span's editor face in a prose row, bold, italic — the
+same spans `rich_text` lays out (`span_of`). A row in one face measures
+as plain text, as before. The bar, the hang point a popup reads, and a
+block caret lifted over a rounded selection all take it.
+
+Still a frame behind: a byte past the first visual line of a wrapped
+row on the frame its text is new (Decision 6's old layout, the letter
+typed behind). Exact there needs kui to say where a byte of a text not
+laid out yet lands, wrapped at a width — Decision 6's "sound model",
+a kui round.
+
+*Beat:* the icon measured alone and its difference added — every other
+face a span can have (a prose row's code span, bold in a face whose
+bold is wider) is the same mistake.
+
 ## Built
 
 2026-09-28, as decided. `kawoosh/src/wrap.rs`: `soft_wrap` (the

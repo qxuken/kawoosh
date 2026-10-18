@@ -1547,6 +1547,56 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 || line.selected.iter().any(|r| r.end > len));
         let text_key: std::cell::Cell<Option<kui_native::Key>> = std::cell::Cell::new(None);
         spacer(ui, before);
+        // A span of the row's text in its look — the face it is drawn in
+        // (an icon's family, a code span's, bold, italic) as well as its
+        // colours: what the row draws, and what a bar caret is measured
+        // against.
+        let span_of = |r: Range<usize>, l: &Look| -> Span<'_> {
+            let mut s = Span::new(&text[r.clone()]);
+            if let Some(c) = l.color {
+                s = s.color(c);
+            }
+            if let Some(c) = l.bg {
+                s = s.bg(c);
+                if l.radius > 0.0 {
+                    s = s.bg_radius(l.radius);
+                }
+            }
+            if let Some(c) = l.underline {
+                s = s
+                    .underline()
+                    .underline_color(c)
+                    .underline_style(kui_native::UnderlineStyle::Wavy);
+            } else if l.mark.underline {
+                s = s.underline();
+                if let Some(c) = l.mark.underline_color {
+                    s = s.underline_color(c);
+                }
+            }
+            if l.mark.bold {
+                s = s.bold();
+            }
+            if l.mark.italic {
+                s = s.italic();
+            }
+            if l.mark.strike {
+                s = s.strikethrough();
+            }
+            // A code span in a prose row: the editor's face (kui
+            // F130 shapes each span in its own).
+            if l.mark.mono && form.is_some_and(|f| f.family.is_some()) {
+                s = match face.id {
+                    Some(id) => s.family(kui_native::FontFamily::Custom(id)),
+                    None => s.mono(),
+                };
+            }
+            if l.mark.icon
+                && let Some(id) = line.icon_font
+            {
+                s = s.family(kui_native::FontFamily::Custom(id));
+            }
+            s
+        };
         let flush = |ui: &mut Ui<'_>, segs: &[(Range<usize>, Look)]| {
             if segs.is_empty() {
                 return;
@@ -1570,52 +1620,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 .then(|| Span::new(" "));
             let spans: Vec<Span<'_>> = segs
                 .iter()
-                .map(|(r, l)| {
-                    let mut s = Span::new(&text[r.clone()]);
-                    if let Some(c) = l.color {
-                        s = s.color(c);
-                    }
-                    if let Some(c) = l.bg {
-                        s = s.bg(c);
-                        if l.radius > 0.0 {
-                            s = s.bg_radius(l.radius);
-                        }
-                    }
-                    if let Some(c) = l.underline {
-                        s = s
-                            .underline()
-                            .underline_color(c)
-                            .underline_style(kui_native::UnderlineStyle::Wavy);
-                    } else if l.mark.underline {
-                        s = s.underline();
-                        if let Some(c) = l.mark.underline_color {
-                            s = s.underline_color(c);
-                        }
-                    }
-                    if l.mark.bold {
-                        s = s.bold();
-                    }
-                    if l.mark.italic {
-                        s = s.italic();
-                    }
-                    if l.mark.strike {
-                        s = s.strikethrough();
-                    }
-                    // A code span in a prose row: the editor's face (kui
-                    // F130 shapes each span in its own).
-                    if l.mark.mono && form.is_some_and(|f| f.family.is_some()) {
-                        s = match face.id {
-                            Some(id) => s.family(kui_native::FontFamily::Custom(id)),
-                            None => s.mono(),
-                        };
-                    }
-                    if l.mark.icon
-                        && let Some(id) = line.icon_font
-                    {
-                        s = s.family(kui_native::FontFamily::Custom(id));
-                    }
-                    s
-                })
+                .map(|(r, l)| span_of(r.clone(), l))
                 .chain(end)
                 .collect();
             match wraps {
@@ -1724,6 +1729,26 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         // the old layout answers, the byte clamped to its text: the row's
         // own wrap, inside it, a frame behind; with no layout at all, the
         // measure folded at the room, a char wrap's guess.
+        // How wide the row's text up to byte `b` is drawn: each span in
+        // its own face, as kui lays the row out — a task's box in
+        // `font.icons`, a code span in the editor's face, bold, italic.
+        // Measured in the row's face alone, a box came out another width
+        // and the bar stood off by the difference on the frame that
+        // typed (2026-10-18). A row in one face measures as plain text.
+        let one_face = segs
+            .iter()
+            .all(|(_, l)| !(l.mark.icon || l.mark.mono || l.mark.bold || l.mark.italic));
+        let prefix_w = |ui: &mut Ui<'_>, b: usize| -> f32 {
+            if one_face || b == 0 {
+                return ui.measure_text(&text[..b], &base, None).width;
+            }
+            let spans: Vec<Span<'_>> = segs
+                .iter()
+                .filter(|(r, _)| r.start < b)
+                .map(|(r, l)| span_of(r.start..r.end.min(b), l))
+                .collect();
+            ui.measure_rich_text(&spans, &base, None).width
+        };
         let stale = form.is_some_and(|f| f.stale);
         let room = form.map_or(f32::INFINITY, |f| f.room).max(1.0);
         let wrapped_at = |ui: &mut Ui<'_>, b: usize| -> (f32, f32) {
@@ -1736,7 +1761,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             if let Some(p) = laid.filter(|_| !stale) {
                 return by_layout(p);
             }
-            let x = ui.measure_text(&text[..b], &base, None).width;
+            let x = prefix_w(ui, b);
             match laid {
                 _ if x <= room => (gutter + x, 0.0),
                 Some(p) => by_layout(p),
@@ -1762,7 +1787,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 caret_bar_at(ui, pal.accent, line.caret_on, x, y, lh);
                 continue;
             }
-            let mut x = before + gutter + ui.measure_text(&text[..cb], &base, None).width;
+            let mut x = before + gutter + prefix_w(ui, cb);
             x += virtual_w
                 .iter()
                 .filter(|(b, _)| cb > *b)
@@ -1777,7 +1802,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             } else {
                 let x = before
                     + gutter
-                    + ui.measure_text(&text[..b], &base, None).width
+                    + prefix_w(ui, b)
                     + virtual_w
                         .iter()
                         .filter(|(v, _)| b > *v)
@@ -1807,7 +1832,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             } else {
                 let x = before
                     + gutter
-                    + ui.measure_text(&text[..r.start], &base, None).width
+                    + prefix_w(ui, r.start)
                     + virtual_w
                         .iter()
                         .filter(|(b, _)| r.start > *b)

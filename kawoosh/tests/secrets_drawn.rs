@@ -47,14 +47,15 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.frame(app);
 }
 
-/// Frames until `f` holds, a few seconds at most.
+/// Frames until `f` holds, 30 seconds at most: a process (git) answers
+/// late under load, 48 copies of these tests at once.
 fn until(
     d: &mut Drive,
     app: &mut Kawoosh,
     what: &str,
     mut f: impl FnMut(&mut Kawoosh, &Drive) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while !f(app, d) {
         assert!(
             Instant::now() < deadline,
@@ -408,6 +409,43 @@ fn a_shown_commit_masks_a_private_file() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `vcs show` of a commit that changed a line deep inside a `.env` value
+/// quoted over lines, its `KEY="` far above the hunk's context and a
+/// key-looking line inside the value: each side of the file is read
+/// whole and the hunk masked by its place in it. Read as a part, the
+/// line after `FOO=bar` was drawn raw (the second review, 2026-10-18).
+#[test]
+fn a_shown_commit_masks_a_hunk_inside_a_quoted_value() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = tmp("show-inside");
+    git(&dir, &["init", "-q", "-b", "main"]);
+    let env = |inner: &str| {
+        let pad: String = (0..12).map(|i| format!("--opt{i}\n")).collect();
+        format!("HOST=db\nOPT=\"\n{pad}FOO=bar\n{inner}\n\"\nPORT=1\n")
+    };
+    std::fs::write(dir.join("prod.env"), env("old9inner")).unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "first"]);
+    std::fs::write(dir.join("prod.env"), env("new8inner")).unwrap();
+    git(&dir, &["commit", "-q", "-am", "second"]);
+    std::fs::write(dir.join("a.txt"), "x\n").unwrap();
+    let (mut d, mut app) = launch(&dir.join("a.txt"), &dir);
+    ex(&mut d, &mut app, "vcs show HEAD");
+    until(&mut d, &mut app, "the commit", |app, _| {
+        buffer_named(app, "*show HEAD*").is_some()
+    });
+    d.frame(&mut app);
+    let shown = drawn(&d);
+    assert!(shown.contains("PORT="), "the diff: {shown}");
+    for s in ["old9inner", "new8inner", "FOO=", "--opt"] {
+        assert!(!shown.contains(s), "`{s}` drawn: {shown}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A key in a plain file, committed, then its body replaced: what a
 /// review of the masks found drawn raw (2026-10-16).
 const KEY_OLD: &str = "MIIEoldbody1";
@@ -565,5 +603,105 @@ fn a_shown_commit_masks_a_renamed_file_whatever_the_colour() {
         "the diff: {shown}"
     );
     assert!(!shown.contains(SECRET), "masked: {shown}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A `.env` whose value is quoted over several lines (the user's
+/// `NFQWS2_OPT="…"`), edited by the keys that rewrite whole lines —
+/// `<A-j>` `<A-k>`, `dd` `p` `P`, a paste — is drawn masked on every
+/// frame: no frame draws a value, and every line inside the quotes, as
+/// the text has them on that frame, is drawn as the stand-in whole.
+/// Before, the lines inside the quotes were drawn as they are on every
+/// frame (a line rule saw only the opening quote).
+#[test]
+fn a_value_over_lines_stays_masked_through_line_moves() {
+    const DOMAIN: &str = "s3cretdom";
+    const PASTED: &str = "pasted9secret";
+    let dir = tmp("moves");
+    let env = dir.join(".env");
+    std::fs::write(
+        &env,
+        format!(
+            "HOST=db\nTOKEN={SECRET}\nNFQWS2_OPT=\"\n$BLOBS\n--filter-tcp=443 --hostlist-domains={DOMAIN}.example --new\n--filter-udp=443 --payload=quic_initial $QUIC_STRAT --new\n\"\nPORT=1\n"
+        ),
+    )
+    .unwrap();
+    let (mut d, mut app) = launch(&env, &dir);
+    let id = focused_buffer(&app);
+    assert!(app.ed.buffers[id].private);
+    let mut frames = 0;
+    // The frame just drawn, against the text as it is: no secret in any
+    // drawn text, and each line between `KEY="` and `"` its stand-in.
+    let check = |d: &Drive, app: &Kawoosh, what: &str| {
+        let shown = drawn(d);
+        for s in [SECRET, DOMAIN, PASTED] {
+            assert!(!shown.contains(s), "{what}: `{s}` drawn: {shown}");
+        }
+        let text = app.ed.buffers[id].text();
+        let rows = d.line_rows();
+        let mut inside = false;
+        for (ln, line) in text.lines().enumerate() {
+            if inside && line == "\"" {
+                inside = false;
+            } else if inside {
+                assert_eq!(
+                    rows.get(ln).map(String::as_str),
+                    Some(kawoosh_editor::masks::STAND_IN),
+                    "{what}: line {ln} `{line}` inside the value; rows {rows:?}"
+                );
+            } else if line.ends_with("=\"") {
+                inside = true;
+            }
+        }
+    };
+    let mut step = |d: &mut Drive, app: &mut Kawoosh, keys: &str| {
+        for tok in kawoosh_editor::keymap::parse_notation(keys) {
+            d.press(app, &tok);
+            check(d, app, &format!("`{tok}` of `{keys}`"));
+            frames += 1;
+        }
+        for i in 0..3 {
+            app.wait_for_jobs();
+            d.frame(app);
+            check(d, app, &format!("frame {i} after `{keys}`"));
+            frames += 1;
+        }
+    };
+    check(&d, &app, "opened");
+    // A line inside the value moved down, up past `$BLOBS`, back.
+    step(&mut d, &mut app, "5G");
+    step(&mut d, &mut app, "<A-j>");
+    step(&mut d, &mut app, "<A-k>");
+    step(&mut d, &mut app, "<A-k>");
+    step(&mut d, &mut app, "<A-j>");
+    // A plain key's line moved into the value and out again.
+    step(&mut d, &mut app, "2G");
+    step(&mut d, &mut app, "<A-j>");
+    step(&mut d, &mut app, "<A-j>");
+    step(&mut d, &mut app, "<A-k>");
+    step(&mut d, &mut app, "<A-k>");
+    // Deleted and put back, below and above.
+    step(&mut d, &mut app, "5G");
+    step(&mut d, &mut app, "dd");
+    step(&mut d, &mut app, "p");
+    step(&mut d, &mut app, "dd");
+    step(&mut d, &mut app, "P");
+    step(&mut d, &mut app, "u");
+    step(&mut d, &mut app, "<C-r>");
+    // A paste from the clipboard into the value.
+    step(&mut d, &mut app, "4G");
+    ex(&mut d, &mut app, "paste clipboard");
+    d.input(
+        &mut app,
+        kui_native::InputEvent::Paste {
+            text: format!("--pasted={PASTED}\n"),
+            marks: kui_native::ClipboardMarks::default(),
+        },
+    );
+    check(&d, &app, "the paste's frame");
+    step(&mut d, &mut app, "");
+    let text = app.ed.buffers[id].text();
+    assert!(text.contains(PASTED), "pasted: {text}");
+    assert!(frames > 60, "{frames} frames looked at");
     std::fs::remove_dir_all(&dir).ok();
 }

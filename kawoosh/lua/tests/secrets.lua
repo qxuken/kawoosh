@@ -32,6 +32,27 @@ kawoosh.test.eq(
   "a key block anywhere"
 )
 
+-- A line read alone may be inside a `.env` value quoted over lines: as a
+-- part of the file, the lines before its first key are masked whole;
+-- as line N of the file on disk, as the file's pane masks it.
+kawoosh.test.eq(
+  kawoosh.secrets.mask_text("--filter=s3cret\n\"\nPORT=1", "/p/.env", { part = true }),
+  "••••••••\n••••••••\nPORT=••••••••",
+  "a hunk that starts inside a value"
+)
+do
+  local dir = os.tmpname()
+  os.remove(dir)
+  local env = kawoosh.fs.join(dir, ".env")
+  kawoosh.fs.write(env, "HOST=db\nOPT=\"\n--hostlist=s3cretdom.example\n\"\nPORT=1\n")
+  kawoosh.test.eq(kawoosh.secrets.mask_text("--hostlist=s3cretdom.example", env, { line = 3 }), "••••••••",
+    "a search's line inside a value")
+  kawoosh.test.eq(kawoosh.secrets.mask_text("HOST=db", env, { line = 1 }), "HOST=••••••••", "a key's line")
+  kawoosh.test.eq(kawoosh.secrets.mask_text("# a note", "/p/notes.txt", { line = 1 }), "# a note",
+    "a file no rule spans lines in is not read")
+  kawoosh.fs.remove(dir)
+end
+
 -- A plugin's own: a scratch made private, ranges masked.
 kawoosh.buf.open_scratch { name = "mine", text = "user alice pin 1234" }
 kawoosh.frame()

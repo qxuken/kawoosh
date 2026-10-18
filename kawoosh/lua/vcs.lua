@@ -161,11 +161,17 @@ end
 
 -- The lines a hunk took away, as a list shows them: from `shown` (the
 -- old text's lines through `shown_lines_of`) when it is there, else
--- each line masked by the rules of the file at `path`.
+-- the hunk's lines masked together by the rules of the file at `path`
+-- as a part of its text — one that may start inside a value a rule
+-- masks over lines (a `.env`'s quoted value opened above the hunk).
 local function old_shown(h, shown, path)
+  local part
+  if not shown and path and #h.old > 0 then
+    part = lines_of(kawoosh.secrets.mask_text(table.concat(h.old, "\n") .. "\n", path, { part = true }))
+  end
   local out = {}
   for k, l in ipairs(h.old) do
-    out[k] = shown and shown[h.old_line + k - 1] or (path and kawoosh.secrets.mask_text(l, path)) or l
+    out[k] = shown and shown[h.old_line + k - 1] or (part and part[k]) or l
   end
   return out
 end
@@ -183,36 +189,74 @@ end
 -- is no hunk's (the message, the stat, the headers) is kept.
 ---@param text string the patch as printed
 ---@param root string the directory its paths are from
+---@param texts? { old: table<string, string>, new: table<string, string> } each side's file whole, by its path from `root`
 ---@return string
-function vcs.shown_patch(text, root)
+function vcs.shown_patch(text, root, texts)
   local lines = lines_of(text)
   -- The section's files: every path its headers name, old and new — a
   -- renamed `prod.env` is masked by its rules as by the new name's.
   local paths, prefixed = {}, false
+  -- The section's `---` and `+++` files, which `texts` has whole.
+  local old_name, new_name
   local body, old, new = {}, {}, {}
+  -- Where each hunk's lines start in `old` and `new`.
+  local old_at, new_at = {}, {}
   -- `text` masked by the rules of every file the section names, or by
-  -- the rules that apply anywhere when it names none.
-  local function mask(text)
-    if #paths == 0 then return kawoosh.secrets.mask_text(text) end
-    for _, p in ipairs(paths) do text = kawoosh.secrets.mask_text(text, fs.join(root, p)) end
+  -- the rules that apply anywhere when it names none; `opts` theirs.
+  local function mask(text, opts)
+    if #paths == 0 then return kawoosh.secrets.mask_text(text, nil, opts) end
+    for _, p in ipairs(paths) do text = kawoosh.secrets.mask_text(text, fs.join(root, p), opts) end
     return text
   end
   local function flush()
-    if #body == 0 then return end
-    local function masked(side)
-      if #side == 0 then return {} end
-      return lines_of(mask(table.concat(side, "\n") .. "\n"))
+    if #body == 0 then
+      old_at, new_at = {}, {}
+      return
     end
-    local o, n = masked(old), masked(new)
+    -- A side read whole, so a block is found across its hunks; and each
+    -- hunk read as a part of the file, which may start inside a value
+    -- opened above it (a `.env`'s quoted one): a line the whole side
+    -- left as it is takes what its hunk's part says.
+    local function masked(side, at)
+      if #side == 0 then return {} end
+      local whole = lines_of(mask(table.concat(side, "\n") .. "\n"))
+      for h, from in ipairs(at) do
+        local to = (at[h + 1] or (#side + 1)) - 1
+        if to >= from then
+          local part = lines_of(mask(table.concat(side, "\n", from, to) .. "\n", { part = true }))
+          for k = from, to do
+            if whole[k] == side[k] then whole[k] = part[k - from + 1] or whole[k] end
+          end
+        end
+      end
+      return whole
+    end
+    local o, n = masked(old, old_at), masked(new, new_at)
+    -- A side whose file is at hand whole is masked by its line in it,
+    -- as the file's pane would (a hunk inside a value opened above it);
+    -- a line that is not the file's there keeps the side's own.
+    local function whole(by, name)
+      local w = texts and name and texts[by] and texts[by][name]
+      if not w then return nil end
+      return { raw = lines_of(w), shown = lines_of(kawoosh.secrets.mask_text(w, fs.join(root, name))) }
+    end
+    local wo, wn = whole("old", old_name), whole("new", new_name)
+    local function at(w, no, raw)
+      if w and no and w.raw[no] == raw then return w.shown[no] end
+    end
     for _, b in ipairs(body) do
       local raw = lines[b.at]:sub(b.cols + 1)
-      local m = b.new and n[b.new] or nil
-      if b.old and (m == nil or m == raw) then m = o[b.old] or m end
+      local m = at(wn, b.newno, raw) or at(wo, b.oldno, raw)
+      if not m then
+        m = b.new and n[b.new] or nil
+        if b.old and (m == nil or m == raw) then m = o[b.old] or m end
+      end
       -- A line its side lost (never: `mask_text` keeps every line) is
       -- masked alone rather than drawn as printed.
       lines[b.at] = lines[b.at]:sub(1, b.cols) .. (m or mask(raw))
     end
     body, old, new = {}, {}, {}
+    old_at, new_at = {}, {}
   end
   -- A path git C-quoted (`"we\"ird.env"`: a `"`, a `\`, a control
   -- character in it, whatever `core.quotePath`) as it is spelled.
@@ -267,6 +311,10 @@ function vcs.shown_patch(text, root)
         i = i + 1
       else
         local function any() for _, c in ipairs(left) do if c > 0 then return true end end end
+        old_at[#old_at + 1], new_at[#new_at + 1] = #old + 1, #new + 1
+        -- Where the hunk starts in each side's file, a two-way diff's.
+        local oln = cols == 1 and tonumber(counts:match("^%-(%d+)")) or nil
+        local nln = cols == 1 and tonumber(counts:match("%+(%d+)")) or nil
         i = i + 1
         while i <= #lines and any() do
           local b = lines[i]
@@ -281,8 +329,14 @@ function vcs.shown_patch(text, root)
             if in_new then left[cols + 1] = left[cols + 1] - 1 end
             local raw = b:sub(cols + 1)
             local entry = { at = i, cols = cols }
-            if in_old then old[#old + 1] = raw; entry.old = #old end
-            if in_new then new[#new + 1] = raw; entry.new = #new end
+            if in_old then
+              old[#old + 1] = raw; entry.old = #old
+              if oln then entry.oldno = oln; oln = oln + 1 end
+            end
+            if in_new then
+              new[#new + 1] = raw; entry.new = #new
+              if nln then entry.newno = nln; nln = nln + 1 end
+            end
             body[#body + 1] = entry
             i = i + 1
           end
@@ -297,6 +351,7 @@ function vcs.shown_patch(text, root)
       if git_path or cc_path or index_path then
         flush()
         paths = {}
+        old_name, new_name = nil, nil
         -- git's headers carry `a/` and `b/` (`git.show` asks for them),
         -- a combined diff's `---` `+++` too; fossil's none.
         prefixed = (git_path or cc_path) ~= nil
@@ -306,6 +361,9 @@ function vcs.shown_patch(text, root)
       elseif l:match("^%-%-%- ") and lines[i + 1] and lines[i + 1]:match("^%+%+%+ ") then
         add(l:sub(5))
         add(lines[i + 1]:sub(5))
+        local o, n = l:sub(5), lines[i + 1]:sub(5)
+        old_name = o ~= "/dev/null" and named(o) or nil
+        new_name = n ~= "/dev/null" and named(n) or nil
         i = i + 1
       end
       i = i + 1
@@ -1051,6 +1109,34 @@ end
 
 local SHOWN = {}
 
+-- The `*show REV*` buffer of `text`, `r`'s commit `rev` as `git show`
+-- printed it, its spanning files' sides `texts`.
+---@param rev string
+---@param text string
+---@param r table
+---@param texts table
+---@return nil
+local function show_text(rev, text, r, texts)
+  local name = "*show " .. rev:sub(1, 10) .. "*"
+  -- In a split beside, unless it is on show already: `q` closes it
+  -- back to where the keys were.
+  local open = false
+  for _, h in ipairs(kawoosh.buf.list()) do
+    if kawoosh.buf.name(h) == name then open = true end
+  end
+  -- `run`, not `cmd`: a shell command through `cmd` lands after
+  -- the scratch is shown, and would split the scratch's pane.
+  if not open then kawoosh.run("vsplit") end
+  -- As a list shows it: a commit that touched a `.env` draws its
+  -- values masked (docs/design/secrets.md Decision 9).
+  kawoosh.buf.open_scratch { name = name, text = vcs.shown_patch(text, r.root, texts), read_only = true, language = "diff" }
+  if not SHOWN[name] then
+    SHOWN[name] = true
+    kawoosh.map("n", "q", "close", { buffer = name })
+    kawoosh.map("n", "<CR>", "vcs show open", { buffer = name })
+  end
+end
+
 -- vcs.show(rev): the commit as a `*show REV*` diff buffer.
 ---@param rev string
 ---@return nil
@@ -1059,23 +1145,30 @@ function vcs.show(rev)
     if not can(r, "show") then return end
     r.backend.show(r.root, rev, function(text, why)
       if not text then return kawoosh.echo("show " .. rev .. ": " .. tostring(why or "nothing")) end
-      local name = "*show " .. rev:sub(1, 10) .. "*"
-      -- In a split beside, unless it is on show already: `q` closes it
-      -- back to where the keys were.
-      local open = false
-      for _, h in ipairs(kawoosh.buf.list()) do
-        if kawoosh.buf.name(h) == name then open = true end
+      -- Each file a rule of its own masks over lines in (a `.env`), read
+      -- whole on both sides, so a hunk inside a value opened above it is
+      -- masked by its place in the file (secrets.md); the rest, and a
+      -- side the backend cannot give, as the patch has them.
+      local wanted = {}
+      if r.backend.base then
+        for _, l in ipairs(lines_of(text)) do
+          local side, p = l:match("^([-+])[-+][-+] [ab]/(.+)$")
+          if p and not p:find("\t", 1, true) and kawoosh.secrets.spans_lines(fs.join(r.root, p)) then
+            wanted[#wanted + 1] = { side = side == "-" and "old" or "new", path = p }
+          end
+        end
       end
-      -- `run`, not `cmd`: a shell command through `cmd` lands after
-      -- the scratch is shown, and would split the scratch's pane.
-      if not open then kawoosh.run("vsplit") end
-      -- As a list shows it: a commit that touched a `.env` draws its
-      -- values masked (docs/design/secrets.md Decision 9).
-      kawoosh.buf.open_scratch { name = name, text = vcs.shown_patch(text, r.root), read_only = true, language = "diff" }
-      if not SHOWN[name] then
-        SHOWN[name] = true
-        kawoosh.map("n", "q", "close", { buffer = name })
-        kawoosh.map("n", "<CR>", "vcs show open", { buffer = name })
+      local texts, pending = { old = {}, new = {} }, #wanted
+      local function opened()
+        show_text(rev, text, r, texts)
+      end
+      if pending == 0 then return opened() end
+      for _, w in ipairs(wanted) do
+        r.backend.base(r.root, fs.join(r.root, w.path), w.side == "old" and rev .. "^" or rev, function(t)
+          texts[w.side][w.path] = t
+          pending = pending - 1
+          if pending == 0 then opened() end
+        end)
       end
     end)
   end)

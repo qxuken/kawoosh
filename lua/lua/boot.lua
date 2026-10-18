@@ -852,11 +852,15 @@ end
 -- down` (`<C-S-j>`) hand them down, `pane up` (`<C-S-k>`) takes them up
 -- to the field focused last, else `field`. nil takes the header off.
 -- kawoosh.secrets.private(path): whether a rule names the file;
--- kawoosh.secrets.mask_text(text, path[, language]): the text with
+-- kawoosh.secrets.mask_text(text, path[, opts]): the text with
 -- what the rules for that file mask drawn as `•` — a list's line, or
 -- a file's text read from disk or from version control; every line is
 -- kept (a block's lines each a stand-in), so its lines still number as
--- the file's.
+-- the file's. `opts` is the language, or `{ language, part, line }`:
+-- `part = true` for a part of the text that may start inside a value
+-- masked over lines (a hunk: its lines before its first key masked
+-- whole), `line = N` for line N of the file on disk (read and masked
+-- as its pane masks it).
 --
 -- kawoosh.buf.annotate(notes[, buffer]): text after a line's end that
 -- is not the buffer's — what an entry is, beside its name — `{ [id] =

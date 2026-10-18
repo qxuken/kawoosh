@@ -7324,17 +7324,105 @@ fn seed(
             Ok(ro().private(Some(std::path::Path::new(&path)), ""))
         })?,
     )?;
-    // `kawoosh.secrets.mask_text(text: string, path?: string, language?: string): string`:
-    // `text`, a line or lines of the file at `path` in `language`, with
-    // what the rules that apply to it mask drawn as `•` — every line
-    // kept, so a list's line numbers stay the file's.
+    // `kawoosh.secrets.spans_lines(path: string, language?: string): boolean`:
+    // whether a rule of the file's own masks over lines (a `.env`'s
+    // quoted value) — a line of it read alone may be inside one, and a
+    // list showing a hunk of it does better to read the file whole.
     let ro = rules_of.clone();
+    secrets.set(
+        "spans_lines",
+        lua.create_function(move |_, (path, language): (String, Option<String>)| {
+            Ok(ro().spans_lines(
+                Some(std::path::Path::new(&path)),
+                language.as_deref().unwrap_or(""),
+            ))
+        })?,
+    )?;
+    // `kawoosh.secrets.mask_text(text: string, path?: string, opts?: string|kawoosh.secrets.MaskOpts): string`:
+    // `text`, a line or lines of the file at `path`, with what the rules
+    // that apply to it mask drawn as `•` — every line kept, so a list's
+    // line numbers stay the file's. `opts` is the language, or a table:
+    // `language`; `part = true` for a part of the file's text whose start
+    // may be inside a value a rule masks over lines (a hunk's lines: the
+    // lines before its first key are masked whole); `line = N` for line N
+    // of the file as it is on disk (a search's line: the file is read,
+    // within `secrets.scan_max_kb`, and the line masked as its pane
+    // masks it — whole inside a value opened above), a part when the
+    // file cannot be read.
+    //
+    // @class kawoosh.secrets.MaskOpts
+    // @field language? string
+    // @field part? boolean
+    // @field line? integer
+    let ro = rules_of.clone();
+    // The files read for `line`, scanned, by path, at their length and
+    // time and the settings' version: a search's rows in one file read
+    // and scan it once.
+    type Read = (
+        u64,
+        Option<std::time::SystemTime>,
+        u64,
+        Rc<kawoosh_editor::masks::Scanned>,
+    );
+    let read: Rc<RefCell<HashMap<std::path::PathBuf, Read>>> = Rc::default();
+    let pp = published.clone();
     secrets.set(
         "mask_text",
         lua.create_function(
-            move |_, (text, path, language): (String, Option<String>, Option<String>)| {
+            move |_, (text, path, opts): (String, Option<String>, Option<LV>)| {
                 let path = path.map(std::path::PathBuf::from);
-                Ok(ro().mask_text(path.as_deref(), language.as_deref().unwrap_or(""), &text))
+                let (mut language, mut part, mut line) = (String::new(), false, None);
+                match &opts {
+                    Some(LV::String(s)) => language = s.to_str()?.to_string(),
+                    Some(LV::Table(t)) => {
+                        language = t.get::<Option<String>>("language")?.unwrap_or_default();
+                        part = t.get::<Option<bool>>("part")?.unwrap_or(false);
+                        line = t.get::<Option<usize>>("line")?;
+                    }
+                    _ => {}
+                }
+                let rules = ro();
+                let at = path.as_deref();
+                if let (Some(n), Some(p)) = (line, at)
+                    && rules.spans_lines(at, &language)
+                {
+                    let max = pp
+                        .borrow()
+                        .settings
+                        .get("secrets.scan_max_kb")
+                        .and_then(|v| v.as_int())
+                        .unwrap_or(1024)
+                        .max(0) as u64
+                        * 1024;
+                    let version = pp.borrow().settings_version;
+                    let file = std::fs::metadata(p)
+                        .ok()
+                        .filter(|m| m.is_file() && m.len() <= max)
+                        .and_then(|m| {
+                            let stamp = (m.len(), m.modified().ok(), version);
+                            let mut r = read.borrow_mut();
+                            if let Some((len, t, v, f)) = r.get(p)
+                                && (*len, *t, *v) == stamp
+                            {
+                                return Some(f.clone());
+                            }
+                            let whole = std::fs::read_to_string(p).ok()?;
+                            let f = Rc::new(rules.scan_file(at, &language, whole));
+                            if r.len() >= 64 {
+                                r.clear();
+                            }
+                            r.insert(p.to_path_buf(), (stamp.0, stamp.1, stamp.2, f.clone()));
+                            Some(f)
+                        });
+                    return Ok(match file {
+                        Some(f) => rules.mask_line_in(at, &language, &text, &f, n),
+                        None => rules.mask_part(at, &language, &text),
+                    });
+                }
+                Ok(match part || line.is_some() {
+                    true => rules.mask_part(at, &language, &text),
+                    false => rules.mask_text(at, &language, &text),
+                })
             },
         )?,
     )?;

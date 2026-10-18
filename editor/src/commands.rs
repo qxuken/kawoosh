@@ -6,7 +6,7 @@
 
 use std::ops::Range;
 
-use kawoosh_doc::Buffer;
+use kawoosh_doc::{Buffer, Move};
 
 use crate::keymap::{Keymap, Mode};
 use crate::motions as m;
@@ -4553,14 +4553,36 @@ fn move_lines_once(ed: &mut Editor, view: ViewId, down: bool) -> bool {
             }
             let next = buf.line_range(b + 1);
             let other = buf.slice(next.clone());
-            edits.push((block.start..next.end, format!("{other}\n{text}")));
+            // Both lines are the same text elsewhere: their runs (the
+            // colours) go with them rather than waiting on the parser.
+            let moves = vec![
+                Move {
+                    from: block.clone(),
+                    to: block.start + other.len() + 1,
+                },
+                Move {
+                    from: next.clone(),
+                    to: block.start,
+                },
+            ];
+            edits.push((block.start..next.end, format!("{other}\n{text}"), moves));
         } else {
             if a == 0 {
                 continue;
             }
             let prev = buf.line_range(a - 1);
             let other = buf.slice(prev.clone());
-            edits.push((prev.start..block.end, format!("{text}\n{other}")));
+            let moves = vec![
+                Move {
+                    from: block.clone(),
+                    to: prev.start,
+                },
+                Move {
+                    from: prev.clone(),
+                    to: prev.start + text.len() + 1,
+                },
+            ];
+            edits.push((prev.start..block.end, format!("{text}\n{other}"), moves));
         }
     }
     if edits.is_empty() {
@@ -4571,7 +4593,7 @@ fn move_lines_once(ed: &mut Editor, view: ViewId, down: bool) -> bool {
     // so they are placed by hand.
     let shifts: Vec<(Range<usize>, isize)> = edits
         .iter()
-        .map(|(r, t)| {
+        .map(|(r, t, _)| {
             let other_len = if down {
                 t.find('\n').unwrap_or(0)
             } else {
@@ -4594,12 +4616,12 @@ fn move_lines_once(ed: &mut Editor, view: ViewId, down: bool) -> bool {
         })
         .collect();
     let primary = ed.views[view].sels.primary;
-    let keyed: Vec<(usize, Range<usize>, String)> = edits
+    let keyed: Vec<(usize, Range<usize>, String, Vec<Move>)> = edits
         .into_iter()
         .enumerate()
-        .map(|(i, (r, t))| (usize::MAX - i, r, t))
+        .map(|(i, (r, t, m))| (usize::MAX - i, r, t, m))
         .collect();
-    ed.edit_each(view, keyed, |start, _| Selection::point(start));
+    ed.edit_each_moving(view, keyed, |start, _| Selection::point(start));
     let v = &mut ed.views[view];
     v.sels.items = items;
     v.sels.primary = primary;

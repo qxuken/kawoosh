@@ -928,9 +928,13 @@ impl Kawoosh {
     }
 
     /// Blocks until `ts` has answered for every buffer sent — for tests,
-    /// which have no loop to be woken.
+    /// which have no loop to be woken. By the clock, up to 30 s: two
+    /// hundred tries five milliseconds apart gave up within a second
+    /// under load, before the parser answered (a review's 32 copies of
+    /// `syntax.rs`, 2026-10-18).
     pub fn wait_for_syntax(&mut self) {
-        for _ in 0..200 {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while std::time::Instant::now() < until {
             self.sync_syntax();
             // Pending: a buffer sent whose layer has not landed yet, or
             // whose tree is still an older version's.

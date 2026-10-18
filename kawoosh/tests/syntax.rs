@@ -510,3 +510,87 @@ fn percent_goes_round_a_keyword_block() {
     assert_eq!(text_of(&app), src);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A line moved with `<A-j>` / `<A-k>` keeps its colours on every frame,
+/// and so does the line it swapped with: the move rewrote both lines'
+/// text in one edit, and the runs over it went with the text replaced,
+/// both lines drawn plain until the parser answered — a flicker of two
+/// lines per keystroke, a line held moving drawn plain throughout. The
+/// move says what it moved (`kawoosh_doc::Move`), and an answer to the
+/// text before it, landing after, moves with the lines too.
+#[test]
+fn a_moved_line_keeps_its_colours_on_every_frame() {
+    let src = "fn main() {\n    let a = \"one\";\n    let b = 2;\n    call(a, b);\n}\n";
+    held_moves(
+        src,
+        "j",
+        1,
+        &["<A-j>", "<A-j>", "<A-k>", "<A-k>", "<A-j>", "<A-k>"],
+    );
+    // Two carets in blocks apart, each line moving with its own.
+    let src = "fn main() {\n    let a = \"one\";\n    let b = 2;\n    let c = 'x';\n    let d = 4.0;\n    call(a, b);\n}\n";
+    held_moves(
+        src,
+        "j2<C-j>",
+        2,
+        &["<A-j>", "<A-j>", "<A-k>", "<A-k>", "<A-j>", "<A-k>"],
+    );
+}
+
+/// `src` parsed, `setup` pressed (making `carets`), then `moves` a frame each, every
+/// line's colours checked on the frame of each move and the one after
+/// against the colours it had before (by its text), and the text back
+/// where it was at the end.
+fn held_moves(src: &str, setup: &str, carets: usize, moves: &[&str]) {
+    let (mut app, mut d, dir) = parsed("moves.rs", src);
+    // Each line's runs, relative to its start, by its text.
+    let colours = |app: &Kawoosh| -> std::collections::HashMap<String, Vec<(usize, usize, u32)>> {
+        let buf = app.ed.buffer_of(app.focused_view().unwrap());
+        (0..buf.line_count())
+            .map(|l| {
+                let r = buf.line_range(l);
+                let runs = buf
+                    .runs(SYNTAX_LAYER, r.clone())
+                    .into_iter()
+                    .map(|x| {
+                        (
+                            x.range.start.max(r.start) - r.start,
+                            x.range.end.min(r.end) - r.start,
+                            x.style,
+                        )
+                    })
+                    .collect();
+                (buf.slice(r), runs)
+            })
+            .collect()
+    };
+    let settled = colours(&app);
+    assert!(
+        !settled["    let a = \"one\";"].is_empty(),
+        "coloured: {settled:?}"
+    );
+    let mut looked = 0;
+    let mut check = |app: &Kawoosh, what: &str| {
+        let now = colours(app);
+        for (line, runs) in &settled {
+            assert_eq!(now.get(line), Some(runs), "{what}: `{line}`");
+        }
+        looked += 1;
+    };
+    d.press(&mut app, setup);
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].sels.iter().count(), carets, "after {setup}");
+    // Held down: a move a frame, the parser's answers landing between.
+    for keys in moves {
+        d.press(&mut app, keys);
+        check(&app, &format!("the frame of {keys} after {setup}"));
+        d.frame(&mut app);
+        check(&app, &format!("the frame after {keys} after {setup}"));
+    }
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    check(&app, "answered");
+    assert_eq!(text_of(&app), src, "back where it was");
+    assert_eq!(looked, 2 * moves.len() + 1);
+    std::fs::remove_dir_all(&dir).ok();
+}

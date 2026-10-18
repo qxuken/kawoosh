@@ -42,9 +42,10 @@ kawoosh.test.eq(lines[2], "    TOKEN=in a message is no file's", "the message ke
 kawoosh.test.eq(lines[7], "--- a/prod.env", "the headers kept")
 kawoosh.test.eq(lines[10], " HOST=••••••••")
 -- `--- x` and `+++ y` are lines of the hunk, which its counts say:
--- read as headers, they would have named the file `y`, no `.env`.
-kawoosh.test.eq(lines[11], "--- x")
-kawoosh.test.eq(lines[12], "+++ y")
+-- read as headers, they would have named the file `y`, no `.env`. In a
+-- `.env` a line no key's and no comment is inside a value: masked.
+kawoosh.test.eq(lines[11], "-••••••••")
+kawoosh.test.eq(lines[12], "+••••••••")
 kawoosh.test.eq(lines[13], "-TOKEN=••••••••", "the old side by its file's rules")
 kawoosh.test.eq(lines[14], "+TOKEN=••••••••", "the new side")
 kawoosh.test.eq(lines[21], "-KEY=••••••••", "a deleted file by its `---`")
@@ -101,3 +102,50 @@ local quoted = table.concat({
 local q = kawoosh.vcs.shown_patch(quoted, "/r")
 kawoosh.test.eq(q:find("old7", 1, true), nil, "a quoted name's rules")
 kawoosh.test.eq(q:find("new8", 1, true), nil, "a quoted name's rules, the new side")
+
+-- A `.env` hunk that starts inside a value quoted over lines (its
+-- `KEY="` above the context): its lines before the first key are masked
+-- whole, as the file's pane draws them, the key after it as ever.
+local inside = table.concat({
+  "diff --git a/prod.env b/prod.env",
+  "--- a/prod.env",
+  "+++ b/prod.env",
+  "@@ -5,4 +5,4 @@",
+  " --filter-tcp=443 --hostlist=s3cretdom.example",
+  "-old-inner-7",
+  "+new-inner-8",
+  ' "',
+  " PORT=1",
+  "",
+}, "\n")
+local w = kawoosh.vcs.shown_patch(inside, "/r")
+for _, s in ipairs({ "s3cretdom", "old-inner", "new-inner" }) do
+  kawoosh.test.eq(w:find(s, 1, true), nil, s .. " is inside a value")
+end
+kawoosh.test.eq(w:find(" PORT=••••••••", 1, true) ~= nil, true, "the key after it")
+
+-- The same hunk with a key-looking line inside the value, each side's
+-- file given whole: masked by its place in the file, so `FOO=` and the
+-- padding line that reads as a key are inside the value, not keys.
+local function side(inner)
+  return "HOST=db\nOPT=\"\nFOO=bar\nZXhhbXBsZQ==\n" .. inner .. "\n\"\nPORT=1\n"
+end
+local keyish = table.concat({
+  "diff --git a/prod.env b/prod.env",
+  "--- a/prod.env",
+  "+++ b/prod.env",
+  "@@ -3,5 +3,5 @@",
+  " FOO=bar",
+  " ZXhhbXBsZQ==",
+  "-old-inner-7",
+  "+new-inner-8",
+  ' "',
+  " PORT=1",
+  "",
+}, "\n")
+local k = kawoosh.vcs.shown_patch(keyish, "/r",
+  { old = { ["prod.env"] = side("old-inner-7") }, new = { ["prod.env"] = side("new-inner-8") } })
+for _, s in ipairs({ "FOO", "ZXhhbXBsZQ", "old-inner", "new-inner" }) do
+  kawoosh.test.eq(k:find(s, 1, true), nil, s .. " is inside the value, the files say")
+end
+kawoosh.test.eq(k:find(" PORT=••••••••", 1, true) ~= nil, true, "the key after it")

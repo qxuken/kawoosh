@@ -19,12 +19,26 @@ use crate::Setting;
 /// secret is is not the screen's business either.
 pub const STAND_IN: &str = "••••••••";
 
+/// What may come before a key on its line: spaces, tabs, and a byte
+/// order mark at a file's start.
+const SPACE: &[char] = &[' ', '\t', '\u{feff}'];
+
 /// What a rule masks: the first group of a line's match (the whole
-/// match without a group), or every line from a `from` match to the
-/// next `to` match.
+/// match without a group); every line from a `from` match to the next
+/// `to` match; or a value, which starts where a `quoted` match ends: one
+/// opening with `"` runs to the first `"` no `\\` escapes (an escaped
+/// newline too), one with `'` or `` ` `` to the next such quote, either
+/// over lines, then to the end of the closing line; any other to the end
+/// of its line, and a commented key's always (`# A="` closes nothing). And
+/// a `quoted` rule's floor, whatever the quotes say: in a file of keys, a
+/// line that is no key's, no comment and not blank can only be inside a
+/// value, and is masked whole — one quote misread (a Windows path's `\"`,
+/// python-dotenv's `\'`, a `\` continuation) shifts the scan, never what
+/// is drawn. A rule may have several (a `pattern` and a `quoted`).
 enum Find {
     Line(Regex),
     Block(Regex, Regex),
+    Quoted(Regex),
 }
 
 pub struct Rule {
@@ -32,7 +46,7 @@ pub struct Rule {
     /// Globs on a path's name, and globs on the whole path.
     files: Option<(GlobSet, GlobSet)>,
     language: Option<String>,
-    find: Find,
+    finds: Vec<Find>,
 }
 
 impl Rule {
@@ -68,7 +82,13 @@ impl Rule {
 
     /// Pushes the ranges of `text` the rule masks onto `out`.
     pub fn scan(&self, text: &str, out: &mut Vec<Range<usize>>) {
-        match &self.find {
+        for find in &self.finds {
+            Self::scan_one(find, text, out);
+        }
+    }
+
+    fn scan_one(find: &Find, text: &str, out: &mut Vec<Range<usize>>) {
+        match find {
             Find::Line(re) => {
                 let mut at = 0;
                 for line in text.split_inclusive('\n') {
@@ -96,8 +116,108 @@ impl Rule {
                     }
                 }
             }
+            Find::Quoted(key) => {
+                let mut at = 0;
+                while let Some(m) = key.find_at(text, at) {
+                    let commented = text[m.range()].trim_start_matches(SPACE).starts_with('#');
+                    let end = value_end(text, m.end(), !commented);
+                    if end > m.end() {
+                        out.push(m.end()..end);
+                    }
+                    at = end.max(m.end());
+                    if at >= text.len() {
+                        break;
+                    }
+                }
+                // The floor: what is no key's, no comment and not blank.
+                let mut start = 0;
+                for line in text.split_inclusive('\n') {
+                    let body = line.trim_end_matches(['\n', '\r']);
+                    let bare = body.trim_start_matches(SPACE);
+                    let keyed = key.find(body).is_some_and(|m| m.start() == 0);
+                    if !bare.is_empty() && !bare.starts_with('#') && !keyed {
+                        out.push(start..start + body.len());
+                    }
+                    start += line.len();
+                }
+            }
         }
     }
+
+    /// [`Self::scan`] over a part of a text whose start may be inside
+    /// what the rule masks over lines — a hunk, a search's line: a block
+    /// whose `to` comes before any `from` is masked from the start, and
+    /// before the first key a `quoted` rule finds every line is, since
+    /// it may be inside a value opened above. The safe side: a comment
+    /// there is masked too.
+    pub fn scan_part(&self, text: &str, out: &mut Vec<Range<usize>>) {
+        self.scan(text, out);
+        for find in &self.finds {
+            let head = match find {
+                Find::Line(_) => continue,
+                Find::Block(from, to) => match to.find(text) {
+                    Some(t) if from.find(text).is_none_or(|f| f.start() >= t.start()) => t.end(),
+                    _ => continue,
+                },
+                // Up to the line the first key is on; all of it with none.
+                Find::Quoted(key) => match key.find(text) {
+                    Some(m) => text[..m.start()].rfind('\n').unwrap_or(0),
+                    None => text.trim_end_matches(['\n', '\r']).len(),
+                },
+            };
+            if head > 0 {
+                out.push(0..head);
+            }
+        }
+    }
+
+    /// Whether what it masks can run over lines (a block, a quoted
+    /// value): a line of it read alone may be inside one.
+    pub fn spans(&self) -> bool {
+        self.finds.iter().any(|f| !matches!(f, Find::Line(_)))
+    }
+
+    /// Whether it applies by its files or its language — a rule of some
+    /// files, not of every text.
+    pub fn of_files(&self) -> bool {
+        self.files.is_some() || self.language.is_some()
+    }
+}
+
+/// Where a value starting at `v` ends (see [`Find::Quoted`]): past its
+/// closing quote's line, or its own line's end (always, not
+/// `over_lines`); the text's end for a quote never closed. A line's `\r`
+/// and `\n` are not the value's.
+fn value_end(text: &str, v: usize, over_lines: bool) -> usize {
+    let bytes = text.as_bytes();
+    let line_end = |p: usize| {
+        text[p.min(text.len())..]
+            .find('\n')
+            .map_or(text.len(), |i| p + i)
+    };
+    let end = match bytes.get(v) {
+        Some(&q @ (b'"' | b'\'' | b'`')) if over_lines => {
+            let mut i = v + 1;
+            let mut close = None;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\\' if q == b'"' => i += 2,
+                    c if c == q => {
+                        close = Some(i);
+                        break;
+                    }
+                    _ => i += 1,
+                }
+            }
+            close.map_or(text.len(), |c| line_end(c + 1))
+        }
+        _ => line_end(v),
+    };
+    let mut end = end;
+    while end > v && matches!(bytes[end - 1], b'\n' | b'\r') {
+        end -= 1;
+    }
+    end
 }
 
 /// Every rule `secrets.masks` holds, and what was wrong with the ones
@@ -178,6 +298,129 @@ impl Rules {
     }
 }
 
+impl Rules {
+    /// The rules that apply to a buffer at `path` in `language`.
+    fn applying<'a>(
+        &'a self,
+        path: Option<&'a Path>,
+        language: &'a str,
+    ) -> impl Iterator<Item = &'a Rule> {
+        self.rules
+            .iter()
+            .filter(move |r| r.applies(path, "", language, &[]))
+    }
+
+    /// [`Self::mask_text`] for a part of the file's text whose start may
+    /// be inside what a rule masks over lines ([`Rule::scan_part`]): a
+    /// hunk's lines, a line found by a search, when the whole text is
+    /// not at hand.
+    pub fn mask_part(&self, path: Option<&Path>, language: &str, text: &str) -> String {
+        let mut found = Vec::new();
+        for r in self.applying(path, language) {
+            r.scan_part(text, &mut found);
+        }
+        masked(text, found)
+    }
+
+    /// Whether a line of the file read alone may be inside what one of
+    /// its own rules masks over lines (a `.env`'s quoted value): its
+    /// whole text answers that, where a part cannot.
+    pub fn spans_lines(&self, path: Option<&Path>, language: &str) -> bool {
+        self.applying(path, language)
+            .any(|r| r.of_files() && r.spans())
+    }
+
+    /// The file's text `whole` scanned once by the rules that apply to
+    /// it, for its lines to be read one at a time ([`Self::mask_line_in`]):
+    /// a search's rows of one file scan it once, not once a row.
+    pub fn scan_file(&self, path: Option<&Path>, language: &str, whole: String) -> Scanned {
+        let masks = self.scan_for(path, "", language, &[], &whole);
+        let mut starts = vec![0];
+        starts.extend(whole.match_indices('\n').map(|(i, _)| i + 1));
+        Scanned {
+            text: whole,
+            masks,
+            starts,
+        }
+    }
+
+    /// `text`, line `line` (from 1) of the file whose text is `whole`,
+    /// as the file's pane draws it ([`Self::mask_line_in`]).
+    pub fn mask_line(
+        &self,
+        path: Option<&Path>,
+        language: &str,
+        text: &str,
+        whole: &str,
+        line: usize,
+    ) -> String {
+        let file = self.scan_file(path, language, whole.to_string());
+        self.mask_line_in(path, language, text, &file, line)
+    }
+
+    /// `text`, a row read as line `line` (from 1) of `file`, as the file's
+    /// pane draws it: a stand-in where a mask from a line above runs over
+    /// it (a quoted value's inside), else masked as a line of its own. A
+    /// row that is not that line — the file changed since it was read, a
+    /// search cut it — is a part ([`Self::mask_part`]).
+    pub fn mask_line_in(
+        &self,
+        path: Option<&Path>,
+        language: &str,
+        text: &str,
+        file: &Scanned,
+        line: usize,
+    ) -> String {
+        let Some(&start) = file.starts.get(line.wrapping_sub(1)) else {
+            return self.mask_part(path, language, text);
+        };
+        let end = file.starts.get(line).map_or(file.text.len(), |e| e - 1);
+        let own = |t: &str| {
+            t.trim_start_matches(SPACE)
+                .trim_end_matches('\r')
+                .to_string()
+        };
+        if own(&file.text[start..end]) != own(text) {
+            return self.mask_part(path, language, text);
+        }
+        // Sorted and merged: the one mask that could run over `start`.
+        let at = file.masks.partition_point(|m| m.start < start);
+        if at > 0 && file.masks[at - 1].end > start {
+            return STAND_IN.to_string();
+        }
+        self.mask_text(path, language, text)
+    }
+}
+
+/// A file's text with what its rules mask, and where its lines start
+/// ([`Rules::scan_file`]).
+pub struct Scanned {
+    pub text: String,
+    masks: Vec<Range<usize>>,
+    starts: Vec<usize>,
+}
+
+/// `text` with `found` drawn as stand-ins, every line kept.
+fn masked(text: &str, mut found: Vec<Range<usize>>) -> String {
+    if found.is_empty() {
+        return text.to_string();
+    }
+    found.sort_by_key(|r| (r.start, r.end));
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(found.len());
+    for r in found {
+        match merged.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => merged.push(r),
+        }
+    }
+    let mut out = String::with_capacity(text.len());
+    for (line, end) in masked_lines(text, &merged) {
+        out.push_str(&line);
+        out.push_str(end);
+    }
+    out
+}
+
 /// A rule read out of its settings table; `Ok(None)` for one switched
 /// off (`name = false`).
 fn read_rule(name: &str, s: &Setting) -> Result<Option<Rule>, String> {
@@ -227,16 +470,21 @@ fn read_rule(name: &str, s: &Setting) -> Result<Option<Rule>, String> {
             ))
         }
     };
-    let find = match (regex("pattern")?, regex("from")?, regex("to")?) {
-        (Some(p), None, None) => Find::Line(p),
-        (None, Some(f), Some(t)) => Find::Block(f, t),
-        _ => return Err("a rule has a `pattern`, or a `from` and a `to`".into()),
-    };
+    let mut finds: Vec<Find> = regex("pattern")?.map(Find::Line).into_iter().collect();
+    match (regex("from")?, regex("to")?) {
+        (Some(f), Some(t)) => finds.push(Find::Block(f, t)),
+        (None, None) => {}
+        _ => return Err("`from` and `to` come together".into()),
+    }
+    finds.extend(regex("quoted")?.map(Find::Quoted));
+    if finds.is_empty() {
+        return Err("a rule has a `pattern`, a `from` and a `to`, or a `quoted`".into());
+    }
     Ok(Some(Rule {
         name: name.to_string(),
         files,
         language: text("language")?,
-        find,
+        finds,
     }))
 }
 
@@ -391,5 +639,177 @@ mod tests {
         assert_eq!(rows[0], "a");
         assert_eq!(rows[3], "");
         assert_eq!(rows[6], "b");
+    }
+
+    /// A `.env` value quoted over several lines is masked on every line
+    /// of it, its key kept: a line rule saw only the opening quote, and
+    /// the lines inside were drawn as they are (2026-10-18). A value
+    /// closed on its own line, and the lines after the closing quote,
+    /// are the line rule's as before.
+    #[test]
+    fn a_value_quoted_over_lines_is_masked_on_each() {
+        let r = bundled();
+        let env = Some(Path::new("/p/.env"));
+        let text = "HOST=db\nNFQWS2_OPT=\"\n$BLOBS\n--filter-tcp=443 --hostlist-domains=s3cret.example --new\n--name=\\\"quoted\\\" --new\n\"\nPORT=1\nONE='a\nsecret'\nDONE=\"x\"\n";
+        let shown = r.mask_text(env, "text", text);
+        let lines: Vec<&str> = shown.split('\n').collect();
+        assert_eq!(
+            lines,
+            [
+                &format!("HOST={STAND_IN}"),
+                &format!("NFQWS2_OPT={STAND_IN}"),
+                STAND_IN,
+                STAND_IN,
+                STAND_IN,
+                STAND_IN,
+                &format!("PORT={STAND_IN}"),
+                &format!("ONE={STAND_IN}"),
+                STAND_IN,
+                &format!("DONE={STAND_IN}"),
+                "",
+            ],
+            "{shown}"
+        );
+    }
+
+    /// A `.env` value is found by its quotes, not by a pattern over its
+    /// line: a `\` before the line's end (a shell's continuation) keeps
+    /// it open, a closing `"` after an escaped `\` closes it — a regex
+    /// that missed it ran on to the next value's opening quote and left
+    /// that value's lines raw — and a commented key opens one too.
+    #[test]
+    fn a_quoted_value_runs_to_its_closing_quote() {
+        let r = bundled();
+        let env = Some(Path::new("/p/.env"));
+        let rows = |text: &str| -> Vec<String> {
+            r.mask_text(env, "text", text)
+                .split('\n')
+                .map(str::to_string)
+                .collect()
+        };
+        let s = STAND_IN;
+        assert_eq!(
+            rows("KEY=\"--opt \\\n--secret=s3cret\n\"\nPORT=1\n"),
+            [&format!("KEY={s}"), s, s, &format!("PORT={s}"), ""],
+            "a continuation"
+        );
+        assert_eq!(
+            rows("B=\"\ninner\\\\\"\nC=\"\ninner2\n\"\nD=1\n"),
+            [
+                &format!("B={s}"),
+                s,
+                &format!("C={s}"),
+                s,
+                s,
+                &format!("D={s}"),
+                ""
+            ],
+            "an escaped backslash before the closing quote"
+        );
+        assert_eq!(
+            rows("A=\"x\\\"y\nmore\"\nC=1\n"),
+            [&format!("A={s}"), s, &format!("C={s}"), ""],
+            "an escaped quote closes nothing"
+        );
+        assert_eq!(
+            rows("# KEY=\"\ninner\n\"\n# a note\n"),
+            [&format!("# KEY={s}"), s, s, "# a note", ""],
+            "a commented key opens a value as the key does"
+        );
+        assert_eq!(rows("EMPTY=\nX=''\n"), ["EMPTY=", &format!("X={s}"), ""]);
+    }
+
+    /// A part of a `.env` — a hunk, a search's line — may start inside a
+    /// value opened above it: its lines before its first key are masked
+    /// whole. A line whose file is at hand is masked as the file's pane
+    /// masks it: whole inside a value, as a line of its own elsewhere.
+    #[test]
+    fn a_part_of_a_file_is_masked_as_if_inside_a_value() {
+        let r = bundled();
+        let env = Some(Path::new("/p/.env"));
+        let s = STAND_IN;
+        assert_eq!(
+            r.mask_part(env, "text", "inner1\ninner2\"\nPORT=1\n"),
+            format!("{s}\n{s}\nPORT={s}\n")
+        );
+        assert_eq!(r.mask_part(env, "text", "--filter=443 s3cret"), s);
+        assert!(r.spans_lines(env, "text"));
+        assert!(!r.spans_lines(Some(Path::new("/p/a.txt")), "text"));
+        let whole = "HOST=db\nOPT=\"\n--filter-tcp=443 s3cret\n\"\nPORT=1\n";
+        assert_eq!(r.mask_line(env, "", "--filter-tcp=443 s3cret", whole, 3), s);
+        assert_eq!(
+            r.mask_line(env, "", "HOST=db", whole, 1),
+            format!("HOST={s}")
+        );
+        assert_eq!(r.mask_line(env, "", "OPT=\"", whole, 2), format!("OPT={s}"));
+    }
+
+    /// Whatever a quote is misread as, a `.env` line that is no key's,
+    /// no comment and not blank is inside a value and is masked whole:
+    /// each case the review found a scan run past its value, or never
+    /// open one, left lines raw.
+    #[test]
+    fn a_line_no_key_owns_is_masked_whole() {
+        let r = bundled();
+        let env = Some(Path::new("/p/.env"));
+        let s = STAND_IN;
+        for (what, text) in [
+            (
+                "a Windows path's backslash before the quote",
+                "A=\"C:\\dir\\\"\nB=\"\nsecret\n\"\nC=1\n",
+            ),
+            (
+                "python-dotenv's escaped single quote",
+                "A='x\\'y\nsecret\n'\nC=1\n",
+            ),
+            (
+                "a quote inside an unquoted value",
+                "KEY=pre\"x\nsecret\n\"\nC=1\n",
+            ),
+            ("an unquoted continuation", "KEY=a \\\nsecret\nC=1\n"),
+            (
+                "a byte order mark before the first key",
+                "\u{feff}KEY=secret\nC=1\n",
+            ),
+        ] {
+            let shown = r.mask_text(env, "text", text);
+            assert!(!shown.contains("secret"), "{what}: {shown:?}");
+            assert!(
+                shown.contains(&format!("C={s}")),
+                "{what}: the key after kept: {shown:?}"
+            );
+        }
+        // A commented key's value ends with its line: an unclosed quote
+        // there masks nothing below it.
+        assert_eq!(
+            r.mask_text(env, "text", "# A=\"\nB=1\n# a note\n"),
+            format!("# A={s}\nB={s}\n# a note\n")
+        );
+        // A part starting inside a value, a key-looking line in it: the
+        // lines after it are no key's either.
+        assert_eq!(
+            r.mask_part(env, "text", "inner1\nFOO=bar\ns3cret\n\"\nPORT=1"),
+            format!("{s}\nFOO={s}\n{s}\n{s}\nPORT={s}")
+        );
+    }
+
+    /// A search's row read against a file scanned before it changed: the
+    /// row is not the file's line there, so it is masked as a part, never
+    /// taken for the key the stale text had at that line.
+    #[test]
+    fn a_row_the_scanned_file_does_not_have_is_a_part() {
+        let r = bundled();
+        let env = Some(Path::new("/p/.env"));
+        let file = r.scan_file(env, "", "HOST=db\nPORT=1\nC=2\n".to_string());
+        assert_eq!(r.mask_line_in(env, "", "s3cret", &file, 2), STAND_IN);
+        assert_eq!(
+            r.mask_line_in(env, "", "  PORT=1", &file, 2),
+            format!("  PORT={STAND_IN}")
+        );
+        assert_eq!(
+            r.mask_line_in(env, "", "x", &file, 9),
+            STAND_IN,
+            "past its end"
+        );
     }
 }
