@@ -1143,15 +1143,15 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.frame(&mut app);
     d.frame(&mut app);
     d.press(&mut app, "<C-n>");
-    // The preview off and on again, a setting for the session (the
-    // cursor is on the second row, the long file).
+    // The preview off and on again, this picker's (the cursor is on
+    // the second row, the long file); the setting left as it is.
     assert!(texts(&d).iter().any(|s| s == "long"), "the preview");
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert!(!texts(&d).iter().any(|s| s == "long"), "hidden");
     lua(
         &mut app,
-        r#"assert(kawoosh.opt("picker.preview") == "off")"#,
+        r#"assert(kawoosh.opt("picker.preview") == "auto")"#,
     );
     let wide = d
         .rect(&format!("row {}", native("many/f00.txt")))
@@ -1349,10 +1349,7 @@ fn without_a_preview_the_width_keys_size_the_column() {
     };
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
-    lua(
-        &mut app,
-        r#"assert(kawoosh.opt("picker.preview") == "off")"#,
-    );
+    assert_eq!(place(&mut app), "none");
     assert!(d.rect("picker divider").is_none(), "no divider");
     let p0 = pane_w(&app);
     let Rect { w: w0, .. } = d.rect("row README.md").unwrap();
@@ -1646,26 +1643,18 @@ fn the_preview_goes_where_the_picker_has_room() {
     );
     let row = d.rect("row README.md").unwrap();
     assert!(row.w > 400.0, "the list the whole picker: {}", row.w);
-    // `<A-p>`: drawn anyway, where the more room is; again, put away
-    // (`off`); again, back — the room still too small, drawn.
+    // `<A-p>`: drawn anyway, where the more room is; again, put away;
+    // again, back — this picker's, the setting untouched throughout.
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert_eq!(place(&mut app), "right", "forced, the width the more room");
     assert!(preview(&d));
-    lua(
-        &mut app,
-        r#"assert(kawoosh.opt("picker.preview") == "auto")"#,
-    );
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert_eq!(place(&mut app), "none");
-    lua(
-        &mut app,
-        r#"assert(kawoosh.opt("picker.preview") == "off")"#,
-    );
     assert!(
         !texts(&d).iter().any(|s| s == "⌥P preview"),
-        "off says nothing"
+        "put away says nothing"
     );
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
@@ -1706,6 +1695,24 @@ fn the_preview_goes_where_the_picker_has_room() {
     app.run_lua_source("t", r#"kawoosh.opt("picker.preview", true)"#);
     d.frame(&mut app);
     assert_eq!(place(&mut app), "below", "true is auto");
+    lua(&mut app, r#"kawoosh.cmd("set picker.preview=false")"#);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "none", "`:set …=false` is off");
+    // `off`: none, and `<A-p>` shows one in this picker all the same.
+    app.run_lua_source("t", r#"kawoosh.opt("picker.preview", "off")"#);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "none");
+    assert!(
+        !texts(&d).iter().any(|s| s == "⌥P preview"),
+        "off says nothing"
+    );
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "below");
+    lua(
+        &mut app,
+        r#"assert(kawoosh.opt("picker.preview") == "off")"#,
+    );
     app.run_lua_source("t", r#"kawoosh.opt("picker.preview", "auto")"#);
     d.press(&mut app, "<C-c>");
     assert_eq!(d.warnings(), Vec::<String>::new());
@@ -1793,6 +1800,30 @@ fn files_here_inside_an_ignored_directory_and_the_ignored_key() {
     d.frame(&mut app);
     d.frame(&mut app);
     assert!(!rows(&d).iter().any(|p| p.starts_with("node_modules")));
+    d.press(&mut app, "<C-c>");
+    // `<A-g>` twice before the walks answer, the slow one last: the
+    // rows are the last one asked for's.
+    lua(
+        &mut app,
+        r#"_G.loads = {}
+           kawoosh.picker.open { name = "slow", ignored = true,
+             load = function(ctx, done) table.insert(_G.loads, { ignored = ctx.ignored, done = done }) end }"#,
+    );
+    d.frame(&mut app);
+    d.key(&mut app, "g", KeyMods::NONE.with_alt());
+    d.key(&mut app, "g", KeyMods::NONE.with_alt());
+    lua(
+        &mut app,
+        r#"local l = _G.loads
+           assert(#l == 3 and not l[1].ignored and l[2].ignored and not l[3].ignored, #l)
+           l[3].done({ { text = "as git sees it" } })
+           l[2].done({ { text = "ignored too" } })
+           l[1].done({ { text = "the first" } })"#,
+    );
+    // Answered from the test, not a job: a key runs the view again.
+    d.press(&mut app, "<Down>");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), ["as git sees it"], "the late answers dropped");
     d.press(&mut app, "<C-c>");
     // A source whose rows stopped at a cap: the count says so.
     lua(

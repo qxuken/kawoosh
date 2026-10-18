@@ -808,7 +808,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "picker.preview",
-        "where the picker's preview goes: `auto` beside the list when the picker is wide enough, below it when tall enough, else none (`<A-p>` shows it anyway); `right`, `below`, or `off`",
+        "where the picker's preview goes: `auto` beside the list when the picker is wide enough, below it when tall enough, else none; `right`, `below`, or `off` — `<A-p>` hides or shows it in one picker; `true` and `false` are read as `auto` and `off`",
     ),
     (
         "picker.wrap",
@@ -907,6 +907,10 @@ pub enum SettingKind {
     Float,
     Str,
     OneOf(Vec<String>),
+    /// A word of a few, or `true` / `false`: a switch grown into words
+    /// whose old spellings are still read (`picker.preview`, picker.md
+    /// Decision 1).
+    OneOfOrBool(Vec<String>),
     List,
     /// A string, or a list of them: one thing or several in turn
     /// (`compile.default`, compile.md Decision 22).
@@ -1411,8 +1415,9 @@ impl Settings {
         // The picker (`picker.lua`): where a preview of the cursor's
         // row goes — `auto` by the picker's room (docs/design/picker.md
         // Decision 1) — and whether a row's text wraps to show the
-        // whole of a long path; `<A-p>` and `<A-w>` in the picker flip
-        // them for the session. `share` is the height the pane opens
+        // whole of a long path; `<A-w>` in the picker flips the second
+        // for the session, `<A-p>` shows or hides that picker's preview
+        // without touching the first. `share` is the height the pane opens
         // at, as a fraction of the pane it splits, `split` the list's
         // share of the pane's width beside the preview and
         // `split_below` of its height above one; the pane keys `<A-J>`
@@ -1496,7 +1501,6 @@ impl Settings {
             ("launcher.start", words(&["normal", "insert"])),
             ("buffers.scope", words(&["tab", "all"])),
             ("memory.scope", words(&["workspace", "global"])),
-            ("picker.preview", words(&["auto", "right", "below", "off"])),
             ("tabs.directory", words(&["auto", "always", "never"])),
             ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
@@ -1522,6 +1526,11 @@ impl Settings {
         ] {
             s.declare(path, kind, "");
         }
+        s.declare(
+            "picker.preview",
+            SettingKind::OneOfOrBool(["auto", "right", "below", "off"].map(String::from).to_vec()),
+            "",
+        );
         // What each default does, in the words `help/settings.md` uses:
         // the settings pane's line under a row, and the doc the language
         // server's types show (docs/design/settings.md Decision 2).

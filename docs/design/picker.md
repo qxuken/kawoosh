@@ -30,7 +30,10 @@ There was no way to list ignored files at all.
 ### 1. The preview goes where there is room for it, decided every frame
 
 `picker.preview` is a word: `auto` (the default), `right`, `below`,
-`off` — `true` and `false`, its old spellings, read as `auto` and `off`.
+`off` — `true` and `false`, its old spellings, read as `auto` and `off`
+and accepted as such by its type, the settings pane and `:setlocal`
+(`SettingKind::OneOfOrBool`), so a `settings.lua` written before is not
+flagged.
 `auto` places it by the picker's body as laid out (the pane under its
 query row: `ctx.width`, `ctx.height`, the view's own size, never the
 window's), every frame, so a pane resized, a column narrowed or the
@@ -68,11 +71,19 @@ very short picker would get a one-line preview beside rather than none
 
 ### 2. `<A-p>` shows a preview there is no room for
 
-`<A-p>` hides a preview that is drawn (`off` for the session, the word
-it had kept to come back to) and shows one that is not: the setting back
-on, and, while this picker is open, drawn even where `auto` finds too
-little — beside or below, whichever has the more room against its least.
-The faint `⌥P preview` is that key, and a click on it.
+`<A-p>` is the open picker's own: it hides a preview that is drawn and
+shows one that is not — drawn even where `auto` finds too little, or
+the setting is `off`: beside or below, whichever has the more room
+against its least. The setting is never written: the next picker opens
+by `picker.preview` again, which `settings.lua` (or `:set`) changes for
+good. The faint `⌥P preview` is that key, and a click on it; it is not
+drawn where the setting is `off` or `<A-p>` put the preview away.
+
+*Beat:* `<A-p>` flipping the setting for the session, as it did when
+the preview was a boolean (and as `<A-w>` still flips `picker.wrap`):
+with a forced preview, "hide" would have written `off` for every picker
+after — a key pressed for one picker's lack of room deciding the
+next's.
 
 ### 3. A root the project ignores is walked with no ignores
 
@@ -85,7 +96,8 @@ root, a directory it is under, or whatever is inside it — `target/`,
 for "anything", so `*.log` ignores no directory. Such a root is walked
 with no ignore rules at all: the project's say nothing about a package's
 own files, and its `node_modules/foo/node_modules` is the package's
-too. Hidden entries stay out, `.git` always. A repository's top (a
+too. Hidden entries stay out, `.git` always — a root inside a `.git`
+lists nothing (`fs::in_git_dir`). A repository's top (a
 `.git` in it) is never ignored, a nested one included.
 
 So `:picker files here` (`<leader>F`) from `node_modules/foo/lib/x.js`
@@ -100,7 +112,9 @@ root): `src` under a `*.log` project would list `src/debug.log`.
 ### 4. `<A-g>` lists ignored and hidden files, the walk capped and said
 
 In a picker whose source says `ignored = true` (`files`, `grep`), `<A-g>`
-flips `ctx.ignored` for this picker and reads again: the walk lists every
+flips `ctx.ignored` for this picker and reads again — a load counted, so
+only the last one asked lands when two presses' walks answer out of
+order — the walk lists every
 file but `.git` (`fs.walk(root, fn, { ignored = true })`), rg runs with
 `--no-ignore --hidden --glob !.git`. The head carries `⌥G ignored`, lit
 while on, a click its key — the same key the search's bar flips its
@@ -108,7 +122,8 @@ ignored files with. `smart` keeps its walk as git sees it.
 
 Every walk stops at `fs::WALK_MAX` = 200 000 files, a `node_modules`
 with its ignores off holding a hundred thousand and more; the answer
-says when it stopped with more left (`capped`, the fourth argument of
+says when it stopped with more left — a host's walk too, one row past
+the cap asked for, so a walk of exactly the cap is whole (`capped`, the fourth argument of
 `fs.walk`'s callback, `done`'s `info.capped` for a source), and the
 count says so: `12 of 200000 · walk stopped at 200000`. A host's walk
 has its own rules and cap ([domains.md](domains.md) Decision 8) and

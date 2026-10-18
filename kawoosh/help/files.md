@@ -167,7 +167,7 @@ cursor; `<Esc>` again closes the picker.
 | `<CR>` | take the row: a file at its line, a buffer, a command |
 | `<C-v>` `<C-s>` `<C-t>` | take it into a split beside, a split below, a new tab |
 | `<C-c>` | close, from either mode |
-| `<A-p>` | hide or show the preview; where the picker is too small for one, show it anyway |
+| `<A-p>` | hide or show the preview in this picker, even where it is too small for one or `picker.preview` is `off`; the next picker follows the setting again |
 | `<A-w>` | wrap long rows instead of cutting them |
 | `<A-g>` | in files and grep: ignored and hidden files too, or not (`⌥G ignored` in the head, lit while on) |
 | `<A-S-h>` `<A-S-l>` | move the divider between the list and a preview beside it; otherwise the list is the whole width and these size its column, as in any pane |

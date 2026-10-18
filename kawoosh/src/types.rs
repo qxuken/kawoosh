@@ -212,6 +212,7 @@ pub fn settings_meta(schema: &std::collections::BTreeMap<String, kawoosh_editor:
                 .map(|w| format!("\"{w}\""))
                 .collect::<Vec<_>>()
                 .join("|"),
+            K::OneOfOrBool(words) => format!("{}|boolean", ty(&K::OneOf(words.clone()))),
             K::List => "any[]".into(),
             K::Open => "table<string, any>".into(),
             K::Size => "integer|string".into(),
@@ -328,6 +329,12 @@ mod tests {
             std::fs::write(out.join("untyped.txt"), meta.untyped.join("\n")).unwrap();
         }
         assert!(meta.twice.is_empty(), "declared twice: {:?}", meta.twice);
+        // A word setting whose old spelling was a switch takes both.
+        let settings = settings_meta(&app.ed.settings.schema());
+        assert!(
+            settings.contains(r#""auto"|"right"|"below"|"off"|boolean"#),
+            "picker.preview typed with its old spelling"
+        );
         let n = meta.untyped.len();
         match n.cmp(&UNTYPED) {
             std::cmp::Ordering::Greater => panic!(

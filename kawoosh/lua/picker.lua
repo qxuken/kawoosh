@@ -37,13 +37,14 @@
 -- `<C-s>` `<C-t>` take it into a split beside, below, a new tab, and
 -- `<C-c>` closes from either mode. A click lands the cursor on a row,
 -- a second one takes it; the wheel scrolls the list, and the preview.
--- `<A-p>` shows or hides the preview and `<A-w>` folds a row's text to
--- the list's width or cuts it — the `picker.preview` and `picker.wrap`
--- settings, flipped for the session (`settings.lua` sets them for
--- good). The preview goes where the picker's laid-out body has room
--- (`picker.place`, docs/design/picker.md Decision 1): beside the list
--- when wide enough for both, below it when tall enough, else none,
--- the head saying `⌥P preview`, `<A-p>` drawing it anyway. The pane
+-- `<A-p>` shows or hides this picker's preview, the `picker.preview`
+-- setting left as it is, and `<A-w>` folds a row's text to the list's
+-- width or cuts it — the `picker.wrap` setting, flipped for the
+-- session (`settings.lua` sets both for good). The preview goes where
+-- the picker's laid-out body has room (`picker.place`,
+-- docs/design/picker.md Decision 1): beside the list when wide enough
+-- for both, below it when tall enough, else none, the head saying
+-- `⌥P preview`, `<A-p>` drawing it anyway. The pane
 -- opens at `picker.share` of the height and the list takes
 -- `picker.split` of its width beside the preview (`picker.split_below`
 -- of its height above one): `<A-K>` `<A-J>` make the pane taller and
@@ -904,11 +905,13 @@ end
 -- Whether a row's text wraps (`picker.wrap`), and where the preview
 -- goes (`picker.preview`: `auto`, `right`, `below`, `off`; `true` and
 -- `false`, its spellings before it was a word, are `auto` and `off`):
--- settings, flipped for the session by `<A-w>` and `<A-p>`.
+-- settings, the first flipped for the session by `<A-w>` (`<A-p>` is
+-- the open picker's own, `P.shown`).
 local function wrapping() return kawoosh.opt("picker.wrap") == true end
 local function preview_mode()
   local v = kawoosh.opt("picker.preview")
-  if v == false or v == "off" then return "off" end
+  -- `:set picker.preview=false` arrives spelled, the setting a word.
+  if v == false or v == "off" or v == "false" then return "off" end
   if v == "right" or v == "below" then return v end
   return "auto"
 end
@@ -949,8 +952,8 @@ end
 -- where they say, `off` none; `auto` beside the list when the width
 -- holds both at their least and the height the preview's least lines,
 -- else below it when the height holds both, else none — and `forced`
--- (`<A-p>` with none) the one of the two with the more room, whatever
--- it is.
+-- (`<A-p>` with none drawn) the one of the two with the more room,
+-- whatever it is.
 ---@param w number
 ---@param h number
 ---@param mode "auto"|"right"|"below"|"off"
@@ -966,6 +969,16 @@ function picker.place(w, h, mode, forced)
   if down >= 1 then return "below" end
   if forced then return across >= down and "right" or "below" end
   return nil
+end
+
+-- Where the open picker's preview goes in a body `w` by `h`: by the
+-- setting, unless `<A-p>` said otherwise in this picker (`P.shown`):
+-- false none, true one wherever the more room is.
+local function placement(w, h)
+  if P.src.follow or P.shown == false then return nil end
+  local mode = preview_mode()
+  if P.shown and mode == "off" then mode = "auto" end
+  return picker.place(w, h, mode, P.shown == true)
 end
 
 -- The list's share of `room` px beside or above a preview: the
@@ -1209,9 +1222,13 @@ local function load_items()
   if src.search then return end
   P.loading = true
   if src.load then
+    -- A load asked again (`<A-g>` twice, quickly) answers in any order:
+    -- only the last one asked is kept.
     local this = P
+    this.load_gen = (this.load_gen or 0) + 1
+    local gen = this.load_gen
     src.load(ctx, function(items, err, info)
-      if P ~= this then return end
+      if P ~= this or this.load_gen ~= gen then return end
       loaded(items, err, info)
     end)
   elseif src.items then
@@ -1530,7 +1547,7 @@ kawoosh.view(VIEW, function(ctx)
   -- moves it.
   local bh = math.max(h - ctx.title_h - ROW_H - 4, 0)
   P.body_w, P.body_h = w, bh
-  local place = (not P.src.follow) and picker.place(w, bh, preview_mode(), P.forced) or nil
+  local place = placement(w, bh)
   P.place = place
   if P.beside ~= (place == "right") then
     P.beside = place == "right"
@@ -1628,7 +1645,7 @@ kawoosh.view(VIEW, function(ctx)
     -- None drawn, none kept: `picker.state().preview` is what is drawn.
     P.preview_for, P.preview = nil, nil
   end
-  if not place and not P.src.follow and previewing() then
+  if not place and not P.src.follow and previewing() and P.shown == nil then
     -- No room for one: the way to it anyway, `<A-p>`, at the head's end.
     head[#head + 1] = row { on_click = { kind = "preview" }, height = ROW_H, cross_align = "center",
       text("⌥P preview", { size = SMALL, color = t.faint, wrap = "none" }) }
@@ -1705,27 +1722,20 @@ kawoosh.command("picker preview down", function(ctx) preview_by(half() * math.ma
   { when = { PANE_FACT }, doc = "the preview half a screen down, COUNT times" })
 kawoosh.command("picker preview up", function(ctx) preview_by(-half() * math.max(ctx.count or 1, 1)) end,
   { when = { PANE_FACT }, doc = "the preview half a screen up, COUNT times" })
--- `<A-p>`: a preview drawn is put away (`off` for the session, the
--- placement it had kept to come back to); none drawn is shown — the
--- setting back on, and drawn where there is the more room even when
--- `auto` finds too little for one, while this picker is open.
-local shown_as = "auto"
+-- `<A-p>`: this picker's preview put away when drawn, shown when not —
+-- where there is the more room, even where `picker.preview` is `off` or
+-- `auto` finds too little for one. The setting is left as it is: the
+-- next picker opens by it again.
 on("preview", function()
-  if P and P.place then
-    shown_as = preview_mode()
-    kawoosh.opt("picker.preview", "off")
-    P.forced = nil
-  else
-    if not previewing() then kawoosh.opt("picker.preview", shown_as) end
-    if P then P.forced = true end
-  end
+  if not P then return end
+  P.shown = not P.place
   -- The fact at once, for a width key before the next frame.
-  if P and P.body_w then
-    P.place = (not P.src.follow) and picker.place(P.body_w, P.body_h, preview_mode(), P.forced) or nil
+  if P.body_w then
+    P.place = placement(P.body_w, P.body_h)
     P.beside = P.place == "right"
     kawoosh.fact(PREVIEW_FACT, P.beside)
   end
-end, "show the cursor's row beside or under the list, or not (the `picker.preview` setting, for the session)")
+end, "show the cursor's row beside or under the list, or not, in this picker")
 -- `<A-g>`, in a source that has it (`files`, `grep`): ignored and
 -- hidden files too, or not — this picker's, read again at once.
 on("ignored", function()
