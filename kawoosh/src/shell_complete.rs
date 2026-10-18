@@ -19,7 +19,6 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -161,21 +160,32 @@ pub fn ask(
 }
 
 /// What `command` prints, given nothing to read: None when it could
-/// not start, outlasted [`PATIENCE`] (stopped then) or printed past
-/// [`CAP`] (stopped too). A completer's run — this module's, and a
-/// nushell parameter's (`compile::nu_answer`). Run on a job: it waits.
+/// not start, outlasted [`PATIENCE`] or printed past [`CAP`]. A
+/// completer's run — this module's, and a nushell parameter's
+/// (`compile::nu_answer`). Run on a job: it waits.
+///
+/// Started in a session of its own (`spawn::session`): no terminal to
+/// ask on, and when it is done or given up on, everything it started is
+/// stopped with it — a `kubectl` against a cluster that does not answer,
+/// a `cargo metadata` waiting on a lock, which would otherwise outlive it
+/// holding the pipe. Its stderr is read and dropped, so a completer
+/// that says much there does not stall on a full pipe.
 pub fn bounded(command: &mut std::process::Command) -> Option<Vec<u8>> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = kawoosh_systems::spawn::spawn(command).ok()?;
-    let Some(stdout) = child.stdout.take() else {
-        child.kill().ok();
+    let mut child = kawoosh_systems::spawn::session(command, false).ok()?;
+    #[cfg(windows)]
+    let tree = kawoosh_systems::job::Tree::of(child.child_mut());
+    let stop = |child: &mut kawoosh_systems::spawn::Session| {
+        #[cfg(windows)]
+        tree.kill(child.child_mut());
+        #[cfg(not(windows))]
+        child.kill();
         child.wait().ok();
+    };
+    let (Some(stdout), Some(mut stderr)) = (child.take_stdout(), child.take_stderr()) else {
+        stop(&mut child);
         return None;
     };
-    // Read on a thread of its own, so the wait is bounded even when a
+    // Read on threads of their own, so the wait is bounded even when a
     // child the completer started holds the pipe open.
     let (tx, rx) = std::sync::mpsc::channel();
     let reader = std::thread::Builder::new()
@@ -185,14 +195,17 @@ pub fn bounded(command: &mut std::process::Command) -> Option<Vec<u8>> {
             stdout.take(CAP as u64 + 1).read_to_end(&mut out).ok();
             tx.send(out).ok();
         });
-    let out = match reader {
-        Ok(_) => rx.recv_timeout(PATIENCE).ok(),
-        Err(_) => None,
+    let drain = std::thread::Builder::new()
+        .name("line complete stderr".into())
+        .spawn(move || {
+            std::io::copy(&mut stderr, &mut std::io::sink()).ok();
+        });
+    let out = match (reader, drain) {
+        (Ok(_), Ok(_)) => rx.recv_timeout(PATIENCE).ok(),
+        _ => None,
     };
-    if !matches!(child.try_wait(), Ok(Some(_))) {
-        child.kill().ok();
-    }
-    child.wait().ok();
+    // Ended, cut off or given up on: its group goes with it.
+    stop(&mut child);
     let out = out?;
     if out.len() > CAP {
         return None;
