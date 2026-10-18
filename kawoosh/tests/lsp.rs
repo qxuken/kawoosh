@@ -640,6 +640,9 @@ fn rename_references_actions_format_and_diagnostics() {
     // A code action on the call's line: the picker lists both, with
     // their kinds; the preview of the first is its edit as a diff.
     d.keys(&mut app, "j");
+    // The picker opens a third of a short window, too low for `auto`
+    // to draw a preview (picker.md Decision 1): asked for beside.
+    app.run_lua_source("t", r#"kawoosh.opt("picker.preview", "right")"#);
     d.keys(&mut app, "gra");
     let picker_up =
         |a: &Kawoosh| matches!(a.layout.focused_content(), Some(Content::Lua(n)) if n == "picker");

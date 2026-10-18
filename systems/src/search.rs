@@ -3,7 +3,9 @@
 //! the text an open buffer has rather than the one on disk.
 //!
 //! The walk is `ignore`'s (as [`crate::fs::walk`]): `.gitignore`d,
-//! hidden and `.git` left out unless `ignored` asks for them. The
+//! hidden and `.git` left out unless `ignored` asks for them — or an
+//! include names the path from the root (`node_modules/foo/**`), which
+//! is then walked too, as rg walks a path it is given ([`named`]). The
 //! include and exclude lists are gitignore-shaped globs ([`globs`]): a
 //! glob with no `/` matches a name at any depth, one with a `/` is from
 //! the root, and a glob matching a directory takes everything under it.
@@ -11,7 +13,8 @@
 //! and no exclude does; an excluded directory is not walked into. A
 //! file with a NUL in its first 8 KB is binary and skipped. The answer
 //! is sorted by path, and stops at [`Query::max_files`] files or
-//! [`Query::max_matches`] matches.
+//! [`Query::max_matches`] matches; the walk lists at most
+//! [`Query::max_walk`] files, and says when it stopped there.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -53,6 +56,8 @@ pub struct Query {
     pub files: Option<Vec<PathBuf>>,
     pub max_files: usize,
     pub max_matches: usize,
+    /// The most files the walk lists: past it the rest is not read.
+    pub max_walk: usize,
 }
 
 impl Default for Query {
@@ -68,6 +73,7 @@ impl Default for Query {
             files: None,
             max_files: 1_000,
             max_matches: 10_000,
+            max_walk: crate::fs::WALK_MAX,
         }
     }
 }
@@ -100,6 +106,11 @@ pub struct Found {
     pub limited: bool,
     /// Stopped by a cancel: what there was by then.
     pub cancelled: bool,
+    /// The walk stopped at [`Query::max_walk`] files: there were more
+    /// to search than were read.
+    pub walk_capped: bool,
+    /// The files the walk listed (or the query gave) to search.
+    pub walked: usize,
     pub took: Duration,
 }
 
@@ -340,48 +351,123 @@ fn is_binary(text: &[u8]) -> bool {
     memchr::memchr(0, &text[..text.len().min(BINARY_PROBE)]).is_some()
 }
 
-/// The files under `root` the query wants, as the walk finds them: a
-/// directory an exclude matches is not walked into.
-fn walk(root: &Path, q: &Compiled, cancel: &AtomicBool) -> Vec<PathBuf> {
-    let ignored = q.query.ignored;
-    let exclude = q.exclude.clone();
-    let root_owned = root.to_path_buf();
+/// The directories (or files) an include names from the root: its
+/// leading parts while they are literal — `node_modules/foo/**` names
+/// `node_modules/foo`, `target/*.log` names `target`, and a bare name
+/// with no glob in it (`node_modules`) the root's entry of that name.
+/// A glob that starts with one (`**/x`, `*.rs`) names none; nor does
+/// one that spells a drive or a root (`C:/x`: a `:` ends the literal
+/// parts), nor anything in a `.git`, which is never searched.
+fn named(include: &[String]) -> Vec<PathBuf> {
+    use std::path::Component;
+    let meta = |c: char| matches!(c, '*' | '?' | '[' | ']' | '{' | '}' | '\\' | '!' | ':');
     let mut out = Vec::new();
-    for entry in ignore::WalkBuilder::new(root)
-        .hidden(!ignored)
-        .git_ignore(!ignored)
-        .git_global(!ignored)
-        .git_exclude(!ignored)
-        .ignore(!ignored)
-        .parents(!ignored)
-        .follow_links(false)
-        .filter_entry(move |e| {
+    for g in include {
+        let g = g.replace('\\', "/");
+        let body = g.trim_matches('/');
+        let mut p = PathBuf::new();
+        for part in body.split('/') {
+            if part.is_empty() || part.chars().any(meta) || part == "." || part == ".." {
+                break;
+            }
+            p.push(part);
+        }
+        // Only names under the root: joined to it, a prefix or a root
+        // would put the walk somewhere else.
+        let under = p
+            .components()
+            .all(|c| matches!(c, Component::Normal(n) if n != ".git"));
+        if !p.as_os_str().is_empty() && under && !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    // One under another is walked with it.
+    let all = out.clone();
+    out.retain(|p| !all.iter().any(|a| a != p && p.starts_with(a)));
+    out
+}
+
+/// The files under `root` the query wants, as the walk finds them: a
+/// directory an exclude matches is not walked into. A path an include
+/// names ([`named`]) that the walk leaves out — the project ignores it
+/// ([`crate::fs::ignored_by_project`]) or it is hidden — is walked
+/// after it with no ignore rules, as rg searches a path given to it,
+/// unless an exclude covers it. At most `max_walk` files, and whether
+/// there were more.
+fn walk(root: &Path, q: &Compiled, cancel: &AtomicBool) -> (Vec<PathBuf>, bool) {
+    let ignored = q.query.ignored;
+    let max = q.query.max_walk;
+    let mut out = Vec::new();
+    // `.git` is never text to search, a root inside it neither: the
+    // walk's own filter never sees its root.
+    if crate::fs::in_git_dir(root) {
+        return (out, false);
+    }
+    let named = if ignored {
+        Vec::new()
+    } else {
+        named(&q.query.include)
+    };
+    let run = |from: &Path, free: bool, out: &mut Vec<PathBuf>| {
+        let exclude = q.exclude.clone();
+        let root_owned = root.to_path_buf();
+        let mut b = ignore::WalkBuilder::new(from);
+        if free {
+            b.standard_filters(false).hidden(!ignored);
+        } else {
+            b.hidden(true)
+                .git_ignore(true)
+                .git_global(true)
+                .git_exclude(true)
+                .ignore(true)
+                .parents(true);
+        }
+        b.follow_links(false).filter_entry(move |e| {
             // `.git` is never text to search, whatever `ignored` says.
             if e.file_name() == ".git" {
                 return false;
             }
             let rel = e.path().strip_prefix(&root_owned).unwrap_or(e.path());
             !(e.depth() > 0 && exclude.as_ref().is_some_and(|g| g.is_match(slashed(rel))))
-        })
-        .build()
-    {
-        if cancel.load(Ordering::Relaxed) {
-            break;
-        }
-        let Ok(entry) = entry else { continue };
-        if !entry.file_type().is_some_and(|t| t.is_file()) {
-            continue;
-        }
-        let rel = entry
-            .path()
-            .strip_prefix(root)
-            .unwrap_or(entry.path())
-            .to_path_buf();
-        if q.wants(&rel) {
+        });
+        for entry in b.build() {
+            if cancel.load(Ordering::Relaxed) {
+                return false;
+            }
+            let Ok(entry) = entry else { continue };
+            let rel = entry
+                .path()
+                .strip_prefix(root)
+                .unwrap_or(entry.path())
+                .to_path_buf();
+            if !entry.file_type().is_some_and(|t| t.is_file()) || !q.wants(&rel) {
+                continue;
+            }
+            if out.len() >= max {
+                return true;
+            }
             out.push(rel);
         }
+        false
+    };
+    let mut capped = run(root, ignored, &mut out);
+    for n in named {
+        if capped || cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        if q.exclude.as_ref().is_some_and(|g| g.is_match(slashed(&n))) {
+            continue;
+        }
+        let from = crate::fs::join(root, &n);
+        let hidden = n
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'));
+        if !from.exists() || !(hidden || crate::fs::ignored_by_project(&from)) {
+            continue;
+        }
+        capped = run(&from, true, &mut out);
     }
-    out
+    (out, capped)
 }
 
 /// Runs `q` under `root`: every file the walk finds — or the query's
@@ -395,6 +481,7 @@ pub fn search(
     cancel: &AtomicBool,
 ) -> Found {
     let started = Instant::now();
+    let mut walk_capped = false;
     let mut files: Vec<PathBuf> = match &q.query.files {
         Some(list) => list
             .iter()
@@ -405,7 +492,11 @@ pub fn search(
             })
             .filter(|p| q.wants(p))
             .collect(),
-        None => walk(root, q, cancel),
+        None => {
+            let (files, capped) = walk(root, q, cancel);
+            walk_capped = capped;
+            files
+        }
     };
     files.sort();
     files.dedup();
@@ -468,8 +559,10 @@ pub fn search(
     // rather than let the answer depend on which finished first.
     let mut out = Found {
         searched: searched.load(Ordering::Relaxed),
-        limited: limited.load(Ordering::Relaxed),
+        limited: limited.load(Ordering::Relaxed) || walk_capped,
         cancelled: cancel.load(Ordering::Relaxed),
+        walk_capped,
+        walked: files.len(),
         ..Default::default()
     };
     for (_, f) in found {
@@ -656,6 +749,128 @@ mod tests {
         let found = search(&dir, &capped, &none, &cancel);
         assert!(found.limited);
         assert_eq!(found.files.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_include_names_where_it_starts() {
+        let n = |g: &str| -> Vec<String> { named(&globs(g)).iter().map(|p| slashed(p)).collect() };
+        assert_eq!(n("node_modules/foo/**"), ["node_modules/foo"]);
+        assert_eq!(n("/target/*.log, src"), ["target", "src"]);
+        assert_eq!(n("node_modules, node_modules/foo"), ["node_modules"]);
+        assert_eq!(n("**/node_modules, *.rs, {a,b}/x"), Vec::<String>::new());
+        // Never `.git`, never off the root.
+        assert_eq!(
+            n(".git, .git/**, sub/.git/config, C:/Windows/**, c:\\x"),
+            Vec::<String>::new()
+        );
+        assert_eq!(n("sub/.github"), ["sub/.github"]);
+    }
+
+    /// Asked 2026-10-18: "search should be able to include ignored
+    /// directories (target, node_modules)". An include that names an
+    /// ignored path from the root searches it, ignores and all — with
+    /// `node_modules/**` in the `.gitignore` too; the rest stays as git
+    /// sees it, an exclude still wins, and the walk's cap is said.
+    #[test]
+    fn an_include_naming_an_ignored_path_searches_it() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-search-ign-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let w = |p: &str, t: &str| {
+            let p = dir.join(p);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, t).unwrap();
+        };
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        w("src/a.rs", "needle\n");
+        w("src/x.log", "needle\n");
+        w("node_modules/foo/index.js", "needle\n");
+        w("node_modules/foo/lib/deep.js", "needle\n");
+        w("node_modules/bar/index.js", "needle\n");
+        w("target/debug/out.txt", "needle\n");
+        w(".github/ci.yml", "needle\n");
+        w(".git/config", "needle\n");
+        w(".git/logs/HEAD", "needle\n");
+        let none = HashMap::new();
+        let cancel = AtomicBool::new(false);
+        let paths = |inc: &str, exc: &str| -> Vec<String> {
+            search(&dir, &q("needle", inc, exc), &none, &cancel)
+                .files
+                .iter()
+                .map(|f| slashed(&f.path))
+                .collect()
+        };
+        for rules in [
+            "node_modules/\ntarget/\n*.log\n",
+            "node_modules/**\n/target/**\n*.log\n",
+        ] {
+            w(".gitignore", rules);
+            assert_eq!(paths("", ""), ["src/a.rs"], "{rules}");
+            assert_eq!(
+                paths("node_modules/foo/**", ""),
+                ["node_modules/foo/index.js", "node_modules/foo/lib/deep.js"],
+                "{rules}"
+            );
+            assert_eq!(
+                paths("node_modules, src", ""),
+                [
+                    "node_modules/bar/index.js",
+                    "node_modules/foo/index.js",
+                    "node_modules/foo/lib/deep.js",
+                    "src/a.rs"
+                ],
+                "{rules}: src as git sees it, x.log still out"
+            );
+            assert_eq!(
+                paths("target/debug/out.txt", ""),
+                ["target/debug/out.txt"],
+                "{rules}"
+            );
+            assert_eq!(
+                paths(".github", ""),
+                [".github/ci.yml"],
+                "{rules}: hidden, named"
+            );
+            for git in [".git", ".git/**", ".git/logs"] {
+                assert_eq!(
+                    paths(git, ""),
+                    Vec::<String>::new(),
+                    "{rules}: {git} never searched"
+                );
+            }
+            assert_eq!(
+                paths("node_modules", "node_modules/bar, lib"),
+                ["node_modules/foo/index.js"],
+                "{rules}: an exclude wins"
+            );
+            assert_eq!(
+                paths("node_modules/foo", "node_modules"),
+                Vec::<String>::new()
+            );
+            assert_eq!(
+                paths("**/node_modules/**", ""),
+                Vec::<String>::new(),
+                "names none"
+            );
+        }
+        // The walk's cap: what it stopped at is read, the rest said.
+        let mut capped = q("needle", "", "");
+        capped.query.ignored = true;
+        capped.query.max_walk = 2;
+        let found = search(&dir, &capped, &none, &cancel);
+        assert!(found.walk_capped && found.limited);
+        assert!(found.searched <= 2, "{}", found.searched);
+        capped.query.max_walk = 100;
+        let found = search(&dir, &capped, &none, &cancel);
+        assert!(!found.walk_capped && !found.limited);
+        // A search rooted inside `.git` finds nothing there.
+        let inside = search(&dir.join(".git"), &capped, &none, &cancel);
+        assert_eq!((inside.files.len(), inside.walked), (0, 0));
+        assert_eq!(
+            (found.files.len(), found.searched),
+            (7, 8),
+            "every file, the .gitignore read too"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

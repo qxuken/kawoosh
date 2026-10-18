@@ -21,8 +21,6 @@ use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, PaneId, Place, SplitDir};
 use crate::notify::{Level, Note, Show, Ttl};
 
-/// The most paths a walk lists (`kawoosh.fs.walk`).
-const WALK_MAX: usize = 200_000;
 /// Where plugin processes' ids start, above compile mode's.
 const LUA_PROC_BASE: u64 = 1 << 32;
 /// The most processes plugins run at once (`kawoosh.spawn`); the rest
@@ -1102,7 +1100,11 @@ impl Kawoosh {
                 place.as_deref().and_then(Place::parse),
                 restore,
             ),
-            Msg::Walk { token, root } => {
+            Msg::Walk {
+                token,
+                root,
+                ignored,
+            } => {
                 // A host's walk is capped and kept: said once. A
                 // distro's share is walked as a local disk is.
                 if let Some((d, _)) = kawoosh_systems::fs::domain_of(&root)
@@ -1118,17 +1120,19 @@ impl Kawoosh {
                         kawoosh_systems::fs::HOST_WALK_MAX
                     );
                 }
+                let job = move || {
+                    kawoosh_systems::fs::walk_with(&root, kawoosh_systems::fs::WALK_MAX, ignored)
+                        .map_err(|e| e.to_string())
+                };
                 if self.jobs_inline {
-                    let result =
-                        kawoosh_systems::fs::walk(&root, WALK_MAX).map_err(|e| e.to_string());
+                    let result = job();
                     rt.publish(&self.ed, self.focused_view());
                     rt.walked(token, result);
                 } else {
                     self.pending_jobs += 1;
                     self.io.run("walk", move || IoMsg::Walked {
                         token,
-                        result: kawoosh_systems::fs::walk(&root, WALK_MAX)
-                            .map_err(|e| e.to_string()),
+                        result: job(),
                     });
                 }
             }

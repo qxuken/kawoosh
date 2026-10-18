@@ -84,7 +84,12 @@ comma-separated globs:
 | `!vendor` | in include, an exclude |
 
 An exclude always wins. Ignored and hidden files are skipped unless
-you turn them on.
+you turn them on with `<A-g>`, or name them: an include that spells an
+ignored path from the root — `node_modules/foo/**`, `target`, a bare
+`node_modules` — searches that path anyway, the rest of the project as
+git sees it. A glob that starts with one (`**/node_modules`) names no
+path. `.git` is never searched. A search reads at most 200 000 files,
+and the count says so when it stopped there.
 
 | keys (in the bar) | what |
 |---|---|

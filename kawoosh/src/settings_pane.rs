@@ -123,7 +123,7 @@ fn kind_word(k: &SettingKind) -> (&'static str, Option<&[String]>) {
         SettingKind::Float => ("number", None),
         // Edited as text here: one line; a list is the file's to write.
         SettingKind::Str | SettingKind::Strings => ("string", None),
-        SettingKind::OneOf(w) => ("choice", Some(w)),
+        SettingKind::OneOf(w) | SettingKind::OneOfOrBool(w) => ("choice", Some(w)),
         SettingKind::List => ("list", None),
         SettingKind::Open => ("table", None),
         SettingKind::Size => ("size", None),
@@ -214,8 +214,14 @@ pub fn check(kind: &SettingKind, value: Setting) -> Result<Setting, String> {
         (SettingKind::Strings, v @ S::Str(_)) => v,
         (SettingKind::Strings, S::List(l)) if l.iter().all(|s| s.as_str().is_some()) => S::List(l),
         (SettingKind::Strings, _) => return Err("text, or a list of it".into()),
-        (SettingKind::OneOf(words), S::Str(w)) if words.contains(&w) => S::Str(w),
-        (SettingKind::OneOf(words), _) => {
+        (SettingKind::OneOf(words) | SettingKind::OneOfOrBool(words), S::Str(w))
+            if words.contains(&w) =>
+        {
+            S::Str(w)
+        }
+        // The older spelling, still read.
+        (SettingKind::OneOfOrBool(_), v @ S::Bool(_)) => v,
+        (SettingKind::OneOf(words) | SettingKind::OneOfOrBool(words), _) => {
             let shown: Vec<String> = words
                 .iter()
                 .map(|w| {
@@ -816,6 +822,17 @@ mod tests {
         assert_eq!(
             check(&words, S::Str("x".into())),
             Err("one of off, word".into())
+        );
+        // The old spelling of a switch grown into words is still read.
+        let grown = SettingKind::OneOfOrBool(vec!["auto".into(), "off".into()]);
+        assert_eq!(check(&grown, S::Bool(false)), Ok(S::Bool(false)));
+        assert_eq!(
+            check(&grown, S::Str("auto".into())),
+            Ok(S::Str("auto".into()))
+        );
+        assert_eq!(
+            check(&grown, S::Str("x".into())),
+            Err("one of auto, off".into())
         );
         assert_eq!(check(&SettingKind::Int, S::Float(3.0)), Ok(S::Int(3)));
         assert!(check(&SettingKind::Int, S::Float(3.5)).is_err());

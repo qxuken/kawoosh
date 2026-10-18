@@ -891,15 +891,45 @@ pub fn drives() -> Vec<PathBuf> {
     }
 }
 
+/// The most files a walk lists for the picker or a search reads: a
+/// `node_modules` walked with its ignores off holds a hundred thousand
+/// and more (docs/design/picker.md Decision 4).
+pub const WALK_MAX: usize = 200_000;
+
+/// A walk's answer: the paths, and whether it stopped at its cap with
+/// more left unwalked — what the picker says when it did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Walked {
+    pub rows: Vec<String>,
+    pub capped: bool,
+}
+
 /// Every file under `root`, as paths relative to it, in the walk's
 /// order — what a file picker lists. What `git` would not see is not
 /// listed: `.gitignore` rules (the repository's, a parent's, the
 /// global one), hidden entries, and `.git` itself — ripgrep's own walk
 /// (`ignore`), so the picker and `:grep` agree on what the project is.
-/// A directory whose entries cannot be read is skipped, not an error.
-/// Stops at `max` paths, so a walk started in `/` costs a bounded
-/// amount rather than the disk.
+/// A root the project itself ignores (a `node_modules`, a `target`, or
+/// a directory under one: [`ignored_by_project`]) is walked with no
+/// ignore rules at all — the project's say nothing about a package's
+/// own files — hidden entries still left out. A directory whose
+/// entries cannot be read is skipped, not an error. Stops at `max`
+/// paths, so a walk started in `/` costs a bounded amount rather than
+/// the disk.
 pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
+    walk_with(root, max, false).map(|w| w.rows)
+}
+
+/// [`walk`], and with `ignored` every file under `root` — ignored and
+/// hidden ones too, never `.git` — as ripgrep's `--no-ignore --hidden`
+/// lists them; whether it stopped at `max` with more left is said. A
+/// host's walk has its own rules and lists what it always does. A root
+/// inside a `.git` lists nothing: git's own files are never the
+/// project's.
+pub fn walk_with(root: &Path, max: usize, ignored: bool) -> io::Result<Walked> {
+    if in_git_dir(root) {
+        return Ok(Walked::default());
+    }
     if let Some(h) = on_host(root) {
         let (fs, _) = h?;
         let (domain, rest) = domain_of(root).expect("on a host");
@@ -909,14 +939,25 @@ pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
         // directory, ten times a local disk's — else by the local
         // walker on the share, its rows the host's, cut on `/`. Not
         // kept: nothing says when a distro's files change.
+        // One past the cap asked for, as the local walk does, says
+        // there was more.
+        let host = |mut rows: Vec<String>, max: usize| {
+            let capped = rows.len() > max;
+            rows.truncate(max);
+            Walked { rows, capped }
+        };
         if let Some(local) = fs.local(rest) {
-            if let Some(rows) = walk_by_host(domain, rest, max) {
-                return Ok(rows);
+            if let Some(rows) = walk_by_host(domain, rest, max + 1) {
+                return Ok(host(rows, max));
             }
-            let rows = walk(&local, max)?;
-            return Ok(rows.into_iter().map(|r| r.replace('\\', "/")).collect());
+            let w = walk_with(&local, max, ignored)?;
+            return Ok(Walked {
+                rows: w.rows.into_iter().map(|r| r.replace('\\', "/")).collect(),
+                capped: w.capped,
+            });
         }
-        return walk_host_cached(root, max.min(HOST_WALK_MAX));
+        let max = max.min(HOST_WALK_MAX);
+        return walk_host_cached(root, max + 1).map(|rows| host(rows, max));
     }
     if !root.is_dir() {
         return Err(io::Error::new(
@@ -924,19 +965,30 @@ pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
             format!("{}: not a directory", root.display()),
         ));
     }
-    let mut out = Vec::new();
-    for entry in ignore::WalkBuilder::new(root)
-        .hidden(true)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .follow_links(false)
+    let mut b = ignore::WalkBuilder::new(root);
+    if ignored || ignored_by_project(root) {
+        // Nothing the ignore files say, read or not: those above the
+        // root ignore it whole, and those under it are a package's.
+        b.standard_filters(false).hidden(!ignored);
+    } else {
+        b.hidden(true)
+            .git_ignore(true)
+            .git_global(true)
+            .git_exclude(true);
+    }
+    b.follow_links(false)
         .sort_by_file_name(|a, b| a.cmp(b))
-        .build()
-    {
+        .filter_entry(|e| e.file_name() != ".git");
+    let mut out = Walked::default();
+    for entry in b.build() {
         let Ok(entry) = entry else { continue };
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
+        }
+        // One past the cap says there was more.
+        if out.rows.len() >= max {
+            out.capped = true;
+            break;
         }
         let rel = entry
             .path()
@@ -944,12 +996,77 @@ pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
             .unwrap_or(entry.path())
             .to_string_lossy()
             .into_owned();
-        out.push(rel);
-        if out.len() >= max {
+        out.rows.push(rel);
+    }
+    Ok(out)
+}
+
+/// Whether `path` is in a `.git` directory (or is one): what no walk or
+/// search lists.
+pub fn in_git_dir(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == ".git")
+}
+
+/// Whether the project's ignore files leave `path` out, as a whole:
+/// it, a directory it is under, or whatever is inside it — `target/`,
+/// `/target` and `target/**` alike, where `*.log` ignores no directory.
+/// A `.gitignore` or `.ignore` in a directory above it decides (the
+/// nearest one that says anything about it), then the repository's
+/// `.git/info/exclude` and the global excludes — up to the
+/// repository's top, `.gitignore`s only inside one, as the walk reads
+/// them. A `node_modules`, a `target`, anything under them.
+pub fn ignored_by_project(path: &Path) -> bool {
+    use ignore::gitignore::{Gitignore, GitignoreBuilder};
+    // A repository's top is a project of its own, a nested one too.
+    if path.join(".git").exists() {
+        return false;
+    }
+    let mut dirs = Vec::new();
+    let mut top = None;
+    for a in path.ancestors().skip(1) {
+        dirs.push(a);
+        if a.join(".git").exists() {
+            top = Some(a);
             break;
         }
     }
-    Ok(out)
+    // Whatever is inside: a name no rule but a whole one would match.
+    let inside = path.join("kawoosh-anything-inside");
+    let said = |gi: &Gitignore| {
+        let m = match gi.matched_path_or_any_parents(path, true) {
+            ignore::Match::None => gi.matched_path_or_any_parents(&inside, false),
+            m => m,
+        };
+        match m {
+            ignore::Match::Ignore(_) => Some(true),
+            ignore::Match::Whitelist(_) => Some(false),
+            ignore::Match::None => None,
+        }
+    };
+    for d in &dirs {
+        // `.ignore` over `.gitignore`, as the walk ranks them.
+        for name in [".ignore", ".gitignore"] {
+            if name == ".gitignore" && top.is_none() {
+                continue;
+            }
+            let file = d.join(name);
+            if !file.is_file() {
+                continue;
+            }
+            if let Some(v) = said(&Gitignore::new(&file).0) {
+                return v;
+            }
+        }
+    }
+    let Some(top) = top else { return false };
+    let mut b = GitignoreBuilder::new(top);
+    b.add(top.join(".git/info/exclude"));
+    if let Ok(gi) = b.build()
+        && let Some(v) = said(&gi)
+    {
+        return v;
+    }
+    said(&GitignoreBuilder::new(top).build_global().0).unwrap_or(false)
 }
 
 /// The files named `name` under `root`, as [`walk`] sees it — nothing
@@ -1698,6 +1815,102 @@ mod tests {
         assert_eq!(walk(&dir, 1).unwrap().len(), 1, "capped");
         let err = walk(&dir.join("src/main.rs"), 10).unwrap_err().to_string();
         assert!(err.contains("not a directory"), "{err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A walk rooted in what the project ignores — a `node_modules`, a
+    /// `target`, a package under one, however the `.gitignore` spells
+    /// it (`node_modules/**` hides the files, not only the directory) —
+    /// lists its files with no ignores; `ignored` lists everything but
+    /// `.git`; a cap says there was more.
+    #[test]
+    fn a_walk_in_an_ignored_root_lists_it_and_says_its_cap() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-walk-ign-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create(&dir.join(".git/HEAD"), false).unwrap();
+        create(&dir.join("src/main.rs"), false).unwrap();
+        create(&dir.join("node_modules/foo/index.js"), false).unwrap();
+        create(&dir.join("node_modules/foo/lib/x.js"), false).unwrap();
+        create(&dir.join("node_modules/foo/node_modules/bar/y.js"), false).unwrap();
+        create(&dir.join("node_modules/foo/.cache/z"), false).unwrap();
+        create(&dir.join("target/debug/out.txt"), false).unwrap();
+        create(&dir.join(".hidden/h.txt"), false).unwrap();
+        let sep = std::path::MAIN_SEPARATOR;
+        let sorted = |mut v: Vec<String>| {
+            v.sort();
+            v
+        };
+        for rules in ["node_modules/\n/target\n", "node_modules/**\ntarget/**\n"] {
+            write(&dir.join(".gitignore"), rules).unwrap();
+            assert!(ignored_by_project(&dir.join("node_modules")), "{rules}");
+            assert!(ignored_by_project(&dir.join("node_modules/foo")), "{rules}");
+            assert!(ignored_by_project(&dir.join("target/debug")), "{rules}");
+            assert!(!ignored_by_project(&dir.join("src")), "{rules}");
+            assert!(!ignored_by_project(&dir), "the top is the project");
+            assert_eq!(
+                walk(&dir, 100).unwrap(),
+                [format!("src{sep}main.rs")],
+                "{rules}"
+            );
+            assert_eq!(
+                sorted(walk(&dir.join("node_modules/foo"), 100).unwrap()),
+                [
+                    "index.js".to_string(),
+                    format!("lib{sep}x.js"),
+                    format!("node_modules{sep}bar{sep}y.js"),
+                ],
+                "{rules}: the package's own files, its hidden ones still out"
+            );
+            assert_eq!(
+                walk(&dir.join("node_modules"), 100).unwrap().len(),
+                3,
+                "{rules}: rooted at node_modules itself"
+            );
+            assert_eq!(
+                walk(&dir.join("target/debug"), 100).unwrap(),
+                ["out.txt"],
+                "{rules}"
+            );
+        }
+        // A rule saying otherwise below the one ignoring it wins.
+        write(&dir.join(".gitignore"), "target/\n").unwrap();
+        write(&dir.join("src/.gitignore"), "!gen/\n").unwrap();
+        assert!(!ignored_by_project(&dir.join("src/gen")));
+        write(&dir.join("src/.gitignore"), "*.log\n").unwrap();
+        assert!(
+            !ignored_by_project(&dir.join("src/gen")),
+            "a file rule ignores no directory"
+        );
+        let all = walk_with(&dir, 100, true).unwrap();
+        assert!(!all.capped);
+        assert_eq!(
+            sorted(all.rows),
+            [
+                ".gitignore".to_string(),
+                format!(".hidden{sep}h.txt"),
+                format!("node_modules{sep}foo{sep}.cache{sep}z"),
+                format!("node_modules{sep}foo{sep}index.js"),
+                format!("node_modules{sep}foo{sep}lib{sep}x.js"),
+                format!("node_modules{sep}foo{sep}node_modules{sep}bar{sep}y.js"),
+                format!("src{sep}.gitignore"),
+                format!("src{sep}main.rs"),
+                format!("target{sep}debug{sep}out.txt"),
+            ],
+            "everything but .git"
+        );
+        assert_eq!(
+            walk_with(&dir.join(".git"), 100, true).unwrap(),
+            Walked::default()
+        );
+        assert!(in_git_dir(&dir.join(".git/logs")) && !in_git_dir(&dir.join(".github")));
+        let capped = walk_with(&dir, 3, true).unwrap();
+        assert_eq!((capped.rows.len(), capped.capped), (3, true));
+        let whole = walk_with(&dir, 9, true).unwrap();
+        assert_eq!(
+            (whole.rows.len(), whole.capped),
+            (9, false),
+            "exactly the cap is whole"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

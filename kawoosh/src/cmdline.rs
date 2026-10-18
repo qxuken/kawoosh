@@ -484,7 +484,9 @@ impl Kawoosh {
             ("cmdline.complete_with", _) => {
                 all.extend(["carapace".into(), "false".into()]);
             }
-            (_, Some(SettingKind::OneOf(words))) => all.extend(words),
+            (_, Some(SettingKind::OneOf(words) | SettingKind::OneOfOrBool(words))) => {
+                all.extend(words)
+            }
             (_, Some(SettingKind::Bool)) => all.extend(["true".into(), "false".into()]),
             _ => {}
         }

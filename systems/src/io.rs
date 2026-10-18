@@ -123,10 +123,11 @@ pub enum IoMsg {
     },
     /// A tree walked on a thread of its own for a plugin
     /// (`kawoosh.fs.walk(root, fn)`): the job's token, and the files
-    /// under the root, relative to it, or why not.
+    /// under the root, relative to it, and whether the walk stopped at
+    /// its cap — or why not.
     Walked {
         token: u64,
-        result: Result<Vec<String>, String>,
+        result: Result<crate::fs::Walked, String>,
     },
     /// A query run for the database pane (`kawoosh.sqlite.query`,
     /// docs/design/sqlite.md): the job's token, and its rows or

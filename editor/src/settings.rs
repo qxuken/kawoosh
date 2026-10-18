@@ -806,7 +806,10 @@ const DOCS: &[(&str, &str)] = &[
         "memory.scope",
         "whose memory the pane shows: `workspace` this one's, `global` every one's",
     ),
-    ("picker.preview", "a preview beside the picker's list"),
+    (
+        "picker.preview",
+        "where the picker's preview goes: `auto` beside the list when the picker is wide enough, below it when tall enough, else none; `right`, `below`, or `off` — `<A-p>` hides or shows it in one picker; `true` and `false` are read as `auto` and `off`",
+    ),
     (
         "picker.wrap",
         "the picker's rows wrap to show a long path whole",
@@ -818,6 +821,10 @@ const DOCS: &[(&str, &str)] = &[
     (
         "picker.split",
         "the list's share of the picker's width beside the preview",
+    ),
+    (
+        "picker.split_below",
+        "the list's share of the picker's height above a preview below it",
     ),
     (
         "font.family",
@@ -900,6 +907,10 @@ pub enum SettingKind {
     Float,
     Str,
     OneOf(Vec<String>),
+    /// A word of a few, or `true` / `false`: a switch grown into words
+    /// whose old spellings are still read (`picker.preview`, picker.md
+    /// Decision 1).
+    OneOfOrBool(Vec<String>),
     List,
     /// A string, or a list of them: one thing or several in turn
     /// (`compile.default`, compile.md Decision 22).
@@ -1401,18 +1412,22 @@ impl Settings {
         // tab's project's, or `global`, every one's; `<C-a>` in the
         // pane flips it for the session.
         defaults.set("memory.scope", Setting::Str("workspace".into()));
-        // The picker (`picker.lua`): a preview of the cursor's row
-        // beside the list, and whether a row's text wraps to show the
-        // whole of a long path; `<A-p>` and `<A-w>` in the picker flip
-        // them for the session. `share` is the height the pane opens
-        // at, as a fraction of the pane it splits, and `split` the
-        // list's share of the pane's width beside the preview; the
-        // pane keys `<A-J>` `<A-K>` and the picker's `<A-H>` `<A-L>`
-        // move them for the session, and both dividers drag.
-        defaults.set("picker.preview", Setting::Bool(true));
+        // The picker (`picker.lua`): where a preview of the cursor's
+        // row goes — `auto` by the picker's room (docs/design/picker.md
+        // Decision 1) — and whether a row's text wraps to show the
+        // whole of a long path; `<A-w>` in the picker flips the second
+        // for the session, `<A-p>` shows or hides that picker's preview
+        // without touching the first. `share` is the height the pane opens
+        // at, as a fraction of the pane it splits, `split` the list's
+        // share of the pane's width beside the preview and
+        // `split_below` of its height above one; the pane keys `<A-J>`
+        // `<A-K>` and the picker's `<A-H>` `<A-L>` move the first two
+        // for the session, and every divider drags.
+        defaults.set("picker.preview", Setting::Str("auto".into()));
         defaults.set("picker.wrap", Setting::Bool(false));
         defaults.set("picker.share", Setting::Float(0.5));
         defaults.set("picker.split", Setting::Float(0.5));
+        defaults.set("picker.split_below", Setting::Float(0.5));
         // The look (kawoosh's `look.rs`): the mono face — a family kui can
         // see, the empty string for the face the editor ships — its size
         // in logical px, the row's height as a ratio of it, and OpenType
@@ -1511,6 +1526,11 @@ impl Settings {
         ] {
             s.declare(path, kind, "");
         }
+        s.declare(
+            "picker.preview",
+            SettingKind::OneOfOrBool(["auto", "right", "below", "off"].map(String::from).to_vec()),
+            "",
+        );
         // What each default does, in the words `help/settings.md` uses:
         // the settings pane's line under a row, and the doc the language
         // server's types show (docs/design/settings.md Decision 2).
@@ -2194,6 +2214,7 @@ mod tests {
                 "picker.preview",
                 "picker.share",
                 "picker.split",
+                "picker.split_below",
                 "picker.wrap",
                 "relativenumber",
                 "save.as_admin",

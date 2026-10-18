@@ -170,7 +170,8 @@ which is ripgrep's `-g`:
 
 A file is searched when it matches an include (or there are none) and
 no exclude; an exclude always wins. `.gitignore`d, hidden and `.git` are
-left out unless `ignored` is on. A glob that does not parse is the
+left out unless `ignored` is on, or an include names the ignored path
+(Decision 14); `.git` always. A glob that does not parse is the
 field's error, drawn under it, and nothing runs.
 
 ### 8. Narrowing is a pipeline of stages
@@ -509,6 +510,45 @@ a remake loses the carets' places and the scroll for a look. **Growing
 past a met excerpt** (both joined and grown on by what is left of N) was
 left out: the next excerpt's lines are already on the screen, and a
 growth that jumps over them is harder to read than a second `zj`.
+
+### 14. Ignored paths: the toggle, or an include that names one
+
+Asked 2026-10-18: "search should be able to include ignored directories
+(target, node_modules)". Two ways, both off the frame on the search's
+own thread:
+
+- **`<A-g>`** (the bar's `ign` chip) searches everything under the root
+  but `.git` — ignored and hidden files too, as rg's `--no-ignore
+  --hidden` — as it always did (Decision 7).
+- **An include that names an ignored path** searches it with `ignored`
+  off: its leading literal parts from the root are the path it names —
+  `node_modules/foo/**` names `node_modules/foo`, `target/*.log`
+  `target`, a bare `node_modules` the root's — and when the project
+  ignores that path as a whole (`fs::ignored_by_project`,
+  [picker.md](picker.md) Decision 3) or it is hidden (`.github`), it is
+  walked after the project's walk with no ignore rules, as rg walks a
+  path given to it. The rest stays as git sees it: `node_modules, src`
+  searches the packages and `src` without the `src/*.log` the project
+  ignores. An exclude still wins (`node_modules, !node_modules/bar`). A
+  glob that starts with one (`**/node_modules`, `*/dist`) names nothing:
+  `<A-g>` is the way to every ignored file. One named under another is
+  walked with it. Nothing in a `.git` is named (`.git/**` searches
+  nothing, as the walk's filter never sees a root it starts at), nor a
+  path off the root — `C:/Windows/**` (a `:` ends the literal parts) or
+  anything with a prefix or a root; and a search rooted inside a `.git`
+  walks nothing (`fs::in_git_dir`), the picker's walk the same.
+
+The walk stops at `max_walk` files (`fs::WALK_MAX`, 200 000) across both,
+the rest not read: the answer says so (`capped`, `walked`), and the
+count reads `3 matches in 2 files (stopped: the walk's first 200000
+files)`.
+
+*Beat:* reading an include as a hint only (search the named path, but
+with the project's ignores): `node_modules/**` in a `.gitignore` would
+still hide every file there.
+*Beat:* lifting every ignore under an include (`src` searched with no
+ignores): an include narrows, and `src` with its `*.log` back in would
+widen.
 
 ## Built
 
