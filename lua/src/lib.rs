@@ -7318,17 +7318,83 @@ fn seed(
             Ok(ro().private(Some(std::path::Path::new(&path)), ""))
         })?,
     )?;
-    // `kawoosh.secrets.mask_text(text: string, path?: string, language?: string): string`:
-    // `text`, a line or lines of the file at `path` in `language`, with
-    // what the rules that apply to it mask drawn as `•` — every line
-    // kept, so a list's line numbers stay the file's.
+    // `kawoosh.secrets.mask_text(text: string, path?: string, opts?: string|kawoosh.secrets.MaskOpts): string`:
+    // `text`, a line or lines of the file at `path`, with what the rules
+    // that apply to it mask drawn as `•` — every line kept, so a list's
+    // line numbers stay the file's. `opts` is the language, or a table:
+    // `language`; `part = true` for a part of the file's text whose start
+    // may be inside a value a rule masks over lines (a hunk's lines: the
+    // lines before its first key are masked whole); `line = N` for line N
+    // of the file as it is on disk (a search's line: the file is read,
+    // within `secrets.scan_max_kb`, and the line masked as its pane
+    // masks it — whole inside a value opened above), a part when the
+    // file cannot be read.
+    //
+    // @class kawoosh.secrets.MaskOpts
+    // @field language? string
+    // @field part? boolean
+    // @field line? integer
     let ro = rules_of.clone();
+    // The files read for `line`, by path, at their length and time: a
+    // search's rows in one file read it once.
+    type Read = (u64, Option<std::time::SystemTime>, Rc<String>);
+    let read: Rc<RefCell<HashMap<std::path::PathBuf, Read>>> = Rc::default();
+    let pp = published.clone();
     secrets.set(
         "mask_text",
         lua.create_function(
-            move |_, (text, path, language): (String, Option<String>, Option<String>)| {
+            move |_, (text, path, opts): (String, Option<String>, Option<LV>)| {
                 let path = path.map(std::path::PathBuf::from);
-                Ok(ro().mask_text(path.as_deref(), language.as_deref().unwrap_or(""), &text))
+                let (mut language, mut part, mut line) = (String::new(), false, None);
+                match &opts {
+                    Some(LV::String(s)) => language = s.to_str()?.to_string(),
+                    Some(LV::Table(t)) => {
+                        language = t.get::<Option<String>>("language")?.unwrap_or_default();
+                        part = t.get::<Option<bool>>("part")?.unwrap_or(false);
+                        line = t.get::<Option<usize>>("line")?;
+                    }
+                    _ => {}
+                }
+                let rules = ro();
+                let at = path.as_deref();
+                if let (Some(n), Some(p)) = (line, at)
+                    && rules.spans_lines(at, &language)
+                {
+                    let max = pp
+                        .borrow()
+                        .settings
+                        .get("secrets.scan_max_kb")
+                        .and_then(|v| v.as_int())
+                        .unwrap_or(1024)
+                        .max(0) as u64
+                        * 1024;
+                    let whole = std::fs::metadata(p)
+                        .ok()
+                        .filter(|m| m.is_file() && m.len() <= max)
+                        .and_then(|m| {
+                            let stamp = (m.len(), m.modified().ok());
+                            let mut r = read.borrow_mut();
+                            if let Some((len, t, w)) = r.get(p)
+                                && (*len, *t) == stamp
+                            {
+                                return Some(w.clone());
+                            }
+                            let w = Rc::new(std::fs::read_to_string(p).ok()?);
+                            if r.len() >= 64 {
+                                r.clear();
+                            }
+                            r.insert(p.to_path_buf(), (stamp.0, stamp.1, w.clone()));
+                            Some(w)
+                        });
+                    return Ok(match whole {
+                        Some(w) => rules.mask_line(at, &language, &text, &w, n),
+                        None => rules.mask_part(at, &language, &text),
+                    });
+                }
+                Ok(match part || line.is_some() {
+                    true => rules.mask_part(at, &language, &text),
+                    false => rules.mask_text(at, &language, &text),
+                })
             },
         )?,
     )?;

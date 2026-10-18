@@ -2075,7 +2075,9 @@ picker.source("grep", {
               local full = fs.join(root, path)
               items[#items + 1] = {
                 text = path .. ":" .. ln,
-                sub = kawoosh.secrets.mask_text((rest:gsub("^%s+", "")), full),
+                -- As the file's pane draws the line: whole when it is
+                -- inside a value opened above it (a `.env`'s quoted one).
+                sub = kawoosh.secrets.mask_text((rest:gsub("^%s+", "")), full, { line = tonumber(ln) }),
                 path = full, line = tonumber(ln), col = tonumber(col),
               }
             elseif l ~= "" then

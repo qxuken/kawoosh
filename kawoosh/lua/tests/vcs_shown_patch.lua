@@ -101,3 +101,24 @@ local quoted = table.concat({
 local q = kawoosh.vcs.shown_patch(quoted, "/r")
 kawoosh.test.eq(q:find("old7", 1, true), nil, "a quoted name's rules")
 kawoosh.test.eq(q:find("new8", 1, true), nil, "a quoted name's rules, the new side")
+
+-- A `.env` hunk that starts inside a value quoted over lines (its
+-- `KEY="` above the context): its lines before the first key are masked
+-- whole, as the file's pane draws them, the key after it as ever.
+local inside = table.concat({
+  "diff --git a/prod.env b/prod.env",
+  "--- a/prod.env",
+  "+++ b/prod.env",
+  "@@ -5,4 +5,4 @@",
+  " --filter-tcp=443 --hostlist=s3cretdom.example",
+  "-old-inner-7",
+  "+new-inner-8",
+  ' "',
+  " PORT=1",
+  "",
+}, "\n")
+local w = kawoosh.vcs.shown_patch(inside, "/r")
+for _, s in ipairs({ "s3cretdom", "old-inner", "new-inner" }) do
+  kawoosh.test.eq(w:find(s, 1, true), nil, s .. " is inside a value")
+end
+kawoosh.test.eq(w:find(" PORT=••••••••", 1, true) ~= nil, true, "the key after it")

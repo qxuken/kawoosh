@@ -680,6 +680,40 @@ fn grep_runs_rg_as_the_query_is_typed() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A grep row of a `.env` line inside a value quoted over lines is drawn
+/// as the file's pane draws it: the line read alone matched no key and
+/// was drawn as it is (the review of 2026-10-18). The file is read for
+/// it, and the line masked whole; the preview masks the file whole.
+#[test]
+fn a_grep_row_inside_a_quoted_value_is_masked() {
+    let _serial = serial();
+    if kawoosh_systems::spawn::output(std::process::Command::new("rg").arg("--version")).is_err() {
+        eprintln!("rg is not installed: the grep test is skipped");
+        return;
+    }
+    let dir = project("grep-env");
+    std::fs::write(
+        dir.join("prod.env"),
+        "HOST=db\nOPT=\"\n--hostlist=s3cretdom.example --new\n\"\nPORT=1\n",
+    )
+    .unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " g");
+    d.frame(&mut app);
+    d.keys(&mut app, "hostlist");
+    app.wait_for_jobs();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(rows(&d), [native("prod.env:3")], "{:?}", rows(&d));
+    let t = texts(&d);
+    assert!(!t.iter().any(|s| s.contains("s3cretdom")), "drawn: {t:?}");
+    d.press(&mut app, "<C-c>");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A search the picker asks for as it draws is one `wait_for_jobs`
 /// waits for. The query is read in the view, so `rg` is asked for on the
 /// frame after the key and sits in Lua's queue until the next drain: a

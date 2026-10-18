@@ -20,13 +20,16 @@ use crate::Setting;
 pub const STAND_IN: &str = "••••••••";
 
 /// What a rule masks: the first group of a line's match (the whole
-/// match without a group), or every line from a `from` match (its first
-/// group, where it has one) to the next `to` match. A rule has one of
-/// each at most for lines, and any number of blocks (`from` and `to`
-/// lists, paired in order).
+/// match without a group); every line from a `from` match to the next
+/// `to` match; or a value, which starts where a `quoted` match ends: one
+/// opening with `"` runs to the first `"` no `\\` escapes (an escaped
+/// newline too), one with `'` or `` ` `` to the next such quote, either
+/// over lines, then to the end of the closing line; any other to the end
+/// of its line. A rule may have several (a `pattern` and a `quoted`).
 enum Find {
     Line(Regex),
     Block(Regex, Regex),
+    Quoted(Regex),
 }
 
 pub struct Rule {
@@ -92,17 +95,26 @@ impl Rule {
             }
             Find::Block(from, to) => {
                 let mut at = 0;
-                while let Some(c) = from.captures_at(text, at) {
-                    let start = c.get(0).unwrap();
+                while let Some(start) = from.find_at(text, at) {
                     let end = match to.find_at(text, start.end()) {
                         Some(e) => e.end(),
                         None => text.len(),
                     };
-                    // From the first group where there is one: a key's
-                    // name before a value over several lines stays.
-                    let first = c.get(1).map_or(start.start(), |g| g.start());
-                    out.push(first..end);
+                    out.push(start.start()..end);
                     at = end.max(start.end());
+                    if at >= text.len() {
+                        break;
+                    }
+                }
+            }
+            Find::Quoted(key) => {
+                let mut at = 0;
+                while let Some(m) = key.find_at(text, at) {
+                    let end = value_end(text, m.end());
+                    if end > m.end() {
+                        out.push(m.end()..end);
+                    }
+                    at = end.max(m.end());
                     if at >= text.len() {
                         break;
                     }
@@ -110,6 +122,80 @@ impl Rule {
             }
         }
     }
+
+    /// [`Self::scan`] over a part of a text whose start may be inside
+    /// what the rule masks over lines — a hunk, a search's line: a block
+    /// whose `to` comes before any `from` is masked from the start, and
+    /// before the first key a `quoted` rule finds every line is, since
+    /// it may be inside a value opened above. The safe side: a comment
+    /// there is masked too.
+    pub fn scan_part(&self, text: &str, out: &mut Vec<Range<usize>>) {
+        self.scan(text, out);
+        for find in &self.finds {
+            let head = match find {
+                Find::Line(_) => continue,
+                Find::Block(from, to) => match to.find(text) {
+                    Some(t) if from.find(text).is_none_or(|f| f.start() >= t.start()) => t.end(),
+                    _ => continue,
+                },
+                // Up to the line the first key is on; all of it with none.
+                Find::Quoted(key) => match key.find(text) {
+                    Some(m) => text[..m.start()].rfind('\n').unwrap_or(0),
+                    None => text.trim_end_matches(['\n', '\r']).len(),
+                },
+            };
+            if head > 0 {
+                out.push(0..head);
+            }
+        }
+    }
+
+    /// Whether what it masks can run over lines (a block, a quoted
+    /// value): a line of it read alone may be inside one.
+    pub fn spans(&self) -> bool {
+        self.finds.iter().any(|f| !matches!(f, Find::Line(_)))
+    }
+
+    /// Whether it applies by its files or its language — a rule of some
+    /// files, not of every text.
+    pub fn of_files(&self) -> bool {
+        self.files.is_some() || self.language.is_some()
+    }
+}
+
+/// Where a value starting at `v` ends (see [`Find::Quoted`]): past its
+/// closing quote's line, or its own line's end; the text's end for a
+/// quote never closed. A line's `\r` and `\n` are not the value's.
+fn value_end(text: &str, v: usize) -> usize {
+    let bytes = text.as_bytes();
+    let line_end = |p: usize| {
+        text[p.min(text.len())..]
+            .find('\n')
+            .map_or(text.len(), |i| p + i)
+    };
+    let end = match bytes.get(v) {
+        Some(&q @ (b'"' | b'\'' | b'`')) => {
+            let mut i = v + 1;
+            let mut close = None;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\\' if q == b'"' => i += 2,
+                    c if c == q => {
+                        close = Some(i);
+                        break;
+                    }
+                    _ => i += 1,
+                }
+            }
+            close.map_or(text.len(), |c| line_end(c + 1))
+        }
+        _ => line_end(v),
+    };
+    let mut end = end;
+    while end > v && matches!(bytes[end - 1], b'\n' | b'\r') {
+        end -= 1;
+    }
+    end
 }
 
 /// Every rule `secrets.masks` holds, and what was wrong with the ones
@@ -190,6 +276,87 @@ impl Rules {
     }
 }
 
+impl Rules {
+    /// The rules that apply to a buffer at `path` in `language`.
+    fn applying<'a>(
+        &'a self,
+        path: Option<&'a Path>,
+        language: &'a str,
+    ) -> impl Iterator<Item = &'a Rule> {
+        self.rules
+            .iter()
+            .filter(move |r| r.applies(path, "", language, &[]))
+    }
+
+    /// [`Self::mask_text`] for a part of the file's text whose start may
+    /// be inside what a rule masks over lines ([`Rule::scan_part`]): a
+    /// hunk's lines, a line found by a search, when the whole text is
+    /// not at hand.
+    pub fn mask_part(&self, path: Option<&Path>, language: &str, text: &str) -> String {
+        let mut found = Vec::new();
+        for r in self.applying(path, language) {
+            r.scan_part(text, &mut found);
+        }
+        masked(text, found)
+    }
+
+    /// Whether a line of the file read alone may be inside what one of
+    /// its own rules masks over lines (a `.env`'s quoted value): its
+    /// whole text answers that, where a part cannot.
+    pub fn spans_lines(&self, path: Option<&Path>, language: &str) -> bool {
+        self.applying(path, language)
+            .any(|r| r.of_files() && r.spans())
+    }
+
+    /// `text`, line `line` (from 1) of the file whose text is `whole`,
+    /// as the file's pane draws it: a stand-in where a mask from a line
+    /// above runs over it (a quoted value's inside), else `text` masked
+    /// as a line of its own.
+    pub fn mask_line(
+        &self,
+        path: Option<&Path>,
+        language: &str,
+        text: &str,
+        whole: &str,
+        line: usize,
+    ) -> String {
+        let start = whole
+            .split_inclusive('\n')
+            .take(line.saturating_sub(1))
+            .map(str::len)
+            .sum::<usize>();
+        let inside = self
+            .scan_for(path, "", language, &[], whole)
+            .iter()
+            .any(|m| m.start < start && m.end > start);
+        if inside {
+            return STAND_IN.to_string();
+        }
+        self.mask_text(path, language, text)
+    }
+}
+
+/// `text` with `found` drawn as stand-ins, every line kept.
+fn masked(text: &str, mut found: Vec<Range<usize>>) -> String {
+    if found.is_empty() {
+        return text.to_string();
+    }
+    found.sort_by_key(|r| (r.start, r.end));
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(found.len());
+    for r in found {
+        match merged.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => merged.push(r),
+        }
+    }
+    let mut out = String::with_capacity(text.len());
+    for (line, end) in masked_lines(text, &merged) {
+        out.push_str(&line);
+        out.push_str(end);
+    }
+    out
+}
+
 /// A rule read out of its settings table; `Ok(None)` for one switched
 /// off (`name = false`).
 fn read_rule(name: &str, s: &Setting) -> Result<Option<Rule>, String> {
@@ -239,30 +406,15 @@ fn read_rule(name: &str, s: &Setting) -> Result<Option<Rule>, String> {
             ))
         }
     };
-    // `from` and `to`: one each, or lists paired in order.
-    let regexes = |k: &str| -> Result<Vec<Regex>, String> {
-        let one = |p: &str| Regex::new(p).map_err(|e| format!("`{k}`: {e}"));
-        match t.get(k) {
-            None => Ok(Vec::new()),
-            Some(Setting::Str(p)) => Ok(vec![one(p)?]),
-            Some(Setting::List(l)) => l
-                .iter()
-                .map(|p| match p {
-                    Setting::Str(p) => one(p),
-                    _ => Err(format!("`{k}` holds strings")),
-                })
-                .collect(),
-            Some(_) => Err(format!("`{k}` is a string or a list of them")),
-        }
-    };
-    let (from, to) = (regexes("from")?, regexes("to")?);
-    if from.len() != to.len() {
-        return Err("`from` and `to` come in pairs".into());
-    }
     let mut finds: Vec<Find> = regex("pattern")?.map(Find::Line).into_iter().collect();
-    finds.extend(from.into_iter().zip(to).map(|(f, t)| Find::Block(f, t)));
+    match (regex("from")?, regex("to")?) {
+        (Some(f), Some(t)) => finds.push(Find::Block(f, t)),
+        (None, None) => {}
+        _ => return Err("`from` and `to` come together".into()),
+    }
+    finds.extend(regex("quoted")?.map(Find::Quoted));
     if finds.is_empty() {
-        return Err("a rule has a `pattern`, or a `from` and a `to`, or both".into());
+        return Err("a rule has a `pattern`, a `from` and a `to`, or a `quoted`".into());
     }
     Ok(Some(Rule {
         name: name.to_string(),
@@ -454,5 +606,77 @@ mod tests {
             ],
             "{shown}"
         );
+    }
+
+    /// A `.env` value is found by its quotes, not by a pattern over its
+    /// line: a `\` before the line's end (a shell's continuation) keeps
+    /// it open, a closing `"` after an escaped `\` closes it — a regex
+    /// that missed it ran on to the next value's opening quote and left
+    /// that value's lines raw — and a commented key opens one too.
+    #[test]
+    fn a_quoted_value_runs_to_its_closing_quote() {
+        let r = bundled();
+        let env = Some(Path::new("/p/.env"));
+        let rows = |text: &str| -> Vec<String> {
+            r.mask_text(env, "text", text)
+                .split('\n')
+                .map(str::to_string)
+                .collect()
+        };
+        let s = STAND_IN;
+        assert_eq!(
+            rows("KEY=\"--opt \\\n--secret=s3cret\n\"\nPORT=1\n"),
+            [&format!("KEY={s}"), s, s, &format!("PORT={s}"), ""],
+            "a continuation"
+        );
+        assert_eq!(
+            rows("B=\"\ninner\\\\\"\nC=\"\ninner2\n\"\nD=1\n"),
+            [
+                &format!("B={s}"),
+                s,
+                &format!("C={s}"),
+                s,
+                s,
+                &format!("D={s}"),
+                ""
+            ],
+            "an escaped backslash before the closing quote"
+        );
+        assert_eq!(
+            rows("A=\"x\\\"y\nmore\"\nC=1\n"),
+            [&format!("A={s}"), s, &format!("C={s}"), ""],
+            "an escaped quote closes nothing"
+        );
+        assert_eq!(
+            rows("# KEY=\"\ninner\n\"\n# a note\n"),
+            [&format!("# KEY={s}"), s, s, "# a note", ""],
+            "a commented key opens a value as the key does"
+        );
+        assert_eq!(rows("EMPTY=\nX=''\n"), ["EMPTY=", &format!("X={s}"), ""]);
+    }
+
+    /// A part of a `.env` — a hunk, a search's line — may start inside a
+    /// value opened above it: its lines before its first key are masked
+    /// whole. A line whose file is at hand is masked as the file's pane
+    /// masks it: whole inside a value, as a line of its own elsewhere.
+    #[test]
+    fn a_part_of_a_file_is_masked_as_if_inside_a_value() {
+        let r = bundled();
+        let env = Some(Path::new("/p/.env"));
+        let s = STAND_IN;
+        assert_eq!(
+            r.mask_part(env, "text", "inner1\ninner2\"\nPORT=1\n"),
+            format!("{s}\n{s}\nPORT={s}\n")
+        );
+        assert_eq!(r.mask_part(env, "text", "--filter=443 s3cret"), s);
+        assert!(r.spans_lines(env, "text"));
+        assert!(!r.spans_lines(Some(Path::new("/p/a.txt")), "text"));
+        let whole = "HOST=db\nOPT=\"\n--filter-tcp=443 s3cret\n\"\nPORT=1\n";
+        assert_eq!(r.mask_line(env, "", "--filter-tcp=443 s3cret", whole, 3), s);
+        assert_eq!(
+            r.mask_line(env, "", "HOST=db", whole, 1),
+            format!("HOST={s}")
+        );
+        assert_eq!(r.mask_line(env, "", "OPT=\"", whole, 2), format!("OPT={s}"));
     }
 }

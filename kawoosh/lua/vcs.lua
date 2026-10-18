@@ -161,11 +161,17 @@ end
 
 -- The lines a hunk took away, as a list shows them: from `shown` (the
 -- old text's lines through `shown_lines_of`) when it is there, else
--- each line masked by the rules of the file at `path`.
+-- the hunk's lines masked together by the rules of the file at `path`
+-- as a part of its text — one that may start inside a value a rule
+-- masks over lines (a `.env`'s quoted value opened above the hunk).
 local function old_shown(h, shown, path)
+  local part
+  if not shown and path and #h.old > 0 then
+    part = lines_of(kawoosh.secrets.mask_text(table.concat(h.old, "\n") .. "\n", path, { part = true }))
+  end
   local out = {}
   for k, l in ipairs(h.old) do
-    out[k] = shown and shown[h.old_line + k - 1] or (path and kawoosh.secrets.mask_text(l, path)) or l
+    out[k] = shown and shown[h.old_line + k - 1] or (part and part[k]) or l
   end
   return out
 end
@@ -190,20 +196,39 @@ function vcs.shown_patch(text, root)
   -- renamed `prod.env` is masked by its rules as by the new name's.
   local paths, prefixed = {}, false
   local body, old, new = {}, {}, {}
+  -- Where each hunk's lines start in `old` and `new`.
+  local old_at, new_at = {}, {}
   -- `text` masked by the rules of every file the section names, or by
-  -- the rules that apply anywhere when it names none.
-  local function mask(text)
-    if #paths == 0 then return kawoosh.secrets.mask_text(text) end
-    for _, p in ipairs(paths) do text = kawoosh.secrets.mask_text(text, fs.join(root, p)) end
+  -- the rules that apply anywhere when it names none; `opts` theirs.
+  local function mask(text, opts)
+    if #paths == 0 then return kawoosh.secrets.mask_text(text, nil, opts) end
+    for _, p in ipairs(paths) do text = kawoosh.secrets.mask_text(text, fs.join(root, p), opts) end
     return text
   end
   local function flush()
-    if #body == 0 then return end
-    local function masked(side)
-      if #side == 0 then return {} end
-      return lines_of(mask(table.concat(side, "\n") .. "\n"))
+    if #body == 0 then
+      old_at, new_at = {}, {}
+      return
     end
-    local o, n = masked(old), masked(new)
+    -- A side read whole, so a block is found across its hunks; and each
+    -- hunk read as a part of the file, which may start inside a value
+    -- opened above it (a `.env`'s quoted one): a line the whole side
+    -- left as it is takes what its hunk's part says.
+    local function masked(side, at)
+      if #side == 0 then return {} end
+      local whole = lines_of(mask(table.concat(side, "\n") .. "\n"))
+      for h, from in ipairs(at) do
+        local to = (at[h + 1] or (#side + 1)) - 1
+        if to >= from then
+          local part = lines_of(mask(table.concat(side, "\n", from, to) .. "\n", { part = true }))
+          for k = from, to do
+            if whole[k] == side[k] then whole[k] = part[k - from + 1] or whole[k] end
+          end
+        end
+      end
+      return whole
+    end
+    local o, n = masked(old, old_at), masked(new, new_at)
     for _, b in ipairs(body) do
       local raw = lines[b.at]:sub(b.cols + 1)
       local m = b.new and n[b.new] or nil
@@ -213,6 +238,7 @@ function vcs.shown_patch(text, root)
       lines[b.at] = lines[b.at]:sub(1, b.cols) .. (m or mask(raw))
     end
     body, old, new = {}, {}, {}
+    old_at, new_at = {}, {}
   end
   -- A path git C-quoted (`"we\"ird.env"`: a `"`, a `\`, a control
   -- character in it, whatever `core.quotePath`) as it is spelled.
@@ -267,6 +293,7 @@ function vcs.shown_patch(text, root)
         i = i + 1
       else
         local function any() for _, c in ipairs(left) do if c > 0 then return true end end end
+        old_at[#old_at + 1], new_at[#new_at + 1] = #old + 1, #new + 1
         i = i + 1
         while i <= #lines and any() do
           local b = lines[i]
