@@ -654,6 +654,10 @@ const DOCS: &[(&str, &str)] = &[
         "types and parameter names from the language server, drawn in the line",
     ),
     (
+        "lsp.idle_stop_secs",
+        "seconds a language server may hold no open file before it is shut down; `0` keeps it running",
+    ),
+    (
         "secrets.forget_secs",
         "seconds a secret stays in the register after it was last yanked or put",
     ),
@@ -1139,6 +1143,12 @@ impl Settings {
         // Inlay hints from the language server — types, parameter names —
         // drawn in the line, faint (`<leader>oh` flips it).
         defaults.set("lsp.inlay_hints", Setting::Bool(false));
+        // A server holding no open file is shut down after this long
+        // (lsp-rules.md Decision 12): long enough that closing a
+        // project's last file and opening another does not pay for a
+        // second start — rust-analyzer's indexing — short enough that a
+        // server started for one file looked at does not stay all day.
+        defaults.set("lsp.idle_stop_secs", Setting::Int(300));
         // Secrets (docs/design/secrets.md): the masks, named rules a
         // user adds to or switches off (`secrets.masks.env = false`);
         // a file a `files` rule names is private. A key commented out
@@ -2149,6 +2159,7 @@ mod tests {
                 "layout.new_tab",
                 "layout.scroll.center",
                 "leader",
+                "lsp.idle_stop_secs",
                 "lsp.inlay_hints",
                 "markdown.heading",
                 "markdown.image_max_mb",

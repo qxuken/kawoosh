@@ -3920,7 +3920,7 @@ pub fn defines_server(t: &Setting) -> bool {
 /// The keys of `lsp.NAME` that are the server or the shell's rules, and
 /// of `lsp` that are not servers: no plugin's rule may be one, or
 /// `lsp.RULE` would read as one of them.
-const LSP_TAKEN: [&str; 15] = [
+const LSP_TAKEN: [&str; 16] = [
     "cmd",
     "args",
     "roots",
@@ -3933,6 +3933,7 @@ const LSP_TAKEN: [&str; 15] = [
     "load_all",
     "load_max",
     "inlay_hints",
+    "idle_stop_secs",
     "ensure_installed",
     "check_updates",
     "server",
@@ -5714,9 +5715,9 @@ fn seed(
     // the rules of the server for a
     // buffer (`where` a handle, `0` or nil the current one) or a
     // language (a name): `{ server = NAME, enabled =, load_all =,
-    // load_max =, inlay_hints = }` with every rule a plugin declared, each
-    // as the settings say it now — `lsp.NAME.RULE`, else `lsp.RULE`, else
-    // its default. `server` is the `lsp.NAME` a rule is set under: a
+    // load_max =, inlay_hints =, idle_stop_secs = }` with every rule a
+    // plugin declared, each as the settings say it now — `lsp.NAME.RULE`,
+    // else `lsp.RULE`, else its default. `server` is the `lsp.NAME` a rule is set under: a
     // `.tsx` buffer's is `typescript`.
     //
     // @class kawoosh.lsp.Rules
@@ -5785,6 +5786,12 @@ fn seed(
                 said("inlay_hints")
                     .and_then(Setting::as_bool)
                     .unwrap_or(false),
+            )?;
+            t.set(
+                "idle_stop_secs",
+                said("idle_stop_secs")
+                    .and_then(Setting::as_int)
+                    .map_or(0, |n| n.max(0)),
             )?;
             for (rule, default) in dd.borrow().iter() {
                 t.set(rule.as_str(), to_lua(lua, said(rule).unwrap_or(default))?)?;

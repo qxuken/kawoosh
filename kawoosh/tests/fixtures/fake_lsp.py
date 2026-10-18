@@ -106,15 +106,30 @@ candidates are then `pair` and `none` (functions, plain, each
 documented) and, told
 `snippetSupport`, `pair_snip(…)` (a function whose snippet puts
 `pair_snip(${1:a}, ${2:b})$0`). With `--signature-never` too it never
-answers a signature, for a test that hands the answer in itself."""
+answers a signature, for a test that hands the answer in itself.
+Instances (lsp-rules.md Decisions 10, 12): `initialize` says on stderr
+"fake server in NAME", NAME its root's last folder, so two instances
+say apart; it says "fake server pid PID" as it starts, so a test can
+ask whether the process is gone or left a zombie; `exit` says "fake
+server exiting" and exits, as the protocol has it after `shutdown` —
+but with `--exit-never` it stays, to be killed; with `--hover-never` it
+never answers a hover, a request left in flight; with `--grandchild` it
+starts a `sleep 20` holding its stdout and stderr, so they stay open
+after it exits; with `--publish-on-shutdown` a `shutdown` is answered
+after a warning "late" published for `src/late.rs` under its root."""
 import json
 import re, sys
 
 docs = {}
+served_root = None
 snippet_support = False
 ended = False
 last_uri = None
 print("fake server starting", file=sys.stderr, flush=True)
+print("fake server pid %d" % __import__("os").getpid(), file=sys.stderr, flush=True)
+if "--grandchild" in sys.argv:
+    import subprocess
+    subprocess.Popen(["sleep", "20"])
 
 def path_of(uri):
     from urllib.parse import unquote, urlparse
@@ -276,6 +291,20 @@ while True:
         break
     method = m.get("method")
     mid = m.get("id")
+    if method == "initialize":
+        served_root = path_of(m["params"].get("rootUri") or "").rstrip("/")
+        print("fake server in " + served_root.rsplit("/", 1)[-1], file=sys.stderr, flush=True)
+    if method == "exit" and "--exit-never" not in sys.argv:
+        print("fake server exiting", file=sys.stderr, flush=True)
+        sys.exit(0)
+    if method == "shutdown" and "--publish-on-shutdown" in sys.argv:
+        late = "file://" + served_root + "/src/late.rs"
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+            "uri": late, "diagnostics": [{"range": {"start": {"line": 0, "character": 0},
+                                                    "end": {"line": 0, "character": 1}},
+                                          "severity": 2, "message": "late"}]}})
+    if method == "textDocument/hover" and "--hover-never" in sys.argv:
+        continue
     if method is None:
         # A response to a request of ours: `--ask`'s is said back.
         if ASK and mid == 4000:

@@ -448,6 +448,128 @@ used here asks for them); the text read back from the disk for
 `includeText` (the pool's copy is what was written, and a read is a
 round trip on a host).
 
+### 10. Each instance's logs its own
+
+*Added 2026-10-17*, from the `:lsp` pane: two rust-analyzers —
+`kawoosh` and `kui` — showed the same "said" lines, and each lua-language-server
+listed both instances' "Log path". What a server said was kept by its
+command, and every instance of one server shared one stream.
+
+- **Kept by instance**: the command and the root it serves
+  (`Event::Message`'s `root`, `ServerLogs` keyed by both), each line
+  tagged with which instance there said it (`Event::Message`'s
+  `instance`, numbered 1, 2, … per root): one stopped or crashed and the
+  one started after it at the same root are told apart, `#1` and `#2`
+  in `*lsp logs*` once there are two. `:lsp info`'s block for each
+  instance shows the running one's tail, not its predecessor's last
+  words.
+- **Bounded in all.** 5000 lines a stream and 10 000 together
+  (`LOG_TOTAL`), the oldest going first whoever said them, a stream let
+  go of once empty: a go-to-definition into each crate of a registry
+  starts a server per crate root, and their streams would otherwise
+  stay, each re-sorted into `*lsp logs*` at every line.
+- **`:lsp logs`** bare shows the instance serving the caret's file — the
+  language's server whose root is nearest above it — or, for a file
+  under none (a library's), every instance of that server; `:lsp logs
+  LANGUAGE` every instance of its server, a line labelled with its root
+  when there are two or more; `:lsp logs all` every one's, by server and
+  root. `:lsp logs clear` forgets them all.
+
+### 11. A library's file is the running server's
+
+*Added 2026-10-17*, from the `:lsp` pane: a lua-language-server rooted
+at this build's types folder, holding 0 documents. The Lua server's
+settings put that folder on `Lua.workspace.library` (`types.rs`); a
+go-to-definition from a config into `kawoosh.lua` opened the file, and
+the file's workspace root — no marker above
+`~/.local/share/kawoosh/types/kawoosh-HASH`, no repository — was its
+own folder: a second lua-language-server, with nothing of the
+config's, started there.
+
+- **A definition says its libraries** (`ServerDef::libraries`): folders
+  it reads as part of a workspace, not as one, each with the folder
+  whose instance takes its files first (`Library::home`). The shell puts
+  the types folder there for `lsp.lua`, beside the library setting, its
+  home the config folder. Nothing on disk says so — there is no `.luarc`
+  in the config; the library reaches every Lua instance through its
+  settings — so the shell says it.
+- **A file under one goes to an instance running as the definition
+  does** (`library_pick`): only one on the file's own domain — a host's
+  server is never handed a file of this machine's, which would come
+  back spelled `box:/Users/…`; of those the one serving the home (the
+  nearest root at or above it); else the one the file went to before,
+  while that runs (`Pool::library_homes`); else the one last sent a
+  buffer. Remembered, the choice sticks: edits in turn in the config and
+  in another Lua project do not close and reopen the types on each
+  server in turn. With none running the file is a workspace's as any
+  file is.
+
+Beaten: the folder made a workspace root of its own with a marker
+(still a second server); a rule that a file a server's answer pointed
+to is that server's (a session restoring the file, or `:e` on it,
+would not know); rust's registry and toolchain sources the same way —
+a file there is found under its crate's `Cargo.toml`, and whether
+rust-analyzer should be one per crate there is its own question, not
+looked at here.
+
+### 12. A server holding no buffer is shut down
+
+*Added 2026-10-17*, from the `:lsp` pane showing a lua-language-server
+rooted at the Lua types' folder with 0 documents: started for a file
+looked at, it ran until kawoosh quit. Nothing stopped a server but a
+rule switched off, `:lsp restart` or its own crash.
+
+- **When.** An instance that has held no buffer for
+  `lsp.idle_stop_secs` — 300 by default, `lsp.NAME.idle_stop_secs` for
+  one server, `0` for never — is shut down. Its idle clock starts when
+  the last buffer it held closes (`close_on`) and stops when it is sent
+  one. A buffer is held from its first sync until it is closed (`:bd`),
+  on show or not: switching away from a project's file keeps its
+  server. A file `load_all` sent it is not a buffer, so a project whose
+  every file is closed lets its server go, the loaded files'
+  diagnostics taken back with it (`unpublish`). Five minutes, not one:
+  closing a project's last file and opening another should not pay for
+  a second start — rust-analyzer indexes the whole workspace again —
+  and a server started for one file glanced at is still gone well
+  before the day is.
+- **Never while it is starting** (its `initialize` unanswered) **or
+  while a request of ours is out** — a hover, a workspace pull, a
+  relayed request: the answer is waited for, and the stop comes with
+  the loop that reads it. A server that never answers is never stopped
+  this way; `:lsp restart` is still there.
+- **How.** `shutdown`, then `exit` once it is answered (or refused).
+  The instance moves out of the pool's servers into `Pool::stopping`
+  at once: a file of its root opened meanwhile starts another, and
+  nothing reaches it after its `shutdown` — no change of a watched
+  file, no file `load_all` read, no settings — nor is anything it
+  publishes then taken (`heard_while_stopping` keeps its answer to `shutdown`,
+  its log lines and its exit, and drops the rest): a late word would
+  stay on screen, and merge with the next instance's at that root. Its
+  exit is no crash (`Exited` is not said, the three-exits count not
+  moved). [`STOP_GRACE`](../../systems/src/lsp.rs) — three seconds —
+  after the `shutdown` it is judged by its own status, not by its
+  output closing, which a child of its own may hold open: exited, it is
+  let go of quietly; still running, killed.
+- **Reaped.** Every server process ended — exited after `shutdown`,
+  killed after the grace, dropped by `:lsp restart` or a rule switched
+  off — is waited for (`ServerProc::reap`, in `Drop`): at once when it
+  has exited, else on a thread of its own, since a process only killed
+  a moment ago may not be gone yet. Before, only a crash read a
+  server's status, and every other stop left a zombie until kawoosh
+  quit.
+- **Said in the log**, as the server's own line — "no buffer open for
+  300 s; shutting down (lsp.idle_stop_secs)", and "did not exit 3 s
+  after shutdown; killed" — never the corner or a toast: no one is
+  waiting on a server that serves nothing (lsp-servers.md Decision 4).
+- **The pool keeps time.** Its loop waits on the soonest server due
+  (`Pool::next_due`) beside its channels, and checks it whatever woke
+  it, so a server's flood of stderr does not hold another's stop back.
+
+Beaten: a stop on the buffer's close (a `:bd` and `:e` of the same
+project would restart rust-analyzer); one minute (the same, a little
+later); a cap on the instances of one server instead (the one stopped
+would not be the one idle).
+
 ## Not built
 
 - ~~**A loaded file changed on disk by another program** is not read

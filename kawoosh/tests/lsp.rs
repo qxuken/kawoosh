@@ -2286,8 +2286,13 @@ fn lsp_logs_keep_what_a_server_said() {
         until(&mut d, &mut app, |a| a
             .lsp
             .logs
-            .of(&server)
-            .any(|l| l.text == "fake server starting")),
+            .instances()
+            .filter(|(s, _)| *s == server)
+            .any(|(s, r)| a
+                .lsp
+                .logs
+                .of(s, r)
+                .any(|l| l.text == "fake server starting"))),
         "the stderr line kept"
     );
     assert!(
@@ -3576,4 +3581,516 @@ fn a_template_server_beside_the_language_s_own() {
         answered(&app)
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A project folder under `base` named `name`: a `Cargo.toml` and a
+/// `src/main.rs`, whose path is returned.
+fn project(base: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let dir = base.join(name);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n}\n").unwrap();
+    file
+}
+
+/// What the instances of `server` whose root's last folder is `name`
+/// said.
+fn said_in(app: &Kawoosh, server: &str, name: &str) -> Vec<String> {
+    app.lsp
+        .logs
+        .instances()
+        .filter(|(s, r)| *s == server && r.file_name().is_some_and(|f| f == name))
+        .flat_map(|(s, r)| app.lsp.logs.of(s, r).map(|l| l.text.clone()))
+        .collect()
+}
+
+/// Two instances of one server — one per project root — keep what each
+/// said apart (lsp-rules.md Decision 10): the `:lsp info` pane shows
+/// each its own tail, bare `:lsp logs` the caret's instance, `:lsp logs
+/// LANGUAGE` both by root, `:lsp logs all` every one by server and root.
+#[test]
+fn two_instances_of_one_server_keep_their_own_logs() {
+    let server = fake_server().command;
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-instances-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let alpha = project(&base, "alpha");
+    let beta = project(&base, "beta");
+
+    let mut app = Kawoosh::from_file(&alpha);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.len() == 1),
+        "alpha's server"
+    );
+    app.open_in_editor(&beta, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.len() == 2
+            && said_in(a, &server, "alpha")
+                .contains(&"fake server in alpha".to_string())
+            && said_in(a, &server, "beta")
+                .contains(&"fake server in beta".to_string())),
+        "two instances, each saying its root: {:?}",
+        app.lsp.logs.instances().collect::<Vec<_>>()
+    );
+    assert!(
+        !said_in(&app, &server, "alpha").contains(&"fake server in beta".to_string()),
+        "alpha's log is alpha's alone"
+    );
+    assert!(!said_in(&app, &server, "beta").contains(&"fake server in alpha".to_string()));
+
+    // The status pane: each instance's block has its own tail.
+    ex(&mut d, &mut app, "lsp info");
+    let shown = |a: &Kawoosh| a.ed.buffer_of(a.focused_view().unwrap()).text();
+    let info = shown(&app);
+    let blocks: Vec<&str> = info
+        .split("\n\n")
+        .filter(|b| !b.trim().is_empty())
+        .collect();
+    assert_eq!(blocks.len(), 2, "{info}");
+    for (name, other) in [("alpha", "beta"), ("beta", "alpha")] {
+        let block = blocks
+            .iter()
+            .find(|b| b.lines().nth(1).is_some_and(|l| l.ends_with(name)))
+            .unwrap_or_else(|| panic!("{name}'s block: {info}"));
+        assert!(block.contains(&format!("fake server in {name}")), "{block}");
+        assert!(
+            !block.contains(&format!("fake server in {other}")),
+            "{block}"
+        );
+    }
+    d.keys(&mut app, "q");
+
+    // Bare: the instance serving the caret's file, beta's.
+    ex(&mut d, &mut app, "lsp logs");
+    let text = shown(&app);
+    assert!(text.contains("  stderr  fake server in beta\n"), "{text}");
+    assert!(!text.contains("fake server in alpha"), "{text}");
+    d.keys(&mut app, "q");
+
+    // The language's: both, each line by its root.
+    ex(&mut d, &mut app, "lsp logs rust");
+    let text = shown(&app);
+    let root_of = |name: &str| {
+        let r = app
+            .lsp
+            .status
+            .iter()
+            .find(|s| s.0.file_name().is_some_and(|f| f == name))
+            .unwrap();
+        kawoosh_systems::fs::abbreviate_home(&r.0)
+    };
+    let (ra, rb) = (root_of("alpha"), root_of("beta"));
+    assert!(
+        text.contains(&format!("  {ra}  stderr  fake server in alpha\n")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("  {rb}  stderr  fake server in beta\n")),
+        "{text}"
+    );
+    d.keys(&mut app, "q");
+
+    // Every one's: by server and root.
+    ex(&mut d, &mut app, "lsp logs all");
+    let text = shown(&app);
+    assert!(
+        text.contains(&format!("  {server} {ra}  stderr  fake server in alpha\n")),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// A server holding no buffer for `lsp.idle_stop_secs` is shut down —
+/// `shutdown`, then `exit`, which it heeds — and said so in the log, not
+/// the corner; a file of its root opened again starts it as usual
+/// (lsp-rules.md Decision 12).
+#[test]
+fn a_server_holding_no_buffer_stops_and_starts_again() {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let server = fake_server().command;
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-idle-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let file = project(&base, "proj");
+    let notes = base.join("notes.txt");
+    std::fs::write(&notes, "notes\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&notes);
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.idle_stop_secs", Setting::Int(1));
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    app.open_in_editor(&file, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)),
+        "the server holds the file"
+    );
+    // Held, it stays past its period.
+    let held = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+    while std::time::Instant::now() < held {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(app.lsp.status.len(), 1, "a server holding a buffer stays");
+
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).name,
+        "notes.txt"
+    );
+    let said = "no buffer open for 1 s; shutting down (lsp.idle_stop_secs)";
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.is_empty()
+            && said_in(a, &server, "proj")
+                .contains(&"fake server exiting".to_string())),
+        "stopped, exiting as told: {:?}",
+        said_in(&app, &server, "proj")
+    );
+    assert!(said_in(&app, &server, "proj").contains(&said.to_string()));
+    let logged = app
+        .notes
+        .log
+        .iter()
+        .find(|e| e.text == said)
+        .expect("logged");
+    assert_eq!(logged.source.as_deref(), Some(server.as_str()));
+    assert!(!noted(&app, said), "the log's alone, not the corner");
+    assert!(
+        !app.notes
+            .log
+            .iter()
+            .any(|e| e.text.contains("started again") || e.text.contains("exited")),
+        "no crash said: {:?}",
+        app.notes.log.iter().map(|e| &e.text).collect::<Vec<_>>()
+    );
+
+    // Opened again: started again, as for any file.
+    app.open_in_editor(&file, None, None);
+    let v = app.focused_view().unwrap();
+    let id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)
+            && msgs(a, id) == ["boom"]),
+        "a new instance: {:?}",
+        app.lsp.status
+    );
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// A server with a request of ours out is not stopped, however long it
+/// has held no buffer: its answer is waited for.
+#[test]
+fn a_server_with_a_request_in_flight_is_not_stopped() {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-inflight-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let file = project(&base, "proj");
+    let notes = base.join("notes.txt");
+    std::fs::write(&notes, "notes\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&notes);
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.idle_stop_secs", Setting::Int(1));
+    let mut def = fake_server();
+    def.args.push("--hover-never".into());
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    app.open_in_editor(&file, None, None);
+    let v = app.focused_view().unwrap();
+    let id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, id) == ["boom"]),
+        "the server is up and holds the file"
+    );
+    ex(&mut d, &mut app, "lsp hover");
+    ex(&mut d, &mut app, "bd");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 0)),
+        "it holds no buffer"
+    );
+    let past = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < past {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(
+        app.lsp.status.len(),
+        1,
+        "still running, its hover unanswered"
+    );
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// A file under a server's library — the Lua API's types, opened by a
+/// go-to-definition from a config — goes to the instance running, not
+/// to one started in its folder (lsp-rules.md Decision 11).
+#[test]
+fn a_library_file_goes_to_the_running_instance() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-library-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let file = project(&base, "config");
+    let library = base.join("types");
+    std::fs::create_dir_all(&library).unwrap();
+    let types = library.join("api.rs");
+    std::fs::write(&types, "fn api() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    let mut def = fake_server();
+    def.libraries = vec![kawoosh_systems::lsp::Library {
+        folder: library.clone(),
+        home: None,
+    }];
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)),
+        "the config's server holds its file"
+    );
+    app.open_in_editor(&types, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 2)),
+        "the library file joined it: {:?}",
+        app.lsp.status
+    );
+    assert_eq!(app.lsp.status.len(), 1, "no server of its own");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// The pid the fake server said last in the instances whose root's last
+/// folder is `name`: the newest one's.
+fn pid_in(app: &Kawoosh, server: &str, name: &str) -> Option<u32> {
+    said_in(app, server, name)
+        .iter()
+        .rev()
+        .find_map(|l| l.strip_prefix("fake server pid ")?.parse().ok())
+}
+
+/// Whether process `pid` is still there — running, or a zombie no one
+/// waited for (`ps` lists both).
+#[cfg(unix)]
+fn process_left(pid: u32) -> bool {
+    let out = kawoosh_systems::spawn::output(std::process::Command::new("ps").args([
+        "-o",
+        "stat=",
+        "-p",
+        &pid.to_string(),
+    ]))
+    .expect("ps");
+    !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+}
+
+/// An app on a notes file with the fake server — `extra` its further
+/// arguments — stopped after 1 s idle, then the project's file opened
+/// until the server holds it: the app, the drive, the file and the
+/// server's command.
+fn idle_project(
+    base: &std::path::Path,
+    extra: &[&str],
+) -> (Kawoosh, Drive, std::path::PathBuf, String) {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let _ = std::fs::remove_dir_all(base);
+    let file = project(base, "proj");
+    let notes = base.join("notes.txt");
+    std::fs::write(&notes, "notes\n").unwrap();
+    let mut app = Kawoosh::from_file(&notes);
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.idle_stop_secs", Setting::Int(1));
+    let mut def = fake_server();
+    def.args.extend(extra.iter().map(|a| a.to_string()));
+    let server = def.command.clone();
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    app.open_in_editor(&file, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)
+            && pid_in(a, &server, "proj").is_some()),
+        "the server holds the file"
+    );
+    (app, d, file, server)
+}
+
+/// A server stopped — idle, or by `:lsp restart` — is waited for, and
+/// leaves no zombie behind; after a restart at its root, `:lsp info`
+/// shows the new instance's tail, not the old one's last words
+/// (lsp-rules.md Decisions 10, 12).
+#[cfg(unix)]
+#[test]
+fn a_stopped_server_leaves_no_zombie() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-reap-{}", std::process::id()));
+    let (mut app, mut d, file, server) = idle_project(&base, &[]);
+    let first = pid_in(&app, &server, "proj").unwrap();
+    ex(&mut d, &mut app, "bd");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.is_empty()
+            && !process_left(first)),
+        "stopped idle, and reaped: pid {first} left"
+    );
+
+    app.open_in_editor(&file, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)
+            && pid_in(a, &server, "proj").is_some_and(|p| p != first)),
+        "a new instance"
+    );
+    let second = pid_in(&app, &server, "proj").unwrap();
+    ex(&mut d, &mut app, "lsp info");
+    let info = app.ed.buffer_of(app.focused_view().unwrap()).text();
+    assert!(info.contains("fake server in proj"), "{info}");
+    assert!(
+        !info.contains("fake server exiting"),
+        "the instance before it is not this one's tail: {info}"
+    );
+    d.keys(&mut app, "q");
+
+    ex(&mut d, &mut app, "lsp restart");
+    assert!(
+        until(&mut d, &mut app, |_| !process_left(second)),
+        "restarted, the old one reaped: pid {second} left"
+    );
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// One that does not heed `exit` is killed `STOP_GRACE` after its
+/// `shutdown`, said in the log, and reaped.
+#[cfg(unix)]
+#[test]
+fn a_server_ignoring_exit_is_killed_and_reaped() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-kill-{}", std::process::id()));
+    let (mut app, mut d, _, server) = idle_project(&base, &["--exit-never"]);
+    let pid = pid_in(&app, &server, "proj").unwrap();
+    ex(&mut d, &mut app, "bd");
+    let killed = "did not exit 3 s after shutdown; killed";
+    assert!(
+        until(&mut d, &mut app, |a| said_in(a, &server, "proj")
+            .contains(&killed.to_string())
+            && !process_left(pid)),
+        "killed and reaped: pid {pid} left; {:?}",
+        said_in(&app, &server, "proj")
+    );
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// One that exits as told while a child of its own holds its output
+/// open is gone by its own status: not said killed, and reaped.
+#[cfg(unix)]
+#[test]
+fn a_server_whose_child_holds_its_output_is_not_said_killed() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-grandchild-{}", std::process::id()));
+    let (mut app, mut d, _, server) = idle_project(&base, &["--grandchild"]);
+    let pid = pid_in(&app, &server, "proj").unwrap();
+    ex(&mut d, &mut app, "bd");
+    assert!(
+        until(&mut d, &mut app, |a| said_in(a, &server, "proj")
+            .contains(&"fake server exiting".to_string())),
+        "told to exit"
+    );
+    // Past the grace a stop is judged at.
+    let past = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while std::time::Instant::now() < past {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        !said_in(&app, &server, "proj")
+            .iter()
+            .any(|l| l.contains("killed")),
+        "it exited: {:?}",
+        said_in(&app, &server, "proj")
+    );
+    assert!(!process_left(pid), "reaped: pid {pid} left");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// What a server asked to shut down still publishes is no one's: its
+/// late diagnostics do not land.
+#[cfg(unix)]
+#[test]
+fn a_stopping_servers_late_diagnostics_are_dropped() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-late-{}", std::process::id()));
+    let (mut app, mut d, _, server) = idle_project(&base, &["--publish-on-shutdown"]);
+    ex(&mut d, &mut app, "bd");
+    // Exiting comes after the late word and the answer to `shutdown`.
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.is_empty()
+            && said_in(a, &server, "proj")
+                .contains(&"fake server exiting".to_string())),
+        "stopped"
+    );
+    for _ in 0..20 {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let late: Vec<_> = app
+        .ed
+        .diagnostics
+        .files()
+        .filter(|(_, l)| l.iter().any(|p| p.diagnostic.message == "late"))
+        .map(|(p, _)| p.clone())
+        .collect();
+    assert!(late.is_empty(), "late diagnostics landed on {late:?}");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// A library file stays with the instance it went to while that runs,
+/// however the others are used meanwhile (lsp-rules.md Decision 11).
+#[test]
+fn a_library_file_stays_with_its_instance() {
+    let base =
+        std::env::temp_dir().join(format!("kawoosh-lsp-library-kept-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let config = project(&base, "config");
+    let other = project(&base, "other");
+    let library = base.join("types");
+    std::fs::create_dir_all(&library).unwrap();
+    let types = library.join("api.rs");
+    std::fs::write(&types, "fn api() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&config);
+    let mut def = fake_server();
+    def.libraries = vec![kawoosh_systems::lsp::Library {
+        folder: library.clone(),
+        home: None,
+    }];
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    let docs = |a: &Kawoosh, name: &str| {
+        a.lsp
+            .status
+            .iter()
+            .find(|s| s.0.file_name().is_some_and(|f| f == name))
+            .map(|s| s.2)
+    };
+    assert!(until(&mut d, &mut app, |a| docs(a, "config") == Some(1)));
+    app.open_in_editor(&types, None, None);
+    assert!(until(&mut d, &mut app, |a| docs(a, "config") == Some(2)));
+    // Another project's server, the one last sent a buffer.
+    app.open_in_editor(&other, None, None);
+    assert!(until(&mut d, &mut app, |a| docs(a, "other") == Some(1)));
+    d.keys(&mut app, "O");
+    d.commit(&mut app, "// there");
+    d.key(&mut app, "escape", KeyMods::default());
+    // An edit in the library file.
+    app.open_in_editor(&types, None, None);
+    d.keys(&mut app, "O");
+    d.commit(&mut app, "// here");
+    d.key(&mut app, "escape", KeyMods::default());
+    let settle = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < settle {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(
+        (docs(&app, "config"), docs(&app, "other")),
+        (Some(2), Some(1)),
+        "it stayed: {:?}",
+        app.lsp.status
+    );
+    std::fs::remove_dir_all(&base).ok();
 }

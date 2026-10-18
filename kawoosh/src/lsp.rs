@@ -480,11 +480,13 @@ impl Kawoosh {
                 // what the user must answer (lsp-servers.md Decision 4).
                 Event::Message {
                     server,
+                    root,
+                    instance,
                     kind,
                     text,
                     log,
                 } => {
-                    self.lsp.logs.push(&server, kind, &text);
+                    self.lsp.logs.push(&server, &root, instance, kind, &text);
                     let note = Note::new(Level::from_lsp(kind), text)
                         .source(server)
                         .show(if log { Show::Log } else { Show::Corner });
@@ -2045,8 +2047,10 @@ impl Kawoosh {
             for p in open {
                 out += &format!("        {p}\n");
             }
-            // The tail of what it said; `:lsp logs` has the rest.
-            let said: Vec<&crate::lsp_logs::Said> = self.lsp.logs.of(cmd).rev().take(20).collect();
+            // The tail of what this instance said — the one running, not
+            // one before a restart there; `:lsp logs` has the rest.
+            let said: Vec<&crate::lsp_logs::Said> =
+                self.lsp.logs.current(cmd, root).rev().take(20).collect();
             if !said.is_empty() {
                 out += "  said  (all of it: :lsp logs)\n";
                 for e in said.into_iter().rev() {
