@@ -115,6 +115,12 @@ says: `<leader>sf` → **`<leader>F`**, `<leader>sg` → **`<leader>G`**.
 recent, `sr` resume, `sd` the directory jumps. The rest leave it for
 their modules (below).
 
+Amended 2026-10-18: `<leader>sF` and `<leader>sG` spell `F` and `G`
+again under `s`, beside `sS` — the three "from here" searches in one
+group. Asked: "let's also add `<leader>s`-F/G to search here". `F` and
+`G` stay; `sf` and `sg` stay gone (the lower case is the project's, and
+that is `f` and `g`).
+
 ### Buffers: `<leader>b`
 
 `bd` `bD` `bo` stay. `bb` goes (`<leader><leader>`), `bn` `bp` go

@@ -428,7 +428,7 @@ finds nothing on them (`<C-\>ZT` says `ZT: not bound`).
 | `<leader><leader>` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; the query matched on the name, then on the path as the row writes it; `<C-x>` closes the row's |
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
-| `<leader>F` `<leader>G` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
+| `<leader>F` `<leader>G` (`<leader>sF` `<leader>sG`) | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
 | `<leader>/` | the buffer's lines, the pane following the cursor as `grs` does |
 | `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
 | `<leader>d` `<leader>D` | the diagnostics as `*diagnostics*` beside the code ([lists.md](lists.md)): the workspace's — a file never opened among them when its server spoke of it — or the file's (`:diagnostics`, `:diagnostics buffer`); each message whole under its line in its severity's colour, errors' files first, made again as they move but not while the keyboard is in it; `]q` walks them |

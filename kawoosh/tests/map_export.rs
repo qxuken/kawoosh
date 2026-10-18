@@ -128,6 +128,8 @@ fn the_keys_are_grouped_by_module() {
         ("<leader>'", "picker marks"),
         ("<leader>F", "picker files here"),
         ("<leader>G", "picker grep here"),
+        ("<leader>sF", "picker files here"),
+        ("<leader>sG", "picker grep here"),
         ("<leader>t", "picker tools"),
         ("<leader>ww", "picker workspaces"),
         ("<leader>oh", "lsp hints"),

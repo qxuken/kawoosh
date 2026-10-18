@@ -2729,6 +2729,9 @@ kawoosh.map("n", "<leader>g", "picker grep")
 -- The same two from the file's directory (a listing's own in `dir`).
 kawoosh.map("n", "<leader>F", "picker files here")
 kawoosh.map("n", "<leader>G", "picker grep here")
+-- And under `<leader>s` beside `sS`, the project search from there.
+kawoosh.map("n", "<leader>sF", "picker files here")
+kawoosh.map("n", "<leader>sG", "picker grep here")
 kawoosh.map("n", "<leader>/", "picker lines")
 kawoosh.map("n", "<leader>.", "picker smart")
 kawoosh.map("n", "<leader><leader>", "picker buffers")

@@ -134,9 +134,9 @@ and every other list you type into to narrow.
 | keys | picker |
 |---|---|
 | `<leader>f` | files under the working directory (those git does not ignore) |
-| `<leader>F` | files under the current file's directory, or the listing's (`:picker files here`); in a directory the project ignores, such as `node_modules` or `target`, all of its files |
+| `<leader>F` `<leader>sF` | files under the current file's directory, or the listing's (`:picker files here`); in a directory the project ignores, such as `node_modules` or `target`, all of its files |
 | `<leader>g` | grep the project as you type (needs `rg`) |
-| `<leader>G` | grep from the current file's directory (`:picker grep here`) |
+| `<leader>G` `<leader>sG` | grep from the current file's directory (`:picker grep here`) |
 | `<leader><leader>` | open buffers, the current one last, so `<CR>` at once goes to the previous one; the query matches a buffer's path too, so a directory finds the buffers under it, a name's match first |
 | `<leader>/` | lines of the current buffer |
 | `<leader>.` | buffers, then files opened before, then all files |
