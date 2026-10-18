@@ -44,7 +44,7 @@
 -- the picker's laid-out body has room (`picker.place`,
 -- docs/design/picker.md Decision 1): beside the list when wide enough
 -- for both, below it when tall enough, else none, the head saying
--- `⌥P preview`, `<A-p>` drawing it anyway. The pane
+-- `⌥p preview`, `<A-p>` drawing it anyway. The pane
 -- opens at `picker.share` of the height and the list takes
 -- `picker.split` of its width beside the preview (`picker.split_below`
 -- of its height above one): `<A-K>` `<A-J>` make the pane taller and
@@ -1184,6 +1184,7 @@ end
 local function loaded(items, err, info)
   if not P then return end
   P.loading = false
+  P.read = true
   P.capped = info and info.capped or false
   if not items then
     P.note = tostring(err)
@@ -1191,6 +1192,7 @@ local function loaded(items, err, info)
     P.matcher = nil
     return
   end
+  P.note = nil
   items = boosted(items)
   P.items = items
   local texts, wide = {}, {}
@@ -1570,8 +1572,13 @@ kawoosh.view(VIEW, function(ctx)
   P.rows = rows
   if P.top > math.max(#P.hits, 1) then P.top = math.max(#P.hits, 1) end
   if P.top < 1 then P.top = 1 end
+  -- A reload (`<A-g>`, a source read again) keeps the count it had
+  -- until its answer lands: one answered by the next frame would blink
+  -- `reading…` and back. The `<A-g>` chip, lit at once, says the key
+  -- was heard. Only a first read, with nothing to count yet, says so.
+  local reading = P.loading and (P.src.search or not P.read)
   local count
-  if P.loading then
+  if reading then
     count = P.src.search and "searching…" or "reading…"
   elseif P.note then
     count = P.note
@@ -1581,7 +1588,7 @@ kawoosh.view(VIEW, function(ctx)
     count = tostring(#P.hits)
   end
   -- A walk stopped at its cap says so: what was not walked is not here.
-  if P.capped and not P.loading then count = count .. " · walk stopped at " .. #P.items end
+  if P.capped and not reading then count = count .. " · walk stopped at " .. #P.items end
   local head = row {
     width = "grow", height = ROW_H + 4, pad = { x = 8 }, gap = 8, cross_align = "center",
     bg = t.surface,
@@ -1595,9 +1602,11 @@ kawoosh.view(VIEW, function(ctx)
   -- `<A-g>`'s state, on a source that has it: lit while on.
   if P.src.ignored then
     local on = P.ctx.ignored == true
-    head[#head + 1] = row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, cross_align = "center",
+    local fg = on and t.bg or t.faint
+    head[#head + 1] = row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, gap = 4, cross_align = "center",
       bg = on and t.accent or nil, hover_bg = not on and t.sunken or nil, on_click = { kind = "ignored" },
-      text("⌥G ignored", { size = SMALL, color = on and t.bg or t.faint, wrap = "none" }) }
+      ctx.keys("<A-g>", { size = SMALL, color = fg, border = on and fg or nil }),
+      text("ignored", { size = SMALL, color = fg, wrap = "none" }) }
   end
   local indent = P.src.tree and (P.query or "") == "" and function(it) return it.depth or 0 end or nil
   -- A row the pointer left is forgotten by the next frame: a row
@@ -1606,7 +1615,7 @@ kawoosh.view(VIEW, function(ctx)
   local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows, wrap = P.wrap, lines = lines_of,
                                           columns = P.src.columns, widths = P.widths, width = P.list_w,
                                           indent = indent, hover = "row", icon = P.src.icon })
-  if #P.hits == 0 and not P.loading then
+  if #P.hits == 0 and not reading then
     list[#list + 1] = row { pad = { x = 8, y = 4 }, text((P.query ~= "" and "no matches") or P.src.empty or "nothing here", { size = SIZE, color = t.muted }) }
   end
   local body = (place == "below" and column or row) { width = "grow", height = "grow", gap = 0, list }
@@ -1647,8 +1656,9 @@ kawoosh.view(VIEW, function(ctx)
   end
   if not place and not P.src.follow and previewing() and P.shown == nil then
     -- No room for one: the way to it anyway, `<A-p>`, at the head's end.
-    head[#head + 1] = row { on_click = { kind = "preview" }, height = ROW_H, cross_align = "center",
-      text("⌥P preview", { size = SMALL, color = t.faint, wrap = "none" }) }
+    head[#head + 1] = row { on_click = { kind = "preview" }, height = ROW_H, gap = 4, cross_align = "center",
+      ctx.keys("<A-p>", { size = SMALL, color = t.faint }),
+      text("preview", { size = SMALL, color = t.faint, wrap = "none" }) }
   end
 
   return column { width = "grow", height = "grow", clip = true, gap = 0, head, body }

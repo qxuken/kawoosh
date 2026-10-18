@@ -48,7 +48,7 @@ window dragged moves it on the next frame (`picker.place`):
 2. else **below the list** when the height holds both — `LIST_ROWS` = 4
    rows and the preview's 4 lines: about 190 px of body — and the width
    holds the wider of the two;
-3. else **none**, and the head ends in a faint `⌥P preview`.
+3. else **none**, and the head ends in a faint `⌥p preview`.
 
 The least are in characters of the faces as they are (`kawoosh.metrics`),
 so a bigger font asks for more pixels. Beside wins when both fit: a wide
@@ -76,7 +76,7 @@ shows one that is not — drawn even where `auto` finds too little, or
 the setting is `off`: beside or below, whichever has the more room
 against its least. The setting is never written: the next picker opens
 by `picker.preview` again, which `settings.lua` (or `:set`) changes for
-good. The faint `⌥P preview` is that key, and a click on it; it is not
+good. The faint `⌥p preview` is that key, and a click on it; it is not
 drawn where the setting is `off` or `<A-p>` put the preview away.
 
 *Beat:* `<A-p>` flipping the setting for the session, as it did when
@@ -116,9 +116,12 @@ flips `ctx.ignored` for this picker and reads again — a load counted, so
 only the last one asked lands when two presses' walks answer out of
 order — the walk lists every
 file but `.git` (`fs.walk(root, fn, { ignored = true })`), rg runs with
-`--no-ignore --hidden --glob !.git`. The head carries `⌥G ignored`, lit
+`--no-ignore --hidden --glob !.git`. The head carries `⌥g ignored`, lit
 while on, a click its key — the same key the search's bar flips its
-ignored files with. `smart` keeps its walk as git sees it.
+ignored files with. The read again keeps the rows and the count shown until it
+lands — `reading…` is a first read's, with nothing to count yet — so a
+walk answered by the next frame does not blink the count; the lit
+chip says the key was heard. `smart` keeps its walk as git sees it.
 
 Every walk stops at `fs::WALK_MAX` = 200 000 files, a `node_modules`
 with its ignores off holding a hundred thousand and more; the answer

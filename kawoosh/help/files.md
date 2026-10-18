@@ -169,7 +169,7 @@ cursor; `<Esc>` again closes the picker.
 | `<C-c>` | close, from either mode |
 | `<A-p>` | hide or show the preview in this picker, even where it is too small for one or `picker.preview` is `off`; the next picker follows the setting again |
 | `<A-w>` | wrap long rows instead of cutting them |
-| `<A-g>` | in files and grep: ignored and hidden files too, or not (`⌥G ignored` in the head, lit while on) |
+| `<A-g>` | in files and grep: ignored and hidden files too, or not (`⌥g ignored` in the head, lit while on) |
 | `<A-S-h>` `<A-S-l>` | move the divider between the list and a preview beside it; otherwise the list is the whole width and these size its column, as in any pane |
 | `<A-S-k>` `<A-S-j>` | make the picker taller, shorter |
 
@@ -181,7 +181,7 @@ the pane or the window is resized: beside the list when the picker is
 wide enough for both (about 30 characters of list and 40 of preview)
 and tall enough for 4 lines of preview, below the list when it is tall
 enough for 4 rows and 4 lines instead,
-and nowhere when it is neither — the head then ends in `⌥P preview`.
+and nowhere when it is neither — the head then ends in `⌥p preview`.
 `picker.preview` set to `right`, `below` or `off` puts it there always.
 The divider under a list drags too.
 
