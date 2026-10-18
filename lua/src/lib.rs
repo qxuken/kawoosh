@@ -194,7 +194,7 @@ pub enum Msg {
     /// (`vsplit`), below (`split`) or in a new tab (`tab`).
     ///
     /// @class kawoosh.buf.ShowOpts
-    /// @field split? "vsplit"|"split"|"tab" where, else the focused pane
+    /// @field split? "vsplit"|"split"|"tab"|"beside"|"below" where, else the focused pane
     ShowBuffer {
         buffer: u64,
         split: Option<String>,
@@ -7043,11 +7043,18 @@ fn seed(
             },
         )?,
     )?;
-    // `kawoosh.buf.set_selections(selections: kawoosh.buf.Selection[], buffer?: integer): nil`:
+    // `kawoosh.buf.set_selections(selections: kawoosh.buf.SelectionIn[], buffer?: integer): nil`:
     // `{ { anchor =, head =, primary = }, … }` (or `{ anchor, head }`),
     // bytes from 0: the selections as given — the one marked `primary`
     // (as `selections()` marks it) the primary, else the first — after
     // the edits asked before it, in the text they leave.
+    //
+    // @class kawoosh.buf.SelectionIn
+    // @field anchor? integer the end that stays, a byte from 0 (or `[1]`)
+    // @field head? integer the end that moves — the caret — a byte from 0 (or `[2]`)
+    // @field [1]? integer `anchor`, written by place
+    // @field [2]? integer `head`, written by place
+    // @field primary? boolean the primary selection
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
@@ -7671,8 +7678,9 @@ fn seed(
         "dylib",
         lua.create_function(|_, name: String| Ok(kfs::dylib(&name)))?,
     )?;
-    // `kawoosh.fs.list(path: string, fn?: fun(entries: kawoosh.fs.Entry[]?, why: string?)): kawoosh.fs.Entry[]?`:
+    // `kawoosh.fs.list(path: string, fn: fun(entries: kawoosh.fs.Entry[]?, why: string?)): nil`:
     // the directory's entries, directories first, each group by name.
+    // @overload fun(path: string): kawoosh.fs.Entry[]
     // `fs.list(path)` answers now (raising when it cannot be read);
     // `fs.list(path, fn)` reads the directory on a thread of its own,
     // answers nil and calls `fn(entries)` — or `fn(nil, why)` — when it

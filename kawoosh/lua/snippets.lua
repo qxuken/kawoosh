@@ -35,7 +35,7 @@ function S.add(lang, snippets) return S._add(lang, snippets) end
 ---@class kawoosh.snippets.Snippet
 ---@field prefix string|string[] what is typed to be offered it
 ---@field body string|string[] the text, the LSP snippet grammar: `$1`, `${1:x}`, `${1|a,b|}`, `$0`, `$TM_FILENAME`; a list its lines
----@field description? string
+---@field description? string|string[] a list its lines
 ---@field scope? string the languages it is for, `"rust,go"`: in a file of every language's
 
 -- kawoosh.snippets.names(lang): the names of the snippets `lang` has,

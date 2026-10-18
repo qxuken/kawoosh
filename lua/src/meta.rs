@@ -278,16 +278,27 @@ impl Walk<'_> {
             });
         let doc = self.classes.strip(&sig.doc);
         // The doc's own `@param` lines type their parameters; the
-        // signature's type the rest.
+        // signature's type the rest. A line that names a parameter or
+        // an answer with no type after it says nothing of its type: it
+        // counts as untyped, as a missing one does.
         let mut said: HashSet<&str> = HashSet::new();
         let mut returns_said = false;
         for line in &doc {
             let _ = writeln!(self.out, "---{line}");
             if let Some(rest) = line.strip_prefix("@param ") {
-                let name = rest.split_whitespace().next().unwrap_or("");
-                said.insert(name.trim_end_matches('?'));
+                let mut words = rest.split_whitespace();
+                let name = words.next().unwrap_or("").trim_end_matches('?');
+                if words.next().is_none() {
+                    self.untyped.push(format!("{full}({name})"));
+                }
+                said.insert(name);
             }
-            returns_said |= line.starts_with("@return");
+            if let Some(rest) = line.strip_prefix("@return") {
+                if rest.split_whitespace().next().is_none() {
+                    self.untyped.push(format!("{full}: return"));
+                }
+                returns_said = true;
+            }
         }
         for p in &sig.params {
             if said.contains(p.name.as_str()) {

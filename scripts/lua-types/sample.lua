@@ -28,7 +28,7 @@ kawoosh.spawn("ls", { cwd = 1 }) -- expect: assign-type-mismatch
 kawoosh.notify("hi", { level = "loud" }) -- expect: assign-type-mismatch
 
 -- The file system, at once and on a thread.
-for _, e in ipairs(kawoosh.fs.list(kawoosh.fs.cwd()) or {}) do
+for _, e in ipairs(kawoosh.fs.list(kawoosh.fs.cwd())) do
   if e.is_dir then kawoosh.open(kawoosh.fs.join(kawoosh.fs.cwd(), e.name)) end
 end
 kawoosh.fs.list("/tmp", function(entries)
@@ -54,3 +54,12 @@ kawoosh.picker.source("broken", { title = 1 }) -- expect: assign-type-mismatch
 
 -- A hook.
 kawoosh.on_write(function(path) kawoosh.notify("wrote " .. path) end)
+
+-- What a review found the types refused though the code takes it
+-- (2026-10-18): each must pass unflagged.
+kawoosh.buf.set_selections({ { 3, 3, primary = true }, { anchor = 5, head = 7 } })
+kawoosh.command("sample cmd", function() end, { aliases = "sc", bang = true, query = true, when = "!terminal", args = "text" })
+kawoosh.buf.show(0, { split = "beside" })
+kawoosh.buf.show(0, { split = "below" })
+kawoosh.notify(42)
+kawoosh.snippets.add("lua", { ["sample"] = { prefix = "smp", body = "x", description = { "line one", "line two" } } })

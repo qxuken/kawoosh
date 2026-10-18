@@ -74,11 +74,11 @@ end
 ---@field pane integer the id of the pane the keyboard is in
 
 ---@class kawoosh.CommandOpts
----@field args? string[] one kind per position: "path", "buffer", "command", "option", "tool", "view", "text", the last with "..." for the rest
----@field aliases? string[] the ex spellings, `{ "o" }`
----@field bang? string what `!` means; without one `:name!` is refused
----@field query? string what `?` means
----@field when? string[] facts that must hold, `{ "language:dir", "!terminal" }`
+---@field args? string|string[] one kind per position: "path", "buffer", "command", "option", "tool", "view", "text", the last with "..." for the rest
+---@field aliases? string|string[] the ex spellings, `{ "o" }`
+---@field bang? string|true what `!` means; without one `:name!` is refused
+---@field query? string|true what `?` means
+---@field when? string|string[] facts that must hold, `{ "language:dir", "!terminal" }`
 ---@field doc? string one line on what it does
 ---@field jump? boolean the move it makes is a jump however near
 
@@ -613,7 +613,7 @@ end
 -- until one is clicked, unless it has a `timeout` too: then it is an
 -- offer, gone when its time is up and put away by a click or `x` as a
 -- plain toast is. Every notification is in `:messages`.
----@param text string
+---@param text string|number|boolean what to say, made a string
 ---@param opts? kawoosh.NotifyLevel|kawoosh.NotifyOpts
 ---@return nil
 function kawoosh.notify(text, opts)
