@@ -3940,6 +3940,17 @@ fn a_stopped_server_leaves_no_zombie() {
         "a new instance"
     );
     let second = pid_in(&app, &server, "proj").unwrap();
+    // Its first line is its stderr's, which a loaded machine hands
+    // over after the instance is up: asked again until it has come.
+    assert!(
+        frames_until(&mut d, &mut app, |d, a| {
+            ex(d, a, "lsp info");
+            let info = a.ed.buffer_of(a.focused_view().unwrap()).text();
+            d.keys(a, "q");
+            info.contains("fake server in proj")
+        }),
+        "the new instance's own tail"
+    );
     ex(&mut d, &mut app, "lsp info");
     let info = app.ed.buffer_of(app.focused_view().unwrap()).text();
     assert!(info.contains("fake server in proj"), "{info}");
