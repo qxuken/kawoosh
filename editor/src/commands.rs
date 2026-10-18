@@ -2084,7 +2084,7 @@ pub(crate) fn save_beside(
     if !buf.mapped
         && meta
             .as_ref()
-            .is_some_and(kawoosh_doc::durable::kept_in_place)
+            .is_some_and(|m| kawoosh_doc::durable::kept_in_place(&path, m))
     {
         return in_place();
     }

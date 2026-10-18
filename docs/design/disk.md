@@ -131,7 +131,13 @@ change under it. It steps down to a write in place
 - the rename would not keep the file as it was
   (`durable::kept_in_place`): one owned by someone else would become
   this user's, one with hard links would leave them the old text. vim's
-  `backupcopy=auto` asks the same two.
+  `backupcopy=auto` asks the same two. On Windows (std's link count is
+  unstable) both are read through a handle: `nNumberOfLinks`, and an
+  owner other than the token's default owner — what a file this
+  process makes is owned by. An elevated process's is Administrators,
+  so there the user's own files are written in place too; a share
+  whose owners this machine does not know reads every file as
+  another's. A file whose permissions may not be read is another's.
 
 In place is the file opened for writing as it stands (never made, so a
 name that is not there stays the caller's error), the text written
@@ -199,4 +205,11 @@ command none of osascript's.
 - **A modified buffer whose file keeps growing** is asked again at
   every change — one toast at a time, each replacing the last — as
   roadmap step 12 built it; a log a user edits while it is written to
+  has not come up.
+- **A Windows file's own ACL through a rename** (Decision 4): the
+  renamed sibling has the entries its directory hands down, so entries
+  given to the file itself, or carried from a directory it was moved
+  out of, are lost, and so are its alternate data streams and its
+  hidden and system attributes (the read-only one is kept, as the mode
+  is). Copying them onto the sibling first (what `ReplaceFileW` does)
   has not come up.

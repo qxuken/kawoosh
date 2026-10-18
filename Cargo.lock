@@ -2490,6 +2490,7 @@ dependencies = [
  "slotmap",
  "text-buffer",
  "unicode-segmentation",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
