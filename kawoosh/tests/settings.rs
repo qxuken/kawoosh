@@ -48,7 +48,9 @@ struct Tree {
 }
 
 fn tree(tag: &str) -> Tree {
-    let dir = std::env::temp_dir().join(format!("kawoosh-settings-{tag}-{}", std::process::id()));
+    // Short: a corner line names a file by this directory, and a long
+    // name (a 7-digit pid) would be cut with `…` at the corner's width.
+    let dir = std::env::temp_dir().join(format!("kw-set-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let root = dir.join("repo");
     let sub = root.join("member");
