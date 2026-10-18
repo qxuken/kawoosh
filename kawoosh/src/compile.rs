@@ -199,7 +199,7 @@ pub(crate) fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
     let dir = file.parent()?;
     let script = format!(
         "source '{}'; {name} | to json -r",
-        file.file_name()?.to_string_lossy().replace('\'', "")
+        file.file_name()?.to_string_lossy()
     );
     let mut command = kawoosh_systems::io::command("nu");
     command
@@ -223,6 +223,19 @@ pub(crate) fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
             })
             .collect(),
     )
+}
+
+/// Whether `name` may be spliced into a nushell script as a command's
+/// name: words of letters, digits, `-` and `_`, one space between
+/// (`nu-complete git branches`). Anything else would be code of the
+/// signature's own — `string@x; rm -rf ~` — and is asked of no one.
+fn nu_command_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.split(' ').all(|w| {
+            !w.is_empty()
+                && w.chars()
+                    .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        })
 }
 
 /// A nushell completer's answer (compile.md Decision 16).
@@ -871,6 +884,12 @@ impl Kawoosh {
     /// — and kept while the file is unchanged. Nothing until nu answers,
     /// asked on a job now when it has not been; a completer that hangs
     /// costs its patience once per change, and no key waits for it.
+    ///
+    /// `source` runs the file's top level, so nu is asked only once the
+    /// file's text is trusted, as a project's `init.lua` is (`:trust
+    /// allow FILE`, compile.md Decision 16): a file from a fresh clone,
+    /// or one a project's settings point `compile.nushell` at, runs
+    /// nothing until then. Nor does a completer whose name is no name.
     fn nu_completions(&mut self, file: &Path, name: &str) -> Rc<Vec<String>> {
         let stamp = std::fs::metadata(file).and_then(|m| m.modified()).ok();
         let key = (file.to_path_buf(), name.to_string());
@@ -878,6 +897,22 @@ impl Kawoosh {
             Some((at, NuAnswer::Got(values))) if *at == stamp => return values.clone(),
             Some((at, NuAnswer::Asked(_))) if *at == stamp => return Rc::default(),
             _ => {}
+        }
+        if !nu_command_name(name)
+            || file
+                .file_name()
+                .is_none_or(|n| n.to_string_lossy().contains('\''))
+        {
+            return Rc::default();
+        }
+        let trusted = std::fs::read_to_string(file)
+            .is_ok_and(|src| self.standing(file, &src) == crate::trust::Standing::Trusted);
+        if !trusted {
+            log::debug!(
+                "compile: {} is not trusted; its completer {name} is not run",
+                file.display()
+            );
+            return Rc::default();
         }
         self.compile.nu_asks += 1;
         let serial = self.compile.nu_asks;
@@ -891,6 +926,21 @@ impl Kawoosh {
             values: nu_answer(&file, &name),
         });
         Rc::default()
+    }
+
+    /// The nushell files `:compile` reads its commands from here
+    /// (`compile.nushell`): code from the repository, which `:trust`
+    /// lists and allows beside the project's `init.lua`.
+    pub(crate) fn compile_nu_files(&self) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = Vec::new();
+        for row in self.deduce_compile().commands {
+            if let Some(nu) = row.nu
+                && !files.contains(&nu.file)
+            {
+                files.push(nu.file);
+            }
+        }
+        files
     }
 
     /// nu answered ask `serial`: kept under it, and the line completed
@@ -2492,6 +2542,25 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_completer_s_name_is_a_name_or_nothing_is_run() {
+        for ok in ["targets", "nu-complete git branches", "my_files2"] {
+            assert!(nu_command_name(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "x; touch pwned",
+            "x | rm",
+            "(rm)",
+            "a  b",
+            "$env.X",
+            "x\nrm",
+            "'q'",
+        ] {
+            assert!(!nu_command_name(bad), "{bad:?}");
+        }
+    }
+
     use super::*;
 
     fn painted(line: &str) -> Vec<(&str, String)> {
