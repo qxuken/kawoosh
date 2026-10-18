@@ -305,11 +305,7 @@ fn a_completer_that_hangs_raves_or_floods_gives_nothing() {
         .trim()
         .parse()
         .unwrap();
-    assert_ne!(
-        unsafe { libc::kill(pid, 0) },
-        0,
-        "the completer was stopped"
-    );
+    assert!(gone(pid), "the completer was stopped");
     leave(&mut d, &mut app);
 
     // What it started outlives it, holding the pipe: stopped with it,
@@ -321,11 +317,7 @@ fn a_completer_that_hangs_raves_or_floods_gives_nothing() {
         .trim()
         .parse()
         .unwrap();
-    assert_ne!(
-        unsafe { libc::kill(pid, 0) },
-        0,
-        "the completer's child was stopped too"
-    );
+    assert!(gone(pid), "the completer's child was stopped too");
     leave(&mut d, &mut app);
 
     // Garbage: nothing, quietly.
@@ -621,4 +613,19 @@ fn a_nushell_completer_is_asked_off_the_frame() {
     assert_eq!(app.cmdline_ghost().as_deref(), Some("pha.txt"));
     assert_eq!(asked("files"), 2);
     leave(&mut d, &mut app);
+}
+
+/// Whether process `pid` is gone within a few seconds: a signal to a
+/// group is delivered, and an orphan reaped by the system, a moment
+/// after the kill — longer on a loaded machine.
+#[cfg(unix)]
+fn gone(pid: i32) -> bool {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < until {
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    false
 }

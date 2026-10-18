@@ -47,9 +47,11 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.frame(app);
 }
 
-/// Frames until the compile is done; its output.
+/// Frames until the compile is done; its output. By the clock, and
+/// long: a loaded machine takes seconds to start a process.
 fn finished(d: &mut Drive, app: &mut Kawoosh) -> String {
-    for _ in 0..300 {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < until {
         d.frame(app);
         if let Some(b) = app.compile.buffer().filter(|_| !app.compile.running()) {
             return app.ed.buffers[b].text();
@@ -223,7 +225,9 @@ fn r_in_the_compile_buffer_runs_it_again() {
 #[cfg(unix)]
 #[test]
 fn the_compile_buffer_is_named_for_its_command() {
-    let dir = project("named", "return {}");
+    // A tag of its own: `named` is another test's project, and the two
+    // run at once in one process (`cargo test`, a copy run by hand).
+    let dir = project("buffer-name", "return {}");
     let mut d = Drive::new(900.0, 500.0);
     let mut app = open(&mut d, &dir);
     ex(&mut d, &mut app, "compile echo  one");
@@ -659,11 +663,22 @@ fn how_a_run_ended_is_no_toast_while_its_pane_has_the_keys() {
         "the log has it"
     );
 
-    // Away: a toast says so.
-    ex(&mut d, &mut app, "compile sleep 0.3; false");
+    // Away: a toast says so. The run waits for a file made once the
+    // keys are away, so it cannot end before they leave, however
+    // loaded the machine (a `sleep` could).
+    let go = dir.join("go");
+    ex(
+        &mut d,
+        &mut app,
+        &format!(
+            "compile until [ -e '{}' ]; do sleep 0.01; done; false",
+            go.display()
+        ),
+    );
     app.layout.focus(editor);
     d.frame(&mut app);
     assert!(!keys_in_compile(&app));
+    std::fs::write(&go, "").unwrap();
     let out = finished(&mut d, &mut app);
     assert!(out.contains("[exited with 1"), "{out}");
     let notes = compile_notes(&app);
