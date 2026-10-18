@@ -3772,7 +3772,7 @@ fn the_lua_types_are_written_for_the_language_server() {
     let init = dir.join("init.lua");
     std::fs::write(
         &init,
-        "-- Mine.\nfunction kawoosh.mine(a, b) end\n\
+        "-- Mine.\n---@param a string\nfunction kawoosh.mine(a, b) end\n\
          kawoosh.lsp.server('lua', { cmd = 'lua-language-server', settings = { Lua = { hint = { enable = true } } } })\n",
     )
     .unwrap();
@@ -3782,8 +3782,8 @@ fn the_lua_types_are_written_for_the_language_server() {
     assert!(kawoosh.starts_with("---@meta kawoosh"));
     assert!(kawoosh.contains("function kawoosh.buf.close(buffer, opts) end"));
     assert!(
-        kawoosh.contains("---Mine.\n---@param a any\n---@param b? any\n---@return any\nfunction kawoosh.mine(a, b) end"),
-        "the config's own, read back from its file"
+        kawoosh.contains("---Mine.\n---@param a string\n---@param b? any\n---@return any\nfunction kawoosh.mine(a, b) end"),
+        "the config's own, read back from its file: what it types typed, the rest `any`"
     );
     assert!(
         kawoosh.contains("---@class kawoosh.picker"),

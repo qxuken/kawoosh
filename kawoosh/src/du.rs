@@ -198,19 +198,14 @@ impl Kawoosh {
     }
 }
 
-/// `kawoosh.du`: `walk(root[, fn])`, a sizing walk of `root` started (an
-/// absolute path) and its number, `fn(done)` called on a frame the walk
-/// had news in — directories sized, or the end; `size(n, path)`, a directory's
-/// subtree `bytes, files` once the walk has done it, else nil;
-/// `stamp(n, dir)`, a number that changes whenever a size in `dir`'s
-/// listing does — what the pane keys its sorted listing on;
-/// `state(n)`, `{ root, files, bytes, errors, dirs, done, secs }` — the
-/// counts so far, `dirs` the directories done, `secs` the time taken or
-/// taken so far; `removed(n, path, bytes, files)`, a path deleted, its
-/// size taken out of every directory above it; `forget(n)`, the walk
-/// stopped and dropped.
+/// `kawoosh.du`: sizing walks, each by its number — `walk`, `size`,
+/// `stamp`, `state`, `removed`, `forget`.
 pub(crate) fn lua_door(lua: &mlua::Lua, du: SharedDu) -> mlua::Result<()> {
     let door = lua.create_table()?;
+    // `kawoosh.du.walk(root: string, fn?: fun(done: boolean)): integer`:
+    // a sizing walk of `root` (an absolute path) started, answering its
+    // number; `fn(done)` called on a frame the walk had news in —
+    // directories sized, or the end.
     let at = du.clone();
     door.set(
         "walk",
@@ -225,6 +220,9 @@ pub(crate) fn lua_door(lua: &mlua::Lua, du: SharedDu) -> mlua::Result<()> {
             Ok(id)
         })?,
     )?;
+    // `kawoosh.du.size(walk: integer, path: string): integer?, integer?`:
+    // a directory's subtree `bytes, files` once the walk has done it,
+    // else nil.
     let at = du.clone();
     door.set(
         "size",
@@ -234,6 +232,9 @@ pub(crate) fn lua_door(lua: &mlua::Lua, du: SharedDu) -> mlua::Result<()> {
             Ok((size.map(|s| s.0), size.map(|s| s.1)))
         })?,
     )?;
+    // `kawoosh.du.stamp(walk: integer, dir: string): integer`: a number
+    // that changes whenever a size in `dir`'s listing does — what the
+    // pane keys its sorted listing on; 0 before any.
     let at = du.clone();
     door.set(
         "stamp",
@@ -244,6 +245,17 @@ pub(crate) fn lua_door(lua: &mlua::Lua, du: SharedDu) -> mlua::Result<()> {
                 .unwrap_or(0))
         })?,
     )?;
+    // `kawoosh.du.state(walk: integer): kawoosh.du.State?`: the walk's
+    // counts so far, nil for a walk there is not.
+    //
+    // @class kawoosh.du.State
+    // @field root string the path walked
+    // @field files integer files counted so far
+    // @field bytes integer their bytes
+    // @field errors integer entries that could not be read
+    // @field dirs integer the directories done
+    // @field done boolean the walk has ended
+    // @field secs number the time taken, or taken so far
     let at = du.clone();
     door.set(
         "state",
@@ -264,6 +276,9 @@ pub(crate) fn lua_door(lua: &mlua::Lua, du: SharedDu) -> mlua::Result<()> {
             Ok(Some(t))
         })?,
     )?;
+    // `kawoosh.du.removed(walk: integer, path: string, bytes: integer, files?: integer): nil`:
+    // a path deleted, its size taken out of every directory above it;
+    // `files` 1 when left out.
     let at = du.clone();
     door.set(
         "removed",
@@ -276,6 +291,8 @@ pub(crate) fn lua_door(lua: &mlua::Lua, du: SharedDu) -> mlua::Result<()> {
             },
         )?,
     )?;
+    // `kawoosh.du.forget(walk: integer): nil`: the walk stopped and
+    // dropped.
     door.set(
         "forget",
         lua.create_function(move |_, id: u64| {

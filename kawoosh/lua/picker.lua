@@ -60,6 +60,173 @@
 -- Decision 2). The pane is not kept by a session.
 
 local fs = kawoosh.fs
+
+---How a row is taken: into a split beside, below, a new tab; nil is
+---the pane the picker came from.
+---@alias kawoosh.picker.How "vsplit"|"split"|"tab"
+
+---A picker source (`picker.source(name, def)`, or `picker.open(def)`
+---given whole): what its rows are and what taking one does. One of
+---`items`, `load` and `search` says the rows.
+---@class kawoosh.picker.Source
+---@field name? string the name a source given whole is opened under, `custom` without one
+---@field title? string the head's label, and its `:picker NAME` command's doc
+---@field placeholder? string the query field's while it is empty
+---@field empty? string what the list says with no row and no query
+---@field items? kawoosh.picker.Item[]|fun(ctx: kawoosh.picker.Ctx): kawoosh.picker.Item[] the rows, at once
+---@field load? fun(ctx: kawoosh.picker.Ctx, done: fun(items: kawoosh.picker.Item[]?, err?: string)) the rows read off the frame, `done` once they are
+---@field search? fun(query: string, job: kawoosh.picker.Job) a dynamic source: asked again as the query is typed, nothing until one is, its rows not filtered again
+---@field query? fun(query: string, ctx: kawoosh.picker.Ctx): string? the text matched for what was typed; nil matches it as typed
+---@field preview? fun(item: kawoosh.picker.Item, ctx: kawoosh.ViewCtx): kawoosh.picker.Preview the cursor's row beside the list; by default its path's, its buffer's or its `lines`
+---@field pick? fun(item: kawoosh.picker.Item, how?: kawoosh.picker.How) what taking a row does; by default its buffer shown, its path opened, its `run` run
+---@field answer? fun(item: kawoosh.picker.Item): string? what a pick answers `kawoosh pick` from a shell; by default its path, its buffer's, its text
+---@field keys? table<string, fun(item: kawoosh.picker.Item?, state: table)> keys of its own on the cursor's row (`<C-x>`): the item nil on an empty list, `state` the open picker's own
+---@field columns? kawoosh.picker.Column[] the rows a grid, the cells lined up (`picker.rows`)
+---@field icon? string the item's field naming the kind whose icon starts each row
+---@field wide? boolean a row's `sub` matched too, after its text
+---@field tree? boolean the rows indented by their `depth` while the query is empty
+---@field cursor? fun(items: kawoosh.picker.Item[], ctx: kawoosh.picker.Ctx): integer? the row the cursor starts on, from 1
+---@field follow? boolean the pane it was opened from follows the cursor's row, and no preview is drawn
+---@field launcher? boolean a module of the launcher too, under its name
+---@field launch? fun(item: kawoosh.picker.Item) what its row does in the launcher, filling the bare pane, when `pick` goes elsewhere
+
+---A row of a picker (and of a launcher's module): its text, and what
+---it stands for. A row of a source with `columns` holds their fields.
+---@class kawoosh.picker.Item
+---@field text string what the row shows and is matched on
+---@field sub? string drawn dim after the text
+---@field path? string a file: opened at `line` and `col` on a pick
+---@field line? integer from 1
+---@field col? integer from 1
+---@field end_line? integer the last line of its range (a symbol's), from 1
+---@field buffer? integer a buffer: shown on a pick
+---@field offset? integer a byte in its buffer, from 0
+---@field run? string a command line run on a pick
+---@field pick? fun(item: kawoosh.picker.Item, how?: kawoosh.picker.How) a pick of its own, when the source has none
+---@field boost? number added to its match's score (`picker.rank`); below 0 ranks it last
+---@field search? string the text it is matched on after its name; set from its columns (`picker.search`) when not given
+---@field lines? string[] lines of its own: the preview's
+---@field preview? kawoosh.picker.Preview its preview, as it is
+---@field can? true|string true, or why it cannot be taken, drawn in the danger colour
+---@field depth? integer its indent in a `tree` source
+---@field key? string in the launcher: the letter it wants
+---@field hint? string in the launcher: the key drawn on its row
+---@field [string] any a column's field, a source's own
+
+---What a source's `items`, `load`, `query` and `cursor` are given:
+---where it was opened from. The launcher gives `buffer`, `cwd` and
+---`origin`.
+---@class kawoosh.picker.Ctx
+---@field buffer? integer the buffer in front when it opened
+---@field cwd string the working directory
+---@field root? string where a walk or a search starts: `here`'s directory, else the working one
+---@field terminal? boolean opened from a terminal pane
+---@field pane? integer the pane it was opened from
+---@field caret? kawoosh.buf.Cursor `kawoosh.buf.cursor`'s, opened from a buffer
+---@field origin? kawoosh.ViewOrigin in the launcher: the buffer a bare pane was split from
+
+---A dynamic source's search, as `search(query, job)` is given it.
+---@class kawoosh.picker.Job
+---@field emit fun(items: kawoosh.picker.Item[]) rows found, appended to the list
+---@field done fun(note?: string) the search over; a note shown in the count's place
+---@field cancel? fun() set by the source: how a newer query stops this one
+---@field stale boolean a newer query took its place: what it emits is dropped
+
+---A row of a list, as `picker.rows` draws it: an item and where the
+---query matched it.
+---@class kawoosh.picker.Hit
+---@field item kawoosh.picker.Item
+---@field positions? integer[] the bytes the match lit, from 1, in its text (or its `picker.search` text)
+
+---A column of a grid of rows (`columns`, `picker.rows`): `[1]` the
+---item's field it holds.
+---@class kawoosh.picker.Column
+---@field [1] string the item's field the cell holds
+---@field dim? string a field drawn faint after it, matched too
+---@field family? string the cell's face: `"mono"`
+---@field muted? boolean drawn in the muted colour
+---@field min? number px: the narrowest it is
+---@field max? number px: the widest `picker.widths` makes it
+---@field width? number px: fixed
+---@field share? number the most of the list's width it takes, a fraction
+---@field grow? boolean it takes the rest of the row
+---@field lead? string the item's field drawn before the cell's, not matched: a string, or spans of their own colours
+---@field color? string the item's field naming the colour of the cell's own text
+---@field path? boolean left blank while a tree is indented
+
+---A preview: lines of text, numbered when `from` says where they
+---start, or a picture.
+---@class kawoosh.picker.Preview
+---@field title? string
+---@field lines string[]
+---@field from? integer the first line's number, from 1; the lines are numbered when given
+---@field at? integer the line lit, by its number
+---@field note? string why there are no lines
+---@field path? string the file whose language colours the lines
+---@field language? string the language the lines are coloured as
+---@field image? string a picture's path, drawn instead of the lines
+
+---A run of a text, as `picker.spans` gives them: `[1]` its text.
+---@class kawoosh.picker.Span
+---@field [1] string
+---@field color? kui.Color
+---@field bold? boolean
+---@field italic? boolean
+
+---The last picker closed, for `picker.resume`.
+---@class kawoosh.picker.Last
+---@field source string its source's name
+---@field query? string
+---@field cursor integer from 1
+
+---What `picker.open` takes besides the source.
+---@class kawoosh.picker.OpenOpts
+---@field query? string the query it opens with
+---@field cursor? integer the row the cursor starts on, from 1
+---@field root? string the directory a walk or a search starts from; the working one by default
+---@field answer? fun(item: kawoosh.picker.Item?) takes the pick instead of the source; nil when the picker closes untaken
+
+---What `picker.rows` draws a list by.
+---@class kawoosh.picker.RowsOpts
+---@field top? integer the first hit shown, from 1
+---@field rows? integer the lines the window has room for
+---@field cursor? integer the hit lit
+---@field kind? string the click's event kind, `"row"` by default
+---@field scroll? string the wheel's tag kind, `"list"` by default
+---@field text? fun(item: kawoosh.picker.Item): string a row's text, `item.text` by default
+---@field columns? kawoosh.picker.Column[] the rows a grid
+---@field widths? table<integer, number> each column's width, px (`picker.widths`)
+---@field width? number the list's width, px, for a column's `share`
+---@field wrap? boolean a text folds to its width
+---@field lines? fun(i: integer): integer how many lines row `i` takes
+---@field indent? fun(item: kawoosh.picker.Item): integer? the steps a row is indented
+---@field keys? table<integer, string> filled: each drawn row's key, by its index
+---@field hover? string the event kind each row posts as the pointer comes and goes
+---@field icon? string the item's field naming the kind whose icon starts each row
+
+---What the open picker shows (`picker.state()`).
+---@class kawoosh.picker.State
+---@field source string its source's name
+---@field query string
+---@field cursor integer the cursor's row, from 1
+---@field top integer the first row shown
+---@field count integer the rows
+---@field text? string the cursor's row's text
+---@field item? kawoosh.picker.Item the cursor's row's item
+---@field positions? integer[] the bytes its match lit, in its `picker.search` text
+---@field loading boolean
+---@field preview? kawoosh.picker.Preview the cursor's, as drawn: `runs` once highlighted
+---@field rows string[] every hit's text, in order
+---@field items kawoosh.picker.Item[] every hit's item, in order
+---@field root string where a walk starts
+
+---The picker: its sources by name and the last one closed; its
+---functions the parts a plugin's own list is drawn with.
+---@class kawoosh.picker
+---@field sources table<string, kawoosh.picker.Source> by name: `picker.open("files")`
+---@field last? kawoosh.picker.Last the last picker closed, for `<leader>sr`
+---@field images table<string, boolean> the extensions the preview draws as a picture
+---@field binary table<string, boolean> the extensions that are not text, ranked under the rest
 local picker = { sources = {}, last = nil }
 kawoosh.picker = picker
 
@@ -108,6 +275,8 @@ end
 
 -- A path for a row: under the working directory, relative to it; under
 -- home, with `~`; else whole.
+---@param path string
+---@return string
 local function short_path(path)
   local rel = fs.relative(path)
   if rel and rel ~= "." then return rel end
@@ -137,6 +306,9 @@ end
 -- picker.rank(item, hit): what a row is ordered by among the hits —
 -- the match's score with the item's `boost` added. Replace it from a
 -- config to rank by what matters to you.
+---@param item kawoosh.picker.Item
+---@param hit kawoosh.FuzzyHit the matcher's
+---@return number
 function picker.rank(item, hit)
   return hit.score + (item.boost or 0)
 end
@@ -362,6 +534,10 @@ end
 
 -- picker.spans(text, positions): the text as spans with the matched
 -- bytes (from 1) lit in the accent, for a row of your own.
+---@param text string
+---@param positions? integer[] bytes from 1
+---@param theme table<string, kui.Color> the env's theme: its `accent` lights the match
+---@return kawoosh.picker.Span[]
 function picker.spans(text, positions, theme)
   if not positions or #positions == 0 then return { { text } } end
   local lit = {}
@@ -417,6 +593,9 @@ end
 -- — what a source with `columns` has its items matched by (`search`,
 -- set when the items load unless the item brought its own). Without
 -- columns, the row's text and its `sub`: a `wide` source's.
+---@param it kawoosh.picker.Item
+---@param columns? kawoosh.picker.Column[]
+---@return string
 function picker.search(it, columns)
   local parts = {}
   for _, p in ipairs(pieces_of(it, columns)) do parts[#parts + 1] = p.text end
@@ -438,6 +617,9 @@ end
 -- the mono glyph's width, since a cell's text is not measured here —
 -- so the columns are the same whichever rows the window shows and
 -- whatever the query kept. A `max` on the column caps it.
+---@param items kawoosh.picker.Item[]
+---@param columns kawoosh.picker.Column[]
+---@return table<integer, number> px by column, none for a growing one
 function picker.widths(items, columns)
   local out = {}
   for j, c in ipairs(columns) do
@@ -508,6 +690,10 @@ end
 -- that field names (`kawoosh.kind_icon`), a cell of the editor's face
 -- wide, in `font.icons` (completion.md Decision 9): a candidate's, a
 -- symbol's.
+---@param ctx kawoosh.ViewCtx the view's
+---@param hits kawoosh.picker.Hit[]
+---@param opts kawoosh.picker.RowsOpts
+---@return kui.Node
 function picker.rows(ctx, hits, opts)
   local t = ctx.env.theme
   local top = opts.top or 1
@@ -638,6 +824,11 @@ end
 -- `path` says the language (asked of the ts thread once, painted
 -- when it answers); the wheel over it posts `{ kind = "scroll", tag =
 -- { kind = "preview" } }`.
+---@param ctx kawoosh.ViewCtx the view's
+---@param pv? kawoosh.picker.Preview nil draws the empty column
+---@param rows integer the lines it has room for
+---@param from? integer the first of `pv.lines` drawn, from 1
+---@return kui.Node
 function picker.preview(ctx, pv, rows, from)
   local t = ctx.env.theme
   local col = column { width = "grow", height = "grow", clip = true, pad = 8, gap = 2, bg = t.sunken,
@@ -957,6 +1148,9 @@ end
 -- What a pick answers a caller that asked for one (`kawoosh pick` from
 -- a shell): the source's `answer(item)`, else the item's path, its
 -- buffer's path or name, its text.
+---@param src kawoosh.picker.Source
+---@param item kawoosh.picker.Item
+---@return string?
 function picker.answer_of(src, item)
   if src.answer then return src.answer(item) end
   if item.path then return item.path end
@@ -1040,6 +1234,9 @@ local function unfollow()
   end
 end
 
+-- picker.close(): the open picker closed, the keys back where they came
+-- from — for a source's key that acts somewhere else.
+---@return nil
 local function close()
   if P then
     unfollow()
@@ -1053,8 +1250,6 @@ local function close()
   kawoosh.view_close(VIEW)
 end
 
--- picker.close(): the open picker closed, the keys back where they came
--- from — for a source's key that acts somewhere else.
 picker.close = close
 
 -- The default pick: a buffer shown, a file opened at its line, a
@@ -1107,6 +1302,9 @@ end
 -- caret = }`, `terminal` when it was opened from a terminal pane,
 -- `caret` (`kawoosh.buf.cursor`'s) when from a buffer. A picker already
 -- open switches to it.
+---@param what string|kawoosh.picker.Source a registered source's name, or one given whole
+---@param opts? kawoosh.picker.OpenOpts
+---@return nil
 function picker.open(what, opts)
   opts = opts or {}
   local name, src
@@ -1139,6 +1337,10 @@ end
 -- `kawoosh pick SOURCE [QUERY]` from a shell (`Request::Pick`): the
 -- picker on the source, and the caller answered with the pick —
 -- `picker.answer_of` — or with nothing when it closes untaken.
+---@param token integer the request's, for `kawoosh._answer`
+---@param source string
+---@param query string empty for none
+---@return nil
 function kawoosh._pick_request(token, source, query)
   local src = picker.sources[source]
   if not src then
@@ -1156,12 +1358,17 @@ end
 -- picker.reload(): the open picker's items read again on the next
 -- frame — after a key of the source's own changed what they are, a
 -- buffer closed — the query and the cursor kept.
+---@return nil
 function picker.reload()
   if not P then return end
   P.stale = true
 end
 
--- picker.source(name, def): a source to open by name.
+-- picker.source(name, def): a source to open by name, and its
+-- `:picker NAME [here]` command.
+---@param name string
+---@param def kawoosh.picker.Source
+---@return nil
 function picker.source(name, def)
   picker.sources[name] = def
   kawoosh.command("picker " .. name, function(ctx)
@@ -1191,6 +1398,7 @@ picker._keys = {}
 -- `rows` (every hit's text, in order) and `root` (where a walk starts)
 -- — or nil when none is open; for a status line, a test, a plugin's
 -- key.
+---@return kawoosh.picker.State?
 function picker.state()
   if not P then return nil end
   local hit = P.hits[P.cursor]
@@ -1204,6 +1412,7 @@ end
 
 -- picker.resume(): the last picker again, its query and cursor as
 -- they were.
+---@return nil
 function picker.resume()
   local l = picker.last
   if not l or not picker.sources[l.source] then return kawoosh.echo("no picker to resume") end
@@ -1584,6 +1793,7 @@ kawoosh.command("picker resume", function() picker.resume() end, { doc = "the la
 -- picker.here(): the directory "here" is — a `dir` listing's own, the
 -- buffer's file's, else the working one — what `:picker files here`
 -- (`<leader>F`) and `:picker grep here` (`<leader>G`) start from.
+---@return string
 function picker.here()
   local h = kawoosh.buf.current()
   local ok, name = pcall(kawoosh.buf.name, h)
@@ -2007,6 +2217,9 @@ end
 -- picker.symbol_at(items, line): the innermost row whose symbol holds
 -- `line` — the last one starting at or before it whose range reaches
 -- it — else the last starting before it.
+---@param items { line?: integer, end_line?: integer }[] in the file's order
+---@param line integer from 1
+---@return integer? index the row's, from 1; nil when none starts at or before `line`
 function picker.symbol_at(items, line)
   local inside, before
   for i, it in ipairs(items) do
@@ -2022,7 +2235,11 @@ end
 -- one list in the file's order, nested again by the lines each holds:
 -- a grammar's symbol is the server's when it starts on the same line
 -- and the server's name holds its name (`impl Marks` holds `Marks`).
+---@param server? kawoosh.lsp.Symbol[] the server's (`kawoosh.lsp.symbols`)
+---@param outline? kawoosh.lsp.Symbol[] the grammar's
+---@return kawoosh.lsp.Symbol[] # the same tables, `depth` set again and `order` (their place before the sort) added
 function picker.merge_symbols(server, outline)
+
   local by_line = {}
   local out = {}
   for _, s in ipairs(server or {}) do

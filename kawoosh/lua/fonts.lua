@@ -169,6 +169,7 @@ end
 -- the families whose cards were built for the first time since it last
 -- asked — nil until it asks, so nothing is kept otherwise.
 local probe_seen, probe_new = nil, nil
+---@return string[] families
 function fonts._probe_take()
   probe_seen = probe_seen or {}
   local out = probe_new or {}
@@ -356,11 +357,14 @@ end, { session = false })
 -- ------------------------------------------------------- the commands
 
 -- fonts.take(name): the family for the session.
+---@param name string a family
+---@return nil
 function fonts.take(name)
   kawoosh.run("font " .. name)
 end
 
 -- fonts.copy(): the line that keeps the face, on the clipboard.
+---@return nil
 function fonts.copy()
   local line = keep_line(fonts.current())
   kawoosh.copy(line)
@@ -370,6 +374,7 @@ end
 -- fonts.state(): what the pane shows — `cursor` (a family's name),
 -- `list` (the names shown), `all`, `query`, `matches` (the names that
 -- match it), `scrolled` (px) and `keep` — or nil when it is not open.
+---@return { cursor?: string, list: string[], all: boolean, query: string, matches: string[], scrolled: number, keep: string }?
 function fonts.state()
   if not S or not S.list then return nil end
   local names, matches = {}, {}

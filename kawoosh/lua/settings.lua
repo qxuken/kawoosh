@@ -845,6 +845,7 @@ end, { session = false })
 -- (a path), `shown` (the paths the search keeps, in order), `sections`
 -- (their names, in order), `editing`, `total` — or nil when it is not
 -- open.
+---@return { query: string, scope: "user"|"project"|"session", cursor?: string, shown: string[], sections: string[], editing?: string, total: integer, open: table<string, true> }? state # `open`: the paths whose layers are unfolded
 function door.state()
   if not S or not S.shown then return nil end
   local shown, sections, seen = {}, {}, {}

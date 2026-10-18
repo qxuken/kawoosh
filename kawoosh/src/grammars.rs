@@ -137,15 +137,33 @@ pub struct Shown {
 
 pub type SharedGrammars = Rc<RefCell<Vec<Shown>>>;
 
-/// `kawoosh.grammars`: `list()`, every grammar there is — each `{ name,
-/// state, installed, built, prebuilt, released, rev, latest, repo,
-/// license, base, extensions, filenames, size, step, percent, why }`, `state`
-/// one of `"built in"`,
-/// `"installed"`, `"available"`, `"installing"` and `"failed"` — the
-/// linked-in ones first, then the rest by name. What changes one is a
-/// command: `:grammar install`, `update`, `remove`.
+/// `kawoosh.grammars`: `list()`. What changes a grammar is a command:
+/// `:grammar install`, `update`, `remove`.
 pub(crate) fn lua_door(lua: &mlua::Lua, shown: SharedGrammars) -> mlua::Result<()> {
     let door = lua.create_table()?;
+    // `kawoosh.grammars.list(): kawoosh.grammars.Grammar[]`: every
+    // grammar there is — linked in, installed, there to install, on its
+    // way, failed and why — the linked-in ones first, then the rest by
+    // name, as of the last change.
+    //
+    // @class kawoosh.grammars.Grammar
+    // @field name string
+    // @field state "built in"|"installed"|"available"|"installing"|"failed"
+    // @field installed boolean a grammar is in, whatever is happening to it
+    // @field built boolean the one in was built on this machine
+    // @field prebuilt boolean a release has an archive of it; without one it is built here
+    // @field released boolean a release lists it; of a built-in one, the linked grammar is used over the release's
+    // @field rev string the revision in, else the one there is to install; twelve of it
+    // @field latest? string the revision an update would bring, when it is another
+    // @field repo string
+    // @field license string
+    // @field base string the base it came from, when in, else the one that lists it; empty for one built here
+    // @field extensions string[]
+    // @field filenames string[]
+    // @field size integer the archive's bytes
+    // @field step? string an install's step, while it is on its way
+    // @field percent? integer its fetch's percentage
+    // @field why? string why the last install failed
     door.set(
         "list",
         lua.create_function(move |lua, ()| {

@@ -987,6 +987,15 @@ fn lua_f32(v: &mlua::Value) -> Option<f32> {
 /// (`kawoosh._key_caps`, `kawoosh._cap`).
 pub(crate) fn lua_door(lua: &mlua::Lua, icons: Shared) -> mlua::Result<()> {
     let k: mlua::Table = lua.globals().get("kawoosh")?;
+    // `kawoosh.icon(name: string, opts?: kawoosh.IconOpts): kui.Node`:
+    // the icon drawn with kui's vectors in a box of its own, `size` px a
+    // side; a name the set lacks draws the `missing` icon. Any other key
+    // of `opts` is the box's own, a kui prop.
+    //
+    // @class kawoosh.IconOpts: kui.Props
+    // @field size? number the box's side, logical px; 13 when left out
+    // @field cell? boolean a cell of the editor's face at that text size, beside the text, in place of the size itself
+    // @field color? integer `0xRRGGBBAA`, the foreground's when left out
     let at = icons.clone();
     k.set(
         "icon",
@@ -994,12 +1003,17 @@ pub(crate) fn lua_door(lua: &mlua::Lua, icons: Shared) -> mlua::Result<()> {
             icon_node(lua, &at.borrow(), &name, opts)
         })?,
     )?;
+    // `kawoosh.kind_icon(kind?: string): string`: the icon's name for a
+    // kind as a source or a server names it — `enum member`, `Function`
+    // — or `symbol` for one the set lacks.
     k.set(
         "kind_icon",
         lua.create_function(|_, kind: Option<String>| {
             Ok(kind_icon(kind.as_deref().unwrap_or("")))
         })?,
     )?;
+    // `kawoosh.icon_names(): string[]`: the set's names — the shipped in
+    // their order, the kinds' among them — then the user's own.
     let at = icons.clone();
     k.set(
         "icon_names",
@@ -1007,6 +1021,18 @@ pub(crate) fn lua_door(lua: &mlua::Lua, icons: Shared) -> mlua::Result<()> {
     )?;
     // `kawoosh.icons.NAME` reads a shape, `= { … }` replaces it, `= nil`
     // puts the shipped one back.
+    //
+    // @class kawoosh.icons
+    // @field [string] kawoosh.icons.Part[]? the shape by the icon's name
+    //
+    // @class kawoosh.icons.Part
+    // @field stroke? number[][] a round-capped line through the points, `{ x, y }` each in a box of side 1, `y` down
+    // @field width? number a stroke's width, a share of the side (1 px at least); 0.1 when left out
+    // @field curve? boolean a stroke a smooth curve through its points
+    // @field fill? number[][] a filled outline, up to eight points
+    // @field dot? number a disc of that radius, centred
+    // @field glyph? string a character centred in the box: a font's picture
+    // @field scale? number a glyph's size, a share of the side; 1 when left out
     let proxy = lua.create_table()?;
     let meta = lua.create_table()?;
     let at = icons.clone();

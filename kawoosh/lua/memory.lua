@@ -8,12 +8,18 @@
 -- boosts — a path to a number in (0, 0.5], a pinned row above any
 -- score — which `picker.lua` reads for its files, buffers and smart
 -- sources.
+---The memory's ranking: `rank` yours to replace from a config.
+---@class kawoosh.memory_rank
+---@field half_life_days number a row's score halves every this many days since it was last attended
 local memory = { half_life_days = 7 }
 kawoosh.memory_rank = memory
 
 -- memory.rank(row, now): the row's signals — visits, three per edit,
 -- two per yank, its dwell in minutes up to sixty — halved for every
 -- week since it was last attended.
+---@param row { visits?: number, edits?: number, yanks?: number, dwell?: number, last?: number } a memory row (`kawoosh.memory`): its signals, `dwell` in seconds, `last` a time in seconds
+---@param now number seconds, as `kawoosh.now()`
+---@return number
 function memory.rank(row, now)
   local dwell = math.min((row.dwell or 0) / 60, 60)
   local signals = (row.visits or 0) + 3 * (row.edits or 0) + 2 * (row.yanks or 0) + dwell
@@ -26,7 +32,11 @@ end
 -- a table of subject → boost, the best-ranked row 0.5 and the rest in
 -- proportion; a pinned row 10 plus its place, so pins come first in
 -- pin order.
+---@param kind? string `file` by default
+---@param limit? integer rows read, 500 by default
+---@return table<string, number> boost by subject
 function memory.boosts(kind, limit)
+
   local rows = kawoosh.memory { kind = kind or "file", workspace = true, limit = limit or 500 }
   local now = kawoosh.now()
   local ranks, max = {}, 0

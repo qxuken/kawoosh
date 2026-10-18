@@ -356,6 +356,7 @@ end
 -- themes.lab(): what the lab shows — `title`, `short` (how many pairs
 -- fall short), `only_short`, `face` (the family its samples are set
 -- in, and `size`) — or nil when it is not open; for a test.
+---@return { title: string, short: integer, only_short: boolean, face?: string, size?: number }?
 function themes.lab()
   if not L or not L.subject then return nil end
   local n = 0

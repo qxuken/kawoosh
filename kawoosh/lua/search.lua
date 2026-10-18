@@ -53,6 +53,51 @@ local function sizes(m)
   ROW_H = SIZE + 6
 end
 
+---A stage of the search's pipeline: its kind, its fields, its flags,
+---and once run its answer.
+---@class kawoosh.search_ui.Stage
+---@field kind string a kind's name: `search`, `in`, `keep`, `drop`, a plugin's
+---@field find string the pattern
+---@field include string globs, a comma list
+---@field exclude string globs, a comma list
+---@field regex boolean
+---@field case "smart"|"sensitive"
+---@field word boolean
+---@field ignored boolean ignored and hidden files searched too
+---@field answer? kawoosh.search_ui.Answer once run
+---@field err? string why it failed
+
+---A stage's answer, as `kawoosh.search` gives one: the files and their
+---matched lines.
+---@class kawoosh.search_ui.Answer
+---@field files { path: string, rel: string, lines: { line: integer, text: string, cols: integer[][] }[] }[] `line` from 1; `cols` each match's `{ from, to }`, bytes from 1, `to` its last
+---@field matches integer
+---@field limited? boolean stopped: there were more
+
+---What a kind of stage's `run` is given besides the stage.
+---@class kawoosh.search_ui.RunCtx
+---@field root string where the search started
+
+---A kind of stage (`search.kind(name, def)`).
+---@class kawoosh.search_ui.Kind
+---@field title? string its chip's word, its name by default
+---@field run fun(prev: kawoosh.search_ui.Answer?, stage: kawoosh.search_ui.Stage, done: fun(answer: kawoosh.search_ui.Answer?, why?: string), ctx: kawoosh.search_ui.RunCtx): integer? `prev` the stage before's answer (nil for the first); answers a `kawoosh.search` token a newer run cancels
+
+---The project search's bar: its stages, the kinds a stage can be, and
+---what it is doing.
+---@class kawoosh.search_ui
+---@field stages kawoosh.search_ui.Stage[] the pipeline, the first the project's search
+---@field cur integer the stage the fields edit, from 1
+---@field kinds table<string, kawoosh.search_ui.Kind> by name
+---@field order string[] the kinds' names, as registered
+---@field gen integer bumped by each run, so a late answer is dropped
+---@field root? string where the search starts
+---@field token? integer the `kawoosh.search` running
+---@field running? integer the stage running
+---@field live? boolean the bar has drawn since the fields were set
+---@field back? table the walk back through earlier searches (`search.earlier`)
+---@field replaced? boolean a replace made the count stale
+---@field shown? table what a replace takes: the pattern the results show
 local search = { stages = {}, cur = 1, kinds = {}, order = {}, gen = 0, root = nil, token = nil }
 -- The module, for a config or a plugin (`kawoosh.search_ui.kind`).
 kawoosh.search_ui = search
@@ -70,6 +115,9 @@ search.stages = { new_stage("search") }
 -- matches = }`, as `kawoosh.search` answers — and `ctx.root` is where
 -- the search started. `run` may return a `kawoosh.search` token, which
 -- a newer run cancels.
+---@param name string
+---@param def kawoosh.search_ui.Kind
+---@return nil
 function search.kind(name, def)
   if not search.kinds[name] then search.order[#search.order + 1] = name end
   search.kinds[name] = def
@@ -278,6 +326,8 @@ end
 -- run again, each on the answer of the one before; the ones before it
 -- keep theirs. The results show the last stage's answer, or the
 -- answer before the first that failed.
+---@param from? integer a stage, from 1
+---@return nil
 function search.run(from)
   save_fields()
   search.back, search.replaced = nil, nil
@@ -353,6 +403,9 @@ local function spelled(stages)
   return table.concat(parts, " › ")
 end
 
+-- search.remember(): the search as it stands put in the workspace's
+-- memory — nothing when its pattern is empty.
+---@return nil
 function search.remember()
   if search.stages[1].find == "" then return end
   local stages = kept(search.stages)
@@ -378,6 +431,8 @@ end
 -- search.earlier(by): the searches made in this workspace, newest
 -- first, `by` steps back (`-1` forward); stepped back to the start, the
 -- stages as they were before the walk. Put in the bar, not run.
+---@param by integer steps back, negative forward
+---@return nil
 function search.earlier(by)
   save_fields()
   if not search.back then
@@ -397,6 +452,8 @@ end
 
 -- search.restore(stages): a search kept in the memory back in the bar
 -- — opened for it, from the workspace's root — and run.
+---@param stages? { kind?: string, find?: string, include?: string, exclude?: string, regex?: boolean, case?: "smart"|"sensitive", word?: boolean, ignored?: boolean }[] as the memory kept them
+---@return nil
 function search.restore(stages)
   search.stages, search.cur = stages_of(stages or {}), 1
   search.open()
@@ -427,6 +484,9 @@ end)
 -- a column of its own beside the pane the keys are on, the pane its
 -- `<CR>` opens files in — the find field with the keys; a pattern given
 -- is the first stage's and runs at once.
+---@param pattern? string
+---@param root? string where it starts; the working directory by default
+---@return nil
 function search.open(pattern, root)
   -- Where it starts is asked each time: the workspace's root, or what
   -- `here` said — never what the last search was left at.
@@ -445,6 +505,7 @@ end
 
 -- search.close(): the panel's pane closed — the results kept, the
 -- search running stopped — and the keys back where it was asked from.
+---@return nil
 function search.close()
   save_fields()
   search.live = false
@@ -460,6 +521,8 @@ end
 -- every one, or with `one` the one at the results' caret, the caret
 -- then on the next — as one change, which `u` in the results takes
 -- back from each file; `:w` there writes them.
+---@param one? boolean only the match at the results' caret
+---@return nil
 function search.replace(one)
   local q = search.shown
   if not q then return kawoosh.echo("nothing to replace: ⏎ searches first") end
@@ -478,6 +541,7 @@ end
 -- `find`, `include`, `exclude`, the flags, `files` and `matches` of
 -- its answer, `err`), `cur`, `running`, `root`, and `replaced` when a
 -- replace has made the count stale — for a test, a status line.
+---@return { stages: { kind: string, find: string, include: string, exclude: string, regex: boolean, case: string, word: boolean, ignored: boolean, err?: string, files?: integer, matches?: integer }[], cur: integer, running?: integer, root?: string, replaced: boolean }
 function search.state()
   local out = { cur = search.cur, running = search.running, root = search.root,
                 replaced = search.replaced or false, stages = {} }
@@ -625,6 +689,9 @@ end, { session = false })
 
 -- ------------------------------------------------------------ the verbs
 
+-- search.go(i): stage `i` (from 1) to the fields.
+---@param i integer
+---@return nil
 function search.go(i)
   if i < 1 or i > #search.stages then return end
   save_fields()
@@ -633,6 +700,9 @@ function search.go(i)
   kawoosh.field_focus(VIEW, focused_field() or "find")
 end
 
+-- search.flip(what): one of the cursor's stage's flags flipped.
+---@param what "regex"|"case"|"word"|"ignored"
+---@return nil
 function search.flip(what)
   local st = search.stages[search.cur]
   if what == "case" then
@@ -642,6 +712,8 @@ function search.flip(what)
   end
 end
 
+-- search.add(): an `in` stage after the cursor's, the fields on it.
+---@return nil
 function search.add()
   save_fields()
   table.insert(search.stages, search.cur + 1, new_stage("in"))
@@ -652,6 +724,8 @@ end
 
 -- search.remove([i]): stage `i` (the cursor's) taken out and the stages
 -- after it run again on the one before it; the only stage is emptied.
+---@param i? integer from 1
+---@return nil
 function search.remove(i)
   save_fields()
   i = i or search.cur
@@ -669,7 +743,9 @@ function search.remove(i)
 end
 
 -- The cursor's stage's kind, round the kinds a later stage can be.
+---@return nil
 function search.cycle()
+
   if search.cur == 1 then return kawoosh.echo("the first stage searches the project") end
   local st = search.stages[search.cur]
   local later = {}

@@ -408,11 +408,18 @@ end, {
   here = function(pane) return states[pane] and states[pane].dir end,
 })
 
--- du.state([pane]): what a pane shows — `root`, `dir`, `cursor`,
--- `sort`, `marked` (paths), `entries` (`{ name, bytes, files, dir }` in
--- order) and the walk's `state` — or nil when it is not open. The pane
--- last drawn with the keyboard when none is named; `du.panes()` the
--- panes that have one.
+---What `kawoosh.du_pane.state` answers.
+---@class kawoosh.du_pane.State
+---@field root string where the walk began
+---@field dir string the directory on show
+---@field cursor? string the cursor's entry, by name
+---@field sort "size"|"name"|"files"
+---@field marked string[] the marked paths, sorted
+---@field entries { name: string, bytes?: integer, files?: integer, dir?: boolean }[] the directory's entries in the order shown; a size nil until the walk has it
+---@field state? { root: string, files: integer, bytes: integer, errors: integer, dirs: integer, done: boolean, secs: number } the walk's counts (`kawoosh.du.state`)
+
+-- du.panes(): the panes that have a state, by id.
+---@return integer[]
 function du.panes()
   local out = {}
   for p in pairs(states) do out[#out + 1] = p end
@@ -420,6 +427,13 @@ function du.panes()
   return out
 end
 
+-- du.state([pane]): what a pane shows — `root`, `dir`, `cursor`,
+-- `sort`, `marked` (paths), `entries` (`{ name, bytes, files, dir }` in
+-- order) and the walk's `state` — or nil when it is not open. The pane
+-- last drawn with the keyboard when none is named; `du.panes()` the
+-- panes that have one.
+---@param pane? integer the pane's id
+---@return kawoosh.du_pane.State?
 function du.state(pane)
   S = states[pane or last]
   if not S then return nil end

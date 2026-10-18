@@ -44,6 +44,45 @@
 
 local fs = kawoosh.fs
 local picker = kawoosh.picker
+
+---A launcher module (`launcher.module(name, def)`): rows of its own
+---(`items`, `load`), a picker source's (`source`), or a block it draws
+---(`draw`).
+---@class kawoosh.launcher.Module
+---@field title? string|false its header, its name by default; false for none
+---@field items? kawoosh.picker.Item[]|fun(ctx: kawoosh.picker.Ctx): kawoosh.picker.Item[] its rows, at once
+---@field load? fun(ctx: kawoosh.picker.Ctx, done: fun(items: kawoosh.picker.Item[]?)) its rows read off the frame
+---@field source? string a picker source whose rows it lists
+---@field draw? fun(ctx: kawoosh.launcher.DrawCtx): kui.Node? a block of its own, drawn while the query is empty unless `show` says
+---@field pick? fun(item: kawoosh.picker.Item) what taking a row does, when the row has no `run` nor `pick`
+---@field limit? integer the rows it shows with no query
+---@field show? "always"|"blank"|"query" when it shows: always, with no query, with one
+---@field style? "list"|"tiles" its rows a list, or tiles in a line that wraps
+---@field keys? boolean its rows take letters, launching while the query is empty
+---@field prompt? boolean the query's field and its label (`title`)
+---@field placeholder? string with `prompt`: the field's while it is empty
+---@field name? string set: the name it was registered by
+---@field bundled? boolean set: kawoosh's own, which `"..."` leaves to be placed by name
+
+---What a module's `draw` is given.
+---@class kawoosh.launcher.DrawCtx
+---@field origin? kawoosh.ViewOrigin the buffer the bare pane was split from
+---@field cwd string the working directory
+---@field query string
+---@field theme table<string, kui.Color> the env's theme
+---@field size number the rows' text size, px
+---@field env table kui's env
+
+---A row a plugin adds to a module (`launcher.entry(def)`).
+---@class kawoosh.launcher.Entry: kawoosh.picker.Item
+---@field module? string the module it joins, `"plugins"` by default
+
+---The launcher: its modules by name, the rows plugins added, and the
+---layout used when the `launcher.layout` setting names none.
+---@class kawoosh.launcher
+---@field modules table<string, kawoosh.launcher.Module> by name: `launcher.module(name, def)`
+---@field entries kawoosh.launcher.Entry[] the rows plugins added, in order
+---@field layout (string|table)[] the default layout: module names, `{ module = }`, `{ row = }`, `{ column = }`, `"..."`
 local launcher = { modules = {}, entries = {} }
 kawoosh.launcher = launcher
 
@@ -103,6 +142,9 @@ local short_path = picker.short_path
 
 -- launcher.module(name, def): a module, the same name replacing it;
 -- `def` nil takes it away. A bundled module replaced stays bundled.
+---@param name string
+---@param def? kawoosh.launcher.Module
+---@return nil
 function launcher.module(name, def)
   local old = launcher.modules[name]
   if def == nil then
@@ -119,6 +161,8 @@ end
 
 -- launcher.entry(def): a row of a plugin's own — `{ text =, sub =, run
 -- = "command line" | pick = fn(item), module = "plugins", key = "x" }`.
+---@param def kawoosh.launcher.Entry
+---@return nil
 function launcher.entry(def)
   launcher.entries[#launcher.entries + 1] = def
   version = version + 1
@@ -567,7 +611,9 @@ end
 -- modules placed, in reading order), `blocks` (the blocks drawn),
 -- `missing` (the names the layout gave that no module has), and
 -- `width` (px, as kui laid it out) of `room` (the pane's) — or nil.
+---@return { query: string, rows: string[], sections: string[], modules: string[], missing: string[], blocks: string[], width?: number, room?: number, cursor?: string }?
 function launcher.state()
+
   if not L then return nil end
   local rows, titles = {}, {}
   for _, r in ipairs(L.rows) do

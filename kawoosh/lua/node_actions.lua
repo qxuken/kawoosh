@@ -23,6 +23,44 @@
 -- `val_closure`), so a caret in a closure never splits the call around
 -- it. `node_actions.NAME = false` in the settings turns one off.
 
+---What an action's `run` is given besides the node.
+---@class kawoosh.node_actions.Ctx
+---@field buffer integer
+---@field language string
+---@field caret? integer the caret's byte, from 0
+---@field indent string the leading whitespace of the node's first line
+---@field unit string one indent's text
+
+---An action as `kawoosh.node.action(name, def)` takes it.
+---@class kawoosh.node_actions.Def
+---@field doc? string what it does, in a line
+---@field languages? "*"|string[] the languages it is for, every one by default
+---@field types? string[]|fun(type: string): boolean the node types it takes (tokens too: `==`), or a test when what it takes can grow
+---@field run fun(n: kawoosh.Node, ctx: kawoosh.node_actions.Ctx): string|{ text: string, cursor?: integer }|nil the node's new text (`cursor` the caret that many bytes into it), or nil when it changes none of this node; only reads
+
+---An action as registered.
+---@class kawoosh.node_actions.Action
+---@field name string
+---@field doc? string
+---@field languages "*"|string[]
+---@field types fun(type: string): boolean
+---@field run fun(n: kawoosh.Node, ctx: kawoosh.node_actions.Ctx): string|{ text: string, cursor?: integer }|nil
+
+---What an action would do from a caret.
+---@class kawoosh.node_actions.Answer
+---@field action kawoosh.node_actions.Action
+---@field node kawoosh.Node
+---@field text string the node's new text
+---@field cursor? integer the caret's byte into it, from 0
+
+---Node actions: the registry and the tables the bundled actions read,
+---each a user's to change.
+---@class kawoosh.node_actions
+---@field list kawoosh.node_actions.Action[] the actions, the newest last
+---@field stops table<string, boolean> node types the climb stops at, besides a `body` field
+---@field operators table<string, string> an operator to its mirror
+---@field operators_by_language table<string, table<string, string>> a language's own, over `operators`
+---@field lists table<string, table<string, { trailing?: boolean, pad?: boolean, single?: boolean, nodes?: boolean, sep?: string }>> by language, by node type: the lists `split` takes and how each is written
 local M = { list = {} }
 kawoosh.node_actions = M
 
@@ -38,6 +76,9 @@ kawoosh.setting("node_actions", {
 -- name (and then the newest), or removed with `def` nil — `def` is
 -- `{ doc =, languages = "*" | { … }, types = { … } | fn(type), run =
 -- fn(n, ctx) }`, `types` a function when what it takes can grow.
+---@param name string
+---@param def? kawoosh.node_actions.Def
+---@return nil
 function kawoosh.node.action(name, def)
   for i, a in ipairs(M.list) do
     if a.name == name then
@@ -92,6 +133,11 @@ end
 -- that answers, on each node from the leaf up to a body, innermost
 -- first and the newest action first — `{ action, node, text, cursor }`,
 -- in `buffer` (the current one by default).
+---@param where? integer|integer[] a byte from 0, or `{ from, to }`; the caret by default
+---@param caret? integer the caret's byte, from 0, for the actions' context
+---@param buffer? integer
+---@return kawoosh.node_actions.Answer[]?
+---@return string? why
 function M.answers(where, caret, buffer)
   local n, why = kawoosh.node.leaf(where, buffer)
   if not n then return nil, why end
@@ -120,7 +166,11 @@ end
 -- is `{ buffer, sels, primary_only }` — the picker's, which acts on the
 -- buffer and the caret it was opened from once its own field has the
 -- keys — else the current buffer's selections, in its mode.
+---@param pick? fun(list: kawoosh.node_actions.Answer[]): kawoosh.node_actions.Answer?
+---@param target? { buffer?: integer, sels?: kawoosh.buf.Selection[], primary_only?: boolean }
+---@return nil
 function M.run(pick, target)
+
   pick = pick or function(list) return list[1] end
   target = target or {}
   local h = target.buffer

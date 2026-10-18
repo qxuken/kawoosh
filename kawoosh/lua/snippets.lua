@@ -25,10 +25,23 @@ local fs = kawoosh.fs
 -- (`$1`, `${1:x}`, `${1|a,b|}`, `$0`, `$TM_FILENAME`). A name added
 -- again replaces it. Answers how many were taken and, when some were
 -- not, why each (a list).
+---@param lang string a language's name, "all" for every one
+---@param snippets table<string, kawoosh.snippets.Snippet> by name
+---@return integer count the snippets taken
+---@return string[]? why each one passed over was
 function S.add(lang, snippets) return S._add(lang, snippets) end
+
+---A snippet as VS Code's JSON spells it.
+---@class kawoosh.snippets.Snippet
+---@field prefix string|string[] what is typed to be offered it
+---@field body string|string[] the text, the LSP snippet grammar: `$1`, `${1:x}`, `${1|a,b|}`, `$0`, `$TM_FILENAME`; a list its lines
+---@field description? string
+---@field scope? string the languages it is for, `"rust,go"`: in a file of every language's
 
 -- kawoosh.snippets.names(lang): the names of the snippets `lang` has,
 -- added or read (as their language was written, lowercased).
+---@param lang string
+---@return string[]
 function S.names(lang) return S._names(lang) end
 
 local function say(text)
@@ -185,6 +198,10 @@ end
 -- every language it has, read off the frame; `fn(count, why)` once
 -- every file landed — `why` the first that did not read. Read again,
 -- a file's replace what it put.
+---@param path string a file, a folder, a package's folder or its `package.json`
+---@param lang? string|fun(count: integer, why?: string) the language, else the file's name says; or `fn` in its place
+---@param fn? fun(count: integer, why?: string) once every file landed; by default `why` goes to the log
+---@return nil
 function S.load_json(path, lang, fn)
   if type(lang) == "function" then lang, fn = nil, lang end
   fn = fn or function(_, why) if why then say("load_json: " .. why) end end
@@ -311,7 +328,11 @@ end
 -- Called by the editor the first time a buffer of `lang` asks for a
 -- completion: its snippets, under each of `names`, read from every
 -- path.
+---@param lang string
+---@param names string[] the names its snippets are found under
+---@return nil
 function kawoosh._snippets_want(lang, names)
+
   wanted[lang] = names
   for _, path in ipairs(order) do
     local r = roots[path]

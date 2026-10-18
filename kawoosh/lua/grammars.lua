@@ -348,6 +348,8 @@ end, { session = false })
 -- grammars.take(name): the grammar installed — built here when no
 -- release has a library of it — or, one that is in, brought up to
 -- date as it came, which fetches nothing when nothing moved.
+---@param name string a grammar's name
+---@return nil
 function grammars.take(name)
   local g = by_name(name)
   if not g then return kawoosh.echo("no grammar to install for " .. tostring(name)) end
@@ -364,6 +366,7 @@ end
 -- grammars.state(): what the pane shows — `cursor` (a grammar's name),
 -- `rows` (the names the cursor walks, in order) and `query` (the
 -- filter) — or nil when it is not open.
+---@return { cursor?: string, rows: string[], query: string }?
 function grammars.state()
   if not S then return nil end
   return { cursor = S.cursor, rows = S.rows or {}, query = S.query or "" }

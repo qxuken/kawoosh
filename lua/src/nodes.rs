@@ -404,11 +404,14 @@ pub(crate) fn install(
         })?,
     )?;
 
-    // `kawoosh.node.at(where, buffer)`: the smallest named node over
-    // `where` — an offset, `{ from, to }`, or nil for the primary
-    // selection — or nil and why: no tree, or one behind the text.
+    // `kawoosh.node.at(where?: kawoosh.node.Where, buffer?: integer): kawoosh.Node?, string?`:
+    // the smallest named node over `where` — an offset, `{ from, to }`,
+    // or nil for the primary selection — or nil and why: no tree, or
+    // one behind the text. The buffer by handle, else the current one.
     // @return kawoosh.Node?
     // @return string? why
+    //
+    // @alias kawoosh.node.Where integer|{ from: integer, to: integer }|integer[]
     let s = sh.clone();
     node.set(
         "at",
@@ -418,8 +421,9 @@ pub(crate) fn install(
             })
         })?,
     )?;
-    // `kawoosh.node.leaf(where, buffer)`: the smallest node over
-    // `where`, a token included — `true`, `==`, `"`.
+    // `kawoosh.node.leaf(where?: kawoosh.node.Where, buffer?: integer): kawoosh.Node?, string?`:
+    // the smallest node over `where`, a token included — `true`, `==`,
+    // `"`.
     // @return kawoosh.Node?
     // @return string? why
     let s = sh.clone();
@@ -431,7 +435,8 @@ pub(crate) fn install(
             })
         })?,
     )?;
-    // `kawoosh.node.root(buffer)`: the whole tree's node, or nil and why.
+    // `kawoosh.node.root(buffer?: integer): kawoosh.Node?, string?`: the
+    // whole tree's node, or nil and why.
     // @return kawoosh.Node?
     // @return string? why
     let s = sh.clone();
@@ -447,7 +452,8 @@ pub(crate) fn install(
         node.set(name, f.clone())?;
         methods.set(name, f)
     };
-    // `kawoosh.node.parent(n)`: the node around it, nil at the root.
+    // `kawoosh.node.parent(n: kawoosh.Node): kawoosh.Node?`: the node
+    // around it, nil at the root. A node of a version gone is an error.
     let s = sh.clone();
     both(
         "parent",
@@ -455,8 +461,12 @@ pub(crate) fn install(
             s.with_node(&t, |_, b, h, n| s.opt_table(lua, b, h, n.parent()))
         })?,
     )?;
-    // `kawoosh.node.children(n, { anonymous = })`: its children in
-    // order, the named ones unless `anonymous` asks for tokens too.
+    // `kawoosh.node.children(n: kawoosh.Node, opts?: kawoosh.node.WalkOpts): kawoosh.Node[]`:
+    // its children in order, the named ones unless `anonymous` asks for
+    // tokens too.
+    //
+    // @class kawoosh.node.WalkOpts
+    // @field anonymous? boolean tokens too — `(`, `==` — not only the named nodes
     let s = sh.clone();
     both(
         "children",
@@ -480,8 +490,9 @@ pub(crate) fn install(
             })
         })?,
     )?;
-    // `kawoosh.node.child(n, i, { anonymous = })`: the `i`th child,
-    // from 1, `-1` the last; named ones unless `anonymous`.
+    // `kawoosh.node.child(n: kawoosh.Node, i: integer, opts?: kawoosh.node.WalkOpts): kawoosh.Node?`:
+    // the `i`th child, from 1, `-1` the last; named ones unless
+    // `anonymous`.
     let s = sh.clone();
     both(
         "child",
@@ -508,8 +519,9 @@ pub(crate) fn install(
             })
         })?,
     )?;
-    // `kawoosh.node.get(n, field)`: the child filling `field` —
-    // `condition`, `body`, `operator` (a token, too) — or nil.
+    // `kawoosh.node.get(n: kawoosh.Node, field: string): kawoosh.Node?`:
+    // the child filling `field` — `condition`, `body`, `operator` (a
+    // token, too) — or nil.
     let s = sh.clone();
     both(
         "get",
@@ -520,7 +532,8 @@ pub(crate) fn install(
             })
         })?,
     )?;
-    // `kawoosh.node.next(n, { anonymous = })`: the sibling after it.
+    // `kawoosh.node.next(n: kawoosh.Node, opts?: kawoosh.node.WalkOpts): kawoosh.Node?`:
+    // the sibling after it.
     let s = sh.clone();
     both(
         "next",
@@ -536,7 +549,8 @@ pub(crate) fn install(
             })
         })?,
     )?;
-    // `kawoosh.node.prev(n, { anonymous = })`: the sibling before it.
+    // `kawoosh.node.prev(n: kawoosh.Node, opts?: kawoosh.node.WalkOpts): kawoosh.Node?`:
+    // the sibling before it.
     let s = sh.clone();
     both(
         "prev",
@@ -552,8 +566,9 @@ pub(crate) fn install(
             })
         })?,
     )?;
-    // `kawoosh.node.closest(n, types)`: the node itself or the nearest
-    // around it whose type is `types` — a string, or a list of them.
+    // `kawoosh.node.closest(n: kawoosh.Node, types: string|string[]): kawoosh.Node?`:
+    // the node itself or the nearest around it whose type is `types` —
+    // a string, or a list of them.
     let s = sh.clone();
     both(
         "closest",
@@ -575,7 +590,7 @@ pub(crate) fn install(
             })
         })?,
     )?;
-    // `kawoosh.node.text(n)`: its text.
+    // `kawoosh.node.text(n: kawoosh.Node): string`: its text.
     let s = sh.clone();
     both(
         "text",
@@ -583,8 +598,9 @@ pub(crate) fn install(
             s.with_node(&t, |_, b, _, n| Ok(b.snapshot.slice(n.byte_range())))
         })?,
     )?;
-    // `kawoosh.node.select(n)`: the selection over it, in visual mode,
-    // the head on its last character — as `<A-o>` leaves one.
+    // `kawoosh.node.select(n: kawoosh.Node): nil`: the selection over
+    // it, in visual mode, the head on its last character — as `<A-o>`
+    // leaves one.
     let s = sh.clone();
     both(
         "select",
@@ -601,9 +617,9 @@ pub(crate) fn install(
             Ok(())
         })?,
     )?;
-    // `kawoosh.node.query(source, where)`: a tree-sitter query's
-    // matches over a node, or a buffer's whole tree (a handle, or nil
-    // for the current buffer) — each `{ pattern, captures = { NAME =
+    // `kawoosh.node.query(source: string, where?: kawoosh.Node|integer): kawoosh.NodeMatch[]?, string?`:
+    // a tree-sitter query's matches over a node, or a buffer's whole
+    // tree (a handle, or nil for the current buffer) — each `{ pattern, captures = { NAME =
     // node }, all = { NAME = { node, … } } }`; nil and why when there
     // is no tree of the text.
     // @return kawoosh.NodeMatch[]?

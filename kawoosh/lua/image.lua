@@ -54,6 +54,11 @@ kawoosh.setting("image.max_mb", {
   doc = "a picture file larger than this many megabytes is not read by a pane or a preview; 64 by default",
 })
 
+---The picture pane (`kawoosh.picture`).
+---@class kawoosh.picture
+---@field stills table<string, boolean> the extensions that open in the pane by their name, lower case
+---@field drawings table<string, boolean> the extensions `:image` draws that open as text (svg)
+
 local picture = {}
 kawoosh.picture = picture
 
@@ -69,6 +74,8 @@ end
 
 -- picture.is_picture(path): a still, a moving one or a drawing, by its
 -- name — what a preview draws rather than reads.
+---@param path string
+---@return boolean
 function picture.is_picture(path)
   local ext = ext_of(path)
   return ext ~= nil and (picture.stills[ext] == true or picture.drawings[ext] == true)
@@ -325,6 +332,8 @@ end, {
 
 -- picture.open(path): the picture pane over `path`, opened or turned
 -- to it.
+---@param path string
+---@return nil
 function picture.open(path)
   path = fs.expand(path)
   if fs.is_dir(path) then return kawoosh.echo("a directory: " .. path) end
@@ -333,12 +342,39 @@ function picture.open(path)
   kawoosh.view_open(VIEW, { share = SHARE })
 end
 
+-- picture.panes(): the panes that have a state, by id.
+---@return integer[]
 function picture.panes()
   local out = {}
   for p in pairs(states) do out[#out + 1] = p end
   table.sort(out)
   return out
 end
+
+---What `kawoosh.picture.state` answers: the fields past `backdrop` once the picture is read.
+---@class kawoosh.picture.State
+---@field path string
+---@field paused boolean
+---@field backdrop "none"|"light"|"dark"
+---@field width? integer the picture's size, its own pixels
+---@field height? integer
+---@field format? string
+---@field frames? integer
+---@field frame? integer the frame on show
+---@field vector? boolean a drawing
+---@field zoom? number the pane's pixels for one of the picture's
+---@field fit? number the zoom that fits it
+---@field fitted? boolean the zoom is the fitted one
+---@field x? number where it is drawn in the pane's room, px
+---@field y? number
+---@field w? number
+---@field h? number
+---@field room_w? number the room's size, px
+---@field room_h? number
+---@field drawn_x? number where the layout put it, from the pane's box
+---@field drawn_y? number
+---@field pixel_width? integer the pixels it was read to
+---@field pixel_height? integer
 
 -- picture.state([pane]): what a pane shows — `path`, `paused`,
 -- `backdrop` (`"none"`, `"light"`, `"dark"`) and, once the picture is
@@ -347,6 +383,8 @@ end
 -- `w`, `h`, `room_w`, `room_h`) and the pixels it was read to
 -- (`pixel_width`, `pixel_height`) — or nil when it is not open: the
 -- pane last drawn with the keyboard when none is named.
+---@param pane? integer the pane's id
+---@return kawoosh.picture.State?
 function picture.state(pane)
   local st = states[pane or last]
   if not st then return nil end

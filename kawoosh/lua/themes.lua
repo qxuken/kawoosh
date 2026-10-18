@@ -279,6 +279,8 @@ end, { session = false })
 -- ------------------------------------------------------- the commands
 
 -- themes.take(name): the variant into its half, for the session.
+---@param name string a variant's name
+---@return nil
 function themes.take(name)
   local v = by_name(name)
   if not v then return kawoosh.echo("no theme " .. tostring(name)) end
@@ -286,6 +288,7 @@ function themes.take(name)
 end
 
 -- themes.copy(): the line that keeps what is shown, on the clipboard.
+---@return nil
 function themes.copy()
   local line = keep_line(themes.current())
   kawoosh.copy(line)
@@ -296,6 +299,7 @@ end
 -- `grid` (the cards' names, in the rows the last frame laid them out
 -- in), `scrolled` (how far down the cards are scrolled, px) and `keep`
 -- (the line for `settings.lua`) — or nil when it is not open.
+---@return { cursor?: string, grid?: string[][], scrolled: number, keep: string }?
 function themes.state()
   if not S then return nil end
   return { cursor = S.cursor, grid = S.grid, scrolled = S.scrolled or 0,

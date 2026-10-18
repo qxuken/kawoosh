@@ -48,6 +48,7 @@ end
 -- to put there, so the `compile` tool is for a line without one; and
 -- for a chain (a list, or a name of one: compile.md Decision 22),
 -- whose steps kawoosh runs in turn and no one shell line says.
+---@return string?
 function kawoosh.compile_default()
   local line = kawoosh.opt("compile.default")
   if type(line) ~= "string" or line == "" then return nil end
@@ -69,7 +70,9 @@ end
 -- kawoosh.tools_sync(): the tools as the settings have them now — the
 -- defaults, `compile` while `compile.default` says one, and the
 -- `tools` table.
+---@return nil
 function kawoosh.tools_sync()
+
   for name, def in pairs(DEFAULTS) do register(name, def) end
   local compile = kawoosh.compile_default()
   if compile then register("compile", { cmd = compile, cwd = "root" }) end

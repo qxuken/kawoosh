@@ -31,6 +31,19 @@
 -- status as the pane reads it, and `kawoosh.qd.state()` is what the
 -- pane shows, for a test.
 
+---A module of the dotfiles repo as `kawoosh.qd.status` reads it, both ways.
+---@class kawoosh.qd.Module
+---@field name string the module's name in the repo
+---@field dest string where it lives on this machine
+---@field first_run? boolean qd has not synced it here yet
+---@field files kawoosh.qd.File[] the files out of step, by `rel`
+
+---A file of a module out of step.
+---@class kawoosh.qd.File
+---@field rel string its path in the module
+---@field state "differs"|"machine only"|"repo only"
+---@field path string the machine's copy
+
 kawoosh.qd = kawoosh.qd or {}
 local qd = kawoosh.qd
 local fs = kawoosh.fs
@@ -131,6 +144,8 @@ end
 -- qd.status(fn): `fn(modules, why, repo)` — each module `{ name, dest,
 -- first_run, files = { { rel, state, path } } }` — from `qd status
 -- --json` both ways.
+---@param done fun(modules: kawoosh.qd.Module[]?, why: string?, repo: string?)
+---@return nil
 function qd.status(done)
   local why = missing()
   if why then return done(nil, why) end
@@ -293,6 +308,7 @@ end, { session = false })
 
 -- qd.state(): what the pane shows — `rows` (keys: `m NAME`, `f NAME
 -- REL`), `cursor`, `modules`, `repo` — or nil when it is not open.
+---@return { rows: string[], cursor?: string, modules?: kawoosh.qd.Module[], repo?: string, why?: string }?
 function qd.state()
   if not S then return nil end
   return { rows = S.rows or {}, cursor = S.cursor, modules = S.modules, repo = S.repo, why = S.why }
@@ -336,6 +352,9 @@ end
 -- qd.add(path, name): `NAME/qd.lua` written in the repo for `path` and
 -- the module pulled in. The default is kawoosh's config folder, as
 -- `kawoosh`, its fonts left out.
+---@param path? string the folder; kawoosh's config folder when nil or empty
+---@param name? string the module's name; the folder's (`kawoosh` for the config folder) when nil or empty
+---@return nil
 function qd.add(path, name)
   local mine = path == nil or path == ""
   path = mine and config_dir() or fs.expand(path)
@@ -391,6 +410,7 @@ end, { args = { "path", "text" }, doc = "keep a folder in the dotfiles: `NAME/qd
 -- the settings, so a new machine installs its servers at the first
 -- launch) — as module `kawoosh`, pulled in; one that keeps it already
 -- is pulled again.
+---@return nil
 function qd.setup()
   local mine = config_dir()
   qd.status(function(modules, why, repo)
@@ -410,6 +430,7 @@ end
 
 -- qd.open(): the dotfiles repository as a workspace — a tab on it, its
 -- working directory.
+---@return nil
 function qd.open()
   qd.status(function(_, why, repo)
     if not repo then return kawoosh.echo("qd open: " .. tostring(why or "no dotfiles repo")) end

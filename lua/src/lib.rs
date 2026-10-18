@@ -17,6 +17,7 @@ mod nodes;
 mod prof;
 
 pub use fuzzy::{Hit, Matcher};
+pub use meta::Meta;
 pub use native::{KW_ABI_VERSION, KW_PROTOCOL, KwEdit, NativeCell};
 pub use prof::{Spent, clock_secs};
 
@@ -139,15 +140,19 @@ pub enum Msg {
     /// "path", "text..." }, aliases = {...}, bang = "...", query =
     /// "...", when = { "language:dir" }, doc = "...", jump = true })`).
     RegisterCommand(Spec),
-    /// `kawoosh.fact(name, on)`: a plugin's word on what holds, for a
-    /// `when`.
+    /// `kawoosh.fact(name: string, on?: boolean): nil`: a plugin's word
+    /// on what holds, for a `when` — on unless `on` is false.
     Fact {
         name: String,
         on: bool,
     },
-    /// `kawoosh.setting(path, { type =, doc = })`: a plugin's setting
-    /// declared (roadmap step 34), so the settings files may set it and
-    /// the language server knows it.
+    /// `kawoosh.setting(path: string, spec?: kawoosh.SettingSpec): nil`:
+    /// a plugin's setting declared (roadmap step 34), so the settings
+    /// files may set it and the language server knows it.
+    ///
+    /// @class kawoosh.SettingSpec
+    /// @field type? "string"|"boolean"|"integer"|"number"|"list"|"table"|"size"|string[] its kind (`string` unless said); a list is the words it may be; `table` one whose keys are the user's
+    /// @field doc? string what it does, for `:settings` and the language server
     Declare {
         path: String,
         kind: kawoosh_editor::SettingKind,
@@ -184,24 +189,31 @@ pub enum Msg {
         keys: String,
         scope: Option<String>,
     },
-    /// `kawoosh.buf.show(buffer, { split = })`: the buffer into the
-    /// focused pane, or into a new one beside (`vsplit`), below
-    /// (`split`) or in a new tab (`tab`).
+    /// `kawoosh.buf.show(buffer: integer, opts?: kawoosh.buf.ShowOpts): nil`:
+    /// the buffer into the focused pane, or into a new one beside
+    /// (`vsplit`), below (`split`) or in a new tab (`tab`).
+    ///
+    /// @class kawoosh.buf.ShowOpts
+    /// @field split? "vsplit"|"split"|"tab" where, else the focused pane
     ShowBuffer {
         buffer: u64,
         split: Option<String>,
     },
-    /// `kawoosh.buf.close(buffer, { force =, if_hidden = })`: the
-    /// buffer closed as `:bd` closes it, every pane on it moved to
+    /// `kawoosh.buf.close(buffer: integer, opts?: kawoosh.buf.CloseOpts): nil`:
+    /// the buffer closed as `:bd` closes it, every pane on it moved to
     /// another; one with unsaved changes stays unless `force`, and the
     /// message says so. With `if_hidden`, one a pane still shows stays,
     /// quietly — what a buffer left behind asks.
+    ///
+    /// @class kawoosh.buf.CloseOpts
+    /// @field force? boolean closed with unsaved changes too
+    /// @field if_hidden? boolean only when no pane shows it
     CloseBuffer {
         buffer: u64,
         force: bool,
         if_hidden: bool,
     },
-    /// `kawoosh.buf.back()`: the focused pane back to the buffer it
+    /// `kawoosh.buf.back(): nil`: the focused pane back to the buffer it
     /// showed before, where `:bd` would take it — else another listed
     /// one, else a new scratch. The buffer it leaves stays.
     BackBuffer,
@@ -279,7 +291,9 @@ pub enum Msg {
         root: PathBuf,
         query: kawoosh_systems::search::Query,
     },
-    /// `kawoosh.search_cancel(token)`: that search stopped where it is.
+    /// `kawoosh.search_cancel(token: integer): nil`: that search
+    /// (`kawoosh.search`'s token) stopped where it is, its callback not
+    /// called.
     SearchCancel(u64),
     /// `kawoosh.multibuffer(name, parts[, opts])`: the multibuffer named
     /// `name` made of `parts` — made, or refilled when it is open — and
@@ -329,10 +343,25 @@ pub enum Msg {
         token: u64,
         done: Result<kawoosh_editor::replace::Replaced, String>,
     },
-    /// `kawoosh.highlight(text, { language = | path = }, fn)`: the
-    /// text's syntax runs from the ts thread, the language given or
+    /// `kawoosh.highlight(text: string, opts?: kawoosh.HighlightOpts, fn: fun(runs: kawoosh.HighlightRun[]?, err: string?)): integer`:
+    /// the text's syntax runs from the ts thread, the language given or
     /// told from the path and the first line, the answer to
-    /// `Runtime::highlighted` under `token`.
+    /// `Runtime::highlighted` under `token` — `fn(runs)`, or `fn(nil,
+    /// why)`. Answers the token.
+    ///
+    /// @class kawoosh.HighlightOpts
+    /// @field language? string the grammar by name
+    /// @field path? string a file's path, the language told from it and the first line
+    ///
+    /// @class kawoosh.HighlightRun
+    /// @field from integer its first byte, from 1
+    /// @field to integer its last byte, from 1
+    /// @field token string the theme token's name
+    /// @field color? integer the colour as the theme paints it, `0xRRGGBBAA`; nil for none
+    /// @field bold? true
+    /// @field italic? true
+    /// @field underline? true
+    /// @field strikethrough? true
     Highlight {
         token: u64,
         text: String,
@@ -359,7 +388,8 @@ pub enum Msg {
         /// (`kawoosh.spawn`'s `env`).
         env: Vec<(String, String)>,
     },
-    /// `kawoosh.kill(token)`: the process stopped early.
+    /// `kawoosh.kill(token: integer): nil`: the process `kawoosh.spawn`
+    /// answered `token` for stopped early.
     Kill(u64),
     /// `kawoosh.pass()`: the command running for a key hands the key
     /// to the binding under it.
@@ -392,20 +422,32 @@ pub enum Msg {
         query: String,
         source: String,
     },
-    /// `kawoosh.cmdline(text)`: the command line opened with `text` on
-    /// it, to finish and submit.
+    /// `kawoosh.cmdline(text: string): nil`: the command line opened
+    /// with `text` on it, to finish and submit.
     Cmdline(String),
-    /// `kawoosh.run(line)`: a command line run where the keyboard is
+    /// `kawoosh.run(line: string): nil`: a command line run where the keyboard is
     /// *after* the messages queued before it — `kawoosh.cmd` runs at
     /// once, in the command that queued it — so a picker can close its
     /// pane and then run what was picked in the pane that has the
     /// keyboard back.
     Run(String),
-    /// `kawoosh.recall(i)`: moment `i` of the memory (1 the newest)
-    /// made the `"` register.
+    /// `kawoosh.recall(i: integer): nil`: moment `i` of the memory (1
+    /// the newest) made the `"` register.
     Recall(usize),
-    /// `kawoosh.remember { kind, subject, signals, meta }`: signals
+    /// `kawoosh.remember(moment: kawoosh.memory.Remember): nil`: signals
     /// added to a subject's moment (memory.md Decision 9).
+    ///
+    /// @class kawoosh.memory.Remember
+    /// @field kind string the moment's kind: `file`, `text`, a plugin's own
+    /// @field subject string what it is of: a path, a name
+    /// @field signals? kawoosh.memory.Signals what is added to its counts (none: 0)
+    /// @field meta? any data kept with it, as JSON
+    ///
+    /// @class kawoosh.memory.Signals
+    /// @field visits? integer
+    /// @field edits? integer
+    /// @field yanks? integer
+    /// @field dwell? integer seconds
     Remember {
         kind: String,
         subject: String,
@@ -415,20 +457,23 @@ pub enum Msg {
         dwell_ms: i64,
         meta: Option<String>,
     },
-    /// `kawoosh.forget(kind, subject)`.
+    /// `kawoosh.forget(kind: string, subject: string): nil`: the
+    /// subject's moment of that kind taken out of the memory.
     Forget {
         kind: String,
         subject: String,
     },
-    /// `kawoosh.pin(kind, subject, on)`.
+    /// `kawoosh.pin(kind: string, subject: string, on?: boolean): nil`:
+    /// the subject's moment of that kind pinned — unpinned when `on` is
+    /// false.
     Pin {
         kind: String,
         subject: String,
         on: bool,
     },
-    /// `kawoosh.buf.retarget(from, to)`: every buffer open at path
-    /// `from`, or under it, is at `to` from now on — a file the file
-    /// manager renamed or moved, still open.
+    /// `kawoosh.buf.retarget(from: string, to: string): nil`: every
+    /// buffer open at path `from`, or under it, is at `to` from now on —
+    /// a file the file manager renamed or moved, still open.
     Retarget {
         from: PathBuf,
         to: PathBuf,
@@ -438,10 +483,15 @@ pub enum Msg {
     /// `kawoosh.copy(text)`: the register's newest, as a yank's, and on
     /// the system clipboard — text no buffer's range held, a path.
     Copy(String),
-    /// `kawoosh.open(path, { line =, col =, split = })`: the path
-    /// opened in an editor pane — the focused one, or one split beside
-    /// (`vsplit`), below (`split`) or in a new tab (`tab`) — the caret
-    /// on `line:col` when given.
+    /// `kawoosh.open(path: string, opts?: kawoosh.OpenOpts): nil`: the
+    /// path opened in an editor pane — the focused one, or one split
+    /// beside (`vsplit`), below (`split`) or in a new tab (`tab`) — the
+    /// caret on `line:col` when given.
+    ///
+    /// @class kawoosh.OpenOpts
+    /// @field line? integer the caret's line, from 1
+    /// @field col? integer its column, from 1
+    /// @field split? "vsplit"|"beside"|"split"|"below"|"tab" where, else the focused pane
     Open {
         path: PathBuf,
         line: Option<usize>,
@@ -491,58 +541,83 @@ pub enum Msg {
         /// with it: a pane of the tab in front, or a column of its own.
         pane: Option<ScratchPane>,
     },
-    /// `kawoosh.buf.set_private(private[, buffer])`.
+    /// `kawoosh.buf.set_private(private?: boolean, buffer?: integer|string): nil`:
+    /// the buffer made private (`true`, the default) or not — no
+    /// history, no memory, not in a session. The buffer by handle, by
+    /// name (a scratch just asked for), or the current one.
     SetPrivate {
         buffer: Option<u64>,
         name: Option<String>,
         private: bool,
     },
-    /// `kawoosh.buf.saved(text[, buffer])`: a hooked buffer's write has
-    /// landed — saved, if it still holds `text` (line by line), else
+    /// `kawoosh.buf.saved(text: string, buffer?: integer|string): nil`:
+    /// a hooked buffer's write has landed — saved, if it still holds `text` (line by line), else
     /// left modified by what was typed since.
     Saved {
         buffer: Option<u64>,
         name: Option<String>,
         text: String,
     },
-    /// `kawoosh.buf.mask_with(rule[, buffer])`: a `secrets.masks` rule
-    /// by name on a buffer whatever its path — a decrypted vault.
+    /// `kawoosh.buf.mask_with(rule: string, buffer?: integer|string): nil`:
+    /// a `secrets.masks` rule by name on a buffer whatever its path — a
+    /// decrypted vault.
     MaskWith {
         buffer: Option<u64>,
         name: Option<String>,
         rule: String,
     },
-    /// `kawoosh.buf.paint(name, spans[, buffer])`: a plugin's named
-    /// set of coloured ranges, `(from, to, colour)`, replacing the set's
-    /// earlier ones and carried through edits after; a span with `bg =
-    /// ALPHA` washes the colour behind the text instead (the colour
+    /// `kawoosh.buf.paint(name: string, spans: kawoosh.buf.PaintSpan[], buffer?: integer|string): nil`:
+    /// a plugin's named set of coloured ranges, `(from, to, colour)`,
+    /// replacing the set's earlier ones and carried through edits
+    /// after — no spans takes the set off; a span with `bg = ALPHA`
+    /// washes the colour behind the text instead (the colour
     /// `bg:ALPHA:NAME` here).
+    ///
+    /// @class kawoosh.buf.PaintSpan
+    /// @field [1] integer its first byte, from 0
+    /// @field [2] integer the byte after its last
+    /// @field [3] string the colour: a palette role (`accent`, `added`), a syntax token, `ansi:N`, or `#rrggbb`
+    /// @field bg? number washed behind the text at this strength, 0 to 1
     Paint {
         buffer: Option<u64>,
         name: Option<String>,
         set: String,
         spans: Vec<(usize, usize, String)>,
     },
-    /// `kawoosh.buf.header({ view =, height =, field = }[, buffer])`:
+    /// `kawoosh.buf.header(spec?: kawoosh.buf.Header, buffer?: integer|string): nil`:
     /// the Lua view drawn over the buffer's text in every pane that
     /// shows it; nil takes it off.
+    ///
+    /// @class kawoosh.buf.Header
+    /// @field view string the Lua view's name
+    /// @field height? number logical px; nil, as tall as it draws
+    /// @field field? string the view's field the keys go to when none was focused yet
     Header {
         buffer: Option<u64>,
         name: Option<String>,
         header: Option<HeaderSpec>,
     },
-    /// `kawoosh.buf.mask(ranges[, buffer])`: byte ranges (0-based,
-    /// end exclusive) drawn as `•`, replacing the plugin's earlier ones
+    /// `kawoosh.buf.mask(ranges: integer[][], buffer?: integer|string): nil`:
+    /// byte ranges, `{ from, to }` each (0-based, end exclusive), drawn
+    /// as `•`, replacing the plugin's earlier ones
     /// and carried through edits after.
     Mask {
         buffer: Option<u64>,
         name: Option<String>,
         ranges: Vec<(usize, usize)>,
     },
-    /// `kawoosh.view_open(name, { focus =, below =, share = })`: the
-    /// view in a split — beside, or below with `below` — taking
+    /// `kawoosh.view_open(name: string, opts?: kawoosh.ViewOpenOpts): nil`:
+    /// the view in a split — beside, or below with `below` — taking
     /// `share` of the room, or its pane focused; `focus = false` leaves
     /// the keyboard where it is (a preview beside a listing).
+    ///
+    /// @class kawoosh.ViewSplitOpts
+    /// @field focus? boolean the keyboard to its pane; default true
+    /// @field below? boolean split below, not beside
+    /// @field share? number the part of the room it takes, 0 to 1
+    ///
+    /// @class kawoosh.ViewOpenOpts: kawoosh.ViewSplitOpts
+    /// @field height? number the new pane's height, logical px below its title, in place of `share`
     OpenView {
         name: String,
         focus: bool,
@@ -552,11 +627,12 @@ pub enum Msg {
         /// — worked out against the pane it splits, in place of `share`.
         height: Option<f32>,
     },
-    /// `kawoosh.view_close(name)`: the pane showing the view goes.
+    /// `kawoosh.view_close(name: string): nil`: the pane showing the
+    /// view goes.
     CloseView(String),
-    /// `kawoosh.view_toggle(name, { focus =, below =, share = })`: the
-    /// view's pane closed when it is on show, opened in a split when
-    /// it is not.
+    /// `kawoosh.view_toggle(name: string, opts?: kawoosh.ViewSplitOpts): nil`:
+    /// the view's pane closed when it is on show, opened in a split
+    /// when it is not.
     ToggleView {
         name: String,
         focus: bool,
@@ -572,15 +648,18 @@ pub enum Msg {
         actions: Vec<(String, String)>,
         default: usize,
     },
-    /// `kawoosh.buf.annotate(notes, buffer)`: text after a line's end
-    /// that is not the buffer's — what an entry is, beside its name —
-    /// on the buffer's tracked lines by id, set or (`false`) taken
-    /// off, the rest kept (`Runtime::annotate`). The buffer by handle,
-    /// by name (a scratch just asked for, not yet in the snapshot), or
-    /// the current one. `align` (`{ align = true }`) says whether the
-    /// buffer's notes start at one place, past its widest line — a
-    /// column, as a listing's sizes are — rather than each past its own
-    /// line's end; `None` leaves it as it was.
+    /// `kawoosh.buf.annotate(notes: table<integer, string|false>, buffer?: integer|string, opts?: kawoosh.buf.AnnotateOpts): nil`:
+    /// text after a line's end that is not the buffer's — what an entry
+    /// is, beside its name — on the buffer's tracked lines by id, set or
+    /// (`false`) taken off, the rest kept (`Runtime::annotate`). The
+    /// buffer by handle, by name (a scratch just asked for, not yet in
+    /// the snapshot), or the current one. `align` (`{ align = true }`)
+    /// says whether the buffer's notes start at one place, past its
+    /// widest line — a column, as a listing's sizes are — rather than
+    /// each past its own line's end; `None` leaves it as it was.
+    ///
+    /// @class kawoosh.buf.AnnotateOpts
+    /// @field align? boolean the notes a column past the widest line; nil leaves it as it was
     Annotate {
         buffer: Option<u64>,
         name: Option<String>,
@@ -627,8 +706,27 @@ pub enum Msg {
         restore: bool,
     },
     Compile(String),
-    /// `kawoosh.lsp.server(name, def)`: a server — its data as
-    /// `lsp.NAME` would have it (`kawoosh/lua/servers.lua`).
+    /// `kawoosh.lsp.server(name: string, def: kawoosh.lsp.Server): nil`:
+    /// a server — its data as `lsp.NAME` would have it
+    /// (`kawoosh/lua/servers.lua`, whose head says each field); a
+    /// plugin's rule's name is refused.
+    ///
+    /// @class kawoosh.lsp.Server
+    /// @field cmd string the program, found on the PATH or in kawoosh's servers
+    /// @field args? string[] its arguments
+    /// @field roots? string[] files that mark a workspace root
+    /// @field languages? string[] every language it serves; none for its name alone
+    /// @field when? string[] files one of which must be at or above a file for it to run there
+    /// @field install? string|table a line, `{ mac =, linux =, windows = }` of lines, or a package kawoosh installs (`{ npm = "name" }`)
+    /// @field settings? table what the server reads as its configuration
+    /// @field answers? table<string, any> its own requests and the result each is answered with
+    /// @field init? any its `initializationOptions`
+    /// @field relay? table[] notifications carried to another server: `{ method =, to =, command =, reply = }`
+    /// @field with? string[] the servers its languages' files have beside it
+    /// @field enabled? boolean
+    /// @field load_all? boolean
+    /// @field load_max? integer
+    /// @field inlay_hints? boolean
     LspServer {
         language: String,
         def: Setting,
@@ -659,9 +757,31 @@ pub enum Msg {
     /// `kawoosh.diagnostics.clear(name)`: every diagnostic plugin `name`
     /// published, every buffer's and every file's, taken back.
     DiagnosticsClear(String),
-    /// `kawoosh.formatter(name, def)`: a formatter (formatters.md) — its
-    /// data as `format.NAME` would have it, and whether a `run` function
-    /// formats in its place.
+    /// `kawoosh.formatter(name: string, def: kawoosh.Formatter): nil`: a
+    /// formatter (formatters.md) — its data as `format.NAME` would have
+    /// it, and whether a `run` function formats in its place; a `cmd` or
+    /// a `run` it must have.
+    ///
+    /// @class kawoosh.Formatter
+    /// @field cmd? string the program: the buffer's text on stdin, the formatted text on stdout
+    /// @field args? string[] its arguments; `{path}` the buffer's path
+    /// @field languages? string[] the languages it formats
+    /// @field when? string|string[] the files above the buffer that say a project uses it (`FILE:KEY` a JSON key), or `always`
+    /// @field node? boolean `node_modules/.bin/CMD` looked for first
+    /// @field range? string[] the arguments that format a range: `{start}` `{end}` bytes
+    /// @field probe? table<string, string> a snippet per language its indent is read by
+    /// @field timeout_ms? integer how long it may take (5000)
+    /// @field install? string|table as `lsp.NAME.install`
+    /// @field enabled? boolean
+    /// @field run? fun(ctx: kawoosh.FormatCtx, text: string, done: fun(text: string?, why: string?)): string? Lua that formats: `done(text)`, `done(nil, why)`, or the text returned at once
+    ///
+    /// @class kawoosh.FormatCtx
+    /// @field path string the buffer's file
+    /// @field language string
+    /// @field buffer integer its handle
+    /// @field cwd string where it runs: its `when` file's directory, else the buffer's
+    /// @field from? integer a range's start, bytes from 0
+    /// @field to? integer a range's end, bytes from 0, exclusive
     Formatter {
         name: String,
         def: Setting,
@@ -673,15 +793,33 @@ pub enum Msg {
         token: u64,
         result: Result<String, String>,
     },
-    /// `kawoosh.format(buffer, { with = })`: the buffer formatted with
-    /// its formatter or the one named.
+    /// `kawoosh.format(buffer?: integer, opts?: kawoosh.FormatOpts): nil`:
+    /// the buffer (nil the current one) formatted with its formatter or
+    /// the one named.
+    ///
+    /// @class kawoosh.FormatOpts
+    /// @field with? string the formatter's name, else the buffer's own
     Format {
         buffer: Option<u64>,
         with: Option<String>,
     },
-    /// `kawoosh.language(name, t)`: a language — its files, and where
-    /// its grammar is, if anything was said (kui.md D13). The shell
-    /// resolves the paths.
+    /// `kawoosh.language(name: string, def?: kawoosh.LanguageDef): nil`:
+    /// a language — its files, and where its grammar is, if anything
+    /// was said (kui.md D13). The shell resolves the paths.
+    ///
+    /// @class kawoosh.LanguageDef
+    /// @field aliases? string[] other names it goes by
+    /// @field extensions? string[] its files' extensions
+    /// @field filenames? string[] its files' whole names
+    /// @field shebangs? string[] the interpreters a `#!` line names
+    /// @field path? string its grammar's library
+    /// @field symbol? string the grammar's function in it
+    /// @field highlights? string its highlights query's file
+    /// @field injections? string its injections query's file
+    /// @field comment? string its line comment token: `//`
+    /// @field comment_block? string[] its block comment's tokens: `{ "/*", "*/" }`
+    /// @field indent_style? "tab"|"space" how its files indent
+    /// @field indent_size? integer
     Language {
         name: String,
         aliases: Vec<String>,
@@ -710,10 +848,13 @@ pub enum Msg {
         value: Option<Setting>,
     },
     Chdir(PathBuf),
-    /// `kawoosh.term.send(text[, { prompt = true }])`: bytes typed into
-    /// the terminal pane with the keys; with `prompt`, only while its
-    /// shell sits at an empty prompt (OSC 133), refused with a message
-    /// otherwise.
+    /// `kawoosh.term.send(text: string, opts?: kawoosh.term.SendOpts): nil`:
+    /// bytes typed into the terminal pane with the keys; with `prompt`,
+    /// only while its shell sits at an empty prompt (OSC 133), refused
+    /// with a message otherwise.
+    ///
+    /// @class kawoosh.term.SendOpts
+    /// @field prompt? boolean only at an empty prompt
     TermSend {
         text: String,
         prompt: bool,
@@ -3611,7 +3752,13 @@ fn set_selections(
 
 type StoreCell = Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>;
 
-/// `kawoosh.matcher(list)`: a list held in Rust for fuzzy queries.
+/// `kawoosh.matcher(list: string[]): kawoosh.Matcher`: a list held in
+/// Rust for fuzzy queries — a big one, forty thousand paths, so a
+/// keystroke's query crosses one string.
+///
+/// @class kawoosh.Matcher
+/// @field query fun(self: kawoosh.Matcher, needle: string, limit?: integer): kawoosh.FuzzyHit[] the best `limit` (500) first
+/// @field count fun(self: kawoosh.Matcher): integer how many it holds
 struct LuaMatcher(Matcher);
 
 impl mlua::UserData for LuaMatcher {
@@ -3626,7 +3773,7 @@ impl mlua::UserData for LuaMatcher {
     }
 }
 
-/// `kawoosh.diagnostics.get({ buffer =, root =, severity =, from = })`:
+/// `kawoosh.diagnostics.get(opts?: kawoosh.diagnostics.Query): kawoosh.Diagnostic[]`:
 /// a row per diagnostic (docs/design/lists.md Decisions 6 and 7) —
 /// `path`, `buffer` when one holds it, `line` `col` `end_line` `end_col`
 /// from 1 (a column in characters), `severity` 1–4 and its `level`,
@@ -3636,6 +3783,26 @@ impl mlua::UserData for LuaMatcher {
 /// `severity = 2` keeps warnings and worse, `from = NAME` one
 /// publisher's. A buffer's in its text's order, then the files no
 /// buffer holds, by path. `kawoosh.lsp.diagnostics` is the same.
+///
+/// @class kawoosh.diagnostics.Query
+/// @field buffer? integer that buffer's only, `0` the current one's
+/// @field root? string those of the files under it only
+/// @field severity? integer|"error"|"warning"|"warn"|"info"|"information"|"hint" that and worse only: `2` warnings and errors
+/// @field from? string one publisher's only: `lsp` the servers', else a plugin's name
+///
+/// @class kawoosh.Diagnostic: kawoosh.diagnostics.Item
+/// @field path? string its file's
+/// @field buffer? integer the buffer that holds it
+/// @field line integer from 1
+/// @field col integer from 1, in characters
+/// @field end_line integer from 1
+/// @field end_col integer from 1: the character after the last
+/// @field severity integer 1 an error, 2 a warning, 3 an info, 4 a hint
+/// @field level "error"|"warning"|"info"|"hint"
+/// @field message string whole
+/// @field source? string
+/// @field code? string
+/// @field from string who published it: `lsp` the servers, else a plugin's name
 fn diagnostic_rows(lua: &Lua, p: &Published, opts: Option<Table>) -> mlua::Result<Table> {
     use kawoosh_systems::fs as kfs;
     let get = |k: &str| opts.as_ref().map(|t| t.get::<LV>(k)).transpose();
@@ -4046,7 +4213,14 @@ fn seed(
     let k = lua.create_table()?;
     let q = |queue: &Rc<RefCell<Vec<Msg>>>| queue.clone();
 
-    // ---- kawoosh.store(ns): persistent KV, no ceremony (mvp.md D7)
+    // ---- `kawoosh.store(ns: string): kawoosh.Store`: persistent KV, no
+    // ceremony (mvp.md D7) — namespace `ns`'s keys, kept across launches.
+    //
+    // @class kawoosh.Store
+    // @field get fun(key: string): string? the value, nil when none (or no store)
+    // @field set fun(key: string, value: string|number|boolean|nil) the value kept as text (nil as "")
+    // @field del fun(key: string) the key gone
+    // @field keys fun(): string[] the namespace's keys, sorted
     let st = store.clone();
     k.set(
         "store",
@@ -4109,9 +4283,23 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- the registry read back: every spec as a table, and whether
-    // a command can run now — the engine's `can`, answered from the
-    // snapshot with the same rule.
+    // ---- `kawoosh.commands(): kawoosh.CommandInfo[]`: the registry
+    // read back, every spec as a table — the fields as `kawoosh.command`
+    // takes them, `name`, `kind` and the `keys` bound to it besides.
+    // `kawoosh.can` below says whether a command can run now — the
+    // engine's `can`, answered from the snapshot with the same rule.
+    //
+    // @class kawoosh.CommandInfo
+    // @field name string
+    // @field aliases string[]
+    // @field args string[] one kind per position, as `kawoosh.command` takes them
+    // @field bang? string what `!` means
+    // @field query? string what `?` means
+    // @field when string[] facts that must hold
+    // @field doc string
+    // @field jump? boolean the move it makes is a jump
+    // @field kind "motion"|"operator"|"textobject"|"command"
+    // @field keys string[] the keys bound to it
     let pp = published.clone();
     k.set(
         "commands",
@@ -4126,8 +4314,8 @@ fn seed(
             Ok(out)
         })?,
     )?;
-    // ---- `kawoosh.holds(fact)`: whether a fact holds where the
-    // keyboard is, by the rule a `when` is checked with.
+    // ---- `kawoosh.holds(fact: string): boolean`: whether a fact holds
+    // where the keyboard is, by the rule a `when` is checked with.
     let pp = published.clone();
     k.set(
         "holds",
@@ -4155,11 +4343,17 @@ fn seed(
     // `"linux"` or `"windows"`, a server's install lines' names — for
     // an `init.lua` whose command differs by system.
     k.set("os", kawoosh_systems::PLATFORM)?;
-    // ---- fuzzy matching (`fuzzy.rs`): `kawoosh.fuzzy(needle, list,
-    // limit)` over a small list; `kawoosh.matcher(list)` holds a big
-    // one — forty thousand paths — so a keystroke's query crosses one
-    // string, and `m:query(needle, limit)` answers `{ index, score,
-    // positions }` best first, `m:count()` how many it holds.
+    // ---- `kawoosh.fuzzy(needle: string, list: string[], limit?: integer): kawoosh.FuzzyHit[]`:
+    // fuzzy matching (`fuzzy.rs`) over a small list, the best `limit`
+    // (500) first; `kawoosh.matcher(list)` holds a big one — forty
+    // thousand paths — so a keystroke's query crosses one string, and
+    // `m:query(needle, limit)` answers `{ index, score, positions }`
+    // best first, `m:count()` how many it holds.
+    //
+    // @class kawoosh.FuzzyHit
+    // @field index integer which entry of the list, from 1
+    // @field score number how well it matched, higher better
+    // @field positions integer[] the matched characters' bytes in the entry, from 1, in order
     k.set(
         "fuzzy",
         lua.create_function(
@@ -4191,27 +4385,26 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- `kawoosh.spawn(cmd, { cwd =, stdin =, on_lines = fn(lines),
-    // on_stderr = fn(lines), on_done = fn(text, code), on_exit = fn(code)
-    // })`: a process — `cmd` a line through the shell, or a list, the
-    // program and its arguments with no shell between (docs/design/vcs.md
-    // Decision 5) — its output in lines as they come, once a frame, or
-    // whole at the end through `on_done` (a trailing newline kept);
-    // stderr with the lines, or apart through `on_stderr`; the token it
-    // answers to, for `kawoosh.kill(token)`.
-    // ---- `kawoosh.pane()`: the pane the keyboard is in, as the shell
-    // last said it before running a command — what `ctx.pane` is, for
+    // ---- `kawoosh.pane(): integer`: the pane the keyboard is in, as the
+    // shell last said it before running a command — what `ctx.pane` is, for
     // code that has no `ctx` at hand (a picker's source, a hook).
     let pp = published.clone();
     k.set(
         "pane",
         lua.create_function(move |_, ()| Ok(pp.borrow().pane))?,
     )?;
-    // ---- `kawoosh.pane_size(pane)`: an editor pane's size as the last
-    // frame drew it — `width` and `height` of its text in logical px,
-    // `cols` and `rows` in cells of the editor's font — or nil for a
-    // pane that is not an editor pane, or not drawn yet. A command's
-    // `ctx.pane` names the one the keyboard is in.
+    // ---- `kawoosh.pane_size(pane: integer): kawoosh.PaneSize?`: an
+    // editor pane's size as the last frame drew it — `width` and
+    // `height` of its text in logical px, `cols` and `rows` in cells of
+    // the editor's font — or nil for a pane that is not an editor pane,
+    // or not drawn yet. A command's `ctx.pane` names the one the
+    // keyboard is in.
+    //
+    // @class kawoosh.PaneSize
+    // @field width number its text's width, logical px
+    // @field height number its text's height, logical px
+    // @field cols integer in cells of the editor's font
+    // @field rows integer in cells of the editor's font
     let pp = published.clone();
     k.set(
         "pane_size",
@@ -4228,11 +4421,16 @@ fn seed(
             Ok(Some(t))
         })?,
     )?;
-    // ---- `kawoosh.panes()`: the tab in front's panes in their order —
-    // a strip's columns left to right, each column top to bottom —
-    // `{ pane =, buffer = }` each, `buffer` the handle an editor pane
-    // shows (nil for a terminal, a Lua view…), as the shell last said
-    // them: before a command runs, before a process's end is told.
+    // ---- `kawoosh.panes(): kawoosh.PaneInfo[]`: the tab in front's
+    // panes in their order — a strip's columns left to right, each
+    // column top to bottom — `{ pane =, buffer = }` each, `buffer` the
+    // handle an editor pane shows (nil for a terminal, a Lua view…), as
+    // the shell last said them: before a command runs, before a
+    // process's end is told.
+    //
+    // @class kawoosh.PaneInfo
+    // @field pane integer its id
+    // @field buffer? integer the buffer an editor pane shows; nil for a terminal, a Lua view…
     let pp = published.clone();
     k.set(
         "panes",
@@ -4248,9 +4446,15 @@ fn seed(
             Ok(t)
         })?,
     )?;
-    // ---- `kawoosh.tabs()`: every tab in the strip's order, `{ index =,
-    // cwd =, active = }` each — `index` from 1, what `:tab goto N`
-    // takes; `cwd` its working directory (workspaces.md Decision 1).
+    // ---- `kawoosh.tabs(): kawoosh.TabInfo[]`: every tab in the strip's
+    // order, `{ index =, cwd =, active = }` each — `index` from 1, what
+    // `:tab goto N` takes; `cwd` its working directory (workspaces.md
+    // Decision 1).
+    //
+    // @class kawoosh.TabInfo
+    // @field index integer from 1, what `:tab goto N` takes
+    // @field cwd string its working directory
+    // @field active boolean the tab in front
     let pp = published.clone();
     k.set(
         "tabs",
@@ -4267,6 +4471,22 @@ fn seed(
             Ok(t)
         })?,
     )?;
+    // ---- `kawoosh.spawn(cmd: string|string[], opts?: kawoosh.SpawnOpts): integer`:
+    // a process — `cmd` a line through the shell, or a list, the
+    // program and its arguments with no shell between (docs/design/vcs.md
+    // Decision 5) — its output in lines as they come, once a frame, or
+    // whole at the end through `on_done` (a trailing newline kept);
+    // stderr with the lines, or apart through `on_stderr`; the token it
+    // answers to, for `kawoosh.kill(token)`.
+    //
+    // @class kawoosh.SpawnOpts
+    // @field cwd? string where it runs (`~` expanded), else the working directory
+    // @field stdin? string written to the process, then closed
+    // @field env? table<string, string|number|boolean> variables over the inherited ones
+    // @field on_lines? fun(lines: string[]) its output's lines as they come, once a frame (stderr's too, without `on_stderr`)
+    // @field on_stderr? fun(lines: string[]) stderr's lines apart from stdout's
+    // @field on_done? fun(out: string, code: integer?) stdout whole at its end (a trailing newline kept); `code` nil when killed
+    // @field on_exit? fun(code: integer?) its exit code, nil when killed
     let qq = q(queue);
     let jj = jobs.clone();
     k.set(
@@ -4349,12 +4569,13 @@ fn seed(
             Ok(token)
         })?,
     )?;
-    // ---- `kawoosh.diff(old, new)`: the hunks between two texts, at
-    // once, as `kawoosh.buf.hunks` shapes them (docs/design/vcs.md
-    // Decision 6): `{ kind =, line =, end_line =, old_line =, old_end =,
-    // old = { … } }` each, lines from 1, ends exclusive — what a review
-    // of two revisions is laid out from, no buffer needed. An LF `old`
-    // against CRLF `new` is read with CRLF (`base_line_ends`).
+    // ---- `kawoosh.diff(old: string, new: string): kawoosh.buf.Hunk[]`: the
+    // hunks between two texts, at once, as `kawoosh.buf.hunks` shapes
+    // them (docs/design/vcs.md Decision 6): `{ kind =, line =, end_line
+    // =, old_line =, old_end =, old = { … } }` each, lines from 1, ends
+    // exclusive — what a review of two revisions is laid out from, no
+    // buffer needed. An LF `old` against CRLF `new` is read with CRLF
+    // (`base_line_ends`).
     k.set(
         "diff",
         lua.create_function(|lua, (old, new): (String, String)| {
@@ -4403,7 +4624,8 @@ fn seed(
             Ok(out)
         })?,
     )?;
-    // `kawoosh.image(path[, opts])`: the picture file at `path` for a
+    // `kawoosh.image(path: string, opts?: kawoosh.ImageOpts): kawoosh.Image?, string?`:
+    // the picture file at `path` for a
     // view's `image { id = }` — `{ id, width, height, … }` once it is
     // read and registered, `nil` while it is on its way (asked for the
     // first time it is named; the frame it lands draws the view
@@ -4418,6 +4640,25 @@ fn seed(
     // moves moving; `frame = n` shows that frame; `width = px` draws a
     // drawing again that many pixels wide; `reload = true` reads the
     // file again, the picture shown until then the one there was.
+    //
+    // @class kawoosh.Image
+    // @field id integer what a view's `image { id = }` takes
+    // @field width integer the picture's own width, what it is laid out by
+    // @field height integer its own height
+    // @field pixel_width integer the pixels decoded across
+    // @field pixel_height integer the pixels decoded down
+    // @field frames integer how many it has, 1 a still
+    // @field frame integer the one shown, from 1
+    // @field duration integer all its frames' time, ms
+    // @field more boolean frames were left out: too many to keep
+    // @field format "png"|"jpeg"|"gif"|"webp"|"bmp"|"svg"|"image" `image` another format the decoder read
+    // @field vector boolean a drawing, sharp at any width
+    //
+    // @class kawoosh.ImageOpts
+    // @field play? boolean keeps a picture that moves moving, said each frame it is drawn
+    // @field frame? integer that frame shown, from 1
+    // @field width? number a drawing drawn again that many pixels wide
+    // @field reload? boolean the file read again
     let (qq, pp) = (q(queue), published.clone());
     k.set(
         "image",
@@ -4491,7 +4732,7 @@ fn seed(
             Ok((a, b))
         })?,
     )?;
-    // `kawoosh.pass()`, from a command a key ran: the key is not this
+    // `kawoosh.pass(): nil`, from a command a key ran: the key is not this
     // command's here — the binding under it gets it, and a key that
     // types, with none left, types. Two plugins on one key (`<CR>` in
     // insert mode) each take it where it is theirs.
@@ -4511,10 +4752,15 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- `kawoosh.oldfiles([limit], [all])`: the files attended
-    // before, newest first, each `{ path, line }` — the workspace's
-    // `file` rows (memory.md Decision 2), every workspace's with `all`;
-    // what the memory has not flushed yet folded in.
+    // ---- `kawoosh.oldfiles(limit?: integer, all?: boolean): kawoosh.OldFile[]`:
+    // the files attended before, newest first, at most `limit` (200),
+    // each `{ path, line }` — the workspace's `file` rows (memory.md
+    // Decision 2), every workspace's with `all`; what the memory has
+    // not flushed yet folded in.
+    //
+    // @class kawoosh.OldFile
+    // @field path string the file's path, as the memory keeps it
+    // @field line integer where the caret was, from 1
     let st = store.clone();
     let pp = published.clone();
     let pd = pending.clone();
@@ -4546,6 +4792,9 @@ fn seed(
             Ok(out)
         })?,
     )?;
+    // `kawoosh.can(name: string): true|string`: whether command `name`
+    // can run where the keyboard is — `true`, or why not (a `when` that
+    // does not hold); a name no command has is `true`.
     let pp = published.clone();
     k.set(
         "can",
@@ -4703,6 +4952,9 @@ fn seed(
             },
         )?,
     )?;
+    // `kawoosh.cmd(line: string): nil`: a command line run at once, in
+    // the command that called it — `kawoosh.run` waits for the messages
+    // queued before it.
     let qq = q(queue);
     k.set(
         "cmd",
@@ -4711,7 +4963,7 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- `kawoosh.copy(text)`: onto the system clipboard and into the
+    // ---- `kawoosh.copy(text: string): nil`: onto the system clipboard and into the
     // register, as a yank puts text — what `<leader>yp` in a listing
     // copies the entry's path with.
     let qq = q(queue);
@@ -4726,6 +4978,8 @@ fn seed(
     // program that answers in it (`qd status --json`), a file of data,
     // the user's snippets.
     json::install(lua, &k)?;
+    // `kawoosh.echo(value: any): nil`: the message line says `value` —
+    // a string as it is, a number or a boolean as text, nil as nothing.
     let qq = q(queue);
     k.set(
         "echo",
@@ -4954,6 +5208,9 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh.compile(line: string): nil`: `:compile LINE` — the line
+    // resolved and run into `*compile*`, shown beside the code; a named
+    // command wanting arguments put in the prompt instead.
     let qq = q(queue);
     k.set(
         "compile",
@@ -4962,7 +5219,8 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- kawoosh.compile_kind(name, def): a kind of build the compile
+    // ---- `kawoosh.compile_kind(name: string, def: kawoosh.CompileKind|false|nil): nil`:
+    // a kind of build the compile
     // picker and a bare `:compile` read a project's files for (compile.md
     // Decision 17): `markers` the files that say a directory is its,
     // `outermost` to run at the outermost of them in the repository
@@ -4973,6 +5231,26 @@ fn seed(
     // text }` answering one. A builtin's name (`cargo`, `node`, `just`,
     // `nu`, `make`, `cmake`, `go`, `python`, `zig`) puts it in that
     // kind's place; `false` turns that kind off.
+    //
+    // @class kawoosh.CompileKind
+    // @field markers string[] the files that say a directory is its; at least one
+    // @field outermost? boolean run at the outermost of them in the repository, not the nearest
+    // @field runner? boolean a task runner: ranked after the language server's kinds, before the rest
+    // @field programs? string[] programs whose commands run where its file is
+    // @field commands? kawoosh.CompileCommands|fun(ctx: kawoosh.CompileKindCtx): kawoosh.CompileCommands its commands, or a function answering them for a file found
+    //
+    // @alias kawoosh.CompileCommands (string|kawoosh.CompileCommand)[]
+    //
+    // @class kawoosh.CompileCommand
+    // @field cmd string the command line
+    // @field why? string what it does, as its file says
+    // @field needs? boolean it wants arguments: taken, it goes to the prompt to finish
+    // @field detail? string[] how it is declared, for the preview
+    //
+    // @class kawoosh.CompileKindCtx
+    // @field file string the marker file found
+    // @field dir string the directory it was found in
+    // @field text string the file's text
     let (qq, jj) = (q(queue), jobs.clone());
     k.set(
         "compile_kind",
@@ -5021,9 +5299,20 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- kawoosh.compile_offer(): what `compile pick` last offered —
-    // `{ index, cmd, name, from, cwd, why, needs, detail }` each, `needs` when
-    // it wants arguments, `detail` how it is declared — or nil before.
+    // ---- `kawoosh.compile_offer(): kawoosh.CompileOffer[]?`: what
+    // `compile pick` last offered — `{ index, cmd, name, from, cwd, why,
+    // needs, detail }` each, `needs` when it wants arguments, `detail`
+    // how it is declared — or nil before.
+    //
+    // @class kawoosh.CompileOffer
+    // @field index integer from 1, what `compile pick N` takes
+    // @field cmd string
+    // @field name? string its name in `compile.commands`
+    // @field from string what said so: `compile.default`, `compile.commands`, `recent`, a file's path
+    // @field cwd string where it runs, `~` for home
+    // @field why string what it does as its file says, or empty
+    // @field needs boolean it wants arguments
+    // @field detail string[] how it is declared
     let pp = published.clone();
     k.set(
         "compile_offer",
@@ -5051,9 +5340,20 @@ fn seed(
             Ok(LV::Table(t))
         })?,
     )?;
-    // ---- kawoosh.domains(): what `domain pick` last offered — `{ name,
-    // kind, target, label, from, state, means, error, open }` each — or nil
-    // before.
+    // ---- `kawoosh.domains(): kawoosh.Domain[]?`: what `domain pick`
+    // last offered — `{ name, kind, target, label, from, state, means,
+    // error, open }` each — or nil before.
+    //
+    // @class kawoosh.Domain
+    // @field name string
+    // @field kind "ssh"|"wsl"
+    // @field target string the host, the distro, or empty for the default distro
+    // @field label string the kind and the machine as the user reads them: `ssh: box`
+    // @field means string what the state means for it, in a sentence
+    // @field from string what made it one: `settings`, `~/.ssh/config`, `WSL`
+    // @field state "down"|"connecting"|"up"|"failed"
+    // @field error? string why it failed, the last time
+    // @field open integer its buffers open
     let pp = published.clone();
     k.set(
         "domains",
@@ -5079,6 +5379,10 @@ fn seed(
             Ok(LV::Table(t))
         })?,
     )?;
+    // ---- `kawoosh.colors(colors: table<string, string>): nil`: syntax
+    // tokens' colours by token name (`keyword = "#c678dd"`), `#rrggbb`
+    // or `#rrggbbaa`, over the theme's in light and dark alike; a name
+    // or a colour that does not read is said on the message line.
     let qq = q(queue);
     k.set(
         "colors",
@@ -5092,9 +5396,11 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- settings: `kawoosh.opt(path)` reads the effective value at a
-    // dotted path (a table for a subtree, the whole tree for no path);
-    // `kawoosh.opt(path, value)` sets it, typed as given, `nil` unsets.
+    // ---- `kawoosh.opt(path?: string, value?: any): any`: the settings —
+    // with only a path, the effective value at that dotted path (a
+    // table for a subtree, the whole tree for no path, nil for none);
+    // `kawoosh.opt(path, value)` sets it, typed as given, `nil` unsets —
+    // answering nil.
     let qq = q(queue);
     let pp = published.clone();
     k.set(
@@ -5119,11 +5425,16 @@ fn seed(
             },
         )?,
     )?;
+    // ---- `kawoosh.mode(): "normal"|"insert"|"visual"|"operator"|"pane"`:
+    // the mode of the view the keyboard is in, as the last publish saw
+    // it; `normal` with none.
     let pp = published.clone();
     k.set(
         "mode",
         lua.create_function(move |_, ()| Ok(pp.borrow().mode.clone()))?,
     )?;
+    // `kawoosh.message(): string`: the status line's message as the
+    // shell last said it, empty when none.
     let pp = published.clone();
     k.set(
         "message",
@@ -5132,10 +5443,22 @@ fn seed(
 
     // ---- lsp
     let lsp = lua.create_table()?;
-    // ---- kawoosh.lsp.candidates(): the completion's candidates while
-    // `lsp candidates` has them up — `{ index, label, insert, kind,
-    // detail, documentation }` each — and `.current`, the one the ghost
-    // showed; nil when none.
+    // ---- `kawoosh.lsp.candidates(): kawoosh.lsp.Candidates?`: the
+    // completion's candidates while `lsp candidates` has them up — `{
+    // index, label, insert, kind, detail, documentation }` each — and
+    // `.current`, the one the ghost showed; nil when none.
+    //
+    // @class kawoosh.lsp.Candidates
+    // @field [integer] kawoosh.lsp.Candidate
+    // @field current integer the `index` of the one the ghost showed
+    //
+    // @class kawoosh.lsp.Candidate
+    // @field index integer from 1, what `lsp accept N` takes
+    // @field label string
+    // @field insert string the text it puts in
+    // @field kind string the kind's name (`function`, `field`, …), or empty
+    // @field detail string the server's one-liner: a signature, a type
+    // @field documentation string plain or markdown, or empty
     let pp = published.clone();
     lsp.set(
         "candidates",
@@ -5159,9 +5482,16 @@ fn seed(
             Ok(LV::Table(t))
         })?,
     )?;
-    // ---- kawoosh.lsp.actions(): the code actions a server last
-    // offered — `{ index, title, kind, preview }` each, `preview` the
-    // lines of what taking it does — or nil before any.
+    // ---- `kawoosh.lsp.actions(): kawoosh.lsp.Action[]?`: the code
+    // actions a server last offered — `{ index, title, kind, preview }`
+    // each, `preview` the lines of what taking it does — or nil before
+    // any.
+    //
+    // @class kawoosh.lsp.Action
+    // @field index integer from 1, what `lsp action N` takes
+    // @field title string
+    // @field kind string the server's kind (`quickfix`, `refactor.extract`, …), or empty
+    // @field preview string[] what taking it does: its edit as a diff, a command it runs
     let pp = published.clone();
     lsp.set(
         "actions",
@@ -5185,7 +5515,8 @@ fn seed(
             Ok(LV::Table(t))
         })?,
     )?;
-    // ---- kawoosh.lsp.counts(): the diagnostics published, counted by
+    // ---- `kawoosh.lsp.counts(): { errors: integer, warnings: integer, infos: integer, hints: integer }`:
+    // the diagnostics published, counted by
     // severity — `{ errors =, warnings =, infos =, hints = }` — without
     // building the list `diagnostics()` does: what a status segment asks
     // every frame (docs/design/status.md).
@@ -5207,7 +5538,7 @@ fn seed(
             Ok(t)
         })?,
     )?;
-    // ---- kawoosh.lsp.diagnostics({ buffer =, root =, severity =, from = })
+    // ---- `kawoosh.lsp.diagnostics(opts?: kawoosh.diagnostics.Query): kawoosh.Diagnostic[]`
     // (docs/design/lists.md Decision 6): every publisher's, as
     // `kawoosh.diagnostics.get` reads them (`diagnostic_rows`).
     let pp = published.clone();
@@ -5242,14 +5573,32 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- kawoosh.lsp.symbols({ workspace =, query =, buffer =, source =
-    // }, fn): the buffer's symbols, or the workspace's matching `query`,
+    // ---- `kawoosh.lsp.symbols(opts: kawoosh.lsp.SymbolsOpts?, fn: fun(items: kawoosh.lsp.Symbol[]?, why: string?)): integer`:
+    // the buffer's symbols, or the workspace's matching `query`,
     // from its server — or, for a buffer's, its grammar's outline:
     // `source` `auto` (the server's when one lists them, the outline
     // otherwise; the default), `lsp` or `syntax`. `fn(items)` with `{
     // name, kind, detail, container, path, line, col, depth, end_line }`
     // each (line and col from 1, depth from 0, in the file's order with
-    // a symbol before those inside it), or `fn(nil, why)`.
+    // a symbol before those inside it), or `fn(nil, why)`. Answers the
+    // job's token.
+    //
+    // @class kawoosh.lsp.SymbolsOpts
+    // @field workspace? boolean the workspace's symbols matching `query`, not the buffer's
+    // @field query? string
+    // @field buffer? integer the buffer's handle, else the current one
+    // @field source? "auto"|"lsp"|"syntax" where from: `auto` the server's when one lists them, else the outline
+    //
+    // @class kawoosh.lsp.Symbol
+    // @field name string
+    // @field kind string the kind's name: `function`, `struct`, …
+    // @field detail? string
+    // @field container? string the name of what holds it
+    // @field path string
+    // @field line integer from 1
+    // @field col integer from 1
+    // @field depth integer from 0: how many symbols it is inside
+    // @field end_line? integer its last line, from 1
     let (qq, pp, jj) = (q(queue), published.clone(), jobs.clone());
     lsp.set(
         "symbols",
@@ -5293,8 +5642,8 @@ fn seed(
             Ok(token)
         })?,
     )?;
-    // ---- `kawoosh.lsp.rule(name, { doc =, default = })`: a rule of a
-    // language server that a plugin defines and reads
+    // ---- `kawoosh.lsp.rule(name: string, opts?: kawoosh.lsp.RuleOpts): nil`:
+    // a rule of a language server that a plugin defines and reads
     // (docs/design/lsp-rules.md Decision 6) — set as the shell's are, per
     // server in the settings' layers (`lsp.NAME.RULE`, else `lsp.RULE`
     // for every server, else `default`, `false` unless said), and, when
@@ -5302,6 +5651,10 @@ fn seed(
     // listed by `:lsp info`. `kawoosh.lsp.rules` reads it. The same name
     // again replaces it. A server's name is no rule's: `lsp.NAME` is that
     // server's table, and `lsp.RULE` for every server would read as it.
+    //
+    // @class kawoosh.lsp.RuleOpts
+    // @field doc? string what it does, for `:lsp info`
+    // @field default? boolean|number|string|table its value unless the settings say one (`false`)
     let (qq, dd, pp, ss) = (
         q(queue),
         declared.clone(),
@@ -5357,13 +5710,22 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- `kawoosh.lsp.rules(where)`: the rules of the server for a
+    // ---- `kawoosh.lsp.rules(where?: integer|string): kawoosh.lsp.Rules`:
+    // the rules of the server for a
     // buffer (`where` a handle, `0` or nil the current one) or a
     // language (a name): `{ server = NAME, enabled =, load_all =,
     // load_max =, inlay_hints = }` with every rule a plugin declared, each
     // as the settings say it now — `lsp.NAME.RULE`, else `lsp.RULE`, else
     // its default. `server` is the `lsp.NAME` a rule is set under: a
     // `.tsx` buffer's is `typescript`.
+    //
+    // @class kawoosh.lsp.Rules
+    // @field server string the `lsp.NAME` the rules are set under
+    // @field enabled boolean
+    // @field load_all boolean
+    // @field load_max integer
+    // @field inlay_hints boolean
+    // @field [string] any a plugin's rule, by its name
     let (pp, dd) = (published.clone(), declared);
     lsp.set(
         "rules",
@@ -5434,8 +5796,8 @@ fn seed(
 
     // ---- diagnostics a plugin publishes (docs/design/lists.md Decision 7)
     let diagnostics = lua.create_table()?;
-    // ---- `kawoosh.diagnostics.set(buffer, name, list)`: plugin `name`'s
-    // diagnostics of a buffer (`buffer` a handle, `0` or nil the current
+    // ---- `kawoosh.diagnostics.set(buffer: integer|string|nil, name: string, list: kawoosh.diagnostics.Item[]): nil`:
+    // plugin `name`'s diagnostics of a buffer (`buffer` a handle, `0` or nil the current
     // one) or of a file (`buffer` a path; a buffer open on it takes them,
     // and one that opens later), in place of what `name` said of it
     // before — an empty list takes them back. Each item is `{ line, col,
@@ -5445,6 +5807,17 @@ fn seed(
     // where the servers' do — the underline, the row's end, `]d`,
     // `<C-e>`, `:diagnostics`, the counts — and are carried through edits
     // as theirs are, until `name` speaks again. `lsp` is the servers'.
+    //
+    // @class kawoosh.diagnostics.Item
+    // @field line integer from 1
+    // @field col? integer from 1, in characters (1)
+    // @field end_line? integer from 1 (`line`)
+    // @field end_col? integer from 1: the character after the last (the one after `col`)
+    // @field severity? integer|"error"|"warning"|"warn"|"info"|"information"|"hint" 1 an error … 4 a hint (an error)
+    // @field level? "error"|"warning"|"warn"|"info"|"information"|"hint" the severity's word, read when `severity` is not said
+    // @field message string
+    // @field source? string the tool's name (the publisher's)
+    // @field code? string|integer
     let (qq, pp) = (q(queue), published.clone());
     diagnostics.set(
         "set",
@@ -5484,7 +5857,7 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- `kawoosh.diagnostics.clear(name)`: every diagnostic plugin
+    // ---- `kawoosh.diagnostics.clear(name: string): nil`: every diagnostic plugin
     // `name` published, every buffer's and every file's, taken back.
     let qq = q(queue);
     diagnostics.set(
@@ -5593,6 +5966,8 @@ fn seed(
 
     // ---- buffers: reads from the snapshot, writes as messages
     let buf = lua.create_table()?;
+    // `kawoosh.buf.current(): integer?`: the handle of the buffer the
+    // keyboard is on, as the last publish saw it; nil with none.
     let pp = published.clone();
     buf.set(
         "current",
@@ -5601,11 +5976,16 @@ fn seed(
     let pp = published.clone();
     buf.set(
         "list",
-        // `kawoosh.buf.list([{ tab = true, borrowed = true }])`: every
-        // buffer, or the focused tab's (`buffers.scope`); `borrowed`,
-        // the files a multibuffer opened for its excerpts too, which
-        // `:ls` leaves out (search.md Decision 5) — a review's, whose
-        // bases version control gives (docs/design/vcs.md Decision 12).
+        // `kawoosh.buf.list(opts?: kawoosh.buf.ListOpts): integer[]`:
+        // every buffer's handle, in order, or the focused tab's
+        // (`buffers.scope`); `borrowed`, the files a multibuffer opened
+        // for its excerpts too, which `:ls` leaves out (search.md
+        // Decision 5) — a review's, whose bases version control gives
+        // (docs/design/vcs.md Decision 12). Fields' buffers never.
+        //
+        // @class kawoosh.buf.ListOpts
+        // @field tab? boolean only the focused tab's
+        // @field borrowed? boolean the buffers a multibuffer opened for its excerpts too
         lua.create_function(move |lua, opts: Option<Table>| {
             let flag = |name: &str| -> mlua::Result<bool> {
                 Ok(opts
@@ -5646,11 +6026,16 @@ fn seed(
             .ok_or_else(|| mlua::Error::runtime(format!("no buffer {h}")))?;
         Ok(f(b))
     }
+    // `kawoosh.buf.name(buffer?: integer): string`: the buffer's name,
+    // a scratch's the one it was opened under. The buffer by handle,
+    // else the current one; no such buffer is an error.
     let pp = published.clone();
     buf.set(
         "name",
         lua.create_function(move |_, h: Option<u64>| with_buf(&pp, h, |b| b.name.clone()))?,
     )?;
+    // `kawoosh.buf.path(buffer?: integer): string?`: the file the buffer
+    // is, absolute; nil for a scratch.
     let pp = published.clone();
     buf.set(
         "path",
@@ -5658,9 +6043,9 @@ fn seed(
             with_buf(&pp, h, |b| b.path.as_ref().map(|p| p.display().to_string()))
         })?,
     )?;
-    // ---- `kawoosh.buf.file([buffer])`: the file the buffer is, else
-    // the one it stands for (a vault's scratch, `about`) — what `%`
-    // names; nil for neither.
+    // ---- `kawoosh.buf.file(buffer?: integer): string?`: the file the
+    // buffer is, else the one it stands for (a vault's scratch,
+    // `about`) — what `%` names; nil for neither.
     let pp = published.clone();
     buf.set(
         "file",
@@ -5673,27 +6058,35 @@ fn seed(
             })
         })?,
     )?;
+    // `kawoosh.buf.language(buffer?: integer): string`: the buffer's
+    // language by name (`rust`, `markdown`).
     let pp = published.clone();
     buf.set(
         "language",
         lua.create_function(move |_, h: Option<u64>| with_buf(&pp, h, |b| b.language.clone()))?,
     )?;
+    // `kawoosh.buf.modified(buffer?: integer): boolean`: whether it has
+    // changes not saved.
     let pp = published.clone();
     buf.set(
         "modified",
         lua.create_function(move |_, h: Option<u64>| with_buf(&pp, h, |b| b.modified))?,
     )?;
-    // ---- `kawoosh.buf.base(text, label[, buffer])`: the buffer read
-    // against `text` from now on — the file as the index has it, a
-    // revision's, anything (docs/design/vcs.md Decision 1) — called
-    // `label` (`index`, `HEAD`, `main`); the diff of the two is the
-    // gutter's signs and `]h`'s hunks, made again once the text has
-    // been still. `text` nil or false takes the base away. The buffer
-    // by handle, by name, or the current one. `opts.head`: the text the
-    // base is itself read against — HEAD's under the index — whose
-    // difference from the base is what is staged, drawn faint and
-    // what `hunk unstage` takes back (Decision 12); a base given
-    // without one has nothing staged.
+    // ---- `kawoosh.buf.base(text?: string|false, label?: string, buffer?: integer|string, opts?: kawoosh.buf.BaseOpts): nil`:
+    // the buffer read against `text` from now on — the file as the
+    // index has it, a revision's, anything (docs/design/vcs.md
+    // Decision 1) — called `label` (`index`, `HEAD`, `main`; `base`
+    // when nil); the diff of the two is the gutter's signs and `]h`'s
+    // hunks, made again once the text has been still. `text` nil or
+    // false takes the base away. The buffer by handle, by name, or the
+    // current one. `opts.head`: the text the base is itself read
+    // against — HEAD's under the index — whose difference from the
+    // base is what is staged, drawn faint and what `hunk unstage`
+    // takes back (Decision 12); a base given without one has nothing
+    // staged.
+    //
+    // @class kawoosh.buf.BaseOpts
+    // @field head? string the text the base is itself read against: HEAD's under the index
     let (qq, pp) = (q(queue), published.clone());
     buf.set(
         "base",
@@ -5726,11 +6119,18 @@ fn seed(
             },
         )?,
     )?;
-    // ---- `kawoosh.buf.blame(rows[, buffer])`: the blame column on
-    // (docs/design/vcs.md Decision 7) — `rows` a list of `{ line =,
-    // count =, label =, rev =, summary = }`, `line` from 1, for the
-    // text as it is now; carried through edits after by each run's
-    // first line — or off, with `rows` nil or false.
+    // ---- `kawoosh.buf.blame(rows?: kawoosh.buf.BlameRow[]|false, buffer?: integer|string): nil`:
+    // the blame column on (docs/design/vcs.md Decision 7) — `rows` a
+    // list of `{ line =, count =, label =, rev =, summary = }`, `line`
+    // from 1, for the text as it is now; carried through edits after
+    // by each run's first line — or off, with `rows` nil or false.
+    //
+    // @class kawoosh.buf.BlameRow
+    // @field line integer the run's first line, from 1 (1 when left out)
+    // @field count integer how many lines (1 when left out)
+    // @field label string what the column shows for the run
+    // @field rev string the revision
+    // @field summary string the commit's first line
     let (qq, pp) = (q(queue), published.clone());
     buf.set(
         "blame",
@@ -5760,8 +6160,8 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // `kawoosh.buf.blame_at(line[, buffer])`: the blame run line `line`
-    // (from 1) is in — `{ line, count, label, rev, summary }`, as the
+    // `kawoosh.buf.blame_at(line: integer, buffer?: integer): kawoosh.buf.BlameRow?`:
+    // the blame run line `line` (from 1) is in — `{ line, count, label, rev, summary }`, as the
     // rows were placed when the column was set — or nil: with no
     // column on, or a line outside every run.
     let pp = published.clone();
@@ -5790,8 +6190,9 @@ fn seed(
             })?
         })?,
     )?;
-    // `kawoosh.buf.base_label([buffer])`: what the buffer is read
-    // against, by the label it was given; nil for no base.
+    // `kawoosh.buf.base_label(buffer?: integer): string?`: what the
+    // buffer is read against, by the label it was given; nil for no
+    // base.
     let pp = published.clone();
     buf.set(
         "base_label",
@@ -5799,11 +6200,16 @@ fn seed(
             with_buf(&pp, h, |b| b.base.as_ref().map(|b| b.label.clone()))
         })?,
     )?;
-    // `kawoosh.buf.hunk_counts([buffer])`: how many of the buffer's
-    // hunks against its base are `added`, `modified` and `deleted`, as
-    // last diffed — `{ added =, modified =, deleted = }` — or nil
-    // without a base: what a statusline shows each frame, without the
-    // hunks themselves.
+    // `kawoosh.buf.hunk_counts(buffer?: integer): kawoosh.buf.HunkCounts?`:
+    // how many of the buffer's hunks against its base are `added`,
+    // `modified` and `deleted`, as last diffed — `{ added =, modified
+    // =, deleted = }` — or nil without a base: what a statusline shows
+    // each frame, without the hunks themselves.
+    //
+    // @class kawoosh.buf.HunkCounts
+    // @field added integer
+    // @field modified integer
+    // @field deleted integer
     let pp = published.clone();
     buf.set(
         "hunk_counts",
@@ -5828,12 +6234,20 @@ fn seed(
             })?
         })?,
     )?;
-    // `kawoosh.buf.hunks([buffer])`: the buffer's hunks against its
-    // base as last diffed, in order — each `{ kind = "added" |
-    // "modified" | "deleted", line =, end_line =, old_line =, old_end =,
-    // old = { … } }`, lines from 1 and ends exclusive (`line` for a
-    // deletion the line after what was taken out), `old` the base's
-    // lines it replaced — or nil without a base.
+    // `kawoosh.buf.hunks(buffer?: integer): kawoosh.buf.Hunk[]?`: the
+    // buffer's hunks against its base as last diffed, in order — each
+    // `{ kind = "added" | "modified" | "deleted", line =, end_line =,
+    // old_line =, old_end =, old = { … } }`, lines from 1 and ends
+    // exclusive (`line` for a deletion the line after what was taken
+    // out), `old` the base's lines it replaced — or nil without a base.
+    //
+    // @class kawoosh.buf.Hunk
+    // @field kind "added"|"modified"|"deleted"
+    // @field line integer its first line in the text, from 1; a deletion's the line after what was taken out
+    // @field end_line integer the line after its last, from 1
+    // @field old_line integer its first line in the base, from 1
+    // @field old_end integer the base's line after its last, from 1
+    // @field old string[] the base's lines it replaced
     let pp = published.clone();
     buf.set(
         "hunks",
@@ -5868,9 +6282,16 @@ fn seed(
             })?
         })?,
     )?;
-    // `kawoosh.buf.indent(buffer)`: its indentation as its settings say
-    // — its language's, its `.editorconfig`'s — `{ tabstop, shiftwidth,
-    // expandtab, unit }`, `unit` one indent's text.
+    // `kawoosh.buf.indent(buffer?: integer): kawoosh.buf.Indent`: its
+    // indentation as its settings say — its language's, its
+    // `.editorconfig`'s — `{ tabstop, shiftwidth, expandtab, unit }`,
+    // `unit` one indent's text.
+    //
+    // @class kawoosh.buf.Indent
+    // @field tabstop integer a tab's columns
+    // @field shiftwidth integer an indent's columns
+    // @field expandtab boolean an indent is spaces
+    // @field unit string one indent's text: `shiftwidth` spaces, or a tab
     let pp = published.clone();
     buf.set(
         "indent",
@@ -5891,10 +6312,14 @@ fn seed(
             Ok(t)
         })?,
     )?;
-    // `kawoosh.buf.comment_tokens(buffer)`: its comment tokens as its
-    // settings say (docs/design/comments.md Decision 5) — `{ line =
-    // "//", block = { "/*", "*/" } }`, either absent where the language
-    // has none.
+    // `kawoosh.buf.comment_tokens(buffer?: integer): kawoosh.buf.CommentTokens`:
+    // its comment tokens as its settings say (docs/design/comments.md
+    // Decision 5) — `{ line = "//", block = { "/*", "*/" } }`, either
+    // absent where the language has none.
+    //
+    // @class kawoosh.buf.CommentTokens
+    // @field line? string a line comment's opener, `//`
+    // @field block? string[] a block comment's opener and closer, `{ "/*", "*/" }`
     let pp = published.clone();
     buf.set(
         "comment_tokens",
@@ -5910,16 +6335,23 @@ fn seed(
             Ok(t)
         })?,
     )?;
+    // `kawoosh.buf.text(buffer?: integer): string`: the buffer's whole
+    // text — a big buffer's is a big copy (`lines_in`, `slice`).
     let pp = published.clone();
     buf.set(
         "text",
         lua.create_function(move |_, h: Option<u64>| with_buf(&pp, h, |b| b.snapshot.text()))?,
     )?;
+    // `kawoosh.buf.len(buffer?: integer): integer`: the text's length in
+    // bytes.
     let pp = published.clone();
     buf.set(
         "len",
         lua.create_function(move |_, h: Option<u64>| with_buf(&pp, h, |b| b.snapshot.len()))?,
     )?;
+    // `kawoosh.buf.line_count(buffer?: integer): integer`: how many
+    // lines — the newlines and one, so a text ending in a newline
+    // counts the empty line after it.
     let pp = published.clone();
     buf.set(
         "line_count",
@@ -5927,6 +6359,9 @@ fn seed(
             with_buf(&pp, h, |b| b.snapshot.text.newline_count() + 1)
         })?,
     )?;
+    // `kawoosh.buf.line(n: integer, buffer?: integer): string?`: line `n`
+    // (from 1) without its newline; nil past the last. Reads the whole
+    // text: for a big buffer `lines_in(n, n)`.
     let pp = published.clone();
     buf.set(
         "line",
@@ -5937,6 +6372,9 @@ fn seed(
             })
         })?,
     )?;
+    // `kawoosh.buf.lines(buffer?: integer): string[]`: every line,
+    // without newlines — no empty last line for a text that ends in
+    // one (Rust's `str::lines`).
     let pp = published.clone();
     buf.set(
         "lines",
@@ -5950,7 +6388,8 @@ fn seed(
             })
         })?,
     )?;
-    // `kawoosh.buf.lines_in(from, to[, buffer])`: the lines from `from`
+    // `kawoosh.buf.lines_in(from: integer, to: integer, buffer?: integer): string[]`:
+    // the lines from `from`
     // to `to` (from 1, inclusive, clamped), for a preview that wants a
     // window of a big buffer and not its text.
     let pp = published.clone();
@@ -5977,7 +6416,8 @@ fn seed(
             })?
         })?,
     )?;
-    // ---- `kawoosh.buf.shown_lines(from, to[, buffer])`: lines `from`
+    // ---- `kawoosh.buf.shown_lines(from: integer, to: integer, buffer?: integer): string[]`:
+    // lines `from`
     // to `to` (from 1) as the pane draws them: what a mask hides is
     // `••••••••` (secrets.md Decision 3), so a preview of an open
     // buffer hides what its pane does. A private buffer whose masks
@@ -6022,7 +6462,8 @@ fn seed(
             })?
         })?,
     )?;
-    // `kawoosh.buf.slice(from, to[, buffer])`: the text between two
+    // `kawoosh.buf.slice(from: integer, to: integer, buffer?: integer): string`:
+    // the text between two
     // offsets (from 0, `to` exclusive, clamped to the text and to
     // characters) — what is around a caret, without the whole text.
     let pp = published.clone();
@@ -6042,9 +6483,15 @@ fn seed(
             })
         })?,
     )?;
-    // `kawoosh.buf.cursor(h)`: the primary caret — `offset`, `line`,
-    // `col` (from 1, `col` in characters) — and `top`, the first line
-    // the view shows.
+    // `kawoosh.buf.cursor(buffer?: integer): kawoosh.buf.Cursor`: the
+    // primary caret — `offset` (a byte from 0), `line`, `col` (from 1,
+    // `col` in characters) — and `top`, the first line the view shows.
+    //
+    // @class kawoosh.buf.Cursor
+    // @field offset integer the caret's byte, from 0
+    // @field line integer from 1
+    // @field col integer in characters, from 1
+    // @field top integer the first line the view shows, from 1
     let pp = published.clone();
     buf.set(
         "cursor",
@@ -6068,8 +6515,9 @@ fn seed(
             Ok(t)
         })?,
     )?;
-    // `kawoosh.buf.offset(line, col, h)`: the byte of line `line`,
-    // character `col` (both from 1; `col` 1 by default), held to the
+    // `kawoosh.buf.offset(line: integer, col?: integer, buffer?: integer): integer`:
+    // the byte (from 0) of line `line`, character `col` (both from 1;
+    // `col` 1 by default), held to the
     // line's end and the text's — read off the line index, so a line of
     // a large file costs its own length.
     let pp = published.clone();
@@ -6091,6 +6539,14 @@ fn seed(
             },
         )?,
     )?;
+    // `kawoosh.buf.selections(buffer?: integer): kawoosh.buf.Selection[]`:
+    // the view's selections in order, `{ anchor =, head = }` bytes
+    // from 0, the primary one marked `primary = true`.
+    //
+    // @class kawoosh.buf.Selection
+    // @field anchor integer the end that stays, a byte from 0
+    // @field head integer the end that moves — the caret — a byte from 0
+    // @field primary? boolean the primary selection
     let pp = published.clone();
     buf.set(
         "selections",
@@ -6109,6 +6565,10 @@ fn seed(
             Ok(t)
         })?,
     )?;
+    // `kawoosh.buf.tracked(buffer?: integer): (string|false)[]`: what
+    // each tracked line has become, by its id (from 1): its text now,
+    // or `false` once deleted — however the text was edited since it
+    // was tracked. Empty for a buffer not tracked.
     let pp = published.clone();
     buf.set(
         "tracked",
@@ -6129,6 +6589,9 @@ fn seed(
             Ok(t)
         })?,
     )?;
+    // `kawoosh.buf.tracked_lines(buffer?: integer): (integer|false)[]`:
+    // where each tracked line is now, by its id: its line (from 1), or
+    // `false` once deleted.
     let pp = published.clone();
     buf.set(
         "tracked_lines",
@@ -6149,6 +6612,9 @@ fn seed(
             Ok(t)
         })?,
     )?;
+    // `kawoosh.buf.tracked_line(id: integer, buffer?: integer): string?, integer?`:
+    // tracked line `id`'s text now and its line (from 1); nothing once
+    // it was deleted, or for an id the buffer never gave.
     let pp = published.clone();
     buf.set(
         "tracked_line",
@@ -6167,6 +6633,19 @@ fn seed(
             }
         })?,
     )?;
+    // `kawoosh.buf.changes(buffer?: integer): kawoosh.buf.Changes`: a
+    // tracked buffer's text against the lines it was tracked with — the
+    // tracked lines that read otherwise now and where, those deleted,
+    // the lines no tracked line is on (typed or pasted anew), and the
+    // lines two or more are on (joined). What a listing's write reads
+    // (docs/design/dir.md). Every part empty for a buffer not tracked.
+    //
+    // @class kawoosh.buf.Changes
+    // @field edited table<integer, string> by tracked id: the text now, of a line that reads otherwise than when tracked
+    // @field lines table<integer, integer> by tracked id: the line (from 1) an `edited` one is on
+    // @field gone integer[] the ids of the tracked lines deleted
+    // @field untracked table<integer, string> by line (from 1): the text of a line no tracked line is on
+    // @field shared table<integer, integer[]> by line (from 1): the ids of two or more tracked lines on it
     let pp = published.clone();
     let tr = tracked.clone();
     buf.set(
@@ -6232,6 +6711,18 @@ fn seed(
             Ok(out)
         })?,
     )?;
+    // `kawoosh.buf.register(): kawoosh.buf.Register?`: the `"`
+    // register — the memory's head — with where its text came from
+    // when the engine knows: the buffer, and for each of its lines the
+    // tracked line of that buffer it was. Nil when the register is
+    // empty.
+    //
+    // @class kawoosh.buf.Register
+    // @field text string
+    // @field linewise boolean whole lines
+    // @field buffer? integer the buffer it came from, when known
+    // @field entries (integer|false)[] per line of it: the tracked id it was in `buffer`, or false
+    // @field payloads (string|false)[] per line of it: that tracked line's payload, or false
     let pp = published.clone();
     buf.set(
         "register",
@@ -6311,8 +6802,12 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // Followed from the snapshot's version on — the buffer's, since
-    // nothing edits it during a call in — and in the snapshot at once,
+    // `kawoosh.buf.track(line: integer, buffer?: integer, payload?: string): integer?`:
+    // line `line` (from 1) tracked from now on, answered by its id — nil
+    // past the last line; `payload`, what the plugin says it is,
+    // carried with it. Followed from the snapshot's version on — the
+    // buffer's, since nothing edits it during a call in — and in the
+    // snapshot at once,
     // so `tracked()` and `tracked_lines()` know the line by its id in
     // the same call.
     let tr = tracked.clone();
@@ -6364,6 +6859,8 @@ fn seed(
             },
         )?,
     )?;
+    // `kawoosh.buf.insert(offset: integer, text: string, buffer?: integer): nil`:
+    // `text` put in at byte `offset` (from 0).
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
@@ -6380,6 +6877,9 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh.buf.replace(from: integer, to: integer, text: string, buffer?: integer): nil`:
+    // the bytes from `from` to `to` (from 0, `to` exclusive) replaced
+    // by `text`.
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
@@ -6398,6 +6898,8 @@ fn seed(
             },
         )?,
     )?;
+    // `kawoosh.buf.set_text(text: string, buffer?: integer): nil`: the
+    // buffer's whole text replaced.
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
@@ -6410,11 +6912,17 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // `kawoosh.buf.set_cursor(offset, h, { top =, center =, jump = })`:
-    // one caret at `offset` in every view of the buffer; the view
-    // scrolled so line `top` (from 1) is its first, or the caret's line
-    // in its middle with `center`, else as little as shows the caret;
-    // `jump`, the move a jump however short (docs/design/jumps.md).
+    // `kawoosh.buf.set_cursor(offset: integer, buffer?: integer, opts?: kawoosh.buf.SetCursorOpts): nil`:
+    // one caret at `offset` (a byte from 0) in every view of the
+    // buffer; the view scrolled so line `top` (from 1) is its first, or
+    // the caret's line in its middle with `center`, else as little as
+    // shows the caret; `jump`, the move a jump however short
+    // (docs/design/jumps.md).
+    //
+    // @class kawoosh.buf.SetCursorOpts
+    // @field top? integer the line (from 1) the view shows first
+    // @field center? boolean the caret's line in the view's middle
+    // @field jump? boolean the move a jump however short
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
@@ -6443,7 +6951,7 @@ fn seed(
             },
         )?,
     )?;
-    // `kawoosh.buf.type(text)`: typed at every caret of the view, as a
+    // `kawoosh.buf.type(text: string): nil`: typed at every caret of the view, as a
     // keystroke in insert mode types it — the carets after it.
     let qq = q(queue);
     buf.set(
@@ -6453,21 +6961,35 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // `kawoosh.buf.edits({ { from, to, text }, … }[, buffer][, { carets
-    // = { … } }])`: several edits as one step — offsets from 0 in the
-    // text as it is, `to` exclusive, disjoint — every view's selections
-    // carried through them (`Editor::apply_edits`); an edit that changes
-    // nothing (`from == to`, no text) is none. With `carets`, the
-    // selections after are those carets instead, in their order, the
-    // one marked `primary = true` the primary, else the first: `{ edit =
-    // i, at = k }` `k` bytes into edit `i`'s text (from 1, as the list
-    // counts; `k` 0 its start, `#text` its end), `{ at = o }` an offset
-    // of the text as it is, where the edits move it — before an
-    // insertion at its own byte, and inside a replaced range kept its
-    // distance into the new text, on its last character at most. What
-    // `pairs` and node actions place a caret per caret with. A range
-    // backwards, or two that overlap, is an error: applied one after
-    // another they would each land in a text the one before had moved.
+    // `kawoosh.buf.edits(edits: kawoosh.buf.Edit[], buffer?: integer, opts?: kawoosh.buf.EditsOpts): nil`:
+    // `{ { from, to, text }, … }`, several edits as one step — offsets
+    // from 0 in the text as it is, `to` exclusive, disjoint — every
+    // view's selections carried through them (`Editor::apply_edits`);
+    // an edit that changes nothing (`from == to`, no text) is none.
+    // With `carets`, the selections after are those carets instead, in
+    // their order, the one marked `primary = true` the primary, else
+    // the first: `{ edit = i, at = k }` `k` bytes into edit `i`'s text
+    // (from 1, as the list counts; `k` 0 its start, `#text` its end),
+    // `{ at = o }` an offset of the text as it is, where the edits move
+    // it — before an insertion at its own byte, and inside a replaced
+    // range kept its distance into the new text, on its last character
+    // at most. What `pairs` and node actions place a caret per caret
+    // with. A range backwards, or two that overlap, is an error:
+    // applied one after another they would each land in a text the one
+    // before had moved.
+    //
+    // @class kawoosh.buf.Edit
+    // @field [1] integer from, a byte from 0
+    // @field [2] integer to, the byte after the last replaced
+    // @field [3] string the text put there
+    //
+    // @class kawoosh.buf.EditsOpts
+    // @field carets? kawoosh.buf.Caret[] the selections after, in place of the carried ones
+    //
+    // @class kawoosh.buf.Caret
+    // @field at integer bytes into edit `edit`'s text, else an offset (from 0) of the text as it is
+    // @field edit? integer the edit, from 1, `at` is in
+    // @field primary? boolean the primary caret
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
@@ -6521,8 +7043,9 @@ fn seed(
             },
         )?,
     )?;
-    // `kawoosh.buf.set_selections({ { anchor, head[, primary] }, … }[,
-    // buffer])`: the selections as given — the one marked `primary`
+    // `kawoosh.buf.set_selections(selections: kawoosh.buf.Selection[], buffer?: integer): nil`:
+    // `{ { anchor =, head =, primary = }, … }` (or `{ anchor, head }`),
+    // bytes from 0: the selections as given — the one marked `primary`
     // (as `selections()` marks it) the primary, else the first — after
     // the edits asked before it, in the text they leave.
     let qq = q(queue);
@@ -6646,6 +7169,9 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh.buf.private(buffer?: integer): boolean`: whether the
+    // buffer is private (docs/design/secrets.md); false for no such
+    // buffer.
     let pp = published.clone();
     buf.set(
         "private",
@@ -6768,6 +7294,9 @@ fn seed(
         }
     };
     let rules_of = Rc::new(rules_of);
+    // `kawoosh.secrets.private(path: string): boolean`: whether a
+    // `files` rule of `secrets.masks` names the path — a buffer of it is
+    // private.
     let ro = rules_of.clone();
     secrets.set(
         "private",
@@ -6775,6 +7304,10 @@ fn seed(
             Ok(ro().private(Some(std::path::Path::new(&path)), ""))
         })?,
     )?;
+    // `kawoosh.secrets.mask_text(text: string, path?: string, language?: string): string`:
+    // `text`, a line or lines of the file at `path` in `language`, with
+    // what the rules that apply to it mask drawn as `•` — every line
+    // kept, so a list's line numbers stay the file's.
     let ro = rules_of.clone();
     secrets.set(
         "mask_text",
@@ -6787,10 +7320,60 @@ fn seed(
     )?;
     k.set("secrets", secrets)?;
 
-    // ---- the memory (memory.md Decision 9): bare, the working
+    // ---- `kawoosh.memory(query?: kawoosh.memory.Query): kawoosh.memory.Text[]|kawoosh.memory.Jump[]|kawoosh.memory.Transition[]|kawoosh.memory.Moment[]|kawoosh.memory.Moment`:
+    // the memory (memory.md Decision 9): bare, the working
     // memory's texts, newest first; with a query, the store's rows
     // with what the memory has not flushed yet folded in (so a file
-    // opened a moment ago has its row), or the ring the same way.
+    // opened a moment ago has its row), or the ring the same way —
+    // `jumps` the focused tab's jumps, `recent` the ring's transitions,
+    // else the moments, one (or an empty table) for a `subject`.
+    //
+    // @class kawoosh.memory.Query
+    // @field jumps? boolean the focused tab's jumps (jumps.md Decision 5)
+    // @field recent? boolean the ring's transitions, newest first
+    // @field kind? string moments of this kind only
+    // @field subject? string that subject's moment alone
+    // @field workspace? string|boolean that workspace's, `true` the shell's own; none every workspace's
+    // @field since? integer moments touched in the last that many seconds
+    // @field pinned? boolean pinned moments only
+    // @field limit? integer how many at most (200; every jump)
+    //
+    // @class kawoosh.memory.Text
+    // @field text string
+    // @field linewise boolean
+    // @field took "yank"|"delete"|"change"|"clipboard"|"seen" how it came to be in the memory
+    // @field from string where it came from
+    // @field buffer? integer the buffer it came from, while it is open
+    // @field age number seconds since
+    //
+    // @class kawoosh.memory.Jump
+    // @field path? string
+    // @field line integer from 1
+    // @field col integer from 1
+    // @field buffer? integer the buffer's handle while it is open
+    // @field current boolean the entry the list is at while going back
+    //
+    // @class kawoosh.memory.Transition
+    // @field at integer when, unix seconds
+    // @field age integer seconds since
+    // @field kind string
+    // @field subject string
+    // @field workspace string
+    //
+    // @class kawoosh.memory.Moment
+    // @field kind string `file`, `text`, …
+    // @field subject string
+    // @field workspace string
+    // @field first integer first seen, unix seconds
+    // @field last integer last seen, unix seconds
+    // @field age integer seconds since `last`
+    // @field visits integer
+    // @field dwell number seconds spent on it
+    // @field edits integer
+    // @field yanks integer
+    // @field pinned boolean
+    // @field meta any its data, as `kawoosh.remember` kept it
+    // @field text? string a `text` moment's text
     let pp = published.clone();
     let st = store.clone();
     let pd = pending.clone();
@@ -6916,6 +7499,8 @@ fn seed(
             Ok(t)
         })?,
     )?;
+    // `kawoosh.now(): integer`: the time, unix seconds — the clock the
+    // memory's moments are stamped by.
     k.set(
         "now",
         lua.create_function(|_, ()| Ok(kawoosh_systems::store::now()))?,
@@ -6998,12 +7583,15 @@ fn seed(
     fn io_err(e: std::io::Error) -> mlua::Error {
         mlua::Error::runtime(e.to_string())
     }
+    // `kawoosh.fs.expand(path: string): string`: the path expanded —
+    // `~`, `..` and the working directory resolved.
     fs.set(
         "expand",
         lua.create_function(|_, p: String| Ok(kfs::display(&expand(&p))))?,
     )?;
-    // `fs.join(a, b, …)`: the parts joined with the platform's
-    // separator — a host's `/` on a host's path — each after the last.
+    // `kawoosh.fs.join(...: string): string`: the parts joined with the
+    // platform's separator — a host's `/` on a host's path — each after
+    // the last.
     fs.set(
         "join",
         lua.create_function(|_, parts: mlua::Variadic<String>| {
@@ -7015,17 +7603,21 @@ fn seed(
             Ok(kfs::display(&out))
         })?,
     )?;
+    // `kawoosh.fs.parent(path: string): string?`: the directory the
+    // path is in, nil for a root.
     fs.set(
         "parent",
         lua.create_function(|_, p: String| {
             Ok(kfs::parent(std::path::Path::new(&p)).map(|p| kfs::display(&p)))
         })?,
     )?;
+    // `kawoosh.fs.basename(path: string): string?`: the path's last
+    // part, nil when it has none (a root).
     fs.set(
         "basename",
         lua.create_function(|_, p: String| Ok(kfs::basename(std::path::Path::new(&p))))?,
     )?;
-    // `fs.relative(path, base)`: `path` from `base` (the working
+    // `kawoosh.fs.relative(path: string, base?: string): string?`: `path` from `base` (the working
     // directory when none) — `.` for `base` itself — or nil when it is
     // not under it; a host's cut on `/`, as its paths are
     // (`kawoosh_doc::paths::relative`). What a plugin would otherwise
@@ -7037,13 +7629,14 @@ fn seed(
             Ok(kfs::relative(&expand(&p), &base).map(|r| kfs::display(&r)))
         })?,
     )?;
-    // `fs.short(path)`: the path with the home written as `~`, for a
-    // row or a title.
+    // `kawoosh.fs.short(path: string): string`: the path with the home
+    // written as `~`, for a row or a title.
     fs.set(
         "short",
         lua.create_function(|_, p: String| Ok(kfs::abbreviate_home(&expand(&p))))?,
     )?;
-    // `fs.form(path, form)`: the path as `path copy` would copy it —
+    // `kawoosh.fs.form(path: string, form: "relative"|"absolute"|"dir"|"dir absolute"|"name"|"stem"): string?, string?`:
+    // the path as `path copy` would copy it —
     // `relative` (to the working directory), `absolute`, `dir`, `dir
     // absolute`, `name`, `stem`; nil and the reason for another form.
     fs.set(
@@ -7057,11 +7650,13 @@ fn seed(
             )
         })?,
     )?;
+    // `kawoosh.fs.home(): string?`: the user's home directory, nil when
+    // there is none.
     fs.set(
         "home",
         lua.create_function(|_, ()| Ok(kfs::home().map(|h| kfs::display(&h))))?,
     )?;
-    // `fs.config()`: the user's config directory, as kawoosh finds it
+    // `kawoosh.fs.config(): string?`: the user's config directory, as kawoosh finds it
     // (`$XDG_CONFIG_HOME/kawoosh`, else `~/.config/kawoosh`) — where
     // `init.lua`, `settings.lua`, `parsers/` and `ext/` are; nil with no
     // home. What a plugin would otherwise rebuild from `os.getenv`.
@@ -7069,17 +7664,27 @@ fn seed(
         "config",
         lua.create_function(|_, ()| Ok(kfs::config_dir().map(|h| kfs::display(&h))))?,
     )?;
-    // `fs.dylib(name)`: `name` as this platform names a shared library
+    // `kawoosh.fs.dylib(name: string): string`: `name` as this platform names a shared library
     // — `dupes.dylib` on macOS, `dupes.so` on Linux, `dupes.dll` on
     // Windows — so a path to one reads the same in every `init.lua`.
     fs.set(
         "dylib",
         lua.create_function(|_, name: String| Ok(kfs::dylib(&name)))?,
     )?;
-    // `fs.list(path)` answers now; `fs.list(path, fn)` reads the
-    // directory on a thread of its own and calls `fn(entries)` — or
-    // `fn(nil, why)` — when it is read, so a listing of forty thousand
-    // entries on a slow disk holds up nothing.
+    // `kawoosh.fs.list(path: string, fn?: fun(entries: kawoosh.fs.Entry[]?, why: string?)): kawoosh.fs.Entry[]?`:
+    // the directory's entries, directories first, each group by name.
+    // `fs.list(path)` answers now (raising when it cannot be read);
+    // `fs.list(path, fn)` reads the directory on a thread of its own,
+    // answers nil and calls `fn(entries)` — or `fn(nil, why)` — when it
+    // is read, so a listing of forty thousand entries on a slow disk
+    // holds up nothing.
+    //
+    // @class kawoosh.fs.Entry
+    // @field name string
+    // @field is_dir boolean a directory, or a link to one
+    // @field is_symlink boolean
+    // @field size integer bytes
+    // @field modified? integer unix seconds
     let qq = q(queue);
     let jj = jobs.clone();
     fs.set(
@@ -7133,10 +7738,12 @@ fn seed(
             },
         )?,
     )?;
-    // `fs.walk(root, fn)`: every file under `root` as git sees it —
+    // `kawoosh.fs.walk(root: string, fn: fun(paths: string[]?, why: string?, whole: string[]?)): integer`:
+    // every file under `root` as git sees it —
     // ignored, hidden and `.git` left out — relative to it, walked on
     // a thread of its own and handed to `fn(paths, nil, whole)`, `whole`
     // each path joined to the root as `fs.join` joins; or `fn(nil, why)`.
+    // Answers the job's token.
     let qq = q(queue);
     let jj = jobs.clone();
     fs.set(
@@ -7156,12 +7763,50 @@ fn seed(
             Ok(token)
         })?,
     )?;
-    // `kawoosh.search(query, fn)` (docs/design/search.md Decision 6):
-    // `query` is `{ pattern =, regex =, case = "smart" | "sensitive" |
-    // "insensitive", word =, include =, exclude = (a field's comma list,
-    // or a list of globs), ignored =, files = { paths }, root =,
-    // max_files =, max_matches = }`; the token to cancel it by, or nil
-    // and why the pattern or a glob does not parse — nothing runs then.
+    // `kawoosh.search(query: kawoosh.SearchQuery, fn: fun(found: kawoosh.SearchFound?, why: string?)): integer?, string?`:
+    // the project searched on a thread of its own (docs/design/search.md
+    // Decision 6): `query` is `{ pattern =, regex =, case = "smart" |
+    // "sensitive" | "insensitive", word =, include =, exclude = (a
+    // field's comma list, or a list of globs), ignored =, files = {
+    // paths }, root =, max_files =, max_matches = }`; the token to
+    // cancel it by, or nil and why the pattern or a glob does not parse
+    // — nothing runs then. `fn(found)` when it is done, or `fn(nil,
+    // why)`.
+    //
+    // @class kawoosh.SearchFind
+    // @field pattern? string
+    // @field regex? boolean the pattern is a regex; otherwise its text, literally
+    // @field word? boolean only where the match is a whole word
+    // @field case? "smart"|"sensitive"|"insensitive" `smart` (the default) is sensitive when the pattern has a capital
+    //
+    // @class kawoosh.SearchGlobs
+    // @field include? string|string[] a field's comma list, or a list of globs
+    // @field exclude? string|string[] the same
+    //
+    // @class kawoosh.SearchQuery: kawoosh.SearchFind, kawoosh.SearchGlobs
+    // @field ignored? boolean ignored and hidden files too
+    // @field files? string[] only these files (relative to the root, or absolute), not a walk of the root
+    // @field root? string where to search, else the working directory
+    // @field max_files? integer stop after this many files with a match (1000)
+    // @field max_matches? integer stop after this many matches (10000)
+    //
+    // @class kawoosh.SearchFound
+    // @field files kawoosh.SearchFile[]
+    // @field matches integer
+    // @field searched integer the files read
+    // @field limited boolean stopped at a cap: there is more
+    // @field cancelled boolean stopped by `kawoosh.search_cancel`
+    // @field took number ms
+    //
+    // @class kawoosh.SearchFile
+    // @field path string the root joined to `rel`
+    // @field rel string relative to the root
+    // @field lines kawoosh.SearchLine[]
+    //
+    // @class kawoosh.SearchLine
+    // @field line integer from 1
+    // @field text string the line, cut when very long
+    // @field cols [integer, integer][] each match's bytes in the line, from 1, `to` the last
     let qq = q(queue);
     let jj = jobs.clone();
     k.set(
@@ -7223,7 +7868,9 @@ fn seed(
             Ok((LV::Integer(token as i64), LV::Nil))
         })?,
     )?;
-    // `kawoosh.search_paint{ pattern =, regex =, word =, case = }`.
+    // `kawoosh.search_paint(find: kawoosh.SearchFind): nil`: the
+    // editor's search set to what a project search looked for — what
+    // `/` would have left: its matches painted, `n` walking them.
     let qq = q(queue);
     k.set(
         "search_paint",
@@ -7243,8 +7890,8 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // `kawoosh.search_replace({ buffer =, pattern =, with =, … })`: the
-    // matches of `pattern` (`regex`, `word`, `case` as `kawoosh.search`
+    // `kawoosh.search_replace(opts: kawoosh.SearchReplace, fn?: fun(done: kawoosh.SearchReplaced?, why: string?)): nil`:
+    // the matches of `pattern` (`regex`, `word`, `case` as `kawoosh.search`
     // reads them) in the multibuffer `buffer` (a handle or a name)
     // replaced by `with` — `$1` `${name}` a group's text when it is a
     // regex, `\n` `\t` the characters — as one change, so one `u` there
@@ -7254,6 +7901,20 @@ fn seed(
     // next. The message says how many. A function after the table is
     // called once it is done: with `{ matches =, files =, read_only = }`,
     // or `nil` and why nothing was replaced.
+    //
+    // @class kawoosh.SearchReplace: kawoosh.SearchFind
+    // @field buffer integer|string the results multibuffer, by its handle or its name
+    // @field with? string what each match becomes: `$1` `${name}` a group's text with a regex, `\n` `\t` the characters
+    // @field lines? kawoosh.SearchLineFilter[] only the lines that match each `keep = true` and none `keep = false`
+    // @field one? boolean only the match at the caret, the caret then on the next
+    //
+    // @class kawoosh.SearchLineFilter: kawoosh.SearchFind
+    // @field keep? boolean the lines that match (the default), or with false those that do not
+    //
+    // @class kawoosh.SearchReplaced
+    // @field matches integer how many were replaced
+    // @field files integer in how many files
+    // @field read_only integer matches left, in the excerpts of files that are read-only
     let qq = q(queue);
     let jj = jobs.clone();
     k.set(
@@ -7313,14 +7974,20 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // `kawoosh.overstrike(raw)`: text as a pager would show it — the
-    // overstrikes `man` prints (`c\bc` bold, `_\bc` underline) and SGR
-    // (`ESC[1m`, `ESC[4m`) read off — answered as `text, spans, bold`:
-    // the plain text, each line's trailing whitespace off and no line
-    // after the last newline; `{ from, to, style }` runs (bytes from 0,
-    // end exclusive; "bold", "underline" or "bold underline"); and the
-    // lines (from 1, as keys) whose every character but spaces is bold.
-    // What `man.lua` reads a page through.
+    // `kawoosh.overstrike(raw: string): string, kawoosh.OverstrikeSpan[], table<integer, true>`:
+    // text as a pager would show it — the overstrikes `man` prints
+    // (`c\bc` bold, `_\bc` underline) and SGR (`ESC[1m`, `ESC[4m`) read
+    // off — answered as `text, spans, bold`: the plain text, each
+    // line's trailing whitespace off and no line after the last
+    // newline; `{ from, to, style }` runs (bytes from 0, end exclusive;
+    // "bold", "underline" or "bold underline"); and the lines (from 1,
+    // as keys) whose every character but spaces is bold. What
+    // `man.lua` reads a page through.
+    //
+    // @class kawoosh.OverstrikeSpan
+    // @field [1] integer from, a byte from 0
+    // @field [2] integer to, the byte after its last
+    // @field [3] "bold"|"underline"|"bold underline"
     k.set(
         "overstrike",
         lua.create_function(|lua, raw: mlua::LuaString| {
@@ -7346,7 +8013,7 @@ fn seed(
             Ok((lua.create_string(&read.text)?, spans, bold))
         })?,
     )?;
-    // `kawoosh.search_wants({ include =, exclude = }, rels)`: for each
+    // `kawoosh.search_wants(globs: kawoosh.SearchGlobs, rels: string[]): boolean[]?, string?`: for each
     // path (relative to the root), whether the globs want it — as a
     // search would read them; or nil and why a glob does not parse.
     k.set(
@@ -7387,19 +8054,49 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // `kawoosh.multibuffer(name, parts[, { show =, line = }])`
+    // `kawoosh.multibuffer(name: string, parts?: kawoosh.MultiPart[], opts?: kawoosh.MultibufferOpts): nil`
     // (docs/design/search.md Decisions 1–5): `parts` in order, each the
     // caller's text (a string: a header, a separator — ending in a
-    // newline) or a file's lines, `{ path =, from =, to = }` from 1,
-    // `to` the last. The multibuffer named `name` is refilled when
-    // open, else made; shown unless `show = false` — where it is on
-    // show, else in the focused editor pane, else the first on screen;
-    // or, with `place` (`under`, `column`; `beside = true` is `under`),
-    // in a pane of its own opened there — the keyboard going to it
-    // unless `focus = false`. `parts` nil shows the one open as it is.
-    // `restore = true`: a session brings its pane back, empty under its
-    // name, for `kawoosh.on_restore` to fill — a multibuffer made then
-    // by that name takes the empty one's panes.
+    // newline; `{ text =, color = }` painted) or a file's lines, `{ path
+    // =, from =, to = }` from 1, `to` the last — or a buffer's, by
+    // `buffer =` handle or `name =`. The multibuffer named `name` is
+    // refilled when open, else made; shown unless `show = false` —
+    // where it is on show, else in the focused editor pane, else the
+    // first on screen; or, with `place` (`under`, `column`; `beside =
+    // true` is `under`), in a pane of its own opened there — the
+    // keyboard going to it unless `focus = false`. `parts` nil shows the
+    // one open as it is. `restore = true`: a session brings its pane
+    // back, empty under its name, for `kawoosh.on_restore` to fill — a
+    // multibuffer made then by that name takes the empty one's panes.
+    // `places`: what a list lists, which `]q` walks (docs/design/lists.md
+    // Decision 4) — a layer by name (`diagnostics`), or places given.
+    //
+    // @alias kawoosh.MultiPart string|kawoosh.MultiLines
+    //
+    // @class kawoosh.MultiLines
+    // @field text? string the caller's text, painted `color`
+    // @field color? string the text's colour, as `kawoosh.buf.paint` names one
+    // @field path? string a file whose lines these are
+    // @field buffer? integer a buffer whose lines these are, by handle
+    // @field name? string a buffer whose lines these are, by name
+    // @field from? integer the first line, from 1 (1 when left out)
+    // @field to? integer the last line, from 1 (`from` when left out)
+    //
+    // @class kawoosh.MultibufferOpts
+    // @field show? boolean false: made or refilled, not shown
+    // @field focus? boolean false: the keyboard stays where it is
+    // @field line? integer the caret's line, from 1
+    // @field place? "under"|"column" a pane of its own, opened there
+    // @field beside? boolean `place = "under"`
+    // @field restore? boolean a session brings its pane back for `kawoosh.on_restore` to fill
+    // @field places? string|kawoosh.MultiPlace[] what a list lists: a layer by name, or places
+    //
+    // @class kawoosh.MultiPlace
+    // @field path string
+    // @field line? integer from 1 (1 when left out)
+    // @field col? integer from 1, in UTF-16 units as a language server counts (1 when left out)
+    // @field end_line? integer from 1 (`line` when left out)
+    // @field end_col? integer from 1 (`col` when left out)
     let qq = q(queue);
     k.set(
         "multibuffer",
@@ -7485,6 +8182,22 @@ fn seed(
             },
         )?,
     )?;
+    // `kawoosh.fs.stat(path: string): kawoosh.fs.Stat`: what the path
+    // is, the link followed but for `is_symlink`; raises when it is not
+    // there.
+    //
+    // @class kawoosh.fs.Stat
+    // @field is_dir boolean
+    // @field is_file boolean
+    // @field is_symlink boolean the path itself is a link
+    // @field size integer bytes
+    // @field modified? integer unix seconds
+    // @field mode? integer the permission bits, `0o7777` of them, where the disk says them
+    // @field perms? string the bits as `ls -l` draws them: `rwxr-xr-x`
+    // @field uid? integer the owner by number
+    // @field gid? integer the group by number
+    // @field user? string the owner's name, where this machine names it (none on a domain)
+    // @field group? string the group's name, the same
     fs.set(
         "stat",
         lua.create_function(|lua, p: String| {
@@ -7514,18 +8227,28 @@ fn seed(
             Ok(t)
         })?,
     )?;
-    // `fs.chmod(paths, mode[, { recursive = }][, fn])` and
-    // `fs.chown(paths, owner[, opts][, fn])` (docs/design/dir.md
-    // Decision 1): `paths` one path or a list; `mode` as `chmod(1)`
-    // takes it — octal (`755`) or symbolic (`u+x,go-w`, no who being
-    // everyone's) — and `owner` as `chown(1)` does (`OWNER`,
-    // `OWNER:GROUP`, `:GROUP`, `OWNER:`). Each path is changed, the
-    // link followed; `recursive` changes everything under a directory
-    // too, a link met there left alone. A path that fails does not stop
-    // the rest: the answer is `{ done =, failed = { { path =, why = },
-    // … } }` — now, or with `fn` on a thread of its own, handed to
-    // `fn(report)`. A mode or owner that does not read returns `nil,
-    // why`, nothing changed.
+    // `kawoosh.fs.chmod(paths: string|string[], mode: string, opts?: kawoosh.fs.AttrOpts|fun(report: kawoosh.fs.Changed?, why: string?), fn?: fun(report: kawoosh.fs.Changed?, why: string?)): kawoosh.fs.Changed|true|nil, string?`:
+    // (docs/design/dir.md Decision 1) `paths` one path or a list; `mode`
+    // as `chmod(1)` takes it — octal (`755`) or symbolic (`u+x,go-w`, no
+    // who being everyone's). Each path is changed, the link followed;
+    // `recursive` changes everything under a directory too, a link met
+    // there left alone. A path that fails does not stop the rest: the
+    // answer is `{ done =, failed = { { path =, why = }, … } }` — now,
+    // or with `fn` (in `opts`' place too) on a thread of its own, handed
+    // to `fn(report)`, the answer then `true`. A mode that does not read
+    // returns `nil, why`, nothing changed.
+    //
+    // @class kawoosh.fs.AttrOpts
+    // @field recursive? boolean everything under a directory too
+    //
+    // @class kawoosh.fs.Changed
+    // @field done integer how many paths were changed
+    // @field failed { path: string, why: string }[] each path that failed, and why
+
+    // `kawoosh.fs.chown(paths: string|string[], owner: string, opts?: kawoosh.fs.AttrOpts|fun(report: kawoosh.fs.Changed?, why: string?), fn?: fun(report: kawoosh.fs.Changed?, why: string?)): kawoosh.fs.Changed|true|nil, string?`:
+    // as `kawoosh.fs.chmod`, the owner set: `owner` as `chown(1)` takes
+    // it (`OWNER`, `OWNER:GROUP`, `:GROUP`, `OWNER:`). An owner that
+    // does not read returns `nil, why`, nothing changed.
     for which in ["chmod", "chown"] {
         let qq = q(queue);
         let jj = jobs.clone();
@@ -7583,16 +8306,21 @@ fn seed(
             })?,
         )?;
     }
+    // `kawoosh.fs.rename(from: string, to: string): nil`: the path
+    // moved or renamed, now; raises when it cannot be.
     fs.set(
         "rename",
         lua.create_function(|_, (a, b): (String, String)| {
             kfs::rename(&expand(&a), &expand(&b)).map_err(io_err)
         })?,
     )?;
-    // `fs.copy(a, b)` and `fs.remove(path)` answer now; with a last
-    // argument `fn`, the change is made on a thread of its own and
-    // `fn(true)` — or `fn(nil, why)` — is called when it is done, so a
-    // tree of fifty gigabytes holds up nothing (`dir`'s writes).
+    // `kawoosh.fs.copy(from: string, to: string, fn?: fun(ok: true?, why: string?)): nil`:
+    // `from` copied to `to` (a directory with all under it; a `to` that
+    // exists refused), now — raising when it cannot be; with a last
+    // argument `fn`, the change
+    // is made on a thread of its own and `fn(true)` — or `fn(nil, why)`
+    // — is called when it is done, so a tree of fifty gigabytes holds
+    // up nothing (`dir`'s writes). `fs.remove` the same.
     let qq = q(queue);
     let jj = jobs.clone();
     fs.set(
@@ -7616,7 +8344,7 @@ fn seed(
             },
         )?,
     )?;
-    // `fs.apply(changes, { settled = fn(outcomes), done = fn(outcomes) })`:
+    // `kawoosh.fs.apply(changes: kawoosh.fs.Change[], opts?: kawoosh.fs.ApplyOpts): nil`:
     // a write's changes — each `{ kind = "rename", from =, to = }` (a
     // move too), `{ kind = "copy", from =, to = }`, `{ kind = "create",
     // path =, dir = }`, `{ kind = "delete", path = }` — applied on a
@@ -7627,6 +8355,17 @@ fn seed(
     // of what was deleted are left — the directories can be read again
     // — and `done` at the end; each with every change's outcome by its
     // index: `true`, why it failed, or `false` while under way.
+    //
+    // @class kawoosh.fs.Change
+    // @field kind "rename"|"move"|"copy"|"create"|"delete"
+    // @field from? string a rename's, a move's or a copy's source
+    // @field to? string a rename's, a move's or a copy's target
+    // @field path? string what a create makes or a delete removes
+    // @field dir? boolean a create's: a directory, not a file
+    //
+    // @class kawoosh.fs.ApplyOpts
+    // @field settled? fun(outcomes: (boolean|string)[]) when only the removals are left: each change's `true`, why it failed, or `false` while under way
+    // @field done? fun(outcomes: (boolean|string)[]) at the end, the same
     let qq = q(queue);
     let jj = jobs.clone();
     fs.set(
@@ -7685,6 +8424,10 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh.fs.remove(path: string, fn?: fun(ok: true?, why: string?)): nil`:
+    // a file, a link or a directory with everything in it removed, now
+    // — raising when it cannot be; with `fn`, on a thread of its own,
+    // `fn(true)` or `fn(nil, why)` when it is done, as `fs.copy`.
     let qq = q(queue);
     let jj = jobs.clone();
     fs.set(
@@ -7706,17 +8449,23 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh.fs.create(path: string, dir?: boolean): nil`: an empty
+    // file — a directory with `dir` — and its parents; a file that exists
+    // is refused (raises), since creating is not truncating.
     fs.set(
         "create",
         lua.create_function(|_, (p, is_dir): (String, Option<bool>)| {
             kfs::create(&expand(&p), is_dir.unwrap_or(false)).map_err(io_err)
         })?,
     )?;
+    // `kawoosh.fs.read(path: string): string`: the whole of a small
+    // file, as text — raising when it cannot be read or is not UTF-8.
     fs.set(
         "read",
         lua.create_function(|_, p: String| kfs::read(&expand(&p)).map_err(io_err))?,
     )?;
-    // `kawoosh.fs.read_json(path)`: the file read and parsed as JSON
+    // `kawoosh.fs.read_json(path: string, fn?: fun(value: any, why: string?)): any, string?`:
+    // the file read and parsed as JSON
     // (`kawoosh.json`'s rules; comments and trailing commas passed
     // over; at most 16 MiB), answered as `value, nil` or `nil, why`;
     // `fs.read_json(path, fn)` reads and parses it on a thread of its
@@ -7746,7 +8495,7 @@ fn seed(
             Ok((LV::Nil, LV::Nil))
         })?,
     )?;
-    // `kawoosh.fs.head(path, n)`: a file's first `n` bytes, as text
+    // `kawoosh.fs.head(path: string, n: integer): string`: a file's first `n` bytes, as text
     // (lossy), without reading the rest — what an opener checks a
     // file's kind by (`secrets.lua`'s `$ANSIBLE_VAULT;`).
     fs.set(
@@ -7767,13 +8516,11 @@ fn seed(
             Ok(String::from_utf8_lossy(&out).into_owned())
         })?,
     )?;
-    // `kawoosh.fs.bytes(path, offset, len)`: `len` of a file's bytes
-    // from `offset` (0-based), as they are — a Lua string that need not
-    // be text — fewer at its end, none past it; and `kawoosh.fs.find(
-    // path, needle, from[, back])`: the offset `needle` (bytes) next
-    // starts at, the first at or after `from`, or with `back` the last
-    // before it, nil when there is none. Neither reads the file whole:
-    // what the bytes pane (`hex.lua`) shows a file of any size through.
+    // `kawoosh.fs.bytes(path: string, offset: integer, len: integer): string`:
+    // `len` of a file's bytes from `offset` (0-based), as they are — a
+    // Lua string that need not be text — fewer at its end, none past
+    // it. It does not read the file whole: what the bytes pane
+    // (`hex.lua`) shows a file of any size through, with `fs.find`.
     fs.set(
         "bytes",
         lua.create_function(|lua, (p, offset, len): (String, u64, usize)| {
@@ -7781,6 +8528,10 @@ fn seed(
             lua.create_string(&bytes)
         })?,
     )?;
+    // `kawoosh.fs.find(path: string, needle: string, from: integer, back?: boolean): integer?`:
+    // the offset (bytes from 0) `needle` (bytes) next starts at, the
+    // first at or after `from`, or with `back` the last before it, nil
+    // when there is none — without reading the file whole.
     fs.set(
         "find",
         lua.create_function(
@@ -7790,7 +8541,7 @@ fn seed(
             },
         )?,
     )?;
-    // `kawoosh.fs.patch(path, { { offset, bytes }, … })`: each run of
+    // `kawoosh.fs.patch(path: string, runs: [integer, string][]): nil`: each `{ offset, bytes }` run of
     // bytes written over the file's own at its offset (0-based), in
     // place — the file as long as it was, nothing else of it read or
     // written; a run past its end refuses them all. What `:hex write`
@@ -7808,6 +8559,9 @@ fn seed(
             kfs::patch(&expand(&p), &out).map_err(io_err)
         })?,
     )?;
+    // `kawoosh.fs.write(path: string, data: string): nil`: the file
+    // written whole — any Lua string, its bytes, text or not — its
+    // directory created when it is missing; raises when it cannot be.
     fs.set(
         "write",
         // Any Lua string: its bytes, text or not.
@@ -7815,25 +8569,35 @@ fn seed(
             kfs::write(&expand(&p), text.as_bytes()).map_err(io_err)
         })?,
     )?;
+    // `kawoosh.fs.exists(path: string): boolean`: whether anything is
+    // at the path.
     fs.set(
         "exists",
         lua.create_function(|_, p: String| Ok(kfs::exists(&expand(&p))))?,
     )?;
+    // `kawoosh.fs.is_dir(path: string): boolean`: whether the path is a
+    // directory (or a link to one).
     fs.set(
         "is_dir",
         lua.create_function(|_, p: String| Ok(kfs::is_dir(&expand(&p))))?,
     )?;
+    // `kawoosh.fs.is_file(path: string): boolean`: whether the path is
+    // a file (or a link to one).
     fs.set(
         "is_file",
         lua.create_function(|_, p: String| Ok(kfs::is_file(&expand(&p))))?,
     )?;
-    // Whether a program would be found by a child kawoosh spawns — on
+    // `kawoosh.fs.on_path(program: string): boolean?`: whether a
+    // program would be found by a child kawoosh spawns — on
     // the PATH the shell made, for a window opened outside one; nil
     // while that PATH is still being asked for.
     fs.set(
         "on_path",
         lua.create_function(|_, p: String| Ok(kawoosh_systems::io::on_path(&p)))?,
     )?;
+    // `kawoosh.fs.drives(): string[]`: the roots above every directory
+    // — the drives on Windows (`C:\`, `D:\`, whichever exist), none
+    // elsewhere, where `/` has nothing above it.
     fs.set(
         "drives",
         lua.create_function(|_, ()| {
@@ -7843,10 +8607,14 @@ fn seed(
                 .collect::<Vec<_>>())
         })?,
     )?;
+    // `kawoosh.fs.cwd(): string`: the editor's working directory — the
+    // focused tab's.
     fs.set(
         "cwd",
         lua.create_function(|_, ()| Ok(kfs::display(&editor_cwd())))?,
     )?;
+    // `kawoosh.fs.chdir(path: string): nil`: `:cd` — the focused tab's
+    // working directory moved, and with it the editor's.
     let qq = q(queue);
     fs.set(
         "chdir",
@@ -7884,6 +8652,30 @@ fn seed(
     let null = lua.create_table()?;
     null.set("__sqlite_null", true)?;
     sqlite.set("null", null.clone())?;
+    // `kawoosh.sqlite.query(path: string, sql: string, ...: (kawoosh.sqlite.Value|boolean)[]|kawoosh.sqlite.QueryOpts|fun(result: kawoosh.sqlite.Result?, err: string?)): integer`:
+    // `(path, sql[, params][, opts], fn)` — the SQL run against the
+    // database on the io thread, `fn(result)` or `fn(nil, err)` (SQLite's
+    // words) on a frame after; `params` bound by position (a boolean as
+    // 1 or 0). The last argument must be the callback. Answers the
+    // job's token.
+    //
+    // @alias kawoosh.sqlite.Value integer|number|string|kawoosh.sqlite.null|kawoosh.sqlite.Blob
+    //
+    // @class kawoosh.sqlite.Blob
+    // @field blob string its bytes, or with `cut` its first ones
+    // @field size? integer a cut blob's whole length
+    // @field cut? boolean only its head is here: shown, never bound
+    //
+    // @class kawoosh.sqlite.QueryOpts
+    // @field cap? integer the rows kept (1000)
+    // @field blob_cap? integer the bytes a blob is kept to; a longer one comes back cut
+    //
+    // @class kawoosh.sqlite.Result
+    // @field columns string[]
+    // @field rows kawoosh.sqlite.Value[][]
+    // @field truncated boolean more rows than `cap` were left out
+    // @field changes integer the rows a write changed
+    // @field ms number how long it took
     let qq = q(queue);
     let jj = jobs.clone();
     let nn = null.clone();
@@ -7939,6 +8731,27 @@ fn seed(
             },
         )?,
     )?;
+    // `kawoosh.sqlite.schema(path: string, fn: fun(schema: kawoosh.sqlite.Schema?, why: string?)): integer`:
+    // the database's tables and views read on the io thread, handed to
+    // `fn`. Answers the job's token.
+    //
+    // @class kawoosh.sqlite.Schema
+    // @field tables kawoosh.sqlite.Table[] in the order `sqlite_master` lists them
+    // @field bytes integer the file's size as its pages say
+    //
+    // @class kawoosh.sqlite.Table
+    // @field name string
+    // @field kind "table"|"view"
+    // @field rows? integer its row count; nil when it could not be read
+    // @field without_rowid boolean
+    // @field columns kawoosh.sqlite.Column[]
+    //
+    // @class kawoosh.sqlite.Column
+    // @field name string
+    // @field type string the declared type, `""` when none
+    // @field notnull boolean
+    // @field pk integer its place in the primary key, from 1; 0 when not in it
+    // @field default? string
     let qq = q(queue);
     let jj = jobs.clone();
     sqlite.set(
@@ -7957,12 +8770,16 @@ fn seed(
             Ok(token)
         })?,
     )?;
+    // `kawoosh.sqlite.is(path: string): boolean`: whether the file's
+    // head says SQLite — sixteen bytes read, the rest left alone.
     sqlite.set(
         "is",
         lua.create_function(move |_, path: String| {
             Ok(kawoosh_systems::sqlite::is_sqlite(&expand(&path)))
         })?,
     )?;
+    // `kawoosh.sqlite.quote(name: string): string`: an identifier
+    // quoted for SQL.
     sqlite.set(
         "quote",
         lua.create_function(move |_, name: String| Ok(kawoosh_systems::sqlite::quote(&name)))?,
