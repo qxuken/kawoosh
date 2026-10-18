@@ -4408,23 +4408,28 @@ fn a_lua_server_is_an_lsp_table() {
 #[test]
 #[cfg(unix)]
 fn a_plugins_processes_wait_their_turn() {
+    // The children wait for this file, not a clock: on a loaded machine
+    // a short sleep ends before the count below is taken.
+    let go = std::env::temp_dir().join(format!("kawoosh-procs-turn-{}", std::process::id()));
+    let _ = std::fs::remove_file(&go);
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
     app.jobs_inline = false;
     d.frame(&mut app);
     app.run_lua_source(
         "t",
-        r#"done, killed = 0, nil
+        &r#"done, killed = 0, nil
            local tokens = {}
            for i = 1, 40 do
-             tokens[i] = kawoosh.spawn({ "sh", "-c", "sleep 0.2" }, {
+             tokens[i] = kawoosh.spawn({ "sh", "-c", "while [ ! -e 'GO' ]; do sleep 0.02; done" }, {
                on_exit = function(code)
                  if code == nil then killed = i else done = done + 1 end
                end,
              })
            end
            last = tokens[40]
-           kawoosh.echo(table.concat(tokens, " "))"#,
+           kawoosh.echo(table.concat(tokens, " "))"#
+            .replace("GO", &go.display().to_string()),
     );
     // The test's own processes, whatever the bundled plugins run beside.
     let mine: std::collections::HashSet<u64> = app
@@ -4455,6 +4460,7 @@ fn a_plugins_processes_wait_their_turn() {
     app.run_lua_source("t", "kawoosh.kill(last)");
     d.frame(&mut app);
     assert_eq!(waiting(&app), before - 1, "the last one, never started");
+    std::fs::write(&go, "").unwrap();
     for _ in 0..200 {
         app.wait_for_jobs();
         d.frame(&mut app);
@@ -4468,6 +4474,7 @@ fn a_plugins_processes_wait_their_turn() {
         app.ed.message, "39 40",
         "every other one ran; the waiting one killed"
     );
+    let _ = std::fs::remove_file(&go);
 }
 
 /// A line yanked in a listing that is then closed outright pastes as
