@@ -826,7 +826,9 @@ completes whole (`cargo b` to `cargo build --release`). After the first
 word: a nushell command's parameter first — `target: string@targets`
 offers what `targets` answers (read from the file when its body is a
 list, else asked of `nu` once while the file is unchanged, in the
-background — the line completes as it answers),
+background — the line completes as it answers; `nu` runs the file to
+ask, so only once you trust it with `:trust allow build.nu`, and again
+after its text changes),
 `string@[debug release]` those two — then the program's own arguments
 from [carapace](https://carapace.sh) when it is on your PATH (`git
 co` to `checkout`, `commit`; a flag's description beside the
