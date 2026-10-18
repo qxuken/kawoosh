@@ -806,7 +806,10 @@ const DOCS: &[(&str, &str)] = &[
         "memory.scope",
         "whose memory the pane shows: `workspace` this one's, `global` every one's",
     ),
-    ("picker.preview", "a preview beside the picker's list"),
+    (
+        "picker.preview",
+        "where the picker's preview goes: `auto` beside the list when the picker is wide enough, below it when tall enough, else none (`<A-p>` shows it anyway); `right`, `below`, or `off`",
+    ),
     (
         "picker.wrap",
         "the picker's rows wrap to show a long path whole",
@@ -818,6 +821,10 @@ const DOCS: &[(&str, &str)] = &[
     (
         "picker.split",
         "the list's share of the picker's width beside the preview",
+    ),
+    (
+        "picker.split_below",
+        "the list's share of the picker's height above a preview below it",
     ),
     (
         "font.family",
@@ -1401,18 +1408,21 @@ impl Settings {
         // tab's project's, or `global`, every one's; `<C-a>` in the
         // pane flips it for the session.
         defaults.set("memory.scope", Setting::Str("workspace".into()));
-        // The picker (`picker.lua`): a preview of the cursor's row
-        // beside the list, and whether a row's text wraps to show the
+        // The picker (`picker.lua`): where a preview of the cursor's
+        // row goes — `auto` by the picker's room (docs/design/picker.md
+        // Decision 1) — and whether a row's text wraps to show the
         // whole of a long path; `<A-p>` and `<A-w>` in the picker flip
         // them for the session. `share` is the height the pane opens
-        // at, as a fraction of the pane it splits, and `split` the
-        // list's share of the pane's width beside the preview; the
-        // pane keys `<A-J>` `<A-K>` and the picker's `<A-H>` `<A-L>`
-        // move them for the session, and both dividers drag.
-        defaults.set("picker.preview", Setting::Bool(true));
+        // at, as a fraction of the pane it splits, `split` the list's
+        // share of the pane's width beside the preview and
+        // `split_below` of its height above one; the pane keys `<A-J>`
+        // `<A-K>` and the picker's `<A-H>` `<A-L>` move the first two
+        // for the session, and every divider drags.
+        defaults.set("picker.preview", Setting::Str("auto".into()));
         defaults.set("picker.wrap", Setting::Bool(false));
         defaults.set("picker.share", Setting::Float(0.5));
         defaults.set("picker.split", Setting::Float(0.5));
+        defaults.set("picker.split_below", Setting::Float(0.5));
         // The look (kawoosh's `look.rs`): the mono face — a family kui can
         // see, the empty string for the face the editor ships — its size
         // in logical px, the row's height as a ratio of it, and OpenType
@@ -1486,6 +1496,7 @@ impl Settings {
             ("launcher.start", words(&["normal", "insert"])),
             ("buffers.scope", words(&["tab", "all"])),
             ("memory.scope", words(&["workspace", "global"])),
+            ("picker.preview", words(&["auto", "right", "below", "off"])),
             ("tabs.directory", words(&["auto", "always", "never"])),
             ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
@@ -2194,6 +2205,7 @@ mod tests {
                 "picker.preview",
                 "picker.share",
                 "picker.split",
+                "picker.split_below",
                 "picker.wrap",
                 "relativenumber",
                 "save.as_admin",

@@ -97,6 +97,8 @@ commits; 70 integration test files and 31 Lua test scripts.
   kept.
 - [matching.md](design/matching.md): the pickers' fuzzy matching, a
   space splitting the query into terms.
+- [picker.md](design/picker.md): the picker's preview placed by its
+  room; a walk rooted in an ignored directory, `<A-g>`, the walk's cap.
 
 ### Code
 

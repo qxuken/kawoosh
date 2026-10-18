@@ -134,7 +134,7 @@ and every other list you type into to narrow.
 | keys | picker |
 |---|---|
 | `<leader>f` | files under the working directory (those git does not ignore) |
-| `<leader>F` | files under the current file's directory, or the listing's (`:picker files here`) |
+| `<leader>F` | files under the current file's directory, or the listing's (`:picker files here`); in a directory the project ignores, such as `node_modules` or `target`, all of its files |
 | `<leader>g` | grep the project as you type (needs `rg`) |
 | `<leader>G` | grep from the current file's directory (`:picker grep here`) |
 | `<leader><leader>` | open buffers, the current one last, so `<CR>` at once goes to the previous one; the query matches a buffer's path too, so a directory finds the buffers under it, a name's match first |
@@ -167,13 +167,25 @@ cursor; `<Esc>` again closes the picker.
 | `<CR>` | take the row: a file at its line, a buffer, a command |
 | `<C-v>` `<C-s>` `<C-t>` | take it into a split beside, a split below, a new tab |
 | `<C-c>` | close, from either mode |
-| `<A-p>` | hide or show the preview |
+| `<A-p>` | hide or show the preview; where the picker is too small for one, show it anyway |
 | `<A-w>` | wrap long rows instead of cutting them |
-| `<A-S-h>` `<A-S-l>` | move the divider between the list and the preview; with the preview hidden, the list is the whole picker and these size its column, as in any pane |
+| `<A-g>` | in files and grep: ignored and hidden files too, or not (`⌥G ignored` in the head, lit while on) |
+| `<A-S-h>` `<A-S-l>` | move the divider between the list and a preview beside it; otherwise the list is the whole width and these size its column, as in any pane |
 | `<A-S-k>` `<A-S-j>` | make the picker taller, shorter |
 
 A click puts the cursor on a row and a second click takes it. The size
 and the divider you leave are kept for the next picker.
+
+The preview goes where the picker has room for it, decided again as
+the pane or the window is resized: beside the list when the picker is
+wide enough for both (about 30 characters of list and 40 of preview),
+below the list when it is tall enough instead (4 rows and 4 lines),
+and nowhere when it is neither — the head then ends in `⌥P preview`.
+`picker.preview` set to `right`, `below` or `off` puts it there always.
+The divider under a list drags too.
+
+A file picker lists at most 200 000 files; the count says
+`walk stopped at …` when there were more.
 
 Some pickers have keys of their own: in buffers, `<C-x>` closes the
 row's buffer (asking first if it has unsaved changes) and `<C-a>`

@@ -40,13 +40,20 @@
 -- `<A-p>` shows or hides the preview and `<A-w>` folds a row's text to
 -- the list's width or cuts it — the `picker.preview` and `picker.wrap`
 -- settings, flipped for the session (`settings.lua` sets them for
--- good). The pane opens at `picker.share` of the height and the list
--- takes `picker.split` of its width beside the preview: `<A-K>`
--- `<A-J>` make the pane taller and shorter (the editor's own pane
--- keys, the height they leave kept as the setting), `<A-H>` `<A-L>`
--- move the divider between list and preview, which drags too — the
--- session's, as the two above; with the preview hidden the list is the
--- whole pane and `<A-H>` `<A-L>` the pane's own, its column's width. A source's own keys ride on the row: `<C-x>` in `buffers`
+-- good). The preview goes where the picker's laid-out body has room
+-- (`picker.place`, docs/design/picker.md Decision 1): beside the list
+-- when wide enough for both, below it when tall enough, else none,
+-- the head saying `⌥P preview`, `<A-p>` drawing it anyway. The pane
+-- opens at `picker.share` of the height and the list takes
+-- `picker.split` of its width beside the preview (`picker.split_below`
+-- of its height above one): `<A-K>` `<A-J>` make the pane taller and
+-- shorter (the editor's own pane keys, the height they leave kept as
+-- the setting), `<A-H>` `<A-L>` move the divider between list and a
+-- preview beside it, which drags too, as the one under a list does —
+-- the session's, as the two above; with no preview beside, the list is
+-- the whole width and `<A-H>` `<A-L>` the pane's own, its column's
+-- width. `<A-g>` in `files` and `grep` lists ignored and hidden files
+-- too (Decision 4). A source's own keys ride on the row: `<C-x>` in `buffers`
 -- closes the row's buffer, asking first when it has unsaved changes.
 -- A source with `columns` draws its rows as a grid, the cells lined up
 -- (the commands: name, key, what it does). A `tree` source's rows are
@@ -74,7 +81,8 @@ local fs = kawoosh.fs
 ---@field placeholder? string the query field's while it is empty
 ---@field empty? string what the list says with no row and no query
 ---@field items? kawoosh.picker.Item[]|fun(ctx: kawoosh.picker.Ctx): kawoosh.picker.Item[] the rows, at once
----@field load? fun(ctx: kawoosh.picker.Ctx, done: fun(items: kawoosh.picker.Item[]?, err?: string)) the rows read off the frame, `done` once they are
+---@field load? fun(ctx: kawoosh.picker.Ctx, done: fun(items: kawoosh.picker.Item[]?, err?: string, info?: { capped?: boolean })) the rows read off the frame, `done` once they are — `capped` when they stopped at a cap, more left
+---@field ignored? boolean `<A-g>` flips `ctx.ignored` and loads (or searches) again: files git ignores, and hidden ones, too
 ---@field search? fun(query: string, job: kawoosh.picker.Job) a dynamic source: asked again as the query is typed, nothing until one is, its rows not filtered again
 ---@field query? fun(query: string, ctx: kawoosh.picker.Ctx): string? the text matched for what was typed; nil matches it as typed
 ---@field preview? fun(item: kawoosh.picker.Item, ctx: kawoosh.ViewCtx): kawoosh.picker.Preview the cursor's row beside the list; by default its path's, its buffer's or its `lines`
@@ -120,6 +128,7 @@ local fs = kawoosh.fs
 ---@field buffer? integer the buffer in front when it opened
 ---@field cwd string the working directory
 ---@field root? string where a walk or a search starts: `here`'s directory, else the working one
+---@field ignored? boolean `<A-g>` on, in a source with `ignored`: ignored and hidden files too
 ---@field terminal? boolean opened from a terminal pane
 ---@field pane? integer the pane it was opened from
 ---@field caret? kawoosh.buf.Cursor `kawoosh.buf.cursor`'s, opened from a buffer
@@ -219,6 +228,9 @@ local fs = kawoosh.fs
 ---@field rows string[] every hit's text, in order
 ---@field items kawoosh.picker.Item[] every hit's item, in order
 ---@field root string where a walk starts
+---@field place? "right"|"below" where the preview is drawn; nil for none
+---@field ignored boolean `<A-g>`: ignored and hidden files too
+---@field capped boolean the rows stopped at a cap, more left
 
 ---The picker: its sources by name and the last one closed; its
 ---functions the parts a plugin's own list is drawn with.
@@ -238,7 +250,8 @@ local FIELD = "q"
 local PANE_FACT = "lua:" .. VIEW
 -- Whether the open picker draws a preview beside its list: the width
 -- keys move the divider between them only while there is one, and
--- without it fall through to the pane's own, the column's width.
+-- without it — the preview below the list, or none — fall through to
+-- the pane's own, the column's width.
 local PREVIEW_FACT = "picker:preview"
 -- The rows' text: the field's size, so the query and its answers line
 -- up; a row is the field's height too. The panes' one scale
@@ -818,18 +831,20 @@ function picker.rows(ctx, hits, opts)
   return outer
 end
 
--- picker.preview(ctx, pv, rows, from): a preview `{ title =, lines =,
--- from =, at =, note =, path = }` as a column, `rows` lines of it at
--- most from line `from` (1) of them, the syntax coloured when a
+-- picker.preview(ctx, pv, rows, from, room): a preview `{ title =,
+-- lines =, from =, at =, note =, path = }` as a column, `rows` lines of
+-- it at most from line `from` (1) of them, the syntax coloured when a
 -- `path` says the language (asked of the ts thread once, painted
 -- when it answers); the wheel over it posts `{ kind = "scroll", tag =
--- { kind = "preview" } }`.
+-- { kind = "preview" } }`. `room` (`{ width =, height = }`, px) is
+-- what a picture is fitted to; the view's right half without it.
 ---@param ctx kawoosh.ViewCtx the view's
 ---@param pv? kawoosh.picker.Preview nil draws the empty column
 ---@param rows integer the lines it has room for
 ---@param from? integer the first of `pv.lines` drawn, from 1
+---@param room? { width: number, height: number } the preview's size
 ---@return kui.Node
-function picker.preview(ctx, pv, rows, from)
+function picker.preview(ctx, pv, rows, from, room)
   local t = ctx.env.theme
   local col = column { width = "grow", height = "grow", clip = true, pad = 8, gap = 2, bg = t.sunken,
     on_scroll = { kind = "preview" } }
@@ -846,9 +861,10 @@ function picker.preview(ctx, pv, rows, from)
       return col
     end
     col[#col + 1] = text(img.width .. " × " .. img.height, { size = PREVIEW_SIZE, color = t.muted })
-    local share = tonumber(kawoosh.opt("picker.split")) or 0.5
-    local room_w = math.max((ctx.width or 400) * (1 - share) - 16, 16)
-    local room_h = math.max((ctx.height or 300) - 2 * (PREVIEW_SIZE + 8) - 16, 16)
+    room = room or { width = (ctx.width or 400) * (1 - (tonumber(kawoosh.opt("picker.split")) or 0.5)),
+                     height = ctx.height or 300 }
+    local room_w = math.max(room.width - 16, 16)
+    local room_h = math.max(room.height - 2 * (PREVIEW_SIZE + 8) - 16, 16)
     local scale = math.min(1, room_w / img.width, room_h / img.height)
     col[#col + 1] = image {
       id = img.id, fit = "contain",
@@ -885,23 +901,82 @@ end
 
 -- ---------------------------------------------------------- the picker
 
--- Whether a row's text wraps (`picker.wrap`), and the preview shows
--- (`picker.preview`): settings, flipped for the session by `<A-w>`
--- and `<A-p>`.
+-- Whether a row's text wraps (`picker.wrap`), and where the preview
+-- goes (`picker.preview`: `auto`, `right`, `below`, `off`; `true` and
+-- `false`, its spellings before it was a word, are `auto` and `off`):
+-- settings, flipped for the session by `<A-w>` and `<A-p>`.
 local function wrapping() return kawoosh.opt("picker.wrap") == true end
-local function previewing() return kawoosh.opt("picker.preview") ~= false end
+local function preview_mode()
+  local v = kawoosh.opt("picker.preview")
+  if v == false or v == "off" then return "off" end
+  if v == "right" or v == "below" then return v end
+  return "auto"
+end
+local function previewing() return preview_mode() ~= "off" end
 
--- A fraction setting, clamped; `picker.share` the pane's height and
--- `picker.split` the list's width beside the preview.
+-- A fraction setting, clamped; `picker.share` the pane's height,
+-- `picker.split` the list's width beside the preview and
+-- `picker.split_below` its height above one.
 local function fraction(name, default)
   local v = tonumber(kawoosh.opt(name)) or default
   return math.max(0.1, math.min(0.9, v))
 end
 local function share() return fraction("picker.share", 0.5) end
 local function split() return fraction("picker.split", 0.5) end
+local function split_below() return fraction("picker.split_below", 0.5) end
 
 -- The width of the divider between the list and the preview.
 local DIVIDER = 4
+
+-- The least each part of a picker is drawn at (docs/design/picker.md
+-- Decision 1): the list `LIST_COLS` characters of its text wide and
+-- `LIST_ROWS` rows high, the preview `PREVIEW_COLS` characters of its
+-- own (smaller) text wide and `PREVIEW_MIN` lines under its title —
+-- each with its padding, in the faces' sizes as they are (`sizes`).
+local LIST_COLS, PREVIEW_COLS = 30, 40
+local LIST_ROWS, PREVIEW_MIN = 4, 4
+local function least()
+  local cw, pw = SIZE * 0.6, PREVIEW_SIZE * 0.6
+  return {
+    list_w = LIST_COLS * cw + 16, preview_w = PREVIEW_COLS * pw + 16,
+    list_h = LIST_ROWS * ROW_H, preview_h = 16 + (2 + PREVIEW_MIN) * PREVIEW_ROW,
+  }
+end
+
+-- picker.place(w, h, mode, forced): where a preview goes in a picker
+-- whose body (the pane under its query row, as laid out) is `w` by `h`
+-- px — `"right"`, `"below"`, or nil for none. `right` and `below` are
+-- where they say, `off` none; `auto` beside the list when the width
+-- holds both at their least, else below it when the height does,
+-- else none — and `forced` (`<A-p>` with none) the one of the two
+-- with the more room, whatever it is.
+---@param w number
+---@param h number
+---@param mode "auto"|"right"|"below"|"off"
+---@param forced? boolean
+---@return "right"|"below"|nil
+function picker.place(w, h, mode, forced)
+  if mode == "off" then return nil end
+  if mode == "right" or mode == "below" then return mode end
+  local m = least()
+  local across = w / (m.list_w + DIVIDER + m.preview_w)
+  local down = h / (m.list_h + DIVIDER + m.preview_h)
+  if across >= 1 then return "right" end
+  if down >= 1 then return "below" end
+  if forced then return across >= down and "right" or "below" end
+  return nil
+end
+
+-- The list's share of `room` px beside or above a preview: the
+-- setting's, held so neither part is drawn under its least while the
+-- room holds both.
+local function share_of(room, frac, least_list, least_preview)
+  local at = math.floor((room - DIVIDER) * frac)
+  if room - DIVIDER >= least_list + least_preview then
+    at = math.max(least_list, math.min(at, room - DIVIDER - least_preview))
+  end
+  return math.max(at, 0)
+end
 
 -- How many lines row `i` takes: one, or with wrapping what its text
 -- folds to at the list's width (`P.cols` characters, an estimate from
@@ -1092,9 +1167,10 @@ end
 
 -- What a static source gave: kept, boosted, and a matcher over the
 -- rows' text.
-local function loaded(items, err)
+local function loaded(items, err, info)
   if not P then return end
   P.loading = false
+  P.capped = info and info.capped or false
   if not items then
     P.note = tostring(err)
     P.items = {}
@@ -1133,9 +1209,9 @@ local function load_items()
   P.loading = true
   if src.load then
     local this = P
-    src.load(ctx, function(items, err)
+    src.load(ctx, function(items, err, info)
       if P ~= this then return end
-      loaded(items, err)
+      loaded(items, err, info)
     end)
   elseif src.items then
     local items = type(src.items) == "function" and src.items(ctx) or src.items
@@ -1407,7 +1483,8 @@ function picker.state()
   return { source = P.name, query = P.query or "", cursor = P.cursor, top = P.top, count = #P.hits,
            text = hit and hit.item.text or nil, item = hit and hit.item or nil,
            positions = hit and hit.positions or nil, loading = P.loading,
-           preview = P.preview, rows = rows, items = items, root = P.ctx.root }
+           preview = P.preview, rows = rows, items = items, root = P.ctx.root,
+           place = P.place, ignored = P.ctx.ignored == true, capped = P.capped == true }
 end
 
 -- picker.resume(): the last picker again, its query and cursor as
@@ -1447,18 +1524,31 @@ kawoosh.view(VIEW, function(ctx)
   end
   local h = (ctx.height or 0) > 0 and ctx.height or 400
   local w = (ctx.width or 0) > 0 and ctx.width or 800
-  local preview_on = previewing() and not P.src.follow
-  if P.previewed ~= preview_on then
-    P.previewed = preview_on
-    kawoosh.fact(PREVIEW_FACT, preview_on)
+  -- The body under the query row, as laid out, says where the preview
+  -- goes (`picker.place`) — every frame, so a pane or a window resized
+  -- moves it.
+  local bh = math.max(h - ctx.title_h - ROW_H - 4, 0)
+  P.body_w, P.body_h = w, bh
+  local place = (not P.src.follow) and picker.place(w, bh, preview_mode(), P.forced) or nil
+  P.place = place
+  if P.beside ~= (place == "right") then
+    P.beside = place == "right"
+    kawoosh.fact(PREVIEW_FACT, P.beside)
   end
   P.wrap = wrapping()
-  P.split = split()
   -- The list's width: its share of the pane beside a preview, the
-  -- whole of it without; and in characters, for the wrap estimate.
-  P.list_w = preview_on and math.floor((w - DIVIDER) * P.split) or w
+  -- whole of it else; and in characters, for the wrap estimate. Its
+  -- height the share above a preview below it, else the body's.
+  local m = least()
+  local list_h = bh
+  P.list_w = w
+  if place == "right" then
+    P.list_w = share_of(w, split(), m.list_w, m.preview_w)
+  elseif place == "below" then
+    list_h = share_of(bh, split_below(), m.list_h, m.preview_h)
+  end
   P.cols = math.floor((P.list_w - 16) / (SIZE * 0.6))
-  local rows = math.max(math.floor((h - ctx.title_h - ROW_H - 4) / ROW_H), 1)
+  local rows = math.max(math.floor(list_h / ROW_H), 1)
   P.rows = rows
   if P.top > math.max(#P.hits, 1) then P.top = math.max(#P.hits, 1) end
   if P.top < 1 then P.top = 1 end
@@ -1472,6 +1562,8 @@ kawoosh.view(VIEW, function(ctx)
   else
     count = tostring(#P.hits)
   end
+  -- A walk stopped at its cap says so: what was not walked is not here.
+  if P.capped and not P.loading then count = count .. " · walk stopped at " .. #P.items end
   local head = row {
     width = "grow", height = ROW_H + 4, pad = { x = 8 }, gap = 8, cross_align = "center",
     bg = t.surface,
@@ -1482,6 +1574,13 @@ kawoosh.view(VIEW, function(ctx)
   local field = ctx.field { name = FIELD, placeholder = P.src.placeholder or "type to filter", size = SIZE, width = "grow" }
   head[#head + 1] = field
   head[#head + 1] = text(count, { size = SMALL, color = t.faint, wrap = "none" })
+  -- `<A-g>`'s state, on a source that has it: lit while on.
+  if P.src.ignored then
+    local on = P.ctx.ignored == true
+    head[#head + 1] = row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, cross_align = "center",
+      bg = on and t.accent or nil, hover_bg = not on and t.sunken or nil, on_click = { kind = "ignored" },
+      text("⌥G ignored", { size = SMALL, color = on and t.bg or t.faint, wrap = "none" }) }
+  end
   local indent = P.src.tree and (P.query or "") == "" and function(it) return it.depth or 0 end or nil
   -- A row the pointer left is forgotten by the next frame: a row
   -- entered after it is the pointer come back to the list.
@@ -1492,14 +1591,15 @@ kawoosh.view(VIEW, function(ctx)
   if #P.hits == 0 and not P.loading then
     list[#list + 1] = row { pad = { x = 8, y = 4 }, text((P.query ~= "" and "no matches") or P.src.empty or "nothing here", { size = SIZE, color = t.muted }) }
   end
-  local body = row { width = "grow", height = "grow", gap = 0, list }
-  if preview_on then list.width = P.list_w end
+  local body = (place == "below" and column or row) { width = "grow", height = "grow", gap = 0, list }
+  if place == "right" then list.width = P.list_w end
+  if place == "below" then list.height = list_h end
   local hit = P.hits[P.cursor]
   if P.src.follow and hit and P.followed ~= hit.item then
     P.followed = hit.item
     follow(hit.item)
   end
-  if preview_on then
+  if place then
     local pv
     if hit then
       local key = hit.item
@@ -1514,12 +1614,19 @@ kawoosh.view(VIEW, function(ctx)
     else
       P.preview_for, P.preview = nil, nil
     end
-    local prows = math.max(math.floor((h - ctx.title_h - ROW_H - 4 - 16 - 2 * PREVIEW_ROW) / PREVIEW_ROW), 1)
+    -- The preview's room: the rest of the body beside or under the list.
+    local room = place == "right" and { width = w - P.list_w - DIVIDER, height = bh }
+                 or { width = w, height = bh - list_h - DIVIDER }
+    local prows = math.max(math.floor((room.height - 16 - 2 * PREVIEW_ROW) / PREVIEW_ROW), 1)
     P.prows = prows
     -- The divider: dragged, the list's share follows the pointer.
     body[#body + 1] = splitter(ctx.env, { key = "picker divider", thickness = DIVIDER,
-      on_drag = { kind = "divide" } })
-    body[#body + 1] = picker.preview(ctx, pv, prows, P.pv_top)
+      dir = place == "below" and "column" or "row", on_drag = { kind = "divide" } })
+    body[#body + 1] = picker.preview(ctx, pv, prows, P.pv_top, room)
+  elseif not P.src.follow and previewing() then
+    -- No room for one: the way to it anyway, `<A-p>`, at the head's end.
+    head[#head + 1] = row { on_click = { kind = "preview" }, height = ROW_H, cross_align = "center",
+      text("⌥P preview", { size = SMALL, color = t.faint, wrap = "none" }) }
   end
 
   return column { width = "grow", height = "grow", clip = true, gap = 0, head, body }
@@ -1531,10 +1638,17 @@ end, function(ev)
     -- The divider under the pointer: its x over the body's width is
     -- the list's share, kept for the session.
     local par = ev.parent or {}
-    if ev.phase ~= "end" and par.w and par.w > 0 then
+    if ev.phase ~= "end" and P.place == "below" and par.h and par.h > 0 then
+      local at = ((ev.y or 0) - (par.y or 0)) / par.h
+      kawoosh.opt("picker.split_below", math.max(0.1, math.min(0.9, at)))
+    elseif ev.phase ~= "end" and par.w and par.w > 0 then
       local at = ((ev.x or 0) - (par.x or 0)) / par.w
       kawoosh.opt("picker.split", math.max(0.1, math.min(0.9, at)))
     end
+  elseif ev.kind == "preview" then
+    kawoosh.run("picker preview")
+  elseif ev.kind == "ignored" then
+    kawoosh.run("picker ignored")
   elseif ev.kind == "hover" then
     -- The pointer moving from one row onto another takes the cursor
     -- there — the pane follows it too. Rows scrolled or refiltered under
@@ -1586,14 +1700,35 @@ kawoosh.command("picker preview down", function(ctx) preview_by(half() * math.ma
   { when = { PANE_FACT }, doc = "the preview half a screen down, COUNT times" })
 kawoosh.command("picker preview up", function(ctx) preview_by(-half() * math.max(ctx.count or 1, 1)) end,
   { when = { PANE_FACT }, doc = "the preview half a screen up, COUNT times" })
+-- `<A-p>`: a preview drawn is put away (`off` for the session, the
+-- placement it had kept to come back to); none drawn is shown — the
+-- setting back on, and drawn where there is the more room even when
+-- `auto` finds too little for one, while this picker is open.
+local shown_as = "auto"
 on("preview", function()
-  kawoosh.opt("picker.preview", not previewing())
-  -- The fact at once, for a width key before the next frame.
-  if P then
-    P.previewed = previewing() and not P.src.follow
-    kawoosh.fact(PREVIEW_FACT, P.previewed)
+  if P and P.place then
+    shown_as = preview_mode()
+    kawoosh.opt("picker.preview", "off")
+    P.forced = nil
+  else
+    if not previewing() then kawoosh.opt("picker.preview", shown_as) end
+    if P then P.forced = true end
   end
-end, "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
+  -- The fact at once, for a width key before the next frame.
+  if P and P.body_w then
+    P.place = (not P.src.follow) and picker.place(P.body_w, P.body_h, preview_mode(), P.forced) or nil
+    P.beside = P.place == "right"
+    kawoosh.fact(PREVIEW_FACT, P.beside)
+  end
+end, "show the cursor's row beside or under the list, or not (the `picker.preview` setting, for the session)")
+-- `<A-g>`, in a source that has it (`files`, `grep`): ignored and
+-- hidden files too, or not — this picker's, read again at once.
+on("ignored", function()
+  if not P then return end
+  if not P.src.ignored then return kawoosh.echo("picker " .. P.name .. ": lists no ignored files") end
+  P.ctx.ignored = not P.ctx.ignored
+  if P.src.search then P.dirty = true else P.keep = P.cursor load_items() end
+end, "ignored and hidden files too, or not, in a picker that walks or searches (files, grep)")
 on("wrap", function() kawoosh.opt("picker.wrap", not wrapping()) end,
   "fold a row's text to the list's width, or cut it (the `picker.wrap` setting, for the session)")
 -- The list's width beside the preview, stepped: the setting for the
@@ -1662,6 +1797,7 @@ for _, mode in ipairs { "i", "n", "p" } do
   local where = mode == "p" and on_pane or at
   kawoosh.map(mode, "<A-p>", "picker preview", where)
   kawoosh.map(mode, "<A-w>", "picker wrap", where)
+  kawoosh.map(mode, "<A-g>", "picker ignored", where)
   kawoosh.map(mode, "<A-S-l>", "picker list wider", where)
   kawoosh.map(mode, "<A-S-h>", "picker list narrower", where)
 end
@@ -1805,15 +1941,17 @@ function picker.here()
 end
 
 -- Every file git sees under the root (the working directory, or where
--- `here` said), relative to it.
+-- `here` said), relative to it — all of a root the project ignores (a
+-- `node_modules`), and with `<A-g>` every file but `.git` — at most
+-- the walk's cap, said when it stopped there (picker.md Decision 4).
 local function walk_items(ctx, done)
   local root = ctx.root or ctx.cwd
-  fs.walk(root, function(paths, err, whole)
+  fs.walk(root, function(paths, err, whole, capped)
     if not paths then return done(nil, err) end
     local items = {}
     for i, p in ipairs(paths) do items[i] = { text = p, path = whole[i] } end
-    done(items)
-  end)
+    done(items, nil, { capped = capped })
+  end, { ignored = ctx.ignored == true })
 end
 
 -- A path typed whole — absolute, or from `~` — is matched as the rows
@@ -1827,7 +1965,7 @@ end
 
 picker.source("files", {
   title = "files", placeholder = "find a file",
-  load = walk_items,
+  load = walk_items, ignored = true,
   query = from_root,
   empty = "no files under " .. fs.cwd(),
 })
@@ -2057,13 +2195,19 @@ picker.source("smart", {
 -- between: `cmd.exe`, Windows' shell when `SHELL` is unset, reads no
 -- single quotes, and searched `'fn` in a file `helper'`.
 picker.source("grep", {
-  title = "grep", placeholder = "a pattern for rg",
+  title = "grep", placeholder = "a pattern for rg", ignored = true,
   search = function(q, job)
     local root = P and P.ctx.root or fs.cwd()
     local n, odd = 0, {}
     local token
+    local argv = { "rg", "--vimgrep", "--color", "never", "--smart-case", "--max-columns", "300" }
+    -- `<A-g>`: rg's own spelling of everything but `.git`.
+    if P and P.ctx.ignored then
+      for _, a in ipairs { "--no-ignore", "--hidden", "--glob", "!.git" } do argv[#argv + 1] = a end
+    end
+    for _, a in ipairs { "--", q, "." } do argv[#argv + 1] = a end
     token = kawoosh.spawn(
-      { "rg", "--vimgrep", "--color", "never", "--smart-case", "--max-columns", "300", "--", q, "." },
+      argv,
       {
         cwd = root,
         on_lines = function(lines)

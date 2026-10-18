@@ -285,7 +285,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `tabs.directory` | `"auto"` | the directory in tab labels: `auto`, `always`, `never` |
 | `dir.hidden` | | whether directory listings show dot files |
 | `dir.sizes` | | whether directory listings size their directories, everything under each counted (`gS`); a listing sorted by size does either way |
-| `picker.preview` | `true` | a preview beside the picker's list |
+| `picker.preview` | `"auto"` | where the picker's preview goes: `auto` beside the list when the picker is wide enough, below it when tall enough, else none; `right`, `below`, `off` ([files](files.md#keys-in-a-picker)) |
 | `multi.expand` | `5` | lines a multibuffer's excerpt grows by: `zo` `zk` `zj` `<S-CR>`, a click on `⋯` ([search](search.md#more-lines-around-an-excerpt)) |
 | `font.family`, `font.size` | `""`, `13` | the font ([look](look.md#fonts)) |
 | `font.icons` | `"Symbols Nerd Font Mono"` | the family every icon kawoosh draws itself is set in — the kinds' in the completion and the pickers, the status marks — each a cell wide, never the text's ([look](look.md#icons-and-keys)) |

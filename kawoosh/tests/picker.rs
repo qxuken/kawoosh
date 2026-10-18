@@ -1151,7 +1151,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     assert!(!texts(&d).iter().any(|s| s == "long"), "hidden");
     lua(
         &mut app,
-        r#"assert(kawoosh.opt("picker.preview") == false)"#,
+        r#"assert(kawoosh.opt("picker.preview") == "off")"#,
     );
     let wide = d
         .rect(&format!("row {}", native("many/f00.txt")))
@@ -1326,7 +1326,9 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
 fn without_a_preview_the_width_keys_size_the_column() {
     let _serial = serial();
     let dir = project("column");
-    let mut d = Drive::new(1200.0, 700.0);
+    // Half the strip holds the list and the preview side by side with
+    // room for the list to widen (`picker.place`'s least widths).
+    let mut d = Drive::new(1400.0, 700.0);
     let mut app = app_with_lua(&mut d, &dir.join("README.md"));
     app.set_cwd(&dir);
     d.frame(&mut app);
@@ -1349,7 +1351,7 @@ fn without_a_preview_the_width_keys_size_the_column() {
     d.frame(&mut app);
     lua(
         &mut app,
-        r#"assert(kawoosh.opt("picker.preview") == false)"#,
+        r#"assert(kawoosh.opt("picker.preview") == "off")"#,
     );
     assert!(d.rect("picker divider").is_none(), "no divider");
     let p0 = pane_w(&app);
@@ -1552,5 +1554,276 @@ fn lines_land_on_their_line_in_a_crlf_file() {
     assert_eq!(line, 36, "the pick on line 37");
     let start: usize = (1..37).map(|i| format!("line {i}\r\n").len()).sum();
     assert_eq!(head, start, "at the line's start");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Where the open picker draws its preview, as it says: `right`,
+/// `below`, or `none`.
+fn place(app: &mut Kawoosh) -> String {
+    app.run_lua_source(
+        "t",
+        r#"local s = kawoosh.picker.state(); kawoosh.echo(s and (s.place or "none") or "<closed>")"#,
+    );
+    app.ed.message.clone()
+}
+
+/// Asked 2026-10-18: "picker preview should detect where it has enough
+/// space" (picker.md Decisions 1 and 2). By the picker's own laid-out
+/// size, every frame: beside the list in a wide one, below it in a
+/// narrow, tall one, none in a small one — the head says `⌥P preview`
+/// then and `<A-p>` draws it anyway — and a resize moves it. `right`
+/// and `below` are where they say; `true` is the old `auto`.
+#[test]
+fn the_preview_goes_where_the_picker_has_room() {
+    let _serial = serial();
+    let dir = project("room");
+    let mut d = Drive::new(1000.0, 700.0);
+    // The editor on another file than the one previewed, README.md's
+    // `# notes` drawn only by the preview.
+    let mut app = app_with_lua(&mut d, &dir.join("src/main.rs"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.keys(&mut app, "README");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let tall = |r: Rect| r.h > r.w;
+    // Wide: beside, the divider standing between them.
+    assert_eq!(place(&mut app), "right");
+    assert!(
+        tall(d.rect("picker divider").unwrap()),
+        "a standing divider"
+    );
+    let preview = |d: &Drive| texts(d).iter().any(|s| s.starts_with("# notes"));
+    assert!(preview(&d), "the cursor's file previewed");
+    // The window narrow and tall: below, the divider lying under the
+    // list, the preview under its rows.
+    d.viewport = kui_native::Size::new(460.0, 900.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "below", "a resize moves it");
+    let div = d.rect("picker divider").unwrap();
+    assert!(!tall(div), "a lying divider: {div:?}");
+    let row = d.rect("row README.md").unwrap();
+    assert!(
+        row.y + row.h <= div.y + 0.5,
+        "the list above: {row:?} {div:?}"
+    );
+    assert!(row.w > 400.0, "the list the whole width: {}", row.w);
+    assert!(preview(&d));
+    // Its divider dragged: the list's share of the height, a setting.
+    d.drag(
+        &mut app,
+        Vec2::new(div.x + div.w / 2.0, div.y + div.h / 2.0),
+        Vec2::new(div.x + div.w / 2.0, div.y + div.h / 2.0 + 60.0),
+    );
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"assert(kawoosh.opt("picker.split_below") > 0.55, kawoosh.opt("picker.split_below"))
+           assert(math.abs(kawoosh.opt("picker.split") - 0.5) < 0.001)"#,
+    );
+    let lower = d.rect("picker divider").unwrap();
+    assert!(
+        lower.y > div.y + 40.0,
+        "dragged down: {} > {}",
+        lower.y,
+        div.y
+    );
+    app.run_lua_source("t", r#"kawoosh.opt("picker.split_below", 0.5)"#);
+    // Small every way: none, and the way to it in the head.
+    d.viewport = kui_native::Size::new(460.0, 300.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "none");
+    assert!(d.rect("picker divider").is_none(), "no divider");
+    assert!(!preview(&d), "no preview");
+    assert!(
+        texts(&d).iter().any(|s| s == "⌥P preview"),
+        "the way to it: {:?}",
+        texts(&d)
+    );
+    let row = d.rect("row README.md").unwrap();
+    assert!(row.w > 400.0, "the list the whole picker: {}", row.w);
+    // `<A-p>`: drawn anyway, where the more room is; again, put away
+    // (`off`); again, back — the room still too small, drawn.
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "right", "forced, the width the more room");
+    assert!(preview(&d));
+    lua(
+        &mut app,
+        r#"assert(kawoosh.opt("picker.preview") == "auto")"#,
+    );
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "none");
+    lua(
+        &mut app,
+        r#"assert(kawoosh.opt("picker.preview") == "off")"#,
+    );
+    assert!(
+        !texts(&d).iter().any(|s| s == "⌥P preview"),
+        "off says nothing"
+    );
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "right");
+    lua(
+        &mut app,
+        r#"assert(kawoosh.opt("picker.preview") == "auto")"#,
+    );
+    // Closed and opened again in the small window: `auto`, so none.
+    d.press(&mut app, "<C-c>");
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.keys(&mut app, "README");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "none", "forced only while it was open");
+    // The window wide again: beside, without a key.
+    d.viewport = kui_native::Size::new(1000.0, 700.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "right");
+    // The words: `below` below in a wide picker, `right` beside in a
+    // narrow one, `true` read as `auto`.
+    app.run_lua_source("t", r#"kawoosh.opt("picker.preview", "below")"#);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "below");
+    d.viewport = kui_native::Size::new(460.0, 900.0);
+    app.run_lua_source("t", r#"kawoosh.opt("picker.preview", "right")"#);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "right");
+    app.run_lua_source("t", r#"kawoosh.opt("picker.preview", true)"#);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "below", "true is auto");
+    app.run_lua_source("t", r#"kawoosh.opt("picker.preview", "auto")"#);
+    d.press(&mut app, "<C-c>");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Asked 2026-10-18: "files picker here to search inside ignored
+/// directories (target, node_modules)" (picker.md Decisions 3 and 4).
+/// `:picker files here` from a file under `node_modules` lists the
+/// package, though the project ignores every file there
+/// (`node_modules/**`); from the project, nothing of it — until `<A-g>`,
+/// lit in the head, lists ignored and hidden files too, never `.git`.
+/// A walk stopped at its cap says so in the count.
+#[test]
+fn files_here_inside_an_ignored_directory_and_the_ignored_key() {
+    let _serial = serial();
+    let dir = project("ignored");
+    let w = |p: &str, t: &str| {
+        let p = dir.join(p);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, t).unwrap();
+    };
+    w(".gitignore", "target/\nnode_modules/**\n");
+    w("node_modules/foo/index.js", "export const needle = 1\n");
+    w("node_modules/foo/lib/x.js", "x\n");
+    w("node_modules/foo/.cache/c", "c\n");
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("node_modules/foo/index.js"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "picker files here");
+    d.frame(&mut app);
+    let mut r = rows(&d);
+    r.sort();
+    assert_eq!(
+        r,
+        ["index.js".to_string(), native("lib/x.js")],
+        "the package's own files"
+    );
+    // `<A-g>`: its hidden file too; lit while on.
+    d.key(&mut app, "g", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(rows(&d).len(), 3, "{:?}", rows(&d));
+    assert!(rows(&d).contains(&native(".cache/c")));
+    lua(
+        &mut app,
+        r#"assert(kawoosh.picker.state().ignored == true)"#,
+    );
+    assert!(texts(&d).iter().any(|s| s == "⌥G ignored"));
+    d.press(&mut app, "<C-c>");
+    // From the project: git's view, then everything but `.git`.
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert!(!r.iter().any(|p| p.starts_with("node_modules")), "{r:?}");
+    assert!(!r.iter().any(|p| p.starts_with("target")), "{r:?}");
+    lua(
+        &mut app,
+        r#"assert(kawoosh.picker.state().ignored == false)"#,
+    );
+    d.key(&mut app, "g", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let r = rows(&d);
+    for want in [
+        "node_modules/foo/index.js",
+        "node_modules/foo/.cache/c",
+        "target/out.o",
+        ".gitignore",
+    ] {
+        assert!(r.contains(&native(want)), "{want} in {r:?}");
+    }
+    assert!(
+        !r.iter().any(|p| p.starts_with(".git") && p != ".gitignore"),
+        "{r:?}"
+    );
+    assert!(
+        !texts(&d).iter().any(|s| s.contains("walk stopped")),
+        "not capped"
+    );
+    // And back.
+    d.key(&mut app, "g", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(!rows(&d).iter().any(|p| p.starts_with("node_modules")));
+    d.press(&mut app, "<C-c>");
+    // A source whose rows stopped at a cap: the count says so.
+    lua(
+        &mut app,
+        r#"kawoosh.picker.open { name = "capped",
+             load = function(ctx, done) done({ { text = "a" }, { text = "b" } }, nil, { capped = true }) end }"#,
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(
+        texts(&d).iter().any(|s| s == "2 · walk stopped at 2"),
+        "{:?}",
+        texts(&d)
+    );
+    lua(&mut app, r#"assert(kawoosh.picker.state().capped == true)"#);
+    assert!(
+        !texts(&d).iter().any(|s| s == "⌥G ignored"),
+        "no key where the source has none"
+    );
+    d.press(&mut app, "<C-c>");
+    // grep: rg as git sees the project, then `--no-ignore --hidden`.
+    if kawoosh_systems::spawn::output(std::process::Command::new("rg").arg("--version")).is_ok() {
+        d.keys(&mut app, " g");
+        d.frame(&mut app);
+        d.keys(&mut app, "needle");
+        app.wait_for_jobs();
+        d.frame(&mut app);
+        d.frame(&mut app);
+        assert_eq!(rows(&d), Vec::<String>::new(), "ignored");
+        d.key(&mut app, "g", KeyMods::NONE.with_alt());
+        app.wait_for_jobs();
+        d.frame(&mut app);
+        app.wait_for_jobs();
+        d.frame(&mut app);
+        assert_eq!(rows(&d), [native("node_modules/foo/index.js:1")]);
+        d.press(&mut app, "<C-c>");
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
