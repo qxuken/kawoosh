@@ -200,6 +200,11 @@ pub struct Item {
     /// Its lines put as they are, not indented as the line they go into
     /// (LSP's `insertTextMode` `asIs`).
     pub as_is: bool,
+    /// How many bytes before the word it replaces too: a server's edit
+    /// that starts before the word and puts something else there
+    /// (TypeScript's `?.x` over a `.`). Matched by its label, never a
+    /// ghost.
+    pub reach: usize,
 }
 
 /// A candidate's detail and documentation as `completionItem/resolve`
@@ -241,7 +246,11 @@ impl Item {
             && self.snippet.as_ref().is_none_or(|b| !b.contains('('))
     }
 
-    fn of_lsp(it: CompletionItem) -> Item {
+    /// A server's candidate, its edit made the word's as every other
+    /// source's text is (`lined_up`): `edit` is where the edit starts
+    /// against the word's start, and the text between.
+    fn of_lsp(mut it: CompletionItem, edit: Option<(std::cmp::Ordering, &str)>) -> Item {
+        let reach = edit.map_or(0, |(at, word)| lined_up(&mut it, at, word));
         let insert = (it.insert != it.label).then(|| Rc::from(it.insert));
         let snippet = it.snippet.map(Rc::from);
         Item {
@@ -255,6 +264,56 @@ impl Item {
             filled: RefCell::new(None),
             snippet,
             as_is: it.as_is,
+            reach,
+        }
+    }
+}
+
+/// The byte `units` UTF-16 code units into `s`, if it is not past it.
+fn utf16_byte(s: &str, units: usize) -> Option<usize> {
+    let mut n = 0;
+    for (i, c) in s.char_indices() {
+        if n >= units {
+            return (n == units).then_some(i);
+        }
+        n += c.len_utf16();
+    }
+    (n == units).then_some(s.len())
+}
+
+/// A server's edit that does not start where the word does, made one
+/// that does: one starting inside the word puts its head again; one
+/// starting before it (at `?.` for `?.requestAdapter`, TypeScript's)
+/// drops what it would put again there. What it puts there that is not
+/// there already is its reach, returned: the bytes before the word it
+/// replaces too.
+fn lined_up(it: &mut CompletionItem, at: std::cmp::Ordering, word: &str) -> usize {
+    use std::cmp::Ordering;
+    match at {
+        Ordering::Equal => 0,
+        // `word` is the word's head, before the edit.
+        Ordering::Greater => {
+            it.insert.insert_str(0, word);
+            if let Some(body) = &mut it.snippet {
+                body.insert_str(0, &crate::signature::escape(word));
+            }
+            0
+        }
+        // `word` is what is between the edit's start and the word's.
+        Ordering::Less => {
+            let again = it.insert.starts_with(word)
+                && it
+                    .snippet
+                    .as_ref()
+                    .is_none_or(|b| b.starts_with(&crate::signature::escape(word)));
+            if !again {
+                return word.len();
+            }
+            it.insert.drain(..word.len());
+            if let Some(body) = &mut it.snippet {
+                body.drain(..crate::signature::escape(word).len());
+            }
+            0
         }
     }
 }
@@ -1001,6 +1060,11 @@ impl Session {
         // (`tfn` for a test function), and offered when the label is all
         // typed; a ghost still shows only a text that continues the word.
         let (tier, continues) = match &item.snippet {
+            // Its text is not the word's: by what it shows.
+            _ if item.reach > 0 => (
+                score(matcher, &self.typed, &item.label, ctx.config.fuzzy)?.0,
+                false,
+            ),
             None => score(matcher, &self.typed, text, ctx.config.fuzzy)?,
             Some(_) if text == self.typed => return None,
             Some(_) => {
@@ -1832,11 +1896,29 @@ impl Kawoosh {
         }
         s.asks.lsp = None;
         s.asks.lsp_incomplete = incomplete;
-        let view = s.view;
+        let (view, start) = (s.view, s.anchor.start);
         let name_only = !self.callable_args(view);
+        // Each edit's start against the word's, on the line asked about:
+        // the text between, which the word's typing leaves as it was.
+        let buf = &self.ed.buffers[buffer];
+        let line = buf.line_of(offset);
+        let ls = buf.line_start(line);
+        let head = buf.slice(ls..offset);
+        let edit = |it: &CompletionItem| {
+            let (l, col) = it.edit_start?;
+            let at = ls + utf16_byte(&head, col as usize)?;
+            let here = l as usize == line && (ls..=offset).contains(&start);
+            here.then(|| match at.cmp(&start) {
+                std::cmp::Ordering::Less => (std::cmp::Ordering::Less, &head[at - ls..start - ls]),
+                o => (o, &head[start - ls..at - ls]),
+            })
+        };
         let items: Rc<[Item]> = items
             .into_iter()
-            .map(Item::of_lsp)
+            .map(|it| {
+                let at = edit(&it);
+                Item::of_lsp(it, at)
+            })
             .map(|mut it| {
                 if name_only {
                     it.callable_name();
@@ -1928,6 +2010,7 @@ impl Kawoosh {
                 filled: RefCell::new(None),
                 snippet: None,
                 as_is: false,
+                reach: 0,
             })
             .collect();
         self.completion_answer(Answer {
@@ -2022,6 +2105,7 @@ impl Kawoosh {
                 filled: RefCell::new(None),
                 snippet: None,
                 as_is: false,
+                reach: 0,
             })
             .collect();
         if let Some((_, _, old)) = self
@@ -2134,6 +2218,7 @@ impl Kawoosh {
                         filled: RefCell::new(None),
                         snippet: None,
                         as_is: false,
+                        reach: 0,
                     });
                 }
             }
@@ -2210,6 +2295,7 @@ impl Kawoosh {
                 filled: RefCell::new(None),
                 snippet: None,
                 as_is: false,
+                reach: 0,
             })
             .collect();
         self.completion_answer(Answer {
@@ -2907,6 +2993,8 @@ impl Kawoosh {
         };
         let item = &s.answers[r.answer as usize].items[r.item as usize];
         let text = item.text().to_string();
+        // Before the word too, where its server's edit starts there.
+        let start = start - item.reach;
         let call = item.called() && self.callable_args(view);
         // A call's brackets are put after its name, not a snippet's.
         let (snippet, as_is) = match call {
@@ -3039,7 +3127,7 @@ impl Kawoosh {
             self.ed.message = "the completion is gone".into();
             return false;
         };
-        let (buffer, start) = (s.anchor.buffer, s.anchor.start);
+        let (buffer, mut start) = (s.anchor.buffer, s.anchor.start);
         let target = view
             .filter(|v| self.ed.views.get(*v).is_some_and(|v| v.buffer == buffer))
             .or_else(|| {
@@ -3064,6 +3152,7 @@ impl Kawoosh {
             .iter()
             .flat_map(|a| a.items.iter())
             .find(|i| i.text() == text);
+        start -= taken.map_or(0, |i| i.reach);
         let call = taken.is_some_and(Item::called) && self.callable_args(v);
         let snippet = taken
             .filter(|_| !call)
@@ -3112,6 +3201,7 @@ impl Kawoosh {
                 filled: RefCell::new(None),
                 snippet: None,
                 as_is: false,
+                reach: 0,
             })
             .collect();
         let caret = self.ed.views[view].sels.primary().head;
@@ -3208,6 +3298,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_servers_edit_is_lined_up_with_the_word() {
+        use std::cmp::Ordering;
+        let item = |insert: &str, snippet: Option<&str>| CompletionItem {
+            label: "x".into(),
+            insert: insert.into(),
+            snippet: snippet.map(str::to_string),
+            as_is: false,
+            edit_start: None,
+            kind: None,
+            detail: None,
+            documentation: None,
+            resolve: None,
+        };
+        // Over the `?.` typed, putting it again: put once.
+        let mut it = item("?.requestAdapter", None);
+        assert_eq!(lined_up(&mut it, Ordering::Less, "?."), 0);
+        assert_eq!(it.insert, "requestAdapter");
+        let mut it = item("$x(a)", Some("\\$x(${1:a})"));
+        assert_eq!(lined_up(&mut it, Ordering::Less, "$"), 0);
+        assert_eq!(
+            (&*it.insert, it.snippet.as_deref()),
+            ("x(a)", Some("x(${1:a})"))
+        );
+        // `?.` over a `.`: the `.` replaced too.
+        let mut it = item("?.x", None);
+        assert_eq!(lined_up(&mut it, Ordering::Less, "."), 1);
+        assert_eq!(it.insert, "?.x");
+        // Inside the word: its head put again.
+        let mut it = item("bar()", Some("bar($0)"));
+        assert_eq!(lined_up(&mut it, Ordering::Greater, "$foo_"), 0);
+        assert_eq!(
+            (&*it.insert, it.snippet.as_deref()),
+            ("$foo_bar()", Some("\\$foo_bar($0)"))
+        );
+        // A column inside a character, or past the text, is no place.
+        assert_eq!(utf16_byte("a😀b", 3), Some(5));
+        assert_eq!(utf16_byte("a😀b", 2), None);
+        assert_eq!(utf16_byte("ab", 2), Some(2));
+        assert_eq!(utf16_byte("ab", 3), None);
+    }
+
+    #[test]
     fn a_path_before_the_caret_names_its_directory() {
         assert_eq!(
             path_context("let p = \"./src/ma", false),
@@ -3243,6 +3375,7 @@ mod tests {
             filled: RefCell::new(None),
             snippet: None,
             as_is: false,
+            reach: 0,
         };
         let a = Answer {
             source: Source::BufferWords,
@@ -3277,6 +3410,7 @@ mod tests {
             filled: RefCell::new(None),
             snippet: None,
             as_is: false,
+            reach: 0,
         };
         let mut s = Session {
             serial: 1,

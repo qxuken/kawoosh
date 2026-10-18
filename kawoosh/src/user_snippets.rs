@@ -186,6 +186,7 @@ impl Store {
                         filled: RefCell::new(None),
                         snippet: Some(d.body.clone()),
                         as_is: false,
+                        reach: 0,
                     });
                 }
             }
