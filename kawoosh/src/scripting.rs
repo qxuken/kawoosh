@@ -21,7 +21,6 @@ use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, PaneId, Place, SplitDir};
 use crate::notify::{Level, Note, Show, Ttl};
 
-/// The most paths a walk lists (`kawoosh.fs.walk`).
 /// Where plugin processes' ids start, above compile mode's.
 const LUA_PROC_BASE: u64 = 1 << 32;
 /// The most processes plugins run at once (`kawoosh.spawn`); the rest

@@ -923,8 +923,13 @@ pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
 /// [`walk`], and with `ignored` every file under `root` — ignored and
 /// hidden ones too, never `.git` — as ripgrep's `--no-ignore --hidden`
 /// lists them; whether it stopped at `max` with more left is said. A
-/// host's walk has its own rules and lists what it always does.
+/// host's walk has its own rules and lists what it always does. A root
+/// inside a `.git` lists nothing: git's own files are never the
+/// project's.
 pub fn walk_with(root: &Path, max: usize, ignored: bool) -> io::Result<Walked> {
+    if in_git_dir(root) {
+        return Ok(Walked::default());
+    }
     if let Some(h) = on_host(root) {
         let (fs, _) = h?;
         let (domain, rest) = domain_of(root).expect("on a host");
@@ -934,12 +939,15 @@ pub fn walk_with(root: &Path, max: usize, ignored: bool) -> io::Result<Walked> {
         // directory, ten times a local disk's — else by the local
         // walker on the share, its rows the host's, cut on `/`. Not
         // kept: nothing says when a distro's files change.
-        let host = |rows: Vec<String>, max: usize| Walked {
-            capped: rows.len() >= max,
-            rows,
+        // One past the cap asked for, as the local walk does, says
+        // there was more.
+        let host = |mut rows: Vec<String>, max: usize| {
+            let capped = rows.len() > max;
+            rows.truncate(max);
+            Walked { rows, capped }
         };
         if let Some(local) = fs.local(rest) {
-            if let Some(rows) = walk_by_host(domain, rest, max) {
+            if let Some(rows) = walk_by_host(domain, rest, max + 1) {
                 return Ok(host(rows, max));
             }
             let w = walk_with(&local, max, ignored)?;
@@ -949,7 +957,7 @@ pub fn walk_with(root: &Path, max: usize, ignored: bool) -> io::Result<Walked> {
             });
         }
         let max = max.min(HOST_WALK_MAX);
-        return walk_host_cached(root, max).map(|rows| host(rows, max));
+        return walk_host_cached(root, max + 1).map(|rows| host(rows, max));
     }
     if !root.is_dir() {
         return Err(io::Error::new(
@@ -991,6 +999,12 @@ pub fn walk_with(root: &Path, max: usize, ignored: bool) -> io::Result<Walked> {
         out.rows.push(rel);
     }
     Ok(out)
+}
+
+/// Whether `path` is in a `.git` directory (or is one): what no walk or
+/// search lists.
+pub fn in_git_dir(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == ".git")
 }
 
 /// Whether the project's ignore files leave `path` out, as a whole:
@@ -1884,6 +1898,11 @@ mod tests {
             ],
             "everything but .git"
         );
+        assert_eq!(
+            walk_with(&dir.join(".git"), 100, true).unwrap(),
+            Walked::default()
+        );
+        assert!(in_git_dir(&dir.join(".git/logs")) && !in_git_dir(&dir.join(".github")));
         let capped = walk_with(&dir, 3, true).unwrap();
         assert_eq!((capped.rows.len(), capped.capped), (3, true));
         let whole = walk_with(&dir, 9, true).unwrap();

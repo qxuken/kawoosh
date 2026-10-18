@@ -532,7 +532,11 @@ own thread:
   ignores. An exclude still wins (`node_modules, !node_modules/bar`). A
   glob that starts with one (`**/node_modules`, `*/dist`) names nothing:
   `<A-g>` is the way to every ignored file. One named under another is
-  walked with it.
+  walked with it. Nothing in a `.git` is named (`.git/**` searches
+  nothing, as the walk's filter never sees a root it starts at), nor a
+  path off the root — `C:/Windows/**` (a `:` ends the literal parts) or
+  anything with a prefix or a root; and a search rooted inside a `.git`
+  walks nothing (`fs::in_git_dir`), the picker's walk the same.
 
 The walk stops at `max_walk` files (`fs::WALK_MAX`, 200 000) across both,
 the rest not read: the answer says so (`capped`, `walked`), and the

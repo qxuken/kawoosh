@@ -355,9 +355,12 @@ fn is_binary(text: &[u8]) -> bool {
 /// leading parts while they are literal — `node_modules/foo/**` names
 /// `node_modules/foo`, `target/*.log` names `target`, and a bare name
 /// with no glob in it (`node_modules`) the root's entry of that name.
-/// A glob that starts with one (`**/x`, `*.rs`) names none.
+/// A glob that starts with one (`**/x`, `*.rs`) names none; nor does
+/// one that spells a drive or a root (`C:/x`: a `:` ends the literal
+/// parts), nor anything in a `.git`, which is never searched.
 fn named(include: &[String]) -> Vec<PathBuf> {
-    let meta = |c: char| matches!(c, '*' | '?' | '[' | ']' | '{' | '}' | '\\' | '!');
+    use std::path::Component;
+    let meta = |c: char| matches!(c, '*' | '?' | '[' | ']' | '{' | '}' | '\\' | '!' | ':');
     let mut out = Vec::new();
     for g in include {
         let g = g.replace('\\', "/");
@@ -369,7 +372,12 @@ fn named(include: &[String]) -> Vec<PathBuf> {
             }
             p.push(part);
         }
-        if !p.as_os_str().is_empty() && !out.contains(&p) {
+        // Only names under the root: joined to it, a prefix or a root
+        // would put the walk somewhere else.
+        let under = p
+            .components()
+            .all(|c| matches!(c, Component::Normal(n) if n != ".git"));
+        if !p.as_os_str().is_empty() && under && !out.contains(&p) {
             out.push(p);
         }
     }
@@ -390,6 +398,11 @@ fn walk(root: &Path, q: &Compiled, cancel: &AtomicBool) -> (Vec<PathBuf>, bool) 
     let ignored = q.query.ignored;
     let max = q.query.max_walk;
     let mut out = Vec::new();
+    // `.git` is never text to search, a root inside it neither: the
+    // walk's own filter never sees its root.
+    if crate::fs::in_git_dir(root) {
+        return (out, false);
+    }
     let named = if ignored {
         Vec::new()
     } else {
@@ -746,6 +759,12 @@ mod tests {
         assert_eq!(n("/target/*.log, src"), ["target", "src"]);
         assert_eq!(n("node_modules, node_modules/foo"), ["node_modules"]);
         assert_eq!(n("**/node_modules, *.rs, {a,b}/x"), Vec::<String>::new());
+        // Never `.git`, never off the root.
+        assert_eq!(
+            n(".git, .git/**, sub/.git/config, C:/Windows/**, c:\\x"),
+            Vec::<String>::new()
+        );
+        assert_eq!(n("sub/.github"), ["sub/.github"]);
     }
 
     /// Asked 2026-10-18: "search should be able to include ignored
@@ -770,6 +789,8 @@ mod tests {
         w("node_modules/bar/index.js", "needle\n");
         w("target/debug/out.txt", "needle\n");
         w(".github/ci.yml", "needle\n");
+        w(".git/config", "needle\n");
+        w(".git/logs/HEAD", "needle\n");
         let none = HashMap::new();
         let cancel = AtomicBool::new(false);
         let paths = |inc: &str, exc: &str| -> Vec<String> {
@@ -810,6 +831,13 @@ mod tests {
                 [".github/ci.yml"],
                 "{rules}: hidden, named"
             );
+            for git in [".git", ".git/**", ".git/logs"] {
+                assert_eq!(
+                    paths(git, ""),
+                    Vec::<String>::new(),
+                    "{rules}: {git} never searched"
+                );
+            }
             assert_eq!(
                 paths("node_modules", "node_modules/bar, lib"),
                 ["node_modules/foo/index.js"],
@@ -835,6 +863,9 @@ mod tests {
         capped.query.max_walk = 100;
         let found = search(&dir, &capped, &none, &cancel);
         assert!(!found.walk_capped && !found.limited);
+        // A search rooted inside `.git` finds nothing there.
+        let inside = search(&dir.join(".git"), &capped, &none, &cancel);
+        assert_eq!((inside.files.len(), inside.walked), (0, 0));
         assert_eq!(
             (found.files.len(), found.searched),
             (7, 8),
