@@ -1326,6 +1326,28 @@ impl Io {
         }
     }
 
+    /// Runs `job` on a thread of its own as [`Io::run`] does — but a
+    /// thread the system will not give is the job not run, said by
+    /// false: for a job that waits (a completer's process, seconds at
+    /// most), which the frame must never run in its place.
+    pub fn try_run(
+        &self,
+        name: &'static str,
+        job: impl FnOnce() -> IoMsg + Send + 'static,
+    ) -> bool {
+        let tx = self.tx.clone();
+        let wake = self.wake.named(name);
+        let spawned = thread::Builder::new().name(name.into()).spawn(move || {
+            if tx.send(job()).is_ok() {
+                wake.wake();
+            }
+        });
+        if let Err(e) = &spawned {
+            log::warn!("{name}: no thread for the job ({e}); not asked");
+        }
+        spawned.is_ok()
+    }
+
     /// Runs `job` on a thread of its own, handing it `send`: every message
     /// it sends is delivered as it goes, the loop woken for each — a job
     /// that has something to say before it is done (the sizing walk).
