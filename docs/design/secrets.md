@@ -559,9 +559,15 @@ lines", in a `.env` whose value is quoted over several lines
   by a pattern — one opening with `"` runs to the first `"` no `\`
   escapes (an escaped newline, a shell's continuation, among them), one
   with `'` or `` ` `` to the next such quote, either over lines and then
-  to the end of the closing line; any other to its line's end. A
-  commented key (`# KEY="`) opens one as the key does. An opening quote
-  never closed masks to the end of the file — the safe side.
+  to the end of the closing line; any other to its line's end. An
+  opening quote never closed masks to the end of the file — the safe
+  side. *Second review:* a commented key's value ends with its line
+  (`# A="` unclosed masked the rest of the file), a byte order mark may
+  stand before the first key, and the scanner has a floor: in a file of
+  keys a line that is no key's, no comment and not blank can only be
+  inside a value, and is masked whole whatever the quotes said. A quote
+  misread — a Windows path's `C:\dir\"`, python-dotenv's `\'`, a `\`
+  continuation, `KEY=pre"…` — shifts the scan, never what is drawn.
 
 *Beat:* rules of their own (`env_quoted`, built first) — they named the
 same files, so `secrets.masks.env = false` no longer made a `.env` plain
@@ -592,4 +598,22 @@ shell does.
   is takes its hunk's. Only for a file a rule of its own spans lines in
   (`spans_lines`): a `.env` is read for its grep rows, a `.rs` never.
   The safe side: a comment before a hunk's first key is masked too.
+
+  *Second review:* a part ended at its first key-looking line, and a
+  line inside the value after it showed raw (`FOO=bar` inside a quoted
+  value; a key's base64 padding `ZXhhbXBsZQ==`). The floor masks the
+  lines after it that are no key's; and `vcs show` now reads both sides
+  of each such file whole from the backend (`base` at `REV^` and
+  `REV`), masking each hunk line by its place in the file, as the grep
+  rows are — a part only where a side cannot be had (a merge's combined
+  diff, a backend without `base`). A grep row is checked against the
+  line the read file has there, and taken as a part when it differs (a
+  file changed since `rg` read it); the file is scanned once per stamp
+  and settings version, its masks and line starts kept beside it
+  (`Rules::scan_file`, `mask_line_in`): ten thousand rows of a 1 MiB
+  `.env` take 7 ms after its scan (6–24 ms by its shape), where each
+  row had rescanned it (13 ms a row). A buffer's scan with the floor:
+  10 µs a version for a `.env` the user's size. Still read as parts,
+  and known: a line inside a value that reads as a key (`FOO=bar`, a
+  padding line) shows its name where no whole text is at hand.
 

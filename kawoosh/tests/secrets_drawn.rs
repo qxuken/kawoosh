@@ -408,6 +408,43 @@ fn a_shown_commit_masks_a_private_file() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `vcs show` of a commit that changed a line deep inside a `.env` value
+/// quoted over lines, its `KEY="` far above the hunk's context and a
+/// key-looking line inside the value: each side of the file is read
+/// whole and the hunk masked by its place in it. Read as a part, the
+/// line after `FOO=bar` was drawn raw (the second review, 2026-10-18).
+#[test]
+fn a_shown_commit_masks_a_hunk_inside_a_quoted_value() {
+    if !has_git() {
+        eprintln!("git is not installed: skipped");
+        return;
+    }
+    let dir = tmp("show-inside");
+    git(&dir, &["init", "-q", "-b", "main"]);
+    let env = |inner: &str| {
+        let pad: String = (0..12).map(|i| format!("--opt{i}\n")).collect();
+        format!("HOST=db\nOPT=\"\n{pad}FOO=bar\n{inner}\n\"\nPORT=1\n")
+    };
+    std::fs::write(dir.join("prod.env"), env("old9inner")).unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "first"]);
+    std::fs::write(dir.join("prod.env"), env("new8inner")).unwrap();
+    git(&dir, &["commit", "-q", "-am", "second"]);
+    std::fs::write(dir.join("a.txt"), "x\n").unwrap();
+    let (mut d, mut app) = launch(&dir.join("a.txt"), &dir);
+    ex(&mut d, &mut app, "vcs show HEAD");
+    until(&mut d, &mut app, "the commit", |app, _| {
+        buffer_named(app, "*show HEAD*").is_some()
+    });
+    d.frame(&mut app);
+    let shown = drawn(&d);
+    assert!(shown.contains("PORT="), "the diff: {shown}");
+    for s in ["old9inner", "new8inner", "FOO=", "--opt"] {
+        assert!(!shown.contains(s), "`{s}` drawn: {shown}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A key in a plain file, committed, then its body replaced: what a
 /// review of the masks found drawn raw (2026-10-16).
 const KEY_OLD: &str = "MIIEoldbody1";

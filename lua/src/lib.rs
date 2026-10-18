@@ -7318,6 +7318,20 @@ fn seed(
             Ok(ro().private(Some(std::path::Path::new(&path)), ""))
         })?,
     )?;
+    // `kawoosh.secrets.spans_lines(path: string, language?: string): boolean`:
+    // whether a rule of the file's own masks over lines (a `.env`'s
+    // quoted value) — a line of it read alone may be inside one, and a
+    // list showing a hunk of it does better to read the file whole.
+    let ro = rules_of.clone();
+    secrets.set(
+        "spans_lines",
+        lua.create_function(move |_, (path, language): (String, Option<String>)| {
+            Ok(ro().spans_lines(
+                Some(std::path::Path::new(&path)),
+                language.as_deref().unwrap_or(""),
+            ))
+        })?,
+    )?;
     // `kawoosh.secrets.mask_text(text: string, path?: string, opts?: string|kawoosh.secrets.MaskOpts): string`:
     // `text`, a line or lines of the file at `path`, with what the rules
     // that apply to it mask drawn as `•` — every line kept, so a list's
@@ -7335,9 +7349,15 @@ fn seed(
     // @field part? boolean
     // @field line? integer
     let ro = rules_of.clone();
-    // The files read for `line`, by path, at their length and time: a
-    // search's rows in one file read it once.
-    type Read = (u64, Option<std::time::SystemTime>, Rc<String>);
+    // The files read for `line`, scanned, by path, at their length and
+    // time and the settings' version: a search's rows in one file read
+    // and scan it once.
+    type Read = (
+        u64,
+        Option<std::time::SystemTime>,
+        u64,
+        Rc<kawoosh_editor::masks::Scanned>,
+    );
     let read: Rc<RefCell<HashMap<std::path::PathBuf, Read>>> = Rc::default();
     let pp = published.clone();
     secrets.set(
@@ -7368,26 +7388,28 @@ fn seed(
                         .unwrap_or(1024)
                         .max(0) as u64
                         * 1024;
-                    let whole = std::fs::metadata(p)
+                    let version = pp.borrow().settings_version;
+                    let file = std::fs::metadata(p)
                         .ok()
                         .filter(|m| m.is_file() && m.len() <= max)
                         .and_then(|m| {
-                            let stamp = (m.len(), m.modified().ok());
+                            let stamp = (m.len(), m.modified().ok(), version);
                             let mut r = read.borrow_mut();
-                            if let Some((len, t, w)) = r.get(p)
-                                && (*len, *t) == stamp
+                            if let Some((len, t, v, f)) = r.get(p)
+                                && (*len, *t, *v) == stamp
                             {
-                                return Some(w.clone());
+                                return Some(f.clone());
                             }
-                            let w = Rc::new(std::fs::read_to_string(p).ok()?);
+                            let whole = std::fs::read_to_string(p).ok()?;
+                            let f = Rc::new(rules.scan_file(at, &language, whole));
                             if r.len() >= 64 {
                                 r.clear();
                             }
-                            r.insert(p.to_path_buf(), (stamp.0, stamp.1, w.clone()));
-                            Some(w)
+                            r.insert(p.to_path_buf(), (stamp.0, stamp.1, stamp.2, f.clone()));
+                            Some(f)
                         });
-                    return Ok(match whole {
-                        Some(w) => rules.mask_line(at, &language, &text, &w, n),
+                    return Ok(match file {
+                        Some(f) => rules.mask_line_in(at, &language, &text, &f, n),
                         None => rules.mask_part(at, &language, &text),
                     });
                 }
