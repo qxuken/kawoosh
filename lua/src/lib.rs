@@ -257,12 +257,14 @@ pub enum Msg {
         attr: kawoosh_systems::fs::Attr,
         recursive: bool,
     },
-    /// `kawoosh.fs.walk(root, fn)`: every file under the root as git
-    /// sees it, walked on a thread of its own, the answer to
-    /// `Runtime::walked` under `token` (`IoMsg::Walked`).
+    /// `kawoosh.fs.walk(root, fn, opts)`: every file under the root as
+    /// git sees it — with `ignored`, every one — walked on a thread of
+    /// its own, the answer to `Runtime::walked` under `token`
+    /// (`IoMsg::Walked`).
     Walk {
         token: u64,
         root: PathBuf,
+        ignored: bool,
     },
     /// `kawoosh.sqlite.query(path, sql, params, opts, fn)`: the SQL run
     /// against the database on a thread of its own, the answer to
@@ -3109,6 +3111,8 @@ impl Runtime {
                 t.set("files", files)?;
                 t.set("matches", found.matches)?;
                 t.set("searched", found.searched)?;
+                t.set("capped", found.walk_capped)?;
+                t.set("walked", found.walked)?;
                 t.set("limited", found.limited)?;
                 t.set("cancelled", found.cancelled)?;
                 t.set("took", found.took.as_secs_f64() * 1000.0)?;
@@ -3119,7 +3123,7 @@ impl Runtime {
         self.answer(token, result, "search");
     }
 
-    pub fn walked(&self, token: u64, result: Result<Vec<String>, String>) {
+    pub fn walked(&self, token: u64, result: Result<kawoosh_systems::fs::Walked, String>) {
         let root = self.jobs.borrow_mut().walking.remove(&token);
         let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
             return;
@@ -3131,7 +3135,8 @@ impl Runtime {
         // The paths as they are, and each joined to the root as
         // `fs.join` joins: a picker's hundred thousand rows need both,
         // and a join a row from Lua was a call into the engine each.
-        let args = result.and_then(|paths| {
+        let args = result.and_then(|walked| {
+            let (paths, capped) = (walked.rows, walked.capped);
             let whole = match &root {
                 Some(root) => self
                     .lua
@@ -3146,7 +3151,7 @@ impl Runtime {
             };
             let paths = self.lua.create_sequence_from(paths);
             match (paths, whole) {
-                (Ok(p), Ok(w)) => Ok((LV::Table(p), LV::Nil, w)),
+                (Ok(p), Ok(w)) => Ok((LV::Table(p), LV::Nil, w, LV::Boolean(capped))),
                 (Err(e), _) | (_, Err(e)) => Err(e.to_string()),
             }
         });
@@ -3155,6 +3160,7 @@ impl Runtime {
             Err(e) => (
                 LV::Nil,
                 LV::String(self.lua.create_string(e).unwrap()),
+                LV::Nil,
                 LV::Nil,
             ),
         };
@@ -7753,30 +7759,40 @@ fn seed(
             },
         )?,
     )?;
-    // `kawoosh.fs.walk(root: string, fn: fun(paths: string[]?, why: string?, whole: string[]?)): integer`:
+    // `kawoosh.fs.walk(root: string, fn: fun(paths: string[]?, why: string?, whole: string[]?, capped: boolean?), opts: { ignored?: boolean }?): integer`:
     // every file under `root` as git sees it —
-    // ignored, hidden and `.git` left out — relative to it, walked on
-    // a thread of its own and handed to `fn(paths, nil, whole)`, `whole`
-    // each path joined to the root as `fs.join` joins; or `fn(nil, why)`.
-    // Answers the job's token.
+    // ignored, hidden and `.git` left out; a root the project ignores
+    // (a `node_modules`) walked with no ignores; with `opts.ignored`
+    // every file but `.git` — relative to it, walked on a thread of its
+    // own and handed to `fn(paths, nil, whole, capped)`, `whole` each
+    // path joined to the root as `fs.join` joins, `capped` when the
+    // walk stopped at its 200 000 files with more left; or `fn(nil,
+    // why)`. Answers the job's token.
     let qq = q(queue);
     let jj = jobs.clone();
     fs.set(
         "walk",
-        lua.create_function(move |lua, (root, cb): (String, mlua::Function)| {
-            let token = {
-                let mut j = jj.borrow_mut();
-                let token = j.token();
-                j.waiting.insert(token, lua.create_registry_value(cb)?);
-                token
-            };
-            jj.borrow_mut().walking.insert(token, PathBuf::from(&root));
-            qq.borrow_mut().push(Msg::Walk {
-                token,
-                root: expand(&root),
-            });
-            Ok(token)
-        })?,
+        lua.create_function(
+            move |lua, (root, cb, opts): (String, mlua::Function, Option<Table>)| {
+                let ignored = match &opts {
+                    Some(o) => o.get::<Option<bool>>("ignored")?.unwrap_or(false),
+                    None => false,
+                };
+                let token = {
+                    let mut j = jj.borrow_mut();
+                    let token = j.token();
+                    j.waiting.insert(token, lua.create_registry_value(cb)?);
+                    token
+                };
+                jj.borrow_mut().walking.insert(token, PathBuf::from(&root));
+                qq.borrow_mut().push(Msg::Walk {
+                    token,
+                    root: expand(&root),
+                    ignored,
+                });
+                Ok(token)
+            },
+        )?,
     )?;
     // `kawoosh.search(query: kawoosh.SearchQuery, fn: fun(found: kawoosh.SearchFound?, why: string?)): integer?, string?`:
     // the project searched on a thread of its own (docs/design/search.md
@@ -7799,17 +7815,20 @@ fn seed(
     // @field exclude? string|string[] the same
     //
     // @class kawoosh.SearchQuery: kawoosh.SearchFind, kawoosh.SearchGlobs
-    // @field ignored? boolean ignored and hidden files too
+    // @field ignored? boolean ignored and hidden files too; without it, a path an include names from the root (`node_modules/foo/**`) is searched though ignored
     // @field files? string[] only these files (relative to the root, or absolute), not a walk of the root
     // @field root? string where to search, else the working directory
     // @field max_files? integer stop after this many files with a match (1000)
     // @field max_matches? integer stop after this many matches (10000)
+    // @field max_walk? integer read at most this many files (200000), `capped` when there were more
     //
     // @class kawoosh.SearchFound
     // @field files kawoosh.SearchFile[]
     // @field matches integer
     // @field searched integer the files read
     // @field limited boolean stopped at a cap: there is more
+    // @field capped boolean the walk stopped at `max_walk` files: some were not read
+    // @field walked integer the files the walk listed to search
     // @field cancelled boolean stopped by `kawoosh.search_cancel`
     // @field took number ms
     //
@@ -7865,6 +7884,9 @@ fn seed(
                 max_matches: t
                     .get::<Option<usize>>("max_matches")?
                     .unwrap_or(defaults.max_matches),
+                max_walk: t
+                    .get::<Option<usize>>("max_walk")?
+                    .unwrap_or(defaults.max_walk),
             };
             if let Err(why) = ks::Compiled::new(query.clone()) {
                 return Ok((LV::Nil, LV::String(lua.create_string(why)?)));
