@@ -482,6 +482,39 @@ fn trust(d: &mut Drive, app: &mut Kawoosh, path: &std::path::Path) {
     d.frame(app);
 }
 
+/// One count bounds the completers running, carapace's and nu's, across
+/// prompts: with four carapace questions out (each hanging past a prompt
+/// that closed), a nushell parameter's completer waits — and is asked
+/// once one of them ends, the line completed again without a key.
+#[test]
+fn carapace_and_nu_share_one_bound() {
+    let s = Sandbox::new("bound", true, "return {}");
+    let nu = s.bin.join("nu");
+    std::fs::write(&nu, FAKE_NU).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&nu, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let build = s.project.join("build.nu");
+    std::fs::write(&build, BUILD_NU).unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = s.open(&mut d);
+    trust(&mut d, &mut app, &build);
+
+    // Four questions, each the words before the caret's: four running.
+    d.keys(&mut app, ":compile slow a b c ");
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":compile nu build.nu build al");
+    // Long past what the fake takes to start, well short of the slow
+    // ones' patience.
+    std::thread::sleep(Duration::from_millis(500));
+    d.frame(&mut app);
+    assert!(!s.bin.join("nu-calls").exists(), "nu waits for a place");
+    // The slow ones are given up on; the place freed asks nu.
+    answered(&mut d, &mut app);
+    answered(&mut d, &mut app);
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("pha.txt"));
+    leave(&mut d, &mut app);
+}
+
 /// compile.md Decision 16 on Decision 23's footing: a nushell
 /// parameter's completer is asked on a job, no key waiting for nu; the
 /// answer kept by file, completer and the file's stamp, across prompts;
@@ -539,15 +572,17 @@ fn a_nushell_completer_is_asked_off_the_frame() {
     assert_eq!(asked("files"), 1);
     leave(&mut d, &mut app);
 
-    // Out as its prompt closes: dropped as it lands, so the next prompt
-    // asks again, and is answered.
+    // Out as its prompt closes: the answer is the file's, kept as it
+    // lands for the next prompt — and while it runs, no prompt starts
+    // nu again.
+    d.keys(&mut app, ":compile nu build.nu build x la");
+    leave(&mut d, &mut app);
     d.keys(&mut app, ":compile nu build.nu build x la");
     leave(&mut d, &mut app);
     app.wait_for_jobs();
     d.keys(&mut app, ":compile nu build.nu build x la");
-    answered(&mut d, &mut app);
     assert_eq!(app.cmdline_ghost().as_deref(), Some("te"));
-    assert_eq!(asked("lag"), 2);
+    assert_eq!(asked("lag"), 1);
     leave(&mut d, &mut app);
 
     // One that hangs: the keys do not wait for it, and it is given up
