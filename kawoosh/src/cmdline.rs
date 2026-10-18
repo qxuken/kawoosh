@@ -94,10 +94,14 @@ impl CmdCompletion {
     }
 }
 
-/// Where the token being completed starts: after the last whitespace,
-/// or the line's start for the command itself.
+/// Where the token being completed starts: after the last whitespace —
+/// past all of it, a no-break space being two bytes — or the line's
+/// start for the command itself.
 fn token_start(line: &str) -> usize {
-    line.rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0)
+    line.char_indices()
+        .rfind(|(_, c)| c.is_whitespace())
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0)
 }
 
 /// Where each word of the line starts.
