@@ -150,6 +150,11 @@ pub struct Config {
     /// `settings.lua` names it and before `init.lua` runs: set by
     /// `main.rs` for a window opened outside a terminal.
     pub ask_shell: bool,
+    /// Whether a shell line's completer (`cmdline.complete_with`) may be
+    /// run: set by `load_config`, so an app that never loads the config
+    /// (a test) never runs the one this machine has — a test that wants
+    /// one turns it on with its own on the PATH.
+    pub completer: bool,
 }
 
 impl Config {
@@ -168,6 +173,7 @@ impl Config {
             editorconfig: Default::default(),
             written: Default::default(),
             ask_shell: false,
+            completer: false,
         }
     }
 }

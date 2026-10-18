@@ -825,12 +825,30 @@ compile = {
 to finish instead of running. `cwd` sets where it runs: a path from
 the project, or `"root"` for the project itself. `commands:NAME` says
 a name and only a name — no such command is an error, where a bare
-word that names nothing runs as a command. `<Tab>` after
-`:compile ` completes the names, then paths; after a nushell command
-your project offers, a parameter's completions first — `target:
-string@targets` offers what `targets` answers (read from the file when
-its body is a list, else asked of `nu` once while the file is
-unchanged), `string@[debug release]` those two.
+word that names nothing runs as a command.
+
+`<Tab>` completes a `:compile` line. Its first word: the names, then
+the lines the picker lists (`compile.default`, the lines run here, the
+project's commands), in the picker's order, then `commands:NAME` once
+you type a letter; a word with a `/`, or one starting `.`, `~` or `%`,
+completes as a path. Once you type a picker's line far enough, the line
+completes whole (`cargo b` to `cargo build --release`). After the first
+word: a nushell command's parameter first — `target: string@targets`
+offers what `targets` answers (read from the file when its body is a
+list, else asked of `nu` once while the file is unchanged, in the
+background — the line completes as it answers; `nu` runs the file to
+ask, so only once you trust it with `:trust allow build.nu`, and again
+after its text changes),
+`string@[debug release]` those two — then the program's own arguments
+from [carapace](https://carapace.sh) when it is on your PATH (`git
+co` to `checkout`, `commit`; a flag's description beside the
+candidates), then paths from where the line runs. `%` completes to
+`%`, `%:h` and `%:t`, each with the path it names, and `%:h/` lists the
+file's directory. A named command's arguments are not asked of carapace.
+`cmdline.complete_with` names another completer that speaks
+carapace's `export`, or `false` turns it off; a project's settings can
+only turn it off. `:!`, `:shell` and `:terminal CMD` complete their
+program's arguments the same way, from the working directory.
 
 ### Chains of steps
 

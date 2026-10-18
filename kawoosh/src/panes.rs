@@ -356,6 +356,19 @@ impl Kawoosh {
                             ui.reveal(key);
                         }
                     }
+                    // What is said of the current candidate — a
+                    // completer's description, the path a `%` names —
+                    // at the strip's end, cut to a third of it.
+                    if let Some(detail) = self.cmd_completion.as_ref().and_then(|c| c.detail()) {
+                        let room = (ui.viewport().w / 3.0).max(80.0);
+                        let style = TextStyle::new(small).color(pal.dim).nowrap().ellipsis();
+                        let w = ui.measure_text(detail, &style, None).width.ceil().min(room);
+                        ui.text_in(
+                            NodeSpec::row().width(w).clip().label("candidate detail"),
+                            detail,
+                            style,
+                        );
+                    }
                     // A `:s` being typed: what `<CR>` would change, at
                     // the strip's end, counted up to a bound
                     // (substitute.md Decision 5).

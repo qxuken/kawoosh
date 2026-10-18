@@ -119,6 +119,7 @@ fn kind_word(k: &SettingKind) -> (&'static str, Option<&[String]>) {
         SettingKind::Bool => ("boolean", None),
         SettingKind::Int => ("integer", None),
         SettingKind::IntOrFalse => ("integer|false", None),
+        SettingKind::StrOrFalse => ("string|false", None),
         SettingKind::Float => ("number", None),
         // Edited as text here: one line; a list is the file's to write.
         SettingKind::Str | SettingKind::Strings => ("string", None),
@@ -203,6 +204,8 @@ pub fn check(kind: &SettingKind, value: Setting) -> Result<Setting, String> {
             S::Int(x as i64)
         }
         (SettingKind::IntOrFalse, _) => return Err("a whole number, or false".into()),
+        (SettingKind::StrOrFalse, v @ (S::Str(_) | S::Bool(false))) => v,
+        (SettingKind::StrOrFalse, _) => return Err("text, or false".into()),
         (SettingKind::Float, v @ S::Float(_)) => v,
         (SettingKind::Float, S::Int(i)) => S::Float(i as f64),
         (SettingKind::Float, _) => return Err("a number".into()),

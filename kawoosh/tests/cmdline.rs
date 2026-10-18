@@ -635,6 +635,24 @@ fn the_completion_reads_up_to_the_caret() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A space that is more than a byte — a no-break space, what Option+Space
+/// types on a Mac — ends a word as any space does, and the word after it
+/// starts past all of it: the line is not cut inside the character.
+#[test]
+fn a_wide_space_ends_a_word_whole() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "");
+    d.frame(&mut app);
+    for line in [":compile cargo\u{a0}", ":e a\u{a0}", ":set\u{2003}mark"] {
+        d.keys(&mut app, line);
+        assert!(app.ed.prompt_view().is_some(), "{line:?}");
+        leave(&mut d, &mut app);
+    }
+    d.keys(&mut app, ":set\u{a0}markdown.ren");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("der"));
+    leave(&mut d, &mut app);
+}
+
 /// A `:s` is previewed in the pane as it is typed (substitute.md
 /// Decision 1): once the replacement is begun each match the line would
 /// take has its replacement drawn after it, beside the line's own text

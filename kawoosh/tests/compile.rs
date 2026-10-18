@@ -747,8 +747,16 @@ def "main build" [target: string@targets, --jobs (-j): int, file?: string@files]
     let nu = kawoosh_systems::spawn::output(std::process::Command::new("nu").arg("--version"));
     if nu.is_ok_and(|o| o.status.success()) {
         // The second positional, past `--jobs 4`: its completer is code,
-        // so nu answers it.
+        // so nu answers it once the file is trusted — on a job, the line
+        // completed again as it lands.
+        ex(
+            &mut d,
+            &mut app,
+            &format!("trust allow {}", dir.join("build.nu").display()),
+        );
         d.keys(&mut app, ":compile nu build.nu build --jobs 4 release al");
+        app.wait_for_jobs();
+        d.frame(&mut app);
         assert_eq!(app.cmdline_ghost().as_deref(), Some("pha.txt"));
         d.key(&mut app, "escape", KeyMods::default());
     }
@@ -1052,4 +1060,151 @@ fn a_failing_step_stops_the_chain() {
         app.ed.message
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The candidates up at the `:` prompt.
+fn candidates(app: &Kawoosh) -> Vec<String> {
+    app.cmd_completion
+        .as_ref()
+        .map(|c| c.candidates.clone())
+        .unwrap_or_default()
+}
+
+fn leave(d: &mut Drive, app: &mut Kawoosh) {
+    d.key(app, "escape", KeyMods::default());
+    d.key(app, "escape", KeyMods::default());
+    assert!(app.ed.prompt_view().is_none());
+}
+
+/// compile.md Decision 23: `:compile`'s first word completes to the
+/// names, the picker's lines in its order and `commands:NAME`; a line
+/// the picker has that goes on from what is typed completes whole;
+/// paths, and `%`'s spellings with what they name, complete as `:e`'s.
+/// No completer runs: this app loaded no config.
+#[cfg(unix)]
+#[test]
+fn the_compile_line_completes_names_the_picker_s_lines_and_paths() {
+    let dir = project(
+        "cmdline",
+        r#"return {
+  compile = {
+    default = "make all",
+    commands = { build = "echo build", e2e = { cmd = "echo e2e", args = true } },
+  },
+}"#,
+    );
+    std::fs::write(dir.join("Cargo.toml"), "").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    ex(&mut d, &mut app, "compile echo ran here");
+    finished(&mut d, &mut app);
+
+    // The first word: the names, sorted; then the picker's lines in
+    // the picker's order — the line run here, the default, the files'.
+    d.keys(&mut app, ":compile ");
+    let c = candidates(&app);
+    assert_eq!(
+        c[..5],
+        ["build", "e2e", "echo ran here", "make all", "cargo check"],
+        "{c:?}"
+    );
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("build"));
+    leave(&mut d, &mut app);
+    ex(&mut d, &mut app, "compile pick");
+    let shown: Vec<String> = app
+        .compile
+        .shown()
+        .into_iter()
+        .map(|i| &app.compile.offer[i])
+        .filter(|o| o.name.is_none())
+        .map(|o| o.cmd.clone())
+        .collect();
+    assert_eq!(c[2..], shown[..], "the picker's lines, in its order");
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+
+    // Narrowed: the start first, then a line that has the word.
+    d.keys(&mut app, ":compile ca");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("rgo check"));
+    assert!(candidates(&app).iter().all(|c| c.starts_with("cargo ")));
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":compile clippy");
+    assert_eq!(candidates(&app), ["cargo clippy"]);
+    tab(&mut d, &mut app);
+    assert_eq!(prompt(&app), "compile cargo clippy");
+    leave(&mut d, &mut app);
+
+    // `commands:NAME`, the strict spelling, once a letter is typed.
+    d.keys(&mut app, ":compile comm");
+    assert_eq!(candidates(&app), ["commands:build", "commands:e2e"]);
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("ands:build"));
+    leave(&mut d, &mut app);
+
+    // A line of the picker's going on from what is typed: whole.
+    d.keys(&mut app, ":compile cargo b");
+    let c = candidates(&app);
+    assert_eq!(c[..2], ["cargo build", "cargo build --release"], "{c:?}");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("uild"));
+    tab(&mut d, &mut app);
+    assert_eq!(prompt(&app), "compile cargo build");
+    leave(&mut d, &mut app);
+
+    // Paths: a first word that reads as one, and the words after.
+    d.keys(&mut app, ":compile ./s");
+    assert_eq!(candidates(&app), ["./src/", "./sub/"]);
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":compile echo s");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("rc/"));
+    leave(&mut d, &mut app);
+
+    // `%`: its spellings, each with what it names, drawn beside the
+    // candidates; `%:h/` lists the file's directory.
+    d.keys(&mut app, ":compile echo %");
+    assert_eq!(candidates(&app), ["%", "%:h", "%:t"]);
+    let file = kawoosh_systems::fs::abbreviate_home(&dir.join("src/a.rs"));
+    let said = app
+        .cmd_completion
+        .as_ref()
+        .unwrap()
+        .detail()
+        .map(str::to_string);
+    assert_eq!(said.as_deref(), Some(file.as_str()));
+    // Cut to its room at the strip's end, an ellipsis for the rest.
+    let drawn = texts(&d)
+        .into_iter()
+        .any(|t| t == file || t.strip_suffix('…').is_some_and(|t| file.starts_with(t)));
+    assert!(drawn, "the detail is drawn");
+    d.press(&mut app, "<C-n>");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some(":h"));
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":compile echo %:h/");
+    assert_eq!(candidates(&app), ["%:h/a.rs"]);
+    leave(&mut d, &mut app);
+    // `:e`'s `%` is the focused pane's file: the source's, not the
+    // compile pane's that has the keys since the run.
+    ex(&mut d, &mut app, "e src/a.rs");
+    d.keys(&mut app, ":e %:h/");
+    assert_eq!(
+        app.cmdline_ghost().as_deref(),
+        Some("a.rs"),
+        "a path argument's too"
+    );
+    leave(&mut d, &mut app);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+fn tab(d: &mut Drive, app: &mut Kawoosh) {
+    d.key(app, "tab", KeyMods::default());
+}
+
+fn prompt(app: &Kawoosh) -> String {
+    app.ed.prompt_text().unwrap_or_default()
+}
+
+fn texts(d: &Drive) -> Vec<String> {
+    d.core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect()
 }

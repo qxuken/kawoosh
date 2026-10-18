@@ -174,7 +174,7 @@ fn carets(line: &str) -> Option<Range<usize>> {
 /// A completion as a word of the command line: double-quoted when it
 /// has what a shell would split or read — inside a `nu -c '…'` too,
 /// where a single quote would end the line's.
-fn quote_arg(v: &str) -> String {
+pub(crate) fn quote_arg(v: &str) -> String {
     if !v.is_empty() && !v.contains(|c: char| c.is_whitespace() || "\"'$`\\;|&<>()*?#".contains(c))
     {
         return v.to_string();
@@ -193,40 +193,20 @@ fn quote_arg(v: &str) -> String {
 /// What nushell completer `name` of `file` answers: a list of values,
 /// of `{ value }` records, or a record of `completions`; read from the
 /// last line printed, the file's own top level printing before it.
-fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
-    use std::io::Read;
+/// Bounded as a shell line's completer is (`shell_complete::bounded`);
+/// run on a job, it waits.
+pub(crate) fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
     let dir = file.parent()?;
     let script = format!(
         "source '{}'; {name} | to json -r",
-        file.file_name()?.to_string_lossy().replace('\'', "")
+        file.file_name()?.to_string_lossy()
     );
-    let mut command = std::process::Command::new("nu");
+    let mut command = kawoosh_systems::io::command("nu");
     command
         .args(["--no-config-file", "-c", &script])
-        .current_dir(dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
-    let mut child = kawoosh_systems::spawn::spawn(&mut command).ok()?;
-    let mut stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut out = String::new();
-        stdout.read_to_string(&mut out).ok();
-        out
-    });
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
-            _ => {
-                child.kill().ok();
-                child.wait().ok();
-                return None;
-            }
-        }
-    }
-    let out = reader.join().ok()?;
+        .current_dir(dir);
+    let out = crate::shell_complete::bounded(&mut command)?;
+    let out = String::from_utf8_lossy(&out);
     let json: serde_json::Value =
         serde_json::from_str(out.lines().rev().find(|l| !l.trim().is_empty())?).ok()?;
     let list = json
@@ -243,6 +223,27 @@ fn nu_answer(file: &Path, name: &str) -> Option<Vec<String>> {
             })
             .collect(),
     )
+}
+
+/// Whether `name` may be spliced into a nushell script as a command's
+/// name: words of letters, digits, `-` and `_`, one space between
+/// (`nu-complete git branches`). Anything else would be code of the
+/// signature's own — `string@x; rm -rf ~` — and is asked of no one.
+fn nu_command_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.split(' ').all(|w| {
+            !w.is_empty()
+                && w.chars()
+                    .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        })
+}
+
+/// A nushell completer's answer (compile.md Decision 16).
+pub enum NuAnswer {
+    /// Out on a job, by serial.
+    Asked(u64),
+    /// Its values; none when nu failed, hung or said no list.
+    Got(Rc<Vec<String>>),
 }
 
 /// How much of a command the buffer's name says.
@@ -386,9 +387,10 @@ pub struct Compile {
     pub asked: Option<(u64, String)>,
     pub tokens: u64,
     /// Nushell completers' answers (compile.md Decision 16), by file and
-    /// completer, with the file's stamp they were asked at.
-    pub completions:
-        std::collections::HashMap<(PathBuf, String), (Option<SystemTime>, Vec<String>)>,
+    /// completer, with the file's stamp they were asked at; and the asks
+    /// handed out.
+    pub completions: std::collections::HashMap<(PathBuf, String), (Option<SystemTime>, NuAnswer)>,
+    pub nu_asks: u64,
 }
 
 impl Compile {
@@ -865,13 +867,13 @@ impl Kawoosh {
                 _ => (token, ""),
             };
             let values = match completion {
-                deduce::Completion::Values(v) => v,
+                deduce::Completion::Values(v) => Rc::new(v),
                 deduce::Completion::Command(name) => self.nu_completions(&nu.file, &name),
             };
             return values
-                .into_iter()
+                .iter()
                 .filter(|v| v.starts_with(typed))
-                .map(|v| format!("{}{close}", quote_arg(&v)))
+                .map(|v| format!("{}{close}", quote_arg(v)))
                 .collect();
         }
         Vec::new()
@@ -879,21 +881,99 @@ impl Kawoosh {
 
     /// Completer `name`'s answer in nushell file `file`, run there —
     /// `source` defines the file's commands and does not run its `main`
-    /// — and kept while the file is unchanged; a second at most, so a
-    /// completer that hangs costs that once.
-    fn nu_completions(&mut self, file: &Path, name: &str) -> Vec<String> {
+    /// — and kept while the file is unchanged. Nothing until nu answers,
+    /// asked on a job now when it has not been; a completer that hangs
+    /// costs its patience once per change, and no key waits for it.
+    ///
+    /// `source` runs the file's top level, so nu is asked only once the
+    /// file's text is trusted, as a project's `init.lua` is (`:trust
+    /// allow FILE`, compile.md Decision 16): a file from a fresh clone,
+    /// or one a project's settings point `compile.nushell` at, runs
+    /// nothing until then. Nor does a completer whose name is no name.
+    fn nu_completions(&mut self, file: &Path, name: &str) -> Rc<Vec<String>> {
         let stamp = std::fs::metadata(file).and_then(|m| m.modified()).ok();
         let key = (file.to_path_buf(), name.to_string());
-        if let Some((at, values)) = self.compile.completions.get(&key)
-            && *at == stamp
-        {
-            return values.clone();
+        match self.compile.completions.get(&key) {
+            Some((at, NuAnswer::Got(values))) if *at == stamp => return values.clone(),
+            Some((at, NuAnswer::Asked(_))) if *at == stamp => return Rc::default(),
+            _ => {}
         }
-        let values = nu_answer(file, name).unwrap_or_default();
+        if !nu_command_name(name)
+            || file
+                .file_name()
+                .is_none_or(|n| n.to_string_lossy().contains('\''))
+        {
+            return Rc::default();
+        }
+        let trusted = std::fs::read_to_string(file)
+            .is_ok_and(|src| self.standing(file, &src) == crate::trust::Standing::Trusted);
+        if !trusted {
+            log::debug!(
+                "compile: {} is not trusted; its completer {name} is not run",
+                file.display()
+            );
+            return Rc::default();
+        }
+        // One count with a shell line's completers; no thread, no ask —
+        // asked again at a later key, never run on the frame.
+        if !self.line_complete.room() {
+            return Rc::default();
+        }
+        self.compile.nu_asks += 1;
+        let serial = self.compile.nu_asks;
+        let (file, name) = key.clone();
+        if !self.io.try_run("nu complete", move || IoMsg::NuCompleted {
+            serial,
+            values: nu_answer(&file, &name),
+        }) {
+            return Rc::default();
+        }
         self.compile
             .completions
-            .insert(key, (stamp, values.clone()));
-        values
+            .insert(key, (stamp, NuAnswer::Asked(serial)));
+        self.line_complete.running += 1;
+        self.pending_jobs += 1;
+        Rc::default()
+    }
+
+    /// The nushell files `:compile` reads its commands from here
+    /// (`compile.nushell`): code from the repository, which `:trust`
+    /// lists and allows beside the project's `init.lua`.
+    pub(crate) fn compile_nu_files(&self) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = Vec::new();
+        for row in self.deduce_compile().commands {
+            if let Some(nu) = row.nu
+                && !files.contains(&nu.file)
+            {
+                files.push(nu.file);
+            }
+        }
+        files
+    }
+
+    /// nu answered ask `serial`: kept under it, and the line completed
+    /// again. An ask outlives the prompt that made it — the answer is
+    /// the file's, by its stamp, and the next prompt's to show; while it
+    /// runs no prompt asks again. Dropped when the file changed since.
+    pub(crate) fn nu_completed(&mut self, serial: u64, values: Option<Vec<String>>) {
+        self.pending_jobs = self.pending_jobs.saturating_sub(1);
+        let freed = self.line_complete.ended();
+        let Some((_, slot)) = self
+            .compile
+            .completions
+            .values_mut()
+            .find(|(_, a)| matches!(a, NuAnswer::Asked(s) if *s == serial))
+        else {
+            if freed {
+                self.cmdline_refresh();
+            }
+            return;
+        };
+        if values.is_none() {
+            log::debug!("compile: a nushell completer gave no answer");
+        }
+        *slot = NuAnswer::Got(Rc::new(values.unwrap_or_default()));
+        self.cmdline_refresh();
     }
 
     /// The scripts of the packages around (compile.md Decision 9): the
@@ -1145,7 +1225,7 @@ impl Kawoosh {
 
     /// The file `%` names in a line asked from here: the caret's; in
     /// `*compile*`, the one its run was asked from.
-    fn compile_file(&self) -> Option<PathBuf> {
+    pub(crate) fn compile_file(&self) -> Option<PathBuf> {
         if let Some(run) = self.compile_shown() {
             return run.file.clone();
         }
@@ -1686,6 +1766,58 @@ impl Kawoosh {
     /// offer, one row per command, as the picker's `compile` source
     /// (`kawoosh.compile_offer()`) — each in its tier (Decision 19).
     pub fn offer_compile(&mut self) {
+        let rows = self.compile_rows();
+        // What the caret's server says can run there, asked now and
+        // added as it answers.
+        let ask = self.runnables_at();
+        if rows.is_empty() && ask.is_none() {
+            self.ed.message = NOTHING.into();
+            return;
+        }
+        if self.scripting.rt.is_none() {
+            self.ed.message = "the compile picker needs lua".into();
+            return;
+        }
+        self.compile.offer = rows;
+        self.publish_offer();
+        self.run_lua_source("compile", "kawoosh.picker.open(\"compile\")");
+        self.compile.asked = None;
+        if let Some((buffer, offset, server)) = ask {
+            self.compile.tokens += 1;
+            let token = self.compile.tokens;
+            self.compile.asked = Some((token, server));
+            self.positional_cmd(kawoosh_systems::lsp::Cmd::Runnables {
+                buffer,
+                offset,
+                token,
+            });
+        }
+    }
+
+    /// The lines the compile picker offers, as the command line
+    /// completes `:compile`'s (compile.md Decision 23): in the picker's
+    /// order, each a line `:compile` runs as it is — not a name's row
+    /// (the names complete as names), nor a chain's (its steps joined
+    /// are no one line).
+    pub(crate) fn compile_lines(&self) -> Vec<String> {
+        let mut rows = Compile {
+            offer: self.compile_rows(),
+            ..Compile::default()
+        };
+        let mut out: Vec<String> = Vec::new();
+        for i in rows.shown() {
+            let o = &mut rows.offer[i];
+            if o.name.is_none() && o.chain.is_empty() && o.steps.is_empty() && !out.contains(&o.cmd)
+            {
+                out.push(std::mem::take(&mut o.cmd));
+            }
+        }
+        out
+    }
+
+    /// The picker's rows but a server's, each in its tier (Decision 19):
+    /// what `offer_compile` lists first.
+    fn compile_rows(&self) -> Vec<Offer> {
         let mut rows: Vec<Offer> = Vec::new();
         let add = |rows: &mut Vec<Offer>, o: Offer| {
             // Once where it runs: two packages' `yarn run build` are two.
@@ -1821,31 +1953,7 @@ impl Kawoosh {
             o.detail = d.detail;
             add(&mut rows, o);
         }
-        // What the caret's server says can run there, asked now and
-        // added as it answers.
-        let ask = self.runnables_at();
-        if rows.is_empty() && ask.is_none() {
-            self.ed.message = NOTHING.into();
-            return;
-        }
-        if self.scripting.rt.is_none() {
-            self.ed.message = "the compile picker needs lua".into();
-            return;
-        }
-        self.compile.offer = rows;
-        self.publish_offer();
-        self.run_lua_source("compile", "kawoosh.picker.open(\"compile\")");
-        self.compile.asked = None;
-        if let Some((buffer, offset, server)) = ask {
-            self.compile.tokens += 1;
-            let token = self.compile.tokens;
-            self.compile.asked = Some((token, server));
-            self.positional_cmd(kawoosh_systems::lsp::Cmd::Runnables {
-                buffer,
-                offset,
-                token,
-            });
-        }
+        rows
     }
 
     /// The offer as `kawoosh.compile_offer()` reads it: each row its
@@ -2438,6 +2546,25 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_completer_s_name_is_a_name_or_nothing_is_run() {
+        for ok in ["targets", "nu-complete git branches", "my_files2"] {
+            assert!(nu_command_name(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "x; touch pwned",
+            "x | rm",
+            "(rm)",
+            "a  b",
+            "$env.X",
+            "x\nrm",
+            "'q'",
+        ] {
+            assert!(!nu_command_name(bad), "{bad:?}");
+        }
+    }
+
     use super::*;
 
     fn painted(line: &str) -> Vec<(&str, String)> {

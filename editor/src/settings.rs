@@ -779,6 +779,10 @@ const DOCS: &[(&str, &str)] = &[
         "the shell whose PATH programs get when kawoosh opens outside a terminal; empty for `$SHELL`",
     ),
     (
+        "cmdline.complete_with",
+        "what completes a shell line's arguments in the command line (`:compile`, `:!`, `:terminal`): a program speaking carapace's `export` — `carapace`, another name on the PATH or a path — or `false` for none; a project's settings may only turn it off",
+    ),
+    (
         "memory.keep_days",
         "days a file's history is kept unvisited; `0` keeps every one",
     ),
@@ -903,6 +907,9 @@ pub enum SettingKind {
     /// A whole number, or `false` for none: a wait that can be off
     /// (`completion.docs`, completion.md Decision 11).
     IntOrFalse,
+    /// A string, or `false` for none: a program that can be off
+    /// (`cmdline.complete_with`, compile.md Decision 23).
+    StrOrFalse,
     Open,
     /// A size the UI resolves against the room it is drawn in: pixels,
     /// a spelling (`"clamp(400px, 80%, 1000px)"`) or the same as data.
@@ -1371,6 +1378,9 @@ impl Settings {
         // the PATH it is there to fix; empty for `$SHELL`. Read at
         // startup.
         defaults.set("env.shell", Setting::Str(String::new()));
+        // The command line's completer of a shell line's arguments
+        // (compile.md Decision 23): carapace, when it is on the PATH.
+        defaults.set("cmdline.complete_with", Setting::Str("carapace".into()));
         // The memory (docs/design/memory.md): days a moment — a file
         // attended, with its history and draft — may go unattended
         // before it is forgotten; 0 keeps every row.
@@ -1514,6 +1524,11 @@ impl Settings {
             "completion.docs",
             SettingKind::IntOrFalse,
             "milliseconds a selected candidate waits before its documentation shows beside the popup (above the caret's line with no popup); `false` shows it only on `completion docs`",
+        );
+        s.declare(
+            "cmdline.complete_with",
+            SettingKind::StrOrFalse,
+            "what completes a shell line's arguments in the command line (`:compile`, `:!`, `:terminal`): a program speaking carapace's `export` — `carapace`, another name on the PATH or a path — or `false` for none; a project's settings may only turn it off",
         );
         s.declare(
             "comment",
@@ -2066,6 +2081,7 @@ mod tests {
             [
                 "buffers.scope",
                 "clipboard.system",
+                "cmdline.complete_with",
                 "completion.callable",
                 "completion.docs",
                 "completion.fuzzy",

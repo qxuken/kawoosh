@@ -39,6 +39,9 @@ libc = "0.2"
 blake3.workspace = true
 globset = "0.4"
 regex = "1"
+# A shell line's words for its completer (shell_complete.rs); in the
+# graph already through portable-pty.
+shell-words = "1"
 
 [target.'cfg(windows)'.dependencies]
 # The process's memory for the perf tab (`perf::read_mem`); the parent's

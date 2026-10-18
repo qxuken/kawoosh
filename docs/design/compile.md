@@ -16,7 +16,10 @@ for its command, then a buffer a command and directory, the same day
 the session the same day (Decision 13); the note's "Not built"
 2026-10-07 (Decisions 14–18); the picker's order and cargo's release
 profile 2026-10-09 (Decisions 19 and 20); a compile in an empty
-pane and chains of steps 2026-10-16 (Decisions 21 and 22). The calls
+pane and chains of steps 2026-10-16 (Decisions 21 and 22); the
+line completed in the command line, carapace for a program's own
+arguments, 2026-10-17 (Decision 23), and Decision 16's `nu` asked
+on Decision 23's job the same day. The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -229,7 +232,8 @@ and in the prompt `<C-e>` opens; yarn, pnpm and bun pass them on.
 
 **`<Tab>` after `:compile `** completes the names, then paths from the
 directory the line will run in — `:compile pw e2e/lo` in `apps/web`
-from anywhere.
+from anywhere. (Decision 23 adds the picker's lines and a program's
+own arguments.)
 
 **A trusted `init.lua` says where in code.** `settings.lua` is data (no
 `kawoosh` in its sandbox); a project's `init.lua`, once trusted, has the
@@ -605,10 +609,52 @@ its value as it is counted. Answers come in order of cost:
    and does not run its `main` — read from the last line (the file's
    own top level may print before it), as a list of values, of `{
    value }` records, or a record of `completions`. Kept by file and
-   completer while the file's stamp holds, so it is once per change; a
-   second at most, a completer that hangs costing that once. The
-   prompt's candidates are made on every key, so a process per key
+   completer while the file's stamp holds, so it is once per change.
+   The prompt's candidates are made on every key, so a process per key
    was not an option.
+
+   *Amended 2026-10-17*, from "Not built" once Decision 23 had its job:
+   nu is **asked on a job, never waited for at a key** — before, the
+   frame waited for it, a second at most, once per change, the last
+   process a key of the prompt waited on. The ask goes out on a thread
+   of its own (`Io::try_run`: no thread, no ask — never run on the
+   frame instead), counted in `pending_jobs`; until nu answers the parameter
+   offers nothing of its own (the paths after it still come), and the
+   line is completed again as it lands. It is bounded as Decision 23's
+   completer is, one rule for both (`shell_complete::bounded`): two
+   seconds, then stopped, past 1 MiB stopped and dropped; a failure is
+   kept as no values, so a completer that hangs costs its patience once
+   per change, and off the frame. The answer is kept by file, completer
+   and the file's stamp across prompts, as before — and so is an ask
+   still out when its prompt closes: the answer is the file's, not the
+   prompt's, kept as it lands for the next prompt, which does not start
+   nu again while it runs. One asked at a stamp the file has since left
+   is dropped as it lands (each ask has a serial). nu counts with
+   Decision 23's completers against one bound, four running at once.
+   Values from the file (1.) still need no process and no wait.
+
+   *Amended 2026-10-17 after a review*: **nu runs only for a trusted
+   file.** `source` runs the file's whole top level, so asking a
+   completer is running the file — and the file is the nearest
+   `build.nu` above the caret (a file opened from a fresh clone is
+   enough), or any `.nu` a project's `.kawoosh/settings.lua` names in
+   `compile.nushell`, at a space typed after the command. So it is
+   gated as a project's `init.lua` is, by the same record: the file's
+   text, trusted by `:trust allow FILE` (or a bare `:trust`, which now
+   allows the project's nushell files beside its `init.lua`), its hash
+   kept under its path; a pull that changes the text is untrusted
+   again. `:trust?` lists them, `:trust revoke` forgets them. An
+   untrusted file still offers what needs no process — an inline
+   `@[a b]`, a completer whose body is a list — and nothing else,
+   quietly (a line in the log). The completer's name is spliced into
+   the script as code, so it must be a name — words of letters,
+   digits, `-` and `_`, one space between (`nu-complete git
+   branches`) — or nothing is asked; a file whose name holds a `'`
+   is not `source`d. Beaten: trusting by directory, as `:format
+   allow` does (a formatter is a program the user installed; this is
+   the repository's own code, which a pull can change); asking the
+   trust question in the prompt (a confirm at a key of `:compile` is
+   in the way; `:trust?` says where the file stands).
 
 A value with a space or a shell's character is double-quoted — inside
 a `nu -c '…'` too, where a single quote would end the line's — and one
@@ -944,6 +990,139 @@ above); `commands:NAME` required for a name in a list (then `"build"`
 would be a name in `default = "build"` and a shell command in `default
 = { "build" }`).
 
+### 23. The line completes in the command line, a program's arguments from carapace
+
+*Added 2026-10-17, the user's call:* complete `:compile` from the
+names, the picker's lines and paths, and the command's own arguments
+through carapace (installed here, with nu and fish). Decision 7 had
+the names, then paths; Decision 16 a nushell parameter's values.
+
+**The first word** is, in order: the names of `compile.commands`
+(sorted, as before), then the lines the picker lists — the same rows,
+not a second list (`compile_rows`, which `offer_compile` opens the
+picker with; `compile_lines` keeps a row that is a line `:compile`
+runs as it is: not a name's, which completes as the name, nor a
+chain's, whose steps joined are no one line) in the picker's order
+(Decision 19's tiers, `Compile::shown`), narrowed as a setting's value
+is — the ones the word starts, then the ones that have it, so `clippy`
+offers `cargo clippy`; then `commands:NAME` (Decision 22's strict
+spelling) once a letter is typed, so a bare `<Tab>` is not doubled;
+then paths, for a word that reads as one (a `/` in it, or from `.`,
+`~`, `%`). The lines are read once while the prompt is open: the
+picker's rows read files and the memory, not to be done at every key.
+A server's runnables (Decision 18) are not among them: they are asked
+of the server as the picker opens, and the prompt asks nothing of it.
+
+**A picker's line completes whole.** Past the first word, a line the
+picker lists that goes on from what is typed (`cargo b`) is offered
+whole, first — `cargo build`, `cargo build --release` — and the word's
+other candidates are then written whole too, one token for all of
+them, which is what the prompt's completion has (`CmdCompletion` keeps
+one start).
+
+**After the first word**: a nushell parameter's values (Decision 16),
+then the program's completer's answer, then paths from where the line
+runs (Decision 7), each once. `%`, `%:h` and `%:t` complete as
+themselves with the path each names as the candidate's detail, and
+`%:h/` lists the file's directory — in every path argument (`:e
+%:h/`), the file `%` is the caret's, `:compile`'s the one its run
+would put in (`compile_file`).
+
+**The completer: carapace's `export`.** For a line that is not a
+named command's, `COMPLETER PROG export PROG WORDS… CURRENT` is run in
+the directory the line will run in, and its JSON's `values` are the
+candidates, their `description` the details. The words are the shell's
+(`shell_words`, in the graph through portable-pty), from after the
+last `|`, `;`, `&&` or `||`; a quote open, or an environment
+assignment for a first word, asks nothing. carapace knows some 700
+programs, and a program it does not know prints nothing: nothing is
+offered, nothing said. The program is given by its file name.
+
+- **Off the frame.** Asked on a job (`Io::run`); the line is completed
+  again when it answers. The completion keeps its candidate when one
+  was cycled to and is still there, so an answer landing mid-cycle does
+  not move it; uncycled, the new first is current.
+- **In a session of its own** (*amended 2026-10-17 after a review*):
+  started by `spawn::session`, so it has no terminal to ask on, and
+  when it is done or given up on its whole group is stopped with it —
+  what it started (`kubectl` against a cluster that does not answer,
+  `cargo metadata` waiting on the package cache's lock) no longer
+  outlives it holding the pipe. Its stderr is drained and dropped. On
+  a thread of its own or not at all (`Io::try_run`): a job that waits
+  is never run on the frame when the system gives no thread.
+- **Bounded.** Two seconds (`PATIENCE`), then stopped; output read on a
+  thread of its own with a channel's timeout, so a child that keeps the
+  pipe open cannot hold it; past 1 MiB (`CAP`) it is stopped and the
+  answer dropped — carapace's longest, git's every flag, is some 10 KiB;
+  2000 values at most. Four completers running at once, counted across
+  prompts and with Decision 16's nu (`ShellComplete::running`): past
+  them the next waits for a key, or for one to end, which completes the
+  line again.
+- **Asked once a question.** An answer is kept, for the prompt's life,
+  by its question: completer, directory, the words before, and the
+  current word's stem — up to its last `/` or `=` (a directory's
+  entries, a flag's values come from there), else `-` for a flag
+  (carapace offers flags only to a word starting with one), else
+  nothing. The rest of the word is narrowed here, so typing through a
+  word asks once. A failure is kept as an empty answer: a completer
+  that hangs costs its two seconds once a prompt, not at every key.
+- **A late answer.** One for a question the line no longer asks is kept
+  under its question and not shown — back at that line, it is there
+  without asking again. One landing after its prompt closed finds its
+  question gone (the prompt's close clears them; each ask has a serial)
+  and is dropped, never taken for the next prompt's same question.
+
+**`cmdline.complete_with`**: `"carapace"` by default, another program
+(a name on the PATH or a path) that speaks the same `export`, or
+`false` — a new kind, `string|false`, as `completion.docs` is
+`integer|false`. Found on the PATH the children get (`io::on_path`,
+the shell's when kawoosh asked one), looked up once a prompt; none is
+nothing, quietly. **A project may only turn it off**: a
+`.kawoosh/settings.lua` is data and runs nothing unasked (formatters.md
+Decision 5), and a program it named would run at every key of a
+`:compile` — so a string in the project layer is passed over for the
+user's, as `grammars.sources` is. **An app that loaded no config runs
+none** (`Config::completer`, set by `load_config`, as `Config::dir`
+is): every test types `:compile` lines, and none may run the machine's
+carapace; a test of it turns it on with a fake on a PATH of its own.
+
+**`:!`, `:shell`, `:terminal [here] CMD`** take the same completer for
+CMD's arguments, from the working directory: their argument is a shell
+line too, and wiring them was a match arm (`:!` is read as `:shell`,
+the engine's way). `:terminal`'s first word stays its subcommands'.
+
+**The detail** — a description, the path a `%` names — is drawn dim
+at the strip's end for the current candidate, cut to a third of the
+window with an ellipsis. The strip had no details before; one line of
+the current one's keeps the row of candidates as it was.
+
+**What carapace reads is not gated by trust** (*decided 2026-10-17
+after a review*, which asked whether it should be). carapace runs in
+the directory the line will run in, and a few of its completers read
+the project in ways that run its code — make's evaluates the
+Makefile, `$(shell …)` and all; a build tool's may load its build
+file. kawoosh's trust is for kawoosh running a repository's file as
+code: a project's `init.lua`, a nushell completer's `source`
+(Decision 16), a project's own formatter. carapace is not that: it
+is a program the user installed and named (a project cannot name
+one), run with the arguments the user's shell would give it at a
+`<Tab>`, and what any of its thousand completers does is carapace's,
+which kawoosh cannot tell apart — gating it would mean gating every
+program's arguments in every unconfigured clone, `git`'s too. The
+difference from the shell is the eagerness: it is asked as a word
+starts, not at a `<Tab>`. `cmdline.complete_with = false` turns it
+off. This is the user's to overturn; a gate would be a directory
+record (`:trust allow DIR`, by path, as `:format allow` is).
+
+Beaten: carapace's `_carapace` bridge or a shell's own completion
+(fish's `complete -C`, nu's external completer) — carapace's `export`
+is one JSON shape for every program and needs no shell started; the
+whole token given to the completer at every key (a process a key);
+the answer dropped outright when the line moved on (it is right for
+its question, and backspacing is common); a project's own completer
+allowed through `:trust` (no ask for it yet); the server's runnables in
+the first word (a request per prompt for rows the picker has).
+
 ## Not built
 
 - ~~A program that colours only on a terminal and reads none of the
@@ -961,3 +1140,6 @@ would be a name in `default = "build"` and a shell command in `default
 - A bare `:compile` again by Decision 19's "here": the last line run in
   the caret's workspace, not the last run anywhere (Decision 2 as it
   stands).
+- ~~Decision 16's `nu` completer is still asked on the frame (a second at
+  most, once per file change); Decision 23's job would take it off.~~
+  Decision 16, amended.

@@ -72,8 +72,8 @@ A project's `.kawoosh/settings.lua` applies as soon as you work under it. A proj
 
 | command | what |
 |---|---|
-| `:trust` | trust and run the working directory's untrusted `init.lua` files |
-| `:trust?` | say which files there are and whether each is trusted |
+| `:trust` | trust and run the working directory's untrusted `init.lua` files, and trust its nushell files (`build.nu`) so `:compile` can complete from them |
+| `:trust?` | say which files there are — `init.lua` and nushell files — and whether each is trusted |
 | `:trust allow PATH` | trust one file |
 | `:trust revoke [PATH]` | forget the trust given |
 
@@ -272,6 +272,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `completion.signature` | `"manual"` | the signature of the call the caret is in: `manual` on `<C-g>`, `auto` also as `(` and `,` are typed, `off` never ([code](code.md#signatures)) |
 | `completion.callable` | `"name"` | what taking a function puts: `name` its name alone, `args` its brackets and parameters as snippet fields |
 | `snippets.paths` | `{}` | your snippets' folders, packages and files, read as a language asks ([code](code.md#your-own-snippets)) |
+| `cmdline.complete_with` | `"carapace"` | what completes a shell line's arguments in the command line (`:compile`, `:!`, `:terminal`): carapace when it is on the PATH, another program that speaks its `export`, or `false`; a project may only turn it off ([code](code.md#compile-commands)) |
 | `clipboard.system` | `true` | `p` puts what other programs copied ([memory](memory.md)) |
 | `layout.default` | `"scroll"` | a new tab is a strip of columns (`scroll`) or a tree of splits (`tree`) |
 | `layout.column_width` | `"half"` | a new column's width: `third`, `half`, `two-thirds`, `full`, or a fraction |

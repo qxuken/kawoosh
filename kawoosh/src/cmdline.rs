@@ -6,7 +6,12 @@
 //! and Lua's — and an argument to what the command declares it takes
 //! (`kawoosh_editor::ArgKind`): a path for `:e`, `:w`, `:cd`, `:vs`,
 //! `:dir`; a buffer for `:b`; a tool, a view, an option, a command, a
-//! font family (`:font`, the rest of the line, monospaced first).
+//! font family (`:font`, the rest of the line, monospaced first);
+//! `:compile` its line — the names, the picker's lines, a program's
+//! arguments from its completer (`shell_complete.rs`), paths — and
+//! `:!`, `:shell`, `:terminal` their program's arguments (compile.md
+//! Decision 23). A path's `%` completes to its spellings, each with
+//! what it names as the candidate's detail.
 //! Past an option's path (`:set font.family=`, `:set font.family `)
 //! its value completes: the families for `font.family` (monospaced
 //! first, the OS's `.`-faces left out), a one-of's
@@ -27,7 +32,7 @@ use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_editor::commands::set_value;
-use kawoosh_editor::{ArgKind, Mode, Prompt, Selection, Selections, Spec};
+use kawoosh_editor::{ArgKind, Editor, Mode, Prompt, Selection, Selections, Spec};
 use kawoosh_systems::io::IoMsg;
 
 use crate::commands::{ShellCommand, cmd};
@@ -57,11 +62,22 @@ pub struct CmdCompletion {
     pub at: usize,
     pub candidates: Vec<String>,
     pub index: usize,
+    /// What is said of each candidate, by its place — a completer's
+    /// description, the path a `%` names — empty where nothing is.
+    pub details: Vec<String>,
 }
 
 impl CmdCompletion {
     pub fn current(&self) -> Option<&str> {
         self.candidates.get(self.index).map(String::as_str)
+    }
+
+    /// What is said of the current candidate, if anything.
+    pub fn detail(&self) -> Option<&str> {
+        self.details
+            .get(self.index)
+            .map(String::as_str)
+            .filter(|d| !d.is_empty())
     }
 
     /// The current candidate past `token` — the ghost — when it extends
@@ -78,10 +94,14 @@ impl CmdCompletion {
     }
 }
 
-/// Where the token being completed starts: after the last whitespace,
-/// or the line's start for the command itself.
+/// Where the token being completed starts: after the last whitespace —
+/// past all of it, a no-break space being two bytes — or the line's
+/// start for the command itself.
 fn token_start(line: &str) -> usize {
-    line.rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0)
+    line.char_indices()
+        .rfind(|(_, c)| c.is_whitespace())
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0)
 }
 
 /// Where each word of the line starts.
@@ -97,21 +117,85 @@ fn word_starts(line: &str) -> Vec<usize> {
     out
 }
 
+/// Whether a word reads as a path: a directory in it, or from `.`,
+/// `~` or the file (`%`).
+fn looks_like_path(word: &str) -> bool {
+    word.contains(['/', MAIN_SEPARATOR]) || word.starts_with(['.', '~', '%'])
+}
+
+/// The candidates for the token from `start`, and what is said of some
+/// of them.
+#[derive(Debug, Default)]
+pub(crate) struct Found {
+    pub start: usize,
+    pub candidates: Vec<String>,
+    pub details: HashMap<String, String>,
+    /// The candidates so far, to keep each once: a directory of
+    /// thousands is not searched for every entry.
+    seen: HashSet<String>,
+}
+
+impl Found {
+    fn new(start: usize, candidates: Vec<String>) -> Self {
+        Found {
+            start,
+            seen: candidates.iter().cloned().collect(),
+            candidates,
+            details: HashMap::new(),
+        }
+    }
+
+    /// A candidate, and what is said of it; once.
+    fn said(&mut self, candidate: String, about: String) {
+        if !self.seen.insert(candidate.clone()) {
+            return;
+        }
+        if !about.is_empty() {
+            self.details.insert(candidate.clone(), about);
+        }
+        self.candidates.push(candidate);
+    }
+
+    /// Candidates, each once.
+    fn extend(&mut self, candidates: impl IntoIterator<Item = String>) {
+        for c in candidates {
+            self.said(c, String::new());
+        }
+    }
+
+    /// The candidates moved `by` bytes along the line: what was found
+    /// for a line after a prefix put on it, or taken off it.
+    fn shifted(mut self, by: isize) -> Self {
+        self.start = self.start.saturating_add_signed(by);
+        self
+    }
+}
+
 impl Kawoosh {
     /// The token the command line is on and its candidates: command
     /// names for the first word, what the command takes after it.
-    pub(crate) fn cmd_candidates(&mut self, line: &str) -> (usize, Vec<String>) {
+    pub(crate) fn cmd_candidates(&mut self, line: &str) -> Found {
         // The selections' range visual mode's `:` puts: the command
         // after it is completed as one on a line of its own.
         const SELECTIONS: &str = "'<,'>";
         if let Some(rest) = line.strip_prefix(SELECTIONS) {
-            let (at, found) = self.cmd_candidates(rest);
-            return (at + SELECTIONS.len(), found);
+            return self.cmd_candidates(rest).shifted(SELECTIONS.len() as isize);
+        }
+        // `:!CMD` is `:shell CMD` (the engine reads it so): its words
+        // complete as that line's.
+        if let Some(rest) = line.strip_prefix('!') {
+            const SHELL: &str = "shell ";
+            if rest.trim().is_empty() {
+                return Found::new(line.len(), Vec::new());
+            }
+            return self
+                .cmd_candidates(&format!("{SHELL}{rest}"))
+                .shifted(1 - SHELL.len() as isize);
         }
         let start = token_start(line);
         let token = &line[start..];
         if start == 0 {
-            return (0, self.command_name_candidates(token));
+            return Found::new(0, self.command_name_candidates(token));
         }
         let head = line[..start].trim();
         let mut words = head.split_whitespace();
@@ -132,13 +216,13 @@ impl Kawoosh {
             Some(ArgKind::Option) => {
                 if let Some((path, value)) = set_value(&line[first..]) {
                     let at = line.len() - value.len();
-                    return (at, self.setting_value_candidates(path, value));
+                    return Found::new(at, self.setting_value_candidates(path, value));
                 }
             }
             // A family is the rest of the line too (`:font Fira Code`).
             Some(ArgKind::Font) => {
                 let names = self.look.fonts.borrow().names();
-                return (first, narrow(names, &line[first..]));
+                return Found::new(first, narrow(names, &line[first..]));
             }
             _ => {}
         }
@@ -155,32 +239,29 @@ impl Kawoosh {
                     .map(str::to_string),
             );
         }
-        // `:compile`: its commands' names first, then paths from where
-        // the line will run (compile.md Decision 7).
+        // `:compile`: a line of its own (compile.md Decisions 7 and 23).
         if inv.name == "compile" {
-            if index == 0 {
-                let mut names: Vec<String> = self
-                    .compile_commands()
-                    .into_iter()
-                    .map(|n| n.name)
-                    .filter(|n| n.starts_with(token))
-                    .collect();
-                names.sort();
-                out.extend(names);
-            } else {
-                // A nushell command's parameter: what completes it, then
-                // paths (Decision 16).
-                out.extend(self.compile_arg_candidates(&inv.args, token));
-                let dir = self.compile_dir_of(&inv.args.join(" "));
-                out.extend(self.path_candidates_in(token, &dir));
+            return self.compile_candidates(line, first, index, &inv.args);
+        }
+        // A shell line's program's arguments: what its completer says,
+        // then paths (Decision 23) — `:!`, `:shell`, `:terminal [here]`.
+        if matches!(inv.name.as_str(), "shell" | "terminal" | "terminal here") && index > 0 {
+            let mut found = Found::new(start, out);
+            let dir = self.cwd.clone();
+            for (c, about) in self.shell_arg_candidates(&line[first..start], token, &dir) {
+                found.said(c, about);
             }
-            out.dedup();
-            return (start, out);
+            self.path_found(&mut found, token, &dir, self.percent_file().as_deref());
+            return found;
         }
         let kind = args_at.and_then(|a| a.kind_at(index));
+        if kind == Some(ArgKind::Path) {
+            let mut found = Found::new(start, out);
+            self.path_found(&mut found, token, &self.cwd, self.percent_file().as_deref());
+            return found;
+        }
         let args: Vec<String> = match kind {
-            None | Some(ArgKind::Text) | Some(ArgKind::Font) => Vec::new(),
-            Some(ArgKind::Path) => self.path_candidates(token),
+            None | Some(ArgKind::Text) | Some(ArgKind::Font) | Some(ArgKind::Path) => Vec::new(),
             Some(ArgKind::Host) => self.host_candidates(token),
             Some(ArgKind::Command) => self.command_name_candidates(token),
             Some(ArgKind::Buffer) => {
@@ -256,7 +337,111 @@ impl Kawoosh {
         };
         out.extend(args);
         out.dedup();
-        (start, out)
+        Found::new(start, out)
+    }
+
+    /// `:compile`'s candidates (compile.md Decision 23). Its first word:
+    /// the names of `compile.commands`, the lines the compile picker
+    /// offers in its order, `commands:NAME` once a letter is typed,
+    /// paths for a word that reads as one. After it: a nushell
+    /// command's parameter (Decision 16), what the line's program's
+    /// completer says unless the line is a name's, paths from where the
+    /// line runs (Decision 7) — after the picker's lines that go on
+    /// from what is typed, when there are any, each candidate then the
+    /// line whole.
+    fn compile_candidates(
+        &mut self,
+        line: &str,
+        first: usize,
+        index: usize,
+        args: &[String],
+    ) -> Found {
+        let start = token_start(line);
+        let token = &line[start..];
+        let lines = match &self.cmd_compile_lines {
+            Some(l) => l.clone(),
+            None => {
+                let l = Rc::new(self.compile_lines());
+                self.cmd_compile_lines = Some(l.clone());
+                l
+            }
+        };
+        let mut names: Vec<String> = self
+            .compile_commands()
+            .into_iter()
+            .map(|n| n.name)
+            .collect();
+        names.sort();
+        let mut found = Found::new(start, Vec::new());
+        if index == 0 {
+            found.extend(names.iter().filter(|n| n.starts_with(token)).cloned());
+            found.extend(narrow(lines.to_vec(), token));
+            if !token.is_empty() {
+                found.extend(
+                    names
+                        .iter()
+                        .map(|n| format!("commands:{n}"))
+                        .filter(|n| n.starts_with(token)),
+                );
+            }
+            if looks_like_path(token) {
+                let dir = self.compile_dir_of("");
+                self.path_found(&mut found, token, &dir, self.compile_file().as_deref());
+            }
+            return found;
+        }
+        found.extend(self.compile_arg_candidates(args, token));
+        let dir = self.compile_dir_of(&args.join(" "));
+        let word = args.first().map(String::as_str).unwrap_or_default();
+        if !word.starts_with("commands:") && !names.iter().any(|n| n == word) {
+            for (c, about) in self.shell_arg_candidates(&line[first..start], token, &dir) {
+                found.said(c, about);
+            }
+        }
+        self.path_found(&mut found, token, &dir, self.compile_file().as_deref());
+        // A picker's line that goes on from what is typed: the line
+        // whole is the candidate, so the rest are written whole too.
+        let typed = &line[first..];
+        let whole: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.len() > typed.len() && l.starts_with(typed))
+            .collect();
+        if whole.is_empty() {
+            return found;
+        }
+        let before = &line[first..start];
+        let mut wide = Found::new(first, whole.into_iter().cloned().collect());
+        for c in found.candidates {
+            let about = found.details.remove(&c).unwrap_or_default();
+            wide.said(format!("{before}{c}"), about);
+        }
+        wide
+    }
+
+    /// Paths for `token` read from `dir` into `found`, and `file`'s own
+    /// spellings when it starts `%` (`%`, `%:h`, `%:t`), each with what
+    /// it names; `%:h/` lists `file`'s directory.
+    fn path_found(&self, found: &mut Found, token: &str, dir: &Path, file: Option<&Path>) {
+        if token.starts_with('%') && !token.contains(['/', MAIN_SEPARATOR]) {
+            for form in ["%", "%:h", "%:t"]
+                .into_iter()
+                .filter(|f| f.starts_with(token))
+            {
+                let about = file
+                    .map(|f| {
+                        let p = Editor::percent_of(f, form);
+                        kawoosh_systems::fs::abbreviate_home(Path::new(&p))
+                    })
+                    .unwrap_or_else(|| "no file for %".into());
+                found.said(form.to_string(), about);
+            }
+        }
+        found.extend(self.path_candidates_in(token, dir, file));
+    }
+
+    /// The file `%` names at the prompt: the caret's.
+    fn percent_file(&self) -> Option<PathBuf> {
+        self.ed.percent_path(self.focused_view()?).ok()
     }
 
     /// What a setting's value may be, narrowed by `typed`: the value it
@@ -295,6 +480,9 @@ impl Kawoosh {
                         .filter(|v| v.dark() == dark)
                         .map(|v| v.name.to_string()),
                 );
+            }
+            ("cmdline.complete_with", _) => {
+                all.extend(["carapace".into(), "false".into()]);
             }
             (_, Some(SettingKind::OneOf(words))) => all.extend(words),
             (_, Some(SettingKind::Bool)) => all.extend(["true".into(), "false".into()]),
@@ -382,13 +570,9 @@ impl Kawoosh {
     /// The entries of the directory the token names, with the token's
     /// own directory part kept as typed (`~/pro` completes to
     /// `~/projects/`, not to the home's absolute path). A hidden entry
-    /// is offered only to a token that starts with `.`.
-    fn path_candidates(&self, token: &str) -> Vec<String> {
-        self.path_candidates_in(token, &self.cwd)
-    }
-
-    /// [`Self::path_candidates`] with a relative token read from `base`.
-    fn path_candidates_in(&self, token: &str, base: &Path) -> Vec<String> {
+    /// is offered only to a token that starts with `.`. A relative token
+    /// is read from `base`; one under `%:h/` from the file's directory.
+    fn path_candidates_in(&self, token: &str, base: &Path, file: Option<&Path>) -> Vec<String> {
         // On a host `/` is the one separator — a `\` is a name's there —
         // and what a directory is completed with.
         use kawoosh_systems::fs::domain_of;
@@ -398,6 +582,12 @@ impl Kawoosh {
         let (dir_text, prefix) = token.split_at(cut);
         let dir = if dir_text.is_empty() {
             base.to_path_buf()
+        } else if dir_text.starts_with('%') {
+            // `%:h/` is the file's directory (`Editor::percent_of`).
+            let Some(file) = file else {
+                return Vec::new();
+            };
+            kawoosh_doc::paths::expand(Path::new(&Editor::percent_of(file, dir_text)), base)
         } else {
             kawoosh_doc::paths::expand(Path::new(dir_text), base)
         };
@@ -533,6 +723,8 @@ impl Kawoosh {
         if !self.at_command_prompt() {
             self.cmd_completion = None;
             self.cmd_dirs.get_mut().clear();
+            self.cmd_compile_lines = None;
+            self.line_complete.clear();
             return;
         }
         let line = self.ed.prompt_text().unwrap_or_default();
@@ -540,16 +732,36 @@ impl Kawoosh {
             self.cmd_completion = None;
             return;
         };
-        let (start, candidates) = self.cmd_candidates(&line[..at]);
+        let Found {
+            start,
+            candidates,
+            mut details,
+            ..
+        } = self.cmd_candidates(&line[..at]);
+        // The same token as before, cycled off its first: the candidate
+        // current stays current where it still is — a completer's answer
+        // landing mid-cycle.
         let index = match &self.cmd_completion {
-            Some(c) if c.start == start && c.at == at && c.candidates == candidates => c.index,
+            Some(c) if c.start == start && c.at == at && c.index > 0 => c
+                .current()
+                .and_then(|cur| candidates.iter().position(|x| x == cur))
+                .unwrap_or(0),
             _ => 0,
+        };
+        let details = if details.is_empty() {
+            Vec::new()
+        } else {
+            candidates
+                .iter()
+                .map(|c| details.remove(c).unwrap_or_default())
+                .collect()
         };
         self.cmd_completion = Some(CmdCompletion {
             start,
             at,
             candidates,
             index,
+            details,
         });
     }
 

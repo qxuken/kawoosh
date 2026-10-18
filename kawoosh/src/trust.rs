@@ -17,6 +17,11 @@
 //! project layer's, over its settings files and under `:set`
 //! (`Config::loading`), and goes with the layer on `:cd`.
 //!
+//! A project's nushell files (`compile.nushell`) are code too: a
+//! parameter's completer `source`s its file, top level and all, so it is
+//! asked of nu only once the file's text is trusted the same way
+//! (compile.md Decision 16) — the record is the same, by path and hash.
+//!
 //! `:trust` allows the working directory's untrusted files and runs
 //! them; `:trust revoke` forgets the records; `:trust?` says which files
 //! there are and where each stands.
@@ -326,10 +331,23 @@ impl Kawoosh {
         n
     }
 
+    /// The project's code a record can trust: its `init.lua` files, then
+    /// the nushell files `:compile` reads, whose completers `source` them
+    /// (compile.md Decision 16).
+    fn project_code(&self) -> Vec<PathBuf> {
+        let mut files = project_init_files(&self.cwd);
+        for f in self.compile_nu_files() {
+            if !files.contains(&f) {
+                files.push(f);
+            }
+        }
+        files
+    }
+
     /// `:trust`: the working directory's untrusted files, and what
     /// `trust allow PATH` (the confirm's button) names.
     fn trust_command(&mut self, args: &[String], query: bool) {
-        let files = project_init_files(&self.cwd);
+        let files = self.project_code();
         if query {
             let formats = self.formats_allowed_under(&self.cwd.clone());
             let formats = match formats {
@@ -339,7 +357,10 @@ impl Kawoosh {
             };
             if files.is_empty() {
                 self.ed.message = match formats.is_empty() {
-                    true => format!("no {PROJECT_DIR}/{INIT_FILE} under {}", self.cwd.display()),
+                    true => format!(
+                        "no {PROJECT_DIR}/{INIT_FILE} or nushell file under {}",
+                        self.cwd.display()
+                    ),
                     false => formats,
                 };
                 return;
@@ -370,7 +391,9 @@ impl Kawoosh {
                 let paths: Vec<PathBuf> = if args.len() > 1 {
                     vec![PathBuf::from(args[1..].join(" "))]
                 } else {
-                    project_init_candidates(&self.cwd)
+                    let mut paths = project_init_candidates(&self.cwd);
+                    paths.extend(self.compile_nu_files());
+                    paths
                 };
                 let mut n = self.trust_revoke(&paths);
                 if args.len() <= 1 {
@@ -395,7 +418,10 @@ impl Kawoosh {
                     .collect();
                 if untrusted.is_empty() {
                     self.ed.message = if files.is_empty() {
-                        format!("no {PROJECT_DIR}/{INIT_FILE} under {}", self.cwd.display())
+                        format!(
+                            "no {PROJECT_DIR}/{INIT_FILE} or nushell file under {}",
+                            self.cwd.display()
+                        )
                     } else {
                         "already trusted".into()
                     };
@@ -416,8 +442,8 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![cmd(
         Spec::new("trust")
             .args(Args::rest(&[ArgKind::Text]))
-            .query("say where the project's init.lua files stand")
-            .doc("run the project's .kawoosh/init.lua and remember its text as trusted; `allow PATH`, `revoke [PATH]`"),
+            .query("say where the project's init.lua and nushell files stand")
+            .doc("run the project's .kawoosh/init.lua, let its nushell files' completers run, and remember their text as trusted; `allow PATH`, `revoke [PATH]`"),
         |k, ctx| k.trust_command(&ctx.args, ctx.query()),
     )]
 }

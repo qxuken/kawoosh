@@ -77,6 +77,21 @@ pub enum IoMsg {
         dir: std::path::PathBuf,
         entries: Option<Vec<crate::fs::Entry>>,
     },
+    /// A shell line's completer answered the `:` prompt
+    /// (`shell_complete.rs`, compile.md Decision 23): the ask's serial,
+    /// and each value with its description — none when it failed, timed
+    /// out, said too much or said it in no shape known.
+    LineCompleted {
+        serial: u64,
+        values: Option<Vec<(String, String)>>,
+    },
+    /// A nushell parameter's completer answered the `:` prompt
+    /// (`compile::nu_answer`, compile.md Decision 16): the ask's serial,
+    /// and its values — none when nu failed, timed out or said no list.
+    NuCompleted {
+        serial: u64,
+        values: Option<Vec<String>>,
+    },
     /// A buffer's words indexed for completion's `buffer_words`
     /// (`words::index`), under its masks' key.
     CompletionWords {
@@ -1309,6 +1324,28 @@ impl Io {
                 self.wake.named(name).wake();
             }
         }
+    }
+
+    /// Runs `job` on a thread of its own as [`Io::run`] does — but a
+    /// thread the system will not give is the job not run, said by
+    /// false: for a job that waits (a completer's process, seconds at
+    /// most), which the frame must never run in its place.
+    pub fn try_run(
+        &self,
+        name: &'static str,
+        job: impl FnOnce() -> IoMsg + Send + 'static,
+    ) -> bool {
+        let tx = self.tx.clone();
+        let wake = self.wake.named(name);
+        let spawned = thread::Builder::new().name(name.into()).spawn(move || {
+            if tx.send(job()).is_ok() {
+                wake.wake();
+            }
+        });
+        if let Err(e) = &spawned {
+            log::warn!("{name}: no thread for the job ({e}); not asked");
+        }
+        spawned.is_ok()
     }
 
     /// Runs `job` on a thread of its own, handing it `send`: every message

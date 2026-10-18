@@ -2164,10 +2164,20 @@ impl Editor {
     /// A path argument's `%` — the view's file — with a modifier and
     /// the rest of the argument; any other argument as it is.
     fn context_path(&self, view: ViewId, arg: &str) -> Result<String, String> {
-        let Some(rest) = arg.strip_prefix('%') else {
+        if !arg.starts_with('%') {
             return Ok(arg.to_string());
+        }
+        Ok(Self::percent_of(&self.percent_path(view)?, arg))
+    }
+
+    /// Path argument `arg`'s `%` as `file`: `%` the path, `%:h` its
+    /// directory, `%:t` its name, the rest of the argument after; an
+    /// argument with no `%` as it is.
+    pub fn percent_of(file: &std::path::Path, arg: &str) -> String {
+        let Some(rest) = arg.strip_prefix('%') else {
+            return arg.to_string();
         };
-        let path = self.percent_path(view)?;
+        let path = file.to_path_buf();
         let (path, rest) = if let Some(r) = rest.strip_prefix(":h") {
             (
                 kawoosh_doc::paths::parent(&path)
@@ -2185,7 +2195,7 @@ impl Editor {
         } else {
             (path, rest)
         };
-        Ok(format!("{}{rest}", path.display()))
+        format!("{}{rest}", path.display())
     }
 
     pub fn register_with_char(&mut self, name: &str, run: impl Fn(&mut Editor, &Ctx) + 'static) {

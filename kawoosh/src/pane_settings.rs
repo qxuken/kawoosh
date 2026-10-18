@@ -177,6 +177,8 @@ fn fits(path: &str, value: Setting, kind: Option<&SettingKind>) -> Result<Settin
         (Some(SettingKind::Int), _) => bad("a whole number"),
         (Some(SettingKind::IntOrFalse), Setting::Int(_) | Setting::Bool(false)) => Ok(value),
         (Some(SettingKind::IntOrFalse), _) => bad("a whole number, or false"),
+        (Some(SettingKind::StrOrFalse), Setting::Str(_) | Setting::Bool(false)) => Ok(value),
+        (Some(SettingKind::StrOrFalse), _) => bad("text, or false"),
         (Some(SettingKind::Float), Setting::Int(n)) => Ok(Setting::Float(*n as f64)),
         (Some(SettingKind::Float), Setting::Float(_)) => Ok(value),
         (Some(SettingKind::Float), _) => bad("a number"),

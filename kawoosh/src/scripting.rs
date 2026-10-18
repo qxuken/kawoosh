@@ -276,6 +276,7 @@ impl Kawoosh {
     /// watch, so a save reloads its layer.
     pub fn load_config(&mut self) {
         self.config.dir = crate::settings::config_dir();
+        self.config.completer = true;
         // Before `init.lua`, so a language it registers is the newer.
         if let Some(dir) = crate::grammars::dir() {
             self.load_grammars(&dir);
