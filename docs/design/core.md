@@ -81,7 +81,13 @@ Two transform modes, and the distinction matters:
   answer's span grows over the whole edit, as a scope does, and so over
   text a move brought in from outside it, which the answer never read;
   there the layer keeps its own runs (found under load: an answer for one
-  line wiped the line swapped with it). A move
+  line wiped the line swapped with it) — only for an edit the span grows
+  over, and whatever it carries is cut to its span, which `splice`
+  takes as given (review: a move elsewhere since the answer was asked
+  for put its lines' runs in twice). A cursor's moves at once are one
+  `replace_many_moving`, a walk over the runs the edits reach, as
+  `replace_many` is. A run starting with the edit is moved, not
+  stretched: only a run that begins before it is around it. A move
   whose text is not what it says, or that is not inside the edit, is left
   out — a wrong one costs the colours, never puts a run on other text.
   *Beat:* the move journaled as a delete and an insert, the block itself

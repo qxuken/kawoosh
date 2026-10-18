@@ -521,6 +521,27 @@ fn percent_goes_round_a_keyword_block() {
 #[test]
 fn a_moved_line_keeps_its_colours_on_every_frame() {
     let src = "fn main() {\n    let a = \"one\";\n    let b = 2;\n    call(a, b);\n}\n";
+    held_moves(
+        src,
+        "j",
+        1,
+        &["<A-j>", "<A-j>", "<A-k>", "<A-k>", "<A-j>", "<A-k>"],
+    );
+    // Two carets in blocks apart, each line moving with its own.
+    let src = "fn main() {\n    let a = \"one\";\n    let b = 2;\n    let c = 'x';\n    let d = 4.0;\n    call(a, b);\n}\n";
+    held_moves(
+        src,
+        "j2<C-j>",
+        2,
+        &["<A-j>", "<A-j>", "<A-k>", "<A-k>", "<A-j>", "<A-k>"],
+    );
+}
+
+/// `src` parsed, `setup` pressed (making `carets`), then `moves` a frame each, every
+/// line's colours checked on the frame of each move and the one after
+/// against the colours it had before (by its text), and the text back
+/// where it was at the end.
+fn held_moves(src: &str, setup: &str, carets: usize, moves: &[&str]) {
     let (mut app, mut d, dir) = parsed("moves.rs", src);
     // Each line's runs, relative to its start, by its text.
     let colours = |app: &Kawoosh| -> std::collections::HashMap<String, Vec<(usize, usize, u32)>> {
@@ -556,18 +577,20 @@ fn a_moved_line_keeps_its_colours_on_every_frame() {
         }
         looked += 1;
     };
-    d.keys(&mut app, "j");
+    d.press(&mut app, setup);
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].sels.iter().count(), carets, "after {setup}");
     // Held down: a move a frame, the parser's answers landing between.
-    for keys in ["<A-j>", "<A-j>", "<A-k>", "<A-k>", "<A-j>", "<A-k>"] {
+    for keys in moves {
         d.press(&mut app, keys);
-        check(&app, &format!("the frame of {keys}"));
+        check(&app, &format!("the frame of {keys} after {setup}"));
         d.frame(&mut app);
-        check(&app, &format!("the frame after {keys}"));
+        check(&app, &format!("the frame after {keys} after {setup}"));
     }
     app.wait_for_syntax();
     d.frame(&mut app);
     check(&app, "answered");
     assert_eq!(text_of(&app), src, "back where it was");
-    assert_eq!(looked, 13);
+    assert_eq!(looked, 2 * moves.len() + 1);
     std::fs::remove_dir_all(&dir).ok();
 }

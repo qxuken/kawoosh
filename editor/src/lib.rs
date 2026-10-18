@@ -4108,10 +4108,13 @@ impl Editor {
             .collect();
         let disjoint = edits.windows(2).all(|w| w[1].1.end <= w[0].1.start);
         if disjoint && edits.iter().any(|e| !e.3.is_empty()) {
-            // Back to front, each in the text as it was.
-            for (_, r, t, moves) in &edits {
-                buf.replace_moving(r.clone(), t, moves);
-            }
+            // One pass over the layers for every cursor's move.
+            let ascending: Vec<(std::ops::Range<usize>, &str, &[kawoosh_doc::Move])> = edits
+                .iter()
+                .rev()
+                .map(|(_, r, t, m)| (r.clone(), t.as_str(), m.as_slice()))
+                .collect();
+            buf.replace_many_moving(&ascending);
         } else {
             let ascending: Vec<(std::ops::Range<usize>, &str)> = edits
                 .iter()
