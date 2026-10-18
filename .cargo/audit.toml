@@ -28,4 +28,23 @@ ignore = [
     # Drop this line when kui drops it: when cosmic-text moves off fontdb or
     # fontdb moves off ttf-parser.
     "RUSTSEC-2026-0192",
+
+    # zvariant, zvariant_derive and zbus_names are unmaintained
+    # (informational, not vulnerabilities; all three dated 2026-10-16):
+    # folded into zbus 6.0 as its `wire` module and names, released the
+    # same day. Not direct dependencies; one path reaches them, through kui:
+    #
+    #   kui-native -> accesskit_winit 0.34 -> accesskit_unix 0.24
+    #     -> atspi 0.29 / accesskit_atspi_common 0.21 -> zbus 5 -> these
+    #
+    # accesskit_unix is the AT-SPI accessibility bridge over D-Bus: Linux
+    # (and the BSDs) only, absent from the macOS and Windows builds. There
+    # is no version to move to - accesskit_unix 0.24 and atspi 0.30, the
+    # newest, both still require zbus 5.
+    #
+    # Drop these lines when accesskit_unix (and atspi under it) move to
+    # zbus 6 and kui takes that accesskit_winit.
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
 ]
