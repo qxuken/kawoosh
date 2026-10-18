@@ -244,7 +244,11 @@ impl Kawoosh {
                 && let Some(dir) = &self.lua_types
             {
                 crate::types::with_library(&mut def.settings, dir);
-                def.libraries.push(dir.clone());
+                // The config's server first: the types are its own.
+                def.libraries.push(kawoosh_systems::lsp::Library {
+                    folder: dir.clone(),
+                    home: crate::settings::config_dir(),
+                });
             }
             out.push(def);
         }

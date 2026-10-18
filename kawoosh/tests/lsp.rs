@@ -3841,7 +3841,10 @@ fn a_library_file_goes_to_the_running_instance() {
 
     let mut app = Kawoosh::from_file(&file);
     let mut def = fake_server();
-    def.libraries = vec![library.clone()];
+    def.libraries = vec![kawoosh_systems::lsp::Library {
+        folder: library.clone(),
+        home: None,
+    }];
     app.add_lsp_server(def);
     let mut d = Drive::new(900.0, 500.0);
     assert!(
@@ -3855,5 +3858,239 @@ fn a_library_file_goes_to_the_running_instance() {
         app.lsp.status
     );
     assert_eq!(app.lsp.status.len(), 1, "no server of its own");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// The pid the fake server said last in the instances whose root's last
+/// folder is `name`: the newest one's.
+fn pid_in(app: &Kawoosh, server: &str, name: &str) -> Option<u32> {
+    said_in(app, server, name)
+        .iter()
+        .rev()
+        .find_map(|l| l.strip_prefix("fake server pid ")?.parse().ok())
+}
+
+/// Whether process `pid` is still there — running, or a zombie no one
+/// waited for (`ps` lists both).
+#[cfg(unix)]
+fn process_left(pid: u32) -> bool {
+    let out = kawoosh_systems::spawn::output(std::process::Command::new("ps").args([
+        "-o",
+        "stat=",
+        "-p",
+        &pid.to_string(),
+    ]))
+    .expect("ps");
+    !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+}
+
+/// An app on a notes file with the fake server — `extra` its further
+/// arguments — stopped after 1 s idle, then the project's file opened
+/// until the server holds it: the app, the drive, the file and the
+/// server's command.
+fn idle_project(
+    base: &std::path::Path,
+    extra: &[&str],
+) -> (Kawoosh, Drive, std::path::PathBuf, String) {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let _ = std::fs::remove_dir_all(base);
+    let file = project(base, "proj");
+    let notes = base.join("notes.txt");
+    std::fs::write(&notes, "notes\n").unwrap();
+    let mut app = Kawoosh::from_file(&notes);
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.idle_stop_secs", Setting::Int(1));
+    let mut def = fake_server();
+    def.args.extend(extra.iter().map(|a| a.to_string()));
+    let server = def.command.clone();
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    app.open_in_editor(&file, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)
+            && pid_in(a, &server, "proj").is_some()),
+        "the server holds the file"
+    );
+    (app, d, file, server)
+}
+
+/// A server stopped — idle, or by `:lsp restart` — is waited for, and
+/// leaves no zombie behind; after a restart at its root, `:lsp info`
+/// shows the new instance's tail, not the old one's last words
+/// (lsp-rules.md Decisions 10, 12).
+#[cfg(unix)]
+#[test]
+fn a_stopped_server_leaves_no_zombie() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-reap-{}", std::process::id()));
+    let (mut app, mut d, file, server) = idle_project(&base, &[]);
+    let first = pid_in(&app, &server, "proj").unwrap();
+    ex(&mut d, &mut app, "bd");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.is_empty()
+            && !process_left(first)),
+        "stopped idle, and reaped: pid {first} left"
+    );
+
+    app.open_in_editor(&file, None, None);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)
+            && pid_in(a, &server, "proj").is_some_and(|p| p != first)),
+        "a new instance"
+    );
+    let second = pid_in(&app, &server, "proj").unwrap();
+    ex(&mut d, &mut app, "lsp info");
+    let info = app.ed.buffer_of(app.focused_view().unwrap()).text();
+    assert!(info.contains("fake server in proj"), "{info}");
+    assert!(
+        !info.contains("fake server exiting"),
+        "the instance before it is not this one's tail: {info}"
+    );
+    d.keys(&mut app, "q");
+
+    ex(&mut d, &mut app, "lsp restart");
+    assert!(
+        until(&mut d, &mut app, |_| !process_left(second)),
+        "restarted, the old one reaped: pid {second} left"
+    );
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// One that does not heed `exit` is killed `STOP_GRACE` after its
+/// `shutdown`, said in the log, and reaped.
+#[cfg(unix)]
+#[test]
+fn a_server_ignoring_exit_is_killed_and_reaped() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-kill-{}", std::process::id()));
+    let (mut app, mut d, _, server) = idle_project(&base, &["--exit-never"]);
+    let pid = pid_in(&app, &server, "proj").unwrap();
+    ex(&mut d, &mut app, "bd");
+    let killed = "did not exit 3 s after shutdown; killed";
+    assert!(
+        until(&mut d, &mut app, |a| said_in(a, &server, "proj")
+            .contains(&killed.to_string())
+            && !process_left(pid)),
+        "killed and reaped: pid {pid} left; {:?}",
+        said_in(&app, &server, "proj")
+    );
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// One that exits as told while a child of its own holds its output
+/// open is gone by its own status: not said killed, and reaped.
+#[cfg(unix)]
+#[test]
+fn a_server_whose_child_holds_its_output_is_not_said_killed() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-grandchild-{}", std::process::id()));
+    let (mut app, mut d, _, server) = idle_project(&base, &["--grandchild"]);
+    let pid = pid_in(&app, &server, "proj").unwrap();
+    ex(&mut d, &mut app, "bd");
+    assert!(
+        until(&mut d, &mut app, |a| said_in(a, &server, "proj")
+            .contains(&"fake server exiting".to_string())),
+        "told to exit"
+    );
+    // Past the grace a stop is judged at.
+    let past = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while std::time::Instant::now() < past {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        !said_in(&app, &server, "proj")
+            .iter()
+            .any(|l| l.contains("killed")),
+        "it exited: {:?}",
+        said_in(&app, &server, "proj")
+    );
+    assert!(!process_left(pid), "reaped: pid {pid} left");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// What a server asked to shut down still publishes is no one's: its
+/// late diagnostics do not land.
+#[cfg(unix)]
+#[test]
+fn a_stopping_servers_late_diagnostics_are_dropped() {
+    let base = std::env::temp_dir().join(format!("kawoosh-lsp-late-{}", std::process::id()));
+    let (mut app, mut d, _, server) = idle_project(&base, &["--publish-on-shutdown"]);
+    ex(&mut d, &mut app, "bd");
+    // Exiting comes after the late word and the answer to `shutdown`.
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.is_empty()
+            && said_in(a, &server, "proj")
+                .contains(&"fake server exiting".to_string())),
+        "stopped"
+    );
+    for _ in 0..20 {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let late: Vec<_> = app
+        .ed
+        .diagnostics
+        .files()
+        .filter(|(_, l)| l.iter().any(|p| p.diagnostic.message == "late"))
+        .map(|(p, _)| p.clone())
+        .collect();
+    assert!(late.is_empty(), "late diagnostics landed on {late:?}");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// A library file stays with the instance it went to while that runs,
+/// however the others are used meanwhile (lsp-rules.md Decision 11).
+#[test]
+fn a_library_file_stays_with_its_instance() {
+    let base =
+        std::env::temp_dir().join(format!("kawoosh-lsp-library-kept-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let config = project(&base, "config");
+    let other = project(&base, "other");
+    let library = base.join("types");
+    std::fs::create_dir_all(&library).unwrap();
+    let types = library.join("api.rs");
+    std::fs::write(&types, "fn api() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&config);
+    let mut def = fake_server();
+    def.libraries = vec![kawoosh_systems::lsp::Library {
+        folder: library.clone(),
+        home: None,
+    }];
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    let docs = |a: &Kawoosh, name: &str| {
+        a.lsp
+            .status
+            .iter()
+            .find(|s| s.0.file_name().is_some_and(|f| f == name))
+            .map(|s| s.2)
+    };
+    assert!(until(&mut d, &mut app, |a| docs(a, "config") == Some(1)));
+    app.open_in_editor(&types, None, None);
+    assert!(until(&mut d, &mut app, |a| docs(a, "config") == Some(2)));
+    // Another project's server, the one last sent a buffer.
+    app.open_in_editor(&other, None, None);
+    assert!(until(&mut d, &mut app, |a| docs(a, "other") == Some(1)));
+    d.keys(&mut app, "O");
+    d.commit(&mut app, "// there");
+    d.key(&mut app, "escape", KeyMods::default());
+    // An edit in the library file.
+    app.open_in_editor(&types, None, None);
+    d.keys(&mut app, "O");
+    d.commit(&mut app, "// here");
+    d.key(&mut app, "escape", KeyMods::default());
+    let settle = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < settle {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(
+        (docs(&app, "config"), docs(&app, "other")),
+        (Some(2), Some(1)),
+        "it stayed: {:?}",
+        app.lsp.status
+    );
     std::fs::remove_dir_all(&base).ok();
 }

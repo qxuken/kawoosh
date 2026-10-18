@@ -481,11 +481,12 @@ impl Kawoosh {
                 Event::Message {
                     server,
                     root,
+                    instance,
                     kind,
                     text,
                     log,
                 } => {
-                    self.lsp.logs.push(&server, &root, kind, &text);
+                    self.lsp.logs.push(&server, &root, instance, kind, &text);
                     let note = Note::new(Level::from_lsp(kind), text)
                         .source(server)
                         .show(if log { Show::Log } else { Show::Corner });
@@ -2046,10 +2047,10 @@ impl Kawoosh {
             for p in open {
                 out += &format!("        {p}\n");
             }
-            // The tail of what this instance said; `:lsp logs` has the
-            // rest.
+            // The tail of what this instance said — the one running, not
+            // one before a restart there; `:lsp logs` has the rest.
             let said: Vec<&crate::lsp_logs::Said> =
-                self.lsp.logs.of(cmd, root).rev().take(20).collect();
+                self.lsp.logs.current(cmd, root).rev().take(20).collect();
             if !said.is_empty() {
                 out += "  said  (all of it: :lsp logs)\n";
                 for e in said.into_iter().rev() {

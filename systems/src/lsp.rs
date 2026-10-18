@@ -101,10 +101,57 @@ pub struct ServerDef {
     pub idle_stop: Option<std::time::Duration>,
     /// Folders it reads as a library of its workspace rather than as a
     /// workspace of their own: a file under one goes to an instance
-    /// already running, the one last sent a buffer, in place of one
-    /// started in the folder — the Lua API's types, which a
-    /// go-to-definition from a config opens (lsp-rules.md Decision 11).
-    pub libraries: Vec<PathBuf>,
+    /// already running in place of one started in the folder — the Lua
+    /// API's types, which a go-to-definition from a config opens
+    /// (lsp-rules.md Decision 11).
+    pub libraries: Vec<Library>,
+}
+
+/// A folder a server reads as a library of its workspace
+/// (`ServerDef::libraries`), and the folder whose instance takes its
+/// files first: the config's, for the Lua API's types.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Library {
+    pub folder: PathBuf,
+    pub home: Option<PathBuf>,
+}
+
+/// A running instance a library file could go to (`library_pick`).
+#[derive(Clone, Copy, Debug)]
+struct Running<'a> {
+    key: usize,
+    domain: Option<&'a str>,
+    root: &'a Path,
+    used: std::time::Instant,
+}
+
+/// The instance a file of a library goes to, of those `running` as its
+/// server: only one on the file's own domain — a host's server is
+/// handed no file of this machine's — and of those the one serving the
+/// library's `home` (the nearest root at or above it); else the one it
+/// went to before, `kept`, while that runs, so it does not move between
+/// instances as each is used in turn; else the one last sent a buffer.
+fn library_pick(
+    running: &[Running],
+    domain: Option<&str>,
+    home: Option<&Path>,
+    kept: Option<usize>,
+) -> Option<usize> {
+    let here: Vec<&Running> = running.iter().filter(|r| r.domain == domain).collect();
+    if let Some(h) = home
+        && let Some(r) = here
+            .iter()
+            .filter(|r| h.starts_with(r.root))
+            .max_by_key(|r| r.root.components().count())
+    {
+        return Some(r.key);
+    }
+    if let Some(k) = kept
+        && here.iter().any(|r| r.key == k)
+    {
+        return Some(k);
+    }
+    here.iter().max_by_key(|r| r.used).map(|r| r.key)
 }
 
 /// What a server's notification `method` asks of another — the server
@@ -1149,11 +1196,14 @@ pub enum Event {
     /// `window/showMessage` (`log` false) or `window/logMessage` (`log`
     /// true): `kind` is the protocol's MessageType, 1 error … 4 log —
     /// and 5, below it, for a line of the server's stderr. `server` is
-    /// its command, `root` the project the instance serves: two
-    /// instances of one server say things apart.
+    /// its command, `root` the project the instance serves and
+    /// `instance` which one it is, never used again: two instances of
+    /// one server — two projects', or one project's before and after a
+    /// restart — say things apart.
     Message {
         server: String,
         root: PathBuf,
+        instance: usize,
         kind: u64,
         text: String,
         log: bool,
@@ -1835,6 +1885,8 @@ struct Document {
 enum ServerProc {
     Local(Child),
     Channel(std::sync::Arc<crate::ssh::Done>, crate::ssh::RemoteKiller),
+    /// Handed to a thread that waits for it (`reap`).
+    Reaped,
 }
 
 impl ServerProc {
@@ -1844,7 +1896,37 @@ impl ServerProc {
                 let _ = c.kill();
             }
             ServerProc::Channel(_, k) => k.kill(),
+            ServerProc::Reaped => {}
         }
+    }
+
+    /// Whether it has exited, by its own status — not by its output
+    /// closing, which a child of its own holding the pipes keeps open.
+    fn exited(&mut self) -> bool {
+        match self {
+            ServerProc::Local(c) => matches!(c.try_wait(), Ok(Some(_))),
+            ServerProc::Channel(done, _) => done.try_get().is_some(),
+            ServerProc::Reaped => true,
+        }
+    }
+
+    /// Waited for, so it leaves no zombie: a process of this machine's
+    /// is only gone once its parent has read its status, and nothing
+    /// else here reads it. At once when it has exited; else — killed a
+    /// moment ago, not yet gone — on a thread of its own.
+    fn reap(&mut self) {
+        let ServerProc::Local(c) = self else { return };
+        if !matches!(c.try_wait(), Ok(None)) {
+            return;
+        }
+        let ServerProc::Local(mut c) = std::mem::replace(self, ServerProc::Reaped) else {
+            return;
+        };
+        let _ = thread::Builder::new()
+            .name("lsp reap".into())
+            .spawn(move || {
+                let _ = c.wait();
+            });
     }
 }
 
@@ -1904,13 +1986,9 @@ struct Server {
 }
 
 impl Server {
-    /// When it is next to be acted on of itself: killed, asked to shut
-    /// down and not gone; or shut down, idle — not while it starts or a
+    /// When it is to be shut down, idle — not while it starts or a
     /// request of ours is out, whose answer brings the pool round again.
     fn due(&self) -> Option<std::time::Instant> {
-        if let Some(at) = self.stopping {
-            return Some(at);
-        }
         if !self.initialized || !self.pending.is_empty() {
             return None;
         }
@@ -2133,6 +2211,7 @@ impl Server {
 fn exit_status(child: &mut ServerProc) -> String {
     let child = match child {
         ServerProc::Local(c) => c,
+        ServerProc::Reaped => return "exited".into(),
         ServerProc::Channel(done, _) => {
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
             while std::time::Instant::now() < deadline {
@@ -2174,6 +2253,7 @@ fn exit_status(child: &mut ServerProc) -> String {
 impl Drop for Server {
     fn drop(&mut self) {
         self.child.kill();
+        self.child.reap();
     }
 }
 
@@ -2310,6 +2390,12 @@ struct Pool {
     /// and the folders it was last handed.
     tree: TreeWatch,
     watching: Vec<PathBuf>,
+    /// The servers asked to shut down, by key, until they exit or are
+    /// killed: out of `servers`, so nothing feeds them and nothing they
+    /// publish is taken (lsp-rules.md Decision 12).
+    stopping: HashMap<usize, Server>,
+    /// The instance each library file went to (`library_pick`).
+    library_homes: HashMap<PathBuf, usize>,
 }
 
 /// What a server's threads hand the pool: a JSON-RPC message from its
@@ -2363,6 +2449,8 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         refreshed_tx,
         tree,
         watching: Vec::new(),
+        stopping: HashMap::new(),
+        library_homes: HashMap::new(),
     };
     loop {
         // An idle server's time is checked whatever woke the loop, so a
@@ -2384,6 +2472,10 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
             }
             recv(from_rx) -> message => {
                 let Ok((key, from)) = message else { continue };
+                if pool.stopping.contains_key(&key) {
+                    pool.heard_while_stopping(key, from);
+                    continue;
+                }
                 match from {
                     FromServer::Message(m) => pool.handle_message(key, m),
                     FromServer::Stderr(line) => pool.handle_stderr(key, line),
@@ -2462,55 +2554,147 @@ impl Pool {
 
     /// The soonest a server is due to be stopped or killed.
     fn next_due(&self) -> Option<std::time::Instant> {
-        self.servers.iter().flatten().filter_map(Server::due).min()
+        let idle = self.servers.iter().flatten().filter_map(Server::due);
+        let late = self.stopping.values().filter_map(|s| s.stopping);
+        idle.chain(late).min()
     }
 
     /// Each server due at `now`: one that held no buffer for its
     /// `idle_stop` asked to shut down — `shutdown`, then `exit` once
-    /// answered (`handle_message`) — and let go of, so a file of its
-    /// root opened later starts another; one asked [`STOP_GRACE`] ago
-    /// and still there, killed. Each said in the log, never the corner:
-    /// nobody is waiting on a server that serves nothing.
+    /// answered (`heard_while_stopping`) — and moved to `stopping`, so a file of
+    /// its root opened later starts another; one asked [`STOP_GRACE`]
+    /// ago and not exited by its own status, killed. Each said in the
+    /// log, never the corner: nobody is waiting on a server that serves
+    /// nothing.
     fn stop_idle(&mut self, now: std::time::Instant) {
-        for key in 0..self.servers.len() {
-            let Some(server) = self.servers[key].as_mut() else {
+        let late: Vec<usize> = self
+            .stopping
+            .iter()
+            .filter(|(_, s)| s.stopping.is_some_and(|t| t <= now))
+            .map(|(k, _)| *k)
+            .collect();
+        for key in late {
+            let Some(mut server) = self.stopping.remove(&key) else {
                 continue;
             };
-            if !server.due().is_some_and(|t| t <= now) {
+            // Exited, its output held open by a child of its own: let
+            // go of, reaped as it is dropped.
+            if server.child.exited() {
                 continue;
             }
             let (name, root) = (server.name.clone(), server.root.clone());
-            let text = if server.stopping.is_some() {
-                self.servers[key] = None;
-                self.forget_servers(&[key]);
-                format!(
-                    "did not exit {} s after shutdown; killed",
-                    STOP_GRACE.as_secs()
-                )
-            } else {
-                let idle = server.idle_stop.unwrap_or_default();
-                server.next_id += 1;
-                let id = server.next_id;
-                server
-                    .pending
-                    .insert(id, ("shutdown", BufferId::default(), Version::INITIAL, 0));
-                server.send(json!({ "jsonrpc": "2.0", "id": id, "method": "shutdown" }));
-                server.stopping = Some(now + STOP_GRACE);
-                self.keys.retain(|_, k| *k != key);
-                self.unpublish(key);
-                format!(
-                    "no buffer open for {} s; shutting down (lsp.idle_stop_secs)",
-                    idle.as_secs()
-                )
-            };
+            drop(server);
             self.emit(Event::Message {
                 server: name,
                 root,
+                instance: key,
+                kind: 2,
+                text: format!(
+                    "did not exit {} s after shutdown; killed",
+                    STOP_GRACE.as_secs()
+                ),
+                log: true,
+            });
+        }
+        let mut stopped = false;
+        for key in 0..self.servers.len() {
+            if !self.servers[key]
+                .as_ref()
+                .and_then(Server::due)
+                .is_some_and(|t| t <= now)
+            {
+                continue;
+            }
+            self.keys.retain(|_, k| *k != key);
+            self.unpublish(key);
+            let Some(mut server) = self.servers[key].take() else {
+                continue;
+            };
+            self.forget_servers(&[key]);
+            let idle = server.idle_stop.unwrap_or_default();
+            server.next_id += 1;
+            let id = server.next_id;
+            server
+                .pending
+                .insert(id, ("shutdown", BufferId::default(), Version::INITIAL, 0));
+            server.send(json!({ "jsonrpc": "2.0", "id": id, "method": "shutdown" }));
+            server.stopping = Some(now + STOP_GRACE);
+            let (name, root) = (server.name.clone(), server.root.clone());
+            self.stopping.insert(key, server);
+            self.emit(Event::Message {
+                server: name,
+                root,
+                instance: key,
                 kind: 3,
+                text: format!(
+                    "no buffer open for {} s; shutting down (lsp.idle_stop_secs)",
+                    idle.as_secs()
+                ),
+                log: true,
+            });
+            stopped = true;
+        }
+        if stopped {
+            self.status();
+        }
+    }
+
+    /// What a server asked to shut down said: the answer to `shutdown`,
+    /// which it is told to `exit` on; its log lines, the log's; its exit,
+    /// read so it leaves no zombie. Anything else — diagnostics, a
+    /// request of its own — is no one's now.
+    fn heard_while_stopping(&mut self, key: usize, from: FromServer) {
+        let Some(server) = self.stopping.get_mut(&key) else {
+            return;
+        };
+        let (name, root) = (server.name.clone(), server.root.clone());
+        let said = match from {
+            FromServer::Message(m) => {
+                let method = m.get("method").and_then(Value::as_str);
+                if method.is_none()
+                    && let Some(id) = m.get("id").and_then(Value::as_i64)
+                    && server
+                        .pending
+                        .remove(&id)
+                        .is_some_and(|(asked, ..)| asked == "shutdown")
+                {
+                    server.send(json!({ "jsonrpc": "2.0", "method": "exit" }));
+                }
+                match method {
+                    Some("window/logMessage" | "window/showMessage") => {
+                        let params = m.get("params");
+                        let text = params
+                            .and_then(|p| p.get("message"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let kind = params
+                            .and_then(|p| p.get("type"))
+                            .and_then(Value::as_u64)
+                            .unwrap_or(3);
+                        Some((kind, text))
+                    }
+                    _ => None,
+                }
+            }
+            FromServer::Stderr(line) => (!line.trim().is_empty()).then_some((5, line)),
+            FromServer::Exited => {
+                if let Some(mut server) = self.stopping.remove(&key) {
+                    let _ = exit_status(&mut server.child);
+                }
+                None
+            }
+            FromServer::Loaded(_) => None,
+        };
+        if let Some((kind, text)) = said {
+            self.emit(Event::Message {
+                server: name,
+                root,
+                instance: key,
+                kind,
                 text,
                 log: true,
             });
-            self.status();
         }
     }
 
@@ -2705,6 +2889,7 @@ impl Pool {
                 Event::Message {
                     server: name.clone(),
                     root: root.clone(),
+                    instance: key,
                     kind: 3,
                     text: format!(
                         "loaded {took} of {found} {language} files (lsp.{language}.load_max)"
@@ -3087,20 +3272,35 @@ impl Pool {
         Some(key)
     }
 
-    /// The instance a file of one of `def`'s libraries goes to: of the
-    /// ones running as `def` does, the one last sent a buffer. None for
-    /// a file under no library, or with none running — then it is a
-    /// workspace's as any file is.
-    fn library_server(&self, def: &ServerDef, path: &Path) -> Option<usize> {
-        if !def.libraries.iter().any(|l| path.starts_with(l)) {
-            return None;
-        }
-        self.keys
+    /// The instance a file of one of `def`'s libraries goes to, of the
+    /// ones running as `def` does (`library_pick`), remembered for the
+    /// file. None for a file under no library, or with none running —
+    /// then it is a workspace's as any file is.
+    fn library_server(&mut self, def: &ServerDef, path: &Path) -> Option<usize> {
+        let library = def.libraries.iter().find(|l| path.starts_with(&l.folder))?;
+        let domain = crate::fs::domain_of(path).map(|(d, _)| d);
+        let running: Vec<Running> = self
+            .keys
             .iter()
             .filter(|((_, c, a), _)| *c == def.command && *a == def.args)
-            .filter_map(|(_, &key)| Some((self.servers.get(key)?.as_ref()?.used, key)))
-            .max()
-            .map(|(_, key)| key)
+            .filter_map(|(_, &key)| {
+                let s = self.servers.get(key)?.as_ref()?;
+                Some(Running {
+                    key,
+                    domain: s.domain.as_deref(),
+                    root: &s.root,
+                    used: s.used,
+                })
+            })
+            .collect();
+        let kept = self.library_homes.get(path).copied();
+        let pick = library_pick(&running, domain, library.home.as_deref(), kept);
+        let live: Vec<usize> = self.keys.values().copied().collect();
+        self.library_homes.retain(|_, k| live.contains(k));
+        if let Some(key) = pick {
+            self.library_homes.insert(path.to_path_buf(), key);
+        }
+        pick
     }
 
     fn handle_cmd(&mut self, cmd: Cmd) {
@@ -4261,11 +4461,6 @@ impl Pool {
         let Some(mut server) = self.servers.get_mut(key).and_then(Option::take) else {
             return;
         };
-        // Asked to: it did as told (`stop_idle`), and it is no crash.
-        if server.stopping.is_some() {
-            self.forget_servers(&[key]);
-            return;
-        }
         let status = exit_status(&mut server.child);
         let why = match &server.last_stderr {
             Some(line) => format!("{status}: {line}"),
@@ -4337,6 +4532,7 @@ impl Pool {
         self.emit(Event::Message {
             server: name,
             root,
+            instance: key,
             kind: 5,
             text: line,
             log: true,
@@ -4354,11 +4550,6 @@ impl Pool {
             let Some((method, buffer, version, offset)) = server.pending.remove(&id) else {
                 return;
             };
-            // Shut down as asked, answered or refused: told to exit.
-            if method == "shutdown" {
-                server.send(json!({ "jsonrpc": "2.0", "method": "exit" }));
-                return;
-            }
             let result = message.get("result");
             // A server that refused to start (typescript-language-server
             // with no TypeScript to run) is not one that does nothing:
@@ -4902,6 +5093,7 @@ impl Pool {
                     Event::Message {
                         server,
                         root,
+                        instance: key,
                         kind,
                         text,
                         log: m == "window/logMessage",
@@ -6246,6 +6438,45 @@ mod tests {
     }
 
     /// rust-analyzer's, as the builtin table has it.
+    #[test]
+    fn a_library_file_goes_to_its_homes_instance_on_its_domain_and_stays() {
+        let t0 = std::time::Instant::now();
+        let later = |ms| t0 + std::time::Duration::from_millis(ms);
+        let config = Path::new("/home/u/.config/kawoosh");
+        let project = Path::new("/home/u/project");
+        let run = |key, domain, root, used| Running {
+            key,
+            domain,
+            root,
+            used,
+        };
+        // A host's server, newest, is never handed a file of this
+        // machine's — nor one of this machine's a host's file.
+        let remote = [
+            run(1, None, project, later(1)),
+            run(2, Some("box"), project, later(9)),
+        ];
+        assert_eq!(library_pick(&remote, None, None, None), Some(1));
+        assert_eq!(library_pick(&remote, Some("box"), None, None), Some(2));
+        assert_eq!(library_pick(&remote[1..], None, None, None), None);
+        // The home's instance — the nearest root at or above it — first,
+        // however old.
+        let local = [
+            run(1, None, config, later(1)),
+            run(2, None, project, later(9)),
+            run(3, None, Path::new("/home/u"), later(5)),
+        ];
+        assert_eq!(library_pick(&local, None, Some(config), None), Some(1));
+        // Else the one it went to, while it runs; else the newest.
+        assert_eq!(
+            library_pick(&local[1..], None, Some(config), Some(3)),
+            Some(3)
+        );
+        assert_eq!(library_pick(&local[1..], None, None, Some(3)), Some(3));
+        assert_eq!(library_pick(&local[1..], None, None, Some(1)), Some(2));
+        assert_eq!(library_pick(&local[1..], None, None, None), Some(2));
+    }
+
     fn rust() -> ServerDef {
         ServerDef {
             language: "rust".into(),
