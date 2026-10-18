@@ -510,3 +510,64 @@ fn percent_goes_round_a_keyword_block() {
     assert_eq!(text_of(&app), src);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A line moved with `<A-j>` / `<A-k>` keeps its colours on every frame,
+/// and so does the line it swapped with: the move rewrote both lines'
+/// text in one edit, and the runs over it went with the text replaced,
+/// both lines drawn plain until the parser answered — a flicker of two
+/// lines per keystroke, a line held moving drawn plain throughout. The
+/// move says what it moved (`kawoosh_doc::Move`), and an answer to the
+/// text before it, landing after, moves with the lines too.
+#[test]
+fn a_moved_line_keeps_its_colours_on_every_frame() {
+    let src = "fn main() {\n    let a = \"one\";\n    let b = 2;\n    call(a, b);\n}\n";
+    let (mut app, mut d, dir) = parsed("moves.rs", src);
+    // Each line's runs, relative to its start, by its text.
+    let colours = |app: &Kawoosh| -> std::collections::HashMap<String, Vec<(usize, usize, u32)>> {
+        let buf = app.ed.buffer_of(app.focused_view().unwrap());
+        (0..buf.line_count())
+            .map(|l| {
+                let r = buf.line_range(l);
+                let runs = buf
+                    .runs(SYNTAX_LAYER, r.clone())
+                    .into_iter()
+                    .map(|x| {
+                        (
+                            x.range.start.max(r.start) - r.start,
+                            x.range.end.min(r.end) - r.start,
+                            x.style,
+                        )
+                    })
+                    .collect();
+                (buf.slice(r), runs)
+            })
+            .collect()
+    };
+    let settled = colours(&app);
+    assert!(
+        !settled["    let a = \"one\";"].is_empty(),
+        "coloured: {settled:?}"
+    );
+    let mut looked = 0;
+    let mut check = |app: &Kawoosh, what: &str| {
+        let now = colours(app);
+        for (line, runs) in &settled {
+            assert_eq!(now.get(line), Some(runs), "{what}: `{line}`");
+        }
+        looked += 1;
+    };
+    d.keys(&mut app, "j");
+    // Held down: a move a frame, the parser's answers landing between.
+    for keys in ["<A-j>", "<A-j>", "<A-k>", "<A-k>", "<A-j>", "<A-k>"] {
+        d.press(&mut app, keys);
+        check(&app, &format!("the frame of {keys}"));
+        d.frame(&mut app);
+        check(&app, &format!("the frame after {keys}"));
+    }
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    check(&app, "answered");
+    assert_eq!(text_of(&app), src, "back where it was");
+    assert_eq!(looked, 13);
+    std::fs::remove_dir_all(&dir).ok();
+}

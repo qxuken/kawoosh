@@ -4040,7 +4040,29 @@ impl Editor {
     pub fn edit_each(
         &mut self,
         view: ViewId,
-        mut edits: Vec<(usize, std::ops::Range<usize>, String)>,
+        edits: Vec<(usize, std::ops::Range<usize>, String)>,
+        after: impl Fn(usize, usize) -> Selection,
+    ) {
+        let edits = edits
+            .into_iter()
+            .map(|(i, r, t)| (i, r, t, Vec::new()))
+            .collect();
+        self.edit_each_moving(view, edits, after);
+    }
+
+    /// [`Self::edit_each`] with what each replacement moved
+    /// ([`kawoosh_doc::Move`]): the text it put back elsewhere keeps its
+    /// runs — a line moved keeps its colours (`<A-j>`).
+    #[allow(clippy::type_complexity)]
+    pub fn edit_each_moving(
+        &mut self,
+        view: ViewId,
+        mut edits: Vec<(
+            usize,
+            std::ops::Range<usize>,
+            String,
+            Vec<kawoosh_doc::Move>,
+        )>,
         after: impl Fn(usize, usize) -> Selection,
     ) {
         let id = self.views[view].buffer;
@@ -4053,7 +4075,7 @@ impl Editor {
             let ascending: Vec<(std::ops::Range<usize>, &str)> = edits
                 .iter()
                 .rev()
-                .map(|(_, r, t)| (r.clone(), t.as_str()))
+                .map(|(_, r, t, _)| (r.clone(), t.as_str()))
                 .collect();
             if let Some(why) = self.multi_refuses(id, &ascending) {
                 self.message = why;
@@ -4064,25 +4086,45 @@ impl Editor {
         // so each keeps its coordinates); the selections follow below,
         // edit by edit, as the descriptors say.
         let buf = &mut self.buffers[id];
-        let edits: Vec<(usize, std::ops::Range<usize>, String)> = edits
+        let edits: Vec<(
+            usize,
+            std::ops::Range<usize>,
+            String,
+            Vec<kawoosh_doc::Move>,
+        )> = edits
             .into_iter()
-            .map(|(i, range, text)| {
+            .map(|(i, range, text, moves)| {
                 let start = buf.floor_char(range.start);
                 let end = buf.floor_char(range.end).max(start);
-                (i, start..end, text)
+                // A move's ends on the range's, or the move is not this
+                // edit's (`replace_moving` checks).
+                let moves = if (start..end) == range {
+                    moves
+                } else {
+                    Vec::new()
+                };
+                (i, start..end, text, moves)
             })
             .collect();
-        let ascending: Vec<(std::ops::Range<usize>, &str)> = edits
-            .iter()
-            .rev()
-            .map(|(_, r, t)| (r.clone(), t.as_str()))
-            .collect();
-        buf.replace_many(&ascending);
+        let disjoint = edits.windows(2).all(|w| w[1].1.end <= w[0].1.start);
+        if disjoint && edits.iter().any(|e| !e.3.is_empty()) {
+            // Back to front, each in the text as it was.
+            for (_, r, t, moves) in &edits {
+                buf.replace_moving(r.clone(), t, moves);
+            }
+        } else {
+            let ascending: Vec<(std::ops::Range<usize>, &str)> = edits
+                .iter()
+                .rev()
+                .map(|(_, r, t, _)| (r.clone(), t.as_str()))
+                .collect();
+            buf.replace_many(&ascending);
+        }
         let mut items = self.views[view].sels.items.clone();
         // Selections without an edit of their own move with the text;
         // one with an edit is where `after` puts it.
         let mut edited = vec![false; items.len()];
-        for (i, _, _) in &edits {
+        for (i, _, _, _) in &edits {
             if let Some(e) = edited.get_mut(*i) {
                 *e = true;
             }
@@ -4095,7 +4137,7 @@ impl Editor {
         let apart = edits.windows(2).all(|w| w[1].1.end <= w[0].1.start);
         let mut placed: Vec<(usize, Selection, isize)> = Vec::with_capacity(edits.len());
         let mut moved: isize = 0;
-        for (i, range, text) in edits {
+        for (i, range, text, _) in edits {
             let (start, end) = (range.start, range.end);
             let edit = kawoosh_doc::Edit {
                 range: start..end,

@@ -58,6 +58,19 @@ pub struct Edit {
     pub new_len: usize,
 }
 
+/// Text a replacement took from one place inside its range and put back,
+/// unchanged, at another: `from` in the text before the edit, `to` where
+/// it starts after. A line moved with `<A-j>` replaces its line and the
+/// next with the two swapped — a replacement for the text, but its runs
+/// (a line's colours) are the same runs at another place, and a layer
+/// carries them there rather than dropping them with the text replaced
+/// ([`Journal::record_moving`]).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Move {
+    pub from: Range<usize>,
+    pub to: usize,
+}
+
 impl Edit {
     pub fn removed(&self) -> usize {
         self.range.end - self.range.start
@@ -122,6 +135,9 @@ pub enum Stale {
 pub struct Journal {
     /// `(version produced by the edit, the edit)`, oldest first.
     entries: VecDeque<(Version, Edit)>,
+    /// The few edits that moved text ([`Move`]), by the version each
+    /// produced, oldest first; pruned with the entries.
+    moves: VecDeque<(Version, Vec<Move>)>,
     oldest: Version,
     current: Version,
 }
@@ -136,6 +152,7 @@ impl Journal {
     pub fn new() -> Self {
         Self {
             entries: VecDeque::new(),
+            moves: VecDeque::new(),
             oldest: Version::INITIAL,
             current: Version::INITIAL,
         }
@@ -156,6 +173,38 @@ impl Journal {
         self.current
     }
 
+    /// [`Self::record`] an edit that moved text: what it moved is kept
+    /// beside it, for a late answer's runs to be carried as the layers'
+    /// own were ([`Self::moved_since`]).
+    pub fn record_moving(&mut self, edit: Edit, moves: Vec<Move>) -> Version {
+        let v = self.record(edit);
+        if !moves.is_empty() {
+            self.moves.push_back((v, moves));
+        }
+        v
+    }
+
+    /// The edits after `from`, oldest first, each with what it moved —
+    /// `None` when none of them moved anything, the common case.
+    #[allow(clippy::type_complexity)]
+    pub fn moved_since(&self, from: Version) -> Result<Option<Vec<(&Edit, &[Move])>>, Stale> {
+        // Its checks: a version past now or pruned is the caller's error.
+        let _ = self.edits_since(from)?;
+        let first = self.moves.partition_point(|(v, _)| *v <= from);
+        if first == self.moves.len() {
+            return Ok(None);
+        }
+        let mut moves = self.moves.range(first..).peekable();
+        Ok(Some(
+            self.after(from)
+                .map(|(v, e)| match moves.next_if(|(mv, _)| mv == v) {
+                    Some((_, m)) => (e, m.as_slice()),
+                    None => (e, &[][..]),
+                })
+                .collect(),
+        ))
+    }
+
     /// Forget history older than `before`. Coordinates tagged with a version
     /// below the new floor can no longer be transformed.
     pub fn prune(&mut self, before: Version) {
@@ -166,6 +215,9 @@ impl Journal {
             self.entries.pop_front();
             self.oldest = version;
         }
+        while self.moves.front().is_some_and(|(v, _)| *v <= before) {
+            self.moves.pop_front();
+        }
     }
 
     /// Clear all history and jump to a fresh version. Used when the buffer is
@@ -173,6 +225,7 @@ impl Journal {
     /// from a prior version can be salvaged.
     pub fn reset_to(&mut self, version: Version) {
         self.entries.clear();
+        self.moves.clear();
         self.current = version;
         self.oldest = version;
     }
