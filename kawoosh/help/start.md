@@ -61,7 +61,8 @@ one you gave to another app since is left as it is.
   --install`).
 - **Linux**: it writes `~/.config/mimeapps.list`, and
   `~/.local/share/applications/kawoosh.desktop` when there is no
-  `kawoosh.desktop` (removed again with the last type `off` gives back).
+  `kawoosh.desktop` (removed again with the last type `off` gives back);
+  `scripts/linux-app.nu --install` installs one.
 
 Inside the editor:
 

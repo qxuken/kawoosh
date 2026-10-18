@@ -168,8 +168,9 @@ fn font_files(dir: &Path) -> Vec<PathBuf> {
 
 /// Where the bundled faces are: `fonts/` beside the binary (a folder
 /// shipped as is, Windows), `../Resources/fonts/` from it (the macOS
-/// app, `scripts/macos-app.nu`), else the source tree's `assets/fonts/`
-/// — a `cargo run`, a test.
+/// app, `scripts/macos-app.nu`), `../share/kawoosh/fonts/` (a prefix laid
+/// out as Linux has it, `bin/` beside `share/`: `scripts/linux-app.nu`),
+/// else the source tree's `assets/fonts/` — a `cargo run`, a test.
 pub fn shipped_dir() -> PathBuf {
     // Resolved: `kawoosh` on the PATH is a link into the app.
     let exe = std::env::current_exe().and_then(|e| kawoosh_systems::fs::canonicalize(&e));
@@ -178,6 +179,7 @@ pub fn shipped_dir() -> PathBuf {
         [
             dir.join("fonts"),
             dir.join("..").join("Resources").join("fonts"),
+            dir.join("..").join("share").join("kawoosh").join("fonts"),
         ]
         .into_iter()
         .find(|d| d.is_dir())

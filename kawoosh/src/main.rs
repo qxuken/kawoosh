@@ -216,6 +216,8 @@ Options:
   -V, --version                  print the version and exit
   --languages                    print the languages this build knows and
                                  their extensions, as JSON
+  --desktop-entry                print the kawoosh.desktop that runs this
+                                 binary (Linux)
   --after PID                    open once process PID has exited: what
                                  :relaunch starts
   --reuse [PATH]                 open PATH in the kawoosh running already,
@@ -263,6 +265,17 @@ fn main() -> anyhow::Result<()> {
         Some("--languages") => {
             kawoosh::outln!("{}", kawoosh::grammars::languages_json());
             return Ok(());
+        }
+        // What scripts/linux-app.nu installs as kawoosh.desktop.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        Some("--desktop-entry") => {
+            return match kawoosh::default_editor::desktop_entry() {
+                Ok(text) => {
+                    kawoosh::out!("{text}");
+                    Ok(())
+                }
+                Err(e) => Err(anyhow::anyhow!("--desktop-entry: {e}")),
+            };
         }
         // `--after PID`: started by that Kawoosh's `:relaunch`, to open
         // once it has gone — its session saved, its store let go.
@@ -388,7 +401,10 @@ const ICON_RESOURCE: u16 = 1;
 /// The window's icon as pixels, for X11's window manager: the PNG
 /// rendered from `kawoosh-icon.svg` (assets/icons/README.md). Windows has
 /// the resource above; macOS draws Kawoosh.app's `.icns` in the Dock, and
-/// Wayland the `.desktop` file's, with no window icon on either.
+/// Wayland the `Icon` of the `.desktop` file the window's app id names,
+/// with no window icon on either. kui gives the window no app id yet, so
+/// on Wayland the compositor finds no `kawoosh.desktop` for it
+/// (`scripts/linux-app.nu` installs one, `Icon=kawoosh`).
 #[cfg(all(unix, not(target_os = "macos")))]
 fn window_icon(launcher: kui_native::Launcher) -> kui_native::Launcher {
     match icon_rgba() {
