@@ -20,8 +20,10 @@ use crate::Setting;
 pub const STAND_IN: &str = "••••••••";
 
 /// What a rule masks: the first group of a line's match (the whole
-/// match without a group), or every line from a `from` match to the
-/// next `to` match.
+/// match without a group), or every line from a `from` match (its first
+/// group, where it has one) to the next `to` match. A rule has one of
+/// each at most for lines, and any number of blocks (`from` and `to`
+/// lists, paired in order).
 enum Find {
     Line(Regex),
     Block(Regex, Regex),
@@ -32,7 +34,7 @@ pub struct Rule {
     /// Globs on a path's name, and globs on the whole path.
     files: Option<(GlobSet, GlobSet)>,
     language: Option<String>,
-    find: Find,
+    finds: Vec<Find>,
 }
 
 impl Rule {
@@ -68,7 +70,13 @@ impl Rule {
 
     /// Pushes the ranges of `text` the rule masks onto `out`.
     pub fn scan(&self, text: &str, out: &mut Vec<Range<usize>>) {
-        match &self.find {
+        for find in &self.finds {
+            Self::scan_one(find, text, out);
+        }
+    }
+
+    fn scan_one(find: &Find, text: &str, out: &mut Vec<Range<usize>>) {
+        match find {
             Find::Line(re) => {
                 let mut at = 0;
                 for line in text.split_inclusive('\n') {
@@ -84,12 +92,16 @@ impl Rule {
             }
             Find::Block(from, to) => {
                 let mut at = 0;
-                while let Some(start) = from.find_at(text, at) {
+                while let Some(c) = from.captures_at(text, at) {
+                    let start = c.get(0).unwrap();
                     let end = match to.find_at(text, start.end()) {
                         Some(e) => e.end(),
                         None => text.len(),
                     };
-                    out.push(start.start()..end);
+                    // From the first group where there is one: a key's
+                    // name before a value over several lines stays.
+                    let first = c.get(1).map_or(start.start(), |g| g.start());
+                    out.push(first..end);
                     at = end.max(start.end());
                     if at >= text.len() {
                         break;
@@ -227,16 +239,36 @@ fn read_rule(name: &str, s: &Setting) -> Result<Option<Rule>, String> {
             ))
         }
     };
-    let find = match (regex("pattern")?, regex("from")?, regex("to")?) {
-        (Some(p), None, None) => Find::Line(p),
-        (None, Some(f), Some(t)) => Find::Block(f, t),
-        _ => return Err("a rule has a `pattern`, or a `from` and a `to`".into()),
+    // `from` and `to`: one each, or lists paired in order.
+    let regexes = |k: &str| -> Result<Vec<Regex>, String> {
+        let one = |p: &str| Regex::new(p).map_err(|e| format!("`{k}`: {e}"));
+        match t.get(k) {
+            None => Ok(Vec::new()),
+            Some(Setting::Str(p)) => Ok(vec![one(p)?]),
+            Some(Setting::List(l)) => l
+                .iter()
+                .map(|p| match p {
+                    Setting::Str(p) => one(p),
+                    _ => Err(format!("`{k}` holds strings")),
+                })
+                .collect(),
+            Some(_) => Err(format!("`{k}` is a string or a list of them")),
+        }
     };
+    let (from, to) = (regexes("from")?, regexes("to")?);
+    if from.len() != to.len() {
+        return Err("`from` and `to` come in pairs".into());
+    }
+    let mut finds: Vec<Find> = regex("pattern")?.map(Find::Line).into_iter().collect();
+    finds.extend(from.into_iter().zip(to).map(|(f, t)| Find::Block(f, t)));
+    if finds.is_empty() {
+        return Err("a rule has a `pattern`, or a `from` and a `to`, or both".into());
+    }
     Ok(Some(Rule {
         name: name.to_string(),
         files,
         language: text("language")?,
-        find,
+        finds,
     }))
 }
 
@@ -391,5 +423,36 @@ mod tests {
         assert_eq!(rows[0], "a");
         assert_eq!(rows[3], "");
         assert_eq!(rows[6], "b");
+    }
+
+    /// A `.env` value quoted over several lines is masked on every line
+    /// of it, its key kept: a line rule saw only the opening quote, and
+    /// the lines inside were drawn as they are (2026-10-18). A value
+    /// closed on its own line, and the lines after the closing quote,
+    /// are the line rule's as before.
+    #[test]
+    fn a_value_quoted_over_lines_is_masked_on_each() {
+        let r = bundled();
+        let env = Some(Path::new("/p/.env"));
+        let text = "HOST=db\nNFQWS2_OPT=\"\n$BLOBS\n--filter-tcp=443 --hostlist-domains=s3cret.example --new\n--name=\\\"quoted\\\" --new\n\"\nPORT=1\nONE='a\nsecret'\nDONE=\"x\"\n";
+        let shown = r.mask_text(env, "text", text);
+        let lines: Vec<&str> = shown.split('\n').collect();
+        assert_eq!(
+            lines,
+            [
+                &format!("HOST={STAND_IN}"),
+                &format!("NFQWS2_OPT={STAND_IN}"),
+                STAND_IN,
+                STAND_IN,
+                STAND_IN,
+                STAND_IN,
+                &format!("PORT={STAND_IN}"),
+                &format!("ONE={STAND_IN}"),
+                STAND_IN,
+                &format!("DONE={STAND_IN}"),
+                "",
+            ],
+            "{shown}"
+        );
     }
 }

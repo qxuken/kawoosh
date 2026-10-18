@@ -1171,6 +1171,10 @@ impl Settings {
             };
             let masks = rule(vec![
                 (
+                    // A key's value; and a value quoted over several
+                    // lines, from its opening quote to the closing one
+                    // (`"` not after a `\`, `'` taking no escapes):
+                    // the pattern sees only the quote on the key's line.
                     "env",
                     rule(vec![
                         (
@@ -1181,6 +1185,18 @@ impl Settings {
                             "pattern",
                             s(r"^\s*(?:#+\s*)?(?:export\s+)?[A-Za-z_][A-Za-z0-9_.]*\s*=\s*(.+)$"),
                         ),
+                        (
+                            "from",
+                            Setting::List(vec![
+                                s(
+                                    r#"(?m)^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_.]*[ \t]*=[ \t]*("(?:[^"\\\n]|\\.)*)$"#,
+                                ),
+                                s(
+                                    r"(?m)^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_.]*[ \t]*=[ \t]*('[^'\n]*)$",
+                                ),
+                            ]),
+                        ),
+                        ("to", Setting::List(vec![s(r#"(?m)(?:^|[^\\])""#), s("'")])),
                     ]),
                 ),
                 (
@@ -2200,7 +2216,9 @@ mod tests {
                 "scrolloff",
                 "secrets.forget_secs",
                 "secrets.masks.env.files",
+                "secrets.masks.env.from",
                 "secrets.masks.env.pattern",
+                "secrets.masks.env.to",
                 "secrets.masks.json.files",
                 "secrets.masks.json.pattern",
                 "secrets.masks.key.files",

@@ -567,3 +567,103 @@ fn a_shown_commit_masks_a_renamed_file_whatever_the_colour() {
     assert!(!shown.contains(SECRET), "masked: {shown}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A `.env` whose value is quoted over several lines (the user's
+/// `NFQWS2_OPT="…"`), edited by the keys that rewrite whole lines —
+/// `<A-j>` `<A-k>`, `dd` `p` `P`, a paste — is drawn masked on every
+/// frame: no frame draws a value, and every line inside the quotes, as
+/// the text has them on that frame, is drawn as the stand-in whole.
+/// Before, the lines inside the quotes were drawn as they are on every
+/// frame (a line rule saw only the opening quote).
+#[test]
+fn a_value_over_lines_stays_masked_through_line_moves() {
+    const DOMAIN: &str = "s3cretdom";
+    const PASTED: &str = "pasted9secret";
+    let dir = tmp("moves");
+    let env = dir.join(".env");
+    std::fs::write(
+        &env,
+        format!(
+            "HOST=db\nTOKEN={SECRET}\nNFQWS2_OPT=\"\n$BLOBS\n--filter-tcp=443 --hostlist-domains={DOMAIN}.example --new\n--filter-udp=443 --payload=quic_initial $QUIC_STRAT --new\n\"\nPORT=1\n"
+        ),
+    )
+    .unwrap();
+    let (mut d, mut app) = launch(&env, &dir);
+    let id = focused_buffer(&app);
+    assert!(app.ed.buffers[id].private);
+    let mut frames = 0;
+    // The frame just drawn, against the text as it is: no secret in any
+    // drawn text, and each line between `KEY="` and `"` its stand-in.
+    let check = |d: &Drive, app: &Kawoosh, what: &str| {
+        let shown = drawn(d);
+        for s in [SECRET, DOMAIN, PASTED] {
+            assert!(!shown.contains(s), "{what}: `{s}` drawn: {shown}");
+        }
+        let text = app.ed.buffers[id].text();
+        let rows = d.line_rows();
+        let mut inside = false;
+        for (ln, line) in text.lines().enumerate() {
+            if inside && line == "\"" {
+                inside = false;
+            } else if inside {
+                assert_eq!(
+                    rows.get(ln).map(String::as_str),
+                    Some(kawoosh_editor::masks::STAND_IN),
+                    "{what}: line {ln} `{line}` inside the value; rows {rows:?}"
+                );
+            } else if line.ends_with("=\"") {
+                inside = true;
+            }
+        }
+    };
+    let mut step = |d: &mut Drive, app: &mut Kawoosh, keys: &str| {
+        for tok in kawoosh_editor::keymap::parse_notation(keys) {
+            d.press(app, &tok);
+            check(d, app, &format!("`{tok}` of `{keys}`"));
+            frames += 1;
+        }
+        for i in 0..3 {
+            app.wait_for_jobs();
+            d.frame(app);
+            check(d, app, &format!("frame {i} after `{keys}`"));
+            frames += 1;
+        }
+    };
+    check(&d, &app, "opened");
+    // A line inside the value moved down, up past `$BLOBS`, back.
+    step(&mut d, &mut app, "5G");
+    step(&mut d, &mut app, "<A-j>");
+    step(&mut d, &mut app, "<A-k>");
+    step(&mut d, &mut app, "<A-k>");
+    step(&mut d, &mut app, "<A-j>");
+    // A plain key's line moved into the value and out again.
+    step(&mut d, &mut app, "2G");
+    step(&mut d, &mut app, "<A-j>");
+    step(&mut d, &mut app, "<A-j>");
+    step(&mut d, &mut app, "<A-k>");
+    step(&mut d, &mut app, "<A-k>");
+    // Deleted and put back, below and above.
+    step(&mut d, &mut app, "5G");
+    step(&mut d, &mut app, "dd");
+    step(&mut d, &mut app, "p");
+    step(&mut d, &mut app, "dd");
+    step(&mut d, &mut app, "P");
+    step(&mut d, &mut app, "u");
+    step(&mut d, &mut app, "<C-r>");
+    // A paste from the clipboard into the value.
+    step(&mut d, &mut app, "4G");
+    ex(&mut d, &mut app, "paste clipboard");
+    d.input(
+        &mut app,
+        kui_native::InputEvent::Paste {
+            text: format!("--pasted={PASTED}\n"),
+            marks: kui_native::ClipboardMarks::default(),
+        },
+    );
+    check(&d, &app, "the paste's frame");
+    step(&mut d, &mut app, "");
+    let text = app.ed.buffers[id].text();
+    assert!(text.contains(PASTED), "pasted: {text}");
+    assert!(frames > 60, "{frames} frames looked at");
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -532,3 +532,40 @@ Not done, and known: a hunk's sides are scanned alone, a `*show*`
 section's sides a hunk's run together: a `pem` block whose `BEGIN` line
 is outside the hunk and its context is not found in it (the `key` rule,
 a line rule, masks a private key file whole either way).
+
+### Line moves and a value over lines, 2026-10-18
+
+From the todo: "`<A-j/k>` line moves inside dotenv files flicker both
+lines", in a `.env` whose value is quoted over several lines
+(`NFQWS2_OPT="` … `"`).
+
+- **No frame drew a mask's value.** A buffer's rule masks are scanned
+  whole for each version before its rows are drawn (`masks_of`, kept
+  per version), so the frame that draws an edit draws it with that
+  edit's masks: checked frame by frame across `<A-j>` `<A-k>`, `dd`
+  `p` `P`, `u` `<C-r>` and a paste. The scan is ~8 µs a version for a
+  `.env` the user's size, 6.7 ms at `scan_max_kb` (1 MiB): no reason
+  to carry the rule masks through the journal instead.
+- **The flicker was the colours**: the move rewrote both lines in one
+  edit and their syntax runs went with it, both lines plain until the
+  parser answered — every language, seen first in `.env` because its
+  grammar had just been installed. An edit now says what it moved, and
+  the runs go with the text (core.md Decision 1, `Move`).
+- **What was drawn was the value's other lines.** `env` is a line rule:
+  on `NFQWS2_OPT="` it masked the quote, and the lines inside the
+  quotes — the value — matched no key and were drawn as they are, on
+  every frame. `env` masks them now: a rule may have a line `pattern`
+  and blocks both, and `from` and `to` may be lists, paired in order.
+  `env`'s two blocks go from a key whose value opens a quote and does
+  not close it on its line to the closing quote (`"` not after a `\`;
+  `'` takes no escapes): every line inside is a stand-in, the key kept.
+  A block's `from` may have a group, where its mask starts, as a line
+  rule's `pattern` does. An opening quote never closed masks to the end
+  of the file — the safe side.
+
+*Beat:* rules of their own (`env_quoted`, built first) — they named the
+same files, so `secrets.masks.env = false` no longer made a `.env` plain
+or not private: one rule for one kind of file is what a user switches
+off by name. *Beat:* `env`'s pattern reaching over lines — a line rule
+is one line by design (a list's line is masked alone, `mask_text`), and
+the block form already scans the whole text.
