@@ -37,6 +37,7 @@ case "$1" in
     esac ;;
   lag) /bin/sleep 0.3; printf '{"values":[{"value":"v%s"}]}' "$#" ;;
   slow) echo $$ > "$here/slow.pid"; exec /bin/sleep 30 ;;
+  orphan) /bin/sleep 30 & echo $! > "$here/orphan.pid"; printf '{"values":[{"value":"o"}]}' ;;
   garbage) echo 'Error: not a completion, and {not json' ;;
   huge) exec /usr/bin/yes '{"values":[{"value":"x"}]}' ;;
   *) ;;
@@ -308,6 +309,22 @@ fn a_completer_that_hangs_raves_or_floods_gives_nothing() {
         unsafe { libc::kill(pid, 0) },
         0,
         "the completer was stopped"
+    );
+    leave(&mut d, &mut app);
+
+    // What it started outlives it, holding the pipe: stopped with it,
+    // its whole group — none left behind.
+    d.keys(&mut app, ":compile orphan ");
+    answered(&mut d, &mut app);
+    let pid: i32 = std::fs::read_to_string(s.bin.join("orphan.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert_ne!(
+        unsafe { libc::kill(pid, 0) },
+        0,
+        "the completer's child was stopped too"
     );
     leave(&mut d, &mut app);
 
