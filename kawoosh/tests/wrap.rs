@@ -277,3 +277,33 @@ fn the_bar_caret_stays_in_the_pane_on_the_frame_that_types() {
         }
     }
 }
+
+/// `<A-k>` in a wrapped pane moves the line, not the pane: the view
+/// holds still until the caret reaches `scrolloff`, as `<A-j>` and an
+/// unwrapped pane do. The rows' anchor once followed the caret through
+/// the swap to the edit's start — the caret's new line — and the pane
+/// scrolled a line a press to keep the row where it was.
+#[test]
+fn alt_k_in_a_wrapped_pane_moves_the_line_not_the_pane() {
+    let text: String = (0..200).map(|i| format!("line {i:03}\n")).collect();
+    let mut app = Kawoosh::new("t", &text);
+    let mut d = Drive::new(800.0, 400.0);
+    settle(&mut d, &mut app);
+    ex(&mut d, &mut app, "set editor.wrap=word");
+    d.keys(&mut app, "51G");
+    settle(&mut d, &mut app);
+    let v = app.focused_view().unwrap();
+    let top = app.ed.views[v].top;
+    for n in 1..=3 {
+        d.key(&mut app, "k", KeyMods::NONE.with_alt());
+        settle(&mut d, &mut app);
+        assert_eq!(head(&app).0, 50 - n);
+        assert_eq!(app.ed.views[v].top, top, "the pane held after {n} <A-k>");
+    }
+    for n in 1..=3 {
+        d.key(&mut app, "j", KeyMods::NONE.with_alt());
+        settle(&mut d, &mut app);
+        assert_eq!(app.ed.views[v].top, top, "the pane held after {n} <A-j>");
+    }
+    assert_eq!(app.ed.buffer_of(v).text(), text);
+}

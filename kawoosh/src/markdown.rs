@@ -1322,10 +1322,16 @@ impl Kawoosh {
             .filter(|a| a.buffer == buf_id)
             .filter(|_| !crate::markdown::is_table_line(buf, head))
             .and_then(|a| {
-                let edits = buf.journal().edits_since(a.version).ok()?;
-                let at = edits.fold(a.head, |o, e| {
-                    e.transform_offset(o, kawoosh_doc::Bias::Left)
-                });
+                // A caret whose text an edit replaced is not followed
+                // through it: the offset lands on the edit's start,
+                // which is no line of its own — `<A-k>` swapping the
+                // line above put it on the caret's new line, and the
+                // pane scrolled a line a press to keep the row still.
+                let mut edits = buf.journal().edits_since(a.version).ok()?;
+                let at = edits.try_fold(a.head, |o, e| {
+                    (!(e.range.start < o && o < e.range.end))
+                        .then(|| e.transform_offset(o, kawoosh_doc::Bias::Left))
+                })?;
                 (buf.line_of(at.min(buf.len())) == head).then_some(a)?;
                 let row = ui.layout_of(a.row)?;
                 let lines = ui.layout_of(a.lines)?;
