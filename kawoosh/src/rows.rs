@@ -854,13 +854,13 @@ pub struct RowForm {
     /// bullet as the caret left it, its source shown as the caret
     /// came): kui's layout of it is that text's, and a caret placed by
     /// it would stand at the byte's place in the old text — two cells
-    /// off, through a drag (2026-10-08). Placed by measure instead,
-    /// right on the first visual line, and the pane asks for the frame
-    /// that places it by the new layout.
+    /// off, through a drag (2026-10-08). Placed by kui in the new text
+    /// instead (`caret_in_rich_text`, wrap.md Decision 8), and the pane
+    /// asks for the frame that places it by the new layout.
     pub stale: bool,
     /// The width the row's text wraps in, as the pane knows it this
-    /// frame (its lines column's): past it a byte measured unwrapped is
-    /// on no visual line of the row.
+    /// frame (its lines column's): what a caret is placed at on a row
+    /// kui has not laid out yet (wrap.md Decision 8).
     pub room: f32,
     pub wrap: Option<kui_native::TextWrap>,
     pub bg: Option<Color>,
@@ -1718,17 +1718,15 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             .and_then(|f| f.gutter.as_ref())
             .map_or(0.0, |g| g.0);
         // Where byte `b` of a wrapped row is: where kui laid it out last
-        // frame, against where it laid the first — the frame that types
-        // is a frame behind, and the next catches up.
+        // frame, against where it laid the first.
         //
-        // A row that drew another text last frame (`stale`), or none,
-        // measures the byte unwrapped: right on the first visual line.
-        // Past the row's room that place is on no line of the row — a
-        // bar hung there (a float, unclipped) stood outside the pane for
-        // the frame, where the text would be unwrapped (2026-10-16). There
-        // the old layout answers, the byte clamped to its text: the row's
-        // own wrap, inside it, a frame behind; with no layout at all, the
-        // measure folded at the room, a char wrap's guess.
+        // A row that drew another text last frame (`stale`), or none — the
+        // frame that types, a row turning to its source — asks kui where
+        // the byte lands in the row's spans as this frame draws them,
+        // wrapped at the width the text had (kui F171): the very place,
+        // on every visual line. Its old layout put the bar a letter
+        // behind past the first line for the frame, and the prefix
+        // measured unwrapped stood outside the pane there (2026-10-16).
         // How wide the row's text up to byte `b` is drawn: each span in
         // its own face, as kui lays the row out — a task's box in
         // `font.icons`, a code span in the editor's face, bold, italic.
@@ -1750,26 +1748,37 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             ui.measure_rich_text(&spans, &base, None).width
         };
         let stale = form.is_some_and(|f| f.stale);
-        let room = form.map_or(f32::INFINITY, |f| f.room).max(1.0);
+        // The row's text as `flush` draws it — one paragraph, its spans
+        // and the end cell's space — and the width kui wraps it in: the
+        // text's box last frame, else the lines column's.
+        let row_spans: Vec<Span<'_>> = match wraps && !segs.is_empty() {
+            true => segs
+                .iter()
+                .map(|(r, l)| span_of(r.clone(), l))
+                .chain(
+                    (end_cell && segs.last().is_some_and(|(r, _)| r.end >= len))
+                        .then(|| Span::new(" ")),
+                )
+                .collect(),
+            false => Vec::new(),
+        };
+        let wrap_w = ui
+            .layout_of(ui.child_key("text"))
+            .map_or(form.map_or(f32::INFINITY, |f| f.room), |r| r.w)
+            .max(1.0);
         let wrapped_at = |ui: &mut Ui<'_>, b: usize| -> (f32, f32) {
             let laid = text_key
                 .get()
+                .filter(|_| !stale)
                 .and_then(|k| Some((ui.caret_rect(k, b)?, ui.caret_rect(k, 0)?)));
-            let by_layout = |(at, origin): (kui_native::Rect, kui_native::Rect)| {
-                (gutter + at.x - origin.x, at.y - origin.y)
-            };
-            if let Some(p) = laid.filter(|_| !stale) {
-                return by_layout(p);
+            if let Some((at, origin)) = laid {
+                return (gutter + at.x - origin.x, at.y - origin.y);
             }
-            let x = prefix_w(ui, b);
-            match laid {
-                _ if x <= room => (gutter + x, 0.0),
-                Some(p) => by_layout(p),
-                None => {
-                    let folds = (x / room).floor();
-                    (gutter + x - folds * room, folds * lh)
-                }
+            if row_spans.is_empty() {
+                return (gutter, 0.0);
             }
+            ui.caret_in_rich_text(&row_spans, &base, Some(wrap_w), b)
+                .map_or((gutter, 0.0), |at| (gutter + at.x, at.y))
         };
         // Bar carets, measured to their byte — past a ghost or a hint
         // when they sit after it.

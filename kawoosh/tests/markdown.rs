@@ -1988,8 +1988,10 @@ fn wrap_flips_a_rendered_panes_own_markdown_wrap() {
 /// bar stood off by the difference for a frame per letter typed
 /// (2026-10-18, "cursor jumps ahead … inside a markdown checkmark
 /// list"). Open, done, set aside, nested, the first line of one that
-/// wraps, and a prose row with a code span in the editor's face before
-/// the caret. The bars a frame draws are kui's 2 px quads.
+/// wraps and a later one — placed by kui in a text it has not laid out
+/// yet (kui F171), where the row's old layout put it a letter behind —
+/// and a prose row with a code span in the editor's face before the
+/// caret. The bars a frame draws are kui's 2 px quads.
 #[test]
 fn the_bar_caret_in_a_task_sits_at_its_byte_on_every_frame() {
     let dir = std::env::temp_dir().join(format!("kawoosh-md-taskcaret-{}", std::process::id()));
@@ -2051,40 +2053,22 @@ fn the_bar_caret_in_a_task_sits_at_its_byte_on_every_frame() {
     run(&mut d, &mut app, "nested", "6GA");
     run(&mut d, &mut app, "mid-item", "3G0fiei");
     run(&mut d, &mut app, "a wrapped one's first line", "7G0fai");
-    // Past the first visual line of a wrapped row, the frame that types
-    // places the bar by the row's last layout (wrap.md Decision 6): on
-    // its visual line, at most the letter typed behind, until kui can
-    // say where a byte of a text not laid out yet lands.
+    // Past the first visual line of a wrapped row too (wrap.md Decision
+    // 6): exact on the frame that types, not a letter behind.
     d.press(&mut app, "<Esc>");
     d.press(&mut app, "7G0i");
     settle(&mut d, &mut app);
     let first = bars(&mut d)[0].1;
-    d.press(&mut app, "<Esc>");
-    d.press(&mut app, "A");
-    settle(&mut d, &mut app);
-    let mut before = bars(&mut d)[0].0;
-    for c in ["x", "y", "z"] {
-        d.keys(&mut app, c);
-        let drawn = bars(&mut d);
-        d.frame(&mut app);
-        let laid = bars(&mut d);
-        assert_eq!((drawn.len(), laid.len()), (1, 1), "{drawn:?} {laid:?}");
-        let ((x0, y0), (x1, y1)) = (drawn[0], laid[0]);
-        assert!(
-            y1 > first,
-            "on a later visual line: {laid:?}, the first at {first}"
-        );
-        assert_eq!(y0, y1, "on its visual line after `{c}`");
-        assert!(
-            x0 <= x1 && x1 - x0 <= x1 - before + 0.5,
-            "a letter behind at most after `{c}`: {x0} for {x1}, {before} before it"
-        );
-        before = x1;
-    }
+    run(&mut d, &mut app, "a wrapped one's later line", "7GA");
+    let later = bars(&mut d)[0].1;
+    assert!(
+        later > first,
+        "on a later visual line: {later}, the first at {first}"
+    );
     d.press(&mut app, "<Esc>");
     ex(&mut d, &mut app, "set font.prose=sans");
     settle(&mut d, &mut app);
     run(&mut d, &mut app, "after a code span in prose", "8GA");
-    assert_eq!(typed, 21);
+    assert_eq!(typed, 24);
     std::fs::remove_dir_all(&dir).ok();
 }
