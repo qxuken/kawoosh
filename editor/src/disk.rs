@@ -605,7 +605,6 @@ mod tests {
     }
 
     /// Buffer `id`'s text made `text` as an edit, so it is modified.
-    #[cfg(unix)]
     fn retype(ed: &mut Editor, id: crate::BufferId, text: &str) {
         let b = &mut ed.buffers[id];
         let len = b.len();
@@ -696,7 +695,6 @@ mod tests {
     /// A file with a second name is written in place, so the other name
     /// reads the new text too: a rename over it would have parted them.
     #[test]
-    #[cfg(unix)]
     fn a_save_keeps_a_hard_link() {
         let dir = tmp("hard-link");
         let f = dir.join("a.txt");

@@ -80,24 +80,135 @@ pub fn unsupported(e: &io::Error) -> bool {
     e.kind() == io::ErrorKind::Unsupported
 }
 
-/// Whether a file a save writes is written in place rather than
-/// replaced by a renamed sibling: a rename would not keep it as it was.
-/// One with other names (hard links) would leave them the old text, and
-/// one owned by someone else would become this user's. What a rename
-/// cannot reach at all — a directory that refuses a new name, an SMB
-/// share whose ACL lets the file be written and nothing made beside it —
-/// is the caller's to see from the refusal.
-pub fn kept_in_place(meta: &std::fs::Metadata) -> bool {
+/// Whether the file at `path` (`meta` its metadata) a save writes is
+/// written in place rather than replaced by a renamed sibling: a rename
+/// would not keep it as it was. One with other names (hard links) would
+/// leave them the old text, and one owned by someone else would become
+/// this user's. What a rename cannot reach at all — a directory that
+/// refuses a new name, an SMB share whose ACL lets the file be written
+/// and nothing made beside it — is the caller's to see from the refusal.
+///
+/// On Windows the links are counted through a handle (std's
+/// `number_of_links` is unstable), and someone else is an owner other
+/// than the one this process gives what it makes — the token's default
+/// owner: an elevated process's is Administrators, so there the user's
+/// own files are written in place too, as the rename would hand them to
+/// the group. A file whose permissions this user may not even read is
+/// taken as another's. A share whose server answers with owners this
+/// machine does not know reads every file as another's: written in
+/// place. The ACL a rename gives is the directory's inherited one; a
+/// file's own entries are not kept by it (docs/design/disk.md, Not
+/// built).
+pub fn kept_in_place(path: &Path, meta: &std::fs::Metadata) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let _ = path;
         // SAFETY: `geteuid` reads the process's own id; it cannot fail.
         meta.is_file() && (meta.nlink() > 1 || meta.uid() != unsafe { libc::geteuid() })
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = meta;
+        meta.is_file() && windows::kept_in_place(path)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (path, meta);
         false
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
+    use std::ptr::null_mut;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{
+        EqualSid, GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+        TOKEN_OWNER, TOKEN_QUERY, TokenOwner,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_READ_ATTRIBUTES, GetFileInformationByHandle, READ_CONTROL,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// A file with another name, or another's: opened for its attributes
+    /// and permissions alone, which no sharing mode refuses.
+    pub fn kept_in_place(path: &Path) -> bool {
+        let file = match std::fs::OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+            .open(path)
+        {
+            Ok(file) => file,
+            // Its owner may always read its permissions.
+            Err(e) => return e.kind() == std::io::ErrorKind::PermissionDenied,
+        };
+        let handle = file.as_raw_handle();
+        // SAFETY: plain data, all zeros a valid value.
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: `handle` is `file`'s, open for this call; `info` is ours.
+        let read = unsafe { GetFileInformationByHandle(handle, &mut info) } != 0;
+        (read && info.nNumberOfLinks > 1) || anothers(handle)
+    }
+
+    /// Whether the file's owner is not the one this process gives a file
+    /// it makes. A file system that keeps no owner (FAT) has none to lose.
+    fn anothers(file: HANDLE) -> bool {
+        let mut owner: PSID = null_mut();
+        let mut sd: PSECURITY_DESCRIPTOR = null_mut();
+        // SAFETY: `file` is open; the out-pointers are ours, and `owner`
+        // points into `sd`, freed below.
+        let read = unsafe {
+            GetSecurityInfo(
+                file,
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &mut owner,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut sd,
+            )
+        } == 0;
+        let theirs = read
+            && !owner.is_null()
+            && default_owner(|mine| {
+                // SAFETY: both are valid SIDs for the call.
+                unsafe { EqualSid(owner, mine) == 0 }
+            });
+        if !sd.is_null() {
+            // SAFETY: `sd` was allocated by `GetSecurityInfo` for us.
+            unsafe { LocalFree(sd) };
+        }
+        theirs
+    }
+
+    /// `f` of the process token's default owner — what a file it makes
+    /// is owned by; false when the token cannot be read.
+    fn default_owner(f: impl FnOnce(PSID) -> bool) -> bool {
+        let mut token: HANDLE = null_mut();
+        // SAFETY: the current process's pseudo-handle; `token` is ours.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return false;
+        }
+        let mut len = 0u32;
+        // SAFETY: a size query: no buffer, `len` is ours.
+        unsafe { GetTokenInformation(token, TokenOwner, null_mut(), 0, &mut len) };
+        // u64s: aligned for the `TOKEN_OWNER` at its start.
+        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+        // SAFETY: `buf` holds `len` bytes.
+        let read = len > 0
+            && unsafe {
+                GetTokenInformation(token, TokenOwner, buf.as_mut_ptr().cast(), len, &mut len)
+            } != 0;
+        // SAFETY: `token` was opened above.
+        unsafe { CloseHandle(token) };
+        // SAFETY: filled by the call: a `TOKEN_OWNER` whose SID is in `buf`.
+        read && f(unsafe { (*buf.as_ptr().cast::<TOKEN_OWNER>()).Owner })
     }
 }
 
@@ -125,10 +236,11 @@ pub fn write_in_place(
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn os(n: i32) -> io::Error {
         io::Error::from_raw_os_error(n)
     }
@@ -136,6 +248,7 @@ mod tests {
     /// The NAS's case, as measured on its two mounts (smbfs): the full
     /// sync refused with os error 45, `fsync` taken.
     #[test]
+    #[cfg(unix)]
     fn a_refused_full_sync_falls_back_to_fsync() {
         let mut plain_asked = false;
         let got = settle(Err(os(libc::ENOTSUP)), || {
@@ -151,6 +264,7 @@ mod tests {
 
     /// Neither sync supported: the write stands.
     #[test]
+    #[cfg(unix)]
     fn no_sync_at_all_is_not_a_failed_write() {
         let got = settle(Err(os(libc::ENOTSUP)), || Err(os(libc::ENOTSUP)));
         assert_eq!(got.unwrap(), Synced::Unsupported);
@@ -164,6 +278,7 @@ mod tests {
     /// may not be there. Neither is the plain one asked for after a full
     /// one that failed so.
     #[test]
+    #[cfg(unix)]
     fn a_failed_sync_fails() {
         let mut plain_asked = false;
         let got = settle(Err(os(libc::EIO)), || {
@@ -207,14 +322,24 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.txt");
         std::fs::write(&path, "a").unwrap();
-        assert!(!kept_in_place(&std::fs::metadata(&path).unwrap()));
+        assert!(!kept_in_place(&path, &std::fs::metadata(&path).unwrap()));
         std::fs::hard_link(&path, dir.join("b.txt")).unwrap();
-        assert!(kept_in_place(&std::fs::metadata(&path).unwrap()));
+        assert!(kept_in_place(&path, &std::fs::metadata(&path).unwrap()));
         assert!(
-            !kept_in_place(&std::fs::metadata(&dir).unwrap()),
+            !kept_in_place(&dir, &std::fs::metadata(&dir).unwrap()),
             "a directory is not"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file of the system's — `win.ini` is TrustedInstaller's — is
+    /// another's: a rename would make it this user's.
+    #[test]
+    #[cfg(windows)]
+    fn a_file_of_the_systems_is_kept_in_place() {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let path = Path::new(&root).join("win.ini");
+        assert!(kept_in_place(&path, &std::fs::metadata(&path).unwrap()));
     }
 
     /// A file on the local disk syncs whole.
