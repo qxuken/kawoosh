@@ -16,7 +16,10 @@
 //!
 //! [`Matcher`] holds a list once and answers queries over it, so the
 //! strings cross the Lua boundary when the list is made, not on every
-//! keystroke; [`fuzzy`] is the one-shot form over a small list.
+//! keystroke; [`fuzzy`] is the one-shot form over a small list. It
+//! keeps the rows' bytes and nothing else (docs/design/picker.md
+//! Decision 5): a query rules a row out on its bytes, and reads the
+//! characters of the few it scores.
 
 use std::cmp::Ordering;
 
@@ -37,29 +40,66 @@ const MATCH_END: f64 = 0.5;
 /// bounded by it, since a needle longer than the haystack never matches.
 const HAYSTACK_MAX: usize = 1024;
 
-/// One haystack as the matcher keeps it: its characters, lower-cased
-/// beside the originals, and each character's byte offset for the
-/// positions handed back.
-struct Entry {
+/// A character as a needle without a capital matches it.
+fn fold(c: char) -> char {
+    if c.is_ascii() {
+        c.to_ascii_lowercase()
+    } else {
+        c.to_lowercase().next().unwrap_or(c)
+    }
+}
+
+/// `s` cut at `HAYSTACK_MAX` characters.
+fn cut(s: &str) -> &str {
+    // No more characters than bytes: a short row is whole.
+    if s.len() <= HAYSTACK_MAX {
+        return s;
+    }
+    match s.char_indices().nth(HAYSTACK_MAX) {
+        Some((i, _)) => &s[..i],
+        None => s,
+    }
+}
+
+/// One row read out for scoring: its characters, lower-cased beside
+/// the originals, and each character's byte offset for the positions
+/// handed back — none for an ASCII row, where a character's index is
+/// its byte. Eight bytes a character and more, so a scratch filled for
+/// the row being scored, never kept for every row.
+#[derive(Default)]
+struct Row {
     chars: Vec<char>,
     lower: Vec<char>,
     bytes: Vec<usize>,
+    ascii: bool,
 }
 
-impl Entry {
-    fn new(s: &str) -> Self {
-        let mut chars = Vec::with_capacity(s.len());
-        let mut lower = Vec::with_capacity(s.len());
-        let mut bytes = Vec::with_capacity(s.len());
-        for (i, c) in s.char_indices().take(HAYSTACK_MAX) {
-            chars.push(c);
-            lower.push(c.to_lowercase().next().unwrap_or(c));
-            bytes.push(i);
+impl Row {
+    fn fill(&mut self, s: &str) {
+        self.chars.clear();
+        self.lower.clear();
+        self.bytes.clear();
+        self.ascii = s.is_ascii();
+        if self.ascii {
+            let s = &s.as_bytes()[..s.len().min(HAYSTACK_MAX)];
+            self.chars.extend(s.iter().map(|&b| b as char));
+            self.lower
+                .extend(s.iter().map(|&b| b.to_ascii_lowercase() as char));
+            return;
         }
-        Self {
-            chars,
-            lower,
-            bytes,
+        for (i, c) in s.char_indices().take(HAYSTACK_MAX) {
+            self.chars.push(c);
+            self.lower.push(fold(c));
+            self.bytes.push(i);
+        }
+    }
+
+    /// The byte character `j` starts at.
+    fn byte(&self, j: usize) -> Option<usize> {
+        if self.ascii {
+            (j < self.chars.len()).then_some(j)
+        } else {
+            self.bytes.get(j).copied()
         }
     }
 }
@@ -73,35 +113,63 @@ pub struct Hit {
     pub positions: Vec<usize>,
 }
 
-/// One term of the needle as it is looked for: its characters, and
-/// whether case counts (an upper-case letter in it).
+/// One term of the needle as it is looked for: its characters, whether
+/// case counts (an upper-case letter in it), and its bytes when every
+/// character is ASCII — what an ASCII row is searched for.
 struct Term {
     chars: Vec<char>,
     sensitive: bool,
+    ascii: Option<Vec<u8>>,
 }
 
 impl Term {
     fn new(chars: Vec<char>) -> Self {
         let sensitive = chars.iter().any(|c| c.is_uppercase());
-        let chars = if sensitive {
+        let chars: Vec<char> = if sensitive {
             chars
         } else {
-            chars
-                .into_iter()
-                .map(|c| c.to_lowercase().next().unwrap_or(c))
-                .collect()
+            chars.into_iter().map(fold).collect()
         };
-        Self { chars, sensitive }
+        let ascii = chars
+            .iter()
+            .all(char::is_ascii)
+            .then(|| chars.iter().map(|&c| c as u8).collect());
+        Self {
+            chars,
+            sensitive,
+            ascii,
+        }
     }
 
-    fn hay<'a>(&self, e: &'a Entry) -> &'a [char] {
-        if self.sensitive { &e.chars } else { &e.lower }
+    fn hay<'a>(&self, r: &'a Row) -> &'a [char] {
+        if self.sensitive { &r.chars } else { &r.lower }
     }
 
-    /// Whether every character appears, in order.
-    fn has_match(&self, hay: &[char]) -> bool {
-        let mut it = hay.iter();
-        self.chars.iter().all(|c| it.any(|h| h == c))
+    /// Whether every character appears in `s`, in order: an ASCII row
+    /// read as bytes, folded a byte at a time; any other as characters,
+    /// since a capital outside ASCII can fold into it (`K`, the Kelvin
+    /// sign, is a `k`).
+    fn found_in(&self, s: &str, ascii: bool) -> bool {
+        if ascii {
+            // A character outside ASCII is in no ASCII row.
+            let Some(want) = &self.ascii else {
+                return false;
+            };
+            let mut it = s.bytes();
+            if self.sensitive {
+                want.iter().all(|&w| it.any(|b| b == w))
+            } else {
+                want.iter()
+                    .all(|&w| it.any(|b| b.to_ascii_lowercase() == w))
+            }
+        } else {
+            let mut it = s.chars().take(HAYSTACK_MAX);
+            if self.sensitive {
+                self.chars.iter().all(|&w| it.any(|c| c == w))
+            } else {
+                self.chars.iter().all(|&w| it.any(|c| fold(c) == w))
+            }
+        }
     }
 }
 
@@ -258,24 +326,48 @@ fn positions(needle_len: usize, orig: &[char], t: &Tables) -> Vec<usize> {
     out
 }
 
-/// A list held for querying.
+/// A list held for querying: every row's text one after another in one
+/// string, each cut at `HAYSTACK_MAX` characters, where each ends, and
+/// whether each is all ASCII — about the rows' own bytes, where a row
+/// kept as characters, folded and offset was sixteen bytes a character
+/// (160 MB for a hundred thousand paths, and most of the time to make).
+#[derive(Default)]
 pub struct Matcher {
-    entries: Vec<Entry>,
+    text: String,
+    ends: Vec<usize>,
+    ascii: Vec<bool>,
 }
 
 impl Matcher {
     pub fn new<S: AsRef<str>>(items: impl IntoIterator<Item = S>) -> Self {
-        Self {
-            entries: items.into_iter().map(|s| Entry::new(s.as_ref())).collect(),
+        let mut m = Self::default();
+        for s in items {
+            m.push(s.as_ref());
         }
+        m
+    }
+
+    /// One row more, at the end: what a list is made of, a row at a
+    /// time, read where it lies (a Lua string) with no copy between.
+    pub fn push(&mut self, s: &str) {
+        let s = cut(s);
+        self.text.push_str(s);
+        self.ends.push(self.text.len());
+        self.ascii.push(s.is_ascii());
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.ends.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.ends.is_empty()
+    }
+
+    /// Row `i`'s text, as cut.
+    fn row(&self, i: usize) -> &str {
+        let start = if i == 0 { 0 } else { self.ends[i - 1] };
+        &self.text[start..self.ends[i]]
     }
 
     /// The best `limit` hits for `needle`, best first, ties in the
@@ -287,12 +379,8 @@ impl Matcher {
     pub fn query(&self, needle: &str, limit: usize) -> Vec<Hit> {
         let terms = terms(needle);
         if terms.is_empty() {
-            return self
-                .entries
-                .iter()
-                .enumerate()
-                .take(limit)
-                .map(|(index, _)| Hit {
+            return (0..self.len().min(limit))
+                .map(|index| Hit {
                     index,
                     score: 0.0,
                     positions: Vec::new(),
@@ -300,17 +388,17 @@ impl Matcher {
                 .collect();
         }
         let mut tables = Tables::default();
-        let mut scored: Vec<(usize, f64)> = self
-            .entries
-            .iter()
-            .enumerate()
-            .filter_map(|(i, e)| {
-                if !terms.iter().all(|t| t.has_match(t.hay(e))) {
+        let mut row = Row::default();
+        let mut scored: Vec<(usize, f64)> = (0..self.len())
+            .filter_map(|i| {
+                let s = self.row(i);
+                if !terms.iter().all(|t| t.found_in(s, self.ascii[i])) {
                     return None;
                 }
+                row.fill(s);
                 let score = terms
                     .iter()
-                    .map(|t| compute(&t.chars, t.hay(e), &e.chars, &mut tables))
+                    .map(|t| compute(&t.chars, t.hay(&row), &row.chars, &mut tables))
                     .sum::<f64>();
                 Some((i, score))
             })
@@ -324,19 +412,19 @@ impl Matcher {
         scored
             .into_iter()
             .map(|(index, score)| {
-                let e = &self.entries[index];
+                row.fill(self.row(index));
                 // Every term's characters; two terms may light the same.
                 let mut pos = Vec::new();
                 for t in &terms {
-                    compute(&t.chars, t.hay(e), &e.chars, &mut tables);
-                    pos.extend(positions(t.chars.len(), &e.chars, &tables));
+                    compute(&t.chars, t.hay(&row), &row.chars, &mut tables);
+                    pos.extend(positions(t.chars.len(), &row.chars, &tables));
                 }
                 pos.sort_unstable();
                 pos.dedup();
                 Hit {
                     index,
                     score,
-                    positions: pos.into_iter().map(|j| e.bytes[j]).collect(),
+                    positions: pos.into_iter().filter_map(|j| row.byte(j)).collect(),
                 }
             })
             .collect()
@@ -353,7 +441,7 @@ impl Matcher {
 pub struct Single {
     term: Term,
     tables: Tables,
-    entry: Entry,
+    row: Row,
 }
 
 impl Single {
@@ -361,11 +449,7 @@ impl Single {
         Self {
             term: Term::new(needle.chars().collect()),
             tables: Tables::default(),
-            entry: Entry {
-                chars: Vec::new(),
-                lower: Vec::new(),
-                bytes: Vec::new(),
-            },
+            row: Row::default(),
         }
     }
 
@@ -379,13 +463,7 @@ impl Single {
         let mut want = t.chars.iter().peekable();
         for c in row.chars().take(HAYSTACK_MAX) {
             let Some(&&w) = want.peek() else { break };
-            let c = if t.sensitive {
-                c
-            } else if c.is_ascii() {
-                c.to_ascii_lowercase()
-            } else {
-                c.to_lowercase().next().unwrap_or(c)
-            };
+            let c = if t.sensitive { c } else { fold(c) };
             if c == w {
                 want.next();
             }
@@ -393,17 +471,12 @@ impl Single {
         if want.peek().is_some() || t.chars.is_empty() {
             return None;
         }
-        let e = &mut self.entry;
-        e.chars.clear();
-        e.lower.clear();
-        for c in row.chars().take(HAYSTACK_MAX) {
-            e.chars.push(c);
-            e.lower.push(c.to_lowercase().next().unwrap_or(c));
-        }
+        let r = &mut self.row;
+        r.fill(row);
         let t = &self.term;
-        let hay = if t.sensitive { &e.chars } else { &e.lower };
+        let hay = t.hay(r);
         let (n, m) = (t.chars.len(), hay.len());
-        let whole = compute(&t.chars, hay, &e.chars, &mut self.tables);
+        let whole = compute(&t.chars, hay, &r.chars, &mut self.tables);
         if n == m {
             return Some(whole);
         }
@@ -418,15 +491,10 @@ impl Single {
     /// on show alone, never in the rescan.
     pub fn positions(&mut self, row: &str) -> Option<Vec<usize>> {
         self.score(row)?;
-        let e = &self.entry;
+        let r = &self.row;
         let n = self.term.chars.len();
-        let at = positions(n, &e.chars, &self.tables);
-        let bytes: Vec<usize> = row.char_indices().map(|(b, _)| b).collect();
-        Some(
-            at.into_iter()
-                .filter_map(|i| bytes.get(i).copied())
-                .collect(),
-        )
+        let at = positions(n, &r.chars, &self.tables);
+        Some(at.into_iter().filter_map(|i| r.byte(i)).collect())
     }
 }
 
@@ -522,6 +590,25 @@ mod tests {
         let hit = &Matcher::new(&items).query(&needle, 10)[0];
         assert_eq!(hit.positions.len(), needle.len(), "every character placed");
         assert!(order(&format!("{dir}delta.rs"), &items).is_empty());
+    }
+
+    /// Rows outside ASCII are read as characters: a capital there can
+    /// fold into ASCII (the Kelvin sign is a `k`), a needle outside
+    /// ASCII finds no ASCII row, and the positions are bytes.
+    #[test]
+    fn rows_outside_ascii_fold_and_place_as_characters() {
+        let m = Matcher::new(["\u{212A}ey.txt", "key.txt", "é.txt", "e.txt"]);
+        let hits = m.query("key", 10);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        let kelvin = hits.iter().find(|h| h.index == 0).unwrap();
+        assert_eq!(kelvin.positions, [0, 3, 4], "the sign is three bytes");
+        let hits = m.query("é", 10);
+        assert_eq!(hits.iter().map(|h| h.index).collect::<Vec<_>>(), [2]);
+        assert_eq!(m.query("É", 10).len(), 0, "a capital is matched as written");
+        // A row is cut at HAYSTACK_MAX characters, bytes or not.
+        let long = format!("{}z", "é".repeat(HAYSTACK_MAX));
+        let m = Matcher::new([long.as_str(), "z"]);
+        assert_eq!(m.query("z", 10).len(), 1, "past the cut is not looked in");
     }
 
     /// A capital earns its bonus whatever case the needle is in: the

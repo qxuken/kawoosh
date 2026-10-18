@@ -4370,9 +4370,20 @@ fn seed(
             },
         )?,
     )?;
+    // Each row read where it lies, its bytes copied once into the
+    // matcher's: a hundred thousand paths cost no `String` each.
     k.set(
         "matcher",
-        lua.create_function(|_, list: Vec<String>| Ok(LuaMatcher(Matcher::new(&list))))?,
+        lua.create_function(|lua, list: Table| {
+            let mut m = Matcher::default();
+            for v in list.sequence_values::<LV>() {
+                match v? {
+                    LV::String(s) => m.push(&s.to_str()?),
+                    v => m.push(&lua.unpack::<String>(v)?),
+                }
+            }
+            Ok(LuaMatcher(m))
+        })?,
     )?;
     // ---- `kawoosh.cmdline(text)`: the command line opened with the
     // text on it.
