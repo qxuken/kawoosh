@@ -161,11 +161,31 @@ Still a frame behind: a byte past the first visual line of a wrapped
 row on the frame its text is new (Decision 6's old layout, the letter
 typed behind). Exact there needs kui to say where a byte of a text not
 laid out yet lands, wrapped at a width — Decision 6's "sound model",
-a kui round.
+a kui round. (*Later the same day:* that round, Decision 8.)
 
 *Beat:* the icon measured alone and its difference added — every other
 face a span can have (a prose row's code span, bold in a face whose
 bold is wider) is the same mistake.
+
+### 8. kui places a byte in a text it has not laid out yet
+
+*Added 2026-10-18,* the round Decisions 6 and 7 named. kui F171,
+`Ui::caret_in_rich_text(spans, base, max_w, byte)`: where a byte of a
+text lands once laid out at a width, with no node — shaped and wrapped
+as layout will, through the text cache, so asking and then drawing the
+row shapes it once. On the frame a wrapped row's text is new to kui
+(`stale`, or no layout yet) the bar, the hang point, a lifted block
+and the cell past the end are placed by it: the row's spans as `flush`
+draws them (the end cell's space too), at the width the row's text had
+last frame (the `text` box's, else `room`). Exact on every visual line
+on the frame that types; the old layout's letter behind, the measure
+folded at the room on a row's first frame, and the measure-or-layout
+choice at the room are gone. A row drawn the same last frame still
+reads its layout (`caret_rect`), which asks nothing of the cache.
+
+*Beat:* asking kui on every frame, the old layout never read — as
+cheap once the row's run is cached, but a change to every caret on
+every frame for a fix to one.
 
 ## Built
 
