@@ -1978,3 +1978,113 @@ fn wrap_flips_a_rendered_panes_own_markdown_wrap() {
     ex(&mut d, &mut app, "wrap");
     assert_eq!(app.ed.message, "markdown wrap on");
 }
+
+/// Typing in a task item, rendered with `markdown.reveal = span` (the
+/// caret's row keeps its box folded), puts the bar where the row lays
+/// the byte out on every frame: the frame that types too, when the
+/// row's text is new to kui and the bar is measured rather than read
+/// off the layout. The box is the Nerd Font's glyph in `font.icons`;
+/// measured in the row's own face it came out another width, and the
+/// bar stood off by the difference for a frame per letter typed
+/// (2026-10-18, "cursor jumps ahead … inside a markdown checkmark
+/// list"). Open, done, set aside, nested, the first line of one that
+/// wraps, and a prose row with a code span in the editor's face before
+/// the caret. The bars a frame draws are kui's 2 px quads.
+#[test]
+fn the_bar_caret_in_a_task_sits_at_its_byte_on_every_frame() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-md-taskcaret-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    std::fs::write(
+        dir.join("doc.md"),
+        concat!(
+            "# Tasks\n",
+            "\n",
+            "- [ ] open item\n",
+            "- [x] done item\n",
+            "- [-] dropped item\n",
+            "  - [ ] nested item\n",
+            "- [ ] a long task that wraps past the width of the pane, words words words words words words\n",
+            "- [ ] with `code` in it\n",
+        ),
+    )
+    .unwrap();
+    let (mut d, mut app) = launch(&dir, 700.0);
+    ex(&mut d, &mut app, "set markdown.reveal=span");
+    settle(&mut d, &mut app);
+    let bars = |d: &mut Drive| -> Vec<(f32, f32)> {
+        let (dl, _) = d.core.output();
+        let s = dl.scale;
+        dl.quads
+            .iter()
+            .filter(|q| {
+                q.kind == kui_native::QuadKind::Solid
+                    && (q.rect.w - 2.0 * s).abs() < 0.5
+                    && q.rect.h > 6.0 * s
+            })
+            .map(|q| (q.rect.x / s, q.rect.y / s))
+            .collect()
+    };
+    let mut typed = 0;
+    let mut run = |d: &mut Drive, app: &mut Kawoosh, what: &str, to: &str| {
+        d.press(app, "<Esc>");
+        d.press(app, to);
+        settle(d, app);
+        for c in ["x", "y", "z"] {
+            d.keys(app, c);
+            let drawn = bars(d);
+            // The same text again: the bar read off the row's layout.
+            d.frame(app);
+            let laid = bars(d);
+            assert_eq!(laid.len(), 1, "{what}: one bar after `{c}`: {laid:?}");
+            assert_eq!(
+                drawn, laid,
+                "{what}: the bar on the frame that typed `{c}`, and where the row laid its byte out"
+            );
+            typed += 1;
+        }
+    };
+    run(&mut d, &mut app, "open", "3GA");
+    run(&mut d, &mut app, "done", "4GA");
+    run(&mut d, &mut app, "set aside", "5GA");
+    run(&mut d, &mut app, "nested", "6GA");
+    run(&mut d, &mut app, "mid-item", "3G0fiei");
+    run(&mut d, &mut app, "a wrapped one's first line", "7G0fai");
+    // Past the first visual line of a wrapped row, the frame that types
+    // places the bar by the row's last layout (wrap.md Decision 6): on
+    // its visual line, at most the letter typed behind, until kui can
+    // say where a byte of a text not laid out yet lands.
+    d.press(&mut app, "<Esc>");
+    d.press(&mut app, "7G0i");
+    settle(&mut d, &mut app);
+    let first = bars(&mut d)[0].1;
+    d.press(&mut app, "<Esc>");
+    d.press(&mut app, "A");
+    settle(&mut d, &mut app);
+    let mut before = bars(&mut d)[0].0;
+    for c in ["x", "y", "z"] {
+        d.keys(&mut app, c);
+        let drawn = bars(&mut d);
+        d.frame(&mut app);
+        let laid = bars(&mut d);
+        assert_eq!((drawn.len(), laid.len()), (1, 1), "{drawn:?} {laid:?}");
+        let ((x0, y0), (x1, y1)) = (drawn[0], laid[0]);
+        assert!(
+            y1 > first,
+            "on a later visual line: {laid:?}, the first at {first}"
+        );
+        assert_eq!(y0, y1, "on its visual line after `{c}`");
+        assert!(
+            x0 <= x1 && x1 - x0 <= x1 - before + 0.5,
+            "a letter behind at most after `{c}`: {x0} for {x1}, {before} before it"
+        );
+        before = x1;
+    }
+    d.press(&mut app, "<Esc>");
+    ex(&mut d, &mut app, "set font.prose=sans");
+    settle(&mut d, &mut app);
+    run(&mut d, &mut app, "after a code span in prose", "8GA");
+    assert_eq!(typed, 21);
+    std::fs::remove_dir_all(&dir).ok();
+}
