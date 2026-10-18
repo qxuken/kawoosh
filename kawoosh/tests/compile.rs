@@ -747,8 +747,13 @@ def "main build" [target: string@targets, --jobs (-j): int, file?: string@files]
     let nu = kawoosh_systems::spawn::output(std::process::Command::new("nu").arg("--version"));
     if nu.is_ok_and(|o| o.status.success()) {
         // The second positional, past `--jobs 4`: its completer is code,
-        // so nu answers it — on a job, the line completed again as it
-        // lands.
+        // so nu answers it once the file is trusted — on a job, the line
+        // completed again as it lands.
+        ex(
+            &mut d,
+            &mut app,
+            &format!("trust allow {}", dir.join("build.nu").display()),
+        );
         d.keys(&mut app, ":compile nu build.nu build --jobs 4 release al");
         app.wait_for_jobs();
         d.frame(&mut app);

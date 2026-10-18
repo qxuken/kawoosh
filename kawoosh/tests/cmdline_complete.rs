@@ -454,8 +454,16 @@ const BUILD_NU: &str = r#"
 def files [] { ["alpha.txt", "beta.txt"] | each {|f| $f } }
 def lag [] { ["late"] | each {|f| $f } }
 def hang [] { [] | each {|f| $f } }
-def "main build" [file: string@files, other?: string@lag, third?: string@hang] { }
+def kinds [] { ["debug", "release"] }
+def "main build" [file: string@files, other?: string@lag, third?: string@hang, kind?: string@kinds] { }
 "#;
+
+/// `:trust allow PATH`, typed.
+fn trust(d: &mut Drive, app: &mut Kawoosh, path: &std::path::Path) {
+    d.keys(app, &format!(":trust allow {}", path.display()));
+    d.key(app, "enter", KeyMods::default());
+    d.frame(app);
+}
 
 /// compile.md Decision 16 on Decision 23's footing: a nushell
 /// parameter's completer is asked on a job, no key waiting for nu; the
@@ -480,8 +488,29 @@ fn a_nushell_completer_is_asked_off_the_frame() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = s.open(&mut d);
 
-    // Asked as the parameter starts; the line completed as nu answers,
-    // read from its last line.
+    // Untrusted, the file's code runs nowhere: no completer is asked of
+    // nu (`source` would run its top level), and a completer whose body
+    // is a list is still its values, read from the text.
+    d.keys(&mut app, ":compile nu build.nu build al");
+    answered(&mut d, &mut app);
+    assert_eq!(app.cmdline_ghost(), None);
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":compile nu build.nu build x y z d");
+    answered(&mut d, &mut app);
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("ebug"));
+    leave(&mut d, &mut app);
+    assert!(!s.bin.join("nu-calls").exists(), "nu was never run");
+    d.keys(&mut app, ":trust?");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(
+        app.ed.message.contains("build.nu (not trusted)"),
+        "{}",
+        app.ed.message
+    );
+    trust(&mut d, &mut app, &build);
+
+    // Trusted: asked as the parameter starts; the line completed as nu
+    // answers, read from its last line.
     d.keys(&mut app, ":compile nu build.nu build al");
     answered(&mut d, &mut app);
     assert_eq!(app.cmdline_ghost().as_deref(), Some("pha.txt"));
@@ -520,7 +549,8 @@ fn a_nushell_completer_is_asked_off_the_frame() {
     assert_eq!(asked("hang"), 1);
     leave(&mut d, &mut app);
 
-    // The file changed: asked again.
+    // The file changed: its trust was of the text before, so nothing
+    // runs until it is trusted again — then asked again.
     std::fs::write(&build, format!("# changed\n{BUILD_NU}")).unwrap();
     std::fs::File::options()
         .write(true)
@@ -528,6 +558,12 @@ fn a_nushell_completer_is_asked_off_the_frame() {
         .unwrap()
         .set_modified(std::time::SystemTime::now() + Duration::from_secs(5))
         .unwrap();
+    d.keys(&mut app, ":compile nu build.nu build al");
+    answered(&mut d, &mut app);
+    assert_eq!(app.cmdline_ghost(), None);
+    assert_eq!(asked("files"), 1);
+    leave(&mut d, &mut app);
+    trust(&mut d, &mut app, &build);
     d.keys(&mut app, ":compile nu build.nu build al");
     answered(&mut d, &mut app);
     assert_eq!(app.cmdline_ghost().as_deref(), Some("pha.txt"));
