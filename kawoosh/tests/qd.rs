@@ -102,7 +102,7 @@ fn fake_qd(t: &Path) -> (PathBuf, PathBuf) {
          case \"$*\" in\n\
          'status --json') cat '{t}/push.json' ;;\n\
          'status --pull --json') cat '{t}/pull.json' ;;\n\
-         'state show') printf '[machine]\\nrepo = \"{r}\"\\n' ;;\n\
+         'state show') printf \"[machine]\\ntags = []\\nrepo = '{r}'\\n\" ;;\n\
          *) echo \"$*\" >> '{t}/asked'; echo ok ;;\n\
          esac\n"
     );
@@ -165,6 +165,9 @@ fn the_pane_lists_modules_and_pushes_pulls_and_adds() {
         states,
         "keys.lua=repo only local.lua=machine only ui.lua=differs"
     );
+    // qd writes the repo as a TOML literal string, `repo = '…'`.
+    let read = lua(&mut app, "kawoosh.echo(kawoosh.qd.state().repo or 'none')");
+    assert_eq!(read, repo.display().to_string());
     let shown: Vec<String> = d
         .core
         .nodes()
