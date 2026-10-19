@@ -104,6 +104,8 @@ commits; 70 integration test files and 31 Lua test scripts.
 
 - [grammars.md](design/grammars.md): grammars built ahead, installed on
   demand.
+- [injections.md](design/injections.md): a language inside a string,
+  `` /* wgsl */ `…` ``, a template's `${…}` left to javascript.
 - [lsp-rules.md](design/lsp-rules.md): a language's server, switched
   per project.
 - [lsp-servers.md](design/lsp-servers.md): a server for every language.

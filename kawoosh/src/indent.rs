@@ -122,7 +122,7 @@ impl Trees {
         let (mut tree, mut g) = (tree, g);
         for _ in 0..ts::INJECTION_DEPTH {
             let Some(inj) = &g.injections else { break };
-            let Some((name, range)) = ts::injection_at(inj, tree.root_node(), &text, at) else {
+            let Some((name, pieces)) = ts::injection_at(inj, tree.root_node(), &text, at) else {
                 break;
             };
             let name = canonical(&name);
@@ -135,7 +135,7 @@ impl Trees {
             if next.injections.is_none() {
                 break;
             }
-            let Some(sub) = ts::parse_range(parser, &next, &text, range) else {
+            let Some(sub) = ts::parse_range(parser, &next, &text, &pieces) else {
                 break;
             };
             tree = sub;

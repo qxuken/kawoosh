@@ -1,7 +1,7 @@
 //! JavaScript, with its crate's query and its injections: JSDoc in a
-//! comment, regex in a regex literal (a tagged template's language is
-//! its tag, which the ts thread does not follow — `injection.combined`
-//! is not read).
+//! comment, regex in a regex literal, a tagged template's language its
+//! tag (`` sql`…` ``); then kawoosh's, a string after a `/* LANG */`
+//! comment as that language (docs/design/injections.md).
 
 use crate::Language;
 
@@ -14,6 +14,13 @@ pub static LANGUAGE: Language = Language {
     grammar: crate::grammar!("javascript", grammar),
 };
 
+/// The crate's injections, then kawoosh's; typescript's and tsx's too.
+#[cfg(feature = "javascript")]
+pub(crate) const INJECTIONS: [&str; 2] = [
+    tree_sitter_javascript::INJECTIONS_QUERY,
+    include_str!("../queries/ecma/injections.scm"),
+];
+
 #[cfg(feature = "javascript")]
 fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
@@ -23,7 +30,7 @@ fn grammar() -> Result<crate::Grammar, String> {
             tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
         ]
         .concat(),
-        Some(tree_sitter_javascript::INJECTIONS_QUERY),
+        Some(&INJECTIONS.concat()),
     )
     .and_then(|g| g.with_outline(OUTLINE))
     .and_then(|g| {
