@@ -2223,7 +2223,8 @@ fn a_narrow_tall_picker_its_keys_head_rows_and_legend() {
         let field = hs.iter().find(|(t, _)| t == "the_file").unwrap().1;
         assert!(field.w > 40.0, "at {width}: the query whole {field:?}");
         let words = hs.iter().any(|(t, _)| t == "ignored");
-        let caps = hs.iter().any(|(t, _)| t == "g");
+        // `<A-g>`'s caps: ⌥ an icon and `g` on a Mac, `alt+g` elsewhere.
+        let caps = hs.iter().any(|(t, _)| t == "g" || t == "alt+g");
         if width >= 460.0 {
             assert!(words && caps, "at {width}: the chip whole {hs:?}");
         }
