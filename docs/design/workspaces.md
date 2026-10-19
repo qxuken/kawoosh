@@ -425,6 +425,57 @@ the directory it is in, and says "deleted on disk" as before.
 refuses the very rename it would follow. A directory moved away reads
 as gone, its tabs going up.
 
+## Round four: a host's projects
+
+*Decided and built 2026-10-19, asked as "a list of hosts for which we
+save the workspace information — use case: wsl projects".*
+
+### 15. `memory.hosts` names the domains looked through
+
+A directory on a domain (domains.md) had no workspace: `workspace_of`
+returned none for any host path, so every WSL project and every ssh
+host's shared the one empty workspace — its pins, its ranking, the
+workspaces picker's rows (which leave the empty one out), the dock's
+owner, the compile root. A host's directories were not looked through
+because each marker asked is a stat on the host, and the frame waits
+for it.
+
+`memory.hosts = { "wsl" }` names the domains whose directories are:
+there `Kawoosh::workspace_of` asks the host itself
+(`host_workspace_of`) the local rule — the outermost directory holding
+a `.kawoosh`, else the nearest holding `.git`, `.jj` or `.hg` — and
+the answer is the host's path spelled with its domain (`wsl:/home/me/
+proj`), so the memory, the picker, the dock and `:compile` take it as
+they take a local root; a pick in the workspaces picker opens its file
+(or lists its root, while the domain is not connected to say the file
+is there) and moves the tab there, as a path on a domain is opened. The
+walk is a stat per marker per directory up to the host's root (`~`'s
+walk stops at `~`), each held for a moment (`fs::new_moment`); it is
+asked once per directory the tab moves to, not per frame. Empty by
+default: a slow host's user names it knowingly. WSL's share answers a
+stat in a few milliseconds on this machine (domains.md, "Built,
+speed"), so `wsl` is the one to name first.
+
+A domain named but not connected — a session restored onto it before
+it answers — cannot be asked, and has no workspace until it connects;
+the memory's workspace is asked again then (`note_workspace` keys its
+cache by the cwd and whether the host is looked through, so naming
+the domain, connecting it or losing it asks again). The dock keeps its
+first answer for a directory, so a connection does not move a pane's
+owner under it and close the workspace it was made in.
+
+What stays local: the project settings layer and the trusted
+`init.lua` are read from the local disk only (`project_settings_
+candidates` has none for a host path), whatever `memory.hosts` says —
+reading and running a host's `.kawoosh/init.lua` is a trust question of
+its own, not this one.
+
+*Beat:* **every domain looked through** — the stats land on the frame,
+a second each on a slow link; **`domains.NAME.workspaces = true`** —
+only the settings' domains have a table, where `wsl`, `wsl-debian` and
+`~/.ssh/config`'s hosts are found with none; **a pattern** (`wsl*`) —
+a distro's name is said once, and a list of names is what was asked.
+
 ## Build order
 
 One round: the tab's `cwd` and the sync on the frame (`Kawoosh::sync_cwd`,

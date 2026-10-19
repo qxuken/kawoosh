@@ -241,6 +241,54 @@ fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// A host's directory is no workspace until `memory.hosts` names its
+/// domain; then its project is, as a local one's — the outermost
+/// `.kawoosh`, else the repository — and a domain gone has none again.
+#[test]
+fn a_host_memory_hosts_names_has_workspaces() {
+    let root = std::env::temp_dir().join(format!("kawoosh-domain-ws-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("proj/.git")).unwrap();
+    std::fs::create_dir_all(root.join("proj/src")).unwrap();
+    std::fs::create_dir_all(root.join("kw/.kawoosh")).unwrap();
+    std::fs::create_dir_all(root.join("kw/inner/.git")).unwrap();
+    let name = format!("ws{}", std::process::id());
+    kawoosh_doc::fs::register(&name, Arc::new(Mirror(root.clone())));
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("cd {name}:/proj/src"));
+    assert_eq!(app.cwd.display().to_string(), format!("{name}:/proj/src"));
+    assert_eq!(app.moments.workspace(), "", "not named: no workspace");
+
+    app.run_lua_source("t", &format!(r#"kawoosh.opt("memory.hosts", {{ "{name}" }})"#));
+    d.frame(&mut app);
+    assert_eq!(
+        app.moments.workspace(),
+        format!("{name}:/proj"),
+        "named: the repository's root, asked of the host"
+    );
+    ex(&mut d, &mut app, &format!("cd {name}:/kw/inner"));
+    assert_eq!(
+        app.moments.workspace(),
+        format!("{name}:/kw"),
+        "the outermost .kawoosh over the repository"
+    );
+    ex(&mut d, &mut app, &format!("cd {name}:/"));
+    assert_eq!(app.moments.workspace(), "", "nothing above the host's root");
+
+    // Not connected, the host cannot be asked: no workspace.
+    ex(&mut d, &mut app, &format!("cd {name}:/proj/src"));
+    assert_eq!(app.moments.workspace(), format!("{name}:/proj"));
+    kawoosh_doc::fs::unregister(&name);
+    d.frame(&mut app);
+    assert_eq!(app.moments.workspace(), "", "{}", app.ed.message);
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// `:dir chmod` in a host's listing goes through its domain — the
 /// mode read off the host's stat, changed here, set by its `set_mode`
 /// (SFTP's SETSTAT) — and `:dir chown` on a host that keeps no owners

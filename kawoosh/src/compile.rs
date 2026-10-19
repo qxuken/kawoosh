@@ -1101,7 +1101,7 @@ impl Kawoosh {
     /// Decision 19).
     fn compile_root(&self) -> PathBuf {
         let (dir, _) = self.compile_start();
-        match crate::moments::workspace_of(&dir) {
+        match self.workspace_of(&dir) {
             ws if ws.is_empty() => self.compile_dir(),
             ws => PathBuf::from(ws),
         }

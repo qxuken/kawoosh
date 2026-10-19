@@ -138,8 +138,9 @@ pub struct Moments {
     /// The head's hash and time as last seen: a head that moved is a
     /// text attended — new, taken again (the time moves), or recalled.
     head_seen: Option<(String, Instant)>,
-    /// The workspace the moments are made under, by the cwd.
-    workspace: (std::path::PathBuf, String),
+    /// The workspace the moments are made under, by the cwd and whether
+    /// it is a host's looked through (`memory.hosts`).
+    workspace: ((std::path::PathBuf, bool), String),
     /// When dwell was last counted to, and whether the window had the
     /// keyboard then: dwell is the time between two counts the window
     /// had it at both, so it needs no frames in between.
@@ -181,7 +182,7 @@ impl Moments {
             evicted_at: 0,
             histories_bytes: None,
             head_seen: None,
-            workspace: (std::path::PathBuf::new(), String::new()),
+            workspace: ((std::path::PathBuf::new(), false), String::new()),
             last_tick: now,
             focused_at_tick: true,
             last_input: now,
@@ -390,7 +391,8 @@ const REPOSITORY_MARKERS: [&str; 3] = [".git", ".jj", ".hg"];
 /// `dir` with a `.kawoosh` in it; else the nearest that is a
 /// repository's root (docs/design/workspaces.md Decision 4), so a
 /// project without a `.kawoosh` has pins of its own; else nothing, as
-/// on a host, whose directories are not looked through for it.
+/// on a host, whose directories are not looked through for it here —
+/// [`Kawoosh::workspace_of`] looks through those `memory.hosts` names.
 pub fn workspace_of(dir: &Path) -> String {
     if kawoosh_systems::fs::domain_of(dir).is_some() {
         return String::new();
@@ -406,7 +408,67 @@ pub fn workspace_of(dir: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// [`workspace_of`] on a host, asked of it: a stat per marker per
+/// directory up to its root, each held for a moment (`fs::new_moment`).
+/// A domain not connected answers none, and so has no workspace yet.
+pub fn host_workspace_of(dir: &Path) -> String {
+    use kawoosh_systems::fs;
+    let mut chain = Vec::new();
+    let mut at = Some(dir.to_path_buf());
+    while let Some(d) = at {
+        // `box:~`'s parent is not on the host: the walk stops there.
+        at = fs::parent(&d).filter(|p| fs::domain_of(p).is_some());
+        chain.push(d);
+    }
+    let has = |d: &Path, m: &str, dir: bool| {
+        let p = fs::join(d, Path::new(m));
+        if dir { fs::is_dir(&p) } else { fs::exists(&p) }
+    };
+    // The chain runs up from `dir`: its outermost is its last.
+    chain
+        .iter()
+        .rev()
+        .find(|d| has(d, crate::settings::PROJECT_DIR, true))
+        .or_else(|| {
+            chain
+                .iter()
+                .find(|d| REPOSITORY_MARKERS.iter().any(|m| has(d, m, false)))
+        })
+        .map(|d| d.display().to_string())
+        .unwrap_or_default()
+}
+
+/// The domains whose directories are looked through for a workspace
+/// (`memory.hosts`), as here: a WSL distro's projects, an ssh host's.
+pub const HOSTS: &str = "memory.hosts";
+
 impl Kawoosh {
+    /// Whether `dir` is on a host `memory.hosts` names, connected — so
+    /// asking it where its project is can be answered.
+    fn looks_through(&self, dir: &Path) -> bool {
+        let Some((name, _)) = kawoosh_systems::fs::domain_of(dir) else {
+            return false;
+        };
+        let named = match self.ed.settings.get(HOSTS) {
+            Some(kawoosh_editor::Setting::List(l)) => {
+                l.iter().any(|x| x.as_str() == Some(name))
+            }
+            _ => false,
+        };
+        named && kawoosh_doc::fs::remote(dir).is_some_and(|r| r.is_ok())
+    }
+
+    /// The workspace `dir` is in ([`workspace_of`]), a host's looked
+    /// through when `memory.hosts` names it (docs/design/workspaces.md
+    /// Decision 15).
+    pub(crate) fn workspace_of(&self, dir: &Path) -> String {
+        if self.looks_through(dir) {
+            host_workspace_of(dir)
+        } else {
+            workspace_of(dir)
+        }
+    }
+
     /// The moment key a buffer is the subject of: its file, or its
     /// scratch number once it has one. Buffers with neither — a
     /// `*messages*`, a scratch nobody typed in — are nobody's moment.
@@ -449,9 +511,14 @@ impl Kawoosh {
 
     /// The workspace the memory files moments under, as the working
     /// directory says now.
+    /// A host's is asked again when it comes to be looked through — its
+    /// domain connected, or named in `memory.hosts` — or stops being.
     pub(crate) fn note_workspace(&mut self) {
-        if self.moments.workspace.0 != self.cwd {
-            self.moments.workspace = (self.cwd.clone(), workspace_of(&self.cwd));
+        let looked = self.looks_through(&self.cwd);
+        let (seen, was) = &self.moments.workspace.0;
+        if *seen != self.cwd || *was != looked {
+            let ws = self.workspace_of(&self.cwd);
+            self.moments.workspace = ((self.cwd.clone(), looked), ws);
         }
     }
 

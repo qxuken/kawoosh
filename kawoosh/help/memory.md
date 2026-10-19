@@ -45,6 +45,8 @@ Text that a password manager marks as concealed or transient is not picked up th
 
 The views show this workspace's memory (the focused tab's project) or the global one, every workspace's: `<C-a>` in the pane switches between them for the session, as does a click on **@workspace** or **@global** at the left of the pane's strip (the one on is filled), the head says which (`in ~/projects/foo` or `every workspace`), `:memory scope @global` sets one, and `:memory workspace` or `:memory global` opens the pane on one. `memory.scope` (`"workspace"`) is where it starts. `texts` are the same either way, since a yank is a yank anywhere, and `jumps` are always the tab's.
 
+A workspace is the project a directory is in: the outermost folder holding a `.kawoosh`, else the repository's root (`.git`, `.jj`, `.hg`). On a [remote host or a WSL distro](remote.md) there is none unless you name its domain in `memory.hosts` — `memory.hosts = { "wsl" }` gives each project in your default distro its own pins, files and place in the workspaces picker (`<leader>ww`), as a local one has. Each folder above where you are is asked of the host once when you get there, so name a slow ssh host only if you can wait for it.
+
 | keys in the pane | what |
 |---|---|
 | `<CR>`, `p`, a click | put the text in the pane you came from; open a file at its line; put a command on the command line |

@@ -315,6 +315,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `compile.default`, `compile.commands` | | what `<leader>cc` and `:compile NAME` run — a line, or a list of them run in turn ([code](code.md)) |
 | `tools` | | named programs to launch in terminal panes, a project's `run` among them; each a `place`: `column`, `under` or `dock` ([terminal](terminal.md#tools)) |
 | `memory.scope` | `"workspace"` | the memory pane shows this `workspace`'s rows or `global`, every one's ([memory](memory.md#the-memory-pane)) |
+| `memory.hosts` | `{}` | domains whose projects get a workspace of their own, as local ones do, such as `{ "wsl" }` ([memory](memory.md#the-memory-pane)) |
 | `memory.text.max_mb` | `8` | how much copied text is kept across restarts; `0` for none |
 | `secrets.masks` | | which text is masked ([memory](memory.md#secrets)) |
 
