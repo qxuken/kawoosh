@@ -576,6 +576,71 @@ fn the_candidates_and_symbols_pickers_carry_kind_icons() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The `<C-x>` candidates picker's preview asks the server for what it
+/// left out of the cursor's candidate (`completionItem/resolve`), as
+/// the popup's panel does — with no panel ever shown, the picker's ask
+/// is the only one — once per candidate, its answer kept on the row.
+#[test]
+fn the_candidates_picker_preview_resolves_the_cursors_docs() {
+    let dir = tmp("picker-docs");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n}\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
+    app.add_lsp_server(resolving_server(&dir));
+    let mut d = Drive::new(1200.0, 600.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.wait_for_open();
+    d.settle(&mut app);
+    ex(&mut d, &mut app, "setlocal completion.docs=false");
+    d.press(&mut app, "o");
+    d.keys(&mut app, "hel");
+    until(&mut d, &mut app, "the server's candidates", |a| {
+        a.completion.candidates().iter().any(|c| c == "hello_world")
+    });
+    let asked = app.completion.resolves;
+    d.press(&mut app, "<C-x>");
+    let cursor = |app: &mut Kawoosh| {
+        app.run_lua_source("t", "kawoosh.echo(tostring(kawoosh.picker.state().text))");
+        app.ed.message.clone()
+    };
+    let first = cursor(&mut app);
+    let drawn = |d: &Drive| -> String {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let want = format!("docs for {first}");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !drawn(&d).contains(&want) {
+        assert!(std::time::Instant::now() < end, "{want:?} in {:?}", drawn(&d));
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(drawn(&d).contains(&format!("fn {first}()")), "the resolved detail");
+    assert_eq!(app.completion.resolves, asked + 1, "the cursor's alone");
+    // Down and back: the second asked, the first kept on its row.
+    d.press(&mut app, "<C-n>");
+    let second = cursor(&mut app);
+    assert_ne!(first, second);
+    let want = format!("docs for {second}");
+    while !drawn(&d).contains(&want) {
+        assert!(std::time::Instant::now() < end, "{want:?} in {:?}", drawn(&d));
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    d.press(&mut app, "<C-p>");
+    d.settle(&mut app);
+    assert!(drawn(&d).contains(&format!("docs for {first}")));
+    assert_eq!(app.completion.resolves, asked + 2, "kept, not asked again");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A resolve's answer is its candidate's, whatever is selected when it
 /// lands: an answer for the first that lands after `<C-n>` moved to the
 /// second — in the frame of the key, before the panel follows — fills

@@ -201,6 +201,9 @@ local fs = kawoosh.fs
 ---@field path? string the file whose language colours the lines
 ---@field language? string the language the lines are coloured as
 ---@field image? string a picture's path, drawn instead of the lines
+---@field wrap? boolean a line longer than the preview is wide wraps at its words, not cut
+---@field code? integer in a markdown preview, how many of the first lines are code, coloured as `code_language` and drawn without a fence
+---@field code_language? string the language of the `code` lines
 
 ---A run of a text, as `picker.spans` gives them: `[1]` its text.
 ---@class kawoosh.picker.Span
@@ -535,12 +538,22 @@ end
 local function highlight_preview(pv)
   if pv.runs or pv.asked or not (pv.path or pv.language) or #pv.lines == 0 then return end
   pv.asked = true
-  local starts, at = {}, 1
-  for i, l in ipairs(pv.lines) do
-    starts[i] = at
+  -- A markdown preview's `code` lines fenced for the highlighter alone:
+  -- the fences are in the text it colours, never in the lines drawn.
+  local code = pv.language == "markdown" and pv.code or 0
+  local parts, starts, at = {}, {}, 1
+  local function put(l)
+    parts[#parts + 1] = l
     at = at + #l + 1
   end
-  kawoosh.highlight(table.concat(pv.lines, "\n"), { path = pv.path, language = pv.language }, function(runs)
+  if code > 0 then put("```" .. (pv.code_language or "")) end
+  for i, l in ipairs(pv.lines) do
+    if code > 0 and i == code + 1 then put("```") end
+    starts[i] = at
+    put(l)
+  end
+  if code > 0 and #pv.lines <= code then put("```") end
+  kawoosh.highlight(table.concat(parts, "\n"), { path = pv.path, language = pv.language }, function(runs)
     if not runs then return end
     pv.runs = runs
     pv.starts = starts
@@ -931,7 +944,9 @@ function picker.preview(ctx, pv, rows, from, room)
     local l = pv.lines[i]
     local ln = first + i - 1
     local hit = pv.at and ln == pv.at
-    local r = row { height = PREVIEW_ROW, width = "grow", gap = 8, cross_align = "center",
+    -- A prose line wrapped takes the rows it needs, a code line one.
+    local r = row { height = (not pv.wrap) and PREVIEW_ROW or nil, min_height = pv.wrap and PREVIEW_ROW or nil,
+      width = "grow", min_width = pv.wrap and 0 or nil, gap = 8, cross_align = "center",
       bg = hit and t.selection or nil }
     -- Numbered when the lines are a file's or a buffer's (`from` says
     -- where they start); a spec's lines are not.
@@ -943,7 +958,7 @@ function picker.preview(ctx, pv, rows, from, room)
       -- the runs are cut so their bytes stay the text's.
       local spans = preview_spans(pv, i, l, hit and t.fg or t.muted)
       for _, sp in ipairs(spans) do sp[1] = sp[1]:gsub("\t", "    ") end
-      r[#r + 1] = text(spans, { family = "mono", size = PREVIEW_SIZE, wrap = "none" })
+      r[#r + 1] = text(spans, { family = "mono", size = PREVIEW_SIZE, wrap = pv.wrap and "word" or "none" })
     end
     col[#col + 1] = r
   end
@@ -2081,41 +2096,71 @@ end
 -- server's detail (a signature, a type) — the query the word typed so
 -- far, the cursor's signature and documentation as the preview,
 -- `⏎` taking one into the text (`lsp accept N`). The rows are what
--- `kawoosh.lsp.candidates()` says while the picker is up.
+-- `kawoosh.lsp.candidates()` says while the picker is up; what a server
+-- left out of its candidates (`completionItem/resolve`) the preview
+-- asks for, as the popup's panel does.
 local CANDIDATE_COLUMNS = {
   { "text", family = "mono", min = 140, max = 360, share = 0.4 },
   { "kind", muted = true, min = 70, max = 140, share = 0.15 },
   { "detail", family = "mono", muted = true, grow = true },
 }
+-- A detail's first line, for its row: a server's may be several (a
+-- TypeScript class's interface and its constructor).
+local function first_line(s) return s:match("^[^\n]*") end
+
+-- A candidate's preview lines: its detail over its documentation, the
+-- text it puts when it has neither; and how many of them are the
+-- detail, which is code in the buffer's language, not markdown.
+local function candidate_lines(item)
+  local lines = {}
+  local detail = item.signature
+  for l in (detail ~= "" and (detail .. "\n") or ""):gmatch("(.-)\n") do lines[#lines + 1] = l end
+  local code = #lines
+  if item.documentation ~= "" then
+    if #lines > 0 then lines[#lines + 1] = "" end
+    for l in (item.documentation .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
+  end
+  if #lines == 0 then lines[1] = item.insert end
+  return lines, code
+end
 picker.source("candidates", {
   title = "candidates", placeholder = "a candidate",
   columns = CANDIDATE_COLUMNS, icon = "kind",
-  items = function()
+  items = function(ctx)
     local cs = kawoosh.lsp.candidates()
     local items = {}
     if not cs then return items end
+    local lok, language = pcall(kawoosh.buf.language, ctx.buffer)
     for _, c in ipairs(cs) do
       items[#items + 1] = {
-        text = c.label, kind = c.kind, detail = c.detail, index = c.index,
-        insert = c.insert, documentation = c.documentation,
+        text = c.label, kind = c.kind, detail = first_line(c.detail), signature = c.detail, index = c.index,
+        insert = c.insert, documentation = c.documentation, language = lok and language or nil,
         boost = c.index == cs.current and 1 or 0,
       }
     end
     return items
   end,
   pick = function(item) kawoosh.run("lsp accept " .. item.index) end,
+  -- Kept on the item: the server asked once, its answer landing in
+  -- the preview however the cursor walked meanwhile.
   preview = function(item)
-    local lines = {}
-    if item.detail ~= "" then
-      lines[#lines + 1] = item.detail
-    end
-    if item.documentation ~= "" then
-      if #lines > 0 then lines[#lines + 1] = "" end
-      for l in (item.documentation .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
-    end
-    if #lines == 0 then lines[1] = item.insert end
+    if item.shown then return item.shown end
     local title = item.text .. (item.kind ~= "" and ("  ·  " .. item.kind) or "")
-    return { title = title, lines = lines, language = "markdown" }
+    local pv = { title = title, language = "markdown", code_language = item.language, wrap = true }
+    pv.lines, pv.code = candidate_lines(item)
+    item.shown = pv
+    if item.documentation == "" then
+      pv.note = "asking the server…"
+      kawoosh.lsp.resolve(item.index, function(c)
+        pv.note = nil
+        if not c then return end
+        if c.detail ~= "" then item.signature, item.detail = c.detail, first_line(c.detail) end
+        item.documentation = c.documentation
+        pv.lines, pv.code = candidate_lines(item)
+        pv.runs, pv.asked = nil, nil
+      end)
+    end
+    return pv
   end,
   empty = "no candidate matches",
 })
