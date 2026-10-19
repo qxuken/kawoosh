@@ -81,8 +81,8 @@ local fs = kawoosh.fs
 ---@field title? string the head's label, and its `:picker NAME` command's doc
 ---@field placeholder? string the query field's while it is empty
 ---@field empty? string what the list says with no row and no query
----@field items? kawoosh.picker.Item[]|fun(ctx: kawoosh.picker.Ctx): kawoosh.picker.Item[] the rows, at once
----@field load? fun(ctx: kawoosh.picker.Ctx, done: fun(items: kawoosh.picker.Item[]?, err?: string, info?: { capped?: boolean })) the rows read off the frame, `done` once they are — `capped` when they stopped at a cap, more left
+---@field items? kawoosh.picker.Item[]|fun(ctx: kawoosh.picker.Ctx): kawoosh.picker.Item[], kawoosh.picker.Loaded? the rows, at once
+---@field load? fun(ctx: kawoosh.picker.Ctx, done: fun(items: kawoosh.picker.Item[]?, err?: string, info?: kawoosh.picker.Loaded)) the rows read off the frame, `done` once they are
 ---@field ignored? boolean `<A-g>` flips `ctx.ignored` and loads (or searches) again: files git ignores, and hidden ones, too
 ---@field search? fun(query: string, job: kawoosh.picker.Job) a dynamic source: asked again as the query is typed, nothing until one is, its rows not filtered again
 ---@field query? fun(query: string, ctx: kawoosh.picker.Ctx): string? the text matched for what was typed; nil matches it as typed
@@ -98,6 +98,24 @@ local fs = kawoosh.fs
 ---@field follow? boolean the pane it was opened from follows the cursor's row, and no preview is drawn
 ---@field launcher? boolean a module of the launcher too, under its name
 ---@field launch? fun(item: kawoosh.picker.Item) what its row does in the launcher, filling the bare pane, when `pick` goes elsewhere
+
+---What a `load` (or an `items` function, as a second answer) says
+---besides its items.
+---@class kawoosh.picker.Loaded
+---@field capped? boolean the rows stopped at a cap, more left
+---@field rows? kawoosh.picker.Rows rows held by the engine, listed after the items
+
+---Rows a source hands over held by the engine, not as a Lua table each
+---— a hundred thousand of them a moment, not a stall: listed after the
+---source's own items, and made an item only when a row is shown or
+---ranked (`picker.with_rows`, docs/design/picker.md Decision 5). With
+---`root` they are paths relative to it, as `fs.walk`'s `matcher` hands
+---them: each path once, in the order `boosted` gives items, an item
+---`{ text, path, boost }`.
+---@class kawoosh.picker.Rows
+---@field matcher kawoosh.Matcher the rows (`kawoosh.matcher(list)`, or a walk's)
+---@field root? string the rows are paths relative to it
+---@field item? fun(text: string, i: integer): kawoosh.picker.Item row `i`'s item, made when it is first shown; `{ text = text }` (and its `path`) by default
 
 ---A row of a picker (and of a launcher's module): its text, and what
 ---it stands for. A row of a source with `columns` holds their fields.
@@ -344,8 +362,9 @@ picker.binary = {
   pyc = true, db = true, sqlite = true, bin = true, dat = true,
 }
 -- Read from the path's end, a few bytes at most: a pattern anchored
--- at the end is tried from every byte, and the picker asks a hundred
--- thousand paths.
+-- at the end is tried from every byte. A walk's rows are read by the
+-- engine, by the same rule (`m:order`'s `last`, lua/src/lib.rs
+-- `picker_extension`).
 local function is_binary(path)
   local n = #path
   for i = n, math.max(1, n - 8), -1 do
@@ -362,12 +381,13 @@ local function is_binary(path)
   return false
 end
 
--- The items boosted, and the boosted ones first — the best boost
--- first, so a pin leads and the file worked in all week comes before
--- one glanced at — the binaries last: an empty query lists what the
--- hands were in before the rest, and the fonts and images after it.
-local function boosted(items)
-  local by = boosts()
+-- The items boosted by `by` (`boosts()`), and the boosted ones first —
+-- the best boost first, so a pin leads and the file worked in all week
+-- comes before one glanced at — the binaries last: an empty query
+-- lists what the hands were in before the rest, and the fonts and
+-- images after it. A walk's rows are put in the same order by the
+-- engine (`picker.with_rows`).
+local function boosted(items, by)
   local first, rest, last = {}, {}, {}
   -- Where each boosted one was, for a sort that keeps their order: only
   -- they are sorted, and an index on every item grew every item's table.
@@ -1179,8 +1199,87 @@ local function refilter(q)
   if P.src.search then search_dynamic(q) else filter_static(q) end
 end
 
+---What `picker.with_rows` takes besides the items and the rows.
+---@class kawoosh.picker.WithRows
+---@field matcher? kawoosh.Matcher the items' own, the rows appended to it; one is made without
+---@field wide? kawoosh.Matcher a `wide` source's, the rows appended too
+---@field by? table<string, number> the boosts, by path (`boosts()`); `{}` leaves the rows' order
+---@field last? table<string, boolean> the extensions put last (`picker.binary`); `{}` none
+---@field drop? table<string, any> paths listed elsewhere, left out besides the items' own
+
+-- picker.with_rows(items, rows, opts): rows the engine holds listed
+-- after a source's own `items`, each made an item only when the list
+-- is indexed there — a row shown or ranked — by `rows.item`, else `{
+-- text }` (docs/design/picker.md Decision 5). Rows with a `root` are
+-- paths under it: those the items (or `opts.drop`) list already are
+-- left out, the rest put in `boosted`'s order by the engine (ordering a
+-- hundred thousand in Lua was 100 ms a load), and a row's item has its
+-- `path` joined to the root and the boost `boosted` would have given
+-- it, unless `rows.item` gave one. Answers the list (`items` itself,
+-- `#` counting the rows) and a matcher over all of it; an `ipairs`
+-- over the list makes every row. The picker and the launcher read
+-- rows so.
+---@param items kawoosh.picker.Item[]
+---@param rows kawoosh.picker.Rows
+---@param opts? kawoosh.picker.WithRows
+---@return kawoosh.picker.Item[] list
+---@return kawoosh.Matcher matcher
+function picker.with_rows(items, rows, opts)
+  opts = opts or {}
+  local m, root, make = rows.matcher, rows.root, rows.item
+  local n = #items
+  local by, tail = {}, m:count() + 1
+  if root then
+    by = opts.by or boosts()
+    local function rel(p)
+      local r = fs.relative(p, root)
+      if r ~= "." then return r end
+    end
+    local drop, boost = {}, {}
+    for _, it in ipairs(items) do
+      local r = it.path and rel(it.path)
+      if r then drop[r] = true end
+    end
+    for p in pairs(opts.drop or {}) do
+      local r = rel(p)
+      if r then drop[r] = true end
+    end
+    for p, b in pairs(by) do
+      local r = rel(p)
+      if r then boost[r] = b end
+    end
+    tail = m:order { drop = drop, boost = boost, last = opts.last or picker.binary }
+  end
+  local all = m
+  if n > 0 then
+    all = opts.matcher
+    if not all then
+      local texts = {}
+      for i, it in ipairs(items) do texts[i] = it.text end
+      all = kawoosh.matcher(texts)
+    end
+    all:extend(m)
+  end
+  if opts.wide then opts.wide:extend(m) end
+  local count = n + m:count()
+  return setmetatable(items, {
+    __index = function(t, k)
+      if math.type(k) ~= "integer" or k <= n or k > count then return nil end
+      local text, i = all:text(k), k - n
+      local it = make and make(text, i) or { text = text }
+      if root then
+        it.path = it.path or fs.join(root, text)
+        if it.boost == nil then it.boost = by[it.path] or (i >= tail and -0.5 or nil) end
+      end
+      rawset(t, k, it)
+      return it
+    end,
+    __len = function() return count end,
+  }), all
+end
+
 -- What a static source gave: kept, boosted, and a matcher over the
--- rows' text.
+-- rows' text; rows the engine holds after them (`picker.with_rows`).
 local function loaded(items, err, info)
   if not P then return end
   P.loading = false
@@ -1193,8 +1292,8 @@ local function loaded(items, err, info)
     return
   end
   P.note = nil
-  items = boosted(items)
-  P.items = items
+  local by = boosts()
+  items = boosted(items, by)
   local texts, wide = {}, {}
   local widened = P.src.columns or P.src.wide
   for i, it in ipairs(items) do
@@ -1206,6 +1305,10 @@ local function loaded(items, err, info)
   -- The name is what a match on a row lights and ranks by; the rest
   -- of the row (`search`) is looked in after it.
   P.wide = widened and kawoosh.matcher(wide) or nil
+  if info and info.rows then
+    items, P.matcher = picker.with_rows(items, info.rows, { matcher = P.matcher, wide = P.wide, by = by })
+  end
+  P.items = items
   P.widths = P.src.columns and picker.widths(items, P.src.columns) or nil
   -- Where the cursor starts, while nothing is typed: the source's say,
   -- through the refilter the load sets off (`P.keep`).
@@ -1233,9 +1336,12 @@ local function load_items()
       if P ~= this or this.load_gen ~= gen then return end
       loaded(items, err, info)
     end)
+  elseif type(src.items) == "function" then
+    -- A second answer may hand rows the engine holds (`info.rows`).
+    local items, info = src.items(ctx)
+    loaded(items, nil, info)
   elseif src.items then
-    local items = type(src.items) == "function" and src.items(ctx) or src.items
-    loaded(items)
+    loaded(src.items)
   else
     loaded({})
   end
@@ -1969,14 +2075,14 @@ end
 -- `here` said), relative to it — all of a root the project ignores (a
 -- `node_modules`), and with `<A-g>` every file but `.git` — at most
 -- the walk's cap, said when it stopped there (picker.md Decision 4).
+-- The rows stay the engine's, a matcher of them, made items only as
+-- they are shown (Decision 5).
 local function walk_items(ctx, done)
   local root = ctx.root or ctx.cwd
-  fs.walk(root, function(paths, err, whole, capped)
-    if not paths then return done(nil, err) end
-    local items = {}
-    for i, p in ipairs(paths) do items[i] = { text = p, path = whole[i] } end
-    done(items, nil, { capped = capped })
-  end, { ignored = ctx.ignored == true })
+  fs.walk(root, function(m, err, _, capped)
+    if not m then return done(nil, err) end
+    done({}, nil, { capped = capped, rows = { matcher = m, root = root } })
+  end, { ignored = ctx.ignored == true, matcher = true })
 end
 
 -- A path typed whole — absolute, or from `~` — is matched as the rows
@@ -2203,12 +2309,9 @@ picker.source("smart", {
         items[#items + 1] = it
       end
     end
-    walk_items(ctx, function(walked, err)
-      if not walked then return done(items) end
-      for _, it in ipairs(walked) do
-        if not seen[it.path] then items[#items + 1] = it end
-      end
-      done(items)
+    -- The walk's rows after them, those listed already left out there.
+    walk_items(ctx, function(_, _, info)
+      done(items, nil, info and { rows = info.rows })
     end)
   end,
 })

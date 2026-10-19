@@ -6,6 +6,7 @@ pub mod blocks;
 pub mod du;
 pub mod filter;
 pub mod fs;
+pub mod fuzzy;
 pub mod grammars;
 pub mod held_dir;
 pub mod indent;

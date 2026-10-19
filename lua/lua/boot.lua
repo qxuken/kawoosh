@@ -990,6 +990,10 @@ end
 -- `.gitignore`d, hidden and `.git` left out — relative to it, read on
 -- a thread of its own; `fn(paths, nil, whole)` when done — `whole`
 -- each path joined to the root as `fs.join` joins — or `fn(nil, why)`.
+-- With `{ matcher = true }` as a third argument the paths come as a
+-- `kawoosh.matcher` of them instead, made on the walk's thread, `fn(m)`:
+-- a hundred thousand rows are no Lua string each, `m:text(i)` reading
+-- one back — what a picker source hands as `rows`.
 -- kawoosh.fs.form(path, form): the path as `path copy` copies it —
 -- "relative" (to the working directory, whole when outside it),
 -- "absolute", "dir", "dir absolute", "name", "stem".
@@ -1009,7 +1013,11 @@ end
 -- kawoosh.fuzzy(needle, list[, limit]) scores a small list;
 -- kawoosh.matcher(list) holds a big one — `m:query(needle, limit)`
 -- answers `{ index =, score =, positions = }` best first, positions
--- the matched characters' bytes from 1; `m:count()`. A space splits
+-- the matched characters' bytes from 1; `m:count()`; `m:text(i)` row
+-- `i` back; `m:extend(other)` another's rows after these;
+-- `m:order { drop =, boost =, last = }` the rows put in a picker's order
+-- (boosted first, then the rest, then `last`'s extensions), answering
+-- where that last group starts. A space splits
 -- the needle into terms, each matched anywhere and in any order (`\ `
 -- is a space to match); case is smart, term by term
 -- (docs/design/matching.md).

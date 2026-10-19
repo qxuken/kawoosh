@@ -2,7 +2,7 @@
 
 Status: decided and built 2026-10-14. Asked as "file search should
 fuzzy find with spaces like (carnet main should match
-roles/carnet/tasks/main.yml)". The matcher is `lua/src/fuzzy.rs`
+roles/carnet/tasks/main.yml)". The matcher is `systems/src/fuzzy.rs`
 (`kawoosh.matcher`, `kawoosh.fuzzy`): fzy's scoring in Rust since
 roadmap step 4, the list crossing the Lua boundary once and a query
 answering the best two hundred with positions. Each decision keeps the

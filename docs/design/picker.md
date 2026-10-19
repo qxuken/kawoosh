@@ -136,6 +136,83 @@ lists what it always did.
 *Beat:* a session-wide toggle: a picker opened next would list a
 hundred thousand rows nobody asked for.
 
+### 5. Rows the engine holds, made items only when shown
+
+Added 2026-10-19, measured first. `<A-g>` from `~/projects/kawoosh`
+walked 129 640 paths (the worktrees' `target`s, 78 000 of them
+binaries), and the frame the answer landed in took 270–282 ms (a dev
+build, `KAWOOSH_PERF_LOG`, the same tree mirrored as empty files for
+every run): the two string lists `fs.walk` hands Lua, 66 ms, the joins
+on the main thread most of it; an item table a row, 9; `boosted`, 103 —
+61 of it the memory-boost lookup, Lua hashing each fresh path the first
+time it is a key, and 43 the extension test; `kawoosh.matcher`, 95–100,
+a `Vec<String>` and every row kept as characters, folded characters and
+offsets, 16 bytes a character (160 MB). Whatever Lua does a row, a
+hundred thousand rows are a stall.
+
+So rows can stay in Rust, any source's — a walk's is the first — and
+Lua touches the ones it shows:
+
+1. **A matcher keeps the rows' bytes** (`fuzzy::Matcher`, in
+   `kawoosh-systems` so an io thread makes one): one string,
+   where each row ends, whether each is ASCII. A query rules a row out
+   on its bytes — folded a byte at a time when ASCII, as characters
+   otherwise (the Kelvin sign is a `k`) — and reads into characters
+   only the rows it scores, cut at 1024 characters there; a row is
+   kept whole, so the matcher is the rows too (`m:text(i)`).
+2. **`fs.walk(root, fn, { matcher = true })`** answers `fn(m, nil, nil,
+   capped)`, a matcher of the walk's paths made on the walk's own
+   thread (`fs::Walked::matcher`): no Lua string a row, and nothing of
+   them built on the frame.
+3. **`m:order { drop, boost, last }`** puts the rows in `boosted`'s order
+   in Rust — boosted first, the most first, then the rest, then the
+   ones given less than 0 and those whose extension `last` holds
+   (`picker.binary`, read by `is_binary`'s rule) — the rows `drop`
+   names left out, and answers where that last group starts. A key's
+   length is checked before it is hashed, so a row as long as no
+   boosted path costs no hash.
+4. **A source hands rows** besides its items: `done(items, nil, { rows
+   = { matcher =, root =, item = } })` from a `load`, or as an `items`
+   function's second answer. `picker.with_rows(items, rows, opts)` lists
+   them after the items and answers the list and one matcher over it:
+   `items` itself with a metatable, a row made an item the first time
+   it is indexed — a row drawn, a hit ranked: the 200 hits a query ranks
+   and the rows drawn, never the rest — by `rows.item(text, i)`, else
+   `{ text }`. With `root` the rows are paths under it: those the items
+   name are left out, the rest put in `boosted`'s order by `m:order`,
+   and an item's `path` is `fs.join`ed to the root, its boost the
+   memory's or −0.5 in the last group — what `boosted` would have given
+   it — unless `item` gave one. `files` hands its walk with no items,
+   `smart` with its buffers and recent files, and the launcher's
+   `files` reads it the same way (its rows in the walk's order, as
+   before). Plain items, `picker.rank` and a source's `pick`, `keys`
+   and `preview` see Lua items as they always did.
+
+The frame on the same tree: `io` 6 ms, `m:order` 4.8 of it, where the
+old build measured 354–386 in the same run, back to back (busier than
+the morning's 270–282); the Lua heap no longer 22 MB larger a walk. The
+matcher alone was cut first, to 14–16 ms; it left the frame at 209–223,
+and with the rows made on the frame from the walk's list, 13–14.
+
+The list is not a plain table: `#` counts every row, an index makes
+one, and an `ipairs` over it makes them all. A source's `cursor(items,
+ctx)` is given it, an indexable list — reading a row or `#` costs
+nothing, a loop over all of them makes every row — and a `columns`
+source's widths would read every row, so rows are for a source without
+columns; the launcher's letters are only a keyed module's.
+
+*Beat:* trimming each Lua step (the joins on the walk's thread, items
+sized for their `boost`, a cheaper extension test): about 130 ms left,
+the lookup's hashing untouched.
+*Beat:* rows for `fs.walk` alone, a picker special case: a plugin's
+own big list (a symbol index, a log) is the same stall.
+*Beat:* the matcher made on the frame from the walk's `Vec<String>`:
+2.5 ms there, and the rows dropped there too; the matcher moved to
+`kawoosh-systems` so the io message can carry it.
+*Beat:* the boosts and the binaries left to Lua, a row at a time as it
+is shown: the empty query lists the boosted rows first and the binaries
+last, an order over every row, so it is made where every row is.
+
 ## Built
 
 2026-10-18: `picker.place` and the view in `kawoosh/lua/picker.lua`, the
@@ -143,3 +220,12 @@ settings in `editor/src/settings.rs`, `fs::walk_with`,
 `fs::ignored_by_project` and `fs::WALK_MAX` in `systems/src/fs.rs`,
 `kawoosh.fs.walk`'s options and cap in `lua/src/lib.rs`. Tested in
 `systems/src/fs.rs` and `kawoosh/tests/picker.rs`.
+
+2026-10-19 (Decision 5): `fuzzy::Matcher` in `systems/src/fuzzy.rs`,
+`fs::Walked::matcher`; `fs.walk`'s `matcher`, `m:text`, `m:extend`,
+`m:order` in `lua/src/lib.rs`; `picker.with_rows` in
+`kawoosh/lua/picker.lua`, used
+by `kawoosh/lua/launcher.lua`. Tested in `systems/src/fuzzy.rs` and
+`kawoosh/tests/picker.rs`
+(`a_walks_rows_are_ordered_by_the_engine_and_made_items_when_shown`,
+`a_plugins_source_hands_rows_the_engine_holds`).
