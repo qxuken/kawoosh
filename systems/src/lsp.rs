@@ -837,6 +837,11 @@ pub struct CompletionItem {
     /// `insertTextMode` 1, `asIs`: its lines are not indented as the
     /// line they go into.
     pub as_is: bool,
+    /// Where its `textEdit` starts (an `InsertReplaceEdit`'s insert
+    /// range), as the server said it: a line and a UTF-16 column. Before
+    /// the word where the edit puts again what is there (TypeScript's
+    /// `?.x` over the `?.` typed).
+    pub edit_start: Option<(u32, u32)>,
     pub kind: Option<u64>,
     /// The server's one-liner: a signature, a type, a path.
     pub detail: Option<String>,
@@ -5711,6 +5716,13 @@ fn completion_items(result: Option<&Value>, resolves: Option<usize>) -> Vec<Comp
                 None => (insert, None),
             };
             let as_is = it.get("insertTextMode").and_then(Value::as_u64) == Some(1);
+            let edit_start = it
+                .pointer("/textEdit/range/start")
+                .or_else(|| it.pointer("/textEdit/insert/start"))
+                .and_then(|p| {
+                    let n = |k: &str| p.get(k)?.as_u64().map(|n| n as u32);
+                    Some((n("line")?, n("character")?))
+                });
             // `documentation` is a string or a `MarkupContent`.
             let documentation = it.get("documentation").and_then(|d| {
                 d.as_str()
@@ -5729,6 +5741,7 @@ fn completion_items(result: Option<&Value>, resolves: Option<usize>) -> Vec<Comp
                 insert,
                 snippet,
                 as_is,
+                edit_start,
                 kind: it.get("kind").and_then(Value::as_u64),
                 detail: it.get("detail").and_then(Value::as_str).map(str::to_string),
                 documentation,
@@ -6230,6 +6243,17 @@ mod tests {
         assert_eq!(items[0].snippet.as_deref(), Some("push(${1})"));
         assert_eq!(items[1].insert, "len()");
         assert_eq!(items[1].snippet, None);
+        assert_eq!((items[0].edit_start, items[1].edit_start), (None, None));
+        // Where the edit starts, from either shape of `textEdit`.
+        let at = |line, character| json!({ "line": line, "character": character });
+        let list = json!([
+            { "label": "a", "textEdit": { "newText": "?.a", "range": { "start": at(0, 13), "end": at(0, 15) } } },
+            { "label": "b", "textEdit": { "newText": "b", "insert": { "start": at(2, 4), "end": at(2, 5) },
+                                          "replace": { "start": at(2, 4), "end": at(2, 9) } } }
+        ]);
+        let items = completion_items(Some(&list), None);
+        assert_eq!(items[0].edit_start, Some((0, 13)));
+        assert_eq!(items[1].edit_start, Some((2, 4)));
         // Too big to lay out: its text, no snippet.
         let big = format!("${{1:{}}}{}", "x".repeat(64 << 10), "$1".repeat(50_000));
         let list = json!([{ "label": "big", "insertText": big, "insertTextFormat": 2 }]);

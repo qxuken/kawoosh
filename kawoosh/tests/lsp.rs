@@ -189,6 +189,41 @@ fn diagnostics_definition_hover_and_completion() {
         Some("ember_a"),
         "the ghost stays while the word grows"
     );
+    // The server's edit starts at the `.` and puts it again (`.member_a`,
+    // TypeScript's): put once. After `?.` the same; one putting `?.`
+    // over a `.` puts it there.
+    let line = |a: &Kawoosh| {
+        let v = a.focused_view().unwrap();
+        let b = a.ed.buffer_of(v);
+        b.line_text(b.line_of(a.ed.views[v].sels.primary().head))
+    };
+    d.key(&mut app, "tab", KeyMods::default());
+    assert_eq!(line(&app), "help.member_a");
+    d.press(&mut app, "<CR>");
+    d.keys(&mut app, "x?.");
+    assert!(
+        until(&mut d, &mut app, |a| a.completion_ghost_text().is_some()),
+        "member completion after `?.`"
+    );
+    d.keys(&mut app, "mem");
+    assert_eq!(app.completion_ghost_text().as_deref(), Some("ber_a"));
+    d.key(&mut app, "tab", KeyMods::default());
+    assert_eq!(line(&app), "x?.member_a");
+    d.press(&mut app, "<CR>");
+    d.keys(&mut app, "y.");
+    assert!(
+        until(&mut d, &mut app, |a| a.completion_ghost_text().is_some()),
+        "member completion after `.`"
+    );
+    d.keys(&mut app, "mc");
+    assert!(
+        until(&mut d, &mut app, |a| a.completion.candidates()
+            == ["?.member_c"]),
+        "{:?}",
+        app.completion.candidates()
+    );
+    d.key(&mut app, "tab", KeyMods::default());
+    assert_eq!(line(&app), "y?.member_c");
     // The prompt's insert mode is not the buffer's: typing `:echo` asks
     // the server for nothing and shows no candidates over the buffer.
     d.key(&mut app, "escape", KeyMods::default());

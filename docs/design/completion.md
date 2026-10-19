@@ -642,7 +642,8 @@ Where the build departs, or says more than the decision did:
   the dim colour (`Mark::underline_color`); an empty one (`$2`) has
   nothing to underline. The field being filled is the selections.
 - **Left for later.** A candidate's `textEdit` range is still not read
-  — the word typed is replaced, as since round 1; `additionalTextEdits`
+  — the word typed is replaced, as since round 1 (read since: see
+  *Found later* at the end); `additionalTextEdits`
   (an auto-import) are not applied — applied later, they land outside
   the snippet and must go in before it is live, or be carried.
   `completion.callable`'s `args` (round 5) and the user's snippets
@@ -1003,6 +1004,21 @@ keystroke with the signature on show measured again: 0.76–0.81 /
 1.11–1.12 ms, against 0.75–0.77 / 1.09–1.12 ms with none.
 
 *Left for later:* the parentheses read from the syntax tree, so a `(`
-in a string or a comment is not a call's; a candidate's `textEdit`
-range and `additionalTextEdits` (round 3's); a `:snippets` command
-(round 4's).
+in a string or a comment is not a call's; `additionalTextEdits`
+(round 3's); a `:snippets` command (round 4's).
+
+## Found later: an edit that starts before the word
+
+TypeScript answers a member completion asked at the `.` with an edit
+over the `.` (or `?.`) that puts it again: `?.requestAdapter` over the
+`?.` of `navigator.gpu?.`. With only the word replaced, that came out
+`navigator.gpu?.?.requestAdapter`. A server's edit is now lined up with
+the word when its answer lands (`lined_up`), so every source's text is
+still the word's: where the edit starts before the word and puts again
+what is there, that is dropped (`requestAdapter`, ghosted as any
+other); where it starts inside the word, the word's head is put again;
+where it puts something else before the word (`?.x` over a `.`), the
+candidate keeps its `reach`, the bytes before the word it replaces too
+— matched by its label and never a ghost. A snippet's body is lined up
+the same, with the text escaped. The range's end is still not read:
+the word up to the caret is what goes.

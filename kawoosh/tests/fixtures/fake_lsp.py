@@ -6,7 +6,9 @@ every line, the cascade a half-typed line gets, so a test can watch it
 wait for the typing to pause); completion
 (hello_world, help — or, after a `.` in the text it was last sent,
 member_a and member_b, so a test can see the request was made on the
-synced text); hover ("the hover"); definition (line 1, character 0 of
+synced text: member_a as TypeScript sends it, an edit over the `.` or
+`?.` before it putting that again, and after a bare `.` member_c too,
+putting `?.member_c` over the `.`); hover ("the hover"); definition (line 1, character 0 of
 the same file); progress: on `initialized` a work-done token
 "Loading workspace" begins (after asking to create it) and reports
 3/12 at 50%, and the first didChange ends it — and sends a
@@ -459,7 +461,17 @@ while True:
     elif method == "textDocument/completion":
         p = m["params"]
         if char_before(p["textDocument"]["uri"], p["position"]) == ".":
-            items = [{"label": "member_a", "kind": 2}, {"label": "member_b", "kind": 2}]
+            # TypeScript's shapes: an edit over the `.` (or `?.`) typed,
+            # putting it again; and one putting `?.` over a `.`.
+            pos = p["position"]
+            dot = char_before(p["textDocument"]["uri"], {"line": pos["line"], "character": pos["character"] - 1})
+            lead = "?." if dot == "?" else "."
+            edit = lambda label, new, start: {"label": label, "kind": 2, "filterText": new, "textEdit": {
+                "newText": new, "range": {"start": {"line": pos["line"], "character": start}, "end": pos}}}
+            c = pos["character"]
+            items = [edit("member_a", lead + "member_a", c - len(lead)), {"label": "member_b", "kind": 2}]
+            if lead == ".":
+                items.append(edit("member_c", "?.member_c", c - 1))
         elif "--signature" in sys.argv:
             items = [{"label": "pair", "kind": 3, "detail": "fn pair(a: i32, b: &str) -> bool",
                       "documentation": "docs of pair"},
