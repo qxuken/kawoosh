@@ -177,7 +177,8 @@ Every command acts on each selection, so inserting, deleting, operators,
 | keys | what |
 |---|---|
 | `<C-j>` `<C-k>` | add a caret on the line below, above (also `<C-Down>` `<C-Up>`) |
-| `<C-j>` `<C-k>` in visual mode | a caret on every selected line, at the same column |
+| `<C-j>` `<C-k>` `<C-h>` `<C-l>` in visual mode | a selection on one line again below, above, to its left, to its right — the same columns, the same width; a line too short for it is passed over |
+| `<C-j>` `<C-k>` in visual mode over several lines | a caret on every selected line, at the same column |
 | `<C-n>` | select the word under the caret; again, the next match too{{mac: (`⌘d`)}} |
 | `<C-S-n>` | select every match at once{{mac: (`⌘⇧L`)}} |
 | `,` | keep only the primary selection |
@@ -208,10 +209,16 @@ back.
 | `<leader>vS` | split every selection on a pattern (`:select split`) |
 | `<leader>vk` | keep the selections that match; `!pattern` keeps those that do not (`:select keep`) |
 | `<leader>vl` | every line of every selection its own selection (`:select lines`) |
+| `<leader>ve` | keep the primary and every second selection counted from it; a count, or `:select every N`, keeps every Nth instead. `(` `)` first choose which; from normal mode too |
 | `<A-,>` | drop the primary selection, from normal mode too (`:select drop primary`) |
 
 {{mac:`⌘a<leader>vs`}}{{pc:`<C-S-a><leader>vs`}} then a pattern selects every match in the file;
 `vip<leader>vs` every match in the paragraph.
+
+A paste of alternating lines, say a title then a value, over and over:
+`ggVG<leader>vl<leader>ve` selects the titles, `Vd` deletes them, and
+`ggVGJ` joins the values onto one line. Press `)` before `<leader>ve` to
+keep the values instead.
 
 ## Putting over a selection
 

@@ -73,7 +73,9 @@ fn rows(d: &Drive) -> Vec<String> {
 /// none drawn.
 fn chip(d: &Drive, word: &str) -> Option<String> {
     let nodes = d.core.nodes();
-    let at = nodes.iter().rposition(|n| n.text.as_deref() == Some(word))?;
+    let at = nodes
+        .iter()
+        .rposition(|n| n.text.as_deref() == Some(word))?;
     let chip = nodes[at].parent?;
     let under = |n: &kui_native::NodeInfo| {
         let mut p = n.parent;
@@ -95,7 +97,11 @@ fn chip(d: &Drive, word: &str) -> Option<String> {
 
 /// What [`chip`] reads for `<A-KEY>` and its word.
 fn alt_chip(key: &str, word: &str) -> String {
-    let alt = if cfg!(target_os = "macos") { "" } else { "alt+" };
+    let alt = if cfg!(target_os = "macos") {
+        ""
+    } else {
+        "alt+"
+    };
     format!("{alt}{key} {word}")
 }
 
@@ -290,7 +296,11 @@ fn a_plugins_source_hands_rows_the_engine_holds() {
     ex(&mut d, &mut app, "picker nums");
     d.frame(&mut app);
     let r = rows(&d);
-    assert_eq!(r[..3], ["first", "row 1", "row 2"], "the items, then the rows");
+    assert_eq!(
+        r[..3],
+        ["first", "row 1", "row 2"],
+        "the items, then the rows"
+    );
     let t = texts(&d);
     assert!(
         t.iter().any(|s| s.ends_with(" of 50001")),
@@ -1830,10 +1840,7 @@ fn the_preview_goes_where_the_picker_has_room() {
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert_eq!(place(&mut app), "none");
-    assert!(
-        chip(&d, "preview").is_none(),
-        "put away says nothing"
-    );
+    assert!(chip(&d, "preview").is_none(), "put away says nothing");
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert_eq!(place(&mut app), "right");
@@ -1880,10 +1887,7 @@ fn the_preview_goes_where_the_picker_has_room() {
     app.run_lua_source("t", r#"kawoosh.opt("picker.preview", "off")"#);
     d.frame(&mut app);
     assert_eq!(place(&mut app), "none");
-    assert!(
-        chip(&d, "preview").is_none(),
-        "off says nothing"
-    );
+    assert!(chip(&d, "preview").is_none(), "off says nothing");
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert_eq!(place(&mut app), "below");
@@ -2017,8 +2021,14 @@ fn files_here_inside_an_ignored_directory_and_the_ignored_key() {
              load = function(ctx, done) table.insert(_G.loads, done) end }"#,
     );
     d.frame(&mut app);
-    assert!(texts(&d).iter().any(|s| s == "reading…"), "a first read says so");
-    lua(&mut app, r#"_G.loads[1]({ { text = "a" }, { text = "b" } })"#);
+    assert!(
+        texts(&d).iter().any(|s| s == "reading…"),
+        "a first read says so"
+    );
+    lua(
+        &mut app,
+        r#"_G.loads[1]({ { text = "a" }, { text = "b" } })"#,
+    );
     d.press(&mut app, "<Down>");
     d.frame(&mut app);
     assert_eq!(rows(&d), ["a", "b"]);
@@ -2121,7 +2131,10 @@ fn a_narrow_tall_picker_its_keys_head_rows_and_legend() {
         .into_iter()
         .find(|s| s.ends_with("the_file_name.rs"))
         .unwrap_or_default();
-    assert!(row_text.starts_with('…'), "cut from the start: {row_text:?}");
+    assert!(
+        row_text.starts_with('…'),
+        "cut from the start: {row_text:?}"
+    );
     let first_shown = |d: &Drive| -> usize {
         texts(d)
             .into_iter()
@@ -2142,11 +2155,18 @@ fn a_narrow_tall_picker_its_keys_head_rows_and_legend() {
     );
     assert_eq!(query(&mut app), "the_file");
     alt("h", &mut app, &mut d);
-    assert!((d.rect("picker divider").unwrap().y - div0.y).abs() < 1.0, "and back");
+    assert!(
+        (d.rect("picker divider").unwrap().y - div0.y).abs() < 1.0,
+        "and back"
+    );
     assert_eq!(query(&mut app), "the_file");
     // `<A-j>` `<A-k>`: the preview scrolled from the query.
     alt("j", &mut app, &mut d);
-    assert!(first_shown(&d) > 3, "half a preview down: {}", first_shown(&d));
+    assert!(
+        first_shown(&d) > 3,
+        "half a preview down: {}",
+        first_shown(&d)
+    );
     alt("k", &mut app, &mut d);
     assert_eq!(first_shown(&d), 1);
     d.key(&mut app, "escape", KeyMods::default());
@@ -2195,7 +2215,10 @@ fn a_narrow_tall_picker_its_keys_head_rows_and_legend() {
             );
         }
         for (t, r) in &hs {
-            assert!(r.x + r.w <= width + 0.5, "at {width}: {t:?} past the edge {r:?}");
+            assert!(
+                r.x + r.w <= width + 0.5,
+                "at {width}: {t:?} past the edge {r:?}"
+            );
         }
         let field = hs.iter().find(|(t, _)| t == "the_file").unwrap().1;
         assert!(field.w > 40.0, "at {width}: the query whole {field:?}");
