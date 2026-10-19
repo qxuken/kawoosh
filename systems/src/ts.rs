@@ -22,11 +22,13 @@
 //! over here. A builtin grammar is loaded the first time a job names
 //! it. A grammar with an
 //! injections query has other languages inside it — a fenced code
-//! block, a JSDoc comment, a regex literal — and each such node
-//! reaching into an answered span is parsed over that node alone by
-//! its own grammar, its captures painted over the host's, its
-//! injections under it in turn; those parses start over every time,
-//! since the spans are small and the tree kept is the host's.
+//! block, a JSDoc comment, a regex literal, a template string after a
+//! `/* wgsl */` comment — and each such document reaching into an
+//! answered span is parsed over its pieces alone by its own grammar
+//! (a template's text between its `${…}`, docs/design/injections.md),
+//! its captures painted over the host's, its injections under it in
+//! turn; those parses start over every time, since the spans are small
+//! and the tree kept is the host's.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -988,25 +990,62 @@ fn paint_captures(
 }
 
 /// The injection holding byte `at` under `root`, the innermost when
-/// they nest: its language as the query names it (the `#set!`, or the
-/// `@injection.language` capture's text, its first word — `rust` of
-/// `rust,ignore`) and its content's bytes. A `#set! injection.combined`
-/// pattern is not followed, as the painter does not. What `gc` asks
-/// for the layer's comment token (docs/design/comments.md Decision 4).
+/// they nest: its language as the query names it ([`language_word`])
+/// and its content's pieces ([`injected`]). What `gc` asks for the
+/// layer's comment token (docs/design/comments.md Decision 4).
 pub fn injection_at(
     inj: &kawoosh_languages::Injections,
     root: Node,
     text: &text_buffer::Buffer,
     at: usize,
-) -> Option<(String, Range<usize>)> {
-    let mut best: Option<(String, Range<usize>)> = None;
+) -> Option<(String, Vec<Range<usize>>)> {
+    let mut best: Option<(String, Vec<Range<usize>>, usize)> = None;
+    for (name, pieces) in injected(inj, root, text, at..at + 1) {
+        let Some(len) = pieces
+            .iter()
+            .find(|r| r.start <= at && at < r.end)
+            .map(|r| r.len())
+        else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(_, _, b)| len < *b) {
+            best = Some((name, pieces, len));
+        }
+    }
+    best.map(|(name, pieces, _)| (name, pieces))
+}
+
+/// The documents `inj` finds under `root` reaching into `span`: each
+/// one's language and its pieces, in the text's order. A pattern's
+/// `@injection.content` node is a document of its own; a `#set!
+/// injection.combined` pattern's are one document per node naming
+/// their language — a tagged template's tag, the `/* wgsl */` comment
+/// before a string — its pieces the content nodes of every match that
+/// shares it (a template's text between its `${…}`, which stay the
+/// host's). A combined pattern that names its language by a `#set!`
+/// means every match in the file as one document, which a span's
+/// painter cannot see, and is not followed (docs/design/injections.md).
+fn injected(
+    inj: &kawoosh_languages::Injections,
+    root: Node,
+    text: &text_buffer::Buffer,
+    span: Range<usize>,
+) -> Vec<(String, Vec<Range<usize>>)> {
+    let mut docs: Vec<(String, Vec<Range<usize>>)> = Vec::new();
+    // A combined document's index in `docs` by its pattern and the
+    // node naming its language.
+    let mut combined: HashMap<(usize, usize), usize> = HashMap::new();
     let mut cursor = QueryCursor::new();
-    cursor.set_byte_range(at..at + 1);
+    cursor.set_byte_range(span);
     let mut node_text = |n: Node| std::iter::once(text.collect_range(n.byte_range()));
     let mut it = cursor.matches(&inj.query, root, &mut node_text);
     while let Some(m) = it.next() {
         let settings = inj.query.property_settings(m.pattern_index);
-        if settings.iter().any(|p| &*p.key == "injection.combined") {
+        let named_by = inj
+            .language
+            .and_then(|i| m.nodes_for_capture_index(i).next());
+        let together = settings.iter().any(|p| &*p.key == "injection.combined");
+        if together && named_by.is_none() {
             continue;
         }
         let name = settings
@@ -1014,40 +1053,59 @@ pub fn injection_at(
             .find(|p| &*p.key == "injection.language")
             .and_then(|p| p.value.as_deref().map(str::to_owned))
             .or_else(|| {
-                let n = m.nodes_for_capture_index(inj.language?).next()?;
-                let word = text.collect_range(n.byte_range());
+                let word = text.collect_range(named_by?.byte_range());
                 Some(String::from_utf8_lossy(&word).into_owned())
             });
         let Some(name) = name else {
             continue;
         };
-        let word = name
-            .split(|c: char| c == ',' || c.is_whitespace())
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let word = language_word(&name);
         if word.is_empty() {
             continue;
         }
-        for n in m.nodes_for_capture_index(inj.content) {
-            let r = n.byte_range();
-            if r.start <= at && at < r.end && best.as_ref().is_none_or(|(_, b)| r.len() < b.len()) {
-                best = Some((word.clone(), r));
+        let pieces = m
+            .nodes_for_capture_index(inj.content)
+            .map(|n| n.byte_range())
+            .filter(|r| r.start < r.end);
+        match named_by.filter(|_| together) {
+            Some(n) => {
+                let at = *combined
+                    .entry((m.pattern_index, n.id()))
+                    .or_insert_with(|| {
+                        docs.push((word.to_string(), Vec::new()));
+                        docs.len() - 1
+                    });
+                docs[at].1.extend(pieces);
             }
+            None => docs.extend(pieces.map(|r| (word.to_string(), vec![r]))),
         }
     }
-    best
+    for (_, pieces) in &mut docs {
+        pieces.sort_by_key(|r| (r.start, r.end));
+        pieces.dedup_by(|later, first| later.start < first.end);
+    }
+    docs.retain(|(_, pieces)| !pieces.is_empty());
+    docs
+}
+
+/// The language a query names, by a `#set!` or the text of its
+/// `@injection.language` node: its first word, a word being letters,
+/// digits and `_` `-` `+` `#` — `rust` of a fence's `rust,ignore`,
+/// `python` of `{.python}`, `wgsl` of a `/* wgsl */` comment.
+fn language_word(name: &str) -> &str {
+    let is_word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '+' | '#');
+    let s = name.trim_start_matches(|c: char| !is_word(c));
+    &s[..s.find(|c: char| !is_word(c)).unwrap_or(s.len())]
 }
 
 /// Paints the languages inside `span` over the host's paint: each
-/// `@injection.content` node of `g`'s injections query that reaches
-/// into the span, whose language — a `#set!` on the pattern, or the
-/// `@injection.language` node's text, its first word (a fence's
-/// `rust,ignore`) — this build has a grammar for, is parsed by that
-/// grammar over the node alone and its captures painted on top (JSDoc's
-/// tags over the comment's colour), then its own injections under it,
-/// [`INJECTION_DEPTH`] deep. A `#set! injection.combined` pattern (a
-/// tagged template's pieces as one document) is not followed.
+/// document of `g`'s injections query ([`injected`]) reaching into the
+/// span whose language this build has a grammar for is parsed by that
+/// grammar over its pieces alone and its captures painted on top
+/// (JSDoc's tags over the comment's colour) — within the pieces, so a
+/// node of it spanning a gap (a WGSL statement around a `${…}`) leaves
+/// the host's colours there — then its own injections under it,
+/// [`INJECTION_DEPTH`] deep.
 #[allow(clippy::too_many_arguments)]
 fn paint_injections(
     parser: &mut Parser,
@@ -1066,82 +1124,56 @@ fn paint_injections(
     if depth >= INJECTION_DEPTH {
         return;
     }
-    let mut found: Vec<(String, Range<usize>)> = Vec::new();
-    {
-        let mut cursor = QueryCursor::new();
-        cursor.set_byte_range(span.clone());
-        let mut node_text = |n: Node| std::iter::once(text.collect_range(n.byte_range()));
-        let mut it = cursor.matches(&inj.query, root, &mut node_text);
-        while let Some(m) = it.next() {
-            let settings = inj.query.property_settings(m.pattern_index);
-            if settings.iter().any(|p| &*p.key == "injection.combined") {
-                continue;
-            }
-            let name = settings
-                .iter()
-                .find(|p| &*p.key == "injection.language")
-                .and_then(|p| p.value.as_deref().map(str::to_owned))
-                .or_else(|| {
-                    let n = m.nodes_for_capture_index(inj.language?).next()?;
-                    let word = text.collect_range(n.byte_range());
-                    Some(String::from_utf8_lossy(&word).into_owned())
-                });
-            let Some(name) = name else {
-                continue;
-            };
-            for n in m.nodes_for_capture_index(inj.content) {
-                let r = n.byte_range();
-                if r.start < r.end {
-                    found.push((name.clone(), r));
-                }
-            }
-        }
-    }
-    for (name, range) in found {
-        let word = name
-            .split(|c: char| c == ',' || c.is_whitespace())
-            .next()
-            .unwrap_or("");
-        let Some(ig) = grammars.get(word) else {
+    for (name, pieces) in injected(inj, root, text, span.clone()) {
+        let Some(ig) = grammars.get(&name) else {
             continue;
         };
-        let Some(tree) = parse_range(parser, &ig, text, range.clone()) else {
+        let Some(tree) = parse_range(parser, &ig, text, &pieces) else {
             continue;
         };
-        let inner = range.start.max(span.start)..range.end.min(span.end);
         let root = tree.root_node();
-        paint_captures(&ig, root, text, inner.clone(), base, paint);
-        paint_injections(
-            parser,
-            grammars,
-            &ig,
-            root,
-            text,
-            inner,
-            base,
-            paint,
-            depth + 1,
-        );
+        for piece in &pieces {
+            let inner = piece.start.max(span.start)..piece.end.min(span.end);
+            if inner.start >= inner.end {
+                continue;
+            }
+            paint_captures(&ig, root, text, inner.clone(), base, paint);
+            paint_injections(
+                parser,
+                grammars,
+                &ig,
+                root,
+                text,
+                inner,
+                base,
+                paint,
+                depth + 1,
+            );
+        }
     }
 }
 
-/// Parses `range` of the text alone with `g` — tree-sitter's included
-/// ranges, reset after — for an injection. Its nodes' positions are
-/// the document's.
+/// Parses `pieces` of the text alone with `g`, as one document —
+/// tree-sitter's included ranges, reset after — for an injection. Its
+/// nodes' positions are the document's. The pieces are in order and
+/// do not overlap.
 pub fn parse_range(
     parser: &mut Parser,
     g: &Grammar,
     text: &text_buffer::Buffer,
-    range: Range<usize>,
+    pieces: &[Range<usize>],
 ) -> Option<Tree> {
     parser.set_language(&g.language).ok()?;
-    let included = tree_sitter::Range {
-        start_byte: range.start,
-        end_byte: range.end,
-        start_point: point_at(text, range.start),
-        end_point: point_at(text, range.end),
-    };
-    if parser.set_included_ranges(&[included]).is_err() {
+    let included: Vec<tree_sitter::Range> = pieces
+        .iter()
+        .map(|r| tree_sitter::Range {
+            start_byte: r.start,
+            end_byte: r.end,
+            start_point: point_at(text, r.start),
+            end_point: point_at(text, r.end),
+        })
+        .collect();
+    if parser.set_included_ranges(&included).is_err() {
         return None;
     }
     let mut read = |byte: usize, _: Point| text.chunk_at(byte);
@@ -1935,6 +1967,215 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    /// A string after a `/* LANG */` comment is that language in
+    /// javascript, typescript and tsx — an object's value, an
+    /// argument, a declaration — and so is a tagged template's; a
+    /// template's pieces around its `${…}` are one document, the
+    /// substitution javascript's. A comment of more than the one word
+    /// injects nothing.
+    #[test]
+    fn a_comment_names_a_strings_language() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let src = "const q = /* sql */ `select a from t where b = 1 ${more} and c = 2`;\n\
+                   f({ code: /* sql */ `select c\n  from u`, n: 1 });\n\
+                   run(/* sql */ 'select d from v');\n\
+                   const r = sql`select e from w`;\n\
+                   const s = /* not sql */ `select f from x`;\n";
+        let want: &[(&str, Option<Token>)] = &[
+            ("/* sql */", Some(Token::Comment)),
+            ("select a", Some(Token::Keyword)),
+            ("from t", Some(Token::Keyword)),
+            ("where", Some(Token::Keyword)),
+            ("${more}", Some(Token::Punctuation)),
+            ("more}", Some(Token::Variable)),
+            ("and c", Some(Token::Keyword)),
+            ("select c", Some(Token::Keyword)),
+            ("from u", Some(Token::Keyword)),
+            ("n: 1", Some(Token::Property)),
+            ("select d", Some(Token::Keyword)),
+            ("select e", Some(Token::Keyword)),
+            ("select f", Some(Token::String)),
+        ];
+        let mut wrong = Vec::new();
+        for lang in ["javascript", "typescript", "tsx"] {
+            let buf = Buffer::new("t", src);
+            let job = Job {
+                buffer: BufferId::default(),
+                language: lang.into(),
+                snapshot: buf.snapshot(),
+                edits: None,
+            };
+            let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job).update();
+            for (needle, tok) in want {
+                let o = src.find(needle).unwrap();
+                let got = a
+                    .runs
+                    .iter()
+                    .find(|r| r.range.contains(&o))
+                    .map(|r| Token::from_style(r.style));
+                if got != *tok {
+                    wrong.push(format!("{lang}: {needle:?} is {got:?}, not {tok:?}"));
+                }
+            }
+            // `gc`'s question: the language at a byte, its pieces the
+            // template's text on each side of the substitution.
+            let host = g.get(lang).unwrap();
+            let text = &job.snapshot.text;
+            let tree = parse_range(
+                &mut parser,
+                &host,
+                text,
+                std::slice::from_ref(&(0..text.len())),
+            )
+            .unwrap();
+            let at = src.find("and c").unwrap();
+            let (name, pieces) = injection_at(
+                host.injections.as_ref().unwrap(),
+                tree.root_node(),
+                text,
+                at,
+            )
+            .unwrap();
+            let pieces: Vec<&str> = pieces.iter().map(|r| &src[r.clone()]).collect();
+            assert_eq!(
+                (name.as_str(), pieces),
+                ("sql", vec!["select a from t where b = 1 ", " and c = 2"]),
+                "{lang}"
+            );
+            let at = src.find("${more}").unwrap() + 2;
+            let inside = injection_at(
+                host.injections.as_ref().unwrap(),
+                tree.root_node(),
+                text,
+                at,
+            );
+            assert_eq!(inside.map(|(n, _)| n), None, "{lang}: the substitution");
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    /// An edit in a template's piece after its `${…}` answers for a
+    /// span around it, and the layer reads as a whole parse would: the
+    /// pieces before the substitution are still in the document.
+    #[test]
+    fn a_combined_injection_survives_a_reparse() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let filler: String = (0..40).map(|i| format!("const v{i} = {i};\n")).collect();
+        let body = format!(
+            "{filler}const q = /* sql */ `\n  select a\n  from t\n  where b = 1 ${{more}}\n  and c = 2\n`;\n{filler}"
+        );
+        let mut buf = Buffer::new("t", &body);
+        buf.language = "typescript".into();
+        let job = |buf: &Buffer, edits: Option<Vec<Edit>>| Job {
+            buffer: BufferId::default(),
+            language: "typescript".into(),
+            snapshot: buf.snapshot(),
+            edits,
+        };
+        let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf, None)).update();
+        buf.apply(first).unwrap();
+        let sent = buf.version();
+        let at = buf.text().find("and c = 2").unwrap() + "and c = 2".len();
+        buf.replace(at..at, " and d = 3");
+        let edits = buf
+            .journal()
+            .edits_since(sent)
+            .ok()
+            .map(|it| it.cloned().collect());
+        let second = highlight(&mut parser, &mut g, &mut parsed, &job(&buf, edits));
+        let spanned: usize = second.updates.iter().map(|u| u.span.len()).sum();
+        assert!(spanned < buf.len() / 2, "{spanned} of {} bytes", buf.len());
+        for u in second.updates {
+            buf.apply(u).unwrap();
+        }
+        let whole = highlight(
+            &mut parser,
+            &mut g,
+            &mut Parsed::default(),
+            &job(&buf, None),
+        )
+        .update();
+        assert_eq!(
+            joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())),
+            joined(&whole.runs)
+        );
+        let o = buf.text().find("and d").unwrap();
+        let tok = buf
+            .runs(SYNTAX_LAYER, o..o + 1)
+            .first()
+            .map(|r| Token::from_style(r.style));
+        assert_eq!(tok, Some(Token::Keyword));
+    }
+
+    /// JSDoc is a `/** … */` comment's alone: a line comment's `@` is
+    /// the comment's colour whole — `// @ts-expect-error`, whose
+    /// `-error` JSDoc's tag would have cut off — and so is a plain
+    /// block comment's.
+    #[test]
+    fn jsdoc_is_a_doc_comments_alone() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let src = "// @ts-expect-error \"webgpu\" does not have context type\n\
+                   const c = canvas.getContext(\"webgpu\");\n\
+                   /* @internal */\n\
+                   /** @param {number} x */\n\
+                   function f(x) {}\n";
+        for lang in ["javascript", "typescript", "tsx"] {
+            let buf = Buffer::new("t", src);
+            let job = Job {
+                buffer: BufferId::default(),
+                language: lang.into(),
+                snapshot: buf.snapshot(),
+                edits: None,
+            };
+            let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job).update();
+            let line = src.find('\n').unwrap();
+            let comment: Vec<_> = a
+                .runs
+                .iter()
+                .filter(|r| r.range.start < line)
+                .map(|r| (r.range.clone(), Token::from_style(r.style)))
+                .collect();
+            assert!(
+                comment.iter().all(|(_, t)| *t == Token::Comment)
+                    && comment.first().map(|(r, _)| r.start) == Some(0)
+                    && comment.last().map(|(r, _)| r.end) == Some(line)
+                    && comment.windows(2).all(|w| w[0].0.end == w[1].0.start),
+                "{lang}: {comment:?}"
+            );
+            let tok_at = |needle: &str| {
+                let o = src.find(needle).unwrap();
+                a.runs
+                    .iter()
+                    .find(|r| r.range.contains(&o))
+                    .map(|r| Token::from_style(r.style))
+            };
+            assert_eq!(tok_at("@internal"), Some(Token::Comment), "{lang}");
+            assert_eq!(tok_at("@param"), Some(Token::Keyword), "{lang}");
+            assert_eq!(tok_at("number"), Some(Token::Type), "{lang}");
+        }
+    }
+
+    /// A language named by the query's word in what it captured.
+    #[test]
+    fn a_language_is_the_first_word() {
+        for (said, word) in [
+            ("rust", "rust"),
+            ("rust,ignore", "rust"),
+            ("{.python}", "python"),
+            ("/* wgsl */", "wgsl"),
+            ("/*glsl*/", "glsl"),
+            ("objective-c", "objective-c"),
+            ("c++ ", "c++"),
+            ("  ", ""),
+        ] {
+            assert_eq!(language_word(said), word, "{said:?}");
+        }
     }
 
     /// The injected languages survive the incremental path: an edit in

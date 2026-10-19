@@ -150,6 +150,31 @@ The same tree drives selections by syntax node, `<A-o>` `<A-i>`
 symbols picker ([search](search.md#symbols-and-the-outline)), and your
 own code through `kawoosh.node` ([lua](lua.md#the-syntax-tree)).
 
+### A language inside a string
+
+In JavaScript, TypeScript and TSX a string after a comment naming a
+language is highlighted as that language:
+
+```typescript
+const module = device.createShaderModule({
+  code: /* wgsl */ `
+    @fragment fn fs() -> @location(0) vec4f {
+      return vec4f(1.0, 0.0, 0.0, ${alpha});
+    }
+  `,
+});
+const q = /* sql */ 'select * from users';
+```
+
+The comment is a block comment of one word, right before the string,
+and the word is any language with a grammar, built in or installed:
+`/* wgsl */`, `/* glsl */`, `/* sql */`, `/* html */`, `/* css */`. A
+tagged template works the same way, its tag the language:
+`` sql`select 1` ``, `` css`color: red` ``. Inside a template the
+`${…}` stay JavaScript, and the text around them reads as one piece of
+the other language. `gcc` on a line of it comments the line in that
+language's way.
+
 ## Language servers
 
 A server starts when you open a file of its language, if its program

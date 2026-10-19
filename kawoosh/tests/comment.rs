@@ -209,6 +209,27 @@ fn a_layer_without_a_token_is_the_hosts() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A string a `/* sql */` comment names is SQL's, its lines taking
+/// `--`, the code around it javascript's (docs/design/injections.md).
+#[test]
+fn a_string_named_by_a_comment_takes_its_languages_token() {
+    let (mut app, mut d, dir) = open(
+        "a.ts",
+        "const q = /* sql */ `\n  select ${c}\n  from t\n`;\nf();\n",
+    );
+    d.press(&mut app, "3Ggcc");
+    assert_eq!(
+        text(&app),
+        "const q = /* sql */ `\n  select ${c}\n  -- from t\n`;\nf();\n"
+    );
+    d.press(&mut app, "5Ggcc");
+    assert_eq!(
+        text(&app),
+        "const q = /* sql */ `\n  select ${c}\n  -- from t\n`;\n// f();\n"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Round 4 (comments.md Decision 8): `gb` wraps the range in the block
 /// pair as one and unwraps one that is; `gbc` the line, a selection's
 /// lines whole, `gbiw` the word alone; a language with no pair says so.
