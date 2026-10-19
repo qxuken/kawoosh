@@ -1923,18 +1923,29 @@ impl Kawoosh {
             self.ed.message = "no candidates".into();
             return;
         };
+        // What a server filled in already — the popup's docs of the
+        // selection — is the candidate's own; the rest the preview asks
+        // for (`kawoosh.lsp.resolve`).
         let snap: Vec<CandidateSnap> = items
-            .into_iter()
+            .iter()
             .enumerate()
-            .map(|(i, it)| CandidateSnap {
-                index: i + 1,
-                insert: it.text().to_string(),
-                label: it.label,
-                kind: it.kind.to_string(),
-                detail: it.detail.unwrap_or_default(),
-                documentation: it.documentation.as_deref().unwrap_or_default().to_string(),
+            .map(|(i, (answer, at))| {
+                let it = &answer[*at as usize];
+                let filled = it.filled.borrow().clone().unwrap_or_default();
+                CandidateSnap {
+                    index: i + 1,
+                    insert: it.text().to_string(),
+                    label: it.label.clone(),
+                    kind: it.kind.to_string(),
+                    detail: filled.detail.or_else(|| it.detail.clone()).unwrap_or_default(),
+                    documentation: filled
+                        .documentation
+                        .or_else(|| it.documentation.as_deref().map(str::to_string))
+                        .unwrap_or_default(),
+                }
             })
             .collect();
+        self.completion.picked = items;
         let Some(rt) = self.scripting.rt.clone() else {
             self.ed.message = "the candidates picker needs lua".into();
             return;
@@ -1964,6 +1975,7 @@ impl Kawoosh {
             return;
         };
         rt.set_candidates(None, 0);
+        self.completion.picked.clear();
         let from = self
             .lsp
             .candidates_from

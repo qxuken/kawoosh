@@ -1205,6 +1205,7 @@ impl Kawoosh {
                     self.start_lua_proc(rt, token, spec);
                 }
             }
+            Msg::Resolve { token, index } => self.resolve_candidate(token, index),
             Msg::Symbols {
                 token,
                 buffer,

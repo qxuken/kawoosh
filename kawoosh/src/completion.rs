@@ -207,6 +207,10 @@ pub struct Item {
     pub reach: usize,
 }
 
+/// A candidate by its answer's items and its place in them: what its
+/// server fills in kept on the one item, wherever it is listed.
+pub(crate) type Listed = (Rc<[Item]>, u32);
+
 /// A candidate's detail and documentation as `completionItem/resolve`
 /// filled them in.
 #[derive(Clone, Debug, Default)]
@@ -525,13 +529,13 @@ impl Session {
         Some(&self.answers[r.answer as usize].items[r.item as usize])
     }
 
-    /// The candidates in rank order, every one sorted — for the
-    /// candidates picker.
-    fn ranked_items(&mut self) -> Vec<&Item> {
+    /// The candidates in rank order, every one sorted, each by its
+    /// answer and its place in it — for the candidates picker.
+    fn ranked(&mut self) -> Vec<Listed> {
         self.sort_all();
         self.ranking
             .iter()
-            .map(|r| &self.answers[r.answer as usize].items[r.item as usize])
+            .map(|r| (self.answers[r.answer as usize].items.clone(), r.item))
             .collect()
     }
 
@@ -770,6 +774,13 @@ pub struct State {
     /// The user's snippets' generation the live session's answer was
     /// made at: a change since offers again.
     snippets_seen: u64,
+    /// The candidates picker's list, by its `index` less one: each one's
+    /// answer and place in it, so what its server fills in is kept on
+    /// the item the popup shows too.
+    pub(crate) picked: Vec<Listed>,
+    /// `kawoosh.lsp.resolve` asks waiting on a resolve, by its token:
+    /// the Lua tokens its answer goes to.
+    lua_resolves: HashMap<u64, Vec<u64>>,
 }
 
 impl State {
@@ -793,6 +804,8 @@ impl State {
             next_resolve: 0,
             resolves: 0,
             snippets_seen: 0,
+            picked: Vec::new(),
+            lua_resolves: HashMap::new(),
         }
     }
 
@@ -2820,6 +2833,16 @@ impl Kawoosh {
         detail: Option<String>,
         documentation: Option<String>,
     ) {
+        // The picker's asks are answered whatever became of the session.
+        if let Some(asks) = self.completion.lua_resolves.remove(&token)
+            && let Some(rt) = self.scripting.rt.clone()
+        {
+            let (d, doc) = (detail.as_deref(), documentation.as_deref());
+            for t in asks {
+                rt.candidate_resolved(t, Ok((d, doc)));
+            }
+            self.drain_lua();
+        }
         let Some(s) = self.completion.session.as_mut() else {
             return;
         };
@@ -3102,22 +3125,73 @@ impl Kawoosh {
 
     /// The live session's candidates in rank order, with the typed word
     /// and the selected one's place among them — the candidates
-    /// picker's list. None with nothing to list.
-    pub(crate) fn completion_list(&mut self) -> Option<(String, Vec<Item>, usize)> {
+    /// picker's list, each by its answer and its place in it. None with
+    /// nothing to list.
+    pub(crate) fn completion_list(&mut self) -> Option<(String, Vec<Listed>, usize)> {
         let s = self.completion.session.as_mut()?;
         if s.closed {
             return None;
         }
         let selected = s.selected_item().map(|i| i.text().to_string());
         let typed = s.typed.clone();
-        let items: Vec<Item> = s.ranked_items().into_iter().cloned().collect();
+        let items = s.ranked();
         if items.is_empty() {
             return None;
         }
         let at = selected
-            .and_then(|t| items.iter().position(|i| i.text() == t))
+            .and_then(|t| items.iter().position(|(a, i)| a[*i as usize].text() == t))
             .unwrap_or(0);
         Some((typed, items, at))
+    }
+
+    /// `kawoosh.lsp.resolve(N, fn)`: the picker's candidate N as its
+    /// server fills it in — what it has at once, else its server asked
+    /// (`completionItem/resolve`), once however many wait on it.
+    pub(crate) fn resolve_candidate(&mut self, lua_token: u64, n: usize) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        let Some((items, at)) = self.completion.picked.get(n.wrapping_sub(1)).cloned() else {
+            rt.candidate_resolved(lua_token, Err(format!("no candidate {n}")));
+            return;
+        };
+        let item = &items[at as usize];
+        let ask = item
+            .resolve
+            .clone()
+            .filter(|_| item.filled.borrow().is_none() && item.documentation.is_none());
+        let (Some(resolve), Some(s)) = (ask, self.completion.session.as_mut()) else {
+            let filled = item.filled.borrow().clone().unwrap_or_default();
+            let detail = filled.detail.or_else(|| item.detail.clone());
+            let docs = filled
+                .documentation
+                .or_else(|| item.documentation.as_deref().map(str::to_string));
+            rt.candidate_resolved(lua_token, Ok((detail.as_deref(), docs.as_deref())));
+            return;
+        };
+        // Asked already — by the popup, or the picker before — its
+        // answer answers this too.
+        let pending = s
+            .resolving
+            .iter()
+            .find(|(_, (i, a))| Rc::ptr_eq(i, &items) && *a == at)
+            .map(|(t, _)| *t);
+        if let Some(t) = pending {
+            self.completion.lua_resolves.entry(t).or_default().push(lua_token);
+            return;
+        }
+        let buffer = s.anchor.buffer;
+        self.completion.next_resolve += 1;
+        let token = self.completion.next_resolve;
+        self.completion.resolves += 1;
+        let s = self.completion.session.as_mut().unwrap();
+        s.resolving.insert(token, (items, at));
+        self.completion.lua_resolves.insert(token, vec![lua_token]);
+        self.positional_cmd(Cmd::Resolve {
+            buffer,
+            token,
+            resolve,
+        });
     }
 
     /// Candidate `text` taken from the picker into the buffer being
@@ -3466,9 +3540,9 @@ mod tests {
         }
         s.rescan_all(&ctx(&config, &frecency, &signals));
         let texts = |s: &mut Session| -> Vec<String> {
-            s.ranked_items()
+            s.ranked()
                 .iter()
-                .map(|i| i.text().to_string())
+                .map(|(a, i)| a[*i as usize].text().to_string())
                 .collect()
         };
         // The server's `help` over the buffer's, once; a word's start

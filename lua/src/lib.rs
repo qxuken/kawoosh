@@ -416,6 +416,10 @@ pub enum Msg {
         name: String,
         paths: Vec<PathBuf>,
     },
+    /// `kawoosh.lsp.resolve(index, fn)`: the candidates picker's
+    /// candidate `index` filled in by its server, answered to `token`
+    /// (`Runtime::candidate_resolved`).
+    Resolve { token: u64, index: usize },
     /// `kawoosh.lsp.symbols(opts, fn)`: symbols asked of `buffer`'s
     /// server, or its grammar's outline (`source`: `auto`, `lsp`,
     /// `syntax`), answered to `token` (`Runtime::symbols_answered`).
@@ -3075,6 +3079,20 @@ impl Runtime {
         self.answer(token, result, "lsp.symbols");
     }
 
+    /// A candidate filled in for `kawoosh.lsp.resolve`: the callback
+    /// called with `{ detail =, documentation = }`, each a string,
+    /// empty when the server has none; or with nil and why not.
+    pub fn candidate_resolved(&self, token: u64, result: Result<(Option<&str>, Option<&str>), String>) {
+        let result = result.and_then(|(detail, documentation)| {
+            let t = self.lua.create_table().map_err(|e| e.to_string())?;
+            t.set("detail", detail.unwrap_or_default())
+                .and_then(|()| t.set("documentation", documentation.unwrap_or_default()))
+                .map_err(|e| e.to_string())?;
+            Ok(t)
+        });
+        self.answer(token, result, "lsp.resolve");
+    }
+
     /// A search for `kawoosh.search(query, fn)`: the callback called
     /// with what it found — `files`, each `{ path =, rel =, lines = {
     /// { line =, text =, cols = { {from, to}, … } }, … } }` (lines from
@@ -5633,6 +5651,31 @@ fn seed(
             }
             t.set("current", p.candidate)?;
             Ok(LV::Table(t))
+        })?,
+    )?;
+    // ---- `kawoosh.lsp.resolve(index: integer, fn: fun(c:
+    // kawoosh.lsp.Resolved?, why: string?)): integer`: candidate `index`
+    // of `kawoosh.lsp.candidates()` as its server fills it in
+    // (`completionItem/resolve`) — what it has, at once, when it was
+    // sent whole or filled in before — to `fn(c)`; `fn(nil, why)` when
+    // there is no such candidate. Answers the job's token.
+    //
+    // @class kawoosh.lsp.Resolved
+    // @field detail string the server's one-liner, or empty
+    // @field documentation string plain or markdown, or empty
+    let qq = q(queue);
+    let jj = jobs.clone();
+    lsp.set(
+        "resolve",
+        lua.create_function(move |lua, (index, cb): (usize, mlua::Function)| {
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::Resolve { token, index });
+            Ok(token)
         })?,
     )?;
     // ---- `kawoosh.lsp.actions(): kawoosh.lsp.Action[]?`: the code
