@@ -163,15 +163,16 @@ cursor; `<Esc>` again closes the picker.
 | `<Down>` `<Up>` `<C-j>` `<C-k>` | next, previous row |
 | `<PageDown>` `<PageUp>` | a page down, up |
 | `j` `k` `gg` `G` `<C-d>` `<C-u>` | in normal mode: move the cursor |
-| `J` `K` | in normal mode: scroll the preview |
+| `<A-j>` `<A-k>` | scroll the preview, from the query too (`J` `K` in normal mode) |
 | `<CR>` | take the row: a file at its line, a buffer, a command |
 | `<C-v>` `<C-s>` `<C-t>` | take it into a split beside, a split below, a new tab |
 | `<C-c>` | close, from either mode |
 | `<A-p>` | hide or show the preview in this picker, even where it is too small for one or `picker.preview` is `off`; the next picker follows the setting again |
 | `<A-w>` | wrap long rows instead of cutting them |
 | `<A-g>` | in files and grep: ignored and hidden files too, or not (`⌥g ignored` in the head, lit while on) |
-| `<A-S-h>` `<A-S-l>` | move the divider between the list and a preview beside it; otherwise the list is the whole width and these size its column, as in any pane |
-| `<A-S-k>` `<A-S-j>` | make the picker taller, shorter |
+| `<A-h>` `<A-l>` | make the list smaller, bigger against the preview: the divider left, right beside it, up, down under it |
+| `<A-S-h>` `<A-S-l>` `<A-S-k>` `<A-S-j>` | the picker's pane narrower, wider, taller, shorter, as in any pane |
+| `<A-/>` | the keys' legend under the list, or not |
 
 A click puts the cursor on a row and a second click takes it. The size
 and the divider you leave are kept for the next picker.
@@ -180,10 +181,18 @@ The preview goes where the picker has room for it, decided again as
 the pane or the window is resized: beside the list when the picker is
 wide enough for both (about 30 characters of list and 40 of preview)
 and tall enough for 4 lines of preview, below the list when it is tall
-enough for 4 rows and 4 lines instead,
-and nowhere when it is neither — the head then ends in `⌥p preview`.
+enough for 4 rows and 4 lines and wide enough for 24 characters of
+preview, and nowhere when it is neither — the head then ends in
+`⌥p preview`. Once placed, the preview stays until its room falls a
+tenth short, so a pane resized near the edge does not flip it back and
+forth.
 `picker.preview` set to `right`, `below` or `off` puts it there always.
 The divider under a list drags too.
+
+A narrow picker's head drops the words of its `⌥g` and `⌥p` chips first,
+then shortens the count (`12/4031`), then drops the title, so the query
+always has room. A path too long for the list loses its start, not its
+file name: `…/kept/apart/the_file_name.rs`.
 
 A file picker lists at most 200 000 files; the count says
 `walk stopped at …` when there were more.

@@ -168,7 +168,7 @@ local function list_it(item, how)
 end
 
 picker.source("dirs", {
-  title = "directories",
+  title = "directories", cut = "start",
   load = function(ctx, done)
     from_terminal = ctx.terminal == true
     local ok, name = pcall(kawoosh.buf.name, ctx.buffer)
