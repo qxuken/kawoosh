@@ -41,6 +41,72 @@ pub fn line_edits(old: &str, new: &str) -> Vec<(Range<usize>, String)> {
     out
 }
 
+/// The edits, ascending and disjoint, that turn `old` into `new`, a
+/// token at a time: a word (letters, digits, `_`), a run of whitespace,
+/// or any other character. What a rewrite the size of a syntax node is
+/// put in as (`kawoosh.buf.edits` with `diff`), so the tokens it keeps
+/// keep their highlight, marks and carets — a list split onto its lines
+/// changes the space between its items and nothing else. Past
+/// `TOKEN_CAP` tokens a side, the one edit of the bytes that differ.
+pub fn token_edits(old: &str, new: &str) -> Vec<(Range<usize>, String)> {
+    let mut out = Vec::new();
+    if old == new {
+        return out;
+    }
+    let (a, b) = (tokens(old), tokens(new));
+    if a.len() > TOKEN_CAP || b.len() > TOKEN_CAP {
+        narrowed(old, 0..old.len(), new, &mut out);
+        return out;
+    }
+    let mut input = InternedInput::default();
+    input.update_before(a.iter().map(|t| &old[t.clone()]));
+    input.update_after(b.iter().map(|t| &new[t.clone()]));
+    let mut diff = Diff::compute(Algorithm::Myers, &input);
+    diff.postprocess_no_heuristic(&input);
+    // A token's start, or the text's end past the last.
+    let at = |ts: &[Range<usize>], i: u32, len: usize| ts.get(i as usize).map_or(len, |t| t.start);
+    for h in diff.hunks() {
+        let from = at(&a, h.before.start, old.len())..at(&a, h.before.end, old.len());
+        let to = at(&b, h.after.start, new.len())..at(&b, h.after.end, new.len());
+        out.push((from, new[to].to_string()));
+    }
+    out
+}
+
+/// How many tokens a side [`token_edits`] diffs: a node action's node
+/// is far under it, a whole file's rewrite may not be.
+const TOKEN_CAP: usize = 20_000;
+
+/// `text` cut into [`token_edits`]'s tokens, each its byte range.
+fn tokens(text: &str) -> Vec<Range<usize>> {
+    #[derive(PartialEq)]
+    enum Class {
+        Word,
+        Space,
+        Other,
+    }
+    let class = |c: char| {
+        if c.is_alphanumeric() || c == '_' {
+            Class::Word
+        } else if c.is_whitespace() {
+            Class::Space
+        } else {
+            Class::Other
+        }
+    };
+    let mut out: Vec<Range<usize>> = Vec::new();
+    let mut last = None;
+    for (i, c) in text.char_indices() {
+        let k = class(c);
+        match out.last_mut() {
+            Some(t) if k != Class::Other && last.as_ref() == Some(&k) => t.end = i + c.len_utf8(),
+            _ => out.push(i..i + c.len_utf8()),
+        }
+        last = Some(k);
+    }
+    out
+}
+
 /// The differences between `old` and `new` as lines (docs/design/vcs.md
 /// Decision 1): each the lines of `old` (from 0, end exclusive) and the
 /// lines of `new` standing in their place — one side empty for a pure
@@ -203,6 +269,44 @@ pub fn base_line_ends<'a>(base: &'a str, head: &str) -> std::borrow::Cow<'a, str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn applied(old: &str, edits: &[(Range<usize>, String)]) -> String {
+        let mut out = old.to_string();
+        for (r, t) in edits.iter().rev() {
+            out.replace_range(r.clone(), t);
+        }
+        out
+    }
+
+    /// A list split onto its lines is edits of the space between its
+    /// items: the string and the names inside it are no edit's.
+    #[test]
+    fn a_split_list_changes_only_between_its_items() {
+        let old = r#"{ sd:"sdsa", device, format: presentationFormat }"#;
+        let new = "{\n    sd:\"sdsa\",\n    device,\n    format: presentationFormat,\n}";
+        let edits = token_edits(old, new);
+        assert_eq!(applied(old, &edits), new);
+        let kept = old.find("\"sdsa\"").unwrap();
+        for (r, _) in &edits {
+            assert!(
+                r.end <= kept || r.start >= kept + 6,
+                "{r:?} reaches into the string"
+            );
+            assert!(
+                old[r.clone()].trim().is_empty() || old[r.clone()] == *" }",
+                "{:?}",
+                &old[r.clone()]
+            );
+        }
+        assert!(token_edits(old, old).is_empty());
+        // A name restyled is the one word.
+        let e = token_edits("let parse_http = 1;", "let parseHttp = 1;");
+        assert_eq!(e, vec![(4..14, "parseHttp".to_string())]);
+        // Words of other scripts are words; an emptied text one edit.
+        let e = token_edits("a(привет, b)", "a(привет)");
+        assert_eq!(applied("a(привет, b)", &e), "a(привет)");
+        assert_eq!(token_edits("ab", ""), vec![(0..2, String::new())]);
+    }
 
     /// A CRLF text against the index's LF blob (`core.autocrlf`) is the
     /// same; an LF text against a CRLF blob is not.

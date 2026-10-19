@@ -239,7 +239,9 @@ function M.run(pick, target)
     carets[#carets + 1] = c
   end
   if visual then kawoosh.cmd("normal") end
-  kawoosh.buf.edits(edits, h, { carets = carets })
+  -- Made where the text differs only: a split's strings keep their
+  -- colour while the parse catches up.
+  kawoosh.buf.edits(edits, h, { carets = carets, diff = true })
   local first = kept[1].answer
   local msg = first.action.name .. " · " .. first.node.type
   if #edits > 1 then msg = msg .. " ×" .. #edits end

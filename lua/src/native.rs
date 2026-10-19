@@ -447,6 +447,7 @@ fn push_edits(ctx: &KwCtx, buffer: u64, edits: &[KwEdit]) -> Result<(), String> 
             edits: list,
             carets: Vec::new(),
             primary: 0,
+            diff: false,
         });
     Ok(())
 }

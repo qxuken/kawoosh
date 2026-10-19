@@ -594,3 +594,80 @@ fn held_moves(src: &str, setup: &str, carets: usize, moves: &[&str]) {
     assert_eq!(looked, 2 * moves.len() + 1);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `g.` splitting an object onto its lines, and joining it back, keeps
+/// the colours of what it kept on the frame it is pressed: the action
+/// rewrote the whole object in one edit, and the runs inside it went
+/// with the text replaced — the string drawn plain until the parser
+/// answered. Its edits are made where the text differs only
+/// (`kawoosh.buf.edits` with `diff`).
+#[test]
+fn a_split_object_keeps_its_strings_colour_on_every_frame() {
+    let src = "context.configure({ sd: \"sdsa\", device, format: presentationFormat });\n";
+    let dir = std::env::temp_dir().join(format!("kawoosh-split-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("split.ts");
+    std::fs::write(&file, src).unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
+    let mut d = Drive::new(900.0, 500.0);
+    // Node actions are a bundled Lua plugin, given the tree it parses.
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    // The runs over the string, from its opening quote.
+    let string = |app: &Kawoosh| -> Vec<(usize, usize, u32)> {
+        let buf = app.ed.buffer_of(app.focused_view().unwrap());
+        let text = buf.text();
+        let at = text.find("\"sdsa\"").unwrap();
+        buf.runs(SYNTAX_LAYER, at..at + 6)
+            .into_iter()
+            .map(|x| {
+                (
+                    x.range.start.max(at) - at,
+                    x.range.end.min(at + 6) - at,
+                    x.style,
+                )
+            })
+            .collect()
+    };
+    let settled = string(&app);
+    assert!(!settled.is_empty(), "the string is coloured");
+    d.press(&mut app, "f{");
+    for (keys, lines) in [("g.", 5), ("g.", 1)] {
+        let before = text_of(&app);
+        d.press(&mut app, keys);
+        // The edits land on a frame of their own, as Lua's do.
+        let mut frames = 0;
+        while text_of(&app) == before && frames < 10 {
+            d.frame(&mut app);
+            frames += 1;
+        }
+        assert_eq!(
+            text_of(&app).lines().count(),
+            lines,
+            "{keys} after {frames} frames: {} — {}",
+            text_of(&app),
+            app.ed.message
+        );
+        assert_eq!(string(&app), settled, "the frame of {keys}");
+        d.frame(&mut app);
+        assert_eq!(string(&app), settled, "the frame after {keys}");
+        app.wait_for_syntax();
+        d.frame(&mut app);
+        assert_eq!(string(&app), settled, "answered after {keys}");
+        // The caret back on the opener, for the join.
+        let v = app.focused_view().unwrap();
+        let at = text_of(&app).find('{').unwrap();
+        assert_eq!(
+            app.ed.views[v].sels.primary().head,
+            at,
+            "on the opener after {keys}"
+        );
+    }
+    assert_eq!(text_of(&app), src, "joined back as it was");
+    std::fs::remove_dir_all(&dir).ok();
+}

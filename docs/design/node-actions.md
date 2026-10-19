@@ -105,6 +105,16 @@ of the list around it), the outer one is done and the inner skipped,
 and the message says how many were: an inner edit would be written
 into text the outer one replaced.
 
+Built (2026-10-19): the edits go with `diff = true`, each made only
+where the node's new text differs from its old, a token at a time
+(`kawoosh_doc::line_diff::token_edits`: a word, a run of whitespace,
+any other character). A rewrite in one edit took every highlight run
+inside the node with it, and a split object's strings were drawn plain
+until the parser answered — a flicker on every `g.`; the edits of a
+split are now the space between its items, and what they keep keeps
+its runs, marks and diagnostics. `tests/syntax.rs` checks a string's
+colour on the frame of a split and of its join.
+
 ### 5. The key runs the first; `:node actions` lists them all
 
 `g.` runs the first action that takes the caret's node (§2), among the
