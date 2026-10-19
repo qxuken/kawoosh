@@ -380,8 +380,11 @@ end
 
 -- A module's items arrived: every path once, in the first module that
 -- lists it (an open buffer is not also a recent file), the buffer
--- split from left to *here*, and a matcher over the rest.
-local function loaded(sec, items)
+-- split from left to *here*, and a matcher over the rest; a walk's
+-- rows the engine holds after them as they came (`picker.with_rows`),
+-- the paths listed before left out — not marked seen, the rows being
+-- the engine's (`files` is the layout's last).
+local function loaded(sec, items, info)
   local kept = {}
   for _, it in ipairs(items or {}) do
     local seen_by = it.path and L.seen[it.path]
@@ -391,10 +394,14 @@ local function loaded(sec, items)
       kept[#kept + 1] = it
     end
   end
-  sec.items = kept
-  local texts = {}
-  for i, it in ipairs(kept) do texts[i] = it.text end
-  sec.matcher = kawoosh.matcher(texts)
+  if info and info.rows then
+    sec.items, sec.matcher = picker.with_rows(kept, info.rows, { by = {}, last = {}, drop = L.seen })
+  else
+    sec.items = kept
+    local texts = {}
+    for i, it in ipairs(kept) do texts[i] = it.text end
+    sec.matcher = kawoosh.matcher(texts)
+  end
   sec.loading = false
   L.dirty = true
 end
@@ -415,16 +422,17 @@ local function load_section(sec, ctx)
   local items_fn = def.items or (src and src.items)
   local load_fn = def.load or (src and src.load)
   if items_fn then
-    local ok, got = pcall(function()
-      return type(items_fn) == "function" and items_fn(ctx) or items_fn
+    local ok, got, info = pcall(function()
+      if type(items_fn) == "function" then return items_fn(ctx) end
+      return items_fn
     end)
-    loaded(sec, with_entries(sec.name, ok and got or {}))
+    loaded(sec, with_entries(sec.name, ok and got or {}), ok and info or nil)
   elseif load_fn then
     sec.loading = true
     local this = L
-    load_fn(ctx, function(items)
+    load_fn(ctx, function(items, _, info)
       if L ~= this then return end
-      loaded(sec, with_entries(sec.name, items))
+      loaded(sec, with_entries(sec.name, items), info)
     end)
   else
     loaded(sec, with_entries(sec.name, {}))
@@ -439,10 +447,14 @@ local function assign_keys()
   L.keys = {}
   local taken, want = {}, {}
   for k in pairs(RESERVED) do taken[k] = true end
+  -- Only a module with keys has letters: a walk's rows are made items
+  -- only when shown, and are not walked here.
   for _, sec in ipairs(L.sections) do
-    for _, it in ipairs(sec.items) do
-      it.letter = nil
-      if sec.def.keys then want[#want + 1] = { item = it, sec = sec } end
+    if sec.def.keys then
+      for _, it in ipairs(sec.items) do
+        it.letter = nil
+        want[#want + 1] = { item = it, sec = sec }
+      end
     end
   end
   for _, w in ipairs(want) do

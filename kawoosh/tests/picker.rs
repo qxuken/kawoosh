@@ -209,6 +209,105 @@ fn files_are_walked_filtered_and_opened() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A walk's rows stay the engine's, a matcher of them, put in the
+/// picker's order there (docs/design/picker.md Decision 5): the open
+/// buffer's file first though the walk lists it last, the binary
+/// last, and a row made an item when it is shown — its path joined to
+/// the root, its boost what `boosted` would have given it.
+#[test]
+fn a_walks_rows_are_ordered_by_the_engine_and_made_items_when_shown() {
+    let _serial = serial();
+    let dir = project("walkrows");
+    std::fs::write(dir.join("zz.txt"), "last on disk\n").unwrap();
+    std::fs::write(dir.join("logo.png"), "not text").unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("zz.txt"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(
+        r,
+        [
+            "zz.txt".to_string(),
+            "README.md".into(),
+            native("src/lib.rs"),
+            native("src/main.rs"),
+            "logo.png".into()
+        ],
+        "boosted first, the binary last, the rest in the walk's order"
+    );
+    lua(
+        &mut app,
+        &format!(
+            r#"local s = kawoosh.picker.state()
+assert(#s.items == 5, #s.items)
+local by = {{}}
+for _, it in ipairs(s.items) do by[it.text] = it end
+assert(by["zz.txt"].boost >= 1, "the open buffer's boost")
+assert(by["zz.txt"].path == kawoosh.fs.join({root:?}, "zz.txt"), by["zz.txt"].path)
+assert(by["logo.png"].boost == -0.5, "a binary's")
+assert(by["README.md"].boost == nil, "none")"#,
+            root = dir.to_string_lossy()
+        ),
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Rows any source can hand over held by the engine (Decision 5), not
+/// a walk's alone: a plugin's own, no root — listed after its items in
+/// their order, made items by its `item` only as they are shown or
+/// ranked, counted, matched and picked as any row.
+#[test]
+fn a_plugins_source_hands_rows_the_engine_holds() {
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        made, picked = 0, nil
+        kawoosh.picker.source("nums", {
+          title = "nums",
+          items = function()
+            local list = {}
+            for i = 1, 50000 do list[i] = "row " .. i end
+            local rows = { matcher = kawoosh.matcher(list), item = function(text, i)
+              made = made + 1
+              return { text = text, n = i }
+            end }
+            return { { text = "first", n = 0 } }, { rows = rows }
+          end,
+          pick = function(item) picked = item.n end,
+        })
+        "#,
+    );
+    ex(&mut d, &mut app, "picker nums");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(r[..3], ["first", "row 1", "row 2"], "the items, then the rows");
+    let t = texts(&d);
+    assert!(
+        t.iter().any(|s| s.ends_with(" of 50001")),
+        "every row counted: {t:?}"
+    );
+    // The hits an empty query ranks (`LIMIT`, 200), no more.
+    lua(&mut app, "assert(made <= 200, made)");
+    d.keys(&mut app, "row 4999");
+    d.frame(&mut app);
+    assert_eq!(rows(&d)[0], "row 4999");
+    // Each key ranks its own 200 at most: eight keys, nowhere near all.
+    lua(&mut app, "assert(made <= 8 * 200, made)");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    lua(&mut app, "assert(picked == 4999, tostring(picked))");
+}
+
 /// Asked 2026-10-14: "file search should fuzzy find with spaces like
 /// (carnet main should match roles/carnet/tasks/main.yml)". A space in
 /// the query splits it into terms, each matched anywhere in the path

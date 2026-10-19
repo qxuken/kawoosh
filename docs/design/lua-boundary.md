@@ -371,12 +371,16 @@ frame of an ease follows one. `kawoosh/tests/view_scroll.rs`: `j` `k`
 `<C-d>` `G` `gg` move the body with the slot replayed, `f` (plugin
 code) still runs the view.
 
+**Round 16, 2026-10-19: a walk's rows kept by the engine** (picker.md
+Decision 5). Asked after `<A-g>` over the kawoosh checkout (130k paths)
+stalled 235 ms. The rows stay in a matcher of their bytes, made on the
+walk's thread; `fs.walk` hands it to Lua, `m:order` puts them in
+`boosted`'s order, and the picker makes an item of a row only when it
+is shown — any source's rows, not a walk's alone. The frame the walk
+lands in from 270–282 ms to 6 (a dev build, the same tree).
+
 ## Open
 
 - A listing's `ids` still mirror its tracked lines in Lua (the plan
   reassigns an entry to a line, Decision 7): the payloads could be the
   only record once the engine takes a payload changed on a tracked line.
-- The picker's 108 ms frame as a 100k-file walk lands (Round 8): what is
-  left is the rows as Lua tables and the matcher's copy of their text —
-  a list kept in the engine and lent to Lua as rows are shown would end
-  it, and change every source.
