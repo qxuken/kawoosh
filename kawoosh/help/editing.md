@@ -177,7 +177,8 @@ Every command acts on each selection, so inserting, deleting, operators,
 | keys | what |
 |---|---|
 | `<C-j>` `<C-k>` | add a caret on the line below, above (also `<C-Down>` `<C-Up>`) |
-| `<C-j>` `<C-k>` in visual mode | a caret on every selected line, at the same column |
+| `<C-j>` `<C-k>` `<C-h>` `<C-l>` in visual mode | a selection on one line again below, above, to its left, to its right — the same columns, the same width; a line too short for it is passed over |
+| `<C-j>` `<C-k>` in visual mode over several lines | a caret on every selected line, at the same column |
 | `<C-n>` | select the word under the caret; again, the next match too{{mac: (`⌘d`)}} |
 | `<C-S-n>` | select every match at once{{mac: (`⌘⇧L`)}} |
 | `,` | keep only the primary selection |

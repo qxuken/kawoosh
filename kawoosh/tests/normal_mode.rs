@@ -161,6 +161,54 @@ fn a_selection_over_lines_is_a_caret_on_each() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A selection on one line spans: `<C-j>` `<C-k>` in visual mode copy it
+/// over the same columns on the next line long enough, `<C-l>` `<C-h>`
+/// over as many characters beside it; the copy primary, visual mode
+/// kept, so an operator takes them all.
+#[test]
+fn a_selection_on_one_line_spans_with_ctrl_hjkl() {
+    let mut app = Kawoosh::new("t", "abcdef\nghijkl\nmn\nopqrst");
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "lvl");
+    d.key(&mut app, "l", ctrl());
+    assert_eq!(sels(&app), [(1, 2), (3, 4)]);
+    assert_eq!(primary(&app), 1, "the copy");
+    d.key(&mut app, "l", ctrl());
+    assert_eq!(sels(&app).len(), 2, "no room for a third on the line");
+    d.key(&mut app, "h", ctrl());
+    assert_eq!(sels(&app), [(1, 2), (3, 4)], "back onto the first");
+    assert_eq!(primary(&app), 0);
+    d.key(&mut app, "j", ctrl());
+    d.key(&mut app, "j", ctrl());
+    assert_eq!(
+        sels(&app),
+        [(1, 2), (3, 4), (8, 9), (18, 19)],
+        "`mn` is too short: passed over"
+    );
+    assert_eq!(primary(&app), 3);
+    assert_eq!(app.focused_mode(), Mode::Visual);
+    d.keys(&mut app, "d");
+    assert_eq!(text(&app), "af\ngjkl\nmn\norst");
+    // Backwards, the head stays first; `<C-k>` from the bottom.
+    esc(&mut d, &mut app);
+    d.keys(&mut app, "u");
+    esc(&mut d, &mut app);
+    d.keys(&mut app, "G3lvh");
+    d.key(&mut app, "k", ctrl());
+    assert_eq!(sels(&app), [(10, 9), (20, 19)]);
+    // `V` copies the line; sideways is nothing.
+    esc(&mut d, &mut app);
+    esc(&mut d, &mut app);
+    d.keys(&mut app, "ggV");
+    d.key(&mut app, "l", ctrl());
+    assert_eq!(sels(&app).len(), 1);
+    d.key(&mut app, "j", ctrl());
+    d.keys(&mut app, "d");
+    assert_eq!(text(&app), "mn\nopqrst");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// A yank lights what it took for a moment: the ranges are the flash
 /// while they are the text's, and time or an edit takes it off.
 #[test]
