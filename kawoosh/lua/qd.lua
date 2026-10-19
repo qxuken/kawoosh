@@ -133,11 +133,26 @@ local function modules_of(push, pull, repo)
   return out
 end
 
--- The repository qd keeps, from `qd state show` (`repo = "…"`).
+-- The repository in `qd state show`'s TOML: `repo = '…'` (a literal
+-- string, as qd writes it) or `repo = "…"` (escapes undone), without
+-- Windows' verbatim prefix (`\\?\C:\…`, `\\?\UNC\host\…`).
+local function repo_of(text)
+  text = "\n" .. (text or "")
+  local repo = text:match("\nrepo%s*=%s*'([^'\n]+)'")
+  if not repo then
+    repo = text:match('\nrepo%s*=%s*"([^"\n]+)"')
+    if repo then repo = repo:gsub("\\(.)", "%1") end
+  end
+  if not repo then return nil end
+  if repo:sub(1, 8) == "\\\\?\\UNC\\" then return "\\\\" .. repo:sub(9) end
+  if repo:sub(1, 4) == "\\\\?\\" then return repo:sub(5) end
+  return repo
+end
+
+-- The repository qd keeps, from `qd state show`.
 local function read_repo(done)
   kawoosh.spawn({ "qd", "state", "show" }, { on_done = function(text, code)
-    done(code == 0 and (text or ""):match('\nrepo%s*=%s*"([^"]+)"') or
-      (text or ""):match('^repo%s*=%s*"([^"]+)"') or nil)
+    done(code == 0 and repo_of(text) or nil)
   end })
 end
 
