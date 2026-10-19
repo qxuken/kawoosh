@@ -24,6 +24,17 @@ fn sels(app: &Kawoosh) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// What each visual selection covers, its head's character in.
+fn texts(app: &Kawoosh) -> Vec<String> {
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    app.ed.views[v]
+        .sels
+        .iter()
+        .map(|s| buf.slice(s.start()..buf.next_char(s.end())))
+        .collect()
+}
+
 fn primary(app: &Kawoosh) -> usize {
     app.ed.views[app.focused_view().unwrap()].sels.primary
 }
@@ -1044,15 +1055,6 @@ fn selections_within_split_keep_lines_drop() {
     let mut app = Kawoosh::new("t", doc);
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
-    let texts = |app: &Kawoosh| -> Vec<String> {
-        let v = app.focused_view().unwrap();
-        let buf = app.ed.buffer_of(v);
-        app.ed.views[v]
-            .sels
-            .iter()
-            .map(|s| buf.slice(s.start()..buf.next_char(s.end())))
-            .collect()
-    };
     // Within the first two lines, live.
     d.press(&mut app, "Vj<leader>vs");
     d.keys(&mut app, "foo");
@@ -1091,6 +1093,48 @@ fn selections_within_split_keep_lines_drop() {
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(texts(&app).len(), 1);
     assert_eq!(app.ed.message, "no match in the selections");
+    assert_eq!(text(&app), doc, "nothing edited");
+}
+
+/// `select every` (`<leader>ve`) keeps the primary and every Nth from
+/// it: a paste of title and value lines loses its titles and joins its
+/// values in a few keys; `)` first keeps the values instead, a count or
+/// the argument is N.
+#[test]
+fn select_every_keeps_every_nth_from_the_primary() {
+    let doc = "t1\nv1\nt2\nv2\nt3\nv3";
+    let mut app = Kawoosh::new("t", doc);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.press(&mut app, "ggVG<leader>vl<leader>ve");
+    assert_eq!(texts(&app), ["t1", "t2", "t3"]);
+    assert_eq!(primary(&app), 0);
+    d.keys(&mut app, "Vd");
+    assert_eq!(text(&app), "v1\nv2\nv3");
+    d.keys(&mut app, "ggVGJ");
+    assert_eq!(text(&app), "v1 v2 v3");
+    // The values: `)` moves the primary onto the first.
+    esc(&mut d, &mut app);
+    d.keys(&mut app, "uu");
+    assert_eq!(text(&app), doc);
+    d.press(&mut app, "ggVG<leader>vl)<leader>ve");
+    assert_eq!(texts(&app), ["v1", "v2", "v3"]);
+    assert_eq!(primary(&app), 0);
+    // A count is N; so is the argument.
+    esc(&mut d, &mut app);
+    esc(&mut d, &mut app);
+    d.press(&mut app, "ggVG<leader>vl3<leader>ve");
+    assert_eq!(texts(&app), ["t1", "v2"]);
+    esc(&mut d, &mut app);
+    esc(&mut d, &mut app);
+    d.press(&mut app, "ggVG<leader>vl");
+    d.keys(&mut app, ":select every 4");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app), ["t1", "t3"]);
+    d.keys(&mut app, ":select every x");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app), ["t1", "t3"], "no count, no change");
+    assert_eq!(app.ed.message, "select every: x is not a count");
     assert_eq!(text(&app), doc, "nothing edited");
 }
 

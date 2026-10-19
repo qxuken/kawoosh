@@ -58,6 +58,7 @@ helix's `C` is not built: it is `<C-j>`.
 | `<leader>vS` | `select split` |
 | `<leader>vk` | `select keep` (`!pat` drops) |
 | `<leader>vl` | `select lines` |
+| `<leader>ve` | `select every` (Decision 4), from normal mode too |
 | `<leader>v,` | `select drop primary`, from normal mode too (the carets `<C-j>` makes) |
 
 `<D-a><leader>vs` is helix's `%s`; `vip<leader>vs` its `vips`.
@@ -81,11 +82,35 @@ first of the new selections inside the old primary, else the first.
 Empty matches (`^`, `a*` on nothing) are no selections; `select lines`
 skips an empty line.
 
+### 4. Every Nth selection: `select every N`
+
+Asked 2026-10-19: a pasted list of title and value lines, the titles
+to go and the values to be joined — "how can i multiselect all lines and
+reduce selection to each second". `select keep` does it only when the
+titles share a pattern; `:g` and `:norm` do not exist, so a macro was
+the only way.
+
+`select every N` (`<leader>ve`) keeps the primary and every Nth
+selection counted from it, before it and after, and drops the rest; the
+primary stays primary. N is the argument (`:select every 3`), else the
+count (`3<leader>ve`), else 2. There is no offset argument and no
+negated form: the primary is the offset, and `(` `)` already move it, so
+`ggVG<leader>vl<leader>ve` keeps the titles (`select lines` leaves the
+first primary) and `)` before `<leader>ve` the values. Empty lines are
+no selections (Decision 3), so a blank line between pairs leaves the
+alternation alone. Then `Vd` takes the kept lines whole and `ggVGJ`
+joins what is left.
+
+*Beat: helix, Kakoune, VS Code.* None of them has it built in;
+vim-visual-multi has no such command either, as far as the round knows.
+The leader group had `e` free and keeps it off vim's letters.
+
 ## Built
 
 `editor/src/commands.rs` (`select_within`, `select_split`,
-`select_keep`, `select_lines`, `select_drop_primary`, and
+`select_keep`, `select_lines`, `select_every`, `select_drop_primary`, and
 `sel_ranges`, what a visual selection covers), the prompt as
 `Prompt::Select` in `editor/src/lib.rs` (previewed by
 `preview_select`), the keys in `default_keymap`. Tests:
-`kawoosh/tests/normal_mode.rs`' `selections_within_split_keep_lines_drop`.
+`kawoosh/tests/normal_mode.rs`' `selections_within_split_keep_lines_drop`
+and `select_every_keeps_every_nth_from_the_primary`.

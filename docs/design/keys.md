@@ -272,6 +272,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `<leader>vs` `<leader>vS` (visual) | helix's `s` `S`: the matches of a pattern inside every selection become the selections, or every selection is split on them — a prompt previewed as it is typed, `<Esc>` putting the selections back (`select within`, `select split`; [selections.md](selections.md)); `<D-a><leader>vs` is helix's `%s` |
 | `<leader>vk` (visual) | helix's `K` and `<A-K>`: keep the selections that match, or with `!pattern` those that do not (`select keep`) |
 | `<leader>vl` (visual) | helix's `<A-s>`: every line of every selection its own selection (`select lines`) |
+| `<leader>ve` | the primary and every Nth selection counted from it, before and after; the rest dropped — N the argument, else the count, else 2; `(` `)` first pick which (`select every`; [selections.md](selections.md) Decision 4) |
 | `<A-,>` | helix's: the primary selection gone (`select drop primary`), from normal mode's carets too |
 | `o` (visual) | swap the selection's ends |
 | `<D-c>` `<C-S-c>` | `yank clipboard`: in visual mode yank — the register and the clipboard; in normal mode the newest yank onto the clipboard; a private buffer's marked concealed ([secrets.md](secrets.md) Decision 8) |

@@ -3436,6 +3436,7 @@ pub fn install(ed: &mut Editor) {
         });
     }
     ed.register("select lines", select_lines);
+    ed.register_with_args("select every", Args::new(&[ArgKind::Text]), select_every);
     ed.register("select drop primary", select_drop_primary);
     // `S`: `cc` in one key.
     ed.register("change line", |ed, ctx| {
@@ -4245,6 +4246,10 @@ const DOCS: &[(&str, &str)] = &[
     (
         "select lines",
         "every line of every selection its own selection (<leader>vl, helix's <A-s>)",
+    ),
+    (
+        "select every",
+        "keep the primary and every Nth selection counted from it, N the argument, else the count, else 2; ( and ) first pick which (<leader>ve)",
     ),
     (
         "select drop primary",
@@ -5552,6 +5557,39 @@ fn select_lines(ed: &mut Editor, ctx: &Ctx) {
     }
 }
 
+/// `select every N` (`<leader>ve`): the primary and every Nth selection
+/// counted from it, before it and after; the rest dropped. N is the
+/// argument, else the count, else 2, and the primary picks which of
+/// them stay — `(` `)` move it first. A paste of title and value lines,
+/// the titles alone: `ggVG<leader>vl<leader>ve`; the values: `)` before
+/// `<leader>ve`.
+fn select_every(ed: &mut Editor, ctx: &Ctx) {
+    let n = match ctx.args.first() {
+        Some(a) => match a.parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                ed.message = format!("select every: {a} is not a count");
+                return;
+            }
+        },
+        None if ctx.has_count => ctx.count.max(1),
+        None => 2,
+    };
+    let sels = &mut ed.views[ctx.view].sels;
+    if sels.len() < 2 {
+        ed.message = "one selection".into();
+        return;
+    }
+    let p = sels.primary;
+    sels.items = std::mem::take(&mut sels.items)
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| i % n == p % n)
+        .map(|(_, s)| s)
+        .collect();
+    sels.primary = p / n;
+}
+
 /// `select drop primary`, helix's `<A-,>`: the primary selection gone,
 /// the one before it primary.
 fn select_drop_primary(ed: &mut Editor, ctx: &Ctx) {
@@ -6064,6 +6102,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>vS", "select split"),
         ("<leader>vk", "select keep"),
         ("<leader>vl", "select lines"),
+        ("<leader>ve", "select every"),
         ("<A-,>", "select drop primary"),
         ("grf", "format selection"),
     ];
@@ -6072,6 +6111,7 @@ pub fn default_keymap(km: &mut Keymap) {
     }
     // The carets `<C-j>` makes are normal mode's.
     km.bind(Normal, "<A-,>", "select drop primary");
+    km.bind(Normal, "<leader>ve", "select every");
     // The case operators doubled on their last letter, vim's `guu`
     // `gUU` `g~~`, a line each; after any other operator the letter
     // is no operator of its, and nothing runs.
