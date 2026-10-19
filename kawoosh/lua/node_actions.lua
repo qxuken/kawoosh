@@ -1,7 +1,8 @@
 -- Node actions (docs/design/node-actions.md): one key that does what the
 -- syntax node under the caret means — a boolean flipped, an operator
 -- mirrored, a list split onto its lines or joined back, a string's
--- quotes changed, a number's digits grouped. ts-node-action's idea on
+-- quotes changed, a number's digits grouped, a name's case cycled.
+-- ts-node-action's idea on
 -- `kawoosh.node`, and only on it: the registry, the dispatch and the
 -- actions are this file.
 --
@@ -61,6 +62,10 @@
 ---@field operators table<string, string> an operator to its mirror
 ---@field operators_by_language table<string, table<string, string>> a language's own, over `operators`
 ---@field lists table<string, table<string, { trailing?: boolean, pad?: boolean, single?: boolean, nodes?: boolean, sep?: string }>> by language, by node type: the lists `split` takes and how each is written
+---@field identifiers table<string, boolean> the node types `case` takes: a name's, in any grammar
+---@field cases string[] the styles `case` cycles through, by name in `case_styles`
+---@field kebab table<string, true|table<string, boolean>> by language, where a name may hold a `-` and kebab-case joins the cycle: every name, or the node types that may
+---@field case_styles table<string, fun(words: string[]): string> each style, a name written from its words
 local M = { list = {} }
 kawoosh.node_actions = M
 
@@ -540,5 +545,117 @@ kawoosh.node.action("digits", {
     if #num < 5 then return nil end
     local grouped = num:reverse():gsub("(%d%d%d)", "%1_"):reverse():gsub("^_", "")
     return grouped .. rest
+  end,
+})
+
+-- A name's style, the next of `M.cases` (or its language's own list):
+-- snake_case → camelCase → PascalCase → SCREAMING_SNAKE, and kebab-case
+-- where a name may hold a `-` (`M.kebab`). This occurrence only: `grn`
+-- renames.
+M.identifiers = {}
+for _, t in ipairs({
+  "identifier", "field_identifier", "type_identifier", "shorthand_field_identifier",
+  "property_identifier", "shorthand_property_identifier",
+  "shorthand_property_identifier_pattern", "private_property_identifier",
+  "statement_identifier", "package_identifier", "namespace_identifier", "label_name",
+  "variable_name", "bare_key", "id_name", "keyframes_name", "symbol",
+  "anchor_name", "alias_name", "cmd_identifier", "long_flag_identifier",
+}) do
+  M.identifiers[t] = true
+end
+
+M.cases = { "snake", "camel", "pascal", "screaming" }
+-- Where a name may hold a `-`, kebab-case comes after SCREAMING: a
+-- language's every name, or the node types that may (nu's commands and
+-- flags may, its variables not).
+M.kebab = {
+  css = true, scheme = true, toml = true, yaml = true,
+  nu = { cmd_identifier = true, long_flag_identifier = true },
+}
+
+local function capital(w) return w:sub(1, 1):upper() .. w:sub(2):lower() end
+
+-- Each style from the name's words.
+M.case_styles = {
+  snake = function(ws)
+    local out = {}
+    for i, w in ipairs(ws) do out[i] = w:lower() end
+    return table.concat(out, "_")
+  end,
+  screaming = function(ws)
+    local out = {}
+    for i, w in ipairs(ws) do out[i] = w:upper() end
+    return table.concat(out, "_")
+  end,
+  kebab = function(ws)
+    local out = {}
+    for i, w in ipairs(ws) do out[i] = w:lower() end
+    return table.concat(out, "-")
+  end,
+  camel = function(ws)
+    local out = {}
+    for i, w in ipairs(ws) do out[i] = i == 1 and w:lower() or capital(w) end
+    return table.concat(out)
+  end,
+  pascal = function(ws)
+    local out = {}
+    for i, w in ipairs(ws) do out[i] = capital(w) end
+    return table.concat(out)
+  end,
+}
+
+-- A name's words: split at `_` and `-`, and where the case turns —
+-- `parseHTTP2Request` is parse, HTTP2, Request; digits stay with the
+-- word before them.
+local function words(core)
+  local out = {}
+  for part in core:gmatch("[^_%-]+") do
+    local apart = part:gsub("(%l)(%u)", "%1 %2"):gsub("(%d)(%u)", "%1 %2"):gsub("(%u)(%u%l)", "%1 %2")
+    for w in apart:gmatch("%S+") do out[#out + 1] = w end
+  end
+  return out
+end
+
+-- The style a name is written in; a lone lower word counts as snake.
+local function style_of(core)
+  local lower = core:find("%l") ~= nil
+  if core:find("-", 1, true) then return "kebab" end
+  if not lower and core:find("%u") then return "screaming" end
+  if core:find("_", 1, true) then return "snake" end
+  if core:find("^%u") then return "pascal" end
+  if core:find("%u") then return "camel" end
+  return "snake"
+end
+
+kawoosh.node.action("case", {
+  doc = "snake_case → camelCase → PascalCase → SCREAMING_SNAKE (→ kebab-case)",
+  types = function(t) return M.identifiers[t] == true end,
+  run = function(n, ctx)
+    -- What leads and trails the words stays: `_private`, `__init__`,
+    -- `$el`, `#field`, `--flag`, scheme's `null?`.
+    local prefix, core, suffix = n:text():match("^([_$#@%-]*)(.-)([_?!]*)$")
+    if not core or not core:find("^%a[%w_%-]*$") then return nil end
+    -- Python's `__init__` is the language's name, not one to restyle.
+    if prefix == "__" and suffix == "__" then return nil end
+    local ws = words(core)
+    if #ws == 0 then return nil end
+    local cycle = M.cases
+    local kebab = M.kebab[ctx.language]
+    if kebab == true or (type(kebab) == "table" and kebab[n.type]) then
+      cycle = { table.unpack(M.cases) }
+      cycle[#cycle + 1] = "kebab"
+    end
+    local at = 0
+    local now = style_of(core)
+    for i, s in ipairs(cycle) do
+      if s == now then at = i end
+    end
+    -- The next style that writes the name otherwise.
+    for k = 1, #cycle do
+      local style = M.case_styles[cycle[(at + k - 1) % #cycle + 1]]
+      local got = style and style(ws)
+      if got and got ~= core then return prefix .. got .. suffix end
+    end
+    return nil
   end,
 })

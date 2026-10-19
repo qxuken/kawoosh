@@ -1,6 +1,6 @@
 -- Node actions (docs/design/node-actions.md): `g.` does what the node
 -- under the caret means — flip, operator, split and join, quotes,
--- digits — the innermost node an action answers for, up to a body;
+-- digits, a name's case — the innermost node an action answers for, up to a body;
 -- many carets one step, a node inside another's skipped; `.` again,
 -- `u` once; `node action NAME N`; a shipped one off by the settings.
 local function text() return kawoosh.buf.text() end
@@ -56,10 +56,11 @@ buf("lua", "local x = a == b\n")
 act("==")
 kawoosh.test.eq(text(), "local x = a ~= b\n", "lua's ~=")
 
--- split and join: rust, from anywhere in the list, the caret on the
+-- split and join: rust, from anywhere in the list but a name (which
+-- `case` takes), the caret on the
 -- opener after; the trailing comma; back on one line.
 buf("rust", "fn main() {\n    f(a, g(b), c);\n}\n")
-act("c)")
+act(", c")
 kawoosh.test.eq(text(), "fn main() {\n    f(\n        a,\n        g(b),\n        c,\n    );\n}\n")
 kawoosh.test.eq(kawoosh.message(), "split · arguments")
 kawoosh.test.eq(kawoosh.buf.cursor().offset, at("f(", 1), "on the opener")
@@ -89,7 +90,7 @@ kawoosh.test.eq(kawoosh.message(), "no node action here")
 -- The climb stops at a body: a closure's does not split the call.
 buf("rust", "fn main() {\n    f(|| { x }, y);\n}\n")
 before = text()
-act("x }")
+act(" x }")
 kawoosh.test.eq(text(), before, "not from inside the closure's body")
 -- Other languages' rules: go's comma, json's none, lua's call and table.
 buf("go", "package p\n\nvar x = []int{1, 2}\n")
@@ -102,7 +103,7 @@ act("1,")
 kawoosh.test.eq(text(), "[\n" .. unit .. "1,\n" .. unit .. "2\n]\n", "json: no trailing comma")
 buf("lua", "f(a, b)\nlocal t = {\n  1,\n  2,\n}\n")
 unit = kawoosh.buf.indent().unit
-act("a,")
+act(", b")
 kawoosh.test.ok(text():find("f(\n" .. unit .. "a,\n" .. unit .. "b\n)", 1, true), "a lua call: no trailing comma")
 act("{\n")
 kawoosh.test.ok(text():find("local t = { 1, 2 }", 1, true), "a lua table joined, padded")
@@ -145,7 +146,7 @@ kawoosh.press("u")
 kawoosh.frame()
 kawoosh.test.eq(text(), "fn main() {\n    let a = true;\n    let b = false;\n}\n", "one undo")
 buf("rust", "fn main() {\n    f(true, x);\n}\n")
-kawoosh.buf.set_selections({ { at("true"), at("true") }, { at("x)"), at("x)"), primary = true } })
+kawoosh.buf.set_selections({ { at("true"), at("true") }, { at(", x"), at(", x"), primary = true } })
 kawoosh.frame()
 kawoosh.press("g.")
 kawoosh.frame()
@@ -202,7 +203,7 @@ kawoosh.test.eq(text(), "fn main() {\n    f(\n        true,\n        x,\n    );\
 -- A list a user adds to `split`'s table is split.
 kawoosh.node_actions.lists.rust.token_tree = { trailing = false }
 buf("rust", "fn main() {\n    m!(a, b);\n}\n")
-act("a,")
+act(", b")
 kawoosh.test.eq(text(), "fn main() {\n    m!(\n        a,\n        b\n    );\n}\n", "a macro's tokens, added")
 kawoosh.node_actions.lists.rust.token_tree = nil
 
@@ -217,15 +218,15 @@ act("2 3")
 kawoosh.test.eq(text(), "let x = [\n" .. unit .. "1\n" .. unit .. "2\n" .. unit .. "3\n]\nlet r = {a: 1, b: 2}\n", "a nu list split without commas")
 act("2\n")
 kawoosh.test.ok(text():find("let x = [1 2 3]\n", 1, true), "joined by spaces")
-act("b:")
+act(": 2")
 kawoosh.test.ok(text():find("{\n" .. unit .. "a: 1\n" .. unit .. "b: 2\n}", 1, true), "a record split, its commas shed")
-act("b:")
+act(": 2")
 kawoosh.test.ok(text():find("{a: 1, b: 2}", 1, true), "joined by commas")
 buf("nu", "def f [a: int, b = 2, --flag] { $a }\n")
 unit = kawoosh.buf.indent().unit
-act("b =")
+act("= 2")
 kawoosh.test.ok(text():find("[\n" .. unit .. "a: int\n" .. unit .. "b = 2\n" .. unit .. "--flag\n]", 1, true), "a signature split")
-act("b =")
+act("= 2")
 kawoosh.test.ok(text():find("[a: int, b = 2, --flag]", 1, true), "and joined")
 buf("nu", "let t = [[a b]; [1 2] [3 4]]\n")
 unit = kawoosh.buf.indent().unit
@@ -258,3 +259,43 @@ act("hi there")
 kawoosh.test.ok(text():find("`hi there`", 1, true), "a backquoted word is left")
 act("1000000", 2)
 kawoosh.test.ok(text():find("1_000_000", 1, true), "nu's digits")
+
+-- case: a name's style cycled, this occurrence only — snake, camel,
+-- Pascal, SCREAMING, back; the words found where the case turns; what
+-- leads and trails kept; kebab where a name may hold a `-`. A name in a
+-- list is the name's, not the list's.
+buf("rust", "fn main() {\n    let parse_http2_request = 1;\n}\n")
+act("parse", 2)
+kawoosh.test.eq(text(), "fn main() {\n    let parseHttp2Request = 1;\n}\n", "snake → camel")
+kawoosh.test.eq(kawoosh.message(), "case · identifier")
+kawoosh.test.eq(kawoosh.buf.cursor().offset, at("parse", 2), "the caret kept its place")
+act("parse")
+kawoosh.test.ok(text():find("let ParseHttp2Request", 1, true), "→ Pascal")
+act("Parse")
+kawoosh.test.ok(text():find("let PARSE_HTTP2_REQUEST", 1, true), "→ SCREAMING")
+act("PARSE")
+kawoosh.test.ok(text():find("let parse_http2_request", 1, true), "→ snake: rust has no kebab")
+buf("javascript", "const parseHTTPRequest = this.#raw_body;\n")
+act("parse")
+kawoosh.test.ok(text():find("const ParseHttpRequest", 1, true), "an acronym is a word")
+act("raw")
+kawoosh.test.ok(text():find("this.#rawBody", 1, true), "a private field's # kept")
+buf("python", "def __init__(self, _x): pass\n")
+act("_x")
+kawoosh.test.ok(text():find("_X)", 1, true), "a lone word: Pascal next, its _ kept")
+buf("rust", "fn main() {\n    f(a, b);\n}\n")
+act("b)")
+kawoosh.test.eq(text(), "fn main() {\n    f(a, B);\n}\n", "a name in a list: case, not split")
+buf("nu", "def my_cmd [--long_flag] { let my_var = 1 }\n")
+for _ = 1, 4 do act("def ", 4) end
+kawoosh.test.ok(text():find("def my-cmd", 1, true), "a nu command's kebab, after SCREAMING")
+act("def ", 4)
+kawoosh.test.ok(text():find("def my_cmd", 1, true), "and round to snake")
+for _ = 1, 4 do act("--", 2) end
+kawoosh.test.ok(text():find("[--long-flag]", 1, true), "a flag's, its -- kept")
+for _ = 1, 4 do act("let ", 4) end
+kawoosh.test.ok(text():find("let my_var", 1, true), "a variable has none: round to snake in four")
+before = text()
+buf("python", "def __init__(self): pass\n")
+act("init")
+kawoosh.test.eq(text(), "def __init__(self): pass\n", "a dunder is left")

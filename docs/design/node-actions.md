@@ -68,8 +68,10 @@ that cannot be put so.
 
 The dispatch starts at the caret's leaf — a token included — and climbs:
 the first node, innermost first, that an action takes and does not
-decline is acted on. On `x` in `f(x, true)` that is the argument list
-(split); on `true` it is the boolean (flip), the list around it next.
+decline is acted on. On the comma in `f(x, true)` that is the argument
+list (split); on `true` it is the boolean (flip), the list around it
+next; on `x` the name (case, since 2026-10-19 — §7), so a list splits
+from its brackets, its commas and the space between items.
 The climb stops at a node that fills a `body` field — a function's, a
 loop's, a closure's: the field most grammars name the same (rust has
 sixteen such kinds, javascript twenty-one, python thirteen). So a caret
@@ -135,7 +137,7 @@ the note proposed was not built.
 
 ### 7. What ships
 
-Five actions, in `node_actions.lua`, each a table a user or plugin can
+Six actions, in `node_actions.lua`, each a table a user or plugin can
 change:
 
 - **flip**: `true` ↔ `false`, `True` ↔ `False`, on the tokens and
@@ -196,16 +198,27 @@ change:
 - **digits**: `1000000` ↔ `1_000_000`, a decimal literal of five digits
   or more, in rust, python, javascript, typescript, go, odin and nu — a suffix
   (`1000000u64`) kept, a hex, octal or binary literal declined.
+- **case** (2026-10-19): a name's style, the next of `snake_case` →
+  `camelCase` → `PascalCase` → `SCREAMING_SNAKE` → `snake_case`, with
+  `kebab-case` after SCREAMING where a name may hold a `-` — css,
+  scheme, toml and yaml, and nu's commands and flags (`let my-var` is
+  an error in nu). On the leaf node types that are names in the linked
+  grammars (`identifier`, `field_identifier`, `property_identifier`,
+  `type_identifier`, bash's `variable_name`, toml's `bare_key`, …:
+  `kawoosh.node_actions.identifiers`). The words are split at `_`, `-`
+  and where the case turns (`parseHTTP2Request`: parse, HTTP2,
+  Request; a digit stays with its word); what leads and trails them is
+  kept (`_private`, `$el`, `#field`, `--flag`, scheme's `null?`), and
+  python's `__dunder__` is left. A style that writes the name the same
+  (`foo` in snake and camel) is passed over. Tables: `cases` the order,
+  `case_styles` each style from the words, `kebab` where `-` may be.
 
 `node_actions.NAME = false` in the settings turns a shipped one off.
 `kawoosh.node_actions.lists` is `split`'s table, and a list added to it
 is split — `split`'s `types` is a function reading it (`types` may be
 a list or a function).
 
-Not shipped: **cycling an identifier's case** (ts-node-action's
-`cycle_case`). It changes one occurrence of a name and leaves the others,
-which is a rename done wrong; `grn` asks the server to do it right. **A
-conditional to a ternary and back**: per language, with its own
+Not shipped: **a conditional to a ternary and back**: per language, with its own
 questions (an `else if`, a statement against an expression); a second
 round, if missed.
 
@@ -214,6 +227,13 @@ round, if missed.
 2026-09-29: `g.` for the key; `<` ↔ `>` mirrored, as ts-node-action
 does, not negated; node actions kept apart from `gra` — the server's
 menu stays the server's.
+
+2026-10-19: **case** shipped after all — the note had left it out as
+"a rename done wrong", changing one occurrence of a name. The user
+asked for it; it changes this occurrence only (ts-node-action's
+`cycle_case`), and `grn` stays the rename. And it wins on a name: the
+innermost rule (§2) holds, so `g.` on an item that is a bare name
+restyles it, where it split the list before.
 
 ## Built
 
@@ -244,6 +264,13 @@ grammar is linked in, so `tests/node_actions.lua` covers each: a list,
 record and signature both ways, a table's row and the table from its
 `;`, a closure's caret refusing the list around it, the operators,
 quotes both ways and a backquoted word left, digits.
+
+Case, 2026-10-19: `case`, and the tests that split a list from an
+item's name moved to its comma or bracket. `tests/node_actions.lua`:
+the cycle round in rust (no kebab), an acronym and a private field in
+javascript, a lone `_x` and a dunder in python, a name in a list
+restyled not split, nu's command and flag through kebab and its
+variable without.
 
 ## Left
 
