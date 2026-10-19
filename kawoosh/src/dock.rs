@@ -18,13 +18,6 @@ use crate::commands::{ShellCommand, cmd};
 use crate::confirm::Confirm;
 use crate::layout::{Content, PaneId};
 
-fn workspace_root_of(dir: &Path) -> String {
-    match crate::moments::workspace_of(dir) {
-        w if w.is_empty() => dir.display().to_string(),
-        w => w,
-    }
-}
-
 /// What the dock last saw of the workspaces.
 #[derive(Default)]
 pub struct DockState {
@@ -42,11 +35,16 @@ impl Kawoosh {
     /// The workspace directory `dir` is in: the memory's (the outermost
     /// `.kawoosh`, else the repository's root), else the directory
     /// itself — so leaving a directory outside every project closes it.
+    /// The first answer for a directory stands: a host's, asked before
+    /// its domain connected, is not changed under the dock's panes.
     pub(crate) fn workspace_root(&mut self, dir: &Path) -> String {
         if let Some(w) = self.dock_state.roots.get(dir) {
             return w.clone();
         }
-        let w = workspace_root_of(dir);
+        let w = match self.workspace_of(dir) {
+            w if w.is_empty() => dir.display().to_string(),
+            w => w,
+        };
         self.dock_state.roots.insert(dir.to_path_buf(), w.clone());
         w
     }

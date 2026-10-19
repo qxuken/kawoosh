@@ -807,6 +807,10 @@ const DOCS: &[(&str, &str)] = &[
         "whose memory the pane shows: `workspace` this one's, `global` every one's",
     ),
     (
+        "memory.hosts",
+        "the domains whose projects are workspaces, as a local one's are — `{ \"wsl\" }`: a directory there is looked through for its `.kawoosh` or its repository, a stat per directory above it on the host; on a domain not named, every directory is the one memory with no workspace",
+    ),
+    (
         "picker.preview",
         "where the picker's preview goes: `auto` beside the list when the picker is wide enough, below it when tall enough, else none; `right`, `below`, or `off` — `<A-p>` hides or shows it in one picker; `true` and `false` are read as `auto` and `off`",
     ),
@@ -1418,6 +1422,11 @@ impl Settings {
         // tab's project's, or `global`, every one's; `<C-a>` in the
         // pane flips it for the session.
         defaults.set("memory.scope", Setting::Str("workspace".into()));
+        // The domains whose directories are looked through for a
+        // workspace (workspaces.md Decision 15) — a WSL distro's
+        // projects, an ssh host's — each a stat per marker per directory
+        // on the host. None: a host's files are kept under no workspace.
+        defaults.set("memory.hosts", Setting::List(Vec::new()));
         // The picker (`picker.lua`): where a preview of the cursor's
         // row goes — `auto` by the picker's room (docs/design/picker.md
         // Decision 1) — and whether a row's text wraps to show the
@@ -2209,6 +2218,7 @@ mod tests {
                 "markdown.render",
                 "markdown.reveal",
                 "markdown.wrap",
+                "memory.hosts",
                 "memory.idle_secs",
                 "memory.keep_days",
                 "memory.max_mb",

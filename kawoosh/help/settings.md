@@ -168,7 +168,7 @@ A pane's values stay with the pane, whatever it shows: `:e other` in a zoomed pa
 
 `:settings` (or {{mac:`⌘,`, or }}`<leader>,`) opens every setting in a column beside the one you are in, so a change shows on the code at once. `:settings QUERY` opens it already searched: `:settings font`.
 
-Each setting is a row: its path as a settings file spells it, what it does, and a control for its kind. A switch flips, a word is one of a few chips, a number steps with `−` and `+` or takes a typed value, and a text is typed in place. A list or a table has **edit in file**, which opens the file at the key and adds the key first when the file does not have it. The rows are grouped into sections (Editing, Look, Layout, …), and a wide pane lists the sections down the left.
+Each setting is a row: its path as a settings file spells it, what it does, and a control for its kind. A switch flips, a word is one of a few chips, a number steps with `−` and `+` or takes a typed value, and a text is typed in place. A list or a table has **edit in file**, which opens the file at the key and adds the key first when the file does not have it. A list whose entries are known — `memory.hosts`, whose entries are your domains (`wsl`, the WSL distros, `~/.ssh/config`'s hosts) — also shows a switch for each, on while the list holds it: click one, or ring it with `h` `l` and press `⏎`. The rows are grouped into sections (Editing, Look, Layout, …), and a wide pane lists the sections down the left.
 
 **A change goes into a file.** At the top, **user**, **project** and **session** say where: your `settings.lua`, the project's `.kawoosh/settings.lua` nearest the working directory (made on the first change), or this session only, as `:set` does, gone at the next launch. Kawoosh edits the file where the key is and keeps your comments and layout. When the file is open in a buffer, the change is made there, one `u` undoes it, and the buffer is saved unless it already had unsaved changes of yours. A change also takes out a `:set` of the same setting, so what you chose is what you see. A file that builds its table in code (more than `return { … }` or a `local` returned by name) is not edited: kawoosh says so and opens it.
 
@@ -187,8 +187,8 @@ The search is at the top and has the keys when the pane opens. Every word you ty
 | `⏎`, `<Esc>` in the search | go to the rows; the arrows and `<C-n>` `<C-p>` walk them from the search |
 | `j` `k`, `gg` `G`, `<C-d>` `<C-u>` | walk the rows |
 | `]]` `[[` | the next section, this one's first row or the one before |
-| `⏎`, `<Space>` | flip, edit in place (`⏎` keeps, `<Esc>` drops), next word, or open the file |
-| `h` `l`, `-` `+` | step a number or a word |
+| `⏎`, `<Space>` | flip, edit in place (`⏎` keeps, `<Esc>` drops), next word, turn a list's ringed entry on or off, or open the file |
+| `h` `l`, `-` `+` | step a number or a word; move the ring along a list's entries |
 | `r` | reset: take the key out of the scope's file |
 | `x` | clear the `:set` value |
 | `<Tab>` | the row's value in every layer, each file's line a click away |
@@ -203,6 +203,7 @@ At the bottom are the files every layer reads, each a click to open, and **reloa
 
 The pane is a Lua plugin over `kawoosh.settings`, which a pane of your own can read too:
 
+- `kawoosh.settings.options[path] = function() return { … } end`: the entries a list setting may hold, each a switch on its row in the pane. Called as the row is drawn, so keep it cheap.
 - `kawoosh.settings.list()`: every setting, each `{ path, kind, choices, doc, default, value, origin, set, entries }`. `kind` is `boolean`, `integer`, `number`, `string`, `size`, `choice`, `list` or `table`; `set` holds the `user`, `project` and `session` values that exist; `entries` holds a table's names.
 - `kawoosh.settings.layers(path)`: the value in each layer, the winning one first, with its `file` and `line`.
 - `kawoosh.settings.files()`: the `user`, `init` and `project` files, and `project_all`.
@@ -315,6 +316,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `compile.default`, `compile.commands` | | what `<leader>cc` and `:compile NAME` run — a line, or a list of them run in turn ([code](code.md)) |
 | `tools` | | named programs to launch in terminal panes, a project's `run` among them; each a `place`: `column`, `under` or `dock` ([terminal](terminal.md#tools)) |
 | `memory.scope` | `"workspace"` | the memory pane shows this `workspace`'s rows or `global`, every one's ([memory](memory.md#the-memory-pane)) |
+| `memory.hosts` | `{}` | domains whose projects get a workspace of their own, as local ones do, such as `{ "wsl" }` ([memory](memory.md#the-memory-pane)) |
 | `memory.text.max_mb` | `8` | how much copied text is kept across restarts; `0` for none |
 | `secrets.masks` | | which text is masked ([memory](memory.md#secrets)) |
 
