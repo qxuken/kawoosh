@@ -1357,12 +1357,16 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.key(&mut app, "w", KeyMods::NONE.with_alt());
     // The pane's height and the list's width beside the preview:
     // `<A-K>` (the editor's pane key) makes the pane taller, the
-    // height kept as the setting, and `<A-L>` the list wider, a
+    // height kept as the setting, and `<A-l>` the list bigger, a
     // setting for the session; the divider between them drags.
     // ⌥⇧ with a letter: kui reports the letter with `shift` set, the
     // binding's `<A-K>`.
     let alt = |name: &str, app: &mut Kawoosh, d: &mut Drive| {
         d.key(app, name, KeyMods::NONE.with_shift().with_alt());
+        d.frame(app);
+    };
+    let plain_alt = |name: &str, app: &mut Kawoosh, d: &mut Drive| {
+        d.key(app, name, KeyMods::NONE.with_alt());
         d.frame(app);
     };
     let Rect {
@@ -1384,14 +1388,14 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     alt("j", &mut app, &mut d);
     let Rect { y: y2, .. } = d.rect("row README.md").unwrap();
     assert!((y2 - y0).abs() < 1.0, "and back: {y2} vs {y0}");
-    alt("l", &mut app, &mut d);
+    plain_alt("l", &mut app, &mut d);
     let Rect { w: w1, .. } = d.rect("row README.md").unwrap();
     assert!(w1 > w0 + 20.0, "the list wider: {w1} > {w0}");
     lua(
         &mut app,
         r#"assert(math.abs(kawoosh.opt("picker.split") - 0.55) < 0.001)"#,
     );
-    alt("h", &mut app, &mut d);
+    plain_alt("h", &mut app, &mut d);
     let Rect { w: w2, .. } = d.rect("row README.md").unwrap();
     assert!((w2 - w0).abs() < 1.0, "and back: {w2} vs {w0}");
     let Rect {
@@ -1481,11 +1485,12 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// With the preview off there is no divider between list and preview:
-/// `<A-S-l>` `<A-S-h>` are the pane's again, the column the picker
-/// stands in wider and narrower (in a strip, its next preset), the
-/// list the whole of it, and `picker.split` untouched. The preview
-/// shown again at runtime gives them back to the divider.
+/// `<A-S-l>` `<A-S-h>` are the pane's, as in the editor, whatever the
+/// picker draws (picker.md Decision 6): the column the picker stands
+/// in wider and narrower (in a strip, its next preset), the list the
+/// whole of it with no preview, and `picker.split` untouched. With the
+/// preview shown again they still size the column; `<A-l>` moves the
+/// divider.
 #[test]
 fn without_a_preview_the_width_keys_size_the_column() {
     let _serial = serial();
@@ -1534,12 +1539,20 @@ fn without_a_preview_the_width_keys_size_the_column() {
     alt("h", &mut app, &mut d);
     let p2 = pane_w(&app);
     assert!((p2 - p0).abs() < 1.0, "and back: {p2} vs {p0}");
-    // The preview again: the keys move the divider, the column holds.
+    // The preview again: `<A-S-l>` is still the column's, `<A-l>`
+    // the divider's, the column holding.
     d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert!(d.rect("picker divider").is_some(), "the divider");
-    let Rect { w: l0, .. } = d.rect("row README.md").unwrap();
     alt("l", &mut app, &mut d);
+    assert!(pane_w(&app) > p0 + 50.0, "the column wider again");
+    alt("h", &mut app, &mut d);
+    d.frame(&mut app);
+    assert!((pane_w(&app) - p0).abs() < 1.0, "and back");
+    let Rect { w: l0, .. } = d.rect("row README.md").unwrap();
+    d.key(&mut app, "l", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    d.frame(&mut app);
     let Rect { w: l1, .. } = d.rect("row README.md").unwrap();
     assert!(l1 > l0 + 20.0, "the list wider: {l1} > {l0}");
     assert!((pane_w(&app) - p0).abs() < 1.0, "the column as it was");
@@ -2059,6 +2072,189 @@ fn files_here_inside_an_ignored_directory_and_the_ignored_key() {
         assert_eq!(rows(&d), [native("node_modules/foo/index.js:1")]);
         d.press(&mut app, "<C-c>");
     }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Asked 2026-10-19: "adaptiveness rework … vertically stacked preview
+/// `<A-h/l>` bugs it a little" (picker.md Decisions 6–10). In a narrow,
+/// tall picker, the preview under the list: `<A-l>` `<A-h>` move that
+/// divider down and up — never the query's text, which the editor's
+/// `<A-h>` `<A-l>` indented — `<A-j>` `<A-k>` scroll the preview from
+/// the query, with none drawn `<A-l>` says so; the head drops its
+/// chips' words, the count's long form and the title before the query
+/// is overlapped; a path too long for the list keeps its file name;
+/// the legend takes rows under the list; a place is kept until its room
+/// falls a tenth short.
+#[test]
+fn a_narrow_tall_picker_its_keys_head_rows_and_legend() {
+    let _serial = serial();
+    let dir = project("narrow");
+    let deep = "src/a/rather/deep/directory/of/modules/kept/apart/the_file_name.rs";
+    std::fs::create_dir_all(dir.join(deep).parent().unwrap()).unwrap();
+    std::fs::write(
+        dir.join(deep),
+        (1..=60).map(|i| format!("line {i}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let mut d = Drive::new(460.0, 900.0);
+    let mut app = app_with_lua(&mut d, &dir.join("src/main.rs"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.keys(&mut app, "the_file");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "below");
+    let query = |app: &mut Kawoosh| -> String {
+        app.run_lua_source("t", r#"kawoosh.echo(kawoosh.picker.state().query)"#);
+        app.ed.message.clone()
+    };
+    let alt = |k: &str, app: &mut Kawoosh, d: &mut Drive| {
+        d.key(app, k, KeyMods::NONE.with_alt());
+        d.frame(app);
+        d.frame(app);
+    };
+    // The row's text cut from its start: `…` and the file name.
+    let row_text = texts(&d)
+        .into_iter()
+        .find(|s| s.ends_with("the_file_name.rs"))
+        .unwrap_or_default();
+    assert!(row_text.starts_with('…'), "cut from the start: {row_text:?}");
+    let first_shown = |d: &Drive| -> usize {
+        texts(d)
+            .into_iter()
+            .find_map(|s| s.strip_prefix("line ").and_then(|n| n.parse().ok()))
+            .unwrap_or(0)
+    };
+    assert_eq!(first_shown(&d), 1);
+    // `<A-l>` `<A-h>`: the divider under the list down and up, the
+    // query as it was — in insert mode and in normal mode.
+    let div0 = d.rect("picker divider").unwrap();
+    alt("l", &mut app, &mut d);
+    let div1 = d.rect("picker divider").unwrap();
+    assert!(div1.y > div0.y + 10.0, "the list taller: {div1:?} {div0:?}");
+    lua(
+        &mut app,
+        r#"assert(math.abs(kawoosh.opt("picker.split_below") - 0.55) < 0.001)
+           assert(math.abs(kawoosh.opt("picker.split") - 0.5) < 0.001)"#,
+    );
+    assert_eq!(query(&mut app), "the_file");
+    alt("h", &mut app, &mut d);
+    assert!((d.rect("picker divider").unwrap().y - div0.y).abs() < 1.0, "and back");
+    assert_eq!(query(&mut app), "the_file");
+    // `<A-j>` `<A-k>`: the preview scrolled from the query.
+    alt("j", &mut app, &mut d);
+    assert!(first_shown(&d) > 3, "half a preview down: {}", first_shown(&d));
+    alt("k", &mut app, &mut d);
+    assert_eq!(first_shown(&d), 1);
+    d.key(&mut app, "escape", KeyMods::default());
+    alt("l", &mut app, &mut d);
+    alt("h", &mut app, &mut d);
+    assert_eq!(query(&mut app), "the_file", "normal mode's too");
+    // No preview: nothing to size the list against, said.
+    alt("p", &mut app, &mut d);
+    assert_eq!(place(&mut app), "none");
+    alt("l", &mut app, &mut d);
+    assert!(app.ed.message.contains("no preview"), "{}", app.ed.message);
+    lua(
+        &mut app,
+        r#"assert(math.abs(kawoosh.opt("picker.split_below") - 0.5) < 0.001)"#,
+    );
+    alt("p", &mut app, &mut d);
+    assert_eq!(place(&mut app), "below");
+    // The head, narrower and narrower: nothing in it overlaps, the
+    // query's field never under its least, the chips' caps the last
+    // to go.
+    let head_texts = |d: &Drive| -> Vec<(String, Rect)> {
+        let nodes = d.core.nodes();
+        let field_y = nodes
+            .iter()
+            .find(|n| n.text.as_deref() == Some("the_file"))
+            .map(|n| n.rect.y)
+            .unwrap();
+        nodes
+            .iter()
+            .filter(|n| n.text.is_some() && (n.rect.y - field_y).abs() < 12.0)
+            .map(|n| (n.text.clone().unwrap(), n.rect))
+            .collect()
+    };
+    for width in [460.0, 300.0, 220.0, 160.0] {
+        d.viewport = kui_native::Size::new(width, 900.0);
+        d.frame(&mut app);
+        d.frame(&mut app);
+        let mut hs = head_texts(&d);
+        hs.sort_by(|a, b| a.1.x.total_cmp(&b.1.x));
+        for w in hs.windows(2) {
+            assert!(
+                w[0].1.x + w[0].1.w <= w[1].1.x + 0.5,
+                "at {width}: {:?} overlaps {:?} in {hs:?}",
+                w[0],
+                w[1]
+            );
+        }
+        for (t, r) in &hs {
+            assert!(r.x + r.w <= width + 0.5, "at {width}: {t:?} past the edge {r:?}");
+        }
+        let field = hs.iter().find(|(t, _)| t == "the_file").unwrap().1;
+        assert!(field.w > 40.0, "at {width}: the query whole {field:?}");
+        let words = hs.iter().any(|(t, _)| t == "ignored");
+        let caps = hs.iter().any(|(t, _)| t == "g");
+        if width >= 460.0 {
+            assert!(words && caps, "at {width}: the chip whole {hs:?}");
+        }
+        if width <= 220.0 {
+            assert!(!words, "at {width}: the chip's word gone first {hs:?}");
+            assert!(
+                !hs.iter().any(|(t, _)| t == "files"),
+                "at {width}: the title gone {hs:?}"
+            );
+        }
+    }
+    d.viewport = kui_native::Size::new(460.0, 900.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    // The legend (`<A-/>`): the keys under the list, the list's rows
+    // above it.
+    assert!(!texts(&d).iter().any(|s| s == "scroll preview"));
+    d.key(&mut app, "/", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(
+        texts(&d).iter().any(|s| s == "scroll preview"),
+        "{:?}",
+        texts(&d)
+    );
+    assert!(texts(&d).iter().any(|s| s == "list smaller, bigger"));
+    let legend = d.rect("picker legend").unwrap();
+    let preview_last = d
+        .core
+        .nodes()
+        .iter()
+        .filter(|n| n.text.as_deref().is_some_and(|t| t.starts_with("line ")))
+        .map(|n| n.rect.y + n.rect.h)
+        .fold(0.0f32, f32::max);
+    assert!(
+        preview_last <= legend.y + 0.5 || preview_last == 0.0,
+        "the preview above the legend: {preview_last} {legend:?}"
+    );
+    d.key(&mut app, "/", KeyMods::NONE.with_alt());
+    d.frame(&mut app);
+    d.press(&mut app, "<C-c>");
+    // A place kept until its room falls a tenth short; a new one asks
+    // for the whole.
+    lua(
+        &mut app,
+        r#"local p = kawoosh.picker.place
+           local w
+           for x = 300, 900 do if p(x, 600, "auto") == "right" then w = x break end end
+           assert(w, "a width that is beside")
+           assert(p(w - 10, 600, "auto") ~= "right", "short of it: not beside")
+           assert(p(w - 10, 600, "auto", false, "right") == "right", "kept beside")
+           assert(p(math.floor(w * 0.85), 600, "auto", false, "right") ~= "right", "a tenth short: moved")"#,
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }

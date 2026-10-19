@@ -6,8 +6,10 @@ search inside ignored directories (target, node_modules)" and "search
 should be able to include ignored directories" — the last is the
 project search's ([search.md](search.md) Decision 14). The picker is
 `kawoosh/lua/picker.lua` (roadmap step 4); its walk is
-`kawoosh_systems::fs::walk_with`, on the io thread. Each decision keeps
-the alternative it beat.
+`kawoosh_systems::fs::walk_with`, on the io thread. Decisions 6–10,
+2026-10-19, are its keys and its fit in a narrow or short pane, asked as
+"adaptiveness rework … vertically stacked preview `<A-h/l>` bugs it a
+little". Each decision keeps the alternative it beat.
 
 ## What there was
 
@@ -213,6 +215,77 @@ own big list (a symbol index, a log) is the same stall.
 is shown: the empty query lists the boosted rows first and the binaries
 last, an order over every row, so it is made where every row is.
 
+### 6. Alt is the picker's, Alt with Shift the pane's
+
+Asked 2026-10-19: "vertically stacked preview `<A-h/l>` bugs it a
+little". Measured: from the query `<A-h>` `<A-l>` were the editor's
+nudge, which indented the query's one line (`READ` became `    READ`,
+the list filtered again), and `<A-S-h>` `<A-S-l>` moved the divider
+only beside a preview — under one they were the column's, so `<A-S-l>`
+did nothing in a lone column and `<A-S-h>` narrowed the column, editor
+and all, until the preview had no room and went; the divider under a
+list had no key at all, and the preview none from the query.
+
+Now, in insert, normal and pane mode alike:
+
+| keys | what |
+|---|---|
+| `<A-j>` `<A-k>` | the preview half its height down, up (`picker preview down`, `up`; `J` `K` in normal mode still) |
+| `<A-l>` `<A-h>` | the list bigger, smaller against the preview (`picker list bigger`, `smaller`): the divider right, left beside it, down, up under it — `picker.split` or `picker.split_below`, for the session; with no preview drawn, said and nothing moved |
+| `<A-S-h>` `<A-S-j>` `<A-S-k>` `<A-S-l>` | the pane, as in every other: the column narrower, the pane shorter, taller, the column wider — mapped in pane mode by the picker, which the editor's pane mode has not |
+
+`list wider` and `list narrower`, the old names, stay as they were
+(beside only, unmapped) for a map of one's own.
+
+*Beat:* the divider following the key's axis — `<A-S-h>` `<A-S-l>`
+beside, `<A-S-j>` `<A-S-k>` under — the pane's height then gone from
+the keys while a preview is below, and one chord two things by layout.
+*Beat:* only stopping the nudge: no key for the divider under a list.
+
+### 7. The head as the width holds it
+
+At 147 px the head's title wrapped under the query, the query was drawn
+over it, `1 of 3` had 20 px and `ignored` 2. The head is measured now
+(`env.measure_text`, the caps by their parts) against the pane's width,
+the query's field held at `FIELD_MIN` = 12 characters, and what does
+not fit goes in this order: the chips' words (the caps stay, the key
+said), the count to its short form (`12/4031`, `+` for a walk stopped
+at its cap, `…` reading, `!` a note), the title, the count, the chips.
+
+*Beat:* kui squeezing the row's children: it squeezes them all, the
+query first, and a text that wraps grows the row.
+
+### 8. A path keeps its file name
+
+A row too long for the list was cut at its end, and a path's end is its
+file name: every `.claude/worktrees/…` row of a walk with ignored files
+read the same. A source says `cut = "start"` (`files`, `recent`,
+`smart`, `dirs`) and a row past the list's width — in characters, the
+rows mono — is `…` and its tail, the match lit where it still falls;
+the row keeps its key (`row PATH`). Other sources' rows (grep's
+`path:line: text`, a command's name) are cut at their end as before,
+and `<A-w>` still folds a row whole.
+
+*Beat:* cutting the middle (`src/…/main.rs`): the directory right above
+the file is what tells two `mod.rs` apart.
+
+### 9. Under the list the preview asks less; a place is kept
+
+Under the list the preview has the list's whole width, so it asks
+`PREVIEW_COLS_BELOW` = 24 characters, not 40: a narrow, tall pane reads
+a file's start rather than nothing. And a place is kept until its room
+falls to `KEEP` = 0.9 of what it asks for (`picker.place`'s `was`, the
+place now): a pane resized across a threshold flips the preview once,
+not back and forth with every pixel of the drag.
+
+### 10. The keys' legend
+
+The picker draws every pane's legend (`ctx.legend`): `⌥/ keys` in its
+title bar, and on `<A-/>` — from the query too — the keys under the
+list, the source's own first (a source's `legend`: buffers' `<C-x>`,
+workspaces' `<C-o>`, compile's `<C-e>`, marks' `<C-x>`), the list giving
+up the rows the legend took when it was last laid out.
+
 ## Built
 
 2026-10-18: `picker.place` and the view in `kawoosh/lua/picker.lua`, the
@@ -229,3 +302,11 @@ by `kawoosh/lua/launcher.lua`. Tested in `systems/src/fuzzy.rs` and
 `kawoosh/tests/picker.rs`
 (`a_walks_rows_are_ordered_by_the_engine_and_made_items_when_shown`,
 `a_plugins_source_hands_rows_the_engine_holds`).
+
+2026-10-19 (Decisions 6–10): `picker list bigger`, `picker list
+smaller`, the Alt maps, `head_of`, `legend_items`, `picker.rows`'s
+`cut`, `PREVIEW_COLS_BELOW` and `KEEP` in `kawoosh/lua/picker.lua`, the
+`cut` of `dirs` in `kawoosh/lua/dirs.lua`. Tested in
+`kawoosh/tests/picker.rs`
+(`a_narrow_tall_picker_its_keys_head_rows_and_legend`,
+`without_a_preview_the_width_keys_size_the_column`).

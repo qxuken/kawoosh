@@ -133,8 +133,8 @@ hand trips on. From a terminal pane `Kawoosh::pane_chord` runs a
 ctrl-shift or alt-shift chord's normal-mode binding before the pty
 sees it; every other pane without a view reaches the chords through
 pane mode (below); a Lua view's field is a view of the editor's and
-takes the chord through its own maps (the picker's `<A-S-l>` over the
-pane's); editor panes have the chords in their normal and insert
+takes the chord through its own maps (the picker's `<A-l>` over the
+editor's nudge); editor panes have the chords in their normal and insert
 maps. Sizing is Alt with Shift because Alt
 alone moves the selection (`<A-hjkl>`: the line, the indent), Shift
 on it reads as the same motion made of the pane, and it is the pair a
@@ -505,15 +505,18 @@ it again, `<A-w>` folds a row's text to the list's width so the whole
 of a long path shows — the `picker.preview` and `picker.wrap`
 settings, flipped for the session (a `settings.lua` sets them for
 good). The pane opens at `picker.share` of the height and the list
-takes `picker.split` of the width beside the preview: the pane keys
-`<A-S-k>` `<A-S-j>` make the pane taller and shorter (the height they
-leave is kept as the setting), `<A-S-h>` `<A-S-l>` move the divider
-between list and preview, and both dividers drag — each change is the
-setting for the session, so the picker opens next where it was left.
-With the preview hidden there is no divider: the list is the whole
-pane, and `<A-S-h>` `<A-S-l>` are the pane's again, the width of the
-column the picker stands in (2026-10-01: "if preview in a pickers is
-disabled it should control entire column size").
+takes `picker.split` of the width beside the preview (`picker.split_below`
+of the height above one under it). Alt is the picker's, from the query
+too ([picker.md](picker.md) Decision 6): `<A-j>` `<A-k>` scroll the
+preview, `<A-l>` `<A-h>` make the list bigger and smaller against it —
+the divider right and left beside it, down and up under it — and the
+dividers drag. Alt with Shift is the pane's, as everywhere: `<A-S-k>`
+`<A-S-j>` the pane taller and shorter (the height they leave is kept as
+the setting), `<A-S-h>` `<A-S-l>` the column narrower and wider, whatever
+the picker draws. Each change is the setting for the session, so the
+picker opens next where it was left. (Until 2026-10-19 `<A-S-h>`
+`<A-S-l>` were the divider beside a preview and the column without one,
+and `<A-h>` `<A-l>` were the editor's, indenting the query's line.)
 A source may put keys of its own on the row: `<C-x>` in the
 buffers picker closes the row's buffer as `:bd` does, asking first
 when it has unsaved changes, and the list is read again; `<C-a>` there
@@ -582,8 +585,9 @@ so that nothing else takes the key meanwhile.
   does not hold where the key was pressed does not shadow, and the
   sequence stays open for what lies beneath (`<CR>` is `dir enter` in a
   listing and `goto location` elsewhere by this) — nor does it shadow
-  the mode a key falls through to: a Lua pane's `<A-S-l>`, gated to
-  the picker, is the column's in every other pane, and a key gated off
+  the mode a key falls through to: a Lua pane's key gated to a fact
+  (the picker's old `list wider`, to a preview beside) is the column's
+  in every other pane, and a key gated off
   with nothing under it is unbound there, not a message. A plugin's prefix is
   a key the engine leaves alone: the listing's sort keys are yazi's
   under `m` (`ms`, `mS`, `mm`, `mM`, `ma`, `mA`, `me`, `mE`), which is
