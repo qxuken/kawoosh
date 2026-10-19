@@ -1088,7 +1088,7 @@ impl Kawoosh {
     }
 
     /// `kawoosh.domains()`: every domain and how it stands.
-    fn publish_domains(&mut self) {
+    pub(crate) fn publish_domains(&mut self) {
         let Some(rt) = self.scripting.rt.clone() else {
             return;
         };
@@ -1160,6 +1160,12 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 "every domain — the settings', ~/.ssh/config's hosts, WSL's distros — in a picker; a pick opens a tab on it",
             ),
             |k, _| k.domain_pick(),
+        ),
+        cmd(
+            Spec::new("domain publish").doc(
+                "kawoosh.domains() filled with every domain as it stands now, for a pane that lists them — the settings' `memory.hosts` switches",
+            ),
+            |k, _| k.publish_domains(),
         ),
         cmd(
             Spec::new("domain tab")

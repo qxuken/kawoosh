@@ -20,8 +20,9 @@
 --
 -- Keys, in the list: `j` `k` walk, `gg` `G`, `<C-d>` `<C-u>`, `]]` `[[`
 -- the sections; `⏎` or `<Space>` flips a switch, edits a text or a
--- number in place, opens a list's or a table's file; `h` `l` (`-` `+`)
--- step a number or a word; `r` resets, `x` clears the session's value,
+-- number in place, turns a list's word on or off (a list with words,
+-- `memory.hosts`'s domains) or opens a list's or a table's file; `h` `l`
+-- (`-` `+`) step a number, a word, or a list's word; `r` resets, `x` clears the session's value,
 -- `<Tab>` shows a row's layers, `gf` the scope's file at the key, `u`
 -- `p` `s` the scope (the session's is `:set`'s), `m` `@modified` and
 -- `<A-m>` `<A-u>` `<A-p>` `<A-s>` each filter, here and in the search, `y` copies the line that sets the
@@ -32,7 +33,8 @@
 -- Hackable: `kawoosh.settings.sections` is the sections' list —
 -- `{ name, paths }`, a path a setting's or a prefix ending in `.`, a
 -- setting in the first section naming it — for a config to reorder or
--- add to; `kawoosh.settings.state()` is what the pane shows, for a
+-- add to; `kawoosh.settings.options[path]` a list's words, each a
+-- switch; `kawoosh.settings.state()` is what the pane shows, for a
 -- test. The data is `kawoosh.settings.list()`, `layers(path)`,
 -- `files()`, and `line(path, value)` the line a settings file keeps it
 -- by, for a pane of your own.
@@ -137,6 +139,46 @@ local function scoped(r)
   if S.scope ~= "user" and r.set.project ~= nil then return r.set.project end
   if r.set.user ~= nil then return r.set.user end
   return r.default
+end
+
+-- The words a list may hold, each a switch on its row
+-- (`kawoosh.settings.options[path]`, a function called as the row is
+-- drawn, so cheap): the function's, then any the list has that it did
+-- not give, so each can be turned off. Nil for a list with none.
+door.options = door.options or {}
+
+-- `memory.hosts`: every domain there is, as `domain publish` last said
+-- (the pane asks it on opening).
+door.options["memory.hosts"] = function()
+  local out = {}
+  for _, d in ipairs(kawoosh.domains() or {}) do out[#out + 1] = d.name end
+  return out
+end
+
+local function options_of(r)
+  local fn = r.kind == "list" and door.options[r.path]
+  if not fn then return nil end
+  local ok, got = pcall(fn)
+  local out, seen = {}, {}
+  local function add(w)
+    if type(w) == "string" and not seen[w] then
+      seen[w] = true
+      out[#out + 1] = w
+    end
+  end
+  for _, w in ipairs(ok and type(got) == "table" and got or {}) do add(w) end
+  local v = scoped(r)
+  for _, w in ipairs(type(v) == "table" and v or {}) do add(w) end
+  return out
+end
+
+-- Whether the scope's list for `r` holds `w`.
+local function holds(r, w)
+  local v = scoped(r)
+  for _, x in ipairs(type(v) == "table" and v or {}) do
+    if x == w then return true end
+  end
+  return false
 end
 
 -- What a layer above the scope sets, over what the scope gives: the
@@ -279,6 +321,22 @@ local function write(r, v)
   door.write(r.path, v, { scope = S.scope })
 end
 
+-- `w` into the scope's list, or out of it when it is there.
+local function toggle(r, w)
+  local v, out, had = scoped(r), {}, false
+  for _, x in ipairs(type(v) == "table" and v or {}) do
+    if x == w then had = true else out[#out + 1] = x end
+  end
+  if not had then out[#out + 1] = w end
+  write(r, out)
+end
+
+-- The switch of a list's the keys are on: `h` `l` move it.
+local function option_at(r, opts)
+  local at = S.option[r.path] or 1
+  return math.max(1, math.min(#opts, at))
+end
+
 -- The number `by` steps from what the scope gives, or the next word.
 local function step(r, by)
   local v = scoped(r)
@@ -295,6 +353,9 @@ local function step(r, by)
     if to >= 1 and to <= #cs then write(r, cs[to]) end
   elseif r.kind == "boolean" then
     write(r, by > 0)
+  else
+    local opts = options_of(r)
+    if opts and #opts > 0 then S.option[r.path] = option_at(r, opts) + by end
   end
 end
 
@@ -352,6 +413,8 @@ local function act(r)
     for i, w in ipairs(cs) do if w == v then at = i end end
     if #cs > 0 then write(r, cs[at % #cs + 1]) end
   elseif r.kind == "list" or r.kind == "table" then
+    local opts = options_of(r)
+    if opts and #opts > 0 then return toggle(r, opts[option_at(r, opts)]) end
     door.open(r.path, { scope = S.scope, add = true })
   else
     edit_begin(r)
@@ -506,6 +569,26 @@ local function control(r, ctx, t)
       text(empty and "empty" or (type(v) == "string" and (v:find("^%s") or v:find("%s$")) and spell(v)
              or type(v) == "string" and v or spell(v, r.kind)),
         { family = "mono", size = SMALL, color = empty and t.faint or t.fg, wrap = "none" }) }
+  end
+  local opts = options_of(r)
+  if opts and #opts > 0 then
+    -- A switch a word, on while the list holds it; the keys' one
+    -- ringed on the cursor's row.
+    local at = S.cursor == r.path and option_at(r, opts) or nil
+    local line = row { width = "grow", gap = 4, cross_gap = 4, wrap_children = true, cross_align = "center" }
+    for i, w in ipairs(opts) do
+      local on = holds(r, w)
+      line[#line + 1] = row {
+        key = "option " .. r.path .. "=" .. w, pad = { x = 8 }, height = SIZE + 8, radius = 4, gap = 6,
+        cross_align = "center", bg = on and t.accent or t.sunken, hover_bg = not on and t.surface or nil,
+        border = i == at and { w = 1, color = on and t.on_accent or t.accent } or nil,
+        on_click = { kind = "toggle", path = r.path, word = w, at = i },
+        text(on and "✓" or "·", { size = NOTE, color = on and t.on_accent or t.faint, wrap = "none" }),
+        text(w, { family = "mono", size = SMALL, color = on and t.on_accent or t.muted, wrap = "none" }) }
+    end
+    line[#line + 1] = row { width = "grow" }
+    line[#line + 1] = button("file " .. r.path, "edit in file", { kind = "open", path = r.path, add = true }, t, t.fg)
+    return line
   elseif r.kind == "list" or r.kind == "table" then
     local summary
     if r.kind == "table" then
@@ -696,7 +779,7 @@ end
 kawoosh.view(VIEW, function(ctx)
   sizes(ctx.env)
   local t = ctx.env.theme
-  if not S then S = { query = "", scope = "user", open = {}, layers = {} } end
+  if not S then S = { query = "", scope = "user", open = {}, layers = {}, option = {} } end
   local q = ctx.field_text(FIELD) or ""
   if not S.rows or S.version ~= door.version() then
     local sticky
@@ -799,6 +882,11 @@ end, function(ev)
     local r = row_of(ev.path)
     S.cursor = ev.path
     if r then write(r, ev.word) end
+  elseif k == "toggle" then
+    local r = row_of(ev.path)
+    S.cursor = ev.path
+    S.option[ev.path] = ev.at
+    if r then toggle(r, ev.word) end
   elseif k == "step" then
     local r = row_of(ev.path)
     S.cursor = ev.path
@@ -913,7 +1001,10 @@ end
 kawoosh.command("settings", function(ctx)
   local q = table.concat(ctx.args or {}, " ")
   local was = S
-  S = { query = q, scope = was and was.scope or "user", open = {}, layers = {} }
+  S = { query = q, scope = was and was.scope or "user", open = {}, layers = {}, option = {} }
+  -- The domains as they stand, for `memory.hosts`' switches: they land
+  -- a frame after, and the row is drawn again with them.
+  kawoosh.run("domain publish")
   kawoosh.field_set(VIEW, FIELD, q)
   kawoosh.view_open(VIEW, { share = SHARE })
   kawoosh.field_focus(VIEW, FIELD)

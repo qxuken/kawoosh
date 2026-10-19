@@ -377,3 +377,25 @@ project write, the layers).
   `always` for the old way. The roadmap's "press-and-hold toggle
   (kui's)" is this, and the README needs no `defaults write -g
   ApplePressAndHoldEnabled`.
+
+### From use, 2026-10-19
+
+- **A list's known words are switches.** Asked as "maybe we can add
+  toggles inside settings?" for `memory.hosts` (workspaces.md Decision
+  15), whose words are the domains — a list nobody wants to spell out in
+  a file. `kawoosh.settings.options[path]`, a function giving the words
+  a `List` may hold, turns Decision 3's summary into a chip a word, lit
+  (`✓`) while the scope's list holds it; the words the list has that
+  the function did not give are chips too, so each can be turned off.
+  A click turns its own; on the cursor's row `h` `l` move a ring along
+  them and `<CR>` turns the ringed one — the `OneOf` row's keys, one
+  word at a time. **edit in file** stays beside them. Each turn writes
+  the whole list into the scope's file. The function is called as the
+  row is drawn, so it is cheap: `memory.hosts`' reads
+  `kawoosh.domains()`, which `:settings` fills by `domain publish` (new)
+  as the pane opens — the switches a frame later.
+
+  *Beat:* a picker of the words with a multi-select — a second surface
+  for one row; the words in the declaration (`Setting` choices for a
+  list) — the domains are known to the shell at run time, not to the
+  engine's schema.

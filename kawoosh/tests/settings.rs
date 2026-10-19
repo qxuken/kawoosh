@@ -698,6 +698,77 @@ fn the_leader_comma_opens_the_pane() {
     assert!(texts(&d).iter().any(|x| x == "Settings"), "{:?}", texts(&d));
 }
 
+/// A list whose words are known is a row of switches: `memory.hosts`'
+/// are the domains, published as the pane opens; `⏎` turns the ringed
+/// one on or off, `h` `l` move the ring, a click turns its own, and
+/// each change is written into the user's file.
+#[test]
+fn a_lists_known_words_are_switches_in_the_pane() {
+    let t = tree("hosts");
+    std::fs::write(
+        &t.user,
+        "return { domains = { zza = { ssh = \"zza.test\" }, zzb = { ssh = \"zzb.test\" } } }\n",
+    )
+    .unwrap();
+    let mut d = Drive::new(1100.0, 800.0);
+    let mut app = app_with_lua(&mut d);
+    app.load_user_settings(&t.user);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "settings memory.hosts");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(pane(&mut d, &mut app).1, "memory.hosts");
+    let opts = eval(
+        &mut d,
+        &mut app,
+        r#"table.concat(kawoosh.settings.options["memory.hosts"](), ",")"#,
+    );
+    let opts: Vec<&str> = opts.split(',').collect();
+    assert!(
+        opts.contains(&"zza") && opts.contains(&"zzb"),
+        "the settings' domains: {opts:?}"
+    );
+    let hosts = |app: &Kawoosh| -> Vec<String> {
+        match app.ed.settings.get("memory.hosts") {
+            Some(kawoosh_editor::Setting::List(l)) => l
+                .iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect(),
+            other => panic!("memory.hosts: {other:?}"),
+        }
+    };
+    assert!(hosts(&app).is_empty());
+
+    // To the rows; `⏎` the first on, `l` `⏎` the second, `h` `⏎` the
+    // first off again.
+    d.press(&mut app, "<Esc><CR>");
+    d.frame(&mut app);
+    assert_eq!(hosts(&app), [opts[0]], "{}", app.ed.message);
+    d.press(&mut app, "l<CR>");
+    d.frame(&mut app);
+    assert_eq!(hosts(&app), [opts[0], opts[1]]);
+    d.press(&mut app, "h<CR>");
+    d.frame(&mut app);
+    assert_eq!(hosts(&app), [opts[1]]);
+    assert!(
+        read(&t.user).contains(&format!("hosts = {{ \"{}\" }}", opts[1])),
+        "{}",
+        read(&t.user)
+    );
+
+    // A click turns its own switch.
+    let last = opts.last().unwrap();
+    let chip = d
+        .rect(&format!("option memory.hosts={last}"))
+        .expect("the last domain's switch");
+    d.click(&mut app, chip.x + 4.0, chip.y + chip.h / 2.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(hosts(&app).contains(&last.to_string()), "{:?}", hosts(&app));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&t.dir).ok();
+}
+
 /// The settings pane (docs/design/settings.md): `:settings` opens it
 /// with the keys in its search; typing filters; `<Esc>` hands the keys
 /// to the rows, where a number steps, a switch flips, a word cycles

@@ -454,7 +454,9 @@ walk stops at `~`), each held for a moment (`fs::new_moment`); it is
 asked once per directory the tab moves to, not per frame. Empty by
 default: a slow host's user names it knowingly. WSL's share answers a
 stat in a few milliseconds on this machine (domains.md, "Built,
-speed"), so `wsl` is the one to name first.
+speed"), so `wsl` is the one to name first. The settings pane shows
+every domain as a switch on the row (settings.md, "From use,
+2026-10-19"), so naming one is a click.
 
 A domain named but not connected — a session restored onto it before
 it answers — cannot be asked, and has no workspace until it connects;
