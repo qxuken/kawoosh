@@ -3418,6 +3418,12 @@ pub fn install(ed: &mut Editor) {
     ed.register("cursor lines back", |ed, ctx| {
         carets_per_line(ed, ctx, false)
     });
+    ed.register("cursor span below", |ed, ctx| span_selection(ed, ctx, 1, 0));
+    ed.register("cursor span above", |ed, ctx| {
+        span_selection(ed, ctx, -1, 0)
+    });
+    ed.register("cursor span left", |ed, ctx| span_selection(ed, ctx, 0, -1));
+    ed.register("cursor span right", |ed, ctx| span_selection(ed, ctx, 0, 1));
     ed.register("select next", select_next);
     ed.register("select all matches", select_all_matches);
     for (name, how) in [
@@ -3430,6 +3436,7 @@ pub fn install(ed: &mut Editor) {
         });
     }
     ed.register("select lines", select_lines);
+    ed.register_with_args("select every", Args::new(&[ArgKind::Text]), select_every);
     ed.register("select drop primary", select_drop_primary);
     // `S`: `cc` in one key.
     ed.register("change line", |ed, ctx| {
@@ -4194,11 +4201,27 @@ const DOCS: &[(&str, &str)] = &[
     ("cursor above", "add a caret on the line above (<C-k>)"),
     (
         "cursor lines",
-        "a caret on each line of the selection, at its head's column; the last primary (<C-j> in visual mode)",
+        "a caret on each line of the selection, at its head's column; the last primary (<C-j> in visual mode over several lines)",
     ),
     (
         "cursor lines back",
-        "a caret on each line of the selection, at its head's column; the first primary (<C-k> in visual mode)",
+        "a caret on each line of the selection, at its head's column; the first primary (<C-k> in visual mode over several lines)",
+    ),
+    (
+        "cursor span below",
+        "the selection again over its columns on the next line that holds them; over several lines, `cursor lines` (<C-j> in visual mode)",
+    ),
+    (
+        "cursor span above",
+        "the selection again over its columns on the line above that holds them; over several lines, `cursor lines back` (<C-k> in visual mode)",
+    ),
+    (
+        "cursor span left",
+        "the selection again over as many characters just before it (<C-h> in visual mode)",
+    ),
+    (
+        "cursor span right",
+        "the selection again over as many characters just after it (<C-l> in visual mode)",
     ),
     (
         "select next",
@@ -4223,6 +4246,10 @@ const DOCS: &[(&str, &str)] = &[
     (
         "select lines",
         "every line of every selection its own selection (<leader>vl, helix's <A-s>)",
+    ),
+    (
+        "select every",
+        "keep the primary and every Nth selection counted from it, N the argument, else the count, else 2; ( and ) first pick which (<leader>ve)",
     ),
     (
         "select drop primary",
@@ -4789,6 +4816,56 @@ fn carets_per_line(ed: &mut Editor, ctx: &Ctx, down: bool) {
         primary,
     };
     ed.set_mode(ctx.view, Mode::Normal);
+}
+
+/// `cursor span below` / `above` / `left` / `right` (`<C-j>` `<C-k>`
+/// `<C-l>` `<C-h>` in visual mode): the primary selection again over
+/// the same columns on the next line that holds them all, or over as
+/// many characters right after it, or before it, on its line —
+/// vim-visual-multi's extend-mode `<C-Down>` — the copy primary, so the
+/// next press goes on from it. A count steps that far. Under `V` the
+/// next line is the copy, and sideways nothing. A selection over several
+/// lines has no copy: down or up it is a caret a line
+/// ([`carets_per_line`]), sideways nothing.
+fn span_selection(ed: &mut Editor, ctx: &Ctx, dy: i64, dx: i64) {
+    let id = view(ed, ctx).buffer;
+    let v = &ed.views[ctx.view];
+    let linewise = v.visual_linewise;
+    let p = v.sels.primary();
+    let buf = &ed.buffers[id];
+    let (ln, acol) = m::line_col(buf, p.anchor);
+    let (hln, hcol) = m::line_col(buf, p.head);
+    if ln != hln {
+        if dy != 0 {
+            carets_per_line(ed, ctx, dy > 0);
+        }
+        return;
+    }
+    let n = ctx.count.max(1) as i64;
+    let chars = |ln: usize| buf.slice(buf.line_range(ln)).chars().count();
+    let (lo, hi) = (acol.min(hcol), acol.max(hcol));
+    // A selection taking its line's newline (`v$`) takes the copy's too.
+    let past = usize::from(hi >= chars(ln));
+    let fits = |ln: usize, hi: usize| linewise || hi < chars(ln) + past;
+    let (to_ln, shift) = if dy != 0 {
+        let mut t = ln as i64 + dy * n;
+        while t >= 0 && (t as usize) < buf.line_count() && !fits(t as usize, hi) {
+            t += dy;
+        }
+        if t < 0 || t as usize >= buf.line_count() {
+            return;
+        }
+        (t as usize, 0)
+    } else {
+        let shift = dx * n * (hi - lo + 1) as i64;
+        if linewise || lo as i64 + shift < 0 || !fits(ln, (hi as i64 + shift) as usize) {
+            return;
+        }
+        (ln, shift)
+    };
+    let at = |col: usize| m::offset_at(buf, to_ln, (col as i64 + shift) as usize);
+    let s = Selection::new(at(acol), at(hcol));
+    ed.views[ctx.view].sels.push(s, true);
 }
 
 /// The `n`th `c` from `o` on — or back — across lines: what `;` does
@@ -5480,6 +5557,39 @@ fn select_lines(ed: &mut Editor, ctx: &Ctx) {
     }
 }
 
+/// `select every N` (`<leader>ve`): the primary and every Nth selection
+/// counted from it, before it and after; the rest dropped. N is the
+/// argument, else the count, else 2, and the primary picks which of
+/// them stay — `(` `)` move it first. A paste of title and value lines,
+/// the titles alone: `ggVG<leader>vl<leader>ve`; the values: `)` before
+/// `<leader>ve`.
+fn select_every(ed: &mut Editor, ctx: &Ctx) {
+    let n = match ctx.args.first() {
+        Some(a) => match a.parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                ed.message = format!("select every: {a} is not a count");
+                return;
+            }
+        },
+        None if ctx.has_count => ctx.count.max(1),
+        None => 2,
+    };
+    let sels = &mut ed.views[ctx.view].sels;
+    if sels.len() < 2 {
+        ed.message = "one selection".into();
+        return;
+    }
+    let p = sels.primary;
+    sels.items = std::mem::take(&mut sels.items)
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| i % n == p % n)
+        .map(|(_, s)| s)
+        .collect();
+    sels.primary = p / n;
+}
+
 /// `select drop primary`, helix's `<A-,>`: the primary selection gone,
 /// the one before it primary.
 fn select_drop_primary(ed: &mut Editor, ctx: &Ctx) {
@@ -5966,11 +6076,14 @@ pub fn default_keymap(km: &mut Keymap) {
     let v = [
         ("<leader>x", "lua eval"),
         ("o", "cursor swap"),
-        // Ctrl counts the selections: in visual mode, one caret a line.
-        ("<C-j>", "cursor lines"),
-        ("<C-k>", "cursor lines back"),
-        ("<C-Down>", "cursor lines"),
-        ("<C-Up>", "cursor lines back"),
+        // Ctrl counts the selections: in visual mode, the selection
+        // again beside itself — over several lines, one caret a line.
+        ("<C-j>", "cursor span below"),
+        ("<C-k>", "cursor span above"),
+        ("<C-h>", "cursor span left"),
+        ("<C-l>", "cursor span right"),
+        ("<C-Down>", "cursor span below"),
+        ("<C-Up>", "cursor span above"),
         ("x", "delete char"),
         ("i", "textobject inner"),
         ("a", "textobject around"),
@@ -5989,6 +6102,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>vS", "select split"),
         ("<leader>vk", "select keep"),
         ("<leader>vl", "select lines"),
+        ("<leader>ve", "select every"),
         ("<A-,>", "select drop primary"),
         ("grf", "format selection"),
     ];
@@ -5997,6 +6111,7 @@ pub fn default_keymap(km: &mut Keymap) {
     }
     // The carets `<C-j>` makes are normal mode's.
     km.bind(Normal, "<A-,>", "select drop primary");
+    km.bind(Normal, "<leader>ve", "select every");
     // The case operators doubled on their last letter, vim's `guu`
     // `gUU` `g~~`, a line each; after any other operator the letter
     // is no operator of its, and nothing runs.

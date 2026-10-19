@@ -257,7 +257,8 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | keys | what |
 |---|---|
 | `<C-j>` `<C-k>`, `<C-Down>` `<C-Up>` | a caret on the line below, above |
-| `<C-j>` `<C-k>` in visual mode | a caret on each line of the selection, at its head's column (a short line's end), and normal mode — vim's visual block as carets; the last line's caret primary, the first's with `<C-k>` (`cursor lines`, `cursor lines back`) |
+| `<C-j>` `<C-k>` `<C-h>` `<C-l>` in visual mode, a selection on one line | the selection again — vim-visual-multi's extend-mode `<C-Down>`: over the same columns on the next line below, above that holds them all (a shorter line passed over), or over as many characters just left, right of it on its line (nothing if they are not there); the copy primary and visual mode kept, so the next press goes on from it and an operator takes them all; a count steps that far; under `V` down, up is the next line and sideways nothing (`cursor span below`, `above`, `left`, `right`; 2026-10-19: "in visual mode let `<C-h/j/k/l>` multicursor span with same range selected") |
+| `<C-j>` `<C-k>` in visual mode over several lines | a caret on each line of the selection, at its head's column (a short line's end), and normal mode — vim's visual block as carets; the last line's caret primary, the first's with `<C-k>` (`cursor lines`, `cursor lines back`) |
 | `<C-n>` `<D-d>` | `select next`: the word under a bare caret, then its next match, each press one more |
 | `<C-S-n>` `<D-L>` | `select all matches`: every match at once (spelled `<C-S-n>` / `<D-S-l>` in a map: a chord's letter under Shift is the upper-case letter) |
 | `,` | keep the primary selection |
@@ -271,6 +272,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `<leader>vs` `<leader>vS` (visual) | helix's `s` `S`: the matches of a pattern inside every selection become the selections, or every selection is split on them — a prompt previewed as it is typed, `<Esc>` putting the selections back (`select within`, `select split`; [selections.md](selections.md)); `<D-a><leader>vs` is helix's `%s` |
 | `<leader>vk` (visual) | helix's `K` and `<A-K>`: keep the selections that match, or with `!pattern` those that do not (`select keep`) |
 | `<leader>vl` (visual) | helix's `<A-s>`: every line of every selection its own selection (`select lines`) |
+| `<leader>ve` | the primary and every Nth selection counted from it, before and after; the rest dropped — N the argument, else the count, else 2; `(` `)` first pick which (`select every`; [selections.md](selections.md) Decision 4) |
 | `<A-,>` | helix's: the primary selection gone (`select drop primary`), from normal mode's carets too |
 | `o` (visual) | swap the selection's ends |
 | `<D-c>` `<C-S-c>` | `yank clipboard`: in visual mode yank — the register and the clipboard; in normal mode the newest yank onto the clipboard; a private buffer's marked concealed ([secrets.md](secrets.md) Decision 8) |

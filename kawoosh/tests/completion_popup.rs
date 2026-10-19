@@ -618,11 +618,18 @@ fn the_candidates_picker_preview_resolves_the_cursors_docs() {
     let want = format!("docs for {first}");
     let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
     while !drawn(&d).contains(&want) {
-        assert!(std::time::Instant::now() < end, "{want:?} in {:?}", drawn(&d));
+        assert!(
+            std::time::Instant::now() < end,
+            "{want:?} in {:?}",
+            drawn(&d)
+        );
         d.frame(&mut app);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(drawn(&d).contains(&format!("fn {first}()")), "the resolved detail");
+    assert!(
+        drawn(&d).contains(&format!("fn {first}()")),
+        "the resolved detail"
+    );
     assert_eq!(app.completion.resolves, asked + 1, "the cursor's alone");
     // Down and back: the second asked, the first kept on its row.
     d.press(&mut app, "<C-n>");
@@ -630,7 +637,11 @@ fn the_candidates_picker_preview_resolves_the_cursors_docs() {
     assert_ne!(first, second);
     let want = format!("docs for {second}");
     while !drawn(&d).contains(&want) {
-        assert!(std::time::Instant::now() < end, "{want:?} in {:?}", drawn(&d));
+        assert!(
+            std::time::Instant::now() < end,
+            "{want:?} in {:?}",
+            drawn(&d)
+        );
         d.frame(&mut app);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }

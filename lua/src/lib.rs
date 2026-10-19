@@ -419,7 +419,10 @@ pub enum Msg {
     /// `kawoosh.lsp.resolve(index, fn)`: the candidates picker's
     /// candidate `index` filled in by its server, answered to `token`
     /// (`Runtime::candidate_resolved`).
-    Resolve { token: u64, index: usize },
+    Resolve {
+        token: u64,
+        index: usize,
+    },
     /// `kawoosh.lsp.symbols(opts, fn)`: symbols asked of `buffer`'s
     /// server, or its grammar's outline (`source`: `auto`, `lsp`,
     /// `syntax`), answered to `token` (`Runtime::symbols_answered`).
@@ -3082,7 +3085,11 @@ impl Runtime {
     /// A candidate filled in for `kawoosh.lsp.resolve`: the callback
     /// called with `{ detail =, documentation = }`, each a string,
     /// empty when the server has none; or with nil and why not.
-    pub fn candidate_resolved(&self, token: u64, result: Result<(Option<&str>, Option<&str>), String>) {
+    pub fn candidate_resolved(
+        &self,
+        token: u64,
+        result: Result<(Option<&str>, Option<&str>), String>,
+    ) {
         let result = result.and_then(|(detail, documentation)| {
             let t = self.lua.create_table().map_err(|e| e.to_string())?;
             t.set("detail", detail.unwrap_or_default())

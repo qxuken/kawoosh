@@ -3177,7 +3177,11 @@ impl Kawoosh {
             .find(|(_, (i, a))| Rc::ptr_eq(i, &items) && *a == at)
             .map(|(t, _)| *t);
         if let Some(t) = pending {
-            self.completion.lua_resolves.entry(t).or_default().push(lua_token);
+            self.completion
+                .lua_resolves
+                .entry(t)
+                .or_default()
+                .push(lua_token);
             return;
         }
         let buffer = s.anchor.buffer;

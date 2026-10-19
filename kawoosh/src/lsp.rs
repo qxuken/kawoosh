@@ -1937,7 +1937,10 @@ impl Kawoosh {
                     insert: it.text().to_string(),
                     label: it.label.clone(),
                     kind: it.kind.to_string(),
-                    detail: filled.detail.or_else(|| it.detail.clone()).unwrap_or_default(),
+                    detail: filled
+                        .detail
+                        .or_else(|| it.detail.clone())
+                        .unwrap_or_default(),
                     documentation: filled
                         .documentation
                         .or_else(|| it.documentation.as_deref().map(str::to_string))
