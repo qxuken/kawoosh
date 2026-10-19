@@ -2112,6 +2112,55 @@ mod tests {
         assert_eq!(tok, Some(Token::Keyword));
     }
 
+    /// JSDoc is a `/** … */` comment's alone: a line comment's `@` is
+    /// the comment's colour whole — `// @ts-expect-error`, whose
+    /// `-error` JSDoc's tag would have cut off — and so is a plain
+    /// block comment's.
+    #[test]
+    fn jsdoc_is_a_doc_comments_alone() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let src = "// @ts-expect-error \"webgpu\" does not have context type\n\
+                   const c = canvas.getContext(\"webgpu\");\n\
+                   /* @internal */\n\
+                   /** @param {number} x */\n\
+                   function f(x) {}\n";
+        for lang in ["javascript", "typescript", "tsx"] {
+            let buf = Buffer::new("t", src);
+            let job = Job {
+                buffer: BufferId::default(),
+                language: lang.into(),
+                snapshot: buf.snapshot(),
+                edits: None,
+            };
+            let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job).update();
+            let line = src.find('\n').unwrap();
+            let comment: Vec<_> = a
+                .runs
+                .iter()
+                .filter(|r| r.range.start < line)
+                .map(|r| (r.range.clone(), Token::from_style(r.style)))
+                .collect();
+            assert!(
+                comment.iter().all(|(_, t)| *t == Token::Comment)
+                    && comment.first().map(|(r, _)| r.start) == Some(0)
+                    && comment.last().map(|(r, _)| r.end) == Some(line)
+                    && comment.windows(2).all(|w| w[0].0.end == w[1].0.start),
+                "{lang}: {comment:?}"
+            );
+            let tok_at = |needle: &str| {
+                let o = src.find(needle).unwrap();
+                a.runs
+                    .iter()
+                    .find(|r| r.range.contains(&o))
+                    .map(|r| Token::from_style(r.style))
+            };
+            assert_eq!(tok_at("@internal"), Some(Token::Comment), "{lang}");
+            assert_eq!(tok_at("@param"), Some(Token::Keyword), "{lang}");
+            assert_eq!(tok_at("number"), Some(Token::Type), "{lang}");
+        }
+    }
+
     /// A language named by the query's word in what it captured.
     #[test]
     fn a_language_is_the_first_word() {

@@ -109,6 +109,31 @@ over a `${…}` (a statement around it, an error) leaves the host's
 colours inside the substitution. A piece's own injections are read
 over that piece.
 
+### 5. JSDoc in a doc comment only; the query is kawoosh's
+
+Asked the same day: `// @ts-expect-error "webgpu" does not have context
+type` was painted a keyword only as far as `@ts`. The javascript
+crate's query injects JSDoc into every comment, line comments too, and
+JSDoc's tag is `@` and letters (`/@[a-zA-Z_]+/` in tree-sitter-jsdoc),
+so the `-` ended it and the rest read as the tag's description. JSDoc
+is now a `/** … */` comment's alone (`#match? "^/[*][*][^*]"`, nvim's
+rule): a line comment and a plain `/* … */` are the comment's colour
+whole.
+
+`languages/queries/ecma/injections.scm` is therefore the whole query,
+in place of the crate's: its tagged-template and regex patterns
+copied, its `hbs` one left out (no Glimmer grammar here reads it),
+then Decision 1's. Beaten: **the crate's query with a pattern of
+kawoosh's after it**: a later pattern cannot take back an earlier one's
+injection, and a text substitution on the crate's query would break
+quietly at a crate update. The cost is that a crate update's new
+injections are not picked up by themselves.
+
+A `@ts-…` directive inside a `/** … */` is still a `@ts` tag and the
+rest description: the tag's extent is the jsdoc grammar's, which only a
+change to it would move. TypeScript's directives are line comments in
+practice.
+
 ## Build notes
 
 2026-10-19, on the branch `claude/xenodochial-archimedes-640302`.
@@ -125,6 +150,9 @@ declaration, a plain string, a tagged template, a comment of two words
 left alone; the substitution javascript's; `injection_at`'s pieces),
 `a_combined_injection_survives_a_reparse` (an edit after the `${…}`
 answers for a span and reads as a whole parse), `a_language_is_the_first_word`.
+`jsdoc_is_a_doc_comments_alone` (Decision 5: `// @ts-expect-error` all
+comment, `/* @internal */` too, `/** @param {number} x */` JSDoc's).
+`kawoosh/tests/comment.rs`: `gcc` in a `/* sql */` template takes `--`.
 The tests inject `sql`, which the build links. WGSL is an installed
 grammar (kawoosh-grammars' `wgsl`, szebniok/tree-sitter-wgsl), so the
 asked snippet was checked through the harness with the installed

@@ -1,7 +1,7 @@
-//! JavaScript, with its crate's query and its injections: JSDoc in a
-//! comment, regex in a regex literal, a tagged template's language its
-//! tag (`` sql`…` ``); then kawoosh's, a string after a `/* LANG */`
-//! comment as that language (docs/design/injections.md).
+//! JavaScript, with its crate's query, and injections of kawoosh's
+//! from the crate's: JSDoc in a doc comment, regex in a regex literal,
+//! a tagged template's language its tag (`` sql`…` ``), a string after
+//! a `/* LANG */` comment as that language (docs/design/injections.md).
 
 use crate::Language;
 
@@ -14,12 +14,10 @@ pub static LANGUAGE: Language = Language {
     grammar: crate::grammar!("javascript", grammar),
 };
 
-/// The crate's injections, then kawoosh's; typescript's and tsx's too.
+/// The injections, in place of the crate's (JSDoc kept to a doc
+/// comment); typescript's and tsx's too.
 #[cfg(feature = "javascript")]
-pub(crate) const INJECTIONS: [&str; 2] = [
-    tree_sitter_javascript::INJECTIONS_QUERY,
-    include_str!("../queries/ecma/injections.scm"),
-];
+pub(crate) const INJECTIONS: &str = include_str!("../queries/ecma/injections.scm");
 
 #[cfg(feature = "javascript")]
 fn grammar() -> Result<crate::Grammar, String> {
@@ -30,7 +28,7 @@ fn grammar() -> Result<crate::Grammar, String> {
             tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
         ]
         .concat(),
-        Some(&INJECTIONS.concat()),
+        Some(INJECTIONS),
     )
     .and_then(|g| g.with_outline(OUTLINE))
     .and_then(|g| {
