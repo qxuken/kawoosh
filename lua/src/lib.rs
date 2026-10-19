@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-pub mod fuzzy;
+pub use kawoosh_systems::fuzzy;
 pub mod json;
 mod meta;
 pub mod native;
@@ -260,11 +260,13 @@ pub enum Msg {
     /// `kawoosh.fs.walk(root, fn, opts)`: every file under the root as
     /// git sees it — with `ignored`, every one — walked on a thread of
     /// its own, the answer to `Runtime::walked` under `token`
-    /// (`IoMsg::Walked`).
+    /// (`IoMsg::Walked`); with `matcher` the paths made a matcher
+    /// there (`fs::Walked::into_matcher`).
     Walk {
         token: u64,
         root: PathBuf,
         ignored: bool,
+        matcher: bool,
     },
     /// `kawoosh.sqlite.query(path, sql, params, opts, fn)`: the SQL run
     /// against the database on a thread of its own, the answer to
@@ -3137,6 +3139,16 @@ impl Runtime {
         // and a join a row from Lua was a call into the engine each.
         let args = result.and_then(|walked| {
             let (paths, capped) = (walked.rows, walked.capped);
+            // Asked for a matcher, made on the walk's thread: the rows
+            // stay in Rust, no Lua string a row (docs/design/picker.md
+            // Decision 5).
+            if let Some(m) = walked.matcher {
+                return self
+                    .lua
+                    .create_userdata(LuaMatcher(m))
+                    .map(|m| (LV::UserData(m), LV::Nil, LV::Nil, LV::Boolean(capped)))
+                    .map_err(|e| e.to_string());
+            }
             let whole = match &root {
                 Some(root) => self
                     .lua
@@ -3760,11 +3772,24 @@ type StoreCell = Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>;
 
 /// `kawoosh.matcher(list: string[]): kawoosh.Matcher`: a list held in
 /// Rust for fuzzy queries — a big one, forty thousand paths, so a
-/// keystroke's query crosses one string.
+/// keystroke's query crosses one string — and the rows themselves:
+/// `m:text(i)` reads one back, so a list of a hundred thousand (a walk's,
+/// `fs.walk`'s `matcher`) need not be a Lua string a row.
+/// `m:order(opts)` puts the rows in a picker's order (`fuzzy::Matcher::order`)
+/// and answers where the last group starts, from 1 (`count() + 1` when
+/// it is empty); `m:extend(other)` appends another's rows.
 ///
 /// @class kawoosh.Matcher
 /// @field query fun(self: kawoosh.Matcher, needle: string, limit?: integer): kawoosh.FuzzyHit[] the best `limit` (500) first
 /// @field count fun(self: kawoosh.Matcher): integer how many it holds
+/// @field text fun(self: kawoosh.Matcher, i: integer): string? row `i`, from 1, whole
+/// @field extend fun(self: kawoosh.Matcher, other: kawoosh.Matcher) `other`'s rows after these
+/// @field order fun(self: kawoosh.Matcher, opts: kawoosh.MatcherOrder): integer the rows reordered; where the last group starts
+///
+/// @class kawoosh.MatcherOrder
+/// @field drop? table<string, any> the rows to leave out, by text
+/// @field boost? table<string, number> by text: above 0 first, the most first; below 0 last
+/// @field last? table<string, boolean> extensions whose rows go last when `boost` gives them nothing (`picker.binary`): read as the picker reads them, case kept or folded
 struct LuaMatcher(Matcher);
 
 impl mlua::UserData for LuaMatcher {
@@ -3776,6 +3801,107 @@ impl mlua::UserData for LuaMatcher {
             },
         );
         methods.add_method("count", |_, this, ()| Ok(this.0.len()));
+        methods.add_method("text", |_, this, i: usize| {
+            Ok((1..=this.0.len())
+                .contains(&i)
+                .then(|| this.0.text(i - 1).to_string()))
+        });
+        methods.add_method_mut("extend", |_, this, other: mlua::AnyUserData| {
+            let other = other.borrow::<LuaMatcher>()?;
+            this.0.extend(&other.0);
+            Ok(())
+        });
+        methods.add_method_mut("order", |_, this, opts: Table| {
+            let drop: Keyed<()> = match opts.get::<Option<Table>>("drop")? {
+                Some(t) => Keyed::new(
+                    t.pairs::<String, LV>()
+                        .filter_map(|kv| kv.ok().map(|(k, _)| (k, ()))),
+                ),
+                None => Keyed::new([]),
+            };
+            let boost: Keyed<f64> = match opts.get::<Option<Table>>("boost")? {
+                Some(t) => Keyed::new(t.pairs::<String, f64>().collect::<mlua::Result<Vec<_>>>()?),
+                None => Keyed::new([]),
+            };
+            let last: HashMap<String, bool> = match opts.get::<Option<Table>>("last")? {
+                Some(t) => t
+                    .pairs::<String, LV>()
+                    .filter_map(|kv| kv.ok().map(|(k, v)| (k, matches!(v, LV::Boolean(true)))))
+                    .collect(),
+                None => HashMap::new(),
+            };
+            let tail = this.0.order(
+                |s| drop.get(s).is_none(),
+                |s| boost.get(s),
+                |s| goes_last(&last, s),
+            );
+            Ok(tail + 1)
+        });
+    }
+}
+
+/// A few keys looked up by a hundred thousand rows (`m:order`'s `drop`
+/// and `boost`): a row as long as no key is ruled out by its length,
+/// never hashed.
+struct Keyed<V> {
+    map: HashMap<String, V>,
+    lens: Vec<bool>,
+}
+
+impl<V: Copy> Keyed<V> {
+    fn new(keys: impl IntoIterator<Item = (String, V)>) -> Self {
+        let map: HashMap<String, V> = keys.into_iter().collect();
+        let mut lens = Vec::new();
+        for k in map.keys() {
+            if lens.len() <= k.len() {
+                lens.resize(k.len() + 1, false);
+            }
+            lens[k.len()] = true;
+        }
+        Self { map, lens }
+    }
+
+    fn get(&self, s: &str) -> Option<V> {
+        if !self.lens.get(s.len()).copied().unwrap_or(false) {
+            return None;
+        }
+        self.map.get(s).copied()
+    }
+}
+
+/// The extension the picker reads off a path (`picker.lua`'s
+/// `is_binary`, the same rule): what follows the last `.` among the
+/// path's last nine bytes, letters and digits only — none when a `/`
+/// or `\` comes first, reading back.
+fn picker_extension(path: &str) -> Option<&str> {
+    let b = path.as_bytes();
+    for j in (b.len().saturating_sub(9)..b.len()).rev() {
+        match b[j] {
+            b'.' => {
+                let ext = &path[j + 1..];
+                let word = !ext.is_empty() && ext.bytes().all(|c| c.is_ascii_alphanumeric());
+                return word.then_some(ext);
+            }
+            b'/' | b'\\' => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `path`'s extension is one `last` puts last (`picker.binary`):
+/// as written, else lower-cased when it has a capital and is not there
+/// as written — `true` alone counts.
+fn goes_last(last: &HashMap<String, bool>, path: &str) -> bool {
+    let Some(ext) = picker_extension(path) else {
+        return false;
+    };
+    match last.get(ext) {
+        Some(&v) => v,
+        None if ext.bytes().any(|c| c.is_ascii_uppercase()) => {
+            last.get(&ext.to_ascii_lowercase()) == Some(&true)
+        }
+        None => false,
     }
 }
 
@@ -7858,7 +7984,7 @@ fn seed(
             },
         )?,
     )?;
-    // `kawoosh.fs.walk(root: string, fn: fun(paths: string[]?, why: string?, whole: string[]?, capped: boolean?), opts: { ignored?: boolean }?): integer`:
+    // `kawoosh.fs.walk(root: string, fn: fun(paths: string[]|kawoosh.Matcher|nil, why: string?, whole: string[]?, capped: boolean?), opts: { ignored?: boolean, matcher?: boolean }?): integer`:
     // every file under `root` as git sees it —
     // ignored, hidden and `.git` left out; a root the project ignores
     // (a `node_modules`) walked with no ignores; with `opts.ignored`
@@ -7866,17 +7992,24 @@ fn seed(
     // own and handed to `fn(paths, nil, whole, capped)`, `whole` each
     // path joined to the root as `fs.join` joins, `capped` when the
     // walk stopped at its 200 000 files with more left; or `fn(nil,
-    // why)`. Answers the job's token.
+    // why)`. With `opts.matcher` the paths come as a `kawoosh.Matcher`
+    // instead, made on the walk's thread, `fn(m, nil, nil, capped)`, its
+    // rows the paths in the walk's order: a hundred thousand rows are no
+    // Lua string each, and nothing of them is built on the frame.
+    // Answers the job's token.
     let qq = q(queue);
     let jj = jobs.clone();
     fs.set(
         "walk",
         lua.create_function(
             move |lua, (root, cb, opts): (String, mlua::Function, Option<Table>)| {
-                let ignored = match &opts {
-                    Some(o) => o.get::<Option<bool>>("ignored")?.unwrap_or(false),
-                    None => false,
+                let flag = |name: &str| -> mlua::Result<bool> {
+                    match &opts {
+                        Some(o) => Ok(o.get::<Option<bool>>(name)?.unwrap_or(false)),
+                        None => Ok(false),
+                    }
                 };
+                let (ignored, matcher) = (flag("ignored")?, flag("matcher")?);
                 let token = {
                     let mut j = jj.borrow_mut();
                     let token = j.token();
@@ -7888,6 +8021,7 @@ fn seed(
                     token,
                     root: expand(&root),
                     ignored,
+                    matcher,
                 });
                 Ok(token)
             },

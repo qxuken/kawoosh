@@ -1104,6 +1104,7 @@ impl Kawoosh {
                 token,
                 root,
                 ignored,
+                matcher,
             } => {
                 // A host's walk is capped and kept: said once. A
                 // distro's share is walked as a local disk is.
@@ -1120,8 +1121,11 @@ impl Kawoosh {
                         kawoosh_systems::fs::HOST_WALK_MAX
                     );
                 }
+                // A matcher asked for is made here too, on the walk's
+                // thread (docs/design/picker.md Decision 5).
                 let job = move || {
                     kawoosh_systems::fs::walk_with(&root, kawoosh_systems::fs::WALK_MAX, ignored)
+                        .map(|w| if matcher { w.into_matcher() } else { w })
                         .map_err(|e| e.to_string())
                 };
                 if self.jobs_inline {

@@ -19,7 +19,8 @@
 //! keystroke; [`fuzzy`] is the one-shot form over a small list. It
 //! keeps the rows' bytes and nothing else (docs/design/picker.md
 //! Decision 5): a query rules a row out on its bytes, and reads the
-//! characters of the few it scores.
+//! characters of the few it scores. It lives here, under the Lua
+//! crate, so that a walk's io thread makes one (`fs::Walked::matcher`).
 
 use std::cmp::Ordering;
 
@@ -327,11 +328,14 @@ fn positions(needle_len: usize, orig: &[char], t: &Tables) -> Vec<usize> {
 }
 
 /// A list held for querying: every row's text one after another in one
-/// string, each cut at `HAYSTACK_MAX` characters, where each ends, and
-/// whether each is all ASCII — about the rows' own bytes, where a row
-/// kept as characters, folded and offset was sixteen bytes a character
-/// (160 MB for a hundred thousand paths, and most of the time to make).
-#[derive(Default)]
+/// string, where each ends, and whether each is all ASCII — about the
+/// rows' own bytes, where a row kept as characters, folded and offset
+/// was sixteen bytes a character (160 MB for a hundred thousand paths,
+/// and most of the time to make). A row is kept whole, so the list is
+/// also the rows themselves ([`Matcher::text`]): a picker over a walk
+/// makes an item only for a row it shows (docs/design/picker.md
+/// Decision 5); it is cut at `HAYSTACK_MAX` characters where scored.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Matcher {
     text: String,
     ends: Vec<usize>,
@@ -350,7 +354,6 @@ impl Matcher {
     /// One row more, at the end: what a list is made of, a row at a
     /// time, read where it lies (a Lua string) with no copy between.
     pub fn push(&mut self, s: &str) {
-        let s = cut(s);
         self.text.push_str(s);
         self.ends.push(self.text.len());
         self.ascii.push(s.is_ascii());
@@ -364,10 +367,68 @@ impl Matcher {
         self.ends.is_empty()
     }
 
-    /// Row `i`'s text, as cut.
-    fn row(&self, i: usize) -> &str {
+    /// Row `i`'s text, whole, from 0.
+    pub fn text(&self, i: usize) -> &str {
         let start = if i == 0 { 0 } else { self.ends[i - 1] };
         &self.text[start..self.ends[i]]
+    }
+
+    /// Row `i`'s text as scored: cut at `HAYSTACK_MAX` characters.
+    fn row(&self, i: usize) -> &str {
+        cut(self.text(i))
+    }
+
+    /// Every row of `other` after these, in its order.
+    pub fn extend(&mut self, other: &Matcher) {
+        let base = self.text.len();
+        self.text.push_str(&other.text);
+        self.ends.extend(other.ends.iter().map(|e| base + e));
+        self.ascii.extend_from_slice(&other.ascii);
+    }
+
+    /// The rows put in a picker's order, those `keep` refuses left out:
+    /// first the rows `boost` gives more than 0, the most first; then
+    /// the rest; last the rows it gives less than 0, and those it gives
+    /// nothing that `last` says go last (a binary, by its extension) —
+    /// each group in the list's order. Answers where the last group
+    /// starts, from 0: `len()` when it is empty. `picker.lua`'s
+    /// `boosted` over a list of items, here for a walk's hundred
+    /// thousand rows, where the same in Lua cost 100 ms a load.
+    pub fn order(
+        &mut self,
+        keep: impl Fn(&str) -> bool,
+        boost: impl Fn(&str) -> Option<f64>,
+        last: impl Fn(&str) -> bool,
+    ) -> usize {
+        let (mut lead, mut rest, mut tail) = (Vec::new(), Vec::new(), Vec::new());
+        for i in 0..self.len() {
+            let s = self.text(i);
+            if !keep(s) {
+                continue;
+            }
+            match boost(s) {
+                Some(b) if b > 0.0 => lead.push((i, b)),
+                Some(b) if b < 0.0 => tail.push(i),
+                Some(_) => rest.push(i),
+                None if last(s) => tail.push(i),
+                None => rest.push(i),
+            }
+        }
+        // Stable: equal boosts keep the list's order.
+        lead.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        let starts = lead.len() + rest.len();
+        let mut out = Matcher {
+            text: String::with_capacity(self.text.len()),
+            ends: Vec::with_capacity(self.len()),
+            ascii: Vec::with_capacity(self.len()),
+        };
+        for i in lead.into_iter().map(|(i, _)| i).chain(rest).chain(tail) {
+            out.text.push_str(self.text(i));
+            out.ends.push(out.text.len());
+            out.ascii.push(self.ascii[i]);
+        }
+        *self = out;
+        starts
     }
 
     /// The best `limit` hits for `needle`, best first, ties in the
@@ -611,6 +672,38 @@ mod tests {
         assert_eq!(m.query("z", 10).len(), 1, "past the cut is not looked in");
     }
 
+    /// A picker's order over the rows themselves: boosted first, the
+    /// most first, then the rest, then the ones put last — each group
+    /// in the list's order, what `keep` refuses gone, the rows whole.
+    #[test]
+    fn order_puts_boosted_first_and_the_last_last() {
+        let mut m = Matcher::new(["a.png", "b.rs", "c.rs", "d.rs", "e.png", "f.rs"]);
+        let tail = m.order(
+            |s| s != "f.rs",
+            |s| match s {
+                "c.rs" => Some(1.0),
+                "d.rs" => Some(3.0),
+                "e.png" => Some(2.0),
+                _ => None,
+            },
+            |s| s.ends_with(".png"),
+        );
+        let rows: Vec<&str> = (0..m.len()).map(|i| m.text(i)).collect();
+        assert_eq!(rows, ["d.rs", "e.png", "c.rs", "b.rs", "a.png"]);
+        assert_eq!(tail, 4, "the last group starts at a.png");
+        assert_eq!(m.query("rs", 10).len(), 3, "the rows match where they went");
+        let mut more = Matcher::new(["x"]);
+        more.extend(&m);
+        assert_eq!(more.len(), 6);
+        assert_eq!(more.text(5), "a.png");
+        assert_eq!(more.query("apng", 10)[0].index, 5);
+        // A row is kept whole, and scored as cut.
+        let long = "d/".repeat(HAYSTACK_MAX) + "z";
+        let m = Matcher::new([long.as_str()]);
+        assert_eq!(m.text(0), long);
+        assert!(m.query("z", 10).is_empty());
+    }
+
     /// A capital earns its bonus whatever case the needle is in: the
     /// bonuses were read off the lower-cased row a needle without a
     /// capital is matched against, where no capital is left — so `fb`
@@ -728,7 +821,7 @@ mod tests {
 
     /// What a query over a realistic tree costs, printed: 45k paths of a
     /// monorepo's shape, one term and three. `cargo nextest run -p
-    /// kawoosh-lua timing --no-capture` to read it.
+    /// kawoosh-systems timing --no-capture` to read it.
     #[test]
     fn timing_over_forty_five_thousand_paths() {
         let dirs = ["roles", "src", "packages", "vendor", "docs", "tests"];

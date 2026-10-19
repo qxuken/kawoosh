@@ -306,7 +306,7 @@ One session each, in order, each merged before the next.
 ### Round 1, 2026-10-17: the model and the settings
 
 `kawoosh/src/completion.rs` (completion's half; lsp.rs keeps asking
-the server and the candidates picker), `lua/src/fuzzy.rs`'s `Single`,
+the server and the candidates picker), `systems/src/fuzzy.rs`'s `Single`,
 `systems/src/words.rs`, the state db's `completion_accepts`, the
 settings in `editor/src/settings.rs`, the keys in
 `editor/src/commands.rs` local to the `completion` fact.

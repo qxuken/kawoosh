@@ -927,6 +927,21 @@ pub const WALK_MAX: usize = 200_000;
 pub struct Walked {
     pub rows: Vec<String>,
     pub capped: bool,
+    /// The paths as a matcher instead ([`Walked::into_matcher`]), made
+    /// on the walk's own thread for a picker (`fs.walk`'s `matcher`,
+    /// docs/design/picker.md Decision 5): `rows` is empty then.
+    pub matcher: Option<crate::fuzzy::Matcher>,
+}
+
+impl Walked {
+    /// The rows moved into a matcher, in the walk's order.
+    pub fn into_matcher(self) -> Self {
+        Self {
+            matcher: Some(crate::fuzzy::Matcher::new(&self.rows)),
+            rows: Vec::new(),
+            capped: self.capped,
+        }
+    }
 }
 
 /// Every file under `root`, as paths relative to it, in the walk's
@@ -969,7 +984,11 @@ pub fn walk_with(root: &Path, max: usize, ignored: bool) -> io::Result<Walked> {
         let host = |mut rows: Vec<String>, max: usize| {
             let capped = rows.len() > max;
             rows.truncate(max);
-            Walked { rows, capped }
+            Walked {
+                rows,
+                capped,
+                matcher: None,
+            }
         };
         if let Some(local) = fs.local(rest) {
             if let Some(rows) = walk_by_host(domain, rest, max + 1) {
@@ -979,6 +998,7 @@ pub fn walk_with(root: &Path, max: usize, ignored: bool) -> io::Result<Walked> {
             return Ok(Walked {
                 rows: w.rows.into_iter().map(|r| r.replace('\\', "/")).collect(),
                 capped: w.capped,
+                matcher: None,
             });
         }
         let max = max.min(HOST_WALK_MAX);
