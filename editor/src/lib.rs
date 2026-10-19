@@ -3041,6 +3041,55 @@ impl Editor {
         Some(starts)
     }
 
+    /// [`Editor::apply_edits_at`] with each edit made only where its
+    /// text differs from what it replaces, a token at a time
+    /// (`kawoosh_doc::line_diff::token_edits`): what a node action's
+    /// rewrite keeps keeps its highlight, marks and carets — a list
+    /// split onto its lines changes the space between its items, and
+    /// the strings in it keep their colour while the parse catches up.
+    /// The starts answered are each given edit's, as if made whole.
+    pub fn apply_edits_diffed_at(
+        &mut self,
+        id: BufferId,
+        edits: &[(Range<usize>, String)],
+    ) -> Option<Vec<usize>> {
+        let buf = self.buffers.get(id)?;
+        if buf.read_only || edits.is_empty() {
+            return None;
+        }
+        let whole: Vec<(Range<usize>, String)> = edits
+            .iter()
+            .map(|(r, t)| {
+                let start = buf.floor_byte(r.start);
+                (start..buf.floor_byte(r.end).max(start), t.clone())
+            })
+            .collect();
+        let mut fine = Vec::new();
+        for (r, t) in &whole {
+            let old = buf.slice(r.clone());
+            fine.extend(
+                kawoosh_doc::line_diff::token_edits(&old, t)
+                    .into_iter()
+                    .map(|(f, t)| (r.start + f.start..r.start + f.end, t)),
+            );
+        }
+        let mut order: Vec<usize> = (0..whole.len()).collect();
+        order.sort_by_key(|&i| (whole[i].0.start, whole[i].0.end));
+        let mut starts = vec![0; whole.len()];
+        let mut delta: isize = 0;
+        for i in order {
+            let (r, t) = &whole[i];
+            starts[i] = (r.start as isize + delta) as usize;
+            delta += t.len() as isize - r.len() as isize;
+        }
+        if fine.is_empty() {
+            return Some(starts);
+        }
+        fine.sort_by_key(|(r, _)| (r.start, r.end));
+        self.apply_edits_at(id, &fine)?;
+        Some(starts)
+    }
+
     /// Back to the parent state; false at the root.
     pub fn undo(&mut self, view: ViewId) -> bool {
         let id = self.views[view].buffer;

@@ -899,6 +899,9 @@ pub enum Msg {
         edits: Vec<(std::ops::Range<usize>, String)>,
         carets: Vec<Caret>,
         primary: usize,
+        /// Each edit made only where its text differs, a token at a
+        /// time (`Editor::apply_edits_diffed_at`).
+        diff: bool,
     },
     /// Every selection of the buffer's view at once, `primary` the
     /// index of the primary.
@@ -3589,12 +3592,18 @@ impl Runtime {
                     edits,
                     carets,
                     primary,
+                    diff,
                 } => {
                     let id = id_of(buffer);
                     let starts = if edits.is_empty() {
                         Vec::new()
                     } else {
-                        let Some(starts) = ed.apply_edits_at(id, &edits) else {
+                        let applied = if diff {
+                            ed.apply_edits_diffed_at(id, &edits)
+                        } else {
+                            ed.apply_edits_at(id, &edits)
+                        };
+                        let Some(starts) = applied else {
                             continue;
                         };
                         starts
@@ -7126,7 +7135,11 @@ fn seed(
     // at most. What `pairs` and node actions place a caret per caret
     // with. A range backwards, or two that overlap, is an error:
     // applied one after another they would each land in a text the one
-    // before had moved.
+    // before had moved. With `diff`, each edit is made only where its
+    // text differs from what it replaces, a token at a time — a word, a
+    // run of whitespace, any other character — so the tokens it keeps
+    // keep their highlight and marks while the parse catches up; a
+    // caret's `edit` and `at` still count in the whole edit's text.
     //
     // @class kawoosh.buf.Edit
     // @field [1] integer from, a byte from 0
@@ -7135,6 +7148,7 @@ fn seed(
     //
     // @class kawoosh.buf.EditsOpts
     // @field carets? kawoosh.buf.Caret[] the selections after, in place of the carried ones
+    // @field diff? boolean each edit made only where its text differs from what it replaces, a token at a time, so what it keeps keeps its highlight and marks (a node action's rewrite)
     //
     // @class kawoosh.buf.Caret
     // @field at integer bytes into edit `edit`'s text, else an offset (from 0) of the text as it is
@@ -7162,9 +7176,12 @@ fn seed(
                     edits.push((from..to, text));
                 }
                 let (mut carets, mut primary) = (Vec::new(), 0);
-                let list = match &opts {
-                    Some(o) => o.get::<Option<Vec<Table>>>("carets")?,
-                    None => None,
+                let (list, diff) = match &opts {
+                    Some(o) => (
+                        o.get::<Option<Vec<Table>>>("carets")?,
+                        o.get::<Option<bool>>("diff")?.unwrap_or(false),
+                    ),
+                    None => (None, false),
                 };
                 for c in list.unwrap_or_default() {
                     let at: usize = c.get("at")?;
@@ -7188,6 +7205,7 @@ fn seed(
                     edits,
                     carets,
                     primary,
+                    diff,
                 });
                 Ok(())
             },
