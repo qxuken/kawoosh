@@ -736,6 +736,44 @@ fn a_shell_line_s_program_completes_from_the_path() {
     leave(&mut d, &mut app);
 }
 
+/// `:terminal shell`'s NAME completes to the shells on the PATH — at an
+/// empty word too, there being a handful — and no other program; a word
+/// that reads as a path to the paths there.
+#[test]
+fn terminal_shell_completes_the_shells_on_the_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Sandbox::new("shells", false, "return {}");
+    for name in ["pwsh", "fish", "kwprog"] {
+        let p = s.bin.join(name);
+        std::fs::write(&p, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = s.open(&mut d);
+
+    d.keys(&mut app, ":terminal shell ");
+    answered(&mut d, &mut app);
+    let c = candidates(&app);
+    for shell in ["fish", "pwsh", "sh"] {
+        assert!(c.iter().any(|c| c == shell), "{shell}: {c:?}");
+    }
+    assert!(!c.iter().any(|c| c == "kwprog"), "no other program: {c:?}");
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":terminal shell pw");
+    answered(&mut d, &mut app);
+    assert_eq!(candidates(&app), ["pwsh"]);
+    d.key(&mut app, "tab", KeyMods::default());
+    assert_eq!(app.ed.prompt_text().as_deref(), Some("terminal shell pwsh"));
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":terminal shell ./s");
+    answered(&mut d, &mut app);
+    assert_eq!(
+        candidates(&app),
+        [format!(".{0}src{0}", std::path::MAIN_SEPARATOR)]
+    );
+    leave(&mut d, &mut app);
+}
+
 /// The repository's packages `:compile` offers (compile.md Decision 9)
 /// are walked on a job — a walk reads up to every entry — the prompt's
 /// lines and the picker's rows read again as it lands.

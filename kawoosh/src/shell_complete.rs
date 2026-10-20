@@ -27,6 +27,24 @@ use kawoosh_systems::io::IoMsg;
 
 use crate::app::Kawoosh;
 
+/// The shells `:terminal shell` offers, those of them on the PATH:
+/// each by the name it is run by, Windows' without its `.exe`.
+pub const SHELLS: &[&str] = &[
+    "bash",
+    "cmd",
+    "dash",
+    "elvish",
+    "fish",
+    "ksh",
+    "nu",
+    "powershell",
+    "pwsh",
+    "sh",
+    "tcsh",
+    "xonsh",
+    "zsh",
+];
+
 /// How long a completer is waited for, its answer then dropped.
 pub const PATIENCE: Duration = Duration::from_secs(2);
 /// The most a completer may print: past it the answer is dropped and
@@ -366,6 +384,40 @@ impl Kawoosh {
         if current.is_empty() || kawoosh_systems::fs::domain_of(dir).is_some() {
             return Vec::new();
         }
+        self.programs_on_path()
+            .iter()
+            .filter(|p| p.starts_with(current))
+            .map(|p| crate::compile::quote_arg(p))
+            .collect()
+    }
+
+    /// `:terminal shell`'s NAME: the shells of [`SHELLS`] on the PATH
+    /// whose names start `current`, an empty word's too — a handful,
+    /// not thousands. Nothing for a host's directory, whose PATH is not
+    /// this one.
+    pub(crate) fn shell_candidates(&mut self, current: &str, dir: &Path) -> Vec<String> {
+        if kawoosh_systems::fs::domain_of(dir).is_some() {
+            return Vec::new();
+        }
+        let programs = self.programs_on_path();
+        // A Windows name is any case: `PowerShell.exe` is `powershell`.
+        let on_path = |s: &str| {
+            if cfg!(windows) {
+                programs.iter().any(|p| p.eq_ignore_ascii_case(s))
+            } else {
+                programs.binary_search_by(|p| p.as_str().cmp(s)).is_ok()
+            }
+        };
+        SHELLS
+            .iter()
+            .filter(|s| s.starts_with(current) && on_path(s))
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    /// The programs on the PATH, sorted: as last listed, listed again on
+    /// a job once a prompt.
+    fn programs_on_path(&mut self) -> Rc<Vec<String>> {
         let c = &mut self.line_complete;
         if !c.programs_asked {
             c.programs_asked = true;
@@ -380,12 +432,7 @@ impl Kawoosh {
                 c.programs_asked = false;
             }
         }
-        self.line_complete
-            .programs
-            .iter()
-            .filter(|p| p.starts_with(current))
-            .map(|p| crate::compile::quote_arg(p))
-            .collect()
+        self.line_complete.programs.clone()
     }
 
     /// The programs on the PATH listed: kept, and the line completed

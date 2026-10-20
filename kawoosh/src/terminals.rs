@@ -144,13 +144,18 @@ pub struct Spawned {
     /// A kept one's program and arguments, run with no shell between
     /// ([`Kawoosh::spawn_bang_argv`]): what `r` runs again.
     pub argv: Option<Vec<String>>,
+    /// A shell's, when it is not `terminal.shell`'s: the one
+    /// `:terminal shell NAME` named, started again as that one.
+    pub shell: Option<String>,
 }
 
-/// A terminal to start: in `cwd`, the tool's command or the shell.
+/// A terminal to start: in `cwd`, the tool's command or the shell —
+/// `shell`, or `terminal.shell`'s.
 #[derive(Clone, Debug)]
 pub struct Pending {
     pub cwd: PathBuf,
     pub tool: Option<String>,
+    pub shell: Option<String>,
 }
 
 impl Terminals {
@@ -259,7 +264,17 @@ impl Kawoosh {
     /// Spawns a shell (or `cmd`) sized for a pane, with the `$EDITOR`
     /// handoff in its environment (Decision 3b).
     pub fn spawn_terminal(&mut self, cmd: Option<&str>, cwd: Option<&Path>) -> Option<TermId> {
-        self.spawn_terminal_as(None, cmd, cwd)
+        self.spawn_terminal_as(None, None, cmd, cwd)
+    }
+
+    /// `:terminal shell NAME`'s: a terminal whose own process is the
+    /// shell `name`, whatever `terminal.shell` and `$SHELL` say — no
+    /// shell of theirs between, as `:terminal NAME` would run it. Kept
+    /// by a session as that shell.
+    pub fn spawn_shell(&mut self, name: &str, cwd: Option<&Path>) -> Option<TermId> {
+        let t = self.spawn_terminal_as(None, Some(name), None, cwd)?;
+        self.terms.spawned.entry(t).or_default().shell = Some(name.to_string());
+        Some(t)
     }
 
     /// The directory of what is in front: a terminal's, where its shell
@@ -546,11 +561,22 @@ impl Kawoosh {
         }
     }
 
+    /// Where `:terminal` starts one: from a terminal, where its shell
+    /// is; else the working directory.
+    fn terminal_cwd(&self) -> PathBuf {
+        self.term_of(self.layout.focused())
+            .and_then(|t| self.terms.map.get(&t))
+            .and_then(|t| t.cwd())
+            .unwrap_or_else(|| self.cwd.clone())
+    }
+
     /// [`Kawoosh::spawn_terminal`] under a number reserved for it — a
-    /// session's pane, made before its process.
+    /// session's pane, made before its process — and the shell `shell`
+    /// where one is named, else `terminal.shell`'s.
     fn spawn_terminal_as(
         &mut self,
         id: Option<TermId>,
+        shell: Option<&str>,
         cmd: Option<&str>,
         cwd: Option<&Path>,
     ) -> Option<TermId> {
@@ -601,7 +627,7 @@ impl Kawoosh {
             kawoosh_systems::fs::domain_of(&cwd).map(|(n, d)| (n.to_string(), d.to_path_buf()));
         let spawned = match &host {
             Some((name, dir)) => {
-                let Some(launch) = self.remote_terminal_argv(name, dir, cmd, size) else {
+                let Some(launch) = self.remote_terminal_argv(name, dir, shell, cmd, size) else {
                     self.ed.message = if self.dropped_domain(Some(&cwd)).is_some() {
                         format!("{name}: disconnected (:domain reconnect {name})")
                     } else {
@@ -627,7 +653,7 @@ impl Kawoosh {
                 })
             }
             None => {
-                let shell = self.ed.settings.str("terminal.shell");
+                let shell = shell.or_else(|| self.ed.settings.str("terminal.shell"));
                 in_a_pty(|| Terminal::spawn(shell, cmd, Some(&cwd), size, &envs))
             }
         };
@@ -702,6 +728,7 @@ impl Kawoosh {
         &self,
         name: &str,
         dir: &Path,
+        shell: Option<&str>,
         cmd: Option<&str>,
         size: TermSize,
     ) -> Option<RemoteLaunch> {
@@ -764,9 +791,11 @@ impl Kawoosh {
                  EDITOR={shim}/kawoosh-edit VISUAL={shim}/kawoosh-edit GIT_EDITOR={shim}/kawoosh-edit; fi\n"
             );
         }
+        // The host's own shell, or the one named, found on its PATH.
+        let sh = shell.map_or_else(|| "\"${SHELL:-/bin/sh}\"".to_string(), shell_quote);
         let exec = match cmd {
-            Some(c) => format!("exec \"${{SHELL:-/bin/sh}}\" -lc {}", shell_quote(c)),
-            None => "exec \"${SHELL:-/bin/sh}\" -l".to_string(),
+            Some(c) => format!("exec {sh} -lc {}", shell_quote(c)),
+            None => format!("exec {sh} -l"),
         };
         let exec = format!("{cli}{exec}");
         let script = remote_script(dir, &envs, &exec, cmd.is_none());
@@ -840,13 +869,15 @@ impl Kawoosh {
             let spawned = if p.tool.is_some() && cmd.is_none() {
                 None
             } else {
-                self.spawn_terminal_as(Some(id), cmd.as_deref(), Some(&cwd))
+                self.spawn_terminal_as(Some(id), p.shell.as_deref(), cmd.as_deref(), Some(&cwd))
             };
             match spawned {
                 Some(id) => {
+                    let s = self.terms.spawned.entry(id).or_default();
                     if let Some(name) = p.tool {
-                        self.terms.spawned.entry(id).or_default().tool = Some(name);
+                        s.tool = Some(name);
                     }
+                    s.shell = p.shell;
                 }
                 None => {
                     let pane = self
@@ -1464,12 +1495,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 } else {
                     Some(ctx.args.join(" "))
                 };
-                // From a terminal, where its shell is.
-                let cwd = k
-                    .term_of(k.layout.focused())
-                    .and_then(|t| k.terms.map.get(&t))
-                    .and_then(|t| t.cwd())
-                    .unwrap_or_else(|| k.cwd.clone());
+                let cwd = k.terminal_cwd();
                 if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
                     k.fill_or_open(k.terminal_place(), Content::Terminal(t));
                 }
@@ -1483,6 +1509,24 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 let cmd = (!ctx.args.is_empty()).then(|| ctx.args.join(" "));
                 let cwd = k.here_dir_there();
                 if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
+                    k.fill_or_open(k.terminal_place(), Content::Terminal(t));
+                }
+            },
+        ),
+        cmd(
+            Spec::new("terminal shell")
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("a terminal whose shell is NAME (`zsh`, `pwsh`, a path to one) in place of `terminal.shell`'s, nothing between: `:terminal NAME` runs NAME inside that shell"),
+            |k, ctx| {
+                let name = ctx.args.join(" ");
+                let name = name.trim();
+                let cwd = k.terminal_cwd();
+                let t = if name.is_empty() {
+                    k.spawn_terminal(None, Some(&cwd))
+                } else {
+                    k.spawn_shell(name, Some(&cwd))
+                };
+                if let Some(t) = t {
                     k.fill_or_open(k.terminal_place(), Content::Terminal(t));
                 }
             },

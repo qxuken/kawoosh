@@ -116,7 +116,8 @@ pub enum PaneData {
     /// A terminal: a shell, or a tool that says `restore`, started
     /// again in the directory it was left in; anything else (`:term
     /// CMD`, a build) is not, and a session from before this has none
-    /// that is.
+    /// that is. `shell`: the one `:terminal shell NAME` named, none for
+    /// `terminal.shell`'s.
     Terminal {
         #[serde(default)]
         restore: bool,
@@ -124,6 +125,8 @@ pub enum PaneData {
         cwd: Option<PathBuf>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shell: Option<String>,
     },
     /// A pane a session does not keep: a transient view (the picker,
     /// the launcher).
@@ -241,6 +244,7 @@ impl Kawoosh {
                 restore: true,
                 cwd: Some(p.cwd.clone()),
                 tool: p.tool.clone(),
+                shell: p.shell.clone(),
             };
         }
         let cwd = self.terms.map.get(&t).and_then(|t| t.cwd());
@@ -249,6 +253,7 @@ impl Kawoosh {
                 restore: true,
                 cwd,
                 tool: None,
+                shell: s.shell.clone(),
             },
             Some(s)
                 if s.tool
@@ -259,12 +264,14 @@ impl Kawoosh {
                     restore: true,
                     cwd,
                     tool: s.tool.clone(),
+                    shell: None,
                 }
             }
             _ => PaneData::Terminal {
                 restore: false,
                 cwd: None,
                 tool: None,
+                shell: None,
             },
         }
     }
@@ -565,6 +572,7 @@ impl Kawoosh {
                         restore: true,
                         cwd,
                         tool,
+                        shell,
                     } => {
                         let id = self.terms.reserve();
                         self.terms.pending.push((
@@ -572,6 +580,7 @@ impl Kawoosh {
                             crate::terminals::Pending {
                                 cwd: cwd.clone().unwrap_or_else(|| self.cwd.clone()),
                                 tool: tool.clone(),
+                                shell: shell.clone(),
                             },
                         ));
                         Content::Terminal(id)

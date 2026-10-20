@@ -246,6 +246,17 @@ impl Kawoosh {
         if inv.name == "compile" {
             return self.compile_candidates(line, first, index, &inv.args);
         }
+        // `:terminal shell`'s NAME: a shell on the PATH, or a path to one.
+        if inv.name == "terminal shell" && index == 0 {
+            let mut found = Found::new(start, out);
+            let dir = self.cwd.clone();
+            if looks_like_path(token) {
+                self.path_found(&mut found, token, &dir, None);
+            } else {
+                found.extend(self.shell_candidates(token, &dir));
+            }
+            return found;
+        }
         // A shell line — `:!`, `:shell`, `:terminal [here]`: its
         // program, of those on the PATH, or a path to one; then the
         // program's arguments, what its completer says, then paths
