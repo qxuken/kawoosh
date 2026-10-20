@@ -535,6 +535,22 @@ impl Store {
         Ok(())
     }
 
+    /// Several rows' pin ordinals set in one transaction — pins put in
+    /// a new order are in it whole or not at all.
+    pub fn set_pins(&self, pins: &[(&MomentKey, i64)]) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let set = pins
+            .iter()
+            .try_for_each(|(key, ordinal)| self.set_pinned(key, *ordinal));
+        match set {
+            Ok(()) => self.conn.execute_batch("COMMIT"),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
     /// The row and its ring rows gone. The history under a `file` or
     /// `scratch` subject goes with it (memory.md Decision 6) — once no
     /// row of the same subject under another workspace still owns it:
@@ -1026,6 +1042,21 @@ mod tests {
                 .map(|r| r.key.subject.as_str())
                 .collect::<Vec<_>>(),
             ["/y", "/x"]
+        );
+        a.set_pins(&[
+            (&MomentKey::new("file", "/x", ""), 1),
+            (&MomentKey::new("file", "/y", ""), 2),
+        ])
+        .unwrap();
+        let pins = a.moments(&MomentQuery {
+            pinned: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            pins.iter()
+                .map(|r| r.key.subject.as_str())
+                .collect::<Vec<_>>(),
+            ["/x", "/y"]
         );
         // Forgetting a file moment takes its ring rows and its history.
         a.save_history("file:/x", b"draft", "{}", false).unwrap();

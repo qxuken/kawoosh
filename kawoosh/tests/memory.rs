@@ -1333,6 +1333,99 @@ fn a_pin_opens_in_the_pane_that_has_the_keyboard() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// Pins put in another order: `<A-k>` `<A-j>` in the pane move the
+/// cursor's pin and the cursor with it, `:memory pin move` the
+/// buffer's file's, `kawoosh.pin(kind, subject, N)` a plugin's — and
+/// `<A-N>` opens the one now Nth.
+#[test]
+fn pins_move_in_order() {
+    let dir = tmp("pin-move");
+    let db = tmp("pin-move-db").join("state.db");
+    let [a, b, c] = ["a.txt", "b.txt", "c.txt"].map(|n| dir.join(n));
+    for p in [&a, &b, &c] {
+        std::fs::write(p, "x\n").unwrap();
+    }
+    let (mut d, mut app) = launch(&db, &a);
+    d.frame(&mut app);
+    for p in [&a, &b, &c] {
+        lua(&mut app, &format!("kawoosh.pin('file', '{}')", lua_path(p)));
+        d.frame(&mut app);
+    }
+    let order = |app: &Kawoosh| -> Vec<String> {
+        let store = app.store.as_ref().unwrap();
+        store
+            .moments(&kawoosh_systems::store::MomentQuery {
+                pinned: true,
+                workspace: Some(""),
+                ..Default::default()
+            })
+            .iter()
+            .map(|r| {
+                std::path::Path::new(&r.key.subject)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    };
+    assert_eq!(order(&app), ["a.txt", "b.txt", "c.txt"]);
+    // In the pane: the first pin down one, the cursor with it.
+    ex(&mut d, &mut app, "memory pins");
+    d.press(&mut app, "<A-j>");
+    d.frame(&mut app);
+    assert_eq!(
+        order(&app),
+        ["b.txt", "a.txt", "c.txt"],
+        "{}",
+        app.ed.message
+    );
+    assert!(app.ed.message.ends_with("pin 2 of 3"), "{}", app.ed.message);
+    assert_eq!(app.memory_pane.cursor, 1, "the cursor went with it");
+    assert_eq!(
+        app.memory_pane.rows()[1].key().unwrap().subject,
+        a.display().to_string()
+    );
+    // Past the end is the end; a count steps further.
+    d.press(&mut app, "<A-j>");
+    d.press(&mut app, "<A-j>");
+    d.frame(&mut app);
+    assert_eq!(order(&app), ["b.txt", "c.txt", "a.txt"]);
+    d.keys(&mut app, "2");
+    d.press(&mut app, "<A-k>");
+    d.frame(&mut app);
+    assert_eq!(order(&app), ["a.txt", "b.txt", "c.txt"]);
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    // From the editor: the buffer's file, here a, to the end.
+    ex(&mut d, &mut app, "memory pin move last");
+    assert_eq!(order(&app), ["b.txt", "c.txt", "a.txt"]);
+    d.press(&mut app, "<A-3>");
+    d.frame(&mut app);
+    assert_eq!(app.ed.buffer_of(app.focused_view().unwrap()).name, "a.txt");
+    // From Lua: c to the front.
+    lua(
+        &mut app,
+        &format!("kawoosh.pin('file', '{}', 1)", lua_path(&c)),
+    );
+    d.frame(&mut app);
+    assert_eq!(order(&app), ["c.txt", "b.txt", "a.txt"]);
+    // What is not pinned has nowhere to move.
+    std::fs::write(dir.join("d.txt"), "x\n").unwrap();
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("d.txt").display()),
+    );
+    ex(&mut d, &mut app, "memory pin move up");
+    assert!(
+        app.ed.message.ends_with("is not pinned"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `<Tab>` walks the pane's views forward and `<S-Tab>` back, round
 /// from the first to the last.
 #[test]

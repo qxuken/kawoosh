@@ -40,7 +40,8 @@
 //! goes to where it came from (a text's bytes carried through the
 //! buffer's edits since, `line_carried`; a file's line); `x` forgets
 //! it — a draft's buffer reverted, as `:history drop` did; `m` pins
-//! or unpins; `q` closes the pane, `<Esc>` hands the keyboard to an
+//! or unpins, `<A-k>` `<A-j>` move a pin up or down the pins; `q`
+//! closes the pane, `<Esc>` hands the keyboard to an
 //! editor pane.
 //!
 //! Every size is `devtab::Tab`'s, as the undo pane's are.
@@ -59,6 +60,7 @@ use crate::devtab::Tab;
 use crate::diff;
 use crate::history::{Base, History, MAX_TEXT, fingerprint};
 use crate::layout::{Content, PaneId, Place};
+use crate::moments::PinPlace;
 use crate::rows;
 use crate::undo::PANEL_SHARE;
 
@@ -1264,42 +1266,69 @@ impl Kawoosh {
         self.layout.focused_content() == Some(Content::Memory)
     }
 
+    /// The moment a row stands for: none for a jump, the tab's.
+    fn memory_row_key(&self, i: usize) -> Option<MomentKey> {
+        match self.memory_pane.rows.get(i)? {
+            Row::Jump { .. } => None,
+            Row::Moment { row, .. } => Some(row.key.clone()),
+            Row::Recent(r) => Some(r.key.clone()),
+            Row::Text(t) => {
+                let m = self.ed.memory.moments().get(*t)?;
+                Some(crate::moments::text_key(&m.text))
+            }
+        }
+    }
+
     /// `m` on a row: pinned, or unpinned.
     fn pin_row(&mut self, i: usize) {
-        let Some(row) = self.memory_pane.rows.get(i).cloned() else {
+        if matches!(self.memory_pane.rows.get(i), Some(Row::Jump { .. })) {
+            self.ed.message = "a jump is the tab's, not the memory's to pin".into();
+            return;
+        }
+        let Some(key) = self.memory_row_key(i) else {
             return;
         };
-        let (key, on) = match row {
-            Row::Jump { .. } => {
-                self.ed.message = "a jump is the tab's, not the memory's to pin".into();
-                return;
-            }
-            Row::Moment { row, .. } => (row.key.clone(), row.pinned == 0),
-            Row::Recent(r) => {
-                let on = self
-                    .store
-                    .as_ref()
-                    .and_then(|s| s.moment(&r.key))
-                    .is_none_or(|m| m.pinned == 0);
-                (r.key, on)
-            }
-            Row::Text(t) => {
-                let Some(m) = self.ed.memory.moments().get(t) else {
-                    return;
-                };
-                let key = crate::moments::text_key(&m.text);
-                let on = self
-                    .store
-                    .as_ref()
-                    .and_then(|s| s.moment(&key))
-                    .is_none_or(|m| m.pinned == 0);
-                (key, on)
-            }
-        };
+        let on = self
+            .store
+            .as_ref()
+            .and_then(|s| s.moment(&key))
+            .is_none_or(|m| m.pinned == 0);
         self.ed.message = match self.pin_moment(&key, on) {
             Ok(m) | Err(m) => m,
         };
         self.sync_memory_rows();
+    }
+
+    /// `memory pin move`: the cursor's row in the pane, else the
+    /// focused buffer's file, moved among the workspace's pins — the
+    /// cursor going with it.
+    fn move_pin_here(&mut self, to: PinPlace) {
+        let key = if self.in_memory_pane() {
+            self.sync_memory_rows();
+            self.memory_row_key(self.memory_pane.cursor)
+        } else {
+            self.focused_view()
+                .and_then(|v| self.subject_of(self.ed.views[v].buffer))
+        };
+        let Some(key) = key else {
+            self.ed.message = "nothing pinned here to move".into();
+            return;
+        };
+        self.ed.message = match self.move_pin(&key, to) {
+            Ok(m) | Err(m) => m,
+        };
+        if self.in_memory_pane() {
+            self.sync_memory_rows();
+            if let Some(i) = self
+                .memory_pane
+                .rows
+                .iter()
+                .position(|r| matches!(r, Row::Moment { row, .. } if row.key == key))
+            {
+                self.memory_pane.cursor = i;
+                self.memory_pane.reveal = true;
+            }
+        }
     }
 
     /// `memory pin`: the focused buffer's file pinned, or unpinned
@@ -2160,6 +2189,21 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                         k.pin_row(k.memory_pane.cursor);
                     }
                     None => k.pin_current(),
+                }
+            },
+        ),
+        cmd(
+            Spec::new("memory pin move")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("move the cursor's pin in the pane, else the buffer's file's, among the workspace's pins: `up`, `down` (a count steps), `first`, `last`, or to N"),
+            |k, ctx| {
+                let word = ctx.args.first().map(String::as_str).unwrap_or("");
+                match PinPlace::parse(word, ctx.count.max(1)) {
+                    Some(to) => k.move_pin_here(to),
+                    None => {
+                        k.ed.message =
+                            "move the pin where? (:memory pin move up|down|first|last|N)".into()
+                    }
                 }
             },
         ),
