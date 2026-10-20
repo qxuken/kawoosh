@@ -2855,6 +2855,7 @@ impl kui_native::App for Kawoosh {
     /// (`:q` saved it already when it got here).
     fn teardown(&mut self) {
         self.compile.stop_all();
+        self.lua_procs_teardown();
         self.domains_teardown();
         self.help_teardown();
         // The link's directory, made for this run: never the shipped

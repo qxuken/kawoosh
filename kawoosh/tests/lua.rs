@@ -4477,6 +4477,75 @@ fn a_plugins_processes_wait_their_turn() {
     let _ = std::fs::remove_file(&go);
 }
 
+/// The app going — `:q`, its window's button, ⌘Q, all `teardown` —
+/// kills every process a plugin spawned, and what each started, and
+/// starts none still waiting its turn: each leads a session of its own,
+/// which the window going takes nothing of.
+#[test]
+#[cfg(unix)]
+fn a_plugins_processes_end_as_the_app_quits() {
+    use kui_native::App;
+    let dir = std::env::temp_dir().join(format!("kawoosh-procs-quit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    app.jobs_inline = false;
+    d.frame(&mut app);
+    // Two that leave a `sleep` behind them, and forty more: the last
+    // ones wait their turn.
+    app.run_lua_source(
+        "t",
+        &r#"local tokens = {}
+           for i = 1, 2 do
+             tokens[i] = kawoosh.spawn({ "sh", "-c", "sleep 300 & echo $! > 'DIR/" .. i .. "'; wait" })
+           end
+           for i = 3, 42 do
+             tokens[i] = kawoosh.spawn({ "sh", "-c", "sleep 300" })
+           end
+           kawoosh.echo(table.concat(tokens, " "))"#
+            .replace("DIR", &dir.display().to_string()),
+    );
+    let mine: std::collections::HashSet<u64> = app
+        .ed
+        .message
+        .split(' ')
+        .map(|t| t.parse().unwrap())
+        .collect();
+    let read = |n: &str| {
+        std::fs::read_to_string(dir.join(n))
+            .ok()
+            .filter(|s| s.ends_with('\n'))
+            .and_then(|s| s.trim().parse::<i32>().ok())
+    };
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while (read("1").is_none() || read("2").is_none()) && std::time::Instant::now() < until {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let sleeps = [read("1").expect("a pid"), read("2").expect("a pid")];
+    // SAFETY: a signal 0 asks whether the process is there; nothing sent.
+    let alive = |&pid: &i32| unsafe { libc::kill(pid, 0) } == 0;
+    assert!(sleeps.iter().all(alive), "both sleep");
+    assert!(
+        app.scripting.queued.iter().any(|(t, _)| mine.contains(t)),
+        "some waiting"
+    );
+
+    app.teardown();
+    assert!(app.scripting.procs.is_empty());
+    assert!(app.scripting.queued.is_empty(), "none started later");
+    // Reaped by init once their shells are gone: a moment, not at once.
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while sleeps.iter().any(alive) && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    for p in &sleeps {
+        assert!(!alive(p), "{p} outlived the app");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A line yanked in a listing that is then closed outright pastes as
 /// its entry all the same: the register carries what each tracked line
 /// is (its payload), not only which line of which listing it was — so

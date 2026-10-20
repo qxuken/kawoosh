@@ -2212,6 +2212,18 @@ impl Kawoosh {
         }
     }
 
+    /// Every process a plugin spawned killed, and what each started,
+    /// and the waiting ones never started: at quit, as each leads a
+    /// session of its own (`spawn::session`), which the window going
+    /// takes nothing of. No `on_exit` is called — no plugin is left to
+    /// act on it.
+    pub(crate) fn lua_procs_teardown(&mut self) {
+        for (_, p) in self.scripting.procs.drain() {
+            p.handle.kill();
+        }
+        self.scripting.queued.clear();
+    }
+
     /// The processes waiting their turn started, as many as there is
     /// room for now that one has ended.
     pub(crate) fn start_queued_procs(&mut self) {
