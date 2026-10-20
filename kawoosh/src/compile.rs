@@ -370,6 +370,13 @@ impl Run {
     pub fn running(&self) -> bool {
         self.proc.is_some()
     }
+
+    /// Where line `ln` of its output was printed: the directory of the
+    /// step whose output it is.
+    pub fn dir_at(&self, ln: usize) -> &Path {
+        let i = self.begun.iter().rposition(|&l| l <= ln).unwrap_or(0);
+        self.steps.get(i).map_or(&self.cwd, |s| &s.cwd)
+    }
 }
 
 #[derive(Default)]
@@ -2257,30 +2264,30 @@ impl Kawoosh {
         if run.is_some() && (ln == 0 || text.starts_with("$ ")) {
             return None;
         }
+        // A run's output names paths from where its step ran, else
+        // from the workspace; a file's, from beside it.
+        let bases = match run {
+            Some(run) => self.link_bases(Some(run.dir_at(ln).to_path_buf())),
+            None => vec![
+                b.path
+                    .as_deref()
+                    .and_then(kawoosh_systems::fs::parent)
+                    .unwrap_or_else(|| self.cwd.clone()),
+            ],
+        };
         // The first path-looking token on the line.
         let mut at = 0;
         while at < text.len() {
             if let Some((path, line, col)) = location_at(&text, at) {
-                let base = match run {
-                    // The directory of the step whose output it is.
-                    Some(run) => {
-                        let i = run.begun.iter().rposition(|&l| l <= ln).unwrap_or(0);
-                        run.steps
-                            .get(i)
-                            .map_or_else(|| run.cwd.clone(), |s| s.cwd.clone())
-                    }
-                    None => b
-                        .path
-                        .as_deref()
-                        .and_then(kawoosh_systems::fs::parent)
-                        .unwrap_or_else(|| self.cwd.clone()),
-                };
-                let full = if kawoosh_systems::fs::is_absolute(Path::new(&path)) {
-                    PathBuf::from(&path)
+                let found = if kawoosh_systems::fs::is_absolute(Path::new(&path)) {
+                    Some(PathBuf::from(&path)).filter(|full| full.is_file())
                 } else {
-                    kawoosh_systems::fs::join(&base, Path::new(&path))
+                    bases
+                        .iter()
+                        .map(|base| kawoosh_systems::fs::join(base, Path::new(&path)))
+                        .find(|full| full.is_file())
                 };
-                if full.is_file() {
+                if let Some(full) = found {
                     return Some((full, line, col));
                 }
             }

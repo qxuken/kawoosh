@@ -726,6 +726,78 @@ fn a_location_opens_in_the_pane_showing_its_file() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A path a run printed is looked for where its step ran first, the
+/// workspace after: `<CR>` and a ⌘-click (`open link`) alike — the
+/// run's `src/a.rs` before the workspace's, and `top.txt`, there only,
+/// from the workspace — each opened beside the output, not over it.
+#[cfg(unix)]
+#[test]
+fn a_location_is_found_where_its_run_ran_first() {
+    let dir = project(
+        "run-cwd",
+        r#"return { compile = { commands = {
+  deep = { cmd = "printf 'src/a.rs:1:1 here\\ntop.txt:1 there\\n'", cwd = "sub/deeper" },
+} } }"#,
+    );
+    std::fs::create_dir_all(dir.join("sub/deeper/src")).unwrap();
+    std::fs::write(dir.join("sub/deeper/src/a.rs"), "deep\n").unwrap();
+    std::fs::write(dir.join("top.txt"), "top\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    ex(&mut d, &mut app, "compile deep");
+    let out = finished(&mut d, &mut app);
+    let b = app.compile.buffer().unwrap();
+    let pane = compile_pane(&app).expect("on show");
+    let opened = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        app.ed.buffers[app.ed.views[v].buffer]
+            .path
+            .clone()
+            .unwrap_or_default()
+    };
+    let to_line = |app: &mut Kawoosh, starts: &str| {
+        app.layout.focus(pane);
+        let ln = out
+            .lines()
+            .position(|l| l.starts_with(starts))
+            .unwrap_or_else(|| panic!("no {starts} in {out}"));
+        let at = app.ed.buffers[b].line_range(ln).start;
+        let v = app.focused_view().unwrap();
+        app.ed.views[v].sels =
+            kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(at));
+    };
+    for open_it in ["enter", "open link"] {
+        let go = |d: &mut Drive, app: &mut Kawoosh| match open_it {
+            "enter" => drop(d.key(app, "enter", KeyMods::default())),
+            line => ex(d, app, line),
+        };
+        to_line(&mut app, "src/a.rs");
+        go(&mut d, &mut app);
+        d.frame(&mut app);
+        assert!(
+            opened(&app).ends_with("sub/deeper/src/a.rs"),
+            "{open_it}: {:?} {}",
+            opened(&app),
+            app.ed.message
+        );
+        to_line(&mut app, "top.txt");
+        go(&mut d, &mut app);
+        d.frame(&mut app);
+        assert_eq!(
+            opened(&app).file_name().and_then(|n| n.to_str()),
+            Some("top.txt"),
+            "{open_it}: {}",
+            app.ed.message
+        );
+        assert_eq!(
+            compile_pane(&app),
+            Some(pane),
+            "{open_it}: the output on show"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// compile.md Decision 16: `<Tab>` after a nushell command the project
 /// offers completes its positional parameters — a completer's list read
 /// from the file, an inline list, a completer run in nu — a flag's value
