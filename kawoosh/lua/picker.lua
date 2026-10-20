@@ -2978,6 +2978,49 @@ picker.source("tools", {
   empty = "no tools registered (kawoosh.tool in init.lua)",
 })
 
+-- The shells on the PATH (`kawoosh.fs.shells`), `<CR>` a terminal whose
+-- own process is the one picked (`:terminal shell NAME`); `:terminal
+-- shell` with no name opens it. The one a terminal runs by default
+-- (`terminal.shell`, else `$SHELL`) is first and says so, a row of its
+-- own when it is a path the PATH does not hold.
+local function shell_stem(path)
+  local name = (fs.basename(path) or path):lower()
+  return (name:gsub("%.exe$", ""))
+end
+
+picker.source("shells", {
+  title = "shells", placeholder = "a shell for a new terminal",
+  columns = {
+    { "text", grow = true },
+    { "is", muted = true, min = 50, max = 80, share = 0.1 },
+    { "where", muted = true, min = 120, max = 420, share = 0.6 },
+  },
+  items = function()
+    local default = kawoosh.opt("terminal.shell")
+    if default == nil or default == "" then default = os.getenv("SHELL") end
+    local stem = default and default ~= "" and shell_stem(default)
+    local items, seen = {}, false
+    for _, s in ipairs(fs.shells() or {}) do
+      local is_default = s.name == stem
+      seen = seen or is_default
+      local row = {
+        text = s.name, is = is_default and "default" or "", where = fs.short(s.path),
+        run = "terminal shell " .. s.name, boost = is_default and 1 or 0,
+        preview = { title = s.name, lines = { s.path, "a terminal whose own process is " .. s.name } },
+      }
+      table.insert(items, is_default and 1 or #items + 1, row)
+    end
+    if stem and not seen then
+      table.insert(items, 1, {
+        text = stem, is = "default", where = fs.short(default), run = "terminal shell " .. default, boost = 1,
+        preview = { title = stem, lines = { default, "a terminal whose own process is " .. stem } },
+      })
+    end
+    return items
+  end,
+  empty = "no shell found on the PATH",
+})
+
 -- The machines within reach (docs/design/domains.md W3): the settings'
 -- domains, `~/.ssh/config`'s hosts, WSL's distros, as `domain pick`
 -- last published them (`kawoosh.domains()`), each with what it is —

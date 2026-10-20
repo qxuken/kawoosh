@@ -2282,3 +2282,62 @@ fn a_narrow_tall_picker_its_keys_head_rows_and_legend() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The shells on the PATH as a picker (`:picker shells`, and
+/// `:terminal shell` with no name): the default one — `$SHELL` here —
+/// first and saying so, no program that is no shell, and `<CR>` a
+/// terminal whose own process is the one picked.
+#[cfg(unix)]
+#[test]
+fn the_shells_source_lists_the_shells_on_the_path_and_starts_one() {
+    use std::os::unix::fs::PermissionsExt;
+    let _serial = serial();
+    let bin = std::env::temp_dir().join(format!("kawoosh-shells-picker-{}", std::process::id()));
+    std::fs::remove_dir_all(&bin).ok();
+    std::fs::create_dir_all(&bin).unwrap();
+    for name in ["zsh", "pwsh", "kwprog"] {
+        let p = bin.join(name);
+        std::fs::write(&p, "#!/bin/sh\nexec /bin/sleep 30\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let (path, shell) = (std::env::var_os("PATH"), std::env::var_os("SHELL"));
+    // The process's, which `serial` keeps to this test while it runs.
+    unsafe {
+        std::env::set_var("PATH", &bin);
+        std::env::set_var("SHELL", bin.join("zsh"));
+    }
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = Kawoosh::new("*scratch*", "hello\n");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "terminal shell");
+    d.frame(&mut app);
+    assert!(picker_open(&app), "no name: the picker");
+    assert_eq!(rows(&d), ["zsh", "pwsh"], "the default first, no kwprog");
+    let t = texts(&d);
+    assert!(
+        t.iter().filter(|s| *s == "default").count() == 1,
+        "the default says so: {t:?}"
+    );
+    d.keys(&mut app, "pw");
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "pwsh");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!picker_open(&app), "gone on the pick");
+    let term = app.term_of_focused().expect("a terminal pane");
+    assert_eq!(app.terms.spawned[&term].shell.as_deref(), Some("pwsh"));
+    unsafe {
+        match path {
+            Some(p) => std::env::set_var("PATH", p),
+            None => std::env::remove_var("PATH"),
+        }
+        match shell {
+            Some(s) => std::env::set_var("SHELL", s),
+            None => std::env::remove_var("SHELL"),
+        }
+    }
+    std::fs::remove_dir_all(&bin).ok();
+}

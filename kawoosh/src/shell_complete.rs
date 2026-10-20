@@ -27,24 +27,6 @@ use kawoosh_systems::io::IoMsg;
 
 use crate::app::Kawoosh;
 
-/// The shells `:terminal shell` offers, those of them on the PATH:
-/// each by the name it is run by, Windows' without its `.exe`.
-pub const SHELLS: &[&str] = &[
-    "bash",
-    "cmd",
-    "dash",
-    "elvish",
-    "fish",
-    "ksh",
-    "nu",
-    "powershell",
-    "pwsh",
-    "sh",
-    "tcsh",
-    "xonsh",
-    "zsh",
-];
-
 /// How long a completer is waited for, its answer then dropped.
 pub const PATIENCE: Duration = Duration::from_secs(2);
 /// The most a completer may print: past it the answer is dropped and
@@ -391,7 +373,7 @@ impl Kawoosh {
             .collect()
     }
 
-    /// `:terminal shell`'s NAME: the shells of [`SHELLS`] on the PATH
+    /// `:terminal shell`'s NAME: the shells of [`kawoosh_systems::io::SHELLS`] on the PATH
     /// whose names start `current`, an empty word's too — a handful,
     /// not thousands. Nothing for a host's directory, whose PATH is not
     /// this one.
@@ -408,7 +390,7 @@ impl Kawoosh {
                 programs.binary_search_by(|p| p.as_str().cmp(s)).is_ok()
             }
         };
-        SHELLS
+        kawoosh_systems::io::SHELLS
             .iter()
             .filter(|s| s.starts_with(current) && on_path(s))
             .map(|s| s.to_string())

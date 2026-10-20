@@ -1516,17 +1516,18 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("terminal shell")
                 .args(Args::rest(&[ArgKind::Text]))
-                .doc("a terminal whose shell is NAME (`zsh`, `pwsh`, a path to one) in place of `terminal.shell`'s, nothing between: `:terminal NAME` runs NAME inside that shell"),
+                .doc("a terminal whose shell is NAME (`zsh`, `pwsh`, a path to one) in place of `terminal.shell`'s, nothing between: `:terminal NAME` runs NAME inside that shell. No NAME: the shells on the PATH as a picker"),
             |k, ctx| {
                 let name = ctx.args.join(" ");
                 let name = name.trim();
+                // No name: the shells on the PATH, to pick one from.
+                if name.is_empty() {
+                    k.shell_command("picker", &["shells".into()], None);
+                    k.drain_lua();
+                    return;
+                }
                 let cwd = k.terminal_cwd();
-                let t = if name.is_empty() {
-                    k.spawn_terminal(None, Some(&cwd))
-                } else {
-                    k.spawn_shell(name, Some(&cwd))
-                };
-                if let Some(t) = t {
+                if let Some(t) = k.spawn_shell(name, Some(&cwd)) {
                     k.fill_or_open(k.terminal_place(), Content::Terminal(t));
                 }
             },

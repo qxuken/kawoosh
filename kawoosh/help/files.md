@@ -145,6 +145,7 @@ and every other list you type into to narrow.
 | `<leader>sd` | directory jumps (below) |
 | `<leader>ic` | every command |
 | `<leader>t` | tools to run in a terminal: lazygit, top, a shell, and those your settings add |
+| `:terminal shell`, `:picker shells` | the shells on the PATH, your default first: `<CR>` a terminal whose shell is the one picked ([terminal](terminal.md)) |
 | `grs` `grS` `<leader>'` | symbols, workspace symbols, marks ([search](search.md#marks)) |
 | `<leader>cC` `gra` | compile commands, code actions ([code](code.md)) |
 | `<leader>sr` | the last picker again, its query and cursor as you left them |
