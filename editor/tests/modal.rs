@@ -677,6 +677,19 @@ fn select_next_and_all_matches() {
     t.keys("l<D-d>");
     assert_eq!(t.sels(), [(1, 1)]);
     assert_eq!(t.ed.message, "no word under the caret");
+    // But `v` on it selects the blank, one character, taken as is.
+    let mut t = T::new("a b  c");
+    t.keys("lv<D-d>");
+    assert_eq!(t.sels(), [(1, 1), (3, 3)]);
+    t.keys("<D-d>");
+    assert_eq!(t.sels(), [(1, 1), (3, 3), (4, 4)]);
+    let mut t = T::new("a b a");
+    t.keys("v<D-d>");
+    assert_eq!(t.sels(), [(0, 0), (4, 4)]);
+    let mut t = T::new("a b  c");
+    t.keys("lv<C-S-n>");
+    assert_eq!(t.sels(), [(1, 1), (3, 3), (4, 4)]);
+    assert_eq!(t.sel(), Selection::new(1, 1));
     // Every match at once, the primary the one under the caret.
     let mut t = T::new("a b a b a");
     t.keys("4l<C-S-n>");

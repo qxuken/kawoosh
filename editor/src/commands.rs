@@ -5271,12 +5271,13 @@ fn surround_replace_with(ed: &mut Editor, ctx: &Ctx) {
 /// text's word form is the search already, the last press's, keeps to
 /// the word. The search is set to it, so `n` goes on past the
 /// selections. The word's range comes back for a bare caret, which the
-/// first press selects and nothing more.
+/// first press selects and nothing more. A caret in visual mode is not
+/// bare: `v` on a blank selects the one character.
 fn select_pattern(ed: &mut Editor, ctx: &Ctx) -> Option<Option<Range<usize>>> {
     let id = view(ed, ctx).buffer;
     let buf = &ed.buffers[id];
     let p = ed.views[ctx.view].sels.primary();
-    let (pattern, word) = if p.is_empty() {
+    let (pattern, word) = if p.is_empty() && ed.mode(ctx.view) != Mode::Visual {
         let (a, b) = m::word_at(buf, p.head);
         if a == b {
             ed.message = "no word under the caret".into();
