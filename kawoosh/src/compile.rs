@@ -467,6 +467,17 @@ impl Compile {
         self.runs.iter().any(Run::running)
     }
 
+    /// Every command still running stopped, and what it started: at
+    /// quit, as each leads a session of its own (`spawn::session`),
+    /// which the window going takes nothing of.
+    pub(crate) fn stop_all(&mut self) {
+        for r in &mut self.runs {
+            if let Some(p) = r.proc.take() {
+                p.kill();
+            }
+        }
+    }
+
     /// `buffer` is gone: its run with it, stopped if it still ran.
     pub(crate) fn forget(&mut self, buffer: BufferId) {
         self.runs.retain_mut(|r| {

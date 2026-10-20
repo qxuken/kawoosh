@@ -388,6 +388,54 @@ fn two_commands_run_side_by_side() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The app going — `:q`, its window's button, ⌘Q, all `teardown` —
+/// stops every command still running, and what each started: each
+/// leads a session of its own, which the window going takes nothing of.
+#[cfg(unix)]
+#[test]
+fn every_compile_stops_as_the_app_quits() {
+    use kui_native::App;
+    let dir = project("quit", "return {}");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    let pids: Vec<PathBuf> = ["one", "two"].iter().map(|n| dir.join(n)).collect();
+    for p in &pids {
+        let line = format!("compile sleep 300 & echo $! > '{}'; wait", p.display());
+        ex(&mut d, &mut app, &line);
+    }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let read = |p: &PathBuf| {
+        std::fs::read_to_string(p)
+            .ok()
+            .filter(|s| s.ends_with('\n'))
+            .map(|s| s.trim().to_string())
+    };
+    while pids.iter().any(|p| read(p).is_none()) && std::time::Instant::now() < until {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let sleeps: Vec<i32> = pids
+        .iter()
+        .map(|p| read(p).expect("a pid").parse().unwrap())
+        .collect();
+    assert_eq!(app.compile.runs.iter().filter(|r| r.running()).count(), 2);
+    // SAFETY: a signal 0 asks whether the process is there; nothing sent.
+    let alive = |&pid: &i32| unsafe { libc::kill(pid, 0) } == 0;
+    assert!(sleeps.iter().all(alive), "both sleep");
+
+    app.teardown();
+    assert!(!app.compile.running());
+    // Reaped by init once their shells are gone: a moment, not at once.
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while sleeps.iter().any(alive) && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    for p in &sleeps {
+        assert!(!alive(p), "{p} outlived the app");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The pane showing `*compile*`, wherever it is.
 fn compile_pane(app: &Kawoosh) -> Option<kawoosh::layout::PaneId> {
     let buffer = app.compile.buffer()?;

@@ -4657,7 +4657,8 @@ fn seed(
     // Decision 5) — its output in lines as they come, once a frame, or
     // whole at the end through `on_done` (a trailing newline kept);
     // stderr with the lines, or apart through `on_stderr`; the token it
-    // answers to, for `kawoosh.kill(token)`.
+    // answers to, for `kawoosh.kill(token)`. Killed, and what it started,
+    // as the app quits (lua-boundary.md Decision 5).
     //
     // @class kawoosh.SpawnOpts
     // @field cwd? string where it runs (`~` expanded), else the working directory

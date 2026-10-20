@@ -21,7 +21,7 @@ line completed in the command line, carapace for a program's own
 arguments, 2026-10-17 (Decision 23), and Decision 16's `nu` asked
 on Decision 23's job the same day; the packages walked on a job, a
 shell line's program from the PATH, 2026-10-20 (Decisions 9 and 23
-amended). The calls
+amended); every run stopped at quit 2026-10-21 (Decision 24). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -1160,6 +1160,24 @@ the answer dropped outright when the line moved on (it is right for
 its question, and backspacing is common); a project's own completer
 allowed through `:trust` (no ask for it yet); the server's runnables in
 the first word (a request per prompt for rows the picker has).
+
+### 24. Every run stops as the app quits
+
+*Added 2026-10-21, asked:* "all compiles should be close when app
+quits". A command runs in a session of its own (`spawn::session`, so
+a tool asking on `/dev/tty` fails at once), and nothing of the window
+going reached it: a `sleep`, a watcher, a dev server, a quiet `cargo`
+kept running past `:q` — or past ⌘Q, the window's button, `:relaunch`
+— until it next wrote to a pipe no one read. Now the app's teardown
+kills every run still going, and what each started, as `<C-c>` kills
+one (`Compile::stop_all`): its group on unix, its job on Windows. A
+chain's next step is not started; no exit is reported, the window
+being gone.
+
+Beaten: asking before a quit while a run goes — a build is cheap to
+start again from the memory's line (Decision 7), and `:q` asks nothing
+of a terminal pane's program either; letting a run finish in the
+background — no one is left to read where it ended.
 
 ## Not built
 

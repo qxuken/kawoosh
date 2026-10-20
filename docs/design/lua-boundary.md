@@ -79,6 +79,15 @@ wait their turn in order, each a job until it starts (`wait_for_jobs`
 counts it); a waiting one killed ends with no code, as a running one
 does. A plugin keeps writing the fan-out it means.
 
+*Amended 2026-10-21*, the user: "also kill the processes plugins
+started with kawoosh.spawn when the app quits", after compile.md
+Decision 24 did so for compiles. Each process leads a session of its
+own (`spawn::session`), so the window going reached none of them: a
+plugin's watcher or server ran on past `:q`. Now the app's teardown
+kills every running one, and what it started (`lua_procs_teardown`),
+and the waiting ones are never started. No `on_exit` is called: the
+plugins go with the app, and a callback at teardown could start more.
+
 ### 6. The profile decides: `kawoosh/tests/lua_costs.rs`
 
 The suspected hot spots measured before any moved (an ignored harness,
