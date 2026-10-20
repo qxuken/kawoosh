@@ -184,9 +184,11 @@ and `:e` reachable when the memory pane is the only pane there is.
 
 A pane's own keys are its own maps, local to its place
 ([local-maps.md](local-maps.md)), so one key can mean each pane's
-thing and is nothing in the others: the memory pane's `y` `o` `x` `m` `p` `/` are
+thing and is nothing in the others: the memory pane's `y` `o` `x` `m` `<A-k>` `<A-j>` `p` `/` are
 `memory recall`, `memory origin`, `memory forget`, `memory pin` (bare
-in the pane: the cursor's row), `list open`, `memory filter` (a field
+in the pane: the cursor's row), `memory pin move up` and `down` (the
+cursor's pin a place up or down the pins, a count more, the cursor
+with it — as `<A-k>` `<A-j>` move a line), `list open`, `memory filter` (a field
 in the pane — `field:memory/q` — whose line narrows the view's rows
 as it is typed, fzy-ranked, `<C-n>` `<C-p>` `<C-d>` `<C-u>` moving
 the cursor from the line — and `j` `k` `gg` `G` too in normal mode
@@ -443,7 +445,7 @@ finds nothing on them (`<C-\>ZT` says `ZT: not bound`).
 | `<leader>sr` | the last picker again, its query and cursor as they were |
 | `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory (from a `dir` listing, lists it there — `gz` opens it in a listing), `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
 | `<leader>mm` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins (each the workspace's), all (every workspace's); `/` filters the view |
-| `<leader>mp` `<leader>ma` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
+| `<leader>mp` `<leader>ma` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file; in the pane `<A-k>` `<A-j>` move the cursor's pin up or down, and `:memory pin move up\|down\|first\|last\|N` moves the buffer's file's |
 | `<A-1>`…`<A-9>` | open the workspace's Nth pin |
 | `<leader>ml` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
 | `<leader>mj` | the tab's jumps (`:memory jumps`, `:jumps`), newest first, how many `<C-o>` away each is; `<CR>` goes to one, `x` drops it |

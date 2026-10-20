@@ -474,13 +474,15 @@ pub enum Msg {
         kind: String,
         subject: String,
     },
-    /// `kawoosh.pin(kind: string, subject: string, on?: boolean): nil`:
+    /// `kawoosh.pin(kind: string, subject: string, on?: boolean|integer): nil`:
     /// the subject's moment of that kind pinned — unpinned when `on` is
-    /// false.
+    /// false; a number pins it at that place among its workspace's pins
+    /// (from 1).
     Pin {
         kind: String,
         subject: String,
         on: bool,
+        place: Option<usize>,
     },
     /// `kawoosh.buf.retarget(from: string, to: string): nil`: every
     /// buffer open at path `from`, or under it, is at `to` from now on —
@@ -7862,11 +7864,22 @@ fn seed(
     k.set(
         "pin",
         lua.create_function(
-            move |_, (kind, subject, on): (String, String, Option<bool>)| {
+            move |_, (kind, subject, on): (String, String, mlua::Value)| {
+                let (on, place) = match on {
+                    mlua::Value::Nil => (true, None),
+                    mlua::Value::Boolean(on) => (on, None),
+                    mlua::Value::Integer(n) if n > 0 => (true, Some(n as usize)),
+                    v => {
+                        return Err(mlua::Error::runtime(format!(
+                            "kawoosh.pin: `on` is a boolean or a place from 1, not {v:?}"
+                        )));
+                    }
+                };
                 qq.borrow_mut().push(Msg::Pin {
                     kind,
                     subject,
-                    on: on.unwrap_or(true),
+                    on,
+                    place,
                 });
                 Ok(())
             },

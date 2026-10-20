@@ -6220,6 +6220,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("o", "memory origin"),
         ("x", "memory forget"),
         ("m", "memory pin"),
+        // The cursor's pin up or down the pins, as `<A-k>` `<A-j>`
+        // move a line.
+        ("<A-k>", "memory pin move up"),
+        ("<A-j>", "memory pin move down"),
         // This workspace's rows or every one's, as `<C-a>` flips the
         // buffers picker's.
         ("<C-a>", "memory scope"),

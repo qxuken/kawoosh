@@ -367,7 +367,13 @@ were to be a `kawoosh.store` table per workspace. They are a `file`
 moment with `pinned = 1`: exempt from eviction, ranked first by the
 picker, listed by `:memory pins` in pin order (`meta.pin` an ordinal),
 and set from the pane with `m` on the cursor's row, from a buffer with
-`memory pin` (`<leader>ea`), and from Lua (`kawoosh.pin`). Jenson's
+`memory pin` (`<leader>ea`), and from Lua (`kawoosh.pin`). The order
+is the user's too: `memory pin move` (`<A-k>` `<A-j>` in the pane, or
+`up`, `down`, `first`, `last`, N for the buffer's file) and
+`kawoosh.pin(kind, subject, N)` deal the workspace's pins' ordinals
+out again in the new order — the ordinals they already hold, so
+another workspace's pins keep theirs — and `<A-N>` opens the one now
+Nth. Jenson's
 word for the clipboard cache was *editable*; a pin is the user editing
 the memory's ranking by hand, and a `x` in the pane is the other half.
 Nothing to store elsewhere, nothing to keep in sync.

@@ -112,6 +112,29 @@ pub fn score(r: &MomentRow, now: i64) -> f64 {
     signals * 0.5f64.powf(days / 7.0)
 }
 
+/// Where `memory pin move` takes a pin: steps up or down its
+/// workspace's pins, or a place among them from 1 — past the end, the
+/// last.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinPlace {
+    Up(usize),
+    Down(usize),
+    At(usize),
+}
+
+impl PinPlace {
+    /// `up`, `down`, `first`, `last` or a number, the steps a count.
+    pub fn parse(word: &str, count: usize) -> Option<Self> {
+        match word {
+            "up" => Some(Self::Up(count)),
+            "down" => Some(Self::Down(count)),
+            "first" => Some(Self::At(1)),
+            "last" => Some(Self::At(usize::MAX)),
+            n => n.parse().ok().filter(|&n| n > 0).map(Self::At),
+        }
+    }
+}
+
 /// The app's side: the deltas, the pending ring rows, what the frame
 /// before saw, the flush alarm.
 pub struct Moments {
@@ -1315,6 +1338,44 @@ impl Kawoosh {
         } else {
             format!("{} unpinned", key.subject)
         })
+    }
+
+    /// A pin moved among its workspace's pins: the ordinals they hold
+    /// dealt out again in the new order, so another workspace's pins
+    /// keep theirs and `<A-N>` opens the one now Nth.
+    pub(crate) fn move_pin(&mut self, key: &MomentKey, to: PinPlace) -> Result<String, String> {
+        let Some(store) = self.store.clone() else {
+            return Err("no store: pins need one".into());
+        };
+        let mut pins = self.pins_in(Some(&key.workspace));
+        let Some(from) = pins.iter().position(|r| r.key == *key) else {
+            return Err(format!("{} is not pinned", key.subject));
+        };
+        let ordinals: Vec<i64> = pins.iter().map(|r| r.pinned).collect();
+        let place = match to {
+            PinPlace::Up(n) => from.saturating_sub(n),
+            PinPlace::Down(n) => from.saturating_add(n),
+            PinPlace::At(n) => n.saturating_sub(1),
+        }
+        .min(pins.len() - 1);
+        let row = pins.remove(from);
+        pins.insert(place, row);
+        let changed: Vec<(&MomentKey, i64)> = pins
+            .iter()
+            .zip(ordinals)
+            .filter(|(r, o)| r.pinned != *o)
+            .map(|(r, o)| (&r.key, o))
+            .collect();
+        store
+            .set_pins(&changed)
+            .map_err(|e| format!("{}: {e}", key.subject))?;
+        self.moments.changed += 1;
+        Ok(format!(
+            "{} pin {} of {}",
+            key.subject,
+            place + 1,
+            pins.len()
+        ))
     }
 
     /// The workspace's pins, in pin order (Decision 5: harpoon is

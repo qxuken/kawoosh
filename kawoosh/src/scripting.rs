@@ -19,6 +19,7 @@ use kui_native::{Color, Key, NodeSpec, Ui, Value};
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, PaneId, Place, SplitDir};
+use crate::moments::PinPlace;
 use crate::notify::{Level, Note, Show, Ttl};
 
 /// Where plugin processes' ids start, above compile mode's.
@@ -1022,9 +1023,28 @@ impl Kawoosh {
                     self.ed.message = e;
                 }
             }
-            Msg::Pin { kind, subject, on } => {
+            Msg::Pin {
+                kind,
+                subject,
+                on,
+                place,
+            } => {
                 let key = self.moment_key(&kind, &subject);
-                if let Err(e) = self.pin_moment(&key, on) {
+                let pinned = self
+                    .store
+                    .as_ref()
+                    .and_then(|s| s.moment(&key))
+                    .is_some_and(|m| m.pinned > 0);
+                // A place for a pin already there moves it, rather than
+                // dealing it a new ordinal at the end.
+                let done = match place {
+                    Some(n) if pinned => self.move_pin(&key, PinPlace::At(n)),
+                    Some(n) => self
+                        .pin_moment(&key, true)
+                        .and_then(|_| self.move_pin(&key, PinPlace::At(n))),
+                    None => self.pin_moment(&key, on),
+                };
+                if let Err(e) = done {
                     self.ed.message = e;
                 }
             }

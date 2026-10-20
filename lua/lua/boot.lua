@@ -935,7 +935,9 @@ end
 -- kind is "<plugin>.<kind>", capped at five hundred rows, and never a
 -- text (the register is the engine's). kawoosh.forget(kind, subject)
 -- takes a row out, its draft with it; kawoosh.pin(kind, subject[,
--- on]) pins or unpins one. kawoosh.now(): unix seconds, for a `rank`.
+-- on]) pins or unpins one — `on` a number pins it at that place among
+-- its workspace's pins, from 1, moving it there when it is pinned.
+-- kawoosh.now(): unix seconds, for a `rank`.
 -- The picker's ranking is `kawoosh.memory_rank` (`memory.lua`):
 -- `rank(row, now)` is the score a row gets and yours to replace,
 -- `boosts(kind, limit)` the rows as the picker's boosts.
