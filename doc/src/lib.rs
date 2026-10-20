@@ -100,10 +100,19 @@ pub struct Update {
 /// update likewise replaces whole chunks inside its span and walks the
 /// two at its edges. Every walk that was `O(runs)` per keystroke is
 /// `O(chunks + a chunk)`.
+///
+/// Runs may overlap — a diagnostic over a whole call with errors inside
+/// it — and then their ends are not in order, which every binary search
+/// over ends assumes: a layer whose runs nest (`nested`) is walked run
+/// by run. Highlights are painted flat and never nest; the
+/// layers that do are a buffer's diagnostics, a few hundred runs.
 #[derive(Clone, Debug, Default)]
 struct Layer {
-    /// Ascending, non-overlapping, none empty.
+    /// Ascending by start, none empty; they overlap only when `nested`.
     chunks: Vec<Chunk>,
+    /// Whether any run overlaps another, in one chunk or across two
+    /// ([`Layer::seal`]).
+    nested: bool,
     /// How many times a producer replaced runs ([`Buffer::layer_changes`]).
     changes: u64,
 }
@@ -113,8 +122,13 @@ const CHUNK_RUNS: usize = 512;
 #[derive(Clone, Debug)]
 struct Chunk {
     base: usize,
-    /// Ascending, non-empty, `range` relative to `base`.
+    /// Ascending by start, non-empty, `range` relative to `base`.
     runs: Vec<Run>,
+    /// The furthest end, relative to `base`: the last run's unless they
+    /// nest.
+    reach: usize,
+    /// Whether a run overlaps another ([`nests`]).
+    nested: bool,
 }
 
 impl Chunk {
@@ -130,6 +144,8 @@ impl Chunk {
                     ..r.clone()
                 })
                 .collect(),
+            reach: runs.iter().map(|r| r.range.end).max()? - base,
+            nested: nests(runs),
         })
     }
 
@@ -138,7 +154,7 @@ impl Chunk {
     }
 
     fn end(&self) -> usize {
-        self.base + self.runs[self.runs.len() - 1].range.end
+        self.base + self.reach
     }
 
     fn absolute(&self) -> Vec<Run> {
@@ -165,25 +181,58 @@ impl Layer {
     fn set(&mut self, mut runs: Vec<Run>) {
         runs.sort_by_key(|r| r.range.start);
         self.chunks = chunked(&runs).collect();
+        self.seal();
     }
 
     fn clear(&mut self) {
         self.chunks.clear();
+        self.nested = false;
+    }
+
+    /// Says whether the runs nest, after the chunks changed.
+    fn seal(&mut self) {
+        self.nested = self.chunks.iter().any(|c| c.nested)
+            || self.chunks.windows(2).any(|w| w[0].end() > w[1].start());
+    }
+
+    /// The first chunk that may reach past `at`: the first whose end
+    /// does when the chunks' ends are in order, the first of all when
+    /// they nest.
+    fn reaching(&self, at: usize) -> usize {
+        if self.nested {
+            0
+        } else {
+            self.chunks.partition_point(|c| c.end() <= at)
+        }
+    }
+
+    /// Every run, absolute, in order.
+    fn flat(&self) -> Vec<Run> {
+        self.chunks.iter().flat_map(Chunk::absolute).collect()
     }
 
     /// The runs overlapping `range`, absolute, in order.
     fn query(&self, range: &Range<usize>) -> Vec<Run> {
-        let lo = self.chunks.partition_point(|c| c.end() <= range.start);
+        let lo = self.reaching(range.start);
         let hi = self.chunks.partition_point(|c| c.start() < range.end);
         let mut out = Vec::new();
         for c in &self.chunks[lo..hi.max(lo)] {
-            let a = c
-                .runs
-                .partition_point(|r| r.range.end + c.base <= range.start);
+            if c.end() <= range.start {
+                continue;
+            }
+            let a = if c.nested {
+                0
+            } else {
+                c.runs
+                    .partition_point(|r| r.range.end + c.base <= range.start)
+            };
             let b = c
                 .runs
                 .partition_point(|r| r.range.start + c.base < range.end);
             for r in &c.runs[a..b.max(a)] {
+                if r.range.end + c.base <= range.start {
+                    continue;
+                }
                 out.push(Run {
                     range: r.range.start + c.base..r.range.end + c.base,
                     ..r.clone()
@@ -196,7 +245,7 @@ impl Layer {
     /// Every run, absolute — a test's reading.
     #[cfg(test)]
     fn all(&self) -> Vec<Run> {
-        self.chunks.iter().flat_map(Chunk::absolute).collect()
+        self.flat()
     }
 
     /// Across one edit: chunks before it stay, chunks after it move by
@@ -218,6 +267,7 @@ impl Layer {
             }
         }
         self.chunks = out;
+        self.seal();
     }
 
     /// [`Self::shift_many`] over edits that moved text: the chunks an edit
@@ -251,12 +301,22 @@ impl Layer {
             out.extend(chunked(&carry_moving_many(reached, edits)));
         }
         self.chunks = out;
+        self.seal();
     }
 
     /// Across several ascending, disjoint edits at once: the delta of the
     /// edits passed accumulates over the chunks, and a chunk an edit
-    /// reaches into has its runs walked ([`shift_runs_many_from`]).
+    /// reaches into has its runs walked ([`shift_runs_many_from`]). Runs
+    /// that nest go one by one ([`carry_each`]): the walk keeps one delta,
+    /// the edits before the run it is on, and a long run's carry takes it
+    /// past the start of the runs inside it.
     fn shift_many(&mut self, edits: &[Edit]) {
+        if self.nested {
+            let mut runs = self.flat();
+            carry_each(&mut runs, edits);
+            self.set(runs);
+            return;
+        }
         let (mut ei, mut delta) = (0usize, 0isize);
         let mut out = Vec::with_capacity(self.chunks.len());
         for mut c in self.chunks.drain(..) {
@@ -276,6 +336,7 @@ impl Layer {
             }
         }
         self.chunks = out;
+        self.seal();
     }
 
     /// Replaces the runs in `span` with `fresh` (sorted, inside it): the
@@ -284,7 +345,7 @@ impl Layer {
     /// outside, the producer's fresh run for the same token ending where
     /// the span does — and the region is chunked again.
     fn splice(&mut self, span: &Range<usize>, fresh: Vec<Run>) {
-        let lo = self.chunks.partition_point(|c| c.end() <= span.start);
+        let lo = self.reaching(span.start);
         let hi = self
             .chunks
             .partition_point(|c| c.start() < span.end)
@@ -317,6 +378,7 @@ impl Layer {
         region.sort_by_key(|r| r.range.start);
         let fresh: Vec<Chunk> = chunked(&region).collect();
         self.chunks.splice(lo..hi, fresh);
+        self.seal();
     }
 }
 
@@ -1401,7 +1463,12 @@ pub fn diff_edit(old: &[u8], new: &[u8]) -> Edit {
 /// (the highlighter's answer covers the edit, not the token around it).
 /// Text inserted at either edge is not the run's (`Bias`).
 fn shift_runs(runs: &mut Vec<Run>, edit: &Edit) {
-    let first = runs.partition_point(|r| r.range.end <= edit.range.start);
+    // Ends are in order only when no run nests in another.
+    let first = if nests(runs) {
+        0
+    } else {
+        runs.partition_point(|r| r.range.end <= edit.range.start)
+    };
     let mut i = first;
     let mut write = first;
     while i < runs.len() {
@@ -1464,6 +1531,36 @@ fn shift_runs_many_from(runs: &mut Vec<Run>, edits: &[Edit], ei: &mut usize, del
         }
     }
     runs.truncate(write);
+}
+
+/// Whether a run of sorted `runs` overlaps another — then one does the
+/// next, and the ends are out of order.
+fn nests(runs: &[Run]) -> bool {
+    runs.windows(2).any(|w| w[0].range.end > w[1].range.start)
+}
+
+/// [`shift_runs_many_from`] for runs that may nest: each carried on its
+/// own over the edits it reaches, the last first, each in the text as it
+/// was, and moved by the delta of those before it.
+fn carry_each(runs: &mut Vec<Run>, edits: &[Edit]) {
+    let mut before = Vec::with_capacity(edits.len() + 1);
+    before.push(0isize);
+    for e in edits {
+        before.push(before[before.len() - 1] + e.new_len as isize - e.removed() as isize);
+    }
+    for r in runs.iter_mut() {
+        let lo = edits.partition_point(|e| e.range.end <= r.range.start);
+        let hi = edits.partition_point(|e| e.range.start < r.range.end);
+        let (mut start, mut end) = (r.range.start, r.range.end);
+        for e in edits[lo..hi.max(lo)].iter().rev() {
+            start = e.transform_offset(start, Bias::Right);
+            end = e.transform_offset(end, Bias::Left);
+        }
+        let at = |o: usize| (o as isize + before[lo]) as usize;
+        r.range = at(start)..at(end.max(start));
+    }
+    runs.retain(|r| !r.range.is_empty());
+    runs.sort_by_key(|r| r.range.start);
 }
 
 /// `runs` carried over one edit that moved text, sorted: a run's part
@@ -1547,7 +1644,7 @@ fn carry_moving_many(runs: Vec<Run>, edits: &[(Edit, Vec<Move>)]) -> Vec<Run> {
 /// the text before it carried half a million runs across each in turn.
 /// Runs that overlap (a diagnostic inside another) go one by one.
 fn carry_runs(runs: &mut Vec<Run>, edits: &[Edit]) {
-    if runs.windows(2).any(|w| w[0].range.end > w[1].range.start) {
+    if nests(runs) {
         for r in runs.iter_mut() {
             for e in edits {
                 let start = e.transform_offset(r.range.start, Bias::Right);
@@ -1753,6 +1850,173 @@ mod tests {
                 .cloned()
                 .collect();
             assert_eq!(layer.query(&q), want, "query {q:?} in round {round}");
+        }
+    }
+
+    /// A diagnostic over a whole call with shorter ones inside it, as a
+    /// TypeScript `await` over an object literal: every row under the
+    /// long one finds it, though the runs after it end before it does.
+    #[test]
+    fn a_run_over_others_is_found_on_every_row_of_it() {
+        let mut layer = Layer::default();
+        let run = |range: Range<usize>, style| Run {
+            range,
+            style,
+            tag: 0,
+        };
+        layer.set(vec![
+            run(0..5, 1),
+            run(3..100, 4),
+            run(50..55, 1),
+            run(60..62, 2),
+        ]);
+        for row in [10..20, 56..58, 70..80, 98..99] {
+            let found = layer.query(&row);
+            assert!(
+                found.iter().any(|r| r.range == (3..100)),
+                "{row:?}: {found:?}"
+            );
+        }
+        // An edit past the inner runs, inside the long one, stretches it.
+        layer.shift(&Edit {
+            range: 80..80,
+            new_len: 10,
+        });
+        assert_eq!(layer.query(&(105..106)).len(), 1);
+        assert_eq!(layer.query(&(105..106))[0].range, 3..110);
+    }
+
+    /// The chunked layer over runs that nest — long ones over many short
+    /// ones, across chunks — answers as each run carried on its own does.
+    #[test]
+    fn nested_layers_match_a_per_run_walk() {
+        let mut seed = 0xD1B5_4A32_D192_ED03u64;
+        let mut next = |n: usize| -> usize {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n.max(1) as u64) as usize
+        };
+        // 1500 short runs, one in fifty a long one over a few hundred
+        // bytes: three chunks, and runs that reach out of their own.
+        let mut flat: Vec<Run> = Vec::new();
+        let mut at = 0;
+        for i in 0..1500 {
+            let len = if i % 50 == 7 {
+                100 + next(600)
+            } else {
+                1 + next(4)
+            };
+            flat.push(Run {
+                range: at..at + len,
+                style: (i % 5) as u32,
+                tag: i as u32,
+            });
+            at += 1 + next(4);
+        }
+        let text_len = flat.iter().map(|r| r.range.end).max().unwrap() + 10;
+        let sorted = |mut v: Vec<Run>| {
+            v.sort_by_key(|r| (r.range.start, r.range.end, r.tag));
+            v
+        };
+        let mut layer = Layer::default();
+        layer.set(flat.clone());
+        assert!(layer.chunks.len() >= 3 && layer.nested);
+        let carry = |flat: &mut Vec<Run>, edits: &[Edit]| {
+            for r in flat.iter_mut() {
+                let (mut s, mut e) = (r.range.start, r.range.end);
+                for ed in edits.iter().rev() {
+                    s = ed.transform_offset(s, Bias::Right);
+                    e = ed.transform_offset(e, Bias::Left);
+                }
+                r.range = s..e.max(s);
+            }
+            flat.retain(|r| !r.range.is_empty());
+        };
+        for round in 0..300 {
+            match round % 3 {
+                0 => {
+                    let start = next(text_len);
+                    let edit = Edit {
+                        range: start..(start + next(4)).min(text_len),
+                        new_len: next(5),
+                    };
+                    carry(&mut flat, std::slice::from_ref(&edit));
+                    layer.shift(&edit);
+                }
+                1 => {
+                    let mut edits = Vec::new();
+                    let mut pos = 0;
+                    for _ in 0..1 + next(5) {
+                        let start = pos + next(text_len / 4);
+                        if start >= text_len {
+                            break;
+                        }
+                        let end = (start + next(3)).min(text_len);
+                        edits.push(Edit {
+                            range: start..end,
+                            new_len: next(4),
+                        });
+                        pos = end + 1;
+                    }
+                    carry(&mut flat, &edits);
+                    layer.shift_many(&edits);
+                }
+                _ => {
+                    // A producer's answer over a span, a long run in it.
+                    let start = next(text_len);
+                    let span = start..(start + next(400)).min(text_len);
+                    let mut fresh = Vec::new();
+                    let mut p = span.start;
+                    while p < span.end {
+                        let len = if next(20) == 0 { 50 } else { 1 + next(5) };
+                        fresh.push(Run {
+                            range: p..(p + len).min(span.end),
+                            style: 9,
+                            tag: 9999,
+                        });
+                        p += 1 + next(4);
+                    }
+                    let mut kept = Vec::new();
+                    for r in flat.drain(..) {
+                        if r.range.end <= span.start || r.range.start >= span.end {
+                            kept.push(r);
+                            continue;
+                        }
+                        if r.range.start < span.start {
+                            kept.push(Run {
+                                range: r.range.start..span.start,
+                                ..r.clone()
+                            });
+                        }
+                        if r.range.end > span.end {
+                            kept.push(Run {
+                                range: span.end..r.range.end,
+                                ..r
+                            });
+                        }
+                    }
+                    kept.extend(fresh.iter().cloned());
+                    flat = kept;
+                    layer.splice(&span, fresh);
+                }
+            }
+            assert_eq!(sorted(layer.all()), sorted(flat.clone()), "round {round}");
+            for c in &layer.chunks {
+                assert!(!c.runs.is_empty());
+            }
+            let qs = next(text_len);
+            let q = qs..(qs + 1 + next(40)).min(text_len);
+            let want: Vec<Run> = flat
+                .iter()
+                .filter(|r| r.range.start < q.end && r.range.end > q.start)
+                .cloned()
+                .collect();
+            assert_eq!(
+                sorted(layer.query(&q)),
+                sorted(want),
+                "query {q:?} in round {round}"
+            );
         }
     }
 

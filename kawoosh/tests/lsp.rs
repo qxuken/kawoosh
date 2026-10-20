@@ -4145,3 +4145,104 @@ fn a_library_file_stays_with_its_instance() {
     );
     std::fs::remove_dir_all(&base).ok();
 }
+
+/// A diagnostic over several lines says its message once, on the line
+/// it starts on, and stays underlined to its end past a shorter one
+/// inside it — a TypeScript `'await' has no effect` over a whole call
+/// said on every line of it, and its underline lost after the error
+/// inside (2026-10-20).
+#[test]
+fn a_diagnostic_over_lines_says_its_message_once() {
+    let text = "let p = await f({\n  a: 1,\n  b: {\n    c,\n  },\n});\n";
+    let mut app = Kawoosh::new("t", text);
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    lua(
+        &mut app,
+        "kawoosh.diagnostics.set(0, 'lint', {\n\
+           { line = 1, col = 9, end_line = 6, end_col = 3, severity = 'hint', message = 'no effect' },\n\
+           { line = 3, col = 3, end_line = 3, end_col = 4, severity = 'error', message = 'missing' },\n\
+         })",
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let said = |d: &Drive, m: &str| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| n.text.as_deref() == Some(m))
+            .count()
+    };
+    assert_eq!(said(&d, "no effect"), 1, "on its first line only");
+    assert_eq!(said(&d, "missing"), 1);
+    let buf = app.ed.buffer_of(app.focused_view().unwrap());
+    for ln in 1..=5 {
+        let row = buf.line_range(ln);
+        assert!(
+            buf.runs(DIAG_LAYER, row.clone())
+                .iter()
+                .any(|r| r.style == 4 && r.range.end > row.start),
+            "line {ln} underlined"
+        );
+    }
+}
+
+/// A code action's edit leaves the view where it was. TypeScript's
+/// `Remove unnecessary 'await'` rewrites the whole call, and a caret
+/// inside it went to the call's start, the view after it — to the top
+/// of a long one; and with the caret carried, the frame after drew the
+/// view with the rows the picker over it had left, and scrolled it.
+#[test]
+fn a_code_action_keeps_the_view() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-action-view-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    let body: String = (0..200).map(|i| format!("    call{i}(),\n")).collect();
+    std::fs::write(&file, format!("let p = await f(\n{body});\n")).unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.caps.contains_key("rust")),
+        "capabilities"
+    );
+    d.keys(&mut app, "150G");
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    // The view's top line and its caret's.
+    let at = |a: &Kawoosh| {
+        let view = &a.ed.views[v];
+        (
+            view.top,
+            a.ed.buffers[buf_id].line_of(view.sels.primary().head),
+        )
+    };
+    let (top, line) = at(&app);
+    assert!(top > 100 && line == 149, "scrolled down: {top} {line}");
+    d.keys(&mut app, "gra");
+    let picker_up =
+        |a: &Kawoosh| matches!(a.layout.focused_content(), Some(Content::Lua(n)) if n == "picker");
+    assert!(until(&mut d, &mut app, picker_up), "the actions picker");
+    assert_eq!(app.lsp.actions[0].title, "Remove unnecessary 'await'");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
+            .text()
+            .starts_with("let p = f(")),
+        "the action's edit"
+    );
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    assert_eq!(at(&app), (top, 149), "the view and the caret stay");
+    std::fs::remove_dir_all(&dir).ok();
+}

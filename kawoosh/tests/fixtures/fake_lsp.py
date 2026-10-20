@@ -22,7 +22,10 @@ at the position and adding a `// renamed` line at the top; references
 lists two places (0:0 and 1:4); a code action request offers "Add
 semicolon" (an edit: `;` at the end of the line) and "Run the command"
 (a bare command `fake.apply`, whose execution sends a
-`workspace/applyEdit` putting `// applied` at the top); formatting is
+`workspace/applyEdit` putting `// applied` at the top), and first,
+when a line above it has `await ` in it, "Remove unnecessary 'await'"
+— TypeScript's shape: one edit rewriting the text from the `await` to
+the end of the line after, the `await ` left out; formatting is
 one edit replacing the text with `// formatted` above it; the type
 definition is line 0 of the same file. Round three (roadmap step 20):
 implementation answers two LocationLinks (lines 0 and 1), declaration
@@ -656,11 +659,20 @@ while True:
         ln = p["range"]["start"]["line"]
         lines = docs.get(uri, "").split("\n")
         end = len(lines[ln]) if ln < len(lines) else 0
-        send({"jsonrpc": "2.0", "id": mid, "result": [
+        offered = [
             {"title": "Add semicolon", "kind": "quickfix", "edit": {"changes": {uri: [
                 {"range": {"start": {"line": ln, "character": end}, "end": {"line": ln, "character": end}},
                  "newText": ";"}]}}},
-            {"title": "Run the command", "command": "fake.apply", "arguments": [uri]}]})
+            {"title": "Run the command", "command": "fake.apply", "arguments": [uri]}]
+        at = next((i for i in range(min(ln, len(lines) - 1), -1, -1) if "await " in lines[i]), None)
+        if at is not None and ln + 1 < len(lines):
+            col = lines[at].index("await ")
+            old = "\n".join([lines[at][col:]] + lines[at + 1:ln + 2])
+            offered.insert(0, {"title": "Remove unnecessary 'await'", "kind": "quickfix", "edit": {"changes": {uri: [
+                {"range": {"start": {"line": at, "character": col},
+                           "end": {"line": ln + 1, "character": len(lines[ln + 1])}},
+                 "newText": old.replace("await ", "", 1)}]}}})
+        send({"jsonrpc": "2.0", "id": mid, "result": offered})
     elif method == "workspace/executeCommand" and m["params"]["command"] == "typescript.tsserverRequest":
         # What Vue's server relays (lsp-servers.md Decision 9): echoed.
         send({"jsonrpc": "2.0", "id": mid, "result": {"body": {"echo": m["params"]["arguments"]}}})
