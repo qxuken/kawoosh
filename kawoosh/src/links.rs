@@ -327,26 +327,49 @@ impl Kawoosh {
     }
 
     /// `gx`, and a ⌘-click in an editor pane: the link under the caret
-    /// followed. A path is looked for beside the buffer's file, then
-    /// under the working directory.
+    /// followed. A path is looked for beside the buffer's file — in a
+    /// compile buffer, where the step that printed it ran — then under
+    /// the working directory.
     pub(crate) fn open_link(&mut self) {
         let Some(v) = self.focused_view() else { return };
+        let buffer = self.ed.views[v].buffer;
         let buf = self.ed.buffer_of(v);
         let head = self.ed.views[v].sels.primary().head;
-        let range = buf.line_range(buf.line_of(head));
+        let ln = buf.line_of(head);
+        let range = buf.line_range(ln);
         let line = buf.slice(range.clone());
         let Some(link) = link_at(&line, head - range.start) else {
             self.ed.message = "no link under the caret".into();
             return;
         };
-        let mut bases = Vec::new();
-        if let Some(dir) = buf.path.as_deref().and_then(kawoosh_systems::fs::parent) {
-            bases.push(dir);
+        let run = self.compile.of(buffer);
+        let near = match run {
+            Some(run) => Some(run.dir_at(ln).to_path_buf()),
+            None => buf.path.as_deref().and_then(kawoosh_systems::fs::parent),
+        };
+        let bases = self.link_bases(near);
+        // A file a run's output names opens as `<CR>` opens it: in
+        // another pane, the output kept on show.
+        if run.is_some()
+            && let Target::Path {
+                path, line, col, ..
+            } = &link.target
+            && let Some(full) = resolve(path, &bases).filter(|f| f.is_file())
+        {
+            self.open_location(&full, *line, *col, Some((buffer, ln)));
+            return;
         }
+        self.follow_link(link.target, &bases);
+    }
+
+    /// Where a path in text is looked for: `near` the text first, then
+    /// under the working directory.
+    pub(crate) fn link_bases(&self, near: Option<PathBuf>) -> Vec<PathBuf> {
+        let mut bases: Vec<PathBuf> = near.into_iter().collect();
         if !bases.contains(&self.cwd) {
             bases.push(self.cwd.clone());
         }
-        self.follow_link(link.target, &bases);
+        bases
     }
 }
 
