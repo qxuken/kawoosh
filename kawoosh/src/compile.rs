@@ -398,6 +398,37 @@ pub struct Compile {
     /// handed out.
     pub completions: std::collections::HashMap<(PathBuf, String), (Option<SystemTime>, NuAnswer)>,
     pub nu_asks: u64,
+    /// The repository's packages' commands (Decision 9), walked on a
+    /// job: a walk of every entry is too long for a frame.
+    pub packages: Packages,
+}
+
+/// What a packages walk starts from ([`deduce::packages`]): the
+/// caret's directory, and the open buffers' directories.
+type PackagesFrom = (PathBuf, Vec<PathBuf>);
+
+/// The packages' commands the last walk found, and the walk out.
+#[derive(Default)]
+pub struct Packages {
+    /// What the last walk found, and what it walked from: offered while
+    /// asked from the same.
+    found: Option<(PackagesFrom, Rc<Vec<Deduced>>)>,
+    /// The walk out, by serial, and what it walks from.
+    walking: Option<(u64, PackagesFrom)>,
+    serial: u64,
+    /// The compile picker opened while the walk is out: its rows are
+    /// the picker's to add.
+    picker: bool,
+    /// The `:` prompt open asked a walk: once a prompt, its lines read
+    /// again as it lands asking none.
+    pub(crate) prompt_asked: bool,
+}
+
+/// A packages walk's answer, from its job (`IoMsg::App`).
+pub(crate) struct PackagesWalked {
+    serial: u64,
+    from: PackagesFrom,
+    rows: Vec<Deduced>,
 }
 
 impl Compile {
@@ -984,10 +1015,10 @@ impl Kawoosh {
         self.cmdline_refresh();
     }
 
-    /// The scripts of the packages around (compile.md Decision 9): the
-    /// open buffers' `package.json`s, then every one in the caret's
-    /// repository. Nothing when `compile.deduce` is off.
-    fn compile_packages(&self) -> Vec<Deduced> {
+    /// What the packages around are walked from (compile.md Decision
+    /// 9): the caret's directory, and the open buffers'. None when
+    /// `compile.deduce` is off.
+    fn packages_from(&self) -> Option<PackagesFrom> {
         // A plugin's `node` in the builtin's place reads what it reads.
         if self.ed.settings.bool("compile.deduce") == Some(false)
             || self
@@ -996,7 +1027,7 @@ impl Kawoosh {
                 .iter()
                 .any(|(n, _)| n == "node")
         {
-            return Vec::new();
+            return None;
         }
         let (dir, _) = self.compile_start();
         let mut open: Vec<PathBuf> = Vec::new();
@@ -1006,7 +1037,75 @@ impl Kawoosh {
                 open.push(d);
             }
         }
-        deduce::packages(&dir, &open)
+        Some((dir, open))
+    }
+
+    /// The scripts of the packages around (compile.md Decision 9): the
+    /// open buffers' `package.json`s, then every one in the caret's
+    /// repository — as the last walk from here found them, nothing
+    /// before one has ([`Kawoosh::ask_packages`]); walked now in a test
+    /// (`jobs_inline`). Nothing when `compile.deduce` is off.
+    fn compile_packages(&self) -> Rc<Vec<Deduced>> {
+        let Some(from) = self.packages_from() else {
+            return Rc::default();
+        };
+        if self.jobs_inline {
+            return Rc::new(deduce::packages(&from.0, &from.1));
+        }
+        match &self.compile.packages.found {
+            Some((at, rows)) if *at == from => rows.clone(),
+            _ => Rc::default(),
+        }
+    }
+
+    /// The packages around walked again, on a job — the walk reads up to
+    /// every entry of the repository, too long for a frame — unless a
+    /// walk from here is out already. `picker`: asked as the compile
+    /// picker opened, which takes the rows it adds when it lands.
+    pub(crate) fn ask_packages(&mut self, picker: bool) {
+        let Some(from) = self.packages_from() else {
+            return;
+        };
+        let p = &mut self.compile.packages;
+        if self.jobs_inline || p.walking.as_ref().is_some_and(|(_, at)| *at == from) {
+            p.picker |= picker;
+            return;
+        }
+        p.serial += 1;
+        p.picker = picker;
+        let serial = p.serial;
+        p.walking = Some((serial, from.clone()));
+        self.pending_jobs += 1;
+        self.io.run("compile packages", move || {
+            let rows = deduce::packages(&from.0, &from.1);
+            IoMsg::App(Box::new(PackagesWalked { serial, from, rows }))
+        });
+    }
+
+    /// A packages walk landed: kept, and when it found what the last did
+    /// not, the `:` prompt's `:compile` lines read again with it and the
+    /// rows new to the compile picker added there. One a later walk
+    /// replaced is dropped.
+    pub(crate) fn packages_walked(&mut self, w: PackagesWalked) {
+        self.pending_jobs = self.pending_jobs.saturating_sub(1);
+        let p = &mut self.compile.packages;
+        if p.walking.as_ref().map(|(s, _)| *s) != Some(w.serial) {
+            return;
+        }
+        p.walking = None;
+        let same = matches!(&p.found, Some((at, rows)) if *at == w.from && **rows == w.rows);
+        let rows = Rc::new(w.rows);
+        p.found = Some((w.from, rows.clone()));
+        let picker = std::mem::take(&mut p.picker);
+        if same {
+            return;
+        }
+        if self.cmd_compile_lines.take().is_some() {
+            self.cmdline_refresh();
+        }
+        if picker {
+            self.offer_more(&rows);
+        }
     }
 
     /// The commands the settings name (`compile.commands`), by name. A
@@ -1774,11 +1873,14 @@ impl Kawoosh {
     /// offer, one row per command, as the picker's `compile` source
     /// (`kawoosh.compile_offer()`) — each in its tier (Decision 19).
     pub fn offer_compile(&mut self) {
+        // The repository's packages as the last walk found them, walked
+        // again and added as it lands.
+        self.ask_packages(true);
         let rows = self.compile_rows();
         // What the caret's server says can run there, asked now and
         // added as it answers.
         let ask = self.runnables_at();
-        if rows.is_empty() && ask.is_none() {
+        if rows.is_empty() && ask.is_none() && self.compile.packages.walking.is_none() {
             self.ed.message = NOTHING.into();
             return;
         }
@@ -1934,7 +2036,7 @@ impl Kawoosh {
             let offered = project
                 .commands
                 .iter()
-                .chain(&packages)
+                .chain(packages.iter())
                 .any(|d| d.cmd == r.cmd && d.cwd == r.cwd)
                 || rows
                     .iter()
@@ -1953,15 +2055,20 @@ impl Kawoosh {
             o.steps = r.steps;
             add(&mut rows, o);
         }
-        for d in project.commands.into_iter().chain(packages) {
-            let from = self.compile_from(&d.file);
-            let mut o = Offer::of(&d.cmd, d.cwd, &from, &d.why);
-            o.needs = d.needs;
-            o.args_at = d.args_at;
-            o.detail = d.detail;
-            add(&mut rows, o);
+        for d in project.commands.into_iter().chain(packages.iter().cloned()) {
+            add(&mut rows, self.deduced_offer(d));
         }
         rows
+    }
+
+    /// The row a command the project's files offer is.
+    fn deduced_offer(&self, d: Deduced) -> Offer {
+        let from = self.compile_from(&d.file);
+        let mut o = Offer::of(&d.cmd, d.cwd, &from, &d.why);
+        o.needs = d.needs;
+        o.args_at = d.args_at;
+        o.detail = d.detail;
+        o
     }
 
     /// The offer as `kawoosh.compile_offer()` reads it: each row its
@@ -2074,6 +2181,34 @@ impl Kawoosh {
             o.server = true;
             self.compile.offer.push(o);
             added = true;
+        }
+        if !added {
+            return;
+        }
+        self.publish_offer();
+        self.run_lua_source(
+            "compile",
+            "local s = kawoosh.picker.state(); if s and s.source == \"compile\" then kawoosh.picker.reload() end",
+        );
+    }
+
+    /// The packages' rows the offer is short of — a walk landed since
+    /// the picker opened — added, and the picker read again if it is
+    /// still the compile one. A row there already, where it runs, stays
+    /// where it is.
+    fn offer_more(&mut self, packages: &[Deduced]) {
+        let mut added = false;
+        for d in packages {
+            let o = self.deduced_offer(d.clone());
+            if !self
+                .compile
+                .offer
+                .iter()
+                .any(|r| r.cmd == o.cmd && r.cwd == o.cwd)
+            {
+                self.compile.offer.push(o);
+                added = true;
+            }
         }
         if !added {
             return;

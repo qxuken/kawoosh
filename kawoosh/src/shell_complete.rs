@@ -69,6 +69,11 @@ pub struct ShellComplete {
     /// Completers running, carapace's and nu's, whichever prompt asked
     /// them: what [`IN_FLIGHT`] bounds. Not the prompt's, so not cleared.
     pub(crate) running: usize,
+    /// The programs on the PATH as last listed, for a line's first word
+    /// — not the prompt's, so the next one has them at its first key —
+    /// and whether this prompt has listed them again.
+    programs: Rc<Vec<String>>,
+    programs_asked: bool,
 }
 
 impl ShellComplete {
@@ -77,6 +82,7 @@ impl ShellComplete {
     pub fn clear(&mut self) {
         self.answers.clear();
         self.found = None;
+        self.programs_asked = false;
     }
 
     /// Whether another completer may start now.
@@ -123,6 +129,21 @@ fn command_words(before: &str) -> Option<Vec<String>> {
         return None;
     }
     Some(words)
+}
+
+/// Whether the word after `before` — a shell line's text up to it — is
+/// a program's: the line's first, or the first after a `|`, `;`, `&&` or
+/// `||` standing as a word, environment assignments passed over. Not
+/// when the text does not split — a quote open.
+pub(crate) fn at_program(before: &str) -> bool {
+    let Ok(words) = shell_words::split(before) else {
+        return false;
+    };
+    words
+        .iter()
+        .rev()
+        .take_while(|w| !matches!(w.as_str(), "|" | ";" | "&&" | "||"))
+        .all(|w| w.contains('=') && !w.starts_with('-'))
 }
 
 /// carapace's answer: `{ "values": [{ "value", "description" }…] }`;
@@ -334,6 +355,48 @@ impl Kawoosh {
         self.line_complete.running += 1;
         self.pending_jobs += 1;
         Vec::new()
+    }
+
+    /// The programs on the PATH whose names start `current`, for a shell
+    /// line's first word run in `dir`: as last listed, listed again on a
+    /// job once a prompt, so one installed since is there by a later key.
+    /// Nothing for an empty word — thousands are no suggestion — nor for
+    /// a host's directory, whose PATH is not this one.
+    pub(crate) fn program_candidates(&mut self, current: &str, dir: &Path) -> Vec<String> {
+        if current.is_empty() || kawoosh_systems::fs::domain_of(dir).is_some() {
+            return Vec::new();
+        }
+        let c = &mut self.line_complete;
+        if !c.programs_asked {
+            c.programs_asked = true;
+            if self.jobs_inline {
+                c.programs = Rc::new(kawoosh_systems::io::programs());
+            } else if self.io.try_run("programs", || {
+                IoMsg::Programs(kawoosh_systems::io::programs())
+            }) {
+                self.pending_jobs += 1;
+            } else {
+                // No thread: asked again at a later key.
+                c.programs_asked = false;
+            }
+        }
+        self.line_complete
+            .programs
+            .iter()
+            .filter(|p| p.starts_with(current))
+            .map(|p| crate::compile::quote_arg(p))
+            .collect()
+    }
+
+    /// The programs on the PATH listed: kept, and the line completed
+    /// again when they changed.
+    pub(crate) fn programs_listed(&mut self, names: Vec<String>) {
+        self.pending_jobs = self.pending_jobs.saturating_sub(1);
+        if *self.line_complete.programs == names {
+            return;
+        }
+        self.line_complete.programs = Rc::new(names);
+        self.cmdline_refresh();
     }
 
     /// The completer answered question `serial`: kept under it, and the

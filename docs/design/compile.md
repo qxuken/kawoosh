@@ -19,7 +19,9 @@ profile 2026-10-09 (Decisions 19 and 20); a compile in an empty
 pane and chains of steps 2026-10-16 (Decisions 21 and 22); the
 line completed in the command line, carapace for a program's own
 arguments, 2026-10-17 (Decision 23), and Decision 16's `nu` asked
-on Decision 23's job the same day. The calls
+on Decision 23's job the same day; the packages walked on a job, a
+shell line's program from the PATH, 2026-10-20 (Decisions 9 and 23
+amended). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -340,6 +342,21 @@ would be a guess. The walk is made as the picker opens, stopped at 500
 packages or 200 000 entries seen; outside a repository only the open
 buffers' packages are read, and `compile.deduce = false` turns it off
 with the rest.
+
+*Amended 2026-10-20*, the user: "`:c ` lags … make it async so it
+would not stutter ui". The walk was made on the frame as the picker
+opened and as the `:` prompt first completed `:compile` (Decision 23's
+lines are the picker's rows): 16 ms in a repository of 18 packages, up
+to the 200 000 entries in a big one. It is a job now
+(`ask_packages`): the rows are the last walk's from the same place —
+the caret's directory and the open buffers' — and nothing before the
+first; as it lands the prompt's lines are read again and the rows new
+to an open picker added (`offer_more`, a row's index never moving,
+as Decision 18's are). One walk a prompt, one out at a time from one
+place; the picker asks again each time it opens, so a script added
+since is there by the walk's end. The answer is the app's own type
+(`Deduced`), so it comes back as `IoMsg::App`, downcast here — the
+systems crate need not know it.
 
 Beaten: the workspace globs (`workspaces`, `pnpm-workspace.yaml`) — a
 reader per package manager, and a repository of packages that is no
@@ -1091,6 +1108,20 @@ carapace; a test of it turns it on with a fake on a PATH of its own.
 CMD's arguments, from the working directory: their argument is a shell
 line too, and wiring them was a match arm (`:!` is read as `:shell`,
 the engine's way). `:terminal`'s first word stays its subcommands'.
+
+*Amended 2026-10-20*, the user: "maybe we can enhance `:!` as well".
+**Its program completes**: the line's first word, the first after a
+`|`, `;`, `&&` or `||`, past assignments (`at_program`), is one of the
+executables on the PATH the children get (`io::programs`: each
+directory's, followed through links, once, sorted), or a path to one
+when the word reads as a path. Listed on a job once a prompt and kept
+across them, so the next prompt has the last list at its first key and
+a program installed since by a later one; an empty word offers none of
+the thousands, and a host's directory none of this machine's. **The
+prompt's directories are listed on a job** — every directory, as a
+host's were: `:!ls ` in a directory of 100 000 entries held the frame
+674 ms reading it (`fs::list` stats each); the candidates are there a
+frame later, as it lands (`prompt_listed`).
 
 **The detail** — a description, the path a `%` names — is drawn dim
 at the strip's end for the current candidate, cut to a third of the
