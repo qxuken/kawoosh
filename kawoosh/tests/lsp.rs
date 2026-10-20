@@ -4145,3 +4145,45 @@ fn a_library_file_stays_with_its_instance() {
     );
     std::fs::remove_dir_all(&base).ok();
 }
+
+/// A diagnostic over several lines says its message once, on the line
+/// it starts on, and stays underlined to its end past a shorter one
+/// inside it — a TypeScript `'await' has no effect` over a whole call
+/// said on every line of it, and its underline lost after the error
+/// inside (2026-10-20).
+#[test]
+fn a_diagnostic_over_lines_says_its_message_once() {
+    let text = "let p = await f({\n  a: 1,\n  b: {\n    c,\n  },\n});\n";
+    let mut app = Kawoosh::new("t", text);
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    lua(
+        &mut app,
+        "kawoosh.diagnostics.set(0, 'lint', {\n\
+           { line = 1, col = 9, end_line = 6, end_col = 3, severity = 'hint', message = 'no effect' },\n\
+           { line = 3, col = 3, end_line = 3, end_col = 4, severity = 'error', message = 'missing' },\n\
+         })",
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let said = |d: &Drive, m: &str| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| n.text.as_deref() == Some(m))
+            .count()
+    };
+    assert_eq!(said(&d, "no effect"), 1, "on its first line only");
+    assert_eq!(said(&d, "missing"), 1);
+    let buf = app.ed.buffer_of(app.focused_view().unwrap());
+    for ln in 1..=5 {
+        let row = buf.line_range(ln);
+        assert!(
+            buf.runs(DIAG_LAYER, row.clone())
+                .iter()
+                .any(|r| r.style == 4 && r.range.end > row.start),
+            "line {ln} underlined"
+        );
+    }
+}

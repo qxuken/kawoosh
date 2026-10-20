@@ -2617,9 +2617,13 @@ impl Kawoosh {
                             // The worst on the row, not the first: a hint
                             // before an error on one line says the lesser.
                             // A list that writes its own notes under the
-                            // lines (lists.md Decision 3) draws none.
+                            // lines (lists.md Decision 3) draws none. One
+                            // over several lines says it on its first,
+                            // underlined on the rest.
+                            let row_start = there(&range).start;
                             let trailing = diags
                                 .iter()
+                                .filter(|r| r.range.start >= row_start)
                                 .filter(|_| runs_id == buf_id || gap_paints.is_empty())
                                 .min_by_key(|r| r.style)
                                 .and_then(|r| {
