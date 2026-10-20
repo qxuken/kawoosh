@@ -70,9 +70,9 @@ pub enum IoMsg {
         token: u64,
         result: Result<Vec<crate::fs::Entry>, String>,
     },
-    /// A host's directory listed on a thread of its own for the `:`
-    /// prompt's path completion (`cmdline.rs`): the directory, and its
-    /// entries or None when it could not be read.
+    /// A directory listed on a thread of its own for the `:` prompt's
+    /// path completion (`cmdline.rs`): the directory, and its entries or
+    /// None when it could not be read.
     PromptListed {
         dir: std::path::PathBuf,
         entries: Option<Vec<crate::fs::Entry>>,
@@ -92,6 +92,9 @@ pub enum IoMsg {
         serial: u64,
         values: Option<Vec<String>>,
     },
+    /// The programs on the PATH ([`programs`]), listed for a shell
+    /// line's first word at the `:` prompt (`shell_complete.rs`).
+    Programs(Vec<String>),
     /// A buffer's words indexed for completion's `buffer_words`
     /// (`words::index`), under its masks' key.
     CompletionWords {
@@ -249,6 +252,10 @@ pub enum IoMsg {
         question: crate::ssh::Question,
         reply: crossbeam_channel::Sender<Option<String>>,
     },
+    /// The answer of an app's job ([`Io::run`]) in a shape of the app's
+    /// own, which only it knows to downcast — work over the app's types
+    /// that this crate has no type for (the packages `:compile` offers).
+    App(Box<dyn std::any::Any + Send>),
 }
 
 /// What [`Io::run_command`] runs, and how its output comes back.
@@ -507,6 +514,46 @@ pub fn on_path(program: &str) -> Option<bool> {
             .iter()
             .any(|d| names.iter().any(|n| d.join(n).is_file())),
     )
+}
+
+/// Every name [`command`] finds on the PATH it gives: each directory's
+/// executable files, once, sorted — on Windows an `.exe`, `.cmd` or
+/// `.bat` named without it. Waits for the shell's PATH and reads every
+/// directory of it: run on a job.
+pub fn programs() -> Vec<String> {
+    let Some(path) = crate::shell_env::path().or_else(|| std::env::var_os("PATH")) else {
+        return Vec::new();
+    };
+    let mut out = std::collections::BTreeSet::new();
+    for dir in path_dirs(&path) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            // A link's target is what runs: followed.
+            let Ok(meta) = std::fs::metadata(e.path()) else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o111 != 0 {
+                    out.insert(name);
+                }
+            }
+            #[cfg(windows)]
+            if let Some((stem, ext)) = name.rsplit_once('.')
+                && ["exe", "cmd", "bat"].contains(&ext.to_ascii_lowercase().as_str())
+            {
+                out.insert(stem.to_string());
+            }
+        }
+    }
+    out.into_iter().collect()
 }
 
 /// Where `program` would be found by [`command`] on the PATH, as

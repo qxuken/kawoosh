@@ -9,9 +9,12 @@
 //! font family (`:font`, the rest of the line, monospaced first);
 //! `:compile` its line — the names, the picker's lines, a program's
 //! arguments from its completer (`shell_complete.rs`), paths — and
-//! `:!`, `:shell`, `:terminal` their program's arguments (compile.md
-//! Decision 23). A path's `%` completes to its spellings, each with
-//! what it names as the candidate's detail.
+//! `:!`, `:shell`, `:terminal` their program — the PATH's executables
+//! — and its arguments (compile.md Decision 23). What is read off the
+//! disk is read on a job, the line completed again as it lands: a
+//! directory's entries, the PATH's programs, `:compile`'s packages. A
+//! path's `%` completes to its spellings, each with what it names as
+//! the candidate's detail.
 //! Past an option's path (`:set font.family=`, `:set font.family `)
 //! its value completes: the families for `font.family` (monospaced
 //! first, the OS's `.`-faces left out), a one-of's
@@ -26,7 +29,6 @@
 //! bound `when field:cmdline` over the engine's history walk on the
 //! same keys, which a search prompt keeps.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::rc::Rc;
@@ -38,10 +40,11 @@ use kawoosh_systems::io::IoMsg;
 use crate::commands::{ShellCommand, cmd};
 
 use crate::app::Kawoosh;
+use crate::shell_complete;
 
 /// Each directory a `:` path was completed from and what it held; kept
 /// while the prompt is open.
-pub(crate) type Listed = RefCell<HashMap<PathBuf, Dir>>;
+pub(crate) type Listed = HashMap<PathBuf, Dir>;
 
 /// A directory the `:` prompt completes from.
 #[derive(Clone)]
@@ -243,11 +246,21 @@ impl Kawoosh {
         if inv.name == "compile" {
             return self.compile_candidates(line, first, index, &inv.args);
         }
-        // A shell line's program's arguments: what its completer says,
-        // then paths (Decision 23) — `:!`, `:shell`, `:terminal [here]`.
-        if matches!(inv.name.as_str(), "shell" | "terminal" | "terminal here") && index > 0 {
+        // A shell line — `:!`, `:shell`, `:terminal [here]`: its
+        // program, of those on the PATH, or a path to one; then the
+        // program's arguments, what its completer says, then paths
+        // (Decision 23).
+        if matches!(inv.name.as_str(), "shell" | "terminal" | "terminal here") {
             let mut found = Found::new(start, out);
             let dir = self.cwd.clone();
+            if shell_complete::at_program(&line[first..start]) {
+                if looks_like_path(token) {
+                    self.path_found(&mut found, token, &dir, self.percent_file().as_deref());
+                } else {
+                    found.extend(self.program_candidates(token, &dir));
+                }
+                return found;
+            }
             for (c, about) in self.shell_arg_candidates(&line[first..start], token, &dir) {
                 found.said(c, about);
             }
@@ -257,7 +270,8 @@ impl Kawoosh {
         let kind = args_at.and_then(|a| a.kind_at(index));
         if kind == Some(ArgKind::Path) {
             let mut found = Found::new(start, out);
-            self.path_found(&mut found, token, &self.cwd, self.percent_file().as_deref());
+            let cwd = self.cwd.clone();
+            self.path_found(&mut found, token, &cwd, self.percent_file().as_deref());
             return found;
         }
         let args: Vec<String> = match kind {
@@ -361,6 +375,11 @@ impl Kawoosh {
         let lines = match &self.cmd_compile_lines {
             Some(l) => l.clone(),
             None => {
+                // The packages' lines as the last walk found them, read
+                // again as this prompt's lands (`packages_walked`).
+                if !std::mem::replace(&mut self.compile.packages.prompt_asked, true) {
+                    self.ask_packages(false);
+                }
                 let l = Rc::new(self.compile_lines());
                 self.cmd_compile_lines = Some(l.clone());
                 l
@@ -421,7 +440,7 @@ impl Kawoosh {
     /// Paths for `token` read from `dir` into `found`, and `file`'s own
     /// spellings when it starts `%` (`%`, `%:h`, `%:t`), each with what
     /// it names; `%:h/` lists `file`'s directory.
-    fn path_found(&self, found: &mut Found, token: &str, dir: &Path, file: Option<&Path>) {
+    fn path_found(&mut self, found: &mut Found, token: &str, dir: &Path, file: Option<&Path>) {
         if token.starts_with('%') && !token.contains(['/', MAIN_SEPARATOR]) {
             for form in ["%", "%:h", "%:t"]
                 .into_iter()
@@ -574,7 +593,7 @@ impl Kawoosh {
     /// `~/projects/`, not to the home's absolute path). A hidden entry
     /// is offered only to a token that starts with `.`. A relative token
     /// is read from `base`; one under `%:h/` from the file's directory.
-    fn path_candidates_in(&self, token: &str, base: &Path, file: Option<&Path>) -> Vec<String> {
+    fn path_candidates_in(&mut self, token: &str, base: &Path, file: Option<&Path>) -> Vec<String> {
         // On a host `/` is the one separator — a `\` is a name's there —
         // and what a directory is completed with.
         use kawoosh_systems::fs::domain_of;
@@ -593,26 +612,30 @@ impl Kawoosh {
         } else {
             kawoosh_doc::paths::expand(Path::new(dir_text), base)
         };
-        // Listed once while the prompt is open, not at every key: a
-        // path typed through `$TMPDIR` or `node_modules` stats each of
-        // thousands of entries, on a host over the wire. A host's on a
-        // job, the candidates there when it lands (`prompt_listed`).
-        let listed = self
-            .cmd_dirs
-            .borrow_mut()
-            .entry(dir.clone())
-            .or_insert_with(|| {
-                if !host || self.jobs_inline {
-                    return Dir::Read(kawoosh_systems::fs::list(&dir).ok().map(Rc::new));
-                }
+        // Listed once while the prompt is open, not at every key, and
+        // on a job: a path typed through `$TMPDIR` or `node_modules`
+        // stats each of thousands of entries — a directory of 100k a
+        // good half second — on a host over the wire. The candidates
+        // there when it lands (`prompt_listed`); at once in a test.
+        let listed = self.cmd_dirs.get(&dir).cloned();
+        let listed = match listed {
+            Some(d) => d,
+            None if self.jobs_inline => {
+                let d = Dir::Read(kawoosh_systems::fs::list(&dir).ok().map(Rc::new));
+                self.cmd_dirs.insert(dir.clone(), d.clone());
+                d
+            }
+            None => {
                 let at = dir.clone();
                 self.io.run("prompt list", move || IoMsg::PromptListed {
                     entries: kawoosh_systems::fs::list(&at).ok(),
                     dir: at,
                 });
+                self.pending_jobs += 1;
+                self.cmd_dirs.insert(dir.clone(), Dir::Asked);
                 Dir::Asked
-            })
-            .clone();
+            }
+        };
         let Dir::Read(Some(entries)) = listed else {
             return Vec::new();
         };
@@ -724,8 +747,9 @@ impl Kawoosh {
     pub(crate) fn cmdline_refresh(&mut self) {
         if !self.at_command_prompt() {
             self.cmd_completion = None;
-            self.cmd_dirs.get_mut().clear();
+            self.cmd_dirs.clear();
             self.cmd_compile_lines = None;
+            self.compile.packages.prompt_asked = false;
             self.line_complete.clear();
             return;
         }
@@ -767,15 +791,16 @@ impl Kawoosh {
         });
     }
 
-    /// A host's directory listed for the prompt: kept, and the line
-    /// completed again with it — unless the prompt it was asked for has
-    /// closed since, which cleared what it asked.
+    /// A directory listed for the prompt: kept, and the line completed
+    /// again with it — unless the prompt it was asked for has closed
+    /// since, which cleared what it asked.
     pub(crate) fn prompt_listed(
         &mut self,
         dir: PathBuf,
         entries: Option<Vec<kawoosh_doc::fs::Entry>>,
     ) {
-        match self.cmd_dirs.get_mut().get_mut(&dir) {
+        self.pending_jobs = self.pending_jobs.saturating_sub(1);
+        match self.cmd_dirs.get_mut(&dir) {
             Some(d @ Dir::Asked) => *d = Dir::Read(entries.map(Rc::new)),
             _ => return,
         }

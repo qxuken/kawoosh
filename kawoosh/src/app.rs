@@ -1051,6 +1051,12 @@ impl Kawoosh {
                 IoMsg::PromptListed { dir, entries } => self.prompt_listed(dir, entries),
                 IoMsg::LineCompleted { serial, values } => self.line_completed(serial, values),
                 IoMsg::NuCompleted { serial, values } => self.nu_completed(serial, values),
+                IoMsg::Programs(names) => self.programs_listed(names),
+                IoMsg::App(answer) => {
+                    if let Ok(w) = answer.downcast::<crate::compile::PackagesWalked>() {
+                        self.packages_walked(*w);
+                    }
+                }
                 IoMsg::CompletionWords { index, masks } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     self.completion_words_indexed(index, masks);

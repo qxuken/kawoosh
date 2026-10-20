@@ -672,3 +672,116 @@ fn a_completer_runs_in_the_project_only_once_it_is_trusted() {
     assert!(c.iter().any(|c| c == "kawoosh-neutral"), "revoked: {c:?}");
     leave(&mut d, &mut app);
 }
+
+/// A shell line's program — `:!`'s first word, the first after a `|`,
+/// `;`, `&&` or `||`, past assignments — completes to the executables on
+/// the PATH, listed on a job once a prompt; a word that reads as a path
+/// to the paths there. A file that does not run, a directory, is none;
+/// a program installed since is offered at the next prompt.
+#[test]
+fn a_shell_line_s_program_completes_from_the_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Sandbox::new("programs", false, "return {}");
+    let exe = |name: &str, mode: u32| {
+        let p = s.bin.join(name);
+        std::fs::write(&p, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    exe("kwprog", 0o755);
+    exe("kwplain", 0o644);
+    std::fs::create_dir_all(s.bin.join("kwdir")).unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = s.open(&mut d);
+
+    d.keys(&mut app, ":!kw");
+    answered(&mut d, &mut app);
+    assert_eq!(candidates(&app), ["kwprog"]);
+    d.key(&mut app, "tab", KeyMods::default());
+    assert_eq!(app.ed.prompt_text().as_deref(), Some("!kwprog"));
+    leave(&mut d, &mut app);
+    for line in [
+        ":!echo a | kwp",
+        ":!true && kwp",
+        ":!FOO=1 kwp",
+        ":shell kwp",
+        ":terminal kwp",
+    ] {
+        d.keys(&mut app, line);
+        answered(&mut d, &mut app);
+        assert_eq!(candidates(&app), ["kwprog"], "{line}");
+        leave(&mut d, &mut app);
+    }
+    // An argument is no program; an empty word offers none of thousands.
+    d.keys(&mut app, ":!echo kwp");
+    answered(&mut d, &mut app);
+    assert_eq!(candidates(&app), Vec::<String>::new());
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":shell ");
+    answered(&mut d, &mut app);
+    assert_eq!(candidates(&app), Vec::<String>::new());
+    leave(&mut d, &mut app);
+    // A path to one.
+    d.keys(&mut app, ":!./s");
+    answered(&mut d, &mut app);
+    assert_eq!(
+        candidates(&app),
+        [format!(".{0}src{0}", std::path::MAIN_SEPARATOR)]
+    );
+    leave(&mut d, &mut app);
+
+    exe("kwnew", 0o755);
+    d.keys(&mut app, ":!kwn");
+    answered(&mut d, &mut app);
+    assert_eq!(candidates(&app), ["kwnew"]);
+    leave(&mut d, &mut app);
+}
+
+/// The repository's packages `:compile` offers (compile.md Decision 9)
+/// are walked on a job — a walk reads up to every entry — the prompt's
+/// lines and the picker's rows read again as it lands.
+#[test]
+fn the_repository_s_packages_are_walked_off_the_frame() {
+    let s = Sandbox::new("packages", false, "return {}");
+    let pkg = s.project.join("web");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{ "scripts": { "build": "vite build" } }"#,
+    )
+    .unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = s.open(&mut d);
+
+    d.keys(&mut app, ":compile ");
+    answered(&mut d, &mut app);
+    assert!(
+        candidates(&app).iter().any(|c| c == "npm run build"),
+        "{:?}",
+        candidates(&app)
+    );
+    d.keys(&mut app, "npm run b");
+    assert_eq!(candidates(&app), ["npm run build"]);
+    leave(&mut d, &mut app);
+
+    // A script added since: the picker opens with the last walk's rows,
+    // and takes the new one as the next walk lands.
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{ "scripts": { "build": "vite build", "check": "tsc" } }"#,
+    )
+    .unwrap();
+    app.offer_compile();
+    answered(&mut d, &mut app);
+    let rows: Vec<&str> = app.compile.offer.iter().map(|o| o.cmd.as_str()).collect();
+    assert!(rows.contains(&"npm run build"), "{rows:?}");
+    assert!(
+        rows.contains(&"npm run check"),
+        "{rows:?} {}",
+        app.ed.message
+    );
+    assert_eq!(
+        rows.iter().filter(|r| **r == "npm run build").count(),
+        1,
+        "a row there already is not made twice"
+    );
+}

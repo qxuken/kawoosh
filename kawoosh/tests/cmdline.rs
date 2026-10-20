@@ -21,6 +21,13 @@ fn tab(d: &mut Drive, app: &mut Kawoosh) {
     d.key(app, "tab", KeyMods::default());
 }
 
+/// The directories the prompt asked for listed — on a job, the
+/// candidates there as it lands — and a frame drawn with them.
+fn listed(d: &mut Drive, app: &mut Kawoosh) {
+    app.wait_for_jobs();
+    d.frame(app);
+}
+
 /// `<Esc><Esc>`: the first is normal mode in the prompt's field, the
 /// second leaves it.
 fn leave(d: &mut Drive, app: &mut Kawoosh) {
@@ -135,6 +142,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     // candidate taken goes on into what it opens. After the command's
     // word, before a letter, the first is suggested and the row is up.
     d.keys(&mut app, ":e ");
+    listed(&mut d, &mut app);
     let sep = std::path::MAIN_SEPARATOR;
     assert_eq!(app.cmdline_ghost(), Some(format!("src{sep}")));
     let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
@@ -151,12 +159,14 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     );
     leave(&mut d, &mut app);
     d.keys(&mut app, ":e s");
+    listed(&mut d, &mut app);
     assert_eq!(app.cmdline_ghost(), Some(format!("rc{sep}")));
     tab(&mut d, &mut app);
     assert_eq!(
         app.ed.prompt_text().unwrap_or_default(),
         format!("e src{sep}")
     );
+    listed(&mut d, &mut app);
     assert_eq!(
         app.cmdline_ghost().as_deref(),
         Some("main.rs"),
@@ -170,6 +180,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(d.line_rows()[0], "fn main() {}");
     d.keys(&mut app, ":e .h");
+    listed(&mut d, &mut app);
     assert_eq!(app.cmdline_ghost().as_deref(), Some("idden"));
     leave(&mut d, &mut app);
 
@@ -198,6 +209,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
         "#,
     );
     d.keys(&mut app, ":visit s");
+    listed(&mut d, &mut app);
     let sep = std::path::MAIN_SEPARATOR;
     assert_eq!(app.cmdline_ghost(), Some(format!("rc{sep}")));
     tab(&mut d, &mut app);
@@ -337,6 +349,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     );
     leave(&mut d, &mut app);
     d.keys(&mut app, ":dir ");
+    listed(&mut d, &mut app);
     let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
     assert_eq!(
         cands,
