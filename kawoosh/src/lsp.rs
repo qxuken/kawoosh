@@ -1545,7 +1545,10 @@ impl Kawoosh {
                 continue;
             };
             let resolved = resolve_edits(&self.ed.buffers[id], &list);
-            if resolved.is_empty() || !self.ed.apply_edits(id, &resolved) {
+            // Made where the text differs: TypeScript's `Remove
+            // unnecessary 'await'` rewrites the whole call, and a caret
+            // inside it went to its start, the view after it.
+            if resolved.is_empty() || self.ed.apply_edits_diffed_at(id, &resolved).is_none() {
                 continue;
             }
             // The server hears of it though no pane shows it.

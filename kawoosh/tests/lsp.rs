@@ -4187,3 +4187,62 @@ fn a_diagnostic_over_lines_says_its_message_once() {
         );
     }
 }
+
+/// A code action's edit leaves the view where it was. TypeScript's
+/// `Remove unnecessary 'await'` rewrites the whole call, and a caret
+/// inside it went to the call's start, the view after it — to the top
+/// of a long one; and with the caret carried, the frame after drew the
+/// view with the rows the picker over it had left, and scrolled it.
+#[test]
+fn a_code_action_keeps_the_view() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-action-view-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    let body: String = (0..200).map(|i| format!("    call{i}(),\n")).collect();
+    std::fs::write(&file, format!("let p = await f(\n{body});\n")).unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.caps.contains_key("rust")),
+        "capabilities"
+    );
+    d.keys(&mut app, "150G");
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    // The view's top line and its caret's.
+    let at = |a: &Kawoosh| {
+        let view = &a.ed.views[v];
+        (
+            view.top,
+            a.ed.buffers[buf_id].line_of(view.sels.primary().head),
+        )
+    };
+    let (top, line) = at(&app);
+    assert!(top > 100 && line == 149, "scrolled down: {top} {line}");
+    d.keys(&mut app, "gra");
+    let picker_up =
+        |a: &Kawoosh| matches!(a.layout.focused_content(), Some(Content::Lua(n)) if n == "picker");
+    assert!(until(&mut d, &mut app, picker_up), "the actions picker");
+    assert_eq!(app.lsp.actions[0].title, "Remove unnecessary 'await'");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
+            .text()
+            .starts_with("let p = f(")),
+        "the action's edit"
+    );
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    assert_eq!(at(&app), (top, 149), "the view and the caret stay");
+    std::fs::remove_dir_all(&dir).ok();
+}

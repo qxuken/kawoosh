@@ -3032,6 +3032,13 @@ impl Editor {
             });
             v.sels.normalize();
             v.goal_col = None;
+            // Carried as the caret is: text put in before it moves its
+            // offset, not the caret, and the view follows a caret that
+            // moved — scrolled by the rows a picker over it left
+            // (2026-10-20).
+            if let Some((b, at)) = v.drawn_caret.filter(|(b, _)| *b == id) {
+                v.drawn_caret = Some((b, commands::carried(at, &shape)));
+            }
         }
         if !had_open {
             self.settle_checkpoint(id);
