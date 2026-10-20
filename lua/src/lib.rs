@@ -8933,6 +8933,26 @@ fn seed(
         "on_path",
         lua.create_function(|_, p: String| Ok(kawoosh_systems::io::on_path(&p)))?,
     )?;
+    // `kawoosh.fs.shells(): { name: string, path: string }[]?`: the
+    // shells a terminal may be started as (`:terminal shell NAME`) that
+    // are on that same PATH, each with where; nil while it is still
+    // being asked for.
+    fs.set(
+        "shells",
+        lua.create_function(|lua, ()| {
+            let Some(found) = kawoosh_systems::io::shells() else {
+                return Ok(mlua::Value::Nil);
+            };
+            let out = lua.create_table()?;
+            for (name, path) in found {
+                let row = lua.create_table()?;
+                row.set("name", name)?;
+                row.set("path", kfs::display(&path))?;
+                out.push(row)?;
+            }
+            Ok(mlua::Value::Table(out))
+        })?,
+    )?;
     // `kawoosh.fs.drives(): string[]`: the roots above every directory
     // — the drives on Windows (`C:\`, `D:\`, whichever exist), none
     // elsewhere, where `/` has nothing above it.

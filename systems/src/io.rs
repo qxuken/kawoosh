@@ -495,9 +495,17 @@ fn path_dirs(path: &std::ffi::OsStr) -> Vec<PathBuf> {
 /// file, or a name in a directory of the PATH it gives. `None` while
 /// the shell's PATH is still being asked for: not waited on here.
 pub fn on_path(program: &str) -> Option<bool> {
+    find_on_path(program).map(|f| f.is_some())
+}
+
+/// Where [`command`] would find `program`: the path itself when it is
+/// a file, else the first directory of the PATH it gives holding it —
+/// on Windows as an `.exe`, `.cmd` or `.bat` too. `None` while the
+/// shell's PATH is still being asked for: not waited on here.
+pub fn find_on_path(program: &str) -> Option<Option<PathBuf>> {
     let p = std::path::Path::new(program);
     if p.components().count() > 1 {
-        return Some(p.is_file());
+        return Some(p.is_file().then(|| p.to_path_buf()));
     }
     let path = crate::shell_env::path_now()?.or_else(|| std::env::var_os("PATH"))?;
     let names: Vec<String> = if cfg!(windows) {
@@ -512,8 +520,39 @@ pub fn on_path(program: &str) -> Option<bool> {
     Some(
         path_dirs(&path)
             .iter()
-            .any(|d| names.iter().any(|n| d.join(n).is_file())),
+            .find_map(|d| names.iter().map(|n| d.join(n)).find(|p| p.is_file())),
     )
+}
+
+/// The shells a terminal may be started as (`:terminal shell`): each by
+/// the name it is run by, Windows' without its `.exe`.
+pub const SHELLS: &[&str] = &[
+    "bash",
+    "cmd",
+    "dash",
+    "elvish",
+    "fish",
+    "ksh",
+    "nu",
+    "powershell",
+    "pwsh",
+    "sh",
+    "tcsh",
+    "xonsh",
+    "zsh",
+];
+
+/// The [`SHELLS`] on the PATH [`command`] gives, each with where it is
+/// found. `None` while the shell's PATH is still being asked for. A
+/// look in each directory for each: a few hundred stats, not a walk.
+pub fn shells() -> Option<Vec<(String, PathBuf)>> {
+    let mut found = Vec::new();
+    for name in SHELLS {
+        if let Some(at) = find_on_path(name)? {
+            found.push((name.to_string(), at));
+        }
+    }
+    Some(found)
 }
 
 /// Every name [`command`] finds on the PATH it gives: each directory's

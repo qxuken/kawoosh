@@ -9,6 +9,7 @@ A terminal pane runs your shell, or any program, inside kawoosh, beside your buf
 | `:terminal`, `:term` | a terminal running your shell, in a column of its own (`terminal.place`) |
 | `:terminal CMD` | a terminal running CMD, as a line your shell runs |
 | `:terminal shell NAME` | a terminal whose shell is NAME (`zsh`, `pwsh`, a path to one) for this pane only, in place of `terminal.shell`. `<Tab>` completes the shells on the PATH |
+| `:terminal shell`, `:picker shells` | the shells on the PATH as a picker, your default first: `<CR>` starts the one picked |
 | `<C-w>!` | a terminal, in the working directory (`terminal.place`) |
 | `<C-w>.`, `:terminal here [CMD]` | a terminal where the pane in front is: a file's directory, the directory a listing or `:du` is on, a terminal's shell's |
 | `<C-w>u`, `:du here` | the disk usage of the same directory ([files](files.md#disk-usage)) |
