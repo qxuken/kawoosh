@@ -7,7 +7,8 @@ A terminal pane runs your shell, or any program, inside kawoosh, beside your buf
 | how | what |
 |---|---|
 | `:terminal`, `:term` | a terminal running your shell, in a column of its own (`terminal.place`) |
-| `:terminal CMD` | a terminal running CMD |
+| `:terminal CMD` | a terminal running CMD, as a line your shell runs |
+| `:terminal shell NAME` | a terminal whose shell is NAME (`zsh`, `pwsh`, a path to one) for this pane only, in place of `terminal.shell`. `<Tab>` completes the shells on the PATH |
 | `<C-w>!` | a terminal, in the working directory (`terminal.place`) |
 | `<C-w>.`, `:terminal here [CMD]` | a terminal where the pane in front is: a file's directory, the directory a listing or `:du` is on, a terminal's shell's |
 | `<C-w>u`, `:du here` | the disk usage of the same directory ([files](files.md#disk-usage)) |
@@ -18,7 +19,7 @@ A `:!CMD` pane stays when CMD ends, how it ended printed under its output (`[fin
 
 A terminal opened from another terminal starts in that shell's directory; otherwise it starts in the working directory. `<C-w>.` starts it where you are instead: beside the file, in the listed directory. A plugin's pane says where it is with `here` in `kawoosh.view`'s options ([lua](lua.md)). Set `layout.new_pane = "terminal"` to make every bare split a terminal without asking.
 
-The shell is `terminal.shell`, or `$SHELL` when that is empty (`/bin/sh` without one, `%ComSpec%` on Windows). When a session is restored, each shell pane is started again in the directory it was left in; a terminal started with `:terminal CMD` is not, and scrollback is not kept.
+The shell is `terminal.shell`, or `$SHELL` when that is empty (`/bin/sh` without one, `%ComSpec%` on Windows). `:terminal CMD` and `:!CMD` run CMD through that shell, so `:terminal zsh` with nu as your shell is zsh inside nu: nu's login config runs first and stays as zsh's parent. `:terminal shell zsh` starts zsh itself, with nothing in between, as a shell is started (`zsh -l`, `pwsh -NoLogo`, `cmd`). When a session is restored, each shell pane is started again in the directory it was left in, and as the shell it was; a terminal started with `:terminal CMD` is not, and scrollback is not kept.
 
 A terminal whose directory is on a remote host runs its shell there over ssh, with `$EDITOR` still reaching this window. See [remote](remote.md).
 

@@ -928,6 +928,89 @@ fn a_session_starts_the_shells_again_where_they_were() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `:terminal shell NAME`: NAME is the pane's own process, started as
+/// a shell is (`-l`), not a line run inside `terminal.shell`'s — and a
+/// session starts it again as that shell, not as the default one.
+#[cfg(unix)]
+#[test]
+fn terminal_shell_runs_the_named_shell_itself_and_a_session_keeps_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("kawoosh-named-shell-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    // A "shell" that says what it was started with: `-l` alone when it
+    // is the pane's process, nothing when a shell ran it as a line.
+    let sh = dir.join("kwsh");
+    std::fs::write(&sh, "#!/bin/sh\necho \"KWSH[$*]\"\nexec /bin/sleep 30\n").unwrap();
+    std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let sh = sh.display().to_string();
+    let db = dir.join("state.db");
+    let said = |d: &mut Drive, app: &mut Kawoosh, t| {
+        let mut seen = String::new();
+        for _ in 0..300 {
+            d.frame(app);
+            let term = &app.terms.map[&t];
+            seen = (0..term.size().rows as usize)
+                .map(|r| term.row_text(r).trim_end().to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if seen.contains("KWSH[") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        seen
+    };
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    app.open_store(Some(&db));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, &format!(":terminal shell {sh}"));
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.term_of_focused().expect("a terminal pane");
+    let seen = said(&mut d, &mut app, t);
+    assert!(seen.contains("KWSH[-l]"), "{seen}");
+    assert_eq!(app.terms.spawned[&t].shell.as_deref(), Some(sh.as_str()));
+    let json = serde_json::to_string(&app.session_data()).unwrap();
+    assert!(
+        json.contains(&format!(
+            r#""restore":true,"cwd":"{}","shell":"{sh}""#,
+            dir.display()
+        )),
+        "{json}"
+    );
+    app.save_session();
+    drop(app);
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    let pending: Vec<_> = app
+        .terms
+        .pending
+        .iter()
+        .map(|(_, p)| p.shell.clone())
+        .collect();
+    assert_eq!(pending, [Some(sh.clone())]);
+    d.frame(&mut app);
+    let t = app
+        .layout
+        .all_panes()
+        .into_iter()
+        .find_map(|p| app.term_of(p))
+        .expect("the shell's pane");
+    let seen = said(&mut d, &mut app, t);
+    assert!(seen.contains("KWSH[-l]"), "started again as itself: {seen}");
+    assert_eq!(app.terms.spawned[&t].shell.as_deref(), Some(sh.as_str()));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A drag across the live pane selects its cells (kui's selectable
 /// grid): the grid takes clicks only under ⌘ or ctrl, which would claim
 /// the press first; a plain click still focuses the pane.

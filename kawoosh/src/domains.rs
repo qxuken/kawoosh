@@ -885,12 +885,16 @@ impl Kawoosh {
             term.feed(tail.as_bytes());
             term.scroll_to_bottom();
             self.terms.done.insert(t, exit);
-            let tool = self.terms.spawned.get(&t).and_then(|s| s.tool.clone());
+            let spawned = self.terms.spawned.get(&t);
+            let tool = spawned.and_then(|s| s.tool.clone());
+            let shell = spawned.and_then(|s| s.shell.clone());
             let cwd =
                 cwd.unwrap_or_else(|| kawoosh_systems::fs::on_domain(&domain, Path::new("~")));
-            self.domains
-                .terminals
-                .push((domain, t, crate::terminals::Pending { cwd, tool }));
+            self.domains.terminals.push((
+                domain,
+                t,
+                crate::terminals::Pending { cwd, tool, shell },
+            ));
             return true;
         }
         let why = why.unwrap_or_else(|| "exited with 255".into());
