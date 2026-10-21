@@ -707,6 +707,10 @@ const DOCS: &[(&str, &str)] = &[
         "the directory in tab labels: `auto` when the tabs are in more than one, `always`, `never`",
     ),
     (
+        "tabs.show",
+        "the tab strip: `auto` while there is more than one tab, `always`, `never` (the tabs then in their picker, `<leader>wt`)",
+    ),
+    (
         "editor.selection_radius",
         "round the selection's corners, in pixels",
     ),
@@ -1316,6 +1320,10 @@ impl Settings {
         // `always`, or `never`. A tab on a terminal is where its shell
         // says it is (OSC 7).
         defaults.set("tabs.directory", Setting::Str("auto".into()));
+        // The tab strip: `auto` drawn while there is more than one tab,
+        // `always`, or `never` — the tabs gone to by their keys and
+        // picker (`<leader>wt`), the strip's segments in the title bar.
+        defaults.set("tabs.show", Setting::Str("auto".into()));
         // The selection's corners, in logical px: 0 square, as a text's
         // span backgrounds are; more rounds the selection as one shape
         // across its lines, the corners where a line reaches past its
@@ -1517,6 +1525,7 @@ impl Settings {
             ("buffers.scope", words(&["tab", "all"])),
             ("memory.scope", words(&["workspace", "global"])),
             ("tabs.directory", words(&["auto", "always", "never"])),
+            ("tabs.show", words(&["auto", "always", "never"])),
             ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
             (
@@ -2258,6 +2267,7 @@ mod tests {
                 "statusline.layout",
                 "statusline.path",
                 "tabs.directory",
+                "tabs.show",
                 "tabstop",
                 "terminal.bell",
                 "terminal.escape",

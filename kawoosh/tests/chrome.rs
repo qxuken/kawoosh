@@ -47,6 +47,7 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
     app.set_cwd(&kawoosh_systems::fs::canonicalize(&deep).unwrap());
+    app.run_lua_source("t", "kawoosh.opt('tabs.show', 'always')");
     d.frame(&mut app);
     let Rect { y: cy, .. } = d.rect("cwd").expect("the cwd in the title bar");
     let Rect { y: ty, .. } = d.rect("tab0").expect("the tab");
@@ -276,6 +277,7 @@ fn the_chrome_follows_the_font_to_a_cap() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("a", "text");
     d.frame(&mut app);
+    ex(&mut d, &mut app, "set tabs.show=always");
     d.frame(&mut app);
     assert_eq!(d.rect("tab0").unwrap().h, 22.0, "the default strip");
     assert_eq!(app.chrome.strip_h, 24.0);
@@ -440,6 +442,7 @@ fn a_tabs_directory_is_in_its_label_as_the_setting_says() {
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
     app.set_cwd(&alpha);
+    app.run_lua_source("t", "kawoosh.opt('tabs.show', 'always')");
     d.frame(&mut app);
     assert_eq!(tab_labels(&d), ["1: a"], "auto, one directory: none");
     app.run_lua_source("t", "kawoosh.opt('tabs.directory', 'always')");
@@ -572,6 +575,7 @@ fn the_wheel_with_a_modifier_held_sizes_the_font() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("a", &doc);
     d.frame(&mut app);
+    ex(&mut d, &mut app, "set tabs.show=always");
     d.frame(&mut app);
     let top = |app: &Kawoosh| app.ed.views[app.focused_view().unwrap()].top;
     let held = |ctrl: bool, super_key: bool| {
@@ -612,4 +616,96 @@ fn the_wheel_with_a_modifier_held_sizes_the_font() {
     d.frame(&mut app);
     assert!(top(&app) > 0);
     assert_eq!(size(&app), 13.0);
+}
+
+/// `tabs.show`: `auto` (the default) draws the strip only while there
+/// is more than one tab, the panes reaching up to the title bar
+/// without it; `never` hides it with any number, the title bar saying
+/// which tab this is and a click on that the tabs picker; `always`
+/// draws it for one.
+#[test]
+fn the_strip_shows_as_tabs_show_says() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    assert!(d.rect("tab0").is_none(), "auto, one tab: no strip");
+    let rows = |app: &Kawoosh| app.ed.views[app.focused_view().unwrap()].rows;
+    let alone = rows(&app);
+    ex(&mut d, &mut app, "tabnew");
+    settle(&mut d, &mut app);
+    assert!(d.rect("tab0").is_some() && d.rect("tab1").is_some());
+    ex(&mut d, &mut app, "tabprev");
+    d.frame(&mut app);
+    assert!(rows(&app) < alone, "the strip takes its row");
+    ex(&mut d, &mut app, "set tabs.show=never");
+    d.frame(&mut app);
+    assert!(d.rect("tab0").is_none(), "never: no strip with two");
+    assert_eq!(rows(&app), alone);
+    ex(&mut d, &mut app, "tabnext");
+    d.frame(&mut app);
+    let t = texts(&d);
+    assert!(t.iter().any(|x| x == "tab 2 of 2"), "{t:?}");
+    // A click on it: the tabs picker, the cursor on the tab in front.
+    let at = d
+        .core
+        .nodes()
+        .iter()
+        .find(|n| n.text.as_deref() == Some("tab 2 of 2"))
+        .map(|n| n.rect)
+        .unwrap();
+    d.click(&mut app, at.x + at.w / 2.0, at.y + at.h / 2.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"local s = kawoosh.picker.state() kawoosh.echo(s.source .. "|" .. s.cursor .. "|" .. table.concat(s.rows, ","))"#,
+    );
+    assert_eq!(app.ed.message, "tabs|2|1: a,2: launcher");
+    // A pick goes to the tab.
+    d.press(&mut app, "<C-k>");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(app.layout.tab, 0);
+    assert!(texts(&d).iter().any(|x| x == "tab 1 of 2"));
+    // always: the strip with one tab.
+    ex(&mut d, &mut app, "tabclose");
+    ex(&mut d, &mut app, "set tabs.show=always");
+    d.frame(&mut app);
+    assert_eq!(
+        tab_labels(&d),
+        ["1: launcher"],
+        "always: the strip with one"
+    );
+    assert!(!texts(&d).iter().any(|x| x.starts_with("tab ")));
+}
+
+/// `kawoosh.tabs()` carries each tab's label as the strip draws it,
+/// what its focused pane is, and whether it is modified — the strip
+/// hidden or not.
+#[test]
+fn lua_reads_each_tabs_label() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    d.keys(&mut app, "i");
+    d.commit(&mut app, "x");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, "set tabs.show=never");
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"local n = {} for _, t in ipairs(kawoosh.tabs()) do
+             n[#n+1] = t.title .. "|" .. t.kind .. "|" .. tostring(t.modified) .. "|" .. tostring(t.active)
+           end kawoosh.echo(table.concat(n, ","))"#,
+    );
+    assert_eq!(
+        app.ed.message,
+        "1: a ●|editor|true|false,2: launcher|lua|false|true"
+    );
 }

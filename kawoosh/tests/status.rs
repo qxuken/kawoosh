@@ -44,7 +44,8 @@ fn a_segment_on_the_title_bar_and_the_tabs() {
         r#"kawoosh.status("mine", function() return { text = "hello", color = "accent" } end, { run = "help" })
            kawoosh.status("strip", function() return { { text = "a" }, { text = "b", color = "dim" } } end,
              { place = "tabs" })
-           kawoosh.status("none", function() return nil end)"#,
+           kawoosh.status("none", function() return nil end)
+           kawoosh.opt("tabs.show", "always")"#,
     );
     d.frame(&mut app);
     let t = texts(&d);
@@ -59,6 +60,19 @@ fn a_segment_on_the_title_bar_and_the_tabs() {
         (by - ty).abs() < 4.0,
         "the strip's in the tabs' row: {by} {ty}"
     );
+    // The strip hidden (`tabs.show`): its segments are the title
+    // bar's, after the title bar's own.
+    app.run_lua_source("t", r#"kawoosh.opt("tabs.show", "never")"#);
+    d.frame(&mut app);
+    assert!(d.rect("tab0").is_none(), "no strip");
+    let Rect { x: sx, y: sy, .. } = at_text(&d, "hello").unwrap();
+    let Rect { x: bx, y: by, .. } = at_text(&d, "ab").unwrap();
+    assert!(
+        (by - sy).abs() < 4.0 && bx > sx,
+        "in the title bar, after its own: {bx},{by} {sx},{sy}"
+    );
+    app.run_lua_source("t", r#"kawoosh.opt("tabs.show", "always")"#);
+    d.frame(&mut app);
     // A click runs its command.
     let Rect { x, y, w, h } = at_text(&d, "hello").unwrap();
     d.click(&mut app, x + w / 2.0, y + h / 2.0);

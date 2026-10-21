@@ -1180,9 +1180,9 @@ pub struct Published {
     /// The tab in front's panes in their order, each with the buffer
     /// it shows when it is an editor pane (`kawoosh.panes()`).
     pub front: Vec<(u64, Option<u64>)>,
-    /// Every tab's working directory in the strip's order, and which
-    /// is in front (`kawoosh.tabs()`).
-    pub tabs: Vec<String>,
+    /// Every tab in the strip's order, and which is in front
+    /// (`kawoosh.tabs()`).
+    pub tabs: Vec<TabSnap>,
     pub tab: usize,
     /// The pane the keyboard is in, as the shell last said it
     /// (`kawoosh.pane()`; a command's `ctx.pane`).
@@ -1205,6 +1205,25 @@ pub struct Published {
     /// `kawoosh.lsp.server`'s, a settings table's — switched on or off:
     /// what no plugin's rule may be named (lsp-rules.md Decision 6).
     pub lsp_servers: Rc<BTreeSet<String>>,
+}
+
+/// A tab as `kawoosh.tabs()` reads it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TabSnap {
+    /// Its working directory.
+    pub cwd: String,
+    /// The label kawoosh draws: `N: name`, the directory as
+    /// `tabs.directory` says, ` ●` when modified.
+    pub title: String,
+    /// What its focused pane is: `editor`, `terminal`, `lua`, `undo`,
+    /// `memory`.
+    pub kind: String,
+    /// That pane's buffer, terminal title or view name.
+    pub name: String,
+    /// Its file.
+    pub path: Option<String>,
+    pub modified: bool,
+    pub bell: bool,
 }
 
 /// One place of a tab's jumps as Lua reads it: lines and columns from 1.
@@ -2377,8 +2396,8 @@ impl Runtime {
     }
 
     /// The tab in front's panes, each with the buffer it shows, and
-    /// every tab's directory (`kawoosh.panes()`, `kawoosh.tabs()`).
-    pub fn set_layout(&self, front: Vec<(u64, Option<u64>)>, tabs: Vec<String>, tab: usize) {
+    /// every tab (`kawoosh.panes()`, `kawoosh.tabs()`).
+    pub fn set_layout(&self, front: Vec<(u64, Option<u64>)>, tabs: Vec<TabSnap>, tab: usize) {
         let mut p = self.published.borrow_mut();
         p.front = front;
         p.tabs = tabs;
@@ -4627,25 +4646,38 @@ fn seed(
         })?,
     )?;
     // ---- `kawoosh.tabs(): kawoosh.TabInfo[]`: every tab in the strip's
-    // order, `{ index =, cwd =, active = }` each — `index` from 1, what
-    // `:tab goto N` takes; `cwd` its working directory (workspaces.md
-    // Decision 1).
+    // order, `{ index =, cwd =, active =, title =, … }` each — `index`
+    // from 1, what `:tab goto N` takes; `cwd` its working directory
+    // (workspaces.md Decision 1); `title` the label the strip draws
+    // (the tabs picker's rows, the strip hidden or not).
     //
     // @class kawoosh.TabInfo
     // @field index integer from 1, what `:tab goto N` takes
     // @field cwd string its working directory
     // @field active boolean the tab in front
+    // @field title string the label kawoosh draws: `N: name`, the directory as `tabs.directory` says, ` ●` when modified
+    // @field kind string its focused pane's: `editor`, `terminal`, `lua`, `undo`, `memory`
+    // @field name string that pane's buffer, terminal title or view
+    // @field path? string its file
+    // @field modified boolean a buffer shown in it is modified
+    // @field bell boolean a terminal in it rang since it was last in front
     let pp = published.clone();
     k.set(
         "tabs",
         lua.create_function(move |lua, ()| {
             let p = pp.borrow();
             let t = lua.create_table()?;
-            for (i, cwd) in p.tabs.iter().enumerate() {
+            for (i, tab) in p.tabs.iter().enumerate() {
                 let e = lua.create_table()?;
                 e.set("index", i + 1)?;
-                e.set("cwd", cwd.as_str())?;
+                e.set("cwd", tab.cwd.as_str())?;
                 e.set("active", i == p.tab)?;
+                e.set("title", tab.title.as_str())?;
+                e.set("kind", tab.kind.as_str())?;
+                e.set("name", tab.name.as_str())?;
+                e.set("path", tab.path.as_deref())?;
+                e.set("modified", tab.modified)?;
+                e.set("bell", tab.bell)?;
                 t.set(i + 1, e)?;
             }
             Ok(t)

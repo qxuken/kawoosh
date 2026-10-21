@@ -924,7 +924,7 @@ impl Kawoosh {
                 .float(
                     FloatConfig::viewport()
                         .inside(Align::End, Align::Start)
-                        .offset(-12.0, self.title_h + 1.0 + self.chrome.tab_h + 8.0),
+                        .offset(-12.0, self.title_h + 1.0 + self.tabs_h() + 8.0),
                 )
                 .max_width(max_w)
                 .gap(6.0)

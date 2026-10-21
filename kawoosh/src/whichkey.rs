@@ -304,7 +304,7 @@ impl Kawoosh {
         if let Some(hint) = hint {
             head_h += CARD_GAP + ui.measure_text(hint, &hint_style, None).height;
         }
-        let room_h = vp.h - self.stack_foot() - self.chrome.tab_h - 8.0 - head_h - CARD_GAP;
+        let room_h = vp.h - self.stack_foot() - self.tabs_h() - 8.0 - head_h - CARD_GAP;
         let fit = (((room_h + ROW_GAP) / (row_h + ROW_GAP)).floor() as usize).max(1);
         let wanted = if keys.is_empty() {
             rows.len().div_ceil(ROOT_COLUMNS).max(PER_COLUMN)
