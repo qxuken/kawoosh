@@ -1256,6 +1256,27 @@ pub struct Anchored {
     pub from: usize,
 }
 
+/// The rows above line `head`, whose row is `y` down the pane, stacked
+/// up from it by their heights `h`: the line at the pane's top, and the
+/// first line stacked, `reach` past the top — what a row above
+/// shrinking brings in. A row showing less than half a pixel at the
+/// top is not on screen: kui's layout and the heights' sum round apart,
+/// and a row ending a hair below the top named the top, drawn there
+/// by the next frame's scroll, moved every row a line down.
+fn stacked(head: usize, y: f32, reach: f32, h: impl Fn(usize) -> f32) -> (usize, usize) {
+    let mut from = head;
+    let mut above = 0.0;
+    let mut top = head;
+    while from > 0 && above < y + reach {
+        from -= 1;
+        if above < y - 0.5 {
+            top = from;
+        }
+        above += h(from);
+    }
+    (top, from)
+}
+
 /// Of a run of edits in order, ending at a text `len` long: the first
 /// byte any touched, and how many bytes at the end none did. A byte
 /// before every edit's start is before each; a byte nearer the end than
@@ -1344,17 +1365,8 @@ impl Kawoosh {
         let v = &mut self.ed.views[view];
         if let Some(y) = anchored_y {
             // The rows above it, stacked up from it to the pane's top and
-            // a half pane more — what a row above shrinking brings in.
-            let mut from = head;
-            let mut above = 0.0;
-            let mut top = head;
-            while from > 0 && above < y + avail / 2.0 {
-                from -= 1;
-                if above < y {
-                    top = from;
-                }
-                above += h(from);
-            }
+            // a half pane more.
+            let (top, from) = stacked(head, y, avail / 2.0, h);
             let (mut last, mut acc, mut fits) = (head, y, 0);
             while last < count && acc < avail {
                 acc += h(last);
@@ -1855,5 +1867,32 @@ mod tests {
         h.by_line.insert(0, 1.0);
         h.sync(b, &ed.buffers[b], 500.0);
         assert!(h.by_line.is_empty());
+    }
+
+    /// The line at a pane's top, stacked up from its caret's row, is
+    /// the first one on screen: a row whose bottom kui put a hair past
+    /// the pane's top — the rows' sum and its layout rounding apart —
+    /// is above it. Named the top, the next key's frame drew it at the
+    /// pane's top and every row a line down: `k` from the pane's foot
+    /// scrolled it up on each press (2026-10-21, SKILL.md at font 15:
+    /// rows 23, 26.45 and 31.05 high).
+    #[test]
+    fn the_rows_above_a_caret_name_the_first_on_screen() {
+        let h = |ln: usize| match ln {
+            35 => 31.05,
+            37 | 41 | 47 | 53 => 26.45,
+            _ => 23.0,
+        };
+        let shown: f32 = (35..56).map(h).sum();
+        let (top, _) = stacked(56, shown + 0.0001, 0.0, h);
+        assert_eq!(top, 35, "line 34 is wholly above the pane");
+        let (top, _) = stacked(56, shown - 0.0001, 0.0, h);
+        assert_eq!(top, 35, "nor a hair short of it");
+        let (top, _) = stacked(56, shown + 5.0, 0.0, h);
+        assert_eq!(top, 34, "five pixels of it show");
+        let (top, from) = stacked(56, shown, 100.0, h);
+        assert_eq!(top, 35);
+        assert_eq!(from, 30, "a hundred pixels more stacked above");
+        assert_eq!(stacked(2, 1000.0, 100.0, h), (0, 0), "the file's start");
     }
 }
