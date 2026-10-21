@@ -3084,7 +3084,7 @@ impl kui_native::App for Kawoosh {
         // more pixel.
         self.title_h = kui_native::widgets::titlebar_height(ui);
         let c = self.chrome;
-        self.body_h = (vp.h - self.title_h - 1.0 - c.tab_h - 2.0 * c.strip_h).max(lh);
+        self.body_h = (vp.h - self.title_h - 1.0 - self.tabs_h() - 2.0 * c.strip_h).max(lh);
         let body_h = self.body_h;
         t = self.perf.lap(Chrome, "window", t);
         self.legends.borrow_mut().roll();

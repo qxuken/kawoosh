@@ -94,6 +94,14 @@ window. A click on a tab goes to it; the `×` it shows under the pointer closes 
 along the strip to move it: it follows the pointer, the others gliding
 aside to make room.
 
+The strip is there while you have more than one tab; with one, the
+panes reach up to the title bar. `tabs.show` changes that: `auto` (the
+default), `always`, or `never`. With the strip hidden the tabs are
+still there: the keys below go among them, the title bar says which
+one you are in (`tab 2 of 3`), and a click on that, or `<leader>wt`,
+lists them in a picker. Segments a plugin put on the strip
+(`kawoosh.status` with `place = "tabs"`) move to the title bar.
+
 | keys | what |
 |---|---|
 | `<C-w>t` | a new tab (`:tabnew`, or `:tabnew PATH`) |
@@ -102,6 +110,7 @@ aside to make room.
 | `]T` `[T` | move the tab a place right, left (`:tabmove +N`, `-N`, `N`), as a drag does |
 | `<C-w>C` | close the tab and its panes (`:tabclose`) |
 | `<C-w>m` | flip the tab between a strip and a tree (`:layout`) |
+| `<leader>wt` | the tabs in a picker (`:picker tabs`): each one's label and directory, the cursor on the one you are in; `<CR>` goes to a tab |
 | `<leader>t` | the tools — lazygit, top, a shell, your compile and run commands — in a picker |
 
 A tab's label is its number and the name of what its focused pane shows,

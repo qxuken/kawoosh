@@ -2449,6 +2449,33 @@ picker.source("workspaces", {
   empty = "no other workspace in the memory",
 })
 
+-- The tabs (`<leader>wt`), in the strip's order, the cursor on the
+-- one in front: how they are gone to while the strip is hidden
+-- (`tabs.show`), and a quick way among many while it is not. A row is
+-- the label the strip draws, its directory dim after it, both matched;
+-- the preview its file's; a pick goes to the tab.
+local function tab_items()
+  local items = {}
+  for _, t in ipairs(kawoosh.tabs()) do
+    items[#items + 1] = {
+      text = t.title, sub = short_path(t.cwd) .. (t.bell and " · rang" or ""),
+      path = t.path, tab = t.index, active = t.active,
+    }
+  end
+  return items
+end
+
+picker.source("tabs", {
+  title = "tabs", placeholder = "go to a tab", wide = true,
+  items = tab_items,
+  cursor = function(items)
+    for i, it in ipairs(items) do
+      if it.active then return i end
+    end
+  end,
+  pick = function(item) kawoosh.run("tab goto " .. item.tab) end,
+})
+
 -- The workspace's pinned files, in pin order (`<leader>mp` is the
 -- pane).
 picker.source("pins", {
@@ -3087,4 +3114,5 @@ kawoosh.map("n", "<leader>so", "picker recent")
 kawoosh.map("n", "<leader>sr", "picker resume")
 kawoosh.map("n", "<leader>ww", "picker workspaces")
 kawoosh.map("n", "<leader>wh", "domain pick")
+kawoosh.map("n", "<leader>wt", "picker tabs")
 kawoosh.map("n", "<leader>t", "picker tools")

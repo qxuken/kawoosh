@@ -1042,8 +1042,9 @@ end
 -- rendered to fit the pane asks (`man.lua`). kawoosh.panes(): the
 -- tab in front's panes in their order, `{ pane =, buffer = }` each
 -- (`buffer` nil for a pane that is not an editor's); kawoosh.tabs():
--- every tab, `{ index =, cwd =, active = }` each, `index` what `:tab
--- goto N` takes.
+-- every tab, `{ index =, cwd =, active =, title =, kind =, name =,
+-- path =, modified =, bell = }` each, `index` what `:tab goto N` takes,
+-- `title` the label the strip draws, hidden or not.
 
 ---What `kawoosh.buf.open_scratch` takes.
 ---@class kawoosh.buf.ScratchOpts

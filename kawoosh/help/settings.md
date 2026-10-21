@@ -284,6 +284,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `launcher.width` | `720` | how wide the launcher is drawn, a [size](#sizes): `"100%"` the pane, `"clamp(400px, 80%, 1000px)"` |
 | `buffers.scope` | `"tab"` | buffer lists show the tab's buffers or `all` |
 | `tabs.directory` | `"auto"` | the directory in tab labels: `auto`, `always`, `never` |
+| `tabs.show` | `"auto"` | the tab strip: `auto` while there is more than one tab, `always`, `never` ([tabs](panes.md#tabs)) |
 | `dir.hidden` | | whether directory listings show dot files |
 | `dir.sizes` | | whether directory listings size their directories, everything under each counted (`gS`); a listing sorted by size does either way |
 | `picker.preview` | `"auto"` | where the picker's preview goes: `auto` beside the list when the picker is wide enough, below it when tall enough, else none; `right`, `below`, `off` ([files](files.md#keys-in-a-picker)) |

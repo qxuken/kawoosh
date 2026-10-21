@@ -79,6 +79,49 @@ was asked is what is on screen. kui has one since (`Ui::window_title`),
 and kawoosh sets `TITLE — kawoosh` with it each frame. A `place = "window"` is the obvious
 next word if it is asked for.
 
+### 5. The strip shown as `tabs.show` says
+
+*Decided and built 2026-10-21.* Asked: "Option to hide tabs when only
+one exists (default), hide all (add picker), show always".
+
+`tabs.show`, three words as `tabs.directory`'s and meaning the same
+`auto`: `auto` (the default) draws the strip while there is more than
+one tab, `always` with one too, as it always was, and `never` with any
+number. Without it the panes reach up to the title bar: the row is the
+panes' (`Kawoosh::tabs_h`, what the body's height, the toasts' place
+and which-key's room take off, is nothing).
+
+Hidden, nothing a strip carried is lost:
+
+- **The tabs**: the keys go among them as before, and the tabs picker
+  (`picker tabs`, `<leader>wt`, new) lists them — each row the label
+  the strip would draw, the directory dim after it and matched too,
+  the cursor starting on the one in front, the preview its file, a pick
+  `:tab goto N`. It is a key whether the strip shows or not: among many
+  tabs typing a name is quicker than reading the strip.
+- **Which tab this is**: with more than one, the title bar says `tab 2
+  of 3`, dim, among kawoosh's own blocks, and a click on it is the
+  picker — the strip's place to click, kept.
+- **The strip's segments** (`place = "tabs"`, Decision 1): the title
+  bar's, after its own, since a plugin put them there to be seen.
+
+The labels are made in one place (`Kawoosh::tab_facts`) for the strip
+and for `kawoosh.tabs()`, which carries each tab's `title`, `kind`,
+`name`, `path`, `modified` and `bell` now, so the picker is Lua and
+reads them whether the strip is drawn or not. A `kawoosh.tab_title`
+hook is not asked for the picker's rows: it is the strip's, called as
+the strip draws ("keep it to strings"), and a picker of tabs written
+for oneself reads `kawoosh.tabs()` as this one does.
+
+*Beat:* **`auto` as "more than one" only while there is a second tab
+in another workspace** — a rule to explain for a row that is either
+needed or not; **the strip's segments hidden with it** — a clock that
+goes when the last other tab closes is a surprise; **a count only,
+not the picker on a click** — the click is free, and it is where the
+strip was clicked; **`<leader>T`** for the picker — the workspace group
+(`<leader>w`) is where the tabs' directories already live
+(`<leader>ww` opens or goes to a tab on a workspace).
+
 ## Built
 
 2026-09-28, as decided. `lua/lua/boot.lua`: `kawoosh.status` over
@@ -97,3 +140,16 @@ clock (`status.clock`) and the counts (`status.diagnostics`). Tests:
 its command, hidden by `nil`, taken away by `nil` and by failing; the
 clock drawn with a wake on the minute and none while it is off; the
 counts drawn in their colours, a click opening the diagnostics.
+
+Decision 5, 2026-10-21: `tabs.show` (editor/src/settings.rs);
+`chrome.rs`: `tabs_shown`, `tabs_h`, `tab_facts` (the labels' parts,
+`TabFacts`, out of `tab_strip`), the strip skipped while hidden (its
+reveal and glide state forgotten), the title bar taking the strip's
+segments and `tab N of M`; `kawoosh.tabs()` filled from `tab_facts`
+(`TabSnap`, lua/src/lib.rs); `kawoosh/lua/picker.lua`: the `tabs`
+source and `<leader>wt`. Tests: `kawoosh/tests/chrome.rs`
+`the_strip_shows_as_tabs_show_says` (each word, the rows given back,
+`tab 2 of 2` clicked into the picker, a pick going to the tab) and
+`lua_reads_each_tabs_label`; `status.rs` a strip's segment in the title
+bar while the strip is hidden; the tests about the strip ask for
+`always`, `editor_pane.rs`'s windows a strip's row shorter.

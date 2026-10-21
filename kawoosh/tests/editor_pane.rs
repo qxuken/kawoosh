@@ -48,9 +48,9 @@ fn keys_edit_through_the_real_dispatch() {
 fn the_view_follows_the_caret_with_scrolloff() {
     let text: String = (1..=100).map(|i| format!("l{i}\n")).collect();
     let mut app = Kawoosh::new("t", &text);
-    // title bar 34 + its line 1 + tabs 22 + strips 48 + pane title 22
-    // + border 2 + 10 rows × 20 = 329.
-    let mut d = Drive::new(600.0, 331.0);
+    // title bar 34 + its line 1 + strips 48 + pane title 22 + border 2
+    // + 10 rows × 20 = 307: one tab draws no strip (`tabs.show`).
+    let mut d = Drive::new(600.0, 309.0);
     d.frame(&mut app);
     assert_eq!(app.ed.views[app.focused_view().unwrap()].rows, 10);
     d.keys(&mut app, "8j");
@@ -82,7 +82,7 @@ fn the_view_follows_the_caret_with_scrolloff() {
 fn g_lands_on_the_bottom_and_stays() {
     let text: String = (1..=100).map(|i| format!("l{i}\n")).collect();
     let mut app = Kawoosh::new("t", &text);
-    let mut d = Drive::new(600.0, 331.0);
+    let mut d = Drive::new(600.0, 309.0);
     d.frame(&mut app);
     let v = app.focused_view().unwrap();
     d.keys(&mut app, "G");

@@ -1995,9 +1995,9 @@ impl Kawoosh {
     }
 
     /// The pane the keys are in (`kawoosh.pane()`), the tab in front's
-    /// panes, each with the buffer an editor pane shows, and every tab's
-    /// directory — the focused one's the editor's — for `kawoosh.panes()`
-    /// and `kawoosh.tabs()`.
+    /// panes, each with the buffer an editor pane shows, and every tab —
+    /// its directory, the focused one's the editor's, and its label —
+    /// for `kawoosh.panes()` and `kawoosh.tabs()`.
     pub(crate) fn publish_layout(&self) {
         let Some(rt) = &self.scripting.rt else {
             return;
@@ -2019,13 +2019,22 @@ impl Kawoosh {
             .layout
             .tabs
             .iter()
+            .zip(self.tab_facts())
             .enumerate()
-            .map(|(i, t)| {
+            .map(|(i, (t, f))| {
                 let cwd = match &t.cwd {
                     Some(c) if i != self.layout.tab => c,
                     _ => &self.ed.cwd,
                 };
-                kawoosh_systems::fs::display(cwd)
+                kawoosh_lua::TabSnap {
+                    cwd: kawoosh_systems::fs::display(cwd),
+                    title: f.title(),
+                    kind: f.kind.into(),
+                    name: f.name,
+                    path: f.path,
+                    modified: f.modified,
+                    bell: t.bell,
+                }
             })
             .collect();
         rt.set_layout(front, tabs, self.layout.tab);
