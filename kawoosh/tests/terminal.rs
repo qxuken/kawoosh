@@ -2337,3 +2337,72 @@ fn a_click_on_a_terminal_the_strip_brings_into_view_selects_nothing() {
     );
     assert_eq!(d.core.copy_selection(), None);
 }
+
+/// Scrolled away, the scrollbar's thumb dragged to the foot of its track
+/// is the prompt again: the bar's own message beside the drag
+/// (`Msg::TermBar`, kui ADR 0047).
+#[test]
+fn the_scrollbar_dragged_down_comes_back_to_the_prompt() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    for i in 0..200 {
+        app.feed_terminal(t, format!("line {i}\r\n").as_bytes());
+    }
+    app.feed_terminal(t, b"$ ");
+    d.frame(&mut app);
+    d.press(&mut app, "<S-PageUp>");
+    d.press(&mut app, "<S-PageUp>");
+    d.frame(&mut app);
+    let away = app.terms.map[&t].display_offset();
+    assert!(away > 0, "scrolled away");
+    let bar = d.rect("scrollbar").expect("a scrollbar while away");
+    let x = bar.x + bar.w / 2.0;
+    d.drag(
+        &mut app,
+        Vec2::new(x, bar.y + bar.h / 2.0),
+        Vec2::new(x, bar.y + bar.h + 40.0),
+    );
+    d.frame(&mut app);
+    assert!(
+        app.terms.map[&t].display_offset() < away,
+        "the drag scrolled toward the prompt: {} of {away}",
+        app.terms.map[&t].display_offset()
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// The keys moved off a terminal stay where they went: the terminal's
+/// focus going *out* is not a click on it (one message on its keys,
+/// clicks, focus and wheel, told apart by the event — kui ADR 0047).
+#[test]
+fn the_keys_moved_off_a_terminal_stay_off_it() {
+    let mut app = Kawoosh::new("t", "text\n");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let editor = app.layout.focused();
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let term = app.layout.focused();
+    assert_ne!(term, editor);
+    assert_eq!(app.layout.focused_content(), Some(Content::Terminal(t)));
+    // The terminal's escape, then the pane command (terminal-keys.md
+    // Decision 1); the frames after it carry the terminal's focus out.
+    d.press(&mut app, "<C-\\>");
+    d.press(&mut app, "<C-w>");
+    d.keys(&mut app, "k");
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    assert_eq!(app.layout.focused(), editor, "the editor keeps the keys");
+    // And a click on the terminal takes them back.
+    let r = app.layout.rects[&term];
+    d.click(&mut app, r.x + r.w / 2.0, r.y + r.h / 2.0);
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), term);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

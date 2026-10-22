@@ -4604,3 +4604,39 @@ fn a_line_yanked_in_a_listing_since_closed_is_still_its_entry() {
     assert!(dir.join("a/f.txt").is_file(), "a copy, the source kept");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A click on a Lua view where none of its nodes asks for one takes the
+/// keys to its pane: the column the view draws in says so itself
+/// (`Msg::LuaPane`, kui ADR 0047).
+#[test]
+fn a_click_on_a_lua_view_takes_the_keys_to_its_pane() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "text\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        kawoosh.view("still", function()
+          return column { pad = 8, text("nothing to press") }
+        end)
+        "#,
+    );
+    d.frame(&mut app);
+    let editor = app.layout.focused();
+    ex(&mut d, &mut app, "view still");
+    settle(&mut d, &mut app);
+    let view = app.layout.focused();
+    assert_ne!(view, editor);
+    app.layout.focus(editor);
+    d.frame(&mut app);
+    let words = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some("nothing to press"))
+        .expect("the view drew")
+        .rect;
+    d.click(&mut app, words.x + words.w / 2.0, words.y + words.h / 2.0);
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), view, "the view's pane has the keys");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
