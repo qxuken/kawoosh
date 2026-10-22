@@ -2251,3 +2251,89 @@ fn the_escape_never_reaches_the_program() {
     assert_eq!(sent(&mut app), b"\x1c");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// A click on a terminal half off screen: the press focuses its pane and
+/// the strip glides it into view while the button is still held, the
+/// grid sliding under a pointer that did not move — and the click
+/// selects nothing, where it had selected the cells the glide covered
+/// (kui F173).
+#[test]
+fn a_click_on_a_terminal_the_strip_brings_into_view_selects_nothing() {
+    use kui_native::MouseButton;
+    let mut app = Kawoosh::new("t", "a\nb");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let settle = |d: &mut Drive, app: &mut Kawoosh| {
+        for _ in 0..12 {
+            d.advance(0.05);
+            d.frame(app);
+        }
+    };
+    d.keys(&mut app, ":");
+    d.keys(&mut app, "layout scroll");
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.add_headless_terminal();
+    app.feed_terminal(t, "0123456789".repeat(12).as_bytes());
+    settle(&mut d, &mut app);
+    let term = app
+        .layout
+        .all_panes()
+        .into_iter()
+        .find(|p| matches!(app.layout.content(*p), Some(Content::Terminal(_))))
+        .unwrap();
+    // The editor above the terminal split beside: a half column after
+    // the full one, focused, and the terminal's half off the left edge.
+    let editor = app
+        .layout
+        .all_panes()
+        .into_iter()
+        .find(|p| *p != term)
+        .unwrap();
+    app.layout.focus(editor);
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>");
+    d.press(&mut app, "v");
+    settle(&mut d, &mut app);
+    let before = app.layout.rects[&term];
+    assert!(before.x < -100.0, "half off screen: {before:?}");
+    let cells = d
+        .core
+        .nodes()
+        .into_iter()
+        .filter(|n| n.kind == kui_native::NodeKind::Cells)
+        .map(|n| n.rect)
+        .find(|r| (r.x - before.x).abs() < 20.0)
+        .expect("the terminal's grid");
+    let (_, ch) = app.cell_metrics();
+    // On the first row's text, where it shows.
+    let at = Vec2::new(300.0, cells.y + ch / 2.0);
+    d.input(&mut app, InputEvent::CursorMoved(at));
+    d.frame(&mut app);
+    d.input(
+        &mut app,
+        InputEvent::MouseDown {
+            button: MouseButton::Primary,
+            clicks: 1,
+        },
+    );
+    settle(&mut d, &mut app);
+    let after = app.layout.rects[&term];
+    assert_eq!(app.layout.focused(), term, "the press focused the pane");
+    assert!(
+        after.x > before.x + 100.0,
+        "and the strip brought it into view under the held button: {after:?}"
+    );
+    d.input(
+        &mut app,
+        InputEvent::MouseUp {
+            button: MouseButton::Primary,
+        },
+    );
+    d.frame(&mut app);
+    let sel = d.core.cell_selection().expect("the press placed both ends");
+    assert_eq!(
+        sel.anchor, sel.focus,
+        "a click, not the cells the glide covered"
+    );
+    assert_eq!(d.core.copy_selection(), None);
+}
