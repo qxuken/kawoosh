@@ -154,8 +154,10 @@ pub fn move_by(doc: &Doc, sel: &[usize], dx: i32, dy: i32) -> Vec<Change> {
                 });
                 if let Some((x, y)) = at {
                     let mut edge = edge.clone();
-                    edge.via = Some((x + dx, y + dy));
-                    out.push(Change::Set(i, Item::Edge(edge)));
+                    edge.via = Some(crate::geom::bend_at(doc, i, (x + dx, y + dy)));
+                    if Item::Edge(edge.clone()) != doc.entries[i].item {
+                        out.push(Change::Set(i, Item::Edge(edge)));
+                    }
                 }
             }
             Item::Node(n) if nodes.contains(&n.id) => {
@@ -202,6 +204,7 @@ pub fn bend(doc: &Doc, i: usize, via: Option<(i32, i32)>) -> Vec<Change> {
     let Some(Item::Edge(e)) = doc.entries.get(i).map(|e| &e.item) else {
         return Vec::new();
     };
+    let via = via.map(|p| crate::geom::bend_at(doc, i, p));
     if e.via == via {
         return Vec::new();
     }
@@ -487,6 +490,26 @@ mod tests {
         assert!(out.contains("arrow a -> c via 6,5\n"), "{out}");
         let out = run(text, |d| bend(d, 4, None));
         assert!(out.ends_with("arrow a -> c\n"), "{out}");
+    }
+
+    #[test]
+    fn a_bend_stops_where_its_route_stops_taking_it() {
+        // A U under two boxes side by side: its run from A's middle (2)
+        // to B's (12); a bend moved past B's end stays at it.
+        let text = "box a at 0,0 size 4x2\nbox b at 10,0 size 4x2\narrow a -> b via 11,6 elbow\n";
+        let out = run(text, |d| move_by(d, &[2], 1, 0));
+        assert!(out.contains("via 12,6 elbow"), "{out}");
+        let out = run(&out, |d| move_by(d, &[2], 1, 0));
+        assert!(out.contains("via 12,6 elbow"), "no further: {out}");
+        // A straight one goes wherever it is put.
+        let out = run(
+            "box a at 0,0 size 4x2\nbox b at 10,0 size 4x2\narrow a -> b via 20,6\n",
+            |d| move_by(d, &[2], 1, 0),
+        );
+        assert!(out.contains("via 21,6"), "{out}");
+        // Pulled past the run's end: put at it.
+        let out = run(text, |d| bend(d, 2, Some((30, 6))));
+        assert!(out.contains("via 12,6 elbow"), "{out}");
     }
 
     #[test]

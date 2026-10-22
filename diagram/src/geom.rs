@@ -219,9 +219,13 @@ fn route(a: &Node, ra: Rect, b: &Node, rb: Rect, how: Route, lane: f32, nth: usi
 /// no right-angled route goes by, is not taken: the arrow as it would be
 /// without it.
 fn bent(a: &Node, ra: &Rect, b: &Node, rb: &Rect, how: Route, p: Pt) -> Wire {
-    let plain = |a: &Node, b: &Node| route(a, *ra, b, *rb, how, 0.0, 0);
+    bent_through(a, ra, b, rb, how, p).unwrap_or_else(|| route(a, *ra, b, *rb, how, 0.0, 0))
+}
+
+/// [`bent`]'s route when it takes `p`; `None` when it does not.
+fn bent_through(a: &Node, ra: &Rect, b: &Node, rb: &Rect, how: Route, p: Pt) -> Option<Wire> {
     if inside(a.shape, ra, p) || inside(b.shape, rb, p) {
-        return plain(a, b);
+        return None;
     }
     let (ca, cb) = (ra.center(), rb.center());
     let points = if a.id == b.id {
@@ -249,11 +253,32 @@ fn bent(a: &Node, ra: &Rect, b: &Node, rb: &Rect, how: Route, p: Pt) -> Wire {
                 pts[n - 1] = onto(b.shape, rb, pts[n - 1], pts[n - 2]);
                 simplify(pts)
             }
-            None => return plain(a, b),
+            None => return None,
         }
     };
     let mid = nearest_on(&points, p);
-    Wire { points, mid }
+    Some(Wire { points, mid })
+}
+
+/// Where arrow `i` bent through `(x, y)` puts its bend: the grid point
+/// of its route nearest it — the point itself for a straight one, kept
+/// on the run a U or a moved turn takes. A bend past where its route
+/// goes changed nothing on the screen, and each key that took it further
+/// was a key to take back before one showed (asked 2026-10-23). The
+/// point as it is where the route does not take it — inside a box, a
+/// move through one.
+pub fn bend_at(doc: &Doc, i: usize, (x, y): (i32, i32)) -> (i32, i32) {
+    let Some(Item::Edge(e)) = doc.entries.get(i).map(|e| &e.item) else {
+        return (x, y);
+    };
+    let (Some(a), Some(b)) = (doc.node(&e.from), doc.node(&e.to)) else {
+        return (x, y);
+    };
+    let p = Pt::new(x as f32, y as f32);
+    match bent_through(a, &node_rect(a), b, &node_rect(b), e.route, p) {
+        Some(w) => (w.mid.x.round() as i32, w.mid.y.round() as i32),
+        None => (x, y),
+    }
 }
 
 /// An elbow's route through `p`, its ends on the boxes' sides: a U under
