@@ -27,7 +27,7 @@ group backend "Backend" { db }
 
 | line | what it is |
 |---|---|
-| `box ID "LABEL" at X,Y size WxH shape S color C dashed` | a box; only its id is needed (`at 0,0`, `size 8x3` otherwise); `dashed` draws its outline dashed |
+| `box ID "LABEL" at X,Y size WxH shape S color C dashed align A` | a box; only its id is needed (`at 0,0`, `size 8x3` otherwise); `dashed` draws its outline dashed; `align left` or `align right` sets its label from the top against that side, for a contract or code (`center` otherwise) |
 | `text "LABEL" at X,Y color C` | free text, its top left at the point |
 | `arrow A -> B "LABEL" elbow dashed color C` | an arrow between two boxes; `->` a head at B, `<-` at A, `<->` both, `--` none |
 | `group ID "LABEL" { A B }` | a frame round boxes (or other groups) |
@@ -54,7 +54,8 @@ again in a standard form; lines it does not touch stay as you wrote them.
 - **Drag** the selection to move it; a group moves its boxes.
 - **Drag a corner** of a selected box to resize it.
 - **Alt-drag** from one box to another draws an arrow.
-- **Double-click** a thing to edit its label.
+- **Double-click** a thing to type its label where it is; a click
+  anywhere else on the diagram keeps what you typed.
 - **The wheel** pans; {{mac:⌘}}{{pc:Ctrl}} and the wheel zooms where the
   pointer is; the middle button drags the view.
 - **Right-click** a thing for what you can do to it — its shape, its
@@ -66,6 +67,25 @@ again in a standard form; lines it does not touch stay as you wrote them.
   is selected. It is the pane's key legend: {{mac:`⌥/`}}{{pc:`<A-/>`}}, or
   `keys` in the title bar, shows and hides it, and `keys.legend = "full"`
   shows it from the start.
+
+## Labels
+
+`<CR>` or `i` on a box, an arrow, a text or a group — or a double-click —
+types its label right where it is drawn, over as many lines as you like:
+a contract, a schema, a few lines of code. It is the editor's own text:
+insert mode to type, `<CR>` a new line (it starts at the indent of the one
+before), `<Esc>` for normal mode and vim's keys over the lines. A box
+grows to hold its label as you type; it never shrinks on its own.
+
+| key | what it does |
+|---|---|
+| `<Esc>` in normal mode (`<Esc><Esc>` from insert), `<CR>` in normal mode | keep the label |
+| {{mac:`⌘↩`}}{{pc:`<C-CR>`}} | keep it, from either mode |
+| `<C-c>` | let it go: the label as it was |
+
+The whole label is one step: `u` takes it back at once. A new text that
+you leave with no words is taken out again. `A` on a box sets its label
+from the top left, then the right, then the middle again.
 
 ## The keys
 
@@ -81,7 +101,7 @@ to connect, group or move several things.
 
 | key | what it does |
 |---|---|
-| `n` | a new box, beside the one selected or in the middle, its label asked |
+| `n` | a new box, beside the one selected or in the middle, its label typed in it |
 | `o` · `O` | a new box to the right · below the one selected, an arrow to it |
 | `h` `j` `k` `l`, the arrows | select the nearest box or text that way |
 | `<C-h>` `<C-j>` `<C-k>` `<C-l>` | the same, the arrows among them (by their label) |
@@ -93,9 +113,10 @@ to connect, group or move several things.
 | `a` | with a box selected, an arrow from it: `hjkl` to the other box, `<CR>` joins, `<Esc>` lets go; otherwise the arrow tool for the mouse |
 | `b` · `t` · `v` | the box tool (drag one, or `hjkl` the cursor and `<CR>` its two corners), the text tool (click, or the cursor and `<CR>`), back to select |
 | `<Esc>` | let go of the tool, then the selection |
-| `<CR>` `i` | edit the label |
+| `<CR>` `i` | type the label where it is ([Labels](#labels)) |
 | `x` `<Del>` | delete; a box takes its arrows with it |
 | `s` | the next shape |
+| `A` | a box's label against the left, the right, or in the middle |
 | `r` | arrows elbowed or straight again — a box's arrows, on a box |
 | `-` | dashed or solid: an arrow, or a box's outline |
 | `R` | an arrow the other way round |
@@ -112,7 +133,7 @@ to connect, group or move several things.
 
 `:`, `<leader>` and `<C-w>` work as everywhere else. Every key is a
 command you can also type: `:diagram shape cylinder`, `:diagram color
-blue`, `:diagram label Payments`, `:diagram heads both`, `:diagram add
+blue`, `:diagram label Payments`, `:diagram align left`, `:diagram heads both`, `:diagram add
 down`, `:diagram box 10 4`, `:diagram zoom 2`, `:diagram pan right`.
 
 ## Sharing it

@@ -15,7 +15,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use kawoosh_diagram::geom::{Layout, Pt, Rect, node_rect};
-use kawoosh_diagram::{Change, Doc, Item, Node, Route, Shape, Text, UNIT, Wire, edit};
+use kawoosh_diagram::{Change, Doc, Item, LabelAlign, Node, Route, Shape, Text, UNIT, Wire, edit};
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{ArgKind, Args, Mode, Spec, ViewId};
 use kui_native::{
@@ -43,6 +43,8 @@ const SLACK: f32 = 6.0;
 const NEW_TEXT: &str = "text";
 /// How far a paste or a duplicate lands from what it copied, units.
 const PASTE_OFFSET: i32 = 2;
+/// The field a label is typed into where it is drawn.
+pub const LABEL_FIELD: &str = "diagram/label";
 
 /// What a press does on the canvas.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -111,6 +113,20 @@ enum Gesture {
     },
 }
 
+/// A label edited where it is drawn (`diagram edit`): the field of
+/// lines the keys type into, the entry it is the label of and that
+/// entry's item as it was — what the words are written back into, and
+/// how the entry is found again if a line moved under it.
+#[derive(Clone, Debug)]
+pub struct LabelEdit {
+    pub field: ViewId,
+    pub entry: usize,
+    was: Item,
+    /// The field's words at zoom 1, in units, as the last frame
+    /// measured them: what a box grows to hold.
+    size: (f32, f32),
+}
+
 /// A view's canvas.
 pub struct Canvas {
     /// Where unit (0, 0) is, px from the canvas's top left.
@@ -146,6 +162,8 @@ pub struct Canvas {
     /// `V`: the keys that select add to the selection rather than
     /// replace it.
     pub extend: bool,
+    /// The label being typed, in place.
+    pub label: Option<LabelEdit>,
 }
 
 impl Default for Canvas {
@@ -166,6 +184,7 @@ impl Default for Canvas {
             cursor: None,
             corner: None,
             extend: false,
+            label: None,
         }
     }
 }
@@ -261,6 +280,22 @@ fn preview(doc: &Rc<Doc>, sel: &[usize], g: Option<&Gesture>) -> Rc<Doc> {
             d.entries[i].item = item;
         }
     }
+    Rc::new(d)
+}
+
+/// The doc as the label being typed has it: its words, and a box grown
+/// to hold them, as they will be written.
+fn typing(doc: &Rc<Doc>, edit: &LabelEdit, words: &str) -> Rc<Doc> {
+    let Some(e) = doc.entries.get(edit.entry).filter(|e| e.item == edit.was) else {
+        return doc.clone();
+    };
+    let mut item = e.item.clone();
+    *item.label_mut() = words.to_string();
+    if let Item::Node(n) = &mut item {
+        edit::hold_label(n, edit.size.0, edit.size.1);
+    }
+    let mut d = (**doc).clone();
+    d.entries[edit.entry].item = item;
     Rc::new(d)
 }
 
@@ -375,6 +410,13 @@ fn menu_rows(
             })
             .collect();
         out.push(MenuItem::submenu("Shape", shapes));
+        let aligns = LabelAlign::ALL
+            .iter()
+            .map(|a| {
+                row(a.word(), "", &format!("diagram align {}", a.word())).checked(*a == n.align)
+            })
+            .collect();
+        out.push(MenuItem::submenu("Label", aligns));
     }
     let color = items[0].color();
     let mut colors = vec![row("none", "", "diagram color none").checked(color.is_none())];
@@ -600,6 +642,26 @@ impl Kawoosh {
             if self.ed.prompt_view().is_none() {
                 self.ed.set_mode(view, Mode::Pane);
             }
+        }
+        // A label being typed: a press on it goes on typing, one anywhere
+        // else writes it first.
+        if d.phase == DragPhase::Start
+            && let Some(entry) = self
+                .canvas
+                .views
+                .get(&view)
+                .and_then(|c| c.label.as_ref())
+                .map(|l| l.entry)
+        {
+            let (_, layout) = self.canvas_layout(view);
+            let c = &self.canvas.views[&view];
+            let p = c.units(&body, d.pos);
+            let on =
+                anchor_rect(&layout, entry).is_some_and(|r| r.grown(SLACK / c.scale()).contains(p));
+            if on {
+                return;
+            }
+            self.canvas_label_end(view, true);
         }
         let (doc, layout) = self.canvas_layout(view);
         let (shift, alt) = (self.mods.shift, self.mods.alt);
@@ -844,6 +906,7 @@ impl Kawoosh {
     /// text made where it was pressed.
     fn canvas_menu(&mut self, pane: PaneId, view: ViewId, pos: Vec2, key: Key, core: &mut Core) {
         self.layout.focus(pane);
+        self.canvas_label_end(view, true);
         if self.ed.prompt_view().is_some() {
             self.ed.cancel_prompt();
         }
@@ -1120,21 +1183,108 @@ impl Kawoosh {
         true
     }
 
-    /// The selection's label in the prompt, `:diagram label` before it.
+    /// The selection's label typed where it is drawn: a field of lines
+    /// over it, in insert mode at its end — `<CR>` a new line, vim's
+    /// keys after `<Esc>`, `<Esc>` again (or `<C-CR>`) writes it, `<C-c>`
+    /// lets it go (asked 2026-10-22: "multiline text everywhere … an
+    /// editor inline? example is some kind of a contract").
     fn canvas_edit(&mut self, view: ViewId) {
         let doc = self.diagram_doc(view);
         let Some(&i) = self.canvas.views[&view].sel.last() else {
             self.ed.message = "nothing selected".into();
             return;
         };
-        // A text just made holds a word so it can be seen; its prompt
+        // One label typed at a time: another canvas's written first.
+        self.canvas_label_end_all(true);
+        let was = doc.entries[i].item.clone();
+        // A text just made holds a word so it can be seen; its field
         // starts empty, the words typed its own.
-        let label = match &doc.entries[i].item {
+        let text = match &was {
             Item::Text(t) if t.label == NEW_TEXT => String::new(),
-            item => item.label().replace('\n', "\\n"),
+            item => item.label().to_string(),
         };
-        let line = format!("diagram label {label}");
-        self.compile_prompt(&line, line.len());
+        let field = self.ed.open_field_lines(LABEL_FIELD, &text);
+        self.canvas_of(view).label = Some(LabelEdit {
+            field,
+            entry: i,
+            was,
+            size: (0.0, 0.0),
+        });
+    }
+
+    /// The field the focused canvas's label is typed into, while one is.
+    pub fn canvas_label_field(&self) -> Option<ViewId> {
+        let v = self.focused_view()?;
+        let f = self.canvas.views.get(&v)?.label.as_ref()?.field;
+        self.ed.is_field(f).then_some(f)
+    }
+
+    /// The label typed on `view`'s canvas ended: written when `keep` —
+    /// a box grown to hold it, a text with no words taken out — else let
+    /// go, and a text made for it with it. The field closes either way.
+    pub(crate) fn canvas_label_end(&mut self, view: ViewId, keep: bool) {
+        let Some(edit) = self
+            .canvas
+            .views
+            .get_mut(&view)
+            .and_then(|c| c.label.take())
+        else {
+            return;
+        };
+        let text = self.ed.field_text(edit.field).unwrap_or_default();
+        self.ed.close_field(edit.field);
+        let doc = self.diagram_doc(view);
+        // Its entry, or the same item where a line written in the text
+        // beside moved it.
+        let at = doc
+            .entries
+            .get(edit.entry)
+            .filter(|e| e.item == edit.was)
+            .map(|_| edit.entry)
+            .or_else(|| doc.entries.iter().position(|e| e.item == edit.was));
+        let Some(i) = at else {
+            self.ed.message = "the label's item went while it was typed".into();
+            return;
+        };
+        let text = text.trim_end_matches(['\n', '\r']).to_string();
+        let made = matches!(&edit.was, Item::Text(t) if t.label == NEW_TEXT);
+        let empty_text = matches!(edit.was, Item::Text(_)) && text.trim().is_empty();
+        let changes = if (!keep && made) || (keep && empty_text) {
+            vec![Change::Remove(i)]
+        } else if !keep {
+            return;
+        } else {
+            let mut item = edit.was.clone();
+            *item.label_mut() = text;
+            if let Item::Node(n) = &mut item {
+                edit::hold_label(n, edit.size.0, edit.size.1);
+            }
+            vec![Change::Set(i, item)]
+        };
+        self.canvas_apply(view, &changes, false);
+    }
+
+    /// Every canvas's label typed ended, written when `keep`.
+    pub(crate) fn canvas_label_end_all(&mut self, keep: bool) {
+        let views: Vec<ViewId> = self
+            .canvas
+            .views
+            .iter()
+            .filter(|(_, c)| c.label.is_some())
+            .map(|(v, _)| *v)
+            .collect();
+        for v in views {
+            self.canvas_label_end(v, keep);
+        }
+    }
+
+    /// The canvas whose label is typed into `field`.
+    fn canvas_of_label(&self, field: ViewId) -> Option<ViewId> {
+        self.canvas
+            .views
+            .iter()
+            .find(|(_, c)| c.label.as_ref().is_some_and(|l| l.field == field))
+            .map(|(v, _)| *v)
     }
 
     /// The selection's items changed by `f`, written.
@@ -1273,26 +1423,55 @@ impl Kawoosh {
     ) {
         let doc = self.diagram_doc(view);
         let pen_face = self.face;
+        // The label being typed: its entry, its words, its lines to draw.
+        let typed = self
+            .canvas
+            .views
+            .get(&view)
+            .and_then(|c| c.label.as_ref())
+            .filter(|l| self.ed.is_field(l.field))
+            .map(|l| {
+                (
+                    l.entry,
+                    self.ed.field_text(l.field).unwrap_or_default(),
+                    self.field_scene_lines(l.field),
+                )
+            });
         // Free texts measured at zoom 1, in units: what a press finds
-        // them by.
+        // them by; and the words typed, what their box grows to hold.
         let base = TextStyle::new(pen_face.size).mono().nowrap();
         let base = match pen_face.id {
             Some(id) => base.font(id),
             None => base,
         };
+        let measure = |ui: &mut Ui<'_>, label: &str| {
+            let lines: Vec<&str> = label.split('\n').collect();
+            let w = lines
+                .iter()
+                .map(|l| ui.measure_text(l, &base, None).width)
+                .fold(0.0f32, f32::max);
+            let h = lines.len() as f32 * (pen_face.size * 1.3).round();
+            (w / UNIT, h / UNIT)
+        };
         let mut sizes = HashMap::new();
-        for item in doc.items() {
-            if let Item::Text(t) = item
-                && !sizes.contains_key(&t.label)
-            {
-                let lines: Vec<&str> = t.label.split('\n').collect();
-                let w = lines
-                    .iter()
-                    .map(|l| ui.measure_text(l, &base, None).width)
-                    .fold(0.0f32, f32::max);
-                let h = lines.len() as f32 * (pen_face.size * 1.3).round();
-                sizes.insert(t.label.clone(), (w / UNIT, h / UNIT));
+        let words = typed.as_ref().map(|(_, t, _)| t.as_str());
+        for label in doc
+            .items()
+            .filter_map(|i| match i {
+                Item::Text(t) => Some(t.label.as_str()),
+                _ => None,
+            })
+            .chain(words)
+        {
+            if !sizes.contains_key(label) {
+                let size = measure(ui, label);
+                sizes.insert(label.to_string(), size);
             }
+        }
+        if let Some((_, t, _)) = &typed
+            && let Some(l) = self.canvas_of(view).label.as_mut()
+        {
+            l.size = sizes[t.as_str()];
         }
         // The toolbar is the pane's legend (icons.md Decision 6): `<A-/>`,
         // the title bar's `⌥/ keys`, `keys.legend` how it starts.
@@ -1304,6 +1483,10 @@ impl Kawoosh {
         let c = self.canvas_of(view);
         c.body = vb;
         let shown = preview(&doc, &c.sel, c.gesture.as_ref());
+        let shown = match (&typed, &c.label) {
+            (Some((_, words, _)), Some(l)) => typing(&shown, l, words),
+            _ => shown,
+        };
         let layout = Layout::of(&shown, &node_rect, &|t| text_size(&c.texts, t));
         if !c.placed && vb.w > 0.0 {
             c.placed = true;
@@ -1329,6 +1512,11 @@ impl Kawoosh {
             hues: self.canvas_hues(),
             w: vb.w,
             h: plane_h,
+            typed: typed.map(|(entry, _, lines)| Typed {
+                entry,
+                lines,
+                keyed: focused && self.ed.prompt_view().is_none(),
+            }),
         };
         let c = &self.canvas.views[&view];
         let sel = c.sel.clone();
@@ -1410,26 +1598,26 @@ impl Kawoosh {
                     // every float.
                     for (i, e) in shown.entries.iter().enumerate() {
                         if let (Item::Group(g), Some(r)) = (&e.item, layout.bounds[i]) {
-                            pen.group(ui, &format!("g{i}"), &g.label, g.color, &r);
+                            pen.group(ui, i, &format!("g{i}"), &g.label, g.color, &r);
                         }
                     }
                     for (i, e) in shown.entries.iter().enumerate() {
                         if let (Item::Node(n), Some(r)) = (&e.item, layout.bounds[i])
                             && pen.on_screen(&r)
                         {
-                            pen.node(ui, &format!("n{i}"), n, &r);
+                            pen.node(ui, i, &format!("n{i}"), n, &r);
                         }
                     }
                     for (i, e) in shown.entries.iter().enumerate() {
                         if let (Item::Edge(edge), Some(w)) = (&e.item, &layout.wires[i]) {
-                            pen.edge(ui, &format!("e{i}"), edge, w, sel.contains(&i));
+                            pen.edge(ui, i, &format!("e{i}"), edge, w, sel.contains(&i));
                         }
                     }
                     for (i, e) in shown.entries.iter().enumerate() {
                         if let (Item::Text(t), Some(r)) = (&e.item, layout.bounds[i])
                             && pen.on_screen(&r)
                         {
-                            pen.text(ui, &format!("t{i}"), t, &r);
+                            pen.text(ui, i, &format!("t{i}"), t, &r);
                         }
                     }
                     // What is selected, a box's corners when it is one box;
@@ -1535,6 +1723,7 @@ impl Kawoosh {
             // keys do now.
             let small = TextStyle::new(chrome_small).color(pal.dim);
             let hint = match tool {
+                _ if pen.typed.is_some() => KEEP_HINT,
                 Tool::Arrow if from.is_some() => "hjkl to the box it goes to · <CR> joins · <Esc> lets go",
                 Tool::Box if corner.is_some() => "hjkl to the other corner · <CR> makes it · <Esc> lets go",
                 Tool::Box => "hjkl the cursor · <CR> a corner, twice for an 8×3 · or drag a box",
@@ -1706,6 +1895,14 @@ fn corner_at(c: &Canvas, doc: &Doc, pos: Vec2, body: &Rect) -> Option<Gesture> {
     None
 }
 
+/// The label being typed, as a frame draws it: its entry, its field's
+/// lines, whether the keys are on it (its carets drawn).
+struct Typed {
+    entry: usize,
+    lines: Vec<crate::panes::FieldScene>,
+    keyed: bool,
+}
+
 /// What a frame draws with: where units are, the theme, the face.
 struct Pen {
     origin: Vec2,
@@ -1716,6 +1913,7 @@ struct Pen {
     hues: [Color; 8],
     w: f32,
     h: f32,
+    typed: Option<Typed>,
 }
 
 impl Pen {
@@ -1764,10 +1962,49 @@ impl Pen {
         crate::rows::mono(face, &self.pal).color(color)
     }
 
-    /// Lines of `label` down a column, each centred.
+    /// Lines of `label` down a column, each as the column aligns it.
     fn lines(&self, ui: &mut Ui<'_>, label: &str, style: TextStyle) {
         for line in label.split('\n') {
             ui.text(line, style);
+        }
+    }
+
+    /// Whether entry `i`'s label is being typed.
+    fn typing(&self, i: usize) -> bool {
+        self.typed.as_ref().is_some_and(|t| t.entry == i)
+    }
+
+    /// Entry `i`'s label: its lines, or — being typed — its field's,
+    /// each a row of the editor's line at `style`'s size, the carets on
+    /// it while the keys are.
+    fn label(&self, ui: &mut Ui<'_>, i: usize, label: &str, style: TextStyle) {
+        let Some(t) = self.typed.as_ref().filter(|t| t.entry == i) else {
+            self.lines(ui, label, style);
+            return;
+        };
+        let face = Face {
+            size: style.size,
+            line_height: (style.size * 1.3).round().max(1.0),
+            ..self.face
+        };
+        for (n, line) in t.lines.iter().enumerate() {
+            crate::panes::draw_field_line(ui, &format!("typed{n}"), line, t.keyed, face);
+        }
+    }
+
+    /// A box's label's float as its `align` lays it: in the middle, or
+    /// from the top against a side, half a unit in.
+    fn aligned(&self, spec: NodeSpec, align: LabelAlign) -> NodeSpec {
+        match align {
+            LabelAlign::Center => spec.main_align(Align::Center).cross_align(Align::Center),
+            side => spec
+                .main_align(Align::Start)
+                .cross_align(if side == LabelAlign::Left {
+                    Align::Start
+                } else {
+                    Align::End
+                })
+                .pad_xy(0.5 * self.s, 0.35 * self.s),
         }
     }
 
@@ -1811,6 +2048,7 @@ impl Pen {
     fn group(
         &self,
         ui: &mut Ui<'_>,
+        i: usize,
         key: &str,
         label: &str,
         color: Option<kawoosh_diagram::Color>,
@@ -1832,7 +2070,7 @@ impl Pen {
             NodeSpec::row(),
         );
         // The wash and the label in one float, the label inside it.
-        let show = !label.is_empty() && self.label_size() >= 5.0;
+        let show = (self.typing(i) || !label.is_empty()) && self.label_size() >= 5.0;
         let style = self.style(self.label_size() * 0.9, ink);
         ui.with_keyed(
             key,
@@ -1843,13 +2081,13 @@ impl Pen {
                 .pad_xy(0.5 * self.s, 0.35 * self.s),
             |ui| {
                 if show {
-                    self.lines(ui, label, style);
+                    self.label(ui, i, label, style);
                 }
             },
         );
     }
 
-    fn node(&self, ui: &mut Ui<'_>, key: &str, n: &Node, r: &Rect) {
+    fn node(&self, ui: &mut Ui<'_>, i: usize, key: &str, n: &Node, r: &Rect) {
         let (x, y, w, h) = self.rect(r);
         let ink = self.ink(n.color);
         let fill = self
@@ -1863,7 +2101,7 @@ impl Pen {
         let d = (6.0 * self.zoom).max(3.0);
         let dashes = Stroke::new(bw, ink).dash(d, d * 0.7);
         let stroked = |p: Path| if n.dashed { p } else { p.stroked(stroke) };
-        let show = !n.label.is_empty() && self.label_size() >= 5.0;
+        let show = (self.typing(i) || !n.label.is_empty()) && self.label_size() >= 5.0;
         let style = self.style(self.label_size(), self.pal.fg);
         match n.shape {
             Shape::Rect | Shape::Round => {
@@ -1874,12 +2112,8 @@ impl Pen {
                 };
                 // The box and its label one float: the label is drawn
                 // after the fill, whatever the stack does.
-                let mut spec = float_at(x, y)
-                    .size(w, h)
-                    .bg(fill)
-                    .radius(radius)
-                    .main_align(Align::Center)
-                    .cross_align(Align::Center);
+                let mut spec =
+                    self.aligned(float_at(x, y).size(w, h).bg(fill).radius(radius), n.align);
                 if !n.dashed {
                     spec = spec.border(bw, ink);
                 }
@@ -1893,7 +2127,7 @@ impl Pen {
                         );
                     }
                     if show {
-                        self.lines(ui, &n.label, style);
+                        self.label(ui, i, &n.label, style);
                     }
                 });
                 return;
@@ -1977,16 +2211,13 @@ impl Pen {
                 float_at(x + w + 0.4 * self.s, y)
                     .height(h)
                     .main_align(Align::Center),
-                |ui| self.lines(ui, &n.label, style),
+                |ui| self.label(ui, i, &n.label, style),
             );
         } else {
             ui.with_keyed(
                 &label_key,
-                float_at(x, y)
-                    .size(w, h)
-                    .main_align(Align::Center)
-                    .cross_align(Align::Center),
-                |ui| self.lines(ui, &n.label, style),
+                self.aligned(float_at(x, y).size(w, h), n.align),
+                |ui| self.label(ui, i, &n.label, style),
             );
         }
     }
@@ -1994,6 +2225,7 @@ impl Pen {
     fn edge(
         &self,
         ui: &mut Ui<'_>,
+        i: usize,
         key: &str,
         e: &kawoosh_diagram::Edge,
         w: &Wire,
@@ -2030,7 +2262,7 @@ impl Pen {
             stroke = stroke.dash(d, d * 0.7);
         }
         ui.polyline_keyed(key, &pts, stroke, NodeSpec::row());
-        if e.label.is_empty() || self.label_size() < 5.0 {
+        if (e.label.is_empty() && !self.typing(i)) || self.label_size() < 5.0 {
             return;
         }
         let style = self.style(
@@ -2056,17 +2288,17 @@ impl Pen {
                 .bg(self.pal.panel)
                 .radius(3.0)
                 .cross_align(Align::Center),
-            |ui| self.lines(ui, &e.label, style),
+            |ui| self.label(ui, i, &e.label, style),
         );
     }
 
-    fn text(&self, ui: &mut Ui<'_>, key: &str, t: &Text, r: &Rect) {
+    fn text(&self, ui: &mut Ui<'_>, i: usize, key: &str, t: &Text, r: &Rect) {
         if self.label_size() < 5.0 {
             return;
         }
         let (x, y, _, _) = self.rect(r);
         let style = self.style(self.label_size(), self.hue(t.color).unwrap_or(self.pal.fg));
-        ui.with_keyed(key, float_at(x, y), |ui| self.lines(ui, &t.label, style));
+        ui.with_keyed(key, float_at(x, y), |ui| self.label(ui, i, &t.label, style));
     }
 
     /// A frame round `r`: what is selected, a box an arrow will join.
@@ -2202,6 +2434,13 @@ const ZOOM_OUT_KEY: &str = if cfg!(target_os = "macos") {
     "⌘-"
 } else {
     "Ctrl+-"
+};
+
+/// What the status says while a label is typed in place.
+const KEEP_HINT: &str = if cfg!(target_os = "macos") {
+    "<CR> a new line · <Esc><Esc> or ⌘↩ keeps it · <C-c> lets it go"
+} else {
+    "<CR> a new line · <Esc><Esc> or Ctrl+↩ keeps it · <C-c> lets it go"
 };
 
 /// The toolbar's buttons in groups, each lit when it fits what is
@@ -2515,6 +2754,26 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
+            Spec::new("diagram label done")
+                .when(&["field:diagram/label"])
+                .doc("the label typed where it is drawn written: a box grown to hold it, a text with no words taken out"),
+            |k, ctx| {
+                if let Some(v) = k.canvas_of_label(ctx.view) {
+                    k.canvas_label_end(v, true);
+                }
+            },
+        ),
+        cmd(
+            Spec::new("diagram label cancel")
+                .when(&["field:diagram/label"])
+                .doc("the label typed where it is drawn let go, the item as it was — a text made for it taken out"),
+            |k, ctx| {
+                if let Some(v) = k.canvas_of_label(ctx.view) {
+                    k.canvas_label_end(v, false);
+                }
+            },
+        ),
+        cmd(
             Spec::new("diagram delete")
                 .when(on)
                 .doc("the selection taken out; a box takes its arrows with it"),
@@ -2557,6 +2816,29 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 k.canvas_each(|item| {
                     if let Item::Node(n) = item {
                         n.shape = named.unwrap_or(n.shape.next());
+                    }
+                });
+            },
+        ),
+        cmd(
+            Spec::new("diagram align")
+                .args(Args::new(&[ArgKind::Text]))
+                .when(on)
+                .doc("where the selected boxes' labels sit: center, or left or right from the top — a contract, code — else the next of them"),
+            |k, ctx| {
+                let named = match ctx.arg(0) {
+                    Some(w) => match LabelAlign::from_word(w) {
+                        Some(a) => Some(a),
+                        None => {
+                            k.ed.message = format!("no align `{w}`: center left right");
+                            return;
+                        }
+                    },
+                    None => None,
+                };
+                k.canvas_each(|item| {
+                    if let Item::Node(n) = item {
+                        n.align = named.unwrap_or(n.align.next());
                     }
                 });
             },

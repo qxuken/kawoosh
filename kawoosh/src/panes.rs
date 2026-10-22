@@ -106,6 +106,64 @@ pub struct FieldScene {
 pub const STRIP_COLUMN: char = '\u{F0763}';
 pub const STRIP_FOCUSED: char = '\u{F0764}';
 
+/// A field's line drawn where it stands, a row `font.line_height`
+/// tall, not scrolled: a line of a label edited in place, whose box
+/// grows to hold it. Its carets when `keyed`.
+pub(crate) fn draw_field_line(
+    ui: &mut Ui<'_>,
+    key: &str,
+    s: &FieldScene,
+    keyed: bool,
+    font: crate::look::Face,
+) {
+    let pal = s.pal;
+    let (carets, access): (&[(Range<usize>, Caret)], _) = if keyed {
+        (&s.carets, s.access)
+    } else {
+        (&[], (None, None))
+    };
+    ui.with_keyed(
+        key,
+        NodeSpec::row()
+            .height(font.line_height)
+            .cross_align(Align::Center),
+        |ui| {
+            let _ = rows::emit_line(
+                ui,
+                font,
+                &pal,
+                &LineDraw {
+                    text: &s.text,
+                    selected: &s.selected,
+                    hits: &[],
+                    flashed: &[],
+                    washed: &[],
+                    styled: &[],
+                    carets,
+                    escapes: &s.escapes,
+                    caret_on: ui.caret_visible() || !s.insert,
+                    access,
+                    underlined: &[],
+                    trailing: None,
+                    trailing_at: None,
+                    ghost: None,
+                    hints: &[],
+                    inserted: &[],
+                    before: 0.0,
+                    after: 0.0,
+                    marks: &[],
+                    form: None,
+                    band: None,
+                    sel_radius: s.sel_radius,
+                    text_key: None,
+                    icon_font: None,
+                    hang: None,
+                },
+            );
+        },
+    );
+}
+
 pub(crate) fn draw_field(ui: &mut Ui<'_>, s: &FieldScene, keyed: bool, font: crate::look::Face) {
     let pal = s.pal;
     let scroller = ui.child_key("field");
@@ -291,6 +349,85 @@ impl Kawoosh {
             sel_radius: self.selection_radius(),
             pal: self.pal,
         })
+    }
+
+    /// What a field of lines draws ([`kawoosh_editor::Editor::
+    /// open_field_lines`]): [`Self::field_scene`] for each of its lines,
+    /// a selection cut at each line's ends, a caret on the line its head
+    /// is on — at a line's end when it is on the newline.
+    pub(crate) fn field_scene_lines(&self, view: ViewId) -> Vec<FieldScene> {
+        let Some(v) = self.ed.views.get(view) else {
+            return Vec::new();
+        };
+        let buf = &self.ed.buffers[v.buffer];
+        let text = buf.text();
+        let tabstop = self.ed.tabstop_in(v.buffer);
+        let insert = v.mode == Mode::Insert;
+        let primary = v.sels.primary();
+        let mut out = Vec::new();
+        let mut start = 0;
+        for line in text.split('\n') {
+            let end = start + line.len();
+            let drawn = Drawn::new(line, tabstop);
+            let clip = |o: usize| drawn.to_drawn(o.clamp(start, end) - start);
+            let mut selected = Vec::new();
+            let mut carets = Vec::new();
+            let mut access = (None, None);
+            let mut head = None;
+            for s in v.sels.iter() {
+                let r = s.range();
+                let re = if v.mode == Mode::Visual {
+                    buf.next_char(r.end).max(r.end + 1)
+                } else {
+                    r.end
+                };
+                // The newline selected: a cell past the line's end.
+                let (rs, re) = (r.start.max(start), re.min(end + 1));
+                if rs < re {
+                    let b = if re > end {
+                        drawn.text.len() + 1
+                    } else {
+                        clip(re)
+                    };
+                    selected.push(clip(rs)..b);
+                }
+                if !(start..=end).contains(&s.head) {
+                    continue;
+                }
+                let kind = match (insert, *s == primary) {
+                    (true, _) => Caret::Bar,
+                    (false, true) => Caret::Block,
+                    (false, false) => Caret::Extra,
+                };
+                let to = if insert {
+                    clip(s.head)
+                } else {
+                    clip(buf.next_char(s.head))
+                };
+                carets.push((clip(s.head)..to, kind));
+                if *s == primary {
+                    head = Some(clip(s.head));
+                    access.0 = Some(clip(s.head) as u32);
+                    if !s.is_empty() {
+                        access.1 = Some(clip(s.anchor) as u32);
+                    }
+                }
+            }
+            out.push(FieldScene {
+                head: head.unwrap_or(0),
+                text: drawn.text,
+                escapes: drawn.escapes,
+                selected,
+                carets,
+                access,
+                insert,
+                ghost: None,
+                sel_radius: self.selection_radius(),
+                pal: self.pal,
+            });
+            start = end + 1;
+        }
+        out
     }
 
     pub(crate) fn command_line(&self, ui: &mut Ui<'_>) {

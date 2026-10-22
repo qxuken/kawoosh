@@ -153,6 +153,27 @@ pub fn move_by(doc: &Doc, sel: &[usize], dx: i32, dy: i32) -> Vec<Change> {
     out
 }
 
+/// Box `n` grown — never shrunk — to hold a label `w` by `h` units with
+/// air round it: half a unit each side of a rectangle's, more where the
+/// outline curves in — an ellipse holds a box √2 smaller, a diamond one
+/// half its size, a cylinder's rims take a unit. A dot's and a final's
+/// label sits beside them: they stay as they are. True when it grew.
+pub fn hold_label(n: &mut Node, w: f32, h: f32) -> bool {
+    let (sx, sy, ax, ay) = match n.shape {
+        Shape::Dot | Shape::Final => return false,
+        Shape::Ellipse => (std::f32::consts::SQRT_2, std::f32::consts::SQRT_2, 1.0, 0.5),
+        Shape::Diamond => (2.0, 2.0, 1.0, 0.5),
+        Shape::Cylinder => (1.0, 1.0, 1.0, 1.5),
+        Shape::Rect | Shape::Round if n.align != LabelAlign::Center => (1.0, 1.0, 1.0, 1.0),
+        Shape::Rect | Shape::Round => (1.0, 1.0, 1.0, 0.5),
+    };
+    let want = |text: f32, scale: f32, air: f32| (text * scale + air - 1e-3).ceil() as i32;
+    let (w, h) = (n.w.max(want(w, sx, ax)), n.h.max(want(h, sy, ay)));
+    let grew = (w, h) != (n.w, n.h);
+    (n.w, n.h) = (w, h);
+    grew
+}
+
 /// Box `i` put at `x`, `y`, `w` by `h`, a unit each way at least.
 pub fn resize(doc: &Doc, i: usize, x: i32, y: i32, w: i32, h: i32) -> Vec<Change> {
     let Some(Item::Node(n)) = doc.entries.get(i).map(|e| &e.item) else {
@@ -218,6 +239,7 @@ pub fn add_node(doc: &Doc, x: i32, y: i32, w: i32, h: i32) -> (Change, String) {
         shape: Shape::Rect,
         color: None,
         dashed: false,
+        align: LabelAlign::Center,
     };
     (Change::Add(Item::Node(n)), id)
 }
@@ -446,6 +468,33 @@ mod tests {
             "{out}"
         );
         assert!(parse(&out).problems.is_empty());
+    }
+
+    #[test]
+    fn a_box_grows_to_hold_its_label_and_never_shrinks() {
+        let doc = parse("box a at 0,0\nbox d at 0,5 shape diamond\nbox s at 0,9 shape dot\n");
+        let node = |i: usize| match &doc.entries[i].item {
+            Item::Node(n) => n.clone(),
+            _ => unreachable!(),
+        };
+        // Ten units of words, four lines: a unit of air across, half one down.
+        let mut a = node(0);
+        assert!(hold_label(&mut a, 10.0, 3.6));
+        assert_eq!((a.w, a.h), (11, 5));
+        // A short label leaves it as it was, wider than it needs.
+        let mut a = node(0);
+        assert!(!hold_label(&mut a, 2.0, 0.9));
+        assert_eq!((a.w, a.h), (8, 3));
+        // Against a side: air under it too.
+        let mut a = node(0);
+        a.align = LabelAlign::Left;
+        hold_label(&mut a, 10.0, 3.6);
+        assert_eq!((a.w, a.h), (11, 5));
+        let mut d = node(1);
+        hold_label(&mut d, 5.0, 1.8);
+        assert_eq!((d.w, d.h), (11, 5), "a diamond holds half its size");
+        let mut s = node(2);
+        assert!(!hold_label(&mut s, 10.0, 3.0), "a dot's label is beside it");
     }
 
     #[test]

@@ -122,6 +122,42 @@ impl Color {
     }
 }
 
+/// Where a box's label sits in it: in its middle, each line centred
+/// (the default); or from its top left, or its top right, each line
+/// against that side — a contract, a schema, code.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum LabelAlign {
+    #[default]
+    Center,
+    Left,
+    Right,
+}
+
+impl LabelAlign {
+    pub const ALL: [LabelAlign; 3] = [LabelAlign::Center, LabelAlign::Left, LabelAlign::Right];
+
+    pub fn word(self) -> &'static str {
+        match self {
+            LabelAlign::Center => "center",
+            LabelAlign::Left => "left",
+            LabelAlign::Right => "right",
+        }
+    }
+
+    pub fn from_word(w: &str) -> Option<LabelAlign> {
+        LabelAlign::ALL.into_iter().find(|a| a.word() == w)
+    }
+
+    /// The one after it, round: what `diagram align` steps to.
+    pub fn next(self) -> LabelAlign {
+        match self {
+            LabelAlign::Center => LabelAlign::Left,
+            LabelAlign::Left => LabelAlign::Right,
+            LabelAlign::Right => LabelAlign::Center,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     pub id: String,
@@ -134,6 +170,7 @@ pub struct Node {
     pub color: Option<Color>,
     /// Its outline dashed: something outside, planned, optional.
     pub dashed: bool,
+    pub align: LabelAlign,
 }
 
 #[derive(Clone, Debug, PartialEq)]

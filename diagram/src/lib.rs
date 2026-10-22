@@ -14,7 +14,9 @@ pub mod write;
 
 pub use edit::Change;
 pub use geom::{Pt, Rect, Wire};
-pub use model::{Color, Doc, Edge, Entry, Group, Heads, Item, Node, Problem, Route, Shape, Text};
+pub use model::{
+    Color, Doc, Edge, Entry, Group, Heads, Item, LabelAlign, Node, Problem, Route, Shape, Text,
+};
 pub use parse::parse;
 
 /// What a unit is in logical pixels at zoom 1, and in the export.

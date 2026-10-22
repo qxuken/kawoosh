@@ -537,11 +537,15 @@ impl Prompt {
 /// the editor (Zed's model): insert mode to type, `<Esc>` to normal
 /// mode for motions and operators over the line, the registers and
 /// undo the buffer's. Not listed among the buffers, not kept by a
-/// session, no history row; a newline typed or pasted is a space.
+/// session, no history row; a newline typed or pasted is a space — but
+/// in a field of lines ([`Editor::open_field_lines`]), a diagram's label
+/// edited where it is drawn, whose `<CR>` breaks the line as a buffer's.
 #[derive(Clone, Debug)]
 pub struct Field {
     pub name: String,
     pub buffer: BufferId,
+    /// Lines, not one: a newline is kept.
+    pub lines: bool,
 }
 
 /// The prompt while it is open: its field, what it is for, the view it
@@ -1299,8 +1303,17 @@ impl Editor {
     /// Opens a field named `name` holding `text`, in insert mode with
     /// the caret at the end, and hands its view back ([`Field`]).
     pub fn open_field(&mut self, name: &str, text: &str) -> ViewId {
-        let text: String = text.replace('\n', " ");
-        let buffer = self.add_buffer(Buffer::new(format!("*{name}*"), &text));
+        self.open_field_as(name, &text.replace('\n', " "), false)
+    }
+
+    /// [`Self::open_field`] of lines: its newlines kept, `<CR>` a line
+    /// break, `j` `k` up and down it.
+    pub fn open_field_lines(&mut self, name: &str, text: &str) -> ViewId {
+        self.open_field_as(name, text, true)
+    }
+
+    fn open_field_as(&mut self, name: &str, text: &str, lines: bool) -> ViewId {
+        let buffer = self.add_buffer(Buffer::new(format!("*{name}*"), text));
         let view = self.add_view(buffer);
         let v = &mut self.views[view];
         v.mode = Mode::Insert;
@@ -1310,6 +1323,7 @@ impl Editor {
             Field {
                 name: name.to_string(),
                 buffer,
+                lines,
             },
         );
         view
@@ -1330,6 +1344,12 @@ impl Editor {
 
     pub fn is_field(&self, view: ViewId) -> bool {
         self.fields.contains_key(&view)
+    }
+
+    /// Whether `view` is a field of one line: a newline typed or pasted
+    /// into it is a space.
+    pub fn is_line_field(&self, view: ViewId) -> bool {
+        self.fields.get(&view).is_some_and(|f| !f.lines)
     }
 
     /// The buffers that are not fields — the ones `:ls` lists, `:bn`
@@ -1390,7 +1410,7 @@ impl Editor {
         self.fields.values().any(|f| f.buffer == id)
     }
 
-    /// The field's text, its one line.
+    /// The field's text: its one line, or its lines.
     pub fn field_text(&self, view: ViewId) -> Option<String> {
         let f = self.fields.get(&view)?;
         Some(self.buffers.get(f.buffer)?.text())
@@ -1402,7 +1422,11 @@ impl Editor {
         let Some(f) = self.fields.get(&view) else {
             return;
         };
-        let text = text.replace('\n', " ");
+        let text = if f.lines {
+            text.to_string()
+        } else {
+            text.replace('\n', " ")
+        };
         let buf = &mut self.buffers[f.buffer];
         let len = buf.len();
         buf.replace(0..len, &text);
@@ -4289,7 +4313,7 @@ impl Editor {
         }
         self.erase_selected(view);
         let mut text = text.to_string();
-        if self.is_field(view) {
+        if self.is_line_field(view) {
             text = text.replace('\n', " ");
         }
         // A tab is `<Tab>`'s: each caret's own run to the next stop,

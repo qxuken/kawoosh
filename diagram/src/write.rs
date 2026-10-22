@@ -47,6 +47,10 @@ pub fn line(item: &Item) -> String {
             if n.dashed {
                 s.push_str(" dashed");
             }
+            if n.align != LabelAlign::Center {
+                s.push_str(" align ");
+                s.push_str(n.align.word());
+            }
             color(&mut s, n.color);
             s
         }
@@ -95,7 +99,7 @@ mod tests {
 
     #[test]
     fn a_line_written_reads_back_as_the_item() {
-        let text = "box api \"API \\\"gw\\\"\\nv2\" at -2,3 size 9x4 shape round dashed color blue\nbox s at 0,0 shape dot\ntext \"note\" at 1,9 color red\narrow api <-> s \"both\" elbow dashed color green\narrow s -- s\ngroup g \"G\" { api s } color gray\n";
+        let text = "box api \"API \\\"gw\\\"\\nv2\" at -2,3 size 9x4 shape round dashed color blue\nbox s at 0,0 shape dot\nbox c \"POST /a\\n  id: int\" at 0,5 size 12x4 align left\ntext \"note\" at 1,9 color red\narrow api <-> s \"both\" elbow dashed color green\narrow s -- s\ngroup g \"G\" { api s } color gray\n";
         let doc = parse(text);
         assert_eq!(doc.problems, vec![]);
         let written: String = doc.items().map(|i| line(i) + "\n").collect();

@@ -2170,7 +2170,8 @@ fn a_key_falls_through_its_bindings_by_when() {
     assert_eq!(t.ed.message, "plain");
     // The listing has them all, newest first, an equal one moved to
     // the front, the default keymap's `goto_location` under them, and
-    // the prompt's own after the global ones.
+    // the local ones after the global ones — a diagram's label typed in
+    // place, the prompt's.
     let bs = t.ed.keymap.bindings(Mode::Normal);
     let cr: Vec<String> = bs
         .iter()
@@ -2184,6 +2185,7 @@ fn a_key_falls_through_its_bindings_by_when() {
             "oil enter",
             "plain_enter",
             "goto location",
+            "diagram label done",
             "prompt submit"
         ]
     );

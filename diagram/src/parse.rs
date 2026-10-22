@@ -128,6 +128,7 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
                 shape: Shape::Rect,
                 color: None,
                 dashed: false,
+                align: LabelAlign::Center,
             };
             let mut size = None;
             while let Some(t) = r.next() {
@@ -145,6 +146,11 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
                         "color" => n.color = Some(r.color()?),
                         "dashed" => n.dashed = true,
                         "solid" => n.dashed = false,
+                        "align" => {
+                            let a = r.word("align")?;
+                            n.align = LabelAlign::from_word(&a)
+                                .ok_or_else(|| format!("no align `{a}`: center left right"))?;
+                        }
                         _ => return Err(format!("`{w}` means nothing to a box")),
                     },
                     _ => return Err("a brace means nothing to a box".into()),

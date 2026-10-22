@@ -42,7 +42,8 @@ arrow api -- db dashed
 group backend "Backend" { db }
 ```
 
-- `box ID ["LABEL"] [at X,Y] [size WxH] [shape S] [color C]`; shapes
+- `box ID ["LABEL"] [at X,Y] [size WxH] [shape S] [color C] [dashed]
+  [align left|right]`; shapes
   `rect` (the default), `round`, `ellipse`, `diamond`, `cylinder`, and
   for state machines `dot` (a start state) and `final` (a ring round a
   dot). Without `size`, 8×3 (a dot 1×1).
@@ -116,8 +117,9 @@ the capitals move.
 | `<A-hjkl>` | narrower, taller, shorter, wider |
 | `a` | on a box: an arrow from it, `hjkl` to the other, `<CR>` joins, `<Esc>` lets go; else the arrow tool |
 | `v` `<Esc>` · `b` · `t` | tools: select, box, text — the box and text tools with a grid cursor, `hjkl` (`HJKL` five) and `<CR>`: a text there, a box's two corners (twice in place, an 8×3) |
-| `<CR>` `i` | the selection's label, in the prompt (`:diagram label TEXT`) |
+| `<CR>` `i` | the selection's label, typed where it is drawn (Decision 12; `:diagram label TEXT` sets it from the prompt) |
 | `x` `<Del>` | delete; a box takes its arrows with it |
+| `A` | a box's label against the left, the right, or in the middle (Decision 12) |
 | `s` · `r` · `-` · `R` · `c` | next shape · elbowed or straight again, a box's arrows on a box · dashed, an arrow or a box's outline · reversed · next colour |
 | `C` | connect the selected boxes in the order selected |
 | `G` | group the selection (`g` is a prefix in pane mode: `gt`, `gg`); a group round just those already is selected instead of a second |
@@ -212,6 +214,13 @@ with the selection moved its buttons, and the drawing under them. The
 drawing does not move as the strip comes and goes either: its origin is
 measured from the pane's inside under the title bar, not from the
 canvas's own box below the strip. A drag that starts on it moves nothing.
+Reported 2026-10-22, "<A-/> jumps whole diagram for a frame": the
+drawing's floats were placed in the canvas's box, which kui lays out a
+frame late, so the frame the strip came or went in drew them a strip
+off. They are drawn on one float, the *plane*, as wide as the canvas and
+reaching from the pane's inside under the title bar down to the canvas's
+foot, pinned by that foot — which the strip does not move — and clipped
+by the canvas as before.
 
 *Beat:* a palette of shapes to drag from (the keys and the menu reach
 every shape already, and a drag-from-palette is a second way to make a
@@ -288,3 +297,44 @@ are — so a group's frame has no size to change, and a box is resized by
 "changes the font" was changing the wrong way. Were frames that clip
 built (a frame with a place and a size of its own), ⌘= ⌘- on a selected
 frame would be the other reading, and a question for then.
+
+### 12. A label is typed where it is drawn, over lines
+
+Asked 2026-10-22: "I want to add multiline text everywhere (free or
+inside boxes, arrows, etc), maybe we will work on a editor inline?
+example is - some kind of a contract". Labels held `\n` from the first
+round, but the prompt typed one line of them, `\n` spelled out.
+
+- **The editor's own text, in place.** `diagram edit` (`<CR>`, `i`, a
+  double click, a box or a text just made) opens a *field of lines* over
+  the label — the engine's field (a buffer and a view, not listed, no
+  history) whose newline is kept and whose `<CR>` breaks the line as a
+  buffer's, its indent carried — and the keys go to it while the canvas
+  is focused. Its lines are drawn where the label is, each the editor's
+  line (selections, a caret per selection, a bar on kui's blink) at the
+  label's size; the status says how to leave.
+- **Kept or let go, as the prompt is.** `<Esc>` in normal mode — so
+  `<Esc><Esc>` from insert — and `<CR>` in normal mode keep it, `<C-CR>`
+  (⌘↩) from either mode; `<C-c>` lets it go. A press on the canvas
+  anywhere but the label keeps it, and so does a toolbar button or the
+  menu. Nothing is written while it is typed: the canvas draws the words
+  over the text as last parsed (Decision 3), and the keeping is one
+  `Set` of the line, one undo step.
+- **A box grows to hold it** — as it is typed, and so when kept — by its
+  measured lines and half a unit of air, more where the outline curves in
+  (an ellipse holds a box √2 smaller, a diamond one half its size, a
+  cylinder's rims take a unit); never shrunk, so a box sized by hand
+  stays as big. A text kept with no words, or a text made for it and let
+  go, is taken out.
+- **`align left` / `align right`** on a box sets its label from the top
+  against that side, half a unit in, each line against it: a contract or
+  code reads down its left edge. `center` (the default, never written)
+  is the middle, each line centred. `A` steps through them, the menu has
+  them under *Label*, the export carries them as Excalidraw's
+  `textAlign` with `verticalAlign: top`. Free text is always from its top
+  left, an arrow's label always centred on it.
+
+*Beat:* the prompt with a multi-line mode (the label far from where it
+is drawn, the box's growth unseen until written); a buffer of its own in
+a split (a pane opened and closed for every label); writing each key's
+change through (a step a key in the undo tree, and a reparse each).

@@ -92,7 +92,7 @@ fn text(id: &str, label: &str, color: &str, place: TextAt) -> Value {
     let (w, h) = text_px(label);
     let (x, y, container, align, valign) = match place {
         TextAt::Free(x, y) => (x, y, Value::Null, "left", "top"),
-        TextAt::In(container, r) => {
+        TextAt::In(container, r, LabelAlign::Center) => {
             let c = r.center();
             (
                 px(c.x) as f32 - w / 2.0,
@@ -100,6 +100,21 @@ fn text(id: &str, label: &str, color: &str, place: TextAt) -> Value {
                 Value::String(container.to_string()),
                 "center",
                 "middle",
+            )
+        }
+        // From the top, against a side: the canvas's half a unit in.
+        TextAt::In(container, r, side) => {
+            let pad = px(0.5) as f32;
+            let x = match side {
+                LabelAlign::Right => px(r.right()) as f32 - pad - w,
+                _ => px(r.x) as f32 + pad,
+            };
+            (
+                x,
+                px(r.y) as f32 + pad,
+                Value::String(container.to_string()),
+                side.word(),
+                "top",
             )
         }
     };
@@ -122,7 +137,7 @@ fn text(id: &str, label: &str, color: &str, place: TextAt) -> Value {
 
 enum TextAt<'a> {
     Free(f32, f32),
-    In(&'a str, Rect),
+    In(&'a str, Rect, LabelAlign),
 }
 
 fn bound(kind: &str, id: &str) -> Value {
@@ -209,7 +224,7 @@ pub fn export(doc: &Doc) -> Value {
                     let at = if matches!(n.shape, Shape::Dot | Shape::Final) {
                         TextAt::Free(px(r.right() + 0.5) as f32, px(r.y) as f32)
                     } else {
-                        TextAt::In(&id, r)
+                        TextAt::In(&id, r, n.align)
                     };
                     let mut t = text(&label_id, &n.label, stroke, at);
                     if matches!(n.shape, Shape::Dot | Shape::Final) {
@@ -273,7 +288,12 @@ pub fn export(doc: &Doc) -> Value {
                 elements.push(Value::Object(m));
                 if !edge.label.is_empty() {
                     let r = Rect::new(w.mid.x, w.mid.y, 0.0, 0.0);
-                    elements.push(text(&label_id, &edge.label, stroke, TextAt::In(&id, r)));
+                    elements.push(text(
+                        &label_id,
+                        &edge.label,
+                        stroke,
+                        TextAt::In(&id, r, LabelAlign::Center),
+                    ));
                 }
             }
             Item::Group(_) => {}
