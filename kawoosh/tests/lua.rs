@@ -3141,6 +3141,74 @@ fn a_wrapped_listing_s_notes_are_a_column() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A listing with a name wider than its pane keeps every note in the
+/// pane: the column starts past the widest name only while the widest
+/// note still fits after it, and no further in than half the room.
+/// Wrapped, a name wraps before the column; unwrapped, a name past the
+/// column has its note past its own end, the rest at the column.
+/// `:dir ~/Downloads` in a half column with a torrent's 180-char title
+/// drew no size or date at all, wrapped, every row's past the pane's
+/// edge (2026-10-22).
+#[test]
+fn a_listing_s_notes_stay_in_a_pane_narrower_than_its_names() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dirlong-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    let long = "Звёздный путь Нижние палубы Star Trek Lower Decks Сезон 5 Серии 1-10 из 10 \
+                (Бэрри Дж. Келли Barry J. Kelly) [2024, США, мультфильм, комедия] \
+                [rutracker-6591349].torrent";
+    for name in ["a.txt", "Profile.pdf", long, "carnet.yaml"] {
+        std::fs::write(dir.join(name), "x").unwrap();
+    }
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let pane = app.layout.rects[&app.layout.focused()];
+    let right = pane.x + pane.w;
+    // Unwrapped: the short names' notes one column inside the pane.
+    let places = d.note_places();
+    let spans = d.note_spans();
+    assert_eq!(places.len(), 4, "a note a file: {places:?}");
+    let longest = places.iter().map(|p| p.1).fold(0.0, f32::max);
+    assert!(
+        longest > right,
+        "the name is wider than the pane: {places:?}"
+    );
+    let short: Vec<_> = places
+        .iter()
+        .zip(&spans)
+        .filter(|(p, _)| p.1 < longest)
+        .collect();
+    assert_eq!(short.len(), 3, "{places:?}");
+    for ((at, end), (_, r)) in &short {
+        assert!((at - short[0].0.0).abs() < 0.5, "one column: {places:?}");
+        assert!(at >= end, "past its own name: {places:?}");
+        assert!(*r <= right, "inside the pane ({right}): {spans:?}");
+    }
+    // Wrapped: every note in the pane, one column, past its name's
+    // last visual line.
+    ex(&mut d, &mut app, "wrap");
+    assert_eq!(app.ed.message, "wrap on");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let places = d.note_places();
+    let spans = d.note_spans();
+    assert_eq!(places.len(), 4, "a note a file, wrapped: {places:?}");
+    for ((at, end), (_, r)) in places.iter().zip(&spans) {
+        assert!((at - places[0].0).abs() < 0.5, "one column: {places:?}");
+        assert!(at >= end, "past its name: {places:?}");
+        assert!(
+            *r <= right && r - at > 40.0,
+            "inside the pane ({right}): {spans:?}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A listing sizes its directories where asked — `gS` (`dir.sizes`), or
 /// a sort by size: everything under each counted by a sizing walk
 /// (`kawoosh.du`), the size on the directory's line, and the listing

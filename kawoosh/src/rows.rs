@@ -411,6 +411,18 @@ struct NoteColumn {
     widest: f32,
 }
 
+/// Where a column of notes starts, from the text's start, in a row
+/// whose text has `room` px: past the widest line, unless the widest
+/// note would then end past the room — then where it ends inside it,
+/// and no further in than half the room, the names' least. A name
+/// past the column wraps before it, or, unwrapped, has its note past
+/// its own end; the column is never pushed out of the pane, where every
+/// note went with it (`:dir ~/Downloads` in a half column, a torrent's
+/// 180-char title, 2026-10-22).
+pub fn note_column_at(widest: f32, note: f32, room: f32) -> f32 {
+    widest.min((room - note - 2.0 * TRAILING_GAP).max(room / 2.0))
+}
+
 impl NoteColumns {
     /// The width of `buf`'s widest line as `face` draws it.
     pub fn widest(
@@ -1097,12 +1109,7 @@ fn sign_bar(ui: &mut Ui<'_>, sign: Option<(kawoosh_editor::Sign, Color)>, lh: f3
         Sign::Deleted => (8.0, 2.0, 0.0),
         Sign::DeletedBelow => (8.0, 2.0, lh - 2.0),
     };
-    ui.leaf(
-        NodeSpec::column()
-            .size(w, h)
-            .bg(color)
-            .float(FloatConfig::parent().offset(0.0, y)),
-    );
+    ui.leaf(NodeSpec::column().size(w, h).bg(color).float(hung(0.0, y)));
 }
 
 /// The blame column's text on a row (docs/design/vcs.md Decision 7):
@@ -1113,7 +1120,7 @@ fn blame_text(ui: &mut Ui<'_>, face: Face, pal: &Pal, text: &str, x: f32, lh: f3
         NodeSpec::row()
             .height(lh)
             .cross_align(Align::Center)
-            .float(FloatConfig::parent().offset(GUTTER_ROW_PAD + x, 0.0)),
+            .float(hung(GUTTER_ROW_PAD + x, 0.0)),
         text,
         mono(face, pal).color(pal.faint),
     );
@@ -1162,7 +1169,7 @@ pub fn gutter_row(
                     NodeSpec::row()
                         .height(face.line_height)
                         .cross_align(Align::Center)
-                        .float(FloatConfig::parent().offset(GUTTER_ROW_PAD, 0.0)),
+                        .float(hung(GUTTER_ROW_PAD, 0.0)),
                     &c.to_string(),
                     mono(face, pal).color(pal.accent),
                 );
@@ -1170,6 +1177,16 @@ pub fn gutter_row(
             ui.text(&numbers.label(ln), mono(face, pal).color(color));
         },
     );
+}
+
+/// A float hung off a row at `x`, `y` — a caret, the cell past a
+/// wrapped row's end, a sign — cut where the pane cuts the row. A float
+/// escapes its ancestors' clips unless it says so, and a row stacked up
+/// past the pane's top (a rendered pane's rows above the caret's) or
+/// scrolled under its edge painted its floats there all the same: a
+/// selection's ends over the title bars (2026-10-22).
+fn hung(x: f32, y: f32) -> FloatConfig {
+    FloatConfig::parent().offset(x, y).clipped()
 }
 
 /// The bar caret: a 2 px float hung off the row at `x`, one pixel to
@@ -1186,7 +1203,7 @@ fn caret_bar(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, lh: f32) {
 fn caret_bar_at(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, y: f32, lh: f32) {
     let bar = NodeSpec::column()
         .size(2.0, lh - 4.0)
-        .float(FloatConfig::parent().offset(x - 1.0, y + 2.0));
+        .float(hung(x - 1.0, y + 2.0));
     ui.leaf(if on { bar.bg(color) } else { bar });
 }
 
@@ -1489,7 +1506,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     Some(at) => {
                         let body = face.line_height;
                         let y = ((lh - body) / 2.0 + 0.3 * face.size * (f.scale - 1.0)).max(0.0);
-                        let float = FloatConfig::parent().offset(at.x, 0.0).clipped();
+                        let float = hung(at.x, 0.0);
                         let spec = spec.height(body).cross_align(Align::Center);
                         if at.kept {
                             // Its room in the flow, a line tall: an empty
@@ -1625,16 +1642,18 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 .collect();
             match wraps {
                 // A wrapped text grows to the row's width less what sits
-                // before it, and kui wraps it there. Its key is kept for
-                // the bar caret, which is placed where kui laid the byte
-                // out.
+                // before it, and kui wraps it there — before a column of
+                // notes, when it has one, so its note has the rest. Its
+                // key is kept for the bar caret, which is placed where kui
+                // laid the byte out.
                 true => {
+                    let spec = match line.trailing_at {
+                        Some(at) => NodeSpec::row().width(at),
+                        None => NodeSpec::row().grow_width(),
+                    };
                     ui.with_keyed(
                         "text",
-                        NodeSpec::row()
-                            .grow_width()
-                            .height(Sizing::Fit)
-                            .min_height(Min::FIT),
+                        spec.height(Sizing::Fit).min_height(Min::FIT),
                         |ui| {
                             text_key.set(Some(ui.child_key_indexed(0)));
                             ui.rich_text(&spans, base)
@@ -1849,28 +1868,23 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                         .sum::<f32>();
                 (x, 0.0)
             };
-            ui.with(
-                NodeSpec::row()
-                    .role(Role::None)
-                    .float(FloatConfig::parent().offset(x, y)),
-                |ui| {
-                    let mut s = Span::new(&text[r.clone()])
-                        .color(pal.bg)
-                        .bg(caret_bg(pal, *kind));
-                    // In the face the row drew it in: a code span's in
-                    // a prose row is the editor's.
-                    let in_code = segs
-                        .iter()
-                        .any(|(sr, l)| sr.contains(&r.start) && l.mark.mono);
-                    if in_code && form.is_some_and(|f| f.family.is_some()) {
-                        s = match face.id {
-                            Some(id) => s.family(kui_native::FontFamily::Custom(id)),
-                            None => s.mono(),
-                        };
-                    }
-                    ui.rich_text(&[s], base)
-                },
-            );
+            ui.with(NodeSpec::row().role(Role::None).float(hung(x, y)), |ui| {
+                let mut s = Span::new(&text[r.clone()])
+                    .color(pal.bg)
+                    .bg(caret_bg(pal, *kind));
+                // In the face the row drew it in: a code span's in
+                // a prose row is the editor's.
+                let in_code = segs
+                    .iter()
+                    .any(|(sr, l)| sr.contains(&r.start) && l.mark.mono);
+                if in_code && form.is_some_and(|f| f.family.is_some()) {
+                    s = match face.id {
+                        Some(id) => s.family(kui_native::FontFamily::Custom(id)),
+                        None => s.mono(),
+                    };
+                }
+                ui.rich_text(&[s], base)
+            });
         }
         // A block caret past the end of the line, or a selection
         // running past the newline: one cell after the text, in the
@@ -1898,12 +1912,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             let cell = [Span::new(" ").bg(pal.select).bg_radius(line.sel_radius)];
             if wraps {
                 let (x, y) = wrapped_at(ui, len);
-                ui.with(
-                    NodeSpec::row()
-                        .role(Role::None)
-                        .float(FloatConfig::parent().offset(x, y)),
-                    |ui| ui.rich_text(&cell, base),
-                );
+                ui.with(NodeSpec::row().role(Role::None).float(hung(x, y)), |ui| {
+                    ui.rich_text(&cell, base)
+                });
             } else {
                 cell_w = ui.measure_text(" ", &base, None).width;
                 ui.with(NodeSpec::row().role(Role::None), |ui| {
@@ -1915,7 +1926,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             let mut cell = NodeSpec::column().size(w, lh).bg(bg).pixel_snap();
             if wraps {
                 let (x, y) = wrapped_at(ui, len);
-                cell = cell.float(FloatConfig::parent().offset(x, y));
+                cell = cell.float(hung(x, y));
             } else {
                 cell_w = w;
             }
@@ -1966,7 +1977,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                         })
                         .cross_align(Align::Center)
                         .role(Role::None)
-                        .float(FloatConfig::parent().offset(0.0, y).clipped()),
+                        .float(hung(0.0, y)),
                     |ui| ui.text(t, style),
                 );
             } else {
@@ -2012,7 +2023,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 .bg(f.bg.unwrap_or(pal.panel))
                 .pixel_snap()
                 .role(Role::None)
-                .float(FloatConfig::parent().offset(at.x, 0.0).clipped()),
+                .float(hung(at.x, 0.0)),
             |ui| {
                 ui.leaf(NodeSpec::row().height(y));
                 ui.with(

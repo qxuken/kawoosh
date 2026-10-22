@@ -176,6 +176,20 @@ impl Harness {
     /// starts at one x, past every line. A wrapped row's line number is
     /// in the row too, before its text, and is no note.
     pub fn note_places(&self) -> Vec<(f32, f32)> {
+        self.notes()
+            .into_iter()
+            .map(|(x, _, end)| (x, end))
+            .collect()
+    }
+
+    /// Where each drawn row's note starts and ends, in window pixels —
+    /// `(note_x, note_right)`, top to bottom, as `note_places` finds
+    /// them: what a pane's edge must hold for the note to be seen.
+    pub fn note_spans(&self) -> Vec<(f32, f32)> {
+        self.notes().into_iter().map(|(x, r, _)| (x, r)).collect()
+    }
+
+    fn notes(&self) -> Vec<(f32, f32, f32)> {
         let nodes = self.core.nodes();
         let holders: Vec<_> = nodes
             .iter()
@@ -198,7 +212,8 @@ impl Harness {
                     j += 1;
                     while j < nodes.len() && nodes[j].depth > d {
                         if texted && nodes[j].text.as_ref().is_some_and(|t| !t.is_empty()) {
-                            note = note.or(Some(nodes[j].rect.x));
+                            let r = nodes[j].rect;
+                            note = note.or(Some((r.x, r.x + r.w)));
                         }
                         j += 1;
                     }
@@ -210,8 +225,8 @@ impl Harness {
                 }
                 j += 1;
             }
-            if let Some(x) = note {
-                out.push((x, end));
+            if let Some((x, right)) = note {
+                out.push((x, right, end));
             }
             i = j;
         }
