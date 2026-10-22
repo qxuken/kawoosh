@@ -850,3 +850,42 @@ fn a_closed_diagram_leaves_its_pane_to_normal_mode() {
     }
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+/// Where the canvas drew the text `t` last frame, in the window.
+fn text_rect(d: &Drive, t: &str) -> Option<kui_native::Rect> {
+    let nodes = d.core.nodes();
+    let at = nodes
+        .iter()
+        .position(|n| n.label.as_deref() == Some("canvas"))?;
+    nodes[at + 1..]
+        .iter()
+        .take_while(|n| n.depth > nodes[at].depth)
+        .find(|n| n.text.as_deref() == Some(t))
+        .map(|n| n.rect)
+}
+
+/// Reported 2026-10-22: "<A-/> jumps whole diagram for a frame". The
+/// toolbar's strip comes and goes over the drawing; the frame it
+/// changes in draws the drawing where it was, not one strip lower (or
+/// higher) until the next frame measures the canvas again.
+#[test]
+fn the_toolbar_coming_and_going_moves_no_box_for_a_frame() {
+    let path = file("jump", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let before = text_rect(&d, "A").expect("A is drawn");
+    // `press` draws one frame: the frame the strip changes in.
+    d.press(&mut app, "<A-/>");
+    assert!(d.rect("toolbar").is_some(), "the toolbar is shown");
+    assert_eq!(text_rect(&d, "A"), Some(before), "shown: the frame it came");
+    d.frame(&mut app);
+    assert_eq!(text_rect(&d, "A"), Some(before), "shown: the frame after");
+    d.press(&mut app, "<A-/>");
+    assert!(d.rect("toolbar").is_none(), "the toolbar is hidden");
+    assert_eq!(
+        text_rect(&d, "A"),
+        Some(before),
+        "hidden: the frame it went"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}

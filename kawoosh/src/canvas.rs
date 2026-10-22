@@ -1312,17 +1312,23 @@ impl Kawoosh {
                 None => c.origin = Vec2::new(2.0 * UNIT, 2.0 * UNIT),
             }
         }
-        // The pen draws in the canvas's own box: the origin less where
-        // that box starts.
+        // The pen draws on the plane: a float as wide as the canvas, from
+        // the pane's inside under the title bar down to the canvas's foot
+        // — where the drawing's origin is measured from — pinned by that
+        // foot, which the toolbar's strip does not move. Pinned by the
+        // canvas's top, the frame the strip came or went in drew the
+        // drawing a strip off, the canvas as the frame before laid it out
+        // (asked 2026-10-22: "<A-/> jumps whole diagram for a frame").
+        let plane_h = vb.y + vb.h;
         let pen = Pen {
-            origin: Vec2::new(c.origin.x - vb.x, c.origin.y - vb.y),
+            origin: Vec2::new(c.origin.x - vb.x, c.origin.y),
             s: c.scale(),
             zoom: c.zoom,
             pal: self.pal,
             face: pen_face,
             hues: self.canvas_hues(),
             w: vb.w,
-            h: vb.h,
+            h: plane_h,
         };
         let c = &self.canvas.views[&view];
         let sel = c.sel.clone();
@@ -1389,6 +1395,14 @@ impl Kawoosh {
                     .cursor(pointer)
                     .label(name.as_str()),
                 |ui| {
+                    ui.with_keyed(
+                        "plane",
+                        NodeSpec::column().size(pen.w, pen.h).float(
+                            FloatConfig::parent()
+                                .inside(Align::Start, Align::End)
+                                .clipped(),
+                        ),
+                        |ui| {
                     pen.grid(ui);
                     // Groups behind, then the boxes, the arrows, the free
                     // texts. A rectangle's box is a float; a path's and an
@@ -1498,6 +1512,8 @@ impl Kawoosh {
                         }
                         _ => {}
                     }
+                        },
+                    );
                     if doc.entries.is_empty() && doc.problems.is_empty() {
                         ui.with_keyed(
                             "empty",
