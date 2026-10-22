@@ -1667,24 +1667,17 @@ impl Terminal {
         })
     }
 
-    /// A `file://` link's path as this terminal's, and the line its
-    /// fragment names (`#12`, `#L12`): on its domain whatever host the
-    /// URL names (`box:/…`), else here when the host is this machine.
-    /// None for another host's file, or a URL that is not a file's.
-    pub fn file_link(&self, uri: &str) -> Option<(std::path::PathBuf, Option<usize>)> {
-        let (url, fragment) = uri.split_once('#').unwrap_or((uri, ""));
-        let path = file_url_path(url, self.domain.is_some())?;
+    /// A `file://` link's path as this terminal's, with its line and
+    /// column ([`file_link`]): on its domain whatever host the URL names
+    /// (`box:/…`), else here when the host is this machine. None for
+    /// another host's file, or a URL that is not a file's.
+    pub fn file_link(&self, uri: &str) -> Option<FileLink> {
+        let (path, line, col) = file_link(uri, self.domain.is_some())?;
         let path = match &self.domain {
             Some(d) => format!("{d}:{}", path.display()).into(),
             None => path,
         };
-        let line = fragment
-            .trim_start_matches(['L', 'l'])
-            .split(|c: char| !c.is_ascii_digit())
-            .next()
-            .and_then(|n| n.parse().ok())
-            .filter(|n| *n > 0);
-        Some((path, line))
+        Some((path, line, col))
     }
 
     /// The text of screen row `row` (0-based on the displayed screen).
@@ -1805,6 +1798,44 @@ fn shell_args(shell: &str, cmd: Option<&str>) -> Vec<String> {
         .map(|s| s.to_string())
         .chain(cmd.map(str::to_string))
         .collect()
+}
+
+/// A file a `file://` URL names, its line and its column, each from 1.
+pub type FileLink = (std::path::PathBuf, Option<usize>, Option<usize>);
+
+/// The path of a `file://host/path` URL and the place in it: the line
+/// its fragment names (`#12`, `#L12`), or the line and column a tool
+/// printed after it as after a path (`file:///a/x.js:602:11`, Node's
+/// stack traces). The host is this machine's ([`file_url_path`]), or
+/// any when `any_host`.
+pub fn file_link(uri: &str, any_host: bool) -> Option<FileLink> {
+    let (url, fragment) = uri.split_once('#').unwrap_or((uri, ""));
+    // `:line:col` or `:line` off the end; the scheme's own colon, and a
+    // drive's, are followed by no digits alone.
+    fn tail(s: &str) -> Option<(&str, usize)> {
+        let (rest, n) = s.rsplit_once(':')?;
+        (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| Some((rest, n.parse().ok()?)))
+            .flatten()
+    }
+    let (url, line, col) = match tail(url) {
+        Some((rest, n)) => match tail(rest) {
+            Some((r, l)) => (r, Some(l), Some(n)),
+            None => (rest, Some(n), None),
+        },
+        None => (url, None, None),
+    };
+    let path = file_url_path(url, any_host)?;
+    let fragment_line = fragment
+        .trim_start_matches(['L', 'l'])
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .and_then(|n| n.parse().ok());
+    let (line, col) = match fragment_line {
+        Some(l) => (Some(l), None),
+        None => (line, col),
+    };
+    Some((path, line.filter(|n| *n > 0), col.filter(|n| *n > 0)))
 }
 
 /// The path of a `file://host/path` URL, percent-decoded, when the host
@@ -2818,22 +2849,35 @@ mod tests {
         let mut t = Terminal::headless(TermSize { rows: 3, cols: 30 });
         assert_eq!(
             t.file_link("file:///tmp/a%20b.rs#L12"),
-            Some(("/tmp/a b.rs".into(), Some(12)))
+            Some(("/tmp/a b.rs".into(), Some(12), None))
         );
         assert_eq!(
             t.file_link("file://localhost/tmp/x#7"),
-            Some(("/tmp/x".into(), Some(7)))
+            Some(("/tmp/x".into(), Some(7), None))
         );
         assert_eq!(
             t.file_link("file:///tmp/x#top"),
-            Some(("/tmp/x".into(), None))
+            Some(("/tmp/x".into(), None, None))
+        );
+        // A place printed after it, as after a path (Node's traces).
+        assert_eq!(
+            t.file_link("file:///tmp/encoder.js:602"),
+            Some(("/tmp/encoder.js".into(), Some(602), None))
+        );
+        assert_eq!(
+            t.file_link("file://localhost/tmp/a%3Ab.js:602:11"),
+            Some(("/tmp/a:b.js".into(), Some(602), Some(11)))
+        );
+        assert_eq!(
+            t.file_link("file:///tmp/x:y"),
+            Some(("/tmp/x:y".into(), None, None))
         );
         assert_eq!(t.file_link("file://elsewhere.example/tmp/x"), None);
         assert_eq!(t.file_link("https://kawoosh.dev"), None);
         t.set_domain("box", "box:/home".into());
         assert_eq!(
-            t.file_link("file://elsewhere.example/tmp/x"),
-            Some(("box:/tmp/x".into(), None)),
+            t.file_link("file://elsewhere.example/tmp/x:3"),
+            Some(("box:/tmp/x".into(), Some(3), None)),
             "a host's shell names its own files"
         );
     }

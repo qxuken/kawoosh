@@ -239,7 +239,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
 | `gd` | definition; in the hover, the symbol it names — looked up in the workspace, opened in the pane the hover came from |
 | `gD` | declaration: one is gone to, several are a list as `grr`'s |
-| `gx` | open the link under the caret (`open link`): a markdown link's destination, a URL in the OS, or a path as the tools print one at its line and column (`src/app.rs:42:7`, `a.ts(3,5)`) — looked for beside the buffer's file, then under the working directory; a directory is listed. A ⌘-click (ctrl where there is no ⌘) in an editor pane is `gx` where it lands, and in a terminal it opens a URL as well as a path (`links.rs`) |
+| `gx` | open the link under the caret (`open link`): a markdown link's destination, a URL in the OS, or a path as the tools print one at its line and column (`src/app.rs:42:7`, `a.ts(3,5)`), a `file://` URL's too (`file:///a/x.js:602`, as Node prints one) — looked for beside the buffer's file, then under the working directory; a directory is listed. A ⌘-click (ctrl where there is no ⌘) in an editor pane is `gx` where it lands, and in a terminal it opens a URL as well as a path (`links.rs`) |
 | `gr…` | the language server's, neovim 0.11's letters under `gr` ([keymap-regroup.md](keymap-regroup.md)), each below |
 | `grr` | references, as `*references*` beside the code: a live multibuffer of the lines around each, washed (`<CR>` opens one, `]q` walks them, `q` closes it; [lists.md](lists.md)) |
 | `grn` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |

@@ -330,3 +330,62 @@ fn a_cmd_click_opens_a_link_while_the_program_reports_the_mouse() {
     );
     assert!(sent(&mut app).is_empty(), "nothing reported under ⌘");
 }
+
+/// A `file://` URL in a terminal's text — as Node prints a stack
+/// trace's frame, with the line after it — is a path to ⌘-click: it
+/// opens in an editor at that line, never handed to the OS, the URL's
+/// escapes read (`%20`).
+#[test]
+fn a_cmd_click_on_a_file_url_in_a_terminal_opens_it_at_its_line() {
+    let dir = tree("file-url");
+    std::fs::create_dir_all(dir.join("kui pkg")).unwrap();
+    let js = dir.join("kui pkg/encoder.js");
+    let text: String = (1..=700).map(|n| format!("line {n}\n")).collect();
+    std::fs::write(&js, text).unwrap();
+    let mut app = Kawoosh::new("t", "");
+    app.urls_opened = Some(Vec::new());
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    // As Node writes the URL: `file:///C:/…` on Windows.
+    let url = js.display().to_string().replace(' ', "%20");
+    let url = match cfg!(windows) {
+        true => format!("/{}", url.replace('\\', "/")),
+        false => url,
+    };
+    app.feed_terminal(
+        t,
+        format!("file://{url}:602\r\n          f[fi++] = PR.windowEvents.id;\r\n").as_bytes(),
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let cells = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
+        .unwrap();
+    let (cw, ch) = app.cell_metrics();
+    let at = Vec2::new(cells.rect.x + 10.5 * cw, cells.rect.y + 0.5 * ch);
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::NONE.with_super()));
+    d.frame(&mut app);
+    d.input(&mut app, InputEvent::CursorMoved(at));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(
+        d.core.cursor_shape(),
+        kui_native::CursorShape::Pointer,
+        "a file URL is a link"
+    );
+    d.click(&mut app, at.x, at.y);
+    app.wait_for_open();
+    d.frame(&mut app);
+    assert_eq!(
+        focused(&app),
+        ("encoder.js".into(), 601),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(app.urls_opened.as_deref(), Some(&[][..]), "not the OS's");
+    std::fs::remove_dir_all(&dir).ok();
+}

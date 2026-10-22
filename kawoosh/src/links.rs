@@ -4,7 +4,8 @@
 //! destination (`[label](dest)`, the point anywhere on it), a URL (an
 //! autolink's or a bare one: `://`, `mailto:`), or a path as the tools
 //! print one, with its line and column (`src/main.rs:42:7`, `a.ts(3,5)`).
-//! A URL opens in the OS; a path in an editor pane, at its line.
+//! A URL opens in the OS; a path in an editor pane, at its line — and a
+//! `file://` URL is a path (`file:///a/x.js:602`, as Node prints one).
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -25,9 +26,8 @@ pub enum Target {
         col: Option<usize>,
         anchor: Option<String>,
     },
-    /// A file on another machine: a `file://` link a program printed on
-    /// purpose (OSC 8) naming a host that is neither this one nor the
-    /// terminal's domain. Shown, not opened.
+    /// A file on another machine: a `file://` link naming a host that is
+    /// neither this one nor the terminal's domain. Shown, not opened.
     Elsewhere(String),
 }
 
@@ -49,7 +49,7 @@ pub fn link_at(text: &str, at: usize) -> Option<Link> {
     }
     if let Some(span) = url_span(text, at) {
         return Some(Link {
-            target: Target::Url(text[span.clone()].to_string()),
+            target: url_target(&text[span.clone()]),
             span,
         });
     }
@@ -70,11 +70,29 @@ fn is_url(s: &str) -> bool {
     s.contains("://") || s.starts_with("mailto:")
 }
 
+/// A URL as a target: a `file://` one is the path it names here, at the
+/// place its fragment or a `:line:col` after it says, or a file on
+/// another machine; any other is the OS's to open.
+fn url_target(url: &str) -> Target {
+    if !url.starts_with("file://") {
+        return Target::Url(url.to_string());
+    }
+    match kawoosh_term::file_link(url, false) {
+        Some((path, line, col)) => Target::Path {
+            path: path.display().to_string(),
+            line,
+            col,
+            anchor: None,
+        },
+        None => Target::Elsewhere(url.to_string()),
+    }
+}
+
 /// A markdown destination as a target: a URL, or a path with its
 /// anchor.
 fn target_of(dest: &str) -> Target {
     if is_url(dest) {
-        return Target::Url(dest.to_string());
+        return url_target(dest);
     }
     let (path, anchor) = match dest.split_once('#') {
         Some((p, a)) => (p, (!a.is_empty()).then(|| a.to_string())),
@@ -132,10 +150,14 @@ fn url_span(line: &str, at: usize) -> Option<Range<usize>> {
 }
 
 /// A `path[:line[:col]]` in `text` around byte `at` — rustc, tsc, grep
-/// and shell spellings (mvp.md Decision 5c).
+/// and shell spellings (mvp.md Decision 5c), and a `file://` URL's.
 pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Option<usize>)> {
     let span = location_span(text, at)?;
     let token = &text[span.clone()];
+    if token.starts_with("file://") {
+        let (path, line, col) = kawoosh_term::file_link(token, false)?;
+        return Some((path.display().to_string(), line, col));
+    }
     // A drive's colon (`C:\x`) is the path's, not a line's.
     let drive = token
         .as_bytes()
@@ -440,6 +462,31 @@ mod tests {
         );
     }
 
+    /// A `file://` URL is the path it names, at the line and column a
+    /// tool printed after it or its fragment's line; another host's is
+    /// said to be one, and an `https://` URL is still the OS's.
+    #[test]
+    fn file_urls_are_paths() {
+        let l = "file:///tmp/encoder.js:602\n          f[fi++] = PR.windowEvents.id;";
+        let link = link_at(l, 12).unwrap();
+        assert_eq!(link.target, path("/tmp/encoder.js", Some(602), None));
+        assert_eq!(&l[link.span], "file:///tmp/encoder.js:602");
+        let at = |l: &str| link_at(l, 9).unwrap().target;
+        assert_eq!(
+            at("at f (file://localhost/a%20b/x.js:3:9)"),
+            path("/a b/x.js", Some(3), Some(9))
+        );
+        assert_eq!(at("[x](file:///a/x.md#L4)"), path("/a/x.md", Some(4), None));
+        assert_eq!(
+            at("see file://far.example/a/x.js:3"),
+            Target::Elsewhere("file://far.example/a/x.js:3".into())
+        );
+        assert_eq!(
+            at("see https://x.io/a:3"),
+            Target::Url("https://x.io/a:3".into())
+        );
+    }
+
     #[test]
     fn locations() {
         let l = "error: x\n  --> src/main.rs:42:7\n";
@@ -478,6 +525,11 @@ mod tests {
         assert_eq!(
             location_at("see a.ts (the file)", 5),
             Some(("a.ts".into(), None, None))
+        );
+        // A file URL's path, not one named `file`.
+        assert_eq!(
+            location_at("at file:///a/x.js:602:11", 9),
+            Some(("/a/x.js".into(), Some(602), Some(11)))
         );
     }
 
