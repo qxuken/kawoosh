@@ -554,10 +554,28 @@ fn the_scrollbar_drags_the_rows_and_the_order_chip_turns_the_order() {
         })
         .expect("the scrollbar")
         .rect;
-    let x = bar.x + bar.w / 2.0;
+    // Its thumb, at the top while the first rows show: the 6 px box in it
+    // that lights up under the pointer. The press lands on it, not on the
+    // track — a press on a child that does nothing with a press is the
+    // enclosing `on_drag` node's (kui F176).
+    let thumb = nodes
+        .iter()
+        .find(|n| {
+            (n.rect.w - 6.0).abs() < 0.5
+                && n.rect.h >= 24.0
+                && n.rect.x >= bar.x
+                && n.rect.x + n.rect.w <= bar.x + bar.w + 0.5
+        })
+        .expect("the thumb")
+        .rect;
+    assert!(
+        thumb.y - bar.y < 1.0,
+        "the thumb starts at the top: {thumb:?} in {bar:?}"
+    );
+    let x = thumb.x + thumb.w / 2.0;
     d.drag(
         &mut app,
-        Vec2::new(x, bar.y + bar.h / 2.0),
+        Vec2::new(x, thumb.y + thumb.h / 2.0),
         Vec2::new(x, bar.y + bar.h - 1.0),
     );
     d.frame(&mut app);
