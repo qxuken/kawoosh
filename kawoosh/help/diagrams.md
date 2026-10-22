@@ -29,7 +29,7 @@ group backend "Backend" { db }
 |---|---|
 | `box ID "LABEL" at X,Y size WxH shape S color C dashed align A` | a box; only its id is needed (`at 0,0`, `size 8x3` otherwise); `dashed` draws its outline dashed; `align left` or `align right` sets its label from the top against that side, for a contract or code (`center` otherwise) |
 | `text "LABEL" at X,Y color C` | free text, its top left at the point |
-| `arrow A -> B "LABEL" elbow dashed color C` | an arrow between two boxes; `->` a head at B, `<-` at A, `<->` both, `--` none |
+| `arrow A -> B "LABEL" via X,Y elbow dashed color C` | an arrow between two boxes; `->` a head at B, `<-` at A, `<->` both, `--` none; `via` bends it through that point |
 | `group ID "LABEL" { A B }` | a frame round boxes (or other groups) |
 
 - **Shapes**: `rect`, `round`, `ellipse`, `diamond`, `cylinder`, and for
@@ -40,7 +40,9 @@ group backend "Backend" { db }
   everything snaps.
 - **Arrows** follow their boxes: they leave and meet a box at its outline;
   `elbow` routes at right angles. `a -> a` is a loop, and two arrows
-  between the same boxes run side by side.
+  between the same boxes run side by side. `via X,Y` bends an arrow
+  through a point, its label there; an elbow with one below or above
+  both boxes goes round under or over them.
 - A line starting `#` is a comment. In a label, `\n` is a line break.
 
 A line that does not read is listed over the diagram (line 4: no box
@@ -53,6 +55,8 @@ again in a standard form; lines it does not touch stay as you wrote them.
   **Drag** on an empty spot to select what the rectangle holds.
 - **Drag** the selection to move it; a group moves its boxes.
 - **Drag a corner** of a selected box to resize it.
+- **Drag an arrow** to bend it through the point where you let go: room
+  for its label, or a way round a box. Its label goes with the bend.
 - **Alt-drag** from one box to another draws an arrow.
 - **Double-click** a thing to type its label where it is; a click
   anywhere else on the diagram keeps what you typed.
@@ -108,7 +112,7 @@ to connect, group or move several things.
 | `<C-n>` · `<C-p>` | select the next · previous thing in the file, arrows and groups too |
 | `<C-o>` | the group round the selection, then the one round that |
 | `V` | extend: the keys above add to the selection; `V` or `<Esc>` stop |
-| `H` `J` `K` `L`, shift and the arrows | move the selection a unit (`5L` five) |
+| `H` `J` `K` `L`, shift and the arrows | move the selection a unit (`5L` five); an arrow's bend |
 | `<A-h>` `<A-l>` · `<A-k>` `<A-j>` | narrower, wider · shorter, taller |
 | `a` | with a box selected, an arrow from it: `hjkl` to the other box, `<CR>` joins, `<Esc>` lets go; otherwise the arrow tool for the mouse |
 | `b` · `t` · `v` | the box tool (drag one, or `hjkl` the cursor and `<CR>` its two corners), the text tool (click, or the cursor and `<CR>`), back to select |
@@ -120,6 +124,7 @@ to connect, group or move several things.
 | `r` | arrows elbowed or straight again — a box's arrows, on a box |
 | `-` | dashed or solid: an arrow, or a box's outline |
 | `R` | an arrow the other way round |
+| `B` | an arrow straight again, its bend let go (a box's arrows, on a box) |
 | `c` | the next colour |
 | `C` | connect the selected boxes, in the order you selected them |
 | `G` | group the selection (once: the same boxes again select the group they are in) |

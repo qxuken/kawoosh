@@ -232,6 +232,9 @@ pub struct Edge {
     pub route: Route,
     pub dashed: bool,
     pub color: Option<Color>,
+    /// The point it is bent through, its label on it: drawn there to
+    /// make room, round a box in the way.
+    pub via: Option<(i32, i32)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

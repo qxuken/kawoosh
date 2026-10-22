@@ -68,7 +68,9 @@ impl Tool {
 
     fn hint(self) -> &'static str {
         match self {
-            Tool::Select => "drag to move · corner to resize · alt-drag to connect",
+            Tool::Select => {
+                "drag to move · an arrow to bend it · corner to resize · alt-drag to connect"
+            }
             Tool::Box => "drag a box, or click for one",
             Tool::Arrow => "drag from a box to a box",
             Tool::Text => "click where the text goes",
@@ -105,6 +107,14 @@ enum Gesture {
     Connect {
         from: usize,
         to: Pt,
+    },
+    /// An arrow pulled by its middle: bent through the grid point under
+    /// the pointer once it moved.
+    Bend {
+        i: usize,
+        from: Pt,
+        to: (i32, i32),
+        moved: bool,
     },
     /// The view dragged with the middle button.
     Pan {
@@ -269,6 +279,9 @@ fn preview(doc: &Rc<Doc>, sel: &[usize], g: Option<&Gesture>) -> Rc<Doc> {
     let changes = match g {
         Some(Gesture::Move { by, .. }) => edit::move_by(doc, sel, by.0, by.1),
         Some(Gesture::Resize { i, to, .. }) => edit::resize(doc, *i, to.0, to.1, to.2, to.3),
+        Some(Gesture::Bend {
+            i, to, moved: true, ..
+        }) => edit::bend(doc, *i, Some(*to)),
         _ => return doc.clone(),
     };
     if changes.is_empty() {
@@ -440,6 +453,7 @@ fn menu_rows(
         .collect();
         out.push(MenuItem::submenu("Heads", heads));
         out.push(row("Reverse", "R", "diagram reverse"));
+        out.push(row("Unbend", "B", "diagram unbend").enabled(e.via.is_some()));
     }
     out.push(MenuItem::separator());
     if nodes == 1 && items.len() == 1 {
@@ -711,7 +725,23 @@ impl Kawoosh {
                             } else if let Some(g) = corner_at(c, &doc, d.pos, &body) {
                                 c.gesture = Some(g);
                             } else {
-                                match layout.hit(&doc, p, tol) {
+                                let hit = layout.hit(&doc, p, tol);
+                                let arrow = hit.filter(|&i| {
+                                    matches!(doc.entries[i].item, Item::Edge(_))
+                                        && !shift
+                                        && (c.sel.len() <= 1 || !c.sel.contains(&i))
+                                });
+                                match hit {
+                                    // An arrow alone: pulled, it bends.
+                                    Some(i) if arrow.is_some() => {
+                                        c.sel = vec![i];
+                                        c.gesture = Some(Gesture::Bend {
+                                            i,
+                                            from: p,
+                                            to: (p.x.round() as i32, p.y.round() as i32),
+                                            moved: false,
+                                        });
+                                    }
                                     Some(i) => {
                                         if shift {
                                             match c.sel.iter().position(|&s| s == i) {
@@ -756,6 +786,12 @@ impl Kawoosh {
                     let (y0, y1) = (fixed.1.min(q.1), fixed.1.max(q.1));
                     *to = (x0, y0, (x1 - x0).max(1), (y1 - y0).max(1));
                 }
+                Some(Gesture::Bend {
+                    from, to, moved, ..
+                }) => {
+                    *moved |= from.dist(p) >= 0.5;
+                    *to = (p.x.round() as i32, p.y.round() as i32);
+                }
                 Some(Gesture::Marquee { to, .. })
                 | Some(Gesture::Create { to, .. })
                 | Some(Gesture::Connect { to, .. }) => *to = p,
@@ -772,6 +808,15 @@ impl Kawoosh {
                 Some(Gesture::Resize { i, to, .. }) => {
                     after = After::Apply {
                         changes: edit::resize(&doc, i, to.0, to.1, to.2, to.3),
+                        select_new: false,
+                        edit: false,
+                    };
+                }
+                Some(Gesture::Bend {
+                    i, to, moved: true, ..
+                }) => {
+                    after = After::Apply {
+                        changes: edit::bend(&doc, i, Some(to)),
                         select_new: false,
                         edit: false,
                     };
@@ -835,7 +880,7 @@ impl Kawoosh {
                         };
                     }
                 }
-                Some(Gesture::Pan { .. }) | None => {}
+                Some(Gesture::Bend { .. }) | Some(Gesture::Pan { .. }) | None => {}
             },
         }
         match after {
@@ -1526,7 +1571,9 @@ impl Kawoosh {
         let pal = self.pal;
         let tag = Msg::Canvas { pane };
         let pointer = match gesture {
-            Some(Gesture::Move { .. }) | Some(Gesture::Pan { .. }) => CursorShape::Grabbing,
+            Some(Gesture::Move { .. })
+            | Some(Gesture::Pan { .. })
+            | Some(Gesture::Bend { moved: true, .. }) => CursorShape::Grabbing,
             Some(Gesture::Resize { .. }) => CursorShape::NwseResize,
             _ => CursorShape::Default,
         };
@@ -1635,6 +1682,20 @@ impl Kawoosh {
                         && tool == Tool::Select
                     {
                         pen.handles(ui, &r);
+                    }
+                    // One arrow with no label: where it bends, or where
+                    // it would, a dot to pull — filled when it is bent. A
+                    // label is the arrow's grip itself, and a dot on it
+                    // covered its words.
+                    if let [i] = sel[..]
+                        && let Some(Item::Edge(e)) = shown.entries.get(i).map(|e| &e.item)
+                        && let Some(Some(w)) = layout.wires.get(i)
+                        && tool == Tool::Select
+                        && e.label.is_empty()
+                        && !pen.typing(i)
+                    {
+                        let at = e.via.map(|(x, y)| Pt::new(x as f32, y as f32)).unwrap_or(w.mid);
+                        pen.bend_handle(ui, at, e.via.is_some());
                     }
                     if tool == Tool::Arrow
                         && let Some(f) = from
@@ -2313,6 +2374,24 @@ impl Pen {
         );
     }
 
+    /// Where a selected arrow bends, a dot to pull: filled when it does.
+    fn bend_handle(&self, ui: &mut Ui<'_>, at: Pt, bent: bool) {
+        let c = self.px(at);
+        let d = HANDLE + 2.0;
+        ui.leaf_keyed(
+            "bend",
+            float_at(c.x - d / 2.0, c.y - d / 2.0)
+                .size(d, d)
+                .radius(d / 2.0)
+                .bg(if bent {
+                    self.pal.accent
+                } else {
+                    self.pal.panel
+                })
+                .border(1.5, self.pal.accent),
+        );
+    }
+
     /// The four corners a box resizes by.
     fn handles(&self, ui: &mut Ui<'_>, r: &Rect) {
         let (x, y, w, h) = self.rect(r);
@@ -2472,6 +2551,7 @@ fn toolbar_groups(what: &Selected) -> Vec<Vec<(Button, bool)>> {
             ),
             (("heads", "", "diagram heads"), what.arrows > 0),
             (("reverse", "R", "diagram reverse"), what.arrows > 0),
+            (("unbend", "B", "diagram unbend"), what.arrows > 0),
             (("connect", "C", "diagram connect"), what.boxes >= 2),
             (
                 ("group", "G", "diagram group"),
@@ -2840,6 +2920,24 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     if let Item::Node(n) = item {
                         n.align = named.unwrap_or(n.align.next());
                     }
+                });
+            },
+        ),
+        cmd(
+            Spec::new("diagram unbend")
+                .when(on)
+                .doc("the selected arrows, and every arrow of the selected boxes, straight from box to box again: their bend let go"),
+            |k, _| {
+                k.canvas_do(false, |doc, sel, _| {
+                    let mut arrows: Vec<usize> = sel
+                        .iter()
+                        .copied()
+                        .filter(|&i| matches!(doc.entries.get(i).map(|e| &e.item), Some(Item::Edge(_))))
+                        .collect();
+                    arrows.extend(edit::arrows_of(doc, sel));
+                    arrows.sort_unstable();
+                    arrows.dedup();
+                    arrows.into_iter().flat_map(|i| edit::bend(doc, i, None)).collect()
                 });
             },
         ),

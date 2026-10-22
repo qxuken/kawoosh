@@ -48,9 +48,10 @@ group backend "Backend" { db }
   for state machines `dot` (a start state) and `final` (a ring round a
   dot). Without `size`, 8×3 (a dot 1×1).
 - `text "LABEL" at X,Y [color C]`: free text, its top left at the point.
-- `arrow A -> B ["LABEL"] [elbow] [dashed] [color C]`: `->` a head at
-  B, `<-` at A, `<->` both, `--` neither; `elbow` is an orthogonal
-  route, straight by default. `A -> A` is a loop.
+- `arrow A -> B ["LABEL"] [via X,Y] [elbow] [dashed] [color C]`: `->` a
+  head at B, `<-` at A, `<->` both, `--` neither; `elbow` is an
+  orthogonal route, straight by default; `via` the point it is bent
+  through (Decision 13). `A -> A` is a loop.
 - `group ID ["LABEL"] { A B … }`: a frame round its members, a member
   another group too. It has no place of its own: it is where they are.
 - Colours: `red orange yellow green teal blue purple gray`.
@@ -119,6 +120,7 @@ the capitals move.
 | `v` `<Esc>` · `b` · `t` | tools: select, box, text — the box and text tools with a grid cursor, `hjkl` (`HJKL` five) and `<CR>`: a text there, a box's two corners (twice in place, an 8×3) |
 | `<CR>` `i` | the selection's label, typed where it is drawn (Decision 12; `:diagram label TEXT` sets it from the prompt) |
 | `x` `<Del>` | delete; a box takes its arrows with it |
+| `B` | the selected arrows, a box's arrows on a box, straight again: their bend let go (Decision 13) |
 | `A` | a box's label against the left, the right, or in the middle (Decision 12) |
 | `s` · `r` · `-` · `R` · `c` | next shape · elbowed or straight again, a box's arrows on a box · dashed, an arrow or a box's outline · reversed · next colour |
 | `C` | connect the selected boxes in the order selected |
@@ -338,3 +340,38 @@ round, but the prompt typed one line of them, `\n` spelled out.
 is drawn, the box's growth unseen until written); a buffer of its own in
 a split (a pane opened and closed for every label); writing each key's
 change through (a step a key in the undo tree, and a reparse each).
+
+### 13. An arrow bends through a point of its own
+
+Asked 2026-10-22: "I want an ability to move arrows so i can write
+more" — a label of several lines (Decision 12) on an arrow between two
+boxes a few units apart had nowhere to go. Of the readings (a bend, a
+label moved off its arrow, both), the user took the bend.
+
+- **`via X,Y`** on an arrow's line: a grid point it is routed through,
+  its label on it. Still between its boxes (Decision 5): the ends are
+  routed, only the bend is placed. Straight, it runs from A's outline to
+  the point and on to B's. Elbowed, it stays at right angles: past both
+  boxes on the side away from the other's way (below or above two boxes
+  side by side, beside two stacked) a U at the point's height, else the
+  plain elbow's turn moved to the point; its label where the route
+  passes nearest it. A loop goes out to the point and back. A point
+  inside either box, or where no right-angled route goes, is not taken:
+  the arrow is drawn as it would be without it. A bent arrow runs in no
+  lane: its route is its own.
+- **Pulled by its middle.** A press on an arrow alone (not one of a
+  wider selection, which moves as before) selects it; a drag from there
+  bends it through the grid point it is let go on, drawn as it goes. An
+  arrow with no label shows a dot where it bends or would; a label is
+  the grip itself, and a dot on it covered its words.
+- **The keys move it as a box**: `HJKL` on an arrow selected move its
+  bend a unit, from its label's point when it has none. A box moved
+  leaves the bend where it was put; both of its boxes moved (a group, a
+  marquee) carry it, and a paste moves it with them. `B` — the menu's
+  Unbend, the toolbar's *unbend* — lets it go.
+- **The export** writes the route as drawn: Excalidraw's arrow points.
+
+*Beat:* free points for an arrow's ends (Decision 10's free-floating
+arrows; a bend keeps the ends routed and the line one point long), a
+label offset (the arrow still crossed the label's room), several bends
+an arrow (a hand-drawn polyline in a format whose arrows are routed).

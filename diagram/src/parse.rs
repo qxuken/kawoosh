@@ -204,11 +204,13 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
                 route: Route::Straight,
                 dashed: false,
                 color: None,
+                via: None,
             };
             while let Some(t) = r.next() {
                 match t {
                     Tok::Str(s) => e.label = s,
                     Tok::Word(w) => match w.as_str() {
+                        "via" => e.via = Some(pair(&r.word("via")?, ',', "point (X,Y)")?),
                         "elbow" => e.route = Route::Elbow,
                         "straight" => e.route = Route::Straight,
                         "dashed" => e.dashed = true,

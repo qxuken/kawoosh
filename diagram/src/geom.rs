@@ -146,7 +146,18 @@ pub const LANE: f32 = 0.75;
 pub fn wires(doc: &Doc, moved: &dyn Fn(&Node) -> Rect) -> Vec<Option<Wire>> {
     // The arrows between each pair of boxes, either way, for their lanes.
     let mut pairs: Vec<((&str, &str), Vec<usize>)> = Vec::new();
+    let mut out: Vec<Option<Wire>> = vec![None; doc.entries.len()];
     for (i, e) in doc.entries.iter().enumerate() {
+        // Bent through a point of its own: its own way, in no lane.
+        if let Item::Edge(edge) = &e.item
+            && let Some((x, y)) = edge.via
+        {
+            if let (Some(a), Some(b)) = (doc.node(&edge.from), doc.node(&edge.to)) {
+                let p = Pt::new(x as f32, y as f32);
+                out[i] = Some(bent(a, &moved(a), b, &moved(b), edge.route, p));
+            }
+            continue;
+        }
         if let Item::Edge(edge) = &e.item {
             let key = if edge.from <= edge.to {
                 (edge.from.as_str(), edge.to.as_str())
@@ -159,7 +170,6 @@ pub fn wires(doc: &Doc, moved: &dyn Fn(&Node) -> Rect) -> Vec<Option<Wire>> {
             }
         }
     }
-    let mut out: Vec<Option<Wire>> = vec![None; doc.entries.len()];
     for (_, list) in pairs {
         let k = list.len();
         for (n, &i) in list.iter().enumerate() {
@@ -199,6 +209,173 @@ fn route(a: &Node, ra: Rect, b: &Node, rb: Rect, how: Route, lane: f32, nth: usi
     };
     let mid = midpoint(&points);
     Wire { points, mid }
+}
+
+/// An arrow bent through `p` (docs/design/diagrams.md Decision 13): a
+/// straight one from A's outline to `p` and on to B's, its label on `p`;
+/// an elbow at right angles — round under or over both boxes when `p`
+/// is past them that way (a U), else with its turn at `p` — its label
+/// where the route passes nearest `p`. A point inside either box, or one
+/// no right-angled route goes by, is not taken: the arrow as it would be
+/// without it.
+fn bent(a: &Node, ra: &Rect, b: &Node, rb: &Rect, how: Route, p: Pt) -> Wire {
+    let plain = |a: &Node, b: &Node| route(a, *ra, b, *rb, how, 0.0, 0);
+    if inside(a.shape, ra, p) || inside(b.shape, rb, p) {
+        return plain(a, b);
+    }
+    let (ca, cb) = (ra.center(), rb.center());
+    let points = if a.id == b.id {
+        // A loop out to `p` and back: its two legs half a box apart.
+        let (dx, dy) = (p.x - ca.x, p.y - ca.y);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-3);
+        let spread = (ra.w.min(ra.h) * 0.25).clamp(0.2, 1.0);
+        let (nx, ny) = (-dy / len * spread, dx / len * spread);
+        vec![
+            crossing(a.shape, ra, Pt::new(ca.x + nx, ca.y + ny), p),
+            p,
+            crossing(a.shape, ra, Pt::new(ca.x - nx, ca.y - ny), p),
+        ]
+    } else if how == Route::Straight {
+        vec![
+            crossing(a.shape, ra, ca, p),
+            p,
+            crossing(b.shape, rb, cb, p),
+        ]
+    } else {
+        match elbow_via(ra, rb, p) {
+            Some(mut pts) => {
+                let n = pts.len();
+                pts[0] = onto(a.shape, ra, pts[0], pts[1]);
+                pts[n - 1] = onto(b.shape, rb, pts[n - 1], pts[n - 2]);
+                simplify(pts)
+            }
+            None => return plain(a, b),
+        }
+    };
+    let mid = nearest_on(&points, p);
+    Wire { points, mid }
+}
+
+/// An elbow's route through `p`, its ends on the boxes' sides: a U under
+/// or over both — or, for boxes one above the other, a C beside both —
+/// at `p`'s height (or across); else the turn of a plain elbow moved to
+/// `p`. `None` when `p` is where neither goes.
+fn elbow_via(ra: &Rect, rb: &Rect, p: Pt) -> Option<Vec<Pt>> {
+    let (ca, cb) = (ra.center(), rb.center());
+    let gap_x = (rb.x - ra.right()).max(ra.x - rb.right());
+    let gap_y = (rb.y - ra.bottom()).max(ra.y - rb.bottom());
+    let beside = gap_x >= gap_y;
+    let above = p.y < ra.y.min(rb.y);
+    let below = p.y > ra.bottom().max(rb.bottom());
+    let left = p.x < ra.x.min(rb.x);
+    let right = p.x > ra.right().max(rb.right());
+    // Out of the tops or the bottoms, across at `p`'s height.
+    let u = |top: bool| {
+        let (ya, yb) = if top {
+            (ra.y, rb.y)
+        } else {
+            (ra.bottom(), rb.bottom())
+        };
+        vec![
+            Pt::new(ca.x, ya),
+            Pt::new(ca.x, p.y),
+            Pt::new(cb.x, p.y),
+            Pt::new(cb.x, yb),
+        ]
+    };
+    // Out of the left sides or the right ones, down at `p`'s place.
+    let c = |l: bool| {
+        let (xa, xb) = if l {
+            (ra.x, rb.x)
+        } else {
+            (ra.right(), rb.right())
+        };
+        vec![
+            Pt::new(xa, ca.y),
+            Pt::new(p.x, ca.y),
+            Pt::new(p.x, cb.y),
+            Pt::new(xb, cb.y),
+        ]
+    };
+    if beside {
+        if above || below {
+            return Some(u(above));
+        }
+        let (xa, xb) = if cb.x >= ca.x {
+            (ra.right(), rb.x)
+        } else {
+            (ra.x, rb.right())
+        };
+        if gap_x > 0.0 && p.x > xa.min(xb) && p.x < xa.max(xb) {
+            return Some(vec![
+                Pt::new(xa, ca.y),
+                Pt::new(p.x, ca.y),
+                Pt::new(p.x, cb.y),
+                Pt::new(xb, cb.y),
+            ]);
+        }
+        if left || right {
+            return Some(c(left));
+        }
+    } else {
+        if left || right {
+            return Some(c(left));
+        }
+        let (ya, yb) = if cb.y >= ca.y {
+            (ra.bottom(), rb.y)
+        } else {
+            (ra.y, rb.bottom())
+        };
+        if gap_y > 0.0 && p.y > ya.min(yb) && p.y < ya.max(yb) {
+            return Some(vec![
+                Pt::new(ca.x, ya),
+                Pt::new(ca.x, p.y),
+                Pt::new(cb.x, p.y),
+                Pt::new(cb.x, yb),
+            ]);
+        }
+        if above || below {
+            return Some(u(above));
+        }
+    }
+    None
+}
+
+/// A route's runs with no turn in them made one: a point twice, or on
+/// the line between its neighbours, goes.
+fn simplify(mut pts: Vec<Pt>) -> Vec<Pt> {
+    pts.dedup_by(|a, b| a.dist(*b) < 1e-4);
+    let mut i = 1;
+    while i + 1 < pts.len() {
+        let (a, b, c) = (pts[i - 1], pts[i], pts[i + 1]);
+        if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() < 1e-4 {
+            pts.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+    pts
+}
+
+/// The point of the route `pts` nearest `p`.
+pub fn nearest_on(pts: &[Pt], p: Pt) -> Pt {
+    let mut best = (f32::MAX, pts.first().copied().unwrap_or(p));
+    for w in pts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (dx, dy) = (b.x - a.x, b.y - a.y);
+        let l2 = dx * dx + dy * dy;
+        let t = if l2 <= 0.0 {
+            0.0
+        } else {
+            (((p.x - a.x) * dx + (p.y - a.y) * dy) / l2).clamp(0.0, 1.0)
+        };
+        let q = Pt::new(a.x + t * dx, a.y + t * dy);
+        let d = q.dist(p);
+        if d < best.0 {
+            best = (d, q);
+        }
+    }
+    best.1
 }
 
 /// From centre to centre, moved `lane` across, cut at both outlines.
@@ -269,19 +446,7 @@ fn elbow(sa: Shape, ra: &Rect, sb: Shape, rb: &Rect, lane: f32) -> Vec<Pt> {
     let n = pts.len();
     pts[0] = onto(sa, ra, pts[0], pts[1]);
     pts[n - 1] = onto(sb, rb, pts[n - 1], pts[n - 2]);
-    // A straight run has no turn in it: a point on the line between its
-    // neighbours goes.
-    pts.dedup_by(|a, b| a.dist(*b) < 1e-4);
-    let mut i = 1;
-    while i + 1 < pts.len() {
-        let (a, b, c) = (pts[i - 1], pts[i], pts[i + 1]);
-        if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() < 1e-4 {
-            pts.remove(i);
-        } else {
-            i += 1;
-        }
-    }
-    pts
+    simplify(pts)
 }
 
 /// `p` on the side of a box of `shape` in `r`, moved onto its outline
@@ -404,7 +569,15 @@ impl Layout {
         }
         for i in order.clone() {
             if let Some(w) = &self.wires[i] {
-                let near = w.points.windows(2).any(|s| seg_dist(p, s[0], s[1]) <= tol);
+                // Its bend's point too, where the canvas draws a dot to
+                // pull: an elbow passes by it, not always through it.
+                let bend = match &doc.entries[i].item {
+                    Item::Edge(e) => e
+                        .via
+                        .is_some_and(|(x, y)| Pt::new(x as f32, y as f32).dist(p) <= tol * 2.0),
+                    _ => false,
+                };
+                let near = bend || w.points.windows(2).any(|s| seg_dist(p, s[0], s[1]) <= tol);
                 if near || (!doc.entries[i].item.label().is_empty() && w.mid.dist(p) <= tol * 2.0) {
                     return Some(i);
                 }
@@ -595,6 +768,58 @@ mod tests {
         // Its legs straight up.
         assert!((first.x - w.points[1].x).abs() < 1e-3, "{w:?}");
         assert!((last.x - w.points[2].x).abs() < 1e-3, "{w:?}");
+    }
+
+    #[test]
+    fn an_arrow_bent_through_a_point_goes_by_it_its_label_on_it() {
+        let (_, l) = layout(
+            "box a at 0,0 size 4x2\nbox b at 10,0 size 4x2\narrow a -> b via 7,6\narrow a -> b \"u\" via 7,6 elbow\narrow a -> b via 7,-1 elbow\narrow a -> b via 2,1\n",
+        );
+        // Straight: A's outline, the point, B's outline.
+        let w = l.wires[2].as_ref().unwrap();
+        assert_eq!(w.points.len(), 3, "{w:?}");
+        assert_eq!(w.points[1], Pt::new(7.0, 6.0));
+        assert_eq!(w.mid, Pt::new(7.0, 6.0), "the label on the point");
+        assert!(
+            (w.points[0].y - 2.0).abs() < 1e-3,
+            "out of A's bottom: {w:?}"
+        );
+        // An elbow under both: a U at the point's height.
+        let w = l.wires[3].as_ref().unwrap();
+        assert_eq!(
+            w.points,
+            vec![
+                Pt::new(2.0, 2.0),
+                Pt::new(2.0, 6.0),
+                Pt::new(12.0, 6.0),
+                Pt::new(12.0, 2.0)
+            ]
+        );
+        assert_eq!(w.mid, Pt::new(7.0, 6.0));
+        // Over both, a unit up: a U over them.
+        let w = l.wires[4].as_ref().unwrap();
+        assert_eq!(w.points[1], Pt::new(2.0, -1.0));
+        // A point inside a box is not taken.
+        let w = l.wires[5].as_ref().unwrap();
+        assert_eq!(w.points.len(), 2, "{w:?}");
+        assert!(
+            close(w.points[0], Pt::new(4.0, 1.0)) && close(w.points[1], Pt::new(10.0, 1.0)),
+            "{w:?}"
+        );
+        // Between them, an elbow's turn moved to it.
+        let (_, l) =
+            layout("box a at 0,0 size 4x2\nbox b at 12,6 size 4x2\narrow a -> b via 5,4 elbow\n");
+        let w = l.wires[2].as_ref().unwrap();
+        assert_eq!(
+            w.points,
+            vec![
+                Pt::new(4.0, 1.0),
+                Pt::new(5.0, 1.0),
+                Pt::new(5.0, 7.0),
+                Pt::new(12.0, 7.0)
+            ]
+        );
+        assert_eq!(w.mid, Pt::new(5.0, 4.0));
     }
 
     #[test]

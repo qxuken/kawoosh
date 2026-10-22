@@ -1035,3 +1035,61 @@ fn a_free_text_is_typed_in_place_and_a_box_label_aligns_left() {
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+/// Asked 2026-10-22: "I want an ability to move arrows so i can write
+/// more". An arrow pulled by its middle bends through the grid point it
+/// is let go on, its label there (`via X,Y`); `J` moves the bend of an
+/// arrow selected, a box moved leaves it, `B` lets it go.
+#[test]
+fn an_arrow_pulled_bends_through_a_point_and_b_lets_it_go() {
+    let path = file("bend", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    // The arrow's middle, (10,1.5), pulled two units down; a click
+    // alone only selects it.
+    let mid = at(&app, 10.0, 1.5);
+    d.click(&mut app, mid.x, mid.y);
+    d.frame(&mut app);
+    assert_eq!(selected(&mut app), vec!["a->b"]);
+    assert_eq!(text(&app), START, "a click bends nothing");
+    // Pulled from further along it: a press where the click was would
+    // be a double click, its label typed.
+    let (from, to) = (at(&app, 8.0, 1.5), at(&app, 10.0, 6.0));
+    d.drag(&mut app, from, to);
+    d.frame(&mut app);
+    assert!(
+        text(&app).ends_with("arrow a -> b via 10,6\n"),
+        "{}",
+        text(&app)
+    );
+    assert_eq!(selected(&mut app), vec!["a->b"]);
+    // Its label on the bend.
+    let v = app.focused_view().unwrap();
+    let doc = app.diagram_doc(v);
+    let layout =
+        kawoosh_diagram::geom::Layout::of(&doc, &kawoosh_diagram::geom::node_rect, &|_| (1.0, 1.0));
+    assert_eq!(
+        layout.wires[2].as_ref().unwrap().mid,
+        kawoosh_diagram::Pt::new(10.0, 6.0)
+    );
+    // `J` a unit further down; `u` back.
+    d.keys(&mut app, "J");
+    assert!(
+        text(&app).ends_with("arrow a -> b via 10,7\n"),
+        "{}",
+        text(&app)
+    );
+    // A box moved: the bend stays where it was put.
+    d.press(&mut app, "<C-n>");
+    assert_eq!(selected(&mut app), vec!["a"]);
+    d.keys(&mut app, "H");
+    assert!(
+        text(&app).ends_with("arrow a -> b via 10,7\n"),
+        "{}",
+        text(&app)
+    );
+    // `B` on A: its arrows straight again.
+    d.keys(&mut app, "B");
+    assert!(text(&app).ends_with("arrow a -> b\n"), "{}", text(&app));
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}

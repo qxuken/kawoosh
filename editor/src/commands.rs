@@ -6293,6 +6293,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("A", "diagram align"),
         ("r", "diagram route"),
         ("R", "diagram reverse"),
+        ("B", "diagram unbend"),
         ("-", "diagram dashed"),
         ("c", "diagram color"),
         ("C", "diagram connect"),

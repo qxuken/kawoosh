@@ -126,15 +126,38 @@ pub fn moving_nodes(doc: &Doc, sel: &[usize]) -> Vec<String> {
 }
 
 /// The selection moved `dx`, `dy` units: a group moves its boxes, an
-/// arrow follows its.
+/// arrow follows its — its bend with it when both its boxes move. An
+/// arrow selected moves its bend (Decision 13), from where its label is
+/// when it has none.
 pub fn move_by(doc: &Doc, sel: &[usize], dx: i32, dy: i32) -> Vec<Change> {
     if dx == 0 && dy == 0 {
         return Vec::new();
     }
     let (nodes, texts) = movers(doc, sel);
+    let mut wires = None;
     let mut out = Vec::new();
     for (i, e) in doc.entries.iter().enumerate() {
         match &e.item {
+            Item::Edge(edge) if nodes.contains(&edge.from) && nodes.contains(&edge.to) => {
+                if let Some((x, y)) = edge.via {
+                    let mut edge = edge.clone();
+                    edge.via = Some((x + dx, y + dy));
+                    out.push(Change::Set(i, Item::Edge(edge)));
+                }
+            }
+            Item::Edge(edge) if sel.contains(&i) => {
+                let at = edge.via.or_else(|| {
+                    let wires = wires
+                        .get_or_insert_with(|| crate::geom::wires(doc, &crate::geom::node_rect));
+                    let m = wires[i].as_ref()?.mid;
+                    Some((m.x.round() as i32, m.y.round() as i32))
+                });
+                if let Some((x, y)) = at {
+                    let mut edge = edge.clone();
+                    edge.via = Some((x + dx, y + dy));
+                    out.push(Change::Set(i, Item::Edge(edge)));
+                }
+            }
             Item::Node(n) if nodes.contains(&n.id) => {
                 let mut n = n.clone();
                 n.x += dx;
@@ -172,6 +195,19 @@ pub fn hold_label(n: &mut Node, w: f32, h: f32) -> bool {
     let grew = (w, h) != (n.w, n.h);
     (n.w, n.h) = (w, h);
     grew
+}
+
+/// Arrow `i` bent through `x`, `y`, or straight again with `None`.
+pub fn bend(doc: &Doc, i: usize, via: Option<(i32, i32)>) -> Vec<Change> {
+    let Some(Item::Edge(e)) = doc.entries.get(i).map(|e| &e.item) else {
+        return Vec::new();
+    };
+    if e.via == via {
+        return Vec::new();
+    }
+    let mut e = e.clone();
+    e.via = via;
+    vec![Change::Set(i, Item::Edge(e))]
 }
 
 /// Box `i` put at `x`, `y`, `w` by `h`, a unit each way at least.
@@ -262,6 +298,7 @@ pub fn add_edge(from: &str, to: &str) -> Change {
         route: Route::Straight,
         dashed: false,
         color: None,
+        via: None,
     }))
 }
 
@@ -389,6 +426,7 @@ pub fn paste(doc: &Doc, items: &[Item], dx: i32, dy: i32) -> Vec<Change> {
             Item::Edge(mut e) => {
                 e.from = name(&e.from).unwrap_or(e.from);
                 e.to = name(&e.to).unwrap_or(e.to);
+                e.via = e.via.map(|(x, y)| (x + dx, y + dy));
                 if doc.node(&e.from).is_none() && !taken.contains(&e.from)
                     || doc.node(&e.to).is_none() && !taken.contains(&e.to)
                 {
@@ -433,6 +471,22 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("text \"note\" at 0,6"));
+    }
+
+    #[test]
+    fn an_arrow_moved_moves_its_bend_and_its_boxes_carry_it() {
+        let text = "box a at 0,0 size 4x2\nbox b at 10,0 size 4x2\nbox c at 0,8 size 4x2\narrow a -> b\narrow a -> c via 6,5\n";
+        // An arrow with no bend: bent from its label's point, (7,1).
+        let out = run(text, |d| move_by(d, &[3], 0, 3));
+        assert!(out.contains("arrow a -> b via 7,4\n"), "{out}");
+        // Both its boxes moved: the bend with them; one: it stays.
+        let out = run(text, |d| move_by(d, &[0, 2], 2, 0));
+        assert!(out.contains("arrow a -> c via 8,5\n"), "{out}");
+        assert!(out.contains("arrow a -> b\n"), "{out}");
+        let out = run(text, |d| move_by(d, &[0], 2, 0));
+        assert!(out.contains("arrow a -> c via 6,5\n"), "{out}");
+        let out = run(text, |d| bend(d, 4, None));
+        assert!(out.ends_with("arrow a -> c\n"), "{out}");
     }
 
     #[test]
