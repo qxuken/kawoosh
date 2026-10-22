@@ -43,6 +43,8 @@ const SLACK: f32 = 6.0;
 const NEW_TEXT: &str = "text";
 /// How far a paste or a duplicate lands from what it copied, units.
 const PASTE_OFFSET: i32 = 2;
+/// The most a drag past the canvas's edge pans the view a move, px.
+const EDGE_PAN: f32 = 24.0;
 /// The field a label is typed into where it is drawn.
 pub const LABEL_FIELD: &str = "diagram/label";
 
@@ -413,6 +415,7 @@ fn menu_rows(
         _ => None,
     });
     let nodes = items.iter().filter(|i| matches!(i, Item::Node(_))).count();
+    let texts = items.iter().filter(|i| matches!(i, Item::Text(_))).count();
     let groups = items.iter().filter(|i| matches!(i, Item::Group(_))).count();
     out.push(row("Edit Label", "i", "diagram edit").enabled(items.len() == 1));
     if let Some(n) = node {
@@ -464,12 +467,21 @@ fn menu_rows(
     if nodes >= 2 {
         out.push(row("Connect in Order", "C", "diagram connect"));
     }
-    if nodes + groups > 0 {
+    if nodes + texts + groups > 0 {
         out.push(row("Group", "G", "diagram group"));
     }
     if groups > 0 {
         out.push(row("Ungroup", "", "diagram ungroup"));
     }
+    out.push(MenuItem::submenu(
+        "Arrange",
+        vec![
+            row("Bring to Front", "", "diagram arrange front"),
+            row("Bring Forward", ">", "diagram arrange forward"),
+            row("Send Backward", "<", "diagram arrange backward"),
+            row("Send to Back", "", "diagram arrange back"),
+        ],
+    ));
     out.push(MenuItem::separator());
     out.push(row("Duplicate", "D", "diagram duplicate"));
     out.push(row("Copy", "y", "diagram copy"));
@@ -679,7 +691,31 @@ impl Kawoosh {
         }
         let (doc, layout) = self.canvas_layout(view);
         let (shift, alt) = (self.mods.shift, self.mods.alt);
+        let vb = self.canvas_view_box(pane);
         let c = self.canvas_of(view);
+        // A drag carried past the canvas's edge takes the view with it,
+        // so what is moved, drawn or pulled stays in sight: by how far
+        // past the pointer is, a little a move at most, and only while
+        // the pointer moves — held still out there, the view holds too.
+        if d.phase == DragPhase::Move
+            && c.gesture
+                .as_ref()
+                .is_some_and(|g| !matches!(g, Gesture::Pan { .. }))
+        {
+            let past = |at: f32, lo: f32, hi: f32| {
+                let by = if at < lo {
+                    at - lo
+                } else if at > hi {
+                    at - hi
+                } else {
+                    0.0
+                };
+                by.clamp(-EDGE_PAN, EDGE_PAN)
+            };
+            let (x0, y0) = (body.x + vb.x, body.y + vb.y);
+            c.origin.x -= past(d.pos.x, x0, x0 + vb.w);
+            c.origin.y -= past(d.pos.y, y0, y0 + vb.h);
+        }
         let p = c.units(&body, d.pos);
         let tol = SLACK / c.scale();
         let mut after = After::Nothing;
@@ -1639,32 +1675,24 @@ impl Kawoosh {
                         ),
                         |ui| {
                     pen.grid(ui);
-                    // Groups behind, then the boxes, the arrows, the free
-                    // texts. A rectangle's box is a float; a path's and an
-                    // arrow's are drawn in the canvas's own layer, under
-                    // every float.
-                    for (i, e) in shown.entries.iter().enumerate() {
-                        if let (Item::Group(g), Some(r)) = (&e.item, layout.bounds[i]) {
-                            pen.group(ui, i, &format!("g{i}"), &g.label, g.color, &r);
-                        }
-                    }
-                    for (i, e) in shown.entries.iter().enumerate() {
-                        if let (Item::Node(n), Some(r)) = (&e.item, layout.bounds[i])
-                            && pen.on_screen(&r)
-                        {
-                            pen.node(ui, i, &format!("n{i}"), n, &r);
-                        }
-                    }
-                    for (i, e) in shown.entries.iter().enumerate() {
-                        if let (Item::Edge(edge), Some(w)) = (&e.item, &layout.wires[i]) {
-                            pen.edge(ui, i, &format!("e{i}"), edge, w, sel.contains(&i));
-                        }
-                    }
-                    for (i, e) in shown.entries.iter().enumerate() {
-                        if let (Item::Text(t), Some(r)) = (&e.item, layout.bounds[i])
-                            && pen.on_screen(&r)
-                        {
-                            pen.text(ui, i, &format!("t{i}"), t, &r);
+                    // The groups behind, then every box, arrow and text in
+                    // the file's order, a line later over one before it —
+                    // each one float (Decision 14).
+                    for i in shown.draw_order() {
+                        match (&shown.entries[i].item, layout.bounds[i], &layout.wires[i]) {
+                            (Item::Group(g), Some(r), _) => {
+                                pen.group(ui, i, &format!("g{i}"), &g.label, g.color, &r)
+                            }
+                            (Item::Node(n), Some(r), _) if pen.on_screen(&r) => {
+                                pen.node(ui, i, &format!("n{i}"), n, &r)
+                            }
+                            (Item::Edge(edge), _, Some(w)) => {
+                                pen.edge(ui, i, &format!("e{i}"), edge, w, sel.contains(&i))
+                            }
+                            (Item::Text(t), Some(r), _) if pen.on_screen(&r) => {
+                                pen.text(ui, i, &format!("t{i}"), t, &r)
+                            }
+                            _ => {}
                         }
                     }
                     // What is selected, a box's corners when it is one box;
@@ -2118,19 +2146,7 @@ impl Pen {
         let (x, y, w, h) = self.rect(r);
         let ink = self.hue(color).unwrap_or(self.pal.dim);
         let dash = (6.0 * self.zoom).max(3.0);
-        ui.polyline_keyed(
-            &format!("{key}.line"),
-            &[
-                Vec2::new(x, y),
-                Vec2::new(x + w, y),
-                Vec2::new(x + w, y + h),
-                Vec2::new(x, y + h),
-                Vec2::new(x, y),
-            ],
-            Stroke::new(1.0, ink.with_alpha(0.8)).dash(dash, dash * 0.7),
-            NodeSpec::row(),
-        );
-        // The wash and the label in one float, the label inside it.
+        // The wash, its dashed frame and its label one float (Decision 14).
         let show = (self.typing(i) || !label.is_empty()) && self.label_size() >= 5.0;
         let style = self.style(self.label_size() * 0.9, ink);
         ui.with_keyed(
@@ -2141,6 +2157,18 @@ impl Pen {
                 .radius(6.0 * self.zoom.min(1.0))
                 .pad_xy(0.5 * self.s, 0.35 * self.s),
             |ui| {
+                ui.polyline_keyed(
+                    "frame",
+                    &[
+                        Vec2::new(0.0, 0.0),
+                        Vec2::new(w, 0.0),
+                        Vec2::new(w, h),
+                        Vec2::new(0.0, h),
+                        Vec2::new(0.0, 0.0),
+                    ],
+                    Stroke::new(1.0, ink.with_alpha(0.8)).dash(dash, dash * 0.7),
+                    NodeSpec::row(),
+                );
                 if show {
                     self.label(ui, i, label, style);
                 }
@@ -2151,9 +2179,11 @@ impl Pen {
     fn node(&self, ui: &mut Ui<'_>, i: usize, key: &str, n: &Node, r: &Rect) {
         let (x, y, w, h) = self.rect(r);
         let ink = self.ink(n.color);
+        // Opaque, its colour mixed over the canvas: a box drawn over an
+        // arrow or a text covers it (Decision 14), not shows it through.
         let fill = self
             .hue(n.color)
-            .map(|c| c.with_alpha(0.16))
+            .map(|c| self.pal.panel.mix(c, 0.16))
             .unwrap_or(self.pal.strip);
         let bw = self.width();
         let stroke = Stroke::new(bw, ink);
@@ -2193,94 +2223,106 @@ impl Pen {
                 });
                 return;
             }
-            Shape::Ellipse => {
-                ui.path_keyed(key, &stroked(ellipse(x, y, w, h)), NodeSpec::row().bg(fill))
-            }
-            Shape::Diamond => {
-                let p = Path::new()
-                    .move_to(x + w / 2.0, y)
-                    .line_to(x + w, y + h / 2.0)
-                    .line_to(x + w / 2.0, y + h)
-                    .line_to(x, y + h / 2.0)
-                    .close();
-                ui.path_keyed(key, &stroked(p), NodeSpec::row().bg(fill));
-            }
-            Shape::Cylinder => {
-                let (rx, ry) = (w / 2.0, (h * 0.15).min(0.5 * self.s).max(2.0));
-                let body = Path::new()
-                    .move_to(x, y + ry)
-                    .arc_to(rx, ry, 0.0, false, true, x + w, y + ry)
-                    .line_to(x + w, y + h - ry)
-                    .arc_to(rx, ry, 0.0, false, true, x, y + h - ry)
-                    .close();
-                ui.path_keyed(key, &stroked(body), NodeSpec::row().bg(fill));
-                if n.dashed {
-                    // The rim: the near half of the top.
-                    let pi = std::f32::consts::PI;
-                    let rim: Vec<Vec2> = (0..=24)
-                        .map(|i| {
-                            let a = pi * i as f32 / 24.0;
-                            Vec2::new(x + rx + rx * a.cos(), y + ry + ry * a.sin())
-                        })
-                        .collect();
-                    ui.polyline_keyed(&format!("{key}.rim"), &rim, dashes, NodeSpec::row());
-                } else {
-                    let rim = Path::new()
-                        .move_to(x, y + ry)
-                        .arc_to(rx, ry, 0.0, false, false, x + w, y + ry)
-                        .stroked(stroke);
+            _ => {}
+        }
+        // A path's box: the float its outline is drawn in, at its own
+        // coordinates, and its label laid out in — one layer an item
+        // (Decision 14). A dot's or a final's label beside it: too small
+        // to hold one.
+        let beside = matches!(n.shape, Shape::Dot | Shape::Final);
+        let spec = if beside {
+            NodeSpec::row()
+                .float(
+                    FloatConfig::parent()
+                        .inside(Align::Start, Align::Start)
+                        .offset(x, y)
+                        .clipped(),
+                )
+                .height(h)
+                .cross_align(Align::Center)
+        } else {
+            self.aligned(float_at(x, y).size(w, h), n.align)
+        };
+        ui.with_keyed(key, spec, |ui| {
+            match n.shape {
+                Shape::Ellipse => {
                     ui.path_keyed(
-                        &format!("{key}.rim"),
-                        &rim,
-                        NodeSpec::row().bg(Color::TRANSPARENT),
+                        "shape",
+                        &stroked(ellipse(0.0, 0.0, w, h)),
+                        NodeSpec::row().bg(fill),
                     );
                 }
+                Shape::Diamond => {
+                    let p = Path::new()
+                        .move_to(w / 2.0, 0.0)
+                        .line_to(w, h / 2.0)
+                        .line_to(w / 2.0, h)
+                        .line_to(0.0, h / 2.0)
+                        .close();
+                    ui.path_keyed("shape", &stroked(p), NodeSpec::row().bg(fill));
+                }
+                Shape::Cylinder => {
+                    let (rx, ry) = (w / 2.0, (h * 0.15).min(0.5 * self.s).max(2.0));
+                    let body = Path::new()
+                        .move_to(0.0, ry)
+                        .arc_to(rx, ry, 0.0, false, true, w, ry)
+                        .line_to(w, h - ry)
+                        .arc_to(rx, ry, 0.0, false, true, 0.0, h - ry)
+                        .close();
+                    ui.path_keyed("shape", &stroked(body), NodeSpec::row().bg(fill));
+                    if n.dashed {
+                        // The rim: the near half of the top.
+                        let pi = std::f32::consts::PI;
+                        let rim: Vec<Vec2> = (0..=24)
+                            .map(|i| {
+                                let a = pi * i as f32 / 24.0;
+                                Vec2::new(rx + rx * a.cos(), ry + ry * a.sin())
+                            })
+                            .collect();
+                        ui.polyline_keyed("rim", &rim, dashes, NodeSpec::row());
+                    } else {
+                        let rim = Path::new()
+                            .move_to(0.0, ry)
+                            .arc_to(rx, ry, 0.0, false, false, w, ry)
+                            .stroked(stroke);
+                        ui.path_keyed("rim", &rim, NodeSpec::row().bg(Color::TRANSPARENT));
+                    }
+                }
+                Shape::Dot => {
+                    ui.path_keyed("shape", &ellipse(0.0, 0.0, w, h), NodeSpec::row().bg(ink));
+                }
+                Shape::Final => {
+                    ui.path_keyed(
+                        "shape",
+                        &stroked(ellipse(0.0, 0.0, w, h)),
+                        NodeSpec::row().bg(self.pal.panel),
+                    );
+                    let (iw, ih) = (w * 0.5, h * 0.5);
+                    ui.path_keyed(
+                        "core",
+                        &ellipse((w - iw) / 2.0, (h - ih) / 2.0, iw, ih),
+                        NodeSpec::row().bg(ink),
+                    );
+                }
+                Shape::Rect | Shape::Round => {}
             }
-            Shape::Dot => ui.path_keyed(key, &ellipse(x, y, w, h), NodeSpec::row().bg(ink)),
-            Shape::Final => {
-                ui.path_keyed(
-                    key,
-                    &stroked(ellipse(x, y, w, h)),
-                    NodeSpec::row().bg(self.pal.panel),
-                );
-                let (iw, ih) = (w * 0.5, h * 0.5);
-                ui.path_keyed(
-                    &format!("{key}.core"),
-                    &ellipse(x + (w - iw) / 2.0, y + (h - ih) / 2.0, iw, ih),
-                    NodeSpec::row().bg(ink),
+            if n.dashed && !matches!(n.shape, Shape::Dot) {
+                ui.polyline_keyed(
+                    "dash",
+                    &outline_points(n.shape, 0.0, 0.0, w, h, 0.0),
+                    dashes,
+                    NodeSpec::row(),
                 );
             }
-        }
-        if n.dashed && !matches!(n.shape, Shape::Dot) {
-            ui.polyline_keyed(
-                &format!("{key}.dash"),
-                &outline_points(n.shape, x, y, w, h, 0.0),
-                dashes,
-                NodeSpec::row(),
-            );
-        }
-        // A path is drawn in the canvas's layer: its label, a float, is
-        // over it whatever the stack does.
-        if !show {
-            return;
-        }
-        let label_key = format!("{key}.label");
-        if matches!(n.shape, Shape::Dot | Shape::Final) {
-            // Too small to hold it: beside, on the right.
-            ui.with_keyed(
-                &label_key,
-                float_at(x + w + 0.4 * self.s, y)
-                    .height(h)
-                    .main_align(Align::Center),
-                |ui| self.label(ui, i, &n.label, style),
-            );
-        } else {
-            ui.with_keyed(
-                &label_key,
-                self.aligned(float_at(x, y).size(w, h), n.align),
-                |ui| self.label(ui, i, &n.label, style),
-            );
-        }
+            if show && beside {
+                ui.leaf_keyed("gap", NodeSpec::row().size(w + 0.4 * self.s, h));
+                ui.with_keyed("words", NodeSpec::column(), |ui| {
+                    self.label(ui, i, &n.label, style)
+                });
+            } else if show {
+                self.label(ui, i, &n.label, style);
+            }
+        });
     }
 
     fn edge(
@@ -2298,34 +2340,10 @@ impl Pen {
             self.ink(e.color)
         };
         let width = self.width() * if selected { 1.4 } else { 1.0 };
-        let mut pts: Vec<Vec2> = w.points.iter().map(|p| self.px(*p)).collect();
-        if pts.len() < 2 {
+        if w.points.len() < 2 {
             return;
         }
-        let head = (9.0 * self.zoom).clamp(6.0, 16.0);
-        let n = pts.len();
-        if e.heads.at_end() {
-            pts[n - 1] = arrow_head(
-                ui,
-                &format!("{key}.h1"),
-                pts[n - 2],
-                pts[n - 1],
-                head,
-                color,
-            );
-        }
-        if e.heads.at_start() {
-            pts[0] = arrow_head(ui, &format!("{key}.h0"), pts[1], pts[0], head, color);
-        }
-        let mut stroke = Stroke::new(width, color);
-        if e.dashed {
-            let d = (6.0 * self.zoom).max(3.0);
-            stroke = stroke.dash(d, d * 0.7);
-        }
-        ui.polyline_keyed(key, &pts, stroke, NodeSpec::row());
-        if (e.label.is_empty() && !self.typing(i)) || self.label_size() < 5.0 {
-            return;
-        }
+        let labelled = (!e.label.is_empty() || self.typing(i)) && self.label_size() >= 5.0;
         let style = self.style(
             self.label_size() * 0.9,
             if selected {
@@ -2341,16 +2359,50 @@ impl Pen {
             .fold(0.0f32, f32::max);
         let lines = e.label.split('\n').count() as f32;
         let th = lines * (self.label_size() * 0.9 * 1.3).round();
+        // One float an arrow (Decision 14), at its label's corner — at its
+        // middle with none — its line and heads drawn from there, under
+        // the label laid out after them.
         let m = self.px(w.mid);
-        ui.with_keyed(
-            &format!("{key}.label"),
-            float_at(m.x - widest / 2.0 - 4.0, m.y - th / 2.0 - 1.0)
-                .pad_xy(4.0, 1.0)
-                .bg(self.pal.panel)
-                .radius(3.0)
-                .cross_align(Align::Center),
-            |ui| self.label(ui, i, &e.label, style),
-        );
+        let at = if labelled {
+            Vec2::new(m.x - widest / 2.0 - 4.0, m.y - th / 2.0 - 1.0)
+        } else {
+            m
+        };
+        let mut pts: Vec<Vec2> = w
+            .points
+            .iter()
+            .map(|p| {
+                let q = self.px(*p);
+                Vec2::new(q.x - at.x, q.y - at.y)
+            })
+            .collect();
+        let head = (9.0 * self.zoom).clamp(6.0, 16.0);
+        let n = pts.len();
+        let mut stroke = Stroke::new(width, color);
+        if e.dashed {
+            let d = (6.0 * self.zoom).max(3.0);
+            stroke = stroke.dash(d, d * 0.7);
+        }
+        ui.with_keyed(key, float_at(at.x, at.y), |ui| {
+            if e.heads.at_end() {
+                pts[n - 1] = arrow_head(ui, "h1", pts[n - 2], pts[n - 1], head, color);
+            }
+            if e.heads.at_start() {
+                pts[0] = arrow_head(ui, "h0", pts[1], pts[0], head, color);
+            }
+            ui.polyline_keyed("line", &pts, stroke, NodeSpec::row());
+            if labelled {
+                ui.with_keyed(
+                    "label",
+                    NodeSpec::column()
+                        .pad_xy(4.0, 1.0)
+                        .bg(self.pal.panel)
+                        .radius(3.0)
+                        .cross_align(Align::Center),
+                    |ui| self.label(ui, i, &e.label, style),
+                );
+            }
+        });
     }
 
     fn text(&self, ui: &mut Ui<'_>, i: usize, key: &str, t: &Text, r: &Rect) {
@@ -2555,7 +2607,7 @@ fn toolbar_groups(what: &Selected) -> Vec<Vec<(Button, bool)>> {
             (("connect", "C", "diagram connect"), what.boxes >= 2),
             (
                 ("group", "G", "diagram group"),
-                what.boxes + what.groups > 0,
+                what.boxes + what.texts + what.groups > 0,
             ),
             (("ungroup", "", "diagram ungroup"), what.groups > 0),
             (("delete", "x", "diagram delete"), what.any()),
@@ -2875,6 +2927,10 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     return;
                 }
                 k.canvas_do(false, |doc, sel, _| edit::move_by(doc, sel, dx, dy));
+                // The view follows what moved (asked 2026-10-23).
+                if let Some(v) = k.canvas_here() {
+                    k.canvas_reveal(v);
+                }
             },
         ),
         cmd(
@@ -2921,6 +2977,38 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                         n.align = named.unwrap_or(n.align.next());
                     }
                 });
+            },
+        ),
+        cmd(
+            Spec::new("diagram arrange")
+                .args(Args::new(&[ArgKind::Text]))
+                .when(on)
+                .doc("the selection forward over the next thing drawn, backward under the one before, to the front or the back: its lines moved in the file, whose order is the drawing's"),
+            |k, ctx| {
+                let Some(how) = ctx.arg(0).and_then(edit::Arrange::from_word) else {
+                    k.ed.message = "arrange: forward backward front back".into();
+                    return;
+                };
+                let Some(v) = k.canvas_here() else {
+                    return;
+                };
+                let doc = k.diagram_doc(v);
+                let sel = k.canvas.views[&v].sel.clone();
+                if sel.is_empty() {
+                    k.ed.message = "nothing selected".into();
+                    return;
+                }
+                let b = k.ed.views[v].buffer;
+                let text = k.ed.buffers[b].text();
+                let (edits, after) = edit::arrange(&doc, &text, &sel, how);
+                if edits.is_empty() {
+                    return;
+                }
+                if !k.ed.apply_edits(b, &edits) {
+                    k.ed.message = "the diagram's buffer takes no edits".into();
+                    return;
+                }
+                k.canvas_of(v).sel = after;
             },
         ),
         cmd(
@@ -3082,7 +3170,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("diagram group")
                 .when(on)
-                .doc("a group round the selected boxes and groups, its label asked — not a second one round the same"),
+                .doc("a group round the selected boxes, texts and groups — a text named for it — its label typed; not a second one round the same"),
             |k, _| {
                 let Some(v) = k.canvas_here() else {
                     return;
@@ -3097,12 +3185,16 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     return;
                 }
                 match edit::group(&doc, &sel) {
-                    Some((change, _)) => {
-                        if k.canvas_apply(v, &[change], true) {
+                    Some((changes, id)) => {
+                        if k.canvas_apply(v, &changes, false) {
+                            let doc = k.diagram_doc(v);
+                            if let Some(g) = doc.entries.iter().position(|e| e.item.id() == Some(id.as_str())) {
+                                k.canvas_of(v).sel = vec![g];
+                            }
                             k.canvas_edit(v);
                         }
                     }
-                    None => k.ed.message = "select boxes to group".into(),
+                    None => k.ed.message = "select boxes or texts to group".into(),
                 }
             },
         ),
@@ -3285,6 +3377,9 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                         b.h = (b.h + dh).max(1);
                     }
                 });
+                if let Some(v) = k.canvas_here() {
+                    k.canvas_reveal(v);
+                }
             },
         ),
         cmd(

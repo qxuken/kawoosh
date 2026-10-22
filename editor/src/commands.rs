@@ -6294,6 +6294,11 @@ pub fn default_keymap(km: &mut Keymap) {
         ("r", "diagram route"),
         ("R", "diagram reverse"),
         ("B", "diagram unbend"),
+        // The draw order, which is the file's: a step, or all the way.
+        (">", "diagram arrange forward"),
+        ("<", "diagram arrange backward"),
+        ("g>", "diagram arrange front"),
+        ("g<", "diagram arrange back"),
         ("-", "diagram dashed"),
         ("c", "diagram color"),
         ("C", "diagram connect"),

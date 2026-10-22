@@ -107,11 +107,11 @@ fn a_box_drawn_takes_its_label_and_an_arrow_joins_it() {
     let v = app.focused_view().unwrap();
     // The box tool: a drag draws one, and the prompt asks its label.
     d.keys(&mut app, "b");
-    let (from, to) = (at(&app, 2.0, 8.0), at(&app, 8.0, 11.0));
+    let (from, to) = (at(&app, 2.0, 6.0), at(&app, 8.0, 9.0));
     d.drag(&mut app, from, to);
     d.frame(&mut app);
     assert!(
-        text(&app).ends_with("box n1 at 2,8 size 6x3\n"),
+        text(&app).ends_with("box n1 at 2,6 size 6x3\n"),
         "{}",
         text(&app)
     );
@@ -119,7 +119,7 @@ fn a_box_drawn_takes_its_label_and_an_arrow_joins_it() {
     keep(&mut d, &mut app);
     d.frame(&mut app);
     assert!(
-        text(&app).ends_with("box n1 \"Cache\" at 2,8 size 6x3\n"),
+        text(&app).ends_with("box n1 \"Cache\" at 2,6 size 6x3\n"),
         "{}",
         text(&app)
     );
@@ -129,7 +129,7 @@ fn a_box_drawn_takes_its_label_and_an_arrow_joins_it() {
         &mut app,
         kui_native::InputEvent::Modifiers(KeyMods::NONE.with_alt()),
     );
-    let (from, to) = (at(&app, 4.0, 1.5), at(&app, 5.0, 9.5));
+    let (from, to) = (at(&app, 4.0, 1.5), at(&app, 5.0, 7.5));
     d.drag(&mut app, from, to);
     d.input(&mut app, kui_native::InputEvent::Modifiers(KeyMods::NONE));
     d.frame(&mut app);
@@ -151,7 +151,7 @@ fn a_box_drawn_takes_its_label_and_an_arrow_joins_it() {
     d.frame(&mut app);
     assert_eq!(
         text(&app),
-        "# services\nbox b \"B\" at 12,0\nbox n1 \"Cache\" at 2,8 size 6x3\n"
+        "# services\nbox b \"B\" at 12,0\nbox n1 \"Cache\" at 2,6 size 6x3\n"
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -1091,5 +1091,122 @@ fn an_arrow_pulled_bends_through_a_point_and_b_lets_it_go() {
     // `B` on A: its arrows straight again.
     d.keys(&mut app, "B");
     assert!(text(&app).ends_with("arrow a -> b\n"), "{}", text(&app));
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// The canvas's items in the order the frame drew them, each by the
+/// first words in it: the floats the plane holds, in kui's tree order —
+/// each a layer of its own over the plane's.
+fn drawn_order(d: &Drive) -> Vec<String> {
+    let nodes = d.core.nodes();
+    let Some(at) = nodes
+        .iter()
+        .position(|n| n.label.as_deref() == Some("canvas"))
+    else {
+        return Vec::new();
+    };
+    let plane = &nodes[at + 1];
+    (at + 2..nodes.len())
+        .take_while(|&i| nodes[i].depth > plane.depth)
+        .filter(|&i| nodes[i].parent == Some(plane.key) && nodes[i].layer != plane.layer)
+        .filter_map(|i| {
+            nodes[i + 1..]
+                .iter()
+                .take_while(|m| m.depth > nodes[i].depth)
+                .find_map(|m| m.text.clone().filter(|t| !t.is_empty()))
+        })
+        .collect()
+}
+
+/// Asked 2026-10-23: "pointer drawn under boxes/text … need a way to
+/// change draw order" — "draw order base from the declaration order in
+/// a file … the reordering is trivial". Each thing is drawn in the
+/// file's order, a line later over the ones before; a press takes the
+/// topmost; `>` `<` `g>` `g<` move the selection's lines.
+#[test]
+fn things_are_drawn_in_the_files_order_and_arrange_moves_their_lines() {
+    let path = file(
+        "order",
+        "box a \"A\" at 0,0 size 8x4\nbox b \"B\" at 4,2 size 8x4\ntext \"T\" at 20,0\n",
+    );
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    assert_eq!(drawn_order(&d), vec!["A", "B", "T"]);
+    // Where A and B overlap, B is on top: the press takes it.
+    let both = at(&app, 6.0, 3.0);
+    d.click(&mut app, both.x, both.y);
+    d.frame(&mut app);
+    assert_eq!(selected(&mut app), vec!["b"]);
+    // `<` sends B under A: its line before A's, and A takes the press.
+    d.keys(&mut app, "<");
+    assert!(
+        text(&app).starts_with("box b \"B\" at 4,2 size 8x4\nbox a \"A\" at 0,0 size 8x4\n"),
+        "{}",
+        text(&app)
+    );
+    assert_eq!(selected(&mut app), vec!["b"], "still B, at its new line");
+    assert_eq!(drawn_order(&d), vec!["B", "A", "T"]);
+    // Somewhere else first: a second press where the last one was would
+    // be a double click, A's label typed.
+    let elsewhere = at(&app, 16.0, 9.0);
+    d.click(&mut app, elsewhere.x, elsewhere.y);
+    assert!(selected(&mut app).is_empty());
+    let both = at(&app, 6.0, 3.0);
+    d.click(&mut app, both.x, both.y);
+    d.frame(&mut app);
+    assert_eq!(selected(&mut app), vec!["a"]);
+    // `g>` to the front: over the text too.
+    d.keys(&mut app, "g>");
+    assert!(
+        text(&app).ends_with("box a \"A\" at 0,0 size 8x4\n"),
+        "{}",
+        text(&app)
+    );
+    assert_eq!(drawn_order(&d), vec!["B", "T", "A"]);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Asked 2026-10-23: "maybe text should be also groupable". A text in a
+/// group is named for it and moves with it.
+#[test]
+fn a_text_is_grouped_with_a_box_and_moves_with_the_group() {
+    let path = file("text-group", "box a \"A\" at 0,0\ntext \"note\" at 0,5\n");
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    d.press(&mut app, "<C-a>");
+    d.keys(&mut app, "G");
+    d.keys(&mut app, "Both");
+    keep(&mut d, &mut app);
+    assert_eq!(
+        text(&app),
+        "box a \"A\" at 0,0\ntext t1 \"note\" at 0,5\ngroup g1 \"Both\" { a t1 }\n"
+    );
+    assert_eq!(selected(&mut app), vec!["g1"]);
+    d.keys(&mut app, "J");
+    assert_eq!(
+        text(&app),
+        "box a \"A\" at 0,1\ntext t1 \"note\" at 0,6\ngroup g1 \"Both\" { a t1 }\n"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Asked 2026-10-23: "while i move element … it should clamp viewport so
+/// it could be visible". `L` walking a box off the canvas's right edge
+/// takes the view with it.
+#[test]
+fn a_box_moved_by_the_keys_stays_in_view() {
+    let path = file("follow", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let canvas = d.rect_labelled("canvas").expect("the canvas");
+    d.press(&mut app, "<C-n>");
+    assert_eq!(selected(&mut app), vec!["a"]);
+    d.keys(&mut app, "60L");
+    d.frame(&mut app);
+    let a = text_rect(&d, "A").expect("A is drawn");
+    assert!(
+        a.x >= canvas.x && a.x + a.w <= canvas.x + canvas.w,
+        "A at {a:?} in the canvas {canvas:?}"
+    );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

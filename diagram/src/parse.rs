@@ -164,7 +164,14 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
             Ok(Item::Node(n))
         }
         "text" => {
+            // A name first, when a group is to hold it: any word but the
+            // ones a text's line takes.
+            let id = match r.toks.as_slice().first() {
+                Some(Tok::Word(w)) if w != "at" && w != "color" => Some(r.id("text")?),
+                _ => None,
+            };
             let mut t = Text {
+                id,
                 label: String::new(),
                 x: 0,
                 y: 0,

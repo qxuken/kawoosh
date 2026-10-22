@@ -125,8 +125,8 @@ fn crossing(shape: Shape, r: &Rect, from: Pt, to: Pt) -> Pt {
 
 /// A group's frame: its members' with a unit round them and two above
 /// for its label; `None` when it holds nothing that is there.
-pub fn group_rect(doc: &Doc, id: &str) -> Option<Rect> {
-    group_rect_placed(doc, id, &node_rect, &mut Vec::new())
+pub fn group_rect(doc: &Doc, id: &str, text_size: &dyn Fn(&Text) -> (f32, f32)) -> Option<Rect> {
+    group_rect_placed(doc, id, &node_rect, text_size, &mut Vec::new())
 }
 
 /// An arrow's route: its points from A's outline to B's, and where its
@@ -246,15 +246,11 @@ fn bent_through(a: &Node, ra: &Rect, b: &Node, rb: &Rect, how: Route, p: Pt) -> 
             crossing(b.shape, rb, cb, p),
         ]
     } else {
-        match elbow_via(ra, rb, p) {
-            Some(mut pts) => {
-                let n = pts.len();
-                pts[0] = onto(a.shape, ra, pts[0], pts[1]);
-                pts[n - 1] = onto(b.shape, rb, pts[n - 1], pts[n - 2]);
-                simplify(pts)
-            }
-            None => return None,
-        }
+        let mut pts = elbow_via(ra, rb, p)?;
+        let n = pts.len();
+        pts[0] = onto(a.shape, ra, pts[0], pts[1]);
+        pts[n - 1] = onto(b.shape, rb, pts[n - 1], pts[n - 2]);
+        simplify(pts)
     };
     let mid = nearest_on(&points, p);
     Some(Wire { points, mid })
@@ -572,56 +568,43 @@ impl Layout {
                     let (w, h) = text_size(t);
                     Some(Rect::new(t.x as f32, t.y as f32, w, h))
                 }
-                Item::Group(g) => group_rect_placed(doc, &g.id, place, &mut Vec::new()),
+                Item::Group(g) => group_rect_placed(doc, &g.id, place, text_size, &mut Vec::new()),
                 Item::Edge(_) => None,
             })
             .collect();
         Layout { bounds, wires }
     }
 
-    /// The topmost entry under `p`, `tol` units of slack for a line: a
-    /// text, an arrow or its label, a box (the last drawn first), then a
-    /// group by its frame's edge or its label's band.
+    /// The topmost entry under `p`, `tol` units of slack for a line: the
+    /// last drawn first (Decision 14) — a box, an arrow or its label, a
+    /// text, by the file's order — then a group by its frame's edge or its
+    /// label's band.
     pub fn hit(&self, doc: &Doc, p: Pt, tol: f32) -> Option<usize> {
-        let n = doc.entries.len();
-        let order = (0..n).rev();
-        for i in order.clone() {
-            if let (Item::Text(_), Some(r)) = (&doc.entries[i].item, &self.bounds[i])
-                && r.grown(tol / 2.0).contains(p)
-            {
-                return Some(i);
-            }
-        }
-        for i in order.clone() {
-            if let Some(w) = &self.wires[i] {
-                // Its bend's point too, where the canvas draws a dot to
-                // pull: an elbow passes by it, not always through it.
-                let bend = match &doc.entries[i].item {
-                    Item::Edge(e) => e
+        let order: Vec<usize> = doc.draw_order().collect();
+        for &i in order.iter().rev() {
+            let hit = match (&doc.entries[i].item, &self.bounds[i], &self.wires[i]) {
+                (Item::Text(_), Some(r), _) => r.grown(tol / 2.0).contains(p),
+                (Item::Node(n), Some(r), _) => {
+                    inside(n.shape, r, p) || (n.w.min(n.h) <= 1 && r.grown(tol).contains(p))
+                }
+                (Item::Edge(e), _, Some(w)) => {
+                    // Its bend's point too, where the canvas draws a dot
+                    // to pull: an elbow passes by it, not always through it.
+                    let bend = e
                         .via
-                        .is_some_and(|(x, y)| Pt::new(x as f32, y as f32).dist(p) <= tol * 2.0),
-                    _ => false,
-                };
-                let near = bend || w.points.windows(2).any(|s| seg_dist(p, s[0], s[1]) <= tol);
-                if near || (!doc.entries[i].item.label().is_empty() && w.mid.dist(p) <= tol * 2.0) {
-                    return Some(i);
+                        .is_some_and(|(x, y)| Pt::new(x as f32, y as f32).dist(p) <= tol * 2.0);
+                    bend || w.points.windows(2).any(|s| seg_dist(p, s[0], s[1]) <= tol)
+                        || (!e.label.is_empty() && w.mid.dist(p) <= tol * 2.0)
                 }
-            }
-        }
-        for i in order.clone() {
-            if let (Item::Node(n), Some(r)) = (&doc.entries[i].item, &self.bounds[i])
-                && (inside(n.shape, r, p) || (n.w.min(n.h) <= 1 && r.grown(tol).contains(p)))
-            {
+                (Item::Group(_), Some(r), _) => {
+                    let band = Rect::new(r.x, r.y, r.w, 2.0);
+                    let on_edge = r.grown(tol).contains(p) && !r.grown(-tol).contains(p);
+                    on_edge || band.contains(p)
+                }
+                _ => false,
+            };
+            if hit {
                 return Some(i);
-            }
-        }
-        for i in order {
-            if let (Item::Group(_), Some(r)) = (&doc.entries[i].item, &self.bounds[i]) {
-                let band = Rect::new(r.x, r.y, r.w, 2.0);
-                let on_edge = r.grown(tol).contains(p) && !r.grown(-tol).contains(p);
-                if on_edge || band.contains(p) {
-                    return Some(i);
-                }
             }
         }
         None
@@ -672,6 +655,7 @@ fn group_rect_placed(
     doc: &Doc,
     id: &str,
     place: &dyn Fn(&Node) -> Rect,
+    text_size: &dyn Fn(&Text) -> (f32, f32),
     seen: &mut Vec<String>,
 ) -> Option<Rect> {
     if seen.iter().any(|s| s == id) {
@@ -681,9 +665,17 @@ fn group_rect_placed(
     let g = doc.group(id)?;
     let mut out: Option<Rect> = None;
     for m in &g.members {
-        let r = match doc.node(m) {
-            Some(n) => Some(place(n)),
-            None => group_rect_placed(doc, m, place, seen),
+        let text = doc.text_index(m).and_then(|i| match &doc.entries[i].item {
+            Item::Text(t) => Some(t),
+            _ => None,
+        });
+        let r = match (doc.node(m), text) {
+            (Some(n), _) => Some(place(n)),
+            (None, Some(t)) => {
+                let (w, h) = text_size(t);
+                Some(Rect::new(t.x as f32, t.y as f32, w, h))
+            }
+            (None, None) => group_rect_placed(doc, m, place, text_size, seen),
         };
         if let Some(r) = r {
             out = Some(out.map_or(r, |o| o.union(&r)));

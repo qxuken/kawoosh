@@ -154,7 +154,10 @@ pub fn export(doc: &Doc) -> Value {
     // Groups behind everything, as the canvas draws them.
     for e in &doc.entries {
         if let Item::Group(g) = &e.item
-            && let Some(r) = group_rect(doc, &g.id)
+            && let Some(r) = group_rect(doc, &g.id, &|t| {
+                let (w, h) = text_px(&t.label);
+                (w / UNIT, h / UNIT)
+            })
         {
             let (stroke, _) = colors(g.color.or(Some(Color::Gray)));
             let id = format!("group-{}", g.id);

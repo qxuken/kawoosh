@@ -106,13 +106,19 @@ fn movers(doc: &Doc, sel: &[usize]) -> (Vec<String>, Vec<usize>) {
                 }
             }
             Some(Item::Group(g)) => {
-                for id in doc.group_nodes(&g.id) {
-                    if !nodes.contains(&id) {
-                        nodes.push(id);
+                for id in doc.group_leaves(&g.id) {
+                    match doc.text_index(&id) {
+                        Some(t) => {
+                            if !texts.contains(&t) {
+                                texts.push(t);
+                            }
+                        }
+                        None if !nodes.contains(&id) => nodes.push(id),
+                        None => {}
                     }
                 }
             }
-            Some(Item::Text(_)) => texts.push(i),
+            Some(Item::Text(_)) if !texts.contains(&i) => texts.push(i),
             _ => {}
         }
     }
@@ -197,6 +203,93 @@ pub fn hold_label(n: &mut Node, w: f32, h: f32) -> bool {
     let grew = (w, h) != (n.w, n.h);
     (n.w, n.h) = (w, h);
     grew
+}
+
+/// Where `arrange` moves the selection in the draw order (Decision 14).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arrange {
+    /// Over the next thing drawn after it.
+    Forward,
+    /// Under the thing drawn before it.
+    Backward,
+    /// Over everything.
+    Front,
+    /// Under everything.
+    Back,
+}
+
+impl Arrange {
+    pub fn from_word(w: &str) -> Option<Arrange> {
+        Some(match w {
+            "forward" => Arrange::Forward,
+            "backward" => Arrange::Backward,
+            "front" => Arrange::Front,
+            "back" => Arrange::Back,
+            _ => return None,
+        })
+    }
+}
+
+/// The selection moved in the draw order, which is the file's order
+/// (Decision 14): its lines moved among the items' lines, each line kept
+/// byte for byte, the comments and blank lines where they were. A step
+/// goes past the next box, arrow or text, not merely the next line — a
+/// group's line, drawn behind whatever its place, is stepped over. The
+/// edits on `text`, and the selection's entries after them.
+pub fn arrange(
+    doc: &Doc,
+    text: &str,
+    sel: &[usize],
+    how: Arrange,
+) -> (Vec<(Range<usize>, String)>, Vec<usize>) {
+    let n = doc.entries.len();
+    let picked = |i: usize| sel.contains(&i);
+    let drawn = |i: usize| !matches!(doc.entries[i].item, Item::Group(_));
+    let mut order: Vec<usize> = (0..n).collect();
+    match how {
+        Arrange::Front | Arrange::Back => {
+            let (mut moved, rest): (Vec<usize>, Vec<usize>) =
+                order.iter().partition(|&&i| picked(i));
+            order = if how == Arrange::Front {
+                rest.into_iter().chain(moved).collect()
+            } else {
+                moved.extend(rest);
+                moved
+            };
+        }
+        Arrange::Forward => {
+            for p in (0..n).rev() {
+                if !picked(order[p]) {
+                    continue;
+                }
+                if let Some(q) = (p + 1..n).find(|&q| !picked(order[q]) && drawn(order[q])) {
+                    let e = order.remove(p);
+                    order.insert(q, e);
+                }
+            }
+        }
+        Arrange::Backward => {
+            for p in 0..n {
+                if !picked(order[p]) {
+                    continue;
+                }
+                if let Some(q) = (0..p).rev().find(|&q| !picked(order[q]) && drawn(order[q])) {
+                    let e = order.remove(p);
+                    order.insert(q, e);
+                }
+            }
+        }
+    }
+    let edits = (0..n)
+        .filter(|&k| order[k] != k)
+        .map(|k| {
+            let from = doc.entries[order[k]].span.clone();
+            (doc.entries[k].span.clone(), text[from].to_string())
+        })
+        .collect();
+    let mut after: Vec<usize> = (0..n).filter(|&k| picked(order[k])).collect();
+    after.sort_unstable();
+    (edits, after)
 }
 
 /// Arrow `i` bent through `x`, `y`, or straight again with `None`.
@@ -285,6 +378,7 @@ pub fn add_node(doc: &Doc, x: i32, y: i32, w: i32, h: i32) -> (Change, String) {
 
 pub fn add_text(label: &str, x: i32, y: i32) -> Change {
     Change::Add(Item::Text(Text {
+        id: None,
         label: label.to_string(),
         x,
         y,
@@ -345,40 +439,46 @@ pub fn arrows_of(doc: &Doc, sel: &[usize]) -> Vec<usize> {
         .collect()
 }
 
-/// A group round the selection's boxes and groups; its id.
-pub fn group(doc: &Doc, sel: &[usize]) -> Option<(Change, String)> {
-    let members: Vec<String> = sel
-        .iter()
-        .filter_map(|&i| {
-            doc.entries
-                .get(i)
-                .and_then(|e| e.item.id())
-                .map(String::from)
-        })
-        .collect();
+/// A group round the selection's boxes, texts and groups — a text with
+/// no name named for it, `t` and the first number free — and its id.
+pub fn group(doc: &Doc, sel: &[usize]) -> Option<(Vec<Change>, String)> {
+    let mut members: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for &i in sel {
+        match doc.entries.get(i).map(|e| &e.item) {
+            Some(Item::Text(t)) if t.id.is_none() => {
+                let id = doc.fresh_id_avoiding("t", &members);
+                let mut t = t.clone();
+                t.id = Some(id.clone());
+                out.push(Change::Set(i, Item::Text(t)));
+                members.push(id);
+            }
+            Some(Item::Edge(_)) | None => {}
+            Some(item) => members.extend(item.id().map(String::from)),
+        }
+    }
     if members.is_empty() {
         return None;
     }
-    let id = doc.fresh_id("g");
-    Some((
-        Change::Add(Item::Group(Group {
-            id: id.clone(),
-            label: String::new(),
-            members,
-            color: None,
-        })),
-        id,
-    ))
+    let id = doc.fresh_id_avoiding("g", &members);
+    out.push(Change::Add(Item::Group(Group {
+        id: id.clone(),
+        label: String::new(),
+        members,
+        color: None,
+    })));
+    Some((out, id))
 }
 
 /// Items copied out of `doc` for a paste: the selection, its groups'
 /// boxes, and the arrows between the boxes copied.
 pub fn copy(doc: &Doc, sel: &[usize]) -> Vec<Item> {
-    let (nodes, _) = movers(doc, sel);
+    let (nodes, texts) = movers(doc, sel);
     let mut out = Vec::new();
     for (i, e) in doc.entries.iter().enumerate() {
         let keep = match &e.item {
             Item::Node(n) => nodes.contains(&n.id),
+            Item::Text(_) => texts.contains(&i),
             Item::Edge(edge) => {
                 sel.contains(&i) || (nodes.contains(&edge.from) && nodes.contains(&edge.to))
             }
@@ -422,6 +522,7 @@ pub fn paste(doc: &Doc, items: &[Item], dx: i32, dy: i32) -> Vec<Change> {
                 Item::Node(n)
             }
             Item::Text(mut t) => {
+                t.id = t.id.map(|id| name(&id).unwrap_or(id));
                 t.x += dx;
                 t.y += dy;
                 Item::Text(t)
@@ -513,6 +614,40 @@ mod tests {
     }
 
     #[test]
+    fn arranging_moves_lines_as_they_are_past_the_next_thing_drawn() {
+        let text = "box a  at 0,0\n# b next\nbox b at 9,0\ngroup g { a b }\narrow a -> b\n";
+        let doc = parse(text);
+        let go = |sel: &[usize], how| {
+            let (e, after) = arrange(&doc, text, sel, how);
+            (apply(text, &e), after)
+        };
+        // Forward: A over B, the comment kept where it was, A's spacing kept.
+        let (out, after) = go(&[0], Arrange::Forward);
+        assert_eq!(
+            out,
+            "box b at 9,0\n# b next\nbox a  at 0,0\ngroup g { a b }\narrow a -> b\n"
+        );
+        assert_eq!(after, vec![1]);
+        // B forward steps over the group's line, past the arrow.
+        let (out, after) = go(&[1], Arrange::Forward);
+        assert_eq!(
+            out,
+            "box a  at 0,0\n# b next\ngroup g { a b }\narrow a -> b\nbox b at 9,0\n"
+        );
+        assert_eq!(after, vec![3]);
+        // To the back, under everything; already at the front, nothing.
+        let (out, after) = go(&[3], Arrange::Back);
+        assert!(
+            out.starts_with("arrow a -> b\n# b next\nbox a  at 0,0\n"),
+            "{out}"
+        );
+        assert_eq!(after, vec![0]);
+        let (e, _) = arrange(&doc, text, &[3], Arrange::Front);
+        assert!(e.is_empty());
+        assert!(parse(&out).problems.is_empty());
+    }
+
+    #[test]
     fn a_box_deleted_takes_its_arrows_and_leaves_its_groups() {
         let out = run(TEXT, |d| delete(d, &[0]));
         assert_eq!(
@@ -576,8 +711,15 @@ mod tests {
 
     #[test]
     fn a_group_round_the_selection() {
-        let out = run(TEXT, |d| vec![group(d, &[0, 1, 2]).unwrap().0]);
+        let out = run(TEXT, |d| group(d, &[0, 1, 2]).unwrap().0);
         assert!(out.ends_with("group g1 { a b }\n"), "{out}");
+        // A text grouped is named for it, and moves with its group.
+        let out = run(TEXT, |d| group(d, &[0, 3]).unwrap().0);
+        assert!(out.contains("text t1 \"note\" at 0,6\n"), "{out}");
+        assert!(out.ends_with("group g1 { a t1 }\n"), "{out}");
+        let out = run(&out, |d| move_by(d, &[d.entries.len() - 1], 1, 1));
+        assert!(out.contains("text t1 \"note\" at 1,7\n"), "{out}");
+        assert!(out.contains("box a \"A\" at 1,1\n"), "{out}");
         // `g` holds a and b already, in whichever order they are chosen.
         let doc = parse(TEXT);
         assert_eq!(existing_group(&doc, &[1, 0]), Some(4));

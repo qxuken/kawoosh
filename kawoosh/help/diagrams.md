@@ -28,9 +28,9 @@ group backend "Backend" { db }
 | line | what it is |
 |---|---|
 | `box ID "LABEL" at X,Y size WxH shape S color C dashed align A` | a box; only its id is needed (`at 0,0`, `size 8x3` otherwise); `dashed` draws its outline dashed; `align left` or `align right` sets its label from the top against that side, for a contract or code (`center` otherwise) |
-| `text "LABEL" at X,Y color C` | free text, its top left at the point |
+| `text ID "LABEL" at X,Y color C` | free text, its top left at the point; the id only when a group holds it |
 | `arrow A -> B "LABEL" via X,Y elbow dashed color C` | an arrow between two boxes; `->` a head at B, `<-` at A, `<->` both, `--` none; `via` bends it through that point |
-| `group ID "LABEL" { A B }` | a frame round boxes (or other groups) |
+| `group ID "LABEL" { A B }` | a frame round boxes, texts or other groups |
 
 - **Shapes**: `rect`, `round`, `ellipse`, `diamond`, `cylinder`, and for
   state machines `dot` (a start state) and `final` (an end state).
@@ -45,6 +45,11 @@ group backend "Backend" { db }
   both boxes goes round under or over them.
 - A line starting `#` is a comment. In a label, `\n` is a line break.
 
+**Draw order** is the file's: a line later in the file is drawn over the
+ones before it (groups are always behind, as frames). `>` and `<` move
+the selection a step forward or back, `g>` and `g<` to the front or the
+back — they move its lines in the file.
+
 A line that does not read is listed over the diagram (line 4: no box
 `ghost`); the rest still draws. Lines the diagram changes are written
 again in a standard form; lines it does not touch stay as you wrote them.
@@ -53,7 +58,9 @@ again in a standard form; lines it does not touch stay as you wrote them.
 
 - **Click** a thing to select it; **shift-click** adds to the selection.
   **Drag** on an empty spot to select what the rectangle holds.
-- **Drag** the selection to move it; a group moves its boxes.
+- **Drag** the selection to move it; a group moves its boxes. Past the
+  diagram's edge the view follows; moved from the keys, the view keeps
+  it in sight too.
 - **Drag a corner** of a selected box to resize it.
 - **Drag an arrow** to bend it through the point where you let go: room
   for its label, or a way round a box. Its label goes with the bend.
@@ -127,7 +134,8 @@ to connect, group or move several things.
 | `B` | an arrow straight again, its bend let go (a box's arrows, on a box) |
 | `c` | the next colour |
 | `C` | connect the selected boxes, in the order you selected them |
-| `G` | group the selection (once: the same boxes again select the group they are in) |
+| `G` | group the selection, texts too (once: the same boxes again select the group they are in) |
+| `>` `<` · `g>` `g<` | draw the selection a step forward · back · at the front · at the back |
 | `y` · `p` · `D` | copy · paste · duplicate |
 | `<C-a>` | select everything |
 | `u` · `<C-r>` | undo · redo |

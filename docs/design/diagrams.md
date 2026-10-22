@@ -47,13 +47,15 @@ group backend "Backend" { db }
   `rect` (the default), `round`, `ellipse`, `diamond`, `cylinder`, and
   for state machines `dot` (a start state) and `final` (a ring round a
   dot). Without `size`, 8×3 (a dot 1×1).
-- `text "LABEL" at X,Y [color C]`: free text, its top left at the point.
+- `text [ID] "LABEL" at X,Y [color C]`: free text, its top left at the
+  point; an id only when a group holds it (Decision 14).
 - `arrow A -> B ["LABEL"] [via X,Y] [elbow] [dashed] [color C]`: `->` a
   head at B, `<-` at A, `<->` both, `--` neither; `elbow` is an
   orthogonal route, straight by default; `via` the point it is bent
   through (Decision 13). `A -> A` is a loop.
-- `group ID ["LABEL"] { A B … }`: a frame round its members, a member
-  another group too. It has no place of its own: it is where they are.
+- `group ID ["LABEL"] { A B … }`: a frame round its members — boxes,
+  named texts, other groups. It has no place of its own: it is where
+  they are.
 - Colours: `red orange yellow green teal blue purple gray`.
 - `#` starts a comment line; blank lines are kept. A label is quoted,
   `\"`, `\\` and `\n` inside it.
@@ -124,6 +126,7 @@ the capitals move.
 | `A` | a box's label against the left, the right, or in the middle (Decision 12) |
 | `s` · `r` · `-` · `R` · `c` | next shape · elbowed or straight again, a box's arrows on a box · dashed, an arrow or a box's outline · reversed · next colour |
 | `C` | connect the selected boxes in the order selected |
+| `>` `<` · `g>` `g<` | the selection a step forward, backward in the draw order · to the front, the back (Decision 14) |
 | `G` | group the selection (`g` is a prefix in pane mode: `gt`, `gg`); a group round just those already is selected instead of a second |
 | `y` · `p` · `D` | copy · paste · duplicate |
 | `<C-a>` | select everything |
@@ -365,7 +368,12 @@ label moved off its arrow, both), the user took the bend.
   arrow with no label shows a dot where it bends or would; a label is
   the grip itself, and a dot on it covered its words.
 - **The keys move it as a box**: `HJKL` on an arrow selected move its
-  bend a unit, from its label's point when it has none. A box moved
+  bend a unit, from its label's point when it has none. A bend is kept
+  on its route: asked through a point past the end of the run a U or a
+  moved turn takes, it is put at the run's grid point nearest it (asked
+  2026-10-23: "`L` continue moving via and `H` need time … to reach a
+  point when it become visual change"); a straight arrow's goes
+  anywhere, a point inside a box is kept as asked. A box moved
   leaves the bend where it was put; both of its boxes moved (a group, a
   marquee) carry it, and a paste moves it with them. `B` — the menu's
   Unbend, the toolbar's *unbend* — lets it go.
@@ -375,3 +383,53 @@ label moved off its arrow, both), the user took the bend.
 arrows; a bend keeps the ends routed and the line one point long), a
 label offset (the arrow still crossed the label's room), several bends
 an arrow (a hand-drawn polyline in a format whose arrows are routed).
+
+### 14. The file's order is the drawing's
+
+Asked 2026-10-23: "pointer drawn under boxes/text … need a way to
+change draw order for items", then "maybe we can draw order base from
+the declaration order in a file … the reordering is trivial". The canvas
+drew every box, then every arrow, then every text, and a path-shaped box
+(an ellipse, a diamond) under every rectangle: an arrow bent over a box
+went under it, and nothing could be put over anything else.
+
+- **A line later in the file is drawn over the ones before it.** Groups
+  stay behind everything, whatever their place: a group is a frame round
+  what it holds, and drawn in turn its wash would cover the boxes it
+  frames. `Doc::draw_order` says it once; the canvas draws by it and a
+  press hits by it, the topmost thing first.
+- **One float an item.** kui paints each float a layer of its own and a
+  line, a polygon or a path in its parent's layer, so an item drawn as
+  a path plus a label float was two layers apart. Each item is now one
+  float holding all of it: a box's fill, outline and label; a path's
+  outline at its own coordinates; an arrow's line and heads drawn from
+  its label's corner, the label laid out after them, over them; a
+  group's wash, dashed frame and label.
+- **Floats stacked in tree order** (kui F186, `floats_in_order` on the
+  drawing's plane, asked of kui 2026-10-23 for its next release): kui
+  stacked float layers by key, a key it had not seen going on top, so a
+  box panned into view, or a new one, came in over everything whatever
+  its line. The plane asks for its floats in the order drawn, each frame.
+- **Reordering moves lines** (`diagram arrange forward|backward|front|
+  back`; `>` `<`, `g>` `g<`, the menu's Arrange): the selection's lines
+  change places with the items' lines, each kept byte for byte, comments
+  and blank lines where they were. A step goes past the next box, arrow
+  or text drawn, stepping over a group's line, which changes nothing
+  drawn. `]` `[` were not taken: `]b` `]t` and the rest fall through to
+  every pane.
+- **A text joins a group** (asked the same day: "maybe text should be
+  also groupable"). `text ID "LABEL"` names it; `G` names a text it
+  groups that has no name (`t1`, …), moves it with the group, frames it,
+  copies and pastes it with it.
+- **What moves stays in view** (asked: "while i move element … it should
+  clamp viewport so it could be visible (careful with edgecases)"):
+  `HJKL`, `<A-hjkl>` and a bend moved from the keys reveal what moved,
+  the least that shows it with a unit of air, its top left first when it
+  is bigger than the view. A drag carried past the canvas's edge pans the
+  view by how far past the pointer is, at most 24 px a move and only
+  while the pointer moves: held still outside, nothing runs away.
+
+*Beat:* a `z ORDER` word on every line (a second order to keep beside
+the file's, renumbered on every insert), re-keying the drawing whenever
+what is drawn changes (kui's stack rebuilt by throwing away every node's
+state), groups drawn in turn (their wash over what they frame).
