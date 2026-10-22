@@ -2406,3 +2406,43 @@ fn the_keys_moved_off_a_terminal_stay_off_it() {
     assert_eq!(app.layout.focused(), term);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// What `less` shows of a byte it cannot print without a UTF-8 locale —
+/// a git author's Cyrillic as `<D0><97>…` — is inverse video, and copy
+/// mode's buffer draws it so: the background's colour on the
+/// foreground's. It painted the text alone in the background's colour,
+/// on the background, and the line read empty.
+#[test]
+fn inverse_text_reads_in_the_scrollback_buffer() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    // `git log` paged by `less` with no locale, as it printed.
+    app.feed_terminal(
+        t,
+        b"Author: \x1b[7m<D0><97><D0><BE>\x1b[27m <z@x>\x1b[m\r\n$ ",
+    );
+    d.frame(&mut app);
+    d.key(&mut app, "X", KeyMods::NONE.with_shift().with_ctrl());
+    d.frame(&mut app);
+    let v = app.focused_view().expect("copy mode");
+    let bid = app.ed.views[v].buffer;
+    assert!(
+        app.ed.buffers[bid]
+            .text()
+            .starts_with("Author: <D0><97><D0><BE> <z@x>")
+    );
+    let pal = app.terms.map[&t].palette();
+    let hex = |c: u32| format!("#{:06x}", c >> 8);
+    let paints = app.scripting.paints[&bid]["terminal"].spans.clone();
+    let inverse = 8..24;
+    assert_eq!(
+        paints,
+        vec![
+            (inverse.clone(), hex(pal.bg)),
+            (inverse, format!("bg:1:{}", hex(pal.fg))),
+        ],
+        "the background's colour on the foreground's: {paints:?}"
+    );
+}

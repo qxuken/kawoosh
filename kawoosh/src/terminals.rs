@@ -1310,11 +1310,19 @@ impl Kawoosh {
         );
         self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(at));
         self.ed.views[v].top = top_line.min(last);
-        // The colours it was printed in, as a paint of their own.
+        // The colours it was printed in, as a paint of their own: a
+        // background as a wash at full strength, so inverse text (the
+        // background's colour on the foreground's) is not the
+        // background's colour on the background.
         let version = self.ed.buffers[bid].version();
+        let hex = |c: u32| format!("#{:06x}", c >> 8);
         let spans = runs
             .into_iter()
-            .map(|(r, c)| (r, format!("#{:06x}", c >> 8)))
+            .flat_map(|r| {
+                let fg = r.fg.map(|c| (r.range.clone(), hex(c)));
+                let bg = r.bg.map(|c| (r.range.clone(), format!("bg:1:{}", hex(c))));
+                fg.into_iter().chain(bg)
+            })
             .collect();
         self.scripting.paints.entry(bid).or_default().insert(
             "terminal".into(),

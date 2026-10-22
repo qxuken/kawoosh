@@ -15,6 +15,17 @@ pub mod plain;
 
 pub use graphics::Placed;
 
+/// A run of [`Terminal::scrollback_styled`]'s text in the colours the
+/// screen drew it in, RGBA: its foreground where that is not the
+/// palette's own, its background where that is not the screen's — one a
+/// cell names, or inverse video's swap.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StyledRun {
+    pub range: std::ops::Range<usize>,
+    pub fg: Option<u32>,
+    pub bg: Option<u32>,
+}
+
 use std::io::{Read, Write};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -1494,23 +1505,27 @@ impl Terminal {
 
     /// [`Self::scrollback_text`] with the colours it was printed in
     /// (roadmap step 31): each run of text whose foreground is not the
-    /// palette's own, as a byte range of the text and an RGBA colour —
-    /// resolved as the screen draws it, inverse and dim included — so
-    /// copy mode's buffer reads as the pane did. A line the terminal
+    /// palette's own, or whose background is not the screen's, as a
+    /// byte range of the text and its RGBA colours — resolved as the
+    /// screen draws them, inverse and dim included — so copy mode's
+    /// buffer reads as the pane did. Inverse is both colours swapped: its
+    /// text alone in the background's colour, with no background under
+    /// it, was invisible (`less` shows a byte it cannot print as `<D0>`
+    /// in inverse video). A line the terminal
     /// wrapped at its edge is one line of the text, its rows joined
     /// where the last cell says it went on (`WRAPLINE`): the breaks are
     /// the width's, not the program's, and a yank of the line should
     /// read as it was printed.
-    pub fn scrollback_styled(&self) -> (String, Vec<(std::ops::Range<usize>, u32)>) {
+    pub fn scrollback_styled(&self) -> (String, Vec<StyledRun>) {
         let pal = &self.palette;
         let grid = self.term.grid();
         let history = grid.history_size() as i32;
         let last = grid.screen_lines() as i32 - 1;
         let mut out = String::new();
-        let mut runs: Vec<(std::ops::Range<usize>, u32)> = Vec::new();
+        let mut runs: Vec<StyledRun> = Vec::new();
         // Where the line being built starts in `out`, and its runs so far.
         let mut start = 0;
-        let mut row_runs: Vec<(std::ops::Range<usize>, u32)> = Vec::new();
+        let mut row_runs: Vec<StyledRun> = Vec::new();
         for line in -history..=last {
             for col in 0..grid.columns() {
                 let cell = &grid[Line(line)][Column(col)];
@@ -1522,22 +1537,36 @@ impl Terminal {
                 }
                 let at = out.len();
                 out.push(cell.c);
+                // As `screen` resolves a cell: the background the
+                // screen's own unless the cell names one, and inverse the
+                // two swapped.
                 let mut fg = color(cell.fg, pal, pal.fg);
+                let mut bg = match cell.bg {
+                    Color::Named(NamedColor::Background) => None,
+                    other => Some(color(other, pal, pal.bg)).filter(|c| *c != pal.bg),
+                };
                 if cell.flags.contains(Flags::INVERSE) {
-                    fg = match cell.bg {
-                        Color::Named(NamedColor::Background) => pal.bg,
-                        other => color(other, pal, pal.bg),
-                    };
+                    let old = fg;
+                    fg = bg.unwrap_or(pal.bg);
+                    bg = Some(old);
                 }
                 if cell.flags.contains(Flags::DIM) {
                     fg = dim(fg);
                 }
-                if fg == pal.fg || cell.c == ' ' {
+                // A space has no foreground to show; a background it has.
+                let fg = (fg != pal.fg && cell.c != ' ').then_some(fg);
+                if fg.is_none() && bg.is_none() {
                     continue;
                 }
                 match row_runs.last_mut() {
-                    Some((r, c)) if *c == fg && r.end == at => r.end = out.len(),
-                    _ => row_runs.push((at..out.len(), fg)),
+                    Some(r) if r.fg == fg && r.bg == bg && r.range.end == at => {
+                        r.range.end = out.len()
+                    }
+                    _ => row_runs.push(StyledRun {
+                        range: at..out.len(),
+                        fg,
+                        bg,
+                    }),
                 }
             }
             // A row that wrapped goes on in the next: the line is not
@@ -1551,8 +1580,11 @@ impl Terminal {
             runs.extend(
                 row_runs
                     .drain(..)
-                    .filter(|(r, _)| r.start < start + kept)
-                    .map(|(r, c)| (r.start..r.end.min(start + kept), c)),
+                    .filter(|r| r.range.start < start + kept)
+                    .map(|r| StyledRun {
+                        range: r.range.start..r.range.end.min(start + kept),
+                        ..r
+                    }),
             );
             out.push('\n');
             start = out.len();
