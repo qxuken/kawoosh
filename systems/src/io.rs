@@ -350,6 +350,27 @@ pub fn curl() -> std::process::Command {
     c
 }
 
+/// Why [`curl`] did not start: on no PATH, with `what` it is needed
+/// for.
+pub fn curl_missing(e: &std::io::Error, what: &str) -> String {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => format!("no curl on the PATH: {what}"),
+        _ => format!("curl: {e}"),
+    }
+}
+
+/// What a [`curl`] that ended with `status` said on `stderr`: its first
+/// line, less its name — `(60) SSL certificate problem: certificate has
+/// expired`, not that and the paragraph of advice curl prints after a
+/// certificate it refused.
+pub fn curl_said(stderr: &str, status: std::process::ExitStatus) -> String {
+    let first = stderr.lines().map(str::trim).find(|l| !l.is_empty());
+    match first {
+        Some(l) => l.trim_start_matches("curl:").trim().to_string(),
+        None => format!("curl failed ({status})"),
+    }
+}
+
 /// The shell a command line is run through here, as a terminal's is
 /// chosen (`kawoosh_term::Terminal::spawn`): `$SHELL` where there is
 /// one (an MSYS bash sets it on Windows too), else `/bin/sh`, or
@@ -2269,6 +2290,37 @@ fn watch_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed fetch says curl's first line, not its paragraph of
+    /// advice after a certificate it refused; with nothing said, how it
+    /// ended.
+    #[test]
+    fn curl_says_its_first_line() {
+        #[cfg(unix)]
+        let status = std::os::unix::process::ExitStatusExt::from_raw(60 << 8);
+        #[cfg(windows)]
+        let status = std::os::windows::process::ExitStatusExt::from_raw(60);
+        let refused = "curl: (60) SSL certificate problem: certificate has expired\n\
+             More details here: https://curl.se/docs/sslcerts.html\n\n\
+             curl failed to verify the legitimacy of the server and therefore could not\n";
+        assert_eq!(
+            curl_said(refused, status),
+            "(60) SSL certificate problem: certificate has expired"
+        );
+        assert_eq!(
+            curl_said(
+                "\n  curl: (22) The requested URL returned error: 404\n",
+                status
+            ),
+            "(22) The requested URL returned error: 404"
+        );
+        assert!(curl_said(" \n", status).starts_with("curl failed ("));
+        let gone = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(
+            curl_missing(&gone, "grammars are fetched with it"),
+            "no curl on the PATH: grammars are fetched with it"
+        );
+    }
 
     /// Every fetch fails fast on a host that does not answer, and on
     /// macOS checks certificates as the system does — unless the user

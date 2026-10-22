@@ -570,13 +570,11 @@ fn ask(argv: &[&str]) -> Result<String, String> {
 fn fetch(url: &str) -> Result<String, String> {
     let mut c = crate::io::curl();
     c.args(["-A", "kawoosh (language servers)", url]);
-    let o = crate::spawn::output(&mut c).map_err(|e| format!("curl: {e}"))?;
+    let o = crate::spawn::output(&mut c)
+        .map_err(|e| crate::io::curl_missing(&e, "registries are asked with it"))?;
     if !o.status.success() {
-        return Err(format!(
-            "`curl {url}` ended with {}: {}",
-            o.status,
-            tail(&o)
-        ));
+        let said = crate::io::curl_said(&String::from_utf8_lossy(&o.stderr), o.status);
+        return Err(format!("{url}: {said}"));
     }
     Ok(String::from_utf8_lossy(&o.stdout).into_owned())
 }
