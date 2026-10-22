@@ -20,11 +20,12 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{Mode, Selection, Selections};
 use kawoosh_systems::WakeHandle;
-use kui_native::{Align, Color, NodeSpec, Ui, Value};
+use kui_native::{Align, Color, NodeSpec, Ui};
 use tree_sitter::{Point, Tree};
 
 use crate::app::Kawoosh;
 use crate::devtab::Tab;
+use crate::msg::Msg;
 
 /// The tab's name in the devtools strip.
 pub const TAB: &str = "syntax";
@@ -387,10 +388,7 @@ impl Kawoosh {
                                 Color::TRANSPARENT
                             })
                             .hover_bg(pal.panel)
-                            .on_click(Value::map([
-                                ("kind", "syntax".into()),
-                                ("what", "anonymous".into()),
-                            ]))
+                            .on_click(Msg::SyntaxAnonymous)
                             .label("anonymous nodes"),
                         "anonymous",
                         style().color(if anonymous { pal.fg } else { pal.dim }),
@@ -440,12 +438,10 @@ impl Kawoosh {
                             Color::TRANSPARENT
                         })
                         .hover_bg(pal.panel)
-                        .on_click(Value::map([
-                            ("kind", "syntax".into()),
-                            ("what", "select".into()),
-                            ("start", Value::Int(r.range.start as i64)),
-                            ("end", Value::Int(r.range.end as i64)),
-                        ]))
+                        .on_click(Msg::SyntaxSelect {
+                            start: r.range.start,
+                            end: r.range.end,
+                        })
                 },
                 |ui, i| {
                     let r = &rows[i];
@@ -457,11 +453,7 @@ impl Kawoosh {
                         .cross_align(Align::Center);
                     if r.branch {
                         fold = fold
-                            .on_click(Value::map([
-                                ("kind", "syntax".into()),
-                                ("what", "fold".into()),
-                                ("id", Value::Int(r.id as i64)),
-                            ]))
+                            .on_click(Msg::SyntaxFold { id: r.id })
                             .label(if r.folded { "unfold" } else { "fold" });
                     }
                     ui.with_keyed("fold", fold, |ui| {
@@ -500,37 +492,21 @@ impl Kawoosh {
         });
     }
 
-    /// A click in the tab: a row selects its node, a fold toggles it,
-    /// the header's toggle shows the anonymous nodes.
-    pub(crate) fn on_syntax_click(&mut self, p: &Value) {
-        match p.get_str("what") {
-            Some("fold") => {
-                if let Some(id) = p.get_int("id") {
-                    self.inspector.toggle_fold(id as usize);
-                }
-            }
-            Some("anonymous") => self.inspector.toggle_anonymous(),
-            Some("select") => {
-                let (Some(start), Some(end)) = (p.get_int("start"), p.get_int("end")) else {
-                    return;
-                };
-                let Some(view) = self.focused_view() else {
-                    return;
-                };
-                let len = self.ed.buffer_of(view).len();
-                let (start, end) = (
-                    (start.max(0) as usize).min(len),
-                    (end.max(0) as usize).min(len),
-                );
-                let v = &mut self.ed.views[view];
-                v.sels = Selections::single(Selection::new(start, end));
-                v.goal_col = None;
-                if start != end && self.ed.mode(view) == Mode::Normal {
-                    self.ed.set_mode(view, Mode::Visual);
-                }
-                self.follow_caret = true;
-            }
-            _ => {}
+    /// A row clicked in the tab: its node's range selected, visual
+    /// when it is not empty. (A fold and the anonymous toggle go to the
+    /// inspector itself.)
+    pub(crate) fn on_syntax_select(&mut self, start: usize, end: usize) {
+        let Some(view) = self.focused_view() else {
+            return;
+        };
+        let len = self.ed.buffer_of(view).len();
+        let (start, end) = (start.min(len), end.min(len));
+        let v = &mut self.ed.views[view];
+        v.sels = Selections::single(Selection::new(start, end));
+        v.goal_col = None;
+        if start != end && self.ed.mode(view) == Mode::Normal {
+            self.ed.set_mode(view, Mode::Visual);
         }
+        self.follow_caret = true;
     }
 }

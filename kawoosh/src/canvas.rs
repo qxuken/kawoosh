@@ -28,6 +28,7 @@ use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::layout::PaneId;
 use crate::look::Face;
+use crate::msg::Msg;
 use crate::palette::Pal;
 
 const ZOOM_MIN: f32 = 0.2;
@@ -1328,7 +1329,7 @@ impl Kawoosh {
         let (tool, from, grid_cursor, corner, extend) =
             (c.tool, c.from, c.cursor, c.corner, c.extend);
         let pal = self.pal;
-        let tag = Value::map([("kind", "canvas".into()), ("pane", Value::Int(pane as i64))]);
+        let tag = Msg::Canvas { pane };
         let pointer = match gesture {
             Some(Gesture::Move { .. }) | Some(Gesture::Pan { .. }) => CursorShape::Grabbing,
             Some(Gesture::Resize { .. }) => CursorShape::NwseResize,
@@ -1378,15 +1379,9 @@ impl Kawoosh {
                     .on_key(tag.clone())
                     .on_drag(tag.clone())
                     .on_scroll(tag.clone())
-                    .on_layout(Value::map([
-                        ("kind", "canvaslayout".into()),
-                        ("pane", Value::Int(pane as i64)),
-                    ]))
-                    .on_button(Value::map([
-                        ("kind", "canvasbutton".into()),
-                        ("pane", Value::Int(pane as i64)),
-                    ]))
-                    .on_menu(crate::menus::chosen())
+                    .on_layout(Msg::CanvasLayout { pane })
+                    .on_button(Msg::CanvasButton { pane })
+                    .on_menu(Msg::Menu)
                     .buttons(Buttons::from_bits(
                         Buttons::MIDDLE.bits() | Buttons::SECONDARY.bits(),
                     ))
@@ -2108,7 +2103,7 @@ impl Pen {
                 .wrap()
                 .gap(2.0)
                 .cross_align(Align::Center)
-                .on_drag(Value::map([("kind", "canvasbar".into())]))
+                .on_drag(Msg::CanvasBar)
                 .label("diagram toolbar"),
             |ui| {
                 for (n, group) in toolbar_groups(what).into_iter().enumerate() {
@@ -2138,11 +2133,10 @@ impl Pen {
                             spec = spec
                                 .hover_bg(pal.hover)
                                 .cursor(CursorShape::Pointer)
-                                .on_click(Value::map([
-                                    ("kind", "canvasbtn".into()),
-                                    ("pane", Value::Int(pane as i64)),
-                                    ("run", line.into()),
-                                ]));
+                                .on_click(Msg::CanvasTool {
+                                    pane,
+                                    run: line.to_string(),
+                                });
                         }
                         ui.with_keyed(line, spec, |ui| {
                             ui.text(label, word);

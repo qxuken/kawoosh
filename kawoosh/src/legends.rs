@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use kui_native::{Align, Color, NodeSpec, TextStyle, Ui, Value};
+use kui_native::{Align, Color, NodeSpec, TextStyle, Ui};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -160,10 +160,7 @@ pub fn toggle(
             // is cut, where a hint squeezed put `keys` under its cap.
             .min_width(kui_native::Min::FIT)
             .cross_align(Align::Center)
-            .on_click(Value::map([
-                ("kind", "legend".into()),
-                ("pane", Value::Int(pane as i64)),
-            ]))
+            .on_click(crate::msg::Msg::Legend { pane })
             .label("legend"),
         |ui| {
             crate::icons::keys(ui, icons, KEY, &style.keys);

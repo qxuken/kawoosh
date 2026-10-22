@@ -11,11 +11,12 @@ use std::ops::Range;
 use kawoosh_editor::search;
 use kawoosh_editor::{Mode, ViewId};
 use kui_native::{
-    Align, Dir, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2, widgets,
+    Align, Dir, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Vec2, widgets,
 };
 
 use crate::app::{DIVIDER, Kawoosh};
 use crate::layout::{Content, Drop, Kind, Node, PaneId, SplitDir, Strip};
+use crate::msg::{Along, Msg};
 use crate::rows::{self, Caret, Drawn, LineDraw, Window};
 use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
@@ -666,12 +667,11 @@ impl Kawoosh {
                             &format!("gap{}", col.id),
                             Dir::Row,
                             gap,
-                            Value::map([
-                                ("kind", "split".into()),
-                                ("path", Value::str(format!("gap{i}"))),
-                                ("dir", "h".into()),
-                                ("vw", vw.into()),
-                            ]),
+                            Msg::Split {
+                                path: format!("gap{i}"),
+                                dir: Along::H,
+                                vw: Some(vw),
+                            },
                         );
                     };
                     let key = ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
@@ -777,19 +777,19 @@ impl Kawoosh {
                         self.render_node(ui, a, &format!("{path}a"))
                     });
                     let (along, name) = match dir {
-                        SplitDir::H => (Dir::Row, "h"),
-                        SplitDir::V => (Dir::Column, "v"),
+                        SplitDir::H => (Dir::Row, Along::H),
+                        SplitDir::V => (Dir::Column, Along::V),
                     };
                     widgets::splitter(
                         ui,
                         "divider",
                         along,
                         DIVIDER,
-                        Value::map([
-                            ("kind", "split".into()),
-                            ("path", Value::str(path)),
-                            ("dir", Value::str(name)),
-                        ]),
+                        Msg::Split {
+                            path: path.to_string(),
+                            dir: name,
+                            vw: None,
+                        },
                     );
                     ui.with_keyed("b", grow(1.0 - ratio), |ui| {
                         self.render_node(ui, b, &format!("{path}b"))
@@ -914,10 +914,7 @@ impl Kawoosh {
                 // it show — a divider wider beside the rows than
                 // beside the title.
                 .pad(1.0)
-                .on_layout(Value::map([
-                    ("kind", "layout".into()),
-                    ("pane", Value::Int(pane as i64)),
-                ])),
+                .on_layout(Msg::Layout { pane }),
             |ui| {
                 // The title bar: a click focuses, a drag moves the pane.
                 let mut title = NodeSpec::row()
@@ -933,32 +930,20 @@ impl Kawoosh {
                     .pad_xy(8.0, 0.0)
                     .gap(6.0)
                     .cross_align(Align::Center)
-                    .on_click(Value::map([
-                        ("kind", "title".into()),
-                        ("pane", Value::Int(pane as i64)),
-                    ]))
+                    .on_click(Msg::Title { pane })
                     // The pane's menu whatever the pane holds; its body
                     // has its own (an editor's, a terminal's), or kui's
                     // over a Lua view's fields and text (`menus.rs`).
-                    .on_context_menu(Value::map([
-                        ("kind", "panemenu".into()),
-                        ("pane", Value::Int(pane as i64)),
-                        ("title", Value::Bool(true)),
-                    ]))
-                    .on_menu(crate::menus::chosen())
+                    .on_context_menu(Msg::PaneMenu { pane, title: true })
+                    .on_menu(Msg::Menu)
                     .keep_focus()
                     .hover_group(&group)
                     .label(name.as_str());
-                title = title
-                    .on_drag(Value::map([
-                        ("kind", "panedrag".into()),
-                        ("pane", Value::Int(pane as i64)),
-                    ]))
-                    .cursor(if dragged {
-                        kui_native::CursorShape::Grabbing
-                    } else {
-                        kui_native::CursorShape::Grab
-                    });
+                title = title.on_drag(Msg::PaneDrag { pane }).cursor(if dragged {
+                    kui_native::CursorShape::Grabbing
+                } else {
+                    kui_native::CursorShape::Grab
+                });
                 ui.with(title, |ui| {
                     // One line whatever the name: in the bar's fixed
                     // height a wrapped name painted its second line
@@ -1025,10 +1010,7 @@ impl Kawoosh {
                             .radius(3.0)
                             .hover_group(&group)
                             .cursor(kui_native::CursorShape::Default)
-                            .on_click(Value::map([
-                                ("kind", "pane close".into()),
-                                ("pane", Value::Int(pane as i64)),
-                            ]))
+                            .on_click(Msg::PaneClose { pane })
                             .label("close pane");
                         if on {
                             close = close.bg(pal.hover);
@@ -1155,7 +1137,7 @@ impl Kawoosh {
             cursor,
             origin_line: screen.origin_line,
         };
-        let tag = Value::map([("kind", "term".into()), ("pane", Value::Int(pane as i64))]);
+        let tag = Msg::Term { pane };
         // A program reporting the mouse gets drags as reports and no cell
         // selection — unless shift is held, the terminal convention for
         // "my selection, not yours".
@@ -1163,10 +1145,7 @@ impl Kawoosh {
         // (terminal-keys.md Decision 6): a report has no bit for it, so a
         // ⌘-click was a plain click to the program and never a link.
         let reporting = term.wants_mouse() && !self.mods.shift && !self.mods.super_key;
-        let drag_tag = Value::map([
-            ("kind", "termmouse".into()),
-            ("pane", Value::Int(pane as i64)),
-        ]);
+        let drag_tag = Msg::TermMouse { pane };
         // Scrolled away from the prompt: a scrollbar down the right edge,
         // the thumb where the view is in the history, and a badge with
         // what lies below and the way back.
@@ -1203,7 +1182,7 @@ impl Kawoosh {
                 let mut spec = NodeSpec::column()
                     .on_scroll(tag.clone())
                     .scroll_axes(kui_native::ScrollAxes::Y)
-                    .on_layout(Value::map([("kind", "termgrid".into())]));
+                    .on_layout(Msg::TermGrid);
                 if self.mods.ctrl || self.mods.super_key {
                     spec = spec.on_click(tag.clone());
                 }
@@ -1235,20 +1214,14 @@ impl Kawoosh {
                     spec.on_drag(drag_tag)
                 } else {
                     spec.selectable()
-                        .on_context_menu(Value::map([
-                            ("kind", "panemenu".into()),
-                            ("pane", Value::Int(pane as i64)),
-                        ]))
-                        .on_menu(crate::menus::chosen())
+                        .on_context_menu(Msg::PaneMenu { pane, title: false })
+                        .on_menu(Msg::Menu)
                 };
                 // The other buttons: the middle one pastes, and while a
                 // program reports the mouse every button is its — the
                 // secondary one too, which is a context menu otherwise.
                 spec = spec
-                    .on_button(Value::map([
-                        ("kind", "termbutton".into()),
-                        ("pane", Value::Int(pane as i64)),
-                    ]))
+                    .on_button(Msg::TermButton { pane })
                     .buttons(if reporting {
                         kui_native::Buttons::ALL
                     } else {
@@ -1334,10 +1307,7 @@ impl Kawoosh {
                             .width(8.0)
                             .height(Sizing::Percent(1.0))
                             .cursor(kui_native::CursorShape::Default)
-                            .on_drag(Value::map([
-                                ("kind", "termbar".into()),
-                                ("pane", Value::Int(pane as i64)),
-                            ]))
+                            .on_drag(Msg::TermBar { pane })
                             .label("scrollbar"),
                         |ui| {
                             ui.leaf(NodeSpec::column().height(above));
@@ -1364,10 +1334,7 @@ impl Kawoosh {
                             .bg(pal.strip)
                             .border(1.0, pal.border)
                             .cursor(kui_native::CursorShape::Pointer)
-                            .on_click(Value::map([
-                                ("kind", "termbottom".into()),
-                                ("pane", Value::Int(pane as i64)),
-                            ]))
+                            .on_click(Msg::TermBottom { pane })
                             .keep_focus()
                             .label("lines below")
                             .gap(4.0)
@@ -2022,7 +1989,7 @@ impl Kawoosh {
             })
             .collect();
         let any_styled = token_marks.iter().any(Option::is_some);
-        let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
+        let tag = Msg::Editor { pane };
         let cell_w = pf.cell.0;
         let marked = self.marks.any(buf_id);
         let gutter = rows::gutter_w(
@@ -2201,11 +2168,8 @@ impl Kawoosh {
                 // rather than asked for (`on_context_menu`) so its press
                 // comes with the row and byte it landed on: the caret
                 // goes there first (`menus.rs`).
-                .on_button(Value::map([
-                    ("kind", "editbutton".into()),
-                    ("pane", Value::Int(pane as i64)),
-                ]))
-                .on_menu(crate::menus::chosen())
+                .on_button(Msg::EditButton { pane })
+                .on_menu(Msg::Menu)
                 .buttons(kui_native::Buttons::SECONDARY)
                 .cursor(kui_native::CursorShape::Text)
                 .role(Role::MultilineTextInput)
@@ -2252,10 +2216,7 @@ impl Kawoosh {
                         // A rendered pane that does not wrap: its rect
                         // as a tall pane's, and sideways as a code
                         // pane's.
-                        lines_spec
-                            .scroll_x()
-                            .clip()
-                            .on_layout(Value::map([("kind", "lines".into())]))
+                        lines_spec.scroll_x().clip().on_layout(Msg::Lines)
                     } else if tall {
                         // Its rect, for the next frame to find the
                         // caret's row in it (`markdown::Anchor`). Rows
@@ -2265,7 +2226,7 @@ impl Kawoosh {
                         lines_spec
                             .scroll_axes(kui_native::ScrollAxes::Y)
                             .clip()
-                            .on_layout(Value::map([("kind", "lines".into())]))
+                            .on_layout(Msg::Lines)
                     } else {
                         lines_spec.scroll_x()
                     },

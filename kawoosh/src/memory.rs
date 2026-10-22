@@ -52,7 +52,7 @@ use std::time::{Duration, Instant};
 use kawoosh_doc::{BufferId, Hunk};
 use kawoosh_editor::{ArgKind, Args, Selection, Selections, Spec, Took, ViewId};
 use kawoosh_systems::store::{MomentKey, MomentQuery, MomentRow, RingRow, history_key_of, now};
-use kui_native::{Color, NodeSpec, Sizing, Ui, Value, widgets};
+use kui_native::{Color, NodeSpec, Sizing, Ui, widgets};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -61,6 +61,7 @@ use crate::diff;
 use crate::history::{Base, History, MAX_TEXT, fingerprint};
 use crate::layout::{Content, PaneId, Place};
 use crate::moments::PinPlace;
+use crate::msg::Msg;
 use crate::rows;
 use crate::undo::PANEL_SHARE;
 
@@ -1376,30 +1377,36 @@ impl Kawoosh {
         }
     }
 
-    /// A click on a row: the pane takes the keyboard and the row opens.
-    pub(crate) fn on_memory_click(&mut self, p: &Value) {
-        if let Some(pane) = p.get_int("pane") {
-            self.layout.focus(pane as PaneId);
-        }
-        if let Some(view) = p.get_str("view").and_then(View::parse) {
+    /// A view chip clicked: the pane takes the keyboard and shows it.
+    pub(crate) fn on_memory_view(&mut self, pane: PaneId, view: &str) {
+        self.layout.focus(pane);
+        if let Some(view) = View::parse(view) {
             self.set_view(view);
-            return;
         }
-        if let Some(scope) = p.get_str("scope").and_then(Scope::parse) {
+    }
+
+    /// A scope chip clicked: the pane takes the keyboard and narrows.
+    pub(crate) fn on_memory_scope(&mut self, pane: PaneId, scope: &str) {
+        self.layout.focus(pane);
+        if let Some(scope) = Scope::parse(scope) {
             self.set_memory_scope(Some(scope));
-            return;
         }
-        if p.get_bool("filter") == Some(true) {
-            self.memory_filter(None);
-            return;
-        }
-        if let Some(i) = p.get_int("row") {
-            self.memory_pane.filtering = false;
-            self.sync_memory_rows();
-            let i = (i.max(0) as usize).min(self.memory_pane.rows.len().saturating_sub(1));
-            self.memory_pane.cursor = i;
-            self.open_memory_row(i);
-        }
+    }
+
+    /// The filter clicked: the pane takes the keyboard, the filter its.
+    pub(crate) fn on_memory_filter(&mut self, pane: PaneId) {
+        self.layout.focus(pane);
+        self.memory_filter(None);
+    }
+
+    /// A click on a row: the pane takes the keyboard and the row opens.
+    pub(crate) fn on_memory_row(&mut self, pane: PaneId, row: usize) {
+        self.layout.focus(pane);
+        self.memory_pane.filtering = false;
+        self.sync_memory_rows();
+        let i = row.min(self.memory_pane.rows.len().saturating_sub(1));
+        self.memory_pane.cursor = i;
+        self.open_memory_row(i);
     }
 
     // ------------------------------------------------------------ render
@@ -1453,7 +1460,7 @@ impl Kawoosh {
         let has_store = self.store.is_some();
         let pending = self.moments.pending();
         let evicted = self.moments.evicted;
-        let tag = Value::map([("kind", "memory".into()), ("pane", Value::Int(pane as i64))]);
+        let tag = Msg::Memory { pane };
         // With a filter: `12 of 138 texts`.
         let filter = self.memory_pane.filter;
         // The filter has the keys only while the pane has them.
@@ -1562,11 +1569,10 @@ impl Kawoosh {
                                         .radius(4.0)
                                         .bg(if on { theme.accent } else { pal.panel })
                                         .hover_bg(if on { theme.accent_hover } else { pal.hover })
-                                        .on_click(Value::map([
-                                            ("kind", "memory".into()),
-                                            ("pane", Value::Int(pane as i64)),
-                                            ("scope", s.name().into()),
-                                        ]))
+                                        .on_click(Msg::MemoryScope {
+                                            pane,
+                                            scope: s.name().into(),
+                                        })
                                         .cursor(kui_native::CursorShape::Pointer)
                                         .label(key.as_str()),
                                     &format!("@{}", s.name()),
@@ -1582,11 +1588,10 @@ impl Kawoosh {
                             v.name(),
                             NodeSpec::row()
                                 .pad_xy(4.0, 0.0)
-                                .on_click(Value::map([
-                                    ("kind", "memory".into()),
-                                    ("pane", Value::Int(pane as i64)),
-                                    ("view", v.name().into()),
-                                ]))
+                                .on_click(Msg::MemoryView {
+                                    pane,
+                                    view: v.name().into(),
+                                })
                                 .cursor(kui_native::CursorShape::Pointer)
                                 .label(v.name()),
                             v.name(),
@@ -1612,11 +1617,7 @@ impl Kawoosh {
                         tm.line(&pal, 0)
                             .hover_bg(Color::TRANSPARENT)
                             .bg(if filtering { pal.strip } else { Color::TRANSPARENT })
-                            .on_click(Value::map([
-                                ("kind", "memory".into()),
-                                ("pane", Value::Int(pane as i64)),
-                                ("filter", Value::Bool(true)),
-                            ])),
+                            .on_click(Msg::MemoryFilter { pane }),
                         |ui| {
                             ui.with(col(2.0).main_align(kui_native::Align::Start), |ui| {
                                 ui.text("/", rows::mono(self.face, &pal).color(pal.command))
@@ -1694,11 +1695,7 @@ impl Kawoosh {
                             // The register's text, a buffer on show.
                             line = line.bg(pal.strip);
                         }
-                        let payload = Value::map([
-                            ("kind", "memory".into()),
-                            ("pane", Value::Int(pane as i64)),
-                            ("row", Value::Int(i as i64)),
-                        ]);
+                        let payload = Msg::MemoryRow { pane, row: i };
                         let label = match r {
                             Row::Text(t) => format!("moment {}", t + 1),
                             Row::Moment { row, .. } => {

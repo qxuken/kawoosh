@@ -2322,10 +2322,7 @@ impl Kawoosh {
             // A launcher's: the buffer the pane was split from.
             ("origin", self.launcher_origin(pane)),
         ]);
-        let tag = Value::map([
-            ("kind", "luapane".into()),
-            ("pane", Value::Int(pane as i64)),
-        ]);
+        let tag = crate::msg::Msg::LuaPane { pane };
         let sink = ui.with_keyed(
             "lua",
             NodeSpec::column()
