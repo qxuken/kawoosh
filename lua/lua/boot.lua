@@ -700,9 +700,14 @@ end
 ---@field legend_toggle fun(opts?: kawoosh.LegendOpts): kui.Node the way to the legend, drawn by the view
 ---@field legend_full fun(): boolean whether the pane's legend is whole
 
----What a view's `on_event` hears: a click's payload, as its node gave it, beside kui's fields.
+---What a view's `on_event` hears: the message its node declared for the
+---event — `on_click = { kind = "row", i = 3 }` arrives as that table — with
+---the event's own data under the event's name (kui ADR 0047), and which
+---event it was in `event`. A key is kawoosh's: `{ kind = "key", key, code,
+---text, ctrl, alt, shift }`, with no `event`.
 ---@class kawoosh.ViewEvent
----@field kind? string a payload's own, or kui's: "key", "drag", "scroll", …
+---@field kind? string the message's own; "key" for a key
+---@field event? string which event it was: "click", "drag", "scroll", "hover", "layout", …
 ---@field slot? string the view's slot, `lua/NAME@PANE`
 ---@field key? string a key's notation, `<C-d>`
 ---@field code? string a key's code
@@ -710,12 +715,11 @@ end
 ---@field ctrl? boolean
 ---@field alt? boolean
 ---@field shift? boolean
----@field tag? table a drag's or a scroll's tag, as its node gave it
----@field phase? string a drag's: "start", "move", "end", …
----@field x? number the pointer, logical px
----@field y? number
----@field dx? number a drag's from the press point, a scroll's delta
----@field dy? number
+---@field click? kui.ClickEvent a click's pointer data, on a grid or a line row
+---@field drag? kui.DragEvent a drag's: phase, the pointer, from the press point, the parent's rect
+---@field scroll? kui.ScrollEvent a wheel's: the pointer, its delta, whole lines
+---@field hover? kui.HoverEvent a hover edge: phase, and whether the pointer or the content moved
+---@field layout? kui.LayoutEvent where the node was laid out, and its parent
 ---@field [string] any
 
 ---@class kawoosh.ViewSpec
@@ -730,8 +734,8 @@ end
 -- height =, share = (the pane's fraction of the split it is in, nil
 -- when it is the whole window), origin = (a new pane's launcher: the
 -- buffer it was split from, `{ buffer =, name =, path = }`), env =
--- kui's env }. Events from the tree's on_click / on_key
--- payloads reach `on_event(ev)`. `opts.session = false` keeps the view
+-- kui's env }. Events reach `on_event(ev)` as the messages the tree's
+-- on_click / on_drag / on_scroll / … declared (`kawoosh.ViewEvent`). `opts.session = false` keeps the view
 -- out of a session: a picker is asked for again, not brought back.
 -- `opts.here(pane)` says the directory the pane shows, if any: where
 -- `:terminal here` starts from it. `opts.scroll` is the label of the

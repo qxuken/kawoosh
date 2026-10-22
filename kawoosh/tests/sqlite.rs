@@ -478,3 +478,23 @@ fn a_long_blob_is_shown_cut_and_copied_and_put_back_whole() {
         "the whole blob put back"
     );
 }
+
+/// A click on the grid puts the cursor on the row under it: the cell is
+/// the click's data, under its name (`ev.click.cell`, kui ADR 0047).
+#[test]
+fn a_click_on_a_cell_puts_the_cursor_there() {
+    let (mut d, mut app, _root, _db) = open("click");
+    d.press(&mut app, "j<CR>");
+    settle(&mut d, &mut app);
+    assert_eq!(shown(&mut app), "grid items 1 1");
+    let pane = app.layout.focused();
+    let grid = d
+        .rect(&format!("sqlite grid {pane}"))
+        .expect("the grid drawn");
+    let lh = app.face.line_height;
+    // Row 0 is the header: the third row of data is fig's.
+    d.click(&mut app, grid.x + 4.0, grid.y + 3.5 * lh);
+    d.frame(&mut app);
+    assert_eq!(shown(&mut app), "grid items 3 1");
+    assert_eq!(field(&mut app, "value"), "3", "fig's id");
+}

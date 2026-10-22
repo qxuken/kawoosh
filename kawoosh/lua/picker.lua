@@ -1902,37 +1902,43 @@ kawoosh.view(VIEW, function(ctx)
   return out
 end, function(ev)
   if not P then return end
-  if ev.kind == "scroll" then
-    scroll(ev.tag and ev.tag.kind, ev.dy or 0)
-  elseif ev.kind == "drag" then
+  -- Which event it was is `ev.event`; `ev.kind` is the message the node
+  -- declared, the same for a row's click and its hover (kui ADR 0047).
+  if ev.event == "scroll" then
+    scroll(ev.kind, ev.scroll.dy or 0)
+  elseif ev.event == "drag" then
     -- The divider under the pointer: its x over the body's width is
     -- the list's share, kept for the session.
-    local par = ev.parent or {}
-    if ev.phase ~= "end" and P.place == "below" and par.h and par.h > 0 then
-      local at = ((ev.y or 0) - (par.y or 0)) / par.h
+    local d = ev.drag
+    local par = d.parent or {}
+    if d.phase ~= "end" and P.place == "below" and par.h and par.h > 0 then
+      local at = ((d.y or 0) - (par.y or 0)) / par.h
       kawoosh.opt("picker.split_below", math.max(0.1, math.min(0.9, at)))
-    elseif ev.phase ~= "end" and par.w and par.w > 0 then
-      local at = ((ev.x or 0) - (par.x or 0)) / par.w
+    elseif d.phase ~= "end" and par.w and par.w > 0 then
+      local at = ((d.x or 0) - (par.x or 0)) / par.w
       kawoosh.opt("picker.split", math.max(0.1, math.min(0.9, at)))
     end
-  elseif ev.kind == "preview" then
-    kawoosh.run("picker preview")
-  elseif ev.kind == "ignored" then
-    kawoosh.run("picker ignored")
-  elseif ev.kind == "hover" then
+  elseif ev.event == "hover" then
     -- The pointer moving from one row onto another takes the cursor
     -- there — the pane follows it too. Rows scrolled or refiltered under
     -- a pointer at rest are `by = "content"`, not the pointer moving;
     -- nor is the pointer come to the list to wheel it, an enter with no
     -- row left before it.
-    if ev.by ~= "pointer" then
+    local h = ev.hover
+    if h.by ~= "pointer" then
       P.left_row = nil
-    elseif ev.phase == "leave" then
+    elseif h.phase == "leave" then
       P.left_row = true
     elseif P.left_row then
       P.left_row = nil
-      P.cursor = ev.tag.i
+      P.cursor = ev.i
     end
+  elseif ev.event ~= "click" then
+    return
+  elseif ev.kind == "preview" then
+    kawoosh.run("picker preview")
+  elseif ev.kind == "ignored" then
+    kawoosh.run("picker ignored")
   elseif ev.kind == "row" then
     kawoosh.field_focus(VIEW, FIELD)
     if ev.i == P.cursor then pick() else P.cursor = ev.i ensure_visible() end

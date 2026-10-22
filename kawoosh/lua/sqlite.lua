@@ -875,7 +875,6 @@ end, function(ev)
   S = states[pane_of(ev.slot)]
   if not S then return end
   local kind = ev.kind
-  if kind == "scroll" and type(ev.tag) == "table" then kind = ev.tag.kind end
   if kind == "table" then
     local tb = S.schema and S.schema.tables[ev.i]
     if not tb then return end
@@ -889,7 +888,7 @@ end, function(ev)
   elseif kind == "run" then
     submit()
   elseif kind == "cell" then
-    local cell = ev.cell
+    local cell = ev.click and ev.click.cell
     if not (cell and S.res) then return end
     local i = nil
     for _, sp in ipairs(S.spans or {}) do
@@ -907,9 +906,10 @@ end, function(ev)
       clamp(S)
       S.reveal = nil
     end
-  elseif kind == "wheel" then
-    if ev.lines and ev.lines ~= 0 and S.res then
-      S.top = math.max(0, math.min(math.max(0, #S.res.rows - (S.rows_shown or 1)), S.top + ev.lines))
+  elseif kind == "wheel" and ev.event == "scroll" then
+    local lines = ev.scroll.lines
+    if lines and lines ~= 0 and S.res then
+      S.top = math.max(0, math.min(math.max(0, #S.res.rows - (S.rows_shown or 1)), S.top + lines))
       if S.top + (S.rows_shown or 1) >= #S.res.rows - 50 then more(S) end
     end
   end
