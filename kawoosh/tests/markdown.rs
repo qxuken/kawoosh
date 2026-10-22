@@ -2072,3 +2072,68 @@ fn the_bar_caret_in_a_task_sits_at_its_byte_on_every_frame() {
     assert_eq!(typed, 24);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A selection never paints past its pane. The rows above the caret's
+/// are stacked up from it in a float cut at the pane's top, and a
+/// selected row's cell past its newline — its own float, where kui laid
+/// the row's end — escaped that cut: a selection run up from the caret
+/// painted its rows' ends over the title bars, the pane's and the
+/// window's (2026-10-22). Square and rounded, each a kind of quad.
+#[test]
+fn a_selection_above_the_caret_stays_in_its_pane() {
+    use kawoosh_editor::{Layer, Setting};
+    use kui_native::QuadKind;
+    let dir = fixture("selclip");
+    let doc: String = (0..200)
+        .map(|i| format!("Line {i} of prose.\n\n"))
+        .collect();
+    std::fs::write(dir.join("doc.md"), doc).unwrap();
+    for radius in [0.0, 4.0] {
+        let mut d = Drive::new(900.0, 600.0);
+        let mut app = Kawoosh::from_file(&dir.join("doc.md"));
+        app.jobs_inline = true;
+        app.ed.settings.set(
+            Layer::Session,
+            "editor.selection_radius",
+            Setting::Float(radius),
+        );
+        d.frame(&mut app);
+        settle(&mut d, &mut app);
+        // From line 100 down to 300, the caret at the bottom: the rows
+        // above it run up past the pane's top.
+        d.keys(&mut app, "100GV300G");
+        settle(&mut d, &mut app);
+        let pane = app.layout.rects[&app.layout.focused()];
+        let top = pane.y + app.chrome.pane_title_h;
+        let bottom = pane.y + pane.h;
+        let (sel, scale) = (app.pal.select, d.scale);
+        let dl = d.core.output().0;
+        // What each selection quad paints, cut to its clip, logical px.
+        let painted: Vec<(f32, f32)> = dl
+            .quads
+            .iter()
+            .filter(|q| matches!(q.kind, QuadKind::Solid | QuadKind::Fragment) && q.color == sel)
+            .filter_map(|q| {
+                let c = dl.clip_of(q).rect;
+                let y0 = q.rect.y.max(c.y) / scale;
+                let y1 = (q.rect.y + q.rect.h).min(c.y + c.h) / scale;
+                let x0 = q.rect.x.max(c.x);
+                let x1 = (q.rect.x + q.rect.w).min(c.x + c.w);
+                (y1 > y0 && x1 > x0).then_some((y0, y1))
+            })
+            .collect();
+        assert!(
+            painted.iter().filter(|(y0, _)| *y0 >= top).count() > 10,
+            "the selection is drawn, radius {radius}: {painted:?}"
+        );
+        let out: Vec<_> = painted
+            .iter()
+            .filter(|(y0, y1)| *y0 < top - 0.5 || *y1 > bottom + 0.5)
+            .collect();
+        assert!(
+            out.is_empty(),
+            "painted outside the pane ({top}..{bottom}), radius {radius}: {out:?}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
