@@ -565,10 +565,18 @@ fn ask(argv: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
-/// A registry's JSON over https, with curl — what the grammars fetch
-/// with already.
+/// A registry's JSON over https, with curl ([`crate::io::curl`]) — what
+/// the grammars fetch with already.
 fn fetch(url: &str) -> Result<String, String> {
-    ask(&["curl", "-fsSL", "-A", "kawoosh (language servers)", url])
+    let mut c = crate::io::curl();
+    c.args(["-A", "kawoosh (language servers)", url]);
+    let o = crate::spawn::output(&mut c)
+        .map_err(|e| crate::io::curl_missing(&e, "registries are asked with it"))?;
+    if !o.status.success() {
+        let said = crate::io::curl_said(&String::from_utf8_lossy(&o.stderr), o.status);
+        return Err(format!("{url}: {said}"));
+    }
+    Ok(String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
 /// The newest version of `p`'s first package its registry has — asked

@@ -328,6 +328,49 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
     c
 }
 
+/// `curl -fsSL --connect-timeout 20`, as everything kawoosh fetches over
+/// https is fetched ([`command`]): the grammars and the language
+/// servers' registries. Its URL and where the body goes are the
+/// caller's.
+///
+/// On macOS it checks a certificate the way the system does. Apple's
+/// `/usr/bin/curl` checks against LibreSSL and `/etc/ssl/cert.pem` by
+/// default, a bundle only an OS update rewrites: neither the Keychain's
+/// roots nor a CA Apple has distrusted since reach it — the compromised
+/// eMudhra intermediates of 2026-10 were still trusted there after
+/// Apple blocked them. Its SecureTransport backend asks Apple's trust
+/// evaluation instead. A curl without that backend (Homebrew's) ignores
+/// the name, and a `CURL_SSL_BACKEND` the user set is theirs.
+pub fn curl() -> std::process::Command {
+    let mut c = command("curl");
+    c.args(["-fsSL", "--connect-timeout", "20"]);
+    if cfg!(target_os = "macos") && std::env::var_os("CURL_SSL_BACKEND").is_none() {
+        c.env("CURL_SSL_BACKEND", "securetransport");
+    }
+    c
+}
+
+/// Why [`curl`] did not start: on no PATH, with `what` it is needed
+/// for.
+pub fn curl_missing(e: &std::io::Error, what: &str) -> String {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => format!("no curl on the PATH: {what}"),
+        _ => format!("curl: {e}"),
+    }
+}
+
+/// What a [`curl`] that ended with `status` said on `stderr`: its first
+/// line, less its name — `(60) SSL certificate problem: certificate has
+/// expired`, not that and the paragraph of advice curl prints after a
+/// certificate it refused.
+pub fn curl_said(stderr: &str, status: std::process::ExitStatus) -> String {
+    let first = stderr.lines().map(str::trim).find(|l| !l.is_empty());
+    match first {
+        Some(l) => l.trim_start_matches("curl:").trim().to_string(),
+        None => format!("curl failed ({status})"),
+    }
+}
+
 /// The shell a command line is run through here, as a terminal's is
 /// chosen (`kawoosh_term::Terminal::spawn`): `$SHELL` where there is
 /// one (an MSYS bash sets it on Windows too), else `/bin/sh`, or
@@ -2247,6 +2290,56 @@ fn watch_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed fetch says curl's first line, not its paragraph of
+    /// advice after a certificate it refused; with nothing said, how it
+    /// ended.
+    #[test]
+    fn curl_says_its_first_line() {
+        #[cfg(unix)]
+        let status = std::os::unix::process::ExitStatusExt::from_raw(60 << 8);
+        #[cfg(windows)]
+        let status = std::os::windows::process::ExitStatusExt::from_raw(60);
+        let refused = "curl: (60) SSL certificate problem: certificate has expired\n\
+             More details here: https://curl.se/docs/sslcerts.html\n\n\
+             curl failed to verify the legitimacy of the server and therefore could not\n";
+        assert_eq!(
+            curl_said(refused, status),
+            "(60) SSL certificate problem: certificate has expired"
+        );
+        assert_eq!(
+            curl_said(
+                "\n  curl: (22) The requested URL returned error: 404\n",
+                status
+            ),
+            "(22) The requested URL returned error: 404"
+        );
+        assert!(curl_said(" \n", status).starts_with("curl failed ("));
+        let gone = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(
+            curl_missing(&gone, "grammars are fetched with it"),
+            "no curl on the PATH: grammars are fetched with it"
+        );
+    }
+
+    /// Every fetch fails fast on a host that does not answer, and on
+    /// macOS checks certificates as the system does — unless the user
+    /// chose curl's backend themselves.
+    #[test]
+    fn curl_times_out_and_asks_the_system_on_macos() {
+        let c = curl();
+        let args: Vec<_> = c.get_args().collect();
+        assert_eq!(args, ["-fsSL", "--connect-timeout", "20"]);
+        let backend = c
+            .get_envs()
+            .find(|(k, _)| *k == "CURL_SSL_BACKEND")
+            .and_then(|(_, v)| v);
+        if std::env::var_os("CURL_SSL_BACKEND").is_some() || !cfg!(target_os = "macos") {
+            assert_eq!(backend, None);
+        } else {
+            assert_eq!(backend, Some("securetransport".as_ref()));
+        }
+    }
 
     /// A program npm installed on Windows is `NAME.cmd`, which std does
     /// not look for: it is taken by its path, found in cmd's order —

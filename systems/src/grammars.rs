@@ -500,22 +500,18 @@ pub fn refresh(bases: &[String], root: &Path) -> Result<Listing, String> {
     })
 }
 
-/// Fetches `url` to `to` with `curl`, saying how far it is against
-/// `total` as it goes. `file://` is a URL too.
+/// Fetches `url` to `to` with `curl` ([`crate::io::curl`]), saying how
+/// far it is against `total` as it goes. `file://` is a URL too.
 fn fetch(url: &str, to: &Path, total: u64, say: &dyn Fn(Step)) -> Result<(), String> {
-    let mut curl = crate::io::command("curl");
-    curl.args(["-fsSL", "--connect-timeout", "20", "-o"])
+    let mut curl = crate::io::curl();
+    curl.arg("-o")
         .arg(to)
         .arg(url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
-    let mut child = crate::spawn::spawn(&mut curl).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => {
-            "no curl on the PATH: grammars are fetched with it".to_string()
-        }
-        _ => format!("curl: {e}"),
-    })?;
+    let mut child = crate::spawn::spawn(&mut curl)
+        .map_err(|e| crate::io::curl_missing(&e, "grammars are fetched with it"))?;
     // The exit is looked for often, so a small fetch is not waited on;
     // how far it is, is said at a progress line's pace and when it moved.
     let (mut said_at, mut said) = (Instant::now(), 0);
@@ -541,14 +537,8 @@ fn fetch(url: &str, to: &Path, total: u64, say: &dyn Fn(Step)) -> Result<(), Str
     if let Some(mut e) = child.stderr.take() {
         let _ = e.read_to_string(&mut err);
     }
-    // curl's own words, less its name: `(22) The requested URL returned
-    // error: 404`.
-    let err = err.trim().trim_start_matches("curl:").trim();
-    Err(if err.is_empty() {
-        format!("{url}: curl failed ({status})")
-    } else {
-        format!("{url}: {err}")
-    })
+    // curl's own words: `(22) The requested URL returned error: 404`.
+    Err(format!("{url}: {}", crate::io::curl_said(&err, status)))
 }
 
 /// Writes `data` at `path` through a file beside it, so a reader finds
