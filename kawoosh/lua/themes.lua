@@ -115,7 +115,7 @@ local function card(v, cur, ctx, is_cursor, width)
   local half = v.dark and "dark" or "light"
   local held = cur[half] == v.name
   local shown = held and cur.base == half
-  local mono = { family = "mono", size = SMALL, wrap = "none" }
+  local mono = { family = "$editor", size = SMALL, wrap = "none" }
   local function styled(extra)
     local s = {}
     for k, x in pairs(mono) do s[k] = x end
@@ -256,7 +256,7 @@ kawoosh.view(VIEW, function(ctx)
       { size = SMALL, color = t.muted, wrap = "word" }),
     row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow", pad = { x = 8, y = 4 }, radius = 4, bg = t.sunken,
-        text(keep, { family = "mono", size = SMALL, color = t.fg, wrap = "word" }) },
+        text(keep, { family = "$editor", size = SMALL, color = t.fg, wrap = "word" }) },
       row { key = "copy", pad = { x = 8, y = 4 }, radius = 4, bg = t.raised, hover_bg = t.surface,
         border = { w = 1, color = t.border }, on_click = { kind = "copy" },
         text("copy", { size = SMALL, color = t.fg, wrap = "none" }) } },

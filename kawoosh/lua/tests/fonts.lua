@@ -24,6 +24,38 @@ kawoosh.test.eq(cur.size, 13)
 kawoosh.test.eq(cur.row, 20, "13 × 1.5")
 kawoosh.test.ok(cur.cell > 0, "a cell measured")
 
+-- The faces as family tokens (look.rs `sync_tokens`): a view's text in
+-- `family = "$editor"` is set in the editor's face, and `$prose` is
+-- the editor's while `font.prose` names none. A probe view reads what
+-- each picked, and measures a run in the token against the same run
+-- in the face's own name; it is opened, read and closed again.
+local seen
+kawoosh.view("family_probe", function(ctx)
+  local fam = ctx.env.tokens.families
+  local width = function(family)
+    return ctx.env.measure_text("0Oo0", { family = family, size = 13, wrap = "none" }).width
+  end
+  seen = { editor = fam.editor, prose = fam.prose, icons = fam.icons,
+           by_token = width("$editor"), by_name = width(fam.editor) }
+  return column { text("probe", { family = "$editor" }) }
+end)
+local function probe()
+  local before = #kawoosh.panes()
+  seen = nil
+  kawoosh.cmd("view family_probe")
+  kawoosh.frame(2)
+  local got = assert(seen, "the probe drew")
+  kawoosh.cmd("close")
+  kawoosh.frame()
+  kawoosh.test.eq(#kawoosh.panes(), before, "the probe closed")
+  return got
+end
+local fam = probe()
+kawoosh.test.eq(fam.editor, "mono", "no face shipped: kui's mono")
+kawoosh.test.eq(fam.prose, "mono", "no font.prose: the editor's")
+kawoosh.test.eq(type(fam.icons), "string")
+kawoosh.test.eq(fam.by_token, fam.by_name, "$editor shapes in the face it picked")
+
 -- A machine with fewer than two monospaced families has nothing to pick
 -- between: the rest needs them.
 if #mono < 2 then return end
@@ -37,6 +69,11 @@ cur = fonts.current()
 kawoosh.test.eq(cur.name, a.name)
 kawoosh.test.ok(cur.font, "a handle for a view")
 kawoosh.test.eq(cur.mono, true)
+-- The face taken is the editor token's pick, and the prose's with it.
+fam = probe()
+kawoosh.test.eq(fam.editor, a.name, "$editor follows the face")
+kawoosh.test.eq(fam.prose, a.name, "and $prose with it")
+kawoosh.test.eq(fam.by_token, fam.by_name, "$editor shapes in " .. a.name)
 kawoosh.cmd("font")
 kawoosh.frame()
 kawoosh.test.ok(kawoosh.message():find("font " .. a.name, 1, true), kawoosh.message())

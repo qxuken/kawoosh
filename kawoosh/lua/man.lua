@@ -552,7 +552,7 @@ function man.index(fn, again)
 end
 
 local COLUMNS = {
-  { "text", family = "mono", min = 120, max = 280, share = 0.3 },
+  { "text", family = "$editor", min = 120, max = 280, share = 0.3 },
   { "doc", grow = true },
 }
 

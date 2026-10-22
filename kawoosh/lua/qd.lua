@@ -237,7 +237,7 @@ local function module_row(m, ctx, on)
     row { width = SIZE * 9, min_width = 0,
       text({ { m.name, bold = true } }, { size = SIZE, color = t.fg, ellipsis = true }) },
     row { width = "grow", min_width = 0,
-      text(fs.short(m.dest), { family = "mono", size = SMALL, color = t.faint, ellipsis = true }) },
+      text(fs.short(m.dest), { family = "$editor", size = SMALL, color = t.faint, ellipsis = true }) },
     text(summary, { size = SMALL, color = #m.files > 0 and t.fg or t.muted, wrap = "none" }),
   }
 end
@@ -252,7 +252,7 @@ local function file_row(m, f, ctx, on)
     -- Under its module's name.
     row { width = SIZE },
     row { width = "grow", min_width = 0,
-      text(f.rel, { family = "mono", size = SMALL, color = t.fg, ellipsis = true }) },
+      text(f.rel, { family = "$editor", size = SMALL, color = t.fg, ellipsis = true }) },
     text(f.state, { size = NOTE, color = t[COLORS[f.state]] or t.muted, wrap = "none" }),
   }
 end

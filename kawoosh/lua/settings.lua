@@ -538,7 +538,7 @@ end
 -- A row's control, under its doc, by its kind.
 local function control(r, ctx, t)
   local v = scoped(r)
-  local mono = { family = "mono", size = SMALL, color = t.fg, wrap = "none" }
+  local mono = { family = "$editor", size = SMALL, color = t.fg, wrap = "none" }
   if S.editing == r.path then
     local f = ctx.field { name = EDIT, size = SMALL, width = "grow" }
     return row { width = "grow", gap = 8, cross_align = "center",
@@ -568,7 +568,7 @@ local function control(r, ctx, t)
       -- Text a space begins or ends — the leader — in quotes, so it shows.
       text(empty and "empty" or (type(v) == "string" and (v:find("^%s") or v:find("%s$")) and spell(v)
              or type(v) == "string" and v or spell(v, r.kind)),
-        { family = "mono", size = SMALL, color = empty and t.faint or t.fg, wrap = "none" }) }
+        { family = "$editor", size = SMALL, color = empty and t.faint or t.fg, wrap = "none" }) }
   end
   local opts = options_of(r)
   if opts and #opts > 0 then
@@ -584,7 +584,7 @@ local function control(r, ctx, t)
         border = i == at and { w = 1, color = on and t.on_accent or t.accent } or nil,
         on_click = { kind = "toggle", path = r.path, word = w, at = i },
         text(on and "✓" or "·", { size = NOTE, color = on and t.on_accent or t.faint, wrap = "none" }),
-        text(w, { family = "mono", size = SMALL, color = on and t.on_accent or t.muted, wrap = "none" }) }
+        text(w, { family = "$editor", size = SMALL, color = on and t.on_accent or t.muted, wrap = "none" }) }
     end
     line[#line + 1] = row { width = "grow" }
     line[#line + 1] = button("file " .. r.path, "edit in file", { kind = "open", path = r.path, add = true }, t, t.fg)
@@ -606,7 +606,7 @@ local function control(r, ctx, t)
     end
     return row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow", clip = true,
-        text(summary, { family = "mono", size = SMALL, color = t.muted, wrap = "none" }) },
+        text(summary, { family = "$editor", size = SMALL, color = t.muted, wrap = "none" }) },
       button("file " .. r.path, "edit in file", { kind = "open", path = r.path, add = true }, t, t.fg) }
   end
   return nil
@@ -631,7 +631,7 @@ local function layers_node(r, t)
       hover_bg = l.file and t.surface or nil,
       on_click = l.file and { kind = "file", file = l.file, line = l.line } or nil,
       row { width = 64, text(LAYER_WORD[l.layer] or l.layer, { size = NOTE, color = t.muted, wrap = "none" }) },
-      text(spell(l.value, r.kind), { family = "mono", size = NOTE, color = t.fg, wrap = "none" }),
+      text(spell(l.value, r.kind), { family = "$editor", size = NOTE, color = t.fg, wrap = "none" }),
       row { width = "grow", clip = true,
         text(where, { size = NOTE, color = t.faint, wrap = "none" }) },
     }
@@ -645,7 +645,7 @@ local function row_node(r, ctx, is_cursor, t)
   local elsewhere = false
   local head = row { width = "grow", gap = 8, cross_align = "center",
     row { width = "grow", clip = true,
-      text(path_spans(r.path, S.words or {}, t), { family = "mono", size = SIZE, wrap = "none" }) } }
+      text(path_spans(r.path, S.words or {}, t), { family = "$editor", size = SIZE, wrap = "none" }) } }
   -- Every layer that sets it, by name: the scope's in the accent, the
   -- others muted, so what `@modified` keeps is marked whoever set it.
   for _, layer in ipairs { "user", "project", "session" } do
@@ -814,7 +814,7 @@ kawoosh.view(VIEW, function(ctx)
       { size = NOTE, color = t.muted, wrap = "word" }),
     row { width = "grow", height = SIZE + 14, pad = { x = 8 }, gap = 8, radius = 5, cross_align = "center",
           bg = t.sunken, border = { w = 1, color = t.border },
-      text("/", { family = "mono", size = SIZE, color = t.accent, wrap = "none" }),
+      text("/", { family = "$editor", size = SIZE, color = t.accent, wrap = "none" }),
       search,
       text(count, { size = NOTE, color = #S.shown == 0 and t.danger or t.faint, wrap = "none" }) },
     filter_chips(ctx, t),

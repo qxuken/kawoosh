@@ -281,7 +281,7 @@ kawoosh.view(VIEW, function(ctx)
     row { width = "grow", gap = 8, cross_align = "center",
       text({ { "picture", bold = true } }, { size = m.text, color = t.fg, wrap = "none" }),
       row { width = "grow", min_width = 0,
-        text(fs.short and fs.short(S.path) or S.path, { family = "mono", size = m.text, color = t.accent, ellipsis = true }) } },
+        text(fs.short and fs.short(S.path) or S.path, { family = "$editor", size = m.text, color = t.accent, ellipsis = true }) } },
     text(table.concat(facts, " · "), { size = m.small, color = t.muted, ellipsis = true }) }
   if note then head[#head + 1] = text(note, { size = m.small, color = t.warning, ellipsis = true }) end
   local keys = { { { "+", "-" }, "zoom" }, { "0", "its own size" }, { "f", "fits" },

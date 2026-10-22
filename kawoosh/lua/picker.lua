@@ -179,7 +179,7 @@ local fs = kawoosh.fs
 ---@class kawoosh.picker.Column
 ---@field [1] string the item's field the cell holds
 ---@field dim? string a field drawn faint after it, matched too
----@field family? string the cell's face: `"mono"`
+---@field family? string the cell's face: `"$editor"`, the editor's
 ---@field muted? boolean drawn in the muted colour
 ---@field min? number px: the narrowest it is
 ---@field max? number px: the widest `picker.widths` makes it
@@ -758,7 +758,7 @@ function picker.rows(ctx, hits, opts)
   local widths = opts.widths or {}
   local wrap = opts.wrap and "glyph" or "none"
   local mono_w = opts.cut == "start" and opts.width
-    and ctx.env.measure_text("M", { family = "mono", size = SIZE, wrap = "none" }).width or nil
+    and ctx.env.measure_text("M", { family = "$editor", size = SIZE, wrap = "none" }).width or nil
   if mono_w and mono_w <= 0 then mono_w = nil end
   -- The window is a column that clips, and inside it the rows as tall
   -- as they are: `min_height = "fit"` is the floor kui compresses a
@@ -889,7 +889,7 @@ function picker.rows(ctx, hits, opts)
         spans[#spans + 1] = { "  " .. it.can, color = t.danger }
       end
       if icon then r[#r + 1] = icon end
-      r[#r + 1] = text(spans, { family = "mono", size = SIZE, wrap = wrap })
+      r[#r + 1] = text(spans, { family = "$editor", size = SIZE, wrap = wrap })
     end
     inner[#inner + 1] = r
   end
@@ -951,14 +951,14 @@ function picker.preview(ctx, pv, rows, from, room)
     -- Numbered when the lines are a file's or a buffer's (`from` says
     -- where they start); a spec's lines are not.
     if pv.from then
-      r[#r + 1] = text(string.format("%4d", ln), { family = "mono", size = PREVIEW_SIZE, color = t.faint })
+      r[#r + 1] = text(string.format("%4d", ln), { family = "$editor", size = PREVIEW_SIZE, color = t.faint })
     end
     if l ~= "" then
       -- The syntax's colours over the line, the tabs widened after
       -- the runs are cut so their bytes stay the text's.
       local spans = preview_spans(pv, i, l, hit and t.fg or t.muted)
       for _, sp in ipairs(spans) do sp[1] = sp[1]:gsub("\t", "    ") end
-      r[#r + 1] = text(spans, { family = "mono", size = PREVIEW_SIZE, wrap = pv.wrap and "word" or "none" })
+      r[#r + 1] = text(spans, { family = "$editor", size = PREVIEW_SIZE, wrap = pv.wrap and "word" or "none" })
     end
     col[#col + 1] = r
   end
@@ -1089,7 +1089,7 @@ local function lines_of(i)
         local d = tostring(it[c.dim] or "")
         if d ~= "" then n = n + 2 + (utf8.len(d) or #d) end
       end
-      local glyph = SIZE * (c.family == "mono" and 0.6 or 0.5)
+      local glyph = SIZE * (c.family == "$editor" and 0.6 or 0.5)
       local w = fixed_width(c, P.widths or {}, j, P.list_w)
       if w then
         lines = math.max(lines, math.ceil(n * glyph / math.max(w, 1)))
@@ -1731,7 +1731,7 @@ local function head_of(ctx, w, parts)
     bg = t.surface,
   }
   if level < 3 then head[#head + 1] = text(parts.title, { size = SIZE, color = t.muted, wrap = "none" }) end
-  head[#head + 1] = text(">", { family = "mono", size = SIZE, color = t.accent })
+  head[#head + 1] = text(">", { family = "$editor", size = SIZE, color = t.accent })
   head[#head + 1] = ctx.field { name = FIELD, placeholder = P.src.placeholder or "type to filter", size = SIZE,
                                 width = "grow" }
   local count = level < 2 and parts.count or level < 4 and parts.short or nil
@@ -2106,9 +2106,9 @@ end
 -- left out of its candidates (`completionItem/resolve`) the preview
 -- asks for, as the popup's panel does.
 local CANDIDATE_COLUMNS = {
-  { "text", family = "mono", min = 140, max = 360, share = 0.4 },
+  { "text", family = "$editor", min = 140, max = 360, share = 0.4 },
   { "kind", muted = true, min = 70, max = 140, share = 0.15 },
-  { "detail", family = "mono", muted = true, grow = true },
+  { "detail", family = "$editor", muted = true, grow = true },
 }
 -- A detail's first line, for its row: a server's may be several (a
 -- TypeScript class's interface and its constructor).
@@ -2799,7 +2799,7 @@ picker.source("symbols", {
   title = "symbols", placeholder = "a symbol in this buffer",
   tree = true, follow = true, icon = "kind",
   columns = {
-    { "text", grow = true, family = "mono", lead = "head", color = "color" },
+    { "text", grow = true, family = "$editor", lead = "head", color = "color" },
     { "tag", dim = "short", muted = true, min = 70, max = 200, share = 0.25 },
     { "sub", muted = true, min = 60, max = 260, share = 0.3, path = true },
   },
@@ -2923,8 +2923,8 @@ picker.source("lines", {
 -- The rows' columns: the name with its first alias faint, the first
 -- key bound to it, and what it does — or why it cannot run here.
 local COMMAND_COLUMNS = {
-  { "text", dim = "alias", family = "mono", min = 160, max = 340, share = 0.36 },
-  { "key", family = "mono", muted = true, min = 100, max = 220, share = 0.26 },
+  { "text", dim = "alias", family = "$editor", min = 160, max = 340, share = 0.36 },
+  { "key", family = "$editor", muted = true, min = 100, max = 220, share = 0.26 },
   { "doc", grow = true },
 }
 

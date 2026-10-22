@@ -306,7 +306,7 @@ kawoosh.view(VIEW, function(ctx)
     text("selected: " .. (shown or "kui's mono") .. (cur.family == "" and " (kawoosh's)" or ""),
       { size = SMALL, color = t.muted, wrap = "word" }),
     row { width = "grow", gap = 8, cross_align = "center",
-      text("/", { family = "mono", size = SIZE, color = t.accent }),
+      text("/", { family = "$editor", size = SIZE, color = t.accent }),
       (function()
         local f = ctx.field { name = FIELD, placeholder = "search by name", size = SIZE, width = "grow" }
         return f
@@ -334,7 +334,7 @@ kawoosh.view(VIEW, function(ctx)
       { size = SMALL, color = t.muted, wrap = "word" }),
     row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow", pad = { x = 8, y = 4 }, radius = 4, bg = t.sunken,
-        text(keep_line(cur), { family = "mono", size = SMALL, color = t.fg, wrap = "word" }) },
+        text(keep_line(cur), { family = "$editor", size = SMALL, color = t.fg, wrap = "word" }) },
       row { key = "copy", pad = { x = 8, y = 4 }, radius = 4, bg = t.raised, hover_bg = t.surface,
         border = { w = 1, color = t.border }, on_click = { kind = "copy" },
         text("copy", { size = SMALL, color = t.fg, wrap = "none" }) } } }

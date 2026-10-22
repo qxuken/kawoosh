@@ -351,7 +351,7 @@ kawoosh.view(VIEW, function(ctx)
     row { width = "grow", gap = 8, cross_align = "center",
       text({ { "disk usage", bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
       row { width = "grow", min_width = 0,
-        text(where, { family = "mono", size = SIZE, color = t.accent, ellipsis = true }) } },
+        text(where, { family = "$editor", size = SIZE, color = t.accent, ellipsis = true }) } },
     text(said, { size = SMALL, color = st.done and t.muted or t.fg, ellipsis = true }),
     text("jk walk · l in · h up · s sort (" .. S.sort .. ") · m marks · d deletes · D deletes marked · o lists · r again · q closes",
       { size = NOTE, color = t.faint, wrap = "word" }) }
@@ -370,13 +370,13 @@ kawoosh.view(VIEW, function(ctx)
       on_click = { kind = "row", i = i + 1 },
       S.marked[e.path] and kawoosh.icon("dot", { size = SIZE, color = t.danger }) or row { width = SIZE, height = SIZE },
       row { width = 72, main_align = "end",
-        text(human(e.bytes), { family = "mono", size = SIZE, color = e.bytes and t.fg or t.faint, wrap = "none" }) } }
+        text(human(e.bytes), { family = "$editor", size = SIZE, color = e.bytes and t.fg or t.faint, wrap = "none" }) } }
     if wide then
       r[#r + 1] = row { width = BAR_W, height = 8, radius = 2, bg = t.sunken,
         row { width = math.max(1, math.floor(BAR_W * frac)), height = 8, radius = 2,
               bg = e.dir and t.accent or t.muted } }
     end
-    r[#r + 1] = text(share, { family = "mono", size = SMALL, color = t.muted, wrap = "none" })
+    r[#r + 1] = text(share, { family = "$editor", size = SMALL, color = t.muted, wrap = "none" })
     -- The name takes what is left, cut with an ellipsis: squeezed to
     -- nothing, it was pushed past the row's end.
     r[#r + 1] = row { width = "grow", min_width = 0,

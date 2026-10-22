@@ -575,7 +575,7 @@ local function chip(t, label, on, kind)
   return row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, cross_align = "center",
     bg = on and t.accent or t.sunken, hover_bg = not on and t.surface or nil,
     on_click = { kind = kind },
-    text(label, { family = "mono", size = SMALL, color = on and t.bg or t.muted, wrap = "none" }) }
+    text(label, { family = "$editor", size = SMALL, color = on and t.bg or t.muted, wrap = "none" }) }
 end
 
 -- The bar's count, and the colour it is drawn in: `searching…`, a
@@ -631,7 +631,7 @@ local function trail(ctx)
       bg = cur and t.selection or nil, hover_bg = not cur and t.sunken or nil,
       on_click = { kind = "stage", i = i },
       text({ { label, color = st.err and t.danger or (cur and t.fg or t.muted) }, { n, color = t.faint } },
-           { family = "mono", size = SIZE, wrap = "none" }) }
+           { family = "$editor", size = SIZE, wrap = "none" }) }
     -- Its own way out.
     chip[#chip + 1] = row { pad = 1, radius = 3, hover_bg = t.surface,
       on_click = { kind = "unstage", i = i },
