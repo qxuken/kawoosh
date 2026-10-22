@@ -1956,3 +1956,30 @@ fn the_pane_s_views_filter_and_rows_answer_clicks() {
     assert_eq!(text_of(&app), format!("one\ntwo\n{want}three\n"));
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// `dwell` is seconds, and a fraction of one is the memory's own way of
+/// saying it (`kawoosh.memory` gives it back so): `remember` keeps it to
+/// the millisecond, where an integer read refused `1.5` (mlua 0.12.2).
+#[test]
+fn a_remembered_dwell_takes_a_fraction_of_a_second() {
+    let dir = tmp("dwell-fraction");
+    let db = dir.join("state.db");
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "aaa\n").unwrap();
+    let (mut d, mut app) = launch(&db, &a);
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"kawoosh.remember { kind = "note", subject = "s", signals = { visits = 1, dwell = 1.5 } }"#,
+    );
+    d.frame(&mut app);
+    app.flush_moments();
+    let row = app
+        .store
+        .as_ref()
+        .unwrap()
+        .moment(&MomentKey::new("note", "s", ""))
+        .expect("remembered");
+    assert_eq!(row.dwell_ms, 1500);
+    std::fs::remove_dir_all(&dir).ok();
+}

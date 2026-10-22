@@ -458,7 +458,7 @@ pub enum Msg {
     /// @field visits? integer
     /// @field edits? integer
     /// @field yanks? integer
-    /// @field dwell? integer seconds
+    /// @field dwell? number seconds, a fraction kept to the millisecond
     Remember {
         kind: String,
         subject: String,
@@ -1719,11 +1719,16 @@ impl Runtime {
         if let Ok(Some(keys)) = t.get::<Option<String>>("press") {
             return Ok(TestStep::Press(keys));
         }
-        if let Ok(Some(ms)) = t.get::<Option<u64>>("sleep") {
-            return Ok(TestStep::Sleep(ms));
+        // A number of either kind: `sleep(2.5)` is three milliseconds,
+        // not a frame, where an integer read refuses a fraction.
+        if let Ok(Some(ms)) = t.get::<Option<f64>>("sleep") {
+            return Ok(TestStep::Sleep(ms.max(0.0).ceil() as u64));
         }
         Ok(TestStep::Frame(
-            t.get::<Option<u32>>("frame").ok().flatten().unwrap_or(1),
+            t.get::<Option<f64>>("frame")
+                .ok()
+                .flatten()
+                .map_or(1, |n| n.max(1.0).ceil() as u32),
         ))
     }
 
@@ -5232,14 +5237,19 @@ fn seed(
     k.set(
         "open",
         lua.create_function(move |_, (p, opts): (String, Option<Table>)| {
-            let get = |k: &str| {
+            // A line or column that is no whole number is the caller's
+            // error, said: dropped, `line = n / 2` opened at the top.
+            let get = |k: &str| -> mlua::Result<Option<usize>> {
                 opts.as_ref()
-                    .and_then(|t| t.get::<Option<usize>>(k).ok().flatten())
+                    .map(|t| t.get::<Option<usize>>(k))
+                    .transpose()
+                    .map(Option::flatten)
+                    .map_err(|e| mlua::Error::runtime(format!("kawoosh.open: {k}: {e}")))
             };
             qq.borrow_mut().push(Msg::Open {
                 path: PathBuf::from(p),
-                line: get("line"),
-                col: get("col"),
+                line: get("line")?,
+                col: get("col")?,
                 split: opts
                     .as_ref()
                     .and_then(|t| t.get::<Option<String>>("split").ok().flatten()),
@@ -7879,7 +7889,15 @@ fn seed(
                 visits: get("visits")?,
                 edits: get("edits")?,
                 yanks: get("yanks")?,
-                dwell_ms: (get("dwell")? * 1000).max(0),
+                // Seconds, fractional as `kawoosh.memory` gives them
+                // back: to the millisecond, where an integer read
+                // refuses `1.5` (mlua 0.12.2).
+                dwell_ms: sig
+                    .as_ref()
+                    .map(|s| s.get::<Option<f64>>("dwell"))
+                    .transpose()?
+                    .flatten()
+                    .map_or(0, |s| (s * 1000.0).round().max(0.0) as i64),
                 meta,
             });
             Ok(())
@@ -8551,9 +8569,14 @@ fn seed(
                     parts: (!keep).then_some(out),
                     show: !matches!(get("show"), Some(LV::Boolean(false))),
                     focus: !matches!(get("focus"), Some(LV::Boolean(false))),
+                    // As `kawoosh.open`'s: a line that is no whole number
+                    // is said, not dropped.
                     line: opts
                         .as_ref()
-                        .and_then(|t| t.get::<Option<usize>>("line").ok().flatten()),
+                        .map(|t| t.get::<Option<usize>>("line"))
+                        .transpose()
+                        .map_err(|e| mlua::Error::runtime(format!("line: {e}")))?
+                        .flatten(),
                     places,
                     place: match get("place") {
                         Some(LV::String(s)) => Some(s.to_str()?.to_string()),
