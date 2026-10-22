@@ -19,8 +19,8 @@ use kawoosh_systems::io::{Incoming, Io, IoMsg, Request};
 use kawoosh_systems::ts::{Job, Token, Ts};
 use kawoosh_term::TermSize;
 use kui_native::{
-    Core, Drag, DragPhase, FontId, KeyMods, KeyPress, NodeSpec, Scroll, Ui, UiEvent, Value,
-    WindowCommand,
+    Core, Drag, DragPhase, EventKind, FontId, KeyMods, KeyPress, NodeSpec, Scroll, Ui, UiEvent,
+    Value, WindowCommand,
 };
 
 use crate::Pal;
@@ -414,7 +414,7 @@ pub struct Kawoosh {
     /// — a 23 px row at 125% is 29 device px, 23.2 — and rows counted
     /// by `cell` ran past the pane's foot.
     pub(crate) grid_cell: (f32, f32),
-    /// Modifier state, from `{kind="modifiers"}` events.
+    /// Modifier state, from the root's `on_modifiers` (kui ADR 0048).
     pub(crate) mods: KeyMods,
     /// The question on show, if one (`confirm.rs`): the keys are its.
     pub confirm: Option<crate::confirm::Confirm>,
@@ -2654,10 +2654,10 @@ impl Kawoosh {
     /// the others shifting to make room as `]T` `[T` shift them. Where
     /// it is let go is where it already is. Only the pointer's `x`
     /// counts: a hand that strays off the strip keeps the tab.
-    fn on_tab_drag(&mut self, d: Drag, tag: Option<&Value>, core: &Core) {
+    fn on_tab_drag(&mut self, d: Drag, msg: &Value, core: &Core) {
         match d.phase {
             DragPhase::Start => {
-                self.tab_drag = tag.and_then(|t| t.get_int("index")).map(|i| {
+                self.tab_drag = msg.get_int("index").map(|i| {
                     self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);
                     self.layout.dock_focused = false;
                     (self.layout.tab, false)
@@ -2701,8 +2701,8 @@ impl Kawoosh {
     /// the pointer makes it, as a fraction of the viewport — a `Ratio`
     /// until a preset key snaps it (scrolling-tab.md Decision 3). The
     /// last column has one too, at its right edge.
-    fn on_split_drag(&mut self, d: Drag, tag: Option<&Value>) {
-        let Some(path) = tag.and_then(|t| t.get_str("path")) else {
+    fn on_split_drag(&mut self, d: Drag, msg: &Value) {
+        let Some(path) = msg.get_str("path") else {
             return;
         };
         let path = path.to_string();
@@ -2712,10 +2712,7 @@ impl Kawoosh {
                 let x = d.pos.x;
                 // The viewport's width, which the last column's handle,
                 // inside its column, has no parent to give.
-                let vw = tag
-                    .and_then(|t| t.get_f32("vw"))
-                    .unwrap_or(d.parent.w)
-                    .max(1.0);
+                let vw = msg.get_f32("vw").unwrap_or(d.parent.w).max(1.0);
                 let gap = self.strip_gap();
                 if let Ok(i) = path[3..].parse::<usize>()
                     && let Some(s) = self.layout.tab().strip()
@@ -2736,7 +2733,7 @@ impl Kawoosh {
                 self.dragging = Some(path);
             }
             _ => {
-                let horizontal = tag.and_then(|t| t.get_str("dir")) == Some("h");
+                let horizontal = msg.get_str("dir") == Some("h");
                 let r = d.ratio();
                 let ratio = if horizontal { r.x } else { r.y }.clamp(0.1, 0.9);
                 if path == "dock" {
@@ -3077,6 +3074,18 @@ impl kui_native::App for Kawoosh {
             ui.request_paste();
         }
         ui.window_title(&format!("{} — kawoosh", self.title()));
+        // What the window says of itself, which no node is under (kui ADR
+        // 0048): back in front, the machine's fonts, the documents the OS
+        // asked it to open, the modifiers held. Each arrives as the
+        // message here, matched on `ev.event` (`on_ui_event`).
+        let said = |kind: &str| Value::map([("kind", kind.into())]);
+        ui.window_events(
+            kui_native::WindowEvents::default()
+                .on_focus(said("window"))
+                .on_fonts(said("fonts"))
+                .on_open(said("open"))
+                .on_modifiers(said("modifiers")),
+        );
         self.sync_menu_bar(ui);
         let vp = ui.viewport();
         let lh = self.face.line_height;
@@ -3181,7 +3190,10 @@ impl kui_native::App for Kawoosh {
     /// looked at — is done here, in the event's turn.
     fn on_event_with(&mut self, ev: UiEvent, core: &mut Core) {
         let asking = self.confirm.is_some();
-        self.frames.input(ev.kind().unwrap_or("event"));
+        // What the frame ledger names the input by: the message's own
+        // kind where it has one (`tab`, `toast`), else the event's.
+        let cause = ev.payload.get_str("kind").unwrap_or(ev.event.name());
+        self.frames.input(cause);
         let prompt = self.ed.prompt_view().map(|f| (f, self.layout.focused()));
         self.on_ui_event(ev, core);
         // Each event its own step for the jumps' look: two keys in one
@@ -3214,16 +3226,18 @@ impl kui_native::App for Kawoosh {
 impl Kawoosh {
     fn on_ui_event(&mut self, ev: UiEvent, core: &mut Core) {
         self.sync_facts();
+        // The message the node declared, with the event's data under the
+        // event's name (kui ADR 0047): `kind` and `pane` are kawoosh's
+        // own, and which event it was is `ev.event`'s alone.
         let p = &ev.payload;
-        let tag = ev.tag();
-        let pane = tag.and_then(|t| t.get_int("pane")).map(|n| n as PaneId);
-        let tag_kind = tag.and_then(|t| t.get_str("kind"));
+        let pane = p.get_int("pane").map(|n| n as PaneId);
+        let kind = p.get_str("kind");
         // Anything but the modifier state is the hands on the keys: the
         // memory's idle guard (`moments.rs`).
         // The window back in front: the files and the clipboard are
         // looked at for what changed while it was away.
-        if ev.kind() == Some("window") {
-            if p.get_str("phase") == Some("focused") {
+        if ev.is(EventKind::Window) {
+            if ev.data().and_then(|d| d.get_str("phase")) == Some("focused") {
                 self.sync_dirs(true);
                 self.sync_disk(true);
                 self.sync_clipboard(core, true);
@@ -3234,7 +3248,7 @@ impl Kawoosh {
         // runs (kui alpha.32 rescans and says so): the families read
         // again at the frame, as when the user's folder changes, so the
         // fonts pane lists it and a `font.family` naming it resolves.
-        if ev.kind() == Some("fonts") {
+        if ev.is(EventKind::Fonts) {
             self.look.fonts.borrow_mut().rescan = true;
             return;
         }
@@ -3242,8 +3256,9 @@ impl Kawoosh {
         // file dropped on the Dock icon, `open -a Kawoosh FILE` — at
         // launch or since: each opened as `kawoosh edit` opens it, a
         // directory listed, the last one in front.
-        if ev.kind() == Some("open") {
-            for path in p.get("paths").and_then(Value::as_list).unwrap_or_default() {
+        if ev.is(EventKind::Open) {
+            let paths = ev.data().and_then(|d| d.get("paths"));
+            for path in paths.and_then(Value::as_list).unwrap_or_default() {
                 if let Some(path) = path.as_str() {
                     self.open_in_editor(Path::new(path), None, None);
                 }
@@ -3285,7 +3300,7 @@ impl Kawoosh {
             return;
         }
         if let Some(b) = ev.button() {
-            match (tag_kind, pane) {
+            match (kind, pane) {
                 (Some("termbutton"), Some(pane)) => self.on_term_button(pane, b),
                 (Some("canvasbutton"), Some(pane)) => self.on_canvas_button(pane, b, ev.key, core),
                 (Some("editbutton"), Some(pane)) => self.on_edit_button(pane, b, ev.key, core),
@@ -3294,12 +3309,12 @@ impl Kawoosh {
             return;
         }
         if let Some(d) = ev.drag() {
-            match (tag_kind, pane) {
-                (Some("split"), _) => self.on_split_drag(d, tag),
+            match (kind, pane) {
+                (Some("split"), _) => self.on_split_drag(d, p),
                 (Some("termmouse"), Some(pane)) => self.on_term_drag(pane, d),
                 (Some("termbar"), Some(pane)) => self.on_term_bar_drag(pane, d),
                 (Some("panedrag"), Some(pane)) => self.on_pane_drag(pane, d),
-                (Some("tabdrag"), _) => self.on_tab_drag(d, tag, core),
+                (Some("tabdrag"), _) => self.on_tab_drag(d, p, core),
                 (Some("canvas"), Some(pane)) => self.on_canvas_drag(pane, d),
                 // A drag on a canvas's toolbar moves nothing.
                 (Some("canvasbar"), _) => {}
@@ -3313,7 +3328,7 @@ impl Kawoosh {
         }
         if let Some(s) = ev.scroll() {
             // The window's own, for the wheel with ⌘ or Ctrl held.
-            if tag_kind == Some("zoom") {
+            if kind == Some("zoom") {
                 self.on_zoom(s.pos, s.delta.y);
                 return;
             }
@@ -3327,22 +3342,22 @@ impl Kawoosh {
             return;
         }
         if let Some(h) = ev.hover() {
-            if tag_kind == Some("toast") {
-                self.on_toast_hover(h, tag);
+            if kind == Some("toast") {
+                self.on_toast_hover(h, p);
             }
             return;
         }
         if let Some(l) = ev.layout()
             && ev.slot.is_none()
         {
-            if tag_kind == Some("headerlayout") {
+            if kind == Some("headerlayout") {
                 if let Some(pane) = pane {
                     self.header_laid(pane, l.rect.h);
                 }
                 return;
             }
             // A diagram's canvas, between its toolbar and its status.
-            if tag_kind == Some("canvaslayout") {
+            if kind == Some("canvaslayout") {
                 if let Some(pane) = pane {
                     let r = l.rect;
                     self.canvas.laid(pane, r.x, r.y, r.w, r.h);
@@ -3412,7 +3427,50 @@ impl Kawoosh {
             self.drain_effects();
             return;
         }
-        match ev.kind() {
+        // A press in a terminal's grid starts a selection, which no
+        // handler hears, and takes kui's keyboard to its sink: the pane
+        // follows. Only the pointer's: kui moving it to a sink the view
+        // declared is the pane focus already there.
+        if ev.is(EventKind::Focus) {
+            let d = ev.data();
+            if d.and_then(|d| d.get_str("phase")) == Some("in")
+                && d.and_then(|d| d.get_str("by")) == Some("pointer")
+                && let Some(pane) = pane
+            {
+                self.layout.focus(pane);
+            }
+            return;
+        }
+        // `<Esc>` or a press outside a modal: the confirm's, on its node.
+        if ev.is(EventKind::Dismiss) {
+            self.on_dismiss(p);
+            return;
+        }
+        // A right-click a pane asked to answer (`menus.rs`), and a row
+        // chosen from any of kawoosh's menus, a pane's or the bar's: each
+        // arrives on the node that declared `on_menu` for it.
+        if ev.slot.is_none() {
+            if ev.is(EventKind::ContextMenu) {
+                if kind == Some("panemenu") {
+                    self.on_context_menu(ev.key, p, core);
+                }
+                return;
+            }
+            if ev.is(EventKind::Menu) {
+                self.on_menu(ev.data().and_then(|d| d.get("item")), core);
+                self.drain_lua();
+                return;
+            }
+        }
+        // What is left is a click, or an extension's reply carrying one
+        // (an engine-drawn legend's): the message names what was clicked.
+        if !ev.is(EventKind::Click) && !ev.is(EventKind::Reply) {
+            if ev.slot.is_some() {
+                self.drain_lua();
+            }
+            return;
+        }
+        match kind {
             Some("syntax") => self.on_syntax_click(p),
             Some("undo") => self.on_undo_click(p),
             // A canvas's toolbar button: its command, on its pane.
@@ -3433,7 +3491,7 @@ impl Kawoosh {
                 }
             }
             // A click's payload is the `on_click` value itself, with the
-            // pointer's `cell` beside it on a grid.
+            // pointer's `cell` under `click` on a grid.
             // The badge on a terminal scrolled away: back to the prompt.
             Some("termbottom") => {
                 if let Some(pane) = p.get_int("pane")
@@ -3441,18 +3499,6 @@ impl Kawoosh {
                 {
                     self.layout.focus(pane as PaneId);
                     self.term_scroll(t, crate::terminals::TermScroll::Bottom);
-                }
-            }
-            // A press in a terminal's grid starts a selection, which no
-            // handler hears, and takes kui's keyboard to its sink: the
-            // pane follows. Only the pointer's: kui moving it to a sink
-            // the view declared is the pane focus already there.
-            Some("focus") => {
-                if p.get_str("phase") == Some("in")
-                    && p.get_str("by") == Some("pointer")
-                    && let Some(pane) = pane
-                {
-                    self.layout.focus(pane);
                 }
             }
             // A breadcrumb in an editor pane's title bar: its symbol.
@@ -3472,22 +3518,11 @@ impl Kawoosh {
                 }
             }
             Some("toast") => self.on_toast(p),
-            // A right-click a pane asked to answer (`menus.rs`), and a
-            // row chosen from any of kawoosh's menus, a pane's or the
-            // bar's.
-            Some("contextmenu") if tag_kind == Some("panemenu") && ev.slot.is_none() => {
-                self.on_context_menu(ev.key, p, core);
-            }
-            Some("menu") if ev.slot.is_none() => {
-                self.on_menu(p.get("item"), core);
-                self.drain_lua();
-            }
             Some("confirm") => {
                 self.on_confirm(p);
                 self.drain_effects();
                 self.drain_lua();
             }
-            Some("dismiss") => self.on_dismiss(p),
             // The chrome's clicks (the tabs, the title bar's blocks):
             // a press there takes kui's focus to the clicked node, and
             // the keys belong back with the pane.
@@ -3535,7 +3570,7 @@ impl Kawoosh {
                 if let Some(pane) = p.get_int("pane") {
                     let pane = pane as PaneId;
                     self.layout.focus(pane);
-                    let cell = p.get("cell");
+                    let cell = p.get("click").and_then(|c| c.get("cell"));
                     if let (Some(t), Some(row), Some(col)) = (
                         self.term_of(pane),
                         cell.and_then(|c| c.get_int("row")),

@@ -121,16 +121,20 @@ impl Kawoosh {
     /// The rest of a pane declares none, so kui's own menu answers over
     /// a Lua view's fields and selectable text (Decision 1).
     pub(crate) fn on_context_menu(&mut self, ev_key: Key, p: &Value, core: &mut Core) {
-        let tag = p.get("tag");
-        let Some(pane) = tag.and_then(|t| t.get_int("pane")).map(|n| n as PaneId) else {
+        let Some(pane) = p.get_int("pane").map(|n| n as PaneId) else {
             return;
         };
         if self.layout.content(pane).is_none() {
             return;
         }
-        let num = |name: &str| p.get(name).and_then(Value::as_float).unwrap_or(0.0) as f32;
+        let at = p.get("contextmenu");
+        let num = |name: &str| {
+            at.and_then(|a| a.get(name))
+                .and_then(Value::as_float)
+                .unwrap_or(0.0) as f32
+        };
         let at = Vec2::new(num("x"), num("y"));
-        let title = tag.and_then(|t| t.get_bool("title")).unwrap_or(false);
+        let title = p.get_bool("title").unwrap_or(false);
         let items = match self.layout.content(pane) {
             Some(Content::Terminal(_)) if !title => self.terminal_menu(pane, core),
             _ => self.pane_menu(pane),
@@ -482,5 +486,14 @@ impl Kawoosh {
             BarMenu::new("Window", window),
             BarMenu::new("Help", help),
         ])
+        .on_menu(chosen())
     }
+}
+
+/// The message a row chosen from one of kawoosh's menus arrives as, on
+/// the node the menu was opened over or on the bar (kui ADR 0047, 0048):
+/// `{kind = "menu", menu = {role, item}}`. A node that declares none
+/// hears no choice.
+pub(crate) fn chosen() -> Value {
+    Value::map([("kind", "menu".into())])
 }

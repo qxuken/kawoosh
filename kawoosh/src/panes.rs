@@ -945,6 +945,7 @@ impl Kawoosh {
                         ("pane", Value::Int(pane as i64)),
                         ("title", Value::Bool(true)),
                     ]))
+                    .on_menu(crate::menus::chosen())
                     .keep_focus()
                     .hover_group(&group)
                     .label(name.as_str());
@@ -1233,10 +1234,12 @@ impl Kawoosh {
                 spec = if reporting {
                     spec.on_drag(drag_tag)
                 } else {
-                    spec.selectable().on_context_menu(Value::map([
-                        ("kind", "panemenu".into()),
-                        ("pane", Value::Int(pane as i64)),
-                    ]))
+                    spec.selectable()
+                        .on_context_menu(Value::map([
+                            ("kind", "panemenu".into()),
+                            ("pane", Value::Int(pane as i64)),
+                        ]))
+                        .on_menu(crate::menus::chosen())
                 };
                 // The other buttons: the middle one pastes, and while a
                 // program reports the mouse every button is its — the
@@ -2202,6 +2205,7 @@ impl Kawoosh {
                     ("kind", "editbutton".into()),
                     ("pane", Value::Int(pane as i64)),
                 ]))
+                .on_menu(crate::menus::chosen())
                 .buttons(kui_native::Buttons::SECONDARY)
                 .cursor(kui_native::CursorShape::Text)
                 .role(Role::MultilineTextInput)

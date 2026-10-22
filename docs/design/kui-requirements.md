@@ -52,10 +52,10 @@ inline node, virtual text a run in a `role="none"` wrapper.
 |---|---|---|---|
 | R3.1 | ~8 runs × 55 lines × 2 panes warm in well under a frame; one line retyped or scrolled in costs a fraction of it | ✓ | `highlight` bench: 160 µs / 228 µs / 282 µs; cold file 1.65 ms. Gated by `scripts/bench-check.sh`. M1 |
 | R3.2 | Runs of one style and different colors share the shaping cache | ✓ | cache keyed (content, style, scale), color excluded. |
-| R3.3 | A press or drag inside the sink says which drawn line and which byte of its text, and the click count | ✓ | `on_drag` payload `line` / `byte` / `clicks` on `Role::Line` rows (C34); `byte` counts across the row's runs (AR30). M2 |
+| R3.3 | A press or drag inside the sink says which drawn line and which byte of its text, and the click count | ✓ | `on_drag`'s `drag: {line, byte, clicks}` on `Role::Line` rows (C34; under `drag` since alpha.60, ADR 0047); `byte` counts across the row's runs (AR30). M2 |
 | R3.4 | Runs that are not document text — gutter, ghost completion, inlay hint, EOL diagnostic — are excluded from `byte` and from what a screen reader reads | ✓ | a `role="none"` ancestor takes its subtree out of the line's text (AR30). Kawoosh wraps every virtual run in one. M6 |
 | R3.5 | A blinking caret for an app-owned caret, on the runner's clock, parked off when the window loses the keyboard | ✓ | `Role::Line` row `.caret(byte)` arms the clock; `ui.caret_visible()` reads the phase (C35). M2 |
-| R3.6 | The OS IME candidate window anchored at that caret; composition delivered to the sink as data, commit as `text` | ✓ | `ime_rect` from the sink's `caret` row; `{kind="preedit", text, cursor}` then `{kind="text"}` (C17). M2 — test with a CJK layout in M2, not later. |
+| R3.6 | The OS IME candidate window anchored at that caret; composition delivered to the sink as data, commit as `text` | ✓ | `ime_rect` from the sink's `caret` row; the sink's message with `preedit: {text, cursor}`, then with `text: {text}` (C17; ADR 0047). M2 — test with a CJK layout in M2, not later. |
 | R3.7 | Clipboard out and paste in for a key sink, without an `edit` widget | ✓ | `ui.set_clipboard`, `ui.request_paste` → `{kind="text"}` (C33). M2 |
 | R3.8 | Trailing and repeated spaces measure reliably in a run | ✓ | **K3, alpha.13**: a run's spaces measure at the face's advance — leading, repeated and trailing — so no NBSP mapping and no 2-byte arithmetic. |
 | R3.9 | A fixed-stride virtual list with programmatic scroll and a readable visible range, so the pane can own culling *or* hand it to kui | ✓ | `widgets::uniform_list` (`virtual_column` until alpha.19) + `set_scroll` + `scroll_geometry`; or `on_scroll` `{lines}` on the sink with app-owned `top` (ADR 0029). M2 decides which; both are there. |
@@ -71,8 +71,8 @@ inline node, virtual text a run in a `role="none"` wrapper.
 |---|---|---|---|
 | R4.1 | A screenful of cells with per-cell fg/bg/bold/italic/underline/strike/wide, a cursor of three shapes, cheap when every cell changes | ✓ | `CellGrid`, `Cell::flags`, `CursorShape`; 200×50 streaming ~60 µs. M4 |
 | R4.2 | Selection in cells (drag, word, row, block), copy trimming trailing blanks, ends as absolute session lines | ✓ | ADR 0017 + `origin_line`; `cell_selection()`, `request_copy`. M4 |
-| R4.3 | The wheel and a drag past the edge arrive as whole lines the app adds to its own `top` | ✓ | `on_scroll` → `{kind="scroll", lines}` (ADR 0029). M4 |
-| R4.4 | A click says which cell, for `gf` from terminal output | ✓ | pointer payload `cell: {row, col}` (C20). M4 |
+| R4.3 | The wheel and a drag past the edge arrive as whole lines the app adds to its own `top` | ✓ | `on_scroll`'s message with `scroll: {lines}` (ADR 0029; ADR 0047). M4 |
+| R4.4 | A click says which cell, for `gf` from terminal output | ✓ | the click's `click: {cell: {row, col}}` (C20; ADR 0047). M4 |
 | R4.5 | Underline color and undercurl per cell (SGR 58 / 4:3) | ✓ | **K4, alpha.13**: `Cell::ul`, `cells::flags::WAVY` / `DOTTED`. M4 |
 | R4.6 | Hyperlinks per cell (OSC 8) | ✓ | not kui's after all (roadmap step 54, 2026-09-28): `term` keeps each cell's link (alacritty's) and kawoosh finds the run under the pointer's `cell: {row, col}` (R4.4), so the grid needs no link field. |
 | R4.7 | The middle button, for the Linux primary-selection paste | ✓ | kui F105 (2026-09-28, roadmap step 55): `on_button` + `buttons` — a node claims the non-primary buttons, captured from press to release, with `cell` on a grid; a claimed secondary press is the node's instead of a context menu. kawoosh's middle button pastes the clipboard (macOS has no primary selection). |
@@ -85,7 +85,7 @@ inline node, virtual text a run in a `role="none"` wrapper.
 | R5.1 | Every press as data with a layout-resolved `code`, a US-QWERTY `physical`, modifiers, `text` and `repeat` | ✓ | `{kind="key", code, physical, shift, ctrl, alt, super, text, repeat}` (ADR 0002 d.11). The hybrid rule is kawoosh's (kui.md D5). M2 |
 | R5.2 | A root sink hears every key when nothing is focused, Tab included, and never has to take focus | ✓ | ADR 0022's rule; a modal editor owns Tab. M1 |
 | R5.3 | Keys a focused control does not consume bubble to the enclosing sink | ✓ | ADR 0011 — a Lua pane's `edit` keeps typing, `Esc` reaches kawoosh; `ui.blur()` hands it back. M7 |
-| R5.4 | Modifier state as an event, so ⌘-drag pane moves and plain clicks coexist without a core concept | ✓ | `{kind="modifiers"}` (splitmux). M3 |
+| R5.4 | Modifier state as an event, so ⌘-drag pane moves and plain clicks coexist without a core concept | ✓ | the root's `windowEvents.onModifiers`, `modifiers: {shift, ctrl, alt, super}` (splitmux; ADR 0048). M3 |
 | R5.5 | Presses and releases where a held key matters | ✓ | `key_up` opt-in; kawoosh does not use it. |
 | R5.6 | Headless key delivery on both channels in one call | ✓ | `Core::press`. |
 

@@ -150,10 +150,10 @@ impl Kawoosh {
     }
 
     /// kui's `dismiss` on the confirm's modal: `<Esc>` or a press
-    /// outside it, answered with none.
+    /// outside it, answered with none. It arrives as the modal's own
+    /// message, `{kind = "confirm", dismiss = {reason}}`.
     pub(crate) fn on_dismiss(&mut self, p: &Value) {
-        let tag = p.get("tag").and_then(|t| t.get_str("kind"));
-        if tag == Some("confirm") {
+        if p.get_str("kind") == Some("confirm") {
             self.confirm_answer(None);
         }
     }

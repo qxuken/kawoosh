@@ -1386,6 +1386,7 @@ impl Kawoosh {
                         ("kind", "canvasbutton".into()),
                         ("pane", Value::Int(pane as i64)),
                     ]))
+                    .on_menu(crate::menus::chosen())
                     .buttons(Buttons::from_bits(
                         Buttons::MIDDLE.bits() | Buttons::SECONDARY.bits(),
                     ))

@@ -822,8 +822,8 @@ impl Kawoosh {
     /// The pointer over a toast, or one of its buttons, or off it:
     /// while it is over, the toast stays; once it leaves, the toast's
     /// time starts over.
-    pub(crate) fn on_toast_hover(&mut self, h: Hover, tag: Option<&Value>) {
-        let Some(id) = tag.and_then(|t| t.get_int("id")) else {
+    pub(crate) fn on_toast_hover(&mut self, h: Hover, msg: &Value) {
+        let Some(id) = msg.get_int("id") else {
             return;
         };
         match h.phase {
