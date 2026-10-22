@@ -8,10 +8,10 @@
 //! by its order in a chain.
 //!
 //! On the wire each is `{kind, ...fields}`, the kind the variant's name in
-//! snake_case (`TabClose` is `tab_close`). Lua sees two of them: the
-//! engine's legend toggle (`legend`, `pane`) and a field's own message,
-//! which is not one of these (`fields.rs`). A Lua view's messages are its
-//! own and never read as these.
+//! snake_case (`TabClose` is `tab_close`). Lua reads one of them: the
+//! legend toggle the engine draws in a Lua view (`legend`, `pane`), which
+//! the engine replies with to the Lua host that placed it (`fields.rs`).
+//! A Lua view's messages are its own and never read as these.
 
 use kui_native::Message;
 

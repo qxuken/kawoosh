@@ -19,8 +19,8 @@ use kawoosh_systems::io::{Incoming, Io, IoMsg, Request};
 use kawoosh_systems::ts::{Job, Token, Ts};
 use kawoosh_term::TermSize;
 use kui_native::{
-    Core, Drag, DragPhase, Event, EventKind, FocusBy, FocusPhase, FontId, KeyMods, KeyPhase,
-    KeyPress, NodeSpec, Scroll, Text, Ui, UiEvent, WindowCommand, WindowPhase,
+    Core, Drag, DragPhase, Event, FocusBy, FocusPhase, FontId, KeyMods, KeyPhase, KeyPress,
+    NodeSpec, Scroll, Text, Ui, UiEvent, WindowCommand, WindowPhase,
 };
 
 use crate::Pal;
@@ -3230,11 +3230,10 @@ impl Kawoosh {
         self.sync_facts();
         let (slot, key) = (ev.slot.is_some(), ev.key);
         // Kawoosh's words only on what the host drew: a Lua view's
-        // `{kind = "row"}` is the view's, and an extension's reply is
-        // the engine's legend.
-        let ours = !slot || ev.is(EventKind::Reply);
+        // `{kind = "row"}` is the view's. (The engine's legend, drawn in
+        // a Lua view, replies to the Lua host that placed it, never here.)
         let (msg, event) = ev.split::<Msg>();
-        let msg = msg.filter(|_| ours);
+        let msg = msg.filter(|_| !slot);
         // Anything but what the window says of itself is the hands on
         // the keys: the memory's idle guard (`moments.rs`).
         if !matches!(
@@ -3323,9 +3322,8 @@ impl Kawoosh {
                     self.ed.message = "cannot close the last pane".into();
                 }
             }
-            // A legend's `⌥/ keys`: its pane's whole, or compact again —
-            // the engine's, over a Lua view, arrives as its reply.
-            (Some(Msg::Legend { pane }), Event::Click(_) | Event::Reply) => self.flip_legend(pane),
+            // A legend's `⌥/ keys`: its pane's whole, or compact again.
+            (Some(Msg::Legend { pane }), Event::Click(_)) => self.flip_legend(pane),
             // A right-click a pane asked to answer (`menus.rs`), and a
             // row chosen from any of kawoosh's menus, a pane's or the
             // bar's, on the node that declared it.
