@@ -797,3 +797,56 @@ fn cmd_minus_and_equals_zoom_the_canvas_and_g_hjkl_pan() {
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+/// The pane a diagram's buffer leaves is the next buffer's, keys and
+/// all: the canvas put its view in pane mode, and `:bd` and `:bd!` put
+/// another buffer in that view still in it — `h` `j` `k` `l` were pane
+/// mode's, the text under them unreachable (2026-10-22).
+#[test]
+fn a_closed_diagram_leaves_its_pane_to_normal_mode() {
+    use kawoosh_editor::Mode;
+    let path = file("close", START);
+    let notes = path.with_file_name("notes.txt");
+    std::fs::write(&notes, "one\ntwo\nthree\n").unwrap();
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &notes);
+    let caret_line = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head)
+    };
+    for close in ["bd", "bd!"] {
+        ex(&mut d, &mut app, &format!("e {}", path.display()));
+        d.frame(&mut app);
+        let v = app.focused_view().unwrap();
+        assert!(app.diagram_drawn(v), "{close}: the diagram");
+        assert_eq!(app.ed.mode(v), Mode::Pane, "{close}: the canvas's keys");
+        if close == "bd!" {
+            // Changed, so that only the bang closes it.
+            let (from, to) = (at(&app, 4.0, 1.5), at(&app, 6.0, 2.5));
+            d.drag(&mut app, from, to);
+            d.frame(&mut app);
+            assert!(app.ed.buffer_of(v).modified, "the drag edited it");
+        }
+        ex(&mut d, &mut app, close);
+        d.frame(&mut app);
+        let v = app.focused_view().unwrap();
+        assert_eq!(
+            app.ed.buffer_of(v).path.as_deref(),
+            Some(notes.as_path()),
+            "{close}: the file it came from"
+        );
+        assert!(!app.diagram_drawn(v));
+        assert_eq!(app.ed.mode(v), Mode::Normal, "{close}: normal mode");
+        let line = caret_line(&app);
+        d.keys(&mut app, "j");
+        assert_eq!(caret_line(&app), line + 1, "{close}: `j` moves the caret");
+        d.keys(&mut app, "k");
+        assert_eq!(caret_line(&app), line, "{close}: `k` back");
+        d.keys(&mut app, "x");
+        assert!(app.ed.buffer_of(v).modified, "{close}: `x` edits the text");
+        d.keys(&mut app, "u");
+    }
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}

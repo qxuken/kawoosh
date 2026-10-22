@@ -1051,6 +1051,15 @@ impl Kawoosh {
                     );
                 }
                 crate::perf::part("title bar", t);
+                // The keys' view in the mode its drawing wants: pane mode
+                // on a canvas, normal on one a canvas left (`:bd`) — as
+                // drawn, before any key, so the status says it.
+                if let Some(Content::Editor(v)) = &content
+                    && focused
+                    && self.ed.prompt_view().is_none()
+                {
+                    self.canvas_mode(*v);
+                }
                 match &content {
                     // A `.kdraw` buffer drawn as its diagram (`canvas.rs`).
                     Some(Content::Editor(v)) if self.diagram_drawn(*v) => {

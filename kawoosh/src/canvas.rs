@@ -446,8 +446,12 @@ impl Kawoosh {
     }
 
     /// The view's mode as its drawing wants it: pane mode on a canvas,
-    /// and normal again on a `.kdraw` file drawn as its text — the
-    /// setting turned off under it. True when it changed.
+    /// and normal again on a view that draws none — a `.kdraw` file
+    /// drawn as its text, the setting turned off under it, or another
+    /// buffer put in the canvas's view (`:bd`, `:e`, `<C-o>`). Pane mode
+    /// on an editor's view is only ever the canvas's; kept past it, the
+    /// buffer after a closed diagram took pane mode's keys, its `h` `j`
+    /// `k` `l` none of its own (2026-10-22). True when it changed.
     pub(crate) fn canvas_mode(&mut self, view: ViewId) -> bool {
         let mode = self.ed.mode(view);
         if self.diagram_drawn(view) {
@@ -455,7 +459,7 @@ impl Kawoosh {
                 self.ed.set_mode(view, Mode::Pane);
                 return true;
             }
-        } else if mode == Mode::Pane && !self.ed.is_pane_view(view) && self.is_kdraw(view) {
+        } else if mode == Mode::Pane && !self.ed.is_pane_view(view) {
             self.ed.set_mode(view, Mode::Normal);
             return true;
         }
@@ -1267,9 +1271,6 @@ impl Kawoosh {
         view: ViewId,
         focused: bool,
     ) {
-        if focused && self.ed.prompt_view().is_none() && self.ed.mode(view) != Mode::Pane {
-            self.ed.set_mode(view, Mode::Pane);
-        }
         let doc = self.diagram_doc(view);
         let pen_face = self.face;
         // Free texts measured at zoom 1, in units: what a press finds
