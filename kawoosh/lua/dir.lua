@@ -1376,7 +1376,7 @@ kawoosh.view(PREVIEW, function(ctx)
   -- The editor's smaller chrome text (its length token), 12 px at the
   -- default font.
   local size = ctx.metrics.small
-  local mono = { family = "mono", size = size }
+  local mono = { family = "$editor", size = size }
   local root = column { pad = 8, gap = 2, clip = true }
   local function say(s, color)
     root[#root + 1] = text(s, { size = size, color = color or t.muted, wrap = "word" })

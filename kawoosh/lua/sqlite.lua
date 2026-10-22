@@ -670,7 +670,7 @@ kawoosh.view(VIEW, function(ctx)
     row { width = "grow", gap = 8, cross_align = "center",
       text({ { "sqlite", bold = true } }, { size = m.text, color = t.fg, wrap = "none" }),
       row { width = "grow", min_width = 0,
-        text(fs.short and fs.short(S.path) or S.path, { family = "mono", size = m.text, color = t.accent, ellipsis = true }) },
+        text(fs.short and fs.short(S.path) or S.path, { family = "$editor", size = m.text, color = t.accent, ellipsis = true }) },
       text(said, { size = m.small, color = t.muted, wrap = "none" }) },
     ctx.legend({ { "<Tab>", "tables, grid" }, { { "j", "k" }, "walk" }, { "<CR>", "browses, edits" },
       { { "h", "l" }, "a column" }, { { "0", "$" }, "the row's ends" }, { { "gg", "G" }, "the ends" },
@@ -697,7 +697,7 @@ kawoosh.view(VIEW, function(ctx)
       row { width = "grow", min_width = 0,
         text(tb.name, { size = m.text, color = browsed and t.accent or t.fg, ellipsis = true, wrap = "none" }) } }
     if tb.kind == "view" then r[#r + 1] = text("view", { size = m.note, color = t.faint, wrap = "none" }) end
-    r[#r + 1] = text(tb.rows and grouped(tb.rows) or "?", { family = "mono", size = m.small, color = t.muted, wrap = "none" })
+    r[#r + 1] = text(tb.rows and grouped(tb.rows) or "?", { family = "$editor", size = m.small, color = t.muted, wrap = "none" })
     return row(r)
   end)
   if S.schema and #tables == 0 then
@@ -714,7 +714,7 @@ kawoosh.view(VIEW, function(ctx)
       text(S.editing and "write" or "run", { size = m.note, color = t.fg, wrap = "none" }) } }
 
   -- The grid: the result's rows in cells.
-  local style = { family = "mono", size = m.font, wrap = "none" }
+  local style = { family = "$editor", size = m.font, wrap = "none" }
   local cell_w = math.max(1, math.floor(env.measure_text("M", style).width + 0.5))
   local line_h = math.ceil(env.measure_text("Mg", style).height)
   local key = "sqlite grid " .. ctx.pane
@@ -825,7 +825,7 @@ kawoosh.view(VIEW, function(ctx)
   for r = #lines + 1, grows + 1 do lines[r] = "" end
   S.lines, S.spans = lines, spans
   local grid = cells { rows = grows + 1, cols = gcols, lines = lines, runs = runs,
-    size = m.font, family = "mono", line_height = line_h, color = t.fg,
+    size = m.font, family = "$editor", line_height = line_h, color = t.fg,
     on_click = { kind = "cell" }, on_scroll = { kind = "wheel" } }
 
   -- The foot: where the cursor is and what is there; the status.
@@ -855,10 +855,10 @@ kawoosh.view(VIEW, function(ctx)
   local status = S.status
   local status_text = status and status.text or (S.loading and "…" or "")
   foot[#foot + 1] = row { width = "grow", gap = 12, cross_align = "center",
-    row { width = "grow", min_width = 0, text(where, { family = "mono", size = m.small, color = t.fg, ellipsis = true }) },
+    row { width = "grow", min_width = 0, text(where, { family = "$editor", size = m.small, color = t.fg, ellipsis = true }) },
     text(status_text, { size = m.small, color = status and status.kind == "error" and t.danger or t.muted, ellipsis = true }) }
   if value then
-    foot[#foot + 1] = text(value, { family = "mono", size = m.small, color = t.muted, ellipsis = true })
+    foot[#foot + 1] = text(value, { family = "$editor", size = m.small, color = t.muted, ellipsis = true })
   end
 
   return column { width = "grow", height = "grow", bg = t.bg, gap = 8, clip = true,

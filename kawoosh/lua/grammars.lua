@@ -202,7 +202,7 @@ local function line(e, ctx, on)
   if g.installed and g.state ~= "built in" then
     local rev = g.rev
     if g.latest then rev = rev .. " → " .. g.latest end
-    r[#r + 1] = text(rev, { family = "mono", size = SMALL,
+    r[#r + 1] = text(rev, { family = "$editor", size = SMALL,
       color = g.latest and t.accent or t.muted, wrap = "none" })
     if g.built then
       r[#r + 1] = text("built here", { size = NOTE, color = t.faint, wrap = "none" })
@@ -210,7 +210,7 @@ local function line(e, ctx, on)
   end
   r[#r + 1] = row { width = "grow", min_width = 0,
     text(lit(files(g), pos, #g.name + 2, t),
-      { family = "mono", size = SMALL, color = t.faint, ellipsis = true }) }
+      { family = "$editor", size = SMALL, color = t.faint, ellipsis = true }) }
   if g.state == "built in" then
     r[#r + 1] = tag("built in", t)
   elseif g.state == "installing" then
@@ -299,7 +299,7 @@ kawoosh.view(VIEW, function(ctx)
           counts.installed, counts.out, counts.built),
         { size = SMALL, color = t.muted, ellipsis = true }) },
     row { width = "grow", gap = 8, cross_align = "center",
-      text("/", { family = "mono", size = SIZE, color = t.accent, wrap = "none" }),
+      text("/", { family = "$editor", size = SIZE, color = t.accent, wrap = "none" }),
       field,
       text(q == "" and (counts.all .. " grammars") or (shown .. " of " .. counts.all),
         { size = NOTE, color = shown == 0 and t.danger or t.faint, wrap = "none" }) },

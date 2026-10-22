@@ -50,7 +50,7 @@ local L = nil
 local F = nil
 local function face(extra)
   local st = { size = F.size, line_height = F.row, wrap = "none" }
-  if F.font then st.font = F.font else st.family = "mono" end
+  if F.font then st.font = F.font else st.family = "$editor" end
   if F.features ~= "" then st.features = F.features end
   for k, v in pairs(extra or {}) do st[k] = v end
   if extra and extra.size and not extra.line_height then st.line_height = nil end
@@ -76,7 +76,7 @@ local function verdict(c, t)
   local label, color = s .. " ✓", t.muted
   if not c.ok then label, color = string.format("%s ✗ %g", s, c.need), t.danger end
   return row { width = SIZE * 6,
-    text(label, { family = "mono", size = NOTE, color = color, wrap = "none" }) }
+    text(label, { family = "$editor", size = NOTE, color = color, wrap = "none" }) }
 end
 
 -- A sample in `fg` on `bg`, a chip the pair's colours exactly.

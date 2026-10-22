@@ -654,7 +654,7 @@ kawoosh.view(VIEW, function(ctx)
   if S.anchor then S.anchor = math.max(0, math.min(last_byte(), S.anchor)) end
 
   -- The grid's cell, and how many the pane had room for last frame.
-  local style = { family = "mono", size = m.font, wrap = "none" }
+  local style = { family = "$editor", size = m.font, wrap = "none" }
   local cell_w = math.max(1, math.floor(env.measure_text("M", style).width + 0.5))
   local line_h = math.ceil(env.measure_text("Mg", style).height)
   local key = "hex grid " .. ctx.pane
@@ -793,7 +793,7 @@ kawoosh.view(VIEW, function(ctx)
   S.lines = lines
 
   local grid = cells { rows = rows + 1, cols = cols, lines = lines, runs = runs,
-    size = m.font, family = "mono", line_height = line_h, color = t.fg,
+    size = m.font, family = "$editor", line_height = line_h, color = t.fg,
     on_click = { kind = "cell" }, on_drag = { kind = "drag" }, on_scroll = { kind = "wheel" } }
 
   -- Where the rows on show are in the file: a thumb to drag.
@@ -822,7 +822,7 @@ kawoosh.view(VIEW, function(ctx)
     row { width = "grow", gap = 8, cross_align = "center",
       text({ { "bytes", bold = true } }, { size = m.text, color = t.fg, wrap = "none" }),
       row { width = "grow", min_width = 0,
-        text(fs.short and fs.short(S.path) or S.path, { family = "mono", size = m.text, color = t.accent, ellipsis = true }) } },
+        text(fs.short and fs.short(S.path) or S.path, { family = "$editor", size = m.text, color = t.accent, ellipsis = true }) } },
     text(said, { size = m.small, color = gone and t.danger or t.muted, ellipsis = true }) }
   if note then head[#head + 1] = text(note, { size = m.small, color = t.warning, ellipsis = true }) end
   head[#head + 1] = ctx.legend({ { { "h", "j", "k", "l" }, "walk" }, { { "w", "b" }, "by fours" }, { { "0", "$" }, "the row's ends" },
@@ -840,7 +840,7 @@ kawoosh.view(VIEW, function(ctx)
       local len = sel_b - sel_a + 1
       where = where .. string.format(" · %s byte%s selected, 0x%X–0x%X", grouped(len), len == 1 and "" or "s", sel_a, sel_b)
     end
-    foot[#foot + 1] = text(where, { family = "mono", size = m.small, color = t.fg, ellipsis = true })
+    foot[#foot + 1] = text(where, { family = "$editor", size = m.small, color = t.fg, ellipsis = true })
     local at_cursor = read(S.path, S.cursor, 8)
     local okr = at_cursor ~= nil
     local chips = row { width = "grow", gap = 12, cross_gap = 2, wrap_children = true, cross_align = "center",
@@ -849,7 +849,7 @@ kawoosh.view(VIEW, function(ctx)
     for _, it in ipairs(okr and readings(at_cursor) or {}) do
       chips[#chips + 1] = row { gap = 4, cross_align = "center",
         text(it[1], { size = m.note, color = t.faint, wrap = "none" }),
-        text(it[2], { family = "mono", size = m.note, color = t.muted, wrap = "none" }) }
+        text(it[2], { family = "$editor", size = m.note, color = t.muted, wrap = "none" }) }
     end
     foot[#foot + 1] = chips
   else

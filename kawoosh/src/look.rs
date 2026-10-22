@@ -908,6 +908,34 @@ impl Kawoosh {
             .length("chrome_small", c.small)
             .length("chrome_note", c.note)
             .length("chrome_row", c.face.line_height);
+        // The faces as family tokens (kui ADR 0049), so a Lua view's
+        // text is set in the editor's face as the editor's is —
+        // `family = "$editor"` — where `"mono"` was kui's generic one:
+        // the face `sync_font` resolved, by the name kui knows it by,
+        // then the generic mono should that name stop resolving. The
+        // prose face is the editor's unless `font.prose` names one; the
+        // icons' is the family `sync_font` settled on.
+        let name_of = |ui: &mut Ui<'_>, id: Option<kui_native::FontId>| {
+            id.and_then(|id| ui.core().font_family(id).map(str::to_string))
+        };
+        let editor: Vec<String> = name_of(ui, self.face.id)
+            .into_iter()
+            .chain(["mono".to_string()])
+            .collect();
+        let prose = match self.prose {
+            Some(kui_native::FontFamily::Sans) => vec!["sans".to_string()],
+            Some(kui_native::FontFamily::Serif) => vec!["serif".to_string()],
+            Some(kui_native::FontFamily::Custom(id)) => name_of(ui, Some(id))
+                .into_iter()
+                .chain(editor.iter().cloned())
+                .collect(),
+            _ => editor.clone(),
+        };
+        let icons = vec![self.icons.borrow().family.clone(), "mono".to_string()];
+        tokens = tokens
+            .family("editor", editor)
+            .family("prose", prose)
+            .family("icons", icons);
         ui.set_tokens(tokens);
         self.look.syntax = syntax;
     }

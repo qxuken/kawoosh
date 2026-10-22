@@ -686,7 +686,7 @@ local function list_row(i, r, R)
     bg = selected and (R.focused and t.selection or t.sunken) or nil,
     hover_bg = not selected and t.sunken or nil,
     on_click = { kind = "row", i = i },
-    column { width = "grow", text(spans, { family = "mono", size = SIZE, wrap = "word" }) },
+    column { width = "grow", text(spans, { family = "$editor", size = SIZE, wrap = "word" }) },
   }
   local hint = hint_of(it)
   if hint then line[#line + 1] = R.ctx.keys(hint, { size = SMALL, color = t.faint }) end
@@ -706,7 +706,7 @@ local function tile(i, r, R)
     hover_bg = not selected and t.sunken or nil,
     border = { w = 1, color = t.border },
     on_click = { kind = "row", i = i },
-    text(spans_of(r, t), { family = "mono", size = SIZE, wrap = "word" }),
+    text(spans_of(r, t), { family = "$editor", size = SIZE, wrap = "word" }),
   }
   local hint = hint_of(r.hit.item)
   if hint then chip[#chip + 1] = R.ctx.keys(hint, { size = SMALL, color = t.faint }) end
@@ -728,7 +728,7 @@ local function prompt(node, R)
   }
   local label = node.def.title
   if label ~= false then head[#head + 1] = text(tostring(label or ""), { size = SIZE, color = t.muted }) end
-  head[#head + 1] = text(">", { family = "mono", size = SIZE, color = t.accent })
+  head[#head + 1] = text(">", { family = "$editor", size = SIZE, color = t.accent })
   local typing = kawoosh.opt("launcher.start") == "insert"
   local field = R.ctx.field { name = FIELD, size = SIZE, width = "grow",
                               placeholder = node.def.placeholder
