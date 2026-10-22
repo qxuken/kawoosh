@@ -511,6 +511,43 @@ fn percent_goes_round_a_keyword_block() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `%` on a tag goes to its element's other tag, from its angle
+/// brackets or its name; under an operator both tags are taken whole.
+#[test]
+fn percent_goes_between_an_element_s_tags() {
+    let src = "const a = (\n  <box gap={1}>\n    <row />\n    <b>hi</b>\n  </box>\n);\n";
+    let (mut app, mut d, dir) = parsed("b.tsx", src);
+    let v = app.focused_view().unwrap();
+    let at = |app: &Kawoosh| {
+        let head = app.ed.views[v].sels.primary().head;
+        let buf = app.ed.buffer_of(v);
+        let ln = buf.line_of(head);
+        (ln + 1, head - buf.line_range(ln).start)
+    };
+    d.press(&mut app, "2G^%");
+    assert_eq!(at(&app), (5, 2), "</box>");
+    d.press(&mut app, "%");
+    assert_eq!(at(&app), (2, 2), "<box>");
+    d.press(&mut app, "ll%");
+    assert_eq!(at(&app), (5, 2), "from the name");
+    d.press(&mut app, "$%");
+    assert_eq!(at(&app), (2, 2), "from the closer's `>`");
+    // An attribute and a self-closing tag stay; a bracket is a bracket's.
+    d.press(&mut app, "2Gfg%");
+    assert_eq!(at(&app), (2, 7));
+    d.press(&mut app, "3G^%");
+    assert_eq!(at(&app), (3, 4));
+    d.press(&mut app, "2Gf{%");
+    assert_eq!(at(&app), (2, 13));
+    d.press(&mut app, "4G^d%");
+    assert_eq!(text_of(&app), src.replace("<b>hi</b>", ""));
+    d.press(&mut app, "u4G$d%");
+    assert_eq!(text_of(&app), src.replace("<b>hi</b>", ""));
+    d.press(&mut app, "u");
+    assert_eq!(text_of(&app), src);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A line moved with `<A-j>` / `<A-k>` keeps its colours on every frame,
 /// and so does the line it swapped with: the move rewrote both lines'
 /// text in one edit, and the runs over it went with the text replaced,

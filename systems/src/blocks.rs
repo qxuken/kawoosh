@@ -13,6 +13,11 @@
 //! keyword that is the block's own child (`then`, `do`, the `function`
 //! of `local function`) is no stop, and goes to the next one after it.
 //!
+//! A markup element's two tags are a pair as well: `<box>` and
+//! `</box>` in HTML, XML, Vue, Svelte, JSX — `%` on either tag's angle
+//! brackets or name goes to the other, and stays on its attributes, a
+//! self-closing tag, and an element its grammar leaves unclosed.
+//!
 //! Pure: a tree. The shell keeps the trees (`kawoosh::indent`).
 
 use std::ops::Range;
@@ -174,10 +179,64 @@ fn clauses<'t>(b: &Block<'t>, n: Node<'t>, out: &mut Vec<Node<'t>>) {
     }
 }
 
-/// The keyword over byte `at` and the one `%` goes to from it, each its
-/// bytes; `None` where `at` is on no keyword of a block.
+/// An element's opening tag: html's `start_tag` (Vue's, Svelte's,
+/// Astro's), XML's `STag`, JSX's `jsx_opening_element`.
+fn opening_tag(n: Node) -> bool {
+    let k = n.kind();
+    k == "STag" || k.ends_with("start_tag") || k.ends_with("opening_element")
+}
+
+/// An element's closing tag: `end_tag`, `ETag`, `jsx_closing_element`;
+/// html's `erroneous_end_tag`, which closes nothing, is none.
+fn closing_tag(n: Node) -> bool {
+    let k = n.kind();
+    k == "ETag"
+        || (k.ends_with("end_tag") && !k.starts_with("erroneous"))
+        || k.ends_with("closing_element")
+}
+
+/// The tag over token `t` and its element's other one, each its bytes:
+/// `t` one of the tag's own tokens (`<`, `</`, `>`) or in its name, not
+/// in an attribute.
+fn tag_partner(t: Node) -> Option<(Range<usize>, Range<usize>)> {
+    let mut c = t;
+    let tag = loop {
+        let p = c.parent()?;
+        if opening_tag(p) || closing_tag(p) {
+            break p;
+        }
+        c = p;
+    };
+    let name = c.is_named() && {
+        let k = c.kind();
+        k == "tag_name" || k == "Name" || tag.child_by_field_name("name") == Some(c)
+    };
+    if c.is_named() && !name {
+        return None;
+    }
+    let element = tag.parent()?;
+    let (open, close) = (first_child(element)?, last_child(element)?);
+    if open == close || !opening_tag(open) || !closing_tag(close) {
+        return None;
+    }
+    let to = if tag == open {
+        close
+    } else if tag == close {
+        open
+    } else {
+        return None;
+    };
+    Some((tag.byte_range(), to.byte_range()))
+}
+
+/// The keyword or tag over byte `at` and the one `%` goes to from it,
+/// each its bytes; `None` where `at` is on no keyword of a block and no
+/// tag of an element.
 pub fn partner(tree: &Tree, at: usize) -> Option<(Range<usize>, Range<usize>)> {
     let t = tree.root_node().descendant_for_byte_range(at, at + 1)?;
+    if let Some(pair) = tag_partner(t) {
+        return Some(pair);
+    }
     if !keyword(t) {
         return None;
     }
@@ -321,6 +380,51 @@ fi
         goes("bash", src, ("case", 0), ("esac", 0));
         goes("bash", src, ("esac", 0), ("case", 0));
         stays("bash", src, ("echo", 0));
+    }
+
+    /// `%` on the `n`th `word` lands on the `m`th `to`, each a tag's
+    /// start.
+    #[track_caller]
+    fn tag(language: &str, src: &str, (word, n): (&str, usize), (to, m): (&str, usize)) {
+        let t = tree(language, src);
+        let at = src.match_indices(word).nth(n).unwrap().0;
+        let want = src.match_indices(to).nth(m).unwrap().0;
+        let got = partner(&t, at).map(|(from, to)| (from.start, to.start));
+        assert_eq!(got, Some((at, want)), "{word} #{n} to {to} #{m}");
+    }
+
+    #[test]
+    fn tsx_tags() {
+        let src = "\
+const a = (
+  <Box gap={1}>
+    <Box.Row title=\"x\" />
+    <>
+      <span>{<b>hi</b>}</span>
+    </>
+  </Box>
+);
+";
+        tag("tsx", src, ("<Box", 0), ("</Box>", 0));
+        tag("tsx", src, ("</Box>", 0), ("<Box", 0));
+        // From the name, or the closing angle bracket.
+        let t = tree("tsx", src);
+        let close = src.find("</Box>").unwrap();
+        let open = src.find("<Box").unwrap();
+        assert_eq!(partner(&t, open + 2).map(|(_, to)| to.start), Some(close));
+        assert_eq!(partner(&t, close + 5).map(|(_, to)| to.start), Some(open));
+        let gt = open + "<Box gap={1}".len();
+        assert_eq!(partner(&t, gt).map(|(_, to)| to.start), Some(close));
+        // A fragment's two.
+        tag("tsx", src, ("<>", 0), ("</>", 0));
+        // An element in an attribute's expression is its own.
+        tag("tsx", src, ("<span>", 0), ("</span>", 0));
+        tag("tsx", src, ("<b>", 0), ("</b>", 0));
+        tag("tsx", src, ("</b>", 0), ("<b>", 0));
+        // An attribute, a self-closing tag, the text: no pair.
+        assert_eq!(partner(&t, src.find("gap").unwrap()), None);
+        assert_eq!(partner(&t, src.find("<Box.Row").unwrap()), None);
+        assert_eq!(partner(&t, src.find("hi").unwrap()), None);
     }
 
     /// A language that closes nothing with a word has no blocks.
