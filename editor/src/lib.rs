@@ -1094,8 +1094,9 @@ pub trait SyntaxObjects {
 
     /// `%` off a bracket: the keyword over byte `at` and the one of its
     /// block to go to — `if` to `else` to `end` and round, in a language
-    /// that closes a block with a word — each its bytes. `None` where
-    /// `at` is on no such keyword, or there is no tree to read.
+    /// that closes a block with a word — or the tag over it and its
+    /// element's other one, `<box>` to `</box>`; each its bytes. `None`
+    /// where `at` is on neither, or there is no tree to read.
     fn partner(
         &mut self,
         _id: BufferId,

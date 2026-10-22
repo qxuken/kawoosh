@@ -415,13 +415,28 @@ Crystal. **A pattern per language**, matchit's own: it reads a string's
 C's `unsigned long` is such a node, and SQL's `ORDER BY`; hence the
 closers' list.
 
+**Tags** (asked 2026-10-22: "% on a `<box>` or `</box>` should jump
+to related ends in html or tsx"): an element whose first child is an
+opening tag and whose last a closing one — html's `start_tag` /
+`end_tag` (Vue's, Svelte's, Astro's too), XML's `STag` / `ETag`, JSX's
+`jsx_opening_element` / `jsx_closing_element`, by those names' ends —
+pairs its two tags, `%` from either to the other and the range each
+tag whole, so `d%` takes the element. Only from the tag's own tokens
+(`<`, `</`, `>`) and its name: an attribute stays, a JSX attribute's
+`{` is a bracket's. A self-closing tag, a void or unclosed element
+(html's `<br>`, a `<p>` the next one closes) and html's
+`erroneous_end_tag` have no pair and stay. Read against the installed
+html, xml, svelte and astro grammars once by hand; tsx is in the
+build.
+
 Not built: `repeat` … `until`, which ends with no word of its own; a
 grammar whose keywords are named nodes; an injected language's blocks
 (§6); a bracket found forward on the line when the caret is on none,
 which vim's `%` does and this one never did.
 
-Tests: `blocks::tests` (`lua`, `bash`, `none_in_braces`),
-`percent_goes_round_a_keyword_block` (`kawoosh/tests/syntax.rs`). Ruby
+Tests: `blocks::tests` (`lua`, `bash`, `tsx_tags`, `none_in_braces`),
+`percent_goes_round_a_keyword_block` and
+`percent_goes_between_an_element_s_tags` (`kawoosh/tests/syntax.rs`). Ruby
 and fish were read once against nvim-treesitter's parsers by hand, the
 grammars not being in the build.
 
