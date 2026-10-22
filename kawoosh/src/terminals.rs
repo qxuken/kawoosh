@@ -1365,25 +1365,29 @@ impl Kawoosh {
     /// The link at `(row, col)` of terminal `id`'s screen: the one a
     /// program printed there on purpose (OSC 8) first, else one found in
     /// the text of the line the row is part of — the rows a long line
-    /// wrapped onto joined, so a URL across the edge is whole. A path in the text is looked for in the
-    /// terminal's directory, then the working directory.
+    /// wrapped onto joined, so a URL across the edge is whole. A path in
+    /// the text is looked for in the terminal's directory, then the
+    /// working directory; a `file://` URL in it is read as a program's.
     fn term_link(&self, id: TermId, row: usize, col: usize) -> Option<TermLink> {
         let t = self.terms.map.get(&id)?;
         let mut bases = vec![t.cwd().unwrap_or_else(|| self.cwd.clone())];
         if !bases.contains(&self.cwd) {
             bases.push(self.cwd.clone());
         }
+        // A `file://` address is a path on the terminal's domain, or
+        // here; one on another host is said to be, not opened.
+        let file = |uri: &str| match t.file_link(uri) {
+            Some((path, line, col)) => Target::Path {
+                path: path.display().to_string(),
+                line,
+                col,
+                anchor: None,
+            },
+            None => Target::Elsewhere(uri.to_string()),
+        };
         if let Some(h) = t.hyperlink_at(row, col) {
             let target = if h.uri.starts_with("file:") {
-                match t.file_link(&h.uri) {
-                    Some((path, line)) => Target::Path {
-                        path: path.display().to_string(),
-                        line,
-                        col: None,
-                        anchor: None,
-                    },
-                    None => Target::Elsewhere(h.uri.clone()),
-                }
+                file(&h.uri)
             } else {
                 Target::Url(h.uri.clone())
             };
@@ -1403,8 +1407,12 @@ impl Kawoosh {
         let link = crate::links::link_at(text, at)?;
         let first = text[..link.span.start].chars().count();
         let chars = first..first + text[link.span.clone()].chars().count();
+        let target = match &text[link.span.clone()] {
+            uri if uri.starts_with("file://") => file(uri),
+            _ => link.target,
+        };
         Some(TermLink {
-            target: link.target,
+            target,
             rows: line.rows_of(chars, t.size().rows as usize),
             uri: None,
             bases,
