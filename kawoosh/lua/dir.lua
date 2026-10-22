@@ -75,10 +75,12 @@
 -- stays a list of names to edit. The notes are a column (`align`): they
 -- start past the widest name as it is drawn, which no count of
 -- characters is — a name in Cyrillic or Chinese is drawn in another
--- font than the mono one, at its own widths. A directory says its size
--- too where they are asked for (`gS`, or a sort by size): a sizing walk
--- of the listed directory (`kawoosh.du`, the disk-usage pane's) on the
--- io thread, each directory's total filled in as its subtree is done,
+-- font than the mono one, at its own widths — or, where that leaves the
+-- notes no room in the pane, where the widest note still fits, a longer
+-- name wrapping before it (`rows::note_column_at`). A directory says
+-- its size too where they are asked for (`gS`, or a sort by size): a
+-- sizing walk of the listed directory (`kawoosh.du`, the disk-usage
+-- pane's) on the io thread, each directory's total filled in as its subtree is done,
 -- `…` until then, and a listing sorted by size listed again in its
 -- order once the walk is done; as it is edited (`on_change`) the
 -- lines say what the write would make of them: a renamed entry what it

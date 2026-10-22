@@ -99,7 +99,11 @@ The gutter: the number beside the row's first line, nothing beside
 the rest (vim's `showbreak` and `breakindent` are later, when asked).
 The search's matches, the selections, the diagnostics' underlines and
 the inlay hints are spans in the row's text, so they wrap with it; the
-trailing diagnostic sits after the row's last line. The rendered
+trailing diagnostic sits after the row's last line. A column of notes
+(a listing's sizes) is a column wrapped too: the row's text wraps
+before it, the note after the last line at the column, and the column
+starts no further than the widest note leaves room for (2026-10-22,
+`rows::note_column_at`). The rendered
 markdown buffer is unchanged — it wraps as it did.
 
 ### 5. The wrap mode

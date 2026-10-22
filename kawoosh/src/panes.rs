@@ -1916,7 +1916,9 @@ impl Kawoosh {
             .map(|rt| rt.notes_on(buf_id, buf.version(), top..last))
             .unwrap_or_default();
         // A column of notes — a listing's sizes — starts past the
-        // buffer's widest line, measured (`rows::NoteColumns`).
+        // buffer's widest line, measured (`rows::NoteColumns`), while
+        // the widest note drawn still fits after it
+        // (`rows::note_column_at`).
         let aligned = self
             .scripting
             .rt
@@ -1926,7 +1928,15 @@ impl Kawoosh {
             let mut columns = std::mem::take(&mut self.note_columns);
             let at = columns.widest(ui, font, &pal, (buf_id, buf), tabstop, pf.cell.0);
             self.note_columns = columns;
-            Some(at)
+            let style = rows::mono(font, &pal);
+            let note = annotated
+                .values()
+                .map(|t| match t.is_ascii() {
+                    true => t.len() as f32 * pf.cell.0,
+                    false => ui.measure_text(t, &style, None).width,
+                })
+                .fold(0.0, f32::max);
+            Some((at, note))
         } else {
             self.note_columns.forget(buf_id);
             None
@@ -2018,6 +2028,7 @@ impl Kawoosh {
             - gutter
             - 2.0)
             .max(0.0);
+        let note_column = note_column.map(|(at, note)| rows::note_column_at(at, note, width));
         // The pane's size in the editor's cells, for a plugin that
         // renders to fit it (`kawoosh.pane_size`; `man.lua`'s width) —
         // once the pane is laid out: the window's width, which a pane
@@ -2730,7 +2741,9 @@ impl Kawoosh {
                                             scale: 1.0,
                                             family: None,
                                             stale,
-                                            room: width,
+                                            // Before a column of notes,
+                                            // where `emit_line` wraps it.
+                                            room: note_column.filter(|_| on_note).unwrap_or(width),
                                             wrap: (!long).then_some(w),
                                             bg: None,
                                             gutter: Some((

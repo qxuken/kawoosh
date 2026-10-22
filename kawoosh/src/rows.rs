@@ -411,6 +411,18 @@ struct NoteColumn {
     widest: f32,
 }
 
+/// Where a column of notes starts, from the text's start, in a row
+/// whose text has `room` px: past the widest line, unless the widest
+/// note would then end past the room — then where it ends inside it,
+/// and no further in than half the room, the names' least. A name
+/// past the column wraps before it, or, unwrapped, has its note past
+/// its own end; the column is never pushed out of the pane, where every
+/// note went with it (`:dir ~/Downloads` in a half column, a torrent's
+/// 180-char title, 2026-10-22).
+pub fn note_column_at(widest: f32, note: f32, room: f32) -> f32 {
+    widest.min((room - note - 2.0 * TRAILING_GAP).max(room / 2.0))
+}
+
 impl NoteColumns {
     /// The width of `buf`'s widest line as `face` draws it.
     pub fn widest(
@@ -1625,16 +1637,18 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 .collect();
             match wraps {
                 // A wrapped text grows to the row's width less what sits
-                // before it, and kui wraps it there. Its key is kept for
-                // the bar caret, which is placed where kui laid the byte
-                // out.
+                // before it, and kui wraps it there — before a column of
+                // notes, when it has one, so its note has the rest. Its
+                // key is kept for the bar caret, which is placed where kui
+                // laid the byte out.
                 true => {
+                    let spec = match line.trailing_at {
+                        Some(at) => NodeSpec::row().width(at),
+                        None => NodeSpec::row().grow_width(),
+                    };
                     ui.with_keyed(
                         "text",
-                        NodeSpec::row()
-                            .grow_width()
-                            .height(Sizing::Fit)
-                            .min_height(Min::FIT),
+                        spec.height(Sizing::Fit).min_height(Min::FIT),
                         |ui| {
                             text_key.set(Some(ui.child_key_indexed(0)));
                             ui.rich_text(&spans, base)
