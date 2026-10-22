@@ -4708,3 +4708,80 @@ fn a_click_on_a_lua_view_takes_the_keys_to_its_pane() {
     assert_eq!(app.layout.focused(), view, "the view's pane has the keys");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// `kawoosh.open`'s line is a whole number: `3.0` is line 3, and `2.5`
+/// is the caller's error, said — under mlua 0.12.2 it was dropped and
+/// the file opened at its top.
+#[test]
+fn open_takes_a_whole_line_and_says_a_fractional_one() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-open-line-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("five.txt");
+    std::fs::write(&file, "1\n2\n3\n4\n5\n").unwrap();
+    let path = file.display().to_string().replace('\\', "\\\\");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        &format!(
+            r#"local ok, err = pcall(kawoosh.open, "{path}", {{ line = 2.5 }})
+               kawoosh.echo(tostring(ok) .. " " .. tostring(err))"#
+        ),
+    );
+    assert!(
+        app.ed.message.starts_with("false") && app.ed.message.contains("kawoosh.open: line"),
+        "{}",
+        app.ed.message
+    );
+    app.run_lua_source("t", &format!(r#"kawoosh.open("{path}", {{ line = 3.0 }})"#));
+    app.wait_for_open();
+    settle(&mut d, &mut app);
+    let v = app.focused_view().expect("the file open");
+    let b = app.ed.buffer_of(v);
+    assert_eq!(b.name, "five.txt");
+    assert_eq!(b.line_of(app.ed.views[v].sels.primary().head), 2, "line 3");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A context set to a fraction is whole lines: the search's parts take
+/// lines, where `2.5` raised under mlua 0.12.2 (the setting says
+/// integer, and nothing makes it one).
+#[test]
+fn a_fractional_search_context_is_whole_lines() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-search-context-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let text: String = (1..=30).map(|i| format!("row {i}\n")).collect();
+    std::fs::write(dir.join("rows.txt"), &text).unwrap();
+    std::fs::write(dir.join(".ignore"), "").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    app.run_lua_source("t", r#"kawoosh.opt("search.context", 2.5)"#);
+    ex(&mut d, &mut app, "search project row 15");
+    for _ in 0..20 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
+    assert!(
+        !app.ed.message.contains("integer"),
+        "the search failed: {}",
+        app.ed.message
+    );
+    let shown: String = app
+        .ed
+        .buffers
+        .iter()
+        .map(|(_, b)| b.text())
+        .find(|t| t.contains("row 15"))
+        .unwrap_or_default();
+    assert!(
+        shown.contains("row 13") && shown.contains("row 17"),
+        "two lines each side: {shown}"
+    );
+    assert!(!shown.contains("row 12\n"), "not three: {shown}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

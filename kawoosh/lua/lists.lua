@@ -46,7 +46,9 @@ local DIAG = "*diagnostics*"
 local LISTS = { DIAG, "*references*", "*implementations*", "*declarations*" }
 local LEVELS = { "error", "warning", "info", "hint" }
 
-local function context() return math.max(tonumber(kawoosh.opt("places.context")) or 2, 0) end
+-- Floored: a setting of 2.5 is two lines, not an error where the
+-- parts take whole lines.
+local function context() return math.max(math.floor(tonumber(kawoosh.opt("places.context")) or 2), 0) end
 
 local function rel(path)
   local r = fs.form(path, "relative")

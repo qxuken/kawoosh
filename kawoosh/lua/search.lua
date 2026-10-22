@@ -299,7 +299,8 @@ end
 -- count, its matched lines with `search.context` around them, runs of
 -- lines that meet made one, a `⋯` between those that do not.
 local function show(answer, upto)
-  local context = tonumber(kawoosh.opt("search.context")) or 2
+  -- Floored: the parts take whole lines (a setting of 2.5 is two).
+  local context = math.max(math.floor(tonumber(kawoosh.opt("search.context")) or 2), 0)
   local parts = {}
   if not answer or #answer.files == 0 then
     parts[1] = (answer and "no matches" or "nothing searched yet") .. "\n"

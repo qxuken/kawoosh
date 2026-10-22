@@ -864,7 +864,9 @@ end, { place = "statusline", order = 5 })
 
 -- ------------------------------------------------------------ the review
 
-local function context() return math.max(tonumber(kawoosh.opt("places.context")) or 2, 0) end
+-- Floored: a setting of 2.5 is two lines, not an error where the
+-- parts take whole lines.
+local function context() return math.max(math.floor(tonumber(kawoosh.opt("places.context")) or 2), 0) end
 
 -- The parts of a review (docs/design/vcs.md Decision 6): a header per
 -- file, then each hunk — the base's lines it took out as a gap in the
