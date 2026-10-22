@@ -366,3 +366,39 @@ fn the_folder_s_pictures_in_turn_and_a_file_as_what_it_is() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The pointer moves over a picture larger than its room: a drag takes
+/// it along from where it was pressed, and the wheel moves it as the
+/// keys do. Both read the event's data under its name (kui ADR 0047):
+/// `ev.drag.dx`, `ev.scroll.dx`.
+#[test]
+fn a_drag_and_the_wheel_move_over_a_picture_larger_than_its_room() {
+    let (mut d, mut app, root) = start("pan");
+    open(
+        &mut d,
+        &mut app,
+        &format!("e {}", root.join("a-wide.png").display()),
+    );
+    ex(&mut d, &mut app, "image zoom 800");
+    frames(&mut d, &mut app, 2);
+    let x = num(&mut app, "x");
+    // The pane's middle, which the picture covers.
+    let pane = app.layout.rects[&app.layout.focused()];
+    let (mx, my) = (pane.x + pane.w / 2.0, pane.y + pane.h / 2.0);
+    let at = |x: f32, y: f32| kui_native::Vec2::new(x, y);
+    d.drag(&mut app, at(mx, my), at(mx - 100.0, my));
+    frames(&mut d, &mut app, 2);
+    let dragged = num(&mut app, "x");
+    assert!(
+        ((dragged - x).abs() - 100.0).abs() < 2.0,
+        "taken along the 100 px the pointer moved: {x} → {dragged}"
+    );
+    d.wheel(&mut app, mx, my, 40.0, 0.0);
+    frames(&mut d, &mut app, 2);
+    let wheeled = num(&mut app, "x");
+    assert!(
+        (wheeled - dragged).abs() > 1.0,
+        "the wheel moved it too: {dragged} → {wheeled}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

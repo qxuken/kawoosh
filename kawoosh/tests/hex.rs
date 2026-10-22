@@ -512,3 +512,57 @@ fn the_rows_are_counted_from_the_grid_s_own_room() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Where a node showing `text` was laid out, last frame.
+fn text_rect(d: &mut Drive, text: &str) -> kui_native::Rect {
+    d.core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some(text))
+        .unwrap_or_else(|| panic!("no node shows {text:?}"))
+        .rect
+}
+
+/// The scrollbar dragged to its foot shows the file's last rows, and
+/// the byte order's chip, clicked, reads the other way: the drag's
+/// `ev.drag.y` / `ev.drag.parent` and the click's own message (kui ADR
+/// 0047). The drag starts in the track: a press on the thumb itself is
+/// not heard (as on alpha.58 — the thumb's `hover_bg` child takes it).
+#[test]
+fn the_scrollbar_drags_the_rows_and_the_order_chip_turns_the_order() {
+    let (mut d, mut app, root) = open("thumb");
+    assert_eq!(shown(&mut app), "0 0 16 nil little");
+    let chip = text_rect(&mut d, "little-endian");
+    d.click(&mut app, chip.x + chip.w / 2.0, chip.y + chip.h / 2.0);
+    d.frame(&mut app);
+    assert!(shown(&mut app).ends_with(" big"), "{}", shown(&mut app));
+    // The bar: the narrow column right of the grid that takes a drag
+    // (the strip's dividers do too, but are labelled `gap…`).
+    let nodes = d.core.nodes();
+    let grid = nodes
+        .iter()
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
+        .expect("the grid")
+        .rect;
+    let bar = nodes
+        .iter()
+        .find(|n| {
+            n.flags.contains(&"drag")
+                && n.label.is_none()
+                && n.rect.w <= 8.5
+                && n.rect.x >= grid.x + grid.w
+        })
+        .expect("the scrollbar")
+        .rect;
+    let x = bar.x + bar.w / 2.0;
+    d.drag(
+        &mut app,
+        Vec2::new(x, bar.y + bar.h / 2.0),
+        Vec2::new(x, bar.y + bar.h - 1.0),
+    );
+    d.frame(&mut app);
+    let top: u64 = shown(&mut app).split(' ').nth(1).unwrap().parse().unwrap();
+    assert!(top > 200, "near the file's 256 rows: {top}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&root).ok();
+}

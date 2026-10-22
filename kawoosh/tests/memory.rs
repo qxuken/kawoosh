@@ -1872,3 +1872,87 @@ fn the_scope_is_drawn_as_at_chips_apart_from_the_views() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The pane's pointer ways, each its node's own message (`msg.rs`, kui
+/// ADR 0047): a click on the pane takes the keys to it, a view's word
+/// shows that view, the filter's line gives the filter the keys, and a
+/// row clicked is put as `⏎` puts it.
+#[test]
+fn the_pane_s_views_filter_and_rows_answer_clicks() {
+    use kawoosh::memory::View;
+    let mut d = Drive::new(1600.0, 600.0);
+    let mut app = Kawoosh::new("t", "one\ntwo\nthree\n");
+    d.frame(&mut app);
+    d.keys(&mut app, "yy");
+    d.keys(&mut app, "jyy");
+    let editor = app.layout.focused();
+    d.keys(&mut app, " mm");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    let click = |d: &mut Drive, app: &mut Kawoosh, label: &str| {
+        let r = d
+            .rect(label)
+            .unwrap_or_else(|| panic!("no {label} drawn: {:?}", texts(d)));
+        d.click(app, r.x + r.w / 2.0, r.y + r.h / 2.0);
+        d.frame(app);
+    };
+    // The pane's head, from the editor: the keys come to the pane.
+    app.layout.focus(editor);
+    d.frame(&mut app);
+    click(&mut d, &mut app, "head");
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    // A view's word.
+    click(&mut d, &mut app, View::Files.name());
+    assert_eq!(app.memory_pane.view, View::Files);
+    click(&mut d, &mut app, View::Texts.name());
+    assert_eq!(app.memory_pane.view, View::Texts);
+    // The filter's line, its keys given away and taken back by a click.
+    d.keys(&mut app, "/");
+    d.keys(&mut app, "o");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!app.memory_pane.filtering, "the rows have the keys");
+    // Its `/`, the lowest: the title bar's legend hint has one too.
+    let slash = d
+        .core
+        .nodes()
+        .into_iter()
+        .filter(|n| n.text.as_deref() == Some("/"))
+        .max_by(|a, b| a.rect.y.total_cmp(&b.rect.y))
+        .expect("the filter's line")
+        .rect;
+    d.click(&mut app, slash.x + slash.w / 2.0, slash.y + slash.h / 2.0);
+    d.frame(&mut app);
+    assert!(app.memory_pane.filtering, "the filter has the keys again");
+    d.press(&mut app, "<C-u>");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    // The second row, put after the caret's line in the editor.
+    let rows: Vec<_> = {
+        let mut rows: Vec<_> = d
+            .core
+            .nodes()
+            .into_iter()
+            .filter(|n| n.label.as_deref().is_some_and(|l| l.starts_with("moment ")))
+            .collect();
+        rows.sort_by(|a, b| a.rect.y.total_cmp(&b.rect.y));
+        rows
+    };
+    assert_eq!(rows.len(), 2, "the two texts");
+    let want = match app.memory_pane.rows()[1] {
+        Row::Text(t) => app.ed.memory.moments()[t].text.clone(),
+        _ => unreachable!("a text"),
+    };
+    let second = rows[1].rect;
+    d.click(&mut app, second.x + 20.0, second.y + second.h / 2.0);
+    d.frame(&mut app);
+    assert_eq!(
+        app.layout.focused(),
+        editor,
+        "the put's pane takes the keys"
+    );
+    assert_eq!(text_of(&app), format!("one\ntwo\n{want}three\n"));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

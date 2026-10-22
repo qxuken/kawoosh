@@ -1410,7 +1410,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     Align::Start
                 })
                 .role(Role::Line)
-                .on_layout(kui_native::Value::map([("kind", "mdrow".into())]));
+                .on_layout(crate::msg::Msg::MarkdownRow);
             // On whole pixels, so a code block's rows, stacked at a
             // pitch that is not whole pixels, meet without a line
             // between them.
@@ -1827,7 +1827,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     NodeSpec::row()
                         .size(0.0, lh)
                         .role(Role::None)
-                        .on_layout(kui_native::Value::map([("kind", "hang".into())]))
+                        .on_layout(crate::msg::Msg::Hang)
                         .float(FloatConfig::parent().offset(x, y)),
                 ),
             ));

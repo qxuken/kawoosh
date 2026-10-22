@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{HistoryRow, Hunk, Mode, Spec, ViewId};
-use kui_native::{Align, Color, NodeSpec, Sizing, Ui, Value, widgets};
+use kui_native::{Align, Color, NodeSpec, Sizing, Ui, widgets};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -29,6 +29,7 @@ use crate::devtab::Tab;
 use crate::diff;
 use crate::graph::{Geometry, Graph};
 use crate::layout::{Content, PaneId, Place};
+use crate::msg::Msg;
 use crate::rows;
 
 /// A panel's share of the column it opens beside — `:memory`'s: the
@@ -303,16 +304,12 @@ impl Kawoosh {
 
     /// A click on a row: the pane takes the keyboard and the row's
     /// state goes back in the buffer.
-    pub(crate) fn on_undo_click(&mut self, p: &Value) {
-        if let Some(pane) = p.get_int("pane") {
-            self.layout.focus(pane as PaneId);
-        }
-        if let Some(i) = p.get_int("state") {
-            self.sync_undo_rows();
-            let i = (i.max(0) as usize).min(self.undo.rows.len().saturating_sub(1));
-            self.undo.cursor = i;
-            self.undo_seek(i);
-        }
+    pub(crate) fn on_undo_state(&mut self, pane: PaneId, state: usize) {
+        self.layout.focus(pane);
+        self.sync_undo_rows();
+        let i = state.min(self.undo.rows.len().saturating_sub(1));
+        self.undo.cursor = i;
+        self.undo_seek(i);
     }
 
     pub(crate) fn render_undo(&mut self, ui: &mut Ui<'_>, pane: PaneId, focused: bool) {
@@ -345,7 +342,7 @@ impl Kawoosh {
             .is_some_and(|v| self.ed.views.contains_key(v));
         let hunk = self.undo.hunk.as_ref().and_then(|(_, h)| h.clone());
         let now = Instant::now();
-        let tag = Value::map([("kind", "undo".into()), ("pane", Value::Int(pane as i64))]);
+        let tag = Msg::Undo { pane };
         let graph_w = graph.width() as f32 * LANE_W;
         let col = move |cells: f32| tm.cell(cells, cell_w);
         let strip = move || tm.strip(&pal);
@@ -440,11 +437,7 @@ impl Kawoosh {
                         } else if r.current {
                             line = line.bg(pal.strip);
                         }
-                        let payload = Value::map([
-                            ("kind", "undo".into()),
-                            ("pane", Value::Int(pane as i64)),
-                            ("state", Value::Int(i as i64)),
-                        ]);
+                        let payload = Msg::UndoState { pane, state: i };
                         let label = format!("state {i}");
                         ui.with_keyed(
                             &label,

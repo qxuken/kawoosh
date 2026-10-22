@@ -891,8 +891,8 @@ kawoosh.view(VIEW, function(ctx)
   return row { width = "grow", height = "grow", main_align = "center", clip = true, bg = t.bg, body }
 end, function(ev)
   if not L then return end
-  if ev.kind == "layout" then
-    L.width, L.room = ev.w, ev.parent and ev.parent.w
+  if ev.event == "layout" then
+    L.width, L.room = ev.layout.w, ev.layout.parent and ev.layout.parent.w
   elseif ev.kind == "row" then
     kawoosh.field_focus(VIEW, FIELD)
     if ev.i == L.cursor then pick(ev.i) elseif takes(ev.i) then L.cursor = ev.i end

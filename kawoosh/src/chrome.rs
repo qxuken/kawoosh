@@ -25,11 +25,12 @@
 //! is more than one tab, `always`, `never` — the panes then reaching up
 //! to the title bar, the tabs gone to by their keys and the tabs picker.
 
-use kui_native::{Align, CursorShape, Enter, NodeSpec, Role, Span, Ui, Value, widgets};
+use kui_native::{Align, CursorShape, Enter, NodeSpec, Role, Span, Ui, widgets};
 
 use crate::app::Kawoosh;
 use crate::icons;
 use crate::layout::Content;
+use crate::msg::Msg;
 use crate::rows;
 
 /// The narrowest a tab gets before the strip scrolls rather than
@@ -263,7 +264,7 @@ impl Kawoosh {
                             .cross_align(Align::Center)
                             .hover_bg(pal.panel)
                             .cursor(CursorShape::Pointer)
-                            .on_click(Value::map([("kind", "cwd".into())]))
+                            .on_click(Msg::Cwd)
                             .label("cwd")
                             .tooltip(&full),
                         |ui| {
@@ -480,14 +481,8 @@ impl Kawoosh {
                                             .cross_align(Align::Center)
                                             .clip()
                                             .hover_group(&group)
-                                            .on_click(Value::map([
-                                                ("kind", "tab".into()),
-                                                ("index", Value::Int(i as i64)),
-                                            ]))
-                                            .on_drag(Value::map([
-                                                ("kind", "tabdrag".into()),
-                                                ("index", Value::Int(i as i64)),
-                                            ]))
+                                            .on_click(Msg::Tab { index: i })
+                                            .on_drag(Msg::TabDrag { index: i })
                                             .role(Role::Tab)
                                             .selected(is_active)
                                             .label(label.as_str());
@@ -527,10 +522,7 @@ impl Kawoosh {
                                             ui.with_keyed(
                                                 "close",
                                                 close
-                                                    .on_click(Value::map([
-                                                        ("kind", "tab close".into()),
-                                                        ("index", Value::Int(i as i64)),
-                                                    ]))
+                                                    .on_click(Msg::TabClose { index: i })
                                                     .label("close tab"),
                                                 |ui| {
                                                     icons::icon(
@@ -652,10 +644,7 @@ fn draw_blocks(
             spec = spec
                 .hover_bg(pal.panel)
                 .cursor(CursorShape::Pointer)
-                .on_click(Value::map([
-                    ("kind", "chrome".into()),
-                    ("run", Value::str(run.as_str())),
-                ]))
+                .on_click(Msg::Chrome { run: run.clone() })
                 .label(run.as_str());
         }
         ui.with_keyed(&format!("block{i}"), spec, |ui| {

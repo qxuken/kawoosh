@@ -15,6 +15,7 @@ use kui_native::{NodeSpec, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::layout::PaneId;
+use crate::msg::Msg;
 
 /// The Lua view over a buffer's text, its height in logical px — none,
 /// as tall as the view draws: a legend that wraps in a narrow pane —
@@ -187,18 +188,12 @@ impl Kawoosh {
             ("share", Value::Null),
             ("origin", Value::Null),
         ]);
-        let tag = Value::map([
-            ("kind", "luapane".into()),
-            ("pane", Value::Int(pane as i64)),
-        ]);
+        let tag = Msg::LuaPane { pane };
         let mut spec = NodeSpec::column().grow_width();
         spec = match header.height {
             Some(h) => spec.height(h),
             // As tall as it draws: told back, for the text's rows.
-            None => spec.on_layout(Value::map([
-                ("kind", "headerlayout".into()),
-                ("pane", Value::Int(pane as i64)),
-            ])),
+            None => spec.on_layout(Msg::HeaderLayout { pane }),
         };
         let sink = ui.with_keyed(
             "header",

@@ -27,8 +27,9 @@ kui asks the topmost node under the pointer that declares a menu, and
 a press on a child that declares none reaches the nearest that does
 (kui backlog T1). So:
 
-- **A pane's title bar** declares `{kind = "panemenu", pane, title =
-  true}`: the pane's menu (Decision 3) whatever the pane holds.
+- **A pane's title bar** declares `Msg::PaneMenu { pane, title: true }`
+  (`msg.rs`), and `Msg::Menu` for the row chosen: the pane's menu
+  (Decision 3) whatever the pane holds.
 - **A terminal's grid** declares it while no program reads the mouse,
   on the grid itself, so kui's Select All selects the grid. While one
   does, every button is the program's (roadmap step 55) and the
@@ -155,8 +156,9 @@ nothing in kawoosh.
 `kawoosh/src/menus.rs`: the three menus, the bar, `on_edit_button`,
 `on_context_menu`, `on_menu` and `menu_edit`. `panes.rs` declares the
 title bar's and the grid's menus and the editor's claim;
-`app.rs` routes `editbutton`, `contextmenu` and `menu`, and declares
-the bar each frame. Tests, `kawoosh/tests/menus.rs`:
+`app.rs` routes `(EditButton, Button)`, `(PaneMenu, ContextMenu)` and
+`(Menu, Menu)` — each message beside its event, kui ADR 0047 — and
+declares the bar, with its `on_menu`, each frame. Tests, `kawoosh/tests/menus.rs`:
 `a_right_click_in_the_text_places_the_caret_and_opens_the_editors_menu`,
 `the_edit_rows_run_what_the_keys_run`,
 `a_panes_title_bar_has_the_panes_menu`,

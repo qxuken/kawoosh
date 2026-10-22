@@ -2341,3 +2341,91 @@ fn the_shells_source_lists_the_shells_on_the_path_and_starts_one() {
     }
     std::fs::remove_dir_all(&bin).ok();
 }
+
+/// Where the last node showing `text` was laid out, last frame.
+fn text_rect(d: &Drive, text: &str) -> Rect {
+    let r = d
+        .core
+        .nodes()
+        .into_iter()
+        .rev()
+        .find(|n| n.text.as_deref() == Some(text))
+        .unwrap_or_else(|| panic!("no node shows {text:?}: {:?}", texts(d)))
+        .rect;
+    Rect {
+        x: r.x,
+        y: r.y,
+        w: r.w,
+        h: r.h,
+    }
+}
+
+/// The picker's own controls under the pointer, each heard as the
+/// message its node declared beside its event (kui ADR 0047): the wheel
+/// over the preview scrolls the preview and not the list, a click on the
+/// `ignored` chip lets the ignored files in, and in a picker too small
+/// for one the `preview` chip draws the preview anyway.
+#[test]
+fn the_preview_s_wheel_and_the_head_s_chips_answer_the_pointer() {
+    let _serial = serial();
+    let dir = project("chips");
+    let tall: String = (1..=80).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(dir.join("tall.txt"), tall).unwrap();
+    let mut d = Drive::new(1400.0, 800.0);
+    let mut app = app_with_lua(&mut d, &dir.join("src/main.rs"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.keys(&mut app, "tall");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "tall.txt");
+    let top = |app: &mut Kawoosh| -> String {
+        app.run_lua_source(
+            "t",
+            r#"local s = kawoosh.picker.state(); kawoosh.echo(s.top)"#,
+        );
+        app.ed.message.clone()
+    };
+    let shows = |d: &Drive, line: &str| texts(d).iter().any(|t| t == line);
+    assert_eq!(top(&mut app), "1");
+    assert!(shows(&d, "line 1"), "the preview from its top");
+    // The wheel over the preview's text.
+    let line = text_rect(&d, "line 3");
+    d.wheel(&mut app, line.x + 4.0, line.y + line.h / 2.0, 0.0, -120.0);
+    d.frame(&mut app);
+    assert!(!shows(&d, "line 1"), "the preview scrolled");
+    assert_eq!(top(&mut app), "1", "the list stays");
+    // The `ignored` chip: `target/out.o` is in once it is clicked.
+    d.press(&mut app, "<C-u>");
+    d.keys(&mut app, "out.o");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(
+        cursor_text(&mut app),
+        "<none>",
+        "not walked: {:?}",
+        rows(&d)
+    );
+    let chip = text_rect(&d, "ignored");
+    d.click(&mut app, chip.x + chip.w / 2.0, chip.y + chip.h / 2.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(
+        rows(&d).contains(&native("target/out.o")),
+        "the ignored let in: {:?}",
+        rows(&d)
+    );
+    // Too small for a preview: its chip draws one.
+    d.viewport = kui_native::Size::new(460.0, 300.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(place(&mut app), "none");
+    let chip = text_rect(&d, "preview");
+    d.click(&mut app, chip.x + chip.w / 2.0, chip.y + chip.h / 2.0);
+    d.frame(&mut app);
+    assert_ne!(place(&mut app), "none", "drawn anyway");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

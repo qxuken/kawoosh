@@ -15,11 +15,12 @@ use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{Selection, Selections, Setting, Spec, ViewId};
 use kawoosh_systems::ts::{OutlineAnswer, OutlineJob, Outlined};
 use kawoosh_systems::{Alarm, WakeHandle};
-use kui_native::{CursorShape, NodeSpec, TextStyle, Ui, Value};
+use kui_native::{CursorShape, NodeSpec, TextStyle, Ui};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::layout::PaneId;
+use crate::msg::Msg;
 
 /// Where the breadcrumbs' outline asks start: above any Lua job's token
 /// and the marks' (`marks::ASK_BASE`).
@@ -239,12 +240,11 @@ impl Kawoosh {
             left -= sep;
             let w = ui.measure_text(&c.name, &dim, None).width;
             let mut node = NodeSpec::row()
-                .on_click(Value::map([
-                    ("kind", "crumb".into()),
-                    ("pane", Value::Int(pane as i64)),
-                    ("line", Value::Int(c.line as i64)),
-                    ("character", Value::Int(c.character as i64)),
-                ]))
+                .on_click(Msg::Crumb {
+                    pane,
+                    line: c.line as i64,
+                    character: c.character as i64,
+                })
                 .keep_focus()
                 .hover_group(&crate::panes::title_group(pane))
                 .cursor(CursorShape::Pointer)
@@ -288,13 +288,7 @@ impl Kawoosh {
 
     /// A crumb clicked: its pane focused, the caret on its symbol's
     /// name, as the symbols picker's pick puts it.
-    pub(crate) fn on_crumb_click(&mut self, p: &Value) {
-        let (Some(pane), Some(line), Some(character)) =
-            (p.get_int("pane"), p.get_int("line"), p.get_int("character"))
-        else {
-            return;
-        };
-        let pane = pane as PaneId;
+    pub(crate) fn on_crumb_click(&mut self, pane: PaneId, line: i64, character: i64) {
         let Some(crate::layout::Content::Editor(view)) = self.layout.content(pane) else {
             return;
         };

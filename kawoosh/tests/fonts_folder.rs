@@ -139,10 +139,17 @@ fn a_font_installed_while_running_is_a_family() {
         !families(&mut d, &mut app).iter().any(|f| f == name),
         "not read again until told"
     );
-    let ev = kui_native::UiEvent::on(
+    // The machine's fonts changed: the message the root declared for it
+    // (kui ADR 0048), as the core raises it after a rescan finds a change.
+    let ev = kui_native::UiEvent::declared(
+        kui_native::EventKind::Fonts,
         kui_native::OriginId::HOST,
         kui_native::Key::ROOT,
-        kui_native::Value::map([("kind", kui_native::Value::str("fonts"))]),
+        Some(&kui_native::Value::map([(
+            "kind",
+            kui_native::Value::str("fonts"),
+        )])),
+        kui_native::Value::Null,
     );
     kui_native::App::on_event_with(&mut app, ev, &mut d.core);
     d.frame(&mut app);

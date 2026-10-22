@@ -478,3 +478,93 @@ fn a_long_blob_is_shown_cut_and_copied_and_put_back_whole() {
         "the whole blob put back"
     );
 }
+
+/// A click on the grid puts the cursor on the row under it: the cell is
+/// the click's data, under its name (`ev.click.cell`, kui ADR 0047).
+#[test]
+fn a_click_on_a_cell_puts_the_cursor_there() {
+    let (mut d, mut app, _root, _db) = open("click");
+    d.press(&mut app, "j<CR>");
+    settle(&mut d, &mut app);
+    assert_eq!(shown(&mut app), "grid items 1 1");
+    let pane = app.layout.focused();
+    let grid = d
+        .rect(&format!("sqlite grid {pane}"))
+        .expect("the grid drawn");
+    let lh = app.face.line_height;
+    // Row 0 is the header: the third row of data is fig's.
+    d.click(&mut app, grid.x + 4.0, grid.y + 3.5 * lh);
+    d.frame(&mut app);
+    assert_eq!(shown(&mut app), "grid items 3 1");
+    assert_eq!(field(&mut app, "value"), "3", "fig's id");
+}
+
+/// Where a node showing `text` was laid out, last frame.
+fn text_rect(d: &mut Drive, text: &str) -> kui_native::Rect {
+    d.core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some(text))
+        .unwrap_or_else(|| panic!("no node shows {text:?}"))
+        .rect
+}
+
+fn click_text(d: &mut Drive, app: &mut Kawoosh, text: &str) {
+    let r = text_rect(d, text);
+    d.click(app, r.x + r.w / 2.0, r.y + r.h / 2.0);
+    settle(d, app);
+}
+
+/// The pointer's ways into the pane, each the message its node declared
+/// (kui ADR 0047): a table's row clicked browses it, the line's `run`
+/// runs what is typed, and the wheel over the grid moves its rows by
+/// whole ones (`ev.scroll.lines`).
+#[test]
+fn a_table_clicked_is_browsed_run_runs_the_line_and_the_wheel_moves_the_rows() {
+    let (mut d, mut app, _root, db) = open("pointer");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE many (n INTEGER);
+         WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 300)
+         INSERT INTO many SELECT n FROM c;",
+    )
+    .unwrap();
+    drop(conn);
+    d.press(&mut app, "r");
+    settle(&mut d, &mut app);
+    // A table's row.
+    click_text(&mut d, &mut app, "items");
+    assert!(
+        shown(&mut app).starts_with("tables items"),
+        "{}",
+        shown(&mut app)
+    );
+    assert_eq!(field(&mut app, "total"), "3");
+    // The line, typed into and left, then `run`.
+    d.press(&mut app, "i");
+    d.frame(&mut app);
+    d.keys(&mut app, "SELECT 41 + 1 AS answer");
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
+    click_text(&mut d, &mut app, "run");
+    assert_eq!(rows(&mut app)[1], "  1      42", "{:?}", rows(&mut app));
+    // The wheel over a long table's grid.
+    click_text(&mut d, &mut app, "many");
+    assert_eq!(field(&mut app, "top"), "0");
+    let pane = app.layout.focused();
+    let grid = d
+        .rect(&format!("sqlite grid {pane}"))
+        .expect("the grid drawn");
+    let lh = app.face.line_height;
+    d.wheel(
+        &mut app,
+        grid.x + grid.w / 2.0,
+        grid.y + grid.h / 2.0,
+        0.0,
+        -lh * 5.0,
+    );
+    settle(&mut d, &mut app);
+    let top: i64 = field(&mut app, "top").parse().unwrap();
+    assert!(top > 0, "the rows moved: top {top}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

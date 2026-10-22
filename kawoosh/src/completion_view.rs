@@ -317,7 +317,7 @@ fn draw_panel(ui: &mut Ui<'_>, pal: &Pal, face: Face, panel: &Panel, cell: f32, 
             .border(1.0, pal.border)
             .pad_xy(cell, PAD + 2.0)
             .width(width)
-            .on_layout(kui_native::Value::map([("kind", "panel".into())])),
+            .on_layout(crate::msg::Msg::CompletionPanel),
         |ui| {
             // The head and the body scroll together, at most
             // `PANEL_LINES` tall: a signature of a hundred parameters is

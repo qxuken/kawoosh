@@ -473,9 +473,7 @@ impl Kawoosh {
             return false;
         };
         let named = match self.ed.settings.get(HOSTS) {
-            Some(kawoosh_editor::Setting::List(l)) => {
-                l.iter().any(|x| x.as_str() == Some(name))
-            }
+            Some(kawoosh_editor::Setting::List(l)) => l.iter().any(|x| x.as_str() == Some(name)),
             _ => false,
         };
         named && kawoosh_doc::fs::remote(dir).is_some_and(|r| r.is_ok())

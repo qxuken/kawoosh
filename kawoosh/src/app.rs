@@ -19,8 +19,8 @@ use kawoosh_systems::io::{Incoming, Io, IoMsg, Request};
 use kawoosh_systems::ts::{Job, Token, Ts};
 use kawoosh_term::TermSize;
 use kui_native::{
-    Core, Drag, DragPhase, FontId, KeyMods, KeyPress, NodeSpec, Scroll, Ui, UiEvent, Value,
-    WindowCommand,
+    Core, Drag, DragPhase, Event, FocusBy, FocusPhase, FontId, KeyMods, KeyPhase, KeyPress,
+    NodeSpec, Scroll, Text, Ui, UiEvent, WindowCommand, WindowPhase,
 };
 
 use crate::Pal;
@@ -29,6 +29,7 @@ use crate::compile::Compile;
 use crate::inspector::Inspector;
 use crate::layout::{Content, Layout, PaneId, Place, SplitDir};
 use crate::lsp::LspState;
+use crate::msg::{Along, Msg};
 use crate::notify::Notifications;
 use crate::rows::{self, Drawn};
 use crate::scripting::Scripting;
@@ -414,7 +415,7 @@ pub struct Kawoosh {
     /// — a 23 px row at 125% is 29 device px, 23.2 — and rows counted
     /// by `cell` ran past the pane's foot.
     pub(crate) grid_cell: (f32, f32),
-    /// Modifier state, from `{kind="modifiers"}` events.
+    /// Modifier state, from the root's `on_modifiers` (kui ADR 0048).
     pub(crate) mods: KeyMods,
     /// The question on show, if one (`confirm.rs`): the keys are its.
     pub confirm: Option<crate::confirm::Confirm>,
@@ -2654,14 +2655,12 @@ impl Kawoosh {
     /// the others shifting to make room as `]T` `[T` shift them. Where
     /// it is let go is where it already is. Only the pointer's `x`
     /// counts: a hand that strays off the strip keeps the tab.
-    fn on_tab_drag(&mut self, d: Drag, tag: Option<&Value>, core: &Core) {
+    fn on_tab_drag(&mut self, d: Drag, index: usize, core: &Core) {
         match d.phase {
             DragPhase::Start => {
-                self.tab_drag = tag.and_then(|t| t.get_int("index")).map(|i| {
-                    self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);
-                    self.layout.dock_focused = false;
-                    (self.layout.tab, false)
-                });
+                self.layout.tab = index.min(self.layout.tabs.len() - 1);
+                self.layout.dock_focused = false;
+                self.tab_drag = Some((self.layout.tab, false));
             }
             DragPhase::Move => {
                 let Some((at, _)) = self.tab_drag else {
@@ -2701,21 +2700,14 @@ impl Kawoosh {
     /// the pointer makes it, as a fraction of the viewport — a `Ratio`
     /// until a preset key snaps it (scrolling-tab.md Decision 3). The
     /// last column has one too, at its right edge.
-    fn on_split_drag(&mut self, d: Drag, tag: Option<&Value>) {
-        let Some(path) = tag.and_then(|t| t.get_str("path")) else {
-            return;
-        };
-        let path = path.to_string();
+    fn on_split_drag(&mut self, d: Drag, path: String, dir: Along, vw: Option<f32>) {
         match d.phase {
             DragPhase::End => self.dragging = None,
             _ if path.starts_with("gap") => {
                 let x = d.pos.x;
                 // The viewport's width, which the last column's handle,
                 // inside its column, has no parent to give.
-                let vw = tag
-                    .and_then(|t| t.get_f32("vw"))
-                    .unwrap_or(d.parent.w)
-                    .max(1.0);
+                let vw = vw.unwrap_or(d.parent.w).max(1.0);
                 let gap = self.strip_gap();
                 if let Ok(i) = path[3..].parse::<usize>()
                     && let Some(s) = self.layout.tab().strip()
@@ -2736,7 +2728,7 @@ impl Kawoosh {
                 self.dragging = Some(path);
             }
             _ => {
-                let horizontal = tag.and_then(|t| t.get_str("dir")) == Some("h");
+                let horizontal = dir == Along::H;
                 let r = d.ratio();
                 let ratio = if horizontal { r.x } else { r.y }.clamp(0.1, 0.9);
                 if path == "dock" {
@@ -3077,6 +3069,17 @@ impl kui_native::App for Kawoosh {
             ui.request_paste();
         }
         ui.window_title(&format!("{} — kawoosh", self.title()));
+        // What the window says of itself, which no node is under (kui ADR
+        // 0048): back in front, the machine's fonts, the documents the OS
+        // asked it to open, the modifiers held. Each arrives as the
+        // message here, matched on `ev.event` (`on_ui_event`).
+        ui.window_events(
+            kui_native::WindowEvents::default()
+                .on_focus(Msg::Window)
+                .on_fonts(Msg::Fonts)
+                .on_open(Msg::Open)
+                .on_modifiers(Msg::Modifiers),
+        );
         self.sync_menu_bar(ui);
         let vp = ui.viewport();
         let lh = self.face.line_height;
@@ -3094,7 +3097,7 @@ impl kui_native::App for Kawoosh {
         let window = NodeSpec::column()
             .fill()
             .bg(pal.bg)
-            .on_scroll(Value::map([("kind", "zoom".into())]))
+            .on_scroll(Msg::Zoom)
             .scroll_mods(KeyMods::NONE.with_ctrl().with_super());
         ui.with(window, |ui| {
             self.title_bar(ui);
@@ -3127,11 +3130,11 @@ impl kui_native::App for Kawoosh {
                         "dockdiv",
                         kui_native::Dir::Column,
                         DIVIDER,
-                        Value::map([
-                            ("kind", "split".into()),
-                            ("path", "dock".into()),
-                            ("dir", "v".into()),
-                        ]),
+                        Msg::Split {
+                            path: "dock".into(),
+                            dir: Along::V,
+                            vw: None,
+                        },
                     );
                     ui.with_keyed(
                         "dock",
@@ -3181,7 +3184,11 @@ impl kui_native::App for Kawoosh {
     /// looked at — is done here, in the event's turn.
     fn on_event_with(&mut self, ev: UiEvent, core: &mut Core) {
         let asking = self.confirm.is_some();
-        self.frames.input(ev.kind().unwrap_or("event"));
+        // What the frame ledger names the input by: the message's own
+        // kind where it has one (`tab`, `toast`, `msg.rs`), else the
+        // event's.
+        let cause = ev.payload.get_str("kind").unwrap_or(ev.event.name());
+        self.frames.input(cause);
         let prompt = self.ed.prompt_view().map(|f| (f, self.layout.focused()));
         self.on_ui_event(ev, core);
         // Each event its own step for the jumps' look: two keys in one
@@ -3212,144 +3219,67 @@ impl kui_native::App for Kawoosh {
 }
 
 impl Kawoosh {
+    /// Every event as the pair it is (kui ADR 0047): the message the node
+    /// kawoosh drew declared (`msg.rs`) and what happened to it. A message
+    /// two handlers share — a terminal's on its keys, clicks, focus and
+    /// wheel — is told apart by the event in the same arm, so no arm
+    /// catches another's by coming first. A Lua view's events are its
+    /// own: its handler ran in the extension, and what it asked for is
+    /// applied here.
     fn on_ui_event(&mut self, ev: UiEvent, core: &mut Core) {
         self.sync_facts();
-        let p = &ev.payload;
-        let tag = ev.tag();
-        let pane = tag.and_then(|t| t.get_int("pane")).map(|n| n as PaneId);
-        let tag_kind = tag.and_then(|t| t.get_str("kind"));
-        // Anything but the modifier state is the hands on the keys: the
-        // memory's idle guard (`moments.rs`).
-        // The window back in front: the files and the clipboard are
-        // looked at for what changed while it was away.
-        if ev.kind() == Some("window") {
-            if p.get_str("phase") == Some("focused") {
-                self.sync_dirs(true);
-                self.sync_disk(true);
-                self.sync_clipboard(core, true);
-            }
-            return;
+        let (slot, key) = (ev.slot.is_some(), ev.key);
+        // Kawoosh's words only on what the host drew: a Lua view's
+        // `{kind = "row"}` is the view's. (The engine's legend, drawn in
+        // a Lua view, replies to the Lua host that placed it, never here.)
+        let (msg, event) = ev.split::<Msg>();
+        let msg = msg.filter(|_| !slot);
+        // Anything but what the window says of itself is the hands on
+        // the keys: the memory's idle guard (`moments.rs`).
+        if !matches!(
+            event,
+            Event::Window(_) | Event::Fonts | Event::Open(_) | Event::Modifiers(_)
+        ) {
+            self.note_input();
         }
-        // A font installed on the machine or taken off it while kawoosh
-        // runs (kui alpha.32 rescans and says so): the families read
-        // again at the frame, as when the user's folder changes, so the
-        // fonts pane lists it and a `font.family` naming it resolves.
-        if ev.kind() == Some("fonts") {
-            self.look.fonts.borrow_mut().rescan = true;
-            return;
-        }
-        // Documents the OS asked the app to open — Finder's Open With, a
-        // file dropped on the Dock icon, `open -a Kawoosh FILE` — at
-        // launch or since: each opened as `kawoosh edit` opens it, a
-        // directory listed, the last one in front.
-        if ev.kind() == Some("open") {
-            for path in p.get("paths").and_then(Value::as_list).unwrap_or_default() {
-                if let Some(path) = path.as_str() {
-                    self.open_in_editor(Path::new(path), None, None);
+        match (msg, event) {
+            // ---------------------------------------- the window's own
+            // Back in front: the files and the clipboard are looked at
+            // for what changed while it was away.
+            (Some(Msg::Window), Event::Window(w)) => {
+                if w.phase == WindowPhase::Focused {
+                    self.sync_dirs(true);
+                    self.sync_disk(true);
+                    self.sync_clipboard(core, true);
                 }
             }
-            return;
-        }
-        if let Some(m) = ev.modifiers() {
-            self.mods = m;
-            return;
-        }
-        self.note_input();
-        if let Some((phase, k)) = ev.key_press() {
-            // A release, and a modifier key alone, are a terminal's alone
-            // to hear — its sink asks for them for kitty's keyboard
-            // protocol (terminal-keys.md Decision 5); no keymap reads one.
-            if phase == kui_native::KeyPhase::Up || k.code.is_modifier() {
-                if let Some(t) = self.term_of(pane.unwrap_or(self.layout.focused())) {
-                    self.term_key_aside(t, &k, phase == kui_native::KeyPhase::Up);
+            // A font installed on the machine or taken off it while
+            // kawoosh runs (kui alpha.32 rescans and says so): the
+            // families read again at the frame, as when the user's folder
+            // changes, so the fonts pane lists it and a `font.family`
+            // naming it resolves.
+            (Some(Msg::Fonts), Event::Fonts) => self.look.fonts.borrow_mut().rescan = true,
+            // Documents the OS asked the app to open — Finder's Open
+            // With, a file dropped on the Dock icon, `open -a Kawoosh
+            // FILE` — at launch or since: each opened as `kawoosh edit`
+            // opens it, a directory listed, the last one in front.
+            (Some(Msg::Open), Event::Open(paths)) => {
+                for path in paths {
+                    self.open_in_editor(Path::new(&path), None, None);
                 }
-                return;
             }
-            // ⌘C over a terminal with something selected on screen is
-            // kui's copy of it, the runner's own half of the chord: the
-            // program hears ⌘C (kitty's keyboard protocol) only when
-            // nothing is selected — one or the other, never both. Its
-            // release goes nowhere either, its press never having been
-            // sent (`term_key_aside`).
-            if k.mods.super_key
-                && k.code.name().eq_ignore_ascii_case("c")
-                && self.term_of(self.layout.focused()).is_some()
-                && core.copy_selection().is_some_and(|t| !t.is_empty())
-            {
-                return;
+            (Some(Msg::Modifiers), Event::Modifiers(m)) => self.mods = m,
+            // The wheel with ⌘ or Ctrl held, for the font's size.
+            (Some(Msg::Zoom), Event::Scroll(s)) => self.on_zoom(s.pos, s.delta.y),
+
+            // ---------------------------------------- the keyboard
+            (msg, Event::Key(phase, k)) => {
+                self.key_event(msg.and_then(|m| m.pane()), phase, k, core)
             }
-            self.on_key(k);
-            // A `gj` / `gk` is resolved against the rows kui laid out
-            // (`wrap.rs`), which only the event's core can answer.
-            self.resolve_row_move(core);
-            return;
-        }
-        if let Some(b) = ev.button() {
-            match (tag_kind, pane) {
-                (Some("termbutton"), Some(pane)) => self.on_term_button(pane, b),
-                (Some("canvasbutton"), Some(pane)) => self.on_canvas_button(pane, b, ev.key, core),
-                (Some("editbutton"), Some(pane)) => self.on_edit_button(pane, b, ev.key, core),
-                _ => {}
-            }
-            return;
-        }
-        if let Some(d) = ev.drag() {
-            match (tag_kind, pane) {
-                (Some("split"), _) => self.on_split_drag(d, tag),
-                (Some("termmouse"), Some(pane)) => self.on_term_drag(pane, d),
-                (Some("termbar"), Some(pane)) => self.on_term_bar_drag(pane, d),
-                (Some("panedrag"), Some(pane)) => self.on_pane_drag(pane, d),
-                (Some("tabdrag"), _) => self.on_tab_drag(d, tag, core),
-                (Some("canvas"), Some(pane)) => self.on_canvas_drag(pane, d),
-                // A drag on a canvas's toolbar moves nothing.
-                (Some("canvasbar"), _) => {}
-                (_, Some(pane)) => self.on_drag(pane, d),
-                // A Lua view's own `on_drag`: its handler ran, what it
-                // asked for is applied now.
-                _ if ev.slot.is_some() => self.drain_lua(),
-                _ => {}
-            }
-            return;
-        }
-        if let Some(s) = ev.scroll() {
-            // The window's own, for the wheel with ⌘ or Ctrl held.
-            if tag_kind == Some("zoom") {
-                self.on_zoom(s.pos, s.delta.y);
-                return;
-            }
-            match pane {
-                Some(pane) => self.on_scroll(pane, s),
-                // A Lua view's own `on_scroll`: its handler ran, what it
-                // asked for is applied now.
-                None if ev.slot.is_some() => self.drain_lua(),
-                None => {}
-            }
-            return;
-        }
-        if let Some(h) = ev.hover() {
-            if tag_kind == Some("toast") {
-                self.on_toast_hover(h, tag);
-            }
-            return;
-        }
-        if let Some(l) = ev.layout()
-            && ev.slot.is_none()
-        {
-            if tag_kind == Some("headerlayout") {
-                if let Some(pane) = pane {
-                    self.header_laid(pane, l.rect.h);
-                }
-                return;
-            }
-            // A diagram's canvas, between its toolbar and its status.
-            if tag_kind == Some("canvaslayout") {
-                if let Some(pane) = pane {
-                    let r = l.rect;
-                    self.canvas.laid(pane, r.x, r.y, r.w, r.h);
-                }
-                return;
-            }
-            if let Some(pane) = pane {
+            (_, Event::Text(t)) => self.text_event(t),
+
+            // ---------------------------------------- the panes
+            (Some(Msg::Layout { pane }), Event::Layout(l)) => {
                 let r = l.rect;
                 self.layout.rects.insert(
                     pane,
@@ -3361,202 +3291,273 @@ impl Kawoosh {
                     },
                 );
             }
-            return;
-        }
-        if let Some(t) = ev.text() {
-            let mut text = t.text.to_string();
-            // What a password manager copied is marked so on the
-            // pasteboard (kui F84): a secret (docs/design/secrets.md
-            // Decision 4).
-            let secret = t.concealed || t.transient;
-            // A look at the clipboard, not a paste: into the
-            // register, unless it is what was put there from here —
-            // or a secret, which is not the register's at all until
-            // it is pasted.
-            if std::mem::take(&mut self.clip_probe) && !self.awaiting_paste {
-                if !secret && self.clip_last.as_deref() != Some(text.as_str()) {
-                    self.ed.adopt_clipboard(&text);
-                }
-                if secret {
-                    text_buffer::wipe_string(&mut text);
-                }
-                return;
+            (Some(Msg::HeaderLayout { pane }), Event::Layout(l)) => {
+                self.header_laid(pane, l.rect.h)
             }
-            // The answer ends the ask, whichever pane takes it: left
-            // open, every frame asked again and a terminal pasted
-            // each answer, for good.
-            let pasted = std::mem::take(&mut self.awaiting_paste);
-            // A canvas has no caret: its text takes no paste.
-            if self.ed.prompt_view().is_none()
-                && self.focused_view().is_some_and(|v| self.diagram_drawn(v))
-            {
-                return;
+            // A diagram's canvas, between its toolbar and its status.
+            (Some(Msg::CanvasLayout { pane }), Event::Layout(l)) => {
+                let r = l.rect;
+                self.canvas.laid(pane, r.x, r.y, r.w, r.h);
             }
-            if let Some(v) = self
-                .header_field()
-                .filter(|_| self.ed.prompt_view().is_none())
-                .or_else(|| self.focused_view())
-            {
-                if pasted {
-                    self.ed.paste_text_marked(v, &text, secret);
-                } else {
-                    self.ed.text(v, &text);
-                }
-            } else if let Some(t) = self
-                .term_of(self.layout.focused())
-                .and_then(|t| self.terms.map.get_mut(&t))
-            {
-                t.paste(&text);
-            }
-            self.follow_caret = true;
-            self.drain_effects();
-            return;
-        }
-        match ev.kind() {
-            Some("syntax") => self.on_syntax_click(p),
-            Some("undo") => self.on_undo_click(p),
-            // A canvas's toolbar button: its command, on its pane.
-            Some("canvasbtn") => {
-                if let Some(pane) = p.get_int("pane") {
-                    self.layout.focus(pane as PaneId);
-                }
-                if let Some(line) = p.get_str("run") {
-                    let line = line.to_string();
-                    self.run_line(&line);
-                }
-            }
-            Some("memory") => self.on_memory_click(p),
-            // A legend's `⌥/ keys`: its pane's whole, or compact again.
-            Some("legend") => {
-                if let Some(pane) = p.get_int("pane") {
-                    self.flip_legend(pane as PaneId);
-                }
-            }
-            // A click's payload is the `on_click` value itself, with the
-            // pointer's `cell` beside it on a grid.
-            // The badge on a terminal scrolled away: back to the prompt.
-            Some("termbottom") => {
-                if let Some(pane) = p.get_int("pane")
-                    && let Some(t) = self.term_of(pane as PaneId)
-                {
-                    self.layout.focus(pane as PaneId);
-                    self.term_scroll(t, crate::terminals::TermScroll::Bottom);
-                }
+            (Some(Msg::Title { pane } | Msg::LuaPane { pane }), Event::Click(_)) => {
+                self.layout.focus(pane)
             }
             // A press in a terminal's grid starts a selection, which no
             // handler hears, and takes kui's keyboard to its sink: the
             // pane follows. Only the pointer's: kui moving it to a sink
             // the view declared is the pane focus already there.
-            Some("focus") => {
-                if p.get_str("phase") == Some("in")
-                    && p.get_str("by") == Some("pointer")
-                    && let Some(pane) = pane
-                {
-                    self.layout.focus(pane);
-                }
+            (Some(Msg::Term { pane } | Msg::LuaPane { pane }), Event::Focus(f))
+                if f.phase == FocusPhase::In && f.by == FocusBy::Pointer =>
+            {
+                self.layout.focus(pane)
             }
-            // A breadcrumb in an editor pane's title bar: its symbol.
-            Some("crumb") => self.on_crumb_click(p),
-            Some("title" | "luapane") => {
-                if let Some(pane) = p.get_int("pane") {
-                    self.layout.focus(pane as PaneId);
-                }
+            (Some(Msg::PaneDrag { pane }), Event::Drag(d)) => self.on_pane_drag(pane, d),
+            (Some(Msg::Split { path, dir, vw }), Event::Drag(d)) => {
+                self.on_split_drag(d, path, dir, vw)
             }
             // A pane's close button: that pane, as `:close` closes the
             // focused one, the keys staying where they were.
-            Some("pane close") => {
-                if let Some(pane) = p.get_int("pane")
-                    && !self.close_pane_at(pane as PaneId)
-                {
+            (Some(Msg::PaneClose { pane }), Event::Click(_)) => {
+                if !self.close_pane_at(pane) {
                     self.ed.message = "cannot close the last pane".into();
                 }
             }
-            Some("toast") => self.on_toast(p),
+            // A legend's `⌥/ keys`: its pane's whole, or compact again.
+            (Some(Msg::Legend { pane }), Event::Click(_)) => self.flip_legend(pane),
             // A right-click a pane asked to answer (`menus.rs`), and a
             // row chosen from any of kawoosh's menus, a pane's or the
-            // bar's.
-            Some("contextmenu") if tag_kind == Some("panemenu") && ev.slot.is_none() => {
-                self.on_context_menu(ev.key, p, core);
+            // bar's, on the node that declared it.
+            (Some(Msg::PaneMenu { pane, title }), Event::ContextMenu(at)) => {
+                self.on_context_menu(key, pane, title, at, core)
             }
-            Some("menu") if ev.slot.is_none() => {
-                self.on_menu(p.get("item"), core);
+            (Some(Msg::Menu), Event::Menu(choice)) => {
+                self.on_menu(Some(&choice.item), core);
                 self.drain_lua();
             }
-            Some("confirm") => {
-                self.on_confirm(p);
-                self.drain_effects();
-                self.drain_lua();
+
+            // ---------------------------------------- an editor
+            (Some(Msg::Editor { pane }), Event::Drag(d)) => self.on_drag(pane, d),
+            (
+                Some(Msg::Editor { pane } | Msg::Term { pane } | Msg::Canvas { pane }),
+                Event::Scroll(s),
+            ) => self.on_scroll(pane, s),
+            (Some(Msg::EditButton { pane }), Event::Button(b)) => {
+                self.on_edit_button(pane, b, key, core)
             }
-            Some("dismiss") => self.on_dismiss(p),
-            // The chrome's clicks (the tabs, the title bar's blocks):
-            // a press there takes kui's focus to the clicked node, and
-            // the keys belong back with the pane.
-            Some("tab") => {
-                if let Some(i) = p.get_int("index") {
-                    self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);
-                    self.layout.dock_focused = false;
+            // A breadcrumb in an editor pane's title bar: its symbol.
+            (
+                Some(Msg::Crumb {
+                    pane,
+                    line,
+                    character,
+                }),
+                Event::Click(_),
+            ) => self.on_crumb_click(pane, line, character),
+
+            // ---------------------------------------- a terminal
+            // A click focuses; with ⌘ held it follows the link under the
+            // pointer (`gx` across the boundary).
+            (Some(Msg::Term { pane }), Event::Click(c)) => self.on_term_click(pane, c.cell),
+            (Some(Msg::TermMouse { pane }), Event::Drag(d)) => self.on_term_drag(pane, d),
+            (Some(Msg::TermBar { pane }), Event::Drag(d)) => self.on_term_bar_drag(pane, d),
+            (Some(Msg::TermButton { pane }), Event::Button(b)) => self.on_term_button(pane, b),
+            // The badge on a terminal scrolled away: back to the prompt.
+            (Some(Msg::TermBottom { pane }), Event::Click(_)) => {
+                if let Some(t) = self.term_of(pane) {
+                    self.layout.focus(pane);
+                    self.term_scroll(t, crate::terminals::TermScroll::Bottom);
                 }
             }
+
+            // ---------------------------------------- a diagram
+            (Some(Msg::Canvas { pane }), Event::Drag(d)) => self.on_canvas_drag(pane, d),
+            (Some(Msg::CanvasButton { pane }), Event::Button(b)) => {
+                self.on_canvas_button(pane, b, key, core)
+            }
+            // A canvas's toolbar button: its command, on its pane.
+            (Some(Msg::CanvasTool { pane, run }), Event::Click(_)) => {
+                self.layout.focus(pane);
+                self.run_line(&run);
+            }
+
+            // ---------------------------------------- the chrome
+            // A press on a tab takes kui's focus to the clicked node, and
+            // the keys belong back with the pane.
+            (Some(Msg::Tab { index }), Event::Click(_)) => {
+                self.layout.tab = index.min(self.layout.tabs.len() - 1);
+                self.layout.dock_focused = false;
+            }
+            (Some(Msg::TabDrag { index }), Event::Drag(d)) => self.on_tab_drag(d, index, core),
             // A tab's close button: that tab, as `:tabclose` closes the
             // one it is in.
-            Some("tab close") => {
-                if let Some(i) = p.get_int("index") {
-                    let (was, n) = (self.layout.tab, self.layout.tabs.len());
-                    let i = (i as usize).min(n - 1);
-                    self.layout.tab = i;
-                    self.layout.dock_focused = false;
-                    self.run_line("tab close");
-                    // A tab closed from behind: the one the user was on
-                    // stays on, one place left if the closed was before.
-                    if self.layout.tabs.len() < n && i != was {
-                        self.layout.tab = if i < was { was - 1 } else { was };
-                    }
+            (Some(Msg::TabClose { index }), Event::Click(_)) => {
+                let (was, n) = (self.layout.tab, self.layout.tabs.len());
+                let i = index.min(n - 1);
+                self.layout.tab = i;
+                self.layout.dock_focused = false;
+                self.run_line("tab close");
+                // A tab closed from behind: the one the user was on stays
+                // on, one place left if the closed was before.
+                if self.layout.tabs.len() < n && i != was {
+                    self.layout.tab = if i < was { was - 1 } else { was };
                 }
             }
             // A title-bar block's command (the servers: `lsp info`).
-            Some("chrome") => {
-                if let Some(run) = p.get_str("run") {
-                    let run = run.to_string();
-                    self.run_line(&run);
-                }
-            }
-            // The title bar's cwd: listed.
-            Some("cwd") => {
-                // As one argument: a command line splits a path with a
-                // space in it.
+            (Some(Msg::Chrome { run }), Event::Click(_)) => self.run_line(&run),
+            // The title bar's cwd: listed. As one argument: a command
+            // line splits a path with a space in it.
+            (Some(Msg::Cwd), Event::Click(_)) => {
                 let cwd = self.cwd.display().to_string();
                 self.shell_command("dir", &[cwd], None);
                 self.drain_lua();
             }
-            Some("term") => {
-                // A click focuses; with ⌘ held it follows the link under
-                // the pointer (`gx` across the boundary). A program that asked
-                // for the mouse gets the click instead (shift bypasses).
-                if let Some(pane) = p.get_int("pane") {
-                    let pane = pane as PaneId;
-                    self.layout.focus(pane);
-                    let cell = p.get("cell");
-                    if let (Some(t), Some(row), Some(col)) = (
-                        self.term_of(pane),
-                        cell.and_then(|c| c.get_int("row")),
-                        cell.and_then(|c| c.get_int("col")),
-                    ) {
-                        // ⌘ is kawoosh's on the mouse whatever the
-                        // program asked (terminal-keys.md Decision 6):
-                        // its reports have no bit for it.
-                        let reporting = self.terms.map.get(&t).is_some_and(|term| {
-                            term.wants_mouse() && !self.mods.shift && !self.mods.super_key
-                        });
-                        // Reporting: the drag events (start = press, end =
-                        // release) carried it; the click only focused.
-                        if !reporting && (self.mods.ctrl || self.mods.super_key) {
-                            self.open_location_at(t, row as usize, col as usize);
-                        }
-                    }
-                }
+
+            // ---------------------------------------- the floats
+            (Some(Msg::Toast { id }), Event::Hover(h)) => self.on_toast_hover(h, id),
+            (Some(Msg::Toast { id }), Event::Click(_)) => self.on_toast(id, None),
+            (Some(Msg::ToastAction { id, action }), Event::Click(_)) => {
+                self.on_toast(id, Some(action))
             }
-            _ if ev.slot.is_some() => self.drain_lua(),
+            (Some(Msg::ConfirmAnswer { action }), Event::Click(_)) => {
+                self.confirm_answer(Some(action));
+                self.drain_effects();
+                self.drain_lua();
+            }
+            // `<Esc>` or a press outside the confirm: answered with none.
+            (Some(Msg::Confirm), Event::Dismiss(_)) => self.confirm_answer(None),
+
+            // ---------------------------------------- the dev tabs
+            (Some(Msg::SyntaxAnonymous), Event::Click(_)) => self.inspector.toggle_anonymous(),
+            (Some(Msg::SyntaxFold { id }), Event::Click(_)) => self.inspector.toggle_fold(id),
+            (Some(Msg::SyntaxSelect { start, end }), Event::Click(_)) => {
+                self.on_syntax_select(start, end)
+            }
+            (Some(Msg::Memory { pane } | Msg::Undo { pane }), Event::Click(_)) => {
+                self.layout.focus(pane)
+            }
+            (Some(Msg::MemoryView { pane, view }), Event::Click(_)) => {
+                self.on_memory_view(pane, &view)
+            }
+            (Some(Msg::MemoryScope { pane, scope }), Event::Click(_)) => {
+                self.on_memory_scope(pane, &scope)
+            }
+            (Some(Msg::MemoryFilter { pane }), Event::Click(_)) => self.on_memory_filter(pane),
+            (Some(Msg::MemoryRow { pane, row }), Event::Click(_)) => self.on_memory_row(pane, row),
+            (Some(Msg::UndoState { pane, state }), Event::Click(_)) => {
+                self.on_undo_state(pane, state)
+            }
+
+            // ---------------------------------------- a Lua view's own
+            // Its handler ran in the extension; what it asked for is
+            // applied now. Not for a hover, a focus, a dismissal or a
+            // button, which ask for nothing a frame does not show.
+            (None, Event::Hover(_) | Event::Focus(_) | Event::Dismiss(_) | Event::Button(_)) => {}
+            _ if slot => self.drain_lua(),
+            // The rest is declared to be measured or not moved: a drag
+            // on the canvas's toolbar, the rows laid out for kui's own
+            // geometry.
             _ => {}
+        }
+    }
+
+    /// A key on a sink: `pane` is the sink's, where it says one.
+    fn key_event(&mut self, pane: Option<PaneId>, phase: KeyPhase, k: KeyPress, core: &mut Core) {
+        // A release, and a modifier key alone, are a terminal's alone to
+        // hear — its sink asks for them for kitty's keyboard protocol
+        // (terminal-keys.md Decision 5); no keymap reads one.
+        if phase == KeyPhase::Up || k.code.is_modifier() {
+            if let Some(t) = self.term_of(pane.unwrap_or(self.layout.focused())) {
+                self.term_key_aside(t, &k, phase == KeyPhase::Up);
+            }
+            return;
+        }
+        // ⌘C over a terminal with something selected on screen is kui's
+        // copy of it, the runner's own half of the chord: the program
+        // hears ⌘C (kitty's keyboard protocol) only when nothing is
+        // selected — one or the other, never both. Its release goes
+        // nowhere either, its press never having been sent
+        // (`term_key_aside`).
+        if k.mods.super_key
+            && k.code.name().eq_ignore_ascii_case("c")
+            && self.term_of(self.layout.focused()).is_some()
+            && core.copy_selection().is_some_and(|t| !t.is_empty())
+        {
+            return;
+        }
+        self.on_key(k);
+        // A `gj` / `gk` is resolved against the rows kui laid out
+        // (`wrap.rs`), which only the event's core can answer.
+        self.resolve_row_move(core);
+    }
+
+    /// Text typed, composed or pasted into whatever has the keys, or
+    /// the clipboard looked at.
+    fn text_event(&mut self, t: Text) {
+        let mut text = t.text;
+        // What a password manager copied is marked so on the pasteboard
+        // (kui F84): a secret (docs/design/secrets.md Decision 4).
+        let secret = t.concealed || t.transient;
+        // A look at the clipboard, not a paste: into the register,
+        // unless it is what was put there from here — or a secret, which
+        // is not the register's at all until it is pasted.
+        if std::mem::take(&mut self.clip_probe) && !self.awaiting_paste {
+            if !secret && self.clip_last.as_deref() != Some(text.as_str()) {
+                self.ed.adopt_clipboard(&text);
+            }
+            if secret {
+                text_buffer::wipe_string(&mut text);
+            }
+            return;
+        }
+        // The answer ends the ask, whichever pane takes it: left open,
+        // every frame asked again and a terminal pasted each answer, for
+        // good.
+        let pasted = std::mem::take(&mut self.awaiting_paste);
+        // A canvas has no caret: its text takes no paste.
+        if self.ed.prompt_view().is_none()
+            && self.focused_view().is_some_and(|v| self.diagram_drawn(v))
+        {
+            return;
+        }
+        if let Some(v) = self
+            .header_field()
+            .filter(|_| self.ed.prompt_view().is_none())
+            .or_else(|| self.focused_view())
+        {
+            if pasted {
+                self.ed.paste_text_marked(v, &text, secret);
+            } else {
+                self.ed.text(v, &text);
+            }
+        } else if let Some(t) = self
+            .term_of(self.layout.focused())
+            .and_then(|t| self.terms.map.get_mut(&t))
+        {
+            t.paste(&text);
+        }
+        self.follow_caret = true;
+        self.drain_effects();
+    }
+
+    /// A click on a terminal: it takes the keys, and with ⌘ (or Ctrl)
+    /// held the link under the pointer opens — unless the program asked
+    /// for the mouse, whose reports carried the press (shift bypasses).
+    fn on_term_click(&mut self, pane: PaneId, cell: Option<(u32, u32)>) {
+        self.layout.focus(pane);
+        let (Some(t), Some((row, col))) = (self.term_of(pane), cell) else {
+            return;
+        };
+        // ⌘ is kawoosh's on the mouse whatever the program asked
+        // (terminal-keys.md Decision 6): its reports have no bit for it.
+        let reporting = self
+            .terms
+            .map
+            .get(&t)
+            .is_some_and(|term| term.wants_mouse() && !self.mods.shift && !self.mods.super_key);
+        // Reporting: the drag events (start = press, end = release)
+        // carried it; the click only focused.
+        if !reporting && (self.mods.ctrl || self.mods.super_key) {
+            self.open_location_at(t, row as usize, col as usize);
         }
     }
 }

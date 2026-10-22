@@ -903,3 +903,46 @@ fn a_long_path_wraps_inside_its_row() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// A row clicked takes the cursor, and clicked on the cursor opens its
+/// file in the pane: the row's own message, `{kind = "row", i}`, as the
+/// view declared it (kui ADR 0047).
+#[test]
+fn a_row_clicked_takes_the_cursor_and_again_opens_it() {
+    let _g = serial();
+    let dir = project("click");
+    let (mut d, mut app) = launch(&dir);
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    d.keys(&mut app, "/s");
+    // The new column's glide into view done: a click lands where the
+    // row was drawn.
+    for _ in 0..30 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
+    let lib = format!("src{}lib.rs", std::path::MAIN_SEPARATOR);
+    let r = rows(&mut app);
+    let i = r.iter().position(|x| *x == lib).expect("lib.rs found") + 1;
+    let cursor = |app: &mut Kawoosh| {
+        app.run_lua_source(
+            "t",
+            r#"kawoosh.echo(tostring(kawoosh.launcher.state().cursor))"#,
+        );
+        app.ed.message.clone()
+    };
+    let click = |d: &mut Drive, app: &mut Kawoosh| {
+        let row = d.rect(&format!("launcher r{i}")).expect("the row drawn");
+        d.click(app, row.x + row.w / 2.0, row.y + row.h / 2.0);
+        d.frame(app);
+    };
+    if cursor(&mut app) != lib {
+        click(&mut d, &mut app);
+        assert!(on_launcher(&app), "a click off the cursor only moves it");
+        assert_eq!(cursor(&mut app), lib);
+    }
+    click(&mut d, &mut app);
+    assert!(!on_launcher(&app), "a click on the cursor takes it");
+    assert_eq!(focused_name(&app), "lib.rs");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

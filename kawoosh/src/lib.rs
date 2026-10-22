@@ -65,6 +65,7 @@ pub mod marks;
 pub mod memory;
 pub mod menus;
 pub mod moments;
+pub mod msg;
 pub mod multis;
 pub mod nodes;
 pub mod notify;

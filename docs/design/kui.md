@@ -232,7 +232,7 @@ What this buys, each of which was a milestone-sized piece of work before:
 - **Multicursor is free.** A selection set is N carets and N selected
   ranges on the visible lines; emitting them is the same loop.
 - **The mouse comes back as data.** A sink declaring `on_drag` over
-  `Role::Line` rows gets `{line, byte, clicks}` per press and move
+  `Role::Line` rows gets `drag: {line, byte, clicks}` per press and move
   (kui's C34): click-to-caret, drag-select and double-click-word are
   arithmetic in `on_event`.
 - **A screen reader reads the buffer** through the same rows (`Role::Line`
@@ -310,7 +310,8 @@ as tmux), and every other pane — a Lua view, the memory and undo panes
 "Panes without a view", 2026-09-22), so their keys are maps like any
 other and `<C-w>…`, `<leader>…` and `:` reach normal mode's from
 anywhere, with no editor pane open at all.
-Modifier state arrives as `{kind="modifiers"}` and is kept in the model,
+Modifier state arrives as the root's `on_modifiers` message (kui ADR
+0048, alpha.60; `{kind="modifiers"}` before it) and is kept in the model,
 which is how ⌘-drag pane moves and plain clicks coexist (splitmux).
 
 `kui_native::Core::press` drives the same path headless — kawoosh's key-sequence

@@ -9,9 +9,10 @@
 //! }` (`Msg::Confirm`); the actions are a toast's, `(label, command)`.
 
 use kawoosh_editor::KeyStroke;
-use kui_native::{Align, FloatConfig, NodeSpec, Role, TextStyle, TextWrap, Ui, Value};
+use kui_native::{Align, FloatConfig, NodeSpec, Role, TextStyle, TextWrap, Ui};
 
 use crate::app::Kawoosh;
+use crate::msg::Msg;
 use crate::rows;
 
 /// The lines a confirm shows before folding the rest into "… N more".
@@ -142,22 +143,6 @@ impl Kawoosh {
         true
     }
 
-    /// A click on a confirm's button (`{kind = "confirm", action = i}`).
-    pub(crate) fn on_confirm(&mut self, p: &Value) {
-        if let Some(i) = p.get_int("action") {
-            self.confirm_answer(Some(i as usize));
-        }
-    }
-
-    /// kui's `dismiss` on the confirm's modal: `<Esc>` or a press
-    /// outside it, answered with none.
-    pub(crate) fn on_dismiss(&mut self, p: &Value) {
-        let tag = p.get("tag").and_then(|t| t.get_str("kind"));
-        if tag == Some("confirm") {
-            self.confirm_answer(None);
-        }
-    }
-
     /// The confirm's float: centred, modal, the keys on it.
     pub(crate) fn confirm_float(&mut self, ui: &mut Ui<'_>) {
         let Some(c) = self.confirm.clone() else {
@@ -167,7 +152,7 @@ impl Kawoosh {
         let small = self.chrome.small;
         let vp = ui.viewport();
         let max_w = (vp.w * 0.6).clamp(280.0, 720.0);
-        let tag = Value::map([("kind", "confirm".into())]);
+        let tag = Msg::Confirm;
         let mono = rows::mono(self.face, &pal);
         let sink = ui.with_keyed(
             "confirm",
@@ -271,10 +256,7 @@ impl Kawoosh {
                             .hover_bg(pal.select)
                             .role(Role::Button)
                             .label(label.as_str())
-                            .on_click(Value::map([
-                                ("kind", "confirm".into()),
-                                ("action", Value::Int(i as i64)),
-                            ]));
+                            .on_click(Msg::ConfirmAnswer { action: i });
                         if column {
                             button = button.grow_width().min_width(kui_native::Min::FIT);
                         }

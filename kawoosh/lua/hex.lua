@@ -884,33 +884,36 @@ end, function(ev)
     if at >= S.size then return nil end
     return at
   end
-  -- A drag or the wheel says its own kind, what the node asked for
-  -- under `tag`.
+  -- `ev.kind` is what the node declared; the event's own data rides
+  -- under its name, `ev.click`, `ev.drag`, `ev.scroll` (kui ADR 0047).
   local kind = ev.kind
-  if (kind == "drag" or kind == "scroll") and type(ev.tag) == "table" then kind = ev.tag.kind end
-  if kind == "cell" then
-    local at = byte_under(ev.cell)
+  if kind == "cell" and ev.event == "click" then
+    local cell = ev.click and ev.click.cell
+    local at = byte_under(cell)
     if at then
       local _, tx = columns(n, digits)
       S.cursor, S.anchor, S.nibble = at, nil, nil
-      S.side = ev.cell.col >= tx and "text" or "hex"
+      S.side = cell.col >= tx and "text" or "hex"
     end
-  elseif kind == "drag" then
-    local at = byte_under(ev.cell)
+  elseif kind == "drag" and ev.event == "drag" then
+    local d = ev.drag
+    local at = byte_under(d.cell)
     if not at then return end
-    if ev.phase == "start" then
+    if d.phase == "start" then
       S.pressed = at
     elseif S.pressed and (at ~= S.pressed or S.anchor) then
       S.anchor, S.cursor = S.pressed, at
     end
-    if ev.phase == "end" then S.pressed = nil end
-  elseif kind == "wheel" then
-    if ev.lines and ev.lines ~= 0 then S.top = math.max(0, S.top + ev.lines) end
-  elseif kind == "thumb" then
-    local p = ev.parent
+    if d.phase == "end" then S.pressed = nil end
+  elseif kind == "wheel" and ev.event == "scroll" then
+    local lines = ev.scroll.lines
+    if lines and lines ~= 0 then S.top = math.max(0, S.top + lines) end
+  elseif kind == "thumb" and ev.event == "drag" then
+    local d = ev.drag
+    local p = d.parent
     if p and p.h > 0 then
       local total = (S.size + n - 1) // n
-      local frac = math.max(0, math.min(1, (ev.y - p.y) / p.h))
+      local frac = math.max(0, math.min(1, (d.y - p.y) / p.h))
       S.top = math.max(0, math.floor(frac * total) - S.rows // 2)
     end
   elseif kind == "order" then

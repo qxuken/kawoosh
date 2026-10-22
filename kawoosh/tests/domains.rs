@@ -264,7 +264,10 @@ fn a_host_memory_hosts_names_has_workspaces() {
     assert_eq!(app.cwd.display().to_string(), format!("{name}:/proj/src"));
     assert_eq!(app.moments.workspace(), "", "not named: no workspace");
 
-    app.run_lua_source("t", &format!(r#"kawoosh.opt("memory.hosts", {{ "{name}" }})"#));
+    app.run_lua_source(
+        "t",
+        &format!(r#"kawoosh.opt("memory.hosts", {{ "{name}" }})"#),
+    );
     d.frame(&mut app);
     assert_eq!(
         app.moments.workspace(),

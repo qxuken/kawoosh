@@ -11,11 +11,12 @@
 use std::path::Path;
 
 use kawoosh_editor::{Mode, Setting, motions};
-use kui_native::{Align, Color, CursorShape, NodeSpec, Span, Ui, Value};
+use kui_native::{Align, Color, CursorShape, NodeSpec, Span, Ui};
 
 use crate::app::Kawoosh;
 use crate::chrome::{Block, cut_component};
 use crate::layout::Content;
+use crate::msg::Msg;
 use crate::rows;
 
 /// The layout when the setting says nothing, or not a list.
@@ -570,10 +571,7 @@ fn draw_module(
                 .cross_align(Align::Center)
                 .hover_bg(pal.panel)
                 .cursor(CursorShape::Pointer)
-                .on_click(Value::map([
-                    ("kind", "chrome".into()),
-                    ("run", Value::str(run.as_str())),
-                ]))
+                .on_click(Msg::Chrome { run: run.clone() })
                 .label(run.as_str()),
             draw,
         ),

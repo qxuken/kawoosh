@@ -21,10 +21,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};
-use kui_native::{Align, FloatConfig, Hover, HoverPhase, NodeSpec, Span, TextStyle, Ui, Value};
+use kui_native::{Align, FloatConfig, Hover, HoverPhase, NodeSpec, Span, TextStyle, Ui};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
+use crate::msg::Msg;
 
 /// How long a toast without actions stays.
 pub const TOAST_TTL: Duration = Duration::from_secs(8);
@@ -804,14 +805,10 @@ impl Kawoosh {
 
     /// A toast clicked: its body (unless it waits for an action) takes
     /// it down; an action runs its command and takes it down.
-    pub(crate) fn on_toast(&mut self, p: &Value) {
-        let Some(id) = p.get_int("id") else {
-            return;
-        };
-        let id = id as u64;
-        match p.get_int("action") {
+    pub(crate) fn on_toast(&mut self, id: u64, action: Option<usize>) {
+        match action {
             Some(index) => {
-                if let Some(cmd) = self.notes.take_action(id, index as usize) {
+                if let Some(cmd) = self.notes.take_action(id, index) {
                     self.run_line(&cmd);
                 }
             }
@@ -822,13 +819,10 @@ impl Kawoosh {
     /// The pointer over a toast, or one of its buttons, or off it:
     /// while it is over, the toast stays; once it leaves, the toast's
     /// time starts over.
-    pub(crate) fn on_toast_hover(&mut self, h: Hover, tag: Option<&Value>) {
-        let Some(id) = tag.and_then(|t| t.get_int("id")) else {
-            return;
-        };
+    pub(crate) fn on_toast_hover(&mut self, h: Hover, id: u64) {
         match h.phase {
-            HoverPhase::Enter => self.notes.hover_enter(id as u64),
-            HoverPhase::Leave => self.notes.hover_leave(id as u64, Instant::now()),
+            HoverPhase::Enter => self.notes.hover_enter(id),
+            HoverPhase::Leave => self.notes.hover_leave(id, Instant::now()),
         }
     }
 
@@ -957,14 +951,10 @@ impl Kawoosh {
                     // The pointer over the card holds it — the buttons
                     // carry the tag too, since hover is per node and a
                     // button under the pointer would be the card left.
-                    let hover =
-                        Value::map([("kind", "toast".into()), ("id", Value::Int(s.id as i64))]);
+                    let hover = Msg::Toast { id: s.id };
                     spec = spec.on_hover(hover.clone());
                     if !s.waits() {
-                        spec = spec.on_click(Value::map([
-                            ("kind", "toast".into()),
-                            ("id", Value::Int(s.id as i64)),
-                        ]));
+                        spec = spec.on_click(Msg::Toast { id: s.id });
                     }
                     ui.with_indexed(s.id, spec, |ui| {
                         let count = format!("({}x) ", s.count);
@@ -992,11 +982,10 @@ impl Kawoosh {
                                             .on_hover(hover.clone())
                                             .role(kui_native::Role::Button)
                                             .label(a.label.as_str())
-                                            .on_click(Value::map([
-                                                ("kind", "toast".into()),
-                                                ("id", Value::Int(s.id as i64)),
-                                                ("action", Value::Int(i as i64)),
-                                            ])),
+                                            .on_click(Msg::ToastAction {
+                                                id: s.id,
+                                                action: i,
+                                            }),
                                         &a.label,
                                         TextStyle::new(small).color(pal.fg).nowrap(),
                                     );

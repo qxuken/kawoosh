@@ -307,20 +307,19 @@ end, function(ev)
   if ev.kind == "key" then return false end
   S = states[pane_of(ev.slot)]
   if not S or not S.shown then return end
-  local kind = ev.kind
-  if (kind == "drag" or kind == "scroll") and type(ev.tag) == "table" then kind = ev.tag.kind end
   local d = S.shown
-  if kind == "pan" then
+  if ev.kind == "pan" and ev.event == "drag" then
     -- The picture goes with the pointer, from where it was pressed.
-    if ev.phase == "start" then S.grab = { S.cx, S.cy } end
+    local g = ev.drag
+    if g.phase == "start" then S.grab = { S.cx, S.cy } end
     if S.grab then
-      S.cx = S.grab[1] - (ev.dx or 0) / d.w
-      S.cy = S.grab[2] - (ev.dy or 0) / d.h
+      S.cx = S.grab[1] - (g.dx or 0) / d.w
+      S.cy = S.grab[2] - (g.dy or 0) / d.h
     end
-    if ev.phase == "end" then S.grab = nil end
-  elseif kind == "wheel" then
-    S.cx = S.cx - (ev.dx or 0) / d.w
-    S.cy = S.cy - (ev.dy or 0) / d.h
+    if g.phase == "end" then S.grab = nil end
+  elseif ev.kind == "wheel" and ev.event == "scroll" then
+    S.cx = S.cx - (ev.scroll.dx or 0) / d.w
+    S.cy = S.cy - (ev.scroll.dy or 0) / d.h
   end
 end, {
   session = false,

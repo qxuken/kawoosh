@@ -1,13 +1,14 @@
 //! Documents the OS asks the app to open — Finder's Open With, a file
-//! dropped on the Dock icon, `open -a Kawoosh FILE` — arrive as kui's
-//! `{kind="open", paths}` event (Info.plist's document types, compiled
-//! by scripts/macos-app.nu), and open as `kawoosh edit` opens them.
+//! dropped on the Dock icon, `open -a Kawoosh FILE` — arrive as the
+//! message the root declares for kui's `open` (`{kind="open", open={paths}}`,
+//! kui ADR 0048; Info.plist's document types, compiled by
+//! scripts/macos-app.nu), and open as `kawoosh edit` opens them.
 
 mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui_native::{App, Key, OriginId, UiEvent, Value};
+use kui_native::InputEvent;
 
 fn focused_path(app: &Kawoosh) -> Option<std::path::PathBuf> {
     let v = app.focused_view()?;
@@ -30,14 +31,9 @@ fn documents_the_os_opens_open_in_the_focused_pane() {
     d.frame(&mut app);
 
     let paths = ["b.rs", "c.md"]
-        .map(|n| Value::str(dir.join(n).to_string_lossy()))
+        .map(|n| dir.join(n).to_string_lossy().into_owned())
         .to_vec();
-    let ev = UiEvent::on(
-        OriginId::HOST,
-        Key::ROOT,
-        Value::map([("kind", Value::str("open")), ("paths", Value::List(paths))]),
-    );
-    app.on_event_with(ev, &mut d.core);
+    d.input(&mut app, InputEvent::Open(paths));
     app.wait_for_open();
     d.frame(&mut app);
 
