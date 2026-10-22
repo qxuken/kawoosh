@@ -328,6 +328,28 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
     c
 }
 
+/// `curl -fsSL --connect-timeout 20`, as everything kawoosh fetches over
+/// https is fetched ([`command`]): the grammars and the language
+/// servers' registries. Its URL and where the body goes are the
+/// caller's.
+///
+/// On macOS it checks a certificate the way the system does. Apple's
+/// `/usr/bin/curl` checks against LibreSSL and `/etc/ssl/cert.pem` by
+/// default, a bundle only an OS update rewrites: neither the Keychain's
+/// roots nor a CA Apple has distrusted since reach it — the compromised
+/// eMudhra intermediates of 2026-10 were still trusted there after
+/// Apple blocked them. Its SecureTransport backend asks Apple's trust
+/// evaluation instead. A curl without that backend (Homebrew's) ignores
+/// the name, and a `CURL_SSL_BACKEND` the user set is theirs.
+pub fn curl() -> std::process::Command {
+    let mut c = command("curl");
+    c.args(["-fsSL", "--connect-timeout", "20"]);
+    if cfg!(target_os = "macos") && std::env::var_os("CURL_SSL_BACKEND").is_none() {
+        c.env("CURL_SSL_BACKEND", "securetransport");
+    }
+    c
+}
+
 /// The shell a command line is run through here, as a terminal's is
 /// chosen (`kawoosh_term::Terminal::spawn`): `$SHELL` where there is
 /// one (an MSYS bash sets it on Windows too), else `/bin/sh`, or
@@ -2247,6 +2269,25 @@ fn watch_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every fetch fails fast on a host that does not answer, and on
+    /// macOS checks certificates as the system does — unless the user
+    /// chose curl's backend themselves.
+    #[test]
+    fn curl_times_out_and_asks_the_system_on_macos() {
+        let c = curl();
+        let args: Vec<_> = c.get_args().collect();
+        assert_eq!(args, ["-fsSL", "--connect-timeout", "20"]);
+        let backend = c
+            .get_envs()
+            .find(|(k, _)| *k == "CURL_SSL_BACKEND")
+            .and_then(|(_, v)| v);
+        if std::env::var_os("CURL_SSL_BACKEND").is_some() || !cfg!(target_os = "macos") {
+            assert_eq!(backend, None);
+        } else {
+            assert_eq!(backend, Some("securetransport".as_ref()));
+        }
+    }
 
     /// A program npm installed on Windows is `NAME.cmd`, which std does
     /// not look for: it is taken by its path, found in cmd's order —

@@ -500,11 +500,11 @@ pub fn refresh(bases: &[String], root: &Path) -> Result<Listing, String> {
     })
 }
 
-/// Fetches `url` to `to` with `curl`, saying how far it is against
-/// `total` as it goes. `file://` is a URL too.
+/// Fetches `url` to `to` with `curl` ([`crate::io::curl`]), saying how
+/// far it is against `total` as it goes. `file://` is a URL too.
 fn fetch(url: &str, to: &Path, total: u64, say: &dyn Fn(Step)) -> Result<(), String> {
-    let mut curl = crate::io::command("curl");
-    curl.args(["-fsSL", "--connect-timeout", "20", "-o"])
+    let mut curl = crate::io::curl();
+    curl.arg("-o")
         .arg(to)
         .arg(url)
         .stdin(std::process::Stdio::null())
