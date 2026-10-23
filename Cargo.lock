@@ -2551,6 +2551,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "base64 0.23.1",
+ "core-foundation-sys",
  "flate2",
  "image",
  "kui-core",

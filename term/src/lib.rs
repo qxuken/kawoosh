@@ -11,6 +11,7 @@ mod graphics;
 #[cfg(windows)]
 mod job;
 pub mod kitty;
+mod locale;
 pub mod plain;
 
 pub use graphics::Placed;
@@ -498,6 +499,10 @@ impl Terminal {
         console_host::raise_hosts();
         builder.env("TERM", "xterm-256color");
         builder.env("COLORTERM", "truecolor");
+        // A locale where the app was opened with none (`locale`).
+        if let Some((k, v)) = locale::missing(envs) {
+            builder.env(k, v);
+        }
         for (k, v) in envs {
             builder.env(k, v);
         }
@@ -2603,6 +2608,33 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+    }
+
+    /// A shell started where no locale is named is given one in UTF-8,
+    /// so `less` shows Cyrillic as letters, not `<D0><97>`; one a
+    /// terminal's variables name is kept.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_shell_is_given_a_utf8_locale_where_none_is_named() {
+        if ["LC_ALL", "LC_CTYPE", "LANG"]
+            .iter()
+            .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
+        {
+            return; // started from a shell that names one
+        }
+        let lang = |envs: &[(String, String)]| {
+            let size = TermSize { rows: 5, cols: 60 };
+            let (_t, mut r) =
+                Terminal::spawn(Some("/bin/sh"), Some("echo \"[$LANG]\""), None, size, envs)
+                    .unwrap();
+            let mut out = Vec::new();
+            let _ = r.read_to_end(&mut out);
+            let out = String::from_utf8_lossy(&out).into_owned();
+            out[out.find('[').unwrap() + 1..out.find(']').unwrap()].to_string()
+        };
+        assert!(lang(&[]).ends_with(".UTF-8"), "{}", lang(&[]));
+        let named = [("LANG".to_string(), "ru_RU.KOI8-R".to_string())];
+        assert_eq!(lang(&named), "ru_RU.KOI8-R");
     }
 
     #[test]
