@@ -3,6 +3,7 @@
 //! key bytes out to the pty, a screenful of cells per frame; scrollback
 //! as text for the materialise-into-a-buffer command.
 
+pub mod cast;
 #[cfg(windows)]
 mod console_host;
 #[cfg(windows)]
@@ -424,7 +425,23 @@ pub struct Terminal {
     /// A cell's size in pixels, as the pty is told it
     /// ([`Terminal::set_cell_pixels`]): what a program sizes an image by.
     cell_px: (u16, u16),
+    /// What the child was given that a recording's reader wants to
+    /// know: its `TERM`, its locale, its shell.
+    child_env: Vec<(String, String)>,
+    /// The recording being made of it ([`Terminal::record`]).
+    recorder: Option<cast::Recorder>,
 }
+
+/// The variables of a child's a recording says ([`Terminal::record`]).
+const RECORDED_ENV: [&str; 7] = [
+    "TERM",
+    "COLORTERM",
+    "TERM_PROGRAM",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+];
 
 impl Terminal {
     /// Spawns `shell` (or `cmd` through it) in a pty. The reader is
@@ -509,12 +526,18 @@ impl Terminal {
         if let Some(cwd) = cwd {
             builder.cwd(cwd);
         }
+        let child_env = RECORDED_ENV
+            .iter()
+            .filter_map(|k| Some((k.to_string(), builder.get_env(k)?.to_string_lossy().into())))
+            .collect();
         let child = pair
             .slave
             .spawn_command(builder)
             .context("spawning shell in pty")?;
         drop(pair.slave);
-        Self::over(pair.master, child, cwd, size)
+        let (mut term, reader) = Self::over(pair.master, child, cwd, size)?;
+        term.child_env = child_env;
+        Ok((term, reader))
     }
 
     /// A terminal over a pty that is not this machine's: a channel of
@@ -572,6 +595,8 @@ impl Terminal {
                 sent: Vec::new(),
                 graphics: graphics::Graphics::default(),
                 cell_px: (0, 0),
+                child_env: Vec::new(),
+                recorder: None,
             },
             reader,
         ))
@@ -610,6 +635,8 @@ impl Terminal {
             sent: Vec::new(),
             graphics: graphics::Graphics::default(),
             cell_px: (0, 0),
+            child_env: Vec::new(),
+            recorder: None,
         }
     }
 
@@ -690,6 +717,9 @@ impl Terminal {
     /// each parsed first so a mark lands on the line the cursor is on
     /// when it arrives.
     pub fn feed(&mut self, bytes: &[u8]) {
+        if let Some(r) = &mut self.recorder {
+            r.output(bytes);
+        }
         if let Some(r) = self.front_read.get_mut() {
             r.output_since = true;
         }
@@ -1251,7 +1281,46 @@ impl Terminal {
     /// Bytes to the process from the user — a key, a paste, the mouse.
     pub fn input(&mut self, bytes: &[u8]) {
         self.typed = true;
+        // Not what is typed at a password prompt.
+        if self.recorder.is_some()
+            && !self.password_prompt()
+            && let Some(r) = &mut self.recorder
+        {
+            r.input(bytes);
+        }
         self.send(bytes);
+    }
+
+    /// Records the terminal into `path` from now on, as an asciicast
+    /// (`cast`): its output, its sizes, what is typed but at a password
+    /// prompt. A recording already being made is finished first.
+    pub fn record(&mut self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(r) = self.recorder.take() {
+            let _ = r.finish();
+        }
+        let title = (!self.title.is_empty()).then_some(self.title.as_str());
+        self.recorder = Some(cast::Recorder::create(
+            path,
+            self.size,
+            &self.child_env,
+            title,
+        )?);
+        Ok(())
+    }
+
+    /// The recording finished, None when none was being made.
+    pub fn stop_recording(&mut self) -> Option<std::io::Result<cast::Recorded>> {
+        self.recorder.take().map(cast::Recorder::finish)
+    }
+
+    /// Where the recording being made goes.
+    pub fn recording(&self) -> Option<&std::path::Path> {
+        self.recorder.as_ref().map(cast::Recorder::path)
+    }
+
+    /// A marker in the recording being made; false when none is.
+    pub fn mark(&mut self, label: &str) -> bool {
+        self.recorder.as_mut().map(|r| r.marker(label)).is_some()
     }
 
     /// Bytes to the process: the user's, or the terminal's own answers
@@ -1282,6 +1351,9 @@ impl Terminal {
             return;
         }
         self.size = size;
+        if let Some(r) = &mut self.recorder {
+            r.resize(size);
+        }
         self.tell_pty_size();
         // Shrunk, the screen's top lines go into history; grown, lines
         // come back out of it: a line keeps its number (`scrolled + l`)
@@ -2635,6 +2707,50 @@ mod tests {
         assert!(lang(&[]).ends_with(".UTF-8"), "{}", lang(&[]));
         let named = [("LANG".to_string(), "ru_RU.KOI8-R".to_string())];
         assert_eq!(lang(&named), "ru_RU.KOI8-R");
+    }
+
+    /// What a shell drew, recorded and played into a terminal of no
+    /// process, is drawn the same: the Cyrillic and the colours, the
+    /// recording's size.
+    #[cfg(unix)]
+    #[test]
+    fn a_recording_plays_back_as_it_was_drawn() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-record-{}", std::process::id()));
+        let path = dir.join("shell.cast");
+        let size = TermSize { rows: 4, cols: 30 };
+        let (mut t, mut r) = Terminal::spawn(
+            Some("/bin/sh"),
+            Some("printf 'Автор: \\033[1;31mЗобков\\033[0m\\nok'"),
+            None,
+            size,
+            &[],
+        )
+        .unwrap();
+        t.record(&path).unwrap();
+        let mut out = Vec::new();
+        let _ = r.read_to_end(&mut out);
+        for chunk in out.chunks(5) {
+            t.feed(chunk);
+        }
+        let recorded = t.stop_recording().unwrap().unwrap();
+        assert_eq!(recorded.path, path);
+        let cast = cast::Cast::read(&path).unwrap();
+        assert_eq!(cast.size, size);
+        assert!(
+            cast.env
+                .iter()
+                .any(|(k, v)| k == "TERM" && v == "xterm-256color")
+        );
+        let mut played = cast::Player::screen(&cast);
+        let mut p = cast::Player::new(cast, std::time::Instant::now());
+        p.step(
+            &mut played,
+            std::time::Instant::now() + std::time::Duration::from_secs(60),
+        );
+        assert_eq!(rows(&played), rows(&t));
+        assert_eq!(rows(&played)[0], "Автор: Зобков");
+        let red = played.screen().cells[7];
+        assert_eq!(red, t.screen().cells[7], "the colour came through");
     }
 
     #[test]

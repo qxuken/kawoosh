@@ -357,6 +357,7 @@ impl Kawoosh {
                 // A raw terminal says so: the keys are its program's
                 // but the escape and ⌘ (terminal-keys.md Decision 2).
                 // A `:!` whose line ended: its keys are normal mode's.
+                Some(Content::Terminal(t)) if self.is_replay(t) => "REPLAY",
                 Some(Content::Terminal(t)) if self.terms.done.contains_key(&t) => "DONE",
                 Some(Content::Terminal(t)) if self.term_raw(t) => "RAW",
                 _ => "TERM",

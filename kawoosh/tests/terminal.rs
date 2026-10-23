@@ -2446,3 +2446,104 @@ fn inverse_text_reads_in_the_scrollback_buffer() {
         "the background's colour on the foreground's: {paints:?}"
     );
 }
+
+/// `:terminal record into FILE` records a new shell from its first byte
+/// — what it drew, what was typed — until it ends; `:terminal replay
+/// FILE` draws it again in a pane of no process, at the recording's
+/// size, its keys normal mode's: `q` closes it.
+#[cfg(unix)]
+#[test]
+fn a_recorded_shell_replays_in_a_pane_of_its_own() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-record-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = Kawoosh::from_file(&dir.join("a.txt"));
+    app.set_cwd(&dir);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.shell",
+        kawoosh_editor::Setting::Str("/bin/sh".into()),
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let panes = app.layout.all_panes().len();
+    d.keys(&mut app, ":terminal record into shell.cast");
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.term_of_focused().expect("a terminal pane");
+    let file = dir.join("shell.cast");
+    assert!(
+        app.ed.message.starts_with("recording to "),
+        "{}",
+        app.ed.message
+    );
+    assert!(
+        app.term_title(t).ends_with(" · recording"),
+        "{}",
+        app.term_title(t)
+    );
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    d.keys(&mut app, "echo Зобков; exit");
+    d.key(&mut app, "enter", KeyMods::default());
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if !app.terms.map.contains_key(&t) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!app.terms.map.contains_key(&t), "the shell ended");
+    assert!(
+        app.ed.message.starts_with("recorded 0:0"),
+        "{}",
+        app.ed.message
+    );
+    let cast = kawoosh_term::cast::Cast::read(&file).unwrap();
+    let typed: String = cast
+        .events
+        .iter()
+        .filter_map(|e| match &e.kind {
+            kawoosh_term::cast::Kind::Input(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(typed, "echo Зобков; exit\r");
+
+    d.keys(&mut app, ":terminal replay shell.cast");
+    d.key(&mut app, "enter", KeyMods::default());
+    let r = app.term_of_focused().expect("a replay pane");
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if app.term_title(r).starts_with("replay: shell.cast 0:0")
+            && !app.term_title(r).contains('/')
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let seen = screen_text(&app, r);
+    assert!(seen.contains("\nЗобков"), "{seen}");
+    let last = cast.events.iter().rev().find_map(|e| match e.kind {
+        kawoosh_term::cast::Kind::Resize(s) => Some(s),
+        _ => None,
+    });
+    assert_eq!(
+        app.terms.map[&r].size(),
+        last.unwrap_or(cast.size),
+        "the recording's size"
+    );
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("REPLAY")),
+        "the status says it is a replay"
+    );
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    assert_eq!(app.layout.all_panes().len(), panes, "closed");
+    assert!(app.terms.replays.is_empty());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

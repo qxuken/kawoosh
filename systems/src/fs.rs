@@ -67,6 +67,15 @@ pub fn config_dir() -> Option<PathBuf> {
     Some(base.join("kawoosh"))
 }
 
+/// The user's data directory: `$XDG_DATA_HOME/kawoosh`, else
+/// `~/.local/share/kawoosh` — the state db's, the recordings'.
+pub fn data_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home().map(|h| h.join(".local").join("share")))?;
+    Some(base.join("kawoosh"))
+}
+
 /// `name` as the platform names a shared library: `dupes.dylib`,
 /// `dupes.so`, `dupes.dll`. A name that has the extension already is
 /// left alone.

@@ -127,10 +127,7 @@ pub fn state_path() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("KAWOOSH_STATE") {
         return Some(PathBuf::from(p));
     }
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| crate::fs::home().map(|h| h.join(".local").join("share")))?;
-    Some(base.join("kawoosh").join("state.db"))
+    Some(crate::fs::data_dir()?.join("state.db"))
 }
 
 impl Store {

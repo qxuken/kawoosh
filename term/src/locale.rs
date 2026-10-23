@@ -76,7 +76,9 @@ fn identifier() -> Option<String> {
         return None;
     }
     let end = buf.iter().position(|&b| b == 0)?;
-    String::from_utf8(buf[..end].to_vec()).ok().filter(|s| !s.is_empty())
+    String::from_utf8(buf[..end].to_vec())
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]
@@ -97,6 +99,9 @@ mod tests {
     fn the_system_locale_is_utf8() {
         let l = system().unwrap();
         assert!(l.ends_with(".UTF-8"), "{l}");
-        assert!(std::path::Path::new("/usr/share/locale").join(&l).is_dir(), "{l}");
+        assert!(
+            std::path::Path::new("/usr/share/locale").join(&l).is_dir(),
+            "{l}"
+        );
     }
 }
