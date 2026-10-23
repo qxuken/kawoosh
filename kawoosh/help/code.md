@@ -832,6 +832,14 @@ and the empty scratch goes. A map or a
 `%` in a command is the current file, written relative to where the
 command runs.
 
+A command runs where its kind does — `cargo` at the workspace, a
+`package.json` script at its package, a named command in its `cwd`.
+`<leader>c.` (`:compile here [CMD]`) runs it where the pane in front
+is instead: the file's directory, the listing's, the terminal's, or in
+a `*compile*` buffer where its run ran. Bare, it runs what
+`<leader>cc` would, there. `%` is written from that directory, and a
+command named `here` is still `:compile commands:here`.
+
 ### Named commands
 
 ```lua
