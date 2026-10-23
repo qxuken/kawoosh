@@ -1011,6 +1011,11 @@ impl Kawoosh {
                         self.drain_lua();
                     }
                 }
+                IoMsg::FsCopying {
+                    token,
+                    title,
+                    copying,
+                } => self.copying_progress(token, title, copying),
                 IoMsg::Listed { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {
@@ -2199,6 +2204,40 @@ impl Kawoosh {
             None,
             pct,
             done,
+            Instant::now(),
+        );
+    }
+
+    /// A write's copies running long, as a corner line under `fs`:
+    /// `Copying NAME 120 of 4,812 files · 31.2 MB of 210.4 MB 14%`,
+    /// counting first while what there is to copy is not known yet.
+    fn copying_progress(&mut self, token: u64, title: String, c: kawoosh_systems::fs::Copying) {
+        let d = c.copied;
+        let (message, pct) = if d.measured {
+            // By bytes; a tree of empty files by its files.
+            let pct = d
+                .bytes_done
+                .saturating_mul(100)
+                .checked_div(d.bytes)
+                .unwrap_or_else(|| d.files_done.saturating_mul(100) / d.files.max(1));
+            let message = format!(
+                "{} of {} files · {} of {}",
+                d.files_done,
+                d.files,
+                crate::perf::bytes(d.bytes_done),
+                crate::perf::bytes(d.bytes)
+            );
+            (message, Some(pct.min(100) as u32))
+        } else {
+            (format!("counting: {} files", d.files), None)
+        };
+        self.notes.progress(
+            "fs",
+            &format!("copy {token}"),
+            Some(title),
+            Some(message),
+            pct,
+            c.done,
             Instant::now(),
         );
     }

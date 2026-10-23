@@ -63,6 +63,14 @@ pub enum IoMsg {
         outcomes: crate::fs::Outcomes,
         last: bool,
     },
+    /// How the copies of `kawoosh.fs.apply`'s changes under `token` are
+    /// going (`fs::apply_with`), while they run: what the corner's
+    /// progress line `title` shows.
+    FsCopying {
+        token: u64,
+        title: String,
+        copying: crate::fs::Copying,
+    },
     /// A directory listed on a thread of its own for a plugin
     /// (`kawoosh.fs.list(path, fn)`): the job's token, and the entries
     /// or why not.
