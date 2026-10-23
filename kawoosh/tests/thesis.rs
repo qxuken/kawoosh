@@ -45,7 +45,21 @@ fn two_panes_one_rust_analyzer() {
     let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
     let a = root.join("src/lib.rs");
     let b = root.join("src/other.rs");
-    let mut app = Kawoosh::from_file(&a);
+    // No cache priming: rust-analyzer (1.99.0) indexes the whole sysroot
+    // before its first `cargo check`, 1.2 s on an idle machine and 40 s
+    // with every core busy, as under `verify.nu` — `core` alone 17 s
+    // (2026-10-23) — and an edit reaching it meanwhile is lost (below).
+    // Nothing here needs it: the diagnostic asks for what it reads.
+    // Said as it starts, `init`, and as it asks, `settings`.
+    let mut app = Kawoosh::new("*scratch*", "");
+    for key in ["init", "settings.rust-analyzer"] {
+        app.ed.settings.set(
+            kawoosh_editor::Layer::Session,
+            &format!("lsp.rust.{key}.cachePriming.enable"),
+            kawoosh_editor::Setting::Bool(false),
+        );
+    }
+    app.open_first(&a);
     let mut d = Drive::new(1000.0, 600.0);
     d.frame(&mut app);
     d.press(&mut app, "<C-w>");
