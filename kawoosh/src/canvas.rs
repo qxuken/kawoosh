@@ -1668,7 +1668,9 @@ impl Kawoosh {
                 |ui| {
                     ui.with_keyed(
                         "plane",
-                        NodeSpec::column().size(pen.w, pen.h).float(
+                        // Its items' floats stacked as drawn, the file's
+                        // order, every frame (kui F186, Decision 14).
+                        NodeSpec::column().size(pen.w, pen.h).floats_in_order().float(
                             FloatConfig::parent()
                                 .inside(Align::Start, Align::End)
                                 .clipped(),

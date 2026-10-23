@@ -405,8 +405,8 @@ went under it, and nothing could be put over anything else.
   outline at its own coordinates; an arrow's line and heads drawn from
   its label's corner, the label laid out after them, over them; a
   group's wash, dashed frame and label.
-- **Floats stacked in tree order** (kui F186, `floats_in_order` on the
-  drawing's plane, asked of kui 2026-10-23 for its next release): kui
+- **Floats stacked in tree order** (kui F186 in alpha.64, ADR 0053:
+  `floats_in_order` on the drawing's plane, asked of kui 2026-10-23): kui
   stacked float layers by key, a key it had not seen going on top, so a
   box panned into view, or a new one, came in over everything whatever
   its line. The plane asks for its floats in the order drawn, each frame.

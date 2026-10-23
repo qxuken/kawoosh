@@ -1210,3 +1210,46 @@ fn a_box_moved_by_the_keys_stays_in_view() {
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+/// The layer the canvas drew the text `t` in: its item's float.
+fn layer_of(d: &Drive, t: &str) -> Option<u16> {
+    let nodes = d.core.nodes();
+    let at = nodes
+        .iter()
+        .position(|n| n.label.as_deref() == Some("canvas"))?;
+    nodes[at + 1..]
+        .iter()
+        .take_while(|n| n.depth > nodes[at].depth)
+        .find(|n| n.text.as_deref() == Some(t))
+        .map(|n| n.layer)
+}
+
+/// kui stacked floats by key, a key it had not seen going on top: a box
+/// out of view is not drawn, so panned in it came over every line after
+/// it. The plane's floats stack in the order drawn (kui F186): A, a line
+/// before B, comes in under B.
+#[test]
+fn a_box_panned_into_view_comes_in_under_the_lines_after_it() {
+    let path = file(
+        "pan-order",
+        "box a \"A\" at 40,0 size 4x2\nbox b \"B\" at 0,0 size 46x3\n",
+    );
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let v = app.focused_view().unwrap();
+    // Zoomed in on B's left end: A, forty units along, is not drawn.
+    let c = app.canvas_of(v);
+    c.zoom = 2.0;
+    c.origin = kui_native::Vec2::new(0.0, 100.0);
+    d.frame(&mut app);
+    assert!(layer_of(&d, "A").is_none(), "A out of view, not drawn");
+    // Panned along to it.
+    app.canvas_of(v).origin = kui_native::Vec2::new(-1000.0, 100.0);
+    d.frame(&mut app);
+    let (a, b) = (
+        layer_of(&d, "A").expect("A drawn"),
+        layer_of(&d, "B").expect("B drawn"),
+    );
+    assert!(a < b, "A (layer {a}) under B (layer {b})");
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
