@@ -1,6 +1,6 @@
 # Terminals
 
-A terminal pane runs your shell, or any program, inside kawoosh, beside your buffers. This page covers opening one, which keys reach the shell, scrollback and copy mode, tools, opening paths from the output, shell integration, and `$EDITOR`.
+A terminal pane runs your shell, or any program, inside kawoosh, beside your buffers. This page covers opening one, which keys reach the shell, scrollback and copy mode, tools, opening paths from the output, shell integration, `$EDITOR`, and recording a terminal for a bug report.
 
 ## Opening a terminal
 
@@ -125,6 +125,7 @@ Every kawoosh terminal gets these environment variables:
 | `KAWOOSH_BIN` | the kawoosh binary (on Windows `kawoosh.com`, below) |
 | `TERM_PROGRAM` | `kawoosh` (and `TERM_PROGRAM_VERSION`) |
 | `TERM_APPEARANCE` | `dark` or `light`, as the window was when the shell started |
+| `LANG` | from the system's language and region, in UTF-8 (`en_US.UTF-8`), when kawoosh was opened from the Dock or Finder and nothing names a locale (`LANG`, `LC_ALL`, `LC_CTYPE`). Without it `less`, and so `git log`, shows letters outside ASCII as `<D0><97>` |
 
 So `git commit`, `lazygit`'s `e`, `crontab -e` or anything else that runs `$EDITOR` opens the file in a real kawoosh pane, not a second editor nested in the terminal. `kawoosh-edit [+LINE] PATH…` waits until the buffer is closed: `:wq` (or `ZZ`) hands it back, `:q!` discards. A file opened this way from the temp directory is private (see [secrets](memory.md#secrets)).
 
@@ -154,6 +155,24 @@ git config --global core.editor kawoosh-edit
 ## Password prompts
 
 When a program in the terminal turns echo off to ask for a password (`sudo`, `ssh`, `gpg`), the pane's title starts with `password ·`, and while that pane has the keys kawoosh turns on macOS's secure keyboard entry, so no other program can read what you type. It goes off by itself when the prompt is answered. A paste into a terminal is never remembered in the [memory](memory.md).
+
+## Recording a terminal
+
+To show a bug in how a terminal draws — the wrong letters, a line in the wrong place, a key a program did not hear — record it, and attach the file to the report.
+
+| how | what |
+|---|---|
+| `:terminal record [CMD]` | a new terminal running CMD or your shell, recorded from its first byte. Its title ends in `· recording` |
+| `:terminal record into FILE` | the same, into FILE |
+| `:terminal record mark [LABEL]` | a marker in the recording: where the bug is |
+| `:terminal record stop` | the recording finished; the shell keeps running. The shell ending finishes it too, and the message says where the file is |
+| `:terminal replay [FILE]` | FILE played in a pane, at its pace; no FILE, the last recording |
+
+A recording is a `.cast` file (asciicast version 2, as `wezterm record` and asciinema write) in `recordings` under the data directory (`~/.local/share/kawoosh/recordings`), named for when it began. It holds what the program printed, the sizes the pane was, and what you typed, but not what you type at a password prompt. It also notes `TERM`, the shell and the locale (`LANG`) the shell was given.
+
+A replay draws the recording again with kawoosh's own terminal: in a pane with no program behind it, at the recording's size, the status line saying `REPLAY` and the title how far it has played. A wait longer than two seconds is cut to two. Its keys are normal mode's: `r` plays it again from the start, `q` closes it, `<C-S-x>` makes what it drew a buffer. It plays asciinema's and WezTerm's recordings too, version 2 and 3.
+
+The format keeps text, so a byte that is not UTF-8 is recorded as `�`.
 
 ## Settings
 

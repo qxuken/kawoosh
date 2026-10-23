@@ -89,6 +89,7 @@ pub mod signature;
 pub mod snippet;
 pub mod ssh_cmd;
 pub mod statusline;
+pub mod term_cast;
 pub mod term_images;
 pub mod terminals;
 pub mod theme_check;

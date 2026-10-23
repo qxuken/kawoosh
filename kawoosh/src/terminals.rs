@@ -130,6 +130,9 @@ pub struct Terminals {
     /// with how it did: the pane stays, its output there to read, and
     /// every key is normal mode's — `r` runs the line again, `q` closes.
     pub done: HashMap<TermId, Option<kawoosh_term::Exit>>,
+    /// Recordings playing, each in its terminal of no process
+    /// (`term_cast`), which is [`Terminals::done`]'s too.
+    pub replays: HashMap<TermId, crate::term_cast::Replay>,
 }
 
 /// What a terminal was started for: a command (none for the shell),
@@ -178,6 +181,7 @@ impl Terminals {
         self.flows.remove(&id);
         self.flowing.remove(&id);
         self.closing.remove(&id);
+        self.replays.remove(&id);
     }
 }
 
@@ -381,13 +385,21 @@ impl Kawoosh {
 
     /// Terminal `id`'s pane title: its process's title, else
     /// `terminal: LINE` for the line it was started with, else
-    /// `terminal`.
+    /// `terminal`; a replay's, `replay: FILE` and how far it is
+    /// (`term_cast`); one being recorded says so.
     pub fn term_title(&self, id: TermId) -> String {
-        match self.term_name(id) {
+        if let Some(t) = self.cast_title(id) {
+            return t;
+        }
+        let title = match self.term_name(id) {
             Some((line, true)) => format!("terminal: {line}"),
             Some((title, false)) => title,
             None => "terminal".into(),
+        };
+        if self.is_recording(id) {
+            return format!("{title} · recording");
         }
+        title
     }
 
     /// Terminal `id`'s name where its kind is said already (a tab's
@@ -417,6 +429,9 @@ impl Kawoosh {
     /// in its pane with how it ended printed under its output, as
     /// `*compile*` ends; any other's pane closes, keeping nothing.
     pub fn term_closed(&mut self, id: TermId) {
+        // The recording ends with what the program drew, not the
+        // `[finished]` kawoosh writes under it.
+        self.stop_recording(id);
         self.domain_term_closed(id);
         let keep = self
             .terms
@@ -520,6 +535,9 @@ impl Kawoosh {
         let Some(old) = self.term_of(pane) else {
             return;
         };
+        if self.replay_again(old) {
+            return;
+        }
         // A shell its host's connection took down (domains.md R2): the
         // host connected again, and the shell back in this pane then.
         if let Some(name) = self
@@ -563,7 +581,7 @@ impl Kawoosh {
 
     /// Where `:terminal` starts one: from a terminal, where its shell
     /// is; else the working directory.
-    fn terminal_cwd(&self) -> PathBuf {
+    pub(crate) fn terminal_cwd(&self) -> PathBuf {
         self.term_of(self.layout.focused())
             .and_then(|t| self.terms.map.get(&t))
             .and_then(|t| t.cwd())
@@ -823,7 +841,7 @@ impl Kawoosh {
     }
 
     /// `terminal.scrollback`: the lines of history a terminal keeps.
-    fn scrollback_setting(&self) -> usize {
+    pub(crate) fn scrollback_setting(&self) -> usize {
         self.ed
             .settings
             .int("terminal.scrollback")
