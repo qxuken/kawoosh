@@ -5945,6 +5945,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>wr", "session restore"),
         ("<leader>cc", "compile"),
         ("<leader>cC", "compile pick"),
+        // `.` for here, as `<C-w>.` is a terminal here.
+        ("<leader>c.", "compile here"),
         ("<leader>'", "picker marks"),
         ("<leader>u", "undo history"),
         ("<leader>x", "lua eval"),

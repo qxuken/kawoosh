@@ -21,7 +21,8 @@ line completed in the command line, carapace for a program's own
 arguments, 2026-10-17 (Decision 23), and Decision 16's `nu` asked
 on Decision 23's job the same day; the packages walked on a job, a
 shell line's program from the PATH, 2026-10-20 (Decisions 9 and 23
-amended); every run stopped at quit 2026-10-21 (Decision 24). The calls
+amended); every run stopped at quit 2026-10-21 (Decision 24);
+`:compile here` 2026-10-23 (Decision 25). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -1178,6 +1179,42 @@ Beaten: asking before a quit while a run goes — a build is cheap to
 start again from the memory's line (Decision 7), and `:q` asks nothing
 of a terminal pane's program either; letting a run finish in the
 background — no one is left to read where it ended.
+
+### 25. `:compile here` runs where the pane in front is
+
+*Added 2026-10-23, asked:* "Let's add `:compile here` command and
+shortcut to it". A line runs where its kind says (Decision 4) — `cargo
+test` at the workspace, `pnpm …` at the package — and nothing said
+"run it in this directory": a crate's own tests in a workspace, a
+script beside the file, took a `cd` in the line.
+
+`:compile here [LINE]` (`<leader>c.`) is `:compile [LINE]` run in the
+directory of the pane in front, as `<C-w>.` reads it (`here_dir`): the
+file's, the listing's, the shell's, `:du`'s, one that is gone its
+closest parent; in a `*compile*` buffer, where its run ran, as
+`compile_start` has it. That directory wins over everything else that
+says where — a name's `cwd`, a chain's, every step's, the program's
+kind — and `%` is written from it. Bare, it is what a bare `:compile`
+runs (Decision 2) moved there: `compile.default`'s lines resolved
+there, the last line's steps run there as they were, the files' first
+run there. A name wanting arguments opens the prompt on `:compile here
+NAME `. The run is a run like any (Decision 11): its buffer
+`*compile: cargo test in crates/foo*`, the memory's line its
+command and that directory, so `r` and a bare `:compile` run it there
+again.
+
+`.` is `<C-w>.`'s: where the pane in front is. `here` is a word of
+`:compile` now, as `pick`, `edit`, `again` and `kill` are: a
+`compile.commands.here` is `:compile commands:here` (Decision 22).
+
+Beaten: deducing again from the pane's directory and running what its
+files offer first — the nearest `Cargo.toml` above a file is the
+crate's, and `cargo test` there already means the crate, but a
+`package.json` script, a Makefile target or a typed line would still
+run where its kind says; the "Not built" bare `:compile` by Decision
+19's here — another question (which line, not where), still open;
+`:compile` in a `cd DIR &&` — the buffer would be named for the `cd`,
+and `%` written from the wrong directory.
 
 ## Not built
 
