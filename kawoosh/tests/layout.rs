@@ -479,6 +479,58 @@ fn each_tab_keeps_its_own_strip_and_a_moved_tab_stays_in_view() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A tab closed before a scrolled strip's, from its button, leaves the
+/// strip where it is: the ribbon is the tab's, not its place's, so it
+/// does not start over from the left edge and glide back to the focus.
+#[test]
+fn a_tab_closed_before_a_strip_leaves_its_ribbon_where_it_is() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, "layout scroll");
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    assert_eq!(app.layout.tab, 2);
+    let before = drawn_columns(&d);
+    assert!(before[0].0 < 0.0, "scrolled to the focus: {before:?}");
+    // The second tab's close, under the pointer.
+    let tab = d.rect("tab1").expect("the second tab");
+    d.input(
+        &mut app,
+        kui_native::InputEvent::CursorMoved(Vec2::new(tab.x + tab.w / 2.0, tab.y + tab.h / 2.0)),
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let close = d
+        .core
+        .nodes()
+        .iter()
+        .filter(|n| n.label.as_deref() == Some("close"))
+        .map(|n| n.rect)
+        .find(|r| r.x >= tab.x && r.x < tab.x + tab.w)
+        .expect("the hovered tab's close");
+    d.click(&mut app, close.x + close.w / 2.0, close.y + close.h / 2.0);
+    assert_eq!(app.layout.tabs.len(), 2);
+    assert_eq!(app.layout.tab, 1, "the strip's tab, one place left");
+    for _ in 0..12 {
+        let now = drawn_columns(&d);
+        assert_eq!(now.len(), before.len());
+        for (a, b) in now.iter().zip(&before) {
+            assert!(
+                (a.0 - b.0).abs() < 1.0,
+                "the ribbon moved: {before:?} -> {now:?}"
+            );
+        }
+        d.advance(0.02);
+        d.frame(&mut app);
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `zs` `ze` `zz` reach past the ribbon's ends: a lone column goes in
 /// the middle or against the right edge, a half column centres with a
 /// third beside it, and `layout.scroll.center = always` centres a lone
