@@ -128,6 +128,7 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
                 shape: Shape::Rect,
                 color: None,
                 dashed: false,
+                align: LabelAlign::Center,
             };
             let mut size = None;
             while let Some(t) = r.next() {
@@ -145,6 +146,11 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
                         "color" => n.color = Some(r.color()?),
                         "dashed" => n.dashed = true,
                         "solid" => n.dashed = false,
+                        "align" => {
+                            let a = r.word("align")?;
+                            n.align = LabelAlign::from_word(&a)
+                                .ok_or_else(|| format!("no align `{a}`: center left right"))?;
+                        }
                         _ => return Err(format!("`{w}` means nothing to a box")),
                     },
                     _ => return Err("a brace means nothing to a box".into()),
@@ -158,7 +164,14 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
             Ok(Item::Node(n))
         }
         "text" => {
+            // A name first, when a group is to hold it: any word but the
+            // ones a text's line takes.
+            let id = match r.toks.as_slice().first() {
+                Some(Tok::Word(w)) if w != "at" && w != "color" => Some(r.id("text")?),
+                _ => None,
+            };
             let mut t = Text {
+                id,
                 label: String::new(),
                 x: 0,
                 y: 0,
@@ -198,11 +211,13 @@ fn read_line(toks: Vec<Tok>) -> Result<Item, String> {
                 route: Route::Straight,
                 dashed: false,
                 color: None,
+                via: None,
             };
             while let Some(t) = r.next() {
                 match t {
                     Tok::Str(s) => e.label = s,
                     Tok::Word(w) => match w.as_str() {
+                        "via" => e.via = Some(pair(&r.word("via")?, ',', "point (X,Y)")?),
                         "elbow" => e.route = Route::Elbow,
                         "straight" => e.route = Route::Straight,
                         "dashed" => e.dashed = true,

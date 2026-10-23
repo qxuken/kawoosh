@@ -381,7 +381,12 @@ impl Kawoosh {
         };
         let buf = self.ed.buffer_of(view);
         let on_toast = self.notes.focus.is_some();
-        let keyed = self.ed.prompt_view().unwrap_or(view);
+        // The prompt's mode, or a diagram's label typed in place.
+        let keyed = self
+            .ed
+            .prompt_view()
+            .or_else(|| self.canvas_label_field())
+            .unwrap_or(view);
         let kv = &self.ed.views[keyed];
         // A terminal's copy mode is a mode of its own to the eye
         // (roadmap step 31): `COPY` where normal mode would say so.

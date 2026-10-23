@@ -2101,6 +2101,15 @@ impl Kawoosh {
             // a Lua pane's field is, until `<Esc>` hands the keys down.
             self.ed.key(f, stroke.clone());
             self.cmdline_refresh();
+        } else if let Some(f) = self
+            .canvas_label_field()
+            .filter(|_| self.ed.prompt_view().is_none())
+        {
+            // A diagram's label typed where it is drawn (`canvas.rs`):
+            // the editor's own lines, until `<Esc>` in normal mode or
+            // `<C-CR>` writes them.
+            self.ed.key(f, stroke.clone());
+            self.cmdline_refresh();
         } else if let Some(v) = self.focused_view().or_else(|| self.ed.prompt_view()) {
             // The completion's keys are local to it while it is on show
             // (completion.md Decision 3): said before the key is looked up.
@@ -3377,6 +3386,7 @@ impl Kawoosh {
             // A canvas's toolbar button: its command, on its pane.
             (Some(Msg::CanvasTool { pane, run }), Event::Click(_)) => {
                 self.layout.focus(pane);
+                self.canvas_label_end_all(true);
                 self.run_line(&run);
             }
 

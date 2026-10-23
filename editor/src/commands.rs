@@ -3114,7 +3114,7 @@ pub fn install(ed: &mut Editor) {
     // not a character to replace.
     ed.register_with_char("replace char", |ed, ctx| {
         let Some(c) = ctx.arg_char else { return };
-        if c == '\n' && ed.is_field(ctx.view) {
+        if c == '\n' && ed.is_line_field(ctx.view) {
             return;
         }
         let id = view(ed, ctx).buffer;
@@ -3249,7 +3249,7 @@ pub fn install(ed: &mut Editor) {
     // A newline at every caret (`break_lines`).
     ed.register("insert newline", |ed, ctx| {
         ed.erase_selected(ctx.view);
-        if ed.is_field(ctx.view) {
+        if ed.is_line_field(ctx.view) {
             return ed.insert_text(ctx.view, "\n");
         }
         break_lines(ed, ctx.view, None);
@@ -6290,8 +6290,15 @@ pub fn default_keymap(km: &mut Keymap) {
         ("o", "diagram add right"),
         ("O", "diagram add down"),
         ("s", "diagram shape"),
+        ("A", "diagram align"),
         ("r", "diagram route"),
         ("R", "diagram reverse"),
+        ("B", "diagram unbend"),
+        // The draw order, which is the file's: a step, or all the way.
+        (">", "diagram arrange forward"),
+        ("<", "diagram arrange backward"),
+        ("g>", "diagram arrange front"),
+        ("g<", "diagram arrange back"),
         ("-", "diagram dashed"),
         ("c", "diagram color"),
         ("C", "diagram connect"),
@@ -6331,6 +6338,22 @@ pub fn default_keymap(km: &mut Keymap) {
     ] {
         km.bind_local("diagram", Pane, &format!("<{m}-{k}>"), c, &[]);
     }
+    // A diagram's label typed where it is drawn, a field of lines: `<CR>`
+    // breaks the line as in a buffer; `<Esc>` in normal mode — so
+    // `<Esc><Esc>` from insert — or `<C-CR>` (⌘↩ too) writes it, and
+    // `<C-c>` lets it go, as the prompt's keys do.
+    let label = "field:diagram/label";
+    for mode in [Insert, Normal] {
+        for (k, c) in [
+            ("<C-CR>", "diagram label done"),
+            (&format!("<{m}-CR>"), "diagram label done"),
+            ("<C-c>", "diagram label cancel"),
+        ] {
+            km.bind_local(label, mode, k, c, &[]);
+        }
+    }
+    km.bind_local(label, Normal, "<Esc>", "diagram label done", &[]);
+    km.bind_local(label, Normal, "<CR>", "diagram label done", &[]);
     let i = [
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),

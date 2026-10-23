@@ -107,19 +107,19 @@ fn a_box_drawn_takes_its_label_and_an_arrow_joins_it() {
     let v = app.focused_view().unwrap();
     // The box tool: a drag draws one, and the prompt asks its label.
     d.keys(&mut app, "b");
-    let (from, to) = (at(&app, 2.0, 8.0), at(&app, 8.0, 11.0));
+    let (from, to) = (at(&app, 2.0, 6.0), at(&app, 8.0, 9.0));
     d.drag(&mut app, from, to);
     d.frame(&mut app);
     assert!(
-        text(&app).ends_with("box n1 at 2,8 size 6x3\n"),
+        text(&app).ends_with("box n1 at 2,6 size 6x3\n"),
         "{}",
         text(&app)
     );
     d.keys(&mut app, "Cache");
-    d.key(&mut app, "enter", KeyMods::default());
+    keep(&mut d, &mut app);
     d.frame(&mut app);
     assert!(
-        text(&app).ends_with("box n1 \"Cache\" at 2,8 size 6x3\n"),
+        text(&app).ends_with("box n1 \"Cache\" at 2,6 size 6x3\n"),
         "{}",
         text(&app)
     );
@@ -129,7 +129,7 @@ fn a_box_drawn_takes_its_label_and_an_arrow_joins_it() {
         &mut app,
         kui_native::InputEvent::Modifiers(KeyMods::NONE.with_alt()),
     );
-    let (from, to) = (at(&app, 4.0, 1.5), at(&app, 5.0, 9.5));
+    let (from, to) = (at(&app, 4.0, 1.5), at(&app, 5.0, 7.5));
     d.drag(&mut app, from, to);
     d.input(&mut app, kui_native::InputEvent::Modifiers(KeyMods::NONE));
     d.frame(&mut app);
@@ -151,7 +151,7 @@ fn a_box_drawn_takes_its_label_and_an_arrow_joins_it() {
     d.frame(&mut app);
     assert_eq!(
         text(&app),
-        "# services\nbox b \"B\" at 12,0\nbox n1 \"Cache\" at 2,8 size 6x3\n"
+        "# services\nbox b \"B\" at 12,0\nbox n1 \"Cache\" at 2,6 size 6x3\n"
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -178,7 +178,7 @@ fn a_marquee_selects_and_the_selection_copies_and_groups() {
     // The duplicate is the selection now; `G` groups it and asks its label.
     d.keys(&mut app, "G");
     d.keys(&mut app, "Copy");
-    d.key(&mut app, "enter", KeyMods::default());
+    keep(&mut d, &mut app);
     d.frame(&mut app);
     assert!(
         text(&app).ends_with("group g1 \"Copy\" { a1 b1 }\n"),
@@ -360,6 +360,13 @@ fn choose(d: &mut Drive, app: &mut Kawoosh, path: &[&str]) {
     d.frame(app);
 }
 
+/// The label typed where it is drawn written: `<Esc>` to normal mode,
+/// `<Esc>` again.
+fn keep(d: &mut Drive, app: &mut Kawoosh) {
+    d.press(app, "<Esc><Esc>");
+    d.frame(app);
+}
+
 fn enter(d: &mut Drive, app: &mut Kawoosh) {
     d.key(app, "enter", KeyMods::default());
     d.frame(app);
@@ -398,10 +405,10 @@ fn a_diagram_is_made_and_walked_from_the_keys_alone() {
     // `n` a box, `o` one joined on to its right, its label asked each time.
     d.keys(&mut app, "n");
     d.keys(&mut app, "API");
-    enter(&mut d, &mut app);
+    keep(&mut d, &mut app);
     d.keys(&mut app, "o");
     d.keys(&mut app, "DB");
-    enter(&mut d, &mut app);
+    keep(&mut d, &mut app);
     let api = node(&mut app, "n1");
     assert_eq!(
         node(&mut app, "n2"),
@@ -412,7 +419,7 @@ fn a_diagram_is_made_and_walked_from_the_keys_alone() {
     d.keys(&mut app, "h");
     d.keys(&mut app, "O");
     d.keys(&mut app, "Cache");
-    enter(&mut d, &mut app);
+    keep(&mut d, &mut app);
     assert_eq!(
         node(&mut app, "n3"),
         (api.0, api.1 + api.3 + 4, 8, 3),
@@ -494,7 +501,7 @@ fn the_toolbar_and_the_menu_run_the_canvas_commands() {
     d.button_click(&mut app, e.x, e.y, kui_native::MouseButton::Secondary);
     choose(&mut d, &mut app, &["New Box Here"]);
     d.keys(&mut app, "Here");
-    enter(&mut d, &mut app);
+    keep(&mut d, &mut app);
     assert!(
         text(&app).ends_with("box n1 \"Here\" at 2,8\n"),
         "{}",
@@ -535,7 +542,7 @@ fn the_box_and_text_tools_place_by_a_grid_cursor() {
     d.keys(&mut app, "jjlllll");
     enter(&mut d, &mut app);
     d.keys(&mut app, "B");
-    enter(&mut d, &mut app);
+    keep(&mut d, &mut app);
     assert!(
         text(&app).ends_with("box n1 \"B\" at 12,0 size 5x2\n"),
         "{}",
@@ -547,7 +554,7 @@ fn the_box_and_text_tools_place_by_a_grid_cursor() {
     d.keys(&mut app, "J");
     enter(&mut d, &mut app);
     d.keys(&mut app, "note");
-    enter(&mut d, &mut app);
+    keep(&mut d, &mut app);
     assert!(
         text(&app).ends_with("text \"note\" at 21,5\n"),
         "{}",
@@ -570,7 +577,7 @@ fn v_extends_the_selection_and_a_group_is_made_once() {
     d.press(&mut app, "<Esc>");
     d.keys(&mut app, "G");
     d.keys(&mut app, "AB");
-    enter(&mut d, &mut app);
+    keep(&mut d, &mut app);
     assert!(
         text(&app).ends_with("group g1 \"AB\" { a b }\n"),
         "{}",
@@ -848,5 +855,401 @@ fn a_closed_diagram_leaves_its_pane_to_normal_mode() {
         assert!(app.ed.buffer_of(v).modified, "{close}: `x` edits the text");
         d.keys(&mut app, "u");
     }
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Where the canvas drew the text `t` last frame, in the window.
+fn text_rect(d: &Drive, t: &str) -> Option<kui_native::Rect> {
+    let nodes = d.core.nodes();
+    let at = nodes
+        .iter()
+        .position(|n| n.label.as_deref() == Some("canvas"))?;
+    nodes[at + 1..]
+        .iter()
+        .take_while(|n| n.depth > nodes[at].depth)
+        .find(|n| n.text.as_deref() == Some(t))
+        .map(|n| n.rect)
+}
+
+/// Reported 2026-10-22: "<A-/> jumps whole diagram for a frame". The
+/// toolbar's strip comes and goes over the drawing; the frame it
+/// changes in draws the drawing where it was, not one strip lower (or
+/// higher) until the next frame measures the canvas again.
+#[test]
+fn the_toolbar_coming_and_going_moves_no_box_for_a_frame() {
+    let path = file("jump", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let before = text_rect(&d, "A").expect("A is drawn");
+    // `press` draws one frame: the frame the strip changes in.
+    d.press(&mut app, "<A-/>");
+    assert!(d.rect("toolbar").is_some(), "the toolbar is shown");
+    assert_eq!(text_rect(&d, "A"), Some(before), "shown: the frame it came");
+    d.frame(&mut app);
+    assert_eq!(text_rect(&d, "A"), Some(before), "shown: the frame after");
+    d.press(&mut app, "<A-/>");
+    assert!(d.rect("toolbar").is_none(), "the toolbar is hidden");
+    assert_eq!(
+        text_rect(&d, "A"),
+        Some(before),
+        "hidden: the frame it went"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Asked 2026-10-22: "multiline text everywhere (free or inside boxes,
+/// arrows, etc) … an editor inline? example is some kind of a
+/// contract". `i` types the label where it is drawn: `<CR>` a new line,
+/// the box growing to hold it as it is typed; `<Esc><Esc>` writes it.
+#[test]
+fn a_label_is_typed_in_its_box_over_lines_and_the_box_grows() {
+    let path = file("inline", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let v = app.focused_view().unwrap();
+    d.keys(&mut app, "l");
+    assert_eq!(selected(&mut app), vec!["a"]);
+    d.keys(&mut app, "i");
+    // The keys are on a field of lines, in insert mode, no prompt open.
+    let f = app.keyed_view().expect("the keys are on the label");
+    assert_ne!(f, v);
+    assert_eq!(app.ed.mode(f), kawoosh_editor::Mode::Insert);
+    assert!(app.ed.prompt_view().is_none(), "no prompt: typed in place");
+    // Typed over what was there: `cc` in normal mode clears the line.
+    d.press(&mut app, "<Esc>");
+    d.keys(&mut app, "cc");
+    d.keys(&mut app, "POST /orders");
+    d.press(&mut app, "<CR>");
+    d.keys(&mut app, "  sku: string, qty: int");
+    // The line after an indented one starts at its indent, as in a
+    // buffer.
+    d.press(&mut app, "<CR>");
+    d.keys(&mut app, "-> 201 { id }");
+    // Drawn in the box as it is typed, line by line, and the file not
+    // written yet.
+    let texts = drawn(&d);
+    for l in ["POST /orders", "  sku: string, qty: int", "  -> 201 { id }"] {
+        assert!(
+            texts.iter().any(|t| t.contains(l.trim())),
+            "{l:?} in {texts:?}"
+        );
+    }
+    assert_eq!(text(&app), START, "nothing written while it is typed");
+    let (_, _, w, h) = node(&mut app, "a");
+    assert_eq!((w, h), (8, 3), "the file's box as it was");
+    keep(&mut d, &mut app);
+    let t = text(&app);
+    let line = t.lines().nth(1).unwrap();
+    assert!(
+        line.starts_with(
+            "box a \"POST /orders\\n  sku: string, qty: int\\n  -> 201 { id }\" at 0,0 size "
+        ),
+        "{t}"
+    );
+    let (_, _, w, h) = node(&mut app, "a");
+    assert!(w > 8 && h >= 4, "grown to hold its three lines: {w}x{h}");
+    assert_eq!(app.keyed_view(), Some(v), "the keys back on the canvas");
+    assert_eq!(app.ed.mode(v), kawoosh_editor::Mode::Pane);
+    // One step: `u` takes the whole label back.
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), START);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// `<C-c>` lets the typing go; `<C-CR>` writes it from insert mode; a
+/// press anywhere else on the canvas writes it too. An arrow's label is
+/// typed over lines the same way.
+#[test]
+fn a_label_typed_is_let_go_kept_by_a_chord_or_by_a_press_elsewhere() {
+    let path = file("inline-keys", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    d.keys(&mut app, "li");
+    d.keys(&mut app, "zzz");
+    d.press(&mut app, "<C-c>");
+    assert_eq!(text(&app), START, "let go");
+    assert!(app.canvas_label_field().is_none());
+    // The arrow: `<C-l>` from A, its label over two lines, `<C-CR>`.
+    d.press(&mut app, "<C-l>");
+    assert_eq!(selected(&mut app), vec!["a->b"]);
+    d.keys(&mut app, "i");
+    d.keys(&mut app, "reads");
+    d.press(&mut app, "<CR>");
+    d.keys(&mut app, "(cached)");
+    d.press(&mut app, "<C-CR>");
+    assert!(
+        text(&app).contains("arrow a -> b \"reads\\n(cached)\"\n"),
+        "{}",
+        text(&app)
+    );
+    // B typed into, then a press on empty canvas: written.
+    d.keys(&mut app, "l");
+    assert_eq!(selected(&mut app), vec!["b"]);
+    d.keys(&mut app, "i");
+    d.keys(&mut app, "2");
+    let empty = at(&app, 4.0, 6.0);
+    d.click(&mut app, empty.x, empty.y);
+    d.frame(&mut app);
+    assert!(
+        text(&app).contains("box b \"B2\" at 12,0\n"),
+        "{}",
+        text(&app)
+    );
+    assert!(app.canvas_label_field().is_none());
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// A text placed by the text tool is typed in place over lines; one
+/// left with no words is taken out again. `A` puts a box's label from
+/// its top left, as a contract reads.
+#[test]
+fn a_free_text_is_typed_in_place_and_a_box_label_aligns_left() {
+    let path = file("inline-text", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    d.keys(&mut app, "t");
+    enter(&mut d, &mut app);
+    d.keys(&mut app, "terms:");
+    d.press(&mut app, "<CR>");
+    d.keys(&mut app, "net 30");
+    keep(&mut d, &mut app);
+    assert!(
+        text(&app).contains("text \"terms:\\nnet 30\" at "),
+        "{}",
+        text(&app)
+    );
+    // Another, its words never typed: gone again.
+    d.keys(&mut app, "t");
+    enter(&mut d, &mut app);
+    keep(&mut d, &mut app);
+    assert_eq!(text(&app).matches("text ").count(), 1, "{}", text(&app));
+    // `A` on A: its label against the left, from the top.
+    d.press(&mut app, "<Esc>");
+    d.press(&mut app, "<C-n>");
+    assert_eq!(selected(&mut app), vec!["a"]);
+    d.keys(&mut app, "A");
+    assert!(
+        text(&app).contains("box a \"A\" at 0,0 align left\n"),
+        "{}",
+        text(&app)
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Asked 2026-10-22: "I want an ability to move arrows so i can write
+/// more". An arrow pulled by its middle bends through the grid point it
+/// is let go on, its label there (`via X,Y`); `J` moves the bend of an
+/// arrow selected, a box moved leaves it, `B` lets it go.
+#[test]
+fn an_arrow_pulled_bends_through_a_point_and_b_lets_it_go() {
+    let path = file("bend", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    // The arrow's middle, (10,1.5), pulled two units down; a click
+    // alone only selects it.
+    let mid = at(&app, 10.0, 1.5);
+    d.click(&mut app, mid.x, mid.y);
+    d.frame(&mut app);
+    assert_eq!(selected(&mut app), vec!["a->b"]);
+    assert_eq!(text(&app), START, "a click bends nothing");
+    // Pulled from further along it: a press where the click was would
+    // be a double click, its label typed.
+    let (from, to) = (at(&app, 8.0, 1.5), at(&app, 10.0, 6.0));
+    d.drag(&mut app, from, to);
+    d.frame(&mut app);
+    assert!(
+        text(&app).ends_with("arrow a -> b via 10,6\n"),
+        "{}",
+        text(&app)
+    );
+    assert_eq!(selected(&mut app), vec!["a->b"]);
+    // Its label on the bend.
+    let v = app.focused_view().unwrap();
+    let doc = app.diagram_doc(v);
+    let layout =
+        kawoosh_diagram::geom::Layout::of(&doc, &kawoosh_diagram::geom::node_rect, &|_| (1.0, 1.0));
+    assert_eq!(
+        layout.wires[2].as_ref().unwrap().mid,
+        kawoosh_diagram::Pt::new(10.0, 6.0)
+    );
+    // `J` a unit further down; `u` back.
+    d.keys(&mut app, "J");
+    assert!(
+        text(&app).ends_with("arrow a -> b via 10,7\n"),
+        "{}",
+        text(&app)
+    );
+    // A box moved: the bend stays where it was put.
+    d.press(&mut app, "<C-n>");
+    assert_eq!(selected(&mut app), vec!["a"]);
+    d.keys(&mut app, "H");
+    assert!(
+        text(&app).ends_with("arrow a -> b via 10,7\n"),
+        "{}",
+        text(&app)
+    );
+    // `B` on A: its arrows straight again.
+    d.keys(&mut app, "B");
+    assert!(text(&app).ends_with("arrow a -> b\n"), "{}", text(&app));
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// The canvas's items in the order the frame drew them, each by the
+/// first words in it: the floats the plane holds, in kui's tree order —
+/// each a layer of its own over the plane's.
+fn drawn_order(d: &Drive) -> Vec<String> {
+    let nodes = d.core.nodes();
+    let Some(at) = nodes
+        .iter()
+        .position(|n| n.label.as_deref() == Some("canvas"))
+    else {
+        return Vec::new();
+    };
+    let plane = &nodes[at + 1];
+    (at + 2..nodes.len())
+        .take_while(|&i| nodes[i].depth > plane.depth)
+        .filter(|&i| nodes[i].parent == Some(plane.key) && nodes[i].layer != plane.layer)
+        .filter_map(|i| {
+            nodes[i + 1..]
+                .iter()
+                .take_while(|m| m.depth > nodes[i].depth)
+                .find_map(|m| m.text.clone().filter(|t| !t.is_empty()))
+        })
+        .collect()
+}
+
+/// Asked 2026-10-23: "pointer drawn under boxes/text … need a way to
+/// change draw order" — "draw order base from the declaration order in
+/// a file … the reordering is trivial". Each thing is drawn in the
+/// file's order, a line later over the ones before; a press takes the
+/// topmost; `>` `<` `g>` `g<` move the selection's lines.
+#[test]
+fn things_are_drawn_in_the_files_order_and_arrange_moves_their_lines() {
+    let path = file(
+        "order",
+        "box a \"A\" at 0,0 size 8x4\nbox b \"B\" at 4,2 size 8x4\ntext \"T\" at 20,0\n",
+    );
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    assert_eq!(drawn_order(&d), vec!["A", "B", "T"]);
+    // Where A and B overlap, B is on top: the press takes it.
+    let both = at(&app, 6.0, 3.0);
+    d.click(&mut app, both.x, both.y);
+    d.frame(&mut app);
+    assert_eq!(selected(&mut app), vec!["b"]);
+    // `<` sends B under A: its line before A's, and A takes the press.
+    d.keys(&mut app, "<");
+    assert!(
+        text(&app).starts_with("box b \"B\" at 4,2 size 8x4\nbox a \"A\" at 0,0 size 8x4\n"),
+        "{}",
+        text(&app)
+    );
+    assert_eq!(selected(&mut app), vec!["b"], "still B, at its new line");
+    assert_eq!(drawn_order(&d), vec!["B", "A", "T"]);
+    // Somewhere else first: a second press where the last one was would
+    // be a double click, A's label typed.
+    let elsewhere = at(&app, 16.0, 9.0);
+    d.click(&mut app, elsewhere.x, elsewhere.y);
+    assert!(selected(&mut app).is_empty());
+    let both = at(&app, 6.0, 3.0);
+    d.click(&mut app, both.x, both.y);
+    d.frame(&mut app);
+    assert_eq!(selected(&mut app), vec!["a"]);
+    // `g>` to the front: over the text too.
+    d.keys(&mut app, "g>");
+    assert!(
+        text(&app).ends_with("box a \"A\" at 0,0 size 8x4\n"),
+        "{}",
+        text(&app)
+    );
+    assert_eq!(drawn_order(&d), vec!["B", "T", "A"]);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Asked 2026-10-23: "maybe text should be also groupable". A text in a
+/// group is named for it and moves with it.
+#[test]
+fn a_text_is_grouped_with_a_box_and_moves_with_the_group() {
+    let path = file("text-group", "box a \"A\" at 0,0\ntext \"note\" at 0,5\n");
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    d.press(&mut app, "<C-a>");
+    d.keys(&mut app, "G");
+    d.keys(&mut app, "Both");
+    keep(&mut d, &mut app);
+    assert_eq!(
+        text(&app),
+        "box a \"A\" at 0,0\ntext t1 \"note\" at 0,5\ngroup g1 \"Both\" { a t1 }\n"
+    );
+    assert_eq!(selected(&mut app), vec!["g1"]);
+    d.keys(&mut app, "J");
+    assert_eq!(
+        text(&app),
+        "box a \"A\" at 0,1\ntext t1 \"note\" at 0,6\ngroup g1 \"Both\" { a t1 }\n"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Asked 2026-10-23: "while i move element … it should clamp viewport so
+/// it could be visible". `L` walking a box off the canvas's right edge
+/// takes the view with it.
+#[test]
+fn a_box_moved_by_the_keys_stays_in_view() {
+    let path = file("follow", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let canvas = d.rect_labelled("canvas").expect("the canvas");
+    d.press(&mut app, "<C-n>");
+    assert_eq!(selected(&mut app), vec!["a"]);
+    d.keys(&mut app, "60L");
+    d.frame(&mut app);
+    let a = text_rect(&d, "A").expect("A is drawn");
+    assert!(
+        a.x >= canvas.x && a.x + a.w <= canvas.x + canvas.w,
+        "A at {a:?} in the canvas {canvas:?}"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// The layer the canvas drew the text `t` in: its item's float.
+fn layer_of(d: &Drive, t: &str) -> Option<u16> {
+    let nodes = d.core.nodes();
+    let at = nodes
+        .iter()
+        .position(|n| n.label.as_deref() == Some("canvas"))?;
+    nodes[at + 1..]
+        .iter()
+        .take_while(|n| n.depth > nodes[at].depth)
+        .find(|n| n.text.as_deref() == Some(t))
+        .map(|n| n.layer)
+}
+
+/// kui stacked floats by key, a key it had not seen going on top: a box
+/// out of view is not drawn, so panned in it came over every line after
+/// it. The plane's floats stack in the order drawn (kui F186): A, a line
+/// before B, comes in under B.
+#[test]
+fn a_box_panned_into_view_comes_in_under_the_lines_after_it() {
+    let path = file(
+        "pan-order",
+        "box a \"A\" at 40,0 size 4x2\nbox b \"B\" at 0,0 size 46x3\n",
+    );
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let v = app.focused_view().unwrap();
+    // Zoomed in on B's left end: A, forty units along, is not drawn.
+    let c = app.canvas_of(v);
+    c.zoom = 2.0;
+    c.origin = kui_native::Vec2::new(0.0, 100.0);
+    d.frame(&mut app);
+    assert!(layer_of(&d, "A").is_none(), "A out of view, not drawn");
+    // Panned along to it.
+    app.canvas_of(v).origin = kui_native::Vec2::new(-1000.0, 100.0);
+    d.frame(&mut app);
+    let (a, b) = (
+        layer_of(&d, "A").expect("A drawn"),
+        layer_of(&d, "B").expect("B drawn"),
+    );
+    assert!(a < b, "A (layer {a}) under B (layer {b})");
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

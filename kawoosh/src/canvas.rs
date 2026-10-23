@@ -15,7 +15,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use kawoosh_diagram::geom::{Layout, Pt, Rect, node_rect};
-use kawoosh_diagram::{Change, Doc, Item, Node, Route, Shape, Text, UNIT, Wire, edit};
+use kawoosh_diagram::{Change, Doc, Item, LabelAlign, Node, Route, Shape, Text, UNIT, Wire, edit};
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{ArgKind, Args, Mode, Spec, ViewId};
 use kui_native::{
@@ -43,6 +43,10 @@ const SLACK: f32 = 6.0;
 const NEW_TEXT: &str = "text";
 /// How far a paste or a duplicate lands from what it copied, units.
 const PASTE_OFFSET: i32 = 2;
+/// The most a drag past the canvas's edge pans the view a move, px.
+const EDGE_PAN: f32 = 24.0;
+/// The field a label is typed into where it is drawn.
+pub const LABEL_FIELD: &str = "diagram/label";
 
 /// What a press does on the canvas.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -66,7 +70,9 @@ impl Tool {
 
     fn hint(self) -> &'static str {
         match self {
-            Tool::Select => "drag to move · corner to resize · alt-drag to connect",
+            Tool::Select => {
+                "drag to move · an arrow to bend it · corner to resize · alt-drag to connect"
+            }
             Tool::Box => "drag a box, or click for one",
             Tool::Arrow => "drag from a box to a box",
             Tool::Text => "click where the text goes",
@@ -104,11 +110,33 @@ enum Gesture {
         from: usize,
         to: Pt,
     },
+    /// An arrow pulled by its middle: bent through the grid point under
+    /// the pointer once it moved.
+    Bend {
+        i: usize,
+        from: Pt,
+        to: (i32, i32),
+        moved: bool,
+    },
     /// The view dragged with the middle button.
     Pan {
         origin: Vec2,
         at: Vec2,
     },
+}
+
+/// A label edited where it is drawn (`diagram edit`): the field of
+/// lines the keys type into, the entry it is the label of and that
+/// entry's item as it was — what the words are written back into, and
+/// how the entry is found again if a line moved under it.
+#[derive(Clone, Debug)]
+pub struct LabelEdit {
+    pub field: ViewId,
+    pub entry: usize,
+    was: Item,
+    /// The field's words at zoom 1, in units, as the last frame
+    /// measured them: what a box grows to hold.
+    size: (f32, f32),
 }
 
 /// A view's canvas.
@@ -146,6 +174,8 @@ pub struct Canvas {
     /// `V`: the keys that select add to the selection rather than
     /// replace it.
     pub extend: bool,
+    /// The label being typed, in place.
+    pub label: Option<LabelEdit>,
 }
 
 impl Default for Canvas {
@@ -166,6 +196,7 @@ impl Default for Canvas {
             cursor: None,
             corner: None,
             extend: false,
+            label: None,
         }
     }
 }
@@ -250,6 +281,9 @@ fn preview(doc: &Rc<Doc>, sel: &[usize], g: Option<&Gesture>) -> Rc<Doc> {
     let changes = match g {
         Some(Gesture::Move { by, .. }) => edit::move_by(doc, sel, by.0, by.1),
         Some(Gesture::Resize { i, to, .. }) => edit::resize(doc, *i, to.0, to.1, to.2, to.3),
+        Some(Gesture::Bend {
+            i, to, moved: true, ..
+        }) => edit::bend(doc, *i, Some(*to)),
         _ => return doc.clone(),
     };
     if changes.is_empty() {
@@ -261,6 +295,22 @@ fn preview(doc: &Rc<Doc>, sel: &[usize], g: Option<&Gesture>) -> Rc<Doc> {
             d.entries[i].item = item;
         }
     }
+    Rc::new(d)
+}
+
+/// The doc as the label being typed has it: its words, and a box grown
+/// to hold them, as they will be written.
+fn typing(doc: &Rc<Doc>, edit: &LabelEdit, words: &str) -> Rc<Doc> {
+    let Some(e) = doc.entries.get(edit.entry).filter(|e| e.item == edit.was) else {
+        return doc.clone();
+    };
+    let mut item = e.item.clone();
+    *item.label_mut() = words.to_string();
+    if let Item::Node(n) = &mut item {
+        edit::hold_label(n, edit.size.0, edit.size.1);
+    }
+    let mut d = (**doc).clone();
+    d.entries[edit.entry].item = item;
     Rc::new(d)
 }
 
@@ -365,6 +415,7 @@ fn menu_rows(
         _ => None,
     });
     let nodes = items.iter().filter(|i| matches!(i, Item::Node(_))).count();
+    let texts = items.iter().filter(|i| matches!(i, Item::Text(_))).count();
     let groups = items.iter().filter(|i| matches!(i, Item::Group(_))).count();
     out.push(row("Edit Label", "i", "diagram edit").enabled(items.len() == 1));
     if let Some(n) = node {
@@ -375,6 +426,13 @@ fn menu_rows(
             })
             .collect();
         out.push(MenuItem::submenu("Shape", shapes));
+        let aligns = LabelAlign::ALL
+            .iter()
+            .map(|a| {
+                row(a.word(), "", &format!("diagram align {}", a.word())).checked(*a == n.align)
+            })
+            .collect();
+        out.push(MenuItem::submenu("Label", aligns));
     }
     let color = items[0].color();
     let mut colors = vec![row("none", "", "diagram color none").checked(color.is_none())];
@@ -398,6 +456,7 @@ fn menu_rows(
         .collect();
         out.push(MenuItem::submenu("Heads", heads));
         out.push(row("Reverse", "R", "diagram reverse"));
+        out.push(row("Unbend", "B", "diagram unbend").enabled(e.via.is_some()));
     }
     out.push(MenuItem::separator());
     if nodes == 1 && items.len() == 1 {
@@ -408,12 +467,21 @@ fn menu_rows(
     if nodes >= 2 {
         out.push(row("Connect in Order", "C", "diagram connect"));
     }
-    if nodes + groups > 0 {
+    if nodes + texts + groups > 0 {
         out.push(row("Group", "G", "diagram group"));
     }
     if groups > 0 {
         out.push(row("Ungroup", "", "diagram ungroup"));
     }
+    out.push(MenuItem::submenu(
+        "Arrange",
+        vec![
+            row("Bring to Front", "", "diagram arrange front"),
+            row("Bring Forward", ">", "diagram arrange forward"),
+            row("Send Backward", "<", "diagram arrange backward"),
+            row("Send to Back", "", "diagram arrange back"),
+        ],
+    ));
     out.push(MenuItem::separator());
     out.push(row("Duplicate", "D", "diagram duplicate"));
     out.push(row("Copy", "y", "diagram copy"));
@@ -601,9 +669,53 @@ impl Kawoosh {
                 self.ed.set_mode(view, Mode::Pane);
             }
         }
+        // A label being typed: a press on it goes on typing, one anywhere
+        // else writes it first.
+        if d.phase == DragPhase::Start
+            && let Some(entry) = self
+                .canvas
+                .views
+                .get(&view)
+                .and_then(|c| c.label.as_ref())
+                .map(|l| l.entry)
+        {
+            let (_, layout) = self.canvas_layout(view);
+            let c = &self.canvas.views[&view];
+            let p = c.units(&body, d.pos);
+            let on =
+                anchor_rect(&layout, entry).is_some_and(|r| r.grown(SLACK / c.scale()).contains(p));
+            if on {
+                return;
+            }
+            self.canvas_label_end(view, true);
+        }
         let (doc, layout) = self.canvas_layout(view);
         let (shift, alt) = (self.mods.shift, self.mods.alt);
+        let vb = self.canvas_view_box(pane);
         let c = self.canvas_of(view);
+        // A drag carried past the canvas's edge takes the view with it,
+        // so what is moved, drawn or pulled stays in sight: by how far
+        // past the pointer is, a little a move at most, and only while
+        // the pointer moves — held still out there, the view holds too.
+        if d.phase == DragPhase::Move
+            && c.gesture
+                .as_ref()
+                .is_some_and(|g| !matches!(g, Gesture::Pan { .. }))
+        {
+            let past = |at: f32, lo: f32, hi: f32| {
+                let by = if at < lo {
+                    at - lo
+                } else if at > hi {
+                    at - hi
+                } else {
+                    0.0
+                };
+                by.clamp(-EDGE_PAN, EDGE_PAN)
+            };
+            let (x0, y0) = (body.x + vb.x, body.y + vb.y);
+            c.origin.x -= past(d.pos.x, x0, x0 + vb.w);
+            c.origin.y -= past(d.pos.y, y0, y0 + vb.h);
+        }
         let p = c.units(&body, d.pos);
         let tol = SLACK / c.scale();
         let mut after = After::Nothing;
@@ -649,7 +761,23 @@ impl Kawoosh {
                             } else if let Some(g) = corner_at(c, &doc, d.pos, &body) {
                                 c.gesture = Some(g);
                             } else {
-                                match layout.hit(&doc, p, tol) {
+                                let hit = layout.hit(&doc, p, tol);
+                                let arrow = hit.filter(|&i| {
+                                    matches!(doc.entries[i].item, Item::Edge(_))
+                                        && !shift
+                                        && (c.sel.len() <= 1 || !c.sel.contains(&i))
+                                });
+                                match hit {
+                                    // An arrow alone: pulled, it bends.
+                                    Some(i) if arrow.is_some() => {
+                                        c.sel = vec![i];
+                                        c.gesture = Some(Gesture::Bend {
+                                            i,
+                                            from: p,
+                                            to: (p.x.round() as i32, p.y.round() as i32),
+                                            moved: false,
+                                        });
+                                    }
                                     Some(i) => {
                                         if shift {
                                             match c.sel.iter().position(|&s| s == i) {
@@ -694,6 +822,12 @@ impl Kawoosh {
                     let (y0, y1) = (fixed.1.min(q.1), fixed.1.max(q.1));
                     *to = (x0, y0, (x1 - x0).max(1), (y1 - y0).max(1));
                 }
+                Some(Gesture::Bend {
+                    from, to, moved, ..
+                }) => {
+                    *moved |= from.dist(p) >= 0.5;
+                    *to = (p.x.round() as i32, p.y.round() as i32);
+                }
                 Some(Gesture::Marquee { to, .. })
                 | Some(Gesture::Create { to, .. })
                 | Some(Gesture::Connect { to, .. }) => *to = p,
@@ -710,6 +844,15 @@ impl Kawoosh {
                 Some(Gesture::Resize { i, to, .. }) => {
                     after = After::Apply {
                         changes: edit::resize(&doc, i, to.0, to.1, to.2, to.3),
+                        select_new: false,
+                        edit: false,
+                    };
+                }
+                Some(Gesture::Bend {
+                    i, to, moved: true, ..
+                }) => {
+                    after = After::Apply {
+                        changes: edit::bend(&doc, i, Some(to)),
                         select_new: false,
                         edit: false,
                     };
@@ -773,7 +916,7 @@ impl Kawoosh {
                         };
                     }
                 }
-                Some(Gesture::Pan { .. }) | None => {}
+                Some(Gesture::Bend { .. }) | Some(Gesture::Pan { .. }) | None => {}
             },
         }
         match after {
@@ -844,6 +987,7 @@ impl Kawoosh {
     /// text made where it was pressed.
     fn canvas_menu(&mut self, pane: PaneId, view: ViewId, pos: Vec2, key: Key, core: &mut Core) {
         self.layout.focus(pane);
+        self.canvas_label_end(view, true);
         if self.ed.prompt_view().is_some() {
             self.ed.cancel_prompt();
         }
@@ -1120,21 +1264,108 @@ impl Kawoosh {
         true
     }
 
-    /// The selection's label in the prompt, `:diagram label` before it.
+    /// The selection's label typed where it is drawn: a field of lines
+    /// over it, in insert mode at its end — `<CR>` a new line, vim's
+    /// keys after `<Esc>`, `<Esc>` again (or `<C-CR>`) writes it, `<C-c>`
+    /// lets it go (asked 2026-10-22: "multiline text everywhere … an
+    /// editor inline? example is some kind of a contract").
     fn canvas_edit(&mut self, view: ViewId) {
         let doc = self.diagram_doc(view);
         let Some(&i) = self.canvas.views[&view].sel.last() else {
             self.ed.message = "nothing selected".into();
             return;
         };
-        // A text just made holds a word so it can be seen; its prompt
+        // One label typed at a time: another canvas's written first.
+        self.canvas_label_end_all(true);
+        let was = doc.entries[i].item.clone();
+        // A text just made holds a word so it can be seen; its field
         // starts empty, the words typed its own.
-        let label = match &doc.entries[i].item {
+        let text = match &was {
             Item::Text(t) if t.label == NEW_TEXT => String::new(),
-            item => item.label().replace('\n', "\\n"),
+            item => item.label().to_string(),
         };
-        let line = format!("diagram label {label}");
-        self.compile_prompt(&line, line.len());
+        let field = self.ed.open_field_lines(LABEL_FIELD, &text);
+        self.canvas_of(view).label = Some(LabelEdit {
+            field,
+            entry: i,
+            was,
+            size: (0.0, 0.0),
+        });
+    }
+
+    /// The field the focused canvas's label is typed into, while one is.
+    pub fn canvas_label_field(&self) -> Option<ViewId> {
+        let v = self.focused_view()?;
+        let f = self.canvas.views.get(&v)?.label.as_ref()?.field;
+        self.ed.is_field(f).then_some(f)
+    }
+
+    /// The label typed on `view`'s canvas ended: written when `keep` —
+    /// a box grown to hold it, a text with no words taken out — else let
+    /// go, and a text made for it with it. The field closes either way.
+    pub(crate) fn canvas_label_end(&mut self, view: ViewId, keep: bool) {
+        let Some(edit) = self
+            .canvas
+            .views
+            .get_mut(&view)
+            .and_then(|c| c.label.take())
+        else {
+            return;
+        };
+        let text = self.ed.field_text(edit.field).unwrap_or_default();
+        self.ed.close_field(edit.field);
+        let doc = self.diagram_doc(view);
+        // Its entry, or the same item where a line written in the text
+        // beside moved it.
+        let at = doc
+            .entries
+            .get(edit.entry)
+            .filter(|e| e.item == edit.was)
+            .map(|_| edit.entry)
+            .or_else(|| doc.entries.iter().position(|e| e.item == edit.was));
+        let Some(i) = at else {
+            self.ed.message = "the label's item went while it was typed".into();
+            return;
+        };
+        let text = text.trim_end_matches(['\n', '\r']).to_string();
+        let made = matches!(&edit.was, Item::Text(t) if t.label == NEW_TEXT);
+        let empty_text = matches!(edit.was, Item::Text(_)) && text.trim().is_empty();
+        let changes = if (!keep && made) || (keep && empty_text) {
+            vec![Change::Remove(i)]
+        } else if !keep {
+            return;
+        } else {
+            let mut item = edit.was.clone();
+            *item.label_mut() = text;
+            if let Item::Node(n) = &mut item {
+                edit::hold_label(n, edit.size.0, edit.size.1);
+            }
+            vec![Change::Set(i, item)]
+        };
+        self.canvas_apply(view, &changes, false);
+    }
+
+    /// Every canvas's label typed ended, written when `keep`.
+    pub(crate) fn canvas_label_end_all(&mut self, keep: bool) {
+        let views: Vec<ViewId> = self
+            .canvas
+            .views
+            .iter()
+            .filter(|(_, c)| c.label.is_some())
+            .map(|(v, _)| *v)
+            .collect();
+        for v in views {
+            self.canvas_label_end(v, keep);
+        }
+    }
+
+    /// The canvas whose label is typed into `field`.
+    fn canvas_of_label(&self, field: ViewId) -> Option<ViewId> {
+        self.canvas
+            .views
+            .iter()
+            .find(|(_, c)| c.label.as_ref().is_some_and(|l| l.field == field))
+            .map(|(v, _)| *v)
     }
 
     /// The selection's items changed by `f`, written.
@@ -1273,26 +1504,55 @@ impl Kawoosh {
     ) {
         let doc = self.diagram_doc(view);
         let pen_face = self.face;
+        // The label being typed: its entry, its words, its lines to draw.
+        let typed = self
+            .canvas
+            .views
+            .get(&view)
+            .and_then(|c| c.label.as_ref())
+            .filter(|l| self.ed.is_field(l.field))
+            .map(|l| {
+                (
+                    l.entry,
+                    self.ed.field_text(l.field).unwrap_or_default(),
+                    self.field_scene_lines(l.field),
+                )
+            });
         // Free texts measured at zoom 1, in units: what a press finds
-        // them by.
+        // them by; and the words typed, what their box grows to hold.
         let base = TextStyle::new(pen_face.size).mono().nowrap();
         let base = match pen_face.id {
             Some(id) => base.font(id),
             None => base,
         };
+        let measure = |ui: &mut Ui<'_>, label: &str| {
+            let lines: Vec<&str> = label.split('\n').collect();
+            let w = lines
+                .iter()
+                .map(|l| ui.measure_text(l, &base, None).width)
+                .fold(0.0f32, f32::max);
+            let h = lines.len() as f32 * (pen_face.size * 1.3).round();
+            (w / UNIT, h / UNIT)
+        };
         let mut sizes = HashMap::new();
-        for item in doc.items() {
-            if let Item::Text(t) = item
-                && !sizes.contains_key(&t.label)
-            {
-                let lines: Vec<&str> = t.label.split('\n').collect();
-                let w = lines
-                    .iter()
-                    .map(|l| ui.measure_text(l, &base, None).width)
-                    .fold(0.0f32, f32::max);
-                let h = lines.len() as f32 * (pen_face.size * 1.3).round();
-                sizes.insert(t.label.clone(), (w / UNIT, h / UNIT));
+        let words = typed.as_ref().map(|(_, t, _)| t.as_str());
+        for label in doc
+            .items()
+            .filter_map(|i| match i {
+                Item::Text(t) => Some(t.label.as_str()),
+                _ => None,
+            })
+            .chain(words)
+        {
+            if !sizes.contains_key(label) {
+                let size = measure(ui, label);
+                sizes.insert(label.to_string(), size);
             }
+        }
+        if let Some((_, t, _)) = &typed
+            && let Some(l) = self.canvas_of(view).label.as_mut()
+        {
+            l.size = sizes[t.as_str()];
         }
         // The toolbar is the pane's legend (icons.md Decision 6): `<A-/>`,
         // the title bar's `⌥/ keys`, `keys.legend` how it starts.
@@ -1304,6 +1564,10 @@ impl Kawoosh {
         let c = self.canvas_of(view);
         c.body = vb;
         let shown = preview(&doc, &c.sel, c.gesture.as_ref());
+        let shown = match (&typed, &c.label) {
+            (Some((_, words, _)), Some(l)) => typing(&shown, l, words),
+            _ => shown,
+        };
         let layout = Layout::of(&shown, &node_rect, &|t| text_size(&c.texts, t));
         if !c.placed && vb.w > 0.0 {
             c.placed = true;
@@ -1312,17 +1576,28 @@ impl Kawoosh {
                 None => c.origin = Vec2::new(2.0 * UNIT, 2.0 * UNIT),
             }
         }
-        // The pen draws in the canvas's own box: the origin less where
-        // that box starts.
+        // The pen draws on the plane: a float as wide as the canvas, from
+        // the pane's inside under the title bar down to the canvas's foot
+        // — where the drawing's origin is measured from — pinned by that
+        // foot, which the toolbar's strip does not move. Pinned by the
+        // canvas's top, the frame the strip came or went in drew the
+        // drawing a strip off, the canvas as the frame before laid it out
+        // (asked 2026-10-22: "<A-/> jumps whole diagram for a frame").
+        let plane_h = vb.y + vb.h;
         let pen = Pen {
-            origin: Vec2::new(c.origin.x - vb.x, c.origin.y - vb.y),
+            origin: Vec2::new(c.origin.x - vb.x, c.origin.y),
             s: c.scale(),
             zoom: c.zoom,
             pal: self.pal,
             face: pen_face,
             hues: self.canvas_hues(),
             w: vb.w,
-            h: vb.h,
+            h: plane_h,
+            typed: typed.map(|(entry, _, lines)| Typed {
+                entry,
+                lines,
+                keyed: focused && self.ed.prompt_view().is_none(),
+            }),
         };
         let c = &self.canvas.views[&view];
         let sel = c.sel.clone();
@@ -1332,7 +1607,9 @@ impl Kawoosh {
         let pal = self.pal;
         let tag = Msg::Canvas { pane };
         let pointer = match gesture {
-            Some(Gesture::Move { .. }) | Some(Gesture::Pan { .. }) => CursorShape::Grabbing,
+            Some(Gesture::Move { .. })
+            | Some(Gesture::Pan { .. })
+            | Some(Gesture::Bend { moved: true, .. }) => CursorShape::Grabbing,
             Some(Gesture::Resize { .. }) => CursorShape::NwseResize,
             _ => CursorShape::Default,
         };
@@ -1389,33 +1666,35 @@ impl Kawoosh {
                     .cursor(pointer)
                     .label(name.as_str()),
                 |ui| {
+                    ui.with_keyed(
+                        "plane",
+                        // Its items' floats stacked as drawn, the file's
+                        // order, every frame (kui F186, Decision 14).
+                        NodeSpec::column().size(pen.w, pen.h).floats_in_order().float(
+                            FloatConfig::parent()
+                                .inside(Align::Start, Align::End)
+                                .clipped(),
+                        ),
+                        |ui| {
                     pen.grid(ui);
-                    // Groups behind, then the boxes, the arrows, the free
-                    // texts. A rectangle's box is a float; a path's and an
-                    // arrow's are drawn in the canvas's own layer, under
-                    // every float.
-                    for (i, e) in shown.entries.iter().enumerate() {
-                        if let (Item::Group(g), Some(r)) = (&e.item, layout.bounds[i]) {
-                            pen.group(ui, &format!("g{i}"), &g.label, g.color, &r);
-                        }
-                    }
-                    for (i, e) in shown.entries.iter().enumerate() {
-                        if let (Item::Node(n), Some(r)) = (&e.item, layout.bounds[i])
-                            && pen.on_screen(&r)
-                        {
-                            pen.node(ui, &format!("n{i}"), n, &r);
-                        }
-                    }
-                    for (i, e) in shown.entries.iter().enumerate() {
-                        if let (Item::Edge(edge), Some(w)) = (&e.item, &layout.wires[i]) {
-                            pen.edge(ui, &format!("e{i}"), edge, w, sel.contains(&i));
-                        }
-                    }
-                    for (i, e) in shown.entries.iter().enumerate() {
-                        if let (Item::Text(t), Some(r)) = (&e.item, layout.bounds[i])
-                            && pen.on_screen(&r)
-                        {
-                            pen.text(ui, &format!("t{i}"), t, &r);
+                    // The groups behind, then every box, arrow and text in
+                    // the file's order, a line later over one before it —
+                    // each one float (Decision 14).
+                    for i in shown.draw_order() {
+                        match (&shown.entries[i].item, layout.bounds[i], &layout.wires[i]) {
+                            (Item::Group(g), Some(r), _) => {
+                                pen.group(ui, i, &format!("g{i}"), &g.label, g.color, &r)
+                            }
+                            (Item::Node(n), Some(r), _) if pen.on_screen(&r) => {
+                                pen.node(ui, i, &format!("n{i}"), n, &r)
+                            }
+                            (Item::Edge(edge), _, Some(w)) => {
+                                pen.edge(ui, i, &format!("e{i}"), edge, w, sel.contains(&i))
+                            }
+                            (Item::Text(t), Some(r), _) if pen.on_screen(&r) => {
+                                pen.text(ui, i, &format!("t{i}"), t, &r)
+                            }
+                            _ => {}
                         }
                     }
                     // What is selected, a box's corners when it is one box;
@@ -1433,6 +1712,20 @@ impl Kawoosh {
                         && tool == Tool::Select
                     {
                         pen.handles(ui, &r);
+                    }
+                    // One arrow with no label: where it bends, or where
+                    // it would, a dot to pull — filled when it is bent. A
+                    // label is the arrow's grip itself, and a dot on it
+                    // covered its words.
+                    if let [i] = sel[..]
+                        && let Some(Item::Edge(e)) = shown.entries.get(i).map(|e| &e.item)
+                        && let Some(Some(w)) = layout.wires.get(i)
+                        && tool == Tool::Select
+                        && e.label.is_empty()
+                        && !pen.typing(i)
+                    {
+                        let at = e.via.map(|(x, y)| Pt::new(x as f32, y as f32)).unwrap_or(w.mid);
+                        pen.bend_handle(ui, at, e.via.is_some());
                     }
                     if tool == Tool::Arrow
                         && let Some(f) = from
@@ -1498,6 +1791,8 @@ impl Kawoosh {
                         }
                         _ => {}
                     }
+                        },
+                    );
                     if doc.entries.is_empty() && doc.problems.is_empty() {
                         ui.with_keyed(
                             "empty",
@@ -1519,6 +1814,7 @@ impl Kawoosh {
             // keys do now.
             let small = TextStyle::new(chrome_small).color(pal.dim);
             let hint = match tool {
+                _ if pen.typed.is_some() => KEEP_HINT,
                 Tool::Arrow if from.is_some() => "hjkl to the box it goes to · <CR> joins · <Esc> lets go",
                 Tool::Box if corner.is_some() => "hjkl to the other corner · <CR> makes it · <Esc> lets go",
                 Tool::Box => "hjkl the cursor · <CR> a corner, twice for an 8×3 · or drag a box",
@@ -1690,6 +1986,14 @@ fn corner_at(c: &Canvas, doc: &Doc, pos: Vec2, body: &Rect) -> Option<Gesture> {
     None
 }
 
+/// The label being typed, as a frame draws it: its entry, its field's
+/// lines, whether the keys are on it (its carets drawn).
+struct Typed {
+    entry: usize,
+    lines: Vec<crate::panes::FieldScene>,
+    keyed: bool,
+}
+
 /// What a frame draws with: where units are, the theme, the face.
 struct Pen {
     origin: Vec2,
@@ -1700,6 +2004,7 @@ struct Pen {
     hues: [Color; 8],
     w: f32,
     h: f32,
+    typed: Option<Typed>,
 }
 
 impl Pen {
@@ -1748,10 +2053,49 @@ impl Pen {
         crate::rows::mono(face, &self.pal).color(color)
     }
 
-    /// Lines of `label` down a column, each centred.
+    /// Lines of `label` down a column, each as the column aligns it.
     fn lines(&self, ui: &mut Ui<'_>, label: &str, style: TextStyle) {
         for line in label.split('\n') {
             ui.text(line, style);
+        }
+    }
+
+    /// Whether entry `i`'s label is being typed.
+    fn typing(&self, i: usize) -> bool {
+        self.typed.as_ref().is_some_and(|t| t.entry == i)
+    }
+
+    /// Entry `i`'s label: its lines, or — being typed — its field's,
+    /// each a row of the editor's line at `style`'s size, the carets on
+    /// it while the keys are.
+    fn label(&self, ui: &mut Ui<'_>, i: usize, label: &str, style: TextStyle) {
+        let Some(t) = self.typed.as_ref().filter(|t| t.entry == i) else {
+            self.lines(ui, label, style);
+            return;
+        };
+        let face = Face {
+            size: style.size,
+            line_height: (style.size * 1.3).round().max(1.0),
+            ..self.face
+        };
+        for (n, line) in t.lines.iter().enumerate() {
+            crate::panes::draw_field_line(ui, &format!("typed{n}"), line, t.keyed, face);
+        }
+    }
+
+    /// A box's label's float as its `align` lays it: in the middle, or
+    /// from the top against a side, half a unit in.
+    fn aligned(&self, spec: NodeSpec, align: LabelAlign) -> NodeSpec {
+        match align {
+            LabelAlign::Center => spec.main_align(Align::Center).cross_align(Align::Center),
+            side => spec
+                .main_align(Align::Start)
+                .cross_align(if side == LabelAlign::Left {
+                    Align::Start
+                } else {
+                    Align::End
+                })
+                .pad_xy(0.5 * self.s, 0.35 * self.s),
         }
     }
 
@@ -1795,6 +2139,7 @@ impl Pen {
     fn group(
         &self,
         ui: &mut Ui<'_>,
+        i: usize,
         key: &str,
         label: &str,
         color: Option<kawoosh_diagram::Color>,
@@ -1803,20 +2148,8 @@ impl Pen {
         let (x, y, w, h) = self.rect(r);
         let ink = self.hue(color).unwrap_or(self.pal.dim);
         let dash = (6.0 * self.zoom).max(3.0);
-        ui.polyline_keyed(
-            &format!("{key}.line"),
-            &[
-                Vec2::new(x, y),
-                Vec2::new(x + w, y),
-                Vec2::new(x + w, y + h),
-                Vec2::new(x, y + h),
-                Vec2::new(x, y),
-            ],
-            Stroke::new(1.0, ink.with_alpha(0.8)).dash(dash, dash * 0.7),
-            NodeSpec::row(),
-        );
-        // The wash and the label in one float, the label inside it.
-        let show = !label.is_empty() && self.label_size() >= 5.0;
+        // The wash, its dashed frame and its label one float (Decision 14).
+        let show = (self.typing(i) || !label.is_empty()) && self.label_size() >= 5.0;
         let style = self.style(self.label_size() * 0.9, ink);
         ui.with_keyed(
             key,
@@ -1826,19 +2159,33 @@ impl Pen {
                 .radius(6.0 * self.zoom.min(1.0))
                 .pad_xy(0.5 * self.s, 0.35 * self.s),
             |ui| {
+                ui.polyline_keyed(
+                    "frame",
+                    &[
+                        Vec2::new(0.0, 0.0),
+                        Vec2::new(w, 0.0),
+                        Vec2::new(w, h),
+                        Vec2::new(0.0, h),
+                        Vec2::new(0.0, 0.0),
+                    ],
+                    Stroke::new(1.0, ink.with_alpha(0.8)).dash(dash, dash * 0.7),
+                    NodeSpec::row(),
+                );
                 if show {
-                    self.lines(ui, label, style);
+                    self.label(ui, i, label, style);
                 }
             },
         );
     }
 
-    fn node(&self, ui: &mut Ui<'_>, key: &str, n: &Node, r: &Rect) {
+    fn node(&self, ui: &mut Ui<'_>, i: usize, key: &str, n: &Node, r: &Rect) {
         let (x, y, w, h) = self.rect(r);
         let ink = self.ink(n.color);
+        // Opaque, its colour mixed over the canvas: a box drawn over an
+        // arrow or a text covers it (Decision 14), not shows it through.
         let fill = self
             .hue(n.color)
-            .map(|c| c.with_alpha(0.16))
+            .map(|c| self.pal.panel.mix(c, 0.16))
             .unwrap_or(self.pal.strip);
         let bw = self.width();
         let stroke = Stroke::new(bw, ink);
@@ -1847,7 +2194,7 @@ impl Pen {
         let d = (6.0 * self.zoom).max(3.0);
         let dashes = Stroke::new(bw, ink).dash(d, d * 0.7);
         let stroked = |p: Path| if n.dashed { p } else { p.stroked(stroke) };
-        let show = !n.label.is_empty() && self.label_size() >= 5.0;
+        let show = (self.typing(i) || !n.label.is_empty()) && self.label_size() >= 5.0;
         let style = self.style(self.label_size(), self.pal.fg);
         match n.shape {
             Shape::Rect | Shape::Round => {
@@ -1858,12 +2205,8 @@ impl Pen {
                 };
                 // The box and its label one float: the label is drawn
                 // after the fill, whatever the stack does.
-                let mut spec = float_at(x, y)
-                    .size(w, h)
-                    .bg(fill)
-                    .radius(radius)
-                    .main_align(Align::Center)
-                    .cross_align(Align::Center);
+                let mut spec =
+                    self.aligned(float_at(x, y).size(w, h).bg(fill).radius(radius), n.align);
                 if !n.dashed {
                     spec = spec.border(bw, ink);
                 }
@@ -1877,107 +2220,117 @@ impl Pen {
                         );
                     }
                     if show {
-                        self.lines(ui, &n.label, style);
+                        self.label(ui, i, &n.label, style);
                     }
                 });
                 return;
             }
-            Shape::Ellipse => {
-                ui.path_keyed(key, &stroked(ellipse(x, y, w, h)), NodeSpec::row().bg(fill))
-            }
-            Shape::Diamond => {
-                let p = Path::new()
-                    .move_to(x + w / 2.0, y)
-                    .line_to(x + w, y + h / 2.0)
-                    .line_to(x + w / 2.0, y + h)
-                    .line_to(x, y + h / 2.0)
-                    .close();
-                ui.path_keyed(key, &stroked(p), NodeSpec::row().bg(fill));
-            }
-            Shape::Cylinder => {
-                let (rx, ry) = (w / 2.0, (h * 0.15).min(0.5 * self.s).max(2.0));
-                let body = Path::new()
-                    .move_to(x, y + ry)
-                    .arc_to(rx, ry, 0.0, false, true, x + w, y + ry)
-                    .line_to(x + w, y + h - ry)
-                    .arc_to(rx, ry, 0.0, false, true, x, y + h - ry)
-                    .close();
-                ui.path_keyed(key, &stroked(body), NodeSpec::row().bg(fill));
-                if n.dashed {
-                    // The rim: the near half of the top.
-                    let pi = std::f32::consts::PI;
-                    let rim: Vec<Vec2> = (0..=24)
-                        .map(|i| {
-                            let a = pi * i as f32 / 24.0;
-                            Vec2::new(x + rx + rx * a.cos(), y + ry + ry * a.sin())
-                        })
-                        .collect();
-                    ui.polyline_keyed(&format!("{key}.rim"), &rim, dashes, NodeSpec::row());
-                } else {
-                    let rim = Path::new()
-                        .move_to(x, y + ry)
-                        .arc_to(rx, ry, 0.0, false, false, x + w, y + ry)
-                        .stroked(stroke);
+            _ => {}
+        }
+        // A path's box: the float its outline is drawn in, at its own
+        // coordinates, and its label laid out in — one layer an item
+        // (Decision 14). A dot's or a final's label beside it: too small
+        // to hold one.
+        let beside = matches!(n.shape, Shape::Dot | Shape::Final);
+        let spec = if beside {
+            NodeSpec::row()
+                .float(
+                    FloatConfig::parent()
+                        .inside(Align::Start, Align::Start)
+                        .offset(x, y)
+                        .clipped(),
+                )
+                .height(h)
+                .cross_align(Align::Center)
+        } else {
+            self.aligned(float_at(x, y).size(w, h), n.align)
+        };
+        ui.with_keyed(key, spec, |ui| {
+            match n.shape {
+                Shape::Ellipse => {
                     ui.path_keyed(
-                        &format!("{key}.rim"),
-                        &rim,
-                        NodeSpec::row().bg(Color::TRANSPARENT),
+                        "shape",
+                        &stroked(ellipse(0.0, 0.0, w, h)),
+                        NodeSpec::row().bg(fill),
                     );
                 }
+                Shape::Diamond => {
+                    let p = Path::new()
+                        .move_to(w / 2.0, 0.0)
+                        .line_to(w, h / 2.0)
+                        .line_to(w / 2.0, h)
+                        .line_to(0.0, h / 2.0)
+                        .close();
+                    ui.path_keyed("shape", &stroked(p), NodeSpec::row().bg(fill));
+                }
+                Shape::Cylinder => {
+                    let (rx, ry) = (w / 2.0, (h * 0.15).min(0.5 * self.s).max(2.0));
+                    let body = Path::new()
+                        .move_to(0.0, ry)
+                        .arc_to(rx, ry, 0.0, false, true, w, ry)
+                        .line_to(w, h - ry)
+                        .arc_to(rx, ry, 0.0, false, true, 0.0, h - ry)
+                        .close();
+                    ui.path_keyed("shape", &stroked(body), NodeSpec::row().bg(fill));
+                    if n.dashed {
+                        // The rim: the near half of the top.
+                        let pi = std::f32::consts::PI;
+                        let rim: Vec<Vec2> = (0..=24)
+                            .map(|i| {
+                                let a = pi * i as f32 / 24.0;
+                                Vec2::new(rx + rx * a.cos(), ry + ry * a.sin())
+                            })
+                            .collect();
+                        ui.polyline_keyed("rim", &rim, dashes, NodeSpec::row());
+                    } else {
+                        let rim = Path::new()
+                            .move_to(0.0, ry)
+                            .arc_to(rx, ry, 0.0, false, false, w, ry)
+                            .stroked(stroke);
+                        ui.path_keyed("rim", &rim, NodeSpec::row().bg(Color::TRANSPARENT));
+                    }
+                }
+                Shape::Dot => {
+                    ui.path_keyed("shape", &ellipse(0.0, 0.0, w, h), NodeSpec::row().bg(ink));
+                }
+                Shape::Final => {
+                    ui.path_keyed(
+                        "shape",
+                        &stroked(ellipse(0.0, 0.0, w, h)),
+                        NodeSpec::row().bg(self.pal.panel),
+                    );
+                    let (iw, ih) = (w * 0.5, h * 0.5);
+                    ui.path_keyed(
+                        "core",
+                        &ellipse((w - iw) / 2.0, (h - ih) / 2.0, iw, ih),
+                        NodeSpec::row().bg(ink),
+                    );
+                }
+                Shape::Rect | Shape::Round => {}
             }
-            Shape::Dot => ui.path_keyed(key, &ellipse(x, y, w, h), NodeSpec::row().bg(ink)),
-            Shape::Final => {
-                ui.path_keyed(
-                    key,
-                    &stroked(ellipse(x, y, w, h)),
-                    NodeSpec::row().bg(self.pal.panel),
-                );
-                let (iw, ih) = (w * 0.5, h * 0.5);
-                ui.path_keyed(
-                    &format!("{key}.core"),
-                    &ellipse(x + (w - iw) / 2.0, y + (h - ih) / 2.0, iw, ih),
-                    NodeSpec::row().bg(ink),
+            if n.dashed && !matches!(n.shape, Shape::Dot) {
+                ui.polyline_keyed(
+                    "dash",
+                    &outline_points(n.shape, 0.0, 0.0, w, h, 0.0),
+                    dashes,
+                    NodeSpec::row(),
                 );
             }
-        }
-        if n.dashed && !matches!(n.shape, Shape::Dot) {
-            ui.polyline_keyed(
-                &format!("{key}.dash"),
-                &outline_points(n.shape, x, y, w, h, 0.0),
-                dashes,
-                NodeSpec::row(),
-            );
-        }
-        // A path is drawn in the canvas's layer: its label, a float, is
-        // over it whatever the stack does.
-        if !show {
-            return;
-        }
-        let label_key = format!("{key}.label");
-        if matches!(n.shape, Shape::Dot | Shape::Final) {
-            // Too small to hold it: beside, on the right.
-            ui.with_keyed(
-                &label_key,
-                float_at(x + w + 0.4 * self.s, y)
-                    .height(h)
-                    .main_align(Align::Center),
-                |ui| self.lines(ui, &n.label, style),
-            );
-        } else {
-            ui.with_keyed(
-                &label_key,
-                float_at(x, y)
-                    .size(w, h)
-                    .main_align(Align::Center)
-                    .cross_align(Align::Center),
-                |ui| self.lines(ui, &n.label, style),
-            );
-        }
+            if show && beside {
+                ui.leaf_keyed("gap", NodeSpec::row().size(w + 0.4 * self.s, h));
+                ui.with_keyed("words", NodeSpec::column(), |ui| {
+                    self.label(ui, i, &n.label, style)
+                });
+            } else if show {
+                self.label(ui, i, &n.label, style);
+            }
+        });
     }
 
     fn edge(
         &self,
         ui: &mut Ui<'_>,
+        i: usize,
         key: &str,
         e: &kawoosh_diagram::Edge,
         w: &Wire,
@@ -1989,34 +2342,10 @@ impl Pen {
             self.ink(e.color)
         };
         let width = self.width() * if selected { 1.4 } else { 1.0 };
-        let mut pts: Vec<Vec2> = w.points.iter().map(|p| self.px(*p)).collect();
-        if pts.len() < 2 {
+        if w.points.len() < 2 {
             return;
         }
-        let head = (9.0 * self.zoom).clamp(6.0, 16.0);
-        let n = pts.len();
-        if e.heads.at_end() {
-            pts[n - 1] = arrow_head(
-                ui,
-                &format!("{key}.h1"),
-                pts[n - 2],
-                pts[n - 1],
-                head,
-                color,
-            );
-        }
-        if e.heads.at_start() {
-            pts[0] = arrow_head(ui, &format!("{key}.h0"), pts[1], pts[0], head, color);
-        }
-        let mut stroke = Stroke::new(width, color);
-        if e.dashed {
-            let d = (6.0 * self.zoom).max(3.0);
-            stroke = stroke.dash(d, d * 0.7);
-        }
-        ui.polyline_keyed(key, &pts, stroke, NodeSpec::row());
-        if e.label.is_empty() || self.label_size() < 5.0 {
-            return;
-        }
+        let labelled = (!e.label.is_empty() || self.typing(i)) && self.label_size() >= 5.0;
         let style = self.style(
             self.label_size() * 0.9,
             if selected {
@@ -2032,25 +2361,59 @@ impl Pen {
             .fold(0.0f32, f32::max);
         let lines = e.label.split('\n').count() as f32;
         let th = lines * (self.label_size() * 0.9 * 1.3).round();
+        // One float an arrow (Decision 14), at its label's corner — at its
+        // middle with none — its line and heads drawn from there, under
+        // the label laid out after them.
         let m = self.px(w.mid);
-        ui.with_keyed(
-            &format!("{key}.label"),
-            float_at(m.x - widest / 2.0 - 4.0, m.y - th / 2.0 - 1.0)
-                .pad_xy(4.0, 1.0)
-                .bg(self.pal.panel)
-                .radius(3.0)
-                .cross_align(Align::Center),
-            |ui| self.lines(ui, &e.label, style),
-        );
+        let at = if labelled {
+            Vec2::new(m.x - widest / 2.0 - 4.0, m.y - th / 2.0 - 1.0)
+        } else {
+            m
+        };
+        let mut pts: Vec<Vec2> = w
+            .points
+            .iter()
+            .map(|p| {
+                let q = self.px(*p);
+                Vec2::new(q.x - at.x, q.y - at.y)
+            })
+            .collect();
+        let head = (9.0 * self.zoom).clamp(6.0, 16.0);
+        let n = pts.len();
+        let mut stroke = Stroke::new(width, color);
+        if e.dashed {
+            let d = (6.0 * self.zoom).max(3.0);
+            stroke = stroke.dash(d, d * 0.7);
+        }
+        ui.with_keyed(key, float_at(at.x, at.y), |ui| {
+            if e.heads.at_end() {
+                pts[n - 1] = arrow_head(ui, "h1", pts[n - 2], pts[n - 1], head, color);
+            }
+            if e.heads.at_start() {
+                pts[0] = arrow_head(ui, "h0", pts[1], pts[0], head, color);
+            }
+            ui.polyline_keyed("line", &pts, stroke, NodeSpec::row());
+            if labelled {
+                ui.with_keyed(
+                    "label",
+                    NodeSpec::column()
+                        .pad_xy(4.0, 1.0)
+                        .bg(self.pal.panel)
+                        .radius(3.0)
+                        .cross_align(Align::Center),
+                    |ui| self.label(ui, i, &e.label, style),
+                );
+            }
+        });
     }
 
-    fn text(&self, ui: &mut Ui<'_>, key: &str, t: &Text, r: &Rect) {
+    fn text(&self, ui: &mut Ui<'_>, i: usize, key: &str, t: &Text, r: &Rect) {
         if self.label_size() < 5.0 {
             return;
         }
         let (x, y, _, _) = self.rect(r);
         let style = self.style(self.label_size(), self.hue(t.color).unwrap_or(self.pal.fg));
-        ui.with_keyed(key, float_at(x, y), |ui| self.lines(ui, &t.label, style));
+        ui.with_keyed(key, float_at(x, y), |ui| self.label(ui, i, &t.label, style));
     }
 
     /// A frame round `r`: what is selected, a box an arrow will join.
@@ -2062,6 +2425,24 @@ impl Pen {
                 .size(w + 6.0, h + 6.0)
                 .border(1.5, color)
                 .radius(3.0),
+        );
+    }
+
+    /// Where a selected arrow bends, a dot to pull: filled when it does.
+    fn bend_handle(&self, ui: &mut Ui<'_>, at: Pt, bent: bool) {
+        let c = self.px(at);
+        let d = HANDLE + 2.0;
+        ui.leaf_keyed(
+            "bend",
+            float_at(c.x - d / 2.0, c.y - d / 2.0)
+                .size(d, d)
+                .radius(d / 2.0)
+                .bg(if bent {
+                    self.pal.accent
+                } else {
+                    self.pal.panel
+                })
+                .border(1.5, self.pal.accent),
         );
     }
 
@@ -2188,6 +2569,13 @@ const ZOOM_OUT_KEY: &str = if cfg!(target_os = "macos") {
     "Ctrl+-"
 };
 
+/// What the status says while a label is typed in place.
+const KEEP_HINT: &str = if cfg!(target_os = "macos") {
+    "<CR> a new line · <Esc><Esc> or ⌘↩ keeps it · <C-c> lets it go"
+} else {
+    "<CR> a new line · <Esc><Esc> or Ctrl+↩ keeps it · <C-c> lets it go"
+};
+
 /// The toolbar's buttons in groups, each lit when it fits what is
 /// selected: the same buttons whatever is.
 fn toolbar_groups(what: &Selected) -> Vec<Vec<(Button, bool)>> {
@@ -2217,10 +2605,11 @@ fn toolbar_groups(what: &Selected) -> Vec<Vec<(Button, bool)>> {
             ),
             (("heads", "", "diagram heads"), what.arrows > 0),
             (("reverse", "R", "diagram reverse"), what.arrows > 0),
+            (("unbend", "B", "diagram unbend"), what.arrows > 0),
             (("connect", "C", "diagram connect"), what.boxes >= 2),
             (
                 ("group", "G", "diagram group"),
-                what.boxes + what.groups > 0,
+                what.boxes + what.texts + what.groups > 0,
             ),
             (("ungroup", "", "diagram ungroup"), what.groups > 0),
             (("delete", "x", "diagram delete"), what.any()),
@@ -2499,6 +2888,26 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
+            Spec::new("diagram label done")
+                .when(&["field:diagram/label"])
+                .doc("the label typed where it is drawn written: a box grown to hold it, a text with no words taken out"),
+            |k, ctx| {
+                if let Some(v) = k.canvas_of_label(ctx.view) {
+                    k.canvas_label_end(v, true);
+                }
+            },
+        ),
+        cmd(
+            Spec::new("diagram label cancel")
+                .when(&["field:diagram/label"])
+                .doc("the label typed where it is drawn let go, the item as it was — a text made for it taken out"),
+            |k, ctx| {
+                if let Some(v) = k.canvas_of_label(ctx.view) {
+                    k.canvas_label_end(v, false);
+                }
+            },
+        ),
+        cmd(
             Spec::new("diagram delete")
                 .when(on)
                 .doc("the selection taken out; a box takes its arrows with it"),
@@ -2520,6 +2929,10 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     return;
                 }
                 k.canvas_do(false, |doc, sel, _| edit::move_by(doc, sel, dx, dy));
+                // The view follows what moved (asked 2026-10-23).
+                if let Some(v) = k.canvas_here() {
+                    k.canvas_reveal(v);
+                }
             },
         ),
         cmd(
@@ -2542,6 +2955,79 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     if let Item::Node(n) = item {
                         n.shape = named.unwrap_or(n.shape.next());
                     }
+                });
+            },
+        ),
+        cmd(
+            Spec::new("diagram align")
+                .args(Args::new(&[ArgKind::Text]))
+                .when(on)
+                .doc("where the selected boxes' labels sit: center, or left or right from the top — a contract, code — else the next of them"),
+            |k, ctx| {
+                let named = match ctx.arg(0) {
+                    Some(w) => match LabelAlign::from_word(w) {
+                        Some(a) => Some(a),
+                        None => {
+                            k.ed.message = format!("no align `{w}`: center left right");
+                            return;
+                        }
+                    },
+                    None => None,
+                };
+                k.canvas_each(|item| {
+                    if let Item::Node(n) = item {
+                        n.align = named.unwrap_or(n.align.next());
+                    }
+                });
+            },
+        ),
+        cmd(
+            Spec::new("diagram arrange")
+                .args(Args::new(&[ArgKind::Text]))
+                .when(on)
+                .doc("the selection forward over the next thing drawn, backward under the one before, to the front or the back: its lines moved in the file, whose order is the drawing's"),
+            |k, ctx| {
+                let Some(how) = ctx.arg(0).and_then(edit::Arrange::from_word) else {
+                    k.ed.message = "arrange: forward backward front back".into();
+                    return;
+                };
+                let Some(v) = k.canvas_here() else {
+                    return;
+                };
+                let doc = k.diagram_doc(v);
+                let sel = k.canvas.views[&v].sel.clone();
+                if sel.is_empty() {
+                    k.ed.message = "nothing selected".into();
+                    return;
+                }
+                let b = k.ed.views[v].buffer;
+                let text = k.ed.buffers[b].text();
+                let (edits, after) = edit::arrange(&doc, &text, &sel, how);
+                if edits.is_empty() {
+                    return;
+                }
+                if !k.ed.apply_edits(b, &edits) {
+                    k.ed.message = "the diagram's buffer takes no edits".into();
+                    return;
+                }
+                k.canvas_of(v).sel = after;
+            },
+        ),
+        cmd(
+            Spec::new("diagram unbend")
+                .when(on)
+                .doc("the selected arrows, and every arrow of the selected boxes, straight from box to box again: their bend let go"),
+            |k, _| {
+                k.canvas_do(false, |doc, sel, _| {
+                    let mut arrows: Vec<usize> = sel
+                        .iter()
+                        .copied()
+                        .filter(|&i| matches!(doc.entries.get(i).map(|e| &e.item), Some(Item::Edge(_))))
+                        .collect();
+                    arrows.extend(edit::arrows_of(doc, sel));
+                    arrows.sort_unstable();
+                    arrows.dedup();
+                    arrows.into_iter().flat_map(|i| edit::bend(doc, i, None)).collect()
                 });
             },
         ),
@@ -2686,7 +3172,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("diagram group")
                 .when(on)
-                .doc("a group round the selected boxes and groups, its label asked — not a second one round the same"),
+                .doc("a group round the selected boxes, texts and groups — a text named for it — its label typed; not a second one round the same"),
             |k, _| {
                 let Some(v) = k.canvas_here() else {
                     return;
@@ -2701,12 +3187,16 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     return;
                 }
                 match edit::group(&doc, &sel) {
-                    Some((change, _)) => {
-                        if k.canvas_apply(v, &[change], true) {
+                    Some((changes, id)) => {
+                        if k.canvas_apply(v, &changes, false) {
+                            let doc = k.diagram_doc(v);
+                            if let Some(g) = doc.entries.iter().position(|e| e.item.id() == Some(id.as_str())) {
+                                k.canvas_of(v).sel = vec![g];
+                            }
                             k.canvas_edit(v);
                         }
                     }
-                    None => k.ed.message = "select boxes to group".into(),
+                    None => k.ed.message = "select boxes or texts to group".into(),
                 }
             },
         ),
@@ -2889,6 +3379,9 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                         b.h = (b.h + dh).max(1);
                     }
                 });
+                if let Some(v) = k.canvas_here() {
+                    k.canvas_reveal(v);
+                }
             },
         ),
         cmd(

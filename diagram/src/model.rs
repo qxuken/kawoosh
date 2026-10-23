@@ -122,6 +122,42 @@ impl Color {
     }
 }
 
+/// Where a box's label sits in it: in its middle, each line centred
+/// (the default); or from its top left, or its top right, each line
+/// against that side — a contract, a schema, code.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum LabelAlign {
+    #[default]
+    Center,
+    Left,
+    Right,
+}
+
+impl LabelAlign {
+    pub const ALL: [LabelAlign; 3] = [LabelAlign::Center, LabelAlign::Left, LabelAlign::Right];
+
+    pub fn word(self) -> &'static str {
+        match self {
+            LabelAlign::Center => "center",
+            LabelAlign::Left => "left",
+            LabelAlign::Right => "right",
+        }
+    }
+
+    pub fn from_word(w: &str) -> Option<LabelAlign> {
+        LabelAlign::ALL.into_iter().find(|a| a.word() == w)
+    }
+
+    /// The one after it, round: what `diagram align` steps to.
+    pub fn next(self) -> LabelAlign {
+        match self {
+            LabelAlign::Center => LabelAlign::Left,
+            LabelAlign::Left => LabelAlign::Right,
+            LabelAlign::Right => LabelAlign::Center,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     pub id: String,
@@ -134,10 +170,14 @@ pub struct Node {
     pub color: Option<Color>,
     /// Its outline dashed: something outside, planned, optional.
     pub dashed: bool,
+    pub align: LabelAlign,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Text {
+    /// The name a group holds it by, when one does: a text's line needs
+    /// none.
+    pub id: Option<String>,
     pub label: String,
     pub x: i32,
     pub y: i32,
@@ -195,6 +235,9 @@ pub struct Edge {
     pub route: Route,
     pub dashed: bool,
     pub color: Option<Color>,
+    /// The point it is bent through, its label on it: drawn there to
+    /// make room, round a box in the way.
+    pub via: Option<(i32, i32)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -214,12 +257,14 @@ pub enum Item {
 }
 
 impl Item {
-    /// The id other lines name it by: a box's, a group's.
+    /// The id other lines name it by: a box's, a group's, a text's
+    /// that has one.
     pub fn id(&self) -> Option<&str> {
         match self {
             Item::Node(n) => Some(&n.id),
             Item::Group(g) => Some(&g.id),
-            _ => None,
+            Item::Text(t) => t.id.as_deref(),
+            Item::Edge(_) => None,
         }
     }
 
@@ -294,6 +339,17 @@ impl Doc {
         self.entries.iter().map(|e| &e.item)
     }
 
+    /// The entries in the order they are drawn (docs/design/diagrams.md
+    /// Decision 14): the groups behind, each a frame round what it holds,
+    /// then every box, arrow and text in the file's order — a line later
+    /// in the file over the ones before it.
+    pub fn draw_order(&self) -> impl Iterator<Item = usize> + '_ {
+        let group = |i: &usize| matches!(self.entries[*i].item, Item::Group(_));
+        (0..self.entries.len())
+            .filter(group)
+            .chain((0..self.entries.len()).filter(move |i| !group(i)))
+    }
+
     /// The entry of the box named `id`.
     pub fn node_index(&self, id: &str) -> Option<usize> {
         self.entries
@@ -337,13 +393,22 @@ impl Doc {
     /// The boxes a group holds, through the groups among its members,
     /// each once.
     pub fn group_nodes(&self, id: &str) -> Vec<String> {
+        self.group_leaves(id)
+            .into_iter()
+            .filter(|m| self.node(m).is_some())
+            .collect()
+    }
+
+    /// What a group holds that is not a group — its boxes and its texts —
+    /// through the groups among its members, each once.
+    pub fn group_leaves(&self, id: &str) -> Vec<String> {
         let mut out = Vec::new();
         let mut seen = Vec::new();
-        self.collect_nodes(id, &mut out, &mut seen);
+        self.collect_leaves(id, &mut out, &mut seen);
         out
     }
 
-    fn collect_nodes(&self, id: &str, out: &mut Vec<String>, seen: &mut Vec<String>) {
+    fn collect_leaves(&self, id: &str, out: &mut Vec<String>, seen: &mut Vec<String>) {
         if seen.iter().any(|s| s == id) {
             return;
         }
@@ -352,13 +417,18 @@ impl Doc {
             return;
         };
         for m in &g.members {
-            if self.node(m).is_some() {
-                if !out.contains(m) {
-                    out.push(m.clone());
-                }
-            } else {
-                self.collect_nodes(m, out, seen);
+            if self.group(m).is_some() {
+                self.collect_leaves(m, out, seen);
+            } else if self.has_id(m) && !out.contains(m) {
+                out.push(m.clone());
             }
         }
+    }
+
+    /// The entry of the text named `id`.
+    pub fn text_index(&self, id: &str) -> Option<usize> {
+        self.entries
+            .iter()
+            .position(|e| matches!(&e.item, Item::Text(t) if t.id.as_deref() == Some(id)))
     }
 }

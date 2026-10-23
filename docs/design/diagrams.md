@@ -42,16 +42,20 @@ arrow api -- db dashed
 group backend "Backend" { db }
 ```
 
-- `box ID ["LABEL"] [at X,Y] [size WxH] [shape S] [color C]`; shapes
+- `box ID ["LABEL"] [at X,Y] [size WxH] [shape S] [color C] [dashed]
+  [align left|right]`; shapes
   `rect` (the default), `round`, `ellipse`, `diamond`, `cylinder`, and
   for state machines `dot` (a start state) and `final` (a ring round a
   dot). Without `size`, 8×3 (a dot 1×1).
-- `text "LABEL" at X,Y [color C]`: free text, its top left at the point.
-- `arrow A -> B ["LABEL"] [elbow] [dashed] [color C]`: `->` a head at
-  B, `<-` at A, `<->` both, `--` neither; `elbow` is an orthogonal
-  route, straight by default. `A -> A` is a loop.
-- `group ID ["LABEL"] { A B … }`: a frame round its members, a member
-  another group too. It has no place of its own: it is where they are.
+- `text [ID] "LABEL" at X,Y [color C]`: free text, its top left at the
+  point; an id only when a group holds it (Decision 14).
+- `arrow A -> B ["LABEL"] [via X,Y] [elbow] [dashed] [color C]`: `->` a
+  head at B, `<-` at A, `<->` both, `--` neither; `elbow` is an
+  orthogonal route, straight by default; `via` the point it is bent
+  through (Decision 13). `A -> A` is a loop.
+- `group ID ["LABEL"] { A B … }`: a frame round its members — boxes,
+  named texts, other groups. It has no place of its own: it is where
+  they are.
 - Colours: `red orange yellow green teal blue purple gray`.
 - `#` starts a comment line; blank lines are kept. A label is quoted,
   `\"`, `\\` and `\n` inside it.
@@ -116,10 +120,13 @@ the capitals move.
 | `<A-hjkl>` | narrower, taller, shorter, wider |
 | `a` | on a box: an arrow from it, `hjkl` to the other, `<CR>` joins, `<Esc>` lets go; else the arrow tool |
 | `v` `<Esc>` · `b` · `t` | tools: select, box, text — the box and text tools with a grid cursor, `hjkl` (`HJKL` five) and `<CR>`: a text there, a box's two corners (twice in place, an 8×3) |
-| `<CR>` `i` | the selection's label, in the prompt (`:diagram label TEXT`) |
+| `<CR>` `i` | the selection's label, typed where it is drawn (Decision 12; `:diagram label TEXT` sets it from the prompt) |
 | `x` `<Del>` | delete; a box takes its arrows with it |
+| `B` | the selected arrows, a box's arrows on a box, straight again: their bend let go (Decision 13) |
+| `A` | a box's label against the left, the right, or in the middle (Decision 12) |
 | `s` · `r` · `-` · `R` · `c` | next shape · elbowed or straight again, a box's arrows on a box · dashed, an arrow or a box's outline · reversed · next colour |
 | `C` | connect the selected boxes in the order selected |
+| `>` `<` · `g>` `g<` | the selection a step forward, backward in the draw order · to the front, the back (Decision 14) |
 | `G` | group the selection (`g` is a prefix in pane mode: `gt`, `gg`); a group round just those already is selected instead of a second |
 | `y` · `p` · `D` | copy · paste · duplicate |
 | `<C-a>` | select everything |
@@ -212,6 +219,13 @@ with the selection moved its buttons, and the drawing under them. The
 drawing does not move as the strip comes and goes either: its origin is
 measured from the pane's inside under the title bar, not from the
 canvas's own box below the strip. A drag that starts on it moves nothing.
+Reported 2026-10-22, "<A-/> jumps whole diagram for a frame": the
+drawing's floats were placed in the canvas's box, which kui lays out a
+frame late, so the frame the strip came or went in drew them a strip
+off. They are drawn on one float, the *plane*, as wide as the canvas and
+reaching from the pane's inside under the title bar down to the canvas's
+foot, pinned by that foot — which the strip does not move — and clipped
+by the canvas as before.
 
 *Beat:* a palette of shapes to drag from (the keys and the menu reach
 every shape already, and a drag-from-palette is a second way to make a
@@ -288,3 +302,134 @@ are — so a group's frame has no size to change, and a box is resized by
 "changes the font" was changing the wrong way. Were frames that clip
 built (a frame with a place and a size of its own), ⌘= ⌘- on a selected
 frame would be the other reading, and a question for then.
+
+### 12. A label is typed where it is drawn, over lines
+
+Asked 2026-10-22: "I want to add multiline text everywhere (free or
+inside boxes, arrows, etc), maybe we will work on a editor inline?
+example is - some kind of a contract". Labels held `\n` from the first
+round, but the prompt typed one line of them, `\n` spelled out.
+
+- **The editor's own text, in place.** `diagram edit` (`<CR>`, `i`, a
+  double click, a box or a text just made) opens a *field of lines* over
+  the label — the engine's field (a buffer and a view, not listed, no
+  history) whose newline is kept and whose `<CR>` breaks the line as a
+  buffer's, its indent carried — and the keys go to it while the canvas
+  is focused. Its lines are drawn where the label is, each the editor's
+  line (selections, a caret per selection, a bar on kui's blink) at the
+  label's size; the status says how to leave.
+- **Kept or let go, as the prompt is.** `<Esc>` in normal mode — so
+  `<Esc><Esc>` from insert — and `<CR>` in normal mode keep it, `<C-CR>`
+  (⌘↩) from either mode; `<C-c>` lets it go. A press on the canvas
+  anywhere but the label keeps it, and so does a toolbar button or the
+  menu. Nothing is written while it is typed: the canvas draws the words
+  over the text as last parsed (Decision 3), and the keeping is one
+  `Set` of the line, one undo step.
+- **A box grows to hold it** — as it is typed, and so when kept — by its
+  measured lines and half a unit of air, more where the outline curves in
+  (an ellipse holds a box √2 smaller, a diamond one half its size, a
+  cylinder's rims take a unit); never shrunk, so a box sized by hand
+  stays as big. A text kept with no words, or a text made for it and let
+  go, is taken out.
+- **`align left` / `align right`** on a box sets its label from the top
+  against that side, half a unit in, each line against it: a contract or
+  code reads down its left edge. `center` (the default, never written)
+  is the middle, each line centred. `A` steps through them, the menu has
+  them under *Label*, the export carries them as Excalidraw's
+  `textAlign` with `verticalAlign: top`. Free text is always from its top
+  left, an arrow's label always centred on it.
+
+*Beat:* the prompt with a multi-line mode (the label far from where it
+is drawn, the box's growth unseen until written); a buffer of its own in
+a split (a pane opened and closed for every label); writing each key's
+change through (a step a key in the undo tree, and a reparse each).
+
+### 13. An arrow bends through a point of its own
+
+Asked 2026-10-22: "I want an ability to move arrows so i can write
+more" — a label of several lines (Decision 12) on an arrow between two
+boxes a few units apart had nowhere to go. Of the readings (a bend, a
+label moved off its arrow, both), the user took the bend.
+
+- **`via X,Y`** on an arrow's line: a grid point it is routed through,
+  its label on it. Still between its boxes (Decision 5): the ends are
+  routed, only the bend is placed. Straight, it runs from A's outline to
+  the point and on to B's. Elbowed, it stays at right angles: past both
+  boxes on the side away from the other's way (below or above two boxes
+  side by side, beside two stacked) a U at the point's height, else the
+  plain elbow's turn moved to the point; its label where the route
+  passes nearest it. A loop goes out to the point and back. A point
+  inside either box, or where no right-angled route goes, is not taken:
+  the arrow is drawn as it would be without it. A bent arrow runs in no
+  lane: its route is its own.
+- **Pulled by its middle.** A press on an arrow alone (not one of a
+  wider selection, which moves as before) selects it; a drag from there
+  bends it through the grid point it is let go on, drawn as it goes. An
+  arrow with no label shows a dot where it bends or would; a label is
+  the grip itself, and a dot on it covered its words.
+- **The keys move it as a box**: `HJKL` on an arrow selected move its
+  bend a unit, from its label's point when it has none. A bend is kept
+  on its route: asked through a point past the end of the run a U or a
+  moved turn takes, it is put at the run's grid point nearest it (asked
+  2026-10-23: "`L` continue moving via and `H` need time … to reach a
+  point when it become visual change"); a straight arrow's goes
+  anywhere, a point inside a box is kept as asked. A box moved
+  leaves the bend where it was put; both of its boxes moved (a group, a
+  marquee) carry it, and a paste moves it with them. `B` — the menu's
+  Unbend, the toolbar's *unbend* — lets it go.
+- **The export** writes the route as drawn: Excalidraw's arrow points.
+
+*Beat:* free points for an arrow's ends (Decision 10's free-floating
+arrows; a bend keeps the ends routed and the line one point long), a
+label offset (the arrow still crossed the label's room), several bends
+an arrow (a hand-drawn polyline in a format whose arrows are routed).
+
+### 14. The file's order is the drawing's
+
+Asked 2026-10-23: "pointer drawn under boxes/text … need a way to
+change draw order for items", then "maybe we can draw order base from
+the declaration order in a file … the reordering is trivial". The canvas
+drew every box, then every arrow, then every text, and a path-shaped box
+(an ellipse, a diamond) under every rectangle: an arrow bent over a box
+went under it, and nothing could be put over anything else.
+
+- **A line later in the file is drawn over the ones before it.** Groups
+  stay behind everything, whatever their place: a group is a frame round
+  what it holds, and drawn in turn its wash would cover the boxes it
+  frames. `Doc::draw_order` says it once; the canvas draws by it and a
+  press hits by it, the topmost thing first.
+- **One float an item.** kui paints each float a layer of its own and a
+  line, a polygon or a path in its parent's layer, so an item drawn as
+  a path plus a label float was two layers apart. Each item is now one
+  float holding all of it: a box's fill, outline and label; a path's
+  outline at its own coordinates; an arrow's line and heads drawn from
+  its label's corner, the label laid out after them, over them; a
+  group's wash, dashed frame and label.
+- **Floats stacked in tree order** (kui F186 in alpha.64, ADR 0053:
+  `floats_in_order` on the drawing's plane, asked of kui 2026-10-23): kui
+  stacked float layers by key, a key it had not seen going on top, so a
+  box panned into view, or a new one, came in over everything whatever
+  its line. The plane asks for its floats in the order drawn, each frame.
+- **Reordering moves lines** (`diagram arrange forward|backward|front|
+  back`; `>` `<`, `g>` `g<`, the menu's Arrange): the selection's lines
+  change places with the items' lines, each kept byte for byte, comments
+  and blank lines where they were. A step goes past the next box, arrow
+  or text drawn, stepping over a group's line, which changes nothing
+  drawn. `]` `[` were not taken: `]b` `]t` and the rest fall through to
+  every pane.
+- **A text joins a group** (asked the same day: "maybe text should be
+  also groupable"). `text ID "LABEL"` names it; `G` names a text it
+  groups that has no name (`t1`, …), moves it with the group, frames it,
+  copies and pastes it with it.
+- **What moves stays in view** (asked: "while i move element … it should
+  clamp viewport so it could be visible (careful with edgecases)"):
+  `HJKL`, `<A-hjkl>` and a bend moved from the keys reveal what moved,
+  the least that shows it with a unit of air, its top left first when it
+  is bigger than the view. A drag carried past the canvas's edge pans the
+  view by how far past the pointer is, at most 24 px a move and only
+  while the pointer moves: held still outside, nothing runs away.
+
+*Beat:* a `z ORDER` word on every line (a second order to keep beside
+the file's, renumbered on every insert), re-keying the drawing whenever
+what is drawn changes (kui's stack rebuilt by throwing away every node's
+state), groups drawn in turn (their wash over what they frame).

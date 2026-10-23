@@ -262,6 +262,7 @@ impl Kawoosh {
         self.ed
             .prompt_view()
             .or_else(|| self.header_field())
+            .or_else(|| self.canvas_label_field())
             .or_else(|| self.focused_view())
             .or_else(|| match self.layout.focused_content() {
                 Some(Content::Lua(name)) => self.lua_field_focused(&name),

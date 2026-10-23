@@ -27,10 +27,10 @@ group backend "Backend" { db }
 
 | line | what it is |
 |---|---|
-| `box ID "LABEL" at X,Y size WxH shape S color C dashed` | a box; only its id is needed (`at 0,0`, `size 8x3` otherwise); `dashed` draws its outline dashed |
-| `text "LABEL" at X,Y color C` | free text, its top left at the point |
-| `arrow A -> B "LABEL" elbow dashed color C` | an arrow between two boxes; `->` a head at B, `<-` at A, `<->` both, `--` none |
-| `group ID "LABEL" { A B }` | a frame round boxes (or other groups) |
+| `box ID "LABEL" at X,Y size WxH shape S color C dashed align A` | a box; only its id is needed (`at 0,0`, `size 8x3` otherwise); `dashed` draws its outline dashed; `align left` or `align right` sets its label from the top against that side, for a contract or code (`center` otherwise) |
+| `text ID "LABEL" at X,Y color C` | free text, its top left at the point; the id only when a group holds it |
+| `arrow A -> B "LABEL" via X,Y elbow dashed color C` | an arrow between two boxes; `->` a head at B, `<-` at A, `<->` both, `--` none; `via` bends it through that point |
+| `group ID "LABEL" { A B }` | a frame round boxes, texts or other groups |
 
 - **Shapes**: `rect`, `round`, `ellipse`, `diamond`, `cylinder`, and for
   state machines `dot` (a start state) and `final` (an end state).
@@ -40,8 +40,15 @@ group backend "Backend" { db }
   everything snaps.
 - **Arrows** follow their boxes: they leave and meet a box at its outline;
   `elbow` routes at right angles. `a -> a` is a loop, and two arrows
-  between the same boxes run side by side.
+  between the same boxes run side by side. `via X,Y` bends an arrow
+  through a point, its label there; an elbow with one below or above
+  both boxes goes round under or over them.
 - A line starting `#` is a comment. In a label, `\n` is a line break.
+
+**Draw order** is the file's: a line later in the file is drawn over the
+ones before it (groups are always behind, as frames). `>` and `<` move
+the selection a step forward or back, `g>` and `g<` to the front or the
+back — they move its lines in the file.
 
 A line that does not read is listed over the diagram (line 4: no box
 `ghost`); the rest still draws. Lines the diagram changes are written
@@ -51,10 +58,15 @@ again in a standard form; lines it does not touch stay as you wrote them.
 
 - **Click** a thing to select it; **shift-click** adds to the selection.
   **Drag** on an empty spot to select what the rectangle holds.
-- **Drag** the selection to move it; a group moves its boxes.
+- **Drag** the selection to move it; a group moves its boxes. Past the
+  diagram's edge the view follows; moved from the keys, the view keeps
+  it in sight too.
 - **Drag a corner** of a selected box to resize it.
+- **Drag an arrow** to bend it through the point where you let go: room
+  for its label, or a way round a box. Its label goes with the bend.
 - **Alt-drag** from one box to another draws an arrow.
-- **Double-click** a thing to edit its label.
+- **Double-click** a thing to type its label where it is; a click
+  anywhere else on the diagram keeps what you typed.
 - **The wheel** pans; {{mac:⌘}}{{pc:Ctrl}} and the wheel zooms where the
   pointer is; the middle button drags the view.
 - **Right-click** a thing for what you can do to it — its shape, its
@@ -66,6 +78,25 @@ again in a standard form; lines it does not touch stay as you wrote them.
   is selected. It is the pane's key legend: {{mac:`⌥/`}}{{pc:`<A-/>`}}, or
   `keys` in the title bar, shows and hides it, and `keys.legend = "full"`
   shows it from the start.
+
+## Labels
+
+`<CR>` or `i` on a box, an arrow, a text or a group — or a double-click —
+types its label right where it is drawn, over as many lines as you like:
+a contract, a schema, a few lines of code. It is the editor's own text:
+insert mode to type, `<CR>` a new line (it starts at the indent of the one
+before), `<Esc>` for normal mode and vim's keys over the lines. A box
+grows to hold its label as you type; it never shrinks on its own.
+
+| key | what it does |
+|---|---|
+| `<Esc>` in normal mode (`<Esc><Esc>` from insert), `<CR>` in normal mode | keep the label |
+| {{mac:`⌘↩`}}{{pc:`<C-CR>`}} | keep it, from either mode |
+| `<C-c>` | let it go: the label as it was |
+
+The whole label is one step: `u` takes it back at once. A new text that
+you leave with no words is taken out again. `A` on a box sets its label
+from the top left, then the right, then the middle again.
 
 ## The keys
 
@@ -81,27 +112,30 @@ to connect, group or move several things.
 
 | key | what it does |
 |---|---|
-| `n` | a new box, beside the one selected or in the middle, its label asked |
+| `n` | a new box, beside the one selected or in the middle, its label typed in it |
 | `o` · `O` | a new box to the right · below the one selected, an arrow to it |
 | `h` `j` `k` `l`, the arrows | select the nearest box or text that way |
 | `<C-h>` `<C-j>` `<C-k>` `<C-l>` | the same, the arrows among them (by their label) |
 | `<C-n>` · `<C-p>` | select the next · previous thing in the file, arrows and groups too |
 | `<C-o>` | the group round the selection, then the one round that |
 | `V` | extend: the keys above add to the selection; `V` or `<Esc>` stop |
-| `H` `J` `K` `L`, shift and the arrows | move the selection a unit (`5L` five) |
+| `H` `J` `K` `L`, shift and the arrows | move the selection a unit (`5L` five); an arrow's bend |
 | `<A-h>` `<A-l>` · `<A-k>` `<A-j>` | narrower, wider · shorter, taller |
 | `a` | with a box selected, an arrow from it: `hjkl` to the other box, `<CR>` joins, `<Esc>` lets go; otherwise the arrow tool for the mouse |
 | `b` · `t` · `v` | the box tool (drag one, or `hjkl` the cursor and `<CR>` its two corners), the text tool (click, or the cursor and `<CR>`), back to select |
 | `<Esc>` | let go of the tool, then the selection |
-| `<CR>` `i` | edit the label |
+| `<CR>` `i` | type the label where it is ([Labels](#labels)) |
 | `x` `<Del>` | delete; a box takes its arrows with it |
 | `s` | the next shape |
+| `A` | a box's label against the left, the right, or in the middle |
 | `r` | arrows elbowed or straight again — a box's arrows, on a box |
 | `-` | dashed or solid: an arrow, or a box's outline |
 | `R` | an arrow the other way round |
+| `B` | an arrow straight again, its bend let go (a box's arrows, on a box) |
 | `c` | the next colour |
 | `C` | connect the selected boxes, in the order you selected them |
-| `G` | group the selection (once: the same boxes again select the group they are in) |
+| `G` | group the selection, texts too (once: the same boxes again select the group they are in) |
+| `>` `<` · `g>` `g<` | draw the selection a step forward · back · at the front · at the back |
 | `y` · `p` · `D` | copy · paste · duplicate |
 | `<C-a>` | select everything |
 | `u` · `<C-r>` | undo · redo |
@@ -112,7 +146,7 @@ to connect, group or move several things.
 
 `:`, `<leader>` and `<C-w>` work as everywhere else. Every key is a
 command you can also type: `:diagram shape cylinder`, `:diagram color
-blue`, `:diagram label Payments`, `:diagram heads both`, `:diagram add
+blue`, `:diagram label Payments`, `:diagram align left`, `:diagram heads both`, `:diagram add
 down`, `:diagram box 10 4`, `:diagram zoom 2`, `:diagram pan right`.
 
 ## Sharing it
