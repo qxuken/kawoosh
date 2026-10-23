@@ -2208,6 +2208,33 @@ impl Kawoosh {
         );
     }
 
+    /// `path copy FORM` in a plugin's pane: the file or directory its
+    /// view says it shows (`opts.path`, else `opts.here`), in the form
+    /// asked, onto the clipboard and into the register as a file's is.
+    fn pane_path_copy(&mut self, form: &str) {
+        let focused = self.layout.focused();
+        let shown = match self.layout.content(focused) {
+            Some(Content::Lua(name)) => self
+                .scripting
+                .rt
+                .as_ref()
+                .and_then(|rt| rt.view_path(&name, focused))
+                .map(|p| (name, p)),
+            _ => None,
+        };
+        let Some((name, path)) = shown else {
+            self.ed.message = "no file for %".into();
+            return;
+        };
+        match kawoosh_editor::path_form(&self.ed.cwd, &path, form) {
+            Ok(text) => {
+                self.ed.message = format!("copied {text}");
+                self.ed.copy_text(text, &name);
+            }
+            Err(why) => self.ed.message = why,
+        }
+    }
+
     /// A write's copies running long, as a corner line under `fs`:
     /// `Copying NAME 120 of 4,812 files · 31.2 MB of 210.4 MB 14%`,
     /// counting first while what there is to copy is not known yet.
@@ -2325,6 +2352,7 @@ impl Kawoosh {
                 Effect::Recalled => self.note_recall(),
                 Effect::PromptLine { kind, line } => self.remember_prompt_line(kind, &line),
                 Effect::Open(p) => self.open(&p),
+                Effect::PanePathCopy(form) => self.pane_path_copy(&form),
                 Effect::Wrote(id) => {
                     self.disk_settled(id);
                     self.lsp_saved(id);

@@ -3708,14 +3708,22 @@ pub fn install(ed: &mut Editor) {
     // register (`Editor::copy_text`), in the form the word after `path
     // copy` names — a private buffer's too, since a path is not the
     // secret. Bare, `path copy` is `path copy relative`. A `dir`
-    // listing binds the same keys to its entry's.
-    let copy = |ed: &mut Editor, view: ViewId, form: &str| match ed.path_form(view, form) {
-        Ok(p) => {
-            let from = ed.buffers[ed.views[view].buffer].name.clone();
-            ed.message = format!("copied {p}");
-            ed.copy_text(p, &from);
+    // listing binds the same keys to its entry's. With the keys in a
+    // plugin's pane (the shell's `lua` fact), what that pane shows: the
+    // shell asks it.
+    let copy = |ed: &mut Editor, view: ViewId, form: &str| {
+        if ed.commands.facts.contains("lua") {
+            ed.effects.push(Effect::PanePathCopy(form.to_string()));
+            return;
         }
-        Err(why) => ed.message = why,
+        match ed.path_form(view, form) {
+            Ok(p) => {
+                let from = ed.buffers[ed.views[view].buffer].name.clone();
+                ed.message = format!("copied {p}");
+                ed.copy_text(p, &from);
+            }
+            Err(why) => ed.message = why,
+        }
     };
     ed.register_spec(
         Spec::new("path copy").doc("copy the file's path from the working directory"),

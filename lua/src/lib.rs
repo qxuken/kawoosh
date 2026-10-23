@@ -2348,11 +2348,25 @@ impl Runtime {
     /// The directory view `name` says its pane `pane` shows
     /// (`opts.here`), if it says one.
     pub fn view_here(&self, name: &str, pane: u64) -> Option<PathBuf> {
+        self.view_says("_here", "here", name, pane)
+    }
+
+    /// The file or directory view `name` says its pane `pane` shows
+    /// (`opts.path`), else its directory (`opts.here`): what the path
+    /// copies copy there.
+    pub fn view_path(&self, name: &str, pane: u64) -> Option<PathBuf> {
+        self.view_says("_paths", "path", name, pane)
+            .or_else(|| self.view_here(name, pane))
+    }
+
+    /// A path view `name`'s function `opt` answers for `pane`, kept by
+    /// `kawoosh.view` under `kawoosh[table]`; an error is echoed.
+    fn view_says(&self, table: &str, opt: &str, name: &str, pane: u64) -> Option<PathBuf> {
         let f = self
             .lua
             .globals()
             .get::<Table>("kawoosh")
-            .and_then(|k| k.get::<Table>("_here"))
+            .and_then(|k| k.get::<Table>(table))
             .and_then(|t| t.get::<Function>(name))
             .ok()?;
         match self.timed(&f, || f.call::<Option<String>>(pane)) {
@@ -2360,7 +2374,7 @@ impl Runtime {
             Err(e) => {
                 self.queue
                     .borrow_mut()
-                    .push(Msg::Echo(format!("{name}: here: {e}")));
+                    .push(Msg::Echo(format!("{name}: {opt}: {e}")));
                 None
             }
         }

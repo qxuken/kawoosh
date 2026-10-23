@@ -916,6 +916,8 @@ end, function(ev)
 end, {
   session = false,
   here = function(p) return states[p] and fs.parent(states[p].path) end,
+  -- The database's file: what `<leader>y*` copies.
+  path = function(p) return states[p] and states[p].path end,
 })
 
 -- pane.sort(i): the browsed table ordered by its `i`th shown column,

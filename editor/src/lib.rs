@@ -427,6 +427,10 @@ pub enum Effect {
     },
     /// Open `path` in the view (a new buffer, or an existing one).
     Open(PathBuf),
+    /// `path copy FORM` with the keys in a pane the engine has no view
+    /// of — a plugin's (`:image`, `:hex`, `:du`): the shell asks the
+    /// pane what it shows and copies that.
+    PanePathCopy(String),
     /// A file was written, so the shell can tell the systems.
     Wrote(BufferId),
     /// `:w` found the buffer's file changed on disk since it was read
