@@ -1014,6 +1014,11 @@ impl Kawoosh {
                         self.drain_lua();
                     }
                 }
+                IoMsg::FsCopying {
+                    token,
+                    title,
+                    copying,
+                } => self.copying_progress(token, title, copying),
                 IoMsg::Listed { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {
@@ -2215,6 +2220,67 @@ impl Kawoosh {
         );
     }
 
+    /// `path copy FORM` in a plugin's pane: the file or directory its
+    /// view says it shows (`opts.path`, else `opts.here`), in the form
+    /// asked, onto the clipboard and into the register as a file's is.
+    fn pane_path_copy(&mut self, form: &str) {
+        let focused = self.layout.focused();
+        let shown = match self.layout.content(focused) {
+            Some(Content::Lua(name)) => self
+                .scripting
+                .rt
+                .as_ref()
+                .and_then(|rt| rt.view_path(&name, focused))
+                .map(|p| (name, p)),
+            _ => None,
+        };
+        let Some((name, path)) = shown else {
+            self.ed.message = "no file for %".into();
+            return;
+        };
+        match kawoosh_editor::path_form(&self.ed.cwd, &path, form) {
+            Ok(text) => {
+                self.ed.message = format!("copied {text}");
+                self.ed.copy_text(text, &name);
+            }
+            Err(why) => self.ed.message = why,
+        }
+    }
+
+    /// A write's copies running long, as a corner line under `fs`:
+    /// `Copying NAME 120 of 4,812 files · 31.2 MB of 210.4 MB 14%`,
+    /// counting first while what there is to copy is not known yet.
+    fn copying_progress(&mut self, token: u64, title: String, c: kawoosh_systems::fs::Copying) {
+        let d = c.copied;
+        let (message, pct) = if d.measured {
+            // By bytes; a tree of empty files by its files.
+            let pct = d
+                .bytes_done
+                .saturating_mul(100)
+                .checked_div(d.bytes)
+                .unwrap_or_else(|| d.files_done.saturating_mul(100) / d.files.max(1));
+            let message = format!(
+                "{} of {} files · {} of {}",
+                d.files_done,
+                d.files,
+                crate::perf::bytes(d.bytes_done),
+                crate::perf::bytes(d.bytes)
+            );
+            (message, Some(pct.min(100) as u32))
+        } else {
+            (format!("counting: {} files", d.files), None)
+        };
+        self.notes.progress(
+            "fs",
+            &format!("copy {token}"),
+            Some(title),
+            Some(message),
+            pct,
+            c.done,
+            Instant::now(),
+        );
+    }
+
     /// A search in a buffer too big to count on the frame: the count runs
     /// on a thread over a snapshot (the piece tree is persistent, so the
     /// snapshot is a handle) and lands in the message as `IoMsg::Counted`.
@@ -2298,6 +2364,7 @@ impl Kawoosh {
                 Effect::Recalled => self.note_recall(),
                 Effect::PromptLine { kind, line } => self.remember_prompt_line(kind, &line),
                 Effect::Open(p) => self.open(&p),
+                Effect::PanePathCopy(form) => self.pane_path_copy(&form),
                 Effect::Wrote(id) => {
                     self.disk_settled(id);
                     self.lsp_saved(id);

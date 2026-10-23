@@ -189,6 +189,25 @@ pub(crate) fn paint_style(name: &str) -> (Option<crate::rows::Mark>, Option<&str
     (styled.then_some(mark), color)
 }
 
+/// What a write's copies are called on their progress line: `Copying
+/// NAME` for one, `Copying N entries` for more.
+fn copying_title(changes: &[kawoosh_systems::fs::Change]) -> String {
+    let names: Vec<_> = changes
+        .iter()
+        .filter_map(|c| match c {
+            kawoosh_systems::fs::Change::Copy { from, .. } => Some(from),
+            _ => None,
+        })
+        .collect();
+    match names.as_slice() {
+        [one] => format!(
+            "Copying {}",
+            kawoosh_systems::fs::basename(one).unwrap_or_else(|| one.display().to_string())
+        ),
+        many => format!("Copying {} entries", many.len()),
+    }
+}
+
 /// One plugin's paint on a buffer: its ranges and colour names, at the
 /// version they were given.
 #[derive(Clone, Debug)]
@@ -961,14 +980,25 @@ impl Kawoosh {
                     rt.fs_applied(token, &all.into_iter().map(Some).collect(), true);
                 } else {
                     self.pending_jobs += 1;
+                    let title = copying_title(&changes);
                     self.io.stream("fs apply", move |send| {
-                        let all = kawoosh_systems::fs::apply(&changes, |o| {
-                            send(IoMsg::FsApplied {
-                                token,
-                                outcomes: o.clone(),
-                                last: false,
-                            });
-                        });
+                        let all = kawoosh_systems::fs::apply_with(
+                            &changes,
+                            |o| {
+                                send(IoMsg::FsApplied {
+                                    token,
+                                    outcomes: o.clone(),
+                                    last: false,
+                                });
+                            },
+                            |copying| {
+                                send(IoMsg::FsCopying {
+                                    token,
+                                    title: title.clone(),
+                                    copying,
+                                });
+                            },
+                        );
                         send(IoMsg::FsApplied {
                             token,
                             outcomes: all.into_iter().map(Some).collect(),

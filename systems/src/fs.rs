@@ -24,6 +24,8 @@ pub use kawoosh_doc::paths::{
 };
 use kawoosh_doc::paths::{host_join, host_parent};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::time::{Duration, Instant};
 
 /// A path on a domain: its file system and the host's path, or the
 /// error that it is not connected; `None` for a local path.
@@ -646,14 +648,25 @@ mod users {
     }
 }
 
-/// Copies `from` to `to` — a file, or a directory with everything in
-/// it — creating `to`'s directory when it is missing, and refusing a
-/// `to` that exists: a copy never writes over anything.
+/// Copies `from` to `to` — a file, a link (as a link), or a directory
+/// with everything in it — creating `to`'s directory when it is
+/// missing, and refusing a `to` that exists: a copy never writes over
+/// anything. An entry inside a directory that cannot be copied does not
+/// stop the rest: the copy goes on, and its error names the first one
+/// and how many more there were — a full disk stops it at once.
 pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
+    copy_tallied(from, to, &Tally::default())
+}
+
+/// [`copy`], counting what it has done into `tally` as it goes — what
+/// a progress line reads from another thread ([`Tally::read`]). What
+/// there is to copy is counted first, so the line has a whole to show
+/// the part done against.
+pub fn copy_tallied(from: &Path, to: &Path, tally: &Tally) -> io::Result<()> {
     if on_host(from).is_some() || on_host(to).is_some() {
         return copy_through(from, to);
     }
-    if to.exists() {
+    if std::fs::symlink_metadata(to).is_ok() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             format!("{}: exists", to.display()),
@@ -664,17 +677,237 @@ pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
     {
         std::fs::create_dir_all(p).map_err(|e| named(p, e))?;
     }
-    if from.is_dir() {
-        std::fs::create_dir(to).map_err(|e| named(to, e))?;
-        for e in std::fs::read_dir(from).map_err(|e| named(from, e))? {
-            let e = e.map_err(|e| named(from, e))?;
-            copy(&e.path(), &to.join(e.file_name()))?;
+    tally.measure(from);
+    let mut failed = Vec::new();
+    // A stop is in `failed` too, last.
+    let _ = copy_entry(from, to, tally, &mut failed);
+    let mut failed = failed.into_iter();
+    match failed.next() {
+        None => Ok(()),
+        Some(first) => {
+            let more = failed.count();
+            Err(if more == 0 {
+                first
+            } else {
+                io::Error::new(first.kind(), format!("{first} (and {more} more)"))
+            })
+        }
+    }
+}
+
+/// What a copy has come to, shared with whoever shows it: the files
+/// and bytes there are (counted before the copy starts) and done.
+#[derive(Debug, Default)]
+pub struct Tally {
+    files: AtomicU64,
+    bytes: AtomicU64,
+    files_done: AtomicU64,
+    bytes_done: AtomicU64,
+    measured: AtomicBool,
+    /// The file being written now: its size so far is part of what is
+    /// done, so one large file moves the line too.
+    current: std::sync::Mutex<Option<PathBuf>>,
+}
+
+/// A [`Tally`] as it stands, or several summed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Copied {
+    pub files: u64,
+    pub bytes: u64,
+    pub files_done: u64,
+    pub bytes_done: u64,
+    /// Whether `files` and `bytes` are the whole; while false the
+    /// count is still going.
+    pub measured: bool,
+}
+
+impl Copied {
+    /// Two copies' tallies as one.
+    pub fn and(self, o: Copied) -> Copied {
+        Copied {
+            files: self.files + o.files,
+            bytes: self.bytes + o.bytes,
+            files_done: self.files_done + o.files_done,
+            bytes_done: self.bytes_done + o.bytes_done,
+            measured: self.measured && o.measured,
+        }
+    }
+}
+
+impl Tally {
+    /// How it stands now, the file being written counted by its size
+    /// so far.
+    pub fn read(&self) -> Copied {
+        let writing = self
+            .current
+            .lock()
+            .ok()
+            .and_then(|c| c.as_ref().and_then(|p| std::fs::symlink_metadata(p).ok()))
+            .map_or(0, |m| m.len());
+        let (bytes, measured) = (self.bytes.load(Relaxed), self.measured.load(Relaxed));
+        let done = self.bytes_done.load(Relaxed) + writing;
+        Copied {
+            files: self.files.load(Relaxed),
+            bytes,
+            files_done: self.files_done.load(Relaxed),
+            bytes_done: if measured { done.min(bytes) } else { done },
+            measured,
+        }
+    }
+
+    /// What there is under `from`: its files, links and their bytes,
+    /// links not followed.
+    fn measure(&self, from: &Path) {
+        fn walk(t: &Tally, p: &Path) {
+            let Ok(m) = std::fs::symlink_metadata(p) else {
+                return;
+            };
+            if m.is_dir() {
+                for e in std::fs::read_dir(p).into_iter().flatten().flatten() {
+                    walk(t, &e.path());
+                }
+            } else {
+                t.files.fetch_add(1, Relaxed);
+                if m.is_file() {
+                    t.bytes.fetch_add(m.len(), Relaxed);
+                }
+            }
+        }
+        walk(self, from);
+        self.measured.store(true, Relaxed);
+    }
+
+    fn writing(&self, to: Option<&Path>) {
+        if let Ok(mut c) = self.current.lock() {
+            *c = to.map(Path::to_path_buf);
+        }
+    }
+
+    fn did(&self, bytes: u64) {
+        self.files_done.fetch_add(1, Relaxed);
+        self.bytes_done.fetch_add(bytes, Relaxed);
+    }
+}
+
+/// One entry of a copy, and everything under it when it is a directory.
+/// What fails is put in `failed` and the rest goes on; an `Err` is a
+/// stop — the disk full — with its reason in `failed` too.
+fn copy_entry(
+    from: &Path,
+    to: &Path,
+    tally: &Tally,
+    failed: &mut Vec<io::Error>,
+) -> Result<(), ()> {
+    fn skip(failed: &mut Vec<io::Error>, e: io::Error) -> Result<(), ()> {
+        let stop = matches!(
+            e.kind(),
+            io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
+        );
+        failed.push(e);
+        if stop { Err(()) } else { Ok(()) }
+    }
+    let kind = match std::fs::symlink_metadata(from) {
+        Ok(m) => m.file_type(),
+        Err(e) => return skip(failed, named(from, e)),
+    };
+    if kind.is_dir() {
+        if let Err(e) = std::fs::create_dir(to) {
+            return skip(failed, named(to, e));
+        }
+        let entries = match std::fs::read_dir(from) {
+            Ok(r) => r,
+            Err(e) => return skip(failed, named(from, e)),
+        };
+        for e in entries {
+            match e {
+                Ok(e) => copy_entry(&e.path(), &to.join(e.file_name()), tally, failed)?,
+                Err(e) => skip(failed, named(from, e))?,
+            }
         }
         Ok(())
+    } else if kind.is_symlink() {
+        match copy_link(from, to) {
+            Ok(()) => {
+                tally.did(0);
+                Ok(())
+            }
+            Err(e) => skip(failed, e),
+        }
+    } else if kind.is_file() {
+        tally.writing(Some(to));
+        let r = copy_file(from, to);
+        tally.writing(None);
+        match r {
+            Ok(n) => {
+                tally.did(n);
+                Ok(())
+            }
+            Err(e) => skip(failed, e),
+        }
     } else {
-        std::fs::copy(from, to)
-            .map(|_| ())
-            .map_err(|e| named(from, e))
+        // A pipe, a socket, a device: nothing a copy can read to an end.
+        skip(
+            failed,
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("{}: not a file, a directory or a link", from.display()),
+            ),
+        )
+    }
+}
+
+/// A file's bytes, mode, times and what else the platform copies with
+/// them (`std::fs::copy`: a clone where the disk can, `fcopyfile` on a
+/// Mac). Where that is refused — a Samba share refuses a Mac's metadata
+/// copy for a name beginning with a dot — the bytes are copied plainly,
+/// with the mode and the modified time, and the first refusal is the
+/// error only when that cannot be done either.
+fn copy_file(from: &Path, to: &Path) -> io::Result<u64> {
+    let refused = match std::fs::copy(from, to) {
+        Ok(n) => return Ok(n),
+        Err(e) => named(from, e),
+    };
+    let plain = || -> io::Result<u64> {
+        let mut r = std::fs::File::open(from)?;
+        let meta = r.metadata()?;
+        let mut w = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(to)?;
+        let n = io::copy(&mut r, &mut w)?;
+        let _ = w.set_permissions(meta.permissions());
+        if let Ok(t) = meta.modified() {
+            let _ = w.set_modified(t);
+        }
+        Ok(n)
+    };
+    plain().map_err(|_| {
+        // What the refused copy left — an empty file — is not the copy.
+        let _ = std::fs::remove_file(to);
+        refused
+    })
+}
+
+/// A link as a link, pointing where it points. Where links cannot be
+/// made (Windows without the privilege), a link to a file is that
+/// file's copy.
+fn copy_link(from: &Path, to: &Path) -> io::Result<()> {
+    let target = std::fs::read_link(from).map_err(|e| named(from, e))?;
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(&target, to);
+    #[cfg(windows)]
+    let made = if from.is_dir() {
+        std::os::windows::fs::symlink_dir(&target, to)
+    } else {
+        std::os::windows::fs::symlink_file(&target, to)
+    };
+    #[cfg(not(any(unix, windows)))]
+    let made: io::Result<()> = Err(io::ErrorKind::Unsupported.into());
+    match made {
+        Ok(()) => Ok(()),
+        Err(_) if from.is_file() => copy_file(from, to).map(|_| ()),
+        Err(e) => Err(named(to, e)),
     }
 }
 
@@ -720,6 +953,30 @@ pub type Outcomes = Vec<Option<Result<(), String>>>;
 /// what a removal could not take goes back under its own name for the
 /// user to free and delete again. The answer is every change's outcome.
 pub fn apply(changes: &[Change], settled: impl FnOnce(&Outcomes)) -> Vec<Result<(), String>> {
+    apply_with(changes, settled, |_| {})
+}
+
+/// How long copies run before [`apply_with`] says how they are going,
+/// and then how often: a copy over in a moment shows no line at all.
+pub const COPYING_AFTER: Duration = Duration::from_millis(300);
+pub const COPYING_EVERY: Duration = Duration::from_millis(150);
+
+/// How a write's copies are going, for its progress line: every copy's
+/// [`Tally`] summed, and `done` once, at the end, when any was said.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Copying {
+    pub copied: Copied,
+    pub done: bool,
+}
+
+/// [`apply`], telling `copying` how the copies are going while they
+/// run ([`COPYING_AFTER`], [`COPYING_EVERY`]), on the thread `apply`
+/// was called on.
+pub fn apply_with(
+    changes: &[Change],
+    settled: impl FnOnce(&Outcomes),
+    mut copying: impl FnMut(Copying),
+) -> Vec<Result<(), String>> {
     let mut out: Outcomes = vec![None; changes.len()];
     let mut targets = std::collections::HashSet::new();
     for c in changes {
@@ -754,16 +1011,70 @@ pub fn apply(changes: &[Change], settled: impl FnOnce(&Outcomes)) -> Vec<Result<
         }
     }
 
-    // The copies, on threads of their own.
+    // The copies, on threads of their own, each telling the loop here
+    // when it is over; the loop says how they go while they run.
+    let copies: Vec<(usize, &Path, &Path)> = changes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| match c {
+            Change::Copy { from, to } => Some((i, from.as_path(), to.as_path())),
+            _ => None,
+        })
+        .collect();
+    let tallies: Vec<Tally> = copies.iter().map(|_| Tally::default()).collect();
     std::thread::scope(|s| {
-        let running: Vec<_> = changes
+        let (over, ended) = std::sync::mpsc::channel();
+        let running: Vec<_> = copies
             .iter()
-            .enumerate()
-            .filter_map(|(i, c)| match c {
-                Change::Copy { from, to } => Some((i, s.spawn(move || copy(from, to)))),
-                _ => None,
+            .zip(&tallies)
+            .map(|(&(i, from, to), tally)| {
+                let over = over.clone();
+                let h = s.spawn(move || {
+                    let r = copy_tallied(from, to, tally);
+                    let _ = over.send(());
+                    r
+                });
+                (i, h)
             })
             .collect();
+        // Only the copies hold it now: one that panics ends the wait
+        // when the rest are over.
+        drop(over);
+        let sum = || {
+            tallies.iter().map(Tally::read).fold(
+                Copied {
+                    measured: true,
+                    ..Copied::default()
+                },
+                Copied::and,
+            )
+        };
+        let start = Instant::now();
+        let mut said: Option<Instant> = None;
+        let mut left = running.len();
+        while left > 0 {
+            let next = match said {
+                Some(t) => t + COPYING_EVERY,
+                None => start + COPYING_AFTER,
+            };
+            match ended.recv_timeout(next.saturating_duration_since(Instant::now())) {
+                Ok(()) => left -= 1,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    copying(Copying {
+                        copied: sum(),
+                        done: false,
+                    });
+                    said = Some(Instant::now());
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        if said.is_some() {
+            copying(Copying {
+                copied: sum(),
+                done: true,
+            });
+        }
         for (i, h) in running {
             out[i] = Some(joined(h.join()));
         }
@@ -1719,6 +2030,75 @@ mod tests {
         v.iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect()
+    }
+
+    /// A tree copied with what cannot be copied in it: the rest is
+    /// copied all the same, a link as a link, and the error names the
+    /// first failure and how many more; the tally counts what was done.
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_goes_on_past_what_it_cannot_copy() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = scratch(
+            "past",
+            &[
+                ("t/sub/", ""),
+                ("t/a", "A"),
+                ("t/b", "BB"),
+                ("t/c", "C"),
+                ("t/sub/d", "DDD"),
+            ],
+        );
+        std::os::unix::fs::symlink("sub/d", d.join("t/link")).unwrap();
+        for locked in ["t/a", "t/c"] {
+            std::fs::set_permissions(d.join(locked), std::fs::Permissions::from_mode(0o000))
+                .unwrap();
+        }
+        // Root reads a file whatever its mode: nothing to see then.
+        if std::fs::File::open(d.join("t/a")).is_ok() {
+            std::fs::remove_dir_all(&d).ok();
+            return;
+        }
+        let tally = Tally::default();
+        let err = copy_tallied(&d.join("t"), &d.join("u"), &tally)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("(and 1 more)"), "{err}");
+        assert_eq!(std::fs::read_to_string(d.join("u/b")).unwrap(), "BB");
+        assert_eq!(std::fs::read_to_string(d.join("u/sub/d")).unwrap(), "DDD");
+        assert_eq!(
+            std::fs::read_link(d.join("u/link")).unwrap(),
+            Path::new("sub/d")
+        );
+        assert!(!d.join("u/a").exists(), "no empty file left for a failure");
+        let t = tally.read();
+        assert!(t.measured);
+        assert_eq!((t.files, t.bytes), (5, 7));
+        assert_eq!((t.files_done, t.bytes_done), (3, 5));
+        for locked in ["t/a", "t/c"] {
+            std::fs::set_permissions(d.join(locked), std::fs::Permissions::from_mode(0o644))
+                .unwrap();
+        }
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A write's copies say how they go only when they run long: a
+    /// quick one says nothing at all.
+    #[test]
+    fn a_quick_copy_says_nothing_of_its_progress() {
+        let d = scratch("quick", &[("a", "A")]);
+        let mut said = Vec::new();
+        let out = apply_with(
+            &[Change::Copy {
+                from: d.join("a"),
+                to: d.join("b"),
+            }],
+            |_| {},
+            |c| said.push(c),
+        );
+        assert_eq!(out, vec![Ok(())]);
+        assert!(said.is_empty(), "{said:?}");
+        std::fs::remove_dir_all(&d).ok();
     }
 
     /// Two names swapped: two steps each, so neither is written over;

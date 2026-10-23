@@ -18,6 +18,7 @@ kawoosh._restorers = {}
 kawoosh._openers = {}
 kawoosh._transient = {}
 kawoosh._here = {}
+kawoosh._paths = {}
 kawoosh._scrollers = {}
 kawoosh._settings_hooks = {}
 kawoosh._watches = {}
@@ -725,6 +726,7 @@ end
 ---@class kawoosh.ViewSpec
 ---@field session? boolean false keeps the view out of a session
 ---@field here? fun(pane: integer): string? the directory the pane shows, if any: where `:terminal here` starts
+---@field path? fun(pane: integer): string? the file or directory the pane shows, if any: what `<leader>y*` copies (else `here`)
 ---@field scroll? string the label of the view's root node when that node scrolls, for `:view scroll`
 ---@field native? string the namespace of the native extension that draws it
 
@@ -738,7 +740,9 @@ end
 -- on_click / on_drag / on_scroll / … declared (`kawoosh.ViewEvent`). `opts.session = false` keeps the view
 -- out of a session: a picker is asked for again, not brought back.
 -- `opts.here(pane)` says the directory the pane shows, if any: where
--- `:terminal here` starts from it. `opts.scroll` is the label of the
+-- `:terminal here` starts from it; `opts.path(pane)` the file or
+-- directory it shows, what the path copies (`<leader>y*`) copy — its
+-- `here` when it says none. `opts.scroll` is the label of the
 -- view's root node when that node scrolls: `:view scroll` moves it
 -- from the keys (`j`, `<C-d>`, `G` mapped to it) as the wheel does,
 -- without running the view — a key that runs plugin code has every
@@ -764,6 +768,7 @@ function kawoosh.view(name, fn, on_event, opts)
   kawoosh._handlers[name] = on_event
   kawoosh._transient[name] = (opts and opts.session == false) or nil
   kawoosh._here[name] = opts and opts.here or nil
+  kawoosh._paths[name] = opts and opts.path or nil
   kawoosh._scrollers[name] = opts and opts.scroll or nil
 end
 

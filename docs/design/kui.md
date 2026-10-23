@@ -549,7 +549,11 @@ measures it: ~3 ns for a record nobody wants, ~20 ns for a literal,
 A file opening on the io thread is a progress line under `io` —
 `Opening NAME 42%`, `Completed Opening NAME` — the same shape as a
 server's token. A running token with a percentage is a loader: a bar
-under its line, filled that far, whoever owns the token.
+under its line, filled that far, whoever owns the token. A write's
+copies that run past 300 ms (`fs::apply_with`) are one under `fs` —
+`Copying NAME 120 of 4812 files · 31.2 MB of 210.4 MB 14%`, the bytes
+of the file being written counted as they land — so a tree going to a
+slow share is not a silent wait.
 
 Redraw stays event-driven: what times out arms a `systems::Alarm` at the
 earliest expiry (`Alarm::soonest`; the diagnostics debounce keeps

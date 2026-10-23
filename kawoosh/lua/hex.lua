@@ -923,6 +923,8 @@ end, {
   session = false,
   -- The file's directory: where `:terminal here` starts.
   here = function(pane) return states[pane] and fs.parent(states[pane].path) end,
+  -- The file: what `<leader>y*` copies.
+  path = function(pane) return states[pane] and states[pane].path end,
 })
 
 -- ------------------------------------------------------------- the door

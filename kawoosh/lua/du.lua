@@ -406,6 +406,13 @@ end, {
   session = false,
   -- The directory the pane is on: where `:terminal here` starts.
   here = function(pane) return states[pane] and states[pane].dir end,
+  -- The entry under the cursor, else the directory: what `<leader>y*`
+  -- copies, as in a `dir` listing.
+  path = function(pane)
+    local st = states[pane]
+    if not st then return nil end
+    return st.cursor and fs.join(st.dir, st.cursor) or st.dir
+  end,
 })
 
 ---What `kawoosh.du_pane.state` answers.
