@@ -60,7 +60,7 @@ pub enum StripAlign {
 /// alignment never pulls the ribbon out from under the first.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct StripRoom {
-    pub tab: usize,
+    pub tab: u64,
     pub columns: Vec<u64>,
     pub lead: f32,
     pub trail: f32,
@@ -70,7 +70,7 @@ pub(crate) struct StripRoom {
 /// focus and its column, the columns' order and widths in px.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StripShape {
-    pub tab: usize,
+    pub tab: u64,
     pub focused: PaneId,
     pub column: Option<usize>,
     pub columns: Vec<(u64, u32)>,
@@ -565,8 +565,8 @@ impl Kawoosh {
     }
 
     /// The strip (scrolling-tab.md Decisions 3 and 4): one `scroll_x`
-    /// row per tab — keyed by the tab, so each keeps the offset kui
-    /// retains for it — a keyed column per `Column` at its width in
+    /// row per tab — keyed by the tab's `id`, so each keeps the offset
+    /// kui retains for it wherever it moves along the row — a keyed column per `Column` at its width in
     /// viewport fractions, a draggable gap after each — the last
     /// column's too, at its right edge.
     ///
@@ -621,7 +621,11 @@ impl Kawoosh {
                 .columns
                 .iter()
                 .any(|c| !self.strip_known.contains(&c.id));
-        let tab = self.layout.tab;
+        // The tab's own number, not its place: a tab closed or moved
+        // before it leaves its ribbon, its room and its shape as they
+        // were, rather than starting over from the left edge and
+        // gliding back to the focus.
+        let tab = self.layout.tab().id;
         // The shape a reveal answers to, read before the columns are
         // declared: whether they slide this frame is the same
         // question.
@@ -653,7 +657,7 @@ impl Kawoosh {
             .collect();
         let span = widths.iter().sum::<f32>() + gap * n.saturating_sub(1) as f32;
         // Keyed by its tab: each tab's ribbon is its own scroller.
-        let strip_key = ui.child_key("strip").index(tab as u64);
+        let strip_key = ui.child_key("strip").index(tab);
         let always = self.ed.settings.str("layout.scroll.center") == Some("always");
         let align = self
             .strip_align
