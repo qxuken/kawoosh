@@ -332,7 +332,7 @@ fn local_now() -> (i64, i64) {
 }
 
 /// A local time's year, month, day and weekday (0 Sunday).
-fn civil(local: i64) -> (i64, i64, i64, usize) {
+pub(crate) fn civil(local: i64) -> (i64, i64, i64, usize) {
     let days = local.div_euclid(86_400);
     let z = days + 719_468;
     let era = z.div_euclid(146_097);

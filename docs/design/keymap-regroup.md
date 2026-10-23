@@ -152,7 +152,8 @@ from `<leader>cr`).
 
 ### Compile: `<leader>c`
 
-`cc` `cC` — all that is left; the group is named "compile".
+`cc` `cC` — all that is left; the group is named "compile". `c.`
+joined it 2026-10-23, `:compile here` (compile.md Decision 25).
 
 ### Help: `<leader>h`
 

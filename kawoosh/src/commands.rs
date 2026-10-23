@@ -40,6 +40,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(cwd());
     v.extend(instruments());
     v.extend(crate::terminals::commands());
+    v.extend(crate::term_cast::commands());
     v.extend(crate::marks::commands());
     v.extend(crate::jumps::commands());
     v.extend(crate::dock::commands());
@@ -331,6 +332,10 @@ impl Kawoosh {
             ("lsp", !self.lsp.status.is_empty()),
             ("editor", matches!(content, Some(Content::Editor(_)))),
             ("terminal", matches!(content, Some(Content::Terminal(_)))),
+            (
+                "recording",
+                matches!(content, Some(Content::Terminal(t)) if self.is_recording(t)),
+            ),
             ("lua", matches!(content, Some(Content::Lua(_)))),
             ("memory", content == Some(Content::Memory)),
             ("undo", content == Some(Content::Undo)),

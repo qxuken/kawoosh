@@ -15,6 +15,8 @@ alacritty_terminal.workspace = true
 portable-pty.workspace = true
 anyhow.workspace = true
 log.workspace = true
+# Asciicast recordings (`cast.rs`).
+serde_json.workspace = true
 # Kitty's graphics protocol (`graphics.rs`): base64 payloads, zlib, PNG.
 base64 = "0.23"
 flate2 = "1"
@@ -22,6 +24,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# The system's locale, for a terminal's `LANG` (`locale.rs`).
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation-sys = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Wdk_System_Threading", "Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }

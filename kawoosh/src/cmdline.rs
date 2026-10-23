@@ -242,8 +242,9 @@ impl Kawoosh {
                     .map(str::to_string),
             );
         }
-        // `:compile`: a line of its own (compile.md Decisions 7 and 23).
-        if inv.name == "compile" {
+        // `:compile [here]`: a line of its own (compile.md Decisions 7
+        // and 23).
+        if matches!(inv.name.as_str(), "compile" | "compile here") {
             return self.compile_candidates(line, first, index, &inv.args);
         }
         // `:terminal shell`'s NAME: a shell on the PATH, or a path to one.

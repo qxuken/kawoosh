@@ -292,6 +292,8 @@ pub struct Kawoosh {
     pub(crate) status_alarm: kawoosh_systems::Alarm,
     /// A moving picture's next frame (`picture_play`).
     pub(crate) picture_alarm: kawoosh_systems::Alarm,
+    /// A replay's next event (`term_cast`).
+    pub(crate) replay_alarm: kawoosh_systems::Alarm,
     /// Wake handles made before the app was — the logger's — set with
     /// the app's own in `setup`.
     pub(crate) shared_wakes: Vec<WakeHandle>,
@@ -554,6 +556,7 @@ impl Kawoosh {
             flash_alarm: kawoosh_systems::Alarm::latest(wake.named("flash")),
             status_alarm: kawoosh_systems::Alarm::soonest(wake.named("status tick")),
             picture_alarm: kawoosh_systems::Alarm::soonest(wake.named("picture frame")),
+            replay_alarm: kawoosh_systems::Alarm::soonest(wake.named("replay")),
             wake,
             beat,
             shared_wakes: Vec::new(),
@@ -1290,6 +1293,7 @@ impl Kawoosh {
             }
         }
         self.pump_ptys();
+        self.pump_replays();
     }
 
     /// Blocks until every job a plugin asked for has been answered —
@@ -1466,6 +1470,14 @@ impl Kawoosh {
     /// Sizes terminal `id` to `w × h` px of cells — its pane's cells,
     /// which may be its own size (pane-settings.md Decision 4).
     pub(crate) fn fit_terminal(&mut self, id: TermId, w: f32, h: f32) -> TermSize {
+        // A replay keeps the recording's size: a program drew for that.
+        if self.is_replay(id) {
+            return self
+                .terms
+                .map
+                .get(&id)
+                .map_or(TermSize { rows: 24, cols: 80 }, |t| t.size());
+        }
         let (cw, ch) = self.term_grid(id);
         let size = TermSize {
             cols: ((w / cw).floor().max(2.0)) as u16,

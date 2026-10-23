@@ -167,14 +167,14 @@ fn a_trusted_init_lua_joins_its_project_root() {
     std::fs::write(
         dir.join(PROJECT_DIR).join(kawoosh::trust::INIT_FILE),
         r#"local root = kawoosh.project.root
-kawoosh.opt("compile.commands.here", { cmd = "pwd", cwd = kawoosh.fs.join(root, "sub", "deeper") })
+kawoosh.opt("compile.commands.there", { cmd = "pwd", cwd = kawoosh.fs.join(root, "sub", "deeper") })
 "#,
     )
     .unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = open(&mut d, &dir);
     ex(&mut d, &mut app, "trust");
-    ex(&mut d, &mut app, "compile here");
+    ex(&mut d, &mut app, "compile there");
     finished(&mut d, &mut app);
     let deeper = dir.join("sub").join("deeper");
     assert_eq!(app.compile.cwd().as_deref(), Some(deeper.as_path()));
@@ -1342,4 +1342,74 @@ fn texts(d: &Drive) -> Vec<String> {
         .iter()
         .filter_map(|n| n.text.clone())
         .collect()
+}
+
+/// `:compile here` (compile.md Decision 25): the line where the pane in
+/// front is — over where its kind says, a name's `cwd` too, `%` written
+/// from there; bare, a bare `:compile`'s line; in a *compile* buffer,
+/// where its run ran; `<leader>c.` its key.
+#[cfg(unix)]
+#[test]
+fn compile_here_runs_where_the_pane_in_front_is() {
+    let dir = project(
+        "here",
+        r#"return { compile = { default = "pwd", commands = {
+  deep = { cmd = "pwd", cwd = "sub/deeper" },
+} } }"#,
+    );
+    let src = dir.join("src").canonicalize().unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    let back = |d: &mut Drive, app: &mut Kawoosh| {
+        d.keys(app, "q");
+        d.frame(app);
+        assert!(!keys_in_compile(app), "the keys back in the file's pane");
+    };
+
+    // Bare `:compile` runs the default at the workspace; here, beside
+    // the file.
+    ex(&mut d, &mut app, "compile");
+    let out = finished(&mut d, &mut app);
+    assert!(!out.contains(&format!("{}\n", src.display())), "{out}");
+    back(&mut d, &mut app);
+    ex(&mut d, &mut app, "compile here");
+    let out = finished(&mut d, &mut app);
+    assert!(
+        out.contains(&format!("$ pwd\n{}\n", src.display())),
+        "{out}"
+    );
+    assert_eq!(
+        app.ed.buffers[app.compile.buffer().unwrap()].name,
+        "*compile: pwd in src*"
+    );
+
+    // From the *compile* buffer: where its run ran.
+    ex(&mut d, &mut app, "compile here echo again; pwd");
+    let out = finished(&mut d, &mut app);
+    assert!(
+        out.contains(&format!("again\n{}\n", src.display())),
+        "{out}"
+    );
+    back(&mut d, &mut app);
+
+    // A name's `cwd` gives way, and `%` is the file from here.
+    ex(&mut d, &mut app, "compile here deep");
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains(&format!("{}\n", src.display())), "{out}");
+    back(&mut d, &mut app);
+    ex(&mut d, &mut app, "compile here echo %");
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("$ echo 'a.rs'\na.rs"), "{out}");
+    back(&mut d, &mut app);
+
+    // The key.
+    let before = app.compile.started;
+    d.press(&mut app, "<leader>c.");
+    assert!(app.compile.started > before, "<leader>c. compiled");
+    let out = finished(&mut d, &mut app);
+    assert!(
+        out.contains(&format!("$ pwd\n{}\n", src.display())),
+        "{out}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }
