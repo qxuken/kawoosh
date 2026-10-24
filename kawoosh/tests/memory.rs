@@ -1983,3 +1983,107 @@ fn a_remembered_dwell_takes_a_fraction_of_a_second() {
     assert_eq!(row.dwell_ms, 1500);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The pane's lines that are not rows — the filter's line, a text's
+/// own lines under the list — keep their ground under the pointer,
+/// over their words as much as between them, while a row lights. kui
+/// alpha.67 lights a `hover_bg` over the node's children too (its
+/// F190), so a transparent one there would wash the filter's strip
+/// and the second line's stripe out whole.
+#[test]
+fn the_pane_s_still_lines_keep_their_ground_under_the_pointer() {
+    let mut d = Drive::new(1600.0, 600.0);
+    let mut app = Kawoosh::new("t", "one\ntwo\nthree\n");
+    d.frame(&mut app);
+    d.keys(&mut app, "yj");
+    d.keys(&mut app, " mm");
+    d.keys(&mut app, "/");
+    d.frame(&mut app);
+    assert!(app.memory_pane.filtering);
+    // A node's ground as drawn, the pointer at the middle of `over`.
+    let hover = |d: &mut Drive, app: &mut Kawoosh, over: kui_native::Rect| {
+        d.input(
+            app,
+            kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(
+                over.x + over.w / 2.0,
+                over.y + over.h / 2.0,
+            )),
+        );
+        // The hover is known after the frame that lays it out.
+        d.frame(app);
+        d.frame(app);
+    };
+    let node = |d: &Drive, key| {
+        d.core
+            .nodes()
+            .into_iter()
+            .find(|n| n.key == key)
+            .expect("the node, still drawn")
+    };
+    let lowest_text = |d: &Drive, text: &str| {
+        d.core
+            .nodes()
+            .into_iter()
+            .filter(|n| n.text.as_deref() == Some(text))
+            .max_by(|a, b| a.rect.y.total_cmp(&b.rect.y))
+            .unwrap_or_else(|| panic!("no {text} drawn: {:?}", texts(d)))
+    };
+    // The line a text sits on: its nearest ancestor as wide as the pane.
+    let line_of = |d: &Drive, n: &kui_native::NodeInfo| {
+        let pane = d
+            .core
+            .nodes()
+            .into_iter()
+            .find(|n| n.label.as_deref() == Some("memory"))
+            .expect("the memory pane")
+            .rect
+            .w;
+        let mut at = n.clone();
+        while let Some(p) = at.parent {
+            at = node(d, p);
+            if at.rect.w >= pane {
+                return at;
+            }
+        }
+        panic!("no line under {:?}", n.text)
+    };
+    // Away from every line first, then over the `/` and over the line.
+    let away = kui_native::Rect {
+        x: 1599.0,
+        y: 0.0,
+        w: 0.0,
+        h: 0.0,
+    };
+    hover(&mut d, &mut app, away);
+    let filter = line_of(&d, &lowest_text(&d, "/"));
+    assert!(
+        filter.bg.a > 0.0,
+        "the filter's strip while it has the keys"
+    );
+    let slash = lowest_text(&d, "/").rect;
+    hover(&mut d, &mut app, slash);
+    assert_eq!(node(&d, filter.key).bg, filter.bg, "over the `/`");
+    hover(&mut d, &mut app, filter.rect);
+    assert_eq!(node(&d, filter.key).bg, filter.bg, "over the line");
+    // The text's second line, striped, over its words.
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    hover(&mut d, &mut app, away);
+    let two = lowest_text(&d, "two");
+    let second = line_of(&d, &two);
+    assert!(second.bg.a > 0.0, "the second line's stripe");
+    hover(&mut d, &mut app, two.rect);
+    assert_eq!(node(&d, second.key).bg, second.bg, "over `two`");
+    // A row lights, the hover itself working here.
+    let row = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.label.as_deref().is_some_and(|l| l.starts_with("moment ")))
+        .expect("the text's row");
+    hover(&mut d, &mut app, away);
+    let calm = node(&d, row.key).bg;
+    hover(&mut d, &mut app, row.rect);
+    assert_ne!(node(&d, row.key).bg, calm, "a hovered row lights");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
