@@ -2450,7 +2450,8 @@ fn inverse_text_reads_in_the_scrollback_buffer() {
 /// `:terminal record into FILE` records a new shell from its first byte
 /// — what it drew, what was typed — until it ends; `:terminal replay
 /// FILE` draws it again in a pane of no process, at the recording's
-/// size, its keys normal mode's: `q` closes it.
+/// size, its keys normal mode's: `q` closes it. FILE has a space in
+/// it, taken whole by both.
 #[cfg(unix)]
 #[test]
 fn a_recorded_shell_replays_in_a_pane_of_its_own() {
@@ -2467,10 +2468,10 @@ fn a_recorded_shell_replays_in_a_pane_of_its_own() {
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     let panes = app.layout.all_panes().len();
-    d.keys(&mut app, ":terminal record into shell.cast");
+    d.keys(&mut app, ":terminal record into a shell.cast");
     d.key(&mut app, "enter", KeyMods::default());
     let t = app.term_of_focused().expect("a terminal pane");
-    let file = dir.join("shell.cast");
+    let file = dir.join("a shell.cast");
     assert!(
         app.ed.message.starts_with("recording to "),
         "{}",
@@ -2510,12 +2511,12 @@ fn a_recorded_shell_replays_in_a_pane_of_its_own() {
         .collect();
     assert_eq!(typed, "echo Зобков; exit\r");
 
-    d.keys(&mut app, ":terminal replay shell.cast");
+    d.keys(&mut app, ":terminal replay a shell.cast");
     d.key(&mut app, "enter", KeyMods::default());
     let r = app.term_of_focused().expect("a replay pane");
     for _ in 0..300 {
         d.frame(&mut app);
-        if app.term_title(r).starts_with("replay: shell.cast 0:0")
+        if app.term_title(r).starts_with("replay: a shell.cast 0:0")
             && !app.term_title(r).contains('/')
         {
             break;

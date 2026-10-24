@@ -234,7 +234,9 @@ impl Kawoosh {
 }
 
 /// A file named on the command line, as one argument however many
-/// words: a path with a space in it.
+/// words: a path with a space in it. The engine resolves the first
+/// word only (`Args::rest(&[Path, Text])`), so the rest join it as
+/// typed; resolved word by word, `a b.cast` was two paths run together.
 fn file_arg(k: &Kawoosh, args: &[String]) -> Option<PathBuf> {
     let line = args.join(" ");
     let line = line.trim();
@@ -254,7 +256,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("terminal record into")
-                .args(Args::rest(&[ArgKind::Path]))
+                .args(Args::rest(&[ArgKind::Path, ArgKind::Text]))
                 .doc("`:terminal record`, into FILE"),
             |k, ctx| match file_arg(k, &ctx.args) {
                 Some(f) => k.record_terminal(None, Some(f)),
@@ -287,7 +289,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("terminal replay")
-                .args(Args::rest(&[ArgKind::Path]))
+                .args(Args::rest(&[ArgKind::Path, ArgKind::Text]))
                 .doc("a recording (`.cast`, asciicast 2 or 3 — asciinema's, wezterm's) played in a pane at its pace, waits cut to 2 s; no FILE, the last `:terminal record` made. `r` plays it again, `q` closes"),
             |k, ctx| {
                 let f = file_arg(k, &ctx.args);

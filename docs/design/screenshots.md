@@ -99,11 +99,12 @@ Window ▸ Save Screenshot and Copy Screenshot in the Mac's bar; no key
 is bound. Taking a screenshot is rare, and every chord near the obvious
 ones means something already.
 
-The frames a screencast's answer names are kui's count of the frames
-drawn while it ran; its encoder keeps a run of identical frames as one
-longer frame, so the file can hold fewer (20 drawn, 3 kept, seen
-2026-10-24). kui's docs say the count is what the file holds — a kui
-defect, reported there, not counted again here.
+The frames a screencast's answer names are the frames drawn while it
+ran, as ADR 0055 decided; the encoder folds a frame that changed
+nothing into the one before and splits a long hold, so the file can
+hold fewer or more (20 drawn, 3 in the APNG, seen 2026-10-24). kui's
+Rust docs on `Captured` and `record_to` say "what the file holds"
+against the ADR: kui F189, filed. The message says kui's number.
 
 ## Not done
 
