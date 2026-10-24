@@ -96,6 +96,8 @@ pub fn cap_for(kind: &str) -> usize {
         "text" => 100,
         "file" => 5000,
         "scratch" => usize::MAX,
+        // The user's word, held (`languages::SYNTAX_KIND`).
+        crate::languages::SYNTAX_KIND => usize::MAX,
         "command" => 500,
         "search" => 200,
         _ => 500,
@@ -1020,8 +1022,14 @@ impl Kawoosh {
         let Some(store) = self.store.clone() else {
             return false;
         };
-        // Pinned, and a mark (docs/design/marks.md Decision 5): held.
-        if r.pinned > 0 || r.key.kind == crate::marks::KIND {
+        // Pinned, a mark (docs/design/marks.md Decision 5) and a
+        // language `:syntax` gave a file or a kind: held — but not a
+        // file gone from this machine (a project deleted), which ages
+        // out as any row.
+        if r.pinned > 0
+            || r.key.kind == crate::marks::KIND
+            || r.key.kind == crate::languages::SYNTAX_KIND && !crate::languages::syntax_gone(&r.key)
+        {
             return false;
         }
         // The register's text is held.
@@ -1282,9 +1290,19 @@ impl Kawoosh {
 
     /// A moment key from a kind and a subject as Lua or a command line
     /// spells it: a file's path resolved against the cwd, under the
-    /// current workspace (a text under none).
+    /// current workspace (a text and a syntax under none; a syntax's
+    /// path resolved, its `*.EXT` as it is).
     pub(crate) fn moment_key(&self, kind: &str, subject: &str) -> MomentKey {
         match kind {
+            crate::languages::SYNTAX_KIND => {
+                let subject =
+                    if subject.contains(std::path::MAIN_SEPARATOR) || subject.contains('/') {
+                        self.resolve(Path::new(subject)).display().to_string()
+                    } else {
+                        subject.to_string()
+                    };
+                MomentKey::new(kind, &subject, "")
+            }
             "file" => MomentKey::new(
                 kind,
                 &self.resolve(Path::new(subject)).display().to_string(),

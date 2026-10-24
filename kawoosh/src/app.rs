@@ -1189,10 +1189,11 @@ impl Kawoosh {
                         if remote && !private {
                             self.attach_file_history(id, &path);
                         }
-                        if let Some(b) = self.ed.buffers.get_mut(id)
+                        if let Some(b) = self.ed.buffers.get(id)
                             && &*b.language == kawoosh_languages::FALLBACK
                         {
-                            b.language = self.languages.detect(&path, &first_line(b)).into();
+                            let lang = self.language_of(&path, &first_line(b));
+                            self.ed.buffers[id].language = lang.into();
                         }
                         self.open_progress(&path, None, true);
                         let b = &self.ed.buffers[id];
@@ -1891,14 +1892,14 @@ impl Kawoosh {
         }
         let mut buf = match Buffer::from_file(path) {
             Ok(mut b) => {
-                b.language = self.languages.detect(path, &first_line(&b)).into();
+                b.language = self.language_of(path, &first_line(&b)).into();
                 b
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let mut b =
                     Buffer::new(kawoosh_systems::fs::basename(path).unwrap_or_default(), "");
                 b.path = Some(path.to_path_buf());
-                b.language = self.languages.detect(path, "").into();
+                b.language = self.language_of(path, "").into();
                 self.ed.message = format!("\"{}\" [new file]", path.display());
                 b
             }
@@ -1930,7 +1931,7 @@ impl Kawoosh {
     pub fn open_on_io_thread(&mut self, path: &Path, total: usize) -> BufferId {
         let mut buf = Buffer::opening(path, total);
         // By the name alone; the `#!` line is read when the text lands.
-        buf.language = self.languages.detect(path, "").into();
+        buf.language = self.language_of(path, "").into();
         buf.private = self.private_path(path, false);
         self.io.open_file(path.to_path_buf());
         self.ed.add_buffer(buf)

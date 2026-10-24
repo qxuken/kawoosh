@@ -809,10 +809,7 @@ impl Kawoosh {
                     // Decision 6).
                     if language.is_none() {
                         let b = &self.ed.buffers[id];
-                        let l = self
-                            .languages
-                            .detect(&p, &crate::app::first_line(b))
-                            .to_string();
+                        let l = self.language_of(&p, &crate::app::first_line(b));
                         self.ed.buffers[id].language = l.into();
                     }
                     self.ed.buffers[id].about = Some(p);
@@ -1135,7 +1132,7 @@ impl Kawoosh {
                 let language = language.unwrap_or_else(|| {
                     let first = text.lines().next().unwrap_or("");
                     match &path {
-                        Some(p) => self.languages.detect(p, first).to_string(),
+                        Some(p) => self.language_of(p, first),
                         None => self.languages.detect(Path::new(""), first).to_string(),
                     }
                 });

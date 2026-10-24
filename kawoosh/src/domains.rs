@@ -922,7 +922,7 @@ impl Kawoosh {
             return Some(id);
         }
         let mut b = kawoosh_doc::Buffer::opening(path, 0);
-        b.language = self.languages.detect(path, "").into();
+        b.language = self.language_of(path, "").into();
         Some(self.ed.add_buffer(b))
     }
 
