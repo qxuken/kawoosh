@@ -39,6 +39,13 @@ pub(crate) fn recordings_dir() -> Option<PathBuf> {
 /// A new recording's file, named for now in local time:
 /// `2026-10-23-141502.cast`.
 fn new_recording(dir: &Path) -> PathBuf {
+    dated_file(dir, "cast")
+}
+
+/// A file in `dir` named for now in local time, with extension `ext`:
+/// `2026-10-23-141502.ext`, `-2` and on after one taken in the same
+/// second.
+pub(crate) fn dated_file(dir: &Path, ext: &str) -> PathBuf {
     let now = kawoosh_systems::store::now();
     let local = now + crate::notify::utc_offset(now);
     let (y, m, d, _) = crate::snippet::civil(local);
@@ -49,11 +56,11 @@ fn new_recording(dir: &Path) -> PathBuf {
         s / 60 % 60,
         s % 60
     );
-    let mut path = dir.join(format!("{name}.cast"));
+    let mut path = dir.join(format!("{name}.{ext}"));
     let mut n = 1;
     while path.exists() {
         n += 1;
-        path = dir.join(format!("{name}-{n}.cast"));
+        path = dir.join(format!("{name}-{n}.{ext}"));
     }
     path
 }

@@ -77,6 +77,7 @@ pub mod pictures;
 pub mod plugins;
 pub mod rows;
 pub mod running;
+pub mod screenshots;
 pub mod scripting;
 pub mod scroll_probe;
 pub mod secrets;
