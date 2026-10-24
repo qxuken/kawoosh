@@ -20,8 +20,10 @@ pub struct Options {
     /// The frame's size in logical px.
     pub size: (f32, f32),
     pub scale: f32,
-    /// No `init.lua`, empty settings: the shipped look.
-    pub clean: bool,
+    /// None of kawoosh's config read — the user's `init.lua` and
+    /// `settings.lua`, the project's `.kawoosh/settings.lua` and
+    /// `.kawoosh/init.lua` — so what is drawn is what kawoosh ships.
+    pub no_config: bool,
     /// Motion as the OS would have it; off, `env.system.motion` is pinned
     /// reduced, so a picture is not taken mid-glide.
     pub motion: bool,
@@ -36,7 +38,7 @@ impl Default for Options {
         Self {
             size: (1100.0, 760.0),
             scale: 2.0,
-            clean: false,
+            no_config: false,
             motion: false,
             appearance: None,
             path: None,
@@ -45,7 +47,7 @@ impl Default for Options {
 }
 
 impl Options {
-    /// `--size WxH`, `--scale N`, `--clean`, `--motion`, `--dark`,
+    /// `--size WxH`, `--scale N`, `--no-config`, `--motion`, `--dark`,
     /// `--light`, then at most one path (`--` before one that starts with
     /// a dash).
     pub fn parse(args: &[String]) -> Result<Options, String> {
@@ -65,7 +67,7 @@ impl Options {
                         .filter(|s: &f32| s.is_finite() && *s > 0.0)
                         .ok_or_else(|| format!("--scale {v}: not a positive number"))?;
                 }
-                "--clean" => o.clean = true,
+                "--no-config" => o.no_config = true,
                 "--motion" => o.motion = true,
                 "--dark" => o.appearance = Some(kui_native::Appearance::Dark),
                 "--light" => o.appearance = Some(kui_native::Appearance::Light),
@@ -105,25 +107,26 @@ fn parse_size(v: &str) -> Option<(f32, f32)> {
 }
 
 /// The directory a run keeps to itself — its state db, and with
-/// `--clean` an empty `init.lua` and `settings.lua` — removed when the run
-/// ends.
+/// `--no-config` an empty `init.lua` and `settings.lua` — removed when the
+/// run ends.
 pub struct Scratch {
     pub dir: PathBuf,
 }
 
 impl Scratch {
     /// Made under the temp directory, before anything reads the config.
-    /// With `clean`, `KAWOOSH_INIT` and `KAWOOSH_SETTINGS` name its empty
-    /// files, so the user's are not read, and the children inherit them.
+    /// With `no_config`, `KAWOOSH_INIT` and `KAWOOSH_SETTINGS` name its
+    /// empty files, so the user's are not read, and the children inherit
+    /// them.
     ///
     /// # Safety
     /// Sets environment variables: called while the process has one
     /// thread, before the logger or any system is started.
-    pub unsafe fn make(clean: bool) -> std::io::Result<Scratch> {
+    pub unsafe fn make(no_config: bool) -> std::io::Result<Scratch> {
         let dir = std::env::temp_dir().join(format!("kawoosh-headless-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir)?;
-        if clean {
+        if no_config {
             let init = dir.join("init.lua");
             let settings = dir.join("settings.lua");
             std::fs::write(&init, "")?;
@@ -157,6 +160,8 @@ impl Drop for Scratch {
 /// and the socket callers waiting for a frame.
 #[derive(Default)]
 pub struct Headless {
+    /// `--no-config`: the project's files are not read either.
+    no_config: bool,
     input: Option<HeadlessInput>,
     /// Views run so far: a reply waits for a view after the one its
     /// request arrived in.
@@ -168,6 +173,13 @@ pub struct Headless {
 }
 
 impl Headless {
+    pub fn new(no_config: bool) -> Self {
+        Self {
+            no_config,
+            ..Self::default()
+        }
+    }
+
     /// The runner's input, once it is open.
     pub fn attach(&mut self, input: HeadlessInput) {
         self.input = Some(input);
@@ -192,6 +204,12 @@ impl Kawoosh {
     /// Whether this is a headless run.
     pub fn is_headless(&self) -> bool {
         self.headless.is_some()
+    }
+
+    /// `--no-config`: no project `.kawoosh/settings.lua` or `init.lua`
+    /// read, on start or on `:cd` (the user's are empty files already).
+    pub(crate) fn reads_no_config(&self) -> bool {
+        self.headless.as_ref().is_some_and(|h| h.no_config)
     }
 
     /// `kawoosh keys NOTATION`: each press sent into the runner, which
@@ -300,12 +318,21 @@ mod tests {
     #[test]
     fn the_options_read_as_the_note_spells_them() {
         let o = Options::parse(&args(&[
-            "--size", "800x600", "--scale", "1", "--clean", "a.rs",
+            "--size",
+            "800x600",
+            "--scale",
+            "1",
+            "--no-config",
+            "a.rs",
         ]))
         .unwrap();
         assert_eq!(o.size, (800.0, 600.0));
         assert_eq!(o.scale, 1.0);
-        assert!(o.clean && !o.motion);
+        assert!(o.no_config && !o.motion);
+        assert!(
+            Options::parse(&args(&["--clean"])).is_err(),
+            "the old name is gone"
+        );
         assert_eq!(o.path.as_deref(), Some("a.rs"));
         assert_eq!(
             Options::parse(&args(&["--", "-x"]))

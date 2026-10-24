@@ -204,12 +204,13 @@ Usage:
   kawoosh -- PATH                open a PATH that starts with a dash
   kawoosh test SCRIPT.lua...     run Lua tests against a headless editor;
                                  exits 0 when every one passes
-  kawoosh --headless [--size WxH] [--scale N] [--clean] [--motion]
+  kawoosh --headless [--size WxH] [--scale N] [--no-config] [--motion]
                    [--dark|--light] [PATH]
                                  the editor with no window, driven over its
                                  socket (printed first as KAWOOSH_SOCKET=…);
                                  never the last session, a state db of its
-                                 own, --clean no init.lua or settings
+                                 own; --no-config reads none of kawoosh's
+                                 config, yours or the project's
 
 From a terminal inside kawoosh (through $KAWOOSH_SOCKET), or from any
 other to the kawoosh started last:
@@ -422,7 +423,7 @@ fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-/// `kawoosh --headless [--size WxH] [--scale N] [--clean] [--motion]
+/// `kawoosh --headless [--size WxH] [--scale N] [--no-config] [--motion]
 /// [--dark|--light] [PATH]`: the window's startup on kui's runner with no
 /// window (kui ADR 0057), never the last session and a state db of its
 /// own. Its first line out is `KAWOOSH_SOCKET=…`, for `kawoosh ex`,
@@ -437,7 +438,7 @@ fn headless(args: &[String]) -> anyhow::Result<()> {
         }
     };
     // SAFETY: one thread so far; nothing has read the environment.
-    let scratch = unsafe { kawoosh::headless::Scratch::make(opts.clean) }
+    let scratch = unsafe { kawoosh::headless::Scratch::make(opts.no_config) }
         .map_err(|e| anyhow::anyhow!("--headless: its directory: {e}"))?;
     let wake = WakeHandle::new();
     let (keep, stderr) = log_levels();
@@ -446,7 +447,7 @@ fn headless(args: &[String]) -> anyhow::Result<()> {
     let (font, shipped) = load_fonts(&mut core);
     let path = opts.path.clone();
     let mut app = Kawoosh::new("*scratch*", if path.is_some() { "" } else { SCRATCH });
-    app.headless = Some(Default::default());
+    app.headless = Some(kawoosh::headless::Headless::new(opts.no_config));
     app.bundled_font = font;
     app.shipped_fonts(shipped);
     app.face.id = font;

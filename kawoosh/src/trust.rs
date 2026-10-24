@@ -297,6 +297,9 @@ impl Kawoosh {
     /// first that is not is asked about. Called after the project
     /// settings at start, on `:cd`, and when one is saved.
     pub(crate) fn reload_project_init(&mut self) {
+        if self.reads_no_config() {
+            return;
+        }
         self.ed
             .settings
             .retain_sources(Layer::Project, |n| n != Layer::Project.name());

@@ -180,16 +180,18 @@ constructor in kui with the loop in kawoosh, is the middle way.
 ### 2. `kawoosh --headless`
 
 ```
-kawoosh --headless [--size 1100x760] [--scale 2] [--clean] [PATH]
+kawoosh --headless [--size 1100x760] [--scale 2] [--no-config] [PATH]
 ```
 
 - Starts as the window does, with fonts, config and plugins, `PATH`
   opened the same way, but **never restores the session and never saves
   one**. A headless run must not leave the user's next window on its
   files.
-- `--clean`: no `init.lua`, empty settings, and a state db in a fresh
-  temp directory, so what is drawn is the shipped look and nothing of
-  the user's is read or written. This is what an agent's smoke run and
+- `--no-config`: none of kawoosh's config read — the user's `init.lua`
+  and `settings.lua`, the project's `.kawoosh/settings.lua` and
+  `.kawoosh/init.lua` — so what is drawn is what kawoosh ships and
+  nothing of the user's is read. A file's `.editorconfig` still applies:
+  it is the file's, not kawoosh's. This is what an agent's smoke run and
   the docs pictures use. Without it the pictures are of the user's own
   setup, which is what a bug report wants.
 - Its first line on stdout is `KAWOOSH_SOCKET=/path`, so a driver
@@ -238,7 +240,7 @@ wants the motion passes `--motion full`.
 1. kui F-round: the headless runner, with a test driving its counter
    example over the input handle and capturing (kui-native). The bulk
    of the work.
-2. kawoosh: `--headless`, `--clean`, the socket name, `Request::Keys`
+2. kawoosh: `--headless`, `--no-config`, the socket name, `Request::Keys`
    and `Wait`, `press` moved out of the harness. One round, with a
    `kawoosh/tests` test that starts the binary headless, sends keys
    over the socket, and reads the buffer back with `ex`.
@@ -253,9 +255,9 @@ wants the motion passes `--motion full`.
   headless target, so `App::setup` is kawoosh's unchanged and the loop,
   the pacing, the captures and the clipboard are kui's.
 - **The state db is always the run's own** (a scratch directory under the
-  temp directory, removed at the end), not only with `--clean`, unless
+  temp directory, removed at the end), not only with `--no-config`, unless
   `KAWOOSH_STATE` names one: a run leaves no moments, history or session
-  in the user's db. The open question of whether `--clean` should be the
+  in the user's db. The open question of whether `--no-config` should be the
   default was answered by that: without it a run reads the user's
   `init.lua` and `settings.lua` and writes nothing of theirs.
 - **A project's `.kawoosh/init.lua` is never asked about.** The run's db
@@ -268,6 +270,15 @@ wants the motion passes `--motion full`.
 - **`kawoosh wait` rings the frame itself**: it arrives in a view that
   has already asked for its frames, and with nothing else owed none would
   come. It answers `idle`, or the corner message.
+- **`--no-config`, not `--clean`** (renamed 2026-10-24, the user's call:
+  `--clean` did not say what it cleaned). The flag says what it does, and
+  does all of it: built as `--clean`, it skipped the user's two files
+  and still read the project's `.kawoosh/settings.lua`, so a picture taken
+  in a repository with one was not the shipped look. Now the project
+  layer is not read either, on start or on `:cd`. Alternatives:
+  `--no-user-config` (true of `--clean` as first built, and the project
+  half then left unnamed), `--defaults` (reads as a setting's value),
+  neovim's `--clean` (the name the user found unclear).
 - **`--dark` and `--light`** pin the system's base, beside `--motion`.
 - **Lua types are not written** and the update watch is not started: a
   run is not a build the user runs.
@@ -285,5 +296,5 @@ socket and directory gone.
 ## Open questions
 
 - Should a headless run start LSP servers and file watchers as the
-  window does, or should `--clean` leave them off for speed? Built as the
+  window does, or should `--no-config` leave them off for speed? Built as the
   window does.

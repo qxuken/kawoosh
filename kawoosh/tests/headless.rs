@@ -30,9 +30,15 @@ impl Drop for Run {
     }
 }
 
-/// A headless kawoosh in a directory of the test's own, `--clean`, and
+/// A headless kawoosh in a directory of the test's own, `--no-config`, and
 /// the socket it printed.
 fn start(name: &str) -> Run {
+    start_with(name, &["--no-config"], |_| {})
+}
+
+/// [`start`] with `flags` for `--no-config`, after `prepare` has had the
+/// directory it runs in.
+fn start_with(name: &str, flags: &[&str], prepare: impl FnOnce(&Path)) -> Run {
     let dir = std::env::temp_dir().join(format!("kwh-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     for d in ["home", "config", "data"] {
@@ -43,9 +49,11 @@ fn start(name: &str) -> Run {
     let run = PathBuf::from(format!("/tmp/kwh-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&run);
     std::fs::create_dir_all(&run).unwrap();
+    prepare(&dir);
     let mut child = kawoosh_systems::spawn::spawn(
         Command::new(env!("CARGO_BIN_EXE_kawoosh"))
-            .args(["--headless", "--clean", "--size", "640x400", "--scale", "1"])
+            .args(["--headless", "--size", "640x400", "--scale", "1"])
+            .args(flags)
             .current_dir(&dir)
             .env("HOME", dir.join("home"))
             .env("XDG_CONFIG_HOME", dir.join("config"))
@@ -140,4 +148,25 @@ fn a_closed_stdin_ends_the_run() {
     drop(run.child.stdin.take());
     assert!(exits(&mut run.child, 10), "still running with stdin closed");
     assert!(!Path::new(&run.sock).exists());
+}
+
+/// `--no-config` reads none of kawoosh's config: a project's
+/// `.kawoosh/settings.lua` that a plain run takes is not read.
+#[test]
+fn no_config_reads_not_even_the_project_s_settings() {
+    let project = |dir: &Path| {
+        std::fs::create_dir_all(dir.join(".kawoosh")).unwrap();
+        std::fs::write(
+            dir.join(".kawoosh/settings.lua"),
+            "return { editor = { bell = true } }\n",
+        )
+        .unwrap();
+    };
+    let read = start_with("proj-read", &[], project);
+    let said = ex(&read, "set editor.bell?");
+    assert!(said.starts_with("editor.bell = true"), "{said}");
+    drop(read);
+    let skipped = start_with("proj-skip", &["--no-config"], project);
+    let said = ex(&skipped, "set editor.bell?");
+    assert!(said.starts_with("editor.bell = false"), "{said}");
 }
