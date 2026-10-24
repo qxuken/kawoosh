@@ -2073,9 +2073,15 @@ impl Runtime {
             // frame, and the line it is by now (`Buffer::line_now`'s
             // reading): what was typed at its edges is its own, a line
             // opened above or below is not; an emptied line is as good
-            // as gone. The lines are found in one pass over the text.
+            // as gone, and so is one with none of its bytes left on a
+            // line another tracked line has bytes on — a line opened
+            // above, joined to the next and its text erased (`x`, `u`)
+            // leaves that next line, not two on one. The lines are
+            // found in one pass over the text.
             let starts = b.line_starts();
             let mut snap = TrackedSnap::default();
+            let mut lns = Vec::with_capacity(t.lines.len());
+            let mut held = std::collections::HashSet::new();
             for f in &mut t.lines {
                 if f.at != v {
                     f.now = f.now.take().and_then(|r| b.line_carried(r, f.at, v));
@@ -2084,8 +2090,16 @@ impl Runtime {
                 let ln = f
                     .now
                     .as_ref()
-                    .map(|r| Buffer::line_at(&starts, r.start))
-                    .map(|ln| (ln, b.line_range_in(&starts, ln)))
+                    .map(|r| (Buffer::line_at(&starts, r.start), r.is_empty()));
+                if let Some((ln, false)) = ln {
+                    held.insert(ln);
+                }
+                lns.push(ln);
+            }
+            for ln in lns {
+                let ln = ln
+                    .filter(|(ln, empty)| !(*empty && held.contains(ln)))
+                    .map(|(ln, _)| (ln, b.line_range_in(&starts, ln)))
                     .filter(|(_, r)| !r.is_empty());
                 snap.at.push(ln.as_ref().map(|(ln, _)| ln + 1));
                 snap.texts.push(ln.map(|(_, r)| b.slice(r)));

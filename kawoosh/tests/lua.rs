@@ -3549,6 +3549,49 @@ fn a_renamed_file_is_still_its_buffer() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A line opened above, joined to the next (`<Del>` at its end) and
+/// its text erased again — `x`, or `u` back to the listing as read —
+/// leaves that next line, not two entries on one: no `← joined`, and
+/// the write has nothing to refuse.
+#[test]
+fn a_joined_line_erased_back_is_one_entry() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-unjoin-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    std::fs::write(dir.join("a1.txt"), "one").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    d.settle(&mut app);
+    for erase in ["x", "u"] {
+        d.press(&mut app, "O-<Del><Esc>");
+        d.settle(&mut app);
+        assert_eq!(d.line_rows(), ["-../", "a1.txt"]);
+        assert!(
+            d.row_extras()[0].ends_with("← joined"),
+            "{:?}",
+            d.row_extras()
+        );
+        d.press(&mut app, erase);
+        d.settle(&mut app);
+        assert_eq!(d.line_rows(), ["../", "a1.txt"], "{erase}");
+        assert_eq!(d.row_extras()[0], "", "{erase}");
+        ex(&mut d, &mut app, "w");
+        d.settle(&mut app);
+        assert!(d.confirm_texts().is_empty(), "{erase}");
+        assert!(
+            !app.notes
+                .shown
+                .iter()
+                .any(|s| s.text.contains("on one line")),
+            "{erase}: {:?}",
+            app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Two entries on one line is nothing the write could do: `J` is
 /// refused in a listing, and a join made some other way is marked on
 /// the line and refused by the write, nothing on disk touched. A name
