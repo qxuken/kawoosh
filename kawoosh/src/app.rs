@@ -164,7 +164,8 @@ pub struct Kawoosh {
     pub cwd: PathBuf,
     /// The theme's base, for `TERM_APPEARANCE` and the syntax palette.
     pub dark: bool,
-    /// kui's devtools panel, toggled with F12 or `:kui_debugger`.
+    /// kui's devtools panel, toggled with F12 or `:kui_debugger`: on and
+    /// showing, not hidden by its close button.
     pub devtools: bool,
     /// What the core was last told (or last said): a change on this side
     /// since is pushed, else the core's own — its close button, its
@@ -3098,7 +3099,12 @@ impl kui_native::App for Kawoosh {
         if self.devtools_synced.is_some_and(|s| s != self.devtools) {
             ui.core().set_devtools(self.devtools);
         } else {
-            self.devtools = ui.core().devtools();
+            // Whether it shows: the close button hides the panel and
+            // leaves it on, and turning on a hidden one shows it again
+            // (kui F188), so a toggle from here is one press after it.
+            let core = ui.core();
+            self.devtools =
+                core.devtools() && core.devtools_dock() != kui_native::DevtoolsDock::Off;
         }
         self.devtools_synced = Some(self.devtools);
         if let Some(tab) = self.show_tab.take() {

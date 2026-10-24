@@ -5,7 +5,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_editor::Mode;
-use kui_native::KeyMods;
+use kui_native::{DevtoolsDock, KeyMods};
 
 const DOC: &str = "line one\nline two\nline three\n\tindented\nlast";
 
@@ -733,6 +733,26 @@ fn kui_instruments_are_commands() {
     d.frame(&mut app);
     assert!(!app.devtools, "the panel closed from its own side");
     assert!(!d.core.devtools());
+    // Its close button hides it and leaves it on (kui F188): the app
+    // reads it as off, so one toggle brings it back where it was, not a
+    // press that turns off a panel nobody sees and a second to show it.
+    let shows = |d: &Drive| d.core.devtools() && d.core.devtools_dock() != DevtoolsDock::Off;
+    ex(&mut d, &mut app, "kui debugger on");
+    d.core.set_devtools_dock(DevtoolsDock::Bottom);
+    d.frame(&mut app);
+    d.core.set_devtools_dock(DevtoolsDock::Off);
+    d.frame(&mut app);
+    assert!(d.core.devtools() && !shows(&d), "closed by its button");
+    assert!(!app.devtools, "a hidden panel reads as off");
+    ex(&mut d, &mut app, "kui debugger");
+    assert_eq!(app.ed.message, "kui devtools on");
+    assert!(app.devtools && shows(&d), "one toggle shows it again");
+    assert_eq!(d.core.devtools_dock(), DevtoolsDock::Bottom);
+    d.core.set_devtools_dock(DevtoolsDock::Off);
+    d.frame(&mut app);
+    d.key(&mut app, "f12", KeyMods::default());
+    d.frame(&mut app);
+    assert!(app.devtools && shows(&d), "F12 shows it again too");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
