@@ -496,6 +496,16 @@ pub enum Msg {
     /// `kawoosh.copy(text)`: the register's newest, as a yank's, and on
     /// the system clipboard — text no buffer's range held, a path.
     Copy(String),
+    /// `kawoosh.reveal(path)`: the path shown in the OS's file manager
+    /// (Finder, Explorer, the desktop's) — selected among its
+    /// directory's entries, or with `inside` a directory's own entries.
+    ///
+    /// @class kawoosh.RevealOpts
+    /// @field inside? boolean a directory's entries shown, not it selected in its parent
+    Reveal {
+        path: PathBuf,
+        inside: bool,
+    },
     /// `kawoosh.open(path: string, opts?: kawoosh.OpenOpts): nil`: the
     /// path opened in an editor pane — the focused one, or one split
     /// beside (`vsplit`), below (`split`) or in a new tab (`tab`) — the
@@ -5203,6 +5213,28 @@ fn seed(
         "copy",
         lua.create_function(move |_, text: String| {
             qq.borrow_mut().push(Msg::Copy(text));
+            Ok(())
+        })?,
+    )?;
+    // ---- `kawoosh.reveal(path: string, opts?: kawoosh.RevealOpts): nil`: `path` shown
+    // in the OS's file manager — what `gX` in a listing asks for the
+    // entry under the caret. A path on a host is refused, said on the
+    // message line: no file manager here can show it.
+    let qq = q(queue);
+    k.set(
+        "reveal",
+        lua.create_function(move |_, (p, opts): (String, Option<Table>)| {
+            let inside = match &opts {
+                Some(t) => t
+                    .get::<Option<bool>>("inside")
+                    .map_err(|e| mlua::Error::runtime(format!("kawoosh.reveal: inside: {e}")))?
+                    .unwrap_or(false),
+                None => false,
+            };
+            qq.borrow_mut().push(Msg::Reveal {
+                path: PathBuf::from(p),
+                inside,
+            });
             Ok(())
         })?,
     )?;

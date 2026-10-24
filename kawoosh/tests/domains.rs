@@ -192,6 +192,18 @@ fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
     until(&mut d, &mut app, "the root", |a| {
         focused_name(a) == format!("dir: {name}:/")
     });
+    // No file manager here shows the host's entry (`gX`): said, and
+    // nothing handed over.
+    app.revealed = Some(Vec::new());
+    d.keys(&mut app, "gX");
+    assert_eq!(
+        app.ed.message,
+        format!(
+            "{name}:/src: on another machine, not for {}",
+            kawoosh::reveal::manager()
+        )
+    );
+    assert_eq!(app.revealed.as_deref(), Some(&[][..]));
     // A path's copy keeps its domain.
     ex(&mut d, &mut app, &format!("e {file}"));
     d.keys(&mut app, " yP");

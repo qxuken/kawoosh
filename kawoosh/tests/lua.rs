@@ -4785,3 +4785,57 @@ fn a_fractional_search_context_is_whole_lines() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `gX` in a listing (`:dir reveal`): the entry under the caret handed
+/// to the OS's file manager, selected in the listed directory; on
+/// `../` the listed directory's own entries; a line not written yet is
+/// nothing there, said, and nothing is handed over. Off a listing the
+/// command is refused. The paths are kept (`revealed`), no Finder
+/// opened.
+#[test]
+fn a_listing_shows_its_entry_in_the_file_manager() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-reveal-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    let file = dir.join("f.txt");
+    std::fs::write(&file, "x").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
+    app.revealed = Some(Vec::new());
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    let manager = kawoosh::reveal::manager();
+    let shown = |p: &std::path::Path| kawoosh_systems::fs::abbreviate_home(p);
+
+    ex(&mut d, &mut app, "dir reveal");
+    assert_eq!(app.ed.message, "dir reveal: only in a dir buffer");
+
+    // `-` lists the directory, the caret on the file.
+    d.keys(&mut app, "-");
+    d.keys(&mut app, "gX");
+    assert_eq!(app.revealed.as_deref(), Some(&[(file.clone(), false)][..]));
+    assert_eq!(
+        app.ed.message,
+        format!("shown in {manager}: {}", shown(&file))
+    );
+    // A directory's line is shown as itself, selected.
+    d.keys(&mut app, "k");
+    d.keys(&mut app, "gX");
+    assert_eq!(app.revealed.as_ref().unwrap()[1], (dir.join("sub"), false));
+    // `../`: the listed directory's own entries.
+    d.keys(&mut app, "gg");
+    d.keys(&mut app, "gX");
+    assert_eq!(app.revealed.as_ref().unwrap()[2], (dir.clone(), true));
+    // A line typed in is not on disk until `:w`.
+    d.keys(&mut app, "Gonew.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "gX");
+    assert_eq!(app.revealed.as_ref().map(Vec::len), Some(3));
+    assert_eq!(
+        app.ed.message,
+        format!("{}: not there", shown(&dir.join("new.txt")))
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

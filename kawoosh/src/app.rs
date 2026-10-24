@@ -436,6 +436,9 @@ pub struct Kawoosh {
     /// For tests: the URLs a link would have handed the OS, kept here
     /// instead when set (`links::follow_link`).
     pub urls_opened: Option<Vec<String>>,
+    /// For tests: the paths `kawoosh.reveal` would have handed the
+    /// file manager, and whether inside, kept here instead when set.
+    pub revealed: Option<Vec<(PathBuf, bool)>>,
 }
 
 /// How long a yank's ranges stay washed.
@@ -612,6 +615,7 @@ impl Kawoosh {
             format: Default::default(),
             jobs_inline: false,
             urls_opened: None,
+            revealed: None,
         };
         app.install_commands();
         crate::settings::declare_shell_settings(&mut app.ed.settings);

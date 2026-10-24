@@ -63,6 +63,7 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `g.` | show or hide dot files (`:dir hidden`, the `dir.hidden` setting) |
 | `gS` | size the directories, or stop (`:dir sizes`, the `dir.sizes` setting) |
 | `~` | make the listed directory the working directory (`:dir cd`) |
+| `gX` | show the entry under the caret in Finder, Explorer or your desktop's file manager, selected (`:dir reveal`); on `../`, the listed directory itself |
 | `<C-w>.` | a terminal in the listed directory (`:terminal here`) |
 | `<C-w>/` | the listed directory again, in a pane beside (`:dir here`) — two listings to browse side by side, each moving on alone |
 | `<C-w>u` | the disk usage of the listed directory (`:du here`) |

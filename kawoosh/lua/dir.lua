@@ -1212,6 +1212,28 @@ for _, c in ipairs(COPIES) do
   })
 end
 
+-- `:dir reveal`, or `gX`: the entry under the caret shown in the OS's
+-- file manager (Finder, Explorer, the desktop's), selected among the
+-- listed directory's entries; on `../`, or in a listing with none, the
+-- listed directory's own entries (`kawoosh.reveal`). A line renamed or
+-- typed in and not written yet is nothing there to show, said; a
+-- listing on a host has no file manager here, said too.
+kawoosh.command("dir reveal", function()
+  local d = listed()
+  if not d then return end
+  if d == DRIVES then
+    local drive = kawoosh.buf.line(kawoosh.buf.cursor().line)
+    if drive and drive ~= "" then kawoosh.reveal(drive, { inside = true }) end
+    return
+  end
+  local name = under_caret()
+  if name then return kawoosh.reveal(fs.join(d, name)) end
+  kawoosh.reveal(d, { inside = true })
+end, {
+  when = { "language:dir" },
+  doc = "show the entry under the caret in the OS's file manager (Finder, Explorer)",
+})
+
 -- `:dir cd`, or `~`: the working directory follows the listing,
 -- so a terminal opened next starts here. A subcommand of `:dir`, so it
 -- completes there; `when` names the listing, so anywhere else the
@@ -1778,6 +1800,9 @@ kawoosh.map("n", "~", "dir cd", LISTING)
 -- `gz`: the directory jumps (`dirs.lua`, zoxide's), a pick listed here.
 -- Not yazi's bare `z`, which would take `zz` `zs` `ze` from a listing.
 kawoosh.map("n", "gz", "picker dirs", LISTING)
+-- `gX`: the entry handed to the OS's file manager, as `gx` hands a link
+-- to the OS — `gx` itself stays the link opener here.
+kawoosh.map("n", "gX", "dir reveal", LISTING)
 for _, c in ipairs(COPIES) do
   kawoosh.map("n", "<leader>y" .. c[1], "dir copy " .. c[2], LISTING)
 end

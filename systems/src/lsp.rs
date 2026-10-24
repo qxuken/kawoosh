@@ -1484,7 +1484,7 @@ fn on_host(ev: Event, d: &str) -> Event {
 /// `file:///a/b%20c`, and on Windows `file:///C:/a/b` — the drive
 /// behind a `/`, upper-cased, the separators forward — as every server
 /// reads it.
-fn uri_of(path: &Path) -> String {
+pub fn uri_of(path: &Path) -> String {
     // A host's path is sent as the host's own: the server runs there,
     // and a `\` there is a name's character, not a separator.
     let (path, host) = match crate::fs::domain_of(path) {

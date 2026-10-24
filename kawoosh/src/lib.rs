@@ -75,6 +75,7 @@ pub mod panes;
 pub mod perf;
 pub mod pictures;
 pub mod plugins;
+pub mod reveal;
 pub mod rows;
 pub mod running;
 pub mod scripting;
