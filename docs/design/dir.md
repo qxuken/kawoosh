@@ -176,3 +176,35 @@ says what it found.
 
 `a_directory_here_that_is_gone_lists_its_closest_parent` in
 `kawoosh/tests/lua.rs`.
+
+### 5. `gX` shows the entry in the OS's file manager
+
+*Added 2026-10-24, asked:* "add open finder/explorer command to dir."
+`:dir reveal`, or `gX` in a listing, hands the entry under the caret
+to the OS's file manager, selected among the listed directory's
+entries; on `../`, or in an empty listing, the listed directory is
+opened as itself. The engine does the asking (`kawoosh.reveal(path,
+{ inside = })`, `kawoosh/src/reveal.rs`), so a plugin pane can show
+its file the same way.
+
+- **How each OS is asked**, a program and its arguments, never a
+  shell, as `gx` opens a URL: macOS `open -R PATH`, and `open -a
+  Finder DIR` inside (a bundle is browsed, not run); Windows
+  `explorer.exe /select,"PATH"`, written raw since Explorer reads its
+  own command line and std would quote the whole argument; Linux the
+  freedesktop `org.freedesktop.FileManager1` `ShowItems` /
+  `ShowFolders` call through `dbus-send`, which Nautilus, Dolphin,
+  Thunar and Nemo answer, and `xdg-open` of the directory — nothing
+  selected — when no file manager answers it.
+- **What is refused**, on the message line: a host's path (no file
+  manager here can show it) and a path that is not there — a line
+  typed in or renamed and not written yet.
+- **The key**: `gX`, beside `gx`, which hands a link to the OS and
+  stays that in a listing. `gO` was free too, but is the outline in
+  neovim.
+
+`a_listing_shows_its_entry_in_the_file_manager` in
+`kawoosh/tests/lua.rs`, the host's refusal in
+`a_hosts_file_is_opened_written_and_listed_through_its_domain`
+(`kawoosh/tests/domains.rs`), the arguments per OS in
+`reveal::tests`.

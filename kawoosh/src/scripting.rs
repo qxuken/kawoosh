@@ -677,6 +677,23 @@ impl Kawoosh {
                 }
                 self.open_in_editor(&path, line, col);
             }
+            Msg::Reveal { path, inside } => {
+                let shown = kawoosh_systems::fs::abbreviate_home(&path);
+                let manager = crate::reveal::manager();
+                if kawoosh_systems::fs::domain_of(&path).is_some() {
+                    self.ed.message = format!("{shown}: on another machine, not for {manager}");
+                } else if !kawoosh_systems::fs::exists(&path) {
+                    self.ed.message = format!("{shown}: not there");
+                } else if let Some(revealed) = &mut self.revealed {
+                    revealed.push((path, inside));
+                    self.ed.message = format!("shown in {manager}: {shown}");
+                } else {
+                    self.ed.message = match crate::reveal::reveal(&path, inside) {
+                        Ok(()) => format!("shown in {manager}: {shown}"),
+                        Err(e) => e,
+                    };
+                }
+            }
             Msg::CloseBuffer {
                 buffer,
                 force,
