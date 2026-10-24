@@ -1614,8 +1614,7 @@ impl Kawoosh {
                 // field, the caret on it while it has the keys.
                 if let Some(f) = filter {
                     ui.with(
-                        tm.line(&pal, 0)
-                            .hover_bg(Color::TRANSPARENT)
+                        tm.still_line(&pal, 0)
                             .bg(if filtering { pal.strip } else { Color::TRANSPARENT })
                             .on_click(Msg::MemoryFilter { pane }),
                         |ui| {
@@ -1626,7 +1625,7 @@ impl Kawoosh {
                         },
                     );
                 }
-                ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| match view {
+                ui.with(tm.still_line(&pal, 0), |ui| match view {
                     View::Texts => {
                         ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text("took", small(pal.faint))
@@ -1956,14 +1955,14 @@ impl Kawoosh {
                             let text = &texts[*t].2;
                             let shown: Vec<&str> = text.lines().take(LINES_SHOWN).collect();
                             for (k, l) in shown.iter().enumerate() {
-                                ui.with(tm.line(&pal, k).hover_bg(Color::TRANSPARENT), |ui| {
+                                ui.with(tm.still_line(&pal, k), |ui| {
                                     ui.text_in(tm.rest(), &l.replace('\t', "    "), style());
                                 });
                             }
                             let all = text.lines().count();
                             if all > shown.len() {
                                 ui.text_in(
-                                    tm.line(&pal, shown.len()).hover_bg(Color::TRANSPARENT),
+                                    tm.still_line(&pal, shown.len()),
                                     &format!("… {} more", all - shown.len()),
                                     small(pal.faint),
                                 );
@@ -2000,7 +1999,7 @@ impl Kawoosh {
                                 facts.push(("pinned", format!("#{}", row.pinned)));
                             }
                             for (k, (name, value)) in facts.iter().enumerate() {
-                                ui.with(tm.line(&pal, k).hover_bg(Color::TRANSPARENT), |ui| {
+                                ui.with(tm.still_line(&pal, k), |ui| {
                                     ui.text_in(col(9.0), name, dim());
                                     ui.text_in(tm.rest(), value, style());
                                 });

@@ -64,6 +64,14 @@ impl Tab {
     /// (a virtual list needs it fixed), the inset and the cell gap the
     /// tabs' rows have, every other row washed and a hovered one lit.
     pub(crate) fn line(&self, pal: &Pal, i: usize) -> NodeSpec {
+        self.still_line(pal, i).hover_bg(pal.hover)
+    }
+
+    /// A [`Tab::line`] that is not lit when hovered — a heading, a
+    /// detail's facts. Since kui alpha.67 a `hover_bg` lights over the
+    /// node's children too, so a transparent one would wash out the
+    /// zebra over the whole line, not only between its cells.
+    pub(crate) fn still_line(&self, pal: &Pal, i: usize) -> NodeSpec {
         NodeSpec::row()
             .grow_width()
             .height(self.line_h)
@@ -75,7 +83,6 @@ impl Tab {
             } else {
                 Color::TRANSPARENT
             })
-            .hover_bg(pal.hover)
     }
 
     /// A cell of a table's line, `cells` mono cells wide, its content

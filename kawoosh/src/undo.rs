@@ -400,7 +400,7 @@ impl Kawoosh {
                     },
                 );
                 // The columns named, over the numbers they hold.
-                ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| {
+                ui.with(tm.still_line(&pal, 0), |ui| {
                     ui.leaf(NodeSpec::row().size(graph_w, tm.line_h));
                     ui.text_in(col(4.0), "#", small(pal.faint));
                     ui.text_in(col(7.0), "when", small(pal.faint));
