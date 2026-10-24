@@ -41,4 +41,5 @@ what your `init.lua` and plugins added.
 Your settings are `settings.lua` and `init.lua` in `~/.config/kawoosh/`
 (see [settings](settings.md)); your fonts go in its `fonts/` folder.
 The memory, the histories and the sessions are in
-`~/.local/share/kawoosh/state.db`.
+`~/.local/share/kawoosh/state.db`; pictures of the window (`:screenshot`)
+in its `screenshots/`, terminal recordings in its `recordings/`.

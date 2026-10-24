@@ -1,8 +1,8 @@
 # Panes, tabs and workspaces
 
 How the window is laid out: panes and splits, tabs, the scrolling strip
-of columns, the dock, a working directory per tab, and the launcher a
-new pane opens on.
+of columns, the dock, a working directory per tab, the launcher a
+new pane opens on, and pictures of the window.
 
 ## Panes and splits
 
@@ -296,3 +296,23 @@ module shows as a line saying so.
 — rows (`items`, `load`, a picker `source`) or a block drawn as it is
 (`draw`) — and a row to one with `kawoosh.launcher.entry`; see
 [Lua](lua.md).
+
+## Pictures of the window
+
+The window takes its own screenshots: it draws the frame again for the
+picture, so it need not be in front, or even on screen.
+
+| how | what |
+|---|---|
+| `:screenshot [FILE]` | the window as a picture into FILE — `.png`, `.jpg`, `.webp` or `.gif` by its extension. A directory, or a name with no extension, gets a file named for now in it (the directory made); no FILE, one under `~/.local/share/kawoosh/screenshots` |
+| `:screenshot copy` | the window as a picture on the clipboard |
+| `:screencast [FILE]` | every frame the window draws, recorded as an animation into FILE — an animated `.png` (`.apng`) or a `.gif`; no FILE, a `.apng` under `screenshots` |
+| `:screencast stop` | the recording ended and written |
+
+The message in the corner says where the file went, its size in pixels
+and, for a screencast, its frames and length — or why there is none.
+On a Mac they are in the bar's Window menu too: Save Screenshot and
+Copy Screenshot.
+
+From a shell, `kawoosh ex ':screenshot /tmp/shot.png'` answers once the
+file is written, with its whole path.

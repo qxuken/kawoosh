@@ -33,6 +33,9 @@ pub enum Msg {
     /// A row chosen from one of kawoosh's menus: the bar's, or one opened
     /// over a node that declares it.
     Menu,
+    /// What kui wrote of the window for a `:screenshot`, a `:screenshot
+    /// copy` or a `:screencast` (`on_capture`, kui ADR 0055).
+    Capture { of: Shot },
 
     // ---------------------------------------------------- a pane's frame
     /// Where a pane was laid out.
@@ -167,6 +170,18 @@ impl Msg {
             _ => None,
         }
     }
+}
+
+/// What a picture of the window was asked as (`screenshots.rs`).
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+#[message(string)]
+pub enum Shot {
+    /// A still into a file.
+    Still,
+    /// A still on the clipboard.
+    Copy,
+    /// A recording into a file.
+    Cast,
 }
 
 /// A divider's direction: `h` between columns, `v` between rows.

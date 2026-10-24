@@ -320,6 +320,9 @@ pub struct Kawoosh {
     /// A secret for the clipboard at the next frame, written marked
     /// concealed and transient (`yank clipboard`, secrets.md Decision 8).
     pub(crate) clip_secret_out: Option<String>,
+    /// Pictures of the window asked for, handed to kui at the next
+    /// frame, and who waits on them (`screenshots.rs`).
+    pub(crate) shots: crate::screenshots::Screenshots,
     pub(crate) awaiting_paste: bool,
     /// The clipboard asked for to see what is on it (`sync_clipboard`),
     /// not to paste: its answer goes to the register.
@@ -573,6 +576,7 @@ impl Kawoosh {
             quit: false,
             clip_out: None,
             clip_secret_out: None,
+            shots: Default::default(),
             awaiting_paste: false,
             clip_probe: false,
             ghost_shown: false,
@@ -1381,9 +1385,14 @@ impl Kawoosh {
                 // Any view will do for a command that needs one.
                 let v = self.command_view();
                 self.ed.message.clear();
+                // A picture of the window the line asks for answers
+                // once kui has written it (`screenshots.rs`).
+                self.shots.asker = Some(reply);
                 self.ed.execute(v, &line);
                 self.drain_effects();
-                let _ = reply.send(self.ed.message.clone());
+                if let Some(reply) = self.shots.asker.take() {
+                    let _ = reply.send(self.ed.message.clone());
+                }
             }
         }
     }
@@ -3138,6 +3147,7 @@ impl kui_native::App for Kawoosh {
         if let Some(text) = self.clip_secret_out.take() {
             ui.set_clipboard_secret(text);
         }
+        self.hand_screenshots(ui);
         self.sync_clipboard(ui.core(), false);
         // Secure keyboard entry while a terminal at a password prompt
         // has the keys, or the confirm asks for a secret (kui F85; per
@@ -3336,7 +3346,11 @@ impl Kawoosh {
         // the keys: the memory's idle guard (`moments.rs`).
         if !matches!(
             event,
-            Event::Window(_) | Event::Fonts | Event::Open(_) | Event::Modifiers(_)
+            Event::Window(_)
+                | Event::Fonts
+                | Event::Open(_)
+                | Event::Modifiers(_)
+                | Event::Capture(_)
         ) {
             self.note_input();
         }
@@ -3367,6 +3381,9 @@ impl Kawoosh {
                 }
             }
             (Some(Msg::Modifiers), Event::Modifiers(m)) => self.mods = m,
+            // What kui wrote of the window for a `:screenshot` or a
+            // `:screencast`, or why it wrote nothing.
+            (Some(Msg::Capture { of }), Event::Capture(c)) => self.on_captured(of, c),
             // The wheel with ⌘ or Ctrl held, for the font's size.
             (Some(Msg::Zoom), Event::Scroll(s)) => self.on_zoom(s.pos, s.delta.y),
 
