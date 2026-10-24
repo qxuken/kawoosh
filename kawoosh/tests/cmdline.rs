@@ -467,6 +467,9 @@ fn the_candidates_scroll_and_keep_their_width() {
     app.set_cwd(&dir);
     d.frame(&mut app);
     d.keys(&mut app, ":e ");
+    // The directory is listed on a job: waited for, or under load the
+    // `<C-n>`s walk no candidates and none is current.
+    listed(&mut d, &mut app);
     for _ in 0..24 {
         d.press(&mut app, "<C-n>");
     }

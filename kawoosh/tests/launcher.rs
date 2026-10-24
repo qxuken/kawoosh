@@ -753,9 +753,10 @@ fn an_idle_launcher_is_replayed() {
     let dir = project("replay");
     let (mut d, mut app) = launch(&dir);
     d.press(&mut app, "<C-w>v");
-    for _ in 0..4 {
-        d.frame(&mut app);
-    }
+    // Settled before counting: a plugin's process answering late — its
+    // stderr, its exit, under load — runs plugin code outside a view,
+    // and every view runs again the frame after, rightly.
+    d.settle(&mut app);
     assert!(on_launcher(&app));
     let slot = format!("lua/launcher@{}", app.layout.focused());
     for i in 0..3 {
