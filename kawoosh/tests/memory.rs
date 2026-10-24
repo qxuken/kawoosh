@@ -1983,3 +1983,122 @@ fn a_remembered_dwell_takes_a_fraction_of_a_second() {
     assert_eq!(row.dwell_ms, 1500);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `:syntax` is remembered (memory.md, "Syntax"): a file the languages
+/// know given another language keeps it by its path, a kind they do
+/// not know (`*.kwx`) keeps it for every file of the kind — the open
+/// ones still unread read so at once — both across a launch, held past
+/// `memory.keep_days`; a file given back what the languages say, or a
+/// kind given back `text`, is forgotten.
+#[test]
+fn a_syntax_given_is_remembered_for_the_file_or_its_kind() {
+    let dir = tmp("syntax");
+    let db = dir.join("state.db");
+    let a = dir.join("a.rs");
+    let b = dir.join("b.kwx");
+    let c = dir.join("c.kwx");
+    let e = dir.join("e.kwx");
+    let start = dir.join("start.txt");
+    let gone = dir.join("gone.rs");
+    std::fs::write(&a, "fn main() {}\n").unwrap();
+    std::fs::write(&gone, "fn main() {}\n").unwrap();
+    for p in [&b, &c, &e] {
+        std::fs::write(p, "fn x() {}\n").unwrap();
+    }
+    std::fs::write(&start, "start\n").unwrap();
+    let file = |p: &std::path::Path| MomentKey::new("syntax", &p.display().to_string(), "");
+    let kind = MomentKey::new("syntax", "*.kwx", "");
+    let language = |app: &Kawoosh| -> String {
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .language
+            .to_string()
+    };
+    let (mut d, mut app) = launch(&db, &start);
+    d.frame(&mut app);
+    let store = app.store.clone().unwrap();
+    app.open(&a);
+    d.frame(&mut app);
+    assert_eq!(language(&app), "rust");
+    ex(&mut d, &mut app, "syntax markdown");
+    assert_eq!(app.ed.message, "syntax markdown");
+    let row = store.moment(&file(&a)).expect("written at once");
+    assert!(
+        row.meta.contains("\"language\":\"markdown\""),
+        "{}",
+        row.meta
+    );
+    app.open(&gone);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "syntax markdown");
+    assert!(store.moment(&file(&gone)).is_some());
+    // Two files of a kind nobody knows: the one given a language gives
+    // it to the other, and the kind is remembered, not the file.
+    app.open(&b);
+    d.frame(&mut app);
+    app.open(&c);
+    d.frame(&mut app);
+    assert_eq!(language(&app), "text");
+    ex(&mut d, &mut app, "setf rs");
+    assert_eq!(
+        app.ed.message,
+        "syntax rust, and 1 more open file of its kind"
+    );
+    let b_id = app.ed.buffer_at(&b).unwrap();
+    assert_eq!(&*app.ed.buffers[b_id].language, "rust");
+    assert!(store.moment(&kind).is_some());
+    assert!(
+        store.moment(&file(&c)).is_none(),
+        "the kind's, not the file's"
+    );
+    // Held: a year unattended, and the launch's sweep keeps both — but
+    // not a file deleted since, which ages out as any row.
+    let old = kawoosh_systems::store::now() - 365 * 86_400;
+    store.set_moment_last(&file(&a), old).unwrap();
+    store.set_moment_last(&kind, old).unwrap();
+    store.set_moment_last(&file(&gone), old).unwrap();
+    ex(&mut d, &mut app, "qa!");
+    d.frame(&mut app);
+    drop(app);
+    drop(store);
+    std::fs::remove_file(&gone).unwrap();
+
+    let (mut d, mut app) = launch(&db, &start);
+    d.frame(&mut app);
+    let store = app.store.clone().unwrap();
+    app.open(&a);
+    d.frame(&mut app);
+    assert_eq!(language(&app), "markdown", "the file's, across a launch");
+    assert!(store.moment(&file(&a)).is_some() && store.moment(&kind).is_some());
+    assert!(store.moment(&file(&gone)).is_none(), "its file is gone");
+    app.open(&e);
+    d.frame(&mut app);
+    assert_eq!(
+        language(&app),
+        "rust",
+        "the kind's, for a file never given it"
+    );
+    // The pane lists them among every kind.
+    ex(&mut d, &mut app, "memory all");
+    let t = texts(&d);
+    assert!(t.iter().any(|s| s == "*.kwx"), "{t:?}");
+    assert!(t.iter().any(|s| s == "as rust"), "{t:?}");
+    // Given back what the languages say, the file is forgotten; the
+    // kind given `text` is too.
+    app.open(&a);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "syntax rust");
+    assert!(store.moment(&file(&a)).is_none());
+    app.open(&e);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "syntax text");
+    assert!(store.moment(&kind).is_none());
+    app.open(&b);
+    d.frame(&mut app);
+    assert_eq!(
+        language(&app),
+        "text",
+        "the kind forgotten, a file of it opens unread"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

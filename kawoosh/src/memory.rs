@@ -594,7 +594,7 @@ impl Kawoosh {
                 .unwrap_or_default(),
             Row::Moment { row, label, .. } => {
                 let meta: serde_json::Value = serde_json::from_str(&row.meta).unwrap_or_default();
-                let extra = ["message", "cmd", "from"]
+                let extra = ["message", "cmd", "from", "language"]
                     .iter()
                     .filter_map(|k| meta.get(k).and_then(|v| v.as_str()))
                     .collect::<Vec<_>>()
@@ -785,8 +785,9 @@ impl Kawoosh {
                 rows.sort_by(|a, b| a.key.subject.cmp(&b.key.subject));
                 self.moment_rows_of(rows)
             }
-            // Every kind under the scope; the texts, made under no
-            // workspace, are every workspace's (as the ring keeps them).
+            // Every kind under the scope; the texts and the syntaxes,
+            // made under no workspace, are every workspace's (as the
+            // ring keeps them).
             View::All => {
                 let mut rows = self.moment_rows(&MomentQuery {
                     workspace: ws,
@@ -794,12 +795,14 @@ impl Kawoosh {
                     ..Default::default()
                 });
                 if ws.is_some_and(|w| !w.is_empty()) {
-                    rows.extend(self.moment_rows(&MomentQuery {
-                        kind: Some("text"),
-                        workspace: Some(""),
-                        limit: ROWS_MAX,
-                        ..Default::default()
-                    }));
+                    for kind in ["text", crate::languages::SYNTAX_KIND] {
+                        rows.extend(self.moment_rows(&MomentQuery {
+                            kind: Some(kind),
+                            workspace: Some(""),
+                            limit: ROWS_MAX,
+                            ..Default::default()
+                        }));
+                    }
                     rows.sort_by_key(|r| std::cmp::Reverse(r.last_at));
                     rows.truncate(ROWS_MAX);
                 }
@@ -826,6 +829,11 @@ impl Kawoosh {
                     "file" => kawoosh_systems::fs::basename(Path::new(&row.key.subject))
                         .unwrap_or_else(|| row.key.subject.clone()),
                     "text" => row.text_head.clone().unwrap_or_default(),
+                    // A file by its name, a kind (`*.EXT`) as it is.
+                    crate::languages::SYNTAX_KIND => {
+                        kawoosh_systems::fs::basename(Path::new(&row.key.subject))
+                            .unwrap_or_else(|| row.key.subject.clone())
+                    }
                     // A mark: `name:line` (its letter is in the kind's
                     // column, its line's text after).
                     "mark" => crate::marks::Record::from_meta(&row.meta)
@@ -1116,6 +1124,22 @@ impl Kawoosh {
                 }
                 self.open_in_editor(&path, line, None);
                 self.follow_caret = true;
+            }
+            // A syntax: its file opened, read as it says; a kind's
+            // said, as there is no one file to open.
+            crate::languages::SYNTAX_KIND => {
+                let language = serde_json::from_str::<serde_json::Value>(meta)
+                    .ok()
+                    .and_then(|m| Some(m.get("language")?.as_str()?.to_string()))
+                    .unwrap_or_default();
+                if key.subject.starts_with("*.") || !Path::new(&key.subject).is_absolute() {
+                    self.ed.message = format!("{} reads as {language}", key.subject);
+                } else {
+                    if let Some((p, _)) = self.memory_target() {
+                        self.layout.focus(p);
+                    }
+                    self.open_in_editor(&PathBuf::from(&key.subject), None, None);
+                }
             }
             // A mark: gone to as `` ` `` goes, found again first.
             "mark" => {
@@ -1784,6 +1808,19 @@ impl Kawoosh {
                                         ui.text(label, style().color(color));
                                         match row.key.kind.as_str() {
                                             "file" => ui.text(&row.key.subject, small(pal.faint)),
+                                            // The language it reads as;
+                                            // a file's path after.
+                                            crate::languages::SYNTAX_KIND => {
+                                                let meta: serde_json::Value =
+                                                    serde_json::from_str(&row.meta).unwrap_or_default();
+                                                let l = meta.get("language").and_then(|v| v.as_str()).unwrap_or("");
+                                                let said = if row.key.subject.starts_with("*.") || row.key.subject == *label {
+                                                    format!("as {l}")
+                                                } else {
+                                                    format!("as {l} · {}", row.key.subject)
+                                                };
+                                                ui.text(&said, small(pal.faint));
+                                            }
                                             // A location's line as it was
                                             // named; a tool's command.
                                             "location" | "tool" => {
