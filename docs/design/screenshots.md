@@ -103,8 +103,9 @@ The frames a screencast's answer names are the frames drawn while it
 ran, as ADR 0055 decided; the encoder folds a frame that changed
 nothing into the one before and splits a long hold, so the file can
 hold fewer or more (20 drawn, 3 in the APNG, seen 2026-10-24). kui's
-Rust docs on `Captured` and `record_to` say "what the file holds"
-against the ADR: kui F189, filed. The message says kui's number.
+Rust docs on `Captured` and `record_to` said "what the file holds"
+against the ADR until kui F189 (built 2026-10-24, after the alpha.66
+tag). The message says kui's number.
 
 ## Not done
 
