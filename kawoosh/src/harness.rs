@@ -18,10 +18,9 @@
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 
-use kawoosh_editor::keymap::{LEADER, parse_notation};
 use kawoosh_lua::TestStep;
 use kui_native::testing::Drive;
-use kui_native::{Core, KeyMods, Rect};
+use kui_native::{Core, Rect};
 
 use crate::app::Kawoosh;
 
@@ -90,67 +89,7 @@ impl Harness {
     /// the keymap says it stands for.
     pub fn press(&mut self, app: &mut Kawoosh, notation: &str) {
         let leader = app.ed.keymap.leader().to_string();
-        for tok in parse_notation(notation) {
-            if tok == LEADER {
-                self.press(app, &leader);
-                continue;
-            }
-            let Some(inner) = tok.strip_prefix('<').and_then(|s| s.strip_suffix('>')) else {
-                self.keys(app, &tok);
-                continue;
-            };
-            let mut mods = KeyMods::default();
-            let mut parts: Vec<&str> = inner.split('-').collect();
-            // `<C-->`: a dash under a modifier.
-            if parts.len() > 1 && parts.last() == Some(&"") {
-                parts.pop();
-                parts.pop();
-                parts.push("-");
-            }
-            let base = parts.pop().unwrap_or("");
-            for m in parts {
-                match m {
-                    "C" | "c" => mods.ctrl = true,
-                    "A" | "a" | "M" | "m" => mods.alt = true,
-                    "D" | "d" => mods.super_key = true,
-                    "S" | "s" => mods.shift = true,
-                    _ => {}
-                }
-            }
-            let named = match base {
-                "Esc" => Some("escape"),
-                "CR" | "Enter" | "Return" => Some("enter"),
-                "Tab" => Some("tab"),
-                "BS" => Some("backspace"),
-                "Del" => Some("delete"),
-                "Space" => Some("space"),
-                "Up" => Some("up"),
-                "Down" => Some("down"),
-                "Left" => Some("left"),
-                "Right" => Some("right"),
-                "Home" => Some("home"),
-                "End" => Some("end"),
-                "PageUp" => Some("pageup"),
-                "PageDown" => Some("pagedown"),
-                "Insert" => Some("insert"),
-                f if f.len() <= 3
-                    && f.starts_with('F')
-                    && f[1..].chars().all(|c| c.is_ascii_digit()) =>
-                {
-                    None
-                }
-                _ => None,
-            };
-            let chord = mods.ctrl || mods.alt || mods.super_key;
-            let name: String = match named {
-                Some(n) => n.to_string(),
-                None if base.starts_with('F') && base.len() > 1 => base.to_lowercase(),
-                None if chord && base.len() == 1 && base.as_bytes()[0].is_ascii_uppercase() => {
-                    mods.shift = true;
-                    base.to_ascii_lowercase()
-                }
-                None => base.to_string(),
-            };
+        for (name, mods) in crate::presses::presses(notation, &leader) {
             self.key(app, &name, mods);
         }
     }

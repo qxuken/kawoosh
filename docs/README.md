@@ -87,6 +87,8 @@ commits; 70 integration test files and 31 Lua test scripts.
 - [icons.md](design/icons.md): one set of icons and key caps.
 - [screenshots.md](design/screenshots.md): the window's own pictures —
   `:screenshot`, `:screencast` — answered over the socket once written.
+- [headless.md](design/headless.md): kawoosh with no window —
+  `--headless`, driven over its socket with `ex`, `keys` and `wait`.
 
 ### Search and places
 

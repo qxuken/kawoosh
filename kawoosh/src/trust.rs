@@ -297,6 +297,9 @@ impl Kawoosh {
     /// first that is not is asked about. Called after the project
     /// settings at start, on `:cd`, and when one is saved.
     pub(crate) fn reload_project_init(&mut self) {
+        if self.reads_no_config() {
+            return;
+        }
         self.ed
             .settings
             .retain_sources(Layer::Project, |n| n != Layer::Project.name());
@@ -337,6 +340,16 @@ impl Kawoosh {
             }
         }
         if let Some((p, src, standing)) = ask {
+            // A run with no window asks nobody: a confirm there would
+            // take the keys its driver sends. The file does not run, the
+            // log says so, and `:trust` over the socket runs it.
+            if self.is_headless() {
+                log::info!(
+                    "trust: {} not run: a headless run does not ask (`:trust` runs it)",
+                    p.display()
+                );
+                return;
+            }
             self.ask_trust(p, &src, standing);
         }
     }

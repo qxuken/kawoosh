@@ -43,6 +43,12 @@ regex = "1"
 # graph already through portable-pty.
 shell-words = "1"
 
+[target.'cfg(unix)'.dependencies]
+# SIGTERM, SIGINT and SIGHUP ending a headless run as `:qa` does
+# (`main.rs`, `end_on_signals`); in the graph already, through
+# alacritty_terminal.
+signal-hook = "0.4"
+
 [target.'cfg(windows)'.dependencies]
 # The process's memory for the perf tab (`perf::read_mem`); the parent's
 # console for the CLI half of a GUI program (`main.rs`); `ShellExecuteW`

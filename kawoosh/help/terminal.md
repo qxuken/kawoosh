@@ -148,6 +148,10 @@ On Windows the window is `kawoosh.exe`, a program cmd and PowerShell neither wai
 git config --global core.editor kawoosh-edit
 ```
 
+## kawoosh with no window
+
+`kawoosh --headless [PATH]` runs the editor with no window: the same startup, its frames drawn for nobody, for a script or an agent to drive and photograph without taking your screen or keyboard. Its first line out is `KAWOOSH_SOCKET=…`; with that set, `kawoosh ex LINE` runs a line in it, `kawoosh keys NOTATION` presses keys there (`'<C-w>v'`, `':w<CR>'`) and answers after the frame they reach, `kawoosh wait` answers once nothing it started is still out, and `kawoosh ex ':screenshot FILE.png'` answers once the picture is written. It never opens your last session, keeps a state db of its own (unless `KAWOOSH_STATE` names one), never asks to run a project's `.kawoosh/init.lua` (`:trust` runs it), and is not the kawoosh `kawoosh-edit` from another terminal finds. `--no-config` reads none of kawoosh's config — your `init.lua` and `settings.lua`, the project's `.kawoosh/settings.lua` and `.kawoosh/init.lua` — so it draws what kawoosh ships (a file's `.editorconfig` still applies); `--size 1100x760` and `--scale 2` are the frame's; `--dark` or `--light` picks the system's base; motion is reduced unless `--motion`. It ends on `:qa`, on Ctrl-C or `kill`, or when the pipe on its stdin closes.
+
 ## Bells
 
 `terminal.bell` says what a program's bell does: `sound` (the default) plays a short chime, at most one every quarter second; `visual` plays nothing; `off` ignores it. Unless it is `off`, a terminal that rings while its tab is not in front marks that tab until you visit it. `editor.bell` (off by default) makes the editor ring for its own failures, such as a search with no match.
