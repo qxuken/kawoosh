@@ -820,6 +820,7 @@ mod tests {
         assert_eq!(vue.relay[0].to, "typescript");
         assert_eq!(ts.init["plugins"][0]["location"], "{package:vue}");
         assert_eq!(defs[at("templ")].args, ["lsp"]);
+        assert_eq!(defs[at("teal")].roots, ["tlconfig.lua"]);
         let taplo = defs[at("toml")].package.as_ref().unwrap();
         assert_eq!(taplo.args, ["--locked", "--features", "lsp"]);
         let lua = &defs[at("lua")];

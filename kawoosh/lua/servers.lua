@@ -433,6 +433,16 @@ return {
     args = { "lsp" },
     roots = { ".luaurc" },
   },
+  {
+    name = "teal",
+    cmd = "teal-language-server",
+    roots = { "tlconfig.lua" },
+    -- LuaRocks builds its C parts (luv, ltreesitter) for a Lua no newer
+    -- than 5.4 (compat53). On Windows with mingw its README's `CFLAGS`,
+    -- and `CC=gcc` where an LLVM clang is on the PATH, which luv's cmake
+    -- would take; its releases stopped shipping a Windows build at 0.1.3.
+    install = "luarocks install teal-language-server",
+  },
   -- Beside a language's own server, where the project says so
   -- (lsp-installs.md Decision 7): its config, at or above the file.
   {

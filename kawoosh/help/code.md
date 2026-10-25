@@ -22,7 +22,7 @@ language of your own is added from Lua with `kawoosh.language`; see
 
 Kawoosh knows more languages than it carries grammars for — some
 seventy: C#, PHP, Java, Kotlin, Scala, Dart, Zig, Haskell, OCaml,
-F#, Elixir, Erlang, Clojure, Ruby, Perl, R, Julia, Nix, HTML, XML
+F#, Elixir, Erlang, Clojure, Ruby, Perl, R, Julia, Nix, Teal, HTML, XML
 (SVG with it), Svelte, Astro, Vue, templ, SCSS, Makefiles, CMake, Dockerfiles,
 protobuf, GLSL and WGSL among them; `:grammars` lists them all. A
 file of one is recognised, and its language server starts, but it has
@@ -233,6 +233,7 @@ of its marker files.
 | `lsp.glsl` | `glsl_analyzer` | GLSL |
 | `lsp.odin` | `ols` | Odin |
 | `lsp.luau` | `luau-lsp` | Luau |
+| `lsp.teal` | `teal-language-server` | Teal |
 | `lsp.eslint` | `vscode-eslint-language-server` | TypeScript, TSX, JavaScript (beside, where an eslint config is) |
 | `lsp.biome` | `biome` | TypeScript, TSX, JavaScript, JSON, JSONC, CSS (beside, where `biome.json` is) |
 | `lsp.ruff` | `ruff` | Python (beside, where `ruff.toml` is) |

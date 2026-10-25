@@ -1747,6 +1747,33 @@
       "size": 180224,
       "blake3": "42da6f85b27b5ea21f86b2b10630679505f1046bf4ed9030ccf7d2eaf92cf184"
     },
+    "teal": {
+      "extensions": [
+        "tl"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "comment": "--",
+      "comment_block": [
+        "--[[",
+        "]]"
+      ],
+      "repo": "https://github.com/euclidianAce/tree-sitter-teal",
+      "rev": "ac6b42ffb23d5d52b582c02508dd3524ac0ba3df",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_teal",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "indents.scm",
+        "tags.scm"
+      ],
+      "archive": "teal.sqlar",
+      "size": 194560,
+      "blake3": "bef39c9557145f00c9e08130255bacad3b8f0538b92578bd8a728e45796afbd2"
+    },
     "templ": {
       "extensions": [
         "templ"
