@@ -58,6 +58,17 @@ fn a_plugins_contributions_are_placed_in_the_shells_slots() {
     ] {
         assert!(t.iter().any(|s| s == want), "{want}: {t:?}");
     }
+    // Each slot's row is laid out and kept, so the room the chrome fits
+    // its text to counts it.
+    for row in [
+        "statusline slot",
+        "title slot",
+        "tabs slot",
+        "pane title slot",
+    ] {
+        let r = d.rect(row).unwrap_or_else(|| panic!("{row} laid out"));
+        assert!(r.w > 0.0, "{row}: {r:?}");
+    }
     // Its click is its own: the handler it gave counts it, and the next
     // frame draws the count.
     let probe = d

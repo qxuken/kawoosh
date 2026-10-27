@@ -104,9 +104,9 @@ a contribution.
 
 `fill PLUGIN` on kui's recording covers a plugin's panes and
 contributions; `prof.rs` keeps timing what is not a fill — a hook, a
-command, a job's answer — reported as `plugin NAME` as now, until kui
-has a door for a span recorded where its core is out of reach (kui
-F215).
+command, a job's answer — each a span `plugin NAME` where it ran,
+through kui's thread spans (kui F215, alpha.69), nested under the fill,
+the handler or the build it ran in.
 
 ## What it costs
 

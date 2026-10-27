@@ -175,31 +175,15 @@ images and ligatures have since been built.
   paragraph); icons centred on the x-height (`measure_text` gives no
   x-height). ([icons.md](design/icons.md), "Not yet")
 - **From the alpha.68 port** (2026-10-27; kui's backlog, "From kawoosh's
-  alpha.68 port"), each with what kawoosh does once a release carries it:
-  - *F222*, built on kui branch `claude/kawoosh-f222-system-doors`
-    (qxuken/kui#6; F220 and F221 are Carnet's), which kawoosh builds
-    against by path (`../kui`): `open_external` and
-    `show_in_folder` start their tools through kawoosh's spawn lock,
-    select on Linux and show a folder in Finder. Then the pin goes back
-    to crates.io at the release that carries it.
-  - *F211*, merged to kui's main (qxuken/kui#4), not released: the Perf
-    tab stops measuring when the panel closes. Then
-    `editor_pane::nothing_is_measured_unless_kui_is` asserts it.
-  - *F212*, a component's refusal says what moved: the `pane ran: kui
-    reads` counter names the fact again, as `slot_fill_why` did.
+  alpha.68 port"), each with what kawoosh does once a release carries
+  it. F211, F212, F215, F216, F222 and F223 came in alpha.69 and are
+  used (2026-10-28); what is left:
   - *F213*, a declared tab listed on the frame the panel opens: the
     frame `show_tab` waits in `view` goes.
   - *F214*, a sink that keeps the keyboard through a press and still
     selects: the `keep_focus` on the memory and undo panes, the Lua
     pane's while focused and the terminal grid's under ⌘ give way to
     it, and a terminal's grid press stops depending on `on_focus`.
-  - *F215*, a span where the core is out of reach: the plugins' time as
-    spans where they ran (`prof.rs`), not one `plugin NAME` measure a
-    frame on a track each; the terminal's foreground read timed again
-    under the status line.
-  - *F216*, a note on the recording: a Lua pane's refusal as one line,
-    the host's reason, kui's and the natives it read, where three
-    counters stand now.
   - *F217*, one Lua state as several extensions: `fields::PluginHost`'s
     wrapping of a `reentry` handle becomes kui-lua's own door.
   - *F218*, contributions after load: `kawoosh.contribute` from

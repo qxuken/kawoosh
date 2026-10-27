@@ -331,8 +331,9 @@ fn perf_is_kuis_tab_with_kawooshs_spans_and_gauges() {
 }
 
 /// Nothing is measured unless kui is: closed, no span, no clock read
-/// for the plugins; open, the plugins' time is on the recording under
-/// each plugin's name, and why a Lua pane ran or replayed is counted.
+/// for the plugins; open, each plugin call is a span where it ran, nested
+/// in the span it ran under (kui F215), and why a Lua pane ran rather
+/// than being replayed is a note (F216); closed again, nothing (F211).
 #[test]
 fn nothing_is_measured_unless_kui_is() {
     let mut app = Kawoosh::new("t", DOC);
@@ -363,23 +364,27 @@ fn nothing_is_measured_unless_kui_is() {
     let tl = trace.timeline();
     let named = |pre: &str| tl.spans.iter().any(|s| trace.name(s.name).starts_with(pre));
     assert!(named("plugin "), "the plugins' time");
+    assert!(
+        tl.spans
+            .iter()
+            .filter(|s| trace.name(s.name).starts_with("plugin "))
+            .all(|s| s.parent != 0),
+        "each plugin call nested where it ran"
+    );
     assert!(named("pane: lua "), "a Lua pane's span");
     assert!(named("view: "), "its view's own function");
-    let counted = |pre: &str| {
-        tl.frames.iter().any(|f| {
-            f.counters
-                .iter()
-                .any(|(n, _)| trace.name(*n).starts_with(pre))
-        })
-    };
-    assert!(counted("pane "), "why a pane ran or replayed");
+    assert!(
+        tl.notes.iter().any(|(_, n)| n.starts_with("themes@")),
+        "why the themes pane ran: {:?}",
+        tl.notes
+    );
 
     run(&mut d, &mut app, ":perf");
     assert!(!app.devtools);
-    // kui alpha.68 keeps measuring once the panel closes on its Perf tab
-    // (its `perf_set_live` is passed only while the panel is on): kui
-    // F211. `assert!(!d.core.perf_measuring())` here once a release
-    // carries it.
+    assert!(
+        !d.core.perf_measuring(),
+        "closed on its Perf tab, kui stops"
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

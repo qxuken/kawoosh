@@ -1653,7 +1653,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     };
                     ui.with_keyed(
                         "text",
-                        spec.height(Sizing::Fit).min_height(Min::FIT),
+                        spec.height(Sizing::Fit)
+                            .min_height(Min::FIT)
+                            .on_layout(crate::msg::Msg::MarkdownRow),
                         |ui| {
                             text_key.set(Some(ui.child_key_indexed(0)));
                             ui.rich_text(&spans, base)

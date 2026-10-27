@@ -2645,7 +2645,9 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.68"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fcc0e230573257aa11d3ca75eba7e1dd6e8f1aacdd2cfd4269f18ba74bd809b"
 dependencies = [
  "cosmic-text",
  "kui-derive",
@@ -2665,7 +2667,9 @@ dependencies = [
 
 [[package]]
 name = "kui-derive"
-version = "0.1.0-alpha.68"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7d011169ad6a7af82a6eeab325a6d9c5705321ec536eab9ae3ae11477a3839a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2674,7 +2678,9 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.68"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae0dbfd7f79e6905b675e18f10de74062b18cf2aa5ffe9d56fb7570b5fde8cd1"
 dependencies = [
  "kui-core",
  "kui-lua",
@@ -2683,7 +2689,9 @@ dependencies = [
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.68"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ceabb3b5005e67c903191e1e109abdc41f9c7463161b53d773e2940abe2fc4b"
 dependencies = [
  "kui-core",
  "mlua",
@@ -2691,7 +2699,9 @@ dependencies = [
 
 [[package]]
 name = "kui-native"
-version = "0.1.0-alpha.68"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d62733f8b95d392221a4bf38b83c775ca4e121c9891d1385682e3c26a35e696"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2721,11 +2731,15 @@ dependencies = [
 
 [[package]]
 name = "kui-trace"
-version = "0.1.0-alpha.68"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72bdae0092151a3f264e09f0a0003e2b9e60df2e8bc9817a2d7e75d6f1580802"
 
 [[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.68"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d214702b36ba50be6f2d031d15e354fa1f081765f2561e0a624a9c9e6f82d3a"
 dependencies = [
  "bytemuck",
  "kui-core",

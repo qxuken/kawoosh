@@ -2,8 +2,9 @@
 //! records itself — the frame, its build, each extension's fill, the
 //! layout, the loop, the inputs and the wakes, named by the systems
 //! that rang them (`WakeHandle::named`): `view`'s systems as spans one
-//! after another ([`Laps`]), a pane's draw and its parts, the plugins'
-//! time ([`Kawoosh::perf_plugins`]), and as gauges what only kawoosh
+//! after another ([`Laps`]), a pane's draw and its parts, each plugin
+//! call where it ran ([`Kawoosh::perf_plugins`]), a Lua pane's reason not
+//! to be replayed as a note, and as gauges what only kawoosh
 //! knows — the process's memory, the buffers, the systems' counts
 //! ([`Kawoosh::perf_gauges`]). kui's Perf tab reads them all, and
 //! `KUI_PERF_TRACE` writes them to a file; there is no tab or log of
@@ -291,22 +292,12 @@ impl Kawoosh {
         core.perf_gauge("line cells", self.line_cells.lines_indexed() as f64);
     }
 
-    /// The plugins' time since the frame before, each as a measure on
-    /// kui's recording under its plugin's name (`kawoosh_lua`'s
-    /// `prof.rs`): timed where kui's core is out of reach, so reported
-    /// here, a frame at a time. Timed only while kui measures.
+    /// The plugins timed while kui measures: each call a span `plugin
+    /// NAME` where it ran (`kawoosh_lua`'s `prof.rs`, kui's thread
+    /// spans), set for the frame after this one.
     pub(crate) fn perf_plugins(&mut self, core: &mut Core) {
-        let Some(rt) = self.scripting.rt.clone() else {
-            return;
-        };
-        let measuring = core.perf_measuring();
-        rt.set_profiling(measuring);
-        if !measuring {
-            return;
-        }
-        for s in rt.take_profile() {
-            core.perf_measure(&format!("plugin {}", s.plugin), s.time.as_secs_f64() * 1e3);
-            core.perf_count(&format!("plugin {} calls", s.plugin), s.calls as i64);
+        if let Some(rt) = self.scripting.rt.clone() {
+            rt.set_profiling(core.perf_measuring());
         }
     }
 }

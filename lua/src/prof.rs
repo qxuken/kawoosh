@@ -1,36 +1,24 @@
-//! Lua's time by plugin, for kui's recording (the shell reports it as
-//! `plugin NAME`, `perf.rs`): each call into a plugin's function — a
-//! hook, a command, a view, a status module, a job's answer — charged to
-//! the file that defined it, less the calls into other plugins' it made.
-//! Off unless kui measures: then a call costs a field read in `boot.lua`
-//! and a flag here, nothing more.
+//! Lua's time by plugin, on kui's recording: each call into a plugin's
+//! function — a hook, a command, a view, a status module, a job's answer
+//! — a span `plugin NAME` (NAME the file that defined it), opened where
+//! the call runs with no core at hand (kui F215's thread spans), nested
+//! under the span it ran in: the frame's build, a handler, kui's `fill`
+//! of a pane, another plugin's call — kui takes the time a plugin's calls
+//! into others took out of its own. Off unless kui measures: then a call
+//! costs a field read in `boot.lua` and a flag here, nothing more.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
+use kui_core::SpanId;
 use mlua::{Function, Lua, Table};
-
-/// One plugin's share since it was last taken.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Spent {
-    /// The plugin, by its file: `dir` for the bundled `kawoosh:dir`,
-    /// `init.lua` for a config file.
-    pub plugin: String,
-    /// Its own time, the calls it made into other plugins left out.
-    pub time: Duration,
-    /// How many times it was called into.
-    pub calls: u32,
-}
 
 #[derive(Default)]
 pub struct Prof {
     on: bool,
-    /// The calls under way, innermost last: whose, since when, and the
-    /// time its calls into others took.
-    stack: Vec<(String, Instant, Duration)>,
-    spent: HashMap<String, (Duration, u32)>,
+    /// The calls under way, innermost last: each one's span.
+    stack: Vec<SpanId>,
 }
 
 pub type ProfCell = Rc<RefCell<Prof>>;
@@ -39,20 +27,13 @@ impl Prof {
     fn enter(&mut self, plugin: &str) {
         if self.on {
             self.stack
-                .push((plugin.to_string(), Instant::now(), Duration::ZERO));
+                .push(kui_core::perf::span_begin(&format!("plugin {plugin}")));
         }
     }
 
     fn leave(&mut self) {
-        let Some((plugin, at, inner)) = self.stack.pop() else {
-            return;
-        };
-        let took = at.elapsed();
-        let e = self.spent.entry(plugin).or_default();
-        e.0 += took.saturating_sub(inner);
-        e.1 += 1;
-        if let Some(outer) = self.stack.last_mut() {
-            outer.2 += took;
+        if let Some(id) = self.stack.pop() {
+            kui_core::perf::span_end(id);
         }
     }
 }
@@ -112,36 +93,17 @@ pub fn seed(lua: &Lua, prof: &ProfCell) -> mlua::Result<()> {
 }
 
 impl crate::Runtime {
-    /// Times the plugins' calls from now on, or stops: what was kept
-    /// goes either way.
+    /// Times the plugins' calls from now on, or stops.
     pub fn set_profiling(&self, on: bool) {
         let mut p = self.prof.borrow_mut();
         if p.on == on {
             return;
         }
         p.on = on;
-        p.spent.clear();
         drop(p);
         if let Ok(k) = self.lua.globals().get::<Table>("kawoosh") {
             let _ = k.set("_profiling", on);
         }
-    }
-
-    /// The plugins' time since the last take, the most first.
-    pub fn take_profile(&self) -> Vec<Spent> {
-        let mut out: Vec<Spent> = self
-            .prof
-            .borrow_mut()
-            .spent
-            .drain()
-            .map(|(plugin, (time, calls))| Spent {
-                plugin,
-                time,
-                calls,
-            })
-            .collect();
-        out.sort_by(|a, b| b.time.cmp(&a.time).then(a.plugin.cmp(&b.plugin)));
-        out
     }
 
     /// `f.call(args)`, charged to `f`'s plugin while profiling.
@@ -171,33 +133,12 @@ mod tests {
         assert_eq!(plugin_name("=[C]"), "[C]");
     }
 
-    /// A call's time is its own: what it spent in another plugin's call
-    /// is that one's.
-    #[test]
-    fn a_nested_call_is_charged_to_its_own_plugin() {
-        let mut p = Prof {
-            on: true,
-            ..Default::default()
-        };
-        p.enter("outer");
-        std::thread::sleep(Duration::from_millis(5));
-        p.enter("inner");
-        std::thread::sleep(Duration::from_millis(20));
-        p.leave();
-        p.leave();
-        let (outer, _) = p.spent["outer"];
-        let (inner, calls) = p.spent["inner"];
-        assert_eq!(calls, 1);
-        assert!(inner >= Duration::from_millis(20));
-        assert!(outer < Duration::from_millis(20), "{outer:?}");
-    }
-
-    /// Off, nothing is kept.
+    /// Off, no span is begun: nothing is held for a `leave` to end.
     #[test]
     fn off_nothing_is_kept() {
         let mut p = Prof::default();
         p.enter("x");
         p.leave();
-        assert!(p.spent.is_empty() && p.stack.is_empty());
+        assert!(p.stack.is_empty());
     }
 }

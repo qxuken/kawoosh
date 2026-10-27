@@ -988,7 +988,11 @@ impl Kawoosh {
         let Some(t) = self.terms.map.get(&id) else {
             return false;
         };
-        let front = t.foreground();
+        // Timed where it runs, under the status line's span (kui F215).
+        let front = {
+            let _span = kui_native::perf::span("term foreground");
+            t.foreground()
+        };
         let pgid = front.as_ref().map(|(g, _)| *g);
         if let Some((set_for, on)) = self.terms.raw.get(&id)
             && *set_for == pgid

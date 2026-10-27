@@ -216,8 +216,9 @@ none of which moved since its last run, has its pane declared with
 `slot_replay`, the others with `slot_kept`. `render_lua_pane` logs the
 answer and, for a view that will not replay, why and which natives it
 called, so a pane that stays slow says so in `KAWOOSH_PERF_LOG` (kui's
-recording since 2026-10-27, as counters: `pane ran: WHY`, `pane read:
-NATIVE`). A view that calls an opaque native is correct and slow, never
+recording since 2026-10-27; since kui alpha.69 a note a run, `NAME@PANE:
+WHY, read NATIVE …` (kui F216), beside kui's own answer to each placement
+and the fact that moved (F212)). A view that calls an opaque native is correct and slow, never
 stale.
 
 *Amended 2026-10-27*, with kui alpha.68 (slots fold into components,

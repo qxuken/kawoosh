@@ -397,6 +397,8 @@ impl Kawoosh {
             NodeSpec::row()
                 .gap(gap)
                 .cross_align(kui_native::Align::Center)
+                // Its rect kept, for the width the next frame counts.
+                .on_layout(crate::msg::Msg::SlotRow)
                 .label(label),
             |ui| {
                 ui.slot(slot, &props);
@@ -2596,25 +2598,16 @@ impl Kawoosh {
         {
             self.legends.borrow_mut().declare(pane);
         }
-        // Why a pane ran, as counters on kui's recording (ADR 0058): the
-        // host's reason not to vouch, or kui's when it was asked and
-        // refused — what moved.
+        // Why a pane ran, on kui's recording: the host's reason not to
+        // vouch, a note (kui F216) — kui records its own answer to every
+        // placement, the fact that moved with it (F212).
         let measuring = ui.core().perf_measuring();
-        if measuring {
-            let core = ui.core();
-            match fill {
-                Some(kui_native::FillAnswer::Replayed) if fresh => {
-                    core.perf_count("pane replayed", 1)
-                }
-                Some(answer) if fresh => {
-                    core.perf_count(&format!("pane ran: kui {}", answer.name()), 1)
-                }
-                _ => core.perf_count(&format!("pane ran: {why}"), 1),
-            }
-        }
         // A native view ran: the count it ran at is what the next frame's
         // claim rests on.
         if !replayed && native.is_some() {
+            if measuring && !fresh {
+                ui.core().perf_note(&format!("{track}: {why}"));
+            }
             self.scripting.native_tracks.insert(track.clone(), calls_in);
         }
         // The view ran: what it read, at this frame's generations, is what
@@ -2624,12 +2617,15 @@ impl Kawoosh {
             && let Some(rt) = self.scripting.rt.as_ref()
             && let Some(reads) = rt.view_reads(&track)
         {
-            // What it read that keeps it from replaying: each opaque
+            // With what it read that keeps it from replaying: each opaque
             // native it called, by name.
-            if measuring {
-                for native in &reads.opaque {
-                    ui.core().perf_count(&format!("pane read: {native}"), 1);
+            if measuring && !fresh {
+                let mut note = format!("{track}: {why}");
+                if !reads.opaque.is_empty() {
+                    note.push_str(", read ");
+                    note.push_str(&reads.opaque.join(" "));
                 }
+                ui.core().perf_note(&note);
             }
             let gens = self.scripting.frame_gens;
             self.scripting

@@ -144,8 +144,9 @@ what follows from the texts:
 
 The lap has its parts as spans — `status: lua`, `status: modules`,
 `status: fit`, `status: draw` — on kui's recording (its Perf tab and
-`KUI_PERF_TRACE`, since 2026-10-27; `term foreground` went with
-kawoosh's own spans, a read with no core at hand).
+`KUI_PERF_TRACE`, since 2026-10-27), and `term foreground` inside
+`modules` again since kui alpha.69, a span where no core is at hand
+(kui F215).
 
 Measured with `lua_costs statusline_lap` (`cargo test -p kawoosh
 --release --test lua_costs -- statusline_lap --ignored --nocapture`):
