@@ -816,7 +816,7 @@ impl Kawoosh {
                     revealed.push((path, inside));
                     self.ed.message = format!("shown in {manager}: {shown}");
                 } else {
-                    // kui's doors (F203, F220): a folder's own entries
+                    // kui's doors (F203, F222): a folder's own entries
                     // opened in the file manager, else the path selected
                     // in its folder.
                     let path = path.to_string_lossy();

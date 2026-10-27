@@ -2912,7 +2912,7 @@ impl kui_native::App for Kawoosh {
         // kui's own children — a link's opener, the file manager, the
         // devtools' "open folder" — start under kawoosh's spawn lock, as
         // every child of this process does (`kawoosh_systems::spawn`;
-        // kui F220).
+        // kui F222).
         kui_native::set_spawner(kawoosh_systems::spawn::spawn);
         // Each wake rings kui's waker under the name it went under, made
         // once a name: a recording reads `wake: pty` (kui ADR 0058).

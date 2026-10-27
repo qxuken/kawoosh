@@ -211,7 +211,7 @@ its file the same way.
 
 *Amended 2026-10-27*: the asking is kui's, `show_in_folder` for an
 entry and `open_external` for a directory's own entries (kui F203, and
-F220, which brought them to what `reveal.rs` did: the Linux selection
+F222, which brought them to what `reveal.rs` did: the Linux selection
 over `FileManager1.ShowItems`, a folder in Finder on macOS, every tool
 started through the host's spawner — kawoosh's spawn lock, set in
 `App::setup`). `reveal.rs` is gone, and with it Linux's `ShowFolders`

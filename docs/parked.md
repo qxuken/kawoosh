@@ -176,12 +176,13 @@ images and ligatures have since been built.
   x-height). ([icons.md](design/icons.md), "Not yet")
 - **From the alpha.68 port** (2026-10-27; kui's backlog, "From kawoosh's
   alpha.68 port"), each with what kawoosh does once a release carries it:
-  - *F220*, built on the same branch (qxuken/kui#4), which kawoosh
-    builds against by path (`../kui`): `open_external` and
+  - *F222*, built on kui branch `claude/kawoosh-f222-system-doors`
+    (qxuken/kui#6; F220 and F221 are Carnet's), which kawoosh builds
+    against by path (`../kui`): `open_external` and
     `show_in_folder` start their tools through kawoosh's spawn lock,
     select on Linux and show a folder in Finder. Then the pin goes back
     to crates.io at the release that carries it.
-  - *F211*, built on kui branch `claude/kawoosh-alpha68-gaps`: the Perf
+  - *F211*, merged to kui's main (qxuken/kui#4), not released: the Perf
     tab stops measuring when the panel closes. Then
     `editor_pane::nothing_is_measured_unless_kui_is` asserts it.
   - *F212*, a component's refusal says what moved: the `pane ran: kui
