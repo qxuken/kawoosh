@@ -255,15 +255,14 @@ impl Extension for EngineDraw {
     fn view(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
         let d = self.drawing.borrow();
         let p = inst.params;
-        let t = crate::perf::span_start();
-        let (r, what) = match inst.name {
-            "field" => (Self::field(&d, p, ui), "engine field"),
-            "keys" => (Self::keys(&d, p, ui), "engine keys"),
-            "legend" => (Self::legend(&d, p, ui), "engine legend"),
-            "toggle" => (Self::toggle(&d, p, ui), "engine toggle"),
-            other => (Err(format!("no {other:?} to draw")), "engine ?"),
+        // kui's recording times each as `fill engine` (ADR 0058).
+        let r = match inst.name {
+            "field" => Self::field(&d, p, ui),
+            "keys" => Self::keys(&d, p, ui),
+            "legend" => Self::legend(&d, p, ui),
+            "toggle" => Self::toggle(&d, p, ui),
+            other => Err(format!("no {other:?} to draw")),
         };
-        crate::perf::span(what, t);
         r.map_err(|e| format!("{}: {e}", inst.name))
     }
 
@@ -319,34 +318,10 @@ impl Extension for LuaHost {
         {
             log::error!("the engine's drawing for Lua views: {e}");
         }
-        let t = crate::perf::span_start();
-        let c0 = t.map(|_| kawoosh_lua::clock_secs());
-        let r = self.lua.component(inst, ui);
-        crate::perf::span("lua host view", t);
-        // The Lua side's marks (boot.lua's `view`): what kui-lua spent
-        // before the call (its env), the call, and after it (the tree
-        // built from the table).
-        if let Some(c0) = c0 {
-            let c2 = kawoosh_lua::clock_secs();
-            let g = self.lua.lua().globals();
-            let k: Option<mlua::Table> = g.get("kawoosh").ok();
-            let marks = k.and_then(|k| {
-                let a: f64 = k.get("_vt_in").ok()?;
-                let b: f64 = k.get("_vt_out").ok()?;
-                let b2: f64 = k.get("_vt_out2").ok()?;
-                let n: f64 = k.get("_vt_nodes").ok()?;
-                Some((a, b, b2, n))
-            });
-            if let Some((a, b, b2, n)) = marks
-                && a >= c0
-            {
-                crate::perf::span_ms("kui-lua env", ((a - c0) * 1e3) as f32);
-                crate::perf::span_ms("lua view fn", ((b - a) * 1e3) as f32);
-                crate::perf::span_ms("kui-lua build", ((c2 - b2) * 1e3) as f32);
-                crate::perf::span_ms("tree tables", n as f32);
-            }
-        }
-        r
+        // kui's recording times the fill as `fill lua`, and boot.lua the
+        // view's own function inside it (`view: NAME`): what is left is
+        // kui-lua's env and its walk of the table.
+        self.lua.component(inst, ui)
     }
 
     fn on_event(&mut self, ev: &UiEvent) -> Vec<Value> {

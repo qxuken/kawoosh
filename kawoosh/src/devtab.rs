@@ -1,4 +1,4 @@
-//! The sizes the app's devtools tabs — Perf, Frames, Syntax — and its
+//! The sizes the app's devtools tab — Syntax — and its
 //! own panes — the undo history, the memory — are drawn from: the text
 //! sizes the chrome's scale (`look::Chrome`, which the Lua panes read
 //! as `ctx.metrics` too, so every pane's text is one of three sizes and
@@ -30,9 +30,6 @@ pub(crate) struct Tab {
     pub pad_x: f32,
     /// Between a row's cells: a hint's horizontal padding.
     pub cell_gap: f32,
-    /// Between sections, and between a toolbar and what is under it: a
-    /// menu row's horizontal padding.
-    pub section_gap: f32,
     /// Between the pieces of a caption or a toolbar — a fold's triangle
     /// and its title, a note and a button.
     pub gap: f32,
@@ -53,7 +50,6 @@ impl Tab {
             caption_h: text + 2.0 * m.hint_pad_y,
             pad_x: m.menu_pad_x,
             cell_gap: m.hint_pad_x,
-            section_gap: m.menu_pad_x,
             gap: m.menu_pad_y,
             small_text: chrome.note,
             line_h,
@@ -134,24 +130,6 @@ impl Tab {
             removed: pal.danger,
             dim: pal.dim,
         }
-    }
-
-    /// A row of a table: the inset, the cell gap, a row's height as its
-    /// floor (a wrapped cell makes it taller), centred; every other row
-    /// washed and a hovered one lit.
-    pub(crate) fn row(&self, pal: &Pal, i: usize) -> NodeSpec {
-        NodeSpec::row()
-            .grow_width()
-            .min_height(self.row_h)
-            .pad_xy(self.pad_x, 0.0)
-            .gap(self.cell_gap)
-            .cross_align(Align::Center)
-            .bg(if i % 2 == 1 {
-                pal.zebra
-            } else {
-                Color::TRANSPARENT
-            })
-            .hover_bg(pal.hover)
     }
 
     /// A section's caption: a strip the tab's width, its text centred.

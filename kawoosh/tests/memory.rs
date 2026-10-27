@@ -234,19 +234,20 @@ fn dwell_wakes_nothing_and_needs_no_frames() {
     std::thread::sleep(std::time::Duration::from_millis(60));
     d.frame(&mut app);
     std::thread::sleep(std::time::Duration::from_millis(60));
-    let wake = app.wake_handle();
-    let _ = wake.take_counts();
+    // Every wake from here on, by the name it went under.
+    let woke = std::sync::Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+    let w = woke.clone();
+    app.wake_handle().set(std::sync::Arc::new(move |name| {
+        w.lock().unwrap().push(name)
+    }));
     // Frames with dwell only, then still.
     for _ in 0..3 {
         std::thread::sleep(std::time::Duration::from_millis(20));
         d.frame(&mut app);
     }
     std::thread::sleep(std::time::Duration::from_millis(200));
-    let woke = wake.take_counts();
-    assert!(
-        !woke.iter().any(|(n, _)| *n == "moments"),
-        "dwell armed a flush: {woke:?}"
-    );
+    let woke = woke.lock().unwrap().clone();
+    assert!(!woke.contains(&"moments"), "dwell armed a flush: {woke:?}");
     // The still 200 ms is dwell, counted by the flush.
     let before = app
         .store

@@ -57,6 +57,32 @@ impl Harness {
         Self(Drive::new(core, w, h).framing())
     }
 
+    /// The spans of the last frame kui's recording holds (kui ADR 0058),
+    /// by name: each one's time summed over its calls, ms, and of it the
+    /// time on a CPU where the platform reads one — what a test times a
+    /// system by, frame by frame. kui records while its Perf tab is on
+    /// show or a recording runs (`Core::set_perf_recording`).
+    pub fn frame_spans(&self) -> Vec<(String, f64, Option<f64>)> {
+        let trace = self.core.perf_trace_read();
+        let tl = trace.timeline();
+        let Some(f) = tl.frames.iter().rev().find(|f| f.end.is_some()) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(String, f64, Option<f64>)> = Vec::new();
+        for s in tl.spans_in(f.begin, f.end_or_begin()) {
+            let name = trace.name(s.name);
+            let (ms, cpu) = (s.dur as f64 / 1e3, s.cpu.map(|c| c as f64 / 1e3));
+            match out.iter_mut().find(|(n, ..)| n == name) {
+                Some((_, m, c)) => {
+                    *m += ms;
+                    *c = c.zip(cpu).map(|(a, b)| a + b);
+                }
+                None => out.push((name.to_string(), ms, cpu)),
+            }
+        }
+        out
+    }
+
     /// Frames until one is idle: every job the app had out — a plugin's
     /// process, a text to highlight, a listing — answered before it, no
     /// plugin code run outside a view since the frame before, and none

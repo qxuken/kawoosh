@@ -24,7 +24,8 @@ kawoosh._tools = {}
 kawoosh._nonce = 0
 
 -- `pcall(fn, ...)` for a plugin's function, its time charged to the
--- file that defined it while the Perf tab is on show (lua/src/prof.rs);
+-- file that defined it while kui measures (lua/src/prof.rs, reported as
+-- `plugin NAME` on kui's recording);
 -- `pcall` itself otherwise. Every call into a plugin from here goes
 -- through it.
 local plugin_of = setmetatable({}, { __mode = "k" })
@@ -1269,7 +1270,6 @@ end
 -- Every pane's view is a component of this script's, `lua/NAME@PANE`
 -- (kui ADR 0060): the host places it with the pane's params as props.
 components["*"] = function(env, params, inst)
-  if kawoosh._profiling then kawoosh._vt_in = kawoosh._clock() end
   local name, pane = split_component(inst.name)
   local fn = kawoosh._views[name]
   local t = env.theme
@@ -1321,20 +1321,21 @@ components["*"] = function(env, params, inst)
   ctx.legend = function(items, opts) return legend_node(pane, env, items, opts) end
   ctx.legend_toggle = function(opts) return legend_toggle(pane, env, opts) end
   ctx.legend_full = function() return legend_full(pane) end
-  local ok, tree = timed(fn, ctx)
+  -- The view's own function as a span inside kui's `fill lua`, so what
+  -- is left of the fill is kui-lua's walk of the table (kui ADR 0058).
+  local ok, tree
+  raw_env.span("view: " .. name, function() ok, tree = timed(fn, ctx) end)
   kawoosh._view_reads = nil
   kawoosh._reads[name .. "@" .. tostring(pane)] = reads
-  if kawoosh._profiling then
-    kawoosh._vt_out = kawoosh._clock()
-    -- The tree's tables, for the perf log: how much kui-lua builds.
+  if raw_env.perf_measuring() then
+    -- The tree's tables: how much kui-lua walks.
     local n = 0
     local function count(t)
       n = n + 1
       for _, c in ipairs(t) do if type(c) == "table" then count(c) end end
     end
     if ok and type(tree) == "table" then count(tree) end
-    kawoosh._vt_nodes = n
-    kawoosh._vt_out2 = kawoosh._clock()
+    raw_env.perf_count("lua tree tables", n)
   end
   if not ok then
     return column { pad = 12, gap = 6,
@@ -1548,8 +1549,8 @@ end
 -- `palette`, `legend`, `clock`, `none` (pure of its arguments) — or
 -- `opaque`, for everything else: a write, the file system, a process,
 -- the store. A view that called an opaque native, or read the clock,
--- is run every frame; the perf log (`KAWOOSH_PERF_LOG`) names what it
--- called, so a pane that will not replay says why.
+-- is run every frame; kui's recording counts what it called (`pane
+-- read: NAME`), so a pane that will not replay says why.
 kawoosh._reads = {}
 kawoosh._ran_outside = true
 -- The natives as seeded, by their path under `kawoosh` (`buf.close`),

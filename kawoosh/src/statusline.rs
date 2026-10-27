@@ -162,13 +162,12 @@ impl Kawoosh {
         let pal = self.pal;
         let style = rows::mono(self.chrome.face, &pal);
         let layout = self.statusline_layout();
-        let t = crate::perf::span_start();
+        let mut laps = crate::perf::Laps::begin(ui.core(), "status: lua");
         // A Lua module the layout names is its own there, even while it
         // shows nothing: `position` taken by Lua is not `line:col`.
         let (lua, lua_names): (Vec<(String, Block)>, Vec<String>) =
             self.status_segments_named(ui, "statusline");
-        crate::perf::span("status: lua", t);
-        let t = crate::perf::span_start();
+        laps.to(ui.core(), "status: modules");
         let lua_module = |b: &Block| {
             let mut m = Module::of(b.parts.clone());
             m.run = b.run.clone();
@@ -190,8 +189,7 @@ impl Kawoosh {
             }
         }
         items.retain(|m| m.as_ref().is_none_or(|m| !m.is_empty()));
-        crate::perf::span("status: modules", t);
-        let t = crate::perf::span_start();
+        laps.to(ui.core(), "status: fit");
         // The path's room: the width less the padding, every other
         // module and the spacing between them all. Fitted for the
         // modules' texts, the width and the face as they stood last
@@ -228,8 +226,7 @@ impl Kawoosh {
                 }
             }
         }
-        crate::perf::span("status: fit", t);
-        let t = crate::perf::span_start();
+        laps.to(ui.core(), "status: draw");
         ui.with_keyed(
             "statusline",
             NodeSpec::row()
@@ -255,7 +252,7 @@ impl Kawoosh {
                 }
             },
         );
-        crate::perf::span("status: draw", t);
+        laps.end(ui.core());
     }
 
     /// kawoosh's own module `name`, `None` for a name it has not.

@@ -35,7 +35,6 @@ pub mod watch;
 pub mod words;
 pub mod wsl;
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -50,15 +49,17 @@ pub const PLATFORM: &str = if cfg!(target_os = "macos") {
     "linux"
 };
 
-/// Wakes the UI loop. Cheap to clone, safe from any thread.
-pub type Wake = Arc<dyn Fn() + Send + Sync>;
+/// Wakes the UI loop, under the name of what woke it: what a recording
+/// says brought the frame (kui's `Waker::named`, ADR 0058). Cheap to
+/// clone, safe from any thread.
+pub type Wake = Arc<dyn Fn(&'static str) + Send + Sync>;
 
-/// Wakes the UI loop at a time: the loop sleeps to it, the earliest
-/// asked for winning, and forgets it once a frame reaches it.
-pub type WakeAt = Arc<dyn Fn(Instant) + Send + Sync>;
+/// Wakes the UI loop at a time, under a name: the loop sleeps to it, the
+/// earliest asked for winning, and forgets it once a frame reaches it.
+pub type WakeAt = Arc<dyn Fn(Instant, &'static str) + Send + Sync>;
 
 pub fn no_wake() -> Wake {
-    Arc::new(|| {})
+    Arc::new(|_| {})
 }
 
 /// A wake every system thread holds, settable after they started: the
@@ -66,15 +67,14 @@ pub fn no_wake() -> Wake {
 /// its systems — exist. Until then a wake is a no-op, which is also what
 /// a headless test wants.
 ///
-/// Each handle wakes under a name ([`WakeHandle::named`]) and counts its
-/// wakes, so a frame nothing on screen asked for can say which thread
-/// brought it: every name made from one handle shares its wake and its
-/// tally, and [`WakeHandle::take_counts`] reads the tally since the last
-/// read (the frame ledger, `kawoosh::frames`).
+/// Each handle wakes under a name ([`WakeHandle::named`]), which its
+/// wake is handed, so a frame nothing on screen asked for says which
+/// thread brought it — kui's recording reads `wake: pty`. Every name
+/// made from one handle shares its wake.
 #[derive(Clone)]
 pub struct WakeHandle {
     shared: Arc<Shared>,
-    count: Arc<AtomicU32>,
+    name: &'static str,
 }
 
 struct Shared {
@@ -86,9 +86,6 @@ struct Shared {
     /// Every [`Alarm`] made from this handle, its time kept here until
     /// a frame reaches it ([`WakeHandle::fire_alarms`]).
     alarms: Mutex<Alarms>,
-    /// Every name a handle was made under, with its wakes since the
-    /// last [`WakeHandle::take_counts`].
-    names: Mutex<Vec<(&'static str, Arc<AtomicU32>)>>,
 }
 
 impl Default for WakeHandle {
@@ -98,36 +95,24 @@ impl Default for WakeHandle {
 }
 
 impl WakeHandle {
-    /// A handle whose own wakes count as `wake`: name what it is handed
+    /// A handle whose own wakes are named `wake`: name what it is handed
     /// to with [`named`](Self::named).
     pub fn new() -> Self {
-        let count = Arc::new(AtomicU32::new(0));
         Self {
             shared: Arc::new(Shared {
                 wake: Mutex::new(no_wake()),
                 at: Mutex::new(None),
                 alarms: Mutex::new(Alarms::default()),
-                names: Mutex::new(vec![("wake", count.clone())]),
             }),
-            count,
+            name: "wake",
         }
     }
 
-    /// The same wake, its calls counted under `name` — one tally per
-    /// name, however many handles carry it.
+    /// The same wake, under `name`.
     pub fn named(&self, name: &'static str) -> Self {
-        let mut names = self.shared.names.lock().unwrap();
-        let count = match names.iter().find(|(n, _)| *n == name) {
-            Some((_, c)) => c.clone(),
-            None => {
-                let c = Arc::new(AtomicU32::new(0));
-                names.push((name, c.clone()));
-                c
-            }
-        };
         Self {
             shared: self.shared.clone(),
-            count,
+            name,
         }
     }
 
@@ -146,9 +131,9 @@ impl WakeHandle {
     }
 
     /// A frame's look at the alarms: those whose time has come are
-    /// spent, each counted as a wake under its name (the frame is the
-    /// wake it asked for), and the loop is asked for the soonest of the
-    /// rest. Every frame calls it, before anything reads the time.
+    /// spent (the frame is the wake each asked for, under its name), and
+    /// the loop is asked for the soonest of the rest. Every frame calls
+    /// it, before anything reads the time.
     pub fn fire_alarms(&self, now: Instant) {
         let mut alarms = self.shared.alarms.lock().unwrap();
         alarms.slots.retain(|slot| {
@@ -158,50 +143,42 @@ impl WakeHandle {
             let mut due = slot.due.lock().unwrap();
             if due.is_some_and(|t| t <= now) {
                 *due = None;
-                slot.count.fetch_add(1, Ordering::Relaxed);
             }
             true
         });
         self.ask(&mut alarms, now);
     }
 
-    /// Asks the loop for the soonest alarm, unless what it was asked
-    /// for last is still ahead and no later.
+    /// Asks the loop for the soonest alarm, under its name, unless what
+    /// it was asked for last is still ahead and no later.
     fn ask(&self, alarms: &mut Alarms, now: Instant) {
         let soonest = alarms
             .slots
             .iter()
-            .filter_map(|s| s.upgrade().and_then(|s| *s.due.lock().unwrap()))
-            .min();
-        let Some(t) = soonest else { return };
+            .filter_map(|s| {
+                let s = s.upgrade()?;
+                let due = (*s.due.lock().unwrap())?;
+                Some((due, s.name))
+            })
+            .min_by_key(|(t, _)| *t);
+        let Some((t, name)) = soonest else { return };
         if alarms.asked.is_some_and(|a| a > now && a <= t) {
             return;
         }
         if let Some(at) = self.shared.at.lock().unwrap().as_ref() {
             alarms.asked = Some(t);
-            at(t);
+            at(t, name);
         }
     }
 
     pub fn wake(&self) {
-        self.count.fetch_add(1, Ordering::Relaxed);
         let w = self.shared.wake.lock().unwrap().clone();
-        w();
+        w(self.name);
     }
 
-    /// The wakes each name made since the last call, the names that made
-    /// none left out; the tally starts again from nothing.
-    pub fn take_counts(&self) -> Vec<(&'static str, u32)> {
-        self.shared
-            .names
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|(n, c)| {
-                let k = c.swap(0, Ordering::Relaxed);
-                (k > 0).then_some((*n, k))
-            })
-            .collect()
+    /// The name its wakes go under.
+    pub fn name(&self) -> &'static str {
+        self.name
     }
 }
 
@@ -228,8 +205,8 @@ pub struct Alarm {
 struct AlarmSlot {
     due: Mutex<Option<Instant>>,
     pick: fn(Instant, Instant) -> Instant,
-    /// The tally of the name the alarm was made under.
-    count: Arc<AtomicU32>,
+    /// The name the alarm was made under, which the loop is woken with.
+    name: &'static str,
 }
 
 /// A handle's alarms, and the time the loop was last asked for.
@@ -254,7 +231,7 @@ impl Alarm {
         let slot = Arc::new(AlarmSlot {
             due: Mutex::new(None),
             pick,
-            count: wake.count.clone(),
+            name: wake.name,
         });
         let mut alarms = wake.shared.alarms.lock().unwrap();
         alarms.slots.push(Arc::downgrade(&slot));
@@ -282,19 +259,20 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    /// What the loop is asked for, and what the frames reach: a
-    /// `WakeAt` that records its times.
-    fn asked() -> (WakeHandle, Arc<Mutex<Vec<Instant>>>) {
+    /// What the loop is asked for, and under which name: a `WakeAt`
+    /// that records them.
+    #[allow(clippy::type_complexity)]
+    fn asked() -> (WakeHandle, Arc<Mutex<Vec<(Instant, &'static str)>>>) {
         let times = Arc::new(Mutex::new(Vec::new()));
         let wake = WakeHandle::new();
         let t = times.clone();
-        wake.set_at(Arc::new(move |at| t.lock().unwrap().push(at)));
+        wake.set_at(Arc::new(move |at, name| t.lock().unwrap().push((at, name))));
         (wake, times)
     }
 
     /// The latest alarm keeps the later time: a frame at the earlier
-    /// one spends nothing and asks again for the later; the frame that
-    /// reaches it spends it once, counted under its name.
+    /// one spends nothing and asks again for the later, under the
+    /// alarm's name; the frame that reaches it spends it.
     #[test]
     fn the_latest_alarm_keeps_the_later_time() {
         let (wake, times) = asked();
@@ -307,26 +285,28 @@ mod tests {
         alarm.set(early);
         alarm.set(late);
         assert_eq!(alarm.due(), Some(late));
-        assert_eq!(times.lock().unwrap()[0], early, "asked at once");
+        assert_eq!(times.lock().unwrap()[0], (early, "quiet"), "asked at once");
         wake.fire_alarms(early);
         assert_eq!(alarm.due(), Some(late), "not spent before its time");
-        assert_eq!(times.lock().unwrap().last(), Some(&late), "asked again");
-        assert!(wake.take_counts().is_empty());
+        assert_eq!(
+            times.lock().unwrap().last(),
+            Some(&(late, "quiet")),
+            "asked again"
+        );
         wake.fire_alarms(late);
         assert_eq!(alarm.due(), None);
-        assert_eq!(wake.take_counts(), [("quiet", 1)]);
         let n = times.lock().unwrap().len();
         wake.fire_alarms(late + Duration::from_secs(1));
         assert_eq!(times.lock().unwrap().len(), n, "nothing left to ask");
         // Armed again, it fires again.
         alarm.set(late + Duration::from_secs(2));
         wake.fire_alarms(late + Duration::from_secs(2));
-        assert_eq!(wake.take_counts(), [("quiet", 1)]);
+        assert_eq!(alarm.due(), None);
     }
 
     /// The soonest alarm keeps the earlier time, even set second; the
-    /// loop is asked for the soonest of a handle's alarms and not asked
-    /// again while that is still ahead.
+    /// loop is asked for the soonest of a handle's alarms, under its
+    /// name, and not asked again while that is still ahead.
     #[test]
     fn the_soonest_alarm_keeps_the_earlier_time() {
         let (wake, times) = asked();
@@ -340,17 +320,17 @@ mod tests {
         assert_eq!(
             *times.lock().unwrap(),
             [
-                t0 + Duration::from_millis(400),
-                t0 + Duration::from_millis(40)
+                (t0 + Duration::from_millis(400), "toast"),
+                (t0 + Duration::from_millis(40), "toast")
             ],
             "the later alarm asked nothing past the soonest"
         );
         wake.fire_alarms(t0 + Duration::from_millis(40));
+        assert_eq!(a.due(), None);
         assert_eq!(
             times.lock().unwrap().last(),
-            Some(&(t0 + Duration::from_millis(200)))
+            Some(&(t0 + Duration::from_millis(200), "quiet"))
         );
-        assert_eq!(wake.take_counts(), [("toast", 1)]);
     }
 
     /// An alarm armed before the loop's wake is known is asked for once
@@ -363,23 +343,21 @@ mod tests {
         alarm.set(t);
         let times = Arc::new(Mutex::new(Vec::new()));
         let r = times.clone();
-        wake.set_at(Arc::new(move |at| r.lock().unwrap().push(at)));
+        wake.set_at(Arc::new(move |at, _| r.lock().unwrap().push(at)));
         assert_eq!(*times.lock().unwrap(), [t]);
         drop(alarm);
         wake.fire_alarms(Instant::now());
         assert!(wake.shared.alarms.lock().unwrap().slots.is_empty());
     }
 
-    /// Every name made from one handle shares its wake and counts apart;
-    /// a read empties the tally.
+    /// Every name made from one handle shares its wake, and the wake is
+    /// handed the name it was rung under.
     #[test]
-    fn named_wakes_are_counted_by_name() {
-        let woke = Arc::new(AtomicU32::new(0));
+    fn named_wakes_ring_one_wake_under_their_names() {
+        let woke = Arc::new(Mutex::new(Vec::new()));
         let root = WakeHandle::new();
         let w = woke.clone();
-        root.set(Arc::new(move || {
-            w.fetch_add(1, Ordering::Relaxed);
-        }));
+        root.set(Arc::new(move |name| w.lock().unwrap().push(name)));
         let pty = root.named("pty");
         let lsp = root.named("lsp");
         let pty_again = lsp.named("pty");
@@ -387,10 +365,6 @@ mod tests {
         pty_again.wake();
         lsp.wake();
         root.wake();
-        assert_eq!(woke.load(Ordering::Relaxed), 4, "one wake under every name");
-        let mut counts = root.take_counts();
-        counts.sort();
-        assert_eq!(counts, [("lsp", 1), ("pty", 2), ("wake", 1)]);
-        assert!(pty.take_counts().is_empty(), "read once");
+        assert_eq!(*woke.lock().unwrap(), ["pty", "pty", "lsp", "wake"]);
     }
 }

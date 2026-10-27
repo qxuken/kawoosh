@@ -988,9 +988,7 @@ impl Kawoosh {
         let Some(t) = self.terms.map.get(&id) else {
             return false;
         };
-        let at = crate::perf::span_start();
         let front = t.foreground();
-        crate::perf::span("term foreground", at);
         let pgid = front.as_ref().map(|(g, _)| *g);
         if let Some((set_for, on)) = self.terms.raw.get(&id)
             && *set_for == pgid

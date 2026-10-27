@@ -718,7 +718,7 @@ impl Kawoosh {
                 .and_then(|rt| rt.lua().load(src).eval::<mlua::Value>().ok())
         };
         p.frame += 1;
-        crate::frames::request(ui, "fonts probe");
+        ui.request_frame_for("fonts probe");
         match p.frame {
             1 => self.run_line("fonts"),
             40 => self.run_line("fonts mode"),

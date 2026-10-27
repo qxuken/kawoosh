@@ -218,7 +218,7 @@ mod tests {
         std::fs::write(&a, "return {}").unwrap();
         let (tx, rx) = crossbeam_channel::unbounded::<()>();
         let wake = WakeHandle::new();
-        wake.set(Arc::new(move || {
+        wake.set(Arc::new(move |_| {
             let _ = tx.send(());
         }));
         let w = Watcher::spawn(wake, Beat::default());
@@ -258,7 +258,7 @@ mod tests {
         std::fs::write(&a, "return {}").unwrap();
         let (tx, rx) = crossbeam_channel::unbounded::<()>();
         let wake = WakeHandle::new();
-        wake.set(Arc::new(move || {
+        wake.set(Arc::new(move |_| {
             let _ = tx.send(());
         }));
         let w = Watcher::spawn(wake, Beat::default());

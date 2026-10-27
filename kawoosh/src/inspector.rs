@@ -311,14 +311,10 @@ fn flatten(tree: &Tree, folded: &HashSet<usize>, anonymous: bool) -> Vec<Row> {
 impl Kawoosh {
     /// Declares the tab every frame and draws it while it is on show.
     pub(crate) fn syntax_tab(&mut self, ui: &mut Ui<'_>) {
-        if self.tab_shown == Some(TAB) {
-            self.tab_shown = None;
-        }
         ui.devtools_tab_with(TAB, "Syntax", |ui| self.syntax_body(ui));
     }
 
     fn syntax_body(&mut self, ui: &mut Ui<'_>) {
-        self.tab_shown = Some(TAB);
         let pal = self.pal;
         let font = self.face;
         let icon_set = self.icons.clone();

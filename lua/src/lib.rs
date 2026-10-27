@@ -1623,7 +1623,7 @@ pub struct Runtime {
     /// command's `ctx.pane`, so a view shown in several panes knows
     /// which one a key was for (`du.lua`, roadmap step 60).
     pane: std::cell::Cell<u64>,
-    /// The plugins' time, while the Perf tab is on show (`prof.rs`).
+    /// The plugins' time, while kui measures (`prof.rs`).
     prof: prof::ProfCell,
     /// Plugin code was called from here since the last `take_ran_outside`
     /// — a hook, a callback, a command — and may have changed what a view

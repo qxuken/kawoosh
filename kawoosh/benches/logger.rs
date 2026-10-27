@@ -14,7 +14,7 @@ use log::Log;
 
 fn bench_log(c: &mut Criterion) {
     let wake = WakeHandle::new();
-    wake.set(Arc::new(|| {}));
+    wake.set(Arc::new(|_| {}));
     let (logger, sink) = Logger::new(wake);
     // The frame's side: drains as fast as it can, so the channel never
     // grows without bound.

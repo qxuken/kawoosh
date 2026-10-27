@@ -172,7 +172,7 @@ pub(crate) fn draw_field(ui: &mut Ui<'_>, s: &FieldScene, keyed: bool, font: cra
     // more frame, or a line typed before it (a paste, keys faster than
     // frames) waits for the next key to scroll.
     if keyed && geometry.is_none() {
-        crate::frames::request(ui, "field geometry");
+        ui.request_frame_for("field geometry");
     }
     let want = geometry.filter(|_| keyed).map(|g| {
         let style = rows::mono(font, &pal);
@@ -941,28 +941,24 @@ impl Kawoosh {
     }
 
     pub(crate) fn render_pane(&mut self, ui: &mut Ui<'_>, pane: PaneId) {
-        let t = self.perf.pane_start();
+        // A span a pane on kui's recording, named by its kind — names are
+        // a recording's to keep, and a buffer's or a title's are without
+        // end; a Lua pane by its view, which a plugin named.
+        let name = match self.layout.content(pane) {
+            Some(Content::Editor(_)) => "pane: editor".to_string(),
+            Some(Content::Terminal(_)) => "pane: terminal".to_string(),
+            Some(Content::Lua(n)) => format!("pane: lua {n}"),
+            Some(Content::Undo) => "pane: undo".to_string(),
+            Some(Content::Memory) => "pane: memory".to_string(),
+            None => "pane".to_string(),
+        };
+        let span = ui.core().span_begin(&name);
         self.render_pane_inner(ui, pane);
-        if t.is_some() {
-            // Named as its title bar names it, so the one slow pane of
-            // several of a kind is found.
-            let what = match self.layout.content(pane) {
-                Some(Content::Editor(v)) => format!("editor · {}", self.ed.buffer_of(v).name),
-                Some(Content::Terminal(t)) => match self.term_label(t) {
-                    Some(name) => format!("terminal · {name}"),
-                    None => "terminal".to_string(),
-                },
-                Some(Content::Lua(n)) => format!("lua {n}"),
-                Some(Content::Undo) => "undo".to_string(),
-                Some(Content::Memory) => "memory".to_string(),
-                None => "?".to_string(),
-            };
-            self.perf.pane(pane, what, t);
-        }
+        ui.core().span_end(span);
     }
 
     fn render_pane_inner(&mut self, ui: &mut Ui<'_>, pane: PaneId) {
-        let t = crate::perf::span_start();
+        let title_bar = crate::perf::Laps::begin(ui.core(), "title bar");
         let pal = self.pal;
         let focused = self.layout.focused() == pane;
         let content = self.layout.content(pane);
@@ -1191,7 +1187,7 @@ impl Kawoosh {
                             .label("drop"),
                     );
                 }
-                crate::perf::part("title bar", t);
+                title_bar.end(ui.core());
                 // The keys' view in the mode its drawing wants: pane mode
                 // on a canvas, normal on one a canvas left (`:bd`) — as
                 // drawn, before any key, so the status says it.
@@ -1238,7 +1234,7 @@ impl Kawoosh {
         if self.culled(ui, pane) {
             return;
         }
-        let mut t = crate::perf::span_start();
+        let mut laps = crate::perf::Laps::begin(ui.core(), "terminal: fit");
         let pal = self.pal;
         // The pane's face: the window's, or its own size
         // (pane-settings.md Decision 4); the grid's cell with it.
@@ -1257,16 +1253,17 @@ impl Kawoosh {
             })
             .unwrap_or((800.0, self.body_h - self.chrome.pane_title_h));
         self.fit_terminal(id, w, h);
-        t = crate::perf::part("fit", t);
+        laps.to(ui.core(), "terminal: images");
         // Kitty's images on its screen (`term_images.rs`).
         let shown = self.term_image_boxes(ui, id);
-        t = crate::perf::part("images", t);
+        laps.to(ui.core(), "terminal: screen copy");
         let Some(term) = self.terms.map.get(&id) else {
+            laps.end(ui.core());
             return;
         };
         // The palette is the frame's (`sync_term_palettes`).
         let screen = term.screen();
-        t = crate::perf::part("screen copy", t);
+        laps.to(ui.core(), "terminal: links");
         let cursor = screen.cursor.map(|(r, c, shape)| {
             (
                 r,
@@ -1362,7 +1359,7 @@ impl Kawoosh {
                             .flatten()
                     })
                     .flatten();
-                t = crate::perf::part("links", t);
+                laps.to(ui.core(), "terminal: cells");
                 // Not reporting, a right-click is the terminal's menu, on
                 // the grid itself so its Select All is the grid's
                 // (`menus.rs`).
@@ -1426,7 +1423,7 @@ impl Kawoosh {
                     }
                     None => ui.cells_keyed("cells", &grid, spec),
                 }
-                crate::perf::part("cells", t);
+                laps.end(ui.core());
                 for s in shown.iter().filter(|s| !s.under) {
                     image(ui, s);
                 }
@@ -1527,7 +1524,7 @@ impl Kawoosh {
         if self.culled(ui, pane) {
             return;
         }
-        let mut t = crate::perf::span_start();
+        let mut laps = crate::perf::Laps::begin(ui.core(), "editor: scroll");
         let pal = self.pal;
         // The pane's face: the window's, or its own size
         // (pane-settings.md Decision 4).
@@ -1656,7 +1653,7 @@ impl Kawoosh {
             }
             v.top = v.top.min(line_count.saturating_sub(1));
         }
-        t = crate::perf::part("scroll", t);
+        laps.to(ui.core(), "editor: rendered rows");
 
         // The rendered rows, worked out before the frame borrows the
         // buffer — an image among them is asked for here — each with
@@ -1914,7 +1911,7 @@ impl Kawoosh {
             None
         };
         let v = &self.ed.views[view];
-        t = crate::perf::part("rendered rows", t);
+        laps.to(ui.core(), "editor: decorations");
         let buf = &self.ed.buffers[buf_id];
         let search = self
             .ed
@@ -2308,7 +2305,7 @@ impl Kawoosh {
             }
         }
 
-        t = crate::perf::part("decorations", t);
+        laps.to(ui.core(), "editor: rows");
         // Each tall row drawn: its line, what it drew
         // (`Heights::stamp`), and its height last frame when it has one.
         let mut md_seen: Vec<(usize, u64, Option<f32>)> = Vec::new();
@@ -3296,7 +3293,7 @@ impl Kawoosh {
             popup_drawn = popup_of.is_some();
             panel_drawn = panel_of.is_some();
         }
-        t = crate::perf::part("rows", t);
+        laps.to(ui.core(), "editor: heights");
         self.ed.views[view].left = left;
         match left_room {
             Some(room) => self.left_max.insert(view, room),
@@ -3360,10 +3357,10 @@ impl Kawoosh {
             }
             known.stamps = stamps;
             if moved {
-                crate::frames::request(ui, "markdown heights");
+                ui.request_frame_for("markdown heights");
             }
         }
-        crate::perf::part("heights", t);
+        laps.end(ui.core());
         if focused {
             self.focus_sink(ui, sink);
         }

@@ -1,8 +1,9 @@
-//! Lua's time by plugin, for the Perf tab: each call into a plugin's
-//! function — a hook, a command, a view, a status module, a job's
-//! answer — charged to the file that defined it, less the calls into
-//! other plugins' it made. Off unless the tab is on show: then a call
-//! costs a field read in `boot.lua` and a flag here, nothing more.
+//! Lua's time by plugin, for kui's recording (the shell reports it as
+//! `plugin NAME`, `perf.rs`): each call into a plugin's function — a
+//! hook, a command, a view, a status module, a job's answer — charged to
+//! the file that defined it, less the calls into other plugins' it made.
+//! Off unless kui measures: then a call costs a field read in `boot.lua`
+//! and a flag here, nothing more.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

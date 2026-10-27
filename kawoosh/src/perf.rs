@@ -1,175 +1,57 @@
-//! The Perf tab: a devtools tab (kui's host form, ADR 0032) reading what
-//! a frame spends where — the systems drained, the rows built — over the
-//! last frames, what the systems report of themselves (a parse's time on
-//! its thread, the rows worker's build), and what the process holds: its
-//! footprint, and the buffers' pieces, runs, chunks and indexes. kui's
-//! own HUD times the whole frame; this is the app's half of it, by
-//! phase, by system (each lap through `view`) and by plugin (Lua's time,
-//! `kawoosh_lua`'s `prof.rs`).
+//! What kawoosh tells kui's recording (kui ADR 0058) beyond what kui
+//! records itself — the frame, its build, each extension's fill, the
+//! layout, the loop, the inputs and the wakes, named by the systems
+//! that rang them (`WakeHandle::named`): `view`'s systems as spans one
+//! after another ([`Laps`]), a pane's draw and its parts, the plugins'
+//! time ([`Kawoosh::perf_plugins`]), and as gauges what only kawoosh
+//! knows — the process's memory, the buffers, the systems' counts
+//! ([`Kawoosh::perf_gauges`]). kui's Perf tab reads them all, and
+//! `KUI_PERF_TRACE` writes them to a file; there is no tab or log of
+//! kawoosh's own.
 //!
-//! Only while the tab is on show: closed, `view` reads no clock for it
-//! and the plugins go untimed. Reopened, it starts over.
+//! Nothing is measured unless kui is (`Core::perf_measuring`): every
+//! door is a branch then, and kawoosh reads no clock of its own.
 
-use std::collections::VecDeque;
-use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
-use kui_native::{Align, Min, NodeSpec, TextStyle, TextWrap, Ui};
-
-use crate::devtab::Tab;
+use kui_native::{Core, SpanId};
 
 use crate::app::Kawoosh;
 
-thread_local! {
-    /// Whether this frame is measured, for [`span`] — which is called
-    /// where the app is not at hand (a kui extension's `view`).
-    static MEASURING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The spans this frame, by name: ms summed and how many.
-    static SPANS: std::cell::RefCell<Vec<(&'static str, f32, u32)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    /// Free-form notes this frame, for the log line.
-    static NOTES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The parts of the pane being drawn ([`part`], and the [`span`]s
-    /// under it), while one is and the frame is measured.
-    static PARTS: std::cell::RefCell<Option<Parts>> = const { std::cell::RefCell::new(None) };
-}
-
-/// A pane's draw by part: a name and its ms, summed by name, in the
-/// order first met.
-type Parts = Vec<(&'static str, f32)>;
-
-fn add(parts: &mut Parts, name: &'static str, m: f32) {
-    match parts.iter_mut().find(|(n, _)| *n == name) {
-        Some((_, total)) => *total += m,
-        None => parts.push((name, m)),
-    }
-}
-
-/// The time since `t` counted as part `name` of the pane being drawn;
-/// the next part starts now. Nothing when not measuring.
-pub fn part(name: &'static str, t: Option<Instant>) -> Option<Instant> {
-    let t = t?;
-    let now = Instant::now();
-    let m = (now - t).as_secs_f32() * 1e3;
-    PARTS.with(|p| {
-        if let Some(parts) = &mut *p.borrow_mut() {
-            add(parts, name, m);
-        }
-    });
-    Some(now)
-}
-
-/// A note on this frame's log line, when measuring.
-pub fn note(s: String) {
-    if MEASURING.get() {
-        NOTES.with(|n| n.borrow_mut().push(s));
-    }
-}
-
-/// The clock read for a [`span`], when measuring.
-pub fn span_start() -> Option<Instant> {
-    MEASURING.get().then(Instant::now)
-}
-
-/// The time since `t` counted under `name` in this frame's spans: a
-/// part of a pane's draw that runs outside the app (a kui extension).
-pub fn span(name: &'static str, t: Option<Instant>) {
-    let Some(t) = t else {
-        return;
-    };
-    let m = ms(t);
-    // Under the pane being drawn too: a Lua view's fill is its pane's.
-    PARTS.with(|p| {
-        if let Some(parts) = &mut *p.borrow_mut() {
-            add(parts, name, m);
-        }
-    });
-    span_ms(name, m);
-}
-
-/// `ms` counted under `name` in this frame's spans.
-pub fn span_ms(name: &'static str, m: f32) {
-    if !MEASURING.get() {
-        return;
-    }
-    SPANS.with(|s| {
-        let mut s = s.borrow_mut();
-        match s.iter_mut().find(|(n, ..)| *n == name) {
-            Some((_, total, k)) => {
-                *total += m;
-                *k += 1;
-            }
-            None => s.push((name, m, 1)),
-        }
-    });
-}
-
-/// The tab's name in the devtools strip.
-pub const TAB: &str = "perf";
-/// Frames kept for the averages.
-const KEEP: usize = 120;
-/// How wide a name or a value is let be in the tab's tables, in ems of
-/// its text: about forty characters.
-const CUT_EMS: f32 = 22.0;
-/// How often the tab's readings are built again.
-const REFRESH: Duration = Duration::from_millis(250);
-/// How often the process is asked for its footprint.
+/// How often the process is asked for its memory while measuring.
 const MEM_EVERY: Duration = Duration::from_millis(500);
 
-/// The parts of `view` a lap is counted under.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Phase {
-    /// The systems' channels drained: pty bytes, processes, requests,
-    /// the disk, the settings.
-    Io,
-    /// The parser's answers applied to the layers.
-    Syntax,
-    /// The language servers' events, and the buffers sent to them.
-    Lsp,
-    /// Lua's messages drained and the editor published to it.
-    Lua,
-    /// The panes: every visible row built.
-    Rows,
-    /// The rest: the bars, the tabs, the floats, the devtools tabs.
-    Chrome,
+/// Spans one after another on kui's recording: [`Laps::to`] ends the
+/// one under way and begins the next, so a run of systems — `view`'s
+/// drains, a pane's parts — is one call a system. Named as each
+/// begins, as kui names a span.
+pub struct Laps(SpanId);
+
+impl Laps {
+    pub fn begin(core: &mut Core, name: &str) -> Self {
+        Laps(core.span_begin(name))
+    }
+
+    /// The span under way ended, and `name`'s begun.
+    pub fn to(&mut self, core: &mut Core, name: &str) {
+        core.span_end(self.0);
+        self.0 = core.span_begin(name);
+    }
+
+    pub fn end(self, core: &mut Core) {
+        core.span_end(self.0);
+    }
 }
 
-/// What one `view` spent, milliseconds: each phase, then the whole.
-#[derive(Clone, Copy, Debug, Default)]
-struct Phases([f32; 7]);
-
-impl Phases {
-    const NAMES: [&'static str; 7] = ["io", "syntax", "lsp", "lua", "rows", "chrome", "view"];
-    const VIEW: usize = 6;
-}
-
-/// One frame's readings.
-#[derive(Clone, Debug, Default)]
-struct Reading {
-    phases: Phases,
-    /// Each lap through `view`, by name, and of it the time the thread
-    /// was on a CPU; a name lapped twice is summed.
-    laps: Vec<(&'static str, f32, Option<f32>)>,
-    /// The plugins' time since the frame before, the input handled
-    /// between them included: ms and calls.
-    plugins: Vec<(String, f32, u32)>,
-    /// Each pane drawn, and its time: the title bar, the rows, a Lua
-    /// view's fill.
-    panes: Vec<PaneTime>,
-    /// The spans ([`span`]): ms and how many.
-    spans: Vec<(&'static str, f32, u32)>,
-    /// The notes ([`note`]).
-    notes: Vec<String>,
-}
-
-/// One pane's draw in a frame: the pane, what it holds and is called,
-/// its ms, and its parts' ([`part`]).
-#[derive(Clone, Debug)]
-struct PaneTime {
-    id: u64,
-    name: String,
-    ms: f32,
-    parts: Parts,
+/// When the memory was last read for the gauges, and what the systems
+/// handed the frame since the one before: the parser thread's answers,
+/// what each took on its thread (`Ts`'s `elapsed`), and the language
+/// servers' news by kind — what an `lsp` wake brought.
+#[derive(Default)]
+pub struct Perf {
+    mem_at: Option<Instant>,
+    pub parses: Vec<Duration>,
+    pub drained: Vec<&'static str>,
 }
 
 /// The process's memory, as the OS counts it.
@@ -185,489 +67,6 @@ pub struct Mem {
     /// compressed, not a file's cached ones — Activity Monitor's
     /// "Memory" (`phys_footprint`); 0 where there is no such reading.
     pub footprint: u64,
-}
-
-/// The focused buffer's text, as the memory section reads it.
-struct FocusedText {
-    name: String,
-    len: usize,
-    lines: usize,
-    pieces: usize,
-    journal: usize,
-    layers: Vec<(&'static str, usize, usize)>,
-}
-
-#[derive(Default)]
-pub struct Perf {
-    /// Measuring: the tab was on show the frame before. Off, `view`
-    /// reads no clock for it and the plugins are not timed.
-    on: bool,
-    /// The last `KEEP` frames' readings, oldest first.
-    frames: VecDeque<Reading>,
-    /// The frame under way.
-    cur: Reading,
-    /// The thread's time on a CPU at the last lap's end, ms.
-    cpu_at: Option<f64>,
-    /// The parser thread's last answer: what it took, and for how many
-    /// bytes.
-    pub ts_last: Option<(Duration, usize)>,
-    pub ts_answers: u64,
-    mem: Option<(Instant, Mem)>,
-    /// The tab's sections as last built, when, and whether any frame
-    /// was measured by then.
-    shown: Option<(Instant, bool, Vec<Section>)>,
-    /// `KAWOOSH_PERF_LOG`: every frame, one line, appended here.
-    log: Option<Log>,
-    /// The environment was read for it: once, at the first frame.
-    log_tried: bool,
-}
-
-/// The per-frame log (`KAWOOSH_PERF_LOG=PATH`): a frame's line waits
-/// for kui's own reading of it — the view, the layout and the render
-/// are only known once the frame has gone — and is written at the start
-/// of the next.
-struct Log {
-    out: std::io::BufWriter<std::fs::File>,
-    /// When the log began, for each line's time.
-    epoch: Instant,
-    /// The frame drawn last: its start, its readings, its causes.
-    pending: Option<(Instant, Reading, String)>,
-    /// The frame before that one's start, for the gap.
-    last_at: Option<Instant>,
-}
-
-impl Log {
-    fn open() -> Option<Self> {
-        let path = std::env::var_os("KAWOOSH_PERF_LOG")?;
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| log::warn!("KAWOOSH_PERF_LOG {}: {e}", path.to_string_lossy()))
-            .ok()?;
-        Some(Self {
-            out: std::io::BufWriter::new(file),
-            epoch: Instant::now(),
-            pending: None,
-            last_at: None,
-        })
-    }
-}
-
-/// What kui read of the frame before (`Core::stats`), ms, and the
-/// text cache's entries then.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct KuiSample {
-    pub input: f32,
-    pub view: f32,
-    pub layout: f32,
-    pub render: f32,
-    pub wait: f32,
-    pub texts: usize,
-}
-
-/// A row of the breakdown: where, then avg, worst and total ms over
-/// the window, and its last column.
-type Spent = (String, f32, f32, f32, Last);
-
-/// A breakdown row's last column.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Last {
-    /// Nothing counted.
-    None,
-    /// Calls, or frames drawn in.
-    Count(u32),
-    /// Of the worst frame's time, the ms the thread was on a CPU; `None`
-    /// where the platform has no reading.
-    Cpu(Option<f32>),
-}
-
-/// The UI thread's time on a CPU so far, ms — user and system, what it
-/// computed, a page fault's handling with it. A lap's wall time less
-/// this is time the thread was off a CPU: a lock waited on (another
-/// process's on `state.db`), a page read back in, the core given to
-/// another program.
-#[cfg(unix)]
-fn cpu_ms() -> Option<f64> {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `clock_gettime` fills the timespec it is given.
-    let r = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
-    (r == 0).then(|| ts.tv_sec as f64 * 1e3 + ts.tv_nsec as f64 / 1e6)
-}
-
-/// Windows' thread times tick every 15.6 ms: no reading worth a lap's.
-#[cfg(not(unix))]
-fn cpu_ms() -> Option<f64> {
-    None
-}
-
-impl Perf {
-    /// Whether this frame is measured: the tab was on show the frame
-    /// before. Turned on, it starts over — what was kept is from before
-    /// it closed.
-    pub fn set_on(&mut self, on: bool) {
-        if self.log.is_none() && !self.log_tried {
-            self.log_tried = true;
-            self.log = Log::open();
-        }
-        let on = on || self.log.is_some();
-        MEASURING.set(on);
-        SPANS.with(|s| s.borrow_mut().clear());
-        NOTES.with(|n| n.borrow_mut().clear());
-        if on && !self.on {
-            self.frames.clear();
-            self.shown = None;
-        }
-        self.on = on;
-        self.cur = Reading::default();
-    }
-
-    pub fn on(&self) -> bool {
-        self.on
-    }
-
-    /// The clock read for a lap, when measuring.
-    pub fn start(&self) -> Option<Instant> {
-        self.on.then(Instant::now)
-    }
-
-    /// The clocks read for the frame's first lap, when measuring: the
-    /// wall's, returned, and the thread's time on a CPU, kept.
-    pub fn frame_start(&mut self) -> Option<Instant> {
-        let t = self.start()?;
-        self.cpu_at = cpu_ms();
-        Some(t)
-    }
-
-    /// The lap since `t` counted as `name` under `phase`, with what of
-    /// it the thread was on a CPU; the next lap starts now. Nothing
-    /// when not measuring.
-    pub fn lap(&mut self, phase: Phase, name: &'static str, t: Option<Instant>) -> Option<Instant> {
-        let t = t?;
-        let now = Instant::now();
-        let ms = (now - t).as_secs_f32() * 1e3;
-        let cpu_now = cpu_ms();
-        let cpu = match (self.cpu_at, cpu_now) {
-            (Some(a), Some(b)) => Some((b - a).max(0.0) as f32),
-            _ => None,
-        };
-        self.cpu_at = cpu_now;
-        self.cur.phases.0[phase as usize] += ms;
-        match self.cur.laps.iter_mut().find(|(n, ..)| *n == name) {
-            Some((_, m, c)) => {
-                *m += ms;
-                *c = c.zip(cpu).map(|(a, b)| a + b);
-            }
-            None => self.cur.laps.push((name, ms, cpu)),
-        }
-        Some(now)
-    }
-
-    /// Whether every frame is written to `KAWOOSH_PERF_LOG`.
-    pub fn logging(&self) -> bool {
-        self.log.is_some()
-    }
-
-    /// The frame drawn last's lap `name`: its ms, and of them the ms
-    /// on a CPU — for a harness timing one system frame by frame.
-    pub fn last_lap(&self, name: &str) -> Option<(f32, Option<f32>)> {
-        let r = self.frames.back()?;
-        r.laps
-            .iter()
-            .find(|(n, ..)| *n == name)
-            .map(|(_, m, c)| (*m, *c))
-    }
-
-    /// The frame drawn last's span `name`: its ms summed, and how many.
-    pub fn last_span(&self, name: &str) -> Option<(f32, u32)> {
-        let r = self.frames.back()?;
-        r.spans
-            .iter()
-            .find(|(n, ..)| *n == name)
-            .map(|(_, m, k)| (*m, *k))
-    }
-
-    /// The clock read for a pane's draw, when measuring, its [`part`]s
-    /// gathered from now until [`Perf::pane`].
-    pub fn pane_start(&self) -> Option<Instant> {
-        let t = self.start()?;
-        PARTS.with(|p| *p.borrow_mut() = Some(Vec::new()));
-        Some(t)
-    }
-
-    /// Pane `pane`'s draw, `what` it holds, since `t`, with its parts.
-    pub fn pane(&mut self, pane: u64, what: String, t: Option<Instant>) {
-        let parts = PARTS.with(|p| p.borrow_mut().take()).unwrap_or_default();
-        if let Some(t) = t {
-            self.cur.panes.push(PaneTime {
-                id: pane,
-                name: what,
-                ms: ms(t),
-                parts,
-            });
-        }
-    }
-
-    /// The frame drawn last, written to the log with kui's reading of
-    /// it — at the start of the frame after, the only time kui has it.
-    pub fn log_frame(&mut self, kui: Option<KuiSample>) {
-        use std::io::Write as _;
-        let Some(log) = &mut self.log else {
-            return;
-        };
-        let Some((at, r, causes)) = log.pending.take() else {
-            return;
-        };
-        let gap = log
-            .last_at
-            .map_or(0.0, |l| at.duration_since(l).as_secs_f32() * 1e3);
-        log.last_at = Some(at);
-        let mut s = String::new();
-        let t = at.duration_since(log.epoch).as_secs_f64();
-        let _ = write!(s, "t={t:.3} gap={gap:.1}");
-        if let Some(k) = kui {
-            let work = k.input + k.view + k.layout + k.render;
-            let _ = write!(
-                s,
-                " kui[work={work:.2} in={:.2} view={:.2} layout={:.2} render={:.2} wait={:.2} texts={}]",
-                k.input, k.view, k.layout, k.render, k.wait, k.texts
-            );
-        }
-        let p = &r.phases.0;
-        let _ = write!(s, " app[");
-        for (i, n) in Phases::NAMES.iter().enumerate() {
-            let _ = write!(s, "{}{n}={:.2}", if i > 0 { " " } else { "" }, p[i]);
-        }
-        let _ = write!(s, "] panes[");
-        for (i, p) in r.panes.iter().enumerate() {
-            let _ = write!(s, "{}{}={:.2}", if i > 0 { "; " } else { "" }, p.name, p.ms);
-            if !p.parts.is_empty() {
-                let _ = write!(s, " (");
-                for (j, (n, m)) in p.parts.iter().enumerate() {
-                    let _ = write!(s, "{}{n}={m:.2}", if j > 0 { " " } else { "" });
-                }
-                let _ = write!(s, ")");
-            }
-        }
-        let _ = write!(s, "] spans[");
-        for (i, (n, m, k)) in r.spans.iter().enumerate() {
-            let _ = write!(s, "{}{n}={m:.2}/{k}", if i > 0 { "; " } else { "" });
-        }
-        let _ = write!(s, "] lua[");
-        let mut plugins = r.plugins.clone();
-        plugins.sort_by(|a, b| b.1.total_cmp(&a.1));
-        for (i, (n, m, c)) in plugins.iter().filter(|p| p.1 >= 0.01).enumerate() {
-            let _ = write!(s, "{}{n}={m:.2}/{c}", if i > 0 { " " } else { "" });
-        }
-        let _ = write!(s, "] laps[");
-        let mut laps = r.laps.clone();
-        laps.sort_by(|a, b| b.1.total_cmp(&a.1));
-        // `wall/cpu`: a lap far over its CPU time waited.
-        for (i, (n, m, c)) in laps.iter().filter(|l| l.1 >= 0.05).take(8).enumerate() {
-            let _ = write!(s, "{}{n}={m:.2}", if i > 0 { "; " } else { "" });
-            if let Some(c) = c {
-                let _ = write!(s, "/{c:.2}");
-            }
-        }
-        let _ = write!(s, "] cause[{}]", causes.trim());
-        if !r.notes.is_empty() {
-            let _ = write!(s, " notes[{}]", r.notes.join(" | "));
-        }
-        let _ = writeln!(s);
-        let _ = log.out.write_all(s.as_bytes());
-        let _ = log.out.flush();
-    }
-
-    /// Closes the frame under way, `view` having begun at `started`,
-    /// with the plugins' time since the frame before: its readings join
-    /// the window.
-    pub fn end_frame(
-        &mut self,
-        started: Option<Instant>,
-        plugins: Vec<kawoosh_lua::Spent>,
-        causes: impl FnOnce() -> String,
-    ) {
-        let Some(started) = started else {
-            return;
-        };
-        let mut r = std::mem::take(&mut self.cur);
-        r.phases.0[Phases::VIEW] = ms(started);
-        r.spans = SPANS.with(|s| std::mem::take(&mut *s.borrow_mut()));
-        r.notes = NOTES.with(|n| std::mem::take(&mut *n.borrow_mut()));
-        r.plugins = plugins
-            .into_iter()
-            .map(|s| (s.plugin, s.time.as_secs_f32() * 1e3, s.calls))
-            .collect();
-        if let Some(log) = &mut self.log {
-            log.pending = Some((started, r.clone(), causes()));
-        }
-        if self.frames.len() == KEEP {
-            self.frames.pop_front();
-        }
-        self.frames.push_back(r);
-    }
-
-    /// Last, average and worst of phase `i` over the window.
-    fn stats(&self, i: usize) -> (f32, f32, f32) {
-        let last = self.frames.back().map_or(0.0, |r| r.phases.0[i]);
-        let (mut sum, mut worst) = (0.0f32, 0.0f32);
-        for r in &self.frames {
-            let v = r.phases.0[i];
-            sum += v;
-            worst = worst.max(v);
-        }
-        let avg = if self.frames.is_empty() {
-            0.0
-        } else {
-            sum / self.frames.len() as f32
-        };
-        (last, avg, worst)
-    }
-
-    /// Each lap and each plugin over the window: the systems, then the
-    /// plugins, each the most total first.
-    fn breakdown(&self) -> (Vec<Spent>, Vec<Spent>) {
-        let n = self.frames.len().max(1) as f32;
-        // A system's total and worst, and the worst frame's time on a CPU.
-        let mut systems: Vec<(&'static str, f32, f32, Option<f32>)> = Vec::new();
-        let mut plugins: Vec<(&str, f32, f32, u32)> = Vec::new();
-        for r in &self.frames {
-            for (name, ms, cpu) in &r.laps {
-                match systems.iter_mut().find(|(s, ..)| s == name) {
-                    Some((_, total, worst, worst_cpu)) => {
-                        *total += ms;
-                        if *ms > *worst {
-                            *worst = *ms;
-                            *worst_cpu = *cpu;
-                        }
-                    }
-                    None => systems.push((name, *ms, *ms, *cpu)),
-                }
-            }
-            for (name, ms, calls) in &r.plugins {
-                match plugins.iter_mut().find(|(p, ..)| p == name) {
-                    Some((_, total, worst, c)) => {
-                        *total += ms;
-                        *worst = worst.max(*ms);
-                        *c += calls;
-                    }
-                    None => plugins.push((name, *ms, *ms, *calls)),
-                }
-            }
-        }
-        let mut systems: Vec<Spent> = systems
-            .into_iter()
-            .map(|(name, total, worst, cpu)| {
-                (name.to_string(), total / n, worst, total, Last::Cpu(cpu))
-            })
-            .collect();
-        let mut plugins: Vec<Spent> = plugins
-            .into_iter()
-            .map(|(name, total, worst, calls)| {
-                (
-                    name.to_string(),
-                    total / n,
-                    worst,
-                    total,
-                    Last::Count(calls),
-                )
-            })
-            .collect();
-        for list in [&mut systems, &mut plugins] {
-            list.sort_by(|a, b| b.3.total_cmp(&a.3).then(a.0.cmp(&b.0)));
-        }
-        (systems, plugins)
-    }
-
-    /// Each pane over the window, by its id under the name it had last
-    /// (a terminal's title moves), the most total first, each followed
-    /// by its parts, indented, the most total first — and what no part
-    /// took, as `rest`.
-    fn pane_breakdown(&self) -> Vec<Spent> {
-        /// A pane's ms total and worst, and the frames it was drawn in;
-        /// each part's total and worst.
-        struct Sum<'a> {
-            id: u64,
-            name: &'a str,
-            total: f32,
-            worst: f32,
-            drawn: u32,
-            parts: Vec<(&'static str, f32, f32)>,
-        }
-        let n = self.frames.len().max(1) as f32;
-        let mut panes: Vec<Sum<'_>> = Vec::new();
-        for r in &self.frames {
-            for p in &r.panes {
-                let at = match panes.iter().position(|s| s.id == p.id) {
-                    Some(at) => at,
-                    None => {
-                        panes.push(Sum {
-                            id: p.id,
-                            name: &p.name,
-                            total: 0.0,
-                            worst: 0.0,
-                            drawn: 0,
-                            parts: Vec::new(),
-                        });
-                        panes.len() - 1
-                    }
-                };
-                let s = &mut panes[at];
-                s.name = &p.name;
-                s.total += p.ms;
-                s.worst = s.worst.max(p.ms);
-                s.drawn += 1;
-                let rest = p.ms - p.parts.iter().map(|(_, m)| m).sum::<f32>();
-                let rest = (!p.parts.is_empty()).then_some(("rest", rest.max(0.0)));
-                for (name, m) in p.parts.iter().copied().chain(rest) {
-                    match s.parts.iter_mut().find(|(q, ..)| *q == name) {
-                        Some((_, total, worst)) => {
-                            *total += m;
-                            *worst = worst.max(m);
-                        }
-                        None => s.parts.push((name, m, m)),
-                    }
-                }
-            }
-        }
-        panes.sort_by(|a, b| b.total.total_cmp(&a.total).then(a.name.cmp(b.name)));
-        let mut out = Vec::new();
-        for mut s in panes {
-            out.push((
-                s.name.to_string(),
-                s.total / n,
-                s.worst,
-                s.total,
-                Last::Count(s.drawn),
-            ));
-            s.parts.sort_by(|a, b| b.1.total_cmp(&a.1));
-            for (name, total, worst) in s.parts {
-                out.push((format!("  {name}"), total / n, worst, total, Last::None));
-            }
-        }
-        out
-    }
-
-    /// The process's memory, asked for at most every [`MEM_EVERY`].
-    fn mem(&mut self) -> Mem {
-        let now = Instant::now();
-        if let Some((at, m)) = self.mem
-            && now.duration_since(at) < MEM_EVERY
-        {
-            return m;
-        }
-        let m = read_mem();
-        self.mem = Some((now, m));
-        m
-    }
-}
-
-/// Milliseconds since `t`, as the phases are kept.
-pub fn ms(t: Instant) -> f32 {
-    t.elapsed().as_secs_f32() * 1e3
 }
 
 #[cfg(target_os = "macos")]
@@ -841,357 +240,80 @@ pub fn bytes(n: u64) -> String {
     }
 }
 
-/// A section of the tab: its caption, a header row when the columns
-/// need naming, its rows, a cell per column, and a note under them.
-type Section = (
-    String,
-    Option<Vec<&'static str>>,
-    Vec<Vec<String>>,
-    Option<&'static str>,
-);
-
-/// Under the phases: why an idle editor's frames read high.
-const COLD: &str = "A frame drawn after a pause runs cold — caches emptied, \
-the core slowed — and costs several times one in a run of them: an idle \
-window's numbers read high for the same work.";
-
-fn count(n: usize) -> String {
-    crate::diff::count(n)
-}
-
 impl Kawoosh {
-    /// Declares the tab every frame and draws it while it is on show.
-    pub(crate) fn perf_tab(&mut self, ui: &mut Ui<'_>) {
-        if self.tab_shown == Some(TAB) {
-            self.tab_shown = None;
+    /// The gauges only kawoosh can read, while kui measures: the
+    /// process's memory (at most every [`MEM_EVERY`]), the buffers, the
+    /// focused one's text, the systems' counts.
+    pub(crate) fn perf_gauges(&mut self, core: &mut Core) {
+        let parses = std::mem::take(&mut self.perf.parses);
+        let drained = std::mem::take(&mut self.perf.drained);
+        if !core.perf_measuring() {
+            return;
         }
-        ui.devtools_tab_with(TAB, "Perf", |ui| self.perf_body(ui));
-    }
-
-    fn perf_body(&mut self, ui: &mut Ui<'_>) {
-        self.tab_shown = Some(TAB);
-        // Just opened: measuring starts with the next frame.
-        if !self.perf.on() {
-            ui.request_frame();
+        // On the parser's track, ending as reported (kui's measure).
+        for p in parses {
+            core.perf_measure("parse", p.as_secs_f64() * 1e3);
         }
-        let pal = self.pal;
-        let font = self.face;
-        // Every size from the panes' one scale (`devtab::Tab`), so the
-        // tabs agree with the panes and each other.
-        let tm = Tab::of(&ui.metrics(), &self.chrome, self.face.line_height);
-        let style = move || tm.style(&pal, font);
-        let dim = move || style().color(pal.dim);
-        // The readings, gathered at most every `REFRESH`: built every
-        // frame, the tab was a third of the frame it was measuring.
+        for kind in drained {
+            core.perf_count(kind, 1);
+        }
         let now = Instant::now();
-        // Ones built before a frame was measured are not kept.
-        let shown = match self.perf.shown.take() {
-            Some((at, true, sections)) if now.duration_since(at) < REFRESH => (at, true, sections),
-            _ => (now, !self.perf.frames.is_empty(), self.perf_sections()),
-        };
-        let sections = &shown.2;
-
-        // A row: every other one washed and a hovered one lit, so a
-        // reading is found by eye across the gap; the name column grows.
-        let row_spec = move |i: usize| tm.row(&pal, i);
-        // A name or a value wider than this is cut, whole on hover: a
-        // terminal running an agent titles itself with its task, and
-        // whole it took the name column past the panel's edge, the
-        // numbers beside it with it.
-        let cap = CUT_EMS * tm.text;
-        let cut = move |ui: &mut Ui<'_>, text: &str, style: TextStyle| -> bool {
-            if ui.measure_text(text, &style, None).width <= cap {
-                return false;
-            }
-            ui.text_in(
-                NodeSpec::row().width(cap).tooltip(text),
-                text,
-                style.ellipsis(),
-            );
-            true
-        };
-        // The name column grows, but never below its longest name: a
-        // long value beside it takes the room, not the name.
-        let name_cell = move |ui: &mut Ui<'_>, name: &str| {
-            if !cut(ui, name, dim()) {
-                ui.text_in(
-                    NodeSpec::row().grow_width().min_width(Min::FIT),
-                    name,
-                    dim(),
-                );
-            }
-        };
-        // On the panel's own surface: each section a block of its own —
-        // the caption its strip — with room between the blocks, as the
-        // Settings tab lays its layers out.
-        ui.with(
-            NodeSpec::column().fill().scroll_y().gap(tm.section_gap),
-            |ui| {
-                for (title, header, rows, note) in sections {
-                    ui.with(NodeSpec::column().grow_width(), |ui| {
-                        ui.text_in(tm.caption(&pal), title, dim());
-                        ui.with(NodeSpec::table().grow_width(), |ui| {
-                            // The header names the numeric columns and sits at
-                            // their right edge, where the numbers do.
-                            if let Some(header) = header {
-                                ui.with(row_spec(0), |ui| {
-                                    for (i, h) in header.iter().enumerate() {
-                                        if i == 0 {
-                                            name_cell(ui, h);
-                                        } else {
-                                            ui.with(NodeSpec::row().main_align(Align::End), |ui| {
-                                                ui.text(h, dim())
-                                            });
-                                        }
-                                    }
-                                });
-                            }
-                            for (r, cells) in rows.iter().enumerate() {
-                                ui.with(row_spec(r + usize::from(header.is_some())), |ui| {
-                                    for (i, cell) in cells.iter().enumerate() {
-                                        if i == 0 {
-                                            name_cell(ui, cell);
-                                        } else if header.is_some() {
-                                            ui.with(NodeSpec::row().main_align(Align::End), |ui| {
-                                                ui.text(cell, style())
-                                            });
-                                        } else if !cut(ui, cell, style()) {
-                                            ui.text(cell, style());
-                                        }
-                                    }
-                                });
-                            }
-                        });
-                        if let Some(note) = note {
-                            ui.text_in(
-                                NodeSpec::row().grow_width().pad_xy(tm.pad_x, tm.gap),
-                                note,
-                                dim().wrap(TextWrap::Word),
-                            );
-                        }
-                    });
-                }
-            },
-        );
-        self.perf.shown = Some(shown);
-    }
-
-    /// The tab's sections from the readings now.
-    fn perf_sections(&mut self) -> Vec<Section> {
-        // The readings, gathered before the tree is built.
-        let mem = self.perf.mem();
-        let phases: Vec<(&str, (f32, f32, f32))> = Phases::NAMES
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (*n, self.perf.stats(i)))
-            .collect();
-        let frames = self.perf.frames.len();
-        let (systems, plugins) = self.perf.breakdown();
-        let panes = self.perf.pane_breakdown();
-        let ts_last = self.perf.ts_last;
-        let ts_answers = self.perf.ts_answers;
-        let rows_last = self.inspector.last_build;
-        let building = self.inspector.building();
-        let inspector_rows = self.inspector.rows().len();
-        let lsp_servers = self.lsp.status.len();
-        let lsp_docs: usize = self.lsp.status.iter().map(|s| s.2).sum();
-        let terms = self.terms.map.len();
-        let lua = self.scripting.rt.is_some();
-        let buffers = self.ed.buffers.len();
-        let total_bytes: usize = self.ed.buffers.values().map(|b| b.len()).sum();
-        let focused: Option<FocusedText> = self.focused_view().map(|v| {
+        if self
+            .perf
+            .mem_at
+            .is_none_or(|at| now.duration_since(at) >= MEM_EVERY)
+        {
+            self.perf.mem_at = Some(now);
+            let m = read_mem();
+            let mb = |n: u64| n as f64 / (1024.0 * 1024.0);
+            core.perf_gauge("memory footprint MB", mb(m.footprint));
+            core.perf_gauge("memory resident MB", mb(m.resident));
+            core.perf_gauge("memory peak MB", mb(m.peak));
+        }
+        let total: usize = self.ed.buffers.values().map(|b| b.len()).sum();
+        core.perf_gauge("buffers", self.ed.buffers.len() as f64);
+        core.perf_gauge("buffers bytes", total as f64);
+        if let Some(v) = self.focused_view() {
             let b = &self.ed.buffers[self.ed.views[v].buffer];
-            FocusedText {
-                name: b.name.clone(),
-                len: b.len(),
-                lines: b.line_count(),
-                pieces: b.piece_count(),
-                journal: b.journal().len(),
-                layers: b.layer_stats(),
-            }
-        });
-        let cells = self.line_cells.lines_indexed();
-        let row_size = std::mem::size_of::<crate::inspector::Row>();
-        let rows_bytes = std::mem::size_of_val(self.inspector.rows());
-
-        // The sections as data, then one table per section (ADR 0033):
-        // the name column at its longest name in that section, nothing
-        // measured and no width picked by hand. A section is a caption,
-        // a header row over the columns when the columns need naming,
-        // and its rows — each cell its own, so a number sits under its
-        // heading and at its column's right edge.
-        let mut sections: Vec<Section> = Vec::new();
-        sections.push((
-            format!("frame · view, ms, over {frames} frames"),
-            Some(vec!["phase", "last", "avg", "worst"]),
-            phases
-                .iter()
-                .map(|(name, (last, avg, worst))| {
-                    vec![
-                        name.to_string(),
-                        format!("{last:.2}"),
-                        format!("{avg:.2}"),
-                        format!("{worst:.2}"),
-                    ]
-                })
-                .collect(),
-            Some(COLD),
-        ));
-        // Each system and plugin: its average a frame, its worst frame,
-        // and its total over the window, the most total first.
-        let spent = |list: Vec<Spent>| -> Vec<Vec<String>> {
-            list.into_iter()
-                .map(|(name, avg, worst, total, last)| {
-                    vec![
-                        name,
-                        format!("{avg:.3}"),
-                        format!("{worst:.2}"),
-                        format!("{total:.1}"),
-                        match last {
-                            Last::None => String::new(),
-                            Last::Count(c) => count(c as usize),
-                            Last::Cpu(Some(c)) => format!("{c:.2}"),
-                            Last::Cpu(None) => "—".into(),
-                        },
-                    ]
-                })
-                .collect()
-        };
-        sections.push((
-            format!("systems · ms, over {frames} frames"),
-            Some(vec!["system", "avg", "worst", "total", "on cpu"]),
-            spent(systems),
-            Some(
-                "A lap through the frame each: a system counts the plugins it calls. \
-                 `on cpu` is what of its worst frame the thread computed; a worst far \
-                 over it waited — a lock, a page read back in after the window was \
-                 away, the core given to another program — rather than worked.",
-            ),
-        ));
-        sections.push((
-            format!("panes · ms, over {frames} frames"),
-            Some(vec!["pane", "avg", "worst", "total", "drawn"]),
-            spent(panes),
-            Some(
-                "The `panes` lap by pane, under the name it has now, and each pane's draw by part.",
-            ),
-        ));
-        sections.push((
-            format!("plugins · ms, over {frames} frames"),
-            Some(vec!["plugin", "avg", "worst", "total", "calls"]),
-            spent(plugins),
-            Some("Lua's time by the file each function came from, its calls into other plugins theirs."),
-        ));
-        // The two-column sections: a name and what it reads.
-        let pairs = |rows: Vec<(String, String)>| -> Vec<Vec<String>> {
-            rows.into_iter().map(|(k, v)| vec![k, v]).collect()
-        };
-        sections.push((
-            "threads".into(),
-            None,
-            pairs(vec![
-                (
-                    "ts parse".into(),
-                    match ts_last {
-                        Some((d, n)) => format!(
-                            "{:.1} ms for {} · {} answers",
-                            d.as_secs_f64() * 1e3,
-                            bytes(n as u64),
-                            ts_answers
-                        ),
-                        None => "—".into(),
-                    },
-                ),
-                (
-                    "syntax rows".into(),
-                    match rows_last {
-                        Some((d, n)) => format!(
-                            "{} rows in {:.1} ms{}",
-                            count(n),
-                            d.as_secs_f64() * 1e3,
-                            if building { " · building…" } else { "" }
-                        ),
-                        None if inspector_rows > 0 => {
-                            format!("{} rows, in the frame", count(inspector_rows))
-                        }
-                        None => "—".into(),
-                    },
-                ),
-                (
-                    "lsp".into(),
-                    format!("{lsp_servers} servers · {lsp_docs} documents"),
-                ),
-                ("terminals".into(), count(terms)),
-                ("lua".into(), if lua { "attached" } else { "—" }.into()),
-            ]),
-            None,
-        ));
-        // One reading a row, so each has its name beside it.
-        let mut memory = vec![
-            ("footprint".into(), bytes(mem.footprint)),
-            ("resident".into(), bytes(mem.resident)),
-            ("peak resident".into(), bytes(mem.peak)),
-            ("buffers".into(), count(buffers)),
-            ("buffers' text".into(), bytes(total_bytes as u64)),
-        ];
-        if let Some(f) = &focused {
-            memory.push(("focused".into(), f.name.clone()));
-            memory.push(("  text".into(), bytes(f.len as u64)));
-            memory.push(("  lines".into(), count(f.lines)));
-            memory.push(("  pieces".into(), count(f.pieces)));
-            memory.push(("  edits journaled".into(), count(f.journal)));
-            for (layer, runs, chunks) in &f.layers {
-                memory.push((format!("  layer {layer} runs"), count(*runs)));
-                memory.push((format!("  layer {layer} chunks"), count(*chunks)));
+            core.perf_gauge("focused bytes", b.len() as f64);
+            core.perf_gauge("focused lines", b.line_count() as f64);
+            core.perf_gauge("focused pieces", b.piece_count() as f64);
+            core.perf_gauge("focused journal", b.journal().len() as f64);
+            for (layer, runs, chunks) in b.layer_stats() {
+                core.perf_gauge(&format!("focused {layer} runs"), runs as f64);
+                core.perf_gauge(&format!("focused {layer} chunks"), chunks as f64);
             }
         }
-        memory.push(("line indexes".into(), count(cells)));
-        memory.push(("syntax rows".into(), count(inspector_rows)));
-        memory.push(("syntax row size".into(), format!("{row_size} B")));
-        memory.push(("syntax rows' bytes".into(), bytes(rows_bytes as u64)));
-        sections.push(("memory".into(), None, pairs(memory), None));
-        sections
+        core.perf_gauge("terminals", self.terms.map.len() as f64);
+        core.perf_gauge("lsp servers", self.lsp.status.len() as f64);
+        let docs: usize = self.lsp.status.iter().map(|s| s.2).sum();
+        core.perf_gauge("lsp documents", docs as f64);
+        core.perf_gauge("line cells", self.line_cells.lines_indexed() as f64);
+    }
+
+    /// The plugins' time since the frame before, each as a measure on
+    /// kui's recording under its plugin's name (`kawoosh_lua`'s
+    /// `prof.rs`): timed where kui's core is out of reach, so reported
+    /// here, a frame at a time. Timed only while kui measures.
+    pub(crate) fn perf_plugins(&mut self, core: &mut Core) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        let measuring = core.perf_measuring();
+        rt.set_profiling(measuring);
+        if !measuring {
+            return;
+        }
+        for s in rt.take_profile() {
+            core.perf_measure(&format!("plugin {}", s.plugin), s.time.as_secs_f64() * 1e3);
+            core.perf_count(&format!("plugin {} calls", s.plugin), s.calls as i64);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::status_footprint;
-    #[cfg(unix)]
-    use super::{Last, Perf, Phase};
-
-    /// A lap's worst frame says what of it the thread computed: a lap
-    /// that waits (a sleep, as a lock waited on is) reads far over its
-    /// time on a CPU, one that works reads about the same.
-    #[cfg(unix)]
-    #[test]
-    fn a_laps_worst_says_what_of_it_was_on_a_cpu() {
-        let mut perf = Perf::default();
-        perf.set_on(true);
-        let started = perf.frame_start();
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        let t = perf.lap(Phase::Io, "waits", started);
-        let spin = std::time::Instant::now();
-        let mut x = 0u64;
-        while spin.elapsed().as_millis() < 30 {
-            x = std::hint::black_box(x.wrapping_add(1));
-        }
-        perf.lap(Phase::Io, "works", t);
-        perf.end_frame(started, Vec::new(), String::new);
-        let (systems, _) = perf.breakdown();
-        let row = |name: &str| systems.iter().find(|s| s.0 == name).cloned().unwrap();
-        let (_, _, worst, _, Last::Cpu(Some(cpu))) = row("waits") else {
-            panic!("no cpu reading: {:?}", row("waits"));
-        };
-        assert!(
-            worst >= 30.0 && cpu < 5.0,
-            "waited: {worst} ms, {cpu} on a cpu"
-        );
-        let (_, _, worst, _, Last::Cpu(Some(cpu))) = row("works") else {
-            panic!("no cpu reading: {:?}", row("works"));
-        };
-        assert!(cpu > worst * 0.5, "worked: {worst} ms, {cpu} on a cpu");
-    }
 
     #[test]
     fn the_footprint_is_the_anonymous_pages_resident_or_swapped() {

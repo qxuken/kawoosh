@@ -2406,9 +2406,7 @@ impl Kawoosh {
                 // ring around a focused sink (kui C93) would say it twice.
                 .focus_ring(Color::TRANSPARENT),
             |ui| {
-                let t = crate::perf::span_start();
-                self.publish_drawing(name);
-                crate::perf::span("publish drawing", t);
+                ui.span("publish drawing", |_| self.publish_drawing(name));
                 let slot_key = self.fill_view_slot(ui, pane, name, native.as_deref(), &params);
                 self.scroll_lua_pane(ui, pane, name, slot_key);
             },
@@ -2460,7 +2458,6 @@ impl Kawoosh {
         };
         props.push(("key".into(), Value::from(component.as_str())));
         props.push(("rev".into(), Value::Int(placed.rev as i64)));
-        let t = crate::perf::span_start();
         let fill = ui.component(&component, &Value::Map(props));
         placed.answer = if fresh { fill } else { None };
         let replayed = fresh && fill == Some(kui_native::FillAnswer::Replayed);
@@ -2475,26 +2472,25 @@ impl Kawoosh {
         {
             self.legends.borrow_mut().declare(pane);
         }
-        crate::perf::span(
+        // Why a pane ran, as counters on kui's recording (ADR 0058): the
+        // host's reason not to vouch, or kui's when it was asked and
+        // refused — what moved.
+        let measuring = ui.core().perf_measuring();
+        if measuring {
+            let core = ui.core();
             match fill {
-                Some(f) if fresh => f.name(),
-                _ => "kept",
-            },
-            t,
-        );
-        // kui's own reason, when it was asked and refused: what moved.
-        let kui_why = fill.filter(|_| fresh).map(kui_native::FillAnswer::name);
+                Some(kui_native::FillAnswer::Replayed) if fresh => {
+                    core.perf_count("pane replayed", 1)
+                }
+                Some(answer) if fresh => {
+                    core.perf_count(&format!("pane ran: kui {}", answer.name()), 1)
+                }
+                _ => core.perf_count(&format!("pane ran: {why}"), 1),
+            }
+        }
         // A native view ran: the count it ran at is what the next frame's
         // claim rests on.
         if !replayed && native.is_some() {
-            if t.is_some() {
-                let mut note = format!("{track}: {why}");
-                if let Some(kui_why) = kui_why {
-                    note.push_str(" kui: ");
-                    note.push_str(kui_why);
-                }
-                crate::perf::note(note);
-            }
             self.scripting.native_tracks.insert(track.clone(), calls_in);
         }
         // The view ran: what it read, at this frame's generations, is what
@@ -2504,20 +2500,12 @@ impl Kawoosh {
             && let Some(rt) = self.scripting.rt.as_ref()
             && let Some(reads) = rt.view_reads(&track)
         {
-            if t.is_some() {
-                let mut note = format!("{track}: {why}");
-                if let Some(kui_why) = kui_why {
-                    note.push_str(" kui: ");
-                    note.push_str(kui_why);
+            // What it read that keeps it from replaying: each opaque
+            // native it called, by name.
+            if measuring {
+                for native in &reads.opaque {
+                    ui.core().perf_count(&format!("pane read: {native}"), 1);
                 }
-                if !reads.opaque.is_empty() {
-                    note.push_str(" opaque ");
-                    note.push_str(&reads.opaque.join(" "));
-                }
-                if reads.clock {
-                    note.push_str(" clock");
-                }
-                crate::perf::note(note);
             }
             let gens = self.scripting.frame_gens;
             self.scripting

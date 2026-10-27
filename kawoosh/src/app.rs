@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crossbeam_channel::Sender;
@@ -237,10 +237,8 @@ pub struct Kawoosh {
     pub(crate) status_fitted: std::cell::RefCell<crate::statusline::Fitted>,
     /// Where each buffer's notes start when they are a column.
     pub(crate) note_columns: rows::NoteColumns,
-    /// The Perf tab's readings: the frame's phases, the systems' reports.
+    /// What kawoosh last told kui's recording of itself (`perf.rs`).
     pub perf: crate::perf::Perf,
-    /// Why each frame was drawn (`frames.rs`).
-    pub frames: crate::frames::Frames,
     /// The undo history pane (`:undo history`): which buffer it follows,
     /// its rows and its cursor.
     pub undo: crate::undo::UndoPanel,
@@ -263,10 +261,9 @@ pub struct Kawoosh {
     /// The keymap version and, at it, the first words of the commands
     /// keys run — the command line ranks them after the typed ones.
     pub(crate) bound_names: (u64, std::collections::HashSet<String>),
-    /// The app's devtools tab the last frame drew, if any — the panel on
-    /// and the strip on it — which is what `:syntax_tree` and `:perf`
-    /// toggle against.
-    pub(crate) tab_shown: Option<&'static str>,
+    /// The devtools tab kui shows while the panel is on, as the frame
+    /// before had it: what `:syntax_tree` and `:perf` toggle against.
+    pub(crate) devtools_shows: Option<String>,
     /// `kawoosh.settings`, the settings pane's door
     /// (`settings_pane.rs`).
     pub(crate) settings_door: crate::settings_pane::SharedDoor,
@@ -543,7 +540,7 @@ impl Kawoosh {
             md_slow_offered: HashSet::new(),
             canvas: Default::default(),
             show_tab: None,
-            tab_shown: None,
+            devtools_shows: None,
             settings_door: Default::default(),
             icons: Default::default(),
             legends: Default::default(),
@@ -553,7 +550,6 @@ impl Kawoosh {
             status_fitted: Default::default(),
             note_columns: Default::default(),
             perf: Default::default(),
-            frames: crate::frames::Frames::with_wake(&wake),
             undo: Default::default(),
             moments: crate::moments::Moments::new(wake.named("moments")),
             marks: Default::default(),
@@ -852,11 +848,8 @@ impl Kawoosh {
             self.drain_lua();
         }
         for a in self.ts.drain() {
-            self.perf.ts_answers += 1;
-            self.perf.ts_last = Some((
-                a.elapsed,
-                self.ed.buffers.get(a.buffer).map_or(0, |b| b.len()),
-            ));
+            // What the parser thread took, reported with the frame.
+            self.perf.parses.push(a.elapsed);
             // The spans whose syntax changed, for the tree hooks.
             let spans: Vec<std::ops::Range<usize>> = a
                 .updates
@@ -2916,11 +2909,17 @@ pub const ASYNC_OPEN_BYTES: usize = 64 << 20;
 
 impl kui_native::App for Kawoosh {
     fn setup(&mut self, waker: kui_native::Waker) {
+        // Each wake rings kui's waker under the name it went under, made
+        // once a name: a recording reads `wake: pty` (kui ADR 0058).
+        let named = Arc::new(NamedWakers {
+            base: waker,
+            named: Mutex::new(Vec::new()),
+        });
         let at: kawoosh_systems::WakeAt = {
-            let waker = waker.clone();
-            Arc::new(move |t| waker.wake_at(t))
+            let named = named.clone();
+            Arc::new(move |t, name| named.of(name).wake_at(t))
         };
-        let wake: kawoosh_systems::Wake = Arc::new(move || waker.wake());
+        let wake: kawoosh_systems::Wake = Arc::new(move |name| named.of(name).wake());
         for w in &self.shared_wakes {
             w.set(wake.clone());
             w.set_at(at.clone());
@@ -2981,108 +2980,95 @@ impl kui_native::App for Kawoosh {
     }
 
     fn view(&mut self, ui: &mut Ui<'_>) {
-        use crate::perf::Phase::{Chrome, Io, Lsp, Lua, Rows, Syntax};
-        self.frames_begin(ui);
-        // Measured while the Perf tab was on show the frame before: a
-        // lap is a clock read then, and nothing otherwise.
-        let measure = self.tab_shown == Some(crate::perf::TAB);
-        self.perf.set_on(measure);
-        // `KAWOOSH_PERF_LOG` measures every frame, tab or not.
-        let measure = self.perf.on();
-        if self.perf.logging() {
-            let core = ui.core();
-            let kui = core.stats.last().map(|s| crate::perf::KuiSample {
-                input: s.input_ms,
-                view: s.view_ms,
-                layout: s.layout_ms,
-                render: s.render_ms,
-                wait: s.wait_ms,
-                texts: core.text_cache_len(),
-            });
-            self.perf.log_frame(kui);
-        }
-        if let Some(rt) = &self.scripting.rt {
-            rt.set_profiling(measure);
-        }
-        let frame_started = self.perf.frame_start();
-        let mut t = frame_started;
+        use crate::perf::Laps;
+        self.fire_alarms();
+        // `view`'s systems as spans on kui's recording, one after another
+        // (kui ADR 0058), the drains and Lua's under a span of their own.
+        let io = ui.core().span_begin("io");
+        let mut laps = Laps::begin(ui.core(), "io drain");
         // Before the requests: one made in this view is answered in a
         // later one, after the frame its keys reach.
         self.answer_headless(ui);
         self.drain_io();
         // Output a budget left behind: parsed on the next frame.
         if !self.terms.flowing.is_empty() {
-            crate::frames::request(ui, "pty backlog");
+            ui.request_frame_for("pty backlog");
         }
-        t = self.perf.lap(Io, "io drain", t);
+        laps.to(ui.core(), "processes");
         self.flush_proc_lines();
         self.sync_native(ui);
-        t = self.perf.lap(Io, "processes", t);
+        laps.to(ui.core(), "settings");
         // Laps of their own, each its owner's: as one `settings` lap a
         // tab switch read 670 ms with nothing to say which part.
         self.sync_settings();
         self.fire_settings();
-        t = self.perf.lap(Io, "settings", t);
+        laps.to(ui.core(), "cwd");
         self.sync_dirs(false);
         self.sync_cwd();
-        t = self.perf.lap(Io, "cwd", t);
+        laps.to(ui.core(), "editorconfig");
         self.sync_editorconfig();
-        t = self.perf.lap(Io, "editorconfig", t);
+        laps.to(ui.core(), "formatters");
         self.sync_probes();
         self.sync_format();
-        t = self.perf.lap(Io, "formatters", t);
+        laps.to(ui.core(), "cwd hooks");
         self.fire_cwd();
-        t = self.perf.lap(Io, "cwd", t);
+        laps.to(ui.core(), "watches");
         self.fire_watches();
         self.fire_du();
-        t = self.perf.lap(Io, "watches", t);
+        laps.to(ui.core(), "histories");
         self.sync_histories(false);
-        t = self.perf.lap(Io, "histories", t);
+        laps.to(ui.core(), "disk");
         self.moments.window_focused = ui.env().focused;
         self.sync_disk(false);
-        t = self.perf.lap(Io, "disk", t);
+        laps.to(ui.core(), "update");
         self.sync_update();
-        t = self.perf.lap(Io, "update", t);
+        laps.to(ui.core(), "marks, jumps");
         self.sync_marks();
         self.sync_jumps();
         self.layout.note_focus();
-        t = self.perf.lap(Io, "marks, jumps", t);
+        laps.to(ui.core(), "moments");
         self.sync_moments(false);
-        t = self.perf.lap(Io, "moments", t);
+        laps.to(ui.core(), "multibuffers");
         // A file's edit from the io thread (it landed, a reload, a
         // server's) in the multibuffers showing it.
         self.sync_multis();
-        t = self.perf.lap(Io, "multibuffers", t);
+        laps.end(ui.core());
+        ui.core().span_end(io);
+        let mut laps = Laps::begin(ui.core(), "syntax");
         self.sync_syntax();
-        t = self.perf.lap(Syntax, "syntax", t);
+        laps.to(ui.core(), "lsp");
         self.sync_lsp();
         self.sync_completion();
         self.sync_signature();
-        t = self.perf.lap(Lsp, "lsp", t);
+        laps.to(ui.core(), "notifications");
         // Filled again by the panes this frame draws.
         self.multis.visible.clear();
         self.sync_flash();
         self.sync_notifications();
-        t = self.perf.lap(Chrome, "notifications", t);
+        laps.end(ui.core());
+        let lua = ui.core().span_begin("lua");
+        let mut laps = Laps::begin(ui.core(), "masks");
         self.publish_masks();
-        t = self.perf.lap(Lua, "masks", t);
+        laps.to(ui.core(), "lua changes");
         self.fire_changes();
-        t = self.perf.lap(Lua, "lua changes", t);
+        laps.to(ui.core(), "lua lists");
         self.sync_lists();
-        t = self.perf.lap(Lua, "lua lists", t);
+        laps.to(ui.core(), "lua drain");
         self.drain_lua();
-        t = self.perf.lap(Lua, "lua drain", t);
+        laps.to(ui.core(), "lua multibuffers");
         self.sync_multis();
-        t = self.perf.lap(Lua, "multibuffers", t);
+        laps.to(ui.core(), "lua publish");
         if let Some(rt) = self.scripting.rt.clone() {
             rt.set_workspace(self.moments.workspace());
             self.publish_jumps();
             rt.publish(&self.ed, self.focused_view());
             self.publish_layout();
         }
-        t = self.perf.lap(Lua, "lua publish", t);
+        laps.to(ui.core(), "lua gens");
         self.read_frame_gens();
-        t = self.perf.lap(Lua, "lua gens", t);
+        laps.end(ui.core());
+        ui.core().span_end(lua);
+        let mut laps = Laps::begin(ui.core(), "look");
         if self.quit {
             if !self.session_saved {
                 self.save_session();
@@ -3092,12 +3078,12 @@ impl kui_native::App for Kawoosh {
         }
         self.sync_settings_door();
         self.sync_look(ui);
-        t = self.perf.lap(Chrome, "look", t);
+        laps.to(ui.core(), "du");
         self.sync_du();
-        t = self.perf.lap(Chrome, "du", t);
+        laps.to(ui.core(), "probes");
         self.probe_fonts(ui);
         self.probe_scroll(ui);
-        t = self.perf.lap(Chrome, "probes", t);
+        laps.to(ui.core(), "terminals");
         self.pal = ui.theme().into();
         if let Some(hit) = self.look.hit {
             self.pal.hit = hit;
@@ -3114,14 +3100,14 @@ impl kui_native::App for Kawoosh {
         self.sync_status_tick();
         self.sync_term_settings();
         self.ring_bells(ui);
-        t = self.perf.lap(Chrome, "terminals", t);
+        laps.to(ui.core(), "panes' upkeep");
         self.sync_dock();
         self.spawn_pending();
         self.sweep_closed_tabs();
         self.sweep_scratches();
         self.tick_secrets();
         self.register_images(ui);
-        t = self.perf.lap(Chrome, "panes' upkeep", t);
+        laps.to(ui.core(), "devtools");
         let pal = self.pal;
         // Whether the panel was on through the last frame, and so lists
         // the tabs it declared (below).
@@ -3137,6 +3123,7 @@ impl kui_native::App for Kawoosh {
                 core.devtools() && core.devtools_dock() != kui_native::DevtoolsDock::Off;
         }
         self.devtools_synced = Some(self.devtools);
+        self.devtools_shows = self.devtools.then(|| ui.core().devtools_current_tab());
         // A tab asked for once the panel lists it: kui takes in the tabs a
         // frame declared only at the end of a frame the panel is on in,
         // and a name it does not list is its own — kui's Perf is `perf`
@@ -3145,14 +3132,10 @@ impl kui_native::App for Kawoosh {
         if listing && let Some(tab) = self.show_tab.take() {
             ui.core().set_devtools_tab(tab);
         }
-        // The syntax and perf tabs: declared every frame, drawn while on
-        // show, as a layer over the panel's tab body (kui ADR 0032).
+        // The syntax tab: declared every frame, drawn while on show, as a
+        // layer over the panel's tab body (kui ADR 0032).
         self.syntax_tab(ui);
-        t = self.perf.lap(Chrome, "tab: syntax", t);
-        self.perf_tab(ui);
-        t = self.perf.lap(Chrome, "tab: perf", t);
-        self.frames_tab(ui);
-        t = self.perf.lap(Chrome, "tab: frames", t);
+        laps.to(ui.core(), "window");
         self.sync_undo_view();
         let m = ui.measure_text("M", &rows::mono(self.face, &pal), None);
         self.cell = (m.width.max(1.0), self.face.line_height);
@@ -3219,7 +3202,7 @@ impl kui_native::App for Kawoosh {
         let c = self.chrome;
         self.body_h = (vp.h - self.title_h - 1.0 - self.tabs_h() - 2.0 * c.strip_h).max(lh);
         let body_h = self.body_h;
-        t = self.perf.lap(Chrome, "window", t);
+        laps.to(ui.core(), "title bar");
         self.legends.borrow_mut().roll();
         // The wheel with ⌘ or Ctrl held is the font's size, and the
         // window's to hear (kui F122, `scroll_mods`): ahead of every pane,
@@ -3231,9 +3214,9 @@ impl kui_native::App for Kawoosh {
             .scroll_mods(KeyMods::NONE.with_ctrl().with_super());
         ui.with(window, |ui| {
             self.title_bar(ui);
-            t = self.perf.lap(Chrome, "title bar", t);
+            laps.to(ui.core(), "tab strip");
             self.tab_strip(ui);
-            t = self.perf.lap(Chrome, "tab strip", t);
+            laps.to(ui.core(), "panes");
             ui.with(NodeSpec::column().grow_width().height(body_h), |ui| {
                 let dock = match &self.layout.dock {
                     Some(d) if self.layout.dock_open => Some(d.layout.clone()),
@@ -3253,8 +3236,8 @@ impl kui_native::App for Kawoosh {
                     0.0
                 };
                 ui.with(NodeSpec::column().fill(), |ui| self.render_tab(ui));
-                t = self.perf.lap(Rows, "panes", t);
                 if let Some(d) = dock {
+                    laps.to(ui.core(), "dock");
                     kui_native::widgets::splitter(
                         ui,
                         "dockdiv",
@@ -3276,34 +3259,27 @@ impl kui_native::App for Kawoosh {
                             crate::layout::Kind::Scroll(s) => self.render_dock_strip(ui, s),
                         },
                     );
-                    t = self.perf.lap(Rows, "dock", t);
                 }
             });
+            laps.to(ui.core(), "status line");
             self.status(ui);
-            t = self.perf.lap(Chrome, "status line", t);
+            laps.to(ui.core(), "command line");
             self.command_line(ui);
-            t = self.perf.lap(Chrome, "command line", t);
+            laps.to(ui.core(), "floats");
             self.toasts(ui);
             self.right_stack(ui);
             self.confirm_float(ui);
-            t = self.perf.lap(Chrome, "floats", t);
+            laps.to(ui.core(), "line cells");
         });
         // A pane that began or stopped drawing a legend: its title bar,
         // drawn before its rows, catches up next frame.
         if !self.legends.borrow().settled() {
-            crate::frames::request(ui, "legend hint");
+            ui.request_frame_for("legend hint");
         }
         self.line_cells.sweep();
-        self.perf.lap(Rows, "line cells", t);
-        let plugins = match &self.scripting.rt {
-            Some(rt) if measure => rt.take_profile(),
-            _ => Vec::new(),
-        };
-        let frames = &self.frames;
-        self.perf.end_frame(frame_started, plugins, || {
-            frames.last().map(|f| f.causes()).unwrap_or_default()
-        });
-        self.frames.end();
+        laps.end(ui.core());
+        self.perf_plugins(ui.core());
+        self.perf_gauges(ui.core());
         if self.hud {
             kui_native::widgets::latency_hud(ui);
         }
@@ -3314,11 +3290,6 @@ impl kui_native::App for Kawoosh {
     /// looked at — is done here, in the event's turn.
     fn on_event_with(&mut self, ev: UiEvent, core: &mut Core) {
         let asking = self.confirm.is_some();
-        // What the frame ledger names the input by: the message's own
-        // kind where it has one (`tab`, `toast`, `msg.rs`), else the
-        // event's.
-        let cause = ev.payload.get_str("kind").unwrap_or(ev.event.name());
-        self.frames.input(cause);
         let prompt = self.ed.prompt_view().map(|f| (f, self.layout.focused()));
         self.on_ui_event(ev, core);
         // Each event its own step for the jumps' look: two keys in one
@@ -3348,7 +3319,36 @@ impl kui_native::App for Kawoosh {
     }
 }
 
+/// kui's waker under each name kawoosh's wakes go under
+/// (`WakeHandle::named`), made the first time a name wakes.
+struct NamedWakers {
+    base: kui_native::Waker,
+    named: Mutex<Vec<(&'static str, kui_native::Waker)>>,
+}
+
+impl NamedWakers {
+    fn of(&self, name: &'static str) -> kui_native::Waker {
+        let mut named = self.named.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, w)) = named.iter().find(|(n, _)| *n == name) {
+            return w.clone();
+        }
+        let w = self.base.named(name);
+        named.push((name, w.clone()));
+        w
+    }
+}
+
 impl Kawoosh {
+    /// The alarms this frame reached spent, and the loop asked for the
+    /// next (`WakeHandle::fire_alarms`): before anything reads the time.
+    fn fire_alarms(&self) {
+        let now = Instant::now();
+        self.wake.fire_alarms(now);
+        for w in &self.shared_wakes {
+            w.fire_alarms(now);
+        }
+    }
+
     /// Every event as the pair it is (kui ADR 0047): the message the node
     /// kawoosh drew declared (`msg.rs`) and what happened to it. A message
     /// two handlers share — a terminal's on its keys, clicks, focus and
