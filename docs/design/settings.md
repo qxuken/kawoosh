@@ -362,6 +362,12 @@ project write, the layers).
   `set_option_as_alt`) and `keys.option_as_alt`, `left` by default, so
   the right ⌥ still types `ü`; declared every frame. kawoosh builds
   against kui by path (`../kui-f113`) until a release carries F113.
+  *Amended 2026-10-27*: the right ⌥'s plain characters reached no
+  pane either — ⌥- came as the chord on `-` with no `–` (the em dash
+  question, 2026-10-25). kui F195 (alpha.68) gives a composing Option's
+  press its character beside the chord: insert mode and the prompt type
+  it once no binding takes the chord, and a terminal sends it as a
+  terminal whose Option is not Meta does, `–` and not `ESC -`.
 
 ### From use, 2026-10-07
 

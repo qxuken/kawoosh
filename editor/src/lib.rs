@@ -3609,9 +3609,12 @@ impl Editor {
                         return true;
                     }
                 }
+                // A chord types nothing — but a Mac's Option that
+                // composes, whose press carries what it typed beside the
+                // chord (kui F195): ⌥- an en dash, ⌥⇧- an em dash, once
+                // no binding took the chord above.
                 if let Some(t) = &stroke.text
                     && !stroke.ctrl
-                    && !stroke.alt
                     && !stroke.sup
                 {
                     let t = t.clone();
