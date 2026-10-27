@@ -4,8 +4,6 @@
 -- writes as queued messages — kui.md D6, mvp.md D8); this file adds the
 -- verbs built on them and the dispatch kui calls into.
 
-slots = { "*" }
-
 kawoosh = kawoosh or {}
 kawoosh._views = {}
 kawoosh._handlers = {}
@@ -709,7 +707,7 @@ end
 ---@class kawoosh.ViewEvent
 ---@field kind? string the message's own; "key" for a key
 ---@field event? string which event it was: "click", "drag", "scroll", "hover", "layout", …
----@field slot? string the view's slot, `lua/NAME@PANE`
+---@field component? string the view's component, `lua/NAME@PANE`
 ---@field key? string a key's notation, `<C-d>`
 ---@field code? string a key's code
 ---@field text? string what a key types
@@ -754,8 +752,8 @@ end
 ---@return nil
 function kawoosh.view(name, fn, on_event, opts)
   -- `{ native = NAMESPACE }`: the view a native extension draws
-  -- (docs/design/native.md Decision 4) — its pane is the slot
-  -- `NAMESPACE/NAME@PANE`, which the extension's `kui_ext_view` fills;
+  -- (docs/design/native.md Decision 4) — its pane is the component
+  -- `NAMESPACE/NAME@PANE`, which the extension's `kui_ext_view` draws;
   -- the function here is what draws if the extension does not.
   if opts and opts.native then
     kawoosh._native[name] = tostring(opts.native)
@@ -1145,25 +1143,25 @@ end
 -- (`fields.rs`, docs/design/lua-boundary.md Decision 8) — tabs and
 -- escapes drawn, every selection, a caret per selection on kui's blink,
 -- scrolled sideways under the caret — and a placeholder while it is
--- empty and off the keys. The view's tree holds the place, a `fill`
--- the field extension draws: `full` names the engine field
+-- empty and off the keys. The view's tree holds the place, a component
+-- the engine draws: `full` names the engine field
 -- (`lua:<view>/<name>`), one not open yet asked for and drawn empty
 -- this frame. The field has the keys when its view's keys are on it
 -- and `pane_focused` — the pane the view is drawn in has the keyboard
 -- — so one caret is on the screen. A click on it is the view's
 -- `{ kind = "field", field = }`, as before.
-local function field_node(view_name, pane, env, opts, pane_focused)
+local function field_node(view_name, env, opts, pane_focused)
   local full = "lua:" .. view_name .. "/" .. opts.name
   if not kawoosh._field(full) then kawoosh._field_open(full) end
-  -- A slot's name has no `/`, and one view drawn in two panes is two.
-  -- A fill is a position, not a box: the field's width is an option —
-  -- `"grow"`, the room its row has; pixels; or, by default, as wide as
-  -- its line.
-  return fill {
-    name = "engine/field:" .. full:gsub("/", ":") .. "@" .. tostring(pane),
-    params = { kind = "field", field = full, size = opts.size or kawoosh.metrics(env).text,
-               placeholder = opts.placeholder, focused = pane_focused, width = opts.width },
-  }
+  -- A component is a position, not a box: the field's width is an
+  -- option — `"grow"`, the room its row has; pixels; or, by default, as
+  -- wide as its line. Keyed by the field, so its place among the view's
+  -- children is not its name; a click on it is the view's.
+  return component("engine/field", {
+    key = full, fresh = true, field = full, size = opts.size or kawoosh.metrics(env).text,
+    placeholder = opts.placeholder, focused = pane_focused, width = opts.width,
+    on_click = { kind = "field", field = full },
+  })
 end
 
 -- kawoosh.field_text(view, name): a view's field's line, "" before it
@@ -1199,23 +1197,21 @@ end
 -- ---------------------------------------------------------------- keys
 
 -- The caps, legends and the way to a legend are the engine's to draw
--- (`fields.rs`, docs/design/lua-boundary.md Decision 9): each a `fill`
--- the engine draws as it draws its own panes' — `icons::keys`,
--- `icons::legend_items`, `legends::toggle` — named by the view, its pane
--- and a count of what it drew this frame (`at`), since a slot's name is
--- the frame's and a view draws caps more than once.
-local function engine_fill(kind, view_name, pane, at, params)
-  params.kind = kind
-  return fill { name = "engine/" .. kind .. ":" .. view_name .. "@" .. tostring(pane) .. "#" .. at,
-                params = params }
+-- (`fields.rs`, docs/design/lua-boundary.md Decision 9): each a
+-- component the engine draws as it draws its own panes' —
+-- `icons::keys`, `icons::legend_items`, `legends::toggle` — `fresh`,
+-- since what it draws is the engine's and kui cannot see it move.
+local function engine_fill(kind, props)
+  props.fresh = true
+  return component("engine/" .. kind, props)
 end
 
 -- A notation as caps (docs/design/icons.md Decision 4): one outlined
 -- cap a key, a chord's modifiers in it before its key as icons, as
 -- tall as the text's line so a row is no taller for it.
-local function keys_node(view_name, pane, at, env, notation, opts)
+local function keys_node(env, notation, opts)
   opts = opts or {}
-  return engine_fill("keys", view_name, pane, at, { notation = notation,
+  return engine_fill("keys", { notation = notation,
     size = opts.size or kawoosh.metrics(env).note, color = opts.color, border = opts.border })
 end
 
@@ -1229,9 +1225,10 @@ end
 
 -- The way to a legend and back: `⌥/ keys`, `⌥/ hide keys` while it is
 -- whole; a click flips the pane's (`on_event` below).
-local function legend_toggle(view_name, pane, at, env, opts)
+local function legend_toggle(pane, env, opts)
   opts = opts or {}
-  return engine_fill("toggle", view_name, pane, at, { pane = pane, full = legend_full(pane),
+  return engine_fill("toggle", { pane = pane, full = legend_full(pane),
+    on_click = { kind = "legend", pane = pane },
     size = opts.size or kawoosh.metrics(env).note, color = opts.color, border = opts.border, word = opts.word })
 end
 
@@ -1246,7 +1243,7 @@ end
 -- for one whose way to it the view draws itself (`ctx.legend_toggle`,
 -- the search bar's), no hint in the title bar either. `width` as wide
 -- as its row (the default), `"fit"`, or pixels.
-local function legend_node(view_name, pane, at, env, items, opts)
+local function legend_node(pane, env, items, opts)
   opts = opts or {}
   if not opts.full and opts.toggle ~= false then kawoosh._legend_drawn(pane) end
   if not (opts.full or legend_full(pane)) then return nil end
@@ -1254,7 +1251,7 @@ local function legend_node(view_name, pane, at, env, items, opts)
   for i, it in ipairs(items) do
     list[i] = { keys = type(it[1]) == "table" and it[1] or { it[1] }, words = it[2] }
   end
-  return engine_fill("legend", view_name, pane, at, { items = list,
+  return engine_fill("legend", { items = list,
     size = opts.size or kawoosh.metrics(env).note, color = opts.color, border = opts.border,
     word = opts.word, width = opts.width })
 end
@@ -1263,26 +1260,27 @@ end
 
 -- "lua/counter@2" (an event's full name) or "counter@2" (a view's own):
 -- the view's name and the pane it is in.
-local function split_slot(name)
+local function split_component(name)
   name = name:match("([^/]*)$") or name
   local view, pane = name:match("^(.-)@(%d+)$")
   return view or name, tonumber(pane) or 0
 end
 
-function view(env, slot)
+-- Every pane's view is a component of this script's, `lua/NAME@PANE`
+-- (kui ADR 0060): the host places it with the pane's params as props.
+components["*"] = function(env, params, inst)
   if kawoosh._profiling then kawoosh._vt_in = kawoosh._clock() end
-  local name, pane = split_slot(slot.name)
+  local name, pane = split_component(inst.name)
   local fn = kawoosh._views[name]
   local t = env.theme
   if not fn then
     return column { pad = 12, text("no such view: " .. name, { color = t.danger }) }
   end
-  local params = slot.params or {}
   -- What the view reads of the host while it runs, by category: the
   -- tracked natives mark it (`track_reads` below), and `env.now` or
   -- `env.caret_visible` read off the proxy marks the clock. The shell
-  -- reads it back by `NAME@PANE` to decide whether the pane's slot may
-  -- be replayed next frame (lua-boundary.md Decision 10).
+  -- reads it back by `NAME@PANE` to decide whether the pane's component
+  -- may be replayed next frame (lua-boundary.md Decision 10).
   local reads = { opaque = {} }
   kawoosh._view_reads = reads
   local raw_env = env
@@ -1302,7 +1300,7 @@ function view(env, slot)
   -- A field draws its caret while its pane has the keys — not while
   -- the command line over it does: one caret on the screen.
   ctx.field = function(opts)
-    return field_node(name, pane, env, opts, params.focused ~= false and not params.prompt)
+    return field_node(name, env, opts, params.focused ~= false and not params.prompt)
   end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
   -- `ctx.icon(name, { size =, color = })`: `kawoosh.icon` in the view's
@@ -1319,13 +1317,9 @@ function view(env, slot)
     if opts.size == nil then opts.size = ctx.metrics.text end
     return kawoosh.icon(icon, opts)
   end
-  -- What the view asked the engine to draw this frame, counted: each a
-  -- slot name of its own.
-  local drawn = 0
-  local function at() drawn = drawn + 1 return drawn end
-  ctx.keys = function(notation, opts) return keys_node(name, pane, at(), env, notation, opts) end
-  ctx.legend = function(items, opts) return legend_node(name, pane, at(), env, items, opts) end
-  ctx.legend_toggle = function(opts) return legend_toggle(name, pane, at(), env, opts) end
+  ctx.keys = function(notation, opts) return keys_node(env, notation, opts) end
+  ctx.legend = function(items, opts) return legend_node(pane, env, items, opts) end
+  ctx.legend_toggle = function(opts) return legend_toggle(pane, env, opts) end
   ctx.legend_full = function() return legend_full(pane) end
   local ok, tree = timed(fn, ctx)
   kawoosh._view_reads = nil
@@ -1354,9 +1348,8 @@ function view(env, slot)
 end
 
 function on_event(ev)
-  -- A click on a field, answered by the field extension: a reply from
-  -- the field's slot, not the view's (no `slot` on it), naming the
-  -- field — the keys go to it, in its view.
+  -- A click on a field, the message the view placed it with (the
+  -- engine's emit): the keys go to it, in its view.
   if ev.kind == "field" and type(ev.field) == "string" then
     local view = ev.field:match("^lua:(.*)/[^/]*$")
     if view then kawoosh._field_focus(view, ev.field) end
@@ -1368,8 +1361,8 @@ function on_event(ev)
     kawoosh._legend(ev.pane, not legend_full(ev.pane))
     return
   end
-  if not ev.slot then return end
-  local name, pane = split_slot(ev.slot)
+  if not ev.component then return end
+  local name, pane = split_component(ev.component)
   -- A legend's `⌥/ keys`: the pane's whole, or compact again.
   if ev.kind == "legend" then
     kawoosh._legend(pane, not legend_full(pane))
@@ -1545,10 +1538,10 @@ end
 
 -- ---------------------------------------------------------------- reads
 
--- A slot replayed by its host (kui ADR 0045; docs/design/lua-boundary.md
--- Decision 10): the shell asks kui to push a pane's last tree again
--- instead of running its view, when nothing the view read of the host
--- has changed. What a view reads is noted here, by category, as it
+-- A pane replayed while its host vouches for it (kui ADR 0045, ADR 0067;
+-- docs/design/lua-boundary.md Decision 10): the shell lets kui push a
+-- pane's last tree again instead of running its view, when nothing the
+-- view read of the host has changed. What a view reads is noted here, by category, as it
 -- calls the natives: each native under `kawoosh` and its tables is
 -- wrapped once, at boot, with the category its name is in — `editor`
 -- (the published snapshot), `fields`, `settings`, `commands`, `memory`,

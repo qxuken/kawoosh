@@ -354,6 +354,13 @@ impl Kawoosh {
                 .on_key(tag.clone())
                 // A click under the rows focuses the pane.
                 .on_click(tag.clone())
+                // The pane's title bar shows where the keys are; kui's
+                // ring around a focused sink (kui C93) would say it twice.
+                .focus_ring(Color::TRANSPARENT)
+                // A press on a row acts and leaves the keys on the pane,
+                // where a press on a Tab stop inside a sink takes them
+                // (kui C135); a row's click focuses the pane itself.
+                .keep_focus()
                 .label("undo history"),
             |ui| {
                 // The header: how many states, how many branches, and

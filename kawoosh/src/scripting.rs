@@ -74,6 +74,19 @@ pub struct ViewTrack {
     pub reads: kawoosh_lua::ViewReads,
 }
 
+/// A pane view's component placement (kui ADR 0060, ADR 0067): `rev`,
+/// the revision of what it reads of the host that kui cannot see, in its
+/// props — moved on every frame the host does not vouch for the view, so
+/// kui fills it again and keeps that fill, and held while the host does,
+/// so kui checks the rest (the props, the facts of the frame the fill
+/// read, its own events) and replays it. `answer`, kui's answer to the
+/// last placement the host vouched for; `None` when it did not.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ViewFill {
+    pub rev: u64,
+    pub answer: Option<kui_native::FillAnswer>,
+}
+
 /// One frame's generations of what a Lua view may read of the host:
 /// the runtime's (`kawoosh_lua::Gens`), the palette's, the legends',
 /// and whether plugin code ran outside a view since the frame before.
@@ -103,8 +116,11 @@ pub struct Scripting {
     pub view_tracks: HashMap<String, ViewTrack>,
     /// Each native view's last fill, by `NAME@PANE`: the count of calls
     /// into native code then (native.md, native views replayed). Its
-    /// slot is replayed while the count is what it was.
+    /// component is replayed while the count is what it was.
     pub native_tracks: HashMap<String, u64>,
+    /// Each pane view's placement, by `NAME@PANE`: the revision its props
+    /// carry and kui's last answer (`ViewFill`).
+    pub view_fills: HashMap<String, ViewFill>,
     /// This frame's generations, read once after the publish.
     pub frame_gens: FrameGens,
     pub tools: HashMap<String, ToolDef>,
@@ -2367,19 +2383,28 @@ impl Kawoosh {
             ("origin", self.launcher_origin(pane)),
         ]);
         let tag = crate::msg::Msg::LuaPane { pane };
+        let mut spec = NodeSpec::column().fill().clip();
+        // A press on the view's rows and buttons acts and leaves the keys
+        // on the pane while it has them, where a press on a Tab stop
+        // inside a sink takes them (kui C135) — a row then had Space, the
+        // leader, and Enter. Not while another pane has them: the press
+        // takes kui's keyboard into the view, and the pane follows.
+        if focused {
+            spec = spec.keep_focus();
+        }
         let sink = ui.with_keyed(
             "lua",
-            NodeSpec::column()
-                .fill()
-                .clip()
-                .on_key(tag.clone())
+            spec.on_key(tag.clone())
                 // A press on the view's own nodes — a field, a row, a
                 // button — takes kui's keyboard into the view: the pane
                 // follows (`on_event_with`'s `focus`), as a terminal's.
                 .on_focus(tag.clone())
                 // A click the view's own nodes do not take focuses the
                 // pane.
-                .on_click(tag),
+                .on_click(tag)
+                // The pane's title bar shows where the keys are; kui's
+                // ring around a focused sink (kui C93) would say it twice.
+                .focus_ring(Color::TRANSPARENT),
             |ui| {
                 let t = crate::perf::span_start();
                 self.publish_drawing(name);
@@ -2393,13 +2418,14 @@ impl Kawoosh {
         }
     }
 
-    /// Fills the slot of view `name` in `pane` — a pane's, or a buffer's
-    /// header over it (`headers.rs`) — with `params`: its tree replayed
-    /// when the host vouches for what the view read (kui ADR 0045;
-    /// lua-boundary.md Decision 10), kui checking its own — the params,
-    /// every fact of the frame the view read — else the view run, and
-    /// what it read then tracked for the next frame's claim. `native`, the
-    /// namespace of a native extension that draws it. The slot's key.
+    /// Places view `name` in `pane` — a pane's, or a buffer's header over
+    /// it (`headers.rs`) — as the component `lua/NAME@PANE` with `params`:
+    /// its tree replayed when the host vouches for what the view read
+    /// (kui ADR 0045; lua-boundary.md Decision 10), kui checking its own —
+    /// the params, every fact of the frame the view read, its own events —
+    /// else the view run, and what it read then tracked for the next
+    /// frame's claim (`ViewFill`). `native`, the namespace of a native
+    /// extension that draws it. The instance's key.
     pub(crate) fn fill_view_slot(
         &mut self,
         ui: &mut Ui<'_>,
@@ -2416,22 +2442,28 @@ impl Kawoosh {
             Some(_) => self.native_view_fresh(&track, calls_in),
             None => self.lua_view_fresh(&track),
         };
-        // A native extension's view is its own slot (native.md
-        // Decision 4): under its namespace, the params the same, filled
-        // by its `kui_ext_view`.
+        // A native extension's view is a component of its own (native.md
+        // Decision 4): under its namespace, the params the same, drawn by
+        // its `kui_ext_view`.
         let ns = native.unwrap_or("lua");
-        let slot = format!("{ns}/{name}@{pane}");
-        // The key kui declares the slot at: the view's root is keyed
-        // under it.
-        let slot_key = ui.child_key(&slot);
-        let t = crate::perf::span_start();
-        let fill = if fresh {
-            ui.slot_replay(&slot, params)
-        } else {
-            ui.slot_kept(&slot, params);
-            None
+        let component = format!("{ns}/{name}@{pane}");
+        // Keyed by its name, so the view's root is keyed under it
+        // wherever the pane sits among its siblings.
+        let slot_key = ui.child_key(&component);
+        let placed = self.scripting.view_fills.entry(track.clone()).or_default();
+        if !fresh {
+            placed.rev = placed.rev.wrapping_add(1);
+        }
+        let mut props = match params {
+            Value::Map(m) => m.clone(),
+            _ => Vec::new(),
         };
-        let replayed = fill == Some(kui_native::SlotFill::Replayed);
+        props.push(("key".into(), Value::from(component.as_str())));
+        props.push(("rev".into(), Value::Int(placed.rev as i64)));
+        let t = crate::perf::span_start();
+        let fill = ui.component(&component, &Value::Map(props));
+        placed.answer = if fresh { fill } else { None };
+        let replayed = fresh && fill == Some(kui_native::FillAnswer::Replayed);
         // What the view declared of the frame beyond its tree, made again
         // for it: that it drew a legend (its title bar's hint).
         if replayed
@@ -2445,17 +2477,19 @@ impl Kawoosh {
         }
         crate::perf::span(
             match fill {
-                Some(f) => f.name(),
-                None => "kept",
+                Some(f) if fresh => f.name(),
+                _ => "kept",
             },
             t,
         );
+        // kui's own reason, when it was asked and refused: what moved.
+        let kui_why = fill.filter(|_| fresh).map(kui_native::FillAnswer::name);
         // A native view ran: the count it ran at is what the next frame's
         // claim rests on.
         if !replayed && native.is_some() {
             if t.is_some() {
                 let mut note = format!("{track}: {why}");
-                if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
+                if let Some(kui_why) = kui_why {
                     note.push_str(" kui: ");
                     note.push_str(kui_why);
                 }
@@ -2472,9 +2506,7 @@ impl Kawoosh {
         {
             if t.is_some() {
                 let mut note = format!("{track}: {why}");
-                // kui's own reason, when it was asked and refused: the
-                // fact that moved, or what the fill declared.
-                if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
+                if let Some(kui_why) = kui_why {
                     note.push_str(" kui: ");
                     note.push_str(kui_why);
                 }
@@ -2493,6 +2525,14 @@ impl Kawoosh {
                 .insert(track, ViewTrack { gens, reads });
         }
         slot_key
+    }
+
+    /// kui's answer to the last placement of the pane view tracked as
+    /// `track` (`NAME@PANE`) that the host vouched for — `Replayed`, or
+    /// why kui ran the view instead — and `None` when the frame just
+    /// drawn placed it unvouched (`ViewFill`).
+    pub fn view_fill(&self, track: &str) -> Option<kui_native::FillAnswer> {
+        self.scripting.view_fills.get(track)?.answer
     }
 
     /// The moves `:view scroll` asked of the pane, made on the scroller
@@ -2860,11 +2900,11 @@ impl kui_native::Extension for NativeKui {
     fn name(&self) -> &str {
         self.0.name()
     }
-    fn slots(&self) -> &[String] {
-        self.0.slots()
+    fn components(&self) -> &[String] {
+        self.0.components()
     }
-    fn view(&mut self, slot: &kui_native::Slot<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
-        self.0.view(slot, ui)
+    fn view(&mut self, inst: &kui_native::Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+        self.0.view(inst, ui)
     }
     fn on_event(&mut self, ev: &kui_native::UiEvent) -> Vec<Value> {
         kawoosh_lua::native::touch();

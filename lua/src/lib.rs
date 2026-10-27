@@ -1657,9 +1657,12 @@ impl Runtime {
     /// The runtime and the extension the launcher takes; both share one
     /// Lua state.
     pub fn new() -> mlua::Result<(Self, LuaExtension)> {
-        // `slots` is read at load (ADR 0014), before the boot script can set
-        // it: the wildcard goes first.
-        let ext = LuaExtension::from_source("kawoosh", "slots = { \"*\" }")?;
+        // `components` is read at load (kui ADR 0060), before the boot
+        // script can set it: the wildcard goes first, every pane view a
+        // name under it, and boot.lua puts the function that draws them
+        // in its place.
+        let ext =
+            LuaExtension::from_source("kawoosh", "components = { [\"*\"] = function() end }")?;
         let lua = ext.lua().clone();
         let queue = Rc::new(RefCell::new(Vec::new()));
         let published = Rc::new(RefCell::new(Published::default()));
@@ -1785,8 +1788,8 @@ impl Runtime {
 
     /// The namespace a native extension registered view `name` under
     /// (`kawoosh.view(name, nil, nil, { native = ns })`): its pane is
-    /// the slot `ns/name@pane`, which the extension's `kui_ext_view`
-    /// fills. None for a Lua view.
+    /// the component `ns/name@pane`, which the extension's `kui_ext_view`
+    /// draws. None for a Lua view.
     pub fn native_namespace_of(&self, name: &str) -> Option<String> {
         self.lua
             .globals()

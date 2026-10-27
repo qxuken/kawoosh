@@ -183,6 +183,16 @@ the extension instead of `boot.lua` — which kui does already, since
 nodes carry their origin. The drawing half of the ABI is kui's, built,
 tested and versioned there.
 
+*Amended 2026-10-27*, with kui alpha.68 (C ABI 39), where slots fold
+into components (kui ADR 0067): the pane is the component
+`NS/NAME@PANE`, placed with `ui.component` and the same params; the
+extension exports `kui_ext_components` answering `{ "*" }` where it
+exported `kui_ext_slots` (which kui now refuses at load), and reads
+`kui_instance_name` and `kui_instance_params` where it read
+`kui_slot_name` and `kui_slot_params`. The host's claim that it may be
+replayed is the placement's `rev` prop (lua-boundary.md Decision 10's
+amendment); `Kawoosh::view_fill` answers what `Core::slot_fill` did.
+
 ### 5. One threading primitive: wake
 
 Everything above runs on the UI thread. An extension that computes on a

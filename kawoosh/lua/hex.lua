@@ -82,8 +82,8 @@ local pending = nil
 -- Paths `hex text` opens as text: the opener lets each by once.
 local plain = {}
 
-local function pane_of(slot)
-  return tonumber(tostring(slot or ""):match("@(%d+)$"))
+local function pane_of(component)
+  return tonumber(tostring(component or ""):match("@(%d+)$"))
 end
 
 local function size_of(path)
@@ -871,7 +871,7 @@ end, function(ev)
     if not S or not S.mode then return false end
     return typed(ev)
   end
-  S = states[pane_of(ev.slot)]
+  S = states[pane_of(ev.component)]
   if not S then return end
   local n = S.n
   local digits = digits_for(S.size)

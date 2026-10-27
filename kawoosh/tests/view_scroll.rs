@@ -11,7 +11,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui_native::SlotFill;
+use kui_native::FillAnswer;
 
 const BODY: &str = "theme lab body";
 
@@ -38,7 +38,7 @@ fn the_lab_scrolls_by_the_keys_with_its_tree_replayed() {
     d.settle(&mut app);
     let pane = app.layout.focused();
     assert_eq!(app.lua_name_of(pane).as_deref(), Some("theme lab"));
-    let slot = format!("lua/theme lab@{pane}");
+    let track = format!("theme lab@{pane}");
     assert_eq!(offset(&mut d), 0.0);
 
     // Each key's frame replays the pane's tree; the body moves.
@@ -46,14 +46,14 @@ fn the_lab_scrolls_by_the_keys_with_its_tree_replayed() {
     for keys in ["j", "j", "<C-d>"] {
         d.press(&mut app, keys);
         d.frame(&mut app);
-        assert_eq!(d.core.slot_fill(&slot), Some(SlotFill::Replayed), "{keys}");
+        assert_eq!(app.view_fill(&track), Some(FillAnswer::Replayed), "{keys}");
         let y = offset(&mut d);
         assert!(y > last, "{keys}: {last} → {y}");
         last = y;
     }
     d.press(&mut app, "k");
     d.frame(&mut app);
-    assert_eq!(d.core.slot_fill(&slot), Some(SlotFill::Replayed), "k");
+    assert_eq!(app.view_fill(&track), Some(FillAnswer::Replayed), "k");
     assert!(offset(&mut d) < last, "k moves it back");
 
     // `G` is the end the layout holds it to, `gg` the top.
@@ -66,11 +66,11 @@ fn the_lab_scrolls_by_the_keys_with_its_tree_replayed() {
     d.press(&mut app, "gg");
     d.frame(&mut app);
     assert_eq!(offset(&mut d), 0.0);
-    assert_eq!(d.core.slot_fill(&slot), Some(SlotFill::Replayed), "gg");
+    assert_eq!(app.view_fill(&track), Some(FillAnswer::Replayed), "gg");
 
     // A command that runs plugin code still has the view run.
     d.press(&mut app, "f");
     d.frame(&mut app);
-    assert_ne!(d.core.slot_fill(&slot), Some(SlotFill::Replayed), "f");
+    assert_ne!(app.view_fill(&track), Some(FillAnswer::Replayed), "f");
     assert_eq!(d.warnings(), Vec::<String>::new(), "kui raised no warning");
 }

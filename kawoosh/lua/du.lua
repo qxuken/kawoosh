@@ -87,9 +87,9 @@ local function start(pane, root, walk)
   states[pane] = S
 end
 
--- The pane an event's slot names (`lua/du@3`).
-local function pane_of(slot)
-  return tonumber(tostring(slot or ""):match("@(%d+)$"))
+-- The pane an event's component names (`lua/du@3`).
+local function pane_of(component)
+  return tonumber(tostring(component or ""):match("@(%d+)$"))
 end
 
 -- The directory's listing as rows, read once on the io thread — forty
@@ -394,7 +394,7 @@ kawoosh.view(VIEW, function(ctx)
   -- the totals fill in as they come.
   return column { width = "grow", height = "grow", bg = t.bg, gap = 8, clip = true, head, rows }
 end, function(ev)
-  S = states[pane_of(ev.slot)]
+  S = states[pane_of(ev.component)]
   if not S then return end
   if ev.kind == "row" then
     local list = entries()

@@ -3123,6 +3123,9 @@ impl kui_native::App for Kawoosh {
         self.register_images(ui);
         t = self.perf.lap(Chrome, "panes' upkeep", t);
         let pal = self.pal;
+        // Whether the panel was on through the last frame, and so lists
+        // the tabs it declared (below).
+        let listing = ui.core().devtools();
         if self.devtools_synced.is_some_and(|s| s != self.devtools) {
             ui.core().set_devtools(self.devtools);
         } else {
@@ -3134,7 +3137,12 @@ impl kui_native::App for Kawoosh {
                 core.devtools() && core.devtools_dock() != kui_native::DevtoolsDock::Off;
         }
         self.devtools_synced = Some(self.devtools);
-        if let Some(tab) = self.show_tab.take() {
+        // A tab asked for once the panel lists it: kui takes in the tabs a
+        // frame declared only at the end of a frame the panel is on in,
+        // and a name it does not list is its own — kui's Perf is `perf`
+        // too. The frame that turns the panel on holds the ask for the
+        // next.
+        if listing && let Some(tab) = self.show_tab.take() {
             ui.core().set_devtools_tab(tab);
         }
         // The syntax and perf tabs: declared every frame, drawn while on
@@ -3350,10 +3358,10 @@ impl Kawoosh {
     /// applied here.
     fn on_ui_event(&mut self, ev: UiEvent, core: &mut Core) {
         self.sync_facts();
-        let (slot, key) = (ev.slot.is_some(), ev.key);
+        let (slot, key) = (ev.instance.is_some(), ev.key);
         // Kawoosh's words only on what the host drew: a Lua view's
         // `{kind = "row"}` is the view's. (The engine's legend, drawn in
-        // a Lua view, replies to the Lua host that placed it, never here.)
+        // a Lua view, emits to the Lua host that placed it, never here.)
         let (msg, event) = ev.split::<Msg>();
         let msg = msg.filter(|_| !slot);
         // Anything but what the window says of itself is the hands on

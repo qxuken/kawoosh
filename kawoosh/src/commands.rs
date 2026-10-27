@@ -1368,6 +1368,7 @@ fn instruments() -> Vec<ShellCommand> {
                     k.show_tab = Some(tab);
                 } else {
                     k.devtools = false;
+                    k.show_tab = None;
                 }
                 k.ed.message = format!("{what} {}", if on { "on" } else { "off" });
             },

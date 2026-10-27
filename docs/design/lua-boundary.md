@@ -165,6 +165,19 @@ compact, and tells the title bar it drew one. A toggle's click is a
 reply carrying its pane. `_key_caps` and `_cap` are gone with their one
 user.
 
+*Amended 2026-10-27*, with kui alpha.68, where slots fold into
+components (kui ADR 0067) and an extension's untyped reply is gone:
+each of Decisions 8 and 9's fills is a component, `component(
+"engine/field" | "engine/keys" | "engine/legend" | "engine/toggle",
+props)`, the name saying what (no `kind`, no name per view, pane and
+count), a field keyed by its full name. A click on a field or a toggle
+is the view's own `on_click` message, passed in the props
+(`{ kind = "field", field = }`, `{ kind = "legend", pane = }`), which
+the engine raises with `emit("on_click")` and kui delivers to the view
+that placed it. Each is placed `fresh`: what it draws — a field's text
+and caret, the icons — is the engine's, which kui cannot see move, so
+it is drawn again whenever its view's tree is, replayed or not.
+
 ### 10. A pane's tree is replayed while nothing its view read has moved
 
 Every frame the window drew ran every visible Lua view and had kui-lua
@@ -204,6 +217,18 @@ none of which moved since its last run, has its pane declared with
 answer and, for a view that will not replay, why and which natives it
 called, so a pane that stays slow says so in `KAWOOSH_PERF_LOG`. A view
 that calls an opaque native is correct and slow, never stale.
+
+*Amended 2026-10-27*, with kui alpha.68 (slots fold into components,
+kui ADR 0067): a pane is the component `lua/NAME@PANE`, keyed by that
+name, and kui replays a component by default while its props and what
+its fill read hold, and while it heard none of its own events. The
+host's claim is a revision in the props, `rev` (`scripting::ViewFill`):
+moved on every frame the host does not vouch, so kui fills the pane
+again and keeps the fill, and held while it does, so kui checks the
+rest — `slot_kept` and `slot_replay` as one door. kui no longer says
+why it refused by name (`slot_fill_why`); the log names its answer
+(`reads`, `heard`, `params`), and `Kawoosh::view_fill` is what the tests
+read where they read `Core::slot_fill`.
 
 ### 11. A view's scroller is moved by the keys without the view
 

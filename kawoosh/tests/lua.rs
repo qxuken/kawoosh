@@ -1,5 +1,5 @@
 //! Milestone 7: the Lua API — commands and keymaps from a config, a Lua
-//! view in a pane through a kui slot with its events routed back, the
+//! view in a pane through a kui component with its events routed back, the
 //! dir file manager, compile mode.
 
 mod drive;

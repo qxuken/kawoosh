@@ -1318,6 +1318,9 @@ impl Kawoosh {
                 .on_focus(tag.clone())
                 // A click past the grid's last cell focuses too.
                 .on_click(tag.clone())
+                // The pane's title bar shows where the keys are; kui's
+                // ring around a focused sink (kui C93) would say it twice.
+                .focus_ring(kui_native::Color::TRANSPARENT)
                 .cursor(kui_native::CursorShape::Text)
                 .label("terminal"),
             |ui| {
@@ -1333,8 +1336,11 @@ impl Kawoosh {
                     .on_scroll(tag.clone())
                     .scroll_axes(kui_native::ScrollAxes::Y)
                     .on_layout(Msg::TermGrid);
+                // A link opened leaves the keys on the sink: a grid with a
+                // click is a Tab stop, which a press would focus (kui
+                // C135), and the shell's Enter and Space would be its.
                 if self.mods.ctrl || self.mods.super_key {
-                    spec = spec.on_click(tag.clone());
+                    spec = spec.on_click(tag.clone()).keep_focus();
                 }
                 // With ⌘ (ctrl) held, the link under the pointer is
                 // underlined and the pointer a hand — what a click there
@@ -1389,7 +1395,7 @@ impl Kawoosh {
                     ui.image(
                         s.id,
                         NodeSpec::column()
-                            .float(FloatConfig::parent().offset(pad + s.x, pad + s.y).clipped())
+                            .float(FloatConfig::parent().offset(pad + s.x, pad + s.y))
                             .size(s.w, s.h),
                     );
                 };
@@ -1397,7 +1403,7 @@ impl Kawoosh {
                     for s in shown.iter().filter(|s| s.under) {
                         image(ui, s);
                     }
-                    spec = spec.float(FloatConfig::parent().offset(pad, pad).clipped());
+                    spec = spec.float(FloatConfig::parent().offset(pad, pad));
                 }
                 match hover {
                     Some((rows, _)) => {
@@ -2319,6 +2325,9 @@ impl Kawoosh {
                 .fill()
                 .clip()
                 .on_key(tag.clone())
+                // The pane's title bar shows where the keys are; kui's
+                // ring around a focused sink (kui C93) would say it twice.
+                .focus_ring(kui_native::Color::TRANSPARENT)
                 .on_drag(tag.clone())
                 // Up and down only: sideways is the text column's while
                 // it has room that way (kui F118) and else the strip's,
@@ -3025,9 +3034,11 @@ impl Kawoosh {
                                             None
                                         } else if sideways {
                                             ui.leaf(NodeSpec::row().width(gutter));
-                                            Some(numbers_spec.bg(pal.panel).float(
-                                                FloatConfig::parent().offset(left, 0.0).clipped(),
-                                            ))
+                                            Some(
+                                                numbers_spec
+                                                    .bg(pal.panel)
+                                                    .float(FloatConfig::parent().offset(left, 0.0)),
+                                            )
                                         } else {
                                             Some(numbers_spec)
                                         };
@@ -3198,8 +3209,7 @@ impl Kawoosh {
                                                 .min_height(kui_native::Min::FIT)
                                                 .float(
                                                     FloatConfig::parent()
-                                                        .inside(Align::Start, Align::End)
-                                                        .clipped(),
+                                                        .inside(Align::Start, Align::End),
                                                 ),
                                             |ui| span(ui, top, line),
                                         );

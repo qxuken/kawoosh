@@ -96,8 +96,8 @@ local pending = nil
 -- once.
 local plain = {}
 
-local function pane_of(slot)
-  return tonumber(tostring(slot or ""):match("@(%d+)$"))
+local function pane_of(component)
+  return tonumber(tostring(component or ""):match("@(%d+)$"))
 end
 
 local function stamp_of(path)
@@ -305,7 +305,7 @@ kawoosh.view(VIEW, function(ctx)
                on_drag = { kind = "pan" }, on_scroll = { kind = "wheel" }, stage } } }
 end, function(ev)
   if ev.kind == "key" then return false end
-  S = states[pane_of(ev.slot)]
+  S = states[pane_of(ev.component)]
   if not S or not S.shown then return end
   local d = S.shown
   if ev.kind == "pan" and ev.event == "drag" then
