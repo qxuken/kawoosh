@@ -25,7 +25,7 @@
 //! is more than one tab, `always`, `never` — the panes then reaching up
 //! to the title bar, the tabs gone to by their keys and the tabs picker.
 
-use kui_native::{Align, CursorShape, Enter, NodeSpec, Role, Span, Ui, widgets};
+use kui_native::{Align, CursorShape, Enter, NodeSpec, Role, Span, Ui, Value, widgets};
 
 use crate::app::Kawoosh;
 use crate::icons;
@@ -273,6 +273,15 @@ impl Kawoosh {
                         },
                     );
                     ui.leaf(NodeSpec::row().grow_width());
+                    // The plugins' contributions, before the segments
+                    // (docs/design/plugin-extensions.md Decision 3).
+                    self.contributed(
+                        ui,
+                        "title slot",
+                        "kawoosh.title",
+                        vec![("focused", Value::Bool(focused))],
+                        6.0,
+                    );
                     draw_blocks(ui, &blocks, font, &pal, &self.icons.borrow(), tab_h);
                 });
             },
@@ -555,7 +564,10 @@ impl Kawoosh {
                 ),
             );
         };
-        if segs.is_empty() {
+        // The plugins' contributions after the tabs (docs/design/
+        // plugin-extensions.md Decision 3), with the segments.
+        let contributed = self.scripting.contributed.contains("kawoosh.tabs");
+        if segs.is_empty() && !contributed {
             tabs(ui);
         } else {
             ui.with(
@@ -567,6 +579,13 @@ impl Kawoosh {
                 |ui| {
                     tabs(ui);
                     ui.leaf(NodeSpec::column().width(1.0).grow_height().bg(pal.border));
+                    self.contributed(
+                        ui,
+                        "tabs slot",
+                        "kawoosh.tabs",
+                        vec![("tabs", Value::Int(n as i64))],
+                        6.0,
+                    );
                     draw_blocks(ui, &segs, font, &pal, &self.icons.borrow(), tab_h);
                 },
             );

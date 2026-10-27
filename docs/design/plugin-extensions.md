@@ -1,11 +1,12 @@
 # Plugins as kui extensions
 
-Status: **proposed 2026-10-27**, not built. Asked with kui alpha.68's
-migration: "maybe we can utilize slots for tabbar for example,
-statuslines etc. maybe more", and, offered three ways (slots for native
-extensions only, none for now, or every plugin its own kui extension),
-the third: "Redesign plugins as extensions". The calls below are
-proposals; the ones marked *open* are the user's.
+Status: **built 2026-10-27**, Decisions 1–3 and 5, but the launcher's
+slot. Asked with kui alpha.68's migration: "maybe we can utilize slots
+for tabbar for example, statuslines etc. maybe more", and, offered three
+ways (slots for native extensions only, none for now, or every plugin its
+own kui extension), the third: "Redesign plugins as extensions". The
+calls below are taken here, each the user's to overturn; the ones marked
+*open* are left for them. What the building changed is at the end.
 
 Companion to [lua-boundary.md](lua-boundary.md) (what is Rust's and
 what is Lua's), [plugin-panes.md](plugin-panes.md) (what a plugin can
@@ -110,8 +111,8 @@ F215).
 ## What it costs
 
 - **kui**: a handle over a shared `LuaExtension` with contributions of
-  its own — `reentry` has none — read when the handle is loaded (kui
-  F217); and contributions that can change after load (a plugin
+  its own — `reentry` has none, so kawoosh wraps it (below; kui F217);
+  and contributions that can change after load (a plugin
   reloaded, a contribution made from `init.lua` once the plugin is in)
   — today they are read once (kui F218).
 - **kawoosh**: `Runtime` loads each plugin under a handle (its name from
@@ -120,6 +121,44 @@ F215).
   beside its function, five `ui.slot` calls in the chrome, and
   `kawoosh.contribute` with its Lua types. The tests that name
   `lua/NAME@PANE` (view_scroll, idle_replay, launcher, native) follow.
+
+## What the building changed
+
+- **No kui change was needed for Decision 1.** A handle over the shared
+  state is kui-lua's `reentry`, which a host can call: `attach_lua` keeps
+  one (`Scripting::lua_spare`) and makes each plugin's from it, wrapped
+  in `fields::PluginHost`, kawoosh's own `Extension`, which answers the
+  plugin's namespace, `["*"]` and its contributions and hands drawing and
+  events to the handle. kui F217 asks for the same as a door of its own,
+  `reentry` being meant for a spare while an extension draws.
+- **Loaded from the host's view** (`Kawoosh::load_plugin_extensions`,
+  a lap of the `lua` span): kui's list takes an extension from any fill
+  of the frame, the host's included, so a plugin met since the frame
+  before is loaded before the panes are drawn. `boot.lua` counts the
+  namespaces met and the contributions said (`kawoosh._plugins_gen`), so
+  a frame with none new reads one number. The engine's drawing loads the
+  same way, from the shell, where `LuaHost` loaded it the first time a
+  Lua pane drew — no pane of the runtime's own draws now.
+- **A plugin is its file** (`prof.rs`'s `plugin_name`, `.lua` dropped):
+  `dir`, `picker`, `init` for `init.lua`, never `lua` or `engine`. A
+  view whose plugin has no extension (its load refused, a namespace
+  taken by a native one) is drawn by the runtime's own, `lua`, as before.
+- **A contribution is drawn fresh** every frame its slot is: what it
+  reads is its plugin's, which kui cannot see move, as a `kawoosh.status`
+  segment is asked every frame. Its row is keyed by the slot, and the
+  width it took the frame before counts where the chrome fits text (the
+  status line's path, a pane's title) — a component's width is known
+  once it is laid out. No row while no loaded plugin contributes to the
+  slot, so an empty one takes no room and no gap; kawoosh knows it from
+  the plugins' contributions, as kui has no door to ask whether a slot
+  has any before placing it (kui F219) — a C extension's contribution
+  to one no plugin contributes to is not drawn.
+- **The status line keeps the keyboard with the pane** (`keep_focus`,
+  as the title bar and the tab strip had): a click on a module with a
+  `run`, and now on a contribution, took it to the clicked node.
+- **Tested** in `kawoosh/tests/plugin_extensions.rs`: a plugin's four
+  contributions drawn in their slots, its click its own, the editor's
+  keys after it; the launcher pane timed as `fill launcher`.
 
 ## Open
 

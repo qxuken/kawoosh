@@ -10,6 +10,16 @@ kawoosh._handlers = {}
 kawoosh._commands = {}
 -- The views native extensions draw, by name: the namespace each is under.
 kawoosh._native = {}
+-- Every plugin is a kui extension of its own over this one state
+-- (docs/design/plugin-extensions.md Decision 1), under its name as
+-- namespace: the namespaces met, in no order, moved count first; each
+-- Lua view's plugin; and what each plugin contributes to the shell's
+-- slots (Decision 3), as kui reads it and as it draws.
+kawoosh._plugins = {}
+kawoosh._plugins_gen = 0
+kawoosh._view_plugin = {}
+kawoosh._contributions = {}
+kawoosh._contributed = {}
 kawoosh._writers = {}
 kawoosh._changers = {}
 kawoosh._restorers = {}
@@ -729,6 +739,55 @@ end
 ---@field scroll? string the label of the view's root node when that node scrolls, for `:view scroll`
 ---@field native? string the namespace of the native extension that draws it
 
+-- The kui namespace of the plugin `fn` was defined in: its file's name
+-- (`dir`, `init` for `init.lua`), never `lua` or `engine`, which are the
+-- shell's (docs/design/plugin-extensions.md Decision 1).
+function kawoosh._plugin_ns(fn)
+  local name = kawoosh._plugin_of(fn):gsub("%.lua$", ""):gsub("[/\\]", "_")
+  if name == "" or name == "lua" or name == "engine" then name = "plugin_" .. name end
+  if not kawoosh._plugins[name] then
+    kawoosh._plugins[name] = true
+    kawoosh._plugins_gen = kawoosh._plugins_gen + 1
+  end
+  return name
+end
+
+---What a contribution is drawn with: the slot's props and the frame's.
+---@class kawoosh.ContributionCtx
+---@field slot string the slot it is placed in
+---@field props table what the shell passes there (`pane`, `focused`, …)
+---@field env table kui's env
+---@field metrics table the scale's sizes
+
+---@class kawoosh.ContributeOpts
+---@field order? integer where among the slot's contributions: lower first, ties in load order
+---@field on_event? fun(ev: kawoosh.ViewEvent) its nodes' events
+
+-- kawoosh.contribute(slot, fn[, opts]): a component of this plugin's
+-- placed wherever the shell declares `slot` — `kawoosh.statusline`,
+-- `kawoosh.title`, `kawoosh.tabs`, `kawoosh.pane_title`
+-- (docs/design/plugin-extensions.md Decision 3) — beside every other
+-- plugin's, `fn(ctx)` its tree each frame the slot is drawn; `opts.order`
+-- its place among them, `opts.on_event` its nodes' events. Said at the
+-- plugin's top level: kui reads a plugin's contributions when it loads
+-- it, so one made later waits for the next start (kui F218).
+---@param slot string
+---@param fn fun(ctx: kawoosh.ContributionCtx): kui.Node?
+---@param opts? kawoosh.ContributeOpts
+---@return nil
+function kawoosh.contribute(slot, fn, opts)
+  opts = opts or {}
+  local ns = kawoosh._plugin_ns(fn)
+  local list = kawoosh._contributions[ns] or {}
+  kawoosh._contributions[ns] = list
+  -- A name of its own in the plugin's vocabulary: no `/`, no `@`.
+  local component = "contribution " .. (#list + 1)
+  list[#list + 1] = { slot = slot, component = component, order = opts.order or 0 }
+  kawoosh._contributed[ns] = kawoosh._contributed[ns] or {}
+  kawoosh._contributed[ns][component] = { fn = fn, on_event = opts.on_event }
+  kawoosh._plugins_gen = kawoosh._plugins_gen + 1
+end
+
 -- kawoosh.view(name, fn[, on_event[, opts]]): a pane whose content is
 -- what `fn` returns — a kui table tree (row, column, text, edit,
 -- button, ...). `fn(ctx)` gets { pane = id, focused = bool, width =,
@@ -764,6 +823,7 @@ function kawoosh.view(name, fn, on_event, opts)
     end
   end
   kawoosh._views[name] = fn
+  if not (opts and opts.native) then kawoosh._view_plugin[name] = kawoosh._plugin_ns(fn) end
   kawoosh._handlers[name] = on_event
   kawoosh._transient[name] = (opts and opts.session == false) or nil
   kawoosh._here[name] = opts and opts.here or nil
@@ -1267,9 +1327,27 @@ local function split_component(name)
   return view or name, tonumber(pane) or 0
 end
 
--- Every pane's view is a component of this script's, `lua/NAME@PANE`
--- (kui ADR 0060): the host places it with the pane's params as props.
+-- A plugin's contribution to a slot, drawn: `fn(ctx)` with the slot's
+-- props, a tree or nothing.
+local function contribution(env, props, inst, c)
+  local ctx = { slot = inst.slot, props = props, env = env, metrics = kawoosh.metrics(env) }
+  local ok, tree
+  env.span("contribution: " .. inst.namespace, function() ok, tree = timed(c.fn, ctx) end)
+  if not ok then
+    return text(inst.namespace .. ": " .. tostring(tree), { color = env.theme.danger, nowrap = true })
+  end
+  if type(tree) ~= "table" then return row {} end
+  return tree
+end
+
+-- Every pane's view is a component of its plugin's, `PLUGIN/NAME@PANE`
+-- (kui ADR 0060; docs/design/plugin-extensions.md Decision 2): the host
+-- places it with the pane's params as props. A contribution to a slot
+-- is one too, by the name `kawoosh.contribute` gave it.
 components["*"] = function(env, params, inst)
+  local mine = kawoosh._contributed[inst.namespace]
+  local c = mine and mine[inst.name]
+  if c then return contribution(env, params, inst, c) end
   local name, pane = split_component(inst.name)
   local fn = kawoosh._views[name]
   local t = env.theme
@@ -1363,6 +1441,16 @@ function on_event(ev)
     return
   end
   if not ev.component then return end
+  -- A contribution's own nodes: its handler's.
+  local ns, short = ev.component:match("^(.*)/([^/]*)$")
+  local c = ns and kawoosh._contributed[ns] and kawoosh._contributed[ns][short]
+  if c then
+    if c.on_event then
+      local ok, err = timed(c.on_event, ev)
+      if not ok then kawoosh.echo(ns .. ": " .. tostring(err)) end
+    end
+    return
+  end
   local name, pane = split_component(ev.component)
   -- A legend's `⌥/ keys`: the pane's whole, or compact again.
   if ev.kind == "legend" then

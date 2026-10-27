@@ -273,6 +273,16 @@ That is the default. kawoosh's modules are `mode`, `recording` (`REC @a`), `path
 
 `kawoosh.spawn(cmd, { cwd = ..., env = { NAME = "value" }, on_lines = fn, on_exit = fn })` runs a shell command — `env` the variables it has over the inherited ones — and hands you its output as it comes; `kawoosh.kill(token)` stops it. `cmd` as a list — `{ "git", "status" }` — runs the program with those arguments and no shell between, so nothing needs quoting; `on_done = fn(text, code)` gets the output whole when it ends, and `on_stderr = fn(lines)` takes stderr apart. A plugin's processes run 32 at a time; the rest wait their turn in order, and one killed before it started ends with no code. `kawoosh.store(name)` is a small store kept between runs: `get(key)`, `set(key, value)`, `del(key)`, `keys()`. `kawoosh.tool(name, { cmd = ... })` adds a launch target for `:tool` and the tools picker (`<leader>t`). `:tool NAME` goes to the tool's terminal in this tab, or starts one here: each tab runs its own. With `dock = true` the tool lives in the dock, one for every tab, and `:tool NAME` shows or hides it.
 
+## Components in the chrome
+
+A segment is text the window fits and cuts; for anything else — a button, a bar, a sparkline — `kawoosh.contribute(slot, fn, { order = n, on_event = handler })` puts a component of your own in the window's chrome. Each plugin is a kui extension of its own, and a slot is where any number of them add to the window: `kawoosh.statusline` (after the status line's `"..."` modules), `kawoosh.title` (the title bar, before its segments), `kawoosh.tabs` (the tab strip, after the tabs), `kawoosh.pane_title` (every pane's title bar, before its close button). `fn(ctx)` returns a tree, as a pane's view does, each time the slot is drawn; `ctx.props` is what the slot passes (`pane`, `kind` and `focused` in a pane's title bar, `focused` in the title bar, `tabs` in the strip), `ctx.slot` the slot's name. Clicks on its nodes reach `on_event`. `order` sorts it among the slot's other contributions, lower first. Contribute at your file's top level: a plugin's contributions are read when its first frame comes, and one made later waits for the next start.
+
+```lua
+kawoosh.contribute("kawoosh.statusline", function(ctx)
+  return row { on_click = { kind = "save" }, text("save") }
+end, { on_event = function(ev) if ev.kind == "save" then kawoosh.run("w") end end })
+```
+
 ## Talking to the user
 
 - `kawoosh.echo(text)` puts a line on the message line.

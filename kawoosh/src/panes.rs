@@ -27,6 +27,11 @@ use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 /// the two motions a key starts run together.
 pub(crate) const RIBBON_MS: f32 = 160.0;
 
+/// The contribution slot a pane's title bar declares (docs/design/
+/// plugin-extensions.md Decision 3), and the row it is drawn in.
+const PANE_SLOT: &str = "kawoosh.pane_title";
+const PANE_SLOT_ROW: &str = "pane title slot";
+
 /// Frames on which the focused column is revealed after the strip's
 /// shape changed. One: kui lays the reveal out in the same frame, and
 /// a second ask against a ribbon already gliding would measure from
@@ -1104,7 +1109,16 @@ impl Kawoosh {
                     });
                     let side = (self.chrome.small * 1.3).round();
                     let close = if closable { side + 6.0 } else { 0.0 };
-                    let hint = hint + close;
+                    // The plugins' contributions to the bar (docs/design/
+                    // plugin-extensions.md Decision 3), as wide as they
+                    // were laid out last frame.
+                    let slot_w = if self.scripting.contributed.contains(PANE_SLOT) {
+                        ui.layout_of(ui.child_key(PANE_SLOT_ROW))
+                            .map_or(0.0, |r| r.w + 6.0)
+                    } else {
+                        0.0
+                    };
+                    let hint = hint + close + slot_w;
                     let name_room = width - 16.0 - dot - reserve - hint;
                     let name = fit_title(&name, |s| {
                         ui.measure_text(s, &style, None).width <= name_room
@@ -1119,9 +1133,29 @@ impl Kawoosh {
                             width - 16.0 - ui.measure_text(&name, &style, None).width - dot - hint;
                         self.breadcrumbs(ui, pane, &crumbs, room, focused);
                     }
-                    if legend.is_some() || closable {
+                    let contributed = self.scripting.contributed.contains(PANE_SLOT);
+                    if legend.is_some() || closable || contributed {
                         ui.leaf(NodeSpec::row().grow_width());
                     }
+                    let kind = match &content {
+                        Some(Content::Editor(_)) => "editor",
+                        Some(Content::Terminal(_)) => "terminal",
+                        Some(Content::Lua(_)) => "lua",
+                        Some(Content::Undo) => "undo",
+                        Some(Content::Memory) => "memory",
+                        None => "",
+                    };
+                    self.contributed(
+                        ui,
+                        PANE_SLOT_ROW,
+                        PANE_SLOT,
+                        vec![
+                            ("pane", kui_native::Value::Int(pane as i64)),
+                            ("kind", kui_native::Value::from(kind)),
+                            ("focused", kui_native::Value::Bool(focused)),
+                        ],
+                        6.0,
+                    );
                     if let Some(full) = legend {
                         crate::legends::toggle(
                             ui,

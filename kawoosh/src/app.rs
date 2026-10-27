@@ -3066,6 +3066,10 @@ impl kui_native::App for Kawoosh {
         }
         laps.to(ui.core(), "lua gens");
         self.read_frame_gens();
+        // A plugin met since the frame before is a kui extension of its
+        // own from this one (docs/design/plugin-extensions.md).
+        laps.to(ui.core(), "plugin extensions");
+        self.load_plugin_extensions(ui);
         laps.end(ui.core());
         ui.core().span_end(lua);
         let mut laps = Laps::begin(ui.core(), "look");

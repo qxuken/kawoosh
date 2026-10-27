@@ -279,21 +279,18 @@ impl Extension for EngineDraw {
     }
 }
 
-/// The Lua runtime's kui extension, and the engine's drawing it loads the
-/// first frame it draws: kui's way for a guest to bring one of its own
-/// (`Ui::add_extension`), so whoever registers `lua` — the app, the test
-/// harness, a test's drive — has fields, caps and legends with it.
+/// The Lua runtime's kui extension, `lua`: the one state every plugin
+/// runs in, which draws a view no plugin registered. Each plugin draws
+/// through a [`PluginHost`] of its own over the same state, and the
+/// engine's drawing is an extension of the shell's (`fields::NAMESPACE`,
+/// loaded with them, `Kawoosh::load_plugin_extensions`).
 pub struct LuaHost {
     lua: kui_lua::LuaExtension,
-    engine: Option<EngineDraw>,
 }
 
 impl LuaHost {
-    pub fn new(lua: kui_lua::LuaExtension, drawing: Shared) -> Self {
-        LuaHost {
-            lua,
-            engine: Some(EngineDraw::new(drawing)),
-        }
+    pub fn new(lua: kui_lua::LuaExtension) -> Self {
+        LuaHost { lua }
     }
 }
 
@@ -307,17 +304,12 @@ impl Extension for LuaHost {
     }
 
     /// The script's `root`, which kawoosh never places: every Lua pane
-    /// is a component (`lua/NAME@PANE`).
+    /// is a component (`PLUGIN/NAME@PANE`).
     fn view(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
         self.lua.view(inst, ui)
     }
 
     fn component(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
-        if let Some(engine) = self.engine.take()
-            && let Err(e) = ui.add_extension(NAMESPACE, Box::new(engine))
-        {
-            log::error!("the engine's drawing for Lua views: {e}");
-        }
         // kui's recording times the fill as `fill lua`, and boot.lua the
         // view's own function inside it (`view: NAME`): what is left is
         // kui-lua's env and its walk of the table.
@@ -326,5 +318,75 @@ impl Extension for LuaHost {
 
     fn on_event(&mut self, ev: &UiEvent) -> Vec<Value> {
         self.lua.on_event(ev)
+    }
+
+    fn reentry(&mut self) -> Option<Box<dyn Extension>> {
+        self.lua.reentry()
+    }
+}
+
+/// A plugin as a kui extension of its own (plugin-extensions.md Decision
+/// 1): a handle over the one Lua state (kui-lua's `reentry`), under the
+/// plugin's name as namespace, its panes and its contributions its
+/// components and the shell's slots its contributions. What it draws is
+/// `boot.lua`'s `components["*"]`, which tells the plugin by the
+/// namespace; its events go to `boot.lua`'s `on_event`, as every Lua
+/// view's do. So kui's recording times `fill PLUGIN`, and kui places a
+/// plugin's contributions wherever the shell declares a slot.
+pub struct PluginHost {
+    handle: Box<dyn Extension>,
+    name: String,
+    components: Vec<String>,
+    contributions: Vec<kui_native::Contribution>,
+}
+
+impl PluginHost {
+    pub fn new(
+        handle: Box<dyn Extension>,
+        name: String,
+        contributions: Vec<kui_native::Contribution>,
+    ) -> Self {
+        PluginHost {
+            handle,
+            name,
+            components: vec![kui_native::ANY_COMPONENT.to_string()],
+            contributions,
+        }
+    }
+}
+
+impl Extension for PluginHost {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn components(&self) -> &[String] {
+        &self.components
+    }
+
+    fn contributions(&self) -> &[kui_native::Contribution] {
+        &self.contributions
+    }
+
+    fn view(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+        self.handle.view(inst, ui)
+    }
+
+    fn component(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+        self.handle.component(inst, ui)
+    }
+
+    fn on_event(&mut self, ev: &UiEvent) -> Vec<Value> {
+        self.handle.on_event(ev)
+    }
+
+    /// A second handle for one of its own components placed while it
+    /// draws: the same plugin, contributing nothing more.
+    fn reentry(&mut self) -> Option<Box<dyn Extension>> {
+        Some(Box::new(PluginHost::new(
+            self.handle.reentry()?,
+            self.name.clone(),
+            Vec::new(),
+        )))
     }
 }

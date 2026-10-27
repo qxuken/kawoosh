@@ -1800,6 +1800,68 @@ impl Runtime {
             .flatten()
     }
 
+    /// The count of plugin namespaces met and contributions made
+    /// (`kawoosh._plugins_gen`), moved by each: the shell loads the new
+    /// ones' extensions when it moves (docs/design/plugin-extensions.md).
+    pub fn plugins_gen(&self) -> u64 {
+        self.kawoosh_table()
+            .and_then(|k| k.get::<u64>("_plugins_gen").ok())
+            .unwrap_or(0)
+    }
+
+    /// Every plugin namespace met, sorted: each a kui extension of its
+    /// own over this state (plugin-extensions.md Decision 1).
+    pub fn plugin_namespaces(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .kawoosh_table()
+            .and_then(|k| k.get::<Table>("_plugins").ok())
+            .map(|t| {
+                t.pairs::<String, mlua::Value>()
+                    .filter_map(|p| p.ok().map(|(k, _)| k))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort();
+        out
+    }
+
+    /// What plugin `ns` contributes to the shell's slots, in the order it
+    /// said them: `(slot, component, order)` (`kawoosh.contribute`).
+    pub fn plugin_contributions(&self, ns: &str) -> Vec<(String, String, i32)> {
+        let Some(list) = self
+            .kawoosh_table()
+            .and_then(|k| k.get::<Table>("_contributions").ok())
+            .and_then(|t| t.get::<Option<Table>>(ns).ok().flatten())
+        else {
+            return Vec::new();
+        };
+        list.sequence_values::<Table>()
+            .filter_map(Result::ok)
+            .filter_map(|c| {
+                Some((
+                    c.get::<String>("slot").ok()?,
+                    c.get::<String>("component").ok()?,
+                    c.get::<i32>("order").unwrap_or(0),
+                ))
+            })
+            .collect()
+    }
+
+    /// The plugin namespace Lua view `name` is drawn under, if a plugin
+    /// registered it (plugin-extensions.md Decision 2).
+    pub fn view_plugin(&self, name: &str) -> Option<String> {
+        self.kawoosh_table()?
+            .get::<Table>("_view_plugin")
+            .ok()?
+            .get::<Option<String>>(name)
+            .ok()
+            .flatten()
+    }
+
+    fn kawoosh_table(&self) -> Option<Table> {
+        self.lua.globals().get::<Table>("kawoosh").ok()
+    }
+
     /// The libraries loaded since the last call that draw: for the
     /// shell's frame to add as kui extensions.
     pub fn take_native_kui(&self) -> Vec<(String, std::path::PathBuf)> {
