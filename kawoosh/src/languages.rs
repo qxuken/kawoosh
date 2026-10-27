@@ -4,10 +4,12 @@
 //! config directory, loads it here so a failure is a toast, and tells
 //! its own registry and the ts thread's.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use kawoosh_doc::BufferId;
 use kawoosh_editor::Setting;
 use kawoosh_languages::{FALLBACK, Grammar, LanguageDef, Library, Locate, Source};
+use kawoosh_systems::store::MomentKey;
 
 use kawoosh_editor::{ArgKind, Args, Spec};
 
@@ -180,16 +182,20 @@ impl Kawoosh {
         // Its files are what `load_all` sends its server.
         self.lsp.rules_seen = None;
         let mut resend = Vec::new();
-        for (id, b) in self.ed.buffers.iter_mut() {
+        let mut unread = Vec::new();
+        for (id, b) in self.ed.buffers.iter() {
             if *b.language == *name {
                 resend.push(id);
             } else if &*b.language == FALLBACK
-                && let Some(path) = b.path.clone()
+                && let Some(path) = &b.path
             {
-                let lang = self.languages.detect(&path, &first_line(b));
-                if lang != FALLBACK {
-                    b.language = lang.into();
-                }
+                unread.push((id, path.clone(), first_line(b)));
+            }
+        }
+        for (id, path, first) in unread {
+            let lang = self.language_of(&path, &first);
+            if lang != FALLBACK {
+                self.ed.buffers[id].language = lang.into();
             }
         }
         for id in resend {
@@ -201,8 +207,9 @@ impl Kawoosh {
     /// alias resolves to its language; `text` is none) — a scratch
     /// given its grammar, a file whose extension says the wrong thing.
     /// The old runs go and the buffer is parsed whole with the new
-    /// grammar; a history row keeps the language with the text. Bare,
-    /// it says which language the buffer is.
+    /// grammar; a history row keeps the language with the text, and
+    /// the memory a file's (`remember_syntax`). Bare, it says which
+    /// language the buffer is.
     pub(crate) fn set_syntax(&mut self, name: Option<&str>) {
         let Some(v) = self.focused_view() else {
             self.ed.message = "syntax: no buffer here".into();
@@ -224,15 +231,157 @@ impl Kawoosh {
                 }
             }
         };
+        self.relanguage(id, &language);
+        let also = self.remember_syntax(id, &language);
+        self.ed.message = match also {
+            0 => format!("syntax {language}"),
+            n => format!(
+                "syntax {language}, and {n} more open file{} of its kind",
+                if n == 1 { "" } else { "s" }
+            ),
+        };
+    }
+
+    /// Buffer `id` read as `language` from now on: the old runs go and
+    /// it is parsed whole again.
+    fn relanguage(&mut self, id: BufferId, language: &str) {
         let b = &mut self.ed.buffers[id];
-        b.language = language.as_str().into();
+        b.language = language.into();
         b.clear_layer(kawoosh_systems::ts::SYNTAX_LAYER);
         self.ts_sent.remove(&id);
         self.inspector.trees.remove(&id);
         if let Some(rt) = &self.scripting.rt {
             rt.set_tree(id, None);
         }
-        self.ed.message = format!("syntax {language}");
+    }
+
+    /// The language of the file at `path` whose first line is
+    /// `first_line`, as the memory has it (memory.md, "Syntax"): what
+    /// `:syntax` said for this file, else what the languages detect,
+    /// else what `:syntax` said for files of its kind (`*.EXT`, or its
+    /// name when it has no extension), else [`FALLBACK`]. A remembered
+    /// language no longer known is passed over.
+    pub(crate) fn language_of(&self, path: &Path, first_line: &str) -> String {
+        let known = |l: String| (l == FALLBACK || self.languages.get(&l).is_some()).then_some(l);
+        let file = self.resolve(path).display().to_string();
+        if let Some(l) = self.remembered_syntax(&file).and_then(known) {
+            return l;
+        }
+        let detected = self.languages.detect(path, first_line);
+        if detected != FALLBACK {
+            return detected.to_string();
+        }
+        syntax_kind_of(path)
+            .and_then(|k| self.remembered_syntax(&k))
+            .and_then(known)
+            .unwrap_or_else(|| FALLBACK.to_string())
+    }
+
+    /// The language a `syntax` row says for `subject`: what is pending
+    /// of it first, else the store's.
+    fn remembered_syntax(&self, subject: &str) -> Option<String> {
+        let key = MomentKey::new(SYNTAX_KIND, subject, "");
+        let meta = self
+            .moments
+            .pending_meta(&key)
+            .or_else(|| Some(self.store.as_ref()?.moment(&key)?.meta))?;
+        let meta: serde_json::Value = serde_json::from_str(&meta).ok()?;
+        Some(meta.get("language")?.as_str()?.to_string())
+    }
+
+    /// `:syntax` gave buffer `id` `language`: the memory keeps it. A
+    /// file the languages know is remembered by its path — and
+    /// forgotten when it is given back what they say. A file they do
+    /// not know is remembered by its kind, so every `*.EXT` reads as
+    /// `language` from then on, and the open ones of that kind still
+    /// unread are read so now: their count is returned. A scratch is
+    /// its history's, a private file nobody's.
+    fn remember_syntax(&mut self, id: BufferId, language: &str) -> usize {
+        let b = &self.ed.buffers[id];
+        let Some(path) = b.path.clone() else {
+            return 0;
+        };
+        if b.private || self.ed.is_field_buffer(id) {
+            return 0;
+        }
+        let detected = self.languages.detect(&path, &first_line(b)).to_string();
+        let file = MomentKey::new(SYNTAX_KIND, &self.resolve(&path).display().to_string(), "");
+        let kind = syntax_kind_of(&path).filter(|_| detected == FALLBACK);
+        let mut also = 0;
+        match kind {
+            Some(kind) => {
+                let key = MomentKey::new(SYNTAX_KIND, &kind, "");
+                self.forget_syntax(&file);
+                if language == FALLBACK {
+                    self.forget_syntax(&key);
+                } else {
+                    self.moments
+                        .set_meta(key, serde_json::json!({ "language": language }).to_string());
+                    let unread: Vec<BufferId> = self
+                        .ed
+                        .buffers
+                        .iter()
+                        .filter(|(o, b)| {
+                            *o != id
+                                && &*b.language == FALLBACK
+                                && b.path.as_deref().and_then(syntax_kind_of).as_ref()
+                                    == Some(&kind)
+                                && self.languages.detect(
+                                    b.path.as_deref().unwrap_or(Path::new("")),
+                                    &first_line(b),
+                                ) == FALLBACK
+                        })
+                        .map(|(o, _)| o)
+                        .collect();
+                    also = unread.len();
+                    for o in unread {
+                        self.relanguage(o, language);
+                    }
+                }
+            }
+            None if language == detected => self.forget_syntax(&file),
+            None => self.moments.set_meta(
+                file,
+                serde_json::json!({ "language": language }).to_string(),
+            ),
+        }
+        self.flush_moments();
+        also
+    }
+
+    /// A `syntax` row gone, if there was one.
+    fn forget_syntax(&mut self, key: &MomentKey) {
+        let known = self.moments.pending_meta(key).is_some()
+            || self.store.as_ref().is_some_and(|s| s.moment(key).is_some());
+        if known {
+            let _ = self.forget_moment(key);
+        }
+    }
+}
+
+/// The memory's kind for a language `:syntax` gave a file (memory.md,
+/// "Syntax"): its subject a file's path, or a kind of file the
+/// languages do not know ([`syntax_kind_of`]); its `meta` the
+/// `language`; under no workspace, since a file reads the same from any
+/// root; held, as a mark is — the user's word, never evicted or aged —
+/// until its file is gone ([`syntax_gone`]).
+pub const SYNTAX_KIND: &str = "syntax";
+
+/// Whether a `syntax` row's file is gone: a local path that is no
+/// more. A kind is never gone, nor a host's file — whether it is there
+/// is not asked over the wire for a sweep.
+pub fn syntax_gone(key: &MomentKey) -> bool {
+    let path = Path::new(&key.subject);
+    path.is_absolute() && kawoosh_systems::fs::domain_of(path).is_none() && !path.exists()
+}
+
+/// The kind of file `path` is, as a `syntax` row names it: `*.EXT`, the
+/// extension in lower case as the languages match it, or the file's
+/// name when it has none.
+pub fn syntax_kind_of(path: &Path) -> Option<String> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) if !ext.is_empty() => Some(format!("*.{}", ext.to_ascii_lowercase())),
+        _ => path.file_name()?.to_str().map(str::to_string),
     }
 }
 
@@ -241,7 +390,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         Spec::new("syntax")
             .alias(&["setf", "setfiletype", "filetype", "ft"])
             .args(Args::new(&[ArgKind::Language]))
-            .doc("read the buffer as language NAME (`text` for none); bare, say which it is"),
+            .doc("read the buffer as language NAME (`text` for none), remembered for the file or its unknown kind; bare, say which it is"),
         |k, ctx| k.set_syntax(ctx.args.first().map(String::as_str)),
     )]
 }

@@ -436,6 +436,9 @@ pub struct Kawoosh {
     /// For tests: a job runs where it is asked for and its answer lands
     /// in the same frame, so a listing is there when the key returns.
     pub jobs_inline: bool,
+    /// A run with no window (`kawoosh --headless`, `headless.rs`): its
+    /// socket under its own name, keys over it, replies after a frame.
+    pub headless: Option<crate::headless::Headless>,
     /// For tests: the URLs a link would have handed the OS, kept here
     /// instead when set (`links::follow_link`).
     pub urls_opened: Option<Vec<String>>,
@@ -618,6 +621,7 @@ impl Kawoosh {
             pending_jobs: 0,
             format: Default::default(),
             jobs_inline: false,
+            headless: None,
             urls_opened: None,
             revealed: None,
         };
@@ -1189,10 +1193,11 @@ impl Kawoosh {
                         if remote && !private {
                             self.attach_file_history(id, &path);
                         }
-                        if let Some(b) = self.ed.buffers.get_mut(id)
+                        if let Some(b) = self.ed.buffers.get(id)
                             && &*b.language == kawoosh_languages::FALLBACK
                         {
-                            b.language = self.languages.detect(&path, &first_line(b)).into();
+                            let lang = self.language_of(&path, &first_line(b));
+                            self.ed.buffers[id].language = lang.into();
                         }
                         self.open_progress(&path, None, true);
                         let b = &self.ed.buffers[id];
@@ -1381,6 +1386,8 @@ impl Kawoosh {
             // `kawoosh pick SOURCE [QUERY]`: answered when the picker
             // is taken or closed.
             Request::Pick { source, query } => self.pick_request(&source, &query, reply),
+            Request::Keys { notation } => self.keys_request(&notation, reply),
+            Request::Wait => self.wait_request(reply),
             Request::Ex { line } => {
                 // Any view will do for a command that needs one.
                 let v = self.command_view();
@@ -1891,14 +1898,14 @@ impl Kawoosh {
         }
         let mut buf = match Buffer::from_file(path) {
             Ok(mut b) => {
-                b.language = self.languages.detect(path, &first_line(&b)).into();
+                b.language = self.language_of(path, &first_line(&b)).into();
                 b
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let mut b =
                     Buffer::new(kawoosh_systems::fs::basename(path).unwrap_or_default(), "");
                 b.path = Some(path.to_path_buf());
-                b.language = self.languages.detect(path, "").into();
+                b.language = self.language_of(path, "").into();
                 self.ed.message = format!("\"{}\" [new file]", path.display());
                 b
             }
@@ -1930,7 +1937,7 @@ impl Kawoosh {
     pub fn open_on_io_thread(&mut self, path: &Path, total: usize) -> BufferId {
         let mut buf = Buffer::opening(path, total);
         // By the name alone; the `#!` line is read when the text lands.
-        buf.language = self.languages.detect(path, "").into();
+        buf.language = self.language_of(path, "").into();
         buf.private = self.private_path(path, false);
         self.io.open_file(path.to_path_buf());
         self.ed.add_buffer(buf)
@@ -2921,7 +2928,11 @@ impl kui_native::App for Kawoosh {
         self.wake.set(wake);
         self.wake.set_at(at);
         kawoosh_lua::native::set_waker(self.wake.named("native"));
-        let path = kawoosh_systems::io::socket_path();
+        let path = if self.is_headless() {
+            crate::headless::socket_path()
+        } else {
+            kawoosh_systems::io::socket_path()
+        };
         match self.io.listen(&path) {
             Ok(()) => {
                 let shipped = std::env::current_exe()
@@ -2995,6 +3006,9 @@ impl kui_native::App for Kawoosh {
         }
         let frame_started = self.perf.frame_start();
         let mut t = frame_started;
+        // Before the requests: one made in this view is answered in a
+        // later one, after the frame its keys reach.
+        self.answer_headless(ui);
         self.drain_io();
         // Output a budget left behind: parsed on the next frame.
         if !self.terms.flowing.is_empty() {

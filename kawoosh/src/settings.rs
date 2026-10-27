@@ -312,6 +312,9 @@ impl Kawoosh {
     /// `.kawoosh/settings.lua` above it, outermost first. Called at
     /// start, on every `:cd`, and when one is saved.
     pub fn reload_project_settings(&mut self) {
+        if self.reads_no_config() {
+            return;
+        }
         let files = project_settings_files(&self.cwd);
         let sources: Vec<(String, Setting)> = files
             .iter()

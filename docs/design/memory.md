@@ -76,6 +76,25 @@ attended, not a yank. Left: co-occurrence. *The pane's scope,
 `:memory workspace` / `:memory global` — this workspace's rows or
 every one's, in every view; `all` is every kind under it. Drawn as
 `@workspace` `@global` chips at the strip's left (2026-10-02).
+*Syntax, 2026-10-24*: `:syntax NAME` is remembered as a `syntax` row
+(`languages::SYNTAX_KIND`), under no workspace — a file reads the
+same from any root — its `meta` `{ "language": NAME }`. A file the
+languages know, given another language, is remembered by its path; one
+they do not know is remembered by its kind, `*.EXT` (the extension
+lower-cased) or its name when it has none, so every file of the kind
+reads as NAME from then on and the open ones still unread read so at
+once ("and N more open files of its kind"). A file opens as
+`language_of` says: its path's row, else the languages' detection,
+else its kind's row, else `text`; a remembered language no longer
+known is passed over. A file given back what the languages say forgets
+its row, a kind given `text` forgets the kind's; the latest word on a
+kind is the kind's. Rows are held as marks are — no cap, never aged,
+never evicted — except a file's whose local path is gone (a project
+deleted), which ages out under `memory.keep_days` as any row; a host's
+file is never stat'ed for it. A scratch keeps its language in its
+history, as before; a private file has no row. In the pane they are
+`all`'s, labelled by the file's name or the kind, `as NAME` after;
+`⏎` opens the file, or says what the kind reads as; `x` forgets.
 options and taken: the unit is a subject row *plus a bounded ring of
 recent transitions* (Decision 1); the histories lose their bookkeeping
 and keep their blob (Decision 6); eviction is a fixed score in Rust

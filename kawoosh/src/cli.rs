@@ -16,9 +16,11 @@ use std::path::{Path, PathBuf};
 
 /// The verbs that are the CLI half (`main.rs`'s `shim`, `lsp`, `format`,
 /// `default-editor`, `test`).
-const VERBS: [&str; 8] = [
+const VERBS: [&str; 10] = [
     "edit",
     "ex",
+    "keys",
+    "wait",
     "theme",
     "pick",
     "lsp",
@@ -104,6 +106,9 @@ mod tests {
             &["pick", "dirs"],
             &["theme"],
             &["edit", "a.txt"],
+            &["keys", "<C-w>v"],
+            &["wait"],
+            &["--headless"],
             &["lsp", "list"],
             &["format", "list"],
             &["default-editor", "status"],

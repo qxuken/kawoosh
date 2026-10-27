@@ -1880,6 +1880,13 @@ pub enum Request {
         #[serde(default)]
         query: String,
     },
+    /// Keys in map notation pressed into a headless kawoosh's own core
+    /// (`kawoosh keys`): answered after the frame that follows them, with
+    /// its message. A window refuses.
+    Keys { notation: String },
+    /// Answered once nothing a headless kawoosh started is still out
+    /// (`kawoosh wait`).
+    Wait,
 }
 
 /// A socket request with the channel its reply goes down.

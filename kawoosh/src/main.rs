@@ -56,7 +56,7 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
     let Some(verb) = args.first().map(String::as_str) else {
         return Ok(false);
     };
-    if !matches!(verb, "edit" | "ex" | "theme" | "pick") {
+    if !matches!(verb, "edit" | "ex" | "theme" | "pick" | "keys" | "wait") {
         return Ok(false);
     }
     // A file to edit starts a Kawoosh when none runs; the other verbs
@@ -98,6 +98,21 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
             std::process::exit(1);
         }
         kawoosh::outln!("{reply}");
+        return Ok(true);
+    }
+    // `kawoosh keys '<C-w>v'`, `kawoosh wait`: a headless kawoosh's
+    // (docs/design/headless.md), reached through `$KAWOOSH_SOCKET`.
+    if verb == "keys" || verb == "wait" {
+        let request = match verb {
+            "keys" => Request::Keys {
+                notation: args[1..].join(" "),
+            },
+            _ => Request::Wait,
+        };
+        let reply = send_request(&sock, &request)?;
+        if !reply.is_empty() {
+            kawoosh::outln!("{reply}");
+        }
         return Ok(true);
     }
     if verb == "ex" {
@@ -189,6 +204,13 @@ Usage:
   kawoosh -- PATH                open a PATH that starts with a dash
   kawoosh test SCRIPT.lua...     run Lua tests against a headless editor;
                                  exits 0 when every one passes
+  kawoosh --headless [--size WxH] [--scale N] [--no-config] [--motion]
+                   [--dark|--light] [PATH]
+                                 the editor with no window, driven over its
+                                 socket (printed first as KAWOOSH_SOCKET=…);
+                                 never the last session, a state db of its
+                                 own; --no-config reads none of kawoosh's
+                                 config, yours or the project's
 
 From a terminal inside kawoosh (through $KAWOOSH_SOCKET), or from any
 other to the kawoosh started last:
@@ -196,6 +218,9 @@ other to the kawoosh started last:
                                  open the paths in the running instance;
                                  --wait returns when the buffer is closed
   kawoosh ex LINE                run LINE as a : command there
+  kawoosh keys NOTATION          press keys in a headless kawoosh (<C-w>v,
+                                 :w<CR>); answers after the frame they reach
+  kawoosh wait                   answer once a headless kawoosh is idle
   kawoosh theme                  print `dark` or `light`
   kawoosh lsp install NAME...    install a language server into kawoosh's
                                  own servers/ folder (update, remove, list)
@@ -316,6 +341,11 @@ fn main() -> anyhow::Result<()> {
         Some("--") => {
             args.remove(0);
         }
+        // `kawoosh --headless`: the editor with no window, driven over
+        // its socket (docs/design/headless.md).
+        Some("--headless") => {
+            return headless(&args[1..]);
+        }
         // A mistyped flag is not a file to create.
         Some(a) if a.starts_with('-') && a != "-" => {
             kawoosh::errln!("kawoosh: unknown option {a} (kawoosh --help lists them)");
@@ -391,6 +421,117 @@ fn main() -> anyhow::Result<()> {
         .extension_as("lua", ext)
         .run(app)
         .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// `kawoosh --headless [--size WxH] [--scale N] [--no-config] [--motion]
+/// [--dark|--light] [PATH]`: the window's startup on kui's runner with no
+/// window (kui ADR 0057), never the last session and a state db of its
+/// own. Its first line out is `KAWOOSH_SOCKET=…`, for `kawoosh ex`,
+/// `kawoosh keys` and `kawoosh wait` to reach it; it ends on `:qa`, on
+/// SIGTERM, SIGINT or SIGHUP, or when a pipe on its stdin closes.
+fn headless(args: &[String]) -> anyhow::Result<()> {
+    let opts = match kawoosh::headless::Options::parse(args) {
+        Ok(o) => o,
+        Err(e) => {
+            kawoosh::errln!("kawoosh: {e}");
+            std::process::exit(2);
+        }
+    };
+    // SAFETY: one thread so far; nothing has read the environment.
+    let scratch = unsafe { kawoosh::headless::Scratch::make(opts.no_config) }
+        .map_err(|e| anyhow::anyhow!("--headless: its directory: {e}"))?;
+    let wake = WakeHandle::new();
+    let (keep, stderr) = log_levels();
+    let log_sink = Logger::install(wake.named("log"), keep);
+    let mut core = Core::new();
+    let (font, shipped) = load_fonts(&mut core);
+    let path = opts.path.clone();
+    let mut app = Kawoosh::new("*scratch*", if path.is_some() { "" } else { SCRATCH });
+    app.headless = Some(kawoosh::headless::Headless::new(opts.no_config));
+    app.bundled_font = font;
+    app.shipped_fonts(shipped);
+    app.face.id = font;
+    app.log_sink = log_sink;
+    app.notes.stderr = stderr;
+    app.notes.keep = keep;
+    app.share_wake(wake);
+    let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
+    app.open_store(Some(&scratch.state()));
+    app.config.ask_shell = cfg!(unix) && std::env::var_os("TERM").is_none();
+    app.load_config();
+    // No last session: a run starts where it is told, and the user's next
+    // window is not left on its files.
+    if let Some(p) = &path {
+        app.open_first(Path::new(p));
+    }
+    let (w, h) = opts.size;
+    let mut runner = kui_native::app("kawoosh")
+        .custom_titlebar()
+        .core(core)
+        .extension_as("lua", ext)
+        .system(opts.system())
+        .open_headless(app, w, h, opts.scale);
+    let input = runner.input();
+    if let Some(hl) = runner.app_mut().headless.as_mut() {
+        hl.attach(input.clone());
+    }
+    let Some(sock) = runner.app_mut().socket.clone() else {
+        let want = kawoosh::headless::socket_path();
+        // The usual reason, and the one the log does not reach a caller
+        // with: a unix socket's path is capped (104 bytes on macOS).
+        let long = if want.as_os_str().len() > 100 {
+            "; its path is too long for a socket — set XDG_RUNTIME_DIR to a short directory"
+        } else {
+            ""
+        };
+        anyhow::bail!("--headless: no command socket at {}{long}", want.display());
+    };
+    kawoosh::outln!("KAWOOSH_SOCKET={}", sock.display());
+    end_on_signals(&input);
+    end_on_closed_stdin(&input);
+    runner.run();
+    drop(scratch);
+    Ok(())
+}
+
+/// SIGTERM, SIGINT and SIGHUP end a headless run as `:qa` would: its
+/// teardown runs and its socket goes.
+#[cfg(unix)]
+fn end_on_signals(input: &kui_native::HeadlessInput) {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+    let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP]) else {
+        return;
+    };
+    let input = input.clone();
+    std::thread::spawn(move || {
+        if signals.forever().next().is_some() {
+            input.close();
+        }
+    });
+}
+
+#[cfg(not(unix))]
+fn end_on_signals(_input: &kui_native::HeadlessInput) {}
+
+/// A pipe on stdin that closes — the parent that started the run gone —
+/// ends it, so a driver that dies leaves no run behind. A terminal or
+/// `/dev/null` on stdin is not watched: nothing closes them.
+fn end_on_closed_stdin(input: &kui_native::HeadlessInput) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        let piped = std::fs::metadata("/dev/stdin").is_ok_and(|m| m.file_type().is_fifo());
+        if !piped {
+            return;
+        }
+        let input = input.clone();
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+            input.close();
+        });
+    }
+    #[cfg(not(unix))]
+    let _ = input;
 }
 
 /// The icon `kawoosh.rc` links into kawoosh.exe (`1 ICON`), which the
