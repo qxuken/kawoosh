@@ -168,6 +168,36 @@ afternoon.
   the file system's root; `kawoosh.store(ns).set` keeps a table's Rust
   `Debug` text; `kawoosh.icon`'s `color` takes an integer only, not a
   `#rrggbb`. Each small. ([lua-types.md](design/lua-types.md), "Built")
+- **The launcher as a contribution slot**: `kawoosh.launcher`, a
+  module the launcher's layout names, its contributions placed with the
+  pane and its origin — and whether it replaces `launcher.layout`'s Lua
+  modules. ([plugin-extensions.md](design/plugin-extensions.md)
+  Decision 3, "Open")
+- **`kawoosh.status` as a contribution**: whether a segment becomes
+  sugar over `kawoosh.contribute`, the fitting of the status line's path
+  kept. ([plugin-extensions.md](design/plugin-extensions.md) Decision 4,
+  "Open")
+- **A plugin's components for other plugins**: picker's list as a
+  `picker/list` another plugin places in its own pane — an API kawoosh
+  documents, or kui's mechanism only. ([plugin-extensions.md](design/plugin-extensions.md),
+  "Open")
+- **A native extension's pane title and status line slots**: a C
+  extension's `kui_ext_contributions` reach a slot only while a Lua
+  plugin contributes to it too — kawoosh draws a slot's row only for
+  the slots it knows a plugin fills. Its own list of the native ones'
+  is the fix short of kui F219. Small.
+  ([plugin-extensions.md](design/plugin-extensions.md), "What the
+  building changed")
+- **A pane's title bar contributions keep the keyboard on the pane**: a
+  click on one is tested only in the status line, which keeps it; the
+  pane's title bar row has no `keep_focus`. Small.
+  ([plugin-extensions.md](design/plugin-extensions.md))
+- **A focus ring for a control inside a pane**: every pane's sink says
+  `focus_ring` transparent (kui C93, the title bar shows the pane's
+  focus), which turns kui's ring off for everything under it too — a
+  Lua view's button reached by Tab shows none. A wrapper under the
+  sink that sets the theme's ring back, if a view's Tab stops are
+  wanted. Small. (commit 43cc3bd3, the alpha.68 pin)
 - **Native extensions, round five**: a `kawoosh-ext` crate for Rust
   authors, when the first asks. Rounds one (the loader, `kw_call`,
   `kw_fn`, `:extensions`), two (native panes, `kw_wake`), three (the
