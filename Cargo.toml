@@ -31,10 +31,14 @@ kawoosh-diagram = { path = "./diagram" }
 # kui-ffi is the native extensions' value type and loader
 # (docs/design/native.md Decision 1); it is in the graph through kui-lua
 # regardless.
-kui-native = "=0.1.0-alpha.68"
-kui-core = "=0.1.0-alpha.68"
-kui-lua = "=0.1.0-alpha.68"
-kui-ffi = "=0.1.0-alpha.68"
+# By path on `../kui` until a release carries F220 (qxuken/kui#4): the
+# tools kui's `open_external` and `show_in_folder` start go through
+# kawoosh's spawn lock (`kui_native::set_spawner`), `links.rs` and the
+# listing's `gX` calling them where kawoosh had its own.
+kui-native = { path = "../kui/crates/kui-native" }
+kui-core = { path = "../kui/crates/kui-core" }
+kui-lua = { path = "../kui/crates/kui-lua" }
+kui-ffi = { path = "../kui/crates/kui-ffi" }
 # A grammar's shared library (`kawoosh-languages`) and a native extension's
 # (`kawoosh-lua`).
 libloading = "0.9"

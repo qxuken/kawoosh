@@ -2909,6 +2909,11 @@ pub const ASYNC_OPEN_BYTES: usize = 64 << 20;
 
 impl kui_native::App for Kawoosh {
     fn setup(&mut self, waker: kui_native::Waker) {
+        // kui's own children — a link's opener, the file manager, the
+        // devtools' "open folder" — start under kawoosh's spawn lock, as
+        // every child of this process does (`kawoosh_systems::spawn`;
+        // kui F220).
+        kui_native::set_spawner(kawoosh_systems::spawn::spawn);
         // Each wake rings kui's waker under the name it went under, made
         // once a name: a recording reads `wake: pty` (kui ADR 0058).
         let named = Arc::new(NamedWakers {

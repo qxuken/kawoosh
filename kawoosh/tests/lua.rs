@@ -4849,7 +4849,7 @@ fn a_listing_shows_its_entry_in_the_file_manager() {
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
     d.frame(&mut app);
-    let manager = kawoosh::reveal::manager();
+    let manager = kawoosh::links::file_manager();
     let shown = |p: &std::path::Path| kawoosh_systems::fs::abbreviate_home(p);
 
     ex(&mut d, &mut app, "dir reveal");

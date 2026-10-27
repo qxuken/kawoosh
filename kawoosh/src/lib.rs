@@ -76,7 +76,6 @@ pub mod perf;
 pub mod pictures;
 pub mod plugins;
 pub mod presses;
-pub mod reveal;
 pub mod rows;
 pub mod running;
 pub mod screenshots;

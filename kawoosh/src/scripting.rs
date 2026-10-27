@@ -807,7 +807,7 @@ impl Kawoosh {
             }
             Msg::Reveal { path, inside } => {
                 let shown = kawoosh_systems::fs::abbreviate_home(&path);
-                let manager = crate::reveal::manager();
+                let manager = crate::links::file_manager();
                 if kawoosh_systems::fs::domain_of(&path).is_some() {
                     self.ed.message = format!("{shown}: on another machine, not for {manager}");
                 } else if !kawoosh_systems::fs::exists(&path) {
@@ -816,7 +816,16 @@ impl Kawoosh {
                     revealed.push((path, inside));
                     self.ed.message = format!("shown in {manager}: {shown}");
                 } else {
-                    self.ed.message = match crate::reveal::reveal(&path, inside) {
+                    // kui's doors (F203, F220): a folder's own entries
+                    // opened in the file manager, else the path selected
+                    // in its folder.
+                    let path = path.to_string_lossy();
+                    let shown_there = if inside {
+                        kui_native::open_external(&path)
+                    } else {
+                        kui_native::show_in_folder(&path)
+                    };
+                    self.ed.message = match shown_there {
                         Ok(()) => format!("shown in {manager}: {shown}"),
                         Err(e) => e,
                     };
