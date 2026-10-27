@@ -1,5 +1,5 @@
 # cargo-audit's config, read from this directory the way config.toml beside it
-# is. The audit job in .forgejo/workflows/audit.yml runs `cargo audit` with
+# is. The audit job in .github/workflows/audit.yml runs `cargo audit` with
 # `--deny warnings`, so an advisory of any kind — a vulnerability, or a crate
 # that has merely gone unmaintained — turns the job red. That is the point:
 # the only way past it is to upgrade out of the advisory, or to add an entry
