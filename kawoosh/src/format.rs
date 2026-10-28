@@ -514,7 +514,11 @@ impl Kawoosh {
         // `named`: `lsp` asked for by name, where no server at all is
         // worth saying; `auto` says only one down.
         let lsp = |skipped: &mut Vec<String>, named: bool| {
-            if !self.lsp_serves(&language) {
+            if self.lsp.detached.contains(&id) {
+                if named {
+                    skipped.push(crate::lsp::DETACHED.into());
+                }
+            } else if !self.lsp_serves(&language) {
                 if named {
                     skipped.push(self.lsp_absent(&language));
                 } else if let Some(why) = self.lsp_down(&language) {

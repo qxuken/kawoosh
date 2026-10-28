@@ -570,6 +570,84 @@ project would restart rust-analyzer); one minute (the same, a little
 later); a cap on the instances of one server instead (the one stopped
 would not be the one idle).
 
+### 13. Every server off, and one file off its servers
+
+*Added 2026-10-29*, asked: "how can i disable lsp? or detach from
+file? sometimes i just wanna highlighting". Highlighting is the
+grammar's, so a server off takes nothing from it; what there was to
+switch was one server (`lsp.NAME.enabled`, `:lsp toggle enabled`).
+
+- **`lsp.enabled`**, true by default, is the switch over all of them:
+  off, the table the pool runs is empty — every server stopped, every
+  buffer taken back, nothing sent — **whatever `lsp.NAME.enabled`
+  says**. A master switch, not a default the server's own beats as
+  `lsp.inlay_hints` is: "no servers" is what it is for, and a
+  `lsp.NAME.enabled = true` left in the session by two toggles should
+  not keep one running under it. `kawoosh.lsp.rules().enabled` is off
+  under it too. `:set -lsp.enabled` and `:set +lsp.enabled` flip it.
+- **`:lsp disable [LANGUAGE]`, `:lsp enable [LANGUAGE]`** write the
+  session layer as `:lsp toggle` does: bare, `lsp.enabled` — every
+  server, as bare `:lsp restart` is every one — with a language, the
+  `lsp.NAME.enabled` of its server. A server enabled under
+  `lsp.enabled` off says so (`lsp.rust.enabled on; lsp.enabled is off
+  (:lsp enable)`). Not set: the commands say what they mean where
+  `:lsp toggle enabled` makes the user know where it stood.
+- **`:lsp detach`** takes the caret's file — the excerpt's in a
+  multibuffer — from its servers: told closed (a `load_all` server
+  holds the disk's text again), its diagnostics and hints dropped, and
+  from then on sent nothing and asked nothing (`LspState::detached`):
+  `lsp_answers` is false for it, the requests that go straight to the
+  pool (`K`, `gd`) say `the buffer is detached from its language
+  servers (:lsp attach)`, completion takes words and snippets only, and
+  `grf` goes on to the next formatter. The language's other buffers stay
+  served. **`:lsp attach`** sends it again, whole, as one just opened.
+  `:lsp info` marks it `(detached)` under its server. It is the buffer's
+  for as long as the buffer is open: not kept by a session, and a file
+  opened again is attached.
+
+Beaten: a buffer-local setting (`:setlocal lsp.enabled`) — the
+settings tree has no layer per buffer, and the pool keys nothing by
+it; `:lsp stop` as the name (it reads as one server, and a stopped
+server of an open file is started again by the next sync); `:lsp
+disable` bare as the caret's language, which `:lsp toggle enabled`
+already is.
+
+### 14. Diagnostics hidden, the server running
+
+*Added 2026-10-29*, after Decision 13: "maybe diagnostics toggle as
+well, so i can just disable part of lsp" — completion, hover and `gd`
+kept, the squiggles gone.
+
+- **`lsp.diagnostics`** (true) over every server, **`lsp.NAME.diagnostics`**
+  for one, reach the pool as `ServerDef::diagnostics`: a server with
+  them off runs and answers as before, and what it publishes — pushed
+  or pulled — is kept in `Pool::published` as ever and **left out of
+  what is said** (`shown_diagnostics`). Hidden at the pool, not the
+  shell, because only the pool knows whose a diagnostic is: eslint's
+  beside typescript's in one buffer, one hidden and the other not.
+- **Switched, it is said again** (`resay_diagnostics`): every file the
+  server spoke of handed up with its word or without, at once, unedited
+  — hiding is no restart and showing waits for no new publish. No
+  `started` field, so no restart either.
+- **A master switch, as `lsp.enabled` is**: `lsp.diagnostics` off hides
+  every server's whatever its own says. Built first as `inlay_hints` is
+  — the server's own beats the global — the test caught the trap: a
+  server's toggled off and on leaves `true` in the session, and the
+  global switch then hid everything but it. A server turned on under
+  it says so (`lsp.rust.diagnostics on; lsp.diagnostics is off (:lsp
+  diagnostics)`), as `enabled` now does under `lsp.enabled`.
+- **Switches**: `:lsp toggle diagnostics [LANGUAGE]` for one server,
+  `:lsp diagnostics` (`<leader>od`, beside `<leader>oh`'s hints) for
+  all, `:set -lsp.diagnostics`. `:lsp info` lists `no diagnostics` where
+  set; `kawoosh.lsp.rules().diagnostics` reads it. A plugin's own
+  (`kawoosh.diagnostics.set`) is not a server's and stays.
+
+Beaten: hiding at the shell by language (eslint's would go with
+typescript's); dropping what a server said while hidden (shown again,
+a file would wait for its next edit to say anything); a severity
+floor (`lsp.diagnostics = "error"`) — not asked, and a table of
+severities per server is a later rule if it is.
+
 ## Not built
 
 - ~~**A loaded file changed on disk by another program** is not read

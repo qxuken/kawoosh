@@ -650,6 +650,14 @@ const DOCS: &[(&str, &str)] = &[
     ),
     ("pairs.enabled", "close brackets and quotes as you type"),
     (
+        "lsp.enabled",
+        "language servers at all; off, none runs and nothing is sent, whatever `lsp.NAME.enabled` says",
+    ),
+    (
+        "lsp.diagnostics",
+        "the language servers' diagnostics shown; off, the servers run and answer and every one's diagnostics are hidden, whatever `lsp.NAME.diagnostics` says",
+    ),
+    (
         "lsp.inlay_hints",
         "types and parameter names from the language server, drawn in the line",
     ),
@@ -1166,6 +1174,12 @@ impl Settings {
         // Auto-closing brackets (`pairs.lua`, docs/design/pairs.md): on
         // since 2026-09-23; `pairs.rules` is the plugin's, per language.
         defaults.set("pairs.enabled", Setting::Bool(true));
+        // Every language server: the switch over `lsp.NAME.enabled`
+        // (lsp-rules.md Decision 13), `:lsp disable` turns it off.
+        defaults.set("lsp.enabled", Setting::Bool(true));
+        // The servers' diagnostics shown (Decision 14): off, the rest of
+        // what a server does stays (`<leader>od` flips it).
+        defaults.set("lsp.diagnostics", Setting::Bool(true));
         // Inlay hints from the language server — types, parameter names —
         // drawn in the line, faint (`<leader>oh` flips it).
         defaults.set("lsp.inlay_hints", Setting::Bool(false));
@@ -2219,6 +2233,8 @@ mod tests {
                 "layout.new_tab",
                 "layout.scroll.center",
                 "leader",
+                "lsp.diagnostics",
+                "lsp.enabled",
                 "lsp.idle_stop_secs",
                 "lsp.inlay_hints",
                 "markdown.heading",

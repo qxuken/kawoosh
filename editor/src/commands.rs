@@ -6012,9 +6012,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>oo", "themes"),
         ("<leader>of", "fonts"),
         ("<leader>ol", "theme lab"),
-        // The language server's hints and the markdown buffer rendered:
-        // how the text looks, so the look's.
+        // The language server's hints and diagnostics, and the markdown
+        // buffer rendered: how the text looks, so the look's.
         ("<leader>oh", "lsp hints"),
+        ("<leader>od", "lsp diagnostics"),
         ("<leader>om", "markdown toggle"),
         // Soft wrap (wrap.md): the focused pane wrapped or not, and the
         // caret a row on screen — `j` `k` stay a line each, as vim's.

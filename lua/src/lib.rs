@@ -754,6 +754,7 @@ pub enum Msg {
     /// @field load_all? boolean
     /// @field load_max? integer
     /// @field inlay_hints? boolean
+    /// @field diagnostics? boolean
     LspServer {
         language: String,
         def: Setting,
@@ -4219,7 +4220,7 @@ pub fn defines_server(t: &Setting) -> bool {
 /// The keys of `lsp.NAME` that are the server or the shell's rules, and
 /// of `lsp` that are not servers: no plugin's rule may be one, or
 /// `lsp.RULE` would read as one of them.
-const LSP_TAKEN: [&str; 16] = [
+const LSP_TAKEN: [&str; 17] = [
     "cmd",
     "args",
     "roots",
@@ -4232,6 +4233,7 @@ const LSP_TAKEN: [&str; 16] = [
     "load_all",
     "load_max",
     "inlay_hints",
+    "diagnostics",
     "idle_stop_secs",
     "ensure_installed",
     "check_updates",
@@ -6106,9 +6108,10 @@ fn seed(
     // the rules of the server for a
     // buffer (`where` a handle, `0` or nil the current one) or a
     // language (a name): `{ server = NAME, enabled =, load_all =,
-    // load_max =, inlay_hints =, idle_stop_secs = }` with every rule a
+    // load_max =, inlay_hints =, diagnostics =, idle_stop_secs = }` with every rule a
     // plugin declared, each as the settings say it now — `lsp.NAME.RULE`,
-    // else `lsp.RULE`, else its default. `server` is the `lsp.NAME` a rule is set under: a
+    // else `lsp.RULE`, else its default; `enabled` is off under
+    // `lsp.enabled` off too. `server` is the `lsp.NAME` a rule is set under: a
     // `.tsx` buffer's is `typescript`.
     //
     // @class kawoosh.lsp.Rules
@@ -6117,6 +6120,7 @@ fn seed(
     // @field load_all boolean
     // @field load_max integer
     // @field inlay_hints boolean
+    // @field diagnostics boolean
     // @field [string] any a plugin's rule, by its name
     let (pp, dd) = (published.clone(), declared);
     lsp.set(
@@ -6158,9 +6162,11 @@ fn seed(
             let t = lua.create_table()?;
             t.set("server", server.as_str())?;
             let own = |rule: &str| p.settings.get(&format!("lsp.{server}.{rule}"));
+            // `lsp.enabled` off is every server off, whatever its own says.
+            let all_on = p.settings.get("lsp.enabled").and_then(Setting::as_bool) != Some(false);
             t.set(
                 "enabled",
-                own("enabled").and_then(Setting::as_bool).unwrap_or(true),
+                all_on && own("enabled").and_then(Setting::as_bool).unwrap_or(true),
             )?;
             t.set(
                 "load_all",
@@ -6177,6 +6183,15 @@ fn seed(
                 said("inlay_hints")
                     .and_then(Setting::as_bool)
                     .unwrap_or(false),
+            )?;
+            // `lsp.diagnostics` off hides every server's, as `enabled`.
+            let shown = p.settings.get("lsp.diagnostics").and_then(Setting::as_bool) != Some(false);
+            t.set(
+                "diagnostics",
+                shown
+                    && own("diagnostics")
+                        .and_then(Setting::as_bool)
+                        .unwrap_or(true),
             )?;
             t.set(
                 "idle_stop_secs",

@@ -369,6 +369,7 @@ return {
 | `load_all` | send the server every file of its languages in the project, so diagnostics, references and renames cover files you have not opened |
 | `load_max` | the most files `load_all` sends (2000) |
 | `inlay_hints` | inlay hints for this server's languages; unset, `lsp.inlay_hints` decides |
+| `diagnostics` | `false` hides the server's diagnostics, the server running on; `lsp.diagnostics = false` hides every server's |
 | `idle_stop_secs` | seconds the server may hold no open file before it is shut down; unset, `lsp.idle_stop_secs` (300) decides; `0` keeps it running |
 | `cmd` `args` | the program and its arguments, saying the words `init` does (`--tsdk={typescript}`); a change restarts the server |
 | `roots` | the marker files that find the project root |
@@ -386,6 +387,18 @@ kawoosh's source), and `kawoosh.lsp.server(NAME, t)` in
 [Lua](lua.md) takes the same table, the rules aside: `lsp.NAME` over
 either changes what you say and keeps the rest.
 
+`lsp.enabled = false` turns every server off, whatever `lsp.NAME.enabled`
+says: only the grammar's highlighting is left. `:set -lsp.enabled` (or
+`:lsp disable`) does it for the session, `:set +lsp.enabled` turns them
+back on. To keep one file away from its server while the rest of the
+project is served, `:lsp detach` in it.
+
+To keep the servers but not their diagnostics — completion, hover and
+`gd` still answer — `lsp.diagnostics = false`, or `:lsp diagnostics`
+(`<leader>od`) for the session; `:lsp toggle diagnostics` hides one
+server's — eslint's, say, and not typescript's. Shown again, what they
+said comes back at once.
+
 A plugin can add rules of its own with `kawoosh.lsp.rule`
 ([lua](lua.md#language-servers)). They are set the same way, as
 `lsp.NAME.RULE` for one server or `lsp.RULE` for all of them, and `:lsp
@@ -402,7 +415,12 @@ toggle` and `:lsp info` know them.
 | `:lsp update [LANGUAGE]` | every server kawoosh installed, or one, at its manager's latest; restarted once that ends well |
 | `:lsp restart [LANGUAGE]` | restart the language's server, or bare every one running or wanted by an open file; a missing program, or one that refused to start or kept exiting, is tried again |
 | `:lsp logs [LANGUAGE]` | what a server said, its errors included, live: bare the one serving the caret's file, `LANGUAGE` its server in every project, `:lsp logs all` every server's; `:lsp logs clear` forgets it |
-| `:lsp toggle RULE [LANGUAGE]` | flip `enabled`, `load_all`, `inlay_hints` or a plugin's rule for the session |
+| `:lsp toggle RULE [LANGUAGE]` | flip `enabled`, `load_all`, `inlay_hints`, `diagnostics` or a plugin's rule for the session |
+| `:lsp diagnostics` | every server's diagnostics hidden or shown for the session, the servers running on (`lsp.diagnostics`) |
+| `:lsp disable [LANGUAGE]` | every server off for the session (`lsp.enabled`), or the language's (`lsp.NAME.enabled`): stopped and sent nothing; highlighting stays |
+| `:lsp enable [LANGUAGE]` | every server on again, or the language's |
+| `:lsp detach` | this file taken from its servers — its diagnostics and hints gone, nothing sent or asked — until `:lsp attach`; the language's other files stay served |
+| `:lsp attach` | this file sent to its servers again |
 
 ### Keys
 
@@ -419,6 +437,7 @@ toggle` and `:lsp info` know them.
 | `grf` | format the buffer with its formatter ([formatting](#formatting)); in visual mode, the selection |
 | `grs` `grS` | the buffer's symbols, the workspace's, in a picker ([search](search.md#symbols-and-the-outline)) |
 | `<leader>oh` | inlay hints on or off for the session (`:lsp hints`) |
+| `<leader>od` | the servers' diagnostics hidden or shown for the session (`:lsp diagnostics`) |
 | `<leader>ob` | breadcrumbs on or off for the pane (`:breadcrumbs`, [search](search.md#breadcrumbs)) |
 
 The server's own keys sit under `gr`, as in neovim 0.11: press `gr` and
