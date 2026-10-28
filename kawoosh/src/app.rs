@@ -1853,6 +1853,25 @@ impl Kawoosh {
         }
     }
 
+    /// The file `%` names: the focused editor's (its buffer's file, or
+    /// the one a scratch stands for), else the one a plugin's pane says
+    /// it shows (`opts.path`: `:hex`'s, `:image`'s, `:sqlite`'s).
+    pub(crate) fn front_file(&self) -> Option<PathBuf> {
+        match self.focused_view() {
+            Some(v) => self.ed.percent_path(v).ok(),
+            None => self.pane_file(),
+        }
+    }
+
+    /// The file the focused plugin's pane says it shows (`opts.path`).
+    pub(crate) fn pane_file(&self) -> Option<PathBuf> {
+        let focused = self.layout.focused();
+        match self.layout.content(focused) {
+            Some(Content::Lua(name)) => self.scripting.rt.as_ref()?.view_file(&name, focused),
+            _ => None,
+        }
+    }
+
     pub(crate) fn view_of(&self, pane: PaneId) -> Option<ViewId> {
         match self.layout.content(pane) {
             Some(Content::Editor(v)) => Some(v),

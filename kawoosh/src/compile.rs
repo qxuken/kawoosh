@@ -738,7 +738,7 @@ pub struct Locations {
 
 impl Kawoosh {
     /// The run the focused pane shows, in a compile buffer.
-    fn compile_shown(&self) -> Option<&Run> {
+    pub(crate) fn compile_shown(&self) -> Option<&Run> {
         let v = self.focused_view()?;
         self.compile.of(self.ed.views.get(v)?.buffer)
     }
@@ -765,9 +765,15 @@ impl Kawoosh {
             ),
             // In a compile buffer, where its command ran: `<leader>cc`
             // there compiles the same project again.
+            // A plugin's pane on a file (`:hex`): its directory.
             None => match self.compile_shown() {
                 Some(run) => (run.cwd.clone(), None),
-                None => (self.cwd.clone(), None),
+                None => (
+                    self.pane_file()
+                        .and_then(|p| kawoosh_systems::fs::parent(&p))
+                        .unwrap_or_else(|| self.cwd.clone()),
+                    None,
+                ),
             },
         }
     }
@@ -1345,26 +1351,22 @@ impl Kawoosh {
     /// `compile.default` as it will run: its one line as `:compile`
     /// reads it, its list a chain of them.
     pub fn default_line(&self, lines: &[String]) -> Result<Line, String> {
-        self.default_line_at(lines, None)
-    }
-
-    /// [`Self::default_line`] run in `here` ([`Self::compile_line_at`]).
-    fn default_line_at(&self, lines: &[String], here: Option<&Path>) -> Result<Line, String> {
         match lines {
-            [one] => self.compile_line_at(one, here),
+            [one] => self.compile_line_at(one, None),
             _ => self
-                .resolve_steps(lines, &mut Vec::new(), None, here)
+                .resolve_steps(lines, &mut Vec::new(), None, None)
                 .map(Line::Chain),
         }
     }
 
-    /// The file `%` names in a line asked from here: the caret's; in
-    /// `*compile*`, the one its run was asked from.
+    /// The file `%` names in a line asked from here: the caret's, or a
+    /// plugin pane's (`:hex`'s); in `*compile*`, the one its run was
+    /// asked from.
     pub(crate) fn compile_file(&self) -> Option<PathBuf> {
         if let Some(run) = self.compile_shown() {
             return run.file.clone();
         }
-        self.ed.percent_path(self.focused_view()?).ok()
+        self.front_file()
     }
 
     /// Where a `:compile` line runs: a name's `cwd`, else where the
@@ -1539,6 +1541,7 @@ impl Kawoosh {
     fn compile_dir(&self) -> PathBuf {
         self.focused_view()
             .and_then(|v| self.ed.buffer_of(v).path.clone())
+            .or_else(|| self.pane_file())
             .map(|p| {
                 let def = kawoosh_systems::lsp::ServerDef {
                     roots: vec![
@@ -1574,14 +1577,9 @@ impl Kawoosh {
     /// `compile.default` run as a bare `:compile` runs it: its line, or
     /// its list in turn (Decision 22).
     pub fn compile_default_lines(&mut self, lines: &[String]) {
-        self.compile_default_lines_at(lines, None);
-    }
-
-    /// [`Self::compile_default_lines`] run in `here`.
-    fn compile_default_lines_at(&mut self, lines: &[String], here: Option<&Path>) {
         match lines {
-            [one] => self.compile_at(one, here),
-            _ => match self.default_line_at(lines, here) {
+            [one] => self.compile(one),
+            _ => match self.default_line(lines) {
                 Ok(Line::Chain(steps)) => {
                     let by = self.setting_by("compile.default");
                     self.compile_steps(steps, Some(by));
@@ -1592,25 +1590,14 @@ impl Kawoosh {
         }
     }
 
-    /// What a bare `:compile` found ([`Self::bare_compile`]) run — in
-    /// `here` when it says one (`:compile here`): the default's lines
-    /// resolved there, the last line's steps and the files' first run
-    /// there as they are.
-    pub(crate) fn compile_bare(&mut self, bare: Bare, here: Option<&Path>) {
+    /// What a bare `:compile` found ([`Self::bare_compile`]) run.
+    pub(crate) fn compile_bare(&mut self, bare: Bare) {
         match bare {
-            Bare::Default(lines) => self.compile_default_lines_at(&lines, here),
-            Bare::Again(mut steps) => {
-                if let Some(here) = here {
-                    for s in &mut steps {
-                        s.cwd = here.to_path_buf();
-                    }
-                }
-                self.compile_steps(steps, None);
-            }
+            Bare::Default(lines) => self.compile_default_lines(&lines),
+            Bare::Again(steps) => self.compile_steps(steps, None),
             Bare::Deduced(d) => {
                 let from = self.compile_from(&d.file);
-                let cwd = here.map_or(d.cwd, Path::to_path_buf);
-                self.compile_by(&d.cmd, cwd, Some(By::Project));
+                self.compile_by(&d.cmd, d.cwd, Some(By::Project));
                 self.ed.message = format!("{} — from {from} (<leader>cC for the rest)", d.cmd);
             }
             Bare::Nothing => self.ed.message = NOTHING.into(),
@@ -2688,22 +2675,23 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     };
                     return;
                 }
-                k.compile_bare(bare, None);
+                k.compile_bare(bare);
             },
         ),
         // `<leader>c.` — `.` for here, as `<C-w>.` is a terminal here:
-        // the line, or a bare `:compile`'s, run where the pane in front
-        // is rather than where its kind says (Decision 25).
+        // the line run where the pane in front is rather than where its
+        // kind says; bare, the prompt open on it to say which line
+        // (Decision 25, amended).
         cmd(
             Spec::new("compile here")
                 .args(Args::rest(&[ArgKind::Text]))
-                .doc("`:compile [LINE]` run where the pane in front is (`<leader>c.`): the file's directory, the listing's, the shell's, a *compile* buffer's run's"),
+                .doc("`:compile LINE` run where the pane in front is (`<leader>c.`): the file's directory, the listing's, the shell's, a *compile* buffer's run's; bare, the prompt open on `:compile here `"),
             |k, ctx| {
-                let here = k.compile_here_dir();
                 if ctx.args.is_empty() {
-                    let bare = k.bare_compile();
-                    k.compile_bare(bare, Some(&here));
+                    let line = "compile here ";
+                    k.compile_prompt(line, line.len());
                 } else {
+                    let here = k.compile_here_dir();
                     k.compile_at(&ctx.args.join(" "), Some(&here));
                 }
             },

@@ -2448,8 +2448,14 @@ impl Runtime {
     /// (`opts.path`), else its directory (`opts.here`): what the path
     /// copies copy there.
     pub fn view_path(&self, name: &str, pane: u64) -> Option<PathBuf> {
-        self.view_says("_paths", "path", name, pane)
+        self.view_file(name, pane)
             .or_else(|| self.view_here(name, pane))
+    }
+
+    /// The file view `name` says its pane `pane` shows (`opts.path`)
+    /// alone: what `%` names there.
+    pub fn view_file(&self, name: &str, pane: u64) -> Option<PathBuf> {
+        self.view_says("_paths", "path", name, pane)
     }
 
     /// A path view `name`'s function `opt` answers for `pane`, kept by

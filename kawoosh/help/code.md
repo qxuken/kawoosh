@@ -830,16 +830,20 @@ and the empty scratch goes. A map or a
 
 `:compile?` says which it would be.
 
-`%` in a command is the current file, written relative to where the
-command runs.
+`%` in a command is the current file — in a plugin's pane on a file,
+`:hex`'s or `:image`'s, the file it shows — written relative to where
+the command runs. As the command itself it is `./NAME` when it sits
+right there, so `:compile %` on an executable runs it.
 
 A command runs where its kind does — `cargo` at the workspace, a
 `package.json` script at its package, a named command in its `cwd`.
-`<leader>c.` (`:compile here [CMD]`) runs it where the pane in front
-is instead: the file's directory, the listing's, the terminal's, or in
-a `*compile*` buffer where its run ran. Bare, it runs what
-`<leader>cc` would, there. `%` is written from that directory, and a
-command named `here` is still `:compile commands:here`.
+`:compile here CMD` runs it where the pane in front is instead: the
+file's directory, the listing's, the terminal's, or in a `*compile*`
+buffer where its run ran. `<leader>c.` opens the prompt on `:compile
+here ` for you to say which command; paths complete from that
+directory, `%` is written from it, and the run's buffer says it:
+`*compile: CMD in DIR*`. A command named `here` is still `:compile
+commands:here`.
 
 ### Named commands
 

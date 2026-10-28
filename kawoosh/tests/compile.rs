@@ -1346,8 +1346,8 @@ fn texts(d: &Drive) -> Vec<String> {
 
 /// `:compile here` (compile.md Decision 25): the line where the pane in
 /// front is — over where its kind says, a name's `cwd` too, `%` written
-/// from there; bare, a bare `:compile`'s line; in a *compile* buffer,
-/// where its run ran; `<leader>c.` its key.
+/// from there; bare, the prompt open on `:compile here ` to say which;
+/// in a *compile* buffer, where its run ran; `<leader>c.` its key.
 #[cfg(unix)]
 #[test]
 fn compile_here_runs_where_the_pane_in_front_is() {
@@ -1366,13 +1366,19 @@ fn compile_here_runs_where_the_pane_in_front_is() {
         assert!(!keys_in_compile(app), "the keys back in the file's pane");
     };
 
-    // Bare `:compile` runs the default at the workspace; here, beside
-    // the file.
+    // Bare `:compile` runs the default at the workspace; `:compile
+    // here` asks which line, and runs it beside the file.
     ex(&mut d, &mut app, "compile");
     let out = finished(&mut d, &mut app);
     assert!(!out.contains(&format!("{}\n", src.display())), "{out}");
     back(&mut d, &mut app);
+    let before = app.compile.started;
     ex(&mut d, &mut app, "compile here");
+    assert_eq!(app.compile.started, before, "a bare one runs nothing");
+    assert_eq!(prompt(&app), "compile here ");
+    d.keys(&mut app, "pwd");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
     let out = finished(&mut d, &mut app);
     assert!(
         out.contains(&format!("$ pwd\n{}\n", src.display())),
@@ -1402,14 +1408,51 @@ fn compile_here_runs_where_the_pane_in_front_is() {
     assert!(out.contains("$ echo 'a.rs'\na.rs"), "{out}");
     back(&mut d, &mut app);
 
-    // The key.
+    // The key: the prompt, a path from here.
     let before = app.compile.started;
     d.press(&mut app, "<leader>c.");
-    assert!(app.compile.started > before, "<leader>c. compiled");
+    assert_eq!(app.compile.started, before, "<leader>c. asks first");
+    assert_eq!(prompt(&app), "compile here ");
+    d.keys(&mut app, "cat a.");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("rs"), "a.rs beside");
+    tab(&mut d, &mut app);
+    assert_eq!(prompt(&app), "compile here cat a.rs");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
     let out = finished(&mut d, &mut app);
-    assert!(
-        out.contains(&format!("$ pwd\n{}\n", src.display())),
-        "{out}"
-    );
+    assert!(out.contains("$ cat a.rs\none\n"), "{out}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `%` in a plugin's pane on a file (`:hex`) is that file: `:compile %`
+/// runs it, from the project — `:compile here %` beside it, `./` before
+/// it so the shell runs the file rather than looking on the PATH — and
+/// `:!` has it too.
+#[cfg(unix)]
+#[test]
+fn percent_in_the_hex_pane_is_its_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = project("hex", "return {}");
+    let tool = dir.join("sub/tool.sh");
+    std::fs::write(&tool, "#!/bin/sh\necho ran \"$0\"\n").unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut d = Drive::new(1200.0, 600.0);
+    let mut app = open(&mut d, &dir);
+    ex(&mut d, &mut app, "hex sub/tool.sh");
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    assert!(app.focused_view().is_none(), "the keys in the hex pane");
+
+    ex(&mut d, &mut app, "compile %");
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("$ 'sub/tool.sh'\nran sub/tool.sh\n"), "{out}");
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    assert!(app.focused_view().is_none(), "back in the hex pane");
+
+    ex(&mut d, &mut app, "compile here %");
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("$ './tool.sh'\nran ./tool.sh\n"), "{out}");
     std::fs::remove_dir_all(&dir).ok();
 }

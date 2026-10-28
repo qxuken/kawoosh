@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use kawoosh_doc::Buffer;
 use kawoosh_editor::keymap::{LEADER, parse_notation, stroke_of};
-use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec};
+use kawoosh_editor::{ArgKind, Args, Editor, KeyStroke, Lookup, Mode, Selection, Spec};
 use kawoosh_systems::io::PtyOutput;
 use kawoosh_term::{TermSize, Terminal, encode_key, encode_super_key};
 use kui_native::KeyPress;
@@ -1616,7 +1616,8 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     k.ed.message = "shell: what to run".into();
                     return;
                 }
-                let cmd = match k.ed.expand_percent(ctx.view, &line) {
+                let file = k.front_file();
+                let cmd = match Editor::expand_percent_from(file.as_deref(), &line, None) {
                     Ok(c) => c,
                     Err(e) => {
                         k.ed.message = e;
