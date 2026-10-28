@@ -22,7 +22,8 @@ arguments, 2026-10-17 (Decision 23), and Decision 16's `nu` asked
 on Decision 23's job the same day; the packages walked on a job, a
 shell line's program from the PATH, 2026-10-20 (Decisions 9 and 23
 amended); every run stopped at quit 2026-10-21 (Decision 24);
-`:compile here` 2026-10-23 (Decision 25). The calls
+`:compile here` 2026-10-23 (Decision 25), its bare form a prompt and
+`%` a plugin pane's file 2026-10-29 (Decision 25 amended). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -1203,9 +1204,36 @@ NAME `. The run is a run like any (Decision 11): its buffer
 command and that directory, so `r` and a bare `:compile` run it there
 again.
 
+*Amended 2026-10-29, asked:* "`<Leader>c.` should open command line
+with prefilled `:compile here`", and "I don't understand what is
+`:compile here`… it feels like something completely different". The
+bare form was the confusing part: the default, or the last line, moved
+to the file's directory — `cargo check` there checks the workspace all
+the same, a `nu scripts/verify.nu` there fails — so it read as a
+second `:compile` that sometimes broke. **Bare, `:compile here` opens
+the prompt on `:compile here `** (as a bare `:rename` opens it on the
+name), and `<leader>c.` is that: the line is always the user's, the
+directory always the pane's. The prompt's paths complete from there
+too, where they came from where the line's kind would run it.
+
+Asked with it: "`:c %` in hex said no file". **`%` is the file a
+plugin's pane says it shows** (`opts.path`: `:hex`'s, `:image`'s,
+`:sqlite`'s, `:du`'s entry under the cursor) when no editor pane is in
+front — at the prompt, in `:compile` and `:!` — and a `:compile`
+started there reads its project from that file's directory. `:!` in a
+terminal or a plugin pane named the file of whichever editor view was
+left over; it is no file now, as in a listing. And **`%` as the
+command's program is `./NAME`** when it is written as a name alone
+(from its own directory): `:compile here %` on an executable runs the
+file, where the shell looked the name up on the PATH. As an argument,
+or under a directory (`sub/tool.sh`), it is written as before.
+
 `.` is `<C-w>.`'s: where the pane in front is. `here` is a word of
 `:compile` now, as `pick`, `edit`, `again` and `kill` are: a
 `compile.commands.here` is `:compile commands:here` (Decision 22).
+
+Beaten (2026-10-29): a key of its own for the prompt, the bare
+command kept — two spellings of "here" that run different lines.
 
 Beaten: deducing again from the pane's directory and running what its
 files offer first — the nearest `Cargo.toml` above a file is the

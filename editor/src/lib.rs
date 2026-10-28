@@ -2185,6 +2185,12 @@ impl Editor {
             };
             let p = match base.and_then(|b| path.strip_prefix(b).ok()) {
                 Some(rel) if rel.as_os_str().is_empty() => ".".to_string(),
+                // The program of a command (`% --help`, `make && %`): a
+                // bare name the shell would look for on the PATH, so it
+                // is the file beside, `./NAME`.
+                Some(rel) if rel.components().count() == 1 && at_program(&out) => {
+                    format!("./{}", rel.display())
+                }
                 Some(rel) => rel.display().to_string(),
                 None => path.display().to_string(),
             };
@@ -4376,6 +4382,13 @@ fn times(a: Option<usize>, b: Option<usize>) -> Option<usize> {
     }
 }
 
+/// Whether a shell line goes on from `before` with its program: at the
+/// start, or after `|`, `;`, `&&`, `||`, `(`.
+fn at_program(before: &str) -> bool {
+    let b = before.trim_end();
+    b.is_empty() || b.ends_with(['|', ';', '&', '('])
+}
+
 fn commands_op_range(
     buf: &Buffer,
     s: &Selection,
@@ -4387,8 +4400,29 @@ fn commands_op_range(
 
 #[cfg(test)]
 mod tests {
-    use super::path_form;
+    use super::{Editor, path_form};
     use std::path::{Path, PathBuf};
+
+    /// `%` as a command's program, written from its own directory, is
+    /// the file beside (`./tool`), not a name looked for on the PATH;
+    /// as an argument, or under a directory, as it is.
+    #[test]
+    fn percent_as_the_program_is_the_file_beside() {
+        let file = Path::new("/p/bin/tool");
+        let e = |line: &str, base: &str| {
+            Editor::expand_percent_from(Some(file), line, Some(Path::new(base))).unwrap()
+        };
+        assert_eq!(e("%", "/p/bin"), "'./tool'");
+        assert_eq!(e("% --help", "/p/bin"), "'./tool' --help");
+        assert_eq!(e("make && %", "/p/bin"), "make && './tool'");
+        assert_eq!(e("echo % | %", "/p/bin"), "echo 'tool' | './tool'");
+        assert_eq!(e("%", "/p"), "'bin/tool'");
+        assert_eq!(e("%:h", "/p/bin"), "'.'");
+        assert_eq!(
+            Editor::expand_percent_from(Some(file), "%", None).unwrap(),
+            "'/p/bin/tool'"
+        );
+    }
 
     #[test]
     fn path_forms_are_vims() {

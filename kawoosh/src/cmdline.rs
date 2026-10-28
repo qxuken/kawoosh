@@ -243,9 +243,13 @@ impl Kawoosh {
             );
         }
         // `:compile [here]`: a line of its own (compile.md Decisions 7
-        // and 23).
+        // and 23), its paths from where it will run.
         if matches!(inv.name.as_str(), "compile" | "compile here") {
-            return self.compile_candidates(line, first, index, &inv.args);
+            let here = (inv.name == "compile here").then(|| match self.compile_shown() {
+                Some(run) => run.cwd.clone(),
+                None => self.here_dir(),
+            });
+            return self.compile_candidates(line, first, index, &inv.args, here);
         }
         // `:terminal shell`'s NAME: a shell on the PATH, or a path to one.
         if inv.name == "terminal shell" && index == 0 {
@@ -372,15 +376,16 @@ impl Kawoosh {
     /// paths for a word that reads as one. After it: a nushell
     /// command's parameter (Decision 16), what the line's program's
     /// completer says unless the line is a name's, paths from where the
-    /// line runs (Decision 7) — after the picker's lines that go on
-    /// from what is typed, when there are any, each candidate then the
-    /// line whole.
+    /// line runs (Decision 7), or from `here` (`:compile here`, Decision
+    /// 25) — after the picker's lines that go on from what is typed,
+    /// when there are any, each candidate then the line whole.
     fn compile_candidates(
         &mut self,
         line: &str,
         first: usize,
         index: usize,
         args: &[String],
+        here: Option<PathBuf>,
     ) -> Found {
         let start = token_start(line);
         let token = &line[start..];
@@ -416,13 +421,13 @@ impl Kawoosh {
                 );
             }
             if looks_like_path(token) {
-                let dir = self.compile_dir_of("");
+                let dir = here.unwrap_or_else(|| self.compile_dir_of(""));
                 self.path_found(&mut found, token, &dir, self.compile_file().as_deref());
             }
             return found;
         }
         found.extend(self.compile_arg_candidates(args, token));
-        let dir = self.compile_dir_of(&args.join(" "));
+        let dir = here.unwrap_or_else(|| self.compile_dir_of(&args.join(" ")));
         let word = args.first().map(String::as_str).unwrap_or_default();
         if !word.starts_with("commands:") && !names.iter().any(|n| n == word) {
             for (c, about) in self.shell_arg_candidates(&line[first..start], token, &dir) {
@@ -470,9 +475,10 @@ impl Kawoosh {
         found.extend(self.path_candidates_in(token, dir, file));
     }
 
-    /// The file `%` names at the prompt: the caret's.
+    /// The file `%` names at the prompt: the caret's, or a plugin
+    /// pane's.
     fn percent_file(&self) -> Option<PathBuf> {
-        self.ed.percent_path(self.focused_view()?).ok()
+        self.front_file()
     }
 
     /// What a setting's value may be, narrowed by `typed`: the value it
