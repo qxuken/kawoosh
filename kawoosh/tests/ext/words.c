@@ -281,10 +281,10 @@ void kw_ext_free(void *user) {
 
 uint32_t kui_ext_abi(void) { return KUI_ABI_VERSION; }
 
-static const KuiStr SLOTS[] = {{(const uint8_t *)"*", 1}};
-const KuiStr *kui_ext_slots(size_t *count) {
+static const KuiStr COMPONENTS[] = {{(const uint8_t *)"*", 1}};
+const KuiStr *kui_ext_components(size_t *count) {
     *count = 1;
-    return SLOTS;
+    return COMPONENTS;
 }
 
 void *kui_ext_init(void) { return NULL; }

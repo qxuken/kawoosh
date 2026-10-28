@@ -2223,7 +2223,7 @@ dependencies = [
  "image-webp",
  "moxcms",
  "num-traits",
- "png",
+ "png 0.18.1",
  "tiff",
  "zune-core",
  "zune-jpeg",
@@ -2238,6 +2238,12 @@ dependencies = [
  "byteorder-lite",
  "quick-error",
 ]
+
+[[package]]
+name = "imagesize"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 
 [[package]]
 name = "imagesize"
@@ -2414,7 +2420,7 @@ dependencies = [
  "libc",
  "log",
  "mlua",
- "png",
+ "png 0.18.1",
  "regex",
  "rusqlite",
  "serde",
@@ -2534,7 +2540,7 @@ dependencies = [
  "notify",
  "portable-pty",
  "regex",
- "resvg",
+ "resvg 0.48.1",
  "rusqlite",
  "russh",
  "serde",
@@ -2639,11 +2645,16 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.67"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fcc0e230573257aa11d3ca75eba7e1dd6e8f1aacdd2cfd4269f18ba74bd809b"
 dependencies = [
  "cosmic-text",
  "kui-derive",
+ "kui-trace",
+ "libc",
  "naga",
+ "resvg 0.46.0",
  "rustc-hash 2.1.3",
  "slotmap",
  "smallvec",
@@ -2651,11 +2662,14 @@ dependencies = [
  "unicode-linebreak",
  "unicode-script",
  "unicode-segmentation",
+ "usvg 0.46.0",
 ]
 
 [[package]]
 name = "kui-derive"
-version = "0.1.0-alpha.67"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7d011169ad6a7af82a6eeab325a6d9c5705321ec536eab9ae3ae11477a3839a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2664,24 +2678,30 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.67"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae0dbfd7f79e6905b675e18f10de74062b18cf2aa5ffe9d56fb7570b5fde8cd1"
 dependencies = [
  "kui-core",
+ "kui-lua",
  "kui-native",
 ]
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.67"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ceabb3b5005e67c903191e1e109abdc41f9c7463161b53d773e2940abe2fc4b"
 dependencies = [
  "kui-core",
- "kui-ffi",
  "mlua",
 ]
 
 [[package]]
 name = "kui-native"
-version = "0.1.0-alpha.67"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d62733f8b95d392221a4bf38b83c775ca4e121c9891d1385682e3c26a35e696"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2697,7 +2717,7 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
  "objc2-quartz-core 0.3.2",
- "png",
+ "png 0.18.1",
  "pollster 1.0.1",
  "rfd",
  "wayland-backend",
@@ -2710,8 +2730,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kui-trace"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72bdae0092151a3f264e09f0a0003e2b9e60df2e8bc9817a2d7e75d6f1580802"
+
+[[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.67"
+version = "0.1.0-alpha.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d214702b36ba50be6f2d031d15e354fa1f081765f2561e0a624a9c9e6f82d3a"
 dependencies = [
  "bytemuck",
  "kui-core",
@@ -3903,6 +3931,19 @@ dependencies = [
 
 [[package]]
 name = "png"
+version = "0.17.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
+dependencies = [
+ "bitflags 1.3.2",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide 0.8.9",
+]
+
+[[package]]
+name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
@@ -4266,6 +4307,20 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "resvg"
+version = "0.46.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b563218631706d614e23059436526d005b50ab5f2d506b55a17eb65c5eb83419"
+dependencies = [
+ "log",
+ "pico-args",
+ "rgb",
+ "svgtypes",
+ "tiny-skia 0.11.4",
+ "usvg 0.46.0",
+]
+
+[[package]]
+name = "resvg"
 version = "0.48.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67e3803f97b999e80cbf7c6ecdd07a8102204d92e1633cf48783720c521196bd"
@@ -4278,7 +4333,7 @@ dependencies = [
  "rgb",
  "svgtypes",
  "tiny-skia 0.12.0",
- "usvg",
+ "usvg 0.48.1",
  "zune-jpeg",
 ]
 
@@ -5247,7 +5302,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.61.2",
@@ -5337,6 +5392,7 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
+ "png 0.17.16",
  "tiny-skia-path 0.11.4",
 ]
 
@@ -5351,7 +5407,7 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
- "png",
+ "png 0.18.1",
  "tiny-skia-path 0.12.0",
 ]
 
@@ -5641,8 +5697,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-md"
-version = "0.5.3"
-source = "git+https://github.com/qxuken/tree-sitter-markdown?rev=7f954148e874b5a6a70134d39ad4a759c3741074#7f954148e874b5a6a70134d39ad4a759c3741074"
+version = "0.5.4"
+source = "git+https://github.com/qxuken/tree-sitter-markdown?rev=af36b1d2144ed50b57a5a8921f389e62e060ac9d#af36b1d2144ed50b57a5a8921f389e62e060ac9d"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -5832,6 +5888,28 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "usvg"
+version = "0.46.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e419dff010bb12512b0ae9e3d2f318dfbdf0167fde7eb05465134d4e8756076f"
+dependencies = [
+ "base64 0.22.1",
+ "data-url",
+ "flate2",
+ "imagesize 0.14.0",
+ "kurbo",
+ "log",
+ "pico-args",
+ "roxmltree 0.21.1",
+ "simplecss",
+ "siphasher",
+ "strict-num",
+ "svgtypes",
+ "tiny-skia-path 0.11.4",
+ "xmlwriter",
+]
+
+[[package]]
+name = "usvg"
 version = "0.48.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "977d0a4abdef933f424a99fe09f95576e089b90aebc6f016a3bc813762493e91"
@@ -5841,7 +5919,7 @@ dependencies = [
  "flate2",
  "fontdb 0.24.0",
  "harfrust 0.12.0",
- "imagesize",
+ "imagesize 0.15.0",
  "kurbo",
  "log",
  "pico-args",

@@ -988,9 +988,11 @@ impl Kawoosh {
         let Some(t) = self.terms.map.get(&id) else {
             return false;
         };
-        let at = crate::perf::span_start();
-        let front = t.foreground();
-        crate::perf::span("term foreground", at);
+        // Timed where it runs, under the status line's span (kui F215).
+        let front = {
+            let _span = kui_native::perf::span("term foreground");
+            t.foreground()
+        };
         let pgid = front.as_ref().map(|(g, _)| *g);
         if let Some((set_for, on)) = self.terms.raw.get(&id)
             && *set_for == pgid
@@ -1155,11 +1157,16 @@ impl Kawoosh {
             }
             return;
         }
+        // A Mac's Option that composes types what it composed (kui F195),
+        // as a terminal whose Option is not Meta sends it: `–` for ⌥-,
+        // not ESC and a dash. An Option `keys.option_as_alt` names is
+        // Meta, and its press carries no text.
+        let meta = stroke.alt && stroke.text.is_none();
         if let Some(bytes) = encode_key(
             &stroke.code,
             stroke.text.as_deref(),
             stroke.ctrl,
-            stroke.alt,
+            meta,
             stroke.shift,
             t.app_cursor_keys(),
         ) {

@@ -263,106 +263,79 @@ fn the_block_caret_is_solid_and_only_the_bar_arms_the_blink_clock() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// `:perf` is kui's Perf tab (ADR 0058), and kawoosh's systems are on
+/// its recording: `view`'s drains one after another, each pane by its
+/// kind and its parts under it, the status line's — and, as gauges,
+/// what only kawoosh reads: the process's memory, the focused buffer.
+/// `:syntax_tree` still toggles against its own showing, and a second
+/// `:perf` closes the panel.
 #[test]
-fn perf_is_a_tab_of_readings() {
+fn perf_is_kuis_tab_with_kawooshs_spans_and_gauges() {
     let mut app = Kawoosh::new("t", DOC);
     let mut d = Drive::new(900.0, 600.0);
     d.frame(&mut app);
     d.keys(&mut app, ":perf");
     d.key(&mut app, "enter", KeyMods::default());
-    d.frame(&mut app);
-    d.frame(&mut app);
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
     assert!(app.devtools && d.core.devtools());
     assert_eq!(d.core.devtools_current_tab(), "perf");
     assert_eq!(app.ed.message, "perf on");
-    let texts: Vec<String> = d
-        .core
-        .nodes()
-        .iter()
-        .filter_map(|n| n.text.clone())
-        .collect();
-    let has = |s: &str| texts.iter().any(|t| t.contains(s));
-    // The three sections, a phase, the process's footprint — a reading
-    // a row, the name beside its value — the buffer.
-    assert!(has("frame · view"), "{texts:?}");
-    assert!(has("rows") && has("view"), "{texts:?}");
-    let footprint = texts
-        .iter()
-        .position(|t| t == "footprint")
-        .expect("a footprint row");
-    let value = &texts[footprint + 1];
-    assert!(value.contains("MB") || value.contains("GB"), "{value}");
-    assert!(has("resident"), "{texts:?}");
-    assert!(has("focused") && has("t"), "{texts:?}");
-    assert!(has("lines") && has("pieces"), "{texts:?}");
-    // The other tab still toggles against its own showing: `:syntax_tree`
-    // opens on the tree, and a second `:perf` closes the panel.
+    assert!(d.core.perf_measuring(), "kui measures while its tab shows");
+    let spans: Vec<String> = d.frame_spans().into_iter().map(|(n, ..)| n).collect();
+    for name in [
+        "io",
+        "io drain",
+        "settings",
+        "lua",
+        "window",
+        "title bar",
+        "pane: editor",
+        "editor: rows",
+        "status line",
+        "status: draw",
+    ] {
+        assert!(spans.iter().any(|s| s == name), "{name}: {spans:?}");
+    }
+    let trace = d.core.perf_trace_read();
+    let gauge = |name: &str| {
+        trace
+            .timeline()
+            .gauges
+            .iter()
+            .rev()
+            .find(|g| trace.name(g.name) == name)
+            .map(|g| g.value)
+    };
+    assert_eq!(gauge("focused lines"), Some(DOC.lines().count() as f64));
+    assert!(gauge("buffers").is_some_and(|n| n >= 1.0));
+    if cfg!(any(target_os = "macos", target_os = "linux", windows)) {
+        assert!(gauge("memory footprint MB").is_some_and(|mb| mb > 1.0));
+    }
     d.keys(&mut app, ":syntax_tree");
     d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
     d.frame(&mut app);
     assert_eq!(d.core.devtools_current_tab(), "syntax");
     d.keys(&mut app, ":perf");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
-    assert_eq!(d.core.devtools_current_tab(), "perf");
     d.frame(&mut app);
-    d.keys(&mut app, ":perf");
+    assert_eq!(d.core.devtools_current_tab(), "perf");
+    d.keys(&mut app, ":frames");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
-    assert!(!app.devtools);
+    assert!(!app.devtools, "`:frames` is `:perf`'s other name");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
-/// A pane named at length — an agent's terminal titles itself with
-/// its whole task — is cut in the Perf tab's tables, with the name
-/// whole on hover: whole, the name column took the width and the
-/// numbers beside it went out of the panel (reported 2026-10-14).
+/// Nothing is measured unless kui is: closed, no span, no clock read
+/// for the plugins; open, each plugin call is a span where it ran, nested
+/// in the span it ran under (kui F215), and why a Lua pane ran rather
+/// than being replayed is a note (F216); closed again, nothing (F211).
 #[test]
-fn a_long_pane_name_is_cut_in_the_perf_tab() {
-    let long = format!(
-        "agent {}",
-        "investigating the status line's spikes ".repeat(6)
-    );
-    let mut app = Kawoosh::new(&long, DOC);
-    let mut d = Drive::new(900.0, 600.0);
-    d.frame(&mut app);
-    d.keys(&mut app, ":perf");
-    d.key(&mut app, "enter", KeyMods::default());
-    for _ in 0..4 {
-        d.frame(&mut app);
-    }
-    let nodes = d.core.nodes();
-    let with = |pred: &dyn Fn(&str) -> bool| -> Vec<kui_native::Rect> {
-        nodes
-            .iter()
-            .filter(|n| n.text.as_deref().is_some_and(pred))
-            .map(|n| n.rect)
-            .collect()
-    };
-    // In the panel: from its first caption's left edge (the pane's own
-    // title bar has the name too).
-    let panel = with(&|t| t.starts_with("frame · view"))[0];
-    let names: Vec<_> = with(&|t| t.contains("investigating the status line"))
-        .into_iter()
-        .filter(|r| r.x >= panel.x - 1.0)
-        .collect();
-    assert!(
-        names.len() >= 2,
-        "the pane's row and the focused buffer: {names:?}"
-    );
-    for r in &names {
-        assert!(r.w <= 900.0 * 0.5, "cut: {r:?}");
-    }
-    for h in with(&|t| t == "worst" || t == "total") {
-        assert!(h.x + h.w <= 900.0, "the numbers in the panel: {h:?}");
-    }
-}
-
-/// The Perf and Frames tabs measure only while on show: closed, no
-/// phase is timed, no plugin, no frame ledgered, kui's trace off.
-/// Open, Perf breaks the frame down by system and by plugin.
-#[test]
-fn perf_and_frames_measure_only_while_on_show() {
+fn nothing_is_measured_unless_kui_is() {
     let mut app = Kawoosh::new("t", DOC);
     let ext = app.attach_lua().unwrap();
     let mut d = Drive::new(1200.0, 900.0);
@@ -377,71 +350,41 @@ fn perf_and_frames_measure_only_while_on_show() {
     for _ in 0..4 {
         d.frame(&mut app);
     }
-    assert!(!app.perf.on() && !app.frames.on());
-    assert!(!d.core.frame_trace(), "kui's trace is off too");
-    assert!(app.frames.ring.is_empty(), "no frame ledgered");
+    assert!(!d.core.perf_measuring());
+    assert!(d.frame_spans().is_empty(), "no span recorded");
 
     run(&mut d, &mut app, ":perf");
-    assert!(app.perf.on());
-    assert!(!app.frames.on(), "the other tab's ledger stays off");
-    let texts: Vec<String> = d
-        .core
-        .nodes()
-        .iter()
-        .filter_map(|n| n.text.clone())
-        .collect();
-    let has = |s: &str| texts.iter().any(|t| t == s);
-    assert!(
-        texts.iter().any(|t| t.starts_with("systems · ms")),
-        "{texts:?}"
-    );
-    assert!(
-        texts.iter().any(|t| t.starts_with("plugins · ms")),
-        "{texts:?}"
-    );
-    // Each pane by the name its title bar has: the one slow pane of
-    // several is found.
-    assert!(
-        texts.iter().any(|t| t.starts_with("panes · ms")),
-        "{texts:?}"
-    );
-    assert!(
-        texts.iter().any(|t| t.starts_with("editor · ")),
-        "{texts:?}"
-    );
-    // And under each, where its draw went.
-    assert!(
-        has("  title bar") && has("  rows") && has("  scroll"),
-        "{texts:?}"
-    );
-    assert!(
-        has("panes") && has("lua publish") && has("status line"),
-        "{texts:?}"
-    );
-    // What a settings change sets off, each part its own lap.
-    assert!(
-        has("settings") && has("cwd") && has("editorconfig") && has("formatters"),
-        "{texts:?}"
-    );
-    // The status line's modules are the bundled `status` plugin's,
-    // asked every frame.
-    assert!(has("status"), "{texts:?}");
-    let over = drive::overflows(&d);
-    assert!(over.is_empty(), "{over:?}");
-
-    run(&mut d, &mut app, ":frames");
-    assert!(app.frames.on() && d.core.frame_trace());
-    assert!(!app.perf.on(), "Perf is closed under Frames");
-    assert!(!app.frames.ring.is_empty());
-
-    run(&mut d, &mut app, ":frames");
-    assert!(!app.devtools);
-    assert!(!app.perf.on() && !app.frames.on() && !d.core.frame_trace());
-    let kept = app.frames.ring.len();
+    assert!(d.core.perf_measuring());
+    // A Lua pane beside, its view timed inside kui's fill.
+    run(&mut d, &mut app, ":themes");
     for _ in 0..4 {
         d.frame(&mut app);
     }
-    assert_eq!(app.frames.ring.len(), kept, "closed, no frame is kept");
+    let trace = d.core.perf_trace_read();
+    let tl = trace.timeline();
+    let named = |pre: &str| tl.spans.iter().any(|s| trace.name(s.name).starts_with(pre));
+    assert!(named("plugin "), "the plugins' time");
+    assert!(
+        tl.spans
+            .iter()
+            .filter(|s| trace.name(s.name).starts_with("plugin "))
+            .all(|s| s.parent != 0),
+        "each plugin call nested where it ran"
+    );
+    assert!(named("pane: lua "), "a Lua pane's span");
+    assert!(named("view: "), "its view's own function");
+    assert!(
+        tl.notes.iter().any(|(_, n)| n.starts_with("themes@")),
+        "why the themes pane ran: {:?}",
+        tl.notes
+    );
+
+    run(&mut d, &mut app, ":perf");
+    assert!(!app.devtools);
+    assert!(
+        !d.core.perf_measuring(),
+        "closed on its Perf tab, kui stops"
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

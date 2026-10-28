@@ -1,5 +1,5 @@
 //! Milestone 7: the Lua API — commands and keymaps from a config, a Lua
-//! view in a pane through a kui slot with its events routed back, the
+//! view in a pane through a kui component with its events routed back, the
 //! dir file manager, compile mode.
 
 mod drive;
@@ -4849,7 +4849,7 @@ fn a_listing_shows_its_entry_in_the_file_manager() {
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
     d.frame(&mut app);
-    let manager = kawoosh::reveal::manager();
+    let manager = kawoosh::links::file_manager();
     let shown = |p: &std::path::Path| kawoosh_systems::fs::abbreviate_home(p);
 
     ex(&mut d, &mut app, "dir reveal");

@@ -1180,13 +1180,13 @@ pub fn gutter_row(
 }
 
 /// A float hung off a row at `x`, `y` — a caret, the cell past a
-/// wrapped row's end, a sign — cut where the pane cuts the row. A float
-/// escapes its ancestors' clips unless it says so, and a row stacked up
+/// wrapped row's end, a sign — cut where the pane cuts the row, as every
+/// float anchored to its parent is since kui ADR 0074: a row stacked up
 /// past the pane's top (a rendered pane's rows above the caret's) or
-/// scrolled under its edge painted its floats there all the same: a
-/// selection's ends over the title bars (2026-10-22).
+/// scrolled under its edge painted its floats there before (a
+/// selection's ends over the title bars, 2026-10-22).
 fn hung(x: f32, y: f32) -> FloatConfig {
-    FloatConfig::parent().offset(x, y).clipped()
+    FloatConfig::parent().offset(x, y)
 }
 
 /// The bar caret: a 2 px float hung off the row at `x`, one pixel to
@@ -1653,7 +1653,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     };
                     ui.with_keyed(
                         "text",
-                        spec.height(Sizing::Fit).min_height(Min::FIT),
+                        spec.height(Sizing::Fit)
+                            .min_height(Min::FIT)
+                            .on_layout(crate::msg::Msg::MarkdownRow),
                         |ui| {
                             text_key.set(Some(ui.child_key_indexed(0)));
                             ui.rich_text(&spans, base)

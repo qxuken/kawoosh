@@ -51,12 +51,12 @@
  *           kw_map("native", kw_strn(ns.ptr, ns.len), NULL));
  *
  * and define kui's seven (kui_ext_abi returning KUI_ABI_VERSION,
- * kui_ext_slots answering { "*" }, kui_ext_view, kui_ext_on_event and
- * the rest). `:view_open panel`, or kw_call("view_open", ["panel"]),
- * puts it in a pane; each pane is the slot NAMESPACE/panel@PANE, which
- * your kui_ext_view fills with kui_open / kui_text / kui_close, reading
- * kui_slot_params for `pane`, `focused`, `width`, `height`, `title_h`
- * and kui_theme for the colours. Clicks on your own nodes come to
+ * kui_ext_components answering { "*" }, kui_ext_view, kui_ext_on_event
+ * and the rest). `:view_open panel`, or kw_call("view_open", ["panel"]),
+ * puts it in a pane; each pane is the component NAMESPACE/panel@PANE,
+ * which your kui_ext_view draws with kui_open / kui_text / kui_close,
+ * reading kui_instance_params for `pane`, `focused`, `width`, `height`,
+ * `title_h` and kui_theme for the colours. Clicks on your own nodes come to
  * kui_ext_on_event; keys are kawoosh maps with `view = "panel"`,
  * registered through kw_call("map", ...). Your kui_ext_init runs on the
  * first frame after kw_ext_init, with no KwCtx and a state of its own:

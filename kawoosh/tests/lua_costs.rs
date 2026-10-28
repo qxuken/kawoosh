@@ -9,9 +9,9 @@
 //!
 //! or one case by name (`… -- --ignored --nocapture vcs_statusline`).
 //! Each case prints wall-clock numbers for the frames and keys it
-//! drives, then the same work again with the Perf tab on show, whose
-//! plugin table (`kawoosh_lua`'s profiler, `lua/src/prof.rs`) says
-//! what of it was Lua's, by plugin. The second pass draws the devtools
+//! drives, then the same work again with kui's Perf tab on show, whose
+//! recording (kui ADR 0058) holds the plugins' time — `kawoosh_lua`'s
+//! profiler, `lua/src/prof.rs` — and says what of it was Lua's. The second pass draws the devtools
 //! panel too, so its wall clock is not the first's; the first pass is
 //! the one to read for "what a frame costs".
 //!
@@ -178,7 +178,7 @@ fn boot(app: &mut Kawoosh, w: f32, h: f32) -> Drive {
     d
 }
 
-/// The Perf tab on show: measuring from the next frame.
+/// kui's Perf tab on show: measuring from the next frame.
 fn perf_on(d: &mut Drive, app: &mut Kawoosh) {
     ex(d, app, "perf");
     d.frame(app);
@@ -198,53 +198,41 @@ fn perf_off(d: &mut Drive, app: &mut Kawoosh) {
     d.frame(app);
 }
 
-/// The Perf tab's readings as drawn: the `lua` and `view` phases' avg
-/// and worst, and the plugins' table. The tab builds them at most every
-/// 250 ms, so it waits that out and draws one frame more (counted in
-/// the window).
+/// What kui's recording holds since the Perf tab came up (kui ADR
+/// 0058): the frames, the `lua` drains' and the panes' spans, and the
+/// plugins' time (`plugin NAME`, `kawoosh_lua`'s profiler) — calls,
+/// average a frame, worst and total, the most total first.
 fn perf_read(d: &mut Drive, app: &mut Kawoosh) -> String {
-    std::thread::sleep(Duration::from_millis(270));
     d.frame(app);
-    let t = texts(d);
-    let mut out = String::new();
-    // The phases: `frame · view, ms, over N frames`, then a header of 4,
-    // then rows of name, last, avg, worst.
-    if let Some(i) = t.iter().position(|s| s.starts_with("frame · view")) {
-        out.push_str(&format!("  perf tab: {}\n", t[i]));
-        let mut j = i + 5;
-        while j + 3 < t.len() && !t[j].starts_with("A frame drawn") {
-            let name = &t[j];
-            if name == "lua" || name == "view" || name == "rows" || name == "chrome" {
-                out.push_str(&format!(
-                    "    phase {name:<8} avg {:>8} worst {:>8} ms\n",
-                    t[j + 2],
-                    t[j + 3]
-                ));
-            }
-            j += 4;
+    let trace = d.core.perf_trace_read();
+    let tl = trace.timeline();
+    let frames = tl.frames.len().max(1) as f64;
+    let stats = kui_native::kui_trace::analysis::by_span(&tl, &tl.spans);
+    let ms = |us: u64| us as f64 / 1e3;
+    let mut out = format!("  recording: {} frames\n", tl.frames.len());
+    let row = |out: &mut String, st: &kui_native::kui_trace::analysis::SpanStat| {
+        out.push_str(&format!(
+            "    {:<24} {:>7} calls  avg {:>8.3}  worst {:>8.3}  total {:>9.2} ms\n",
+            trace.name(st.name),
+            st.calls,
+            ms(st.total) / frames,
+            ms(st.worst),
+            ms(st.total)
+        ));
+    };
+    for st in &stats {
+        let name = trace.name(st.name);
+        if name == "lua" || name == "build" || name.starts_with("pane: ") {
+            row(&mut out, st);
         }
-    } else {
-        out.push_str("  perf tab: no phases drawn\n");
     }
-    if let Some(i) = t.iter().position(|s| s.starts_with("plugins · ms")) {
-        out.push_str(&format!("  {}\n", t[i]));
-        out.push_str("    plugin            avg ms/frame   worst ms   total ms   calls\n");
-        let mut j = i + 6;
-        let mut shown = 0;
-        while j + 4 < t.len() && !t[j].starts_with("Lua's time") && shown < 6 {
-            out.push_str(&format!(
-                "    {:<16} {:>12} {:>10} {:>10} {:>7}\n",
-                t[j],
-                t[j + 1],
-                t[j + 2],
-                t[j + 3],
-                t[j + 4]
-            ));
-            j += 5;
-            shown += 1;
-        }
-    } else {
-        out.push_str("  perf tab: no plugins table drawn\n");
+    out.push_str("  plugins:\n");
+    for st in stats
+        .iter()
+        .filter(|st| trace.name(st.name).starts_with("plugin "))
+        .take(6)
+    {
+        row(&mut out, st);
     }
     out
 }
@@ -390,20 +378,21 @@ struct Laps {
 }
 
 impl Laps {
-    fn add(&mut self, app: &Kawoosh) {
-        let Some((wall, cpu)) = app.perf.last_lap("status line") else {
+    fn add(&mut self, d: &Drive) {
+        let spans = d.frame_spans();
+        let span = |name: &str| spans.iter().find(|(n, ..)| n == name);
+        let Some((_, wall, cpu)) = span("status line") else {
             return;
         };
-        self.wall.push(wall as f64);
-        self.cpu.push(cpu.unwrap_or(0.0) as f64);
+        self.wall.push(*wall);
+        self.cpu.push(cpu.unwrap_or(0.0));
         for name in [
             "status: lua",
             "status: modules",
             "status: fit",
             "status: draw",
-            "term foreground",
         ] {
-            let m = app.perf.last_span(name).map_or(0.0, |(m, _)| m as f64);
+            let m = span(name).map_or(0.0, |(_, m, _)| *m);
             match self.spans.iter_mut().find(|(n, _)| *n == name) {
                 Some((_, total)) => *total += m,
                 None => self.spans.push((name, m)),
@@ -446,7 +435,7 @@ fn frames_for(d: &mut Drive, app: &mut Kawoosh, secs: f64) -> Laps {
     while Instant::now() < until {
         d.advance(0.016);
         d.frame(app);
-        laps.add(app);
+        laps.add(d);
         std::thread::sleep(Duration::from_millis(14));
     }
     laps
@@ -472,8 +461,8 @@ fn spawned(app: &mut Kawoosh) -> String {
 /// and a terminal running a lazygit stand-in — a full-screen program
 /// redrawing ten times a second and rewriting `.git/index` as
 /// lazygit's `git status` does. The "status line" lap is read frame by
-/// frame (`Perf::last_lap`, measured because `KAWOOSH_PERF_LOG` is set,
-/// the log left in the sandbox), with what Lua started meanwhile:
+/// frame (`Harness::frame_spans`, off kui's recording), with what Lua
+/// started meanwhile:
 /// quiet, then churning with the listing focused, then with the
 /// terminal focused.
 #[test]
@@ -503,18 +492,14 @@ fn statusline_lap() {
         "printf '\\033[?1049h'\ni=0\nwhile :; do\n  i=$((i+1))\n  printf '\\033[H\\033[2J lazygit stand-in, frame %d\\n' $i\n  git status --porcelain >/dev/null 2>&1\n  touch .git/index\n  sleep 0.1\ndone\n",
     )
     .unwrap();
-    let log = root.join("perf.log");
     // SAFETY: serial, before the app's threads start.
     unsafe {
-        std::env::set_var("KAWOOSH_PERF_LOG", &log);
         std::env::set_var("SHELL", "/bin/sh");
     }
-    eprintln!(
-        "\n== statusline_lap: {secs} s a phase, log {} ==",
-        log.display()
-    );
+    eprintln!("\n== statusline_lap: {secs} s a phase ==");
     let mut app = Kawoosh::new("t", "");
     let mut d = boot(&mut app, 1600.0, 900.0);
+    d.core.set_perf_recording(true);
     // The bundled face, as `main.rs` loads it: what the line is
     // measured in.
     let fonts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts/IosevkaNavcon");
@@ -600,13 +585,7 @@ fn statusline_lap() {
     on_file.report("lazygit churning, a file focused");
     eprintln!("    {}", spawned(&mut app));
 
-    // SAFETY: serial.
-    unsafe {
-        std::env::remove_var("KAWOOSH_PERF_LOG");
-    }
     drop(app);
-    let lines = std::fs::read_to_string(&log).map_or(0, |s| s.lines().count());
-    eprintln!("  perf log: {lines} lines");
     if std::env::var("LUA_COSTS_KEEP").is_err() {
         std::fs::remove_dir_all(&root).ok();
     }
@@ -1209,38 +1188,24 @@ fn median(mut v: Vec<f64>) -> f64 {
     v[v.len() / 2]
 }
 
-/// The perf log's lines from `from` on: the pane `what`'s draw, ms, a
-/// frame, and the spans named, summed a frame — medians.
-fn log_medians(log: &Path, from: usize, what: &str, spans: &[&str]) -> (usize, f64, Vec<f64>) {
-    let text = std::fs::read_to_string(log).unwrap_or_default();
-    let lines: Vec<&str> = text.lines().skip(from).collect();
-    let field = |line: &str, open: &str| -> String {
-        line.split(open)
-            .nth(1)
-            .and_then(|s| s.split(']').next())
-            .unwrap_or("")
-            .to_string()
-    };
+/// The frames' spans (`Harness::frame_spans`, one list a frame): the
+/// pane `what`'s draw, ms, a frame, and the spans named, summed a frame
+/// — medians, over the frames that drew the pane.
+fn span_medians(
+    frames: &[Vec<(String, f64, Option<f64>)>],
+    what: &str,
+    spans: &[&str],
+) -> (usize, f64, Vec<f64>) {
     let mut pane = Vec::new();
     let mut per_span = vec![Vec::new(); spans.len()];
-    for l in &lines {
-        let panes = field(l, " panes[");
-        let Some(m) = panes
-            .split("; ")
-            .find_map(|p| p.strip_prefix(&format!("{what}=")))
-            .and_then(|m| m.parse::<f64>().ok())
-        else {
+    for f in frames {
+        let ms = |name: &str| f.iter().find(|(n, ..)| n == name).map(|(_, m, _)| *m);
+        let Some(m) = ms(what) else {
             continue;
         };
         pane.push(m);
-        let sp = field(l, " spans[");
         for (i, name) in spans.iter().enumerate() {
-            let v: f64 = sp
-                .split("; ")
-                .filter_map(|s| s.strip_prefix(&format!("{name}=")))
-                .filter_map(|s| s.split('/').next()?.parse::<f64>().ok())
-                .fold(0.0, |a, b| a + b);
-            per_span[i].push(v);
+            per_span[i].push(ms(name).unwrap_or(0.0));
         }
     }
     let n = pane.len();
@@ -1250,20 +1215,14 @@ fn log_medians(log: &Path, from: usize, what: &str, spans: &[&str]) -> (usize, f
     (n, median(pane), per_span.into_iter().map(median).collect())
 }
 
-fn log_len(log: &Path) -> usize {
-    std::fs::read_to_string(log)
-        .map(|t| t.lines().count())
-        .unwrap_or(0)
-}
-
 /// The same plugin twice — `tests/ext/words.c` and `tests/ext/words.lua`
 /// — at one mildly complex job, three ways: an index (every identifier
 /// of the buffer counted and ranked, the top 100 in a scratch), a
 /// rename (every whole-word `self` edited, as one batch), and a pane of
 /// 200 ranked rows drawn idle and with its selection moving every
 /// frame. Each run's own clock (the C side's, Lua's `kawoosh._clock`)
-/// and the wall clock around the command; the pane's draw from the
-/// per-frame perf log. The two outputs are asserted equal.
+/// and the wall clock around the command; the pane's draw off kui's
+/// recording, frame by frame. The two outputs are asserted equal.
 ///
 /// `LUA_COSTS_WORDS_MB` (4): the corpus' size, the workspace's own Rust.
 #[test]
@@ -1276,9 +1235,6 @@ fn native_vs_lua() {
     let path = root.join("corpus.rs");
     let corpus = rust_corpus(mb);
     std::fs::write(&path, &corpus).unwrap();
-    let log = root.join("perf.log");
-    // SAFETY: as `sandbox`'s: one case at a time, before the app reads it.
-    unsafe { std::env::set_var("KAWOOSH_PERF_LOG", &log) };
     let so = drive::build_ext("words", &[], "words");
     eprintln!(
         "\n== native_vs_lua: words.c against words.lua, a {:.1} MB Rust buffer, {reps} runs each ==",
@@ -1287,6 +1243,7 @@ fn native_vs_lua() {
     let mut app = Kawoosh::new("t", "");
     app.jobs_inline = true;
     let mut d = boot(&mut app, 1600.0, 900.0);
+    d.core.set_perf_recording(true);
     d.frame(&mut app);
     ex(&mut d, &mut app, &format!("e {}", path.display()));
     app.wait_for_open();
@@ -1427,10 +1384,21 @@ fn native_vs_lua() {
     frames(&mut d, &mut app, 2);
     let base = frames(&mut d, &mut app, 120);
     eprintln!("  {}", base.line("no pane (the editor alone), a frame"));
-    let spans = ["lua view fn", "kui-lua build"];
-    for (label, open, next, what) in [
-        ("C pane", "cwords_pane", "cwords_next", "lua cwords"),
-        ("Lua pane", "lwords_pane", "lwords_next", "lua lwords"),
+    for (label, open, next, what, spans) in [
+        (
+            "C pane",
+            "cwords_pane",
+            "cwords_next",
+            "pane: lua cwords",
+            ["view: cwords", "fill words"],
+        ),
+        (
+            "Lua pane",
+            "lwords_pane",
+            "lwords_next",
+            "pane: lua lwords",
+            ["view: lwords", "fill lua"],
+        ),
     ] {
         lua(&mut app, &format!("kawoosh.run('{open}')"));
         for _ in 0..6 {
@@ -1440,21 +1408,21 @@ fn native_vs_lua() {
         let drawn = texts(&d).iter().any(|t| t.ends_with("words ranked, row 1"));
         assert!(drawn, "{label} drawn");
         frames(&mut d, &mut app, 2);
-        let from = log_len(&log);
         let mut idle_v = Vec::new();
         let mut idle = Stats::default();
+        let mut drawn_idle = Vec::new();
         for _ in 0..120 {
             d.advance(0.016);
             let t = Instant::now();
             d.frame(&mut app);
             idle.add(ms(t));
             idle_v.push(ms(t));
+            drawn_idle.push(d.frame_spans());
         }
-        frames(&mut d, &mut app, 1);
-        let (n_i, pane_i, sp_i) = log_medians(&log, from, what, &spans);
-        let from = log_len(&log);
+        let (n_i, pane_i, sp_i) = span_medians(&drawn_idle, what, &spans);
         let mut moving = Stats::default();
         let mut moving_v = Vec::new();
+        let mut drawn_moving = Vec::new();
         for _ in 0..120 {
             lua(&mut app, &format!("kawoosh.run('{next}')"));
             d.advance(0.016);
@@ -1462,16 +1430,16 @@ fn native_vs_lua() {
             d.frame(&mut app);
             moving.add(ms(t));
             moving_v.push(ms(t));
+            drawn_moving.push(d.frame_spans());
         }
-        frames(&mut d, &mut app, 1);
-        let (n_m, pane_m, sp_m) = log_medians(&log, from, what, &spans);
+        let (n_m, pane_m, sp_m) = span_medians(&drawn_moving, what, &spans);
         eprintln!(
             "  {}  median {:6.2} ms",
             idle.line(&format!("{label}, idle, a frame")),
             median(idle_v)
         );
         eprintln!(
-            "      pane draw median {pane_i:6.3} ms over {n_i}  (view fn {:.3}, kui-lua build {:.3})",
+            "      pane draw median {pane_i:6.3} ms over {n_i}  (view fn {:.3}, fill {:.3})",
             sp_i[0], sp_i[1]
         );
         eprintln!(
@@ -1480,7 +1448,7 @@ fn native_vs_lua() {
             median(moving_v)
         );
         eprintln!(
-            "      pane draw median {pane_m:6.3} ms over {n_m}  (view fn {:.3}, kui-lua build {:.3})",
+            "      pane draw median {pane_m:6.3} ms over {n_m}  (view fn {:.3}, fill {:.3})",
             sp_m[0], sp_m[1]
         );
         ex(&mut d, &mut app, "close");
@@ -1489,5 +1457,4 @@ fn native_vs_lua() {
             d.frame(&mut app);
         }
     }
-    unsafe { std::env::remove_var("KAWOOSH_PERF_LOG") };
 }

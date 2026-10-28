@@ -2156,6 +2156,32 @@ fn cmds_text_keys_reach_a_shell_as_readlines() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A Mac's Option that composes types what it composed into a shell, as
+/// a terminal whose Option is not Meta does (kui F195): ⌥- sends `–`,
+/// where its press carried no text and went as `ESC -`. An Option
+/// `keys.option_as_alt` names is Meta: no text, the escape and the key.
+#[test]
+fn a_composing_option_types_its_character_into_a_shell() {
+    use kui_native::{KeyCode, KeyPress};
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    let sent = |app: &mut Kawoosh| {
+        String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap()
+    };
+    sent(&mut app);
+    let dash = KeyPress::new(KeyCode::Char('-'), KeyMods::NONE.with_alt()).with_text("–");
+    d.input(&mut app, InputEvent::KeyDown(dash.clone()));
+    d.input(&mut app, InputEvent::KeyUp(dash.released()));
+    d.frame(&mut app);
+    assert_eq!(sent(&mut app), "–");
+    d.key(&mut app, "-", KeyMods::NONE.with_alt());
+    assert_eq!(sent(&mut app), "\x1b-");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// The grid fits its pane at every scale. Reported 2026-10-05: "Prompt
 /// line in `cmd.exe` kinda is under the bottom row when I maximize" —
 /// kui draws a cell on whole device pixels (a 23 px row at 125% is 29

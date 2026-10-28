@@ -19,7 +19,7 @@ mod prof;
 pub use fuzzy::{Hit, Matcher};
 pub use meta::Meta;
 pub use native::{KW_ABI_VERSION, KW_PROTOCOL, KwEdit, NativeCell};
-pub use prof::{Spent, clock_secs};
+pub use prof::clock_secs;
 
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
 use std::collections::BTreeSet;
@@ -1623,7 +1623,7 @@ pub struct Runtime {
     /// command's `ctx.pane`, so a view shown in several panes knows
     /// which one a key was for (`du.lua`, roadmap step 60).
     pane: std::cell::Cell<u64>,
-    /// The plugins' time, while the Perf tab is on show (`prof.rs`).
+    /// The plugins' time, while kui measures (`prof.rs`).
     prof: prof::ProfCell,
     /// Plugin code was called from here since the last `take_ran_outside`
     /// — a hook, a callback, a command — and may have changed what a view
@@ -1657,9 +1657,12 @@ impl Runtime {
     /// The runtime and the extension the launcher takes; both share one
     /// Lua state.
     pub fn new() -> mlua::Result<(Self, LuaExtension)> {
-        // `slots` is read at load (ADR 0014), before the boot script can set
-        // it: the wildcard goes first.
-        let ext = LuaExtension::from_source("kawoosh", "slots = { \"*\" }")?;
+        // `components` is read at load (kui ADR 0060), before the boot
+        // script can set it: the wildcard goes first, every pane view a
+        // name under it, and boot.lua puts the function that draws them
+        // in its place.
+        let ext =
+            LuaExtension::from_source("kawoosh", "components = { [\"*\"] = function() end }")?;
         let lua = ext.lua().clone();
         let queue = Rc::new(RefCell::new(Vec::new()));
         let published = Rc::new(RefCell::new(Published::default()));
@@ -1785,8 +1788,8 @@ impl Runtime {
 
     /// The namespace a native extension registered view `name` under
     /// (`kawoosh.view(name, nil, nil, { native = ns })`): its pane is
-    /// the slot `ns/name@pane`, which the extension's `kui_ext_view`
-    /// fills. None for a Lua view.
+    /// the component `ns/name@pane`, which the extension's `kui_ext_view`
+    /// draws. None for a Lua view.
     pub fn native_namespace_of(&self, name: &str) -> Option<String> {
         self.lua
             .globals()
@@ -1795,6 +1798,68 @@ impl Runtime {
             .and_then(|t| t.get::<Option<String>>(name))
             .ok()
             .flatten()
+    }
+
+    /// The count of plugin namespaces met and contributions made
+    /// (`kawoosh._plugins_gen`), moved by each: the shell loads the new
+    /// ones' extensions when it moves (docs/design/plugin-extensions.md).
+    pub fn plugins_gen(&self) -> u64 {
+        self.kawoosh_table()
+            .and_then(|k| k.get::<u64>("_plugins_gen").ok())
+            .unwrap_or(0)
+    }
+
+    /// Every plugin namespace met, sorted: each a kui extension of its
+    /// own over this state (plugin-extensions.md Decision 1).
+    pub fn plugin_namespaces(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .kawoosh_table()
+            .and_then(|k| k.get::<Table>("_plugins").ok())
+            .map(|t| {
+                t.pairs::<String, mlua::Value>()
+                    .filter_map(|p| p.ok().map(|(k, _)| k))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort();
+        out
+    }
+
+    /// What plugin `ns` contributes to the shell's slots, in the order it
+    /// said them: `(slot, component, order)` (`kawoosh.contribute`).
+    pub fn plugin_contributions(&self, ns: &str) -> Vec<(String, String, i32)> {
+        let Some(list) = self
+            .kawoosh_table()
+            .and_then(|k| k.get::<Table>("_contributions").ok())
+            .and_then(|t| t.get::<Option<Table>>(ns).ok().flatten())
+        else {
+            return Vec::new();
+        };
+        list.sequence_values::<Table>()
+            .filter_map(Result::ok)
+            .filter_map(|c| {
+                Some((
+                    c.get::<String>("slot").ok()?,
+                    c.get::<String>("component").ok()?,
+                    c.get::<i32>("order").unwrap_or(0),
+                ))
+            })
+            .collect()
+    }
+
+    /// The plugin namespace Lua view `name` is drawn under, if a plugin
+    /// registered it (plugin-extensions.md Decision 2).
+    pub fn view_plugin(&self, name: &str) -> Option<String> {
+        self.kawoosh_table()?
+            .get::<Table>("_view_plugin")
+            .ok()?
+            .get::<Option<String>>(name)
+            .ok()
+            .flatten()
+    }
+
+    fn kawoosh_table(&self) -> Option<Table> {
+        self.lua.globals().get::<Table>("kawoosh").ok()
     }
 
     /// The libraries loaded since the last call that draw: for the

@@ -57,7 +57,7 @@ impl Kawoosh {
             };
             t.set_cell_pixels(cw, ch);
             if t.poll_graphics() || t.graphics_busy() {
-                crate::frames::request(ui, "terminal graphics");
+                ui.request_frame_for("terminal graphics");
             }
         }
         let images = &mut self.term_images;

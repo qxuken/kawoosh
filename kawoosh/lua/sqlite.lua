@@ -118,8 +118,8 @@ local last = nil
 local pending = nil
 local kept = kawoosh.store("sqlite")
 
-local function pane_of(slot)
-  return tonumber(tostring(slot or ""):match("@(%d+)$"))
+local function pane_of(component)
+  return tonumber(tostring(component or ""):match("@(%d+)$"))
 end
 
 local function page_size()
@@ -872,7 +872,7 @@ kawoosh.view(VIEW, function(ctx)
     foot }
 end, function(ev)
   if ev.kind == "key" then return false end
-  S = states[pane_of(ev.slot)]
+  S = states[pane_of(ev.component)]
   if not S then return end
   local kind = ev.kind
   if kind == "table" then

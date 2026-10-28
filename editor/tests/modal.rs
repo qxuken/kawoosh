@@ -143,6 +143,38 @@ fn insert_and_escape() {
     assert_eq!(t.text(), "helloab!\n  \n  x");
 }
 
+/// A Mac's Option that composes: its press is the chord on the key with
+/// what it composed as text (kui F195).
+fn composed(code: &str, text: &str) -> KeyStroke {
+    let mut st = KeyStroke::plain(code);
+    st.alt = true;
+    st.text = Some(text.into());
+    st
+}
+
+#[test]
+fn a_composing_option_types_what_it_composed_unless_the_chord_is_bound() {
+    let mut t = T::new("");
+    t.keys("i");
+    // ⌥- and ⌥⇧- on a U.S. layout: an en dash and an em dash.
+    t.ed.key(t.v, composed("-", "–"));
+    let mut em = composed("-", "—");
+    em.shift = true;
+    t.ed.key(t.v, em);
+    assert_eq!(t.text(), "–—");
+    // A chord bound in insert mode is the binding's, and types nothing.
+    t.ed.register("dash bound", |ed, _| ed.message = "bound".into());
+    t.ed.keymap.bind(Mode::Insert, "<A-->", "dash bound");
+    t.ed.key(t.v, composed("-", "–"));
+    assert_eq!(t.ed.message, "bound");
+    assert_eq!(t.text(), "–—");
+    // An Option that is Alt carries no text: a chord, still nothing typed.
+    let mut alt = KeyStroke::plain("m");
+    alt.alt = true;
+    t.ed.key(t.v, alt);
+    assert_eq!(t.text(), "–—");
+}
+
 #[test]
 fn operators_compose_with_motions_and_objects() {
     let mut t = T::new("one two three\nfour");

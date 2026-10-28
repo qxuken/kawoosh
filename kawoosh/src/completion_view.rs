@@ -151,7 +151,7 @@ pub fn draw(
                 .unwrap_or_else(|| panel_height(p, place.lh, cell, panel_w));
             if p.placed_h.get() != Some(h) {
                 p.placed_h.set(Some(h));
-                ui.request_frame();
+                ui.request_frame_for("completion docs height");
             }
             h <= place.over || place.over >= place.below
         }

@@ -138,8 +138,8 @@ GPU-less Linux box is Mesa's lavapipe, as kui's CI does
 
 ### What it is not for
 
-- **The frame probes** (`probe-scroll.nu`, `probe-fonts.nu`, `:frames`,
-  the frame ledger). They measure what a window costs, presenting and
+- **The frame probes** (`probe-scroll.nu`, `probe-fonts.nu`, kui's
+  Perf tab). They measure what a window costs, presenting and
   pacing included. Headless measures the view and layout only, which is
   a reading of its own, not a replacement.
 - **The OS's side**: IME, drag and drop from Finder, the Mac's menu bar,

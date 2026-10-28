@@ -132,10 +132,10 @@ void kw_ext_free(void *user) { (void)user; }
 
 uint32_t kui_ext_abi(void) { return KUI_ABI_VERSION; }
 
-static const KuiStr SLOTS[] = {{(const uint8_t *)"*", 1}};
-const KuiStr *kui_ext_slots(size_t *count) {
+static const KuiStr COMPONENTS[] = {{(const uint8_t *)"*", 1}};
+const KuiStr *kui_ext_components(size_t *count) {
     *count = 1;
-    return SLOTS;
+    return COMPONENTS;
 }
 
 typedef struct {
@@ -147,7 +147,7 @@ void kui_ext_free(void *user) { free(user); }
 
 void kui_ext_view(void *user, KuiCtx *ui) {
     Panel *p = user;
-    const KuiValue *params = kui_slot_params(ui);
+    const KuiValue *params = kui_instance_params(ui);
     int64_t pane = 0;
     if (params) kui_value_as_int(kui_value_get(params, KUI_STR("pane")), &pane);
     KuiTheme t = KUI_THEME_INIT;

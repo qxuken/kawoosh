@@ -143,8 +143,10 @@ what follows from the texts:
   (vcs.md Decision 13): it was a `git rev-parse` twice a second.
 
 The lap has its parts as spans — `status: lua`, `status: modules`,
-`status: fit`, `status: draw`, and `term foreground` inside `modules` —
-in the Perf tab and `KAWOOSH_PERF_LOG`.
+`status: fit`, `status: draw` — on kui's recording (its Perf tab and
+`KUI_PERF_TRACE`, since 2026-10-27), and `term foreground` inside
+`modules` again since kui alpha.69, a span where no core is at hand
+(kui F215).
 
 Measured with `lua_costs statusline_lap` (`cargo test -p kawoosh
 --release --test lua_costs -- statusline_lap --ignored --nocapture`):
@@ -170,15 +172,13 @@ the busy phases'), which a reading on another machine shares.
 cannot run: start kawoosh from a terminal with the log on,
 
 ```nu
-with-env { KAWOOSH_PERF_LOG: ("~/kawoosh-perf.log" | path expand) } { ^/Applications/Kawoosh.app/Contents/MacOS/kawoosh }
+with-env { KUI_PERF_TRACE: ("~/kawoosh.kuitrace" | path expand) } { ^/Applications/Kawoosh.app/Contents/MacOS/kawoosh }
 ```
 
-work as usual for a minute, quit, and read the lap's `wall/cpu` pairs
-(a lap is logged once it reaches 0.05 ms):
-
-```nu
-open ~/kawoosh-perf.log | lines | parse --regex 'status line=(?<wall>[\d.]+)/(?<cpu>[\d.]+)' | into float wall cpu | insert off {|r| $r.wall - $r.cpu } | sort-by wall --reverse | first 20
-```
+work as usual for a minute, quit, and read the spans' wall and CPU time
+(`kui-trace stats ~/kawoosh.kuitrace`, or the file opened in Perfetto
+after `kui-trace convert … --to perfetto`; until 2026-10-27 this was
+kawoosh's own `KAWOOSH_PERF_LOG`, its lap logged as `wall/cpu`).
 
 A steady cost is wall ≈ cpu on most lines; a stall is a rare line far
 over its cpu (`3.80/0.30`) — the thread off a core: preempted, a page

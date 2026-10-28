@@ -1233,7 +1233,7 @@ pub enum Event {
 }
 
 impl Event {
-    /// What kind of news it is, for a count of them (the frame ledger).
+    /// What kind of news it is, for a count of them on a recording.
     pub fn kind(&self) -> &'static str {
         match self {
             Event::Diagnostics { .. } => "lsp diagnostics",

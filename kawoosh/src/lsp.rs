@@ -252,7 +252,7 @@ impl Kawoosh {
         self.sync_lsp_installs();
         self.drain_lsp_installs();
         for ev in self.lsp.lsp.drain() {
-            self.frames.drained(ev.kind());
+            self.perf.drained.push(ev.kind());
             match ev {
                 Event::Diagnostics {
                     buffer,

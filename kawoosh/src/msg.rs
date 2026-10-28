@@ -112,6 +112,9 @@ pub enum Msg {
     HeaderLayout { pane: PaneId },
 
     // ---------------------------------------------------- the chrome
+    /// A contribution slot's row in the chrome, laid out for its width
+    /// (`Kawoosh::contributed`; no one reads the event).
+    SlotRow,
     /// The title bar's cwd: listed.
     Cwd,
     /// A tab in the strip.

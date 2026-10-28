@@ -174,6 +174,26 @@ images and ligatures have since been built.
 - **Icons**: markdown's boxes and bullets as icons (an inline box in a
   paragraph); icons centred on the x-height (`measure_text` gives no
   x-height). ([icons.md](design/icons.md), "Not yet")
+- **From the alpha.68 port** (2026-10-27; kui's backlog, "From kawoosh's
+  alpha.68 port"), each with what kawoosh does once a release carries
+  it. F211, F212, F215, F216, F222 and F223 came in alpha.69 and are
+  used (2026-10-28); what is left:
+  - *F213*, a declared tab listed on the frame the panel opens: the
+    frame `show_tab` waits in `view` goes.
+  - *F214*, a sink that keeps the keyboard through a press and still
+    selects: the `keep_focus` on the memory and undo panes, the Lua
+    pane's while focused and the terminal grid's under ⌘ give way to
+    it, and a terminal's grid press stops depending on `on_focus`.
+  - *F217*, one Lua state as several extensions: `fields::PluginHost`'s
+    wrapping of a `reentry` handle becomes kui-lua's own door.
+  - *F218*, contributions after load: `kawoosh.contribute` from
+    `init.lua` into a bundled plugin's, or a plugin reloaded on save,
+    placed without a restart.
+  - *F219*, whether a slot has contributions: the shell's own list of
+    contributed slots (`Scripting::contributed`) goes, and a C
+    extension's contribution is drawn where no plugin contributes.
+  ([plugin-extensions.md](design/plugin-extensions.md),
+  [lua-boundary.md](design/lua-boundary.md) Decision 10's amendment)
 
 ## On a platform run
 

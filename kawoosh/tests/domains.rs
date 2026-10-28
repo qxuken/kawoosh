@@ -200,7 +200,7 @@ fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
         app.ed.message,
         format!(
             "{name}:/src: on another machine, not for {}",
-            kawoosh::reveal::manager()
+            kawoosh::links::file_manager()
         )
     );
     assert_eq!(app.revealed.as_deref(), Some(&[][..]));

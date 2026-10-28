@@ -840,7 +840,7 @@ mod tests {
     /// 2026-10-03).
     #[test]
     fn every_install_line_runs_a_known_manager_and_reads_under_cmd() {
-        const MANAGERS: [&str; 12] = [
+        const MANAGERS: [&str; 13] = [
             "brew",
             "rustup",
             "winget",
@@ -853,6 +853,7 @@ mod tests {
             "raco",
             "nix",
             "R",
+            "luarocks",
         ];
         let rows = kawoosh_lua::eval_data("servers.lua", include_str!("../lua/servers.lua"))
             .expect("servers.lua reads");

@@ -31,13 +31,10 @@ kawoosh-diagram = { path = "./diagram" }
 # kui-ffi is the native extensions' value type and loader
 # (docs/design/native.md Decision 1); it is in the graph through kui-lua
 # regardless.
-# By path on `../kui` until a release carries C58, kui's runner with no
-# window (`Launcher::open_headless`, kui ADR 0057), which `--headless` runs
-# on (docs/design/headless.md).
-kui-native = { path = "../kui/crates/kui-native" }
-kui-core = { path = "../kui/crates/kui-core" }
-kui-lua = { path = "../kui/crates/kui-lua" }
-kui-ffi = { path = "../kui/crates/kui-ffi" }
+kui-native = "=0.1.0-alpha.69"
+kui-core = "=0.1.0-alpha.69"
+kui-lua = "=0.1.0-alpha.69"
+kui-ffi = "=0.1.0-alpha.69"
 # A grammar's shared library (`kawoosh-languages`) and a native extension's
 # (`kawoosh-lua`).
 libloading = "0.9"
@@ -93,14 +90,13 @@ bitflags = { version = "2.13.1", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "deref_mut"] }
 
 # tree-sitter-md from our fork, github.com/qxuken/tree-sitter-markdown,
-# branch kawoosh: upstream 0.5.3, which has merged no grammar fix
-# since 2026-02, with its inline grammar's code spans fixed (CommonMark
-# 0.31.2 examples 330, 331, 340, 343; docs/design/markdown.md, Built,
-# "Code spans are CommonMark's") and upstream's open fixes we took, each
-# a commit of its own, and empty pipe-table cells (7f95414).
-# Regenerated with tree-sitter-cli 0.27.1.
+# branch kawoosh: upstream 0.5.4 with its inline grammar's code spans
+# fixed (CommonMark 0.31.2 examples 330, 331, 340, 343;
+# docs/design/markdown.md, Built, "Code spans are CommonMark's"),
+# upstream's open fixes we took, each a commit of its own, and empty
+# pipe-table cells (af36b1d). Regenerated with tree-sitter-cli 0.27.1.
 [patch.crates-io]
-tree-sitter-md = { git = "https://github.com/qxuken/tree-sitter-markdown", rev = "7f954148e874b5a6a70134d39ad4a759c3741074" }
+tree-sitter-md = { git = "https://github.com/qxuken/tree-sitter-markdown", rev = "af36b1d2144ed50b57a5a8921f389e62e060ac9d" }
 
 [profile.release]
 # Symbols, one codegen unit and fat LTO: 48 MB down to 39 MB. Half of

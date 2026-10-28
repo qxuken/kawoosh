@@ -1361,13 +1361,14 @@ fn instruments() -> Vec<ShellCommand> {
                     "the {what} tab of the devtools (on, off, or toggle)"
                 )),
             move |k, ctx| {
-                let showing = k.devtools && k.tab_shown == Some(tab);
+                let showing = k.devtools && k.devtools_shows.as_deref() == Some(tab);
                 let on = switch(ctx, showing);
                 if on {
                     k.devtools = true;
                     k.show_tab = Some(tab);
                 } else {
                     k.devtools = false;
+                    k.show_tab = None;
                 }
                 k.ed.message = format!("{what} {}", if on { "on" } else { "off" });
             },
@@ -1400,8 +1401,9 @@ fn instruments() -> Vec<ShellCommand> {
             crate::inspector::TAB,
             "syntax tree",
         ),
-        tab("perf", &["kui_perf"], crate::perf::TAB, "perf"),
-        tab("frames", &[], crate::frames::TAB, "frames"),
+        // kui's Perf tab (ADR 0058): the frames, why each ran and what it
+        // spent, kawoosh's systems among its spans.
+        tab("perf", &["kui_perf", "frames"], "perf", "perf"),
         cmd(
             Spec::new("settings reload").doc("read every settings file again"),
             |k, _| k.reload_all_settings(),

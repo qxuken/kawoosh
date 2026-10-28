@@ -74,6 +74,19 @@ pub struct ViewTrack {
     pub reads: kawoosh_lua::ViewReads,
 }
 
+/// A pane view's component placement (kui ADR 0060, ADR 0067): `rev`,
+/// the revision of what it reads of the host that kui cannot see, in its
+/// props — moved on every frame the host does not vouch for the view, so
+/// kui fills it again and keeps that fill, and held while the host does,
+/// so kui checks the rest (the props, the facts of the frame the fill
+/// read, its own events) and replays it. `answer`, kui's answer to the
+/// last placement the host vouched for; `None` when it did not.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ViewFill {
+    pub rev: u64,
+    pub answer: Option<kui_native::FillAnswer>,
+}
+
 /// One frame's generations of what a Lua view may read of the host:
 /// the runtime's (`kawoosh_lua::Gens`), the palette's, the legends',
 /// and whether plugin code ran outside a view since the frame before.
@@ -103,8 +116,21 @@ pub struct Scripting {
     pub view_tracks: HashMap<String, ViewTrack>,
     /// Each native view's last fill, by `NAME@PANE`: the count of calls
     /// into native code then (native.md, native views replayed). Its
-    /// slot is replayed while the count is what it was.
+    /// component is replayed while the count is what it was.
     pub native_tracks: HashMap<String, u64>,
+    /// Each pane view's placement, by `NAME@PANE`: the revision its props
+    /// carry and kui's last answer (`ViewFill`).
+    pub view_fills: HashMap<String, ViewFill>,
+    /// A handle over the runtime's one Lua state, each plugin's own made
+    /// from it; the plugins given an extension, and whether kui took it
+    /// (plugin-extensions.md); the plugins' count when last looked at;
+    /// whether the engine's drawing is loaded.
+    pub lua_spare: Option<Box<dyn kui_native::Extension>>,
+    pub plugin_hosts: HashMap<String, bool>,
+    /// The slots a loaded plugin contributes to, by name.
+    pub contributed: std::collections::HashSet<String>,
+    pub plugins_seen: Option<u64>,
+    pub engine_loaded: bool,
     /// This frame's generations, read once after the publish.
     pub frame_gens: FrameGens,
     pub tools: HashMap<String, ToolDef>,
@@ -220,7 +246,12 @@ impl Kawoosh {
     /// Installs the runtime and returns the extension for the launcher
     /// (`extension_as("lua", ..)`). The bundled plugins load with it.
     pub fn attach_lua(&mut self) -> Result<crate::fields::LuaHost, String> {
-        let (rt, ext) = Runtime::new().map_err(|e| e.to_string())?;
+        let (rt, mut ext) = Runtime::new().map_err(|e| e.to_string())?;
+        // A handle over the same state, kept to make each plugin's own
+        // from (`load_plugin_extensions`).
+        self.scripting.lua_spare = kui_native::Extension::reentry(&mut ext);
+        self.scripting.plugin_hosts.clear();
+        self.scripting.plugins_seen = None;
         let rt = Rc::new(rt);
         self.scripting.rt = Some(rt.clone());
         // The servers' names for `kawoosh.lsp.rules`, said again to this
@@ -279,13 +310,112 @@ impl Kawoosh {
         // The plugins have declared theirs: a settings file's key no one
         // declared can be named now without naming theirs.
         self.note_undeclared();
-        // With the engine's drawing it loads, which draws its views'
-        // fields, caps and legends (`fields.rs`).
+        // The engine's drawing, which draws the views' fields, caps and
+        // legends (`fields.rs`), loaded with the plugins.
         self.scripting.drawing.borrow_mut().icons = self.icons.clone();
-        Ok(crate::fields::LuaHost::new(
-            ext,
-            self.scripting.drawing.clone(),
-        ))
+        Ok(crate::fields::LuaHost::new(ext))
+    }
+
+    /// Each plugin as a kui extension of its own, loaded the first frame
+    /// after it is met (docs/design/plugin-extensions.md Decision 1): a
+    /// handle over the one Lua state under the plugin's name, with what
+    /// it contributes to the shell's slots — read now, as kui reads a
+    /// plugin's contributions once (kui F218). And the engine's drawing,
+    /// once. From the host's view, where kui's list takes a new one.
+    pub(crate) fn load_plugin_extensions(&mut self, ui: &mut Ui<'_>) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        if !self.scripting.engine_loaded {
+            self.scripting.engine_loaded = true;
+            let engine = crate::fields::EngineDraw::new(self.scripting.drawing.clone());
+            if let Err(e) = ui.add_extension(crate::fields::NAMESPACE, Box::new(engine)) {
+                log::error!("the engine's drawing for Lua views: {e}");
+            }
+        }
+        let generation = rt.plugins_gen();
+        if self.scripting.plugins_seen == Some(generation) {
+            return;
+        }
+        self.scripting.plugins_seen = Some(generation);
+        for ns in rt.plugin_namespaces() {
+            if self.scripting.plugin_hosts.contains_key(&ns) {
+                continue;
+            }
+            let contributions: Vec<kui_native::Contribution> = rt
+                .plugin_contributions(&ns)
+                .into_iter()
+                .map(|(slot, component, order)| {
+                    kui_native::Contribution::new(slot, component).order(order)
+                })
+                .collect();
+            let Some(handle) = self.scripting.lua_spare.as_mut().and_then(|h| h.reentry()) else {
+                return;
+            };
+            let slots: Vec<String> = contributions.iter().map(|c| c.slot.clone()).collect();
+            let host = crate::fields::PluginHost::new(handle, ns.clone(), contributions);
+            let loaded = match ui.add_extension(&ns, Box::new(host)) {
+                Ok(_) => {
+                    self.scripting.contributed.extend(slots);
+                    true
+                }
+                Err(e) => {
+                    log::error!("plugin `{ns}` as a kui extension: {e}");
+                    false
+                }
+            };
+            self.scripting.plugin_hosts.insert(ns, loaded);
+        }
+    }
+
+    /// Slot `slot` (plugin-extensions.md Decision 3) drawn in a row of
+    /// its own keyed `label` — the contributions as its children, `gap`
+    /// apart, each with `props` and drawn fresh, its plugin's state being
+    /// kui's to not see — and the width that row took last frame, which a
+    /// line fitting its text to the room counts (0 the first frame).
+    /// Nothing while no loaded plugin contributes to it, so an empty slot
+    /// takes no room and no gap.
+    pub(crate) fn contributed(
+        &self,
+        ui: &mut Ui<'_>,
+        label: &str,
+        slot: &str,
+        props: Vec<(&str, Value)>,
+        gap: f32,
+    ) -> f32 {
+        if !self.scripting.contributed.contains(slot) {
+            return 0.0;
+        }
+        let key = ui.child_key(label);
+        let was = ui.layout_of(key).map_or(0.0, |r| r.w);
+        let mut props: Vec<(String, Value)> =
+            props.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        props.push(("fresh".into(), Value::Bool(true)));
+        let props = Value::Map(props);
+        ui.with_keyed(
+            label,
+            NodeSpec::row()
+                .gap(gap)
+                .cross_align(kui_native::Align::Center)
+                // Its rect kept, for the width the next frame counts.
+                .on_layout(crate::msg::Msg::SlotRow)
+                .label(label),
+            |ui| {
+                ui.slot(slot, &props);
+            },
+        );
+        was
+    }
+
+    /// The namespace view `name` is drawn under: its plugin's, once that
+    /// plugin's extension is loaded, else the runtime's own (`lua`).
+    fn view_namespace(&self, name: &str) -> String {
+        self.scripting
+            .rt
+            .as_ref()
+            .and_then(|rt| rt.view_plugin(name))
+            .filter(|ns| self.scripting.plugin_hosts.get(ns) == Some(&true))
+            .unwrap_or_else(|| "lua".to_string())
     }
 
     /// The config, in layers (kui.md D10): the user's `settings.lua`,
@@ -679,7 +809,7 @@ impl Kawoosh {
             }
             Msg::Reveal { path, inside } => {
                 let shown = kawoosh_systems::fs::abbreviate_home(&path);
-                let manager = crate::reveal::manager();
+                let manager = crate::links::file_manager();
                 if kawoosh_systems::fs::domain_of(&path).is_some() {
                     self.ed.message = format!("{shown}: on another machine, not for {manager}");
                 } else if !kawoosh_systems::fs::exists(&path) {
@@ -688,7 +818,16 @@ impl Kawoosh {
                     revealed.push((path, inside));
                     self.ed.message = format!("shown in {manager}: {shown}");
                 } else {
-                    self.ed.message = match crate::reveal::reveal(&path, inside) {
+                    // kui's doors (F203, F222): a folder's own entries
+                    // opened in the file manager, else the path selected
+                    // in its folder.
+                    let path = path.to_string_lossy();
+                    let shown_there = if inside {
+                        kui_native::open_external(&path)
+                    } else {
+                        kui_native::show_in_folder(&path)
+                    };
+                    self.ed.message = match shown_there {
                         Ok(()) => format!("shown in {manager}: {shown}"),
                         Err(e) => e,
                     };
@@ -2367,23 +2506,30 @@ impl Kawoosh {
             ("origin", self.launcher_origin(pane)),
         ]);
         let tag = crate::msg::Msg::LuaPane { pane };
+        let mut spec = NodeSpec::column().fill().clip();
+        // A press on the view's rows and buttons acts and leaves the keys
+        // on the pane while it has them, where a press on a Tab stop
+        // inside a sink takes them (kui C135) — a row then had Space, the
+        // leader, and Enter. Not while another pane has them: the press
+        // takes kui's keyboard into the view, and the pane follows.
+        if focused {
+            spec = spec.keep_focus();
+        }
         let sink = ui.with_keyed(
             "lua",
-            NodeSpec::column()
-                .fill()
-                .clip()
-                .on_key(tag.clone())
+            spec.on_key(tag.clone())
                 // A press on the view's own nodes — a field, a row, a
                 // button — takes kui's keyboard into the view: the pane
                 // follows (`on_event_with`'s `focus`), as a terminal's.
                 .on_focus(tag.clone())
                 // A click the view's own nodes do not take focuses the
                 // pane.
-                .on_click(tag),
+                .on_click(tag)
+                // The pane's title bar shows where the keys are; kui's
+                // ring around a focused sink (kui C93) would say it twice.
+                .focus_ring(Color::TRANSPARENT),
             |ui| {
-                let t = crate::perf::span_start();
-                self.publish_drawing(name);
-                crate::perf::span("publish drawing", t);
+                ui.span("publish drawing", |_| self.publish_drawing(name));
                 let slot_key = self.fill_view_slot(ui, pane, name, native.as_deref(), &params);
                 self.scroll_lua_pane(ui, pane, name, slot_key);
             },
@@ -2393,13 +2539,14 @@ impl Kawoosh {
         }
     }
 
-    /// Fills the slot of view `name` in `pane` — a pane's, or a buffer's
-    /// header over it (`headers.rs`) — with `params`: its tree replayed
-    /// when the host vouches for what the view read (kui ADR 0045;
-    /// lua-boundary.md Decision 10), kui checking its own — the params,
-    /// every fact of the frame the view read — else the view run, and
-    /// what it read then tracked for the next frame's claim. `native`, the
-    /// namespace of a native extension that draws it. The slot's key.
+    /// Places view `name` in `pane` — a pane's, or a buffer's header over
+    /// it (`headers.rs`) — as the component `PLUGIN/NAME@PANE` with `params`:
+    /// its tree replayed when the host vouches for what the view read
+    /// (kui ADR 0045; lua-boundary.md Decision 10), kui checking its own —
+    /// the params, every fact of the frame the view read, its own events —
+    /// else the view run, and what it read then tracked for the next
+    /// frame's claim (`ViewFill`). `native`, the namespace of a native
+    /// extension that draws it. The instance's key.
     pub(crate) fn fill_view_slot(
         &mut self,
         ui: &mut Ui<'_>,
@@ -2416,22 +2563,30 @@ impl Kawoosh {
             Some(_) => self.native_view_fresh(&track, calls_in),
             None => self.lua_view_fresh(&track),
         };
-        // A native extension's view is its own slot (native.md
-        // Decision 4): under its namespace, the params the same, filled
-        // by its `kui_ext_view`.
-        let ns = native.unwrap_or("lua");
-        let slot = format!("{ns}/{name}@{pane}");
-        // The key kui declares the slot at: the view's root is keyed
-        // under it.
-        let slot_key = ui.child_key(&slot);
-        let t = crate::perf::span_start();
-        let fill = if fresh {
-            ui.slot_replay(&slot, params)
-        } else {
-            ui.slot_kept(&slot, params);
-            None
+        // A native extension's view is a component of its own (native.md
+        // Decision 4): under its namespace, the params the same, drawn by
+        // its `kui_ext_view`.
+        let ns = match native {
+            Some(ns) => ns.to_string(),
+            None => self.view_namespace(name),
         };
-        let replayed = fill == Some(kui_native::SlotFill::Replayed);
+        let component = format!("{ns}/{name}@{pane}");
+        // Keyed by its name, so the view's root is keyed under it
+        // wherever the pane sits among its siblings.
+        let slot_key = ui.child_key(&component);
+        let placed = self.scripting.view_fills.entry(track.clone()).or_default();
+        if !fresh {
+            placed.rev = placed.rev.wrapping_add(1);
+        }
+        let mut props = match params {
+            Value::Map(m) => m.clone(),
+            _ => Vec::new(),
+        };
+        props.push(("key".into(), Value::from(component.as_str())));
+        props.push(("rev".into(), Value::Int(placed.rev as i64)));
+        let fill = ui.component(&component, &Value::Map(props));
+        placed.answer = if fresh { fill } else { None };
+        let replayed = fresh && fill == Some(kui_native::FillAnswer::Replayed);
         // What the view declared of the frame beyond its tree, made again
         // for it: that it drew a legend (its title bar's hint).
         if replayed
@@ -2443,23 +2598,15 @@ impl Kawoosh {
         {
             self.legends.borrow_mut().declare(pane);
         }
-        crate::perf::span(
-            match fill {
-                Some(f) => f.name(),
-                None => "kept",
-            },
-            t,
-        );
+        // Why a pane ran, on kui's recording: the host's reason not to
+        // vouch, a note (kui F216) — kui records its own answer to every
+        // placement, the fact that moved with it (F212).
+        let measuring = ui.core().perf_measuring();
         // A native view ran: the count it ran at is what the next frame's
         // claim rests on.
         if !replayed && native.is_some() {
-            if t.is_some() {
-                let mut note = format!("{track}: {why}");
-                if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
-                    note.push_str(" kui: ");
-                    note.push_str(kui_why);
-                }
-                crate::perf::note(note);
+            if measuring && !fresh {
+                ui.core().perf_note(&format!("{track}: {why}"));
             }
             self.scripting.native_tracks.insert(track.clone(), calls_in);
         }
@@ -2470,22 +2617,15 @@ impl Kawoosh {
             && let Some(rt) = self.scripting.rt.as_ref()
             && let Some(reads) = rt.view_reads(&track)
         {
-            if t.is_some() {
+            // With what it read that keeps it from replaying: each opaque
+            // native it called, by name.
+            if measuring && !fresh {
                 let mut note = format!("{track}: {why}");
-                // kui's own reason, when it was asked and refused: the
-                // fact that moved, or what the fill declared.
-                if let Some(kui_why) = ui.core().slot_fill_why(&slot) {
-                    note.push_str(" kui: ");
-                    note.push_str(kui_why);
-                }
                 if !reads.opaque.is_empty() {
-                    note.push_str(" opaque ");
+                    note.push_str(", read ");
                     note.push_str(&reads.opaque.join(" "));
                 }
-                if reads.clock {
-                    note.push_str(" clock");
-                }
-                crate::perf::note(note);
+                ui.core().perf_note(&note);
             }
             let gens = self.scripting.frame_gens;
             self.scripting
@@ -2493,6 +2633,14 @@ impl Kawoosh {
                 .insert(track, ViewTrack { gens, reads });
         }
         slot_key
+    }
+
+    /// kui's answer to the last placement of the pane view tracked as
+    /// `track` (`NAME@PANE`) that the host vouched for — `Replayed`, or
+    /// why kui ran the view instead — and `None` when the frame just
+    /// drawn placed it unvouched (`ViewFill`).
+    pub fn view_fill(&self, track: &str) -> Option<kui_native::FillAnswer> {
+        self.scripting.view_fills.get(track)?.answer
     }
 
     /// The moves `:view scroll` asked of the pane, made on the scroller
@@ -2860,11 +3008,11 @@ impl kui_native::Extension for NativeKui {
     fn name(&self) -> &str {
         self.0.name()
     }
-    fn slots(&self) -> &[String] {
-        self.0.slots()
+    fn components(&self) -> &[String] {
+        self.0.components()
     }
-    fn view(&mut self, slot: &kui_native::Slot<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
-        self.0.view(slot, ui)
+    fn view(&mut self, inst: &kui_native::Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+        self.0.view(inst, ui)
     }
     fn on_event(&mut self, ev: &kui_native::UiEvent) -> Vec<Value> {
         kawoosh_lua::native::touch();

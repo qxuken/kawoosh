@@ -758,21 +758,20 @@ fn an_idle_launcher_is_replayed() {
     // and every view runs again the frame after, rightly.
     d.settle(&mut app);
     assert!(on_launcher(&app));
-    let slot = format!("lua/launcher@{}", app.layout.focused());
+    let track = format!("launcher@{}", app.layout.focused());
     for i in 0..3 {
         d.frame(&mut app);
         assert_eq!(
-            d.core.slot_fill(&slot),
-            Some(kui_native::SlotFill::Replayed),
-            "idle frame {i}: {:?}",
-            d.core.slot_fill_why(&slot)
+            app.view_fill(&track),
+            Some(kui_native::FillAnswer::Replayed),
+            "idle frame {i}"
         );
     }
     d.press(&mut app, "j");
     d.frame(&mut app);
     assert_ne!(
-        d.core.slot_fill(&slot),
-        Some(kui_native::SlotFill::Replayed),
+        app.view_fill(&track),
+        Some(kui_native::FillAnswer::Replayed),
         "j moves the cursor"
     );
     app.run_lua_source("t", "kawoosh.echo(kawoosh.launcher.state().cursor)");
@@ -903,6 +902,39 @@ fn a_long_path_wraps_inside_its_row() {
     assert!(!on_launcher(&app), "the letter launched");
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&root).ok();
+}
+
+/// A row clicked leaves kui's keyboard on the pane's sink, not on the
+/// row: a press on a Tab stop inside a sink focuses the stop (kui C135),
+/// and a focused row takes Space — the leader — Enter and Tab for its
+/// own. Its pane has the keys, so the press keeps them where they are.
+#[test]
+fn a_row_clicked_leaves_the_keys_on_the_pane() {
+    let _g = serial();
+    let dir = project("click-keys");
+    let (mut d, mut app) = launch(&dir);
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    for _ in 0..30 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
+    let before = d.core.focus();
+    assert!(before.is_some(), "the pane's sink has the keys");
+    let label = "launcher r3";
+    let row = d.rect(label).expect("the row drawn");
+    d.click(&mut app, row.x + row.w / 2.0, row.y + row.h / 2.0);
+    d.frame(&mut app);
+    assert!(on_launcher(&app), "a click off the cursor only moves it");
+    let focus = d.core.focus();
+    assert_ne!(
+        focus.and_then(|k| d.core.label_of(k).map(str::to_string)),
+        Some(label.to_string()),
+        "the row holds no keyboard"
+    );
+    assert_eq!(focus, before, "the sink keeps it");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// A row clicked takes the cursor, and clicked on the cursor opens its

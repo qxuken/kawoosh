@@ -1,9 +1,9 @@
 //! What a Lua view draws through the engine (docs/design/lua-boundary.md
 //! Decisions 8 and 9): its fields, key caps, legends and the way to a
-//! legend. Each is a `fill { name = "engine/…", params = { kind, … } }`
-//! in the view's tree, and [`EngineDraw`] — a kui extension of the
-//! app's, loaded by the Lua host the first frame it draws ([`LuaHost`])
-//! — fills it with what the app draws its own with:
+//! legend. Each is a `component("engine/KIND", props)` in the view's
+//! tree, and [`EngineDraw`] — a kui extension of the app's, loaded by the
+//! Lua host the first frame it draws ([`LuaHost`]) — draws it with what
+//! the app draws its own with:
 //!
 //! - `field`: the line `Kawoosh::field_line` draws the prompt with — tabs
 //!   and escapes drawn, every selection, a caret per selection, a block
@@ -13,10 +13,13 @@
 //!   (`icons::legend_items`);
 //! - `toggle`: the way to a legend and back, `⌥/ keys` (`legends::toggle`).
 //!
-//! The view draws none of these itself; kui's slots carry them (ADR 0014,
-//! an extension hosting extensions), and a click on a field or a toggle
-//! is a reply to the view that declared it. Whether a legend is whole is
-//! still the view's to say (`ctx.legend` gives nil while it is compact).
+//! The view draws none of these itself; kui's components carry them (ADR
+//! 0060, an extension hosting extensions), and a click on a field or a
+//! toggle is the view's own `on_click` message, emitted to the view that
+//! placed it (ADR 0067). Whether a legend is whole is still the view's to
+//! say (`ctx.legend` gives nil while it is compact). Each is placed
+//! `fresh`: what it draws — a field's text and caret, the icons — is the
+//! app's, which kui cannot see, so it is never replayed on its own.
 //!
 //! The app gathers what the extension reads — each field's scene from the
 //! engine, the palette, the icons — before a Lua pane or a header is
@@ -27,13 +30,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use kui_native::{Align, Color, Extension, NodeSpec, Slot, TextStyle, Ui, UiEvent, Value};
+use kui_native::{Align, Color, Extension, Instance, NodeSpec, TextStyle, Ui, UiEvent, Value};
 
 use crate::icons::{CAP, KeyStyle};
 use crate::look::Face;
 use crate::panes::{FieldScene, draw_field};
 
-/// The namespace the extension fills under: `engine/KIND:…`.
+/// The namespace the extension draws under: `engine/KIND`.
 pub const NAMESPACE: &str = "engine";
 
 /// What the extension draws from: the chrome's face and the palette as
@@ -49,18 +52,18 @@ pub struct Drawing {
 
 pub type Shared = Rc<RefCell<Drawing>>;
 
-/// The `engine` extension: every slot under its namespace one thing to
-/// draw, by its params' `kind`.
+/// The `engine` extension: every component under its namespace one thing
+/// to draw, by its name.
 pub struct EngineDraw {
     drawing: Shared,
-    slots: Vec<String>,
+    components: Vec<String>,
 }
 
 impl EngineDraw {
     pub fn new(drawing: Shared) -> Self {
         EngineDraw {
             drawing,
-            slots: vec![kui_native::ANY_SLOT.to_string()],
+            components: vec![kui_native::ANY_COMPONENT.to_string()],
         }
     }
 }
@@ -130,10 +133,7 @@ impl EngineDraw {
         // The pane has the keys, and not the command line over it: one
         // caret on the screen.
         let pane_keyed = !matches!(param(p, "focused"), Some(Value::Bool(false)));
-        let click = Value::map([
-            ("kind", Value::from("field")),
-            ("field", Value::from(full.as_str())),
-        ]);
+        let click = Value::map([("kind", Value::from("field"))]);
         // Not open yet (asked for this frame): its row, empty, so
         // nothing moves when it is.
         let scene = d.fields.get(full.as_str());
@@ -248,51 +248,49 @@ impl Extension for EngineDraw {
         NAMESPACE
     }
 
-    fn slots(&self) -> &[String] {
-        &self.slots
+    fn components(&self) -> &[String] {
+        &self.components
     }
 
-    fn view(&mut self, slot: &Slot<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+    fn view(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
         let d = self.drawing.borrow();
-        let p = slot.params;
-        let t = crate::perf::span_start();
-        let (r, what) = match param(p, "kind") {
-            Some(Value::Str(k)) if k == "field" => (Self::field(&d, p, ui), "engine field"),
-            Some(Value::Str(k)) if k == "keys" => (Self::keys(&d, p, ui), "engine keys"),
-            Some(Value::Str(k)) if k == "legend" => (Self::legend(&d, p, ui), "engine legend"),
-            Some(Value::Str(k)) if k == "toggle" => (Self::toggle(&d, p, ui), "engine toggle"),
-            other => (Err(format!("no kind {other:?} to draw")), "engine ?"),
+        let p = inst.params;
+        // kui's recording times each as `fill engine` (ADR 0058).
+        let r = match inst.name {
+            "field" => Self::field(&d, p, ui),
+            "keys" => Self::keys(&d, p, ui),
+            "legend" => Self::legend(&d, p, ui),
+            "toggle" => Self::toggle(&d, p, ui),
+            other => Err(format!("no {other:?} to draw")),
         };
-        crate::perf::span(what, t);
-        r.map_err(|e| format!("{}: {e}", slot.name))
+        r.map_err(|e| format!("{}: {e}", inst.name))
     }
 
-    /// A click on a field or a legend's toggle: the reply its view hears,
-    /// `{ kind = "field", field = }` or `{ kind = "legend", pane = }`, as
-    /// it heard its own before.
+    /// A click on a field or a legend's toggle: the view's `on_click`
+    /// message, `{ kind = "field", field = }` or `{ kind = "legend", pane
+    /// = }`, emitted to the view that placed it (kui ADR 0060).
     fn on_event(&mut self, ev: &UiEvent) -> Vec<Value> {
         match param(&ev.payload, "kind") {
-            Some(Value::Str(k)) if k == "field" || k == "legend" => vec![ev.payload.clone()],
+            Some(Value::Str(k)) if k == "field" || k == "legend" => {
+                vec![kui_native::slot::emit("on_click", Value::Null)]
+            }
             _ => Vec::new(),
         }
     }
 }
 
-/// The Lua runtime's kui extension, and the engine's drawing it loads the
-/// first frame it draws: kui's way for a guest to bring one of its own
-/// (`Ui::add_extension`), so whoever registers `lua` — the app, the test
-/// harness, a test's drive — has fields, caps and legends with it.
+/// The Lua runtime's kui extension, `lua`: the one state every plugin
+/// runs in, which draws a view no plugin registered. Each plugin draws
+/// through a [`PluginHost`] of its own over the same state, and the
+/// engine's drawing is an extension of the shell's (`fields::NAMESPACE`,
+/// loaded with them, `Kawoosh::load_plugin_extensions`).
 pub struct LuaHost {
     lua: kui_lua::LuaExtension,
-    engine: Option<EngineDraw>,
 }
 
 impl LuaHost {
-    pub fn new(lua: kui_lua::LuaExtension, drawing: Shared) -> Self {
-        LuaHost {
-            lua,
-            engine: Some(EngineDraw::new(drawing)),
-        }
+    pub fn new(lua: kui_lua::LuaExtension) -> Self {
+        LuaHost { lua }
     }
 }
 
@@ -301,47 +299,94 @@ impl Extension for LuaHost {
         self.lua.name()
     }
 
-    fn slots(&self) -> &[String] {
-        self.lua.slots()
+    fn components(&self) -> &[String] {
+        self.lua.components()
     }
 
-    fn view(&mut self, slot: &Slot<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
-        if let Some(engine) = self.engine.take()
-            && let Err(e) = ui.add_extension(NAMESPACE, Box::new(engine))
-        {
-            log::error!("the engine's drawing for Lua views: {e}");
-        }
-        let t = crate::perf::span_start();
-        let c0 = t.map(|_| kawoosh_lua::clock_secs());
-        let r = self.lua.view(slot, ui);
-        crate::perf::span("lua host view", t);
-        // The Lua side's marks (boot.lua's `view`): what kui-lua spent
-        // before the call (its env), the call, and after it (the tree
-        // built from the table).
-        if let Some(c0) = c0 {
-            let c2 = kawoosh_lua::clock_secs();
-            let g = self.lua.lua().globals();
-            let k: Option<mlua::Table> = g.get("kawoosh").ok();
-            let marks = k.and_then(|k| {
-                let a: f64 = k.get("_vt_in").ok()?;
-                let b: f64 = k.get("_vt_out").ok()?;
-                let b2: f64 = k.get("_vt_out2").ok()?;
-                let n: f64 = k.get("_vt_nodes").ok()?;
-                Some((a, b, b2, n))
-            });
-            if let Some((a, b, b2, n)) = marks
-                && a >= c0
-            {
-                crate::perf::span_ms("kui-lua env", ((a - c0) * 1e3) as f32);
-                crate::perf::span_ms("lua view fn", ((b - a) * 1e3) as f32);
-                crate::perf::span_ms("kui-lua build", ((c2 - b2) * 1e3) as f32);
-                crate::perf::span_ms("tree tables", n as f32);
-            }
-        }
-        r
+    /// The script's `root`, which kawoosh never places: every Lua pane
+    /// is a component (`PLUGIN/NAME@PANE`).
+    fn view(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+        self.lua.view(inst, ui)
+    }
+
+    fn component(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+        // kui's recording times the fill as `fill lua`, and boot.lua the
+        // view's own function inside it (`view: NAME`): what is left is
+        // kui-lua's env and its walk of the table.
+        self.lua.component(inst, ui)
     }
 
     fn on_event(&mut self, ev: &UiEvent) -> Vec<Value> {
         self.lua.on_event(ev)
+    }
+
+    fn reentry(&mut self) -> Option<Box<dyn Extension>> {
+        self.lua.reentry()
+    }
+}
+
+/// A plugin as a kui extension of its own (plugin-extensions.md Decision
+/// 1): a handle over the one Lua state (kui-lua's `reentry`), under the
+/// plugin's name as namespace, its panes and its contributions its
+/// components and the shell's slots its contributions. What it draws is
+/// `boot.lua`'s `components["*"]`, which tells the plugin by the
+/// namespace; its events go to `boot.lua`'s `on_event`, as every Lua
+/// view's do. So kui's recording times `fill PLUGIN`, and kui places a
+/// plugin's contributions wherever the shell declares a slot.
+pub struct PluginHost {
+    handle: Box<dyn Extension>,
+    name: String,
+    components: Vec<String>,
+    contributions: Vec<kui_native::Contribution>,
+}
+
+impl PluginHost {
+    pub fn new(
+        handle: Box<dyn Extension>,
+        name: String,
+        contributions: Vec<kui_native::Contribution>,
+    ) -> Self {
+        PluginHost {
+            handle,
+            name,
+            components: vec![kui_native::ANY_COMPONENT.to_string()],
+            contributions,
+        }
+    }
+}
+
+impl Extension for PluginHost {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn components(&self) -> &[String] {
+        &self.components
+    }
+
+    fn contributions(&self) -> &[kui_native::Contribution] {
+        &self.contributions
+    }
+
+    fn view(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+        self.handle.view(inst, ui)
+    }
+
+    fn component(&mut self, inst: &Instance<'_>, ui: &mut Ui<'_>) -> Result<(), String> {
+        self.handle.component(inst, ui)
+    }
+
+    fn on_event(&mut self, ev: &UiEvent) -> Vec<Value> {
+        self.handle.on_event(ev)
+    }
+
+    /// A second handle for one of its own components placed while it
+    /// draws: the same plugin, contributing nothing more.
+    fn reentry(&mut self) -> Option<Box<dyn Extension>> {
+        Some(Box::new(PluginHost::new(
+            self.handle.reentry()?,
+            self.name.clone(),
+            Vec::new(),
+        )))
     }
 }

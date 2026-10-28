@@ -247,7 +247,7 @@ mod tests {
         let wakes = Arc::new(AtomicUsize::new(0));
         let wake = WakeHandle::new();
         let w = wakes.clone();
-        wake.set(Arc::new(move || {
+        wake.set(Arc::new(move |_| {
             w.fetch_add(1, Ordering::SeqCst);
         }));
         let (logger, sink) = Logger::new(wake);

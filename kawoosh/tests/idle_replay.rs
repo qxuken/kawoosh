@@ -6,7 +6,7 @@
 //! pane nobody touched (reported 2026-10-13: "why launcher does takes so
 //! long to render?"). The assertion names what the view read.
 //!
-//! A buffer's header is a view's slot too, replayed as a pane's is: the
+//! A buffer's header is a view's component too, replayed as a pane's is: the
 //! search's bar over its results was filled every frame (`headers.rs`).
 //!
 //! Not here: `hex` and `sqlite` draw a `cells` grid, which kui does not
@@ -16,7 +16,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui_native::{KeyMods, SlotFill};
+use kui_native::{FillAnswer, KeyMods};
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -98,7 +98,7 @@ fn idle(
     else {
         return Some(format!("{name}: not open ({})", app.ed.message));
     };
-    let slot = format!("lua/{name}@{pane}");
+    let track = format!("{name}@{pane}");
     // The Lua that asked ran outside a view: every view runs once more.
     for _ in 0..2 {
         d.frame(&mut app);
@@ -107,14 +107,13 @@ fn idle(
     for _ in 0..3 {
         d.advance(0.05);
         d.frame(&mut app);
-        fills.push(d.core.slot_fill(&slot));
+        fills.push(app.view_fill(&track));
     }
-    if fills.iter().all(|f| *f == Some(SlotFill::Replayed)) {
+    if fills.iter().all(|f| *f == Some(FillAnswer::Replayed)) {
         return None;
     }
-    let why = d.core.slot_fill_why(&slot).map(str::to_string);
     Some(format!(
-        "{name}: {fills:?} {why:?}, {}",
+        "{name}: {fills:?}, {}",
         reads(&mut app, name, pane)
     ))
 }

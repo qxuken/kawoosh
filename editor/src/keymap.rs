@@ -80,7 +80,9 @@ pub struct KeyStroke {
     pub alt: bool,
     pub shift: bool,
     pub sup: bool,
-    /// What the press would insert, for insert mode and prompts.
+    /// What the press would insert, for insert mode and prompts: none
+    /// under a chord, but a Mac's composing Option's character beside
+    /// its `alt` (kui F195).
     pub text: Option<String>,
 }
 

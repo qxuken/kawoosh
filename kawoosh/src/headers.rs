@@ -195,12 +195,19 @@ impl Kawoosh {
             // As tall as it draws: told back, for the text's rows.
             None => spec.on_layout(Msg::HeaderLayout { pane }),
         };
+        // As a Lua pane's (`render_lua_pane`): a press on the bar's own
+        // nodes leaves the keys where they are while the pane has them
+        // (kui C135), and kui draws no ring of its own around it (C93).
+        if focused {
+            spec = spec.keep_focus();
+        }
         let sink = ui.with_keyed(
             "header",
             spec.clip()
                 .on_key(tag.clone())
                 .on_focus(tag.clone())
-                .on_click(tag),
+                .on_click(tag)
+                .focus_ring(kui_native::Color::TRANSPARENT),
             |ui| {
                 self.publish_drawing(&header.view);
                 // Replayed while what the view read holds, as a pane's

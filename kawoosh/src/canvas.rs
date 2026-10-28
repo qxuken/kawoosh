@@ -1655,6 +1655,9 @@ impl Kawoosh {
                     .clip()
                     .bg(pal.panel)
                     .on_key(tag.clone())
+                    // The pane's title bar shows where the keys are: no
+                    // ring of kui's around the sink (kui C93).
+                    .focus_ring(Color::TRANSPARENT)
                     .on_drag(tag.clone())
                     .on_scroll(tag.clone())
                     .on_layout(Msg::CanvasLayout { pane })
@@ -1673,7 +1676,6 @@ impl Kawoosh {
                         NodeSpec::column().size(pen.w, pen.h).floats_in_order().float(
                             FloatConfig::parent()
                                 .inside(Align::Start, Align::End)
-                                .clipped(),
                         ),
                         |ui| {
                     pen.grid(ui);
@@ -1797,7 +1799,7 @@ impl Kawoosh {
                         ui.with_keyed(
                             "empty",
                             NodeSpec::column()
-                                .float(FloatConfig::parent().inside(Align::Center, Align::Center).clipped())
+                                .float(FloatConfig::parent().inside(Align::Center, Align::Center))
                                 .cross_align(Align::Center)
                                 .gap(4.0),
                             |ui| {
@@ -1952,8 +1954,7 @@ fn float_at(x: f32, y: f32) -> NodeSpec {
     NodeSpec::column().float(
         FloatConfig::parent()
             .inside(Align::Start, Align::Start)
-            .offset(x, y)
-            .clipped(),
+            .offset(x, y),
     )
 }
 
@@ -2237,8 +2238,7 @@ impl Pen {
                 .float(
                     FloatConfig::parent()
                         .inside(Align::Start, Align::Start)
-                        .offset(x, y)
-                        .clipped(),
+                        .offset(x, y),
                 )
                 .height(h)
                 .cross_align(Align::Center)

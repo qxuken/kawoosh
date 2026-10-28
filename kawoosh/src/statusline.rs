@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use kawoosh_editor::{Mode, Setting, motions};
-use kui_native::{Align, Color, CursorShape, NodeSpec, Span, Ui};
+use kui_native::{Align, Color, CursorShape, NodeSpec, Span, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::chrome::{Block, cut_component};
@@ -33,8 +33,12 @@ pub const LAYOUT: &[&str] = &[
     "percent",
 ];
 
-/// Where the Lua modules the layout does not name are drawn.
+/// Where the Lua modules the layout does not name are drawn, and the
+/// plugins' contributions after them.
 const REST: &str = "...";
+/// The contribution slot the line declares there, and the row it is in.
+const SLOT: &str = "kawoosh.statusline";
+const SLOT_ROW: &str = "statusline slot";
 /// A spring: the room the modules leave, shared evenly by the springs.
 const GAP: &str = "gap";
 
@@ -46,12 +50,16 @@ const PAD: f32 = 8.0;
 
 /// What a module draws: its parts in their colours and what a click on
 /// it runs. `path` marks the one fitted to the room left; `apart`
-/// draws the parts as words that far apart rather than as one text.
+/// draws the parts as words that far apart rather than as one text;
+/// `slot` marks where the plugins' contributions to `kawoosh.statusline`
+/// stand (`...`, docs/design/plugin-extensions.md Decision 3), no parts
+/// of its own.
 struct Module {
     parts: Vec<(String, Color)>,
     run: Option<String>,
     path: bool,
     apart: Option<f32>,
+    slot: bool,
 }
 
 impl Module {
@@ -61,6 +69,7 @@ impl Module {
             run: None,
             path: false,
             apart: None,
+            slot: false,
         }
     }
 
@@ -162,13 +171,12 @@ impl Kawoosh {
         let pal = self.pal;
         let style = rows::mono(self.chrome.face, &pal);
         let layout = self.statusline_layout();
-        let t = crate::perf::span_start();
+        let mut laps = crate::perf::Laps::begin(ui.core(), "status: lua");
         // A Lua module the layout names is its own there, even while it
         // shows nothing: `position` taken by Lua is not `line:col`.
         let (lua, lua_names): (Vec<(String, Block)>, Vec<String>) =
             self.status_segments_named(ui, "statusline");
-        crate::perf::span("status: lua", t);
-        let t = crate::perf::span_start();
+        laps.to(ui.core(), "status: modules");
         let lua_module = |b: &Block| {
             let mut m = Module::of(b.parts.clone());
             m.run = b.run.clone();
@@ -182,6 +190,11 @@ impl Kawoosh {
             } else if n == REST {
                 let rest = lua.iter().filter(|(name, _)| !layout.contains(name));
                 items.extend(rest.map(|(_, b)| lua_module(b)));
+                if self.scripting.contributed.contains(SLOT) {
+                    let mut m = Module::of(Vec::new());
+                    m.slot = true;
+                    items.push(Some(m));
+                }
             } else if lua_names.contains(n) {
                 let found = lua.iter().find(|(name, _)| name == n);
                 items.extend(found.map(|(_, b)| lua_module(b)));
@@ -189,16 +202,20 @@ impl Kawoosh {
                 items.push(Some(m));
             }
         }
-        items.retain(|m| m.as_ref().is_none_or(|m| !m.is_empty()));
-        crate::perf::span("status: modules", t);
-        let t = crate::perf::span_start();
+        items.retain(|m| m.as_ref().is_none_or(|m| m.slot || !m.is_empty()));
+        laps.to(ui.core(), "status: fit");
         // The path's room: the width less the padding, every other
         // module and the spacing between them all. Fitted for the
         // modules' texts, the width and the face as they stood last
         // frame, the fitting stands — nothing measured.
         if items.iter().flatten().any(|m| m.path) {
+            // The contributions' room as the last frame laid them out: a
+            // component's width is known once it is.
+            let slot_w = ui
+                .layout_of(ui.child_key("statusline").str(SLOT_ROW))
+                .map_or(0.0, |r| r.w);
             let key = FitKey {
-                width: ui.viewport().w,
+                width: ui.viewport().w - slot_w,
                 face: self.chrome.face,
                 texts: texts_hash(&items),
             };
@@ -228,8 +245,7 @@ impl Kawoosh {
                 }
             }
         }
-        crate::perf::span("status: fit", t);
-        let t = crate::perf::span_start();
+        laps.to(ui.core(), "status: draw");
         ui.with_keyed(
             "statusline",
             NodeSpec::row()
@@ -239,6 +255,10 @@ impl Kawoosh {
                 .pad_xy(PAD, 0.0)
                 .gap(SPACING)
                 .cross_align(Align::Center)
+                // Its clicks — a module's command, a plugin's
+                // contribution — leave the keyboard with the pane, as
+                // the title bar's do.
+                .keep_focus()
                 .label("statusline"),
             |ui| {
                 // A module squeezed past what fitting did — the name
@@ -247,6 +267,16 @@ impl Kawoosh {
                 let style = style.ellipsis();
                 for (i, item) in items.iter().enumerate() {
                     match item {
+                        Some(m) if m.slot => {
+                            let focused = self.layout.focused();
+                            self.contributed(
+                                ui,
+                                SLOT_ROW,
+                                SLOT,
+                                vec![("pane", Value::Int(focused as i64))],
+                                SPACING,
+                            );
+                        }
                         Some(m) => draw_module(ui, i, m, style, &pal, &self.icons.borrow()),
                         None => {
                             ui.leaf_keyed(&format!("g{i}"), NodeSpec::row().grow_width());
@@ -255,7 +285,7 @@ impl Kawoosh {
                 }
             },
         );
-        crate::perf::span("status: draw", t);
+        laps.end(ui.core());
     }
 
     /// kawoosh's own module `name`, `None` for a name it has not.

@@ -225,81 +225,23 @@ pub fn resolve(path: &str, bases: &[PathBuf]) -> Option<PathBuf> {
         .find(|p| kawoosh_systems::fs::exists(p))
 }
 
-/// How the OS is asked to open a URL: never through a shell or `cmd`,
-/// which would read the URL as a command line — `cmd /c start "" URL`
-/// ran what followed a `&` in `https://x/?a=1&calc`, std quoting only
-/// an argument with a space, a tab or a `"` in it.
-#[derive(Debug, PartialEq, Eq)]
-enum Opener<'a> {
-    /// A program given the URL as its one argument (`open`, `xdg-open`).
-    Program(&'static str, &'a str),
-    /// Windows' `ShellExecuteW` with the verb `open` and the URL as the
-    /// file: the shell's URL handler, no command line parsed.
-    #[cfg_attr(not(windows), allow(dead_code))]
-    Shell(&'a str),
-}
-
-fn opener(url: &str) -> Opener<'_> {
-    if cfg!(target_os = "macos") {
-        Opener::Program("open", url)
-    } else if cfg!(windows) {
-        Opener::Shell(url)
-    } else {
-        Opener::Program("xdg-open", url)
-    }
-}
-
-/// Hands `url` to the OS's opener.
+/// Hands `url` to the OS's opener: kui's `open_external`, which starts
+/// the platform's own tool with the URL whole and no shell between —
+/// under kawoosh's spawn lock (`App::setup`'s `set_spawner`).
 pub fn open_in_os(url: &str) -> Result<(), String> {
-    match opener(url) {
-        // Waited for on a thread of its own: dropped, each link opened
-        // would leave a zombie until kawoosh exits.
-        Opener::Program(program, url) => {
-            kawoosh_systems::spawn::spawn(kawoosh_systems::io::command(program).arg(url))
-                .map(|mut child| {
-                    std::thread::spawn(move || child.wait());
-                })
-                .map_err(|e| format!("{program}: {e}"))
-        }
-        Opener::Shell(url) => shell_open(url),
-    }
+    kui_native::open_external(url)
 }
 
-#[cfg(windows)]
-fn shell_open(url: &str) -> Result<(), String> {
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    if url.contains('\0') {
-        return Err(format!("{url}: not a URL"));
-    }
-    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
-    let (verb, file) = (wide("open"), wide(url));
-    // SAFETY: both strings are NUL-terminated and live past the call;
-    // the null window, parameters and directory are allowed.
-    let r = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            verb.as_ptr(),
-            file.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            SW_SHOWNORMAL,
-        )
-    };
-    // Above 32 is success; at or below, an error code.
-    if r as usize > 32 {
-        Ok(())
+/// What the OS's file manager is called where `kawoosh.reveal` (`gX`)
+/// asks it, for the message line: `shown in Finder`.
+pub fn file_manager() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Finder"
+    } else if cfg!(windows) {
+        "Explorer"
     } else {
-        Err(format!(
-            "{url}: the shell could not open it (error {})",
-            r as usize
-        ))
+        "the file manager"
     }
-}
-
-#[cfg(not(windows))]
-fn shell_open(url: &str) -> Result<(), String> {
-    Err(format!("{url}: no shell opener here"))
 }
 
 impl Kawoosh {
@@ -548,14 +490,7 @@ mod tests {
             panic!("no URL at {at}");
         };
         assert_eq!(url, "https://x.example/?a=1&whoami|more^x%PATH%");
-        let tricky = r#"https://x.example/?a=1&whoami|calc^x%PATH%"&b"#;
-        let expected = if cfg!(windows) {
-            Opener::Shell(tricky)
-        } else if cfg!(target_os = "macos") {
-            Opener::Program("open", tricky)
-        } else {
-            Opener::Program("xdg-open", tricky)
-        };
-        assert_eq!(opener(tricky), expected, "no shell, the URL whole");
+        // Handed on whole, with no shell between, by kui's
+        // `open_external` (its `system` tests).
     }
 }
