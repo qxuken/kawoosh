@@ -407,6 +407,70 @@ impl Kawoosh {
         }
     }
 
+    /// Whether buffer `id` takes a name from `:rename`: a scratch of the
+    /// user's. A file is named by its path, a plugin's page by its
+    /// plugin (`Buffer::hook`, how a session finds it again), and a
+    /// read-only, private or field buffer has no row to keep one.
+    pub(crate) fn renamable(&self, id: BufferId) -> Result<(), String> {
+        let b = &self.ed.buffers[id];
+        if b.path.is_some() {
+            return Err(format!("{}: a file is named by its path", b.name));
+        }
+        if b.hook.is_some() || b.read_only || b.private || self.ed.is_multi(id) {
+            return Err(format!("{}: not a scratch of yours to rename", b.name));
+        }
+        if self.ed.is_field_buffer(id) {
+            return Err("a field is not renamed".into());
+        }
+        Ok(())
+    }
+
+    /// `:rename NAME`: scratch `id` is named `*NAME*`, and its row is
+    /// written again with it.
+    pub(crate) fn rename_scratch(&mut self, id: BufferId, name: &str) -> Result<(), String> {
+        self.renamable(id)?;
+        let name = self
+            .scratch_name(name, Some(id))
+            .ok_or("rename to what? (:rename NAME)")??;
+        let old = std::mem::replace(&mut self.ed.buffers[id].name, name.clone());
+        self.history_stale(id);
+        self.ed.message = format!("{old} is {name}");
+        Ok(())
+    }
+
+    /// `NAME` as a scratch's name, `*NAME*` — refused when another
+    /// buffer that is not a file has it (but `except`), since a session
+    /// finds a plugin's page by its name. `None` for no name at all.
+    fn scratch_name(&self, name: &str, except: Option<BufferId>) -> Option<Result<String, String>> {
+        let name = starred(name.trim())?;
+        let taken = name != "*scratch*"
+            && self
+                .ed
+                .buffers
+                .iter()
+                .any(|(b, buf)| Some(b) != except && buf.path.is_none() && buf.name == name);
+        Some(if taken {
+            Err(format!("{name} is another buffer's name"))
+        } else {
+            Ok(name)
+        })
+    }
+
+    /// `:enew`, `:new`, `:vnew`: a fresh scratch, named NAME when the
+    /// command has one, else `*scratch*`; `None`, and the message why,
+    /// when the name is another's.
+    fn new_scratch(&mut self, ctx: &Ctx) -> Option<BufferId> {
+        let name = match self.scratch_name(&ctx.args.join(" "), None) {
+            None => "*scratch*".to_string(),
+            Some(Ok(name)) => name,
+            Some(Err(why)) => {
+                self.ed.message = why;
+                return None;
+            }
+        };
+        Some(self.ed.add_buffer(Buffer::new(name, "")))
+    }
+
     /// The view a shell command acts on, when the keyboard is on one:
     /// the focused pane's, else the one the command was run on — never
     /// a field's, a launcher's query or the resident pane view, whose
@@ -792,6 +856,18 @@ impl Kawoosh {
     }
 }
 
+/// A scratch's name as typed, starred: `notes` → `*notes*`; one typed
+/// starred stays. `None` for nothing between the stars.
+fn starred(name: &str) -> Option<String> {
+    let bare = unstarred(name).trim();
+    (!bare.is_empty()).then(|| format!("*{bare}*"))
+}
+
+/// A starred name without its stars, as `:rename` bare offers it.
+fn unstarred(name: &str) -> &str {
+    name.trim_matches('*')
+}
+
 fn path_arg(ctx: &Ctx) -> Option<PathBuf> {
     ctx.args.first().map(PathBuf::from)
 }
@@ -816,13 +892,15 @@ fn panes() -> Vec<ShellCommand> {
         // `:enew` shows a fresh scratch in the focused pane; `:new`
         // and `:vnew` open one in a split, as vim's do. A scratch is
         // named `*scratch*` like the one a launch without a file
-        // gets, and takes a history row of its own once written in.
+        // gets — or `*NAME*`, given one — and takes a history row of
+        // its own once written in or named.
         cmd(
             Spec::new("enew")
                 .alias(&["ene"])
-                .doc("a fresh scratch in the focused pane"),
-            |k, _| {
-                let id = k.ed.add_buffer(Buffer::new("*scratch*", ""));
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("a fresh scratch in the focused pane, named NAME if given"),
+            |k, ctx| {
+                let Some(id) = k.new_scratch(ctx) else { return };
                 match k.focused_view().or_else(|| k.claim_launcher()) {
                     Some(v) => k.show_buffer(v, id),
                     None => {
@@ -833,9 +911,11 @@ fn panes() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("new").doc("a fresh scratch in a split below"),
-            |k, _| {
-                let id = k.ed.add_buffer(Buffer::new("*scratch*", ""));
+            Spec::new("new")
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("a fresh scratch in a split below, named NAME if given"),
+            |k, ctx| {
+                let Some(id) = k.new_scratch(ctx) else { return };
                 let v = k.ed.add_view(id);
                 k.layout.split(SplitDir::V, Content::Editor(v));
             },
@@ -843,9 +923,10 @@ fn panes() -> Vec<ShellCommand> {
         cmd(
             Spec::new("vnew")
                 .alias(&["vne"])
-                .doc("a fresh scratch in a split beside"),
-            |k, _| {
-                let id = k.ed.add_buffer(Buffer::new("*scratch*", ""));
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("a fresh scratch in a split beside, named NAME if given"),
+            |k, ctx| {
+                let Some(id) = k.new_scratch(ctx) else { return };
                 let v = k.ed.add_view(id);
                 k.layout.split(SplitDir::H, Content::Editor(v));
             },
@@ -1250,6 +1331,32 @@ fn buffers() -> Vec<ShellCommand> {
                 let cur = k.ed.views[v].buffer;
                 if let Err(why) = k.close_buffer(cur, ctx.bang()) {
                     k.ed.message = why.into();
+                }
+            },
+        ),
+        // `:rename NAME`: a scratch takes a name of its own, starred as
+        // every name that is not a file's is. Its row keeps the name
+        // (`history.rs`), so a session brings it back by it.
+        cmd(
+            Spec::new("buffer rename")
+                .alias(&["rename"])
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("name the scratch NAME; bare, the prompt filled with its name"),
+            |k, ctx| {
+                let Some(v) = k.view_arg(ctx) else { return };
+                let id = k.ed.views[v].buffer;
+                if let Err(why) = k.renamable(id) {
+                    k.ed.message = why;
+                    return;
+                }
+                if ctx.args.is_empty() {
+                    let name = unstarred(&k.ed.buffers[id].name).to_string();
+                    let pv = k.ed.open_prompt(v, Prompt::Command);
+                    k.ed.set_field_text(pv, &format!("rename {name}"));
+                    return;
+                }
+                if let Err(why) = k.rename_scratch(id, &ctx.args.join(" ")) {
+                    k.ed.message = why;
                 }
             },
         ),

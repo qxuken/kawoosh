@@ -44,7 +44,11 @@ puts a pane anywhere by hand: `<C-w>s` then `t` is a terminal under the
 pane, `<C-w>v` then `t` one beside, whatever the settings say.
 
 `:split PATH` and `:vsplit PATH` open PATH straight away; `:new` and
-`:vnew` a fresh scratch buffer below, beside.
+`:vnew` a fresh scratch buffer below, beside; `:enew`, `:new` and
+`:vnew` with a NAME name it `*NAME*`. `:rename NAME` names the
+scratch in front `*NAME*`, the name its tab, `:ls` and the pickers show
+and a session brings it back by; bare, it opens the prompt on the name
+to edit. A file keeps its own name, its path.
 
 ### Where the keys go when a pane closes
 

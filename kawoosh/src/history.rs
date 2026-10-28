@@ -459,10 +459,11 @@ impl Kawoosh {
             let buf = &self.ed.buffers[id];
             let version = buf.version();
             let modified = buf.modified;
-            // A row is of changes or of history; a buffer with neither
-            // has none.
+            // A row is of changes, of history, or of a scratch's own
+            // name (`:rename`); a buffer with none of them has none.
             let history = self.ed.history_key(id).0 > 1;
-            if !draftable(buf) || !(modified || history) {
+            let named = buf.path.is_none() && buf.name != "*scratch*";
+            if !draftable(buf) || !(modified || history || named) {
                 if self.histories.has_row(id) {
                     self.drop_history(id);
                 }
@@ -497,6 +498,14 @@ impl Kawoosh {
         }
         if let Some(due) = soonest {
             self.histories.alarm.set(due);
+        }
+    }
+
+    /// Buffer `id` changed where its version does not say — a scratch
+    /// renamed — so the next sync writes its row again.
+    pub(crate) fn history_stale(&mut self, id: BufferId) {
+        if let Some(s) = self.histories.seen.get_mut(&id) {
+            s.dirty_since.get_or_insert_with(Instant::now);
         }
     }
 

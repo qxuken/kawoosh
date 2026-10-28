@@ -304,6 +304,65 @@ fn new_scratches() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// `:rename NAME` names the scratch in front `*NAME*`; bare, it opens
+/// the prompt on its name to edit. A file is named by its path, and a
+/// name another scratch has is refused. `:enew NAME` names one new.
+#[test]
+fn rename_a_scratch() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-rename-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "1\n").unwrap();
+    let mut app = Kawoosh::from_file(&a);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "rename notes");
+    assert_eq!(app.ed.message, "a.txt: a file is named by its path");
+    assert_eq!(app.ed.buffer_of(app.focused_view().unwrap()).name, "a.txt");
+
+    ex(&mut d, &mut app, "enew");
+    let scratch = app.ed.views[app.focused_view().unwrap()].buffer;
+    ex(&mut d, &mut app, "rename notes");
+    assert_eq!(app.ed.buffers[scratch].name, "*notes*");
+    assert_eq!(app.ed.message, "*scratch* is *notes*");
+    ex(&mut d, &mut app, "rename *to do*");
+    assert_eq!(
+        app.ed.buffers[scratch].name, "*to do*",
+        "stars typed stay one pair"
+    );
+
+    d.keys(&mut app, ":rename");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(app.ed.prompt_text().as_deref(), Some("rename to do"));
+    d.key(&mut app, "escape", KeyMods::default());
+
+    ex(&mut d, &mut app, "vnew");
+    let other = app.ed.views[app.focused_view().unwrap()].buffer;
+    ex(&mut d, &mut app, "rename to do");
+    assert_eq!(app.ed.message, "*to do* is another buffer's name");
+    assert_eq!(app.ed.buffers[other].name, "*scratch*");
+    // Back to the plain name is never another's.
+    ex(&mut d, &mut app, "rename scratch");
+    assert_eq!(app.ed.buffers[other].name, "*scratch*");
+
+    // `:enew`, `:new` and `:vnew` take the name at the start, by the
+    // same rule.
+    ex(&mut d, &mut app, "enew draft");
+    let draft = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert_eq!(app.ed.buffers[draft].name, "*draft*");
+    let panes = app.layout.visible_panes().len();
+    ex(&mut d, &mut app, "new to do");
+    assert_eq!(app.ed.message, "*to do* is another buffer's name");
+    assert_eq!(app.layout.visible_panes().len(), panes, "no split for it");
+    ex(&mut d, &mut app, "vnew ideas");
+    assert_eq!(app.layout.visible_panes().len(), panes + 1);
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).name,
+        "*ideas*"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn buffers_are_listed_and_switched() {
     let dir = std::env::temp_dir().join(format!("kawoosh-panes-{}", std::process::id()));
