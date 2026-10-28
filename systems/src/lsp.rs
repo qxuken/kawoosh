@@ -99,6 +99,11 @@ pub struct ServerDef {
     /// keeps it while kawoosh runs. A file of its root opened later
     /// starts it again.
     pub idle_stop: Option<std::time::Duration>,
+    /// Whether what it says of a file's problems is shown
+    /// (`lsp.diagnostics`, lsp-rules.md Decision 14): off, it runs and
+    /// answers as before and its diagnostics are kept, unsaid, for when
+    /// it is on again.
+    pub diagnostics: bool,
     /// Folders it reads as a library of its workspace rather than as a
     /// workspace of their own: a file under one goes to an instance
     /// already running in place of one started in the folder — the Lua
@@ -202,6 +207,7 @@ impl Default for ServerDef {
             relay: Vec::new(),
             with: Vec::new(),
             idle_stop: None,
+            diagnostics: true,
             libraries: Vec::new(),
         }
     }
@@ -1983,6 +1989,9 @@ struct Server {
     /// `None` while it holds one; and, once asked to shut down, when it
     /// is killed if it has not exited (lsp-rules.md Decision 12).
     idle_stop: Option<std::time::Duration>,
+    /// Its definition's `diagnostics`: off, what it publishes is kept in
+    /// `Pool::published` and left out of what is said.
+    diagnostics: bool,
     idle_since: Option<std::time::Instant>,
     stopping: Option<std::time::Instant>,
     /// When it was last sent a buffer: of two instances a library file
@@ -2163,6 +2172,7 @@ impl Server {
             pulling: false,
             pull_again: false,
             idle_stop: def.idle_stop,
+            diagnostics: def.diagnostics,
             // Sent its first buffer at once, it holds one.
             idle_since: Some(std::time::Instant::now()),
             stopping: None,
@@ -2718,15 +2728,10 @@ impl Pool {
                 continue;
             };
             by.remove(&key);
-            let all: Vec<Value> = by
-                .values()
-                .filter_map(Value::as_array)
-                .flatten()
-                .cloned()
-                .collect();
             if by.is_empty() {
                 self.published.remove(&uri);
             }
+            let all = self.shown_diagnostics(&uri);
             if let Some(path) = path_of_uri(&uri) {
                 let diagnostics = placed_diagnostics(&json!({ "uri": uri, "diagnostics": all }));
                 self.emit_from(key, Event::FileDiagnostics { path, diagnostics });
@@ -3325,10 +3330,15 @@ impl Pool {
                         .defs
                         .iter()
                         .find(|d| d.command == server.name && d.language == server.language);
+                    let mut shown = None;
                     if let Some(d) = def {
                         server.answers = d.answers.clone();
                         server.relay = d.relay.clone();
                         server.idle_stop = d.idle_stop;
+                        if server.diagnostics != d.diagnostics {
+                            server.diagnostics = d.diagnostics;
+                            shown = Some(d.diagnostics);
+                        }
                     }
                     if let Some(d) = def
                         && d.settings != server.settings
@@ -3345,6 +3355,11 @@ impl Pool {
                     }
                     // A rule switched reaches it too.
                     self.reconcile_loads(key);
+                    // Its diagnostics hidden or shown: every file it
+                    // spoke of said again, with them or without.
+                    if shown.is_some() {
+                        self.resay_diagnostics(key);
+                    }
                 }
             }
             Cmd::Stop { commands } => {
@@ -3816,12 +3831,48 @@ impl Pool {
         let uri = canonical_uri(uri);
         let by = self.published.entry(uri.clone()).or_default();
         by.insert(key, items);
-        let all: Vec<Value> = by
-            .values()
-            .filter_map(Value::as_array)
+        self.say_diagnostics(key, &uri);
+    }
+
+    /// What every server said of `uri`, but the ones whose diagnostics
+    /// are hidden (`ServerDef::diagnostics`).
+    fn shown_diagnostics(&self, uri: &str) -> Vec<Value> {
+        let Some(by) = self.published.get(uri) else {
+            return Vec::new();
+        };
+        by.iter()
+            .filter(|(k, _)| {
+                self.servers
+                    .get(**k)
+                    .and_then(Option::as_ref)
+                    .is_none_or(|s| s.diagnostics)
+            })
+            .filter_map(|(_, v)| v.as_array())
             .flatten()
             .cloned()
+            .collect()
+    }
+
+    /// Every file server `key` published for said again as the servers'
+    /// diagnostics show now: its own hidden or shown.
+    fn resay_diagnostics(&mut self, key: usize) {
+        let uris: Vec<String> = self
+            .published
+            .iter()
+            .filter(|(_, by)| by.contains_key(&key))
+            .map(|(u, _)| u.clone())
             .collect();
+        for uri in uris {
+            self.say_diagnostics(key, &uri);
+        }
+    }
+
+    /// The servers' diagnostics of `uri` handed up — through server
+    /// `key`'s document, as the buffer's, or the file's when no buffer
+    /// holds it.
+    fn say_diagnostics(&mut self, key: usize, uri: &str) {
+        let uri = uri.to_string();
+        let all = self.shown_diagnostics(&uri);
         let params = json!({ "uri": uri, "diagnostics": all });
         let Some(server) = self.servers.get(key).and_then(Option::as_ref) else {
             return;

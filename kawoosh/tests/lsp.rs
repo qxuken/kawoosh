@@ -2154,6 +2154,194 @@ fn rules_load_all_hints_and_enabled() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `:lsp detach` takes one file from its server and `:lsp attach` gives
+/// it back; `:lsp disable` (and `:set -lsp.enabled`) stops every server
+/// whatever its own rule says, `:lsp disable LANGUAGE` one
+/// (lsp-rules.md Decision 13).
+#[test]
+fn detach_a_file_and_disable_the_servers() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-detach-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&dir.join("src/main.rs"));
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let main_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    let docs = |a: &Kawoosh| a.lsp.status.first().map(|s| s.2);
+    // Sent before the pane moves on: the server holds it from then.
+    assert!(until(&mut d, &mut app, |a| docs(a) == Some(1)));
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("src/a.rs").display()),
+    );
+    let a_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    let both = |a: &Kawoosh| {
+        docs(a) == Some(2) && msgs(a, main_id) == ["boom"] && msgs(a, a_id) == ["boom"]
+    };
+    assert!(until(&mut d, &mut app, both), "{:?}", app.lsp.status);
+
+    // Detached: a.rs closed at the server, its diagnostics gone, asked
+    // nothing; main.rs served as it was.
+    ex(&mut d, &mut app, "lsp detach");
+    assert_eq!(app.ed.message, "a.rs detached from its language servers");
+    assert!(
+        until(&mut d, &mut app, |a| docs(a) == Some(1)
+            && msgs(a, a_id).is_empty()
+            && msgs(a, main_id) == ["boom"]),
+        "a.rs taken back: {:?}",
+        app.lsp.status
+    );
+    ex(&mut d, &mut app, "lsp hover");
+    assert_eq!(
+        app.ed.message,
+        "the buffer is detached from its language servers (:lsp attach)"
+    );
+    // Typed into, it is still sent nothing.
+    d.keys(&mut app, "O");
+    d.commit(&mut app, "//");
+    d.key(&mut app, "escape", KeyMods::default());
+    for _ in 0..20 {
+        d.frame(&mut app);
+    }
+    assert_eq!(docs(&app), Some(1));
+    assert!(msgs(&app, a_id).is_empty());
+    ex(&mut d, &mut app, "lsp detach");
+    assert_eq!(app.ed.message, "a.rs is detached already (:lsp attach)");
+    ex(&mut d, &mut app, "lsp info");
+    let rows = d.line_rows().join("\n");
+    assert!(rows.contains("src/a.rs  (detached)"), "{rows}");
+    d.keys(&mut app, "q");
+
+    ex(&mut d, &mut app, "lsp attach");
+    assert_eq!(app.ed.message, "a.rs attached to its language servers");
+    assert!(
+        until(&mut d, &mut app, both),
+        "a.rs sent again: {:?}",
+        app.lsp.status
+    );
+    ex(&mut d, &mut app, "lsp attach");
+    assert_eq!(app.ed.message, "a.rs is not detached");
+
+    // Every server off; one turned on under it still runs nothing.
+    let off = |a: &Kawoosh| {
+        a.lsp.status.is_empty() && msgs(a, main_id).is_empty() && msgs(a, a_id).is_empty()
+    };
+    ex(&mut d, &mut app, "lsp disable");
+    assert_eq!(app.ed.message, "lsp.enabled off");
+    assert!(
+        until(&mut d, &mut app, off),
+        "stopped: {:?}",
+        app.lsp.status
+    );
+    ex(&mut d, &mut app, "lsp enable rust");
+    assert_eq!(
+        app.ed.message,
+        "lsp.rust.enabled on; lsp.enabled is off (:lsp enable)"
+    );
+    for _ in 0..20 {
+        d.frame(&mut app);
+    }
+    assert!(off(&app), "{:?}", app.lsp.status);
+    ex(&mut d, &mut app, "lsp enable");
+    assert_eq!(app.ed.message, "lsp.enabled on");
+    assert!(
+        until(&mut d, &mut app, both),
+        "started again: {:?}",
+        app.lsp.status
+    );
+
+    // One server, by its language.
+    ex(&mut d, &mut app, "lsp disable rust");
+    assert_eq!(app.ed.message, "lsp.rust.enabled off");
+    assert!(until(&mut d, &mut app, off), "{:?}", app.lsp.status);
+    ex(&mut d, &mut app, "lsp enable rust");
+    assert!(until(&mut d, &mut app, both), "{:?}", app.lsp.status);
+    ex(&mut d, &mut app, "lsp disable cobol");
+    assert_eq!(app.ed.message, "no language server for cobol");
+
+    // The switch as a setting.
+    ex(&mut d, &mut app, "set -lsp.enabled");
+    assert!(until(&mut d, &mut app, off), "{:?}", app.lsp.status);
+    ex(&mut d, &mut app, "set +lsp.enabled");
+    assert!(until(&mut d, &mut app, both), "{:?}", app.lsp.status);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `lsp.diagnostics` and `lsp.NAME.diagnostics` hide what the servers
+/// say of a file's problems and nothing else: the server runs and
+/// answers, and what it said comes back when shown again, unedited
+/// (lsp-rules.md Decision 14).
+#[test]
+fn diagnostics_hidden_with_the_server_running() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-quiet-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&dir.join("src/main.rs"));
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let id = app.ed.views[app.focused_view().unwrap()].buffer;
+    let shown = |a: &Kawoosh| msgs(a, id) == ["boom"];
+    let hidden = |a: &Kawoosh| !a.lsp.status.is_empty() && msgs(a, id).is_empty();
+    assert!(until(&mut d, &mut app, shown));
+
+    ex(&mut d, &mut app, "lsp toggle diagnostics");
+    assert_eq!(app.ed.message, "lsp.rust.diagnostics off");
+    assert!(until(&mut d, &mut app, hidden), "{:?}", msgs(&app, id));
+    // The server still answers.
+    ex(&mut d, &mut app, "lsp hover");
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .ed
+            .buffers
+            .values()
+            .any(|b| b.name == "*hover*")),
+        "hover pane"
+    );
+    d.keys(&mut app, "q");
+    ex(&mut d, &mut app, "lsp info");
+    let rows = d.line_rows().join("\n");
+    assert!(
+        rows.contains("lsp.rust  no diagnostics (session)"),
+        "{rows}"
+    );
+    d.keys(&mut app, "q");
+    ex(&mut d, &mut app, "lsp toggle diagnostics");
+    assert_eq!(app.ed.message, "lsp.rust.diagnostics on");
+    assert!(until(&mut d, &mut app, shown), "said again unedited");
+
+    // Every server's, by the command and by the setting.
+    ex(&mut d, &mut app, "lsp diagnostics");
+    assert_eq!(app.ed.message, "lsp diagnostics hidden");
+    assert!(until(&mut d, &mut app, hidden));
+    ex(&mut d, &mut app, "lsp diagnostics");
+    assert_eq!(app.ed.message, "lsp diagnostics shown");
+    assert!(until(&mut d, &mut app, shown));
+    ex(&mut d, &mut app, "set -lsp.diagnostics");
+    assert!(until(&mut d, &mut app, hidden));
+    // A server's turned on under it is still hidden, and said so.
+    ex(&mut d, &mut app, "lsp toggle diagnostics");
+    ex(&mut d, &mut app, "lsp toggle diagnostics");
+    assert_eq!(
+        app.ed.message,
+        "lsp.rust.diagnostics on; lsp.diagnostics is off (:lsp diagnostics)"
+    );
+    for _ in 0..20 {
+        d.frame(&mut app);
+    }
+    assert!(hidden(&app));
+    ex(&mut d, &mut app, "set +lsp.diagnostics");
+    assert!(until(&mut d, &mut app, shown));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `lsp.LANGUAGE` is the server too (lsp-rules.md Decision 2): its
 /// `settings` reach the server running, and new `args` start a new one.
 #[test]

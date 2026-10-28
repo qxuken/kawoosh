@@ -26,7 +26,7 @@ use crate::notify::Level;
 
 /// The rules that are on or off, as `:lsp toggle` flips them, and what
 /// each does.
-const SWITCHES: [(&str, &str); 3] = [
+const SWITCHES: [(&str, &str); 4] = [
     (
         "enabled",
         "the server of the caret's language — or LANGUAGE's — on or off for the session (`lsp.NAME.enabled`)",
@@ -39,10 +39,16 @@ const SWITCHES: [(&str, &str); 3] = [
         "inlay_hints",
         "the server's inlay hints on or off for the session (`lsp.NAME.inlay_hints`)",
     ),
+    (
+        "diagnostics",
+        "the server's diagnostics shown or hidden for the session, the server running on (`lsp.NAME.diagnostics`)",
+    ),
 ];
 
 /// The keys of `lsp` that are not servers.
-const RESERVED: [&str; 5] = [
+const RESERVED: [&str; 7] = [
+    "enabled",
+    "diagnostics",
     "inlay_hints",
     "idle_stop_secs",
     "languages",
@@ -51,11 +57,12 @@ const RESERVED: [&str; 5] = [
 ];
 
 /// The keys of `lsp.NAME` that are rules, for `:lsp info`.
-const RULES: [&str; 5] = [
+const RULES: [&str; 6] = [
     "enabled",
     "load_all",
     "load_max",
     "inlay_hints",
+    "diagnostics",
     "idle_stop_secs",
 ];
 
@@ -151,7 +158,8 @@ impl Kawoosh {
     /// The table the pool runs: every server Lua or the builtin table
     /// defines, and every `lsp.NAME` that names a `cmd`, each with its
     /// settings over it and its languages' files the registry's; one
-    /// switched off (`enabled = false`) left out. A language with a
+    /// switched off (`enabled = false`) left out, and all of them while
+    /// `lsp.enabled` is off. A language with a
     /// server of its own name is that server's, not another's. Beside
     /// it, what to tell the user once, each by a key: an `lsp.NAME`
     /// that is no server's — a language another one serves (`lsp.tsx`),
@@ -192,6 +200,9 @@ impl Kawoosh {
             names.push(k.clone());
         }
         let private = private_files(self.ed.settings.get("secrets.masks"));
+        // `lsp.enabled` off is every server off, whatever its own says
+        // (Decision 13).
+        let all_on = self.ed.settings.bool("lsp.enabled") != Some(false);
         let mut out = Vec::new();
         let mut strays: Vec<String> = Vec::new();
         let mut mistakes: Vec<(String, String)> = Vec::new();
@@ -215,7 +226,7 @@ impl Kawoosh {
                     continue;
                 }
             };
-            if field("enabled").and_then(Setting::as_bool) == Some(false) {
+            if !all_on || field("enabled").and_then(Setting::as_bool) == Some(false) {
                 continue;
             }
             if let Some(t) = t {
@@ -234,6 +245,10 @@ impl Kawoosh {
                 .or_else(|| self.ed.settings.int("lsp.idle_stop_secs"))
                 .unwrap_or(0);
             def.idle_stop = (idle > 0).then(|| std::time::Duration::from_secs(idle as u64));
+            // `lsp.diagnostics` off hides every server's, whatever its own
+            // says, as `lsp.enabled` stops them (Decision 14).
+            def.diagnostics = self.ed.settings.bool("lsp.diagnostics") != Some(false)
+                && field("diagnostics").and_then(Setting::as_bool) != Some(false);
             def.private = private.clone();
             // The Lua API's types stay on the Lua server's library
             // however often a config redefines it (`types.rs`) — and a
@@ -409,24 +424,16 @@ impl Kawoosh {
             self.ed.message = format!("lsp toggle {rule}: which language?");
             return;
         };
-        let name = self.lsp_name_of(&language);
-        let known = self
-            .lsp
-            .defs
-            .iter()
-            .chain(self.scripting.servers.iter())
-            .any(|d| d.language == name)
-            || self.ed.settings.str(&format!("lsp.{name}.cmd")).is_some();
-        if !known {
-            self.ed.message = format!("no language server for {language}");
+        let Some(name) = self.lsp_server_name(&language) else {
             return;
-        }
+        };
         let path = format!("lsp.{name}.{rule}");
         let now = match self.ed.settings.bool(&path) {
             Some(b) => b,
             None => match rule {
                 "enabled" => true,
                 "inlay_hints" => self.lsp_hints_on(&language),
+                "diagnostics" => true,
                 // A plugin's: `lsp.RULE` for every server, else its own
                 // default.
                 _ => self
@@ -450,7 +457,63 @@ impl Kawoosh {
         // A restart's word, if the switch made one, is the one to read.
         if !self.ed.message.starts_with("lsp: restarting") {
             self.ed.message = format!("{path} {}", if now { "off" } else { "on" });
+            // On under the switch over every server, it is still off.
+            if !now
+                && matches!(rule, "enabled" | "diagnostics")
+                && self.ed.settings.bool(&format!("lsp.{rule}")) == Some(false)
+            {
+                let cmd = if rule == "enabled" {
+                    "lsp enable"
+                } else {
+                    "lsp diagnostics"
+                };
+                self.ed.message += &format!("; lsp.{rule} is off (:{cmd})");
+            }
         }
+    }
+
+    /// The `lsp.NAME` serving `language`, switched off or not; none
+    /// said in the message.
+    fn lsp_server_name(&mut self, language: &str) -> Option<String> {
+        let name = self.lsp_name_of(language);
+        let known = self
+            .lsp
+            .defs
+            .iter()
+            .chain(self.scripting.servers.iter())
+            .any(|d| d.language == name)
+            || self.ed.settings.str(&format!("lsp.{name}.cmd")).is_some();
+        if !known {
+            self.ed.message = format!("no language server for {language}");
+            return None;
+        }
+        Some(name)
+    }
+
+    /// `:lsp enable [LANGUAGE]`, `:lsp disable [LANGUAGE]`: every server
+    /// on or off for the session (`lsp.enabled`), or `LANGUAGE`'s
+    /// (`lsp.NAME.enabled`) — a server turned on under `lsp.enabled` off
+    /// still runs nothing, and the message says so (Decision 13).
+    fn lsp_enable(&mut self, on: bool, language: Option<String>) {
+        let path = match language {
+            None => "lsp.enabled".to_string(),
+            Some(language) => match self.lsp_server_name(&language) {
+                Some(name) => format!("lsp.{name}.enabled"),
+                None => return,
+            },
+        };
+        self.ed
+            .settings
+            .set(Layer::Session, &path, Setting::Bool(on));
+        self.sync_lsp_rules();
+        if self.ed.message.starts_with("lsp: restarting") {
+            return;
+        }
+        let mut said = format!("{path} {}", if on { "on" } else { "off" });
+        if on && path != "lsp.enabled" && self.ed.settings.bool("lsp.enabled") == Some(false) {
+            said += "; lsp.enabled is off (:lsp enable)";
+        }
+        self.ed.message = said;
     }
 
     /// `kawoosh.lsp.rule(name, { doc =, default = })`: a plugin's rule
@@ -772,9 +835,10 @@ fn setting_json(v: &Setting) -> Value {
     }
 }
 
-/// `:lsp toggle RULE [LANGUAGE]`, a command per rule so each completes.
+/// `:lsp toggle RULE [LANGUAGE]`, a command per rule so each completes,
+/// and `:lsp enable`/`:lsp disable`.
 pub(crate) fn commands() -> Vec<ShellCommand> {
-    SWITCHES
+    let mut out: Vec<ShellCommand> = SWITCHES
         .iter()
         .map(|&(rule, doc)| {
             cmd(
@@ -784,7 +848,20 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 move |k, ctx| k.lsp_toggle(rule, ctx.args.first().cloned()),
             )
         })
-        .collect()
+        .collect();
+    out.push(cmd(
+        Spec::new("lsp enable")
+            .args(Args::new(&[ArgKind::Language]))
+            .doc("language servers on for the session — bare, all of them (`lsp.enabled`); LANGUAGE, its server (`lsp.NAME.enabled`)"),
+        |k, ctx| k.lsp_enable(true, ctx.args.first().cloned()),
+    ));
+    out.push(cmd(
+        Spec::new("lsp disable")
+            .args(Args::new(&[ArgKind::Language]))
+            .doc("language servers off for the session, stopped and sent nothing — bare, all of them (`lsp.enabled`); LANGUAGE, its server (`lsp.NAME.enabled`); highlighting stays"),
+        |k, ctx| k.lsp_enable(false, ctx.args.first().cloned()),
+    ));
+    out
 }
 
 #[cfg(test)]

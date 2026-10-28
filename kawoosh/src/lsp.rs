@@ -135,6 +135,9 @@ pub struct LspState {
     /// rename's edits in files it loaded, and what a server held before
     /// a restart or a rule took it away.
     also_sync: HashSet<BufferId>,
+    /// Buffers `:lsp detach` took from their servers: sent nothing, and
+    /// asked of no server, until `:lsp attach`.
+    pub(crate) detached: HashSet<BufferId>,
     /// `:lsp install`'s terminals, by the command each installs: one
     /// that ends well restarts its servers.
     pub(crate) installs: HashMap<crate::terminals::TermId, Vec<String>>,
@@ -151,6 +154,9 @@ enum HoverThen {
     /// Go to it and show its own hover (`K` in the hover).
     Hover,
 }
+
+/// What a request of a buffer `:lsp detach` took from its servers says.
+pub(crate) const DETACHED: &str = "the buffer is detached from its language servers (:lsp attach)";
 
 /// The engine's own symbol lookups count down from here, so they never
 /// meet a Lua job's token.
@@ -189,6 +195,7 @@ impl LspState {
             symbol_asks: HashMap::new(),
             next_ask: ENGINE_TOKENS,
             also_sync: HashSet::new(),
+            detached: HashSet::new(),
             installs: HashMap::new(),
             cli: vec![
                 std::env::current_exe()
@@ -259,6 +266,10 @@ impl Kawoosh {
                     update,
                     diagnostics,
                 } => {
+                    // Said before the close reached the server.
+                    if self.lsp.detached.contains(&buffer) {
+                        continue;
+                    }
                     if self.lsp.typing(buffer, self.pane_mode()) {
                         self.lsp.held.insert(buffer, (update, diagnostics));
                         self.lsp.alarm.set(self.lsp.moved[&buffer] + self.lsp.quiet);
@@ -472,7 +483,9 @@ impl Kawoosh {
                 }
                 Event::Status(s) => self.lsp.status = s,
                 Event::Holders { buffer, commands } => {
-                    self.lsp.holders.insert(buffer, commands);
+                    if !self.lsp.detached.contains(&buffer) {
+                        self.lsp.holders.insert(buffer, commands);
+                    }
                 }
                 // A server's word: a corner line, whatever its type —
                 // logged at it — or, a log message, the log's alone.
@@ -768,7 +781,7 @@ impl Kawoosh {
         self.note_location(&path, Some(line), "hover", "");
         self.open_in_editor(&path, Some(line), Some(col));
         if then == HoverThen::Hover
-            && let Some((_, buffer, offset)) = self.lsp_at_caret()
+            && let Some((_, buffer, offset)) = self.lsp_at_attached_caret()
         {
             self.lsp.hover_from = Some(buffer);
             self.positional_cmd(Cmd::Hover { buffer, offset });
@@ -795,6 +808,8 @@ impl Kawoosh {
         let caps = self.caps_of(buffer);
         let why = if b.private {
             Some("a private buffer is not sent to a server".to_string())
+        } else if self.lsp.detached.contains(&buffer) {
+            Some(DETACHED.to_string())
         } else if !self.lsp_serves(&language) {
             Some(self.lsp_absent(&language))
         } else if workspace && !caps.workspace_symbol || !workspace && !caps.document_symbol {
@@ -850,6 +865,9 @@ impl Kawoosh {
         self.lsp
             .also_sync
             .retain(|id| self.ed.buffers.contains_key(*id));
+        self.lsp
+            .detached
+            .retain(|id| self.ed.buffers.contains_key(*id));
         let mut shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
         // Every file a multibuffer holds, on screen or not: its excerpts
         // have their diagnostics, and a rename sees what they are.
@@ -879,6 +897,7 @@ impl Kawoosh {
             // once it lands.
             if b.private
                 || b.loading.is_some()
+                || self.lsp.detached.contains(&id)
                 || !self.lsp_syncs(&b.language)
                 || self.lsp.sent.get(&id) == Some(&b.version())
             {
@@ -1022,6 +1041,55 @@ impl Kawoosh {
         // ended the session under the keys.
         self.completion.lsp_gone(id);
         self.signature_lsp_gone(id);
+    }
+
+    /// `:lsp detach`: the caret's file taken from its servers — told
+    /// closed, its diagnostics and hints dropped — and sent nothing nor
+    /// asked of them until `:lsp attach`; the rest of its language's
+    /// buffers stay served, and its highlighting is the grammar's
+    /// (lsp-rules.md Decision 13). In a multibuffer, the excerpt's file.
+    fn lsp_detach(&mut self) {
+        let Some((_, id, _)) = self.caret_in_file() else {
+            return;
+        };
+        let Some(name) = self.lsp_file_name(id) else {
+            self.ed.message = "lsp detach: no file here, nothing a server is sent".into();
+            return;
+        };
+        if !self.lsp.detached.insert(id) {
+            self.ed.message = format!("{name} is detached already (:lsp attach)");
+            return;
+        }
+        self.lsp_forget_buffer(id, true);
+        // What forgetting keeps to send again is not to be sent.
+        self.lsp.also_sync.remove(&id);
+        self.ed.message = format!("{name} detached from its language servers");
+    }
+
+    /// Buffer `id`'s file name, when it has a file.
+    fn lsp_file_name(&self, id: BufferId) -> Option<String> {
+        let path = self.ed.buffers[id].path.as_ref()?;
+        Some(kawoosh_systems::fs::basename(path).unwrap_or_default())
+    }
+
+    /// `:lsp attach`: a buffer `:lsp detach` took sent to its servers
+    /// again, as one just opened.
+    fn lsp_attach(&mut self) {
+        let Some((_, id, _)) = self.caret_in_file() else {
+            return;
+        };
+        let name = self.lsp_file_name(id).unwrap_or_default();
+        let language = self.ed.buffers[id].language.to_string();
+        if !self.lsp.detached.remove(&id) {
+            self.ed.message = format!("{name} is not detached");
+            return;
+        }
+        self.lsp.also_sync.insert(id);
+        self.ed.message = if self.lsp_syncs(&language) {
+            format!("{name} attached to its language servers")
+        } else {
+            format!("{name} attached; {}", self.lsp_absent(&language))
+        };
     }
 
     /// The server `language` names — its `lsp.NAME`, else the one
@@ -1384,6 +1452,17 @@ impl Kawoosh {
         Some((v, view.buffer, view.sels.primary().head))
     }
 
+    /// [`Kawoosh::lsp_at_caret`] in a buffer its servers may be asked
+    /// of: one `:lsp detach` took says so instead.
+    fn lsp_at_attached_caret(&mut self) -> Option<(ViewId, BufferId, usize)> {
+        let at = self.lsp_at_caret()?;
+        if self.lsp.detached.contains(&at.1) {
+            self.ed.message = DETACHED.into();
+            return None;
+        }
+        Some(at)
+    }
+
     /// Whether anyone serves `language`: a definition, its command not
     /// found missing and not being restarted.
     pub(crate) fn lsp_serves(&self, language: &str) -> bool {
@@ -1400,8 +1479,11 @@ impl Kawoosh {
 
     /// Whether anyone answers for `buffer`: its language served, or a
     /// server beside (eslint) that holds it, the language's own down or
-    /// not.
+    /// not — none for a buffer `:lsp detach` took from them.
     pub(crate) fn lsp_answers(&self, buffer: BufferId) -> bool {
+        if self.lsp.detached.contains(&buffer) {
+            return false;
+        }
         let held = self
             .lsp
             .holders
@@ -1493,6 +1575,9 @@ impl Kawoosh {
     /// The answer comes as `Event::Formatted`.
     pub(crate) fn lsp_format_buffer(&mut self, id: BufferId) -> Result<(), String> {
         let language = self.ed.buffers[id].language.to_string();
+        if self.lsp.detached.contains(&id) {
+            return Err(DETACHED.into());
+        }
         if !self.lsp_serves(&language) {
             return Err(self.lsp_absent(&language));
         }
@@ -1519,6 +1604,10 @@ impl Kawoosh {
             return;
         };
         let language = self.ed.buffers[buffer].language.to_string();
+        if self.lsp.detached.contains(&buffer) {
+            self.ed.message = DETACHED.into();
+            return;
+        }
         if !self.lsp_answers(buffer) {
             self.ed.message = self.lsp_absent(&language);
             return;
@@ -2054,11 +2143,16 @@ impl Kawoosh {
             let mut open: Vec<String> = self
                 .ed
                 .buffers
-                .values()
-                .filter(|b| languages.contains(&&*b.language))
-                .filter_map(|b| {
-                    kawoosh_systems::fs::relative(b.path.as_ref()?, root)
-                        .map(|p| p.display().to_string())
+                .iter()
+                .filter(|(_, b)| languages.contains(&&*b.language))
+                .filter_map(|(id, b)| {
+                    let p = kawoosh_systems::fs::relative(b.path.as_ref()?, root)?;
+                    let detached = if self.lsp.detached.contains(&id) {
+                        "  (detached)"
+                    } else {
+                        ""
+                    };
+                    Some(format!("{}{detached}", p.display()))
                 })
                 .collect();
             open.sort();
@@ -2105,7 +2199,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .when(&["lsp"])
                 .doc("go to the definition under the caret"),
             |k, _| {
-                if let Some((_, buffer, offset)) = k.lsp_at_caret() {
+                if let Some((_, buffer, offset)) = k.lsp_at_attached_caret() {
                     k.positional_cmd(Cmd::Definition { buffer, offset });
                 }
             },
@@ -2115,7 +2209,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .when(&["lsp"])
                 .doc("what the server says of the symbol under the caret"),
             |k, _| {
-                if let Some((_, buffer, offset)) = k.lsp_at_caret() {
+                if let Some((_, buffer, offset)) = k.lsp_at_attached_caret() {
                     k.lsp.hover_from = Some(buffer);
                     k.positional_cmd(Cmd::Hover { buffer, offset });
                 }
@@ -2217,6 +2311,19 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
+            Spec::new("lsp diagnostics")
+                .doc("the servers' diagnostics shown or hidden for the session, the servers running on (`lsp.diagnostics`); `:lsp toggle diagnostics` for one server"),
+            |k, _| {
+                let on = k.ed.settings.bool("lsp.diagnostics") == Some(false);
+                k.ed.settings.set(
+                    kawoosh_editor::settings::Layer::Session,
+                    "lsp.diagnostics",
+                    kawoosh_editor::Setting::Bool(on),
+                );
+                k.ed.message = format!("lsp diagnostics {}", if on { "shown" } else { "hidden" });
+            },
+        ),
+        cmd(
             Spec::new("lsp action")
                 .args(Args::new(&[ArgKind::Text]))
                 .doc("the code actions at the caret (or over the selection) in a picker; `lsp action N` runs the Nth offered"),
@@ -2300,6 +2407,15 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 let language = ctx.args.first().cloned();
                 k.lsp_update(language.as_deref());
             },
+        ),
+        cmd(
+            Spec::new("lsp detach")
+                .doc("the caret's file taken from its language servers — its diagnostics and hints gone, nothing sent or asked — until `:lsp attach`; highlighting stays"),
+            |k, _| k.lsp_detach(),
+        ),
+        cmd(
+            Spec::new("lsp attach").doc("a file `:lsp detach` took sent to its language servers again"),
+            |k, _| k.lsp_attach(),
         ),
         cmd(
             Spec::new("lsp servers")
