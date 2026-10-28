@@ -76,12 +76,13 @@ tokens = {
 | {{mac:`⌘-` `⌘_`}}{{pc:`<C-->` `<C-_>`}} | `:pane font smaller` | a pixel smaller |
 | {{mac:`⌘0`}}{{pc:`<C-0>`}} | `:pane font reset` | back to the window's size |
 | {{mac:`⌘` or `Ctrl`}}{{pc:`Ctrl`}} and the wheel | | the pane under the pointer bigger with the wheel up, smaller with it down, a pixel a notch |
-| {{mac:`⌘⌥=` `⌘⌥+`}}{{pc:`<C-A-=>` `<C-A-+>`}} | `:font bigger` | every pane's text a pixel bigger, for the session |
+{{mac:| a pinch on the trackpad | | the pane under the pointer bigger as the fingers spread, smaller as they close |
+}}| {{mac:`⌘⌥=` `⌘⌥+`}}{{pc:`<C-A-=>` `<C-A-+>`}} | `:font bigger` | every pane's text a pixel bigger, for the session |
 | {{mac:`⌘⌥-` `⌘⌥_`}}{{pc:`<C-A-->` `<C-A-_>`}} | `:font smaller` | every pane's a pixel smaller |
 | {{mac:`⌘⌥0`}}{{pc:`<C-A-0>`}} | `:font reset` | back to `font.size` |
 
-The size keys and the wheel work in every mode and pane, except over a
-diagram, where they zoom the drawing instead ([diagrams](diagrams.md#the-keys)). A pane's own size is its text alone: an editor's rows, a terminal's grid (the program in it is told its new size); the title bars, tabs and status line stay as they are. A tool pane (the settings, the pickers, the grammars) draws at the chrome's size and keeps it. A pane zoomed on its own keeps its size when the window's changes; `:pane font reset` puts it back with the others. The same with a command: `:setlocal font.size=16` ([settings](settings.md#setlocal)).
+The size keys and the wheel{{mac: (and a pinch)}} work in every mode and pane, except over a
+diagram, where they zoom the drawing instead{{mac: (and over a picture, where a pinch zooms it)}} ([diagrams](diagrams.md#the-keys)). A pane's own size is its text alone: an editor's rows, a terminal's grid (the program in it is told its new size); the title bars, tabs and status line stay as they are. A tool pane (the settings, the pickers, the grammars) draws at the chrome's size and keeps it. A pane zoomed on its own keeps its size when the window's changes; `:pane font reset` puts it back with the others. The same with a command: `:setlocal font.size=16` ([settings](settings.md#setlocal)).
 
 The fonts pane lists every family as a card drawn in that font, with two lines of code in the current theme: yours first, then the ones kawoosh ships (JetBrains Mono, Cascadia Code, Fira Mono, IBM Plex Mono, Monaspace and more), then the system's. `<CR>` or a click uses the family; `j` `k` `gg` `G` `<C-d>` `<C-u>` walk; `/` searches by name, with `n` `N` for the next and previous match; `m` switches between monospaced families and all; `+` `-` change the size; `y` copies the settings line; `q` closes.
 

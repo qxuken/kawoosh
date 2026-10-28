@@ -2589,6 +2589,9 @@ impl Kawoosh {
     }
 
     fn on_scroll(&mut self, pane: PaneId, s: Scroll) {
+        if let Some(zoom) = s.zoom {
+            return self.on_pinch(pane, s.pos, zoom);
+        }
         if self.on_canvas_scroll(pane, &s) {
             return;
         }

@@ -167,8 +167,10 @@ images and ligatures have since been built.
   ([menus.md](design/menus.md) Decision 5)
 - **A terminal at the top of its history** still takes a vertical
   swipe: a lone `onScroll` handler takes its axes. (roadmap.md step 62)
-- **Zoom on a picture** by wheel or pinch: kui's scroll carries no
-  modifier and there is no pinch. (roadmap.md step 89)
+- **Zoom on a picture** by the wheel with ⌘: the window's root takes
+  that for the font (kui F122 `scroll_mods`) ahead of every pane. A
+  pinch zooms one about the pointer since kui alpha.70 (F256).
+  (roadmap.md step 89)
 - **Copy mode's colour** is the foreground only: the paint layer draws
   one colour. (roadmap.md, "Terminal")
 - **Icons**: markdown's boxes and bullets as icons (an inline box in a

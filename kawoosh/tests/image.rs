@@ -402,3 +402,46 @@ fn a_drag_and_the_wheel_move_over_a_picture_larger_than_its_room() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A trackpad's pinch (kui F256) over a picture zooms it by the fingers'
+/// spread about the pointer: the picture's point under the pointer stays
+/// under it. `ev.scroll.zoom` in the pane's own handler.
+#[test]
+fn a_pinch_zooms_a_picture_about_the_pointer() {
+    use kui_native::InputEvent;
+    let (mut d, mut app, root) = start("pinch");
+    open(
+        &mut d,
+        &mut app,
+        &format!("e {}", root.join("a-wide.png").display()),
+    );
+    ex(&mut d, &mut app, "image zoom 800");
+    frames(&mut d, &mut app, 2);
+    let pane = app.layout.rects[&app.layout.focused()];
+    // Right of the middle, over the picture.
+    let (px, py) = (pane.x + pane.w * 0.7, pane.y + pane.h / 2.0);
+    // The fraction of the picture across under the pointer.
+    let under =
+        |app: &mut Kawoosh| (px as f64 - num(app, "room_x") - num(app, "x")) / num(app, "w");
+    let u = under(&mut app);
+    d.input(
+        &mut app,
+        InputEvent::CursorMoved(kui_native::Vec2::new(px, py)),
+    );
+    for (delta, begins) in [(0.0, true), (0.25, false)] {
+        d.input(&mut app, InputEvent::Pinch { delta, begins });
+    }
+    frames(&mut d, &mut app, 2);
+    assert!(
+        (num(&mut app, "zoom") - 10.0).abs() < 1e-3,
+        "800% spread a quarter: {}",
+        state(&mut app, "zoom")
+    );
+    assert_eq!(state(&mut app, "fitted"), "false");
+    let after = under(&mut app);
+    assert!(
+        (after - u).abs() < 0.002,
+        "the point under the pointer stays: {u} → {after}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -727,7 +727,7 @@ end
 ---@field shift? boolean
 ---@field click? kui.ClickEvent a click's pointer data, on a grid or a line row
 ---@field drag? kui.DragEvent a drag's: phase, the pointer, from the press point, the parent's rect
----@field scroll? kui.ScrollEvent a wheel's: the pointer, its delta, whole lines
+---@field scroll? kui.ScrollEvent a wheel's: the pointer, its delta, whole lines; or a pinch's `zoom`
 ---@field hover? kui.HoverEvent a hover edge: phase, and whether the pointer or the content moved
 ---@field layout? kui.LayoutEvent where the node was laid out, and its parent
 ---@field [string] any

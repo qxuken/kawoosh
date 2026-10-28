@@ -323,7 +323,8 @@ for a drawing, which is drawn at whatever size it is shown.
 | `0` | its own size |
 | `f` | fits it to the pane again |
 | `:image zoom N` | a percent of its own size (`250`, `50%`), or `fit` |
-| `h` `j` `k` `l`, the wheel, a drag | move over what does not fit |
+{{mac:| a pinch on the trackpad | zooms in, out, about the pointer |
+}}| `h` `j` `k` `l`, the wheel, a drag | move over what does not fit |
 | `<C-d>` `<C-u>` | half a pane down, up |
 | `p` | holds a picture that moves, and lets it go |
 | `.` `,` | a frame on, a frame back |

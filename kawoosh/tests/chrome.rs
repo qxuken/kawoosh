@@ -618,6 +618,56 @@ fn the_wheel_with_a_modifier_held_sizes_the_font() {
     assert_eq!(size(&app), 13.0);
 }
 
+/// A trackpad's pinch (kui F256) over a pane is its font's size, as the
+/// wheel with ⌘ is: by as much of the size as the fingers spread, what
+/// is under a pixel carried to the next event, and nothing scrolls.
+#[test]
+fn a_pinch_sizes_the_font_of_the_pane_under_it() {
+    use kui_native::{InputEvent, Vec2};
+    let doc = (0..200)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", &doc);
+    d.frame(&mut app);
+    let pane = app.layout.focused();
+    let size = |app: &Kawoosh| app.face_of(pane).face.size;
+    assert_eq!(size(&app), 13.0);
+    let pinch = |d: &mut Drive, app: &mut Kawoosh, by: &[f32]| {
+        d.input(app, InputEvent::CursorMoved(Vec2::new(300.0, 250.0)));
+        d.input(
+            app,
+            InputEvent::Pinch {
+                delta: 0.0,
+                begins: true,
+            },
+        );
+        for &delta in by {
+            d.input(
+                app,
+                InputEvent::Pinch {
+                    delta,
+                    begins: false,
+                },
+            );
+        }
+        d.frame(app);
+    };
+    // 13 px spread by a sixth is two pixels, the rest carried.
+    pinch(&mut d, &mut app, &[0.1, 0.07]);
+    assert_eq!(size(&app), 15.0, "spread: bigger");
+    assert_eq!(app.face.size, 13.0, "the window's stays");
+    pinch(&mut d, &mut app, &[-0.2]);
+    assert_eq!(size(&app), 12.0, "pinched: smaller");
+    assert_eq!(
+        app.ed.views[app.focused_view().unwrap()].top,
+        0,
+        "nothing scrolled"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `tabs.show`: `auto` (the default) draws the strip only while there
 /// is more than one tab, the panes reaching up to the title bar
 /// without it; `never` hides it with any number, the title bar saying

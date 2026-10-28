@@ -145,7 +145,8 @@ The mouse: a press on an item selects it (shift adds), a drag moves the
 selection, a corner of one selected box resizes it, a drag on nothing
 draws a marquee, a double click edits a label, the wheel pans, the
 wheel with ⌘ or Ctrl zooms at the pointer (the window's zoom is the
-pane's under the pointer already, pane-settings.md Decision 5), the
+pane's under the pointer already, pane-settings.md Decision 5), so
+does a trackpad's pinch, by its spread (kui F256, 2026-10-28), the
 middle button drags the view. With the box tool a drag draws the box,
 a click puts an 8×3 one; with the arrow tool a drag from a box to a
 box connects them, and so does a drag from a box with Alt held.

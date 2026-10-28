@@ -68,7 +68,8 @@ again in a standard form; lines it does not touch stay as you wrote them.
 - **Double-click** a thing to type its label where it is; a click
   anywhere else on the diagram keeps what you typed.
 - **The wheel** pans; {{mac:⌘}}{{pc:Ctrl}} and the wheel zooms where the
-  pointer is; the middle button drags the view.
+  pointer is{{mac:, and so does a pinch on the trackpad}}; the middle
+  button drags the view.
 - **Right-click** a thing for what you can do to it — its shape, its
   colour, an arrow's heads, a box added after it — or the empty canvas
   for a box, a text or a paste right there.
