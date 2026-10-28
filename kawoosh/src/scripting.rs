@@ -807,6 +807,13 @@ impl Kawoosh {
                 }
                 self.open_in_editor(&path, line, col);
             }
+            Msg::CopyFiles(paths) => {
+                let from = self
+                    .focused_view()
+                    .map(|v| self.ed.buffer_of(v).name.clone())
+                    .unwrap_or_default();
+                self.copy_files(paths, &from);
+            }
             Msg::Reveal { path, inside } => {
                 let shown = kawoosh_systems::fs::abbreviate_home(&path);
                 let manager = crate::links::file_manager();

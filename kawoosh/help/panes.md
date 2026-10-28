@@ -80,7 +80,7 @@ Rename Symbol, Code Actions, Format — then Cut, Copy, Paste and Select
 All, then Split Right, Split Down, Close Other Panes and Close Pane.
 The keys beside a row are the ones that do the same (`gd`, `grr`…).
 A terminal's menu has Copy, Paste and Select All, and a pane's title
-bar has the pane's own rows (and an editor's Copy Path).
+bar has the pane's own rows (and an editor's Copy Path and Copy File).
 
 On macOS the menu bar at the top of the screen has kawoosh's commands
 too: File, Edit, View, Go, Window and Help.{{mac: Its Edit rows take no

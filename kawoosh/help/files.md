@@ -254,6 +254,7 @@ listing they copy the entry under the caret (the listed directory's on
 | `<leader>yd` `<leader>yD` | the directory, from the working directory and absolute |
 | `<leader>yn` | the file name |
 | `<leader>yN` | the file name without its extension |
+| `<leader>yf` | the file itself, to paste into {{mac:Finder}}{{pc:the file manager}}, a mail or a chat as the file (`:path copy file`); its whole path goes in the register. In a listing, every entry the selection covers |
 
 ## A file's bytes
 

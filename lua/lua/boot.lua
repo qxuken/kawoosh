@@ -1037,6 +1037,8 @@ end
 -- kawoosh.cmdline(text): the command line opened with `text` on it.
 -- kawoosh.copy(text): onto the system clipboard and into the register,
 -- as a yank puts text — for what no buffer's range holds, a path.
+-- kawoosh.copy_files(paths): the files themselves onto the clipboard,
+-- as a file manager's Copy puts them; their paths into the register.
 -- kawoosh.pass(): from a command a key ran, the key is not this
 -- command's here — the binding under it gets it (the next whose `when`
 -- holds), and a key that types, with none left, types; do nothing

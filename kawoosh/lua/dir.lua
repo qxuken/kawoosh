@@ -1759,6 +1759,22 @@ for which, w in pairs(WORDS) do
   })
 end
 
+-- `:dir copy file`, or `<leader>yf`: the entries under the carets or
+-- the visual selection (`chosen`) onto the clipboard as the files
+-- themselves, to paste into Finder, Explorer, a mail or a chat
+-- (`kawoosh.copy_files`, kui F247), their paths into the register; on
+-- `../`, the listed directory.
+kawoosh.command("dir copy file", function()
+  local h, d = kawoosh.buf.current(), listed()
+  if not d or d == DRIVES then return end
+  local paths, fresh = chosen(h)
+  if #paths == 0 and fresh > 0 then return kawoosh.echo("not on disk until :w: write the new line first") end
+  kawoosh.copy_files(#paths > 0 and paths or { d })
+end, {
+  when = { "language:dir" },
+  doc = "copy the entries under the carets or the selection as files, to paste into the file manager or a mail",
+})
+
 -- `g.` (oil's): dot files shown or not, every unedited listing read
 -- again.
 kawoosh.command("dir hidden", function()
@@ -1806,6 +1822,8 @@ kawoosh.map("n", "gX", "dir reveal", LISTING)
 for _, c in ipairs(COPIES) do
   kawoosh.map("n", "<leader>y" .. c[1], "dir copy " .. c[2], LISTING)
 end
+kawoosh.map("n", "<leader>yf", "dir copy file", LISTING)
+kawoosh.map("v", "<leader>yf", "dir copy file", LISTING)
 kawoosh.map("n", "<C-l>", "dir refresh", LISTING)
 kawoosh.map("n", "<C-c>", "dir close", LISTING)
 kawoosh.map("n", "<C-p>", "dir preview", LISTING)

@@ -219,3 +219,26 @@ for a directory's own entries: `xdg-open` on the directory does the
 same. `gx`'s URLs go through `open_external` too (`links::open_in_os`),
 Windows' through `explorer "URL"` where kawoosh called `ShellExecuteW`.
 The arguments per OS are kui's `system::tests`.
+
+### 6. `<leader>yf` copies the entries as files
+
+*Added 2026-10-28, with kui alpha.70's files on the clipboard (F247).*
+`:dir copy file`, or `<leader>yf` in a listing, puts the entries under
+the carets or the visual selection (Decision 1's `chosen`) on the
+clipboard as a file manager's Copy puts them — file URLs on the Mac's
+pasteboard, `CF_HDROP` on Windows, a `text/uri-list` on Linux, kui's
+to write — so they paste into Finder, Explorer, a mail or a chat as
+the files; on `../` the listed directory. Their whole paths, a line
+each, go into the register, as `<leader>yp`'s path does. The same key
+copies an editor's file and a plugin pane's (`path copy file` in the
+engine, `kawoosh.copy_files` from Lua).
+
+- **What is refused**, on the message line, as `gX` refuses: a host's
+  path and a path that is not there; a line typed in and not written
+  yet says to write it first. Nothing is copied when one is refused.
+- **The key**: `<leader>yf`, beside the `<leader>y*` path copies; `f`
+  was free there and reads as "file".
+
+`leader_yf_copies_the_file_itself_and_a_listing_s_entries` in
+`kawoosh/tests/copy_files.rs`; a plugin pane's in
+`kawoosh/lua/tests/path_copy.lua`.
