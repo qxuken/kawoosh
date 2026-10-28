@@ -338,6 +338,60 @@ fn an_emptied_scratch_closed_does_not_come_back() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A renamed scratch comes back by its name — one typed in, and one
+/// left empty, which has a row for its name alone.
+#[test]
+fn a_renamed_scratch_comes_back_by_its_name() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-renamed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "1\n2\n").unwrap();
+    let db = dir.join("state.db");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&a);
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "enew");
+    d.keys(&mut app, "ikawoosh");
+    d.key(&mut app, "escape", KeyMods::default());
+    app.sync_histories(true);
+    // Renamed after its row was written: the row is written again.
+    ex(&mut d, &mut app, "rename notes");
+    ex(&mut d, &mut app, "vnew");
+    ex(&mut d, &mut app, "rename empty");
+    ex(&mut d, &mut app, "qa");
+    d.frame(&mut app);
+    assert!(app.quit);
+    drop(app);
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "the greeting");
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    d.frame(&mut app);
+    let mut names: Vec<String> = app
+        .ed
+        .listed_buffers()
+        .into_iter()
+        .map(|id| {
+            format!(
+                "{}={:?}",
+                app.ed.buffers[id].name,
+                app.ed.buffers[id].text()
+            )
+        })
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            "*empty*=\"\"".to_string(),
+            "*notes*=\"kawoosh\"".to_string(),
+        ]
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A `:session restore` from inside drops only what it replaced that
 /// was nothing — the launch's greeting, a blank scratch — and leaves
 /// what the old panes showed otherwise: a listing (read-only, and
