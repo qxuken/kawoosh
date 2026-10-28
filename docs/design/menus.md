@@ -87,7 +87,7 @@ scope, so its menu has kui's Copy and Select All and kawoosh's Paste
 
 ### 3. The pane's menu
 
-An editor's Copy Path (`path copy`, dimmed for a buffer with no file),
+An editor's Copy Path (`path copy`) and Copy File (`path copy file`, 2026-10-28), dimmed for a buffer with no file,
 then Decision 2's last four rows. Every row's `id` names the pane, which
 is focused before the row runs: the menu of a pane that does not hold
 the keys acts on that pane, and a pane closed while its menu was open

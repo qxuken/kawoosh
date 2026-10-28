@@ -172,7 +172,12 @@ thing a person types.
   `:setlocal`, look.md's fonts table, terminal.md, search.md, lua.md.
 
 Found while building: no pinch reaches kawoosh (only ⌘ with the
-wheel), so the decision speaks of the wheel. Seen in a window opened
+wheel), so the decision speaks of the wheel. *Amended 2026-10-28*
+(kui alpha.70, F256): a trackpad's pinch reaches the pane under the
+pointer as a scroll with a `zoom`, and steps its text by as much of
+its size as the fingers spread, on the wheel's carry
+(`Kawoosh::on_pinch`); a canvas zooms by it and a picture pane hears
+its own. Seen in a window opened
 from this build, driven over its socket: an editor pane at 22 px with
 relative numbers beside one at the window's 13 and a terminal at 9,
 the title bars all at the chrome's size. Tests:

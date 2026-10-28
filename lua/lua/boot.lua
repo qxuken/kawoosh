@@ -727,7 +727,7 @@ end
 ---@field shift? boolean
 ---@field click? kui.ClickEvent a click's pointer data, on a grid or a line row
 ---@field drag? kui.DragEvent a drag's: phase, the pointer, from the press point, the parent's rect
----@field scroll? kui.ScrollEvent a wheel's: the pointer, its delta, whole lines
+---@field scroll? kui.ScrollEvent a wheel's: the pointer, its delta, whole lines; or a pinch's `zoom`
 ---@field hover? kui.HoverEvent a hover edge: phase, and whether the pointer or the content moved
 ---@field layout? kui.LayoutEvent where the node was laid out, and its parent
 ---@field [string] any
@@ -1037,6 +1037,8 @@ end
 -- kawoosh.cmdline(text): the command line opened with `text` on it.
 -- kawoosh.copy(text): onto the system clipboard and into the register,
 -- as a yank puts text — for what no buffer's range holds, a path.
+-- kawoosh.copy_files(paths): the files themselves onto the clipboard,
+-- as a file manager's Copy puts them; their paths into the register.
 -- kawoosh.pass(): from a command a key ran, the key is not this
 -- command's here — the binding under it gets it (the next whose `when`
 -- holds), and a key that types, with none left, types; do nothing

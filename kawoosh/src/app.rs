@@ -314,6 +314,8 @@ pub struct Kawoosh {
     pub quit: bool,
     /// Text for the clipboard at the next frame — `on_event` has no `Ui`.
     pub(crate) clip_out: Option<String>,
+    /// Files for the clipboard at the next frame, whole paths (kui F247).
+    pub(crate) clip_files_out: Option<Vec<String>>,
     /// A secret for the clipboard at the next frame, written marked
     /// concealed and transient (`yank clipboard`, secrets.md Decision 8).
     pub(crate) clip_secret_out: Option<String>,
@@ -574,6 +576,7 @@ impl Kawoosh {
             waiters: HashMap::new(),
             quit: false,
             clip_out: None,
+            clip_files_out: None,
             clip_secret_out: None,
             shots: Default::default(),
             awaiting_paste: false,
@@ -2252,6 +2255,9 @@ impl Kawoosh {
             self.ed.message = "no file for %".into();
             return;
         };
+        if form == "file" {
+            return self.copy_files(vec![path], &name);
+        }
         match kawoosh_editor::path_form(&self.ed.cwd, &path, form) {
             Ok(text) => {
                 self.ed.message = format!("copied {text}");
@@ -2259,6 +2265,44 @@ impl Kawoosh {
             }
             Err(why) => self.ed.message = why,
         }
+    }
+
+    /// Files onto the system clipboard as the files themselves, as a
+    /// file manager's Copy puts them (kui F247) — `path copy file`,
+    /// `kawoosh.copy_files` — and their whole paths into the register,
+    /// asked from `from`. A path is made whole against the working
+    /// directory; one on a host, or not here, is said and nothing is
+    /// copied: no file manager could paste it.
+    pub(crate) fn copy_files(&mut self, paths: Vec<PathBuf>, from: &str) {
+        use kawoosh_systems::fs::{abbreviate_home, domain_of, exists};
+        let mut whole = Vec::with_capacity(paths.len());
+        for p in paths {
+            let p = if p.is_absolute() || domain_of(&p).is_some() {
+                p
+            } else {
+                self.ed.cwd.join(p)
+            };
+            let shown = abbreviate_home(&p);
+            if domain_of(&p).is_some() {
+                self.ed.message = format!("{shown}: on another machine, not for the clipboard");
+                return;
+            }
+            if !exists(&p) {
+                self.ed.message = format!("{shown}: not there");
+                return;
+            }
+            whole.push(p.to_string_lossy().into_owned());
+        }
+        self.ed.message = match whole.as_slice() {
+            [] => "no file to copy".into(),
+            [one] => format!("copied the file {}", abbreviate_home(Path::new(one))),
+            many => format!("copied {} files", many.len()),
+        };
+        if whole.is_empty() {
+            return;
+        }
+        self.ed.remember_copy(whole.join("\n"), from);
+        self.clip_files_out = Some(whole);
     }
 
     /// A write's copies running long, as a corner line under `fs`:
@@ -2374,6 +2418,7 @@ impl Kawoosh {
                 Effect::Quit { force } => self.request_quit(force),
                 Effect::QuitAll { force } => self.request_quit_all(force),
                 Effect::SetClipboard(t) => self.clip_out = Some(t),
+                Effect::CopyFiles { paths, from } => self.copy_files(paths, &from),
                 Effect::RequestPaste => self.awaiting_paste = true,
                 Effect::Recalled => self.note_recall(),
                 Effect::PromptLine { kind, line } => self.remember_prompt_line(kind, &line),
@@ -2589,6 +2634,9 @@ impl Kawoosh {
     }
 
     fn on_scroll(&mut self, pane: PaneId, s: Scroll) {
+        if let Some(zoom) = s.zoom {
+            return self.on_pinch(pane, s.pos, zoom);
+        }
         if self.on_canvas_scroll(pane, &s) {
             return;
         }
@@ -3160,6 +3208,12 @@ impl kui_native::App for Kawoosh {
         }
         if let Some(text) = self.clip_secret_out.take() {
             ui.set_clipboard_secret(text);
+        }
+        if let Some(paths) = self.clip_files_out.take() {
+            // What reading the clipboard back gives where it gives the
+            // paths as text (a headless run's): not news.
+            self.clip_last = Some(paths.join("\n"));
+            ui.set_clipboard_files(paths);
         }
         self.hand_screenshots(ui);
         self.sync_clipboard(ui.core(), false);

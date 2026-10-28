@@ -8,10 +8,11 @@
 -- The picture is fitted to the pane — never drawn larger than it is,
 -- but for a drawing, which has no pixels to run out of. `+` and `-`
 -- zoom about the pane's middle, `0` is its own size, `f` fits it
--- again, `:image zoom 250` says a percent; `h` `j` `k` `l` move over
--- what does not fit, as the wheel and a drag do. Past twice its size a
--- picture's pixels are drawn as squares; a drawing is drawn again at
--- the size it is shown, sharp at any zoom its pixels have room for.
+-- again, `:image zoom 250` says a percent, a trackpad's pinch zooms
+-- about the pointer; `h` `j` `k` `l` move over what does not fit, as
+-- the wheel and a drag do. Past twice its size a picture's pixels are
+-- drawn as squares; a drawing is drawn again at the size it is shown,
+-- sharp at any zoom its pixels have room for.
 --
 -- One that moves plays: `p` holds it and lets it go, `.` and `,` step
 -- a frame on and back. `b` puts a light or a dark ground under
@@ -253,6 +254,7 @@ kawoosh.view(VIEW, function(ctx)
                 width = w, height = h, format = img.format, frames = img.frames, frame = img.frame,
                 vector = img.vector, zoom = z, fit = fit, fitted = S.zoom == nil,
                 x = dx, y = dy, w = dw, h = dh, room_w = vw, room_h = vh,
+                room_x = box and box.x or 0, room_y = box and box.y or 0,
                 pixel_width = img.pixel_width, pixel_height = img.pixel_height }
 
     facts = { w .. " × " .. h, img.format }
@@ -317,6 +319,16 @@ end, function(ev)
       S.cy = S.grab[2] - (g.dy or 0) / d.h
     end
     if g.phase == "end" then S.grab = nil end
+  elseif ev.kind == "wheel" and ev.event == "scroll" and ev.scroll.zoom then
+    -- A trackpad's pinch (kui F256) zooms about the pointer: the
+    -- picture's point under it stays under it.
+    local s = ev.scroll
+    local px, py = s.x - d.room_x, s.y - d.room_y
+    local u, v = (px - d.x) / d.w, (py - d.y) / d.h
+    S.zoom = bounded(d.zoom * math.max(0.1, 1 + s.zoom), d.width, d.height)
+    local dw, dh = d.width * S.zoom, d.height * S.zoom
+    S.cx = (d.room_w / 2 - px + u * dw) / dw
+    S.cy = (d.room_h / 2 - py + v * dh) / dh
   elseif ev.kind == "wheel" and ev.event == "scroll" then
     S.cx = S.cx - (ev.scroll.dx or 0) / d.w
     S.cy = S.cy - (ev.scroll.dy or 0) / d.h
@@ -372,6 +384,8 @@ end
 ---@field h? number
 ---@field room_w? number the room's size, px
 ---@field room_h? number
+---@field room_x? number the room's corner in the window, px
+---@field room_y? number
 ---@field drawn_x? number where the layout put it, from the pane's box
 ---@field drawn_y? number
 ---@field pixel_width? integer the pixels it was read to
@@ -381,7 +395,8 @@ end
 -- `backdrop` (`"none"`, `"light"`, `"dark"`) and, once the picture is
 -- read, `width`, `height`, `format`, `frames`, `frame`, `vector`,
 -- `zoom`, `fitted`, where it is drawn in the pane's room (`x`, `y`,
--- `w`, `h`, `room_w`, `room_h`) and the pixels it was read to
+-- `w`, `h`, `room_w`, `room_h`; the room's corner in the window,
+-- `room_x`, `room_y`) and the pixels it was read to
 -- (`pixel_width`, `pixel_height`) — or nil when it is not open: the
 -- pane last drawn with the keyboard when none is named.
 ---@param pane? integer the pane's id

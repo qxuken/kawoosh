@@ -1121,10 +1121,36 @@ impl Kawoosh {
         if dy == 0.0 {
             return;
         }
+        let pane = self.pane_at(pos.x, pos.y);
         // A diagram's canvas zooms itself, about the pointer.
-        if self.canvas_zoom_at(self.pane_at(pos.x, pos.y), pos, dy) {
+        if self.canvas_zoom_at(pane, pos, 1.1f32.powf(dy / ZOOM_STEP)) {
             return;
         }
+        self.font_wheel(pane, dy);
+    }
+
+    /// A trackpad's pinch over `pane` (kui F256), `zoom` the
+    /// magnification since the last event: a canvas zooms by it about
+    /// the pointer, any other pane's text by as much of its size, on
+    /// the wheel's carry. (A picture pane hears its own.)
+    pub(crate) fn on_pinch(
+        &mut self,
+        pane: crate::layout::PaneId,
+        pos: kui_native::Vec2,
+        zoom: f32,
+    ) {
+        if zoom == 0.0 {
+            return;
+        }
+        if self.canvas_zoom_at(pane, pos, (1.0 + zoom).max(0.1)) {
+            return;
+        }
+        let size = self.face_of(pane).face.size;
+        self.font_wheel(pane, zoom * size * ZOOM_STEP);
+    }
+
+    /// `dy` of the wheel turned for `pane`'s text: a pixel a notch.
+    fn font_wheel(&mut self, pane: crate::layout::PaneId, dy: f32) {
         if (dy > 0.0) != (self.zoom_carry > 0.0) {
             self.zoom_carry = 0.0;
         }
@@ -1132,7 +1158,6 @@ impl Kawoosh {
         let steps = (self.zoom_carry / ZOOM_STEP).trunc();
         if steps != 0.0 {
             self.zoom_carry -= steps * ZOOM_STEP;
-            let pane = self.pane_at(pos.x, pos.y);
             self.pane_font_step(pane, steps as f64);
         }
     }

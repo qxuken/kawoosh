@@ -178,6 +178,7 @@ fn a_panes_title_bar_has_the_panes_menu() {
         names,
         [
             "Copy Path",
+            "Copy File",
             "",
             "Split Right",
             "Split Down",
@@ -188,6 +189,7 @@ fn a_panes_title_bar_has_the_panes_menu() {
     );
     // A buffer with no file has no path to copy, and one pane no other.
     assert!(!row(&d, "Copy Path").1.enabled);
+    assert!(!row(&d, "Copy File").1.enabled);
     assert!(!row(&d, "Close Other Panes").1.enabled);
     choose(&mut d, &mut app, "Split Right");
     assert_eq!(app.layout.visible_panes().len(), 2);

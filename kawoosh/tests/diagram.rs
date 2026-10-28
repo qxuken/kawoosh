@@ -1253,3 +1253,33 @@ fn a_box_panned_into_view_comes_in_under_the_lines_after_it() {
     assert!(a < b, "A (layer {a}) under B (layer {b})");
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+/// A trackpad's pinch over a canvas (kui F256) zooms it by the fingers'
+/// spread about the pointer — the point under it stays there — and
+/// leaves the pane's font, which a pinch elsewhere sizes, alone.
+#[test]
+fn a_pinch_zooms_the_canvas_about_the_pointer() {
+    use kui_native::InputEvent;
+    let path = file("pinch", START);
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = open(&mut d, &path);
+    let v = app.focused_view().unwrap();
+    let pane = app.layout.focused();
+    let font = app.face_of(pane).face.size;
+    let z0 = app.canvas.views[&v].zoom;
+    let c = at(&app, 4.0, 1.5);
+    d.input(&mut app, InputEvent::CursorMoved(c));
+    for (delta, begins) in [(0.0, true), (0.1, false), (0.15, false)] {
+        d.input(&mut app, InputEvent::Pinch { delta, begins });
+    }
+    d.frame(&mut app);
+    let z = app.canvas.views[&v].zoom;
+    assert!((z - z0 * 1.1 * 1.15).abs() < 1e-3, "zoomed in: {z0} → {z}");
+    let still = at(&app, 4.0, 1.5);
+    assert!(
+        (still.x - c.x).abs() < 0.5 && (still.y - c.y).abs() < 0.5,
+        "about the pointer: {c:?} → {still:?}"
+    );
+    assert_eq!(app.face_of(pane).face.size, font, "the font left alone");
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}

@@ -3735,6 +3735,29 @@ pub fn install(ed: &mut Editor) {
             move |ed, ctx| copy(ed, ctx.view, form),
         );
     }
+    // `<leader>yf`: the file itself onto the clipboard, to paste into
+    // Finder, Explorer, a mail or a chat as the file (kui F247); its
+    // path into the register. In a plugin's pane, the file it shows.
+    ed.register_spec(
+        Spec::new("path copy file")
+            .doc("copy the file itself, to paste into the file manager or a mail (`<leader>yf`)"),
+        |ed, ctx| {
+            if ed.commands.facts.contains("lua") {
+                ed.effects.push(Effect::PanePathCopy("file".into()));
+                return;
+            }
+            match ed.percent_path(ctx.view) {
+                Ok(path) => {
+                    let from = ed.buffers[ed.views[ctx.view].buffer].name.clone();
+                    ed.effects.push(Effect::CopyFiles {
+                        paths: vec![path],
+                        from,
+                    });
+                }
+                Err(why) => ed.message = why,
+            }
+        },
+    );
     // `:e path` opens; `:e!` alone loads the disk's text into the
     // buffer as one undoable change, so what was unsaved is a `u` away
     // — a draft restored over a file that moved on disk, looked at
@@ -5979,6 +6002,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>yD", "path copy dir absolute"),
         ("<leader>yn", "path copy name"),
         ("<leader>yN", "path copy stem"),
+        ("<leader>yf", "path copy file"),
         ("<leader>?", "keys"),
         // `o`: the look (docs/design/themes.md Decision 3) — the base
         // flipped, the OS's again, the themes' pane, the fonts' (fonts.md

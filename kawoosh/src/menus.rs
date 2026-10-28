@@ -307,6 +307,7 @@ impl Kawoosh {
         if let Some(view) = self.view_of(pane) {
             let has_path = self.ed.buffer_of(view).path.is_some();
             items.push(run("Copy Path", Some(pane), "path copy").enabled(has_path));
+            items.push(run("Copy File", Some(pane), "path copy file").enabled(has_path));
             items.push(MenuItem::separator());
         }
         self.pane_rows(pane, &mut items);

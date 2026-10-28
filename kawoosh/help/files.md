@@ -254,6 +254,7 @@ listing they copy the entry under the caret (the listed directory's on
 | `<leader>yd` `<leader>yD` | the directory, from the working directory and absolute |
 | `<leader>yn` | the file name |
 | `<leader>yN` | the file name without its extension |
+| `<leader>yf` | the file itself, to paste into {{mac:Finder}}{{pc:the file manager}}, a mail or a chat as the file (`:path copy file`); its whole path goes in the register. In a listing, every entry the selection covers |
 
 ## A file's bytes
 
@@ -323,7 +324,8 @@ for a drawing, which is drawn at whatever size it is shown.
 | `0` | its own size |
 | `f` | fits it to the pane again |
 | `:image zoom N` | a percent of its own size (`250`, `50%`), or `fit` |
-| `h` `j` `k` `l`, the wheel, a drag | move over what does not fit |
+{{mac:| a pinch on the trackpad | zooms in, out, about the pointer |
+}}| `h` `j` `k` `l`, the wheel, a drag | move over what does not fit |
 | `<C-d>` `<C-u>` | half a pane down, up |
 | `p` | holds a picture that moves, and lets it go |
 | `.` `,` | a frame on, a frame back |

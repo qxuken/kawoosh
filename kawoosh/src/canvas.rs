@@ -1253,14 +1253,15 @@ impl Kawoosh {
         true
     }
 
-    /// The wheel with ⌘ or Ctrl over a canvas zooms it about the
-    /// pointer, a tenth a notch; true when `pane` is one.
-    pub(crate) fn canvas_zoom_at(&mut self, pane: PaneId, pos: Vec2, dy: f32) -> bool {
+    /// The canvas in `pane` zoomed `by` times about the pointer at
+    /// `pos` — a tenth a notch of the wheel with ⌘ or Ctrl, a pinch's
+    /// magnification; true when `pane` is one.
+    pub(crate) fn canvas_zoom_at(&mut self, pane: PaneId, pos: Vec2, by: f32) -> bool {
         let (Some(view), Some(body)) = (self.canvas_view(pane), self.canvas_body(pane)) else {
             return false;
         };
         let at = Vec2::new(pos.x - body.x, pos.y - body.y);
-        self.canvas_of(view).zoom_about(at, 1.1f32.powf(dy / 40.0));
+        self.canvas_of(view).zoom_about(at, by);
         true
     }
 

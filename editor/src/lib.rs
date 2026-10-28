@@ -414,6 +414,13 @@ pub enum Effect {
         force: bool,
     },
     SetClipboard(String),
+    /// `path copy file`: the files themselves onto the system clipboard,
+    /// as a file manager's Copy puts them (kui F247), asked from buffer
+    /// `from`. The shell checks they are here and on this machine.
+    CopyFiles {
+        paths: Vec<PathBuf>,
+        from: String,
+    },
     RequestPaste,
     /// A moment made the register's head by the engine (`[p` `]p`):
     /// attended again, as the memory pane's recall is, not a yank.
@@ -3812,6 +3819,14 @@ impl Editor {
         if text.is_empty() {
             return;
         }
+        self.remember_copy(text.clone(), from);
+        self.effects.push(Effect::SetClipboard(text));
+    }
+
+    /// Text copied made the register's newest, as a yank's, without
+    /// the clipboard: what `copy_text` remembers, and the paths of
+    /// files the shell put on the clipboard as files.
+    pub fn remember_copy(&mut self, text: String, from: &str) {
         self.memory.remember(Moment {
             text: text.clone(),
             linewise: false,
@@ -3821,7 +3836,6 @@ impl Editor {
             at: Instant::now(),
             secret: false,
         });
-        self.effects.push(Effect::SetClipboard(text));
     }
 
     /// The view's file in the form `path copy` names: `relative` to the

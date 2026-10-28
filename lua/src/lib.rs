@@ -496,6 +496,10 @@ pub enum Msg {
     /// `kawoosh.copy(text)`: the register's newest, as a yank's, and on
     /// the system clipboard — text no buffer's range held, a path.
     Copy(String),
+    /// `kawoosh.copy_files(paths)`: the files themselves on the system
+    /// clipboard, as a file manager's Copy puts them, their paths the
+    /// register's newest.
+    CopyFiles(Vec<PathBuf>),
     /// `kawoosh.reveal(path)`: the path shown in the OS's file manager
     /// (Finder, Explorer, the desktop's) — selected among its
     /// directory's entries, or with `inside` a directory's own entries.
@@ -5292,6 +5296,21 @@ fn seed(
         "copy",
         lua.create_function(move |_, text: String| {
             qq.borrow_mut().push(Msg::Copy(text));
+            Ok(())
+        })?,
+    )?;
+    // ---- `kawoosh.copy_files(paths: string[]): nil`: the files themselves onto the
+    // system clipboard, as a file manager's Copy puts them, to paste into
+    // Finder, Explorer, a mail or a chat as the files — what `<leader>yf`
+    // in a listing copies its entries with — and their paths into the
+    // register. One not here, or on a host, is refused on the message line.
+    let qq = q(queue);
+    k.set(
+        "copy_files",
+        lua.create_function(move |_, paths: Vec<String>| {
+            qq.borrow_mut().push(Msg::CopyFiles(
+                paths.into_iter().map(PathBuf::from).collect(),
+            ));
             Ok(())
         })?,
     )?;
