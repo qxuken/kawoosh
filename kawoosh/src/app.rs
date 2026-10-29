@@ -411,6 +411,12 @@ pub struct Kawoosh {
     /// Every column drawn so far, by number, so a column arriving in a
     /// strip already on show is the one that slides in.
     pub(crate) strip_known: std::collections::HashSet<u64>,
+    /// The ribbon as last declared (`StripFrame`): whether this frame's
+    /// widths ease from it, and how much longer it grew.
+    pub(crate) strip_frame: Option<crate::panes::StripFrame>,
+    /// Room held past the ribbon's end while its widths ease, and the
+    /// time it is held until (`render_strip`).
+    pub(crate) strip_slack: Option<(f32, f64)>,
     /// The dock's view of the workspaces (roadmap step 32).
     pub(crate) dock_state: crate::dock::DockState,
     /// A mono cell's advance and height, measured each frame.
@@ -611,6 +617,8 @@ impl Kawoosh {
             culled: Default::default(),
             layout_default_seen: false,
             strip_known: Default::default(),
+            strip_frame: None,
+            strip_slack: None,
             dock_state: Default::default(),
             cell: (7.8, crate::rows::LH),
             grid_cell: (8.0, crate::rows::LH),

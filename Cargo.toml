@@ -31,10 +31,10 @@ kawoosh-diagram = { path = "./diagram" }
 # kui-ffi is the native extensions' value type and loader
 # (docs/design/native.md Decision 1); it is in the graph through kui-lua
 # regardless.
-kui-native = "=0.1.0-alpha.70"
-kui-core = "=0.1.0-alpha.70"
-kui-lua = "=0.1.0-alpha.70"
-kui-ffi = "=0.1.0-alpha.70"
+kui-native = "=0.1.0-alpha.71"
+kui-core = "=0.1.0-alpha.71"
+kui-lua = "=0.1.0-alpha.71"
+kui-ffi = "=0.1.0-alpha.71"
 # A grammar's shared library (`kawoosh-languages`) and a native extension's
 # (`kawoosh-lua`).
 libloading = "0.9"

@@ -81,7 +81,7 @@ fn open(name: &str) -> (Drive, Kawoosh, std::path::PathBuf) {
     ex(&mut d, &mut app, &format!("hex {}", blob.display()));
     d.frame(&mut app);
     d.frame(&mut app);
-    d.frame(&mut app);
+    d.land(&mut app);
     (d, app, root)
 }
 
@@ -250,7 +250,7 @@ fn a_click_puts_the_cursor_and_a_file_that_is_not_text_opens_here() {
     ex(&mut d, &mut app, &format!("e {}", blob.display()));
     d.frame(&mut app);
     d.frame(&mut app);
-    d.frame(&mut app);
+    d.land(&mut app);
     assert_eq!(shown(&mut app), "0 0 16 nil little");
     // A click on a byte, in the hex half and in the text half.
     let grid = d

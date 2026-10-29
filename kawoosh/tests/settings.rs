@@ -716,7 +716,7 @@ fn a_lists_known_words_are_switches_in_the_pane() {
     d.frame(&mut app);
     ex(&mut d, &mut app, "settings memory.hosts");
     d.frame(&mut app);
-    d.frame(&mut app);
+    d.land(&mut app);
     assert_eq!(pane(&mut d, &mut app).1, "memory.hosts");
     let opts = eval(
         &mut d,
@@ -787,7 +787,7 @@ fn the_pane_searches_and_changes_settings_in_their_files() {
     let editor = app.focused_view().unwrap();
 
     d.press(&mut app, "<D-,>");
-    d.frame(&mut app);
+    d.land(&mut app);
     assert!(texts(&d).iter().any(|x| x == "Settings"), "{:?}", texts(&d));
     d.press(&mut app, "tabstop");
     d.frame(&mut app);

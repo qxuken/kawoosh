@@ -779,10 +779,10 @@ fn a_key_reaches_a_column_the_animation_has_not_finished_moving() {
 }
 
 /// The ribbon glides to the column a key reveals (kui's F80: a
-/// `transition` on the scroll container) while a width step lands at
-/// once, so a resize is as fast as the key that asked for it.
+/// `transition` on the scroll container), and a width step eases with
+/// it over the same `RIBBON_MS`.
 #[test]
-fn the_ribbon_glides_to_a_key_and_a_width_lands_at_once() {
+fn the_ribbon_glides_to_a_key_and_a_width_eases_with_it() {
     let vw = 900.0;
     let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
@@ -811,17 +811,143 @@ fn the_ribbon_glides_to_a_key_and_a_width_lands_at_once() {
     settle(&mut d, &mut app);
     let (x, w) = drawn_columns(&d)[2];
     assert!(x + w <= vw + 1.0 && x + w > vw - 40.0, "landed: {x} + {w}");
-    // A width step lands on the frame it is asked for: the column's
-    // box and the ones after it are where the key put them.
+    // A width step eases on the same clock: the columns after it have
+    // not moved on the frame the key landed, are part of the way a
+    // moment later, and arrive a third of the viewport over.
     d.press(&mut app, "<D-1>");
     settle(&mut d, &mut app);
     let before = drawn_columns(&d)[1].0;
     d.press(&mut app, "<A-S-h>");
     assert_eq!(columns(&app)[0].1, Width::TwoThirds);
+    assert_eq!(
+        drawn_columns(&d)[1].0,
+        before,
+        "the leg starts where it was"
+    );
+    d.advance(0.08);
+    d.frame(&mut app);
+    let midway = drawn_columns(&d)[1].0;
+    assert!(
+        midway < before - 20.0 && midway > before - vw / 3.0 + 20.0,
+        "part of the way: {midway} from {before}"
+    );
+    settle(&mut d, &mut app);
     let after = drawn_columns(&d)[1].0;
     assert!(
         (after - (before - vw / 3.0)).abs() < 2.0,
-        "a third of the viewport narrower, at once: {before} -> {after}"
+        "a third of the viewport narrower: {before} -> {after}"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A column resized against the viewport's edge stays against it on
+/// every frame of the step, narrower or wider: its width and the
+/// ribbon's offset ease on one clock. The width had snapped while the
+/// ribbon glided from a reveal measured on the frame before, so the
+/// column jumped away from the edge, past where it was going, and
+/// drifted back.
+#[test]
+fn a_column_resized_at_the_edge_keeps_to_it_while_it_eases() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    assert_eq!(columns(&app)[1].1, Width::Half);
+    let right = |d: &Drive| {
+        let (x, w) = drawn_columns(d)[1];
+        x + w
+    };
+    let edge = right(&d);
+    assert!(edge <= vw + 1.0 && edge > vw - 20.0, "at the edge: {edge}");
+    for (key, width) in [("<A-S-h>", Width::Third), ("<A-S-l>", Width::Half)] {
+        let from = drawn_columns(&d)[1];
+        d.press(&mut app, key);
+        assert_eq!(columns(&app)[1].1, width);
+        let mut lefts = vec![from.0];
+        for _ in 0..12 {
+            d.advance(0.016);
+            d.frame(&mut app);
+            assert!(
+                (right(&d) - edge).abs() < 1.5,
+                "{key}: the right edge moved to {} from {edge}",
+                right(&d)
+            );
+            lefts.push(drawn_columns(&d)[1].0);
+        }
+        settle(&mut d, &mut app);
+        let to = drawn_columns(&d)[1];
+        assert!((to.1 - vw * width.fraction()).abs() < 1.5, "{key}: {to:?}");
+        assert!(
+            (right(&d) - edge).abs() < 1.5,
+            "{key}: landed at {}",
+            right(&d)
+        );
+        // The left edge travels one way, never past where it lands.
+        lefts.push(to.0);
+        let down = to.0 < from.0;
+        assert!(
+            lefts.windows(2).all(|w| if down {
+                w[1] <= w[0] + 0.5
+            } else {
+                w[1] >= w[0] - 0.5
+            }),
+            "{key}: {lefts:?}"
+        );
+        assert!(
+            lefts
+                .iter()
+                .any(|x| (x - from.0).abs() > 1.0 && (x - to.0).abs() > 1.0),
+            "{key}: eased, not snapped: {lefts:?}"
+        );
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A width step taken while another is still easing carries on from
+/// where the column is drawn, against the edge all the way: kui clamps
+/// an eased offset, and its leg's start, to each frame's content, so a
+/// ribbon whose length moves under a leg holds room past its end until
+/// the leg is over.
+#[test]
+fn a_width_step_mid_ease_keeps_to_the_edge() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    let right = |d: &Drive| {
+        let (x, w) = drawn_columns(d)[1];
+        x + w
+    };
+    let edge = right(&d);
+    assert!(edge <= vw + 1.0 && edge > vw - 20.0, "at the edge: {edge}");
+    let mut lefts = vec![drawn_columns(&d)[1].0];
+    for key in ["<A-S-l>", "<A-S-h>", "<A-S-h>"] {
+        d.press(&mut app, key);
+        for _ in 0..4 {
+            d.advance(0.016);
+            d.frame(&mut app);
+            assert!(
+                (right(&d) - edge).abs() < 1.5,
+                "{key}: the right edge moved to {} from {edge}",
+                right(&d)
+            );
+            lefts.push(drawn_columns(&d)[1].0);
+        }
+    }
+    assert_eq!(columns(&app)[1].1, Width::Third);
+    settle(&mut d, &mut app);
+    assert!((right(&d) - edge).abs() < 1.5, "landed at {}", right(&d));
+    lefts.push(drawn_columns(&d)[1].0);
+    let steps: Vec<f32> = lefts.windows(2).map(|p| (p[1] - p[0]).abs()).collect();
+    assert!(
+        steps.iter().all(|s| *s < vw / 8.0),
+        "no frame moves the column far: {lefts:?}"
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }

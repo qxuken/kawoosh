@@ -1808,7 +1808,7 @@ fn the_scope_is_drawn_as_at_chips_apart_from_the_views() {
     app.open_store(Some(&db));
     d.frame(&mut app);
     ex(&mut d, &mut app, "memory");
-    d.frame(&mut app);
+    d.land(&mut app);
     let accent = d.core.theme().accent;
     // A chip: its words, its ground, where it is.
     let chip = |d: &Drive, s: Scope| {
@@ -1888,7 +1888,7 @@ fn the_pane_s_views_filter_and_rows_answer_clicks() {
     d.keys(&mut app, "jyy");
     let editor = app.layout.focused();
     d.keys(&mut app, " mm");
-    d.frame(&mut app);
+    d.land(&mut app);
     assert_eq!(app.layout.focused_content(), Some(Content::Memory));
     let click = |d: &mut Drive, app: &mut Kawoosh, label: &str| {
         let r = d
@@ -1999,7 +1999,7 @@ fn the_pane_s_still_lines_keep_their_ground_under_the_pointer() {
     d.keys(&mut app, "yj");
     d.keys(&mut app, " mm");
     d.keys(&mut app, "/");
-    d.frame(&mut app);
+    d.land(&mut app);
     assert!(app.memory_pane.filtering);
     // A node's ground as drawn, the pointer at the middle of `over`.
     let hover = |d: &mut Drive, app: &mut Kawoosh, over: kui_native::Rect| {
