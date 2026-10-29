@@ -82,7 +82,7 @@ fn settle(d: &mut Drive, app: &mut Kawoosh) {
             break;
         }
     }
-    d.frame(app);
+    d.land(app);
 }
 
 fn open(name: &str) -> (Drive, Kawoosh, std::path::PathBuf, std::path::PathBuf) {

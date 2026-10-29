@@ -274,7 +274,8 @@ departed from the text above, and what day one found:
     follows;
   - **a column's width and place snap**, so a preset step and `<C-w>H`
     are as fast as the key — and no `slide` rides on a column, which is
-    what keeps the thumb linear;
+    what keeps the thumb linear (a width eases since 2026-10-29, on the
+    ribbon's clock; see below);
   - **a column arriving** in a strip already on show comes in from a
     third of its width away and fades up over the same 160ms, landing
     as the ribbon does; the strip's first frame (a conversion, a
@@ -285,17 +286,38 @@ departed from the text above, and what day one found:
     once: kui plays an `exit` only under a parent still declared (DX19),
     and holds 4,096 departing nodes (DX23), a whole pane's. It went at
     once until 2026-09-27; see below.
-  Tests: `the_ribbon_glides_to_a_key_and_a_width_lands_at_once`,
+  Tests: `the_ribbon_glides_to_a_key_and_a_width_eases_with_it`,
   `a_scroll_the_pointer_makes_is_followed_one_to_one` and
   `a_key_reaches_a_column_the_animation_has_not_finished_moving`, which
   types into a column the slide has not finished moving — the case F79
   was asked for.
+- **A width eases on the ribbon's clock** (2026-10-29, kui alpha.71).
+  A width step snapped while the ribbon glided, and the glide was aimed
+  by kui's `reveal`, which measures the rects the frame before laid out
+  — from before the step — and was aimed again a frame later; a column
+  resized against the viewport's edge jumped off it, past where it was
+  going, and drifted back, and one narrowed at the ribbon's end was cut
+  back to the end in one frame by kui's clamp. Now the column's `Fixed`
+  width, the room at the ribbon's ends (declared at no width too) and
+  the offset all ease `RIBBON_MS` on kui's one curve, begun on the
+  frame the key changed them, and the offset is worked out from the
+  model — kui's reveal rule over the widths this frame declares, no
+  further than the ribbon's new end. kui eases a width as an *input*
+  to layout, so the neighbours are laid out from it each frame and
+  nothing retargets: the rubber of the first shape was `slide`'s, and
+  no column carries one. Every edge then moves on one curve as the
+  ribbon does, and a column against the edge stays there. kui clamps a
+  scroller's offset and its leg's start to each frame's content, so
+  while the ribbon's length eases it holds room past its end as much
+  as the length moved (`Kawoosh::strip_slack`), let go when the ease is
+  over. A gap drag, a frame the viewport or the gap changed and a
+  ribbon's first frame land whole, as before. Tests:
+  `a_column_resized_at_the_edge_keeps_to_it_while_it_eases`,
+  `a_width_step_mid_ease_keeps_to_the_edge`.
 - **The reveal answers the strip's shape, not only the focus**
   (`StripShape`: the tab, the focus and its column, the columns' order
-  and widths), asked on the frame it changed — once, since kui lays a
-  reveal out in the same frame and a second ask against a ribbon
-  already gliding measures from where the content has got to and stops
-  the leg short — so a
+  and widths), asked on the frame it changed — once, read off the
+  model since 2026-10-29 (above) — so a
   column widened at the viewport's right edge comes wholly into view
   rather than growing past it, and a tab moved along the tab strip (a
   new key) is revealed again. Not under a gap drag: the offset moving

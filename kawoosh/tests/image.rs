@@ -127,6 +127,7 @@ fn start(name: &str) -> (Drive, Kawoosh, PathBuf) {
 fn open(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     ex(d, app, line);
     frames(d, app, 5);
+    d.land(app);
 }
 
 #[test]

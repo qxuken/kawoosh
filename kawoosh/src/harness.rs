@@ -83,6 +83,17 @@ impl Harness {
         out
     }
 
+    /// Moves the clock past the ribbon's ease (`panes::RIBBON_MS`) and
+    /// frames, so what a key or an opened pane set moving has landed —
+    /// a column's width, the ribbon's offset. A test's clock stands
+    /// where the test left it, and an ease on a clock that stands stays
+    /// at its start: a test that opens a pane beside another and points
+    /// at either lands first.
+    pub fn land(&mut self, app: &mut Kawoosh) {
+        self.advance(crate::panes::RIBBON_MS as f64 / 1000.0 + 0.05);
+        self.frame(app);
+    }
+
     /// Frames until one is idle: every job the app had out — a plugin's
     /// process, a text to highlight, a listing — answered before it, no
     /// plugin code run outside a view since the frame before, and none

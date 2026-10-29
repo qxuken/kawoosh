@@ -33,9 +33,8 @@ const PANE_SLOT: &str = "kawoosh.pane_title";
 const PANE_SLOT_ROW: &str = "pane title slot";
 
 /// Frames on which the focused column is revealed after the strip's
-/// shape changed. One: kui lays the reveal out in the same frame, and
-/// a second ask against a ribbon already gliding would measure from
-/// where the content has got to and stop the leg short of the column.
+/// shape changed. One: the reveal is read off the model, where the
+/// ribbon is going, and the frame that changed it knows that already.
 const STRIP_SETTLING: u8 = 1;
 /// The band under a strip's columns that its scrollbar lies in while
 /// the ribbon has anything to scroll: kui's grabbable gutter (its
@@ -79,6 +78,17 @@ pub(crate) struct StripShape {
     pub focused: PaneId,
     pub column: Option<usize>,
     pub columns: Vec<(u64, u32)>,
+}
+
+/// A ribbon as last declared, for the frame after: the same tab at
+/// the same viewport width and gap eases its widths from it, and its
+/// length says how much room a growing ribbon must hold past its end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StripFrame {
+    pub tab: u64,
+    pub vw: f32,
+    pub gap: f32,
+    pub length: f32,
 }
 
 /// The most completion candidates the command line's strip draws.
@@ -579,14 +589,18 @@ impl Kawoosh {
     /// so the offset a reveal takes it to is eased over `RIBBON_MS`
     /// (kui F80, asked for from here) while the thumb, the wheel and a
     /// swipe — the hand's own, which must never lag a finger — land
-    /// whole and drop any leg in flight. Nothing else eases a position:
-    /// a column's width and place snap, so a preset step and `<C-w>H`
-    /// are as fast as the key, and a width easing cannot retarget the
-    /// neighbours every frame, which was the wobble. `slide` on a
-    /// column is what that costs, and it is no loss: `slide` eases a
-    /// node's *viewport* position, so a column carrying one eases the
-    /// ribbon's scrolling too — the lag under the scrollbar's thumb,
-    /// found 2026-09-22 — and cannot tell the two apart.
+    /// whole and drop any leg in flight. A column's width eases with it
+    /// — the width, the room at the ribbon's ends and the offset all
+    /// `RIBBON_MS` on one curve, begun on the frame the key changed
+    /// them, the offset read off the model rather than off the frame
+    /// before — so a column resized against the viewport's edge keeps
+    /// to it (scrolling-tab.md, 2026-10-29). A width is an input to
+    /// layout, so the neighbours are laid out from the eased width each
+    /// frame and nothing retargets, which `slide` did: no column
+    /// carries one, since `slide` eases a node's *viewport* position, so
+    /// a column carrying one eases the ribbon's scrolling too — the lag
+    /// under the scrollbar's thumb, found 2026-09-22 — and cannot tell
+    /// the two apart. A column's place in the order still snaps.
     ///
     /// What is left is a column arriving in a strip already on show: it
     /// comes in from a third of its width away and fades up, the same
@@ -730,6 +744,64 @@ impl Kawoosh {
         };
         let (lead, trail) = (lead.max(0.0).round(), trail.max(0.0).round());
         let overflows = lead + span + trail > vw + 0.5;
+        // The widths, the room at the ends and the offset a reveal
+        // takes the ribbon to ease together, on one clock: all of them
+        // `RIBBON_MS` on kui's one curve, begun on the frame the key
+        // changed them, so every column's edges move as the ribbon
+        // does and a column resized against the viewport's edge stays
+        // against it. Not under a gap drag, whose width is the hand's,
+        // nor on a frame the viewport or the gap changed, nor on a
+        // ribbon's first frame: those land whole.
+        let length = lead + span + trail;
+        let now = ui.now();
+        let eases = self.dragging.is_none()
+            && self
+                .strip_frame
+                .is_some_and(|f| f.tab == tab && f.vw == vw && f.gap == gap);
+        // kui clamps a scroller's offset, and an eased leg's start,
+        // to the content each frame lays out, so a ribbon whose length
+        // eases would have the offset cut off its curve: short of a
+        // new end it grew to, or dragged back with an end it shrank
+        // from. Room past the end, as much as the length moved, keeps
+        // either clamp off the leg, and is let go when the ease is
+        // over. An arriving column is at its width on its first frame,
+        // and needs none.
+        let moved = match self.strip_frame {
+            Some(f) if eases && !arriving => (length - f.length).abs(),
+            _ => 0.0,
+        };
+        self.strip_frame = Some(StripFrame {
+            tab,
+            vw,
+            gap,
+            length,
+        });
+        let held = self
+            .strip_slack
+            .filter(|(_, until)| eases && now < *until)
+            .map_or(0.0, |(px, _)| px);
+        self.strip_slack = (held + moved > 0.0).then(|| {
+            let until = if moved > 0.0 {
+                now + RIBBON_MS as f64 / 1000.0
+            } else {
+                self.strip_slack.map_or(now, |(_, until)| until)
+            };
+            (held + moved, until)
+        });
+        let slack = match self.strip_slack {
+            Some((px, until)) => {
+                ui.request_frame_at(until);
+                px.ceil()
+            }
+            None => 0.0,
+        };
+        let ease = |spec: NodeSpec| {
+            if eases {
+                spec.transition(RIBBON_MS)
+            } else {
+                spec
+            }
+        };
         // Which columns are worth their rows this frame: the ones the
         // ribbon's offset puts within half a viewport of it, and the
         // focused one wherever it is. Read from the model — the widths
@@ -760,7 +832,6 @@ impl Kawoosh {
                 self.culled.extend(ps);
             }
         }
-        let mut focus_key = None;
         let row = ui.with_key(
             strip_key,
             NodeSpec::row()
@@ -785,10 +856,10 @@ impl Kawoosh {
                 .cross_align(Align::Start)
                 .label("strip"),
             |ui| {
-                let room = |px: f32| NodeSpec::column().width(px).grow_height();
-                if lead > 0.0 {
-                    ui.leaf_keyed("lead", room(lead));
-                }
+                // Declared at no width too, so room that comes or goes
+                // eases with the columns.
+                let room = |px: f32| ease(NodeSpec::column().width(px).grow_height());
+                ui.leaf_keyed("lead", room(lead));
                 for (i, col) in strip.columns.iter().enumerate() {
                     let px = widths[i];
                     // A closed column fades where it stood; one that goes
@@ -820,8 +891,8 @@ impl Kawoosh {
                             },
                         );
                     };
-                    let key = ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
-                        ui.with(NodeSpec::row().width(px).grow_height(), |ui| {
+                    ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
+                        ui.with(ease(NodeSpec::row().width(px).grow_height()), |ui| {
                             ui.with(NodeSpec::column().grow_width().grow_height(), |ui| {
                                 self.render_node(ui, &col.node, &format!("{i}/"))
                             });
@@ -830,32 +901,28 @@ impl Kawoosh {
                             }
                         });
                     });
-                    if Some(i) == fi {
-                        focus_key = Some(key);
-                    }
                     if !last {
                         handle(ui);
                     }
                 }
-                if trail > 0.0 {
-                    ui.leaf_keyed("trail", room(trail));
+                ui.leaf_keyed("trail", room(trail));
+                if slack > 0.0 {
+                    ui.leaf_keyed("slack", NodeSpec::column().width(slack).grow_height());
                 }
             },
         );
         self.strip_known.extend(strip.columns.iter().map(|c| c.id));
-        // Asked on the frame the shape changed and the two after it,
-        // so the reveal reads a layout the `on_layout` events have
-        // caught up with; a reveal of a column in view is a no-op. Not
-        // under a gap drag: the offset moving under the pointer would
-        // feed the width it is measuring.
+        // Asked on the frame the shape changed, from the widths and
+        // the room this frame declares, so the ribbon's leg starts with
+        // the widths' and on their curve; a column in view asks for no
+        // move. Not under a gap drag: the offset moving under the
+        // pointer would feed the width it is measuring.
         if settling || align.is_some() {
             self.strip_settling = self.strip_settling.saturating_sub(1);
-            if let (Some(i), Some(key)) = (fi, focus_key) {
-                match align {
-                    Some(a) => {
-                        let x = lead + lefts[i] - edge(a, i);
-                        ui.set_scroll(row, Vec2::new(x.max(0.0), 0.0));
-                    }
+            if let Some(i) = fi {
+                let at = ui.scroll_offset(row).x;
+                let x = match align {
+                    Some(a) => lead + lefts[i] - edge(a, i),
                     // A column the viewport has no room around — a
                     // full one — is put where it fits, and stays: kui's
                     // reveal wants `REVEAL_MARGIN` clear at both of a
@@ -865,10 +932,31 @@ impl Kawoosh {
                     // side each time the keyboard moved inside the
                     // column.
                     None if widths[i] + 2.0 * REVEAL_MARGIN > vw => {
-                        let x = lead + lefts[i] - edge(StripAlign::Center, i);
-                        ui.set_scroll(row, Vec2::new(x.max(0.0), 0.0));
+                        lead + lefts[i] - edge(StripAlign::Center, i)
                     }
-                    None => ui.reveal(key),
+                    // kui's reveal, read off the model: it would
+                    // measure the rects the last frame laid out, from
+                    // before a width step, and aim the ribbon at where
+                    // the column was rather than where it is going.
+                    None => {
+                        let x0 = lead + lefts[i] - REVEAL_MARGIN;
+                        let x1 = lead + lefts[i] + widths[i] + REVEAL_MARGIN;
+                        if x0 < at {
+                            x0
+                        } else if x1 > at + vw {
+                            x1 - vw
+                        } else {
+                            at
+                        }
+                    }
+                };
+                // No further than the ribbon's new end, so a ribbon
+                // that came out shorter eases back with its widths
+                // rather than being cut back whole by kui's clamp —
+                // at once, or when the room held past the end goes.
+                let x = x.min(length - vw).max(0.0);
+                if x != at {
+                    ui.set_scroll(row, Vec2::new(x, 0.0));
                 }
             }
         }

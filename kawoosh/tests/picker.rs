@@ -1513,14 +1513,14 @@ fn without_a_preview_the_width_keys_size_the_column() {
     d.frame(&mut app);
     // A second column, so the first is half the strip, not all of it.
     ex(&mut d, &mut app, "vsplit src/main.rs");
-    d.frame(&mut app);
+    d.land(&mut app);
     d.keys(&mut app, " f");
     d.frame(&mut app);
     d.frame(&mut app);
     let alt = |name: &str, app: &mut Kawoosh, d: &mut Drive| {
         d.key(app, name, KeyMods::NONE.with_shift().with_alt());
         d.frame(app);
-        d.frame(app);
+        d.land(app);
     };
     let pane_w = |app: &Kawoosh| {
         let p = app.lua_view_pane("picker").expect("the picker's pane");
