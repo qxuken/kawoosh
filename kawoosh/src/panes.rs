@@ -25,7 +25,7 @@ use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 /// How long the ribbon takes to reach the column a key revealed, and
 /// a column its place after a width step or a move: one duration, so
 /// the two motions a key starts run together.
-pub(crate) const RIBBON_MS: f32 = 160.0;
+pub(crate) const RIBBON_MS: f32 = 80.0;
 
 /// The contribution slot a pane's title bar declares (docs/design/
 /// plugin-extensions.md Decision 3), and the row it is drawn in.
