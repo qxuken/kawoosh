@@ -573,6 +573,9 @@ fn a_host_with_no_sftp_or_base64_still_connects() {
     std::fs::write(home.join(".fake-ssh-small"), "").unwrap();
     std::fs::write(proj.join("a.txt"), "on a small host\n").unwrap();
     let name = format!("o{}", std::process::id());
+    // SAFETY: this case checks that a host without the CLI leaves the
+    // inherited variable out; set it before the app's threads start.
+    unsafe { std::env::remove_var("KAWOOSH_BIN") };
     let (mut d, mut app) = ssh_app(&name, &home.display().to_string());
     let sock = root.join("k.sock");
     app.io.listen(&sock).unwrap();

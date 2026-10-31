@@ -11,11 +11,18 @@ use kawoosh_systems::lsp::{DIAG_LAYER, ServerDef};
 use kui_native::{KeyMods, Rect};
 
 fn fake_server() -> ServerDef {
+    // SAFETY: this binary's install lines are POSIX; no test expects the
+    // caller's shell, and each is set before its app's threads start.
+    unsafe { std::env::set_var("SHELL", "/bin/sh") };
     ServerDef {
         roots: vec!["Cargo.toml".into()],
         ..fake_lsp("rust")
     }
 }
+
+/// Plain `cargo test` shares the process environment, so the package
+/// install cases hold this while their PATH and servers folder are theirs.
+static PACKAGE_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Buffer `id`'s diagnostic messages, in the order they were said.
 fn msgs(app: &Kawoosh, id: kawoosh_doc::BufferId) -> Vec<String> {
@@ -246,7 +253,7 @@ fn diagnostics_definition_hover_and_completion() {
 /// or the moment insert mode ends.
 #[test]
 fn diagnostics_wait_for_the_typing_to_pause() {
-    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-quiet-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-pause-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
     let file = dir.join("src/main.rs");
@@ -1377,6 +1384,7 @@ fn a_missing_server_is_installed_by_its_line() {
 #[cfg(unix)]
 #[test]
 fn a_package_is_installed_into_kawooshs_directory_and_run_from_there() {
+    let _package_env = PACKAGE_ENV.lock().unwrap_or_else(|e| e.into_inner());
     use std::os::unix::fs::PermissionsExt;
     let dir = std::env::temp_dir().join(format!("kawoosh-lsppkg-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -1463,6 +1471,7 @@ fn a_package_is_installed_into_kawooshs_directory_and_run_from_there() {
 #[cfg(unix)]
 #[test]
 fn ensure_installed_installs_locks_and_says_updates() {
+    let _package_env = PACKAGE_ENV.lock().unwrap_or_else(|e| e.into_inner());
     use kawoosh_editor::{Layer, Setting};
     use std::os::unix::fs::PermissionsExt;
     let dir = std::env::temp_dir().join(format!("kawoosh-lspensure-{}", std::process::id()));
@@ -2784,6 +2793,11 @@ fn a_plugins_rule_is_set_and_flipped_as_the_shells_are() {
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
     d.frame(&mut app);
+    assert!(until(&mut d, &mut app, |a| a
+        .lsp
+        .status
+        .iter()
+        .any(|s| s.2 == 1)));
     lua(
         &mut app,
         "kawoosh.lsp.rule('organize', { doc = 'imports organized on save' })\n\
