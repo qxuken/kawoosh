@@ -229,12 +229,33 @@ fn tag_partner(t: Node) -> Option<(Range<usize>, Range<usize>)> {
     Some((tag.byte_range(), to.byte_range()))
 }
 
-/// The keyword or tag over byte `at` and the one `%` goes to from it,
-/// each its bytes; `None` where `at` is on no keyword of a block and no
-/// tag of an element.
+/// A bracket token and the one closing its parent on the other edge.
+/// Reading the pair off the tree skips brackets in strings and comments.
+fn bracket_partner(t: Node) -> Option<(Range<usize>, Range<usize>)> {
+    if t.is_named() || t.is_missing() || t.child_count() != 0 {
+        return None;
+    }
+    let parent = t.parent()?;
+    let (mate, expected, edge) = match t.kind() {
+        "(" => (last_child(parent)?, ")", first_child(parent)?),
+        "[" => (last_child(parent)?, "]", first_child(parent)?),
+        "{" => (last_child(parent)?, "}", first_child(parent)?),
+        ")" => (first_child(parent)?, "(", last_child(parent)?),
+        "]" => (first_child(parent)?, "[", last_child(parent)?),
+        "}" => (first_child(parent)?, "{", last_child(parent)?),
+        _ => return None,
+    };
+    if edge != t || mate.is_missing() || mate.kind() != expected {
+        return None;
+    }
+    Some((t.byte_range(), mate.byte_range()))
+}
+
+/// The bracket, keyword or tag over byte `at` and the one `%` goes to
+/// from it, each its bytes; `None` where `at` is on none of them.
 pub fn partner(tree: &Tree, at: usize) -> Option<(Range<usize>, Range<usize>)> {
     let t = tree.root_node().descendant_for_byte_range(at, at + 1)?;
-    if let Some(pair) = tag_partner(t) {
+    if let Some(pair) = bracket_partner(t).or_else(|| tag_partner(t)) {
         return Some(pair);
     }
     if !keyword(t) {
@@ -425,6 +446,25 @@ const a = (
         assert_eq!(partner(&t, src.find("gap").unwrap()), None);
         assert_eq!(partner(&t, src.find("<Box.Row").unwrap()), None);
         assert_eq!(partner(&t, src.find("hi").unwrap()), None);
+    }
+
+    #[test]
+    fn brackets_are_paired_by_the_tree() {
+        let src = "fn f() {\n    let s = \"}\";\n    /* { */\n    let a = [(1), {2}];\n}\n";
+        let t = tree("rust", src);
+        let array = src.find("[(1), {2}]").unwrap();
+        for (open, close) in [
+            (src.find('{').unwrap(), src.rfind('}').unwrap()),
+            (src.find("()").unwrap(), src.find("()").unwrap() + 1),
+            (array, array + 9),
+            (array + 1, array + 3),
+            (array + 6, array + 8),
+        ] {
+            assert_eq!(partner(&t, open), Some((open..open + 1, close..close + 1)));
+            assert_eq!(partner(&t, close), Some((close..close + 1, open..open + 1)));
+        }
+        assert_eq!(partner(&t, src.find("\"}\"").unwrap() + 1), None);
+        assert_eq!(partner(&t, src.find("/* { */").unwrap() + 3), None);
     }
 
     /// A language that closes nothing with a word has no blocks.

@@ -1232,7 +1232,7 @@ impl Kawoosh {
 
     /// A `:compile` line as it will run (compile.md Decision 7): a name
     /// first — its command, the line's other words after it, in its
-    /// `cwd` — else the line itself where its program's kind runs; `%`
+    /// `cwd` — else the line itself in the tab's working directory; `%`
     /// put in as the caret's file from that directory.
     pub fn compile_line(&self, line: &str) -> Result<Line, String> {
         self.compile_line_at(line, None)
@@ -1284,19 +1284,14 @@ impl Kawoosh {
             seen.pop();
             return steps.map(Line::Chain);
         }
-        let (cmd, dir_cmd, cwd) = match named {
+        let (cmd, cwd) = match named {
             Some(n) if n.args && rest.trim().is_empty() => return Ok(Line::Finish(n.name)),
-            Some(n) => (with_args(&n.cmd, rest), n.cmd, n.cwd.or(within)),
-            None => (line.to_string(), line.to_string(), within),
+            Some(n) => (with_args(&n.cmd, rest), n.cwd.or(within)),
+            None => (line.to_string(), within),
         };
         let cwd = here
             .map(Path::to_path_buf)
             .or(cwd)
-            .or_else(|| {
-                self.deduce_compile()
-                    .dir_for(&dir_cmd)
-                    .map(Path::to_path_buf)
-            })
             .unwrap_or_else(|| self.compile_dir());
         let cmd = if cmd.contains('%') {
             Editor::expand_percent_from(self.compile_file().as_deref(), &cmd, Some(&cwd))?
@@ -1369,17 +1364,15 @@ impl Kawoosh {
         self.front_file()
     }
 
-    /// Where a `:compile` line runs: a name's `cwd`, else where the
-    /// program of its command runs (compile.md Decision 4), else the
-    /// outermost project file in the repository.
+    /// Where a `:compile` line runs: a name's `cwd`, else the tab's
+    /// working directory.
     pub fn compile_dir_of(&self, line: &str) -> PathBuf {
         let word = line.split_whitespace().next().unwrap_or_default();
         let word = word.strip_prefix("commands:").unwrap_or(word);
-        let (cmd, cwd) = match self.compile_commands().into_iter().find(|n| n.name == word) {
-            Some(n) => (n.cmd, n.cwd),
-            None => (line.to_string(), None),
-        };
-        cwd.or_else(|| self.deduce_compile().dir_for(&cmd).map(Path::to_path_buf))
+        self.compile_commands()
+            .into_iter()
+            .find(|n| n.name == word)
+            .and_then(|n| n.cwd)
             .unwrap_or_else(|| self.compile_dir())
     }
 
@@ -1534,25 +1527,13 @@ impl Kawoosh {
         self.cmdline_refresh();
     }
 
-    /// Where a command no project file claims runs: the outermost
-    /// `Cargo.toml`, `package.json` or `Makefile` in the caret file's
-    /// repository, else the repository, else the file's directory; the
-    /// working directory with no file.
+    /// Where a command with no explicit `cwd` runs: the tab's working
+    /// directory, else the process's when the tab has none of its own.
     fn compile_dir(&self) -> PathBuf {
-        self.focused_view()
-            .and_then(|v| self.ed.buffer_of(v).path.clone())
-            .or_else(|| self.pane_file())
-            .map(|p| {
-                let def = kawoosh_systems::lsp::ServerDef {
-                    roots: vec![
-                        "Cargo.toml".into(),
-                        "package.json".into(),
-                        "Makefile".into(),
-                    ],
-                    ..Default::default()
-                };
-                kawoosh_systems::lsp::workspace_root(&p, &def)
-            })
+        self.layout
+            .tab()
+            .cwd
+            .clone()
             .unwrap_or_else(|| self.cwd.clone())
     }
 
@@ -2016,12 +1997,7 @@ impl Kawoosh {
         // (Decision 9).
         let packages = self.compile_packages();
         let named = self.compile_commands();
-        let dir_of = |n: &Named| {
-            n.cwd
-                .clone()
-                .or_else(|| project.dir_for(&n.cmd).map(Path::to_path_buf))
-                .unwrap_or_else(|| self.compile_dir())
-        };
+        let dir_of = |n: &Named| n.cwd.clone().unwrap_or_else(|| self.compile_dir());
         // The settings' rows: the user's own a tier above the project's.
         let tier = |by: By| if by == By::User { 2 } else { 3 };
         // A named command's row; a chain's says its steps (Decision 22).
@@ -2049,12 +2025,9 @@ impl Kawoosh {
                     o.needs &= d.trim() == word;
                     add(&mut rows, o);
                 } else {
-                    let cwd = project
-                        .dir_for(d)
-                        .map(Path::to_path_buf)
-                        .unwrap_or_else(|| self.compile_dir());
                     let by = self.setting_by("compile.default");
-                    let mut o = Offer::of(d, cwd, "compile.default", "").at(by, tier(by), 0);
+                    let mut o =
+                        Offer::of(d, self.compile_dir(), "compile.default", "").at(by, tier(by), 0);
                     o.line = Some(d.to_string());
                     add(&mut rows, o);
                 }
@@ -2390,6 +2363,17 @@ impl Kawoosh {
                 let buffer = run.buffer;
                 self.compile_append(buffer, &format!("{text}\n"), paints);
             }
+            IoMsg::ProcStartFailed { id, error } => {
+                let Some(run) = self.compile.runs.iter_mut().find(|r| r.proc_id == id) else {
+                    return;
+                };
+                run.proc = None;
+                let buffer = run.buffer;
+                let line = format!("cannot run: {error}");
+                let paints = vec![(0..line.len(), "error".to_string())];
+                self.compile_append(buffer, &format!("{line}\n"), paints);
+                self.compile_not_run(buffer);
+            }
             IoMsg::ProcExit { id, code } => {
                 let Some(run) = self.compile.runs.iter_mut().find(|r| r.proc_id == id) else {
                     return;
@@ -2684,6 +2668,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         // (Decision 25, amended).
         cmd(
             Spec::new("compile here")
+                .alias(&["ch"])
                 .args(Args::rest(&[ArgKind::Text]))
                 .doc("`:compile LINE` run where the pane in front is (`<leader>c.`): the file's directory, the listing's, the shell's, a *compile* buffer's run's; bare, the prompt open on `:compile here `"),
             |k, ctx| {

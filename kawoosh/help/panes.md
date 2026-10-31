@@ -177,6 +177,7 @@ the list instead.
 | `layout.column_width` | a new column's width: `third`, `half` (the default), `two-thirds`, `full`, or a fraction |
 | `layout.scroll.center` | `always` keeps the focused column centred; `never` (the default) scrolls only as far as needed |
 | `layout.gap` | the gap between columns, in pixels |
+| `layout.ribbon_ms` | column and ribbon transition time in milliseconds (80 by default); `0` lands at once |
 
 ## The dock
 

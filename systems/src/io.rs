@@ -26,6 +26,8 @@ pub enum IoMsg {
     ProcLine { id: u64, line: String },
     /// Process `id` exited.
     ProcExit { id: u64, code: Option<i32> },
+    /// Process `id` could not be started on its job thread.
+    ProcStartFailed { id: u64, error: String },
     /// Process `id`'s stdout whole, as it closed — asked for by
     /// [`ProcSpec::whole`] instead of lines: a base text, newline at
     /// the end and all.
@@ -1312,11 +1314,17 @@ impl PtyShared {
     }
 }
 
+#[derive(Default)]
+struct ProcState {
+    child: Option<crate::spawn::Session>,
+    #[cfg(windows)]
+    tree: Option<Arc<crate::job::Tree>>,
+    killed: bool,
+}
+
 #[derive(Clone)]
 pub struct ProcHandle {
-    child: Arc<Mutex<Option<crate::spawn::Session>>>,
-    #[cfg(windows)]
-    tree: Arc<crate::job::Tree>,
+    state: Arc<Mutex<ProcState>>,
     /// A channel's process (`crate::ssh`), ended through its channel.
     remote: Option<crate::ssh::RemoteKiller>,
 }
@@ -1326,9 +1334,7 @@ impl ProcHandle {
     /// (`crate::runner`), which runs to its end.
     fn detached() -> Self {
         ProcHandle {
-            child: Arc::new(Mutex::new(None)),
-            #[cfg(windows)]
-            tree: Arc::new(crate::job::Tree::none()),
+            state: Arc::new(Mutex::new(ProcState::default())),
             remote: None,
         }
     }
@@ -1338,18 +1344,22 @@ impl ProcHandle {
     /// and a `cargo` left behind would hold the pipes open and the exit
     /// back until it finished. On unix the process leads a session of
     /// its own (`spawn::session`), so its group is the command's; on
-    /// Windows it is in a job of its own (`job::Tree`).
+    /// Windows it is in a job of its own (`job::Tree`). A kill before the
+    /// job thread has started the child is remembered and applied there.
     pub fn kill(&self) {
         if let Some(r) = &self.remote {
             r.kill();
         }
-        if let Ok(mut c) = self.child.lock()
-            && let Some(child) = c.as_mut()
-        {
-            #[cfg(windows)]
-            self.tree.kill(child.child_mut());
-            // Not yet waited on, so the pid is still this process's.
-            child.kill();
+        if let Ok(mut state) = self.state.lock() {
+            state.killed = true;
+            if let Some(child) = state.child.as_mut() {
+                #[cfg(windows)]
+                if let Some(tree) = &state.tree {
+                    tree.kill(child.child_mut());
+                }
+                // Not yet waited on, so the pid is still this process's.
+                child.kill();
+            }
         }
     }
 }
@@ -1630,8 +1640,10 @@ impl Io {
     /// the shell, or a program with its arguments and no shell between;
     /// its stdout in lines ([`IoMsg::ProcLine`]) or whole when it closes
     /// ([`IoMsg::ProcOut`]); its stderr's lines with stdout's or apart
-    /// ([`IoMsg::ProcErr`]); then [`IoMsg::ProcExit`]. Bytes that are
-    /// not UTF-8 are replaced, never a stop.
+    /// ([`IoMsg::ProcErr`]); then [`IoMsg::ProcExit`]. A local child is
+    /// created on a job thread, never the caller's; failure to create it
+    /// arrives as [`IoMsg::ProcStartFailed`]. Bytes that are not UTF-8
+    /// are replaced, never a stop.
     pub fn run_command(&self, id: u64, spec: ProcSpec) -> std::io::Result<ProcHandle> {
         use std::io::Write;
         let ProcSpec {
@@ -1794,52 +1806,73 @@ impl Io {
         if host.is_none() {
             command.envs(env.iter().map(|(k, v)| (k, v)));
         }
-        // A session of its own, so no controlling terminal: a tool that
-        // would ask on `/dev/tty` — `ansible-vault` with no password
-        // file, `git` wanting credentials, `sudo` — fails at once
-        // instead of waiting on a terminal no one is looking at (or
-        // being stopped for reading it from the background). Started by
-        // `posix_spawn`, not a fork of this process (`spawn.rs`).
-        let mut child = crate::spawn::session(&mut command, stdin.is_some())?;
-        #[cfg(windows)]
-        let tree = Arc::new(crate::job::Tree::of(child.child_mut()));
-        if let (Some(mut text), Some(mut pipe)) = (stdin, child.take_stdin()) {
-            thread::spawn(move || {
-                let _ = pipe.write_all(text.as_bytes());
-                drop(pipe);
-                text_buffer::wipe_string(&mut text);
-            });
-        }
-        let stdout = child.take_stdout().unwrap();
-        let stderr = child.take_stderr().unwrap();
-        let child = Arc::new(Mutex::new(Some(child)));
+        let handle = ProcHandle::detached();
+        let worker = handle.clone();
         let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
-        let (a, b) = pump_outputs(id, stdout, stderr, whole, split_err, &tx, &wake);
-        let handle = ProcHandle {
-            child: child.clone(),
-            #[cfg(windows)]
-            tree: tree.clone(),
-            remote: None,
-        };
-        thread::spawn(move || {
-            // The pipes close when the process ends — or was killed —
-            // and only then is the child taken to be waited on, so a
-            // kill never waits on the lock a wait holds.
-            let _ = a.join();
-            let _ = b.join();
-            let code = child
-                .lock()
-                .ok()
-                .and_then(|mut c| c.take())
-                .and_then(|mut c| c.wait().ok())
-                .flatten();
-            // Windows has no signal to die by: a killed process exits
-            // with the code the kill gave it.
-            #[cfg(windows)]
-            let code = code.filter(|_| !tree.killed());
-            let _ = tx.send(IoMsg::ProcExit { id, code });
-            wake.wake();
-        });
+        thread::Builder::new()
+            .name(format!("process-start-{id}"))
+            .spawn(move || {
+                // A session of its own, so no controlling terminal: a tool
+                // that would ask on `/dev/tty` fails at once instead of
+                // waiting on a terminal no one is looking at. Process
+                // creation is here, not on the caller (usually the UI).
+                let mut child = match crate::spawn::session(&mut command, stdin.is_some()) {
+                    Ok(child) => child,
+                    Err(e) => {
+                        let _ = tx.send(IoMsg::ProcStartFailed {
+                            id,
+                            error: e.to_string(),
+                        });
+                        wake.wake();
+                        return;
+                    }
+                };
+                #[cfg(windows)]
+                let tree = Arc::new(crate::job::Tree::of(child.child_mut()));
+                if let (Some(mut text), Some(mut pipe)) = (stdin, child.take_stdin()) {
+                    thread::spawn(move || {
+                        let _ = pipe.write_all(text.as_bytes());
+                        drop(pipe);
+                        text_buffer::wipe_string(&mut text);
+                    });
+                }
+                let stdout = child.take_stdout().unwrap();
+                let stderr = child.take_stderr().unwrap();
+                let killed = {
+                    let mut state = worker.state.lock().unwrap_or_else(|e| e.into_inner());
+                    state.child = Some(child);
+                    #[cfg(windows)]
+                    {
+                        state.tree = Some(tree);
+                    }
+                    state.killed
+                };
+                if killed {
+                    worker.kill();
+                }
+                let (a, b) = pump_outputs(id, stdout, stderr, whole, split_err, &tx, &wake);
+                let state = worker.state.clone();
+                thread::spawn(move || {
+                    // The pipes close when the process ends — or was killed —
+                    // and only then is the child taken to be waited on, so a
+                    // kill never waits on the lock a wait holds.
+                    let _ = a.join();
+                    let _ = b.join();
+                    let (code, killed) = {
+                        let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+                        let code = state.child.take().and_then(|mut c| c.wait().ok()).flatten();
+                        (code, state.killed)
+                    };
+                    // Windows has no signal to die by: a killed process exits
+                    // with the code the kill gave it.
+                    #[cfg(windows)]
+                    let code = code.filter(|_| !killed);
+                    #[cfg(not(windows))]
+                    let _ = killed;
+                    let _ = tx.send(IoMsg::ProcExit { id, code });
+                    wake.wake();
+                });
+            })?;
         Ok(handle)
     }
 
@@ -2305,6 +2338,42 @@ fn watch_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Starting a process waits for the spawn lock on its job thread, not
+    /// on the caller (docs/design/vcs.md Decision 5).
+    #[test]
+    fn starting_a_process_does_not_block_the_caller() {
+        let held = crate::spawn::lock();
+        let io = Io::new(WakeHandle::new());
+        #[cfg(windows)]
+        let argv = vec!["cmd".into(), "/d".into(), "/c".into(), "exit 0".into()];
+        #[cfg(not(windows))]
+        let argv = vec!["true".into()];
+        let started = std::time::Instant::now();
+        io.run_command(
+            1,
+            ProcSpec {
+                cmd: ProcCmd::Argv(argv),
+                cwd: None,
+                stdin: None,
+                whole: false,
+                split_err: false,
+                env: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        drop(held);
+        let code = loop {
+            match io.rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(IoMsg::ProcExit { code, .. }) => break code,
+                Ok(IoMsg::ProcStartFailed { error, .. }) => panic!("{error}"),
+                Ok(_) => {}
+                Err(e) => panic!("no process exit: {e}"),
+            }
+        };
+        assert_eq!(code, Some(0));
+    }
 
     /// A failed fetch says curl's first line, not its paragraph of
     /// advice after a certificate it refused; with nothing said, how it

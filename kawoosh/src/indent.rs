@@ -179,6 +179,15 @@ impl Trees {
         }
     }
 
+    /// `id`'s tree only if it is already of `buf`'s current text: no
+    /// catch-up or parse, for a motion with a text scan to fall back on.
+    fn fresh(&self, id: BufferId, buf: &Buffer) -> Option<Tree> {
+        let inner = self.0.borrow();
+        let k = inner.kept.get(&id)?;
+        (k.language.as_str() == buf.language.as_ref() && k.version == buf.version())
+            .then(|| k.tree.clone())
+    }
+
     /// `id`'s tree as of `buf`'s text: kept, or caught up — told the
     /// journal's edits since and reparsed, a whole parse when the
     /// journal no longer reaches back — and kept so.
@@ -260,6 +269,15 @@ impl kawoosh_editor::SyntaxObjects for Objects {
                 inside: f.inside,
             })
             .collect())
+    }
+
+    fn fresh_partner(
+        &mut self,
+        id: BufferId,
+        buf: &Buffer,
+        at: usize,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        blocks::partner(&self.trees.fresh(id, buf)?, at)
     }
 
     fn partner(

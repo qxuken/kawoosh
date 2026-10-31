@@ -1322,6 +1322,8 @@ fn a_terminal_at_a_password_prompt_says_so() {
 /// answered there.
 #[test]
 fn bang_runs_a_shell_line_with_percent_in_a_terminal() {
+    // SAFETY: this command line is POSIX, set before the app starts.
+    unsafe { std::env::set_var("SHELL", "/bin/sh") };
     let dir = std::env::temp_dir().join(format!("kawoosh-bang-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("it's here.txt");
@@ -1513,6 +1515,8 @@ fn the_other_buttons_paste_and_reach_a_reporting_program() {
 /// the dock being every tab's.
 #[test]
 fn a_split_tool_is_each_tabs_and_a_docked_one_the_windows() {
+    // SAFETY: the tools' `sleep 30` is POSIX, set before the app starts.
+    unsafe { std::env::set_var("SHELL", "/bin/sh") };
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;

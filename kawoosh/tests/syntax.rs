@@ -511,6 +511,22 @@ fn percent_goes_round_a_keyword_block() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `%` over a large Rust module reads a fresh tree's bracket locations,
+/// ignoring strings, with the linear byte scan as its fallback.
+#[test]
+fn percent_goes_across_a_large_mod() {
+    let body = "#[test]\nfn a_case() { assert_eq!(1, 1); }\n".repeat(3_000);
+    let src = format!("mod tests {{\nconst BRACES: &str = \"}} {{\";\n{body}}}\n");
+    let (mut app, mut d, dir) = parsed("large.rs", &src);
+    let v = app.focused_view().unwrap();
+    let head = |app: &Kawoosh| app.ed.views[v].sels.primary().head;
+    d.press(&mut app, "ggf{%");
+    assert_eq!(head(&app), src.rfind('}').unwrap());
+    d.press(&mut app, "%");
+    assert_eq!(head(&app), src.find('{').unwrap());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `%` on a tag goes to its element's other tag, from its angle
 /// brackets or its name; under an operator both tags are taken whole.
 #[test]

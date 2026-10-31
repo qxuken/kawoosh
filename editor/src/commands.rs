@@ -1248,10 +1248,15 @@ fn match_pair(ed: &mut Editor, ctx: &Ctx) {
     let v = &mut ed.views[ctx.view];
     v.sels.map(|s| {
         let h = s.head.min(buf.len());
-        if let Some(to) = m::matching_bracket(buf, h) {
+        let fresh = finder.as_mut().and_then(|f| f.fresh_partner(id, buf, h));
+        if fresh.is_none()
+            && let Some(to) = m::matching_bracket(buf, h)
+        {
             return s.with_head(to, ext);
         }
-        let Some((from, to)) = finder.as_mut().and_then(|f| f.partner(id, buf, h)) else {
+        let Some((from, to)) =
+            fresh.or_else(|| finder.as_mut().and_then(|f| f.partner(id, buf, h)))
+        else {
             return s;
         };
         if !op {

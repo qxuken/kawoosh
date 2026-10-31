@@ -27,6 +27,12 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
 }
 
 fn launch() -> (Drive, Kawoosh) {
+    // SAFETY: this binary's plugin command is POSIX `ls`, set before the
+    // app's threads start; Windows keeps its own command processor.
+    #[cfg(unix)]
+    unsafe {
+        std::env::set_var("SHELL", "/bin/sh");
+    }
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;

@@ -39,7 +39,7 @@ kawoosh.test.eq(table.concat(out, "|"), "out")
 kawoosh.test.eq(table.concat(err, "|"), "err")
 kawoosh.test.eq(code, 3)
 
--- A program that is not there fails at once, the exit with no code.
+-- A program that is not there reports its exit with no code.
 local exited = false
 kawoosh.spawn({ "kawoosh-no-such-program-here" }, {
   on_exit = function(c) exited = true; code = c end,

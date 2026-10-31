@@ -854,15 +854,14 @@ and the empty scratch goes. A map or a
 the command runs. As the command itself it is `./NAME` when it sits
 right there, so `:compile %` on an executable runs it.
 
-A command runs where its kind does — `cargo` at the workspace, a
-`package.json` script at its package, a named command in its `cwd`.
-`:compile here CMD` runs it where the pane in front is instead: the
-file's directory, the listing's, the terminal's, or in a `*compile*`
-buffer where its run ran. `<leader>c.` opens the prompt on `:compile
-here ` for you to say which command; paths complete from that
-directory, `%` is written from it, and the run's buffer says it:
-`*compile: CMD in DIR*`. A command named `here` is still `:compile
-commands:here`.
+A direct command runs in the tab's working directory; a named command's
+explicit `cwd` still wins. `:compile here CMD` (also `:ch CMD`) runs it
+where the pane in front is instead: the file's directory, the listing's,
+the terminal's, or in a `*compile*` buffer where its run ran. `<leader>c.`
+opens the prompt on `:compile here ` for you to say which command; paths
+complete from that directory, `%` is written from it, and the run's buffer
+says it: `*compile: CMD in DIR*`. A command named `here` is still
+`:compile commands:here`.
 
 ### Named commands
 

@@ -1107,11 +1107,20 @@ pub trait SyntaxObjects {
         within: std::ops::Range<usize>,
     ) -> Result<Vec<SyntaxObject>, String>;
 
-    /// `%` off a bracket: the keyword over byte `at` and the one of its
-    /// block to go to — `if` to `else` to `end` and round, in a language
-    /// that closes a block with a word — or the tag over it and its
-    /// element's other one, `<box>` to `</box>`; each its bytes. `None`
-    /// where `at` is on neither, or there is no tree to read.
+    /// [`Self::partner`] over a tree already of `buf`'s current text:
+    /// no catch-up or parse, for a motion with a text scan to fall back on.
+    fn fresh_partner(
+        &mut self,
+        _id: BufferId,
+        _buf: &Buffer,
+        _at: usize,
+    ) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+        None
+    }
+
+    /// `%`: the bracket, keyword or tag over byte `at` and the one to go
+    /// to, each its bytes. `None` where `at` is on none of them, or there
+    /// is no tree to read.
     fn partner(
         &mut self,
         _id: BufferId,

@@ -9,7 +9,17 @@ use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
 use kui_native::KeyMods;
 
+fn posix_shell() {
+    // SAFETY: this binary's terminal and compile commands are POSIX;
+    // set before each app's processes start, never read as a preference.
+    #[cfg(unix)]
+    unsafe {
+        std::env::set_var("SHELL", "/bin/sh");
+    }
+}
+
 fn app_with_lua(d: &mut Drive, title: &str, text: &str) -> Kawoosh {
+    posix_shell();
     let mut app = Kawoosh::new(title, text);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
@@ -30,6 +40,7 @@ fn settle(d: &mut Drive, app: &mut Kawoosh) {
 }
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
+    posix_shell();
     d.keys(app, ":");
     d.keys(app, line);
     d.key(app, "enter", KeyMods::default());
@@ -313,6 +324,7 @@ fn compile_mode_streams_and_jumps_to_locations() {
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
     d.frame(&mut app);
     ex(
         &mut d,
@@ -670,6 +682,7 @@ fn a_build_nu_command_wanting_arguments_goes_to_the_prompt() {
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
     d.frame(&mut app);
     ex(&mut d, &mut app, "compile?");
     let m = app.ed.message.clone();
