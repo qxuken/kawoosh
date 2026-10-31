@@ -800,11 +800,16 @@ fn a_relative_cmd_is_from_where_it_runs() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Plain `cargo test` shares the process environment, so the package
+/// install tests hold this while their PATH and servers folder are their
+/// own. Nextest gives each a process, but the same lock is harmless there.
+static PACKAGE_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A fake `npm` in `dir/tools`, first on the PATH, and kawoosh's folder
 /// `dir/servers`: `npm view` says `dir/latest`; `npm install --prefix
 /// DIR …` logs what it was asked to `dir/asked` and puts `fake-shout`,
-/// a formatter upper-casing stdin, in `DIR/node_modules/.bin`. Each test
-/// is a process of its own under nextest: its PATH is its own to set.
+/// a formatter upper-casing stdin, in `DIR/node_modules/.bin`. The caller
+/// holds [`PACKAGE_ENV`] while it and the install run.
 fn fake_npm(dir: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let tools = dir.join("tools");
@@ -855,6 +860,7 @@ fn shout_installed_by_npm(app: &mut Kawoosh) {
 #[test]
 fn a_formatter_is_installed_into_kawooshs_folder_and_runs_from_there() {
     let dir = project("install", &[(".shoutrc", ""), ("a.ts", "x\n")]);
+    let _package_env = PACKAGE_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let servers = fake_npm(&dir);
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_in(&mut d, &dir);
@@ -911,6 +917,7 @@ fn a_formatter_is_installed_into_kawooshs_folder_and_runs_from_there() {
 #[test]
 fn format_ensure_installed_installs_and_says_updates() {
     let dir = project("ensure", &[(".shoutrc", ""), ("a.ts", "x\n")]);
+    let _package_env = PACKAGE_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let servers = fake_npm(&dir);
     let asked = || std::fs::read_to_string(dir.join("asked")).unwrap_or_default();
     let program = servers.join("npm/fake-shout/node_modules/.bin/fake-shout");
