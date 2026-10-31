@@ -31,6 +31,12 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
 /// A window on `dir/a.txt`, its tab in `dir`, `on_cwd` kept as the
 /// setting `moved`.
 fn launch(dir: &Path) -> (Drive, Kawoosh) {
+    // SAFETY: this binary's shell command is POSIX `ls`, read by no test
+    // expecting the caller's shell; set before the app's threads start.
+    #[cfg(unix)]
+    unsafe {
+        std::env::set_var("SHELL", "/bin/sh");
+    }
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
