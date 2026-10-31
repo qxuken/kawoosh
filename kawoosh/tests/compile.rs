@@ -19,11 +19,19 @@ use kawoosh::settings::{PROJECT_DIR, SETTINGS_FILE};
 use kui_native::KeyMods;
 
 fn project(tag: &str, settings: &str) -> PathBuf {
-    // SAFETY: this binary's commands are POSIX, and its colour test asks
-    // for the defaults; no test reads another SHELL or NO_COLOR value.
+    // SAFETY: this binary's commands are POSIX, and its colour tests ask
+    // for the defaults and then none; no test reads other values of these.
     unsafe {
         std::env::set_var("SHELL", "/bin/sh");
-        std::env::remove_var("NO_COLOR");
+        for key in [
+            "NO_COLOR",
+            "FORCE_COLOR",
+            "CLICOLOR",
+            "CLICOLOR_FORCE",
+            "CARGO_TERM_COLOR",
+        ] {
+            std::env::remove_var(key);
+        }
     }
     let dir = std::env::temp_dir().join(format!("kawoosh-compile-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
