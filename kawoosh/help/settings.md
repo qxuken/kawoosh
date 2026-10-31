@@ -277,6 +277,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `clipboard.system` | `true` | `p` puts what other programs copied ([memory](memory.md)) |
 | `layout.default` | `"scroll"` | a new tab is a strip of columns (`scroll`) or a tree of splits (`tree`) |
 | `layout.column_width` | `"half"` | a new column's width: `third`, `half`, `two-thirds`, `full`, or a fraction |
+| `layout.ribbon_ms` | `80` | column and ribbon transition time in milliseconds; `0` lands at once |
 | `layout.new_pane`, `layout.new_tab` | `"launcher"` | what a bare split or tab is: `launcher`, `same`, `scratch`, `terminal` or `dir` |
 | `layout.dock` | `"tree"` | the dock's layout, `tree` or `scroll` |
 | `launcher.start` | `"normal"` | the launcher opens in `normal` (letters launch) or `insert` (typing filters) |

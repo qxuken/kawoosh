@@ -22,10 +22,18 @@ use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 
-/// How long the ribbon takes to reach the column a key revealed, and
-/// a column its place after a width step or a move: one duration, so
-/// the two motions a key starts run together.
-pub(crate) const RIBBON_MS: f32 = 80.0;
+/// The default `layout.ribbon_ms`: how long the ribbon takes to reach
+/// the column a key revealed, and a column its place after a width step
+/// or a move, so the two motions a key starts run together.
+pub(crate) const DEFAULT_RIBBON_MS: i64 = 80;
+
+/// The configured ribbon and dock-strip transition duration, in ms.
+pub(crate) fn ribbon_ms(ed: &kawoosh_editor::Editor) -> f32 {
+    ed.settings
+        .int("layout.ribbon_ms")
+        .unwrap_or(DEFAULT_RIBBON_MS)
+        .max(0) as f32
+}
 
 /// The contribution slot a pane's title bar declares (docs/design/
 /// plugin-extensions.md Decision 3), and the row it is drawn in.
@@ -586,12 +594,12 @@ impl Kawoosh {
     /// column's too, at its right edge.
     ///
     /// **The ribbon is what moves.** The row declares a `transition`,
-    /// so the offset a reveal takes it to is eased over `RIBBON_MS`
+    /// so the offset a reveal takes it to is eased over `layout.ribbon_ms`
     /// (kui F80, asked for from here) while the thumb, the wheel and a
     /// swipe — the hand's own, which must never lag a finger — land
     /// whole and drop any leg in flight. A column's width eases with it
     /// — the width, the room at the ribbon's ends and the offset all
-    /// `RIBBON_MS` on one curve, begun on the frame the key changed
+    /// `layout.ribbon_ms` on one curve, begun on the frame the key changed
     /// them, the offset read off the model rather than off the frame
     /// before — so a column resized against the viewport's edge keeps
     /// to it (scrolling-tab.md, 2026-10-29). A width is an input to
@@ -604,7 +612,7 @@ impl Kawoosh {
     ///
     /// What is left is a column arriving in a strip already on show: it
     /// comes in from a third of its width away and fades up, the same
-    /// `RIBBON_MS`, so it lands as the ribbon does. The strip's first
+    /// `layout.ribbon_ms`, so it lands as the ribbon does. The strip's first
     /// frame (a conversion, a restore, a tab switched to) does neither,
     /// those columns not being arrivals. A closing one goes at once: an
     /// `exit` fade would replay on a tab switch too, kui playing a
@@ -623,6 +631,7 @@ impl Kawoosh {
     pub(crate) fn render_strip(&mut self, ui: &mut Ui<'_>, strip: &Strip) {
         let vw = ui.viewport().w.max(1.0);
         let gap = self.strip_gap();
+        let ribbon_ms = ribbon_ms(&self.ed);
         let focused = self.layout.focused();
         let fi = strip.column_of(focused);
         let n = strip.columns.len();
@@ -746,7 +755,7 @@ impl Kawoosh {
         let overflows = lead + span + trail > vw + 0.5;
         // The widths, the room at the ends and the offset a reveal
         // takes the ribbon to ease together, on one clock: all of them
-        // `RIBBON_MS` on kui's one curve, begun on the frame the key
+        // `layout.ribbon_ms` on kui's one curve, begun on the frame the key
         // changed them, so every column's edges move as the ribbon
         // does and a column resized against the viewport's edge stays
         // against it. Not under a gap drag, whose width is the hand's,
@@ -782,7 +791,7 @@ impl Kawoosh {
             .map_or(0.0, |(px, _)| px);
         self.strip_slack = (held + moved > 0.0).then(|| {
             let until = if moved > 0.0 {
-                now + RIBBON_MS as f64 / 1000.0
+                now + ribbon_ms as f64 / 1000.0
             } else {
                 self.strip_slack.map_or(now, |(_, until)| until)
             };
@@ -797,7 +806,7 @@ impl Kawoosh {
         };
         let ease = |spec: NodeSpec| {
             if eases {
-                spec.transition(RIBBON_MS)
+                spec.transition(ribbon_ms)
             } else {
                 spec
             }
@@ -840,7 +849,7 @@ impl Kawoosh {
                 // The ribbon glides to the column a key reveals (kui's
                 // F80, asked for from here); a swipe is the hand's and
                 // lands whole.
-                .transition(RIBBON_MS)
+                .transition(ribbon_ms)
                 // The bar in a band of its own under the columns, never
                 // over a pane's last row, and only while there is
                 // anything to scroll: no empty band under one column.
@@ -868,7 +877,7 @@ impl Kawoosh {
                     // DX19).
                     let mut wrap = NodeSpec::column()
                         .grow_height()
-                        .transition(RIBBON_MS)
+                        .transition(ribbon_ms)
                         .exit(Enter::default().opacity(0.0));
                     if arriving && !self.strip_known.contains(&col.id) {
                         wrap = wrap.enter(Enter::from((px / 3.0).min(200.0), 0.0).opacity(0.0));

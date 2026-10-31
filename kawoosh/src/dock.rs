@@ -189,7 +189,7 @@ impl Kawoosh {
             NodeSpec::row()
                 .fill()
                 .scroll_x()
-                .transition(crate::panes::RIBBON_MS),
+                .transition(crate::panes::ribbon_ms(&self.ed)),
             |ui| {
                 for (i, col) in strip.columns.iter().enumerate() {
                     let px = (col.width.fraction() * vw).round().max(160.0);

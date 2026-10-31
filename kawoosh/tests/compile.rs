@@ -19,6 +19,12 @@ use kawoosh::settings::{PROJECT_DIR, SETTINGS_FILE};
 use kui_native::KeyMods;
 
 fn project(tag: &str, settings: &str) -> PathBuf {
+    // SAFETY: this binary's commands are POSIX, and its colour test asks
+    // for the defaults; no test reads another SHELL or NO_COLOR value.
+    unsafe {
+        std::env::set_var("SHELL", "/bin/sh");
+        std::env::remove_var("NO_COLOR");
+    }
     let dir = std::env::temp_dir().join(format!("kawoosh-compile-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join(".git")).unwrap();

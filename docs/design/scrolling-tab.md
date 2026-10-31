@@ -237,7 +237,7 @@ session saved and restored as a strip.
 over both kinds (`node_of`, `split_of` in a `"2/ab"` grammar for a
 strip, `ratio_mut`, `share_of`, `resize`, `to_scroll`, `to_tree`);
 `panes.rs`'s `render_strip`; `:layout`, `:layout scroll`, `:layout
-tree`, `column left` / `right` on `<C-w>H` / `<C-w>L`; the four
+tree`, `column left` / `right` on `<C-w>H` / `<C-w>L`; the five
 settings; the session's `kind` and `columns`; `kawoosh/tests/layout.rs`
 (three tests) and seven unit tests in `layout.rs`. Where the build
 departed from the text above, and what day one found:
@@ -269,19 +269,19 @@ departed from the text above, and what day one found:
   drew it, and **F80**, a `transition` on a scroll container eases the
   offset a `reveal` takes it to while the wheel, the thumb and an edge
   drag land whole — and the shape that came out of them:
-  - **the ribbon eases** (the row's own `transition`, `RIBBON_MS` =
-    160ms) to the column a key reveals, which is the motion the eye
-    follows;
+  - **the ribbon eases** (the row's own `transition`, `layout.ribbon_ms`,
+    80 ms by default) to the column a key reveals, which is the motion
+    the eye follows;
   - **a column's width and place snap**, so a preset step and `<C-w>H`
     are as fast as the key — and no `slide` rides on a column, which is
     what keeps the thumb linear (a width eases since 2026-10-29, on the
     ribbon's clock; see below);
   - **a column arriving** in a strip already on show comes in from a
-    third of its width away and fades up over the same 160ms, landing
+    third of its width away and fades up over the same duration, landing
     as the ribbon does; the strip's first frame (a conversion, a
     restore, a tab switched to) does neither, those columns not being
     arrivals (`Kawoosh::strip_known`);
-  - **a closing column fades where it stood** (160 ms), and one that
+  - **a closing column fades where it stood** over that duration, and one that
     goes with its strip — a tab switched away, `:layout tree` — goes at
     once: kui plays an `exit` only under a parent still declared (DX19),
     and holds 4,096 departing nodes (DX23), a whole pane's. It went at
@@ -299,7 +299,7 @@ departed from the text above, and what day one found:
   going, and drifted back, and one narrowed at the ribbon's end was cut
   back to the end in one frame by kui's clamp. Now the column's `Fixed`
   width, the room at the ribbon's ends (declared at no width too) and
-  the offset all ease `RIBBON_MS` on kui's one curve, begun on the
+  the offset all ease `layout.ribbon_ms` on kui's one curve, begun on the
   frame the key changed them, and the offset is worked out from the
   model — kui's reveal rule over the widths this frame declares, no
   further than the ribbon's new end. kui eases a width as an *input*

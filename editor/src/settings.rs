@@ -596,6 +596,10 @@ const DOCS: &[(&str, &str)] = &[
     ),
     ("layout.gap", "the gap between columns, in pixels"),
     (
+        "layout.ribbon_ms",
+        "how long column and ribbon transitions take, in milliseconds; 0 lands at once",
+    ),
+    (
         "layout.scroll.center",
         "the focused column: `always` centred, `never` only brought into view",
     ),
@@ -1118,11 +1122,13 @@ impl Settings {
         // tab is (`tree` | `scroll`; the strip since 2026-09-22), a
         // new column's width (`third`,
         // `half`, `two-thirds`, `full`, or a fraction), the gap between
-        // columns in px, and whether the focus frame centres the column
-        // (`always`) or only brings it into view (`never`).
+        // columns in px, the ribbon's duration in ms, and whether the
+        // focus frame centres the column (`always`) or only brings it
+        // into view (`never`).
         defaults.set("layout.default", Setting::Str("scroll".into()));
         defaults.set("layout.column_width", Setting::Str("half".into()));
         defaults.set("layout.gap", Setting::Int(4));
+        defaults.set("layout.ribbon_ms", Setting::Int(80));
         defaults.set("layout.scroll.center", Setting::Str("never".into()));
         // What a pane made bare is (docs/design/launcher.md): a split
         // (`<C-w>v`, `:vsplit`) and a tab (`:tabnew`) without a path —
@@ -2231,6 +2237,7 @@ mod tests {
                 "layout.gap",
                 "layout.new_pane",
                 "layout.new_tab",
+                "layout.ribbon_ms",
                 "layout.scroll.center",
                 "leader",
                 "lsp.diagnostics",

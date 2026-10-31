@@ -780,7 +780,7 @@ fn a_key_reaches_a_column_the_animation_has_not_finished_moving() {
 
 /// The ribbon glides to the column a key reveals (kui's F80: a
 /// `transition` on the scroll container), and a width step eases with
-/// it over the same `RIBBON_MS`.
+/// it over the same `layout.ribbon_ms`.
 #[test]
 fn the_ribbon_glides_to_a_key_and_a_width_eases_with_it() {
     let vw = 900.0;
@@ -837,6 +837,24 @@ fn the_ribbon_glides_to_a_key_and_a_width_eases_with_it() {
         (after - (before - vw / 3.0)).abs() < 2.0,
         "a third of the viewport narrower: {before} -> {after}"
     );
+
+    // The setting drives the same clock: at 160 ms, 40 ms is still
+    // early in the reveal rather than the default duration's midpoint.
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "layout.ribbon_ms",
+        kawoosh_editor::Setting::Int(160),
+    );
+    let before = drawn_columns(&d)[2].0;
+    d.press(&mut app, "<D-3>");
+    d.advance(0.04);
+    d.frame(&mut app);
+    let early = drawn_columns(&d)[2].0;
+    assert!(
+        early < before - 20.0 && early > 450.0,
+        "configured duration: {early} from {before}"
+    );
+    settle(&mut d, &mut app);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
