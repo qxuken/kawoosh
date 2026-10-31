@@ -9,7 +9,17 @@ use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
 use kui_native::KeyMods;
 
+fn posix_shell() {
+    // SAFETY: this binary's terminal and compile commands are POSIX;
+    // set before each app's processes start, never read as a preference.
+    #[cfg(unix)]
+    unsafe {
+        std::env::set_var("SHELL", "/bin/sh");
+    }
+}
+
 fn app_with_lua(d: &mut Drive, title: &str, text: &str) -> Kawoosh {
+    posix_shell();
     let mut app = Kawoosh::new(title, text);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
@@ -30,6 +40,7 @@ fn settle(d: &mut Drive, app: &mut Kawoosh) {
 }
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
+    posix_shell();
     d.keys(app, ":");
     d.keys(app, line);
     d.key(app, "enter", KeyMods::default());
