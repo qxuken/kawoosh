@@ -120,15 +120,19 @@ why (the script's body, the recipe's comment) and how it is declared
 N`); `<C-e>` puts it in the prompt to add arguments first (`:compile
 edit N`).
 
-### 4. Every command runs where its kind says
+### 4. A direct line runs in the tab's working directory
 
 A deduced command carries its directory (Decision 1's "where"). A typed
-or set one runs where the deduced kind of its program does —
-`:compile cargo test` at the workspace, `:compile make foo` beside the
-nearest Makefile, `pnpm …` at the package — and anything else where the
-compile ran before this: the outermost marker in the repository, else
-the repository, else the file's directory. The locations in its output
-resolve against the same directory.
+or set line instead runs in the tab's working directory: `:compile cargo
+test` and `:compile make foo` do not move to a workspace, Makefile or
+package the caret's file suggests. A named command's explicit `cwd` and
+a chain's scope still win; `:compile here` (Decision 25) is the way to
+run relative to the pane in front. The locations in a run's output
+resolve against the directory it actually ran in.
+
+*Amended 2026-10-31*, the user: direct lines had moved to the deduced
+program kind's directory; the predictable base is the tab's, with the
+pane-relative form explicit.
 
 ### 5. tsc's locations are locations
 
@@ -195,8 +199,8 @@ compile = {
   run but put in the prompt, `:compile e2e ` with the caret at its end.
 - **`cwd`**: a relative one is the project's whose `.kawoosh/settings.lua`
   said it, joined in Rust; from the user's file or `:set`, the caret's
-  project's (its `.kawoosh`, else its repository). Without one, where its
-  program's kind runs (Decision 4).
+  project's (its `.kawoosh`, else its repository). Without one, the tab's
+  working directory (Decision 4).
 - **Why a table inside the table**: step 34's declared settings flag a
   misspelt key (`compile = { comand = … }`) and give the language
   server its types. A table of the user's names has to be open — any
@@ -1184,18 +1188,17 @@ background — no one is left to read where it ended.
 ### 25. `:compile here` runs where the pane in front is
 
 *Added 2026-10-23, asked:* "Let's add `:compile here` command and
-shortcut to it". A line runs where its kind says (Decision 4) — `cargo
-test` at the workspace, `pnpm …` at the package — and nothing said
-"run it in this directory": a crate's own tests in a workspace, a
-script beside the file, took a `cd` in the line.
+shortcut to it". A direct line now uses the tab's working directory
+(Decision 4); this form names the other useful base explicitly, the
+pane's, rather than requiring a `cd` in the line.
 
-`:compile here [LINE]` (`<leader>c.`) is `:compile [LINE]` run in the
-directory of the pane in front, as `<C-w>.` reads it (`here_dir`): the
+`:compile here [LINE]` (`:ch`, `<leader>c.`) is `:compile [LINE]` run in
+the directory of the pane in front, as `<C-w>.` reads it (`here_dir`): the
 file's, the listing's, the shell's, `:du`'s, one that is gone its
 closest parent; in a `*compile*` buffer, where its run ran, as
 `compile_start` has it. That directory wins over everything else that
-says where — a name's `cwd`, a chain's, every step's, the program's
-kind — and `%` is written from it. Bare, it is what a bare `:compile`
+says where — a name's `cwd`, a chain's, every step's — and `%` is written
+from it. Bare, it is what a bare `:compile`
 runs (Decision 2) moved there: `compile.default`'s lines resolved
 there, the last line's steps run there as they were, the files' first
 run there. A name wanting arguments opens the prompt on `:compile here
@@ -1214,7 +1217,7 @@ second `:compile` that sometimes broke. **Bare, `:compile here` opens
 the prompt on `:compile here `** (as a bare `:rename` opens it on the
 name), and `<leader>c.` is that: the line is always the user's, the
 directory always the pane's. The prompt's paths complete from there
-too, where they came from where the line's kind would run it.
+too, as `:ch`'s do.
 
 Asked with it: "`:c %` in hex said no file". **`%` is the file a
 plugin's pane says it shows** (`opts.path`: `:hex`'s, `:image`'s,

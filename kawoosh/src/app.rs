@@ -1144,6 +1144,20 @@ impl Kawoosh {
                         p.out = Some(text);
                     }
                 }
+                IoMsg::ProcStartFailed { id, error } if self.scripting.procs.contains_key(&id) => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(p) = self.scripting.procs.remove(&id) {
+                        self.ed.message = format!("spawn: {error}");
+                        log::warn!("spawn: {error}");
+                        if let Some(rt) = self.scripting.rt.clone() {
+                            rt.publish(&self.ed, self.focused_view());
+                            self.publish_layout();
+                            rt.proc_exit(p.token, None, None);
+                            self.drain_lua();
+                        }
+                    }
+                    self.start_queued_procs();
+                }
                 IoMsg::ProcExit { id, code } if self.scripting.procs.contains_key(&id) => {
                     self.flush_proc_lines();
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
@@ -1162,6 +1176,7 @@ impl Kawoosh {
                 }
                 other @ (IoMsg::ProcLine { .. }
                 | IoMsg::ProcExit { .. }
+                | IoMsg::ProcStartFailed { .. }
                 | IoMsg::ProcErr { .. }
                 | IoMsg::ProcOut { .. }) => self.on_proc_msg(other),
                 IoMsg::Opening { path, done, total } => {

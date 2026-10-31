@@ -313,6 +313,7 @@ fn compile_mode_streams_and_jumps_to_locations() {
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
     d.frame(&mut app);
     ex(
         &mut d,
@@ -670,6 +671,7 @@ fn a_build_nu_command_wanting_arguments_goes_to_the_prompt() {
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
     d.frame(&mut app);
     ex(&mut d, &mut app, "compile?");
     let m = app.ed.message.clone();

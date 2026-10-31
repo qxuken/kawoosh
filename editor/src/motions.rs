@@ -507,6 +507,51 @@ pub fn matching_pair(
     close: char,
     forward: bool,
 ) -> Option<usize> {
+    if open.is_ascii() && close.is_ascii() {
+        let (open, close) = (open as u8, close as u8);
+        let mut found = None;
+        if forward {
+            let mut depth = 0i32;
+            let mut base = o;
+            buf.visit_range(o..buf.len(), |chunk| {
+                if found.is_none() {
+                    for (i, b) in chunk.iter().enumerate() {
+                        if *b == open {
+                            depth += 1;
+                        } else if *b == close {
+                            depth -= 1;
+                        }
+                        if depth == 0 {
+                            found = Some(base + i);
+                            break;
+                        }
+                    }
+                }
+                base += chunk.len();
+            });
+        } else {
+            let mut opens = Vec::new();
+            let mut base = 0;
+            buf.visit_range(0..o.saturating_add(1), |chunk| {
+                if found.is_none() {
+                    for (i, b) in chunk.iter().enumerate() {
+                        let at = base + i;
+                        if *b == open {
+                            opens.push(at);
+                        } else if *b == close {
+                            let mate = opens.pop();
+                            if at == o {
+                                found = mate;
+                                break;
+                            }
+                        }
+                    }
+                }
+                base += chunk.len();
+            });
+        }
+        return found;
+    }
     let mut depth = 0i32;
     let mut p = o;
     loop {
@@ -561,6 +606,17 @@ mod tests {
         assert_eq!(matching_bracket(&b, 1), None);
         assert_eq!(matching_pair(&b, 1, '<', '>', true), Some(7));
         assert_eq!(matching_pair(&b, 7, '<', '>', false), Some(1));
+    }
+
+    #[test]
+    fn brackets_match_across_a_large_mod() {
+        let body = "    #[test]\n    fn a_case() { assert_eq!(\"😀\", \"😀\"); }\n".repeat(3_000);
+        let src = format!("mod tests {{\n{body}}}\n");
+        let b = Buffer::new("t", &src);
+        let open = src.find('{').unwrap();
+        let close = src.rfind('}').unwrap();
+        assert_eq!(matching_bracket(&b, open), Some(close));
+        assert_eq!(matching_bracket(&b, close), Some(open));
     }
 
     #[test]

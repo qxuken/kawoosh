@@ -800,7 +800,7 @@ fn the_ribbon_glides_to_a_key_and_a_width_eases_with_it() {
     let before = drawn_columns(&d);
     d.press(&mut app, "<D-3>");
     assert_eq!(drawn_columns(&d), before, "the leg starts where it was");
-    d.advance(0.08);
+    d.advance(0.04);
     d.frame(&mut app);
     let midway = drawn_columns(&d)[2].0;
     assert!(
@@ -824,7 +824,7 @@ fn the_ribbon_glides_to_a_key_and_a_width_eases_with_it() {
         before,
         "the leg starts where it was"
     );
-    d.advance(0.08);
+    d.advance(0.04);
     d.frame(&mut app);
     let midway = drawn_columns(&d)[1].0;
     assert!(

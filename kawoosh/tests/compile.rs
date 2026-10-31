@@ -910,12 +910,14 @@ fn a_plugin_s_kind_of_build_is_read_as_the_builtin_ones() {
     std::fs::write(dir.join("sub/mix.exs"), "# deps: phoenix\n").unwrap();
     std::fs::write(dir.join("sub/deeper/b.ex"), "x\n").unwrap();
     std::fs::write(dir.join("Makefile"), "all:\n\techo\n").unwrap();
+    let sub = dir.join("sub");
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::from_file(&dir.join("sub/deeper/b.ex"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
-    app.set_cwd(&dir);
+    app.set_cwd(&sub);
+    app.layout.tab_mut().cwd = Some(dir.clone());
     d.frame(&mut app);
     app.run_lua_source(
         "t",
@@ -940,7 +942,6 @@ kawoosh.compile_kind("mix", {
             .map(|c| (c.cmd, c.cwd))
             .collect()
     };
-    let sub = dir.join("sub");
     assert_eq!(
         cmds(&app)[..4],
         [
@@ -954,9 +955,13 @@ kawoosh.compile_kind("mix", {
     assert_eq!(app.deduce_compile().commands[1].why, "the tests");
     assert_eq!(
         app.compile_dir_of("mix deps.get"),
-        sub,
-        "its program runs where its file is"
+        dir,
+        "a direct compile uses the tab cwd, not the package's"
     );
+    let kawoosh::compile::Line::Run(_, cwd) = app.compile_line("mix deps.get").unwrap() else {
+        panic!("a direct command line")
+    };
+    assert_eq!(cwd, dir);
     // A builtin's name: in its place, a list for its commands.
     app.run_lua_source(
         "t",
@@ -1387,6 +1392,15 @@ fn compile_here_runs_where_the_pane_in_front_is() {
     assert_eq!(
         app.ed.buffers[app.compile.buffer().unwrap()].name,
         "*compile: pwd in src*"
+    );
+    back(&mut d, &mut app);
+
+    // `:ch` is the same command, relative to the file's pane.
+    ex(&mut d, &mut app, "ch pwd");
+    let out = finished(&mut d, &mut app);
+    assert!(
+        out.contains(&format!("$ pwd\n{}\n", src.display())),
+        "{out}"
     );
 
     // From the *compile* buffer: where its run ran.

@@ -153,7 +153,9 @@ whole output at once, as it was (a trailing newline kept, which a
 base text needs; bytes that are not UTF-8 replaced, where the line
 reader stopped at them); `opts.on_stderr = fn(lines)` takes stderr
 apart from stdout when given. The `dir` provider moves onto the list
-form, and works under nushell.
+form, and works under nushell. A local child is created on a job thread:
+`posix_spawn`, and whatever a host does to authorise it, never blocks the
+UI; a kill requested before it finishes starting is applied to the child.
 
 ### 6. The review is a multibuffer
 
