@@ -105,7 +105,10 @@ strip = true
 lto = "fat"
 codegen-units = 1
 
+# `CARGO_PROFILE_DEV_DEBUG=full` brings it back
+# for a debugging session (a separate set of builds).
 [profile.dev]
+debug = "line-tables-only"
 opt-level = 1
 
 [profile.dev.package."*"]
