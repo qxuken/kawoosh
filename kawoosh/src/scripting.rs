@@ -33,6 +33,13 @@ const LUA_PROCS_AT_ONCE: usize = 32;
 /// to the content.
 const SCROLL_END: f32 = 1.0e9;
 
+/// A channel listing built on its IO job (`IoMsg::App`), keeping the
+/// systems crate independent of the UI's data type.
+pub(crate) struct ListedChannel {
+    pub token: u64,
+    pub result: Result<kui_core::channel::Channel, String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ToolDef {
     pub cmd: String,
@@ -1070,16 +1077,31 @@ impl Kawoosh {
                     }
                 }
             }
-            Msg::ListDir { token, path } => {
+            Msg::ListDir {
+                token,
+                path,
+                channel,
+            } => {
                 if self.jobs_inline {
                     let result = kawoosh_systems::fs::list(&path).map_err(|e| e.to_string());
                     rt.publish(&self.ed, self.focused_view());
-                    rt.listed(token, result);
+                    if channel {
+                        rt.listed_channel(token, result.map(kawoosh_lua::entries_channel));
+                    } else {
+                        rt.listed(token, result);
+                    }
                 } else {
                     self.pending_jobs += 1;
-                    self.io.run("list", move || IoMsg::Listed {
-                        token,
-                        result: kawoosh_systems::fs::list(&path).map_err(|e| e.to_string()),
+                    self.io.run("list", move || {
+                        let result = kawoosh_systems::fs::list(&path).map_err(|e| e.to_string());
+                        if channel {
+                            IoMsg::App(Box::new(ListedChannel {
+                                token,
+                                result: result.map(kawoosh_lua::entries_channel),
+                            }))
+                        } else {
+                            IoMsg::Listed { token, result }
+                        }
                     });
                 }
             }

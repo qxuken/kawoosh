@@ -92,45 +92,58 @@ local function pane_of(component)
   return tonumber(tostring(component or ""):match("@(%d+)$"))
 end
 
--- The directory's listing as rows, read once on the io thread — forty
--- thousand entries hold up no frame — and kept: `name`, `path`, `dir`,
--- a file's size. Nil while it is read; a directory `into` is going to
--- (`S.going`) is gone into once it is.
+-- The directory's listing as flat columns, read on the io thread and
+-- handed over as one channel. Paths and the size walk's sentinel columns
+-- are made once here; row tables are made only when shown or acted on.
+-- Nil while it is read; a directory `into` is going to (`S.going`) is
+-- gone into once it is.
 local function listing(d)
-  local rows = S.listed[d]
-  if rows ~= nil then return rows or nil end
+  local listed = S.listed[d]
+  if listed ~= nil then return listed or nil end
   S.listed[d] = false
   local st = S
   fs.list(d, function(got)
     if st.listed[d] ~= false then return end
-    rows = {}
-    for i, e in ipairs(got or {}) do
-      local dir = e.is_dir and not e.is_symlink
-      rows[i] = { name = e.name, lower = e.name:lower(), path = fs.join(d, e.name), dir = dir,
-                  bytes = not dir and (e.size or 0) or nil, files = not dir and 1 or nil }
+    local cols = { name = {}, lower = {}, path = {}, dir = {}, bytes = {}, files = {} }
+    if got then
+      cols.name = got:column("name")
+      cols.lower = got:column("name")
+      cols.dir = got:column("is_dir")
+      cols.bytes = got:column("size")
+      for i, name in ipairs(cols.name) do
+        local dir = cols.dir[i] and got:get(i - 1, "is_symlink") == false
+        cols.lower[i] = name:lower()
+        cols.path[i] = fs.join(d, name)
+        cols.dir[i] = dir
+        cols.bytes[i] = not dir and cols.bytes[i] or -1
+        cols.files[i] = not dir and 1 or -1
+      end
     end
-    st.listed[d] = rows
+    st.listed[d] = { ch = got, cols = cols }
     if st.going and st.going.dir == d then
       st.dir, st.cursor, st.reveal, st.going = d, nil, true, nil
     end
-  end)
+  end, { channel = true })
   return S.listed[d] or nil
 end
 
-local function by_size(a, b)
-  local x, y = a.bytes, b.bytes
-  if (x == nil) ~= (y == nil) then return x ~= nil end
-  if x ~= y then return x > y end
-  return a.name < b.name
+-- Rows over a channel's sorted indices. The columns stay flat; an entry
+-- table exists only after a visible row, a command or `du.state` asks.
+local function rows_of(cols, order)
+  return setmetatable({}, {
+    __len = function() return #order end,
+    __index = function(t, i)
+      local at = order[i]
+      if at == nil then return nil end
+      at = at + 1
+      local bytes, files = cols.bytes[at], cols.files[at]
+      local e = { name = cols.name[at], lower = cols.lower[at], path = cols.path[at], dir = cols.dir[at],
+                  bytes = bytes >= 0 and bytes or nil, files = files >= 0 and files or nil }
+      rawset(t, i, e)
+      return e
+    end,
+  })
 end
-local function by_files(a, b)
-  local x, y = a.files, b.files
-  if (x == nil) ~= (y == nil) then return x ~= nil end
-  if x ~= y then return x > y end
-  return a.name < b.name
-end
-local function by_name(a, b) return a.lower < b.lower end
-local ORDER = { size = by_size, files = by_files, name = by_name }
 
 -- The directory on show, sorted: `rows`, `at` (a row's index by name),
 -- the `largest` and the `whole`. Sorted again only when the listing,
@@ -139,7 +152,7 @@ local ORDER = { size = by_size, files = by_files, name = by_name }
 -- entries was the frame.
 local function shown()
   local d = S.dir
-  local rows = listing(d)
+  local listed = listing(d)
   -- A finished walk's stamps move no more (but by `remove`, which lets
   -- them go): kept, so an idle pane asks the door nothing and is
   -- replayed (lua-boundary.md Decision 10).
@@ -149,21 +162,40 @@ local function shown()
     if S.done then S.stamps[d] = stamp end
   end
   local sh = S.shown
-  if sh and sh.dir == d and sh.sort == S.sort and sh.stamp == stamp and sh.list == rows then
+  if sh and sh.dir == d and sh.sort == S.sort and sh.stamp == stamp and sh.list == listed then
     return sh
   end
-  sh = { dir = d, sort = S.sort, stamp = stamp, list = rows, rows = {}, at = {}, largest = 0, whole = 0 }
+  sh = { dir = d, sort = S.sort, stamp = stamp, list = listed, rows = {}, at = {}, largest = 0, whole = 0 }
   S.shown = sh
-  if not rows then sh.reading = true return sh end
-  local out = sh.rows
-  for i, r in ipairs(rows) do
-    if r.dir then r.bytes, r.files = door.size(S.walk, r.path) end
-    out[i] = r
+  if not listed then sh.reading = true return sh end
+  local cols = listed.cols
+  for i, path in ipairs(cols.path) do
+    if cols.dir[i] then
+      local bytes, files = door.size(S.walk, path)
+      cols.bytes[i], cols.files[i] = bytes or -1, files or -1
+    end
   end
-  table.sort(out, ORDER[S.sort])
-  for i, r in ipairs(out) do
-    sh.at[r.name] = i
-    local b = r.bytes or 0
+  local order = {}
+  if #cols.name > 0 then
+    -- Names and paths stay in their first channel. Only the two numeric
+    -- columns move as the walk answers, so a revision copies no strings.
+    local sizes = { bytes = cols.bytes, files = cols.files }
+    listed.sizes = listed.sizes and listed.sizes:publish(sizes) or channel(sizes)
+    if S.sort == "name" then
+      if not listed.by_lower then
+        listed.by_lower = channel({ lower = cols.lower }):sort("lower")
+      end
+      order = listed.by_lower
+    else
+      listed.by_name = listed.by_name or listed.ch:sort("name")
+      order = listed.sizes:sort(S.sort == "size" and "bytes" or S.sort, true, listed.by_name)
+    end
+  end
+  sh.rows = rows_of(cols, order)
+  for i = 1, #order do
+    local at = order[i] + 1
+    sh.at[cols.name[at]] = i
+    local b = math.max(0, cols.bytes[at])
     if b > sh.largest then sh.largest = b end
     sh.whole = sh.whole + b
   end

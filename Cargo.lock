@@ -2414,6 +2414,7 @@ dependencies = [
  "kawoosh-lua",
  "kawoosh-systems",
  "kawoosh-term",
+ "kui-core",
  "kui-ffi",
  "kui-lua",
  "kui-native",

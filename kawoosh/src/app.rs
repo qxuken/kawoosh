@@ -1079,7 +1079,17 @@ impl Kawoosh {
                 IoMsg::NuCompleted { serial, values } => self.nu_completed(serial, values),
                 IoMsg::Programs(names) => self.programs_listed(names),
                 IoMsg::App(answer) => {
-                    if let Ok(w) = answer.downcast::<crate::compile::PackagesWalked>() {
+                    if answer.is::<crate::scripting::ListedChannel>() {
+                        let w = answer
+                            .downcast::<crate::scripting::ListedChannel>()
+                            .expect("checked above");
+                        self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                        if let Some(rt) = self.scripting.rt.clone() {
+                            rt.publish(&self.ed, self.focused_view());
+                            rt.listed_channel(w.token, w.result);
+                            self.drain_lua();
+                        }
+                    } else if let Ok(w) = answer.downcast::<crate::compile::PackagesWalked>() {
                         self.packages_walked(*w);
                     }
                 }
