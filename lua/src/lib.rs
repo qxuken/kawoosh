@@ -217,12 +217,13 @@ pub enum Msg {
     /// showed before, where `:bd` would take it — else another listed
     /// one, else a new scratch. The buffer it leaves stays.
     BackBuffer,
-    /// `kawoosh.fs.list(path, fn)`: the directory read on a thread of
+    /// `kawoosh.fs.list(path, fn, opts)`: the directory read on a thread of
     /// its own, the answer to `Runtime::listed` under `token` when it
-    /// comes (`IoMsg::Listed`).
+    /// comes (`IoMsg::Listed`), or a channel made there with `channel`.
     ListDir {
         token: u64,
         path: PathBuf,
+        channel: bool,
     },
     /// `kawoosh.fs.remove(path, fn)` and `fs.copy(a, b, fn)`: the
     /// change made on a thread of its own, the answer to
@@ -3132,6 +3133,17 @@ impl Runtime {
         self.answer(token, result, "fs.list");
     }
 
+    /// A listing made a channel on its job's thread, handed over whole.
+    pub fn listed_channel(&self, token: u64, result: Result<kui_core::channel::Channel, String>) {
+        let result = result.and_then(|ch| {
+            self.lua
+                .create_userdata(kui_core::channel::lua::LuaChannel(ch))
+                .map(LV::UserData)
+                .map_err(|e| e.to_string())
+        });
+        self.answer_value(token, result, "fs.list");
+    }
+
     /// A file read for `kawoosh.fs.read_json(path, fn)`: the callback
     /// called with the value, or `nil` and why.
     pub fn json_read(&self, token: u64, result: Result<serde_json::Value, String>) {
@@ -3472,6 +3484,10 @@ impl Runtime {
     }
 
     fn answer(&self, token: u64, result: Result<Table, String>, what: &str) {
+        self.answer_value(token, result.map(LV::Table), what);
+    }
+
+    fn answer_value(&self, token: u64, result: Result<LV, String>, what: &str) {
         let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
             return;
         };
@@ -3480,7 +3496,7 @@ impl Runtime {
         };
         let _ = self.lua.remove_registry_value(key);
         let args = match result {
-            Ok(t) => (LV::Table(t), LV::Nil),
+            Ok(v) => (v, LV::Nil),
             Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
         };
         // A delivery to a plugin, not a reading of it: its state may move.
@@ -4493,6 +4509,47 @@ fn changed_table(lua: &Lua, c: &kawoosh_systems::fs::Changed) -> mlua::Result<Ta
     }
     t.set("failed", failed)?;
     Ok(t)
+}
+
+/// A directory listing as typed columns, made away from the Lua state for
+/// `fs.list(path, fn, { channel = true })`. A missing mtime has
+/// `has_modified` false and `modified` zero, since a channel has no nulls.
+pub fn entries_channel(entries: Vec<kawoosh_systems::fs::Entry>) -> kui_core::channel::Channel {
+    use kui_core::channel::{Channel, Column};
+    Channel::table(vec![
+        ("name".into(), Column::strs(entries.iter().map(|e| &e.name))),
+        (
+            "is_dir".into(),
+            Column::Bool(entries.iter().map(|e| e.is_dir).collect()),
+        ),
+        (
+            "is_symlink".into(),
+            Column::Bool(entries.iter().map(|e| e.is_symlink).collect()),
+        ),
+        (
+            "size".into(),
+            Column::I64(
+                entries
+                    .iter()
+                    .map(|e| i64::try_from(e.size).unwrap_or(i64::MAX))
+                    .collect(),
+            ),
+        ),
+        (
+            "modified".into(),
+            Column::I64(
+                entries
+                    .iter()
+                    .map(|e| e.modified.and_then(|m| i64::try_from(m).ok()).unwrap_or(0))
+                    .collect(),
+            ),
+        ),
+        (
+            "has_modified".into(),
+            Column::Bool(entries.iter().map(|e| e.modified.is_some()).collect()),
+        ),
+    ])
+    .expect("listing columns have one length")
 }
 
 fn entries_table(lua: &Lua, entries: Vec<kawoosh_systems::fs::Entry>) -> mlua::Result<Table> {
@@ -8216,12 +8273,18 @@ fn seed(
     // `kawoosh.fs.list(path: string, fn: fun(entries: kawoosh.fs.Entry[]?, why: string?)): nil`:
     // the directory's entries, directories first, each group by name.
     // @overload fun(path: string): kawoosh.fs.Entry[]
+    // @overload fun(path: string, fn: fun(entries: kui.Channel?, why: string?), opts: kawoosh.fs.ListOpts): nil
     // `fs.list(path)` answers now (raising when it cannot be read);
     // `fs.list(path, fn)` reads the directory on a thread of its own,
     // answers nil and calls `fn(entries)` — or `fn(nil, why)` — when it
     // is read, so a listing of forty thousand entries on a slow disk
-    // holds up nothing.
+    // holds up nothing. With `{ channel = true }` as the third argument
+    // the answer is a `kui.Channel`, made on that thread: columns `name`,
+    // `is_dir`, `is_symlink`, `size`, `modified` and `has_modified`, the
+    // last two paired because a channel has no nulls.
     //
+    // @class kawoosh.fs.ListOpts
+    // @field channel? boolean answer a `kui.Channel` rather than row tables
     // @class kawoosh.fs.Entry
     // @field name string
     // @field is_dir boolean a directory, or a link to one
@@ -8232,23 +8295,32 @@ fn seed(
     let jj = jobs.clone();
     fs.set(
         "list",
-        lua.create_function(move |lua, (dir, cb): (String, Option<mlua::Function>)| {
-            let Some(cb) = cb else {
-                let entries = kfs::list(&expand(&dir)).map_err(io_err)?;
-                return Ok(LV::Table(entries_table(lua, entries)?));
-            };
-            let token = {
-                let mut j = jj.borrow_mut();
-                let token = j.token();
-                j.waiting.insert(token, lua.create_registry_value(cb)?);
-                token
-            };
-            qq.borrow_mut().push(Msg::ListDir {
-                token,
-                path: expand(&dir),
-            });
-            Ok(LV::Nil)
-        })?,
+        lua.create_function(
+            move |lua, (dir, cb, opts): (String, Option<mlua::Function>, Option<Table>)| {
+                let Some(cb) = cb else {
+                    let entries = kfs::list(&expand(&dir)).map_err(io_err)?;
+                    return Ok(LV::Table(entries_table(lua, entries)?));
+                };
+                let channel = opts
+                    .as_ref()
+                    .map(|o| o.get::<Option<bool>>("channel"))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or(false);
+                let token = {
+                    let mut j = jj.borrow_mut();
+                    let token = j.token();
+                    j.waiting.insert(token, lua.create_registry_value(cb)?);
+                    token
+                };
+                qq.borrow_mut().push(Msg::ListDir {
+                    token,
+                    path: expand(&dir),
+                    channel,
+                });
+                Ok(LV::Nil)
+            },
+        )?,
     )?;
     // `kawoosh.highlight(text, { language | path }, fn)`: the text's
     // syntax runs from the ts thread, to `fn(runs)`.

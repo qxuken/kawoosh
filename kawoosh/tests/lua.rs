@@ -27,6 +27,40 @@ fn app_with_lua(d: &mut Drive, title: &str, text: &str) -> Kawoosh {
     app
 }
 
+#[test]
+fn fs_list_optionally_answers_a_channel() {
+    let root = std::env::temp_dir().join(format!("kawoosh-fs-channel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("a")).unwrap();
+    std::fs::write(root.join("b"), b"abc").unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let mut d = Drive::new(600.0, 300.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    app.run_lua_source(
+        "t",
+        &format!(
+            r#"local fs = kawoosh.fs
+               fs.list({root:?}, function(entries, err)
+                 assert(entries, err)
+                 ordinary = #entries .. ':' .. entries[1].name .. ':' .. tostring(entries[2].size)
+               end)
+               fs.list({root:?}, function(ch, err)
+                 assert(ch, err)
+                 assert(ch:get(0, 'name') == 'a')
+                 assert(ch:get(0, 'is_dir') == true)
+                 assert(ch:get(0, 'is_symlink') == false)
+                 assert(ch:get(1, 'has_modified') == true)
+                 channel = #ch .. ':' .. ch:get(1, 'name') .. ':' .. ch:get(1, 'size')
+               end, {{ channel = true }})"#
+        ),
+    );
+    d.frame(&mut app);
+    app.run_lua_source("t", "kawoosh.echo(ordinary .. '|' .. channel)");
+    assert_eq!(app.ed.message, "2:a:3|2:b:3");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// Frames with time passing: a pane opening in a scrolling tab rides
 /// the ribbon's glide (scrolling-tab.md), and the harness's keys pass
 /// no time, so a test that clicks what a view drew waits for it to
@@ -4582,8 +4616,8 @@ fn a_plugins_processes_wait_their_turn() {
     assert!(waiting(&app) >= 8, "the rest waiting");
     let before = waiting(&app);
     app.run_lua_source("t", "kawoosh.kill(last)");
-    d.frame(&mut app);
     assert_eq!(waiting(&app), before - 1, "the last one, never started");
+    d.frame(&mut app);
     std::fs::write(&go, "").unwrap();
     for _ in 0..200 {
         app.wait_for_jobs();

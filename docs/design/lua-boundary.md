@@ -416,6 +416,19 @@ walk's thread; `fs.walk` hands it to Lua, `m:order` puts them in
 is shown — any source's rows, not a walk's alone. The frame the walk
 lands in from 270–282 ms to 6 (a dev build, the same tree).
 
+**Round 17, 2026-11-01: a directory listing over a kui data channel**
+(kui ADR 0065). `fs.list(path, fn, { channel = true })` makes the
+listing's typed columns on the io thread and hands Lua one channel; the
+ordinary table answer is unchanged. `:du` keeps flat columns and makes
+an entry table only for a row shown or acted on. Its name order is
+cached, while a channel of `bytes` and `files` alone is published as the
+size walk answers: sorting stays in Rust without copying the strings
+again. `du_pane.state()` still answers ordinary entry tables.
+
+`lua_costs du_walk`, release, 40,000 entries: the frames during the walk
+171.4 → 39.7 ms in all, their worst 98.6 → 2.2, a sort after it 27.8 →
+12.1, and the walk's wall time 363.1 → 209.9.
+
 ## Open
 
 - A listing's `ids` still mirror its tracked lines in Lua (the plan

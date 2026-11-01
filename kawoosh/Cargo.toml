@@ -22,6 +22,7 @@ tree-sitter.workspace = true
 tree-sitter-lua.workspace = true
 crossbeam-channel.workspace = true
 kawoosh-lua.workspace = true
+kui-core.workspace = true
 kui-lua.workspace = true
 # A native extension that draws is a kui extension (`CExtension`),
 # added to the frame by the shell (docs/design/native.md Decision 4).
