@@ -383,13 +383,14 @@ pub fn curl_said(stderr: &str, status: std::process::ExitStatus) -> String {
 
 /// The shell a command line is run through here, as a terminal's is
 /// chosen (`kawoosh_term::Terminal::spawn`): `$SHELL` where there is
-/// one (an MSYS bash sets it on Windows too), else `/bin/sh`, or
-/// `%ComSpec%` on Windows — where `/bin/sh` is no path at all, and every
+/// one (an MSYS bash sets it on Windows too), else the account's login
+/// shell, `/bin/sh`, or `%ComSpec%` on Windows — where `/bin/sh` is no path at all, and every
 /// `:compile` said "The system cannot find the path specified".
 fn local_shell() -> String {
     std::env::var("SHELL")
         .ok()
         .filter(|s| !s.is_empty())
+        .or_else(|| crate::shell_env::default_shell().map(|s| s.to_string_lossy().into_owned()))
         .unwrap_or_else(|| {
             if cfg!(windows) {
                 std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into())

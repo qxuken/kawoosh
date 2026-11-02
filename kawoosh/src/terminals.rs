@@ -671,8 +671,19 @@ impl Kawoosh {
                 })
             }
             None => {
-                let shell = shell.or_else(|| self.ed.settings.str("terminal.shell"));
-                in_a_pty(|| Terminal::spawn(shell, cmd, Some(&cwd), size, &envs))
+                let shell = shell
+                    .or_else(|| self.ed.settings.str("terminal.shell"))
+                    .map(str::to_string)
+                    .or_else(|| {
+                        kawoosh_systems::shell_env::default_shell()
+                            .map(|s| s.to_string_lossy().into_owned())
+                    });
+                if std::env::var_os("SHELL").is_none()
+                    && let Some(shell) = &shell
+                {
+                    envs.push(("SHELL".into(), shell.clone()));
+                }
+                in_a_pty(|| Terminal::spawn(shell.as_deref(), cmd, Some(&cwd), size, &envs))
             }
         };
         self.adopt_terminal(id, spawned, cmd)

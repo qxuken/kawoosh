@@ -557,7 +557,7 @@ fn write_as_admin(argv: &[String], file: &Path, text: &mut [u8]) -> Result<(), S
                     .replace("{file}", &file.to_string_lossy())
             })
             .collect();
-        let mut command = std::process::Command::new(&words[0]);
+        let mut command = kawoosh_systems::io::command(&words[0]);
         command.args(&words[1..]);
         let out = kawoosh_systems::spawn::output(&mut command)
             .map_err(|e| format!("{}: {e}", words[0]))?;

@@ -9,6 +9,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::collections::HashSet;
+use std::io::IsTerminal;
 use std::path::Path;
 
 use kawoosh::Kawoosh;
@@ -385,7 +386,7 @@ fn main() -> anyhow::Result<()> {
     // nothing the shell's rc files add: a shell is asked for its own on
     // a thread, and the children get it (`shell_env`), the config's own
     // among them. From a terminal it is the shell's already.
-    app.config.ask_shell = cfg!(unix) && std::env::var_os("TERM").is_none();
+    app.config.ask_shell = cfg!(unix) && !std::io::stdin().is_terminal();
     app.load_config();
     // After the config, so what `init.lua` and the plugins added is in
     // the types lua-language-server reads.
@@ -457,7 +458,7 @@ fn headless(args: &[String]) -> anyhow::Result<()> {
     app.share_wake(wake);
     let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
     app.open_store(Some(&scratch.state()));
-    app.config.ask_shell = cfg!(unix) && std::env::var_os("TERM").is_none();
+    app.config.ask_shell = cfg!(unix) && !std::io::stdin().is_terminal();
     app.load_config();
     // No last session: a run starts where it is told, and the user's next
     // window is not left on its files.
