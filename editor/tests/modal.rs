@@ -1807,6 +1807,11 @@ fn a_path_argument_is_resolved_before_the_command_runs() {
         effects(&mut t).as_slice(),
         [Effect::Open(p)] if p == std::path::Path::new("/work/dir/a.txt")
     ));
+    t.keys(":E sub/../a.txt<CR>");
+    assert!(matches!(
+        effects(&mut t).as_slice(),
+        [Effect::Open(p)] if p == std::path::Path::new("/work/dir/a.txt")
+    ));
     t.keys(":e! ~/b.txt<CR>");
     let home = kawoosh_doc::paths::home().unwrap();
     assert!(matches!(
