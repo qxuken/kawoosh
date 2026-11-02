@@ -321,7 +321,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
  "x11rb",
 ]
 
@@ -390,9 +390,9 @@ dependencies = [
 
 [[package]]
 name = "async-executor"
-version = "1.14.0"
+version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
+checksum = "f426a31126c735126297bc5ea7a521263c9faff4f63ca415267ee625651c4f37"
 dependencies = [
  "async-task",
  "concurrent-queue",
@@ -1541,7 +1541,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2646,9 +2646,9 @@ dependencies = [
 
 [[package]]
 name = "kui-access"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fac3f90b67c6b25e555f01bb7cf99b70ab97124494460c34d02044d76e9a473"
+checksum = "77f091e9b60805ac3c5104455fb00e5afc2149d79f4c623394cb36cabaf2ab50"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2662,9 +2662,9 @@ dependencies = [
 
 [[package]]
 name = "kui-channel"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20ef67f6d8c9aae6876e74832ffd3bea09a5557a60c8a9f8e17f1c38e3638dcb"
+checksum = "9ac476163c13ee44709b966a9b82cf6e6207601a5c6d93b470ce8c9f575a60af"
 dependencies = [
  "kui-value",
  "mlua",
@@ -2673,9 +2673,9 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "285e8fe1b724b14e5da40e2fae0ee461b0f8be9fe831eaa90b9c12d98e13d0ca"
+checksum = "54ec7978add53d45534d1075935eb01ade0c18854cf2bed27da7c9e79e2f8885"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -2698,9 +2698,9 @@ dependencies = [
 
 [[package]]
 name = "kui-derive"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7cc956cc2641db87d225e2ad5c5705f950f30b6f1b89c6a70dbc0c9e6e30a55"
+checksum = "854abe38dfef64762e5b94ec7a6e543e6dc7a25ae08a7ee960bd1ece5894c4b3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2709,9 +2709,9 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18a62cff1bd4ccdf0c8dc5267c637b5f5b2218cee746700381a2c53062ebee33"
+checksum = "9dae745ea7f4edd9c6679e1b805d38272ebdd97ccf8d9f3303afefa229f37ea9"
 dependencies = [
  "bytemuck",
  "kui-access",
@@ -2722,9 +2722,9 @@ dependencies = [
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e2b92d1aad4aa9e9bee434df8cbcdcf0dc2e2ff7b6b7557bcbf743c248cea97"
+checksum = "e23a5dda4131613257676b4dbae40af6df3c500cf022551c7441f3e94be736c8"
 dependencies = [
  "kui-channel",
  "kui-core",
@@ -2734,9 +2734,9 @@ dependencies = [
 
 [[package]]
 name = "kui-native"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88300a602dfb176f6a2aaaf900c2af362628b185ddad1bcbe74a9fcdadba3dd6"
+checksum = "098129516879ed001437d27356d9fafdd03186d2dc38d4cc20676ac9a423bbfd"
 dependencies = [
  "accesskit_winit",
  "arboard",
@@ -2766,24 +2766,24 @@ dependencies = [
 
 [[package]]
 name = "kui-trace"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb608521e476cae5509de31a66e81c563a336aadb693976671b3dc83056c0b31"
+checksum = "238a6c51c2b7bf2ed7529ce898ec04aca971d4beafc2df49a8bac046eac86cbc"
 
 [[package]]
 name = "kui-value"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a25a91444a2a247a79715699c0eea4c014b5376a71e6204325e2a23f30b30d6a"
+checksum = "88a21047f3dcd06548a2c14ae05f1b1b1ab660fa2e806e37b4d3182dc9f5b6aa"
 dependencies = [
  "mlua",
 ]
 
 [[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.73"
+version = "0.1.0-alpha.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa9ec91e656992fb9ae3d4aebf1f066a03e18689f321da63481c7479fce7d30f"
+checksum = "4261139c8944a129ebaf6c0c6004e41b32615ec2ff253f9c5664844843817913"
 dependencies = [
  "bytemuck",
  "kui-core",
@@ -3006,7 +3006,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4621,7 +4621,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5040,7 +5040,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5349,7 +5349,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5869,7 +5869,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6457,7 +6457,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6818,7 +6818,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
