@@ -688,7 +688,7 @@ const DOCS: &[(&str, &str)] = &[
     ("terminal.scrollback", "lines of history a terminal keeps"),
     (
         "terminal.shell",
-        "the terminal's program (`nu`, a path); empty for `$SHELL`",
+        "the terminal's program (`nu`, a path); empty for `$SHELL` or the account's login shell",
     ),
     (
         "terminal.bell",
@@ -792,7 +792,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "env.shell",
-        "the shell whose PATH programs get when kawoosh opens outside a terminal; empty for `$SHELL`",
+        "the shell whose PATH programs get when kawoosh opens outside a terminal; empty for `$SHELL` or the account's login shell",
     ),
     (
         "cmdline.complete_with",
@@ -1424,7 +1424,7 @@ impl Settings {
         // The shell whose PATH the window's children get when it was
         // opened outside a terminal — from Finder, the Dock (kawoosh's
         // `shell_env`): a path to it, since a bare name is looked up on
-        // the PATH it is there to fix; empty for `$SHELL`. Read at
+        // the PATH it is there to fix; empty for `$SHELL` or the account's login shell. Read at
         // startup.
         defaults.set("env.shell", Setting::Str(String::new()));
         // The command line's completer of a shell line's arguments

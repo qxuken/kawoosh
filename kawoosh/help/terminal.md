@@ -182,13 +182,13 @@ The format keeps text, so a byte that is not UTF-8 is recorded as `�`.
 
 | setting | default | what |
 |---|---|---|
-| `terminal.shell` | `""` | the program a terminal runs (`nu`, `pwsh`, a path); empty for `$SHELL` |
+| `terminal.shell` | `""` | the program a terminal runs (`nu`, `pwsh`, a path); empty for `$SHELL` or the account's login shell |
 | `terminal.scrollback` | `10000` | lines of history each terminal keeps |
 | `terminal.bell` | `"sound"` | `sound`, `visual` or `off` |
 | `terminal.escape` | `"<C-\\>"` | the key before normal mode's keys in a terminal; `""` for none, every key the program's |
 | `terminal.place` | `"column"` | where `:terminal` and `:!` open: `column`, a column of its own, or `under` the focused pane in its column; `<C-w>s` then `t` is under either way |
 | `terminal.raw` | `{}` | programs a pane is raw for while one is in front, such as `{ "nvim", "hx" }` |
 | `editor.bell` | `false` | whether the editor rings for its own failures |
-| `env.shell` | `""` | the shell whose `PATH` kawoosh borrows when started outside a terminal (from the Dock, Finder); read from `settings.lua` at startup, before `init.lua` runs |
+| `env.shell` | `""` | the shell whose `PATH` kawoosh borrows when started outside a terminal (from the Dock, Finder); empty for `$SHELL` or the account's login shell; read from `settings.lua` at startup, before `init.lua` runs |
 
 See [settings](settings.md) for how to set them.

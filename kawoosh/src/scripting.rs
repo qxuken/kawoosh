@@ -454,7 +454,7 @@ impl Kawoosh {
                 .str("env.shell")
                 .filter(|s| !s.is_empty())
                 .map(std::ffi::OsString::from)
-                .or_else(|| std::env::var_os("SHELL"));
+                .or_else(kawoosh_systems::shell_env::default_shell);
             if let Some(shell) = shell {
                 kawoosh_systems::shell_env::resolve(shell);
             }
