@@ -2546,6 +2546,7 @@ impl Runtime {
         let _ = t.set("count", ctx.count);
         let _ = t.set("counted", ctx.has_count);
         let _ = t.set("args", ctx.args.clone());
+        let _ = t.set("text", ctx.text.clone());
         let _ = t.set("form", ctx.form.name());
         let _ = t.set("bang", ctx.bang());
         let _ = t.set("query", ctx.query());
@@ -9829,6 +9830,7 @@ mod tests {
                 form: kawoosh_editor::Form::Run,
                 args: vec![],
                 arg_char: None,
+                text: None,
             },
         );
         Runtime::apply_editor_msgs(&mut ed, v, rt.take_msgs());

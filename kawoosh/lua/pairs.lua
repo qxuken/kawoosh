@@ -232,6 +232,7 @@ end
 
 kawoosh.command("pairs key", function(ctx)
   local ch = string.char(tonumber(ctx.args[1]) or 0)
+  if ctx.text and ctx.text ~= ch then return kawoosh.pass() end
   key(ch)
 end, { args = { "text" }, when = WHEN, doc = "a pair's character typed: paired, stepped over, or itself (pairs.lua)" })
 kawoosh.command("pairs backspace", backspace,

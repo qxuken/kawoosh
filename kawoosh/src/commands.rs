@@ -253,7 +253,7 @@ impl Kawoosh {
             Some(v) => v,
             None => self.ed.pane_view(),
         };
-        self.ed.run_bindings(v, bs, None);
+        self.ed.run_bindings(v, bs, None, None);
         self.drain_effects();
     }
 

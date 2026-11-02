@@ -2494,8 +2494,15 @@ impl Editor {
     /// Runs the bindings of `bs` that can run here, newest first, until
     /// one takes the key — a command that passes ([`Editor::pass`])
     /// hands it to the next — or says why none can run. True when one
-    /// took it; false when none could, or every one passed.
-    pub fn run_bindings(&mut self, view: ViewId, bs: &[Binding], count: Option<usize>) -> bool {
+    /// took it; false when none could, or every one passed. `text` is
+    /// what the live key produced, passed to the command in [`Ctx`].
+    pub fn run_bindings(
+        &mut self,
+        view: ViewId,
+        bs: &[Binding],
+        count: Option<usize>,
+        text: Option<&str>,
+    ) -> bool {
         let mut first = None;
         let mut ran = false;
         for b in bs {
@@ -2505,7 +2512,7 @@ impl Editor {
             }
             ran = true;
             let b = b.clone();
-            self.run_step(view, &b.command, &b.args, count);
+            self.run_step_with_text(view, &b.command, &b.args, count, text);
             if !std::mem::take(&mut self.passed) {
                 return true;
             }
@@ -2520,9 +2527,20 @@ impl Editor {
     /// [`Editor::run`] as a step of the stream: what `.` and a macro
     /// keep ([`repeat`]).
     fn run_step(&mut self, view: ViewId, name: &str, args: &[String], count: Option<usize>) {
+        self.run_step_with_text(view, name, args, count, None);
+    }
+
+    fn run_step_with_text(
+        &mut self,
+        view: ViewId,
+        name: &str,
+        args: &[String],
+        count: Option<usize>,
+        text: Option<&str>,
+    ) {
         self.passed = false;
         self.step_begin();
-        self.run(view, name, args, count);
+        self.run_with(view, name, args, count, None, text);
         // A command that passed the key on is not a step: the binding
         // that takes it is.
         if self.passed {
@@ -2547,7 +2565,7 @@ impl Editor {
     /// message. A command without a body here — declared, or unknown —
     /// is the shell's ([`Effect::Shell`]).
     pub fn run(&mut self, view: ViewId, name: &str, args: &[String], count: Option<usize>) {
-        self.run_with(view, name, args, count, None);
+        self.run_with(view, name, args, count, None, None);
     }
 
     /// [`Editor::run`] with the character a `takes_char` command asked
@@ -2560,9 +2578,10 @@ impl Editor {
         args: &[String],
         count: Option<usize>,
         arg_char: Option<char>,
+        text: Option<&str>,
     ) {
         let naming = self.commands.resolve(name, args).name == "register";
-        self.run_resolved(view, name, args, count, arg_char);
+        self.run_resolved(view, name, args, count, arg_char, text);
         // A named register lasts the command it was named for: through
         // an operator's motion and a `f`'s character, gone after.
         if !naming && self.pending_op.is_none() && self.awaiting_char.is_none() {
@@ -2577,6 +2596,7 @@ impl Editor {
         args: &[String],
         count: Option<usize>,
         arg_char: Option<char>,
+        text: Option<&str>,
     ) {
         let inv = self.commands.resolve(name, args);
         if let Some(spec) = self.commands.spec(&inv.name)
@@ -2625,6 +2645,7 @@ impl Editor {
             form: inv.form,
             args,
             arg_char,
+            text: text.map(str::to_string),
         };
         let Some(cmd) = self.commands.body(&inv.name) else {
             self.pending_op = None;
@@ -2826,7 +2847,7 @@ impl Editor {
                     if arg_char.is_some() {
                         self.awaiting_char = None;
                     }
-                    self.run_with(view, name, args, *count, *arg_char);
+                    self.run_with(view, name, args, *count, *arg_char, None);
                 }
             }
             self.after_prompt_key(view);
@@ -3599,7 +3620,7 @@ impl Editor {
                 return true;
             }
             self.step_begin();
-            self.run_with(view, &binding.command, &binding.args, count, Some(c));
+            self.run_with(view, &binding.command, &binding.args, count, Some(c), None);
             self.step_end(
                 view,
                 Step::Command {
@@ -3626,7 +3647,7 @@ impl Editor {
                     // unbound here: nothing said.
                     let unbound = plain || self.gated_off(view, &bs);
                     if !(unbound && self.pick_binding(view, &bs).is_err())
-                        && (self.run_bindings(view, &bs, None) || !plain)
+                        && (self.run_bindings(view, &bs, None, stroke.text.as_deref()) || !plain)
                     {
                         return true;
                     }
@@ -3792,7 +3813,7 @@ impl Editor {
                 }
                 // The picked one and, when it passes, the ones under it.
                 let at = bs.iter().position(|x| *x == b).unwrap_or(0);
-                self.run_bindings(view, &bs[at..], count);
+                self.run_bindings(view, &bs[at..], count, stroke.text.as_deref());
                 true
             }
         }

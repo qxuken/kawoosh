@@ -78,6 +78,7 @@ end
 ---@field count integer the count typed, 1 when none
 ---@field counted boolean a count was typed: `1j` and not `j`
 ---@field args string[] the arguments, a "path" one absolute
+---@field text? string the text produced by the key that ran the command
 ---@field form "run"|"bang"|"query" how it was spelled: `:x`, `:x!`, `:x?`
 ---@field bang boolean
 ---@field query boolean
@@ -97,8 +98,9 @@ end
 -- subcommand (`"dir cd"` runs as `:dir cd`, completes under `:dir`).
 -- `fn(ctx)` gets { count = n, counted = (a count was typed: `1j` and
 -- not `j`), args = {...}, form = "run" | "bang" |
--- "query", bang = bool, query = bool, pane = the id of the pane the
--- keyboard is in — a view's `ctx.pane` when it is one }. `opts`:
+-- "query", bang = bool, query = bool, text = the text produced by the
+-- key that ran it (nil from the command line), pane = the id of the
+-- pane the keyboard is in — a view's `ctx.pane` when it is one }. `opts`:
 --   args    what the arguments are, one kind per position — "path",
 --           "buffer", "command", "option", "tool", "view", "text" — the
 --           last with "..." for the rest: a "path" reaches `fn` absolute
