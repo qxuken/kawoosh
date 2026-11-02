@@ -197,6 +197,12 @@ roadmap's item struck.
   (`primary = true`), `set_selections` takes the mark back, and the
   plugin keeps it. `set_selections` also snaps an offset inside a
   character to its start.
+- **The layout's text wins over the binding's key.** The key code has
+  the US-QWERTY fallback, so Russian `х` arrives on `[` with `х` as its
+  text. A command run by a key receives that text as `ctx.text`; pairs
+  passes when it differs from the bracket its binding named, letting
+  the engine insert `х` and record it for `.` rather than inserting
+  `[]`.
 
 `kawoosh/lua/pairs.lua`, `kawoosh/lua/tests/pairs.lua`, and
 `type_edits_selections_and_slice` in `lua/src/lib.rs`.

@@ -87,6 +87,8 @@ pub struct Ctx {
     /// The key that followed, for commands that take a character (`f`,
     /// `r`, `iw`).
     pub arg_char: Option<char>,
+    /// The text produced by the key that ran the command, if it was a key.
+    pub text: Option<String>,
 }
 
 impl Ctx {
@@ -98,6 +100,7 @@ impl Ctx {
             form: Form::Run,
             args: Vec::new(),
             arg_char: None,
+            text: None,
         }
     }
 

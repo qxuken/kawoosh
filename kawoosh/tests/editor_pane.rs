@@ -5,7 +5,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_editor::Mode;
-use kui_native::{DevtoolsDock, KeyMods};
+use kui_native::{DevtoolsDock, InputEvent, KeyCode, KeyMods, KeyPress};
 
 const DOC: &str = "line one\nline two\nline three\n\tindented\nlast";
 
@@ -41,6 +41,24 @@ fn keys_edit_through_the_real_dispatch() {
     assert_eq!(app.focused_mode(), Mode::Normal);
     d.keys(&mut app, "u");
     assert_eq!(d.line_rows()[0], "line ");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn pairs_preserve_the_layouts_typed_text() {
+    let mut app = Kawoosh::new("t", "");
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(800.0, 400.0);
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    d.keys(&mut app, "i");
+    let press = KeyPress::new(KeyCode::Char('['), KeyMods::NONE).with_text("х");
+    d.input(&mut app, InputEvent::KeyDown(press.clone()));
+    d.input(&mut app, InputEvent::KeyUp(press.released()));
+    assert_eq!(text(&app), "х");
+    d.key(&mut app, "escape", KeyMods::NONE);
+    d.keys(&mut app, ".");
+    assert_eq!(text(&app), "хх");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
