@@ -3770,7 +3770,7 @@ pub fn install(ed: &mut Editor) {
     // way).
     ed.register_spec(
         Spec::new("edit")
-            .alias(&["e"])
+            .alias(&["e", "E"])
             .args(Args::new(&[ArgKind::Path]))
             .bang("reload the disk's text, as one undoable change")
             .doc("open PATH"),
