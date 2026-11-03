@@ -1407,6 +1407,21 @@ impl Kawoosh {
                     }
                 }
             }
+            Request::Stdin { text, wait } => {
+                let id = self.ed.add_buffer(Buffer::new("*stdin*", &text));
+                match self.focused_view().or_else(|| self.claim_launcher()) {
+                    Some(v) => self.show_buffer(v, id),
+                    None => {
+                        let v = self.ed.add_view(id);
+                        self.layout.open(Content::Editor(v), Place::Column);
+                    }
+                }
+                if wait {
+                    self.waiters.entry(id).or_default().push(reply);
+                } else {
+                    let _ = reply.send("ok".into());
+                }
+            }
             // `kawoosh theme`: the base the panes are on, for a shell's
             // prompt hook (roadmap step 6).
             Request::Theme => {
