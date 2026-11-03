@@ -1475,6 +1475,15 @@ fn insert_mode_keys() {
     assert_eq!(t.text(), "foo ");
 }
 
+#[test]
+fn shifted_backspace_and_delete_edit_like_the_plain_keys() {
+    let mut t = T::new("abc");
+    t.keys("A<S-BS><Esc>");
+    assert_eq!(t.text(), "ab");
+    t.keys("0i<S-Del>");
+    assert_eq!(t.text(), "b");
+}
+
 /// Insert's `<BS>` at a line's start joins it to the line above, the
 /// caret where they meet; `X` stops there, and the first line's start
 /// has nothing before it.

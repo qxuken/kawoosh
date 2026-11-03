@@ -134,7 +134,7 @@ impl KeyStroke {
         if self.sup {
             mods.push_str("D-");
         }
-        if self.shift && (named.is_some() || shifted_digit) {
+        if self.shift && shift_changes_key(named, chord) && (named.is_some() || shifted_digit) {
             mods.push_str("S-");
         }
         if mods.is_empty() && named.is_none() {
@@ -145,6 +145,12 @@ impl KeyStroke {
             format!("<{mods}{base}>")
         }
     }
+}
+
+/// Shift alone on Backspace or Delete is the plain editing key; on a
+/// chord it remains a modifier of its own.
+fn shift_changes_key(named: Option<&str>, chord: bool) -> bool {
+    chord || !matches!(named, Some("BS" | "Del"))
 }
 
 /// The digit a key stands for when Shift is down: the digit itself,
@@ -401,6 +407,7 @@ fn normalize_chord(inner: &str) -> String {
             _ => {}
         }
     }
+    let s = s && shift_changes_key(base_named, c || a || d);
     if c {
         m.push_str("C-");
     }
@@ -1141,6 +1148,24 @@ mod tests {
         assert_eq!(parse_notation("<2-LeftMouse>"), ["<2-LeftMouse>"]);
         assert_eq!(parse_notation("<2-leftmouse>"), ["<2-LeftMouse>"]);
         assert_eq!(parse_notation("<LeftMouse>"), ["<LeftMouse>"]);
+    }
+
+    #[test]
+    fn shift_alone_leaves_backspace_and_delete_plain() {
+        for (code, shifted, plain) in [
+            ("backspace", "<S-BS>", "<BS>"),
+            ("delete", "<S-Del>", "<Del>"),
+        ] {
+            let mut k = KeyStroke::plain(code);
+            k.shift = true;
+            assert_eq!(k.notation(), plain);
+            assert_eq!(parse_notation(shifted), [plain]);
+            k.ctrl = true;
+            assert_eq!(
+                k.notation(),
+                format!("<C-S-{}>", &plain[1..plain.len() - 1])
+            );
+        }
     }
 
     #[test]
