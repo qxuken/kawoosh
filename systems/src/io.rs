@@ -1903,6 +1903,9 @@ pub enum Request {
         #[serde(default)]
         domain: Option<String>,
     },
+    /// Open piped standard input in a scratch buffer; with `wait`, answer
+    /// when the buffer is closed.
+    Stdin { text: String, wait: bool },
     /// Run an ex command line.
     Ex { line: String },
     /// Which base the theme is on: answered `dark` or `light`.

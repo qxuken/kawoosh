@@ -127,7 +127,7 @@ Every kawoosh terminal gets these environment variables:
 | `TERM_APPEARANCE` | `dark` or `light`, as the window was when the shell started |
 | `LANG` | from the system's language and region, in UTF-8 (`en_US.UTF-8`), when kawoosh was opened from the Dock or Finder and nothing names a locale (`LANG`, `LC_ALL`, `LC_CTYPE`). Without it `less`, and so `git log`, shows letters outside ASCII as `<D0><97>` |
 
-So `git commit`, `lazygit`'s `e`, `crontab -e` or anything else that runs `$EDITOR` opens the file in a real kawoosh pane, not a second editor nested in the terminal. `kawoosh-edit [+LINE] PATH…` waits until the buffer is closed: `:wq` (or `ZZ`) hands it back, `:q!` discards. A file opened this way from the temp directory is private (see [secrets](memory.md#secrets)).
+So `git commit`, `lazygit`'s `e`, `crontab -e` or anything else that runs `$EDITOR` opens the file in a real kawoosh pane, not a second editor nested in the terminal. `kawoosh-edit [+LINE] PATH…` waits until the buffer is closed: `:wq` (or `ZZ`) hands it back, `:q!` discards. A file opened this way from the temp directory is private (see [secrets](memory.md#secrets)). With no path, `kawoosh-edit` reads piped or redirected standard input into a `*stdin*` scratch buffer; use `:w PATH` to save it to a file.
 
 The same socket serves the `kawoosh` command inside a terminal:
 
