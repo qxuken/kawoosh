@@ -2223,7 +2223,11 @@ fn detach_a_file_and_disable_the_servers() {
     assert_eq!(app.ed.message, "a.rs is detached already (:lsp attach)");
     ex(&mut d, &mut app, "lsp info");
     let rows = d.line_rows().join("\n");
-    assert!(rows.contains("src/a.rs  (detached)"), "{rows}");
+    let detached = format!(
+        "{}  (detached)",
+        std::path::Path::new("src").join("a.rs").display()
+    );
+    assert!(rows.contains(&detached), "{rows}");
     d.keys(&mut app, "q");
 
     ex(&mut d, &mut app, "lsp attach");
