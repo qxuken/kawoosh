@@ -1353,11 +1353,12 @@ impl ProcHandle {
         }
         if let Ok(mut state) = self.state.lock() {
             state.killed = true;
+
+            #[cfg(windows)]
+            if let Some((tree, child)) = state.tree.clone().zip(state.child.as_mut()) {
+                tree.kill(child.child_mut());
+            }
             if let Some(child) = state.child.as_mut() {
-                #[cfg(windows)]
-                if let Some(tree) = &state.tree {
-                    tree.kill(child.child_mut());
-                }
                 // Not yet waited on, so the pid is still this process's.
                 child.kill();
             }
