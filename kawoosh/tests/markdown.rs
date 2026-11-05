@@ -48,6 +48,36 @@ fn settle(d: &mut Drive, app: &mut Kawoosh) {
     }
 }
 
+#[test]
+fn a_blank_rendered_row_keeps_the_ime_in_the_text_column() {
+    let dir = fixture("ime-blank");
+    std::fs::write(dir.join("doc.md"), "# Heading\n\nBefore\n\nAfter\n").unwrap();
+    let (mut d, mut app) = launch(&dir, 700.0);
+    d.press(&mut app, "3G");
+    settle(&mut d, &mut app);
+    let before = d.core.ime_rect().expect("nonempty source line anchor");
+    d.press(&mut app, "j");
+    settle(&mut d, &mut app);
+    let blank = d.core.ime_rect().expect("blank source line anchor");
+    assert!(
+        (blank.x - before.x).abs() < 0.1,
+        "anchor follows the text, past the gutter"
+    );
+    assert!(blank.h > 0.0);
+    d.press(&mut app, "i");
+    settle(&mut d, &mut app);
+    assert_eq!(
+        d.core.ime_rect(),
+        Some(blank),
+        "the bar keeps the same anchor"
+    );
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "# Heading\n\nBefore\n\nAfter\n"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// The text node drawn with exactly `text`, its rect.
 fn rect_of_text(d: &Drive, text: &str) -> Option<(f32, f32, f32, f32)> {
     let nodes = d.core.nodes();

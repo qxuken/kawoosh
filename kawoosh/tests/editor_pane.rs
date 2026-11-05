@@ -281,6 +281,46 @@ fn the_block_caret_is_solid_and_only_the_bar_arms_the_blink_clock() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+#[test]
+fn the_ime_anchor_follows_the_caret_across_consecutive_blank_lines() {
+    let doc = format!("before\n{}after", "\n".repeat(9));
+    let mut app = Kawoosh::new("t", &doc);
+    let mut d = Drive::new(800.0, 600.0);
+    d.frame(&mut app);
+    let first = d.core.ime_rect().expect("first line's anchor");
+    d.press(&mut app, "G");
+    let last = d.core.ime_rect().expect("last line's anchor");
+    for line in (1..=9).rev() {
+        d.press(&mut app, "k");
+        let at = d.core.ime_rect().expect("a blank line still anchors IME");
+        assert_eq!(at.x, first.x, "text column on line {line}");
+        assert!((at.y - (last.y - (10 - line) as f32 * first.h)).abs() < 0.1);
+    }
+    let blank = d.core.ime_rect().unwrap();
+    d.press(&mut app, "i");
+    assert_eq!(
+        d.core.ime_rect(),
+        Some(blank),
+        "insert mode uses the same anchor"
+    );
+    d.press(&mut app, "<Esc>gg");
+    assert_eq!(d.core.ime_rect(), Some(first));
+    assert_eq!(text(&app), doc, "anchoring adds no document text");
+}
+
+#[test]
+fn an_empty_buffer_and_the_line_after_a_final_newline_anchor_the_ime() {
+    for doc in ["", "\n", "before\n"] {
+        let mut app = Kawoosh::new("t", doc);
+        let mut d = Drive::new(800.0, 400.0);
+        d.frame(&mut app);
+        d.press(&mut app, "G");
+        let at = d.core.ime_rect().expect("the empty final line's anchor");
+        assert!(at.h > 0.0);
+        assert_eq!(text(&app), doc);
+    }
+}
+
 /// `:perf` is kui's Perf tab (ADR 0058), and kawoosh's systems are on
 /// its recording: `view`'s drains one after another, each pane by its
 /// kind and its parts under it, the status line's — and, as gauges,
