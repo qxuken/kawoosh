@@ -283,7 +283,7 @@ fn a_plugins_source_hands_rows_the_engine_holds() {
           items = function()
             local list = {}
             for i = 1, 50000 do list[i] = "row " .. i end
-            local rows = { matcher = kawoosh.matcher(list), item = function(text, i)
+            local rows = { matcher = kawoosh.matcher(list), boosts = {}, item = function(text, i)
               made = made + 1
               return { text = text, n = i }
             end }
@@ -302,20 +302,566 @@ fn a_plugins_source_hands_rows_the_engine_holds() {
         "the items, then the rows"
     );
     let t = texts(&d);
-    assert!(
-        t.iter().any(|s| s.ends_with(" of 50001")),
-        "every row counted: {t:?}"
-    );
-    // The hits an empty query ranks (`LIMIT`, 200), no more.
+    assert!(t.iter().any(|s| s == "50001"), "every row counted: {t:?}");
+    // Only the visible items, even when state() reads the count.
+    lua(&mut app, "assert(kawoosh.picker.state().count == 50001)");
     lua(&mut app, "assert(made <= 200, made)");
     d.keys(&mut app, "row 4999");
     d.frame(&mut app);
     assert_eq!(rows(&d)[0], "row 4999");
-    // Each key ranks its own 200 at most: eight keys, nowhere near all.
+    // Each key materializes a viewport, nowhere near every match.
     lua(&mut app, "assert(made <= 8 * 200, made)");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     lua(&mut app, "assert(picked == 4999, tostring(picked))");
+}
+
+/// Every hit is reachable by keys, a wheel and a pick. State readings and a
+/// jump to the end still construct only a viewport of the engine's rows.
+#[test]
+fn all_matches_are_reachable_without_materializing_the_list() {
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        made, picked = 0, nil
+        local paths = {}
+        for i = 1, 10000 do paths[i] = string.format('file%05d.rs', i) end
+        local matcher = kawoosh.matcher(paths)
+        held_matcher = matcher
+        kawoosh.opt('picker.preview', 'off')
+        kawoosh.picker.open {
+          items = function() return {}, { rows = {
+            matcher = matcher, boosts = {}, item = function(text, i)
+              made = made + 1
+              return { text = text, n = i }
+            end,
+          } } end,
+          pick = function(it) picked = it.n end,
+        }
+    "#,
+    );
+    d.frame(&mut app);
+    d.land(&mut app);
+    assert!(!rows(&d).is_empty(), "the opened pane has visible rows");
+    lua(
+        &mut app,
+        r#"
+        local s = kawoosh.picker.state()
+        assert(s.count == 10000 and #s.rows == 10000 and #s.items == 10000)
+        assert(made < 100, made)
+        snapshot = s
+        for _ = 1, 250 do kawoosh.run('picker next') end
+    "#,
+    );
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "file00251.rs");
+    let r = d.rect("row file00251.rs").unwrap();
+    d.wheel(&mut app, r.x + 4.0, r.y + r.h / 2.0, 0.0, -r.h * 200.0);
+    d.frame(&mut app);
+    lua(&mut app, "assert(kawoosh.picker.state().top > 400)");
+    lua(
+        &mut app,
+        r#"
+        kawoosh.run('picker last')
+    "#,
+    );
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "file10000.rs");
+    assert!(rows(&d).len() < 50);
+    lua(
+        &mut app,
+        r#"
+        assert(made < 100, made)
+        assert(snapshot.rows[10000] == 'file10000.rs')
+        kawoosh.field_set('picker', 'q', 'file')
+    "#,
+    );
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        local s = kawoosh.picker.state()
+        assert(s.count == 10000 and s.cursor == 1)
+        assert(made < 150, made)
+        kawoosh.run('picker last')
+    "#,
+    );
+    d.frame(&mut app);
+    let s = cursor_text(&mut app);
+    assert_eq!(s, "file10000.rs");
+    lua(&mut app, "kawoosh.run('picker pick')");
+    d.frame(&mut app);
+    lua(&mut app, "assert(picked == 10000, tostring(picked))");
+    lua(
+        &mut app,
+        r#"
+        held_matcher:order { drop = { ['file00001.rs'] = true } }
+        assert(held_matcher:text(5000) == 'file05001.rs')
+        assert(snapshot.rows[5000] == 'file05000.rs', snapshot.rows[5000])
+    "#,
+    );
+    assert!(!picker_open(&app));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// Boosts can promote a hit beyond the former fuzzy top 200. Name matches
+/// still precede matches in secondary text, with no duplicates or cap.
+#[test]
+fn all_hits_keep_boosts_and_primary_matches_before_secondary_matches() {
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        local items = {}
+        for i = 1, 1000 do
+          items[i] = { text = string.format('file%04d', i), sub = 'file secondary' }
+        end
+        items[1000].boost = 20
+        items[1001] = { text = 'secondary', sub = 'file', boost = 100 }
+        kawoosh.picker.open { items = items, wide = true }
+        kawoosh.field_set('picker', 'q', 'file')
+    "#,
+    );
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        local s = kawoosh.picker.state()
+        assert(s.count == 1001, s.count)
+        assert(s.rows[1] == 'file1000', s.rows[1])
+        assert(s.rows[1001] == 'secondary', s.rows[1001])
+        local seen = {}
+        for _, text in ipairs(s.rows) do assert(not seen[text]); seen[text] = true end
+        local n = 0
+        for _, text in pairs(s.rows) do assert(seen[text]); n = n + 1 end
+        assert(n == 1001, n)
+        assert(s.items[1000].text == 'file0999')
+        s.items[1000].boost = 40
+        kawoosh.field_set('picker', 'q', 'fil')
+    "#,
+    );
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        assert(kawoosh.picker.state().text == 'file0999')
+        kawoosh.picker.state().item.boost = nil
+        kawoosh.field_set('picker', 'q', 'file')
+    "#,
+    );
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "file1000");
+    lua(
+        &mut app,
+        r#"
+        kawoosh.run('picker last')
+    "#,
+    );
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        local s = kawoosh.picker.state()
+        assert(s.text == 'secondary')
+        assert(#s.positions == 4)
+    "#,
+    );
+}
+
+/// A custom factory can compute boosts from arbitrary Lua state. Without
+/// native boost metadata, inspect its matches; custom picker.rank remains
+/// free to use every hit's positions and promote any of them.
+#[test]
+fn custom_item_boosts_and_rank_callbacks_inspect_all_matches() {
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        made = 0
+        local paths = {}
+        for i = 1, 1000 do paths[i] = string.format('file%04d', i) end
+        kawoosh.picker.open { items = function() return {}, { rows = {
+          matcher = kawoosh.matcher(paths), item = function(text, i)
+            made = made + 1
+            return { text = text, n = i, boost = i == 1000 and 20 or 0 }
+          end,
+        } } end }
+        kawoosh.field_set('picker', 'q', 'file')
+    "#,
+    );
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        assert(made == 1000, made)
+        assert(kawoosh.picker.state().text == 'file1000')
+        saved_rank = kawoosh.picker.rank
+        kawoosh.picker.rank = function(it, hit)
+          assert(#hit.positions == 4)
+          return it.n == 999 and 100 or hit.score
+        end
+        kawoosh.field_set('picker', 'q', 'filE')
+    "#,
+    );
+    d.frame(&mut app);
+    lua(&mut app, "kawoosh.field_set('picker', 'q', 'file')");
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        assert(kawoosh.picker.state().text == 'file0999')
+        kawoosh.picker.rank = saved_rank
+    "#,
+    );
+}
+
+/// A repeatable cost measurement, not a wall-clock assertion. Run alone:
+/// `cargo test -p kawoosh --test picker picker_cost -- --ignored --nocapture`.
+/// Dataset creation is outside the timings; queries include the Lua handover
+/// and a real headless frame. Keep this workload stable for before/after runs.
+#[test]
+#[ignore]
+fn picker_cost() {
+    use std::time::Instant;
+    fn median(mut samples: Vec<f64>) -> f64 {
+        samples.sort_by(f64::total_cmp);
+        samples[samples.len() / 2]
+    }
+    let mut d = Drive::new(1000.0, 700.0);
+    let profile = std::env::var_os("KAWOOSH_PICKER_PROFILE").is_some();
+    d.core.set_perf_recording(profile);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    // An old picker.lua can run in the same binary for interleaved comparisons.
+    if let Ok(path) = std::env::var("KAWOOSH_PICKER_SOURCE") {
+        lua(&mut app, &std::fs::read_to_string(path).unwrap());
+        d.frame(&mut app);
+    }
+    lua(&mut app, "kawoosh.opt('picker.preview', 'off')");
+    for n in [10_000, 50_000, 200_000] {
+        lua(
+            &mut app,
+            &format!(
+                r#"
+            local paths = {{}}
+            for i = 1, {n} do
+              paths[i] = string.format("src/module%d/tasks/file%d.rs", i % 97, i)
+            end
+            local matcher = kawoosh.matcher(paths)
+            kawoosh.picker.source("cost", {{ items = function()
+              return {{}}, {{ rows = {{ matcher = matcher }} }}
+            end }})
+            collectgarbage('collect')
+        "#
+            ),
+        );
+        let start = Instant::now();
+        lua(&mut app, "kawoosh.picker.open('cost')");
+        d.frame(&mut app);
+        eprintln!(
+            "picker {n}: open {:.3} ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+        for q in ["", "file", "mod12 fi", "absent", "file199999"] {
+            let mut samples = Vec::new();
+            let mut cpu = Vec::new();
+            let mut stages: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+            for _ in 0..13 {
+                lua(
+                    &mut app,
+                    "kawoosh.field_set('picker', 'q', 'reset-no-match')",
+                );
+                d.frame(&mut app);
+                let before_cpu = picker_cpu_ms();
+                let start = Instant::now();
+                lua(
+                    &mut app,
+                    &format!("kawoosh.field_set('picker', 'q', {q:?})"),
+                );
+                d.frame(&mut app);
+                samples.push(start.elapsed().as_secs_f64() * 1000.0);
+                if let Some(ms) = before_cpu.zip(picker_cpu_ms()).map(|(a, b)| b - a) {
+                    cpu.push(ms);
+                }
+                if profile {
+                    for (name, wall, cpu) in d.frame_spans() {
+                        if name.starts_with("picker query ") {
+                            stages.entry(name).or_default().push(cpu.unwrap_or(wall));
+                        }
+                    }
+                }
+            }
+            let mut idle = Vec::new();
+            for _ in 0..13 {
+                let start = Instant::now();
+                d.frame(&mut app);
+                idle.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+            app.run_lua_source(
+                "cost",
+                "kawoosh.echo(tostring(kawoosh.picker.state().count))",
+            );
+            eprintln!(
+                "picker {n} {q:?}: query {:.3} ms (CPU {:.3}), idle {:.3} ms, hits {}, nodes {}",
+                median(samples),
+                if cpu.is_empty() {
+                    f64::NAN
+                } else {
+                    median(cpu)
+                },
+                median(idle),
+                app.ed.message,
+                d.core.nodes().len()
+            );
+            for (name, samples) in stages {
+                eprintln!("  {name}: {:.3} ms CPU", median(samples));
+            }
+        }
+        lua(&mut app, "kawoosh.run('picker close')");
+        d.frame(&mut app);
+    }
+}
+
+// Thread CPU separates actual work from scheduling delays on a busy host.
+fn picker_cpu_ms() -> Option<f64> {
+    #[cfg(unix)]
+    {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: the OS fills this valid timespec, as kui's recorder does.
+        let ok = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+        (ok == 0).then(|| ts.tv_sec as f64 * 1000.0 + ts.tv_nsec as f64 / 1e6)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// Interleave both native interfaces in one process to distinguish matcher
+/// work from frame scheduling, GC and changes in system load between runs.
+#[test]
+#[ignore]
+fn matcher_channel_cost() {
+    measure_matcher_channels(&["", "file", "mod12 fi", "absent", "file199999"], false);
+}
+
+/// A deliberately ignored performance gate: run alone on an idle host.
+/// Every broad-query result must be retained, within 2% of the legacy cost.
+#[test]
+#[ignore]
+fn matcher_channel_broad_cost() {
+    measure_matcher_channels(&["file"], true);
+}
+
+fn measure_matcher_channels(queries: &[&str], gate: bool) {
+    if picker_cpu_ms().is_none() {
+        eprintln!("thread CPU timing is unavailable on this platform");
+        return;
+    }
+    let (rt, _ext) = kawoosh_lua::Runtime::new().unwrap();
+    rt.load_source(
+        "cost",
+        r#"
+        local paths = {}
+        for i = 1, 200000 do
+          paths[i] = string.format('src/module%d/tasks/file%d.rs', i % 97, i)
+        end
+        local m = kawoosh.matcher(paths)
+        function perf_legacy(q) return m:query(q, 200) end
+        function perf_channel(q)
+          local ch = m:query_channel(q)
+          if q == 'file' then assert(#ch == 200000, 'keep every broad-query hit') end
+          for i = 0, math.min(#ch, 12) - 1 do m:positions(q, ch:get(i, 0)) end
+          return ch
+        end
+        function perf_boost(mode)
+          local by = { [1] = 2, [200000] = 10 }
+          if mode == 'mixed' then
+            for i = 5, 200000, 5 do by[i] = -0.5 end
+            by[200000] = 10
+          end
+          m:boosts(by)
+        end
+    "#,
+    )
+    .unwrap();
+    if let Ok(mode) = std::env::var("KAWOOSH_MATCHER_BOOST") {
+        let boost: mlua::Function = rt.lua().globals().get("perf_boost").unwrap();
+        boost.call::<()>(mode.as_str()).unwrap();
+        eprintln!("matcher boost mode: {mode}");
+    }
+    let legacy: mlua::Function = rt.lua().globals().get("perf_legacy").unwrap();
+    let channel: mlua::Function = rt.lua().globals().get("perf_channel").unwrap();
+    for &q in queries {
+        let mut pairs = Vec::new();
+        for i in 0..21 {
+            rt.lua().gc_collect().unwrap();
+            let mut elapsed = [0.0; 2];
+            for at in if i % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let start = picker_cpu_ms().unwrap_or(0.0);
+                let value: mlua::Value = [&legacy, &channel][at].call(q).unwrap();
+                elapsed[at] = picker_cpu_ms().unwrap_or(0.0) - start;
+                std::hint::black_box(value);
+            }
+            pairs.push(elapsed);
+        }
+        let mut old: Vec<_> = pairs.iter().map(|p| p[0]).collect();
+        let mut new: Vec<_> = pairs.iter().map(|p| p[1]).collect();
+        let mut ratio: Vec<_> = pairs.iter().map(|p| p[1] / p[0]).collect();
+        old.sort_by(f64::total_cmp);
+        new.sort_by(f64::total_cmp);
+        ratio.sort_by(f64::total_cmp);
+        eprintln!(
+            "matcher {q:?}: legacy {:.3} ms CPU, channel {:.3} ms CPU, paired ratio {:.3}",
+            old[10], new[10], ratio[10]
+        );
+        if gate {
+            assert!(
+                ratio[10] <= 1.02,
+                "full-result query costs {:.3}x baseline (maximum 1.020x)",
+                ratio[10]
+            );
+        }
+    }
+}
+
+/// The cost of extensibility, separate from the default path above. Factories
+/// get fresh lazy item lists each sample, so cached items do not hide their
+/// first-query cost. No preview or filesystem I/O is included.
+#[test]
+#[ignore]
+fn picker_extension_cost() {
+    use std::time::Instant;
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    if let Ok(path) = std::env::var("KAWOOSH_PICKER_SOURCE") {
+        lua(&mut app, &std::fs::read_to_string(path).unwrap());
+        d.frame(&mut app);
+    }
+    lua(
+        &mut app,
+        r#"
+        kawoosh.opt('picker.preview', 'off')
+        perf_rank = kawoosh.picker.rank
+    "#,
+    );
+    for n in [10_000, 50_000, 200_000] {
+        lua(
+            &mut app,
+            &format!(
+                r#"
+            local paths = {{}}
+            for i = 1, {n} do paths[i] = string.format('src/file%06d.rs', i) end
+            perf_matcher = kawoosh.matcher(paths)
+        "#
+            ),
+        );
+        for mode in ["files", "items", "metadata", "factory", "rank"] {
+            lua(
+                &mut app,
+                &format!(
+                    r#"
+                perf_mode = {mode:?}
+                local plain
+                if perf_mode == 'items' then
+                  plain = {{}}
+                  for i = 1, perf_matcher:count() do
+                    plain[i] = {{ text = perf_matcher:text(i) }}
+                  end
+                end
+                kawoosh.picker.rank = perf_mode == 'rank' and function(it, hit)
+                  return hit.score + (it.boost or 0)
+                end or perf_rank
+                kawoosh.picker.source('extension_cost', {{ items = function()
+                  if plain then return plain end
+                  local rows = {{ matcher = perf_matcher }}
+                  if perf_mode == 'files' then
+                    rows.root = kawoosh.fs.cwd()
+                  else
+                    rows.item = function(text, i)
+                      perf_made = perf_made + 1
+                      return {{ text = text, boost = 0, n = i }}
+                    end
+                    if perf_mode ~= 'factory' then rows.boosts = {{}} end
+                  end
+                  return {{}}, {{ rows = rows }}
+                end }})
+            "#
+                ),
+            );
+            let mut open = Vec::new();
+            let mut query = Vec::new();
+            let mut jump = Vec::new();
+            for _ in 0..13 {
+                lua(
+                    &mut app,
+                    "if kawoosh.picker.state() then kawoosh.run('picker close') end",
+                );
+                d.frame(&mut app);
+                lua(
+                    &mut app,
+                    "perf_made = 0; collectgarbage('collect'); perf_heap = collectgarbage('count')",
+                );
+                let start = Instant::now();
+                lua(&mut app, "kawoosh.picker.open('extension_cost')");
+                d.frame(&mut app);
+                open.push(start.elapsed().as_secs_f64() * 1000.0);
+                let start = Instant::now();
+                lua(&mut app, "kawoosh.field_set('picker', 'q', 'file')");
+                d.frame(&mut app);
+                query.push(start.elapsed().as_secs_f64() * 1000.0);
+                let start = Instant::now();
+                lua(&mut app, "kawoosh.run('picker last')");
+                d.frame(&mut app);
+                jump.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+            open.sort_by(f64::total_cmp);
+            query.sort_by(f64::total_cmp);
+            jump.sort_by(f64::total_cmp);
+            app.run_lua_source(
+                "cost",
+                r#"
+                local s = kawoosh.picker.state()
+                collectgarbage('collect')
+                kawoosh.echo(string.format('%d made, %d hits, %.1f KiB Lua retained',
+                  perf_made, s.count, collectgarbage('count') - perf_heap))
+            "#,
+            );
+            eprintln!(
+                "picker {n} {mode}: open {:.3} ms, query {:.3} ms, last {:.3} ms; {}",
+                open[6], query[6], jump[6], app.ed.message
+            );
+            lua(&mut app, "kawoosh.run('picker close')");
+            d.frame(&mut app);
+        }
+        lua(&mut app, "kawoosh.picker.rank = perf_rank");
+    }
 }
 
 /// Asked 2026-10-14: "file search should fuzzy find with spaces like

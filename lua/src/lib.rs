@@ -3326,7 +3326,7 @@ impl Runtime {
             if let Some(m) = walked.matcher {
                 return self
                     .lua
-                    .create_userdata(LuaMatcher(m))
+                    .create_userdata(LuaMatcher(Rc::new(m), Rc::new(Vec::new())))
                     .map(|m| (LV::UserData(m), LV::Nil, LV::Nil, LV::Boolean(capped)))
                     .map_err(|e| e.to_string());
             }
@@ -3972,6 +3972,10 @@ type StoreCell = Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>;
 ///
 /// @class kawoosh.Matcher
 /// @field query fun(self: kawoosh.Matcher, needle: string, limit?: integer): kawoosh.FuzzyHit[] the best `limit` (500) first
+/// @field query_channel fun(self: kawoosh.Matcher, needle: string, opts?: kawoosh.MatcherQuery): kui.Channel all matching rows, sorted; columns `index` (from 1) and `score`, channel rows from 0
+/// @field positions fun(self: kawoosh.Matcher, needle: string, i: integer): integer[] highlight bytes for row `i`, from 1, calculated on demand
+/// @field boosts fun(self: kawoosh.Matcher, by: table<integer, number>) set score boosts by row index (from 1); retained by `extend`, replaced by `order`; used by `query_channel` only
+/// @field snapshot fun(self: kawoosh.Matcher): kawoosh.Matcher a cheap snapshot; later mutations copy shared data only when necessary
 /// @field count fun(self: kawoosh.Matcher): integer how many it holds
 /// @field text fun(self: kawoosh.Matcher, i: integer): string? row `i`, from 1, whole
 /// @field extend fun(self: kawoosh.Matcher, other: kawoosh.Matcher) `other`'s rows after these
@@ -3981,7 +3985,11 @@ type StoreCell = Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>;
 /// @field drop? table<string, any> the rows to leave out, by text
 /// @field boost? table<string, number> by text: above 0 first, the most first; below 0 last
 /// @field last? table<string, boolean> extensions whose rows go last when `boost` gives them nothing (`picker.binary`): read as the picker reads them, case kept or folded
-struct LuaMatcher(Matcher);
+///
+/// @class kawoosh.MatcherQuery
+/// @field exclude? kui.Channel omit rows whose `index` is in this query channel
+/// @field raw? boolean sort on fuzzy score alone, ignoring the matcher's boosts
+struct LuaMatcher(Rc<Matcher>, Rc<Vec<f64>>);
 
 impl mlua::UserData for LuaMatcher {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
@@ -3991,7 +3999,93 @@ impl mlua::UserData for LuaMatcher {
                 hits_table(lua, &this.0.query(&needle, limit.unwrap_or(500)))
             },
         );
+        methods.add_method(
+            "query_channel",
+            |_, this, (needle, opts): (String, Option<Table>)| {
+                use kui_core::channel::{Channel, Column, lua::LuaChannel};
+                let raw = opts
+                    .as_ref()
+                    .map(|t| t.get::<Option<bool>>("raw"))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or(false);
+                let exclude = opts
+                    .as_ref()
+                    .map(|t| t.get::<Option<mlua::AnyUserData>>("exclude"))
+                    .transpose()?
+                    .flatten();
+                let mut omitted = Vec::new();
+                if let Some(exclude) = exclude {
+                    let ch = exclude.borrow::<LuaChannel>()?;
+                    let col =
+                        ch.0.col("index")
+                            .ok_or_else(|| mlua::Error::runtime("exclude needs an index column"))?;
+                    let Some(Column::I64(indices)) = ch.0.column(col) else {
+                        return Err(mlua::Error::runtime("exclude needs integer indices"));
+                    };
+                    omitted.resize(this.0.len(), false);
+                    for &i in indices {
+                        if i > 0
+                            && let Some(v) = omitted.get_mut(i as usize - 1)
+                        {
+                            *v = true;
+                        }
+                    }
+                }
+                let score_span = kui_core::perf::span("picker query score");
+                let mut hits = if !omitted.is_empty() && omitted.iter().all(|v| *v) {
+                    Vec::new()
+                } else {
+                    this.0.scores(&needle)
+                };
+                if !omitted.is_empty() {
+                    hits.retain(|(i, _)| !omitted[*i]);
+                }
+                drop(score_span);
+                let rank_span = kui_core::perf::span("picker query sort");
+                if !needle.is_empty() {
+                    hits = fuzzy::rank_scores(hits, if raw { &[] } else { &this.1 });
+                }
+                drop(rank_span);
+                let columns_span = kui_core::perf::span("picker query columns");
+                let (index, score) = hits.into_iter().map(|(i, s)| (i as i64 + 1, s)).unzip();
+                drop(columns_span);
+                let _publish_span = kui_core::perf::span("picker query publish");
+                Channel::table(vec![
+                    ("index".into(), Column::I64(index)),
+                    ("score".into(), Column::F64(score)),
+                ])
+                .map(LuaChannel)
+                .map_err(mlua::Error::runtime)
+            },
+        );
+        methods.add_method("positions", |lua, this, (needle, i): (String, usize)| {
+            let pos = i
+                .checked_sub(1)
+                .map(|i| this.0.positions(&needle, i))
+                .unwrap_or_default();
+            lua.create_sequence_from(pos.into_iter().map(|p| p + 1))
+        });
+        methods.add_method_mut("boosts", |_, this, by: Table| {
+            for pair in by.pairs::<usize, f64>() {
+                let (i, boost) = pair?;
+                if i == 0 || i > this.0.len() {
+                    return Err(mlua::Error::runtime("boost index outside the matcher"));
+                }
+                if boost == this.1.get(i - 1).copied().unwrap_or(0.0) {
+                    continue;
+                }
+                if this.1.len() < this.0.len() {
+                    Rc::make_mut(&mut this.1).resize(this.0.len(), 0.0);
+                }
+                Rc::make_mut(&mut this.1)[i - 1] = boost;
+            }
+            Ok(())
+        });
         methods.add_method("count", |_, this, ()| Ok(this.0.len()));
+        methods.add_method("snapshot", |_, this, ()| {
+            Ok(LuaMatcher(this.0.clone(), this.1.clone()))
+        });
         methods.add_method("text", |_, this, i: usize| {
             Ok((1..=this.0.len())
                 .contains(&i)
@@ -3999,7 +4093,12 @@ impl mlua::UserData for LuaMatcher {
         });
         methods.add_method_mut("extend", |_, this, other: mlua::AnyUserData| {
             let other = other.borrow::<LuaMatcher>()?;
-            this.0.extend(&other.0);
+            if !this.1.is_empty() || !other.1.is_empty() {
+                Rc::make_mut(&mut this.1).resize(this.0.len(), 0.0);
+                Rc::make_mut(&mut this.1)
+                    .extend((0..other.0.len()).map(|i| other.1.get(i).copied().unwrap_or(0.0)));
+            }
+            Rc::make_mut(&mut this.0).extend(&other.0);
             Ok(())
         });
         methods.add_method_mut("order", |_, this, opts: Table| {
@@ -4021,11 +4120,25 @@ impl mlua::UserData for LuaMatcher {
                     .collect(),
                 None => HashMap::new(),
             };
-            let tail = this.0.order(
+            let tail = Rc::make_mut(&mut this.0).order(
                 |s| drop.get(s).is_none(),
                 |s| boost.get(s),
                 |s| goes_last(&last, s),
             );
+            // The same defaults `picker.with_rows` gives an item, kept beside
+            // the bytes so a query can rank every row without creating items.
+            this.1 = Rc::new(
+                (0..this.0.len())
+                    .map(|i| {
+                        boost
+                            .get(this.0.text(i))
+                            .unwrap_or(if i >= tail { -0.5 } else { 0.0 })
+                    })
+                    .collect(),
+            );
+            if this.1.iter().all(|b| *b == 0.0) {
+                this.1 = Rc::new(Vec::new());
+            }
             Ok(tail + 1)
         });
     }
@@ -4741,7 +4854,7 @@ fn seed(
                     v => m.push(&lua.unpack::<String>(v)?),
                 }
             }
-            Ok(LuaMatcher(m))
+            Ok(LuaMatcher(Rc::new(m), Rc::new(Vec::new())))
         })?,
     )?;
     // ---- `kawoosh.cmdline(text)`: the command line opened with the
@@ -9780,6 +9893,101 @@ fn lua_str(v: &LV) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_order_agrees_with_complete_legacy_queries() {
+        let (rt, _ext) = Runtime::new().unwrap();
+        rt.load_source("channel-order", r#"
+            local paths = {}
+            for i = 1, 3000 do
+              paths[i] = i % 17 == 0 and 'same/name.rs'
+                or string.format('src/module%d/tasks/file%d.rs', i % 97, i)
+            end
+            paths[3001], paths[3002] = 'rs', 'rs'
+            paths[3003], paths[3004] = 'Kelvin/key.rs', 'école/file.rs'
+            for _, boosts in ipairs { {}, { [2] = 20, [97] = -0.5, [117] = 0.5,
+                                           [3001] = -1, [3002] = 1 } } do
+              local m = kawoosh.matcher(paths)
+              m:boosts(boosts)
+              for _, q in ipairs { '', '   ', 'file', 'mod12 fi', 'rs', 'k', 'é', 'same name', 'absent' } do
+                for _, raw in ipairs { false, true } do
+                  local expected = m:query(q, #paths)
+                  for i, h in ipairs(expected) do
+                    h.order = i
+                    h.rank = h.score + (raw and 0 or boosts[h.index] or 0)
+                  end
+                  if q ~= '' then table.sort(expected, function(a, b)
+                    if a.rank ~= b.rank then return a.rank > b.rank end
+                    return a.order < b.order
+                  end) end
+                  local ch = m:query_channel(q, { raw = raw })
+                  assert(#ch == #expected, q)
+                  for i, h in ipairs(expected) do
+                    assert(ch:get(i - 1, 'index') == h.index, q .. ' at ' .. i)
+                    assert(ch:get(i - 1, 'score') == h.score, q)
+                  end
+                  if #ch > 1 then
+                    local excluded = ch:take { 0, #ch - 1 }
+                    local rest = m:query_channel(q, { raw = raw, exclude = excluded })
+                    assert(#rest == #expected - 2, q)
+                    for i = 1, #rest do
+                      assert(rest:get(i - 1, 'index') == expected[i + 1].index, q)
+                    end
+                  end
+                end
+              end
+            end
+        "#).unwrap();
+    }
+
+    #[test]
+    fn matcher_channels_keep_all_scores_boosts_and_lazy_unicode_positions() {
+        let (rt, _ext) = Runtime::new().unwrap();
+        rt.load_source(
+            "channels",
+            r#"
+            local paths = {}
+            for i = 1, 1000 do paths[i] = string.format('file%04d.rs', i) end
+            local m = kawoosh.matcher(paths)
+            m:boosts { [1000] = 20 }
+            local ch = m:query_channel('file')
+            assert(#ch == 1000 and ch:get(0, 'index') == 1000)
+            assert(type(ch:get(0, 'score')) == 'number')
+            assert(#m:query('file', 200) == 200, 'legacy query keeps its limit')
+            local raw = m:query_channel('file', { raw = true })
+            assert(raw:get(0, 'index') == 1)
+            local rest = m:query_channel('file', { exclude = ch })
+            assert(#rest == 0)
+            local subset = ch:take { 0, 1 }
+            assert(#m:query_channel('file', { exclude = subset }) == 998)
+            assert(m:query_channel(''):get(0, 'index') == 1)
+            local extra = kawoosh.matcher { 'Kelvin/key' }
+            extra:boosts { [1] = 30 }
+            m:extend(extra)
+            assert(m:query_channel('k'):get(0, 'index') == 1001)
+            local hit = extra:query('k', 1)[1]
+            local pos = extra:positions('k', 1)
+            assert(pos[1] == hit.positions[1] and #pos == #hit.positions)
+            assert(#extra:positions('absent', 1) == 0)
+            assert(#extra:positions('k', 0) == 0)
+            assert(#extra:positions('k', 2) == 0)
+            local ordered = kawoosh.matcher { 'drop.rs', 'a.rs', 'b.rs', 'c.png' }
+            assert(ordered:order { drop = { ['drop.rs'] = true },
+              boost = { ['b.rs'] = 2 }, last = { png = true } } == 3)
+            assert(ordered:text(1) == 'b.rs' and ordered:text(3) == 'c.png')
+            assert(ordered:query_channel(''):get(0, 'index') == 1)
+            assert(ordered:query_channel('.'):get(0, 'index') == 1)
+            local snapshot = ordered:snapshot()
+            ordered:boosts { [2] = 20 }
+            ordered:order { drop = { ['b.rs'] = true }, last = { png = true } }
+            ordered:extend(kawoosh.matcher { 'new.rs' })
+            assert(snapshot:count() == 3 and snapshot:text(1) == 'b.rs')
+            assert(snapshot:query_channel('.'):get(0, 'index') == 1)
+            assert(ordered:text(1) == 'a.rs' and ordered:text(3) == 'new.rs')
+        "#,
+        )
+        .unwrap();
+    }
 
     #[test]
     fn reads_publish_and_writes_queue() {

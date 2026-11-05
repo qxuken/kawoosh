@@ -113,3 +113,8 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Picker scoring benefits from level 2 without slowing app/Lua edits.
+# Measurements: docs/design/picker.md, Decision 13.
+[profile.dev.package.kawoosh-systems]
+opt-level = 2

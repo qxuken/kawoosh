@@ -1,5 +1,9 @@
 # The picker's room and its walk
 
+Decision 11 (2026-11-05) removes the 200-hit query limit with Kui data
+channels. The walk's 200,000-file safety cap remains separate.
+Decision 12 brings broad-query time back to the old limited path's cost.
+
 Status: decided and built 2026-10-18. Asked as three items: "picker
 preview should detect where it has enough space", "files picker here to
 search inside ignored directories (target, node_modules)" and "search
@@ -285,6 +289,370 @@ title bar, and on `<A-/>` — from the query too — the keys under the
 list, the source's own first (a source's `legend`: buffers' `<C-x>`,
 workspaces' `<C-o>`, compile's `<C-e>`, marks' `<C-x>`), the list giving
 up the rows the legend took when it was last laid out.
+
+### 11. Every match stays in a channel; Lua reads the rows it uses
+
+Decided and measured 2026-11-05. `LIMIT = 200` limited the result set,
+not the drawing: `picker.rows` already draws a viewport. Static queries
+now keep every hit. The walk's 200,000-file cap and grep's 2,000-line
+cap are unchanged. Kui **alpha.76 already supplies everything used**;
+no Kui change or dependency update is needed. Moving the viewport onto
+Kui's list widgets is a separate change.
+
+`Matcher::scores` scores without sorting or calculating highlight
+positions. `m:query_channel(query, opts)` ranks in Rust and returns a
+Kui channel with `index` (the matcher's row, from 1) and `score`
+columns; channel row indices remain from 0. `m:boosts` supplies known
+item boosts; `m:order` keeps the native path boosts and binary penalty,
+and `m:extend` carries them with the rows. Empty queries keep source
+order. Names precede secondary-text matches; the latter exclude every
+primary hit, by index, in Rust. Equal ranks keep fuzzy-score order and
+then source order.
+
+`m:snapshot()` shares the rows and boosts until a mutation needs a copy.
+Lazy item lists and query highlights hold snapshots, so reordering or
+reusing a source matcher cannot change an older result's text. Already
+materialized items' boosts are refreshed before native ranking; this
+preserves changes made by plugin keys. For sources supplying large Lua
+item arrays, that refresh visits the array, whereas engine-held rows
+visit only the items already made. Known boosts are cached, so unchanged
+plain items send no metadata back to Rust. The extension benchmark covers
+both kinds of source.
+
+The hit list is indexable and lazy. An item crosses to Lua when a view,
+cursor or plugin indexes it; `m:positions(query, index)` calculates its
+highlight bytes only when requested. `picker.state().rows` and `.items`
+are lazy indexable lists too: `#` and reading the count are cheap;
+`ipairs`, `pairs` and `table.concat` read every entry. This prevents a status line
+from accidentally constructing every item. Keyboard navigation, wheel
+scrolling, previews and picks use the same viewport code as before.
+
+Arbitrary Lua ranking has an explicit cost. A replacement `picker.rank`
+must inspect every match on a nonempty query. So must a custom
+`Rows.item` factory whose boosts are unknown. Such a factory can supply
+`Rows.boosts`, a sparse table of known boost overrides by row after
+ordering; `{}` declares that its items do not override the native
+ranking defaults. The same metadata supplies an item's boost if the
+factory leaves it unset. Without metadata, the slower inspection
+preserves custom item boosts and paths. A callback that reads
+`hit.positions` still gets them, on demand.
+
+**Cost, not just reachability.** Apple M3 Pro, Rust 1.99.1, the existing
+dev profile (`opt-level = 1`, dependencies at 2). Fixed synthetic paths,
+1,000 × 700 headless view, preview off, dataset construction outside the
+timings. Medians of 13 query-plus-frame samples, run serially with the
+old Lua picker loaded in the same binary for the comparison:
+
+| Paths | Query | Before, ms | Channels, ms | Hits before → after |
+|---:|---|---:|---:|---:|
+| 10,000 | `file` | 2.71 | 2.67 | 200 → 10,000 |
+| 50,000 | `file` | 11.52 | 12.49 | 200 → 50,000 |
+| 200,000 | empty | 0.31 | 0.63 | 200 → 200,000 |
+| 200,000 | `file` | 45.15 | 50.61 | 200 → 200,000 |
+| 200,000 | `mod12 fi` | 24.39 | 26.03 | 200 → 56,713 |
+| 200,000 | `absent` | 3.42 | 3.55 | 0 → 0 |
+
+Idle frames stay about 0.11 ms, with 104 declared nodes in both broad
+queries. Keeping all results is not free: the broadest query adds about
+5.5 ms (12%) at the walk cap, and clearing a query adds about 0.3 ms.
+Repeated quiet runs put the broad query at 45–47 ms before and
+51–53 ms after; this is a dev-build cost range, not a frame-time limit.
+A second benchmark interleaves the native interfaces in one process,
+alternating their order over 21 samples and reading thread CPU time:
+`file` 44.44 → 49.97 ms (paired ratio 1.124), `mod12 fi` 23.88 →
+25.30 ms (1.061), no matches 3.34 → 3.32 ms (0.992).
+The first implementation did boost lookups per sort comparison;
+measuring caught that overhead. Boosted scores are now computed once
+per hit, and unboosted queries use the original score comparator.
+
+The channel retains 16 bytes per hit (3.05 MiB at 200,000), besides the
+matcher's existing bytes and temporary scoring/sorting buffers. Native
+boosts can add 8 bytes per source row (1.53 MiB at the cap). The
+extension workload, opening, filtering and jumping to the end, creates
+31 items with supplied boost metadata and retains about 17.7 KiB of
+Lua heap, versus 200 items and 115 KiB before. Without metadata, or
+with custom Lua ranking, it creates all 200,000 items and retains about
+88 MiB of Lua heap; measured broad queries take hundreds of
+milliseconds. That fallback is a real scaling limit, not a native-path
+performance claim. These timings exclude disk walks, preview I/O,
+GPU rendering and release-profile optimization.
+
+The extension workload uses simpler, fixed-length `src/fileNNNNNN.rs`
+paths. At 200,000 rows, its query-plus-frame medians are:
+
+| Source | Before, ms | Channels, ms |
+|---|---:|---:|
+| Native file rows | 22.74 | 23.26 |
+| Factory with boost metadata | 22.72 | 22.81 |
+| Prebuilt Lua item array | 22.86 | 29.27 |
+| Factory with unknown boosts | 22.89 | 309.45 |
+| Custom Lua rank | 22.97 | 305.71 |
+
+Opening the prebuilt Lua array takes 36.88 → 45.80 ms. The first boost
+refresh implementation sent every unchanged boost back through Lua;
+measuring caught a 43.38 ms query, reduced to 29.27 ms by sending only
+changes and removing a per-row type check on the picker's own array.
+The remaining array scan preserves mutable boosts. These eager Lua
+sources do not have the native rows' cost profile; large sources should
+use engine-held rows and supplied boost metadata when possible.
+
+Repeat the measurements (ignored so CI load does not turn time into a
+flaky correctness assertion):
+
+```sh
+cargo test -p kawoosh --test picker picker_cost -- --exact --ignored --nocapture
+cargo test -p kawoosh --test picker picker_extension_cost -- --exact --ignored --nocapture
+cargo test -p kawoosh --test picker matcher_channel_cost -- --exact --ignored --nocapture
+```
+
+For a before/after Lua comparison, save the old `picker.lua` outside the
+checkout and set `KAWOOSH_PICKER_SOURCE` to its path on the before run.
+Run benchmarks without concurrent tests or builds; the main benchmark
+also prints thread CPU time on Unix to expose scheduling noise.
+Correctness tests assert full counts, bounded item construction on the
+native path, navigation and picks beyond 200, boost promotion from
+beyond the old cap, primary/secondary ordering, custom ranking, and
+Unicode highlight parity with the legacy matcher interface.
+
+### 12. Share the sort kernel; keep all results at the old query cost
+
+Measured and built 2026-11-05, after Decision 11's cost review. The
+200,000-path `file` query had a reproducible 11–13% CPU regression even
+without a UI: a paired run measured 45.70 ms through the legacy query
+and 51.79 ms through the channel interface. The native benchmark keeps
+every hit and calculates highlights for the twelve rows it uses.
+
+Profiling split the channel query into score, sort, column conversion
+and publication. At 200,000 hits, the initial path spent 39.38 ms
+scoring, 11.62 ms sorting, 0.30 ms splitting columns and 0.002 ms
+publishing the Kui channel. Temporary instrumentation in the legacy
+matcher found the same scoring cost but a roughly 6 ms sort. The two
+equivalent comparators had produced materially different sort kernels
+in this dev build when instantiated in different crates.
+
+The binding now delegates ranking to `fuzzy::rank_scores`, in the
+systems crate. Unboosted queries and `Matcher::query` call the same
+non-generic `sort_scores` kernel there. Boosted results are sorted in
+place: the rank, raw score and unique source index already resolve
+every tie, so an unstable sort preserves the exact observable order
+without a merge buffer. A differential test checks the full channel
+against complete legacy queries plus Lua ranking, including duplicates,
+Unicode, positive/negative boosts, exact-match infinities, whitespace,
+raw queries and exclusions. No limit or partial sorting was restored.
+
+The same 13-sample headless query-plus-frame benchmark, without the
+profiler enabled:
+
+| Paths | Query | Legacy, ms | Full channel, ms | Hits legacy → full |
+|---:|---|---:|---:|---:|
+| 10,000 | `file` | 2.76 | 2.49 | 200 → 10,000 |
+| 50,000 | `file` | 11.74 | 11.56 | 200 → 50,000 |
+| 200,000 | `file` | 45.86 | 45.96 | 200 → 200,000 |
+| 200,000 | `mod12 fi` | 25.04 | 24.49 | 200 → 56,713 |
+| 200,000 | `absent` | 3.54 | 3.53 | 0 → 0 |
+
+Idle frames remain about 0.11 ms, with 104 nodes for the broad query.
+An independent 21-sample native CPU gate alternates call order and
+asserts both 200,000 retained hits and a paired median ratio no greater
+than 1.02. It failed before the fix (1.115) and passes after it:
+
+| Boost mode | Legacy, ms CPU | Full channel, ms CPU | Paired ratio |
+|---|---:|---:|---:|
+| None | 45.26 | 45.52 | 1.002 |
+| Sparse positive boosts | 45.08 | 45.24 | 1.002 |
+| Positive boosts and ~40,000 penalties | 44.95 | 45.61 | 1.012 |
+
+The full query's measured sort is now 6.18 ms. Column conversion is
+0.26 ms and Kui publication 0.004 ms. **No Kui change or release is
+needed.** Even removing all conversion/publication work would save less
+than 0.3 ms here; it would not have fixed the roughly 5.5 ms regression.
+Existing alpha.76 remains sufficient. Decision 11's result-buffer memory
+and arbitrary Lua callback costs are separate from this sort fix.
+
+Keep the performance gate opt-in, because timing assertions should not
+compete with CI's parallel builds/tests. Run alone on an idle Unix host:
+
+```sh
+cargo test -p kawoosh --test picker matcher_channel_broad_cost -- --exact --ignored --nocapture
+KAWOOSH_MATCHER_BOOST=sparse cargo test -p kawoosh --test picker matcher_channel_broad_cost -- --exact --ignored --nocapture
+KAWOOSH_MATCHER_BOOST=mixed cargo test -p kawoosh --test picker matcher_channel_broad_cost -- --exact --ignored --nocapture
+KAWOOSH_PICKER_PROFILE=1 cargo test -p kawoosh --test picker picker_cost -- --exact --ignored --nocapture
+```
+
+The last command prints score/sort/columns/publish CPU medians from
+Kui's recording; the same `picker query …` spans appear in the Perf
+trace. The unprofiled `picker_cost` and `matcher_channel_cost` commands
+from Decision 11 continue to measure all query shapes. Temporary legacy
+debug instrumentation was removed.
+
+#### Generated-code check, 2026-11-06
+
+Disassembly and a controlled compiler experiment identify the cause more
+precisely: **cross-crate sharing of generic instantiations at opt-level 1**.
+This was checked on the actual ARM64 binaries with Rust 1.99.1 / LLVM
+23.1.1, using `nm`, `llvm-cxxfilt --strip-underscore` and
+`llvm-objdump --disassemble-symbols`. The old binding sorter was restored
+in an isolated copy; the working shared-sort implementation stayed intact.
+
+Both comparators were inlined. The slow binding-specific
+`stable_partition<(usize, f64), BindingClosure>` instead called the
+standard library's `PartitionState<(usize, f64)>::partition_one` once
+per element. Its mangled symbol identifies the reused instance as
+emitted by `kawoosh_systems`. The hot unrolled loop has four calls to
+it; the tail and pivot paths have another call each. Shortened excerpt:
+
+```asm
+; old binding: comparison is inline, partition state is on the stack
+fcmp d0, d1
+; ... inlined Ordering and source-index tie breaker ...
+mov  x0, sp
+bl   PartitionState::partition_one
+ldr  x8, [sp, #8]                 ; reload the updated scan pointer
+```
+
+`partition_one` reads/writes the scan pointer, scratch pointer and
+left-side count in that stack state, checks the copy's pointer
+preconditions and copies one 16-byte row. Its source in this toolchain
+has no inline annotation. The systems-specific partition inlines it:
+the partition state remains in registers and the row copy is directly
+in the loop, with no per-element helper call:
+
+```asm
+; shared matcher kernel: excerpt after the inlined comparison
+ldr  q1, [x6]
+str  q1, [x20]
+cinc x6, x19, ne
+```
+
+The important type distinction is that each comparison closure has its
+own type. Consequently `stable_partition<T, F>` gets a distinct
+binding-side instantiation, while `PartitionState<T>::partition_one`
+does not depend on `F` and can reuse the systems crate's existing
+instance. At this profile's settings, the binding sees an external
+call instead of a local body that LLVM can inline and optimize with
+the surrounding loop. Calling the systems-owned sorter keeps the
+instantiations together.
+
+For the causal check, the old binding's Rust code was left unchanged
+and only its crate was compiled with `-Zshare-generics=no` in the
+isolated experiment. Its imported `partition_one` calls disappeared;
+the partition itself was absorbed into the local quicksort body.
+The same 200,000-hit profiled frame measured:
+
+| Restored old binding | Score, ms CPU | Sort, ms CPU | Frame query, ms CPU |
+|---|---:|---:|---:|
+| Default generic sharing | 38.573 | 11.346 | 50.677 |
+| Sharing disabled only for `kawoosh-lua` | 38.584 | 5.972 | 45.377 |
+
+The paired native gate likewise changed from 1.125× the legacy query
+(49.884 versus 44.401 ms) to 1.001× (44.590 versus 44.553 ms).
+This isolates the cause from comparator logic, match scoring, Lua
+interpretation and Kui channel construction.
+
+Cargo documents this opt-level-dependent behavior in
+[Overrides and generics](https://doc.rust-lang.org/cargo/reference/profiles.html#overrides-and-generics):
+opt-level 2/3 disable importing/exporting shared generic instances.
+The project's workspace code uses opt-level 1; its `"*"` dependency
+override does not apply to workspace members. The release profile has
+different conditions (opt-level 3 and fat LTO); release performance was
+not measured in this check.
+
+The unstable compiler flag and wrapper were diagnostic only. Project
+compiler settings and Kui dependencies remain unchanged. The ordinary
+shared-sort build was restored and its broad-query gate passed again.
+
+### 13. Dev profile: prefer optimizing the matcher crate to the whole workspace
+
+Measured 2026-11-06 on an Apple M3 Pro (12 cores, 36 GiB RAM), Rust
+1.99.1 / LLVM 23.1.1, with Kui alpha.77. Compare the original workspace
+`opt-level = 1`, workspace level 2, and workspace level 1 with only
+`kawoosh-systems` at level 2. External dependencies stay at level 2 in
+all three configurations; debug information, incremental compilation
+and other profile settings are unchanged. These measurements use the
+shared-sort implementation from Decision 12 and retain every result.
+
+**Keep the workspace at level 1 and use a level-2 override for
+`kawoosh-systems`.** It improves
+this broad query by 28% with essentially unchanged app/Lua rebuilds.
+Global level 2 improves the unprofiled query by 10% but adds 27–29% to
+those rebuilds. The dev profile adopts this override:
+
+```toml
+[profile.dev.package.kawoosh-systems]
+opt-level = 2
+```
+
+Query-plus-headless-frame wall times in milliseconds, preview disabled:
+
+| Paths | Query | Workspace level 1 | Global level 2 | Systems-only level 2 |
+|---:|---|---:|---:|---:|
+| 10,000 | `file` | 2.46 | 2.25 | 1.86 |
+| 50,000 | `file` | 11.29 | 10.29 | 8.29 |
+| 200,000 | `file` | 45.56 | 40.90 | 32.71 |
+| 200,000 | `mod12 fi` | 24.54 | 20.91 | 18.30 |
+| 200,000 | `absent` | 3.47 | 3.43 | 3.40 |
+| 200,000 | `file199999` | 4.01 | 4.00 | 3.99 |
+| 200,000 | empty | 0.64 | 0.61 | 0.62 |
+
+Each value is the median of six separate process runs, each reporting
+its own 13-sample median from `picker_cost`. Profile order alternates
+between runs and no compilation runs concurrently. The broad query's
+six medians range from 45.48–45.91, 40.46–41.15 and 32.62–32.96 ms,
+respectively. Thread CPU matches wall time. All three retain 200,000
+broad-query hits, with 102 UI nodes and roughly 0.10 ms idle frames.
+The two-term query retains 56,713 hits.
+
+Warm incremental app builds, including relinking, in wall seconds:
+
+| Edit | Workspace level 1 | Global level 2 | Systems-only level 2 |
+|---|---:|---:|---:|
+| No source change | 0.236 | 0.237 | 0.240 |
+| App Rust function body | 10.138 | 13.096 | 10.142 |
+| Bundled picker Lua string | 14.471 | 18.420 | 14.412 |
+| Matcher Rust constant | 3.310 | 3.470 | 3.347 |
+
+These are medians of three unique semantic edits per configuration,
+not repeated builds of the same edit. App Rust changes an error string
+in `kawoosh/src/commands.rs`; Lua changes an error string in the embedded
+`kawoosh/lua/picker.lua`; the matcher changes `MATCH_DOT` in
+`systems/src/fuzzy.rs`. Each sample starts a fresh Cargo process and
+builds `-p kawoosh --bin kawoosh --offline --locked`. Cargo artifact
+records confirm the expected optimization levels and rebuilt targets:
+app/Lua edits rebuild `kawoosh`; matcher edits rebuild
+`kawoosh-systems`, `kawoosh-lua` and `kawoosh`. No-change samples rebuild
+nothing. Initial dependency builds, profile preparation, test-binary
+builds and source-restoration builds are excluded. This measures these
+specific body edits, not public-API edits or clean builds.
+
+All work ran in an isolated source copy with an APFS copy-on-write
+target cache. The same unchanged source produced each query binary
+before the build probes. Select the three configurations without
+editing the manifest using `CARGO_PROFILE_DEV_OPT_LEVEL=1`,
+`CARGO_PROFILE_DEV_OPT_LEVEL=2`, or level 1 plus Cargo's
+`--config profile.dev.package.kawoosh-systems.opt-level=2`.
+Run `picker_cost` separately after compiling each configuration;
+`SHELL=/bin/sh` keeps the shell-source correctness test independent of
+the host's interactive shell. All 27 non-ignored picker tests pass
+under each configuration.
+
+The independent unprofiled native broad-query gate also passes under
+all three profiles. Channel CPU medians are 44.80, 31.85 and 31.88 ms;
+paired channel/legacy ratios are 1.003, 1.000 and 1.003. Thus global
+and systems-only level 2 have essentially the same native matcher cost.
+Recording the UI performance trace changes global level 2's frame
+result to 32.59 ms; systems-only is 32.84 ms and the original is 45.77 ms in
+that diagnostic run. Recorded scoring falls from 38.87 to about
+25.9 ms, while sorting remains about 6 ms. The unprofiled frame gap
+between the two level-2 variants is sensitive to execution context;
+its cause is not established by this experiment. Use the repeated
+unprofiled measurements for the dev-loop tradeoff, and do not infer
+that the selective override always produces a faster matcher kernel.
+
+No Kui change is needed for this optimization. Kui is compiled at the
+same level in all variants; recorded channel publication is about
+0.003 ms. These measurements cover native-row picker queries, not
+arbitrary Lua ranking callbacks, previews, GPU rendering or general
+editor performance.
 
 ## Built
 
