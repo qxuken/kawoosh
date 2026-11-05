@@ -20,8 +20,9 @@
 -- Matching is `kawoosh.matcher` (fzy's scoring, in Rust; a space
 -- splits the query into terms matched in any order, `carnet main`
 -- finding `roles/carnet/tasks/main.yml`, docs/design/matching.md), the
--- ranking Lua's: `picker.rank(item, hit)` is the score plus the item's
--- `boost`, and a config replaces it; an open buffer and a file
+-- ranking by `picker.rank(item, hit)`, the score plus the item's
+-- `boost`: the engine does the default, a config can replace it with
+-- Lua ranking over every match; an open buffer and a file
 -- attended before are boosted by the memory's rank (memory.md D8,
 -- `kawoosh.memory_rank`) and a binary (`picker.binary`, by
 -- extension) held back. A row with columns is matched on its name
@@ -124,6 +125,7 @@ local fs = kawoosh.fs
 ---@field matcher kawoosh.Matcher the rows (`kawoosh.matcher(list)`, or a walk's)
 ---@field root? string the rows are paths relative to it
 ---@field item? fun(text: string, i: integer): kawoosh.picker.Item row `i`'s item, made when it is first shown; `{ text = text }` (and its `path`) by default
+---@field boosts? table<integer, number> known boost overrides, by row after ordering; `{}` declares `item` does not override ranking, keeping items lazy. Without this, a custom `item` is inspected for ranking on nonempty queries.
 
 ---A row of a picker (and of a launcher's module): its text, and what
 ---it stands for. A row of a source with `columns` holds their fields.
@@ -256,8 +258,8 @@ local fs = kawoosh.fs
 ---@field positions? integer[] the bytes its match lit, in its `picker.search` text
 ---@field loading boolean
 ---@field preview? kawoosh.picker.Preview the cursor's, as drawn: `runs` once highlighted
----@field rows string[] every hit's text, in order
----@field items kawoosh.picker.Item[] every hit's item, in order
+---@field rows string[] every hit's text, in order; an indexable lazy list, iteration or `table.concat` reads them all
+---@field items kawoosh.picker.Item[] every hit's item, in order; an indexable lazy list
 ---@field root string where a walk starts
 ---@field place? "right"|"below" where the preview is drawn; nil for none
 ---@field ignored boolean `<A-g>`: ignored and hidden files too
@@ -299,8 +301,6 @@ local function sizes(env)
   PREVIEW_SIZE = m.small
   PREVIEW_ROW = PREVIEW_SIZE + 4
 end
--- The most rows a query keeps: a screenful and a few pages after it.
-local LIMIT = 200
 -- The most lines a search reads before it is stopped.
 local GREP_MAX = 2000
 local PREVIEW_MAX = 256 * 1024
@@ -355,6 +355,7 @@ end
 function picker.rank(item, hit)
   return hit.score + (item.boost or 0)
 end
+local default_rank = picker.rank
 
 -- The files the preview draws as a picture, by extension: what the
 -- engine decodes (`kawoosh.image`).
@@ -1180,37 +1181,77 @@ end
 -- before every command whose doc mentions a directory. A `wide`
 -- source's the same over its `sub`: `main` lists the buffer `main.rs`
 -- before `util.rs` in `main/`.
-local function ranked(hits, q)
-  local out = {}
-  for i, h in ipairs(hits) do
-    local item = P.items[h.index]
-    out[i] = { item = item, positions = h.positions, score = h.score, rank = picker.rank(item, h), i = i }
+local function filter_static(q)
+  if not P.matcher then P.hits = {} return end
+  -- The channel holds every index and score. Items and highlight positions
+  -- cross to Lua only when indexed by the viewport, the cursor or a plugin.
+  -- Arbitrary Lua ranking must inspect every match; the usual item.boost
+  -- ranking is done by the matcher without constructing those items.
+  local custom = q ~= "" and (picker.rank ~= default_rank or P.custom_rows)
+  if not custom then
+    -- Plugins can change a materialized item's boost between queries.
+    -- pairs reads only items already made, never the lazy engine rows.
+    local weights, count, known = {}, P.plain_count, P.plain_boosts
+    for i, it in pairs(P.items) do
+      local boost = it.boost or 0
+      if i > count or boost ~= (known[i] or 0) then
+        weights[i] = boost
+        if i <= count then known[i] = boost ~= 0 and boost or nil end
+      end
+    end
+    P.matcher:boosts(weights)
+    if P.wide then P.wide:boosts(weights) end
   end
-  if q ~= "" then
+  local matcher, wider = P.matcher:snapshot(), P.wide and P.wide:snapshot()
+  local main = matcher:query_channel(q, { raw = custom })
+  local wide = wider and q ~= "" and wider:query_channel(q, { raw = custom, exclude = main }) or nil
+  local items = P.items
+  local function positions_for(m)
+    return {
+      __index = function(t, k)
+        if k ~= "positions" then return nil end
+        local pos = m:positions(q, t.index)
+        rawset(t, k, pos)
+        return pos
+      end,
+    }
+  end
+  local main_meta, wide_meta = positions_for(matcher), wide and positions_for(wider)
+  local function hit(ch, meta, i)
+    local index = ch:get(i - 1, 0)
+    return setmetatable({ item = items[index], index = index, score = ch:get(i - 1, 1) }, meta)
+  end
+  local function ranked(ch, meta)
+    local out = {}
+    for i = 1, #ch do
+      local h = hit(ch, meta, i)
+      h.rank, h.i = picker.rank(h.item, h), i
+      out[i] = h
+    end
     table.sort(out, function(a, b)
       if a.rank ~= b.rank then return a.rank > b.rank end
       return a.i < b.i
     end)
+    return out
   end
-  return out
-end
-
-local function filter_static(q)
-  if not P.matcher then P.hits = {} return end
-  local out = ranked(P.matcher:query(q, LIMIT), q)
-  if P.wide and q ~= "" and #out < LIMIT then
-    local seen = {}
-    for _, h in ipairs(out) do seen[h.item] = true end
-    local more = {}
-    for _, h in ipairs(P.wide:query(q, LIMIT)) do
-      if not seen[P.items[h.index]] then more[#more + 1] = h end
+  if custom then
+    local out = ranked(main, main_meta)
+    if wide then
+      for _, h in ipairs(ranked(wide, wide_meta)) do out[#out + 1] = h end
     end
-    for _, h in ipairs(ranked(more, q)) do
-      if #out >= LIMIT then break end
-      out[#out + 1] = h
-    end
+    P.hits = out
+  else
+    local n, count = #main, #main + (wide and #wide or 0)
+    P.hits = setmetatable({}, {
+      __len = function() return count end,
+      __index = function(t, i)
+        if math.type(i) ~= "integer" or i < 1 or i > count then return nil end
+        local h = i <= n and hit(main, main_meta, i) or hit(wide, wide_meta, i - n)
+        rawset(t, i, h)
+        return h
+      end,
+    })
   end
-  P.hits = out
 end
 
 -- A dynamic source asked for `q`: the job before it cancelled, this
@@ -1306,6 +1347,7 @@ function picker.with_rows(items, rows, opts)
     end
     tail = m:order { drop = drop, boost = boost, last = opts.last or picker.binary }
   end
+  if rows.boosts then m:boosts(rows.boosts) end
   local all = m
   if n > 0 then
     all = opts.matcher
@@ -1318,11 +1360,13 @@ function picker.with_rows(items, rows, opts)
   end
   if opts.wide then opts.wide:extend(m) end
   local count = n + m:count()
+  local held = all:snapshot()
   return setmetatable(items, {
     __index = function(t, k)
       if math.type(k) ~= "integer" or k <= n or k > count then return nil end
-      local text, i = all:text(k), k - n
+      local text, i = held:text(k), k - n
       local it = make and make(text, i) or { text = text }
+      if it.boost == nil and rows.boosts then it.boost = rows.boosts[i] end
       if root then
         it.path = it.path or fs.join(root, text)
         if it.boost == nil then it.boost = by[it.path] or (i >= tail and -0.5 or nil) end
@@ -1350,17 +1394,22 @@ local function loaded(items, err, info)
   P.note = nil
   local by = boosts()
   items = boosted(items, by)
-  local texts, wide = {}, {}
+  local texts, wide, weights = {}, {}, {}
   local widened = P.src.columns or P.src.wide
   for i, it in ipairs(items) do
     if widened and not it.search then it.search = picker.search(it, P.src.columns) end
     texts[i] = it.text
     wide[i] = it.search or it.text
+    if it.boost and it.boost ~= 0 then weights[i] = it.boost end
   end
   P.matcher = kawoosh.matcher(texts)
+  P.matcher:boosts(weights)
   -- The name is what a match on a row lights and ranks by; the rest
   -- of the row (`search`) is looked in after it.
   P.wide = widened and kawoosh.matcher(wide) or nil
+  if P.wide then P.wide:boosts(weights) end
+  P.plain_count, P.plain_boosts = #items, weights
+  P.custom_rows = info and info.rows and info.rows.item ~= nil and info.rows.boosts == nil
   if info and info.rows then
     items, P.matcher = picker.with_rows(items, info.rows, { matcher = P.matcher, wide = P.wide, by = by })
   end
@@ -1660,8 +1709,27 @@ picker._keys = {}
 function picker.state()
   if not P then return nil end
   local hit = P.hits[P.cursor]
-  local rows, items = {}, {}
-  for i, h in ipairs(P.hits) do rows[i], items[i] = h.item.text, h.item end
+  -- A state reading (often a status line) must not materialize every hit.
+  -- These keep the query's snapshot and remain indexable and iterable.
+  local hits = P.hits
+  local function mapped(fn)
+    return setmetatable({}, {
+      __len = function() return #hits end,
+      __index = function(_, i)
+        local h = hits[i]
+        return h and fn(h) or nil
+      end,
+      __pairs = function(t)
+        local i = 0
+        return function()
+          i = i + 1
+          if i <= #hits then return i, t[i] end
+        end
+      end,
+    })
+  end
+  local rows = mapped(function(h) return h.item.text end)
+  local items = mapped(function(h) return h.item end)
   return { source = P.name, query = P.query or "", cursor = P.cursor, top = P.top, count = #P.hits,
            text = hit and hit.item.text or nil, item = hit and hit.item or nil,
            positions = hit and hit.positions or nil, loading = P.loading,

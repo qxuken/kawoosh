@@ -114,6 +114,39 @@ pub struct Hit {
     pub positions: Vec<usize>,
 }
 
+/// Fuzzy-score order, with source indices breaking ties. Both the legacy
+/// query and full-result channels use this kernel: keeping a second sort in
+/// the Lua binding generated a substantially slower sorter in dev builds.
+pub fn sort_scores(hits: &mut [(usize, f64)]) {
+    hits.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+}
+
+/// Rank every scored row with optional per-source-row boosts. Equal ranks
+/// keep fuzzy-score order, then source order, just as the picker's Lua rank.
+pub fn rank_scores(mut hits: Vec<(usize, f64)>, boosts: &[f64]) -> Vec<(usize, f64)> {
+    if boosts.is_empty() {
+        sort_scores(&mut hits);
+        return hits;
+    }
+    let mut ranked: Vec<_> = hits
+        .into_iter()
+        .map(|(i, score)| (i, score, score + boosts.get(i).copied().unwrap_or(0.0)))
+        .collect();
+    // Source indices already resolve every tie, so an in-place unstable
+    // sort has exactly the same observable order without a merge buffer.
+    ranked.sort_unstable_by(|a, b| {
+        b.2.partial_cmp(&a.2)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    ranked.into_iter().map(|(i, score, _)| (i, score)).collect()
+}
+
 /// One term of the needle as it is looked for: its characters, whether
 /// case counts (an upper-case letter in it), and its bytes when every
 /// character is ASCII — what an ASCII row is searched for.
@@ -450,7 +483,32 @@ impl Matcher {
         }
         let mut tables = Tables::default();
         let mut row = Row::default();
-        let mut scored: Vec<(usize, f64)> = (0..self.len())
+        let mut scored = self.scores_with(&terms, &mut tables, &mut row);
+        sort_scores(&mut scored);
+        scored.truncate(limit);
+        scored
+            .into_iter()
+            .map(|(index, score)| Hit {
+                index,
+                score,
+                positions: self.positions_with(index, &terms, &mut tables, &mut row),
+            })
+            .collect()
+    }
+
+    /// All matches in source order, without highlight positions or sorting.
+    /// A caller can rank these in Rust and keep the result in a data channel;
+    /// only the rows it displays need [`Self::positions`].
+    pub fn scores(&self, needle: &str) -> Vec<(usize, f64)> {
+        let terms = terms(needle);
+        if terms.is_empty() {
+            return (0..self.len()).map(|i| (i, 0.0)).collect();
+        }
+        self.scores_with(&terms, &mut Tables::default(), &mut Row::default())
+    }
+
+    fn scores_with(&self, terms: &[Term], tables: &mut Tables, row: &mut Row) -> Vec<(usize, f64)> {
+        (0..self.len())
             .filter_map(|i| {
                 let s = self.row(i);
                 if !terms.iter().all(|t| t.found_in(s, self.ascii[i])) {
@@ -459,36 +517,43 @@ impl Matcher {
                 row.fill(s);
                 let score = terms
                     .iter()
-                    .map(|t| compute(&t.chars, t.hay(&row), &row.chars, &mut tables))
+                    .map(|t| compute(&t.chars, t.hay(row), &row.chars, tables))
                     .sum::<f64>();
                 Some((i, score))
             })
-            .collect();
-        scored.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| a.0.cmp(&b.0))
-        });
-        scored.truncate(limit);
-        scored
-            .into_iter()
-            .map(|(index, score)| {
-                row.fill(self.row(index));
-                // Every term's characters; two terms may light the same.
-                let mut pos = Vec::new();
-                for t in &terms {
-                    compute(&t.chars, t.hay(&row), &row.chars, &mut tables);
-                    pos.extend(positions(t.chars.len(), &row.chars, &tables));
-                }
-                pos.sort_unstable();
-                pos.dedup();
-                Hit {
-                    index,
-                    score,
-                    positions: pos.into_iter().filter_map(|j| row.byte(j)).collect(),
-                }
-            })
             .collect()
+    }
+
+    /// Highlight byte offsets for one matching row, from 0. A row outside
+    /// the matcher or one that does not match has no positions.
+    pub fn positions(&self, needle: &str, index: usize) -> Vec<usize> {
+        let terms = terms(needle);
+        if index >= self.len()
+            || !terms
+                .iter()
+                .all(|t| t.found_in(self.row(index), self.ascii[index]))
+        {
+            return Vec::new();
+        }
+        self.positions_with(index, &terms, &mut Tables::default(), &mut Row::default())
+    }
+
+    fn positions_with(
+        &self,
+        index: usize,
+        terms: &[Term],
+        tables: &mut Tables,
+        row: &mut Row,
+    ) -> Vec<usize> {
+        row.fill(self.row(index));
+        let mut pos = Vec::new();
+        for t in terms {
+            compute(&t.chars, t.hay(row), &row.chars, tables);
+            pos.extend(positions(t.chars.len(), &row.chars, tables));
+        }
+        pos.sort_unstable();
+        pos.dedup();
+        pos.into_iter().filter_map(|j| row.byte(j)).collect()
     }
 }
 
@@ -817,6 +882,39 @@ mod tests {
             "{:?}",
             t.elapsed()
         );
+    }
+
+    #[test]
+    fn scores_and_lazy_positions_agree_with_complete_queries() {
+        let m = Matcher::new([
+            "src/main.rs",
+            "main",
+            "máin",
+            "Kelvin/key",
+            "no match",
+            "src/main.rs",
+        ]);
+        for q in [
+            "",
+            "   ",
+            "main",
+            "src main",
+            "k",
+            "mái",
+            "absent",
+            r"no\ match",
+        ] {
+            let hits = m.query(q, usize::MAX);
+            let scores = m.scores(q);
+            assert_eq!(scores.len(), hits.len(), "{q:?}");
+            assert!(scores.windows(2).all(|w| w[0].0 < w[1].0));
+            for h in hits {
+                assert!(scores.contains(&(h.index, h.score)), "{q:?}: {h:?}");
+                assert_eq!(m.positions(q, h.index), h.positions, "{q:?}");
+            }
+            assert!(m.positions(q, m.len()).is_empty());
+        }
+        assert!(m.positions("main", 4).is_empty());
     }
 
     /// What a query over a realistic tree costs, printed: 45k paths of a
