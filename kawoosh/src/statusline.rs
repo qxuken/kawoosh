@@ -27,10 +27,10 @@ pub const LAYOUT: &[&str] = &[
     "keys",
     GAP,
     REST,
-    "strip",
     "selections",
     "position",
     "percent",
+    "strip",
 ];
 
 /// Where the Lua modules the layout does not name are drawn, and the

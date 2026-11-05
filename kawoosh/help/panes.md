@@ -283,7 +283,8 @@ launcher = {
 ```
 
 The modules kawoosh has: `prompt`, `here`, `buffers`, `plugins`,
-`pins`, `recent`, `files` (only with a query) and `workspaces`. A
+`pins`, `recent`, `files` (only with a query) and `workspaces`. The
+default layout ends with `workspaces`, after the file sections. A
 place can override a module's `title` (`false` for none), `limit`,
 `show` (`always`, `blank` — only while the query is empty — or
 `query`), `style` (`list`, or `tiles` that wrap) and `keys` (whether

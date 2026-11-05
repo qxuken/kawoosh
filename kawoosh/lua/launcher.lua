@@ -260,7 +260,7 @@ launcher.module("files", { source = "files", show = "query" })
 launcher.module("prompt", { prompt = true, title = "new pane" })
 
 -- The layout when the setting names none; `init.lua` may set it too.
-launcher.layout = { "prompt", "here", "workspaces", "buffers", "plugins", "recent", "...", "files" }
+launcher.layout = { "prompt", "here", "buffers", "plugins", "recent", "...", "files", "workspaces" }
 
 -- ------------------------------------------------------------- layout
 
@@ -383,7 +383,7 @@ end
 -- split from left to *here*, and a matcher over the rest; a walk's
 -- rows the engine holds after them as they came (`picker.with_rows`),
 -- the paths listed before left out — not marked seen, the rows being
--- the engine's (`files` is the layout's last).
+-- the engine's (`files` follows the other file sources by default).
 local function loaded(sec, items, info)
   local kept = {}
   for _, it in ipairs(items or {}) do

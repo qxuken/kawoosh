@@ -27,13 +27,14 @@ The line is modules, named, and one setting places them left to right,
 ```lua
 statusline = {
   layout = { "mode", "recording", "path", "keys", "gap",
-             "...", "strip", "selections", "position", "percent" },
+             "...", "selections", "position", "percent", "strip" },
   path = "relative",
 }
 ```
 
-Those are the defaults, and the line they draw is the one there was,
-but for the path. kawoosh's own modules:
+Those are the defaults. Amended 2026-11-05: the panel's column marks
+are at the far right, with the buffer's position and percentage to
+their left. kawoosh's own modules:
 
 | module       | shows                                                        |
 |--------------|--------------------------------------------------------------|
