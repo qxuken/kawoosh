@@ -1410,10 +1410,10 @@ impl Settings {
                     "keys",
                     "gap",
                     "...",
-                    "strip",
                     "selections",
                     "position",
                     "percent",
+                    "strip",
                 ]
                 .iter()
                 .map(|s| Setting::Str(s.to_string()))

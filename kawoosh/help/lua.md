@@ -263,7 +263,7 @@ The line under the panes is modules, placed left to right by one list:
 ```lua
 statusline = {
   layout = { "mode", "recording", "path", "keys", "gap",
-             "...", "strip", "selections", "position", "percent" },
+             "...", "selections", "position", "percent", "strip" },
 }
 ```
 
