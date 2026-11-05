@@ -1564,6 +1564,13 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 || line.selected.iter().any(|r| r.end > len));
         let text_key: std::cell::Cell<Option<kui_native::Key>> = std::cell::Cell::new(None);
         spacer(ui, before);
+        // A blank caret line still declares its text origin. In a
+        // rendered row the gutter is inside the line, so the row's own
+        // origin is not the insertion point. kui keeps this zero-width
+        // run's layout as the empty line's IME anchor.
+        if text.is_empty() && line.access.0.is_some() {
+            ui.text("", base);
+        }
         // A span of the row's text in its look — the face it is drawn in
         // (an icon's family, a code span's, bold, italic) as well as its
         // colours: what the row draws, and what a bar caret is measured
