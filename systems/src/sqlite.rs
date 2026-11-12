@@ -190,7 +190,7 @@ pub fn query(
             out.changes += stmt.execute(bound.as_slice()).map_err(|e| e.to_string())?;
             continue;
         }
-        let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+        let columns: Vec<String> = stmt.column_names().map(|s| s.to_string()).collect();
         let n = columns.len();
         let mut rows = Vec::new();
         let mut truncated = false;
