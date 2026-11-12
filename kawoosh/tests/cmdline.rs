@@ -506,7 +506,7 @@ fn a_long_command_line_scrolls_sideways_under_the_caret() {
     // Unframed: keys go in with no frame between them, as keys faster
     // than frames — a paste, a script's keystrokes — do.
     let mut d = Drive(kui_native::testing::Drive::new(
-        kui_native::Core::new(),
+        kui_native::system::new_core(),
         400.0,
         300.0,
     ));
