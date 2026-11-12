@@ -1,2 +1,5 @@
 *.ttf filter=lfs diff=lfs merge=lfs -text
 *.otf filter=lfs diff=lfs merge=lfs -text
+# Release digests are over exact UTF-8/LF manifest bytes on every platform.
+kawoosh/tools/*.json text eol=lf
+kawoosh/grammars/*.json text eol=lf

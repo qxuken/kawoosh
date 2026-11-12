@@ -1058,6 +1058,7 @@ impl Kawoosh {
     /// The keyboard goes with it.
     fn open_subject(&mut self, key: &MomentKey, meta: &str) {
         match key.kind.as_str() {
+            crate::domains::MEMORY_KIND => self.domain_tab(&key.subject),
             "file" | "scratch" => {
                 let id = match self.buffer_of_subject(key) {
                     Some(id) => Some(id),

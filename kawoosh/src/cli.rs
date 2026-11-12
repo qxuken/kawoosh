@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 /// The verbs that are the CLI half (`main.rs`'s `shim`, `lsp`, `format`,
 /// `default-editor`, `test`).
-const VERBS: [&str; 10] = [
+const VERBS: [&str; 11] = [
     "edit",
     "ex",
     "keys",
@@ -25,6 +25,7 @@ const VERBS: [&str; 10] = [
     "pick",
     "lsp",
     "format",
+    "catalog",
     "default-editor",
     "test",
 ];

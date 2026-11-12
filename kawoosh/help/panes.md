@@ -174,10 +174,24 @@ the list instead.
 
 | setting | what |
 |---|---|
-| `layout.column_width` | a new column's width: `third`, `half` (the default), `two-thirds`, `full`, or a fraction |
+| `layout.column_width` | `auto` (the default): formatter/EditorConfig text width, else 110 characters; `96ch` for a fixed count, or `third`, `half`, `two-thirds`, `full`, or a viewport fraction |
 | `layout.scroll.center` | `always` keeps the focused column centred; `never` (the default) scrolls only as far as needed |
 | `layout.gap` | the gap between columns, in pixels |
 | `layout.ribbon_ms` | column and ribbon transition time in milliseconds (80 by default); `0` lands at once |
+
+Character widths reserve that many text cells; gutters and borders add their
+own room, and zooming the pane measures its cells again. A dragged column
+keeps its chosen viewport fraction. Project settings can set a fixed count:
+
+```lua
+-- .kawoosh/settings.lua
+return { layout = { column_width = "100ch" } }
+```
+
+With `auto`, `.editorconfig`'s `max_line_length` applies per file. Declarative
+formatter configs (Prettier, Biome, rustfmt, Ruff, StyLua, clang-format and
+Taplo) take precedence where they specify a width. Executable configs are
+not evaluated to discover a width.
 
 ## The dock
 

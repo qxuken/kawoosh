@@ -40,6 +40,7 @@ kawoosh.setting("search.context", { type = "integer", doc = "lines shown above a
 
 local VIEW = "search"
 local RESULTS = "*search*"
+local restored = {}
 -- In `<Tab>`'s order. The replacement is the search's, not a stage's:
 -- the stages keep the rest (`STAGED`).
 local FIELDS = { "find", "replace", "include", "exclude" }
@@ -103,7 +104,21 @@ end
 ---@field replaced? boolean a replace made the count stale
 ---@field shown? table what a replace takes: the pattern the results show
 ---@field max_walk? integer the most files a search walks, nil for the engine's 200 000
-local search = { stages = {}, cur = 1, kinds = {}, order = {}, gen = 0, root = nil, token = nil }
+local shared = { kinds = {}, order = {} }
+local states, current, current_id = {}, { stages = {}, cur = 1, gen = 0 }, nil
+setmetatable(current, { __index = shared })
+-- Keep the public module stable: its methods and registered kinds are
+-- shared, while queries, flags, results and field contents belong to a tab.
+local search = setmetatable({}, {
+  __index = function(_, key)
+    if shared[key] ~= nil then return shared[key] end
+    return current[key]
+  end,
+  __newindex = function(_, key, value)
+    if type(value) == "function" or key == "max_walk" then shared[key] = value
+    else current[key] = value end
+  end,
+})
 -- The module, for a config or a plugin (`kawoosh.search_ui.kind`).
 kawoosh.search_ui = search
 
@@ -284,6 +299,16 @@ local function named(name)
   end
 end
 
+local function result_name(id)
+  local base = id == 0 and "*search*" or ("*search:" .. id .. "*")
+  local name, n = base, 1
+  while named(name) do
+    name = "*search:" .. id .. "-" .. n .. "*"
+    n = n + 1
+  end
+  return name
+end
+
 -- The results into the panel (Decision 11): `*search*` where a pane
 -- shows it, else in a column of its own, the bar over it.
 local function panel(parts, opts)
@@ -298,7 +323,11 @@ end
 -- The answer into the results: each file under a header with its
 -- count, its matched lines with `search.context` around them, runs of
 -- lines that meet made one, a `⋯` between those that do not.
-local function show(answer, upto)
+local function show(answer, upto, owner)
+  if owner and owner ~= current then
+    owner.pending = { answer = answer, upto = upto }
+    return
+  end
   -- Floored: the parts take whole lines (a setting of 2.5 is two).
   local context = math.max(math.floor(tonumber(kawoosh.opt("search.context")) or 2), 0)
   local parts = {}
@@ -339,6 +368,8 @@ end
 ---@return nil
 function search.run(from)
   save_fields()
+  -- Async callbacks hold the tab they started in, even after a switch.
+  local search = current
   search.back, search.replaced = nil, nil
   from = from or search.cur
   if search.token then kawoosh.search_cancel(search.token) end
@@ -352,8 +383,8 @@ function search.run(from)
     if gen ~= search.gen then return end
     if i > #search.stages then
       search.running, search.token = nil, nil
-      search.remember()
-      return show(search.stages[#search.stages].answer, #search.stages)
+      if search == current then shared.remember() end
+      return show(search.stages[#search.stages].answer, #search.stages, search)
     end
     local st = search.stages[i]
     local prev = i > 1 and search.stages[i - 1].answer or nil
@@ -365,7 +396,7 @@ function search.run(from)
       st.answer, st.err = answer, why
       if not answer then
         search.running, search.token = nil, nil
-        return show(prev, i - 1)
+        return show(prev, i - 1, search)
       end
       step(i + 1)
     end, ctx)
@@ -474,8 +505,7 @@ kawoosh.on_memory_open(KIND, function(row) search.restore((row.meta or {}).stage
 -- The panel a session brought back — `*search*`, empty — filled again:
 -- the last search made in this workspace back in the bar, and run, so
 -- the results are as they are now; the bar alone when there was none.
-kawoosh.on_restore(function(name)
-  if name ~= RESULTS then return end
+local function restore_panel()
   search.root = fs.cwd()
   local ok, rows = pcall(kawoosh.memory, { kind = KIND, workspace = true, limit = 50 })
   rows = ok and rows or {}
@@ -485,6 +515,9 @@ kawoosh.on_restore(function(name)
   panel({ "nothing searched yet\n" }, { focus = false })
   load_fields()
   if search.stages[1].find ~= "" then search.run(1) end
+end
+kawoosh.on_restore(function(name)
+  if name == "*search*" or name:match("^%*search:[%d%-]+%*$") then restored[name] = true end
 end)
 
 -- ------------------------------------------------------------ opening
@@ -533,6 +566,7 @@ end
 ---@param one? boolean only the match at the results' caret
 ---@return nil
 function search.replace(one)
+  local owner = current
   local q = search.shown
   if not q then return kawoosh.echo("nothing to replace: ⏎ searches first") end
   -- The count goes stale only when something was replaced: a refused
@@ -542,7 +576,7 @@ function search.replace(one)
                            case = q.case, lines = q.lines, one = one or false,
                            with = kawoosh.field_text(VIEW, "replace") or "" },
                          function(done)
-                           if done and search.gen == gen then search.replaced = true end
+                           if done and owner.gen == gen then owner.replaced = true end
                          end)
 end
 
@@ -934,4 +968,53 @@ kawoosh.map("n", "g<Space>", "multi open", results)
 kawoosh.map("n", "<C-v>", "multi open beside", results)
 -- The bar's `<A-CR>` replaces every match; the results' the one at the
 -- caret, as their `<CR>` opens the one file (Decision 12).
-kawoosh.map("n", "<A-CR>", "search replace one", { buffer = RESULTS })
+kawoosh.map("n", "<A-CR>", "search replace one", { when = { PANE_FACT } })
+
+-- Field buffers are a view's, so save their text before changing the
+-- active tab. Results buffers have separate names and never alias a
+-- second tab's multibuffer. Reordering keeps the same stable IDs.
+kawoosh.on_tabs(function()
+  local alive, active = {}, nil
+  for _, tab in ipairs(kawoosh.tabs()) do
+    alive[tab.id] = true
+    if tab.active then active = tab.id end
+  end
+  if active == nil then return end
+  if active ~= current_id then
+    save_fields()
+    current.replacement = kawoosh.field_text(VIEW, "replace") or ""
+    if current_id ~= nil then states[current_id] = current end
+    current = states[active] or setmetatable({ stages = { new_stage("search") }, cur = 1, gen = 0 },
+                                           { __index = shared })
+    states[active], current_id = current, active
+    -- Session tab IDs are new. Adopt the result buffer actually restored
+    -- in this tab instead of interpreting its old ID as today's owner.
+    if not current.results then
+      for _, pane in ipairs(kawoosh.panes()) do
+        local name = pane.buffer and kawoosh.buf.name(pane.buffer)
+        if name and restored[name] then current.results = name; break end
+      end
+    end
+    RESULTS = current.results or result_name(active)
+    current.results = RESULTS
+    load_fields()
+    kawoosh.field_set(VIEW, "replace", current.replacement or "")
+    if restored[RESULTS] then
+      restored[RESULTS] = nil
+      restore_panel()
+    end
+    if current.pending then
+      local pending = current.pending
+      current.pending = nil
+      search.remember()
+      show(pending.answer, pending.upto)
+    end
+  end
+  for id, state in pairs(states) do
+    if not alive[id] then
+      state.gen = state.gen + 1
+      if state.token then kawoosh.search_cancel(state.token) end
+      states[id] = nil
+    end
+  end
+end)

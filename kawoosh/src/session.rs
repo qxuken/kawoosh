@@ -78,7 +78,7 @@ pub struct JumpData {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ColumnData {
     pub node: NodeData,
-    /// A preset's name, or a fraction (`Width::parse`).
+    /// Auto, a character count (`96ch`), a preset or fraction (`Width::parse`).
     pub width: String,
 }
 
@@ -172,6 +172,11 @@ impl Kawoosh {
     }
 
     fn pane_data(&self, pane: PaneId) -> PaneData {
+        // A connection attempt is process-local; restoring its read-only
+        // placeholder would leave a blank tab with no work to resume.
+        if self.is_connection_screen(pane) {
+            return PaneData::Gone;
+        }
         match self.layout.content(pane) {
             Some(Content::Editor(v)) => {
                 let view = &self.ed.views[v];
@@ -247,7 +252,7 @@ impl Kawoosh {
                 shell: p.shell.clone(),
             };
         }
-        let cwd = self.terms.map.get(&t).and_then(|t| t.cwd());
+        let cwd = self.terms.cwd(t);
         match self.terms.spawned.get(&t) {
             Some(s) if s.cmd.is_none() && s.tool.is_none() => PaneData::Terminal {
                 restore: true,
@@ -391,6 +396,7 @@ impl Kawoosh {
     /// could be restored (only terminals, or files that are gone).
     pub fn restore_session_data(&mut self, data: &SessionData) -> bool {
         let mut layout = Layout::new(Content::Lua(String::new()));
+        layout.continue_ids(&self.layout);
         layout.tabs.clear();
         layout.panes.clear();
         // The one blank scratch every pane left on an untouched one

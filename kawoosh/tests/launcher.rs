@@ -418,7 +418,21 @@ fn the_settings_say_what_a_bare_pane_is() {
     ex(&mut d, &mut app, "close");
     ex(&mut d, &mut app, "set layout.new_pane=dir");
     d.press(&mut app, "<C-w>v");
-    d.frame(&mut app);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while app
+        .ed
+        .buffer_of(app.focused_view().unwrap())
+        .language
+        .to_string()
+        != "dir"
+    {
+        assert!(
+            std::time::Instant::now() < end,
+            "directory listing did not open"
+        );
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     assert_eq!(
         app.ed
             .buffer_of(app.focused_view().unwrap())
@@ -848,7 +862,8 @@ fn a_long_path_wraps_inside_its_row() {
         .join("launcher_should_be_able_to_wrap_long_paths_even_with_no_break_in_them");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
-    let mut d = Drive::new(840.0, 600.0);
+    // Keep this an actually narrow pane with Auto's viewport sizing.
+    let mut d = Drive::new(420.0, 600.0);
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();

@@ -470,3 +470,23 @@ departed from the text above, and what day one found:
   `exit { opacity: 0 }` again (160 ms, the ribbon's), and a tab switch
   still does not cross-fade. Test:
   `a_closed_column_fades_and_a_tab_switch_does_not`.
+
+## Text widths (2026-11-12)
+
+`layout.column_width` now defaults to `auto`: the nearest supported declarative
+formatter config's preferred width, then the buffer's EditorConfig
+`max_line_length`, then 110 text characters. `"96ch"` explicitly fixes a column
+at 96 text cells and can be set in `.kawoosh/settings.lua`. Gutters, blame,
+marks and borders add their own width; the actual pane font supplies the cell
+size. A stacked column takes the widest of its panes' requirements.
+Character-based widths fit within the available viewport (subject to the
+existing minimum pane size); their logical `auto`/`96ch` value is kept,
+so widening the window restores the preferred text width. Data
+configs are cached with the EditorConfig sources and watched for changes;
+executable formatter configs are never evaluated to discover a width.
+
+Named viewport presets and numeric fractions keep their existing meaning.
+Dragging a column stores a fraction, so subsequent file-width changes do not
+replace a manual resize. Character widths step by ten characters with the
+width keys. Sessions keep `auto`, `96ch`, presets and fractions by their string
+spellings. Tree conversion and dock layout keep their fractional behavior.

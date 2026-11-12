@@ -1045,4 +1045,27 @@ its `comment` and `comment_block`, the builder checks them (one word,
 a pair of two), the manifest carries them, and kawoosh reads them into
 the language's defaults on listing and on install (`def_of`,
 `put_loaded`), and from `kawoosh.language(name, t)` and a
-`grammars.sources.NAME` table as well. The built-in copy is r7's.
+`grammars.sources.NAME` table as well. The built-in copy is r12's.
+
+## Configuration outlines (2026-11-12)
+
+The symbols picker uses configuration grammars' existing syntax trees too.
+Installed nginx, INI, Git config, SSH config and dotenv grammars gain fallback
+outline queries when their archive has neither `outline.scm` nor `tags.scm`.
+An installed/user query retains precedence. nginx blocks and location routes
+hold their directives in the outline tree; the other config grammars expose
+sections/hosts and keys or assignments. This works through the ordinary
+following symbols picker, including cancel restoring the original caret.
+
+Detection recognizes nginx's `.conf` and site snippets under an `nginx`
+directory, `.ssh/config`, `.git/config`, INI dotfiles such as `.editorconfig`
+and `.npmrc`, and `.env.*`. It only chooses a registered language; an
+arbitrary `.conf` remains unclaimed. Existing JSON, TOML, YAML, Lua and Bash
+queries cover those config families and shell startup dotfiles; additional
+JSON-style dotfiles include `.jshintrc` and `.jsbeautifyrc`. External grammars
+still use the normal installation flow. Matching queries ship in
+[grammar release r12](https://github.com/qxuken/kawoosh-grammars/releases/tag/r12),
+whose full 73-grammar manifest is pinned in this checkout. The five
+configuration archives carry `outline.scm` for all six targets. The bundled
+fallbacks keep older archives working; packaged and user queries retain
+precedence.

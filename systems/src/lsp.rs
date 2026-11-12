@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
+use std::sync::Arc;
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, after, never, select, unbounded};
@@ -497,6 +498,8 @@ pub enum Cmd {
     /// its new `settings` and rules as they come; a new command or
     /// arguments are the shell's to restart for.
     Servers(Vec<ServerDef>),
+    /// The same application-scoped environment providers as child jobs.
+    Environments(Arc<crate::project_env::Registry>),
     /// Each language's servers by name, in the order asked of them
     /// (`lsp.languages`, Decision 7): only these run for it, and a
     /// request goes to the first that answers it. A language not here
@@ -1966,6 +1969,7 @@ struct Server {
     /// The domain it runs on: the paths it speaks of are that host's,
     /// spelled `box:/…` on the way out (`Pool::emit_from`).
     domain: Option<String>,
+    environment_id: u64,
     /// The workspace root it was started in: what `load_all` walks.
     root: PathBuf,
     /// The languages whose files `load_all` sent it, or is sending.
@@ -2030,6 +2034,8 @@ impl Server {
         root: &Path,
         from_tx: Sender<(usize, FromServer)>,
         key: usize,
+        environment: crate::project_env::Environment,
+        environment_id: u64,
     ) -> Option<Self> {
         // On a host: through its domain, started in the root there
         // (docs/design/domains.md Decision 7).
@@ -2042,7 +2048,7 @@ impl Server {
                     line.push(' ');
                     line.push_str(&crate::io::shell_quote(a));
                 }
-                let script = crate::io::remote_script(dir, &[], &line, false);
+                let script = crate::io::remote_script(dir, &environment, &line, false);
                 match t.exec(&script) {
                     Some(r) => Launch::Channel(r.ok()?),
                     None => Launch::Command(t.remote_command(&script)),
@@ -2051,11 +2057,11 @@ impl Server {
             // One kawoosh installed is started from its directory, ahead
             // of the PATH (docs/design/lsp-installs.md).
             None => {
-                let program = crate::servers::find(&def.command)
+                let program = crate::servers::find_for(&def.command, def.package.as_ref())
                     .map(PathBuf::into_os_string)
                     .unwrap_or_else(|| def.command.clone().into());
-                let mut c = crate::io::command(program);
-                c.args(&def.args).current_dir(root);
+                let mut c = crate::io::command_in_env(program, &environment);
+                c.args(&def.args).current_dir(root).envs(environment);
                 Launch::Command(c)
             }
         };
@@ -2163,6 +2169,7 @@ impl Server {
             answers: def.answers.clone(),
             relay: def.relay.clone(),
             domain,
+            environment_id,
             root: root.to_path_buf(),
             loading: BTreeSet::new(),
             last_stderr: None,
@@ -2347,6 +2354,7 @@ impl Pace {
 }
 
 struct Pool {
+    environments: Arc<crate::project_env::Registry>,
     defs: Vec<ServerDef>,
     /// The servers running, by their root, command and arguments: two
     /// definitions run alike are one process.
@@ -2392,13 +2400,12 @@ struct Pool {
     progress_pace: Pace,
     progress_wake: WakeHandle,
     progress_at: crate::Alarm,
-    /// The commands that did not start, by the domain they were tried
-    /// on (None: here) — not tried again until a restart.
-    failed: std::collections::HashSet<(Option<String>, String)>,
-    /// When each command exited on its own lately, by domain as
+    /// Failed launches, isolated by root and resolved environment.
+    failed: std::collections::HashSet<(PathBuf, String, u64)>,
+    /// When each command exited on its own lately, by root/environment as
     /// `failed` is: past [`CRASHES`] in [`CRASH_WINDOW`] it is not
     /// started again until a restart.
-    crashes: HashMap<(Option<String>, String), Vec<std::time::Instant>>,
+    crashes: HashMap<(PathBuf, String, u64), Vec<std::time::Instant>>,
     /// A restart's commands, sent back once the shell gave its PATH.
     refreshed_tx: Sender<Vec<String>>,
     /// The watch on the workspaces of the servers that hear of files,
@@ -2438,6 +2445,7 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
     let tree = TreeWatch::spawn(Mode::native());
     let files_rx = tree.batches.clone();
     let mut pool = Pool {
+        environments: Arc::default(),
         defs: Vec::new(),
         keys: HashMap::new(),
         servers: Vec::new(),
@@ -2500,8 +2508,8 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
             }
             recv(refreshed_rx) -> commands => {
                 let Ok(commands) = commands else { continue };
-                pool.failed.retain(|(_, c)| !commands.contains(c));
-                pool.crashes.retain(|(_, c), _| !commands.contains(c));
+                pool.failed.retain(|(_, c, _)| !commands.contains(c));
+                pool.crashes.retain(|(_, c, _), _| !commands.contains(c));
                 pool.emit(Event::Restarted { commands });
             }
             recv(files_rx) -> batch => {
@@ -3182,14 +3190,25 @@ impl Pool {
         let root = self.root_of(&def, path);
         let k = (root.clone(), def.command.clone(), def.args.clone());
         if let Some(&key) = self.keys.get(&k) {
-            return self.servers[key].as_ref().map(|_| key);
+            if self.servers[key].is_some() {
+                return Some(key);
+            }
+            // A refused/crashed instance leaves no live process. Its
+            // failed environment below decides whether a retry is due.
+            self.keys.remove(&k);
         }
-        // A command failed on one host has not failed on another, or
-        // here: failures are the domain's and the command's.
-        let failed_as = (
-            crate::fs::domain_of(path).map(|(d, _)| d.to_string()),
-            def.command.clone(),
-        );
+        // The same command can be absent in one project and supplied by
+        // another project's environment. Resolve before consulting failures,
+        // and retry when provider configuration or its answer changes.
+        let environment = self.environments.resolve(&root);
+        let environment_id = {
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            environment.hash(&mut hash);
+            self.environments.generation().hash(&mut hash);
+            hash.finish()
+        };
+        let failed_as = (root.clone(), def.command.clone(), environment_id);
         if self.failed.contains(&failed_as) {
             return None;
         }
@@ -3210,13 +3229,20 @@ impl Pool {
                 })
                 .unwrap_or_default();
         }
-        let Some(mut server) = Server::spawn(&def, &root, self.from_tx.clone(), key) else {
+        let Some(mut server) = Server::spawn(
+            &def,
+            &root,
+            self.from_tx.clone(),
+            key,
+            environment,
+            environment_id,
+        ) else {
             self.failed.insert(failed_as);
             self.emit(Event::Unavailable {
                 language: def.language.clone(),
                 command: def.command.clone(),
                 why: None,
-                root: None,
+                root: Some(root.clone()),
             });
             return None;
         };
@@ -3362,6 +3388,7 @@ impl Pool {
                     }
                 }
             }
+            Cmd::Environments(environments) => self.environments = environments,
             Cmd::Stop { commands } => {
                 let stopped: Vec<usize> = self
                     .keys
@@ -3402,7 +3429,7 @@ impl Pool {
                 // No thread: the PATH as it was, and the restart done.
                 if let Err(e) = spawned {
                     log::warn!("lsp restart: no thread to ask the shell on: {e}");
-                    self.failed.retain(|(_, c)| !commands.contains(c));
+                    self.failed.retain(|(_, c, _)| !commands.contains(c));
                     self.emit(Event::Restarted { commands });
                 }
             }
@@ -4548,7 +4575,11 @@ impl Pool {
         }
         // And a completion gathered with it, or a request relayed to it.
         self.forget_waits(&[key]);
-        let crashed_as = (server.domain.clone(), server.name.clone());
+        let crashed_as = (
+            server.root.clone(),
+            server.name.clone(),
+            server.environment_id,
+        );
         let now = std::time::Instant::now();
         let times = self.crashes.entry(crashed_as.clone()).or_default();
         times.retain(|t| now.duration_since(*t) < CRASH_WINDOW);
@@ -4620,7 +4651,8 @@ impl Pool {
                     .to_string();
                 let (language, command) = (server.language.clone(), server.name.clone());
                 let root = Some(server.root.clone());
-                self.failed.insert((server.domain.clone(), command.clone()));
+                self.failed
+                    .insert((server.root.clone(), command.clone(), server.environment_id));
                 self.servers[key] = None;
                 self.forget_servers(&[key]);
                 self.emit(Event::Unavailable {

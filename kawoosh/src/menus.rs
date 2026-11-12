@@ -429,7 +429,7 @@ impl Kawoosh {
             edit("Select All", None, "select all").enabled(editing),
             MenuItem::separator(),
             run("Find…", None, "search").enabled(editing),
-            run("Find in Files…", None, "picker grep"),
+            run("Find in Files…", None, "search project"),
         ];
         let view_menu = vec![
             // The focused pane's text, as ⌘= ⌘- ⌘0; the window's under

@@ -102,6 +102,26 @@ pub struct Session {
 }
 
 impl Session {
+    /// Checks for exit without blocking. As with `wait`, a returned
+    /// exit status reaps the process and must not be waited on again.
+    pub fn try_wait(&mut self) -> io::Result<Option<Option<i32>>> {
+        #[cfg(unix)]
+        {
+            let mut status = 0;
+            // SAFETY: status is writable, and pid is this session's
+            // unreaped child. WNOHANG never blocks the caller.
+            let got = unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) };
+            if got == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok((got != 0).then(|| libc::WIFEXITED(status).then(|| libc::WEXITSTATUS(status))))
+        }
+        #[cfg(windows)]
+        {
+            Ok(self.child.try_wait()?.map(|s| s.code()))
+        }
+    }
+
     /// The process id.
     pub fn id(&self) -> u32 {
         #[cfg(unix)]

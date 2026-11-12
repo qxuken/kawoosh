@@ -95,7 +95,7 @@ local fs = kawoosh.fs
 ---@field ignored? boolean `<A-g>` flips `ctx.ignored` and loads (or searches) again: files git ignores, and hidden ones, too
 ---@field search? fun(query: string, job: kawoosh.picker.Job) a dynamic source: asked again as the query is typed, nothing until one is, its rows not filtered again
 ---@field query? fun(query: string, ctx: kawoosh.picker.Ctx): string? the text matched for what was typed; nil matches it as typed
----@field preview? fun(item: kawoosh.picker.Item, ctx: kawoosh.ViewCtx): kawoosh.picker.Preview the cursor's row beside the list; by default its path's, its buffer's or its `lines`
+---@field preview? fun(item: kawoosh.picker.Item, ctx: kawoosh.ViewCtx, done: fun(preview: kawoosh.picker.Preview)): kawoosh.picker.Preview the cursor's row beside the list; return a loading preview and call `done` for asynchronous IO; late answers for another request are discarded
 ---@field pick? fun(item: kawoosh.picker.Item, how?: kawoosh.picker.How) what taking a row does; by default its buffer shown, its path opened, its `run` run
 ---@field answer? fun(item: kawoosh.picker.Item): string? what a pick answers `kawoosh pick` from a shell; by default its path, its buffer's, its text
 ---@field keys? table<string, fun(item: kawoosh.picker.Item?, state: table)> keys of its own on the cursor's row (`<C-x>`): the item nil on an empty list, `state` the open picker's own
@@ -452,26 +452,36 @@ local function on_host(path)
   return path:match("^[%w_%.%-][%w_%.%-]+:[/~]") ~= nil
 end
 
-local function file_lines(path, around)
+local function file_lines(path, around, done)
   if on_host(path) then
     local c = host_cache[path]
     if not c then
-      local lines, why = (function()
-        local ok, st = pcall(fs.stat, path)
-        if not ok then return nil, "not on disk" end
-        if st.is_dir then return nil, "a directory" end
-        if st.size > PREVIEW_MAX then return nil, "too big to preview" end
-        local rok, text = pcall(fs.read, path)
-        if not rok then return nil, "not text" end
-        if text:find("\0", 1, true) then return nil, "binary" end
-        text = kawoosh.secrets.mask_text(text, path)
-        local out = {}
-        for line in (text .. "\n"):gmatch("(.-)\n") do out[#out + 1] = line end
-        if out[#out] == "" then out[#out] = nil end
-        return out
-      end)()
-      c = { lines = lines, why = why }
+      c = { waiting = {} }
       host_cache[path] = c
+      local function finish(lines, why)
+        c.lines, c.why = lines, why
+        local waiting = c.waiting
+        c.waiting = nil
+        for _, answer in ipairs(waiting) do answer(lines, why) end
+      end
+      fs.stat(path, function(st)
+        if not st then return finish(nil, "not on disk") end
+        if st.is_dir then return finish(nil, "a directory") end
+        if st.size > PREVIEW_MAX then return finish(nil, "too big to preview") end
+        fs.read(path, function(text)
+          if not text then return finish(nil, "not text") end
+          if text:find("\0", 1, true) then return finish(nil, "binary") end
+          text = kawoosh.secrets.mask_text(text, path)
+          local out = {}
+          for line in (text .. "\n"):gmatch("(.-)\n") do out[#out + 1] = line end
+          if out[#out] == "" then out[#out] = nil end
+          finish(out)
+        end)
+      end)
+    end
+    if c.waiting then
+      c.waiting[#c.waiting + 1] = done
+      return nil, "loading…"
     end
     return c.lines, c.why
   end
@@ -500,7 +510,15 @@ end
 -- The preview of an item with a path, or a buffer, or lines of its
 -- own: `{ title =, lines =, from =, at = }` — `from` the number of the
 -- first line shown, `at` the line to light.
-local function preview_of(item)
+local function text_preview(item, title, lines, why)
+  if not lines then return { title = title, lines = {}, note = why } end
+  local from = math.max((item.line or 1) - 10, 1)
+  local window = {}
+  for i = from, math.min(#lines, from + PREVIEW_LINES) do window[#window + 1] = lines[i] end
+  return { title = title, lines = window, from = from, at = item.line, path = item.path }
+end
+
+local function preview_of(item, _, done)
   if item.preview then return item.preview end
   local lines, why, title
   if item.lines then
@@ -521,15 +539,13 @@ local function preview_of(item)
     if ext and picker.images[ext:lower()] then
       return { title = title, lines = {}, image = item.path }
     end
-    lines, why = file_lines(item.path)
+    lines, why = file_lines(item.path, nil, function(got, note)
+      done(text_preview(item, title, got, note))
+    end)
   else
     return { title = item.text, lines = { item.sub or "" } }
   end
-  if not lines then return { title = title, lines = {}, note = why } end
-  local from = math.max((item.line or 1) - 10, 1)
-  local window = {}
-  for i = from, math.min(#lines, from + PREVIEW_LINES) do window[#window + 1] = lines[i] end
-  return { title = title, lines = window, from = from, at = item.line, path = item.path }
+  return text_preview(item, title, lines, why)
 end
 
 -- The preview's lines coloured: `kawoosh.highlight` asked once per
@@ -1935,8 +1951,20 @@ kawoosh.view(VIEW, function(ctx)
         P.preview_for = key
         P.pv_top, P.pv_acc = 1, 0
         local fn = P.src.preview or preview_of
-        local ok, got = pcall(fn, hit.item, ctx)
-        P.preview = ok and got or { title = "preview failed", lines = { tostring(got) } }
+        local this, delivered = P, false
+        this.preview_gen = (this.preview_gen or 0) + 1
+        local gen = this.preview_gen
+        -- An asynchronous preview may answer after another row, after
+        -- reopening the picker, or after leaving and returning to this
+        -- same row. Only this request can fill its preview.
+        local ok, got = pcall(fn, hit.item, ctx, function(answer)
+          if P ~= this or this.preview_for ~= key or this.preview_gen ~= gen then return end
+          delivered = true
+          this.preview = answer
+        end)
+        if not delivered then
+          P.preview = ok and got or { title = "preview failed", lines = { tostring(got) } }
+        end
       end
       pv = P.preview
     else
@@ -3143,11 +3171,16 @@ picker.source("domains", {
   },
   items = function()
     local items = {}
+    local recent, max = {}, 0
+    for _, row in ipairs(kawoosh.memory { kind = "domain", limit = 500 }) do
+      recent[row.subject] = (recent[row.subject] or 0) + kawoosh.memory_rank.rank(row, kawoosh.now())
+      max = math.max(max, recent[row.subject])
+    end
     for _, d in ipairs(kawoosh.domains() or {}) do
       local state = (DOMAIN_STATE[d.state] or d.state) .. (d.open > 0 and (" · " .. d.open .. " open") or "")
       items[#items + 1] = {
         text = d.name, what = d.label, state = state, name = d.name, dropped = d.state == "dropped",
-        boost = d.state == "up" and 0.5 or 0,
+        boost = (d.state == "up" and 0.5 or 0) + (max > 0 and 0.5 * (recent[d.name] or 0) / max or 0),
         preview = { title = d.name .. " — " .. d.label, lines = {
           d.means, "", "found in " .. d.from, d.name .. ":~ in a new tab on <CR>",
         } },

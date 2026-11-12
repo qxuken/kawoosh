@@ -284,12 +284,14 @@ const LAST_HERE: &str = "last run here";
 #[derive(Clone, Debug, PartialEq)]
 pub struct Step {
     pub cmd: String,
+    pub argv: Option<Vec<String>>,
     pub cwd: PathBuf,
 }
 
 impl Step {
     pub fn new(cmd: &str, cwd: PathBuf) -> Self {
         Step {
+            argv: None,
             cmd: cmd.to_string(),
             cwd,
         }
@@ -315,10 +317,14 @@ pub(crate) fn steps_of_json(v: Option<&serde_json::Value>) -> Vec<Step> {
     };
     list.iter()
         .filter_map(|s| {
-            Some(Step::new(
+            let mut step = Step::new(
                 s.get("cmd")?.as_str()?,
                 PathBuf::from(s.get("cwd")?.as_str()?),
-            ))
+            );
+            step.argv = s
+                .get("argv")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            Some(step)
         })
         .collect()
 }
@@ -326,7 +332,13 @@ pub(crate) fn steps_of_json(v: Option<&serde_json::Value>) -> Vec<Step> {
 fn steps_json(steps: &[Step]) -> serde_json::Value {
     steps
         .iter()
-        .map(|s| serde_json::json!({ "cmd": s.cmd, "cwd": s.cwd.display().to_string() }))
+        .map(|s| {
+            let mut value = serde_json::json!({ "cmd": s.cmd, "cwd": s.cwd.display().to_string() });
+            if let Some(argv) = &s.argv {
+                value["argv"] = serde_json::json!(argv);
+            }
+            value
+        })
         .collect::<Vec<_>>()
         .into()
 }
@@ -381,6 +393,7 @@ impl Run {
 
 #[derive(Default)]
 pub struct Compile {
+    argv_prompt: Option<ArgvPrompt>,
     /// The runs whose buffers are open, the last started last.
     pub runs: Vec<Run>,
     /// How many commands were started: the last one's process id.
@@ -401,6 +414,35 @@ pub struct Compile {
     /// The repository's packages' commands (Decision 9), walked on a
     /// job: a walk of every entry is too long for a frame.
     pub packages: Packages,
+}
+
+struct ArgvPrompt {
+    field: kawoosh_editor::ViewId,
+    step: Step,
+    by: By,
+    accepted: Option<String>,
+}
+
+impl Compile {
+    pub(crate) fn validate_prompt(&mut self, field: Option<kawoosh_editor::ViewId>) {
+        if let Some(field) = field
+            && self.argv_prompt.as_ref().is_some_and(|p| p.field != field)
+        {
+            self.argv_prompt = None;
+        }
+    }
+
+    pub(crate) fn accepted_prompt(&mut self, line: &str) {
+        if let Some(prompt) = &mut self.argv_prompt {
+            prompt.accepted = line
+                .strip_prefix("compile ")
+                .filter(|line| {
+                    line.strip_prefix(&prompt.step.cmd)
+                        .is_some_and(|tail| tail.is_empty() || tail.starts_with(' '))
+                })
+                .map(str::to_string);
+        }
+    }
 }
 
 /// What a packages walk starts from ([`deduce::packages`]): the
@@ -818,7 +860,7 @@ impl Kawoosh {
             })
             .collect();
         let rows = |i: usize, f: &deduce::Found| self.compile_kind_rows(i, f);
-        deduce::deduce(
+        let mut project = deduce::deduce(
             &dir,
             &markers,
             &deduce::Kinds {
@@ -826,7 +868,23 @@ impl Kawoosh {
                 plugins: &plugins,
                 rows: &rows,
             },
-        )
+        );
+        // Context providers keep their own asynchronous discovery. This
+        // works on a domain too, without probing its files on the UI.
+        for (i, (_, definition)) in self.scripting.compile_kinds.iter().enumerate() {
+            let Some(definition) = definition.as_ref().filter(|d| d.context) else {
+                continue;
+            };
+            let found = deduce::Found {
+                kind: deduce::Kind::Plugin(i),
+                dir: dir.clone(),
+                file: dir.join(&plugins[i].name),
+                programs: definition.programs.clone(),
+            };
+            project.commands.extend(self.compile_kind_rows(i, &found));
+            project.found.push(found);
+        }
+        project
     }
 
     /// Plugin kind `i`'s commands for the file found (compile.md Decision
@@ -837,7 +895,11 @@ impl Kawoosh {
             return Vec::new();
         };
         let rows = if def.dynamic {
-            let text = kawoosh_systems::fs::read(&f.file).unwrap_or_default();
+            let text = if def.context {
+                String::new()
+            } else {
+                kawoosh_systems::fs::read(&f.file).unwrap_or_default()
+            };
             let answer = self.scripting.rt.as_ref().map(|rt| {
                 rt.compile_kind_rows(
                     name,
@@ -860,6 +922,13 @@ impl Kawoosh {
         rows.into_iter()
             .map(|r| {
                 let mut d = Deduced::new(r.cmd, f, &r.why);
+                d.argv = r.argv;
+                if let Some(cwd) = r.cwd {
+                    d.cwd = PathBuf::from(cwd);
+                }
+                if let Some(file) = r.file {
+                    d.file = PathBuf::from(file);
+                }
                 d.needs = r.needs;
                 d.detail = r.detail;
                 d
@@ -1314,7 +1383,7 @@ impl Kawoosh {
         let mut steps = Vec::new();
         for l in lines {
             match self.resolve_line(l, seen, within.clone(), here)? {
-                Line::Run(cmd, cwd) => steps.push(Step { cmd, cwd }),
+                Line::Run(cmd, cwd) => steps.push(Step::new(&cmd, cwd)),
                 Line::Chain(s) => steps.extend(s),
                 Line::Finish(name) => {
                     return Err(format!("{name} wants arguments: a step has to be whole"));
@@ -1496,6 +1565,35 @@ impl Kawoosh {
     /// [`Self::compile`], run in `here` when it says one (`:compile
     /// here LINE`, [`Self::compile_line_at`]).
     pub fn compile_at(&mut self, line: &str, here: Option<&Path>) {
+        if let Some(mut prompt) = self.compile.argv_prompt.take()
+            && here.is_none()
+            && prompt.accepted.as_deref() == Some(line)
+            && let Some(tail) = line.strip_prefix(&prompt.step.cmd)
+        {
+            match shell_words::split(tail) {
+                Ok(words) => {
+                    prompt
+                        .step
+                        .argv
+                        .as_mut()
+                        .expect("argv prompt")
+                        .extend(words);
+                    prompt.step.cmd = line.to_string();
+                    self.compile_steps(vec![prompt.step], Some(prompt.by));
+                }
+                Err(error) => {
+                    let full = format!("compile {line}");
+                    self.compile_prompt(&full, full.len());
+                    if let Some(field) = self.ed.prompt_view() {
+                        prompt.field = field;
+                        prompt.accepted = None;
+                        self.compile.argv_prompt = Some(prompt);
+                    }
+                    self.ed.message = format!("arguments: {error}");
+                }
+            }
+            return;
+        }
         match self.compile_line_at(line, here) {
             Ok(Line::Run(cmd, cwd)) => {
                 let by = self.line_by(line);
@@ -1519,6 +1617,7 @@ impl Kawoosh {
     /// The prompt open on `line`, the caret at byte `caret`: a command
     /// to finish — a compile's arguments, a diagram's label.
     pub(crate) fn compile_prompt(&mut self, line: &str, caret: usize) {
+        self.compile.argv_prompt = None;
         self.open_cmdline();
         self.ed.set_prompt_text(line);
         if let Some(v) = self.ed.prompt_view() {
@@ -1578,7 +1677,9 @@ impl Kawoosh {
             Bare::Again(steps) => self.compile_steps(steps, None),
             Bare::Deduced(d) => {
                 let from = self.compile_from(&d.file);
-                self.compile_by(&d.cmd, d.cwd, Some(By::Project));
+                let mut step = Step::new(&d.cmd, d.cwd);
+                step.argv = d.argv;
+                self.compile_steps(vec![step], Some(By::Project));
                 self.ed.message = format!("{} — from {from} (<leader>cC for the rest)", d.cmd);
             }
             Bare::Nothing => self.ed.message = NOTHING.into(),
@@ -1606,7 +1707,7 @@ impl Kawoosh {
         let cmd = cmd.as_str();
         let cwd = first.cwd.clone();
         // The memory's: a chain's steps with it, a line's none.
-        let kept = if steps.len() > 1 {
+        let kept = if steps.len() > 1 || first.argv.is_some() {
             steps.clone()
         } else {
             Vec::new()
@@ -1740,7 +1841,10 @@ impl Kawoosh {
         self.compile.started += 1;
         let proc_id = self.compile.started;
         let spec = ProcSpec {
-            cmd: ProcCmd::Shell(step.cmd),
+            cmd: step
+                .argv
+                .map(ProcCmd::Argv)
+                .unwrap_or_else(|| ProcCmd::Shell(step.cmd)),
             cwd: Some(step.cwd),
             stdin: None,
             whole: false,
@@ -1924,7 +2028,15 @@ impl Kawoosh {
         // What the caret's server says can run there, asked now and
         // added as it answers.
         let ask = self.runnables_at();
-        if rows.is_empty() && ask.is_none() && self.compile.packages.walking.is_none() {
+        if rows.is_empty()
+            && ask.is_none()
+            && self.compile.packages.walking.is_none()
+            && !self
+                .scripting
+                .compile_kinds
+                .iter()
+                .any(|(_, d)| d.as_ref().is_some_and(|d| d.context))
+        {
             self.ed.message = NOTHING.into();
             return;
         }
@@ -1946,6 +2058,29 @@ impl Kawoosh {
                 token,
             });
         }
+    }
+
+    /// Cached plugin discovery landed. Rebuild only while this picker
+    /// is open; its query, selection and calling pane remain in place.
+    pub(crate) fn refresh_compile_offer(&mut self) {
+        let active = self.scripting.rt.as_ref().is_some_and(|rt| {
+            rt.eval("local s = kawoosh.picker.state(); return s ~= nil and s.source == 'compile'")
+                .is_ok_and(|s| s == "true")
+        });
+        if !active {
+            return;
+        }
+        let server: Vec<_> = self
+            .compile
+            .offer
+            .iter()
+            .filter(|o| o.server)
+            .cloned()
+            .collect();
+        self.compile.offer = self.compile_rows();
+        self.compile.offer.extend(server);
+        self.publish_offer();
+        self.run_lua_source("compile", "kawoosh.picker.reload()");
     }
 
     /// The lines the compile picker offers, as the command line
@@ -2100,7 +2235,15 @@ impl Kawoosh {
     /// The row a command the project's files offer is.
     fn deduced_offer(&self, d: Deduced) -> Offer {
         let from = self.compile_from(&d.file);
+        let direct = d.argv.map(|argv| Step {
+            cmd: d.cmd.clone(),
+            cwd: d.cwd.clone(),
+            argv: Some(argv),
+        });
         let mut o = Offer::of(&d.cmd, d.cwd, &from, &d.why);
+        if let Some(step) = direct {
+            o.steps.push(step);
+        }
         o.needs = d.needs;
         o.args_at = d.args_at;
         o.detail = d.detail;
@@ -2271,13 +2414,22 @@ impl Kawoosh {
         };
         // A chain's steps are no one line to finish (Decision 22); a
         // named one's prompt is its name.
-        if edit && o.name.is_none() && !(o.chain.is_empty() && o.steps.is_empty()) {
+        let direct = o.steps.len() == 1 && o.steps[0].argv.is_some();
+        if edit && o.name.is_none() && !(o.chain.is_empty() && (o.steps.is_empty() || direct)) {
             self.ed.message = "a chain of steps: nothing to finish (r runs it again)".into();
             return;
         }
         if edit || o.needs {
             let (line, caret) = o.prompt();
             self.compile_prompt(&line, caret);
+            if direct && let Some(field) = self.ed.prompt_view() {
+                self.compile.argv_prompt = Some(ArgvPrompt {
+                    field,
+                    step: o.steps[0].clone(),
+                    by: o.by,
+                    accepted: None,
+                });
+            }
             return;
         }
         if !o.chain.is_empty() {

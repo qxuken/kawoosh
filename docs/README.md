@@ -68,6 +68,8 @@ commits; 70 integration test files and 31 Lua test scripts.
 - [wrap.md](design/wrap.md): soft wrap.
 - [terminal-keys.md](design/terminal-keys.md): what a terminal pane's
   keys send.
+- [terminal-cleanup-freeze.md](design/terminal-cleanup-freeze.md): safe
+  Windows cleanup-output probes and the freeze they have not reproduced.
 
 ### Panes and the window
 
@@ -113,6 +115,10 @@ commits; 70 integration test files and 31 Lua test scripts.
 - [lsp-rules.md](design/lsp-rules.md): a language's server, switched
   per project.
 - [lsp-servers.md](design/lsp-servers.md): a server for every language.
+- [tool-catalog.md](design/tool-catalog.md): server and formatter recipes
+  with their own releases, offline snapshot and explicit refresh.
+- [typescript-native.md](design/typescript-native.md): the native
+  TypeScript server versus its newer compiler API, before an opt-in trial.
 - [lsp-installs.md](design/lsp-installs.md): installs, and qd.
 - [completion.md](design/completion.md): when completion asks, how it
   shows (a ghost, a popup), what it offers, snippets; designed, built
@@ -126,6 +132,7 @@ commits; 70 integration test files and 31 Lua test scripts.
 - [compile.md](design/compile.md): compile commands, deduced, and their
   runs.
 - [vcs.md](design/vcs.md): hunks, review, blame, history, worktrees.
+- [mise.md](design/mise.md): mise task discovery and project environments through bundled plugin hooks.
 
 ### Buffers with a shape
 
@@ -143,6 +150,8 @@ commits; 70 integration test files and 31 Lua test scripts.
 
 ### Look and settings
 
+- [memory-footprint.md](design/memory-footprint.md): controlled startup
+  measurements and the cost of loading the bundled fonts.
 - [themes.md](design/themes.md): a registry, a dark and a light, the
   pane.
 - [fonts.md](design/fonts.md): the fonts pane and lab.

@@ -238,6 +238,32 @@ pub fn find(command: &str) -> Option<PathBuf> {
     find_in(&root()?, command)
 }
 
+/// A recipe's own executable. Dependencies of another installed tool
+/// must not supply a same-named program (notably TypeScript 5's `tsc`
+/// bundled beside typescript-language-server versus the native server).
+/// A recipe without a package keeps the general installed-program lookup.
+pub fn find_for(command: &str, package: Option<&Package>) -> Option<PathBuf> {
+    find_for_in(&root()?, command, package)
+}
+
+pub fn find_for_in(root: &Path, command: &str, package: Option<&Package>) -> Option<PathBuf> {
+    let Some(package) = package else {
+        return find_in(root, command);
+    };
+    if Path::new(command).components().count() > 1 {
+        return None;
+    }
+    let dir = package.dir(root);
+    read_record(&dir)?;
+    let names = program_names(command);
+    bin_dirs(package.manager, &dir).into_iter().find_map(|bin| {
+        names
+            .iter()
+            .map(|name| bin.join(name))
+            .find(|path| path.is_file())
+    })
+}
+
 /// [`find`] under `root`.
 pub fn find_in(root: &Path, command: &str) -> Option<PathBuf> {
     if Path::new(command).components().count() > 1 {
@@ -943,6 +969,38 @@ mod tests {
         assert_eq!(needs(&p, |_| true), None);
         let py = Package::new(Manager::Pip, &["x"], &[]);
         assert_eq!(needs(&py, |p| p == "uv"), None, "uv is enough");
+    }
+
+    #[test]
+    fn native_typescript_uses_its_own_managed_package() {
+        let root =
+            std::env::temp_dir().join(format!("kawoosh-native-ts-package-{}", std::process::id()));
+        let legacy = Package::new(
+            Manager::Npm,
+            &["typescript-language-server", "typescript@5"],
+            &[],
+        );
+        let native = Package::new(Manager::Npm, &["typescript@7.0.2"], &[]);
+        let program = if cfg!(windows) { "tsc.cmd" } else { "tsc" };
+        let install = |package: &Package| {
+            let dir = package.dir(&root);
+            let bin = dir.join("node_modules/.bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::write(bin.join(program), "stub").unwrap();
+            std::fs::write(dir.join(RECORD), serde_json::to_string(package).unwrap()).unwrap();
+            bin.join(program)
+        };
+        let legacy_tsc = install(&legacy);
+        assert_eq!(find_in(&root, "tsc"), Some(legacy_tsc.clone()));
+        assert_eq!(
+            find_for_in(&root, "tsc", Some(&native)),
+            None,
+            "an uninstalled native server must not launch the legacy compiler"
+        );
+        let native_tsc = install(&native);
+        assert_eq!(find_for_in(&root, "tsc", Some(&native)), Some(native_tsc));
+        assert_eq!(find_for_in(&root, "tsc", Some(&legacy)), Some(legacy_tsc));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// A program is found in an installed package's bin, by its record;

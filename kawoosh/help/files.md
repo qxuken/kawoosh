@@ -40,8 +40,11 @@ see [disk usage](#disk-usage).
 are removed, so read the list first. A deleted entry leaves the listing
 at once, even a folder of many gigabytes: it is renamed aside and
 removed in the background, and copies are made in the background too,
-so the window never waits on the disk. The count of changes appears
-when the last of it is done. A folder that cannot be removed whole —
+so the window never waits on the disk. A removal that takes longer than
+a moment shows a corner progress line in both `dir` and the disk-usage
+pane: selected entries processed and elapsed time. A selected directory
+counts as one entry while its contents are removed. The count of changes
+appears when the last of it is done. A folder that cannot be removed whole —
 a program running from it, a file another program holds — comes back
 under its own name with what is left, and an error says how many files
 and one of them: free it and delete it again. If two lines claim the same name,
@@ -80,6 +83,11 @@ unless you have edits in it. Entries are coloured by their git status:
 untracked and added green, modified in the command colour, a conflict
 red, and what git ignores faint — `.git` too, and a directory git
 ignores as a whole, not one that merely holds ignored files.
+The previous colours appear immediately while Git is asked again in the
+background. Local writes inside an open listing's tree, ignore-rule
+changes and repository changes refresh its colours without reopening it.
+On a remote host, `<C-l>` also rechecks deep external writes that its
+named-path polling cannot see.
 `dir.vcs_enabled = false` leaves the listings plain.
 
 ### Permissions and owners

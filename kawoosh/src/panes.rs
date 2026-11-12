@@ -589,8 +589,8 @@ impl Kawoosh {
 
     /// The strip (scrolling-tab.md Decisions 3 and 4): one `scroll_x`
     /// row per tab — keyed by the tab's `id`, so each keeps the offset
-    /// kui retains for it wherever it moves along the row — a keyed column per `Column` at its width in
-    /// viewport fractions, a draggable gap after each — the last
+    /// kui retains for it wherever it moves along the row — a keyed column per `Column` at its text width or
+    /// viewport fraction, a draggable gap after each — the last
     /// column's too, at its right edge.
     ///
     /// **The ribbon is what moves.** The row declares a `transition`,
@@ -638,7 +638,45 @@ impl Kawoosh {
         let widths: Vec<f32> = strip
             .columns
             .iter()
-            .map(|c| (c.width.fraction() * vw).round().max(120.0))
+            .enumerate()
+            .map(|(i, c)| {
+                let mut panes = Vec::new();
+                c.node.panes(&mut panes);
+                panes
+                    .into_iter()
+                    .map(|pane| {
+                        let pf = self.pane_face(ui, pane);
+                        let cell =
+                            if matches!(self.layout.content(pane), Some(Content::Terminal(_))) {
+                                pf.grid.0
+                            } else {
+                                pf.cell.0
+                            };
+                        let handle = if i + 1 == n { gap } else { 0.0 };
+                        let (preferred, chrome) =
+                            self.view_of(pane).map_or((110, 2.0 + handle), |v| {
+                                let id = self.ed.views[v].buffer;
+                                let b = &self.ed.buffers[id];
+                                let preferred =
+                                    self.ed
+                                        .setting_in(id, "max_line_length")
+                                        .and_then(kawoosh_editor::Setting::as_int)
+                                        .filter(|n| *n > 0)
+                                        .unwrap_or(110) as u32;
+                                let gutter = rows::gutter_w(
+                                    pf.cell.0,
+                                    b.line_count(),
+                                    self.marks.any(id),
+                                    self.ed.blame_width(id),
+                                );
+                                // The final splitter lives inside the column.
+                                // Its handle is extra room beside the text too.
+                                (preferred, gutter + 2.0 + handle)
+                            });
+                        c.width.pixels(vw, preferred, cell, chrome)
+                    })
+                    .fold(120.0, f32::max)
+            })
             .collect();
         let on_show = strip
             .columns
@@ -1388,7 +1426,35 @@ impl Kawoosh {
         // Kitty's images on its screen (`term_images.rs`).
         let shown = self.term_image_boxes(ui, id);
         laps.to(ui.core(), "terminal: screen copy");
-        let Some(term) = self.terms.map.get(&id) else {
+        let Some(term) = self
+            .terms
+            .map
+            .get(&id)
+            .filter(|_| !self.terms.preparing(id))
+        else {
+            // A reserved terminal is already the focused pane while its
+            // project environment loads. Its keys must reach the input
+            // queue rather than the editor sink that was here before.
+            let tag = Msg::Term { pane };
+            let sink = ui.with_keyed(
+                "term",
+                NodeSpec::column()
+                    .fill()
+                    .pad(pad)
+                    .clip()
+                    .on_key(tag.clone())
+                    .key_up()
+                    .modifier_keys()
+                    .on_focus(tag.clone())
+                    .on_click(tag)
+                    .focus_ring(kui_native::Color::TRANSPARENT)
+                    .cursor(kui_native::CursorShape::Text)
+                    .label("terminal"),
+                |_| {},
+            );
+            if focused {
+                self.focus_sink(ui, sink);
+            }
             laps.end(ui.core());
             return;
         };

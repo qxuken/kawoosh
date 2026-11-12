@@ -358,6 +358,18 @@ function kawoosh.fs.watch(name, paths, fn)
   kawoosh._fs_watch(name, paths or {})
 end
 
+-- Local trees, using the engine's native recursive/coalesced watcher.
+-- Build, VCS administration and ignored paths are excluded as for LSP
+-- workspace watches. A lost event batch names its root for a refresh.
+---@param name string the plugin's set
+---@param roots? string[] local directory roots; nil stops the set
+---@param fn? fun(changed: string[])
+---@return nil
+function kawoosh.fs.watch_tree(name, roots, fn)
+  kawoosh._watches[name] = roots and fn or nil
+  kawoosh._fs_watch_tree(name, roots or {})
+end
+
 function kawoosh._watched(name, paths)
   local fn = kawoosh._watches[name]
   if not fn then return end
@@ -382,6 +394,21 @@ function kawoosh._settings()
   for _, fn in ipairs(kawoosh._settings_hooks) do
     local ok, err = timed(fn)
     if not ok then kawoosh.echo("on_settings: " .. tostring(err)) end
+  end
+end
+
+kawoosh._tabs_hooks = {}
+-- The active tab or the strip's membership/order changed. tabs() is
+-- already current; its stable `id` identifies tab-local plugin state.
+---@param fn fun()
+---@return nil
+function kawoosh.on_tabs(fn)
+  kawoosh._tabs_hooks[#kawoosh._tabs_hooks + 1] = fn
+end
+function kawoosh._tabs()
+  for _, fn in ipairs(kawoosh._tabs_hooks) do
+    local ok, err = timed(fn)
+    if not ok then kawoosh.echo("on_tabs: " .. tostring(err)) end
   end
 end
 
@@ -1134,6 +1161,8 @@ end
 ---@field payloads? table<integer, string> by line from 1: what the line is, to the plugin (with `on_write`)
 ---@field restore? boolean a session brings its pane back, empty, for `kawoosh.on_restore`
 ---@field pane? integer|"column" shown in pane N of the tab in front, or a new column beside the focused pane
+---@field focus? boolean default true; false with pane N fills that pane in any tab without moving focus, ignoring a closed pane
+---@field if_buffer? integer fill only if the destination still shows this buffer, for a delayed request
 
 -- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, on_change=fn,
 -- read_only=bool, language=, reuse=handle, line=n, private=bool,
@@ -1170,7 +1199,7 @@ function kawoosh.buf.open_scratch(t)
   if t.on_change then kawoosh._changers[t.name] = t.on_change end
   kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
     t.reuse, t.line, t.show ~= false, t.on_change ~= nil, t.private or false, t.about, t.payloads,
-    t.restore or false, t.pane)
+    t.restore or false, t.pane, t.focus ~= false, t.if_buffer)
 end
 
 -- ---------------------------------------------------------------- fields
@@ -1653,7 +1682,7 @@ local READS = {
   -- the editor's snapshot
   buf = "editor", node = "editor", lsp = "editor", diagnostics = "editor",
   mode = "editor", message = "editor", pane = "editor", pane_size = "editor",
-  panes = "editor", tabs = "editor", holds = "editor", can = "editor",
+  panes = "editor", tabs = "editor", holds = "editor", can = "editor", workspace = "editor",
   language = "editor", image = "editor", _selection_radius = "editor",
   compile_offer = "editor", domains = "editor", _change = "editor",
   -- the working directory, as of the last publish (the editor's

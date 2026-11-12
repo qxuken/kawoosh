@@ -550,6 +550,24 @@ still hide every file there.
 ignores): an include narrows, and `src` with its `*.log` back in would
 widen.
 
+### 15. Find and project search belong to the tab
+
+Decided 2026-11-12: buffer Find and the project search are tab-local,
+including two tabs in the same workspace. Each tab keeps its Find
+pattern, highlight visibility and prompt history; each project search
+keeps its pipeline, flags, include/exclude fields, replacement, results
+and result count. The dock uses the active tab's search context.
+Reordering the strip keeps these attached to stable tab IDs; closing a
+tab drops its state, so a later tab starts empty.
+
+The editor exposes its active Find as before and swaps inactive states
+at the shell's tab synchronization point. Lua's `kawoosh.tabs()` gives
+each tab a lifetime `id`, and `kawoosh.on_tabs` observes changes to the
+active tab or strip. Project results use separate multibuffers per tab;
+an asynchronous answer updates its originating pipeline and is drawn
+when that tab is active. Registered pipeline kinds remain shared.
+⌘F opens buffer Find; the existing ⌘⇧F opens project search.
+
 ## Built
 
 2026-09-25, in four commits: the engine (`editor/src/multi.rs`,

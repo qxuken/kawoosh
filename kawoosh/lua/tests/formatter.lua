@@ -28,17 +28,26 @@ kawoosh.test.eq(kawoosh.buf.text(), "IF (A) {\nB;\n}\n", "returned at once")
 kawoosh.test.eq(kawoosh.message(), "formatted with upper (2 edits)")
 
 -- Later: `done` from a process's end.
+local later_exits = 0
 kawoosh.formatter("later", {
   languages = { "typescript" },
   run = function(_, text, done)
-    kawoosh.spawn("true", {
-      on_exit = function() done(text .. "// later\n") end,
+    -- Run a known command directly: the user's shell may be PowerShell,
+    -- where `true` is no command and a profile can delay its startup.
+    kawoosh.spawn({ "sh", "-c", "exit 0" }, {
+      on_exit = function(code)
+        later_exits = later_exits + 1
+        kawoosh.test.eq(code, 0, "the formatter's background job succeeded")
+        done(text .. "// later\n")
+      end,
     })
   end,
 })
 kawoosh.format(nil, { with = "later" })
 kawoosh.wait(function() return kawoosh.buf.text():find("// later", 1, true) ~= nil end,
   nil, "the slow formatter's answer")
+kawoosh.frame(2)
+kawoosh.test.eq(later_exits, 1, "the background job completes exactly once")
 
 -- A failure, said; the text as it was.
 kawoosh.formatter("bad", {

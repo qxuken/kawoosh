@@ -442,7 +442,6 @@ local function open_drives(fresh)
   local drives = fs.drives()
   local name = PREFIX .. DRIVES
   dir.state[name] = { dir = DRIVES, ids = {} }
-  local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
   kawoosh.buf.open_scratch {
     name = name, text = table.concat(drives, "\n"), language = "dir",
     read_only = true, reuse = reuse,
@@ -482,12 +481,22 @@ function dir.open(path, from, fresh, reread)
     return
   end
   local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
-  -- The keyboard's last ask is the one that lands: a `-` pressed twice
-  -- while the first read is out shows the second's directory.
-  dir.nav = (dir.nav or 0) + 1
-  local nav = dir.nav
+  -- The last ask in this pane lands, even if another tab is focused
+  -- when its listing arrives. Different panes can read independently.
+  local pane = kawoosh.pane()
+  -- A command issued from a launcher or terminal has a resident editor
+  -- view as its command context. That buffer is not what this pane shows.
+  local origin_buffer
+  for _, p in ipairs(kawoosh.panes()) do
+    if p.pane == pane then origin_buffer = p.buffer; break end
+  end
+  local reuse = (origin_buffer and listed() and not fresh and not kawoosh.buf.modified()) and origin_buffer or nil
+  local origin_workspace = kawoosh.workspace()
+  dir.nav = type(dir.nav) == "table" and dir.nav or {}
+  local nav = (dir.nav[pane] or 0) + 1
+  dir.nav[pane] = nav
   listing(path, function(lines, meta, waits)
-    if dir.nav ~= nav then return end
+    if dir.nav[pane] ~= nav then return end
     if not lines then return kawoosh.echo(tostring(meta)) end
     -- The listing to reuse is still one, and not edited meanwhile.
     if reuse and (not lists(reuse) or kawoosh.buf.modified(reuse)) then reuse = nil end
@@ -501,13 +510,16 @@ function dir.open(path, from, fresh, reread)
       on_write = dir.write,
       on_change = dir.changed,
       reuse = reuse,
+      pane = origin_buffer and pane or nil,
+      focus = origin_buffer == nil,
+      if_buffer = origin_buffer,
       line = line_of(lines, from),
       payloads = payloads_of(dir.state[name]),
     }
     kawoosh.buf.annotate(meta, name, COLUMN)
     -- A directory attended, for the jumps (`dirs.lua`); a listing read
     -- again is not a visit.
-    if not reread and kawoosh.dirs then kawoosh.dirs.visit(path) end
+    if not reread and kawoosh.dirs then kawoosh.dirs.visit(path, origin_workspace) end
     -- Not in the snapshot until the next frame: named to the watch.
     if dir.watch_sync then dir.watch_sync(path) end
     if dir.decorate then dir.decorate(name, path) end
@@ -1535,6 +1547,7 @@ function dir.states_of(d, files)
   return states
 end
 
+local decoration_watches = {}
 -- Asks the backend that owns `d` about listing `name` and paints its
 -- lines, read as they are when the answer comes (edited meanwhile or
 -- not).
@@ -1543,9 +1556,7 @@ end
 ---@return nil
 function dir.decorate(name, d)
   if kawoosh.opt("dir.vcs_enabled") == false or not kawoosh.vcs then return end
-  kawoosh.vcs.root(d, function(r)
-    if not r or not r.backend.status then return end
-    r.backend.status(r.root, function(files)
+  kawoosh.vcs.listing_status(d, function(files)
       if not files then return end
       local states = dir.states_of(d, files)
       local h
@@ -1553,6 +1564,33 @@ function dir.decorate(name, d)
         if kawoosh.buf.name(x) == name then h = x end
       end
       if not h then return end
+      -- A directory's mtime alone misses writes to existing files and
+      -- ignore rules above it. Watch the entries and the paths the
+      -- backend reported as well; filesystem work stays on the watcher.
+      local paths, seen = {}, {}
+      local function watch(p)
+        if p and not seen[p] then seen[p] = true; paths[#paths + 1] = p end
+      end
+      watch(d)
+      for _, line in ipairs(kawoosh.buf.lines(h)) do watch(fs.join(d, line:gsub("/$", ""))) end
+      for _, f in ipairs(files) do watch(f.path); watch(fs.parent(f.path)) end
+      local at = d
+      while at do
+        watch(fs.join(at, ".gitignore"))
+        watch(fs.join(at, ".git"))
+        watch(fs.join(at, ".git", "info", "exclude"))
+        watch(fs.join(at, ".git", "config"))
+        local parent = fs.parent(at)
+        if parent == at then break end
+        at = parent
+      end
+      local key = table.concat(paths, "\0")
+      if decoration_watches[d] ~= key then
+        decoration_watches[d] = key
+        kawoosh.fs.watch("dir vcs:" .. d, paths, function()
+          kawoosh.vcs.listing_changed(d, true)
+        end)
+      end
       local spans, at = {}, 0
       for _, line in ipairs(kawoosh.buf.lines(h)) do
         local entry = line:gsub("/$", "")
@@ -1561,7 +1599,6 @@ function dir.decorate(name, d)
         at = at + #line + 1
       end
       kawoosh.buf.paint("vcs", spans, h)
-    end, { under = d, untracked = "normal" })
   end)
 end
 
@@ -1581,6 +1618,7 @@ end
 -- on disk — an entry made, removed, renamed by anything — is read again
 -- where it is, unless the listing has edits of its own (its plan comes
 -- first; `<C-l>` asks).
+local tree_watch_roots
 ---@param also? string a directory watched too: one whose listing is not in the snapshot yet
 ---@return nil
 function dir.watch_sync(also)
@@ -1599,6 +1637,36 @@ function dir.watch_sync(also)
   -- let go here: every listing opened or read again comes this way.
   for d in pairs(dir.walks) do
     if not seen[d] or not sizing(d) then forget(d) end
+  end
+  for d in pairs(decoration_watches) do
+    if not seen[d] then
+      kawoosh.fs.watch("dir vcs:" .. d, nil)
+      decoration_watches[d] = nil
+    end
+  end
+  local local_dirs = {}
+  if kawoosh.opt("dir.vcs_enabled") ~= false then
+    for _, d in ipairs(dirs) do
+      if not d:match("^[%w_%.%-][%w_%.%-]+:[/~]") then local_dirs[#local_dirs + 1] = d end
+    end
+  end
+  table.sort(local_dirs)
+  local trees = table.concat(local_dirs, "\0")
+  if trees ~= tree_watch_roots then
+    tree_watch_roots = trees
+    kawoosh.fs.watch_tree("dir vcs tree", #local_dirs > 0 and local_dirs or nil, function(changed)
+      for _, l in ipairs(open_listings()) do
+        local relevant = false
+        for _, path in ipairs(changed) do
+          local down, up = fs.relative(path, l.dir), fs.relative(l.dir, path)
+          if (down and down:sub(1, 2) ~= "..") or (up and up:sub(1, 2) ~= "..") then relevant = true; break end
+        end
+        if relevant then
+          kawoosh.vcs.listing_changed(l.dir)
+          dir.decorate(PREFIX .. l.dir, l.dir)
+        end
+      end
+    end)
   end
   if #dirs == 0 then return kawoosh.fs.watch("dir", nil) end
   kawoosh.fs.watch("dir", dirs, function(changed)

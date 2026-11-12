@@ -191,6 +191,8 @@ end
 -- `<leader>ik` (`:man beside`) on a word: its page in a column of its
 -- own beside the pane, the keys going to it, rendered to the column's
 -- width — not to the pane it was asked from.
+-- Give the destination a distinct width: Auto can make both panes 110ch.
+kawoosh.opt("layout.column_width", "half")
 kawoosh.cmd("e " .. file)
 kawoosh.frame()
 kawoosh.test.eq(#kawoosh.panes(), 1, "one pane to start from")

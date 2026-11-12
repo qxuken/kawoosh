@@ -15,6 +15,7 @@ globset = "0.4"
 memchr = "2"
 text-buffer.workspace = true
 unicode-width.workspace = true
+serde_json.workspace = true
 
 # A test's own CPU time (`modal.rs`'s one-pass bound), which other
 # processes on a loaded machine do not stretch as they do the clock.

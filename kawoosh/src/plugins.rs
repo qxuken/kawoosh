@@ -21,6 +21,7 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:lists", include_str!("../lua/lists.lua")),
     ("kawoosh:dirs", include_str!("../lua/dirs.lua")),
     ("kawoosh:tools", include_str!("../lua/tools.lua")),
+    ("kawoosh:mise", include_str!("../lua/mise.lua")),
     ("kawoosh:launcher", include_str!("../lua/launcher.lua")),
     ("kawoosh:themes", include_str!("../lua/themes.lua")),
     // After themes: its cards set the sample in the theme on show.

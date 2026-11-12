@@ -326,6 +326,9 @@ fn main() -> anyhow::Result<()> {
         Some("format") => {
             std::process::exit(kawoosh::format_cli::run(&args[1..]));
         }
+        Some("catalog") => {
+            std::process::exit(kawoosh::tool_catalog::run(&args[1..]));
+        }
         // `kawoosh default-editor on`: the system's default for the
         // text types, only when asked (docs/design/default-editor.md).
         Some("default-editor") => {

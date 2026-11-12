@@ -73,6 +73,20 @@ fn settle(d: &mut Drive, app: &mut Kawoosh) {
     }
 }
 
+/// These listing tests compare both columns' drawn rows at once.
+fn side_by_side(app: &mut Kawoosh) {
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "layout.column_width",
+        kawoosh_editor::Setting::Str("half".into()),
+    );
+    if let Some(strip) = app.layout.tab_mut().strip_mut() {
+        for column in &mut strip.columns {
+            column.width = kawoosh::layout::Width::Half;
+        }
+    }
+}
+
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     posix_shell();
     d.keys(app, ":");
@@ -360,11 +374,12 @@ fn compile_mode_streams_and_jumps_to_locations() {
     d.extension("lua", ext).unwrap();
     app.set_cwd(&dir);
     d.frame(&mut app);
-    ex(
-        &mut d,
-        &mut app,
-        "compile printf 'error at src/a.rs:3:1\\nwarning src/b.rs:2\\n'; exit 1",
-    );
+    let command = if cfg!(windows) {
+        r#"compile cmd.exe /d /s /c "echo error at src/a.rs:3:1&echo warning src/b.rs:2&exit /b 1""#
+    } else {
+        "compile printf 'error at src/a.rs:3:1\\nwarning src/b.rs:2\\n'; exit 1"
+    };
+    ex(&mut d, &mut app, command);
     let mut done = false;
     for _ in 0..300 {
         d.frame(&mut app);
@@ -389,7 +404,12 @@ fn compile_mode_streams_and_jumps_to_locations() {
     d.keys(&mut app, "]q");
     let v = app.focused_view().unwrap();
     let buf = app.ed.buffer_of(v);
-    assert!(buf.path.as_ref().unwrap().ends_with("src/b.rs"));
+    assert!(
+        buf.path.as_ref().unwrap().ends_with("src/b.rs"),
+        "second location: {:?}; message: {}; compile output: {text:?}",
+        buf.path,
+        app.ed.message
+    );
     assert_eq!(buf.line_of(app.ed.views[v].sels.primary().head), 1);
     d.keys(&mut app, "]q");
     assert_eq!(app.ed.message, "no more locations");
@@ -858,7 +878,18 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     assert_eq!(app.cwd, dir);
     // And a terminal opened now starts there (by the directory's own
     // name: an MSYS shell on Windows spells the temp directory `/tmp`).
-    ex(&mut d, &mut app, "term pwd; sleep 1");
+    #[cfg(windows)]
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.shell",
+        kawoosh_editor::Setting::Str("cmd.exe".into()),
+    );
+    let command = if cfg!(windows) {
+        "term cd & ping -n 2 127.0.0.1 > nul"
+    } else {
+        "term pwd; sleep 1"
+    };
+    ex(&mut d, &mut app, command);
     let t = app.term_of_focused().unwrap();
     let there = dir.file_name().unwrap().to_string_lossy().into_owned();
     let mut seen = String::new();
@@ -1967,6 +1998,7 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
     std::fs::write(dir.join("b/sub/inner.txt"), "inner").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
+    side_by_side(&mut app);
     d.frame(&mut app);
     ex(
         &mut d,
@@ -2160,6 +2192,7 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     std::fs::write(dir.join("b/file.txt"), "from b, longer").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
+    side_by_side(&mut app);
     d.frame(&mut app);
     let read = |p: &str| std::fs::read_to_string(dir.join(p)).unwrap();
     ex(
@@ -2272,6 +2305,7 @@ fn a_file_replaced_by_a_copy_is_kept_until_the_copy_arrives() {
     std::fs::write(dir.join("b/f.txt"), "from b").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
+    side_by_side(&mut app);
     d.frame(&mut app);
     let read = |p: &str| std::fs::read_to_string(dir.join(p)).unwrap();
     let replace = |d: &mut Drive, app: &mut Kawoosh| {
@@ -2916,6 +2950,7 @@ fn a_pasted_line_yanked_again_is_still_its_entry() {
     std::fs::write(dir.join("dir2/file2.txt"), "two!").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
+    side_by_side(&mut app);
     d.frame(&mut app);
     ex(
         &mut d,
@@ -2995,6 +3030,7 @@ fn renames_and_moves_swap_without_writing_over_anything() {
     std::fs::write(dir.join("c/x.txt"), "from c").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
+    side_by_side(&mut app);
     d.frame(&mut app);
     let read = |p: &str| std::fs::read_to_string(dir.join(p)).unwrap();
     // one ↔ two, by editing the names.
@@ -3876,6 +3912,7 @@ fn a_moment_recalled_keeps_its_entry() {
     std::fs::write(dir.join("a/a2.txt"), "two!").unwrap();
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = app_with_lua(&mut d, "t", "");
+    side_by_side(&mut app);
     d.frame(&mut app);
     ex(
         &mut d,
@@ -4304,6 +4341,7 @@ fn a_write_deletes_and_copies_off_the_frame() {
     let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
+    side_by_side(&mut app);
     d.frame(&mut app);
     ex(
         &mut d,
@@ -4862,10 +4900,12 @@ fn a_fractional_search_context_is_whole_lines() {
     );
     let shown: String = app
         .ed
-        .buffers
-        .iter()
-        .map(|(_, b)| b.text())
-        .find(|t| t.contains("row 15"))
+        .multis
+        .keys()
+        .map(|id| &app.ed.buffers[*id])
+        // The search field also contains "row 15"; inspect its results.
+        .find(|b| b.name == "*search*" || b.name.starts_with("*search:"))
+        .map(|b| b.text())
         .unwrap_or_default();
     assert!(
         shown.contains("row 13") && shown.contains("row 17"),

@@ -87,10 +87,10 @@ return {
 - Reading: `current()`, `list()`, `name()`, `path()`, `language()`, `indent()` (`tabstop`, `shiftwidth`, `expandtab` and `unit`, one indent's text, as the buffer's language and `.editorconfig` say), `comment_tokens()` (`line`, the token `gc` writes, and `block`, the pair, each absent where the language has none), `modified()`, `text()`, `lines()`, `line(n)`, `line_count()`, `lines_in(from, to)`, `cursor()` (the caret's `offset`, `line`, `col`), `selections()`.
 - Changing: `insert(offset, text)`, `replace(from, to, text)`, `set_text(text)`, `edits({ { from, to, text }, ... }[, buffer][, { carets = { ... } }])` (several edits as one undo step; `carets` places the selections after them — `{ edit = i, at = k }` `k` bytes into edit `i`'s text, `{ at = o }` an offset of the text before, moved by the edits, one of them `primary = true`), `type(text)` (typed at every caret), `set_cursor(offset, h, { top =, center =, jump = })` (`jump = true`: the move goes on the tab's [jumps](editing.md#jumps) however near), `set_selections(...)`.
 - Showing: `show(buffer)` puts a buffer in the focused pane, `close(buffer)` closes it as `:bd` does. `header({ view =, height =, field = }[, buffer])` draws your view over the buffer's text in every pane that shows it, one pane with the view's fields on top — the project search's bar over its results: the keys are on the view's field while one is focused, on the text otherwise, `<C-S-j>` and `<C-S-k>` moving them down and up (to `field` the first time); `nil` takes it off.
-- `open_scratch { name = ..., text = ..., on_write = fn, read_only = ..., language = ... }` makes a buffer that is not a file. With `on_write(lines)`, `:w` hands you its lines. A session brings it back by its name for `kawoosh.on_restore` to fill — with `on_write`, or `restore = true` for a page that writes nothing. It is shown in the focused pane; `pane = N` shows it in pane N of the tab in front instead (the keys go there), `pane = "column"` in a column of its own beside.
+- `open_scratch { name = ..., text = ..., on_write = fn, read_only = ..., language = ... }` makes a buffer that is not a file. With `on_write(lines)`, `:w` hands you its lines. A session brings it back by its name for `kawoosh.on_restore` to fill — with `on_write`, or `restore = true` for a page that writes nothing. It is shown in the focused pane; `pane = N` shows it in pane N of the tab in front instead (the keys go there), `pane = "column"` in a column of its own beside. With an explicit `pane = N`, `focus = false` fills that pane in any tab without moving the keyboard; a closed pane is ignored. `if_buffer = H` also requires that the pane still show buffer H, so a late asynchronous result leaves a repurposed pane alone.
 - `annotate(notes)` draws dim text after lines, and `paint(set, spans)` colours ranges over the syntax colours — a span's colour is a role (`accent`), a token (`keyword`, `link`), `ansi:N` or `#rrggbb`, with `bold`, `italic`, `underline` or `strike` before it (`"bold keyword"`) or alone (`"underline"`) to set the text's style too. `annotate(notes, buffer, { align = true })` makes the buffer's notes a column: each starts past the buffer's widest line, as a listing's sizes do — or, when the pane is too narrow for that and the widest note, where that note still ends inside it, no further in than half the pane: a longer line wraps before the column, or, unwrapped, has its note past its own end.
 
-`kawoosh.open(path, { line = ..., col = ..., split = "vsplit" | "split" | "tab" })` opens a file in an editor pane. `kawoosh.pane()` is the pane the keyboard was in when the command at hand ran (a command's `ctx.pane`), and `kawoosh.pane_size(pane)` an editor pane's text column as last drawn — `width`, `height` in px, `cols`, `rows` in cells — for what renders to fit it, nil until the pane is laid out. `kawoosh.panes()` lists the tab in front's panes in order, `{ pane =, buffer = }` each (`buffer` nil for a pane that is not an editor's), and `kawoosh.tabs()` every tab, `{ index =, cwd =, active =, title =, kind =, name =, path =, modified =, bell = }` each — `title` the label the tab strip draws, `kind` and `name` what its focused pane shows; `:tab goto N` goes to one.
+`kawoosh.open(path, { line = ..., col = ..., split = "vsplit" | "split" | "tab" })` opens a file in an editor pane. `kawoosh.pane()` is the pane the keyboard was in when the command at hand ran (a command's `ctx.pane`), and `kawoosh.pane_size(pane)` an editor pane's text column as last drawn — `width`, `height` in px, `cols`, `rows` in cells — for what renders to fit it, nil until the pane is laid out. `kawoosh.panes()` lists the tab in front's panes in order, `{ pane =, buffer = }` each (`buffer` nil for a pane that is not an editor's), and `kawoosh.tabs()` every tab, `{ id =, index =, cwd =, active =, title =, kind =, name =, path =, modified =, bell = }` each — `id` stays with that tab through reordering for its lifetime (not across sessions), `title` is the label the tab strip draws, `kind` and `name` say what its focused pane shows; `:tab goto N` goes to one. `kawoosh.on_tabs(fn)` calls `fn()` after the active tab or the strip's membership/order changes, with `tabs()` already current. The active tab also supplies the context when the dock has focus.
 
 ## The syntax tree
 
@@ -214,6 +214,30 @@ kawoosh.compile_kind("mix", {
 
 A builtin kind's name — `cargo`, `node`, `just`, `nu`, `make`, `cmake`, `go`, `python`, `zig` — puts yours in its place, and `kawoosh.compile_kind("make", false)` turns that kind off.
 
+For asynchronous or remote discovery, use `context = true` instead of
+markers. `commands(ctx)` receives the current directory, returns cached
+rows and can start a process with `kawoosh.spawn`. Call
+`kawoosh.compile_changed()` when the cache changes; an open compile
+picker refreshes in place. A row can supply its own `cwd` and source
+`file`, and optional `argv` executes it directly without a shell (kept
+for recent commands and reruns). The bundled `mise.lua` is a working example.
+An argv row's argument prompt keeps its original argv/cwd while its
+command prefix is unchanged; quotes group appended literal arguments.
+Editing the prefix instead makes it an ordinary shell command.
+
+`kawoosh.project_environment(name, { command = { "program", "env", "--json" }, markers = { "project.toml" }, watch = { "project.toml" }, env = {} })`
+registers a directory-scoped child environment provider. It prints a JSON
+object of strings and runs on workers before tools, compile/plugin
+children and language servers start. Explicit child variables win.
+`project_environment_changed(name, dir)` invalidates its cache; a nil
+definition removes the provider. Providers and their caches belong to
+one window.
+
+For optional background discovery, `kawoosh.spawn(argv, { quiet = true,
+on_stderr = ..., on_done = ... })` keeps startup errors in its callbacks
+without replacing the editor's current message. Ordinary spawns retain
+their visible startup error.
+
 ## Version control
 
 A buffer's hunks ([vcs](vcs.md)) are the difference between its text and a *base* — the editor diffs them; a backend only says what the base is. `kawoosh.buf.base(text, label[, buffer[, { head = }]])` gives a buffer its base (`kawoosh.buf.base(nil)` takes it away; `head`, the text the base is itself read against — HEAD's under the index — makes what is staged), `kawoosh.buf.hunks([buffer])` reads the hunks back once diffed — each `{ kind = "added" | "modified" | "deleted", line, end_line, old_line, old_end, old = { … } }`, lines from 1, ends exclusive — and `kawoosh.diff(old, new)` diffs two texts at once, the same shape. `kawoosh.buf.blame(rows[, buffer])` puts the blame column on from rows `{ line, count, label, rev, summary }`; `kawoosh.buf.blame_at(line)` reads one back.
@@ -241,12 +265,15 @@ kawoosh.vcs.register("jj", {
 `kawoosh.fs` works on paths as you would write them (`~/x`, `../y`), relative to the working directory, and on a remote host's paths too (see [remote](remote.md)). A failed operation raises an error naming the path.
 
 - `read(path)`, `write(path, text)`, `exists`, `is_file`, `is_dir`, `stat`, `create(path, is_dir)`, `rename(a, b)`, `copy(a, b)`, `remove(path)`.
-- `list(path)` lists a folder now; `list(path, fn)` reads it in the background and calls `fn(entries)`. `copy(a, b, fn)` and `remove(path, fn)` do the same for a change: made in the background, then `fn(true)`, or `fn(nil, why)`. `walk(root, fn)` lists every file under a folder as git sees it, in the background.
+- `list(path)` lists a folder now; `list(path, fn)` reads it in the background and calls `fn(entries)`. `stat(path, fn)` and `read(path, fn)` read metadata and text in the background too, calling `fn(value)` or `fn(nil, why)`. Use these callback forms for remote paths so a slow connection leaves the window responsive. `copy(a, b, fn)` and `remove(path, fn)` do the same for a change: made in the background, then `fn(true)`, or `fn(nil, why)`. `walk(root, fn)` lists every file under a folder as git sees it, in the background.
 - `stat(path)` says `is_dir`, `is_file`, `is_symlink`, `size` and `modified`, and where the disk has them `mode` (the permission bits), `perms` (`rwxr-xr-x`), `uid` and `gid` — with `user` and `group`, their names, on this machine.
 - `chmod(paths, mode, opts, fn)` and `chown(paths, owner, opts, fn)` set a mode (`755`, `u+x,go-w`) or an owner (`me`, `me:staff`, `:staff`) on one path or a list, `opts.recursive` on everything under a folder too (links there left alone). The answer is `{ done =, failed = { { path =, why = }, … } }` — returned now, or handed to `fn` from the background when you give one; a mode or owner that does not read returns `nil, why` and changes nothing.
 - Path helpers: `join`, `parent`, `basename`, `relative`, `expand`, `short`, `home`, `cwd`, `chdir`.
 - `watch(name, paths, fn)` calls `fn(changed)` when the files or folders change; `watch(name, nil)` stops it.
+- `watch_tree(name, roots, fn)` watches local directory trees through the engine's native coalesced workspace watcher; ignored/build/admin paths are omitted. `watch_tree(name, nil)` stops it. An overflow reports its root so the plugin can refresh it.
 - `read_json(path)` reads a file as JSON now and answers `value` — or `nil, why`, never an error; `read_json(path, fn)` reads and parses it in the background and calls `fn(value)` or `fn(nil, why)`. Only a regular file is read, and one over 16 MiB, or holding more than 250,000 values, is refused.
+
+For asynchronous work that records a memory visit, capture `local workspace = kawoosh.workspace()` before starting it and pass `workspace = workspace` to `kawoosh.remember { kind = ..., subject = ..., signals = ... }` when it completes. The accessor reads the published workspace without touching disk; leaving `workspace` out of `remember` uses the current workspace when the message is handled.
 
 `kawoosh.json.decode(text)` and `kawoosh.json.encode(value[, { pretty = true }])` turn JSON into Lua data and back, answering `nil, why` when they cannot. An object is a table with string keys, an array a list carrying `kawoosh.json.array` as its metatable, so `[]` stays an array when written back (`setmetatable({}, kawoosh.json.array)` makes an empty one). `null` inside an array is `kawoosh.json.null`, so the items keep their places; an object's `null` member is simply not there. Written, a table with keys `1..n` is an array, one with string keys an object (its keys sorted), an empty one `{}`; a table with both, a list with a hole, `nan`, a function or a table holding itself is refused, naming where (`$.a[2]`). Read, `//` and `/* */` comments and a comma before `]` or `}` are passed over, as VS Code allows in its own files; nesting deeper than 128 is refused.
 

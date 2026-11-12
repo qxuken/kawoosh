@@ -207,6 +207,13 @@ impl Kawoosh {
         let mut strays: Vec<String> = Vec::new();
         let mut mistakes: Vec<(String, String)> = Vec::new();
         for name in names {
+            // Kept as a separate recipe: Vue still talks to the legacy
+            // tsserver bridge, while plain TS/JS can explicitly opt in.
+            if name == "typescript-native"
+                && self.ed.settings.bool("lsp.typescript.native") != Some(true)
+            {
+                continue;
+            }
             let t = said.and_then(|t| t.get(&name)).filter(|v| v.is_table());
             let field = |key: &str| t.and_then(|t| t.get(key));
             let base = self
@@ -275,7 +282,7 @@ impl Kawoosh {
         let own: HashSet<String> = out.iter().map(|d| d.language.clone()).collect();
         for d in &mut out {
             let name = d.language.clone();
-            let beside = !d.when.is_empty();
+            let beside = !d.when.is_empty() || d.language == "typescript-native";
             d.languages
                 .retain(|l| beside || *l == name || !own.contains(l));
             d.files = d
@@ -330,6 +337,21 @@ impl Kawoosh {
                     .collect(),
                 _ => Default::default(),
             };
+        if self.ed.settings.bool("lsp.typescript.native") == Some(true) {
+            for language in ["typescript", "tsx", "javascript"] {
+                order.entry(language.into()).or_insert_with(|| {
+                    std::iter::once("typescript-native".to_string())
+                        .chain(
+                            self.lsp
+                                .defs
+                                .iter()
+                                .filter(|d| !d.when.is_empty() && d.serves(language))
+                                .map(|d| d.language.clone()),
+                        )
+                        .collect()
+                });
+            }
+        }
         // A row's `with`: its languages' files have those servers beside
         // it, after it, where `lsp.languages` says nothing of them
         // (lsp-servers.md Decision 9).
@@ -362,6 +384,15 @@ impl Kawoosh {
     /// The name of the server for `language` — the running table's, else
     /// the one it would be when switched back on — or the language.
     pub(crate) fn lsp_name_of(&self, language: &str) -> String {
+        if self
+            .lsp
+            .order
+            .get(language)
+            .and_then(|names| names.first())
+            .is_some_and(|name| name == "typescript-native")
+        {
+            return "typescript-native".into();
+        }
         // The language's own server: one of its name, else one that
         // serves it unconditionally — not a linter beside it.
         let all = || self.lsp.defs.iter().chain(self.scripting.servers.iter());
@@ -596,24 +627,22 @@ impl Kawoosh {
     }
 }
 
-/// The builtin servers: `lua/servers.lua`'s rows, each an `lsp.NAME`
+/// The released tool catalog's servers, each an `lsp.NAME`
 /// table with its `name`, in the order a language's servers are asked
 /// (docs/design/lsp-servers.md Decision 1). Read once.
 pub(crate) fn builtin() -> Vec<ServerDef> {
     static DEFS: std::sync::OnceLock<Vec<ServerDef>> = std::sync::OnceLock::new();
     DEFS.get_or_init(|| {
-        let rows = kawoosh_lua::eval_data("servers.lua", include_str!("../lua/servers.lua"))
-            .expect("servers.lua reads");
-        let rows = rows.as_list().expect("servers.lua returns a list");
+        let rows = &crate::tool_catalog::effective().servers;
         rows.iter()
             .map(|row| {
                 let name = row.get("name").and_then(Setting::as_str);
                 let mut def = ServerDef {
-                    language: name.expect("a servers.lua row has a name").to_string(),
+                    language: name.expect("a catalog server has a name").to_string(),
                     ..Default::default()
                 };
                 let mistakes = fold(&mut def, row);
-                assert!(mistakes.is_empty(), "servers.lua: {mistakes:?}");
+                assert!(mistakes.is_empty(), "tool catalog: {mistakes:?}");
                 def
             })
             .collect()
@@ -622,7 +651,7 @@ pub(crate) fn builtin() -> Vec<ServerDef> {
 }
 
 /// `t`, what a server is as `lsp.NAME` says it — a row of
-/// `lua/servers.lua`, a `kawoosh.lsp.server`'s table, the settings' —
+/// The tool catalog, a `kawoosh.lsp.server`'s table, the settings' —
 /// over `def`: `cmd`, `args`, `roots`, `languages`, `when`, `install`,
 /// `settings` and `answers`, each one said replacing what was. The rules
 /// (`enabled`, `load_all`…) are the settings' alone (lsp-rules.md). What
@@ -868,10 +897,81 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
 mod tests {
     use super::*;
 
-    /// servers.lua reads whole, in its asking order: a language's own
+    #[test]
+    fn native_typescript_is_opt_in_and_keeps_vues_legacy_bridge() {
+        let mut app = Kawoosh::new("typescript-native", "");
+        let (defs, _) = app.lsp_table();
+        assert!(defs.iter().all(|d| d.language != "typescript-native"));
+        app.ed
+            .settings
+            .set(Layer::Session, "lsp.typescript.native", Setting::Bool(true));
+        app.sync_lsp_rules();
+        let native = app
+            .lsp
+            .defs
+            .iter()
+            .find(|d| d.language == "typescript-native")
+            .unwrap();
+        assert_eq!(native.command, "tsc");
+        assert_eq!(native.args, ["--lsp", "--stdio"]);
+        assert!(native.serves("typescript") && native.serves("tsx") && native.serves("javascript"));
+        for language in ["typescript", "tsx", "javascript"] {
+            let order = &app.lsp.order[language];
+            assert_eq!(order[0], "typescript-native");
+            assert!(!order.iter().any(|n| n == "typescript"));
+            assert!(order.iter().any(|n| n == "eslint"));
+        }
+        assert_eq!(app.lsp.order["vue"], ["vue", "typescript"]);
+        let legacy = app
+            .lsp
+            .defs
+            .iter()
+            .find(|d| d.language == "typescript")
+            .unwrap();
+        assert_eq!(legacy.command, "typescript-language-server");
+        assert_eq!(legacy.init["plugins"][0]["location"], "{package:vue}");
+        app.ed.settings.set(
+            Layer::Session,
+            "lsp.typescript-native.enabled",
+            Setting::Bool(false),
+        );
+        app.sync_lsp_rules();
+        assert!(
+            app.lsp
+                .defs
+                .iter()
+                .all(|d| d.language != "typescript-native")
+        );
+        assert_eq!(app.lsp_name_of("typescript"), "typescript-native");
+        assert_eq!(
+            app.lsp.order["typescript"][0], "typescript-native",
+            "disabling the selected provider must not silently start legacy TypeScript"
+        );
+        app.ed.settings.set(
+            Layer::Session,
+            "lsp.languages.typescript",
+            Setting::List(vec![Setting::Str("typescript".into())]),
+        );
+        app.sync_lsp_rules();
+        assert_eq!(app.lsp.order["typescript"], ["typescript"]);
+        app.ed.settings.set(
+            Layer::Session,
+            "lsp.typescript.native",
+            Setting::Bool(false),
+        );
+        app.sync_lsp_rules();
+        assert!(
+            app.lsp
+                .defs
+                .iter()
+                .all(|d| d.language != "typescript-native")
+        );
+    }
+
+    /// The catalog reads whole, in its asking order: a language's own
     /// server before the ones that run beside it.
     #[test]
-    fn the_builtin_servers_are_read_from_lua() {
+    fn the_builtin_servers_are_read_from_catalog() {
         let defs = builtin();
         let at = |n: &str| defs.iter().position(|d| d.language == n).unwrap();
         assert_eq!(defs[0].command, "rust-analyzer");
@@ -932,9 +1032,7 @@ mod tests {
             "R",
             "luarocks",
         ];
-        let rows = kawoosh_lua::eval_data("servers.lua", include_str!("../lua/servers.lua"))
-            .expect("servers.lua reads");
-        for row in rows.as_list().expect("a list") {
+        for row in &kawoosh_editor::tool_catalog::Catalog::bundled().servers {
             let name = row.get("name").and_then(Setting::as_str).unwrap_or("?");
             let lines: Vec<(&str, &str)> = match row.get("install") {
                 Some(Setting::Str(line)) => vec![("every", line.as_str())],
