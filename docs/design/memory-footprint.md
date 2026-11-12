@@ -1,15 +1,21 @@
 # Startup memory footprint
 
-Status: investigated 2026-11-12, with a reusable CPU-only probe in
+Status: alpha.80 baseline measured 2026-11-12, with a reusable CPU-only probe in
 [`kawoosh/examples/memory_probe.rs`](../../kawoosh/examples/memory_probe.rs).
 This note concerns process memory, separately from the editor's remembered
 history described in [memory.md](memory.md).
 
 **Measured finding:** eagerly registering the shipped fonts added about
 253 MiB of private commit before the app was constructed. Loading only the
-symbols added 2.56 MiB. This is a large startup cost in the current checkout,
+symbols added 2.56 MiB. This was a large startup cost in the measured checkout,
 even with an empty directory; the result does not reproduce the reported
 190 MB Task Manager reading. Measurement details and limits follow.
+
+The dependency pin moved to alpha.81 on 2026-11-13. Its native OS font
+preparation is lazy, so the native-core and final totals below remain
+historical alpha.80 results. Its [shipped-font loader](https://github.com/qxuken/kui/blob/c35eeaf8dbd6fbcef4beaecf947e46b51c05cb35/crates/kui-native/src/fonts.rs)
+still reads whole files into owned bytes. A fresh probe is needed for
+alpha.81 memory totals; the commands below build the current dependency pin.
 
 ## Question and measurement boundary
 
@@ -71,7 +77,7 @@ core's file loader for each accepted path. This is independent of the
 directory being shown. Sources: [`main::load_fonts`](../../kawoosh/src/main.rs),
 [`fonts::font_files` and `fonts::load_shipped`](../../kawoosh/src/fonts.rs).
 
-The current checkout contains **167 actual font files, 264,094,860 bytes
+The measured checkout contained **167 actual font files, 264,094,860 bytes
 (251.86 MiB)**, with no LFS placeholders in those files. Counting every file
 under `assets/fonts` instead gives 182: that includes licenses, readmes and a
 build plan, which the font loader does not load. IosevkaNavcon accounts for
@@ -80,7 +86,7 @@ These are file inventories, not direct process-memory measurements.
 Source: [the shipped assets](../../assets/fonts), counted by the probe's
 `font_inventory` and the PowerShell command below.
 
-In the pinned kui-native **0.1.0-alpha.80**, `Loader::file` calls
+At the measured kui-native **0.1.0-alpha.80** pin, `Loader::file` calls
 `std::fs::read`, wraps the resulting bytes in an `Arc` and registers them as
 `fontdb::Source::SharedFile`. That name does not turn a `Vec<u8>` into an
 OS-backed file mapping: this code has read the whole file into owned bytes.
