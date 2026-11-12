@@ -206,6 +206,15 @@ impl Watcher {
 mod tests {
     use super::*;
 
+    // Publish one completed stamp. Writing directly to a watched path can
+    // expose its truncated state to one poll and its final bytes to the next,
+    // correctly producing two changes for what this fixture calls one save.
+    fn save(path: &std::path::Path, text: &str) {
+        let pending = path.with_extension("pending");
+        std::fs::write(&pending, text).unwrap();
+        std::fs::rename(pending, path).unwrap();
+    }
+
     /// A write, a creation and a removal each wake once with the path;
     /// a still file wakes nothing.
     #[test]
@@ -227,11 +236,11 @@ mod tests {
             rx.recv_timeout(INTERVAL * 3).is_err(),
             "nothing changed, nothing woke"
         );
-        std::fs::write(&a, "return { tabstop = 2 }").unwrap();
+        save(&a, "return { tabstop = 2 }");
         rx.recv_timeout(Duration::from_secs(5))
             .expect("a wake for the write");
         assert_eq!(w.drain(), std::slice::from_ref(&a));
-        std::fs::write(&b, "return {}").unwrap();
+        save(&b, "return {}");
         rx.recv_timeout(Duration::from_secs(5))
             .expect("a wake for the creation");
         assert_eq!(w.drain(), std::slice::from_ref(&b));
@@ -269,7 +278,7 @@ mod tests {
         );
         std::thread::sleep(Duration::from_millis(5));
         w.watch(vec![a.clone()]);
-        std::fs::write(&a, "return { tabstop = 2 }").unwrap();
+        save(&a, "return { tabstop = 2 }");
         // Named again after the save, in a set the thread takes with the
         // one before: watched since the first.
         w.watch(vec![a.clone(), dir.join("b.lua")]);
