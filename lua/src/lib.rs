@@ -225,6 +225,16 @@ pub enum Msg {
         path: PathBuf,
         channel: bool,
     },
+    /// `kawoosh.fs.stat(path, fn)`: metadata read away from the window.
+    StatFile {
+        token: u64,
+        path: PathBuf,
+    },
+    /// `kawoosh.fs.read(path, fn)`: text read away from the window.
+    ReadFile {
+        token: u64,
+        path: PathBuf,
+    },
     /// `kawoosh.fs.remove(path, fn)` and `fs.copy(a, b, fn)`: the
     /// change made on a thread of its own, the answer to
     /// `Runtime::fs_done` under `token` (`IoMsg::FsDone`) — a tree of
@@ -417,6 +427,10 @@ pub enum Msg {
         name: String,
         paths: Vec<PathBuf>,
     },
+    WatchTree {
+        name: String,
+        paths: Vec<PathBuf>,
+    },
     /// `kawoosh.lsp.resolve(index, fn)`: the candidates picker's
     /// candidate `index` filled in by its server, answered to `token`
     /// (`Runtime::candidate_resolved`).
@@ -452,6 +466,7 @@ pub enum Msg {
     /// @class kawoosh.memory.Remember
     /// @field kind string the moment's kind: `file`, `text`, a plugin's own
     /// @field subject string what it is of: a path, a name
+    /// @field workspace? string the origin workspace of delayed work; defaults to the current workspace
     /// @field signals? kawoosh.memory.Signals what is added to its counts (none: 0)
     /// @field meta? any data kept with it, as JSON
     ///
@@ -468,6 +483,7 @@ pub enum Msg {
         yanks: i64,
         dwell_ms: i64,
         meta: Option<String>,
+        workspace: Option<String>,
     },
     /// `kawoosh.forget(kind: string, subject: string): nil`: the
     /// subject's moment of that kind taken out of the memory.
@@ -568,6 +584,11 @@ pub enum Msg {
         /// Where it is shown instead of the focused pane, the keys going
         /// with it: a pane of the tab in front, or a column of its own.
         pane: Option<ScratchPane>,
+        /// With an explicit pane, `false` fills that pane in any tab
+        /// without moving the keyboard; a closed pane is ignored.
+        focus: bool,
+        /// Ignore a late fill if the destination no longer shows this buffer.
+        if_buffer: Option<u64>,
     },
     /// `kawoosh.buf.set_private(private?: boolean, buffer?: integer|string): nil`:
     /// the buffer made private (`true`, the default) or not — no
@@ -721,6 +742,16 @@ pub enum Msg {
     CompileKind {
         name: String,
         def: Option<CompileKindDef>,
+    },
+    /// An asynchronous compile kind's cached answer changed.
+    CompileChanged,
+    ProjectEnvironment {
+        name: String,
+        def: Option<kawoosh_systems::project_env::Provider>,
+    },
+    ProjectEnvironmentChanged {
+        name: String,
+        dir: Option<PathBuf>,
     },
     Tool {
         name: String,
@@ -1226,6 +1257,8 @@ pub struct Published {
 /// A tab as `kawoosh.tabs()` reads it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TabSnap {
+    /// Stable for this tab's lifetime, independent of its strip index.
+    pub id: u64,
     /// Its working directory.
     pub cwd: String,
     /// The label kawoosh draws: `N: name`, the directory as
@@ -1320,6 +1353,9 @@ pub struct DomainSnap {
 /// function answers for the file found ([`Runtime::compile_kind_rows`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CompileKindDef {
+    /// Ask in the current directory, including on a domain, without
+    /// reading marker files on the window thread.
+    pub context: bool,
     pub markers: Vec<String>,
     pub outermost: bool,
     pub runner: bool,
@@ -1332,6 +1368,9 @@ pub struct CompileKindDef {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CompileKindRow {
     pub cmd: String,
+    pub argv: Option<Vec<String>>,
+    pub cwd: Option<String>,
+    pub file: Option<String>,
     pub why: String,
     /// It wants arguments: taken, it goes to the prompt to finish.
     pub needs: bool,
@@ -1353,6 +1392,9 @@ fn compile_kind_rows(v: &LV) -> mlua::Result<Vec<CompileKindRow>> {
                 ..Default::default()
             }),
             LV::Table(r) => out.push(CompileKindRow {
+                argv: r.get("argv")?,
+                cwd: r.get("cwd")?,
+                file: r.get("file")?,
                 cmd: r.get::<String>("cmd").map_err(|_| {
                     mlua::Error::runtime("compile_kind: a command is a string or has a `cmd`")
                 })?,
@@ -1559,6 +1601,7 @@ struct Jobs {
 /// A spawned process's callbacks, each as given.
 #[derive(Default)]
 struct ProcKeys {
+    quiet: bool,
     lines: Option<mlua::RegistryKey>,
     err: Option<mlua::RegistryKey>,
     exit: Option<mlua::RegistryKey>,
@@ -2517,11 +2560,22 @@ impl Runtime {
 
     /// The tab in front's panes, each with the buffer it shows, and
     /// every tab (`kawoosh.panes()`, `kawoosh.tabs()`).
+    pub fn layout_changed(&self, tabs: &[TabSnap], tab: usize) -> bool {
+        let p = self.published.borrow();
+        p.tabs.get(p.tab).map(|t| t.id) != tabs.get(tab).map(|t| t.id)
+            || !p.tabs.iter().map(|t| t.id).eq(tabs.iter().map(|t| t.id))
+    }
+
     pub fn set_layout(&self, front: Vec<(u64, Option<u64>)>, tabs: Vec<TabSnap>, tab: usize) {
+        let changed = self.layout_changed(&tabs, tab);
         let mut p = self.published.borrow_mut();
         p.front = front;
         p.tabs = tabs;
         p.tab = tab;
+        drop(p);
+        if changed {
+            self.hook("_tabs", (), "on_tabs");
+        }
     }
 
     /// A pane closed: its size forgotten.
@@ -3134,6 +3188,27 @@ impl Runtime {
         self.answer(token, result, "fs.list");
     }
 
+    pub fn stated(
+        &self,
+        token: u64,
+        result: Result<kawoosh_systems::fs::Stat, String>,
+        local: bool,
+    ) {
+        let result =
+            result.and_then(|st| stat_table(&self.lua, st, local).map_err(|e| e.to_string()));
+        self.answer(token, result, "fs.stat");
+    }
+
+    pub fn file_read(&self, token: u64, result: Result<String, String>) {
+        let result = result.and_then(|text| {
+            self.lua
+                .create_string(text)
+                .map(LV::String)
+                .map_err(|e| e.to_string())
+        });
+        self.answer_value(token, result, "fs.read");
+    }
+
     /// A listing made a channel on its job's thread, handed over whole.
     pub fn listed_channel(&self, token: u64, result: Result<kui_core::channel::Channel, String>) {
         let result = result.and_then(|ch| {
@@ -3519,6 +3594,15 @@ impl Runtime {
     /// `on_stderr`.
     pub fn proc_err(&self, token: u64, lines: Vec<String>) {
         self.proc_call(token, lines, |k| k.err.as_ref());
+    }
+
+    /// Whether this process leaves startup errors to its callbacks.
+    pub fn proc_quiet(&self, token: u64) -> bool {
+        self.jobs
+            .borrow()
+            .procs
+            .get(&token)
+            .is_some_and(|p| p.quiet)
     }
 
     fn proc_call(
@@ -4666,6 +4750,27 @@ pub fn entries_channel(entries: Vec<kawoosh_systems::fs::Entry>) -> kui_core::ch
     .expect("listing columns have one length")
 }
 
+fn stat_table(lua: &Lua, st: kawoosh_systems::fs::Stat, local: bool) -> mlua::Result<Table> {
+    use kawoosh_systems::fs as kfs;
+    let t = lua.create_table()?;
+    t.set("is_dir", st.is_dir)?;
+    t.set("is_file", st.is_file)?;
+    t.set("is_symlink", st.is_symlink)?;
+    t.set("size", st.size)?;
+    t.set("modified", st.modified)?;
+    if let Some(m) = st.mode {
+        t.set("mode", m)?;
+        t.set("perms", kfs::mode_string(m))?;
+    }
+    t.set("uid", st.uid)?;
+    t.set("gid", st.gid)?;
+    if local {
+        t.set("user", st.uid.and_then(kfs::user_name))?;
+        t.set("group", st.gid.and_then(kfs::group_name))?;
+    }
+    Ok(t)
+}
+
 fn entries_table(lua: &Lua, entries: Vec<kawoosh_systems::fs::Entry>) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     for (i, e) in entries.into_iter().enumerate() {
@@ -4944,6 +5049,7 @@ fn seed(
     //
     // @class kawoosh.TabInfo
     // @field index integer from 1, what `:tab goto N` takes
+    // @field id integer stable for the tab's lifetime, independent of its index; not persisted
     // @field cwd string its working directory
     // @field active boolean the tab in front
     // @field title string the label kawoosh draws: `N: name`, the directory as `tabs.directory` says, ` ●` when modified
@@ -4961,6 +5067,7 @@ fn seed(
             for (i, tab) in p.tabs.iter().enumerate() {
                 let e = lua.create_table()?;
                 e.set("index", i + 1)?;
+                e.set("id", tab.id)?;
                 e.set("cwd", tab.cwd.as_str())?;
                 e.set("active", i == p.tab)?;
                 e.set("title", tab.title.as_str())?;
@@ -4987,6 +5094,7 @@ fn seed(
     // @field cwd? string where it runs (`~` expanded), else the working directory
     // @field stdin? string written to the process, then closed
     // @field env? table<string, string|number|boolean> variables over the inherited ones
+    // @field quiet? boolean startup errors go to on_stderr/on_done without replacing the editor's message
     // @field on_lines? fun(lines: string[]) its output's lines as they come, once a frame (stderr's too, without `on_stderr`)
     // @field on_stderr? fun(lines: string[]) stderr's lines apart from stdout's
     // @field on_done? fun(out: string, code: integer?) stdout whole at its end (a trailing newline kept); `code` nil when killed
@@ -5024,6 +5132,12 @@ fn seed(
                 }
             };
             let keys = ProcKeys {
+                quiet: opts
+                    .as_ref()
+                    .map(|t| t.get::<Option<bool>>("quiet"))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or(false),
                 lines: key("on_lines")?,
                 err: key("on_stderr")?,
                 exit: key("on_exit")?,
@@ -5678,6 +5792,8 @@ fn seed(
                 payloads,
                 restore,
                 pane,
+                focus,
+                if_buffer,
             ): (
                 String,
                 String,
@@ -5693,6 +5809,8 @@ fn seed(
                 Option<Table>,
                 Option<bool>,
                 LV,
+                Option<bool>,
+                Option<u64>,
             )| {
                 let pane = match pane {
                     LV::Nil => None,
@@ -5734,6 +5852,8 @@ fn seed(
                     payloads: lines,
                     restore: restore.unwrap_or(false),
                     pane,
+                    focus: focus.unwrap_or(true),
+                    if_buffer,
                 });
                 Ok(())
             },
@@ -5765,6 +5885,70 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh.project_environment(name: string, def?: kawoosh.ProjectEnvironment): nil`:
+    // an argv that prints a JSON object of
+    // environment variables, resolved on workers per working directory.
+    // Explicit spawn variables win over the provider's values.
+    // @class kawoosh.ProjectEnvironment
+    // @field command string[] argv, with no shell between
+    // @field watch? string[] config files/directories relative to each ancestor
+    // @field markers? string[] apply locally only beneath one of these project markers
+    // @field env? table<string, string> provider process variables
+    let qq = q(queue);
+    k.set(
+        "project_environment",
+        lua.create_function(move |_, (name, def): (String, Option<Table>)| {
+            let provider = def
+                .map(|t| -> mlua::Result<_> {
+                    let command: Vec<String> = t.get("command")?;
+                    if command.is_empty() {
+                        return Err(mlua::Error::runtime("project_environment: empty command"));
+                    }
+                    let env: Option<Table> = t.get("env")?;
+                    Ok(kawoosh_systems::project_env::Provider {
+                        command,
+                        watch: t.get::<Option<Vec<String>>>("watch")?.unwrap_or_default(),
+                        markers: t.get::<Option<Vec<String>>>("markers")?.unwrap_or_default(),
+                        env: env
+                            .map(|e| {
+                                e.pairs::<String, String>()
+                                    .collect::<mlua::Result<Vec<_>>>()
+                            })
+                            .transpose()?
+                            .unwrap_or_default(),
+                    })
+                })
+                .transpose()?;
+            qq.borrow_mut().push(Msg::ProjectEnvironment {
+                name,
+                def: provider,
+            });
+            Ok(())
+        })?,
+    )?;
+    // `kawoosh.project_environment_changed(name: string, dir?: string): nil`:
+    // invalidate a provider's cached directory, or all its directories.
+    let qq = q(queue);
+    k.set(
+        "project_environment_changed",
+        lua.create_function(move |_, (name, dir): (String, Option<String>)| {
+            qq.borrow_mut().push(Msg::ProjectEnvironmentChanged {
+                name,
+                dir: dir.map(PathBuf::from),
+            });
+            Ok(())
+        })?,
+    )?;
+    // `kawoosh.compile_changed(): nil`: refresh cached asynchronous
+    // commands in the current compile picker without replacing its state.
+    let qq = q(queue);
+    k.set(
+        "compile_changed",
+        lua.create_function(move |_, ()| {
+            qq.borrow_mut().push(Msg::CompileChanged);
+            Ok(())
+        })?,
+    )?;
     // ---- `kawoosh.compile_kind(name: string, def: kawoosh.CompileKind|false|nil): nil`:
     // a kind of build the compile
     // picker and a bare `:compile` read a project's files for (compile.md
@@ -5779,7 +5963,8 @@ fn seed(
     // kind's place; `false` turns that kind off.
     //
     // @class kawoosh.CompileKind
-    // @field markers string[] the files that say a directory is its; at least one
+    // @field markers? string[] the files that say a directory is its; at least one unless context is true
+    // @field context? boolean call commands with the current directory, including on a remote domain, without marker reads
     // @field outermost? boolean run at the outermost of them in the repository, not the nearest
     // @field runner? boolean a task runner: ranked after the language server's kinds, before the rest
     // @field programs? string[] programs whose commands run where its file is
@@ -5789,6 +5974,9 @@ fn seed(
     //
     // @class kawoosh.CompileCommand
     // @field cmd string the command line
+    // @field argv? string[] execute directly without a shell; cmd remains its displayed/editable line
+    // @field cwd? string the command's directory, overriding the found marker's
+    // @field file? string the source of this command, overriding the found marker
     // @field why? string what it does, as its file says
     // @field needs? boolean it wants arguments: taken, it goes to the prompt to finish
     // @field detail? string[] how it is declared, for the preview
@@ -5811,7 +5999,8 @@ fn seed(
                 _ => return Err(mlua::Error::runtime("compile_kind: a table, or false")),
             };
             let markers: Vec<String> = t.get::<Option<Vec<String>>>("markers")?.unwrap_or_default();
-            if markers.is_empty() {
+            let context = t.get::<Option<bool>>("context")?.unwrap_or(false);
+            if markers.is_empty() && !context {
                 return Err(mlua::Error::runtime(
                     "compile_kind: `markers`, the files it is found by",
                 ));
@@ -5829,6 +6018,7 @@ fn seed(
                 }
             }
             let def = CompileKindDef {
+                context,
                 markers,
                 outermost: t.get::<Option<bool>>("outermost")?.unwrap_or(false),
                 runner: t.get::<Option<bool>>("runner")?.unwrap_or(false),
@@ -8199,6 +8389,13 @@ fn seed(
         "now",
         lua.create_function(|_, ()| Ok(kawoosh_systems::store::now()))?,
     )?;
+    // `kawoosh.workspace(): string`: the workspace in the shell's last
+    // published snapshot, without discovering roots or touching disk.
+    let pp = published.clone();
+    k.set(
+        "workspace",
+        lua.create_function(move |_, ()| Ok(pp.borrow().workspace.clone()))?,
+    )?;
     let qq = q(queue);
     k.set(
         "remember",
@@ -8235,6 +8432,7 @@ fn seed(
                     .flatten()
                     .map_or(0, |s| (s * 1000.0).round().max(0.0) as i64),
                 meta,
+                workspace: o.get("workspace")?,
             });
             Ok(())
         })?,
@@ -8942,7 +9140,9 @@ fn seed(
     )?;
     // `kawoosh.fs.stat(path: string): kawoosh.fs.Stat`: what the path
     // is, the link followed but for `is_symlink`; raises when it is not
-    // there.
+    // there. With a callback, metadata is read on a job thread and the
+    // callback receives `stat` or `nil, why`, as `fs.list` does.
+    // @overload fun(path: string, fn: fun(stat: kawoosh.fs.Stat?, why: string?)): nil
     //
     // @class kawoosh.fs.Stat
     // @field is_dir boolean
@@ -8956,33 +9156,27 @@ fn seed(
     // @field gid? integer the group by number
     // @field user? string the owner's name, where this machine names it (none on a domain)
     // @field group? string the group's name, the same
+    let qq = q(queue);
+    let jj = jobs.clone();
     fs.set(
         "stat",
-        lua.create_function(|lua, p: String| {
+        lua.create_function(move |lua, (p, cb): (String, Option<mlua::Function>)| {
             let path = expand(&p);
-            let st = kfs::stat(&path).map_err(io_err)?;
-            let t = lua.create_table()?;
-            t.set("is_dir", st.is_dir)?;
-            t.set("is_file", st.is_file)?;
-            t.set("is_symlink", st.is_symlink)?;
-            t.set("size", st.size)?;
-            t.set("modified", st.modified)?;
-            // The permission bits (`0o7777` of them) and `perms`, as
-            // `ls -l` draws them; the owner and group by number, and by
-            // name where this machine names them — a host's numbers are
-            // the host's, so a path on a domain has none.
-            if let Some(m) = st.mode {
-                t.set("mode", m)?;
-                t.set("perms", kfs::mode_string(m))?;
-            }
-            t.set("uid", st.uid)?;
-            t.set("gid", st.gid)?;
-            let here = kfs::domain_of(&path).is_none();
-            if here {
-                t.set("user", st.uid.and_then(kfs::user_name))?;
-                t.set("group", st.gid.and_then(kfs::group_name))?;
-            }
-            Ok(t)
+            let Some(cb) = cb else {
+                return Ok(LV::Table(stat_table(
+                    lua,
+                    kfs::stat(&path).map_err(io_err)?,
+                    kfs::domain_of(&path).is_none(),
+                )?));
+            };
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::StatFile { token, path });
+            Ok(LV::Nil)
         })?,
     )?;
     // `kawoosh.fs.chmod(paths: string|string[], mode: string, opts?: kawoosh.fs.AttrOpts|fun(report: kawoosh.fs.Changed?, why: string?), fn?: fun(report: kawoosh.fs.Changed?, why: string?)): kawoosh.fs.Changed|true|nil, string?`:
@@ -9218,9 +9412,29 @@ fn seed(
     )?;
     // `kawoosh.fs.read(path: string): string`: the whole of a small
     // file, as text — raising when it cannot be read or is not UTF-8.
+    // With a callback it reads on a job thread and calls `fn(text)` or
+    // `fn(nil, why)` when it returns.
+    // @overload fun(path: string, fn: fun(text: string?, why: string?)): nil
+    let qq = q(queue);
+    let jj = jobs.clone();
     fs.set(
         "read",
-        lua.create_function(|_, p: String| kfs::read(&expand(&p)).map_err(io_err))?,
+        lua.create_function(move |lua, (p, cb): (String, Option<mlua::Function>)| {
+            let path = expand(&p);
+            let Some(cb) = cb else {
+                return lua
+                    .create_string(kfs::read(&path).map_err(io_err)?)
+                    .map(LV::String);
+            };
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::ReadFile { token, path });
+            Ok(LV::Nil)
+        })?,
     )?;
     // `kawoosh.fs.read_json(path: string, fn?: fun(value: any, why: string?)): any, string?`:
     // the file read and parsed as JSON
@@ -9402,6 +9616,21 @@ fn seed(
         })?,
     )?;
     // `kawoosh._fs_watch(name, paths)`, under `kawoosh.fs.watch`.
+    let qq = q(queue);
+    k.set(
+        "_fs_watch_tree",
+        lua.create_function(move |_, (name, paths): (String, Vec<String>)| {
+            qq.borrow_mut().push(Msg::WatchTree {
+                name,
+                paths: paths
+                    .iter()
+                    .map(|p| expand(p))
+                    .filter(|p| kfs::domain_of(p).is_none())
+                    .collect(),
+            });
+            Ok(())
+        })?,
+    )?;
     let qq = q(queue);
     fs.set(
         "_watch",

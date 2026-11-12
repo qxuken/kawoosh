@@ -22,7 +22,7 @@ pub const FILE: &str = ".editorconfig";
 
 /// The properties kawoosh applies, and the settings they become: what
 /// `:editorconfig` says of one not here ("not applied").
-pub const APPLIED: [&str; 7] = [
+pub const APPLIED: [&str; 8] = [
     "indent_style",
     "indent_size",
     "tab_width",
@@ -30,6 +30,7 @@ pub const APPLIED: [&str; 7] = [
     "trim_trailing_whitespace",
     "insert_final_newline",
     "charset",
+    "max_line_length",
 ];
 
 /// One `.editorconfig`, parsed.
@@ -234,6 +235,11 @@ impl Resolved {
                 put(p, "tabstop", Setting::Int(number(p).unwrap()))
             }
             _ => {}
+        }
+        if let Some(p) = self.get("max_line_length")
+            && let Some(n) = number(p)
+        {
+            put(p, "max_line_length", Setting::Int(n));
         }
         if let Some(p) = self.get("end_of_line")
             && matches!(p.value.as_str(), "lf" | "crlf" | "cr")
@@ -699,5 +705,24 @@ mod tests {
             glob_for(&["mk".into()], &["Makefile".into()]).as_deref(),
             Some("{*.mk,Makefile}")
         );
+    }
+
+    #[test]
+    fn line_width_is_scoped_and_unset_or_disabled_values_use_the_default() {
+        let ec = EditorConfig::parse(
+            "[*]\nmax_line_length = 96\n[*.md]\nmax_line_length = off\n[*.txt]\nmax_line_length = unset\n",
+        );
+        for (name, want) in [("a.rs", Some(96)), ("a.md", None), ("a.txt", None)] {
+            let r = resolve(
+                Path::new(&format!("/p/{name}")),
+                &[(PathBuf::from("/p/.editorconfig"), &ec)],
+            );
+            let got = r
+                .settings()
+                .iter()
+                .find_map(|(_, s)| s.get("max_line_length").and_then(Setting::as_int));
+            assert_eq!(got, want, "{name}");
+            assert!(r.not_applied().is_empty());
+        }
     }
 }

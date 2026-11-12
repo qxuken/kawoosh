@@ -77,6 +77,7 @@ pub struct LspState {
     /// what befell them (`did not start: …`, `stopped: …`), said after
     /// "the LANGUAGE server".
     said_unavailable: HashMap<String, Option<String>>,
+    unavailable_roots: HashMap<(String, PathBuf), u64>,
     /// The commands a `:lsp restart` is waiting on the shell's PATH for,
     /// by how many restarts: no document is sent them meanwhile, which
     /// would start one on the PATH before.
@@ -174,6 +175,7 @@ impl LspState {
             typed: None,
             alarm: Alarm::latest(wake.named("lsp alarm")),
             said_unavailable: HashMap::new(),
+            unavailable_roots: HashMap::new(),
             restarting: HashMap::new(),
             status: Vec::new(),
             defs: Vec::new(),
@@ -481,7 +483,16 @@ impl Kawoosh {
                         }
                     }
                 }
-                Event::Status(s) => self.lsp.status = s,
+                Event::Status(s) => {
+                    // A command missing in another project may be
+                    // supplied by this root's environment.
+                    for (root, command, _, _) in &s {
+                        self.lsp
+                            .unavailable_roots
+                            .remove(&(command.clone(), root.clone()));
+                    }
+                    self.lsp.status = s;
+                }
                 Event::Holders { buffer, commands } => {
                     if !self.lsp.detached.contains(&buffer) {
                         self.lsp.holders.insert(buffer, commands);
@@ -810,7 +821,7 @@ impl Kawoosh {
             Some("a private buffer is not sent to a server".to_string())
         } else if self.lsp.detached.contains(&buffer) {
             Some(DETACHED.to_string())
-        } else if !self.lsp_serves(&language) {
+        } else if !self.lsp_serves_buffer(buffer) {
             Some(self.lsp_absent(&language))
         } else if workspace && !caps.workspace_symbol || !workspace && !caps.document_symbol {
             Some(format!("the {language} server does not list symbols"))
@@ -987,6 +998,9 @@ impl Kawoosh {
         self.lsp
             .said_unavailable
             .retain(|c, _| !commands.contains(c));
+        self.lsp
+            .unavailable_roots
+            .retain(|(c, _), _| !commands.contains(c));
         for c in &commands {
             *self.lsp.restarting.entry(c.clone()).or_default() += 1;
         }
@@ -1312,6 +1326,12 @@ impl Kawoosh {
         why: Option<String>,
         root: Option<&Path>,
     ) {
+        if let Some(root) = root {
+            self.lsp.unavailable_roots.insert(
+                (command.clone(), root.to_path_buf()),
+                self.io.environments.generation(),
+            );
+        }
         if self.lsp.said_unavailable.contains_key(&command)
             || self.lsp.restarting.contains_key(&command)
         {
@@ -1463,18 +1483,49 @@ impl Kawoosh {
         Some(at)
     }
 
-    /// Whether anyone serves `language`: a definition, its command not
-    /// found missing and not being restarted.
-    pub(crate) fn lsp_serves(&self, language: &str) -> bool {
+    /// Whether this target belongs to a failed workspace in the current
+    /// environment, without a live instance in a more specific root.
+    fn lsp_failed_at(&self, command: &str, path: &Path) -> bool {
+        let under = |root: &Path| {
+            kawoosh_systems::fs::relative(path, root)
+                .is_some_and(|rel| rel.components().next() != Some(std::path::Component::ParentDir))
+        };
+        let failure = self
+            .lsp
+            .unavailable_roots
+            .iter()
+            .filter(|((c, root), generation)| {
+                c == command && **generation == self.io.environments.generation() && under(root)
+            })
+            .map(|((_, root), _)| root.as_os_str().len())
+            .max();
+        let Some(failure) = failure else {
+            return false;
+        };
+        // A nested workspace can have a live instance of the same
+        // command while its enclosing project still cannot start one.
+        !self
+            .lsp
+            .status
+            .iter()
+            .any(|(root, c, _, _)| c == command && under(root) && root.as_os_str().len() >= failure)
+    }
+
+    fn lsp_serves_at(&self, language: &str, path: &Path) -> bool {
         // A server beside the language's (`when`, lsp-installs.md
         // Decision 7) runs only where its files are, so it is not one to
         // count on.
         self.lsp.defs.iter().any(|d| {
             d.when.is_empty()
                 && d.serves(language)
-                && !self.lsp.said_unavailable.contains_key(&d.command)
                 && !self.lsp.restarting.contains_key(&d.command)
+                && !self.lsp_failed_at(&d.command, path)
         })
+    }
+
+    pub(crate) fn lsp_serves_buffer(&self, buffer: BufferId) -> bool {
+        let b = &self.ed.buffers[buffer];
+        self.lsp_serves_at(&b.language, b.path.as_deref().unwrap_or(&self.cwd))
     }
 
     /// Whether anyone answers for `buffer`: its language served, or a
@@ -1484,26 +1535,26 @@ impl Kawoosh {
         if self.lsp.detached.contains(&buffer) {
             return false;
         }
+        let path = self.ed.buffers[buffer].path.as_deref().unwrap_or(&self.cwd);
         let held = self
             .lsp
             .holders
             .get(&buffer)
-            .is_some_and(|c| c.iter().any(|c| !self.lsp.said_unavailable.contains_key(c)));
-        held || self.lsp_serves(&self.ed.buffers[buffer].language)
+            .is_some_and(|commands| commands.iter().any(|c| !self.lsp_failed_at(c, path)));
+        held || self.lsp_serves_buffer(buffer)
     }
 
     /// Whether a buffer of `language` is sent: any server for it — one
     /// beside the language's own (`when`) too, which the pool runs where
     /// its files are — not found missing and not being restarted.
     pub(crate) fn lsp_syncs(&self, language: &str) -> bool {
-        self.lsp.defs.iter().any(|d| {
-            d.serves(language)
-                && !self.lsp.said_unavailable.contains_key(&d.command)
-                && !self.lsp.restarting.contains_key(&d.command)
-        })
+        self.lsp
+            .defs
+            .iter()
+            .any(|d| d.serves(language) && !self.lsp.restarting.contains_key(&d.command))
     }
 
-    /// Why `language` has no server to ask, when [`Kawoosh::lsp_serves`]
+    /// Why `language` has no server to ask, when [`Kawoosh::lsp_serves_buffer`]
     /// says it has none: restarting, did not start, or none at all.
     pub(crate) fn lsp_absent(&self, language: &str) -> String {
         self.lsp_down(language)
@@ -1573,12 +1624,19 @@ impl Kawoosh {
     /// Buffer `id` formatted by its server, with its own indent — its
     /// language's, its `.editorconfig`'s — as the options; or why not.
     /// The answer comes as `Event::Formatted`.
-    pub(crate) fn lsp_format_buffer(&mut self, id: BufferId) -> Result<(), String> {
+    /// A deferred formatter fallback keeps the options captured when
+    /// the format was requested, even after another project's settings load.
+    pub(crate) fn lsp_format_buffer_with(
+        &mut self,
+        id: BufferId,
+        tab_size: usize,
+        insert_spaces: bool,
+    ) -> Result<(), String> {
         let language = self.ed.buffers[id].language.to_string();
         if self.lsp.detached.contains(&id) {
             return Err(DETACHED.into());
         }
-        if !self.lsp_serves(&language) {
+        if !self.lsp_serves_buffer(id) {
             return Err(self.lsp_absent(&language));
         }
         if !self.caps_of(id).format {
@@ -1587,8 +1645,8 @@ impl Kawoosh {
         let cmd = Cmd::Format {
             buffer: id,
             version: self.ed.buffers[id].version(),
-            tab_size: self.ed.shiftwidth_in(id),
-            insert_spaces: self.ed.expandtab_in(id),
+            tab_size,
+            insert_spaces,
         };
         self.positional_cmd(cmd);
         Ok(())

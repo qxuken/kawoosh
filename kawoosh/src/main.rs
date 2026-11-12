@@ -326,6 +326,9 @@ fn main() -> anyhow::Result<()> {
         Some("format") => {
             std::process::exit(kawoosh::format_cli::run(&args[1..]));
         }
+        Some("catalog") => {
+            std::process::exit(kawoosh::tool_catalog::run(&args[1..]));
+        }
         // `kawoosh default-editor on`: the system's default for the
         // text types, only when asked (docs/design/default-editor.md).
         Some("default-editor") => {
@@ -369,7 +372,9 @@ fn main() -> anyhow::Result<()> {
     let wake = WakeHandle::new();
     let (keep, stderr) = log_levels();
     let log_sink = Logger::install(wake.named("log"), keep);
-    let mut core = Core::new();
+    // Native fonts, file loaders and platform conventions live in the host
+    // session; a bare Core is portable from kui alpha.80 onwards.
+    let mut core = kui_native::system::new_core();
     let (font, shipped) = load_fonts(&mut core);
     let mut app = Kawoosh::new("*scratch*", if path.is_some() { "" } else { SCRATCH });
     app.bundled_font = font;
@@ -444,7 +449,7 @@ fn headless(args: &[String]) -> anyhow::Result<()> {
     let wake = WakeHandle::new();
     let (keep, stderr) = log_levels();
     let log_sink = Logger::install(wake.named("log"), keep);
-    let mut core = Core::new();
+    let mut core = kui_native::system::new_core();
     let (font, shipped) = load_fonts(&mut core);
     let path = opts.path.clone();
     let mut app = Kawoosh::new("*scratch*", if path.is_some() { "" } else { SCRATCH });

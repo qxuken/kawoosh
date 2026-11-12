@@ -104,5 +104,50 @@ fn a_listing_in_a_repository_paints_what_git_says() {
             ("only/".to_string(), "ignored".to_string()),
         ]
     );
+    // Overwriting a clean nested file does not change its directory's
+    // stamp. Native tree events must invalidate the cached src/ colour.
+    // Give the asynchronous watch its initial root before the write.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let stamp = std::fs::metadata(dir.join("src"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    std::fs::write(dir.join("src/main.c"), "changed nested source\n").unwrap();
+    assert_eq!(
+        std::fs::metadata(dir.join("src"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        stamp
+    );
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        d.frame(&mut app);
+        if states(&app).contains(&("src/".into(), "modified".into())) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < end,
+            "nested source write did not refresh cached src/ colour: {:?}",
+            states(&app)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    // Ignore rules above an entry change its standing as well.
+    std::fs::write(dir.join(".gitignore"), "*.gen\n/src/deep/\n").unwrap();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        d.frame(&mut app);
+        let now = states(&app);
+        if now.contains(&("build/".into(), "untracked".into())) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < end,
+            "ignore rule change did not invalidate cached colours: {now:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     std::fs::remove_dir_all(&dir).ok();
 }

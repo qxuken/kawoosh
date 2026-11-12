@@ -19,8 +19,8 @@ use std::ops::{Deref, DerefMut};
 use std::path::Path;
 
 use kawoosh_lua::TestStep;
+use kui_native::Rect;
 use kui_native::testing::Drive;
-use kui_native::{Core, Rect};
 
 use crate::app::Kawoosh;
 
@@ -49,7 +49,8 @@ impl Harness {
     /// A `w` by `h` window, kui's diagnostics on so a test can assert
     /// it raised no warning.
     pub fn new(w: f32, h: f32) -> Self {
-        let mut core = Core::new();
+        // Exercise the desktop's font loaders and platform conventions too.
+        let mut core = kui_native::system::new_core();
         core.set_diagnostics(true);
         // The icons' family the app ships, as `main.rs` loads it: a test
         // draws `font.icons` whether the machine has it installed or not.

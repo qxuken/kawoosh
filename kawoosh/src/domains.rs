@@ -40,12 +40,13 @@ use kawoosh_systems::wsl::Wsl;
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::layout::{Content, Place};
+use crate::layout::{Content, PaneId, Place};
 use crate::terminals::TermId;
 
 /// How long a master may take to come up: a password typed, a key
 /// touched.
 const PATIENCE: Duration = Duration::from_secs(600);
+pub const MEMORY_KIND: &str = "domain";
 
 /// How one domain stands.
 pub enum State {
@@ -70,12 +71,27 @@ pub enum State {
 pub enum Pending {
     Open(PathBuf),
     Cd(PathBuf),
+    /// A tab made for this connection, rather than an inherited local pane.
+    Tab(PathBuf),
+}
+
+pub struct Waiting {
+    pane: PaneId,
+    action: Pending,
+}
+
+struct ConnectionScreen {
+    name: String,
+    path: PathBuf,
+    buffer: kawoosh_doc::BufferId,
 }
 
 #[derive(Default)]
 pub struct Domains {
     pub state: BTreeMap<String, State>,
-    pub pending: Vec<(String, Pending)>,
+    pub pending: Vec<(String, Waiting)>,
+    screens: BTreeMap<PaneId, ConnectionScreen>,
+    origins: BTreeMap<String, String>,
     pub transports: BTreeMap<String, Transport>,
     /// The domains whose walk the message line has explained.
     pub walk_told: std::collections::HashSet<String>,
@@ -391,7 +407,13 @@ impl Kawoosh {
             );
             return true;
         }
-        self.domains.pending.push((name.clone(), then));
+        self.domains.pending.push((
+            name.clone(),
+            Waiting {
+                pane: self.layout.focused(),
+                action: then,
+            },
+        ));
         self.domain_connect(&name);
         true
     }
@@ -517,6 +539,30 @@ impl Kawoosh {
             }
             _ => {}
         }
+        // A failed or cancelled connection keeps its screen. Retrying it
+        // resumes only tabs that still show that screen.
+        self.refresh_connection_screens();
+        self.note_workspace();
+        self.domains
+            .origins
+            .insert(name.to_string(), self.moments.workspace().to_string());
+        for (&pane, screen) in &self.domains.screens {
+            if screen.name == name
+                && !self
+                    .domains
+                    .pending
+                    .iter()
+                    .any(|(n, p)| n == name && p.pane == pane)
+            {
+                self.domains.pending.push((
+                    name.to_string(),
+                    Waiting {
+                        pane,
+                        action: Pending::Tab(screen.path.clone()),
+                    },
+                ));
+            }
+        }
         let host = match kind {
             Kind::Ssh(host) => host,
             Kind::Wsl(distro) => return self.wsl_connect(name, distro),
@@ -591,6 +637,7 @@ impl Kawoosh {
     /// `:domain disconnect NAME`: the master told to go, the files
     /// unregistered; a buffer on it stays, and asks again when used.
     pub(crate) fn domain_disconnect(&mut self, name: &str) {
+        self.domains.origins.remove(name);
         if let Some(State::Connecting { cancel, .. }) = self.domains.state.get(name) {
             cancel.store(true, Ordering::Relaxed);
         }
@@ -650,6 +697,7 @@ impl Kawoosh {
     /// The connect thread's word: the pending work done, or the failure
     /// said and the work dropped.
     pub(crate) fn domain_up(&mut self, name: &str) {
+        let connected = matches!(self.domains.state.get(name), Some(State::Connecting { .. }));
         let term = match self.domains.state.remove(name) {
             Some(State::Connecting { term, .. }) => term,
             Some(State::Up { term }) => term,
@@ -666,6 +714,19 @@ impl Kawoosh {
         self.domains
             .state
             .insert(name.to_string(), State::Up { term });
+        if connected {
+            self.note_workspace();
+            let workspace = self
+                .domains
+                .origins
+                .remove(name)
+                .unwrap_or_else(|| self.moments.workspace().to_string());
+            self.moments.visit(kawoosh_systems::store::MomentKey::new(
+                MEMORY_KIND,
+                name,
+                &workspace,
+            ));
+        }
         self.ed.message = match kawoosh_doc::fs::via(name).filter(|v| !v.is_empty()) {
             Some(via) => format!("{name}: connected, files over {via}"),
             None => format!("{name}: connected"),
@@ -698,12 +759,37 @@ impl Kawoosh {
             .into_iter()
             .partition(|(n, _)| n == name);
         self.domains.pending = later;
+        let focused = self.layout.focused();
+        let tab = self.layout.tab().id;
         for (_, p) in now {
-            match p {
+            if !self.layout.panes.contains_key(&p.pane) {
+                continue;
+            }
+            if matches!(p.action, Pending::Tab(_)) && !self.domains.screens.contains_key(&p.pane) {
+                continue;
+            }
+            self.layout.focus(p.pane);
+            self.sync_cwd();
+            match p.action {
                 Pending::Open(path) => self.open(&from_home(path)),
                 Pending::Cd(dir) => self.set_cwd(&from_home(dir)),
+                Pending::Tab(path) => {
+                    let path = from_home(path);
+                    self.set_cwd(&path);
+                    self.open(&path);
+                }
             }
         }
+        // A dock pane belongs to no tab: restoring its focus alone
+        // would leave the last request's tab active underneath it.
+        if let Some(index) = self.layout.tabs.iter().position(|t| t.id == tab) {
+            self.layout.tab = index;
+        }
+        if self.layout.panes.contains_key(&focused) {
+            self.layout.focus(focused);
+            self.sync_cwd();
+        }
+        self.refresh_connection_screens();
     }
 
     /// A connection's question (the in-process client's, `ssh.client =
@@ -772,6 +858,7 @@ impl Kawoosh {
             log::debug!("{name}: {error} (after the connection was let go)");
             return;
         }
+        self.domains.origins.remove(name);
         self.domains
             .state
             .insert(name.to_string(), State::Failed(error.to_string()));
@@ -1085,6 +1172,7 @@ impl Kawoosh {
     /// the picker has the domains: published again and the open picker
     /// read again, so its row says how the domain stands now.
     fn refresh_domain_pick(&mut self) {
+        self.refresh_connection_screens();
         if self.domains.published {
             self.publish_domains();
             self.run_lua_source("domains", "kawoosh.picker.reload()");
@@ -1127,14 +1215,84 @@ impl Kawoosh {
     /// directory the home there and listed — connected first when it is
     /// down, the tab there at once and its directory once it is up.
     pub(crate) fn domain_tab(&mut self, name: &str) {
+        self.open_domain_tab(name, "~");
+    }
+
+    pub(crate) fn open_domain_tab(&mut self, name: &str, path: &str) {
         if self.domain_kind(name).is_none() {
             self.ed.message = format!("no domain named {name}");
             return;
         }
-        let home = from_home(kawoosh_systems::fs::on_domain(name, Path::new("~")));
-        self.shell_command("tab new", &[], None);
-        self.set_cwd(&home);
-        self.open(&home);
+        let path = kawoosh_systems::fs::on_domain(name, Path::new(path));
+        let mut buffer = kawoosh_doc::Buffer::new(format!("Connection: {name}"), "");
+        buffer.read_only = true;
+        let buffer = self.ed.add_buffer(buffer);
+        let view = self.ed.add_view(buffer);
+        let pane = self.layout.new_tab(Content::Editor(view));
+        self.domains.screens.insert(
+            pane,
+            ConnectionScreen {
+                name: name.to_string(),
+                path: path.clone(),
+                buffer,
+            },
+        );
+        self.refresh_connection_screens();
+        if !self.domain_gate(&path, Pending::Tab(path.clone())) {
+            let path = from_home(path);
+            self.set_cwd(&path);
+            self.open(&path);
+            self.refresh_connection_screens();
+        }
+    }
+
+    pub(crate) fn is_connection_screen(&self, pane: PaneId) -> bool {
+        self.domains.screens.get(&pane).is_some_and(|screen| {
+            self.view_of(pane)
+                .and_then(|view| self.ed.views.get(view))
+                .is_some_and(|view| view.buffer == screen.buffer)
+        })
+    }
+
+    fn refresh_connection_screens(&mut self) {
+        self.domains
+            .screens
+            .retain(|pane, screen| match self.layout.content(*pane) {
+                Some(Content::Editor(view)) => self
+                    .ed
+                    .views
+                    .get(view)
+                    .is_some_and(|v| v.buffer == screen.buffer),
+                _ => false,
+            });
+        for screen in self.domains.screens.values() {
+            let name = &screen.name;
+            let state = match self.domains.state.get(name) {
+                Some(State::Failed(error)) => format!(
+                    "Connection to {name} failed\n\n{error}\n\n:domain reconnect {name} to retry."
+                ),
+                Some(State::Dropped(error)) => format!(
+                    "Disconnected from {name}\n\n{}\n\n:domain reconnect {name} to retry.",
+                    error.as_deref().unwrap_or("The connection ended.")
+                ),
+                Some(State::Up { .. }) => {
+                    format!("Connected to {name}\n\nLoading {}…", screen.path.display())
+                }
+                Some(State::Connecting { .. }) => format!(
+                    "Connecting to {name}…\n\n{}\n\n:domain disconnect {name} to cancel.",
+                    screen.path.display()
+                ),
+                None => format!(
+                    "Connect to {name}\n\n{}\n\n:domain connect {name} to connect.",
+                    screen.path.display()
+                ),
+            };
+            if let Some(buffer) = self.ed.buffers.get_mut(screen.buffer)
+                && buffer.text() != state
+            {
+                buffer.set_text(&state);
+            }
+        }
     }
 }
 
@@ -1262,4 +1420,197 @@ fn last_word(text: &str) -> Option<String> {
         .map(str::trim)
         .rfind(|l| !l.is_empty())
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+    use kawoosh_editor::Layer;
+
+    #[test]
+    fn only_successful_connections_become_persistent_domain_moments() {
+        let dir =
+            std::env::temp_dir().join(format!("kawoosh-domain-memory-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.db");
+        let name = "remembered-connection";
+        let mut app = Kawoosh::new("memory", "");
+        app.open_store(Some(&path));
+        app.note_workspace();
+        let key =
+            kawoosh_systems::store::MomentKey::new(MEMORY_KIND, name, app.moments.workspace());
+        let connecting = || State::Connecting {
+            term: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        app.domains.state.insert(name.into(), connecting());
+        app.domain_failed(name, "refused", true);
+        app.sync_moments(true);
+        assert!(app.store.as_ref().unwrap().moment(&key).is_none());
+        app.domains.state.insert(name.into(), connecting());
+        app.domain_up(name);
+        app.sync_moments(true);
+        let first = app
+            .store
+            .as_ref()
+            .unwrap()
+            .moment(&key)
+            .expect("successful connection recorded");
+        app.domain_up(name);
+        app.sync_moments(true);
+        assert_eq!(
+            app.store.as_ref().unwrap().moment(&key).unwrap().visits,
+            first.visits,
+            "duplicate up notifications are not visits"
+        );
+        drop(app);
+        let store = kawoosh_systems::store::Store::open(&path).unwrap();
+        assert_eq!(store.moment(&key).unwrap().visits, 1);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    struct File;
+
+    impl kawoosh_doc::fs::Fs for File {
+        fn read(&self, _: &Path) -> std::io::Result<Vec<u8>> {
+            Ok(b"connected document".to_vec())
+        }
+        fn write(&self, _: &Path, _: &[u8]) -> std::io::Result<()> {
+            unreachable!()
+        }
+        fn stat(&self, _: &Path) -> std::io::Result<kawoosh_doc::fs::Stat> {
+            Ok(kawoosh_doc::fs::Stat {
+                is_file: true,
+                size: 18,
+                ..Default::default()
+            })
+        }
+        fn list(&self, _: &Path) -> std::io::Result<Vec<kawoosh_doc::fs::Entry>> {
+            unreachable!()
+        }
+        fn rename(&self, _: &Path, _: &Path) -> std::io::Result<()> {
+            unreachable!()
+        }
+        fn remove(&self, _: &Path) -> std::io::Result<()> {
+            unreachable!()
+        }
+        fn create(&self, _: &Path, _: bool) -> std::io::Result<()> {
+            unreachable!()
+        }
+        fn canonicalize(&self, path: &Path) -> std::io::Result<PathBuf> {
+            Ok(path.to_path_buf())
+        }
+    }
+
+    fn complete_in_original_pane(in_dock: bool) {
+        let name = if in_dock {
+            "connection-original-dock"
+        } else {
+            "connection-original-pane"
+        };
+        let path = PathBuf::from(format!("{name}:/file.txt"));
+        let mut app = Kawoosh::new("original", "original document");
+        let original = app.focused_view().unwrap();
+        app.ed.settings.set(
+            Layer::Session,
+            &format!("domains.{name}.ssh"),
+            Setting::Str("unused.invalid".into()),
+        );
+        app.domains.state.insert(
+            name.into(),
+            State::Connecting {
+                term: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+            },
+        );
+        app.open(&path);
+        let elsewhere_buffer = app
+            .ed
+            .add_buffer(kawoosh_doc::Buffer::new("elsewhere", "keep this"));
+        let elsewhere_view = app.ed.add_view(elsewhere_buffer);
+        let elsewhere = app.layout.new_tab(Content::Editor(elsewhere_view));
+        app.set_cwd(&std::env::temp_dir());
+        let tab = app.layout.tab().id;
+        let cwd = app.cwd.clone();
+        let focused = if in_dock {
+            let buffer = app
+                .ed
+                .add_buffer(kawoosh_doc::Buffer::new("dock", "unrelated dock"));
+            let view = app.ed.add_view(buffer);
+            app.layout.open(Content::Editor(view), Place::Dock)
+        } else {
+            elsewhere
+        };
+
+        kawoosh_doc::fs::register(name, Arc::new(File));
+        app.domain_up(name);
+        kawoosh_doc::fs::unregister(name);
+
+        assert_eq!(app.layout.focused(), focused);
+        assert_eq!(app.layout.tab().id, tab);
+        assert_eq!(app.cwd, cwd);
+        assert_eq!(app.ed.cwd, cwd);
+        assert_eq!(app.ed.buffer_of(elsewhere_view).text(), "keep this");
+        assert_eq!(app.ed.buffer_of(original).path.as_ref(), Some(&path));
+    }
+
+    #[test]
+    fn a_connected_file_opens_in_its_original_pane_without_stealing_focus() {
+        complete_in_original_pane(false);
+    }
+
+    #[test]
+    fn a_connected_file_preserves_the_active_tab_while_the_dock_is_focused() {
+        complete_in_original_pane(true);
+    }
+
+    #[test]
+    fn a_connecting_domain_tab_does_not_duplicate_its_parent() {
+        let mut app = Kawoosh::new("parent", "parent's document");
+        app.ed.settings.set(
+            Layer::Session,
+            "layout.new_tab",
+            Setting::Str("same".into()),
+        );
+        app.ed.settings.set(
+            Layer::Session,
+            "domains.connection-screen.ssh",
+            Setting::Str("unused.invalid".into()),
+        );
+        // Keep the connection pending without starting a network process.
+        app.domains.state.insert(
+            "connection-screen".into(),
+            State::Connecting {
+                term: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+            },
+        );
+        app.domain_tab("connection-screen");
+
+        assert_eq!(app.layout.tabs.len(), 2);
+        let view = app.focused_view().expect("the connection's pane");
+        let buffer = app.ed.buffer_of(view);
+        assert!(buffer.text().contains("Connecting to connection-screen"));
+        assert!(buffer.read_only);
+        assert!(!buffer.text().contains("parent's document"));
+
+        app.domain_failed("connection-screen", "connection refused", false);
+        let buffer = app.ed.buffer_of(view);
+        assert!(buffer.text().contains("connection refused"));
+        assert!(
+            buffer
+                .text()
+                .contains(":domain reconnect connection-screen")
+        );
+
+        let session = app.session_data();
+        let mut restored = Kawoosh::new("restored", "");
+        assert!(restored.restore_session_data(&session));
+        assert_eq!(
+            restored.layout.tabs.len(),
+            1,
+            "a connection screen is transient"
+        );
+    }
 }

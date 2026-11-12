@@ -22,6 +22,7 @@ fn fake_server() -> ServerDef {
 
 /// Plain `cargo test` shares the process environment, so the package
 /// install cases hold this while their PATH and servers folder are theirs.
+#[cfg(unix)]
 static PACKAGE_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Buffer `id`'s diagnostic messages, in the order they were said.

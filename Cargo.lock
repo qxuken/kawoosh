@@ -207,7 +207,7 @@ dependencies = [
  "piper",
  "polling",
  "regex-automata",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "rustix-openpty",
  "serde",
  "signal-hook",
@@ -415,7 +415,7 @@ dependencies = [
  "futures-lite",
  "parking",
  "polling",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "slab",
  "windows-sys 0.61.2",
 ]
@@ -446,7 +446,7 @@ dependencies = [
  "cfg-if",
  "event-listener",
  "futures-lite",
- "rustix 1.1.5",
+ "rustix 1.1.6",
 ]
 
 [[package]]
@@ -472,7 +472,7 @@ dependencies = [
  "cfg-if",
  "futures-core",
  "futures-io",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "signal-hook-registry",
  "slab",
  "windows-sys 0.61.2",
@@ -1036,30 +1036,6 @@ dependencies = [
  "objc2-core-audio",
  "objc2-core-audio-types",
  "objc2-core-foundation",
-]
-
-[[package]]
-name = "cosmic-text"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be17b688510d934ce13f48a2beba700e11583e281e0fda99c22bb256a14eda73"
-dependencies = [
- "bitflags 2.13.2",
- "fontdb 0.23.0",
- "harfrust 0.5.2",
- "linebender_resource_handle",
- "log",
- "rangemap",
- "rustc-hash 2.1.3",
- "self_cell",
- "skrifa 0.40.0",
- "smol_str 0.3.7",
- "swash",
- "sys-locale",
- "unicode-bidi",
- "unicode-linebreak",
- "unicode-script",
- "unicode-segmentation",
 ]
 
 [[package]]
@@ -1873,21 +1849,10 @@ dependencies = [
 
 [[package]]
 name = "generic-array"
-version = "0.14.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bb6743198531e02858aeaea5398fcc883e71851fcbcb5a2f773e2fb6cb1edf2"
-dependencies = [
- "typenum",
- "version_check",
-]
-
-[[package]]
-name = "generic-array"
 version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "337d46834ee672ab3e48caca2cb0c78cc174fb12b3a68d0d88f99a0519a5e36e"
 dependencies = [
- "generic-array 0.14.9",
  "rustversion",
  "typenum",
 ]
@@ -1898,7 +1863,7 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bd49230192a3797a9a4d6abe9b3eed6f7fa4c8a8a4947977c6f80025f92cbd8"
 dependencies = [
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "windows-link",
 ]
 
@@ -2465,6 +2430,7 @@ dependencies = [
  "libc",
  "memchr",
  "regex",
+ "serde_json",
  "slotmap",
  "text-buffer",
  "unicode-width",
@@ -2646,9 +2612,9 @@ dependencies = [
 
 [[package]]
 name = "kui-access"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a03ab917d74432d699909c25dba4dce008ce335357cf1c80c2435ab59b694d26"
+checksum = "3a5ff4cc24588badec5f0181603703207abe8d53084f27e64317c37a49a6d403"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2662,9 +2628,9 @@ dependencies = [
 
 [[package]]
 name = "kui-channel"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16ca668011c84fe6a47eda3351ac52446cfad809e0d52a5855e4310781f23cb5"
+checksum = "614467be928b75cf38fc8df19ba0406410112a3537400d167826053f8dd76fdf"
 dependencies = [
  "kui-value",
  "mlua",
@@ -2673,23 +2639,31 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df468c8a56b3f7a96dbe92c584e3419844bc48bda33c75631080934498f09a9c"
+checksum = "a71f859d46f90ab39194d7a30fe5c22655073b351d09071eca94654d29ff6e2e"
 dependencies = [
+ "bitflags 2.13.2",
  "bytemuck",
- "cosmic-text",
+ "fontdb 0.23.0",
+ "harfrust 0.5.2",
  "kui-channel",
  "kui-derive",
  "kui-trace",
  "kui-value",
- "libc",
+ "linebender_resource_handle",
+ "log",
  "naga",
+ "rangemap",
  "resvg 0.46.0",
  "rustc-hash 2.1.3",
+ "self_cell",
+ "skrifa 0.40.0",
  "slotmap",
  "smallvec",
+ "smol_str 0.3.7",
  "swash",
+ "unicode-bidi",
  "unicode-linebreak",
  "unicode-script",
  "unicode-segmentation",
@@ -2698,9 +2672,9 @@ dependencies = [
 
 [[package]]
 name = "kui-derive"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e34186b0689f1a16e9fdd0464a1005176e9ce4fac0db89b15aa324383e59dd69"
+checksum = "7900eda7109dfb560aa1575b759ef59035050560e2a2c315af76d7965d13ce25"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2709,9 +2683,9 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e3ea45dac0421368831b5ffb75fd01c75d2fb924c108248c35fb6d51e91ec55"
+checksum = "0ed7ff9a1c51938c04c2701e970e622ba0639eb6cb796853bf657e8ca420f3a4"
 dependencies = [
  "bytemuck",
  "kui-access",
@@ -2722,31 +2696,35 @@ dependencies = [
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec49125b560ab0a78ec1322cbe36018fb64f2a5a3f30066cec12f3ab46d8c43d"
+checksum = "5ecd5dadfe7581181dcffe9cdcd809697c97fc08978741bc6a197d13bc6d00e2"
 dependencies = [
  "kui-channel",
  "kui-core",
+ "kui-native",
  "kui-value",
  "mlua",
 ]
 
 [[package]]
 name = "kui-native"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c36e2892fb416a31e7ac75352a9e859db88a1ea961b3aac89f4219f74dedf6a"
+checksum = "f94354f1cdad83690660275317d78e79da696a37504a488f20ee45882974eff5"
 dependencies = [
  "accesskit_winit",
  "arboard",
  "block2 0.6.2",
+ "fontdb 0.23.0",
  "gif",
  "image",
  "kira",
  "kui-access",
  "kui-core",
  "kui-wgpu",
+ "libc",
+ "memmap2",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-core-graphics",
@@ -2755,6 +2733,8 @@ dependencies = [
  "png 0.18.1",
  "pollster 1.0.1",
  "rfd",
+ "sys-locale",
+ "tempfile",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
@@ -2766,28 +2746,32 @@ dependencies = [
 
 [[package]]
 name = "kui-trace"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d68f901771b6376e8e67ec8ee232cf2d802d7cfb95820d34fe39b89ae0ff2154"
+checksum = "360015242592b3f2ecdcabebd7d0d2bf97d50b86a6b720530b06363f1362dc5c"
 
 [[package]]
 name = "kui-value"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71c93801074a591f3aee266551d1d69c9a7d6bf7285a7d9e8b859ffb141ed8fb"
+checksum = "558df7180ecb7d467e48f333a3467bed7658136f1adb3301815b90ecd9e97fa6"
 dependencies = [
  "mlua",
 ]
 
 [[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.77"
+version = "0.1.0-alpha.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8df153f8327a1fce716bce59dbf473c25a772c72ea6b858eadce0f5a48069c"
+checksum = "3d867532eac98de991390c532659d026f2cf13817413a4e944e91d14a6fae009"
 dependencies = [
  "bytemuck",
  "kui-core",
+ "objc2 0.6.5",
+ "objc2-metal 0.3.2",
+ "objc2-quartz-core 0.3.2",
  "pollster 1.0.1",
+ "web-time",
  "wgpu",
  "windows",
 ]
@@ -2856,9 +2840,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.38.2"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -4009,7 +3993,7 @@ dependencies = [
  "concurrent-queue",
  "hermit-abi",
  "pin-project-lite",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
@@ -4471,9 +4455,9 @@ checksum = "9278fb35b3e730abe136e9b395b5b81b96d06b9f5478a50f0c8430a2237b22de"
 
 [[package]]
 name = "rusqlite"
-version = "0.40.2"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",
@@ -4486,9 +4470,9 @@ dependencies = [
 
 [[package]]
 name = "russh"
-version = "0.64.1"
+version = "0.65.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba61e87b9ec9a39a59a6bbed4c0b8ff7fb07073405b24a767a1f2c8560ac8f58"
+checksum = "94be3d86c71b9ed220a675c405e35c7a02565a009bf8da2e9cc13a700320a5c5"
 dependencies = [
  "aes",
  "bitflags 2.13.2",
@@ -4510,7 +4494,7 @@ dependencies = [
  "enum_dispatch",
  "flate2",
  "futures",
- "generic-array 1.4.5",
+ "generic-array",
  "getrandom 0.4.3",
  "ghash",
  "hex-literal",
@@ -4613,9 +4597,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags 2.13.2",
  "errno",
@@ -4632,7 +4616,7 @@ checksum = "1de16c7c59892b870a6336f185dc10943517f1327447096bbb7bb32cd85e2393"
 dependencies = [
  "errno",
  "libc",
- "rustix 1.1.5",
+ "rustix 1.1.6",
 ]
 
 [[package]]
@@ -5348,7 +5332,7 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.3",
  "once_cell",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
@@ -6126,7 +6110,7 @@ checksum = "38a91b4eaddff87b1cd1074985e3713da4af2c49742d1b356b2c01670a67a078"
 dependencies = [
  "cc",
  "downcast-rs",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "scoped-tls",
  "smallvec",
  "wayland-sys",
@@ -6139,7 +6123,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3c36a0f861ad76d0901f2800b46321410d9f73f2ea88aac0650d86c32688073"
 dependencies = [
  "bitflags 2.13.2",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "wayland-backend",
  "wayland-scanner",
 ]
@@ -6161,7 +6145,7 @@ version = "0.31.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a52d18780be9b1314328a3de5f930b73d2200112e3849ca6cb11822793fb34d"
 dependencies = [
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "wayland-client",
  "xcursor",
 ]
@@ -6861,7 +6845,7 @@ dependencies = [
  "libc",
  "libloading 0.8.9",
  "once_cell",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "x11rb-protocol",
 ]
 
@@ -6936,7 +6920,7 @@ dependencies = [
  "hex",
  "libc",
  "ordered-stream",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "serde",
  "serde_repr",
  "tracing",

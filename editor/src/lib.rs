@@ -20,6 +20,7 @@ pub mod replace;
 pub mod search;
 pub mod selection;
 pub mod settings;
+pub mod tool_catalog;
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -914,6 +915,8 @@ pub struct Local {
     pub path: PathBuf,
     pub editorconfig: editorconfig::Resolved,
     pub tool: Option<(String, Setting)>,
+    /// A declarative formatter config's preferred line width.
+    pub width: Option<(String, Setting)>,
     pub sources: Vec<(String, Setting)>,
 }
 
@@ -923,6 +926,7 @@ impl Local {
             path,
             editorconfig,
             tool: None,
+            width: None,
             sources: Vec::new(),
         };
         l.rebuild();
@@ -937,8 +941,16 @@ impl Local {
         }
     }
 
+    pub fn set_width(&mut self, width: Option<(String, Setting)>) {
+        if self.width != width {
+            self.width = width;
+            self.rebuild();
+        }
+    }
+
     fn rebuild(&mut self) {
         self.sources = self.editorconfig.settings();
+        self.sources.extend(self.width.clone());
         self.sources.extend(self.tool.clone());
     }
 }
@@ -1001,6 +1013,8 @@ pub struct Editor {
     /// on, `<Esc>` in normal mode turns it off (vim's `:noh`); the
     /// pattern stays for `n`.
     pub search_hl: bool,
+    search_tab: Option<u64>,
+    tab_searches: HashMap<u64, (Option<search::Search>, bool, Vec<String>)>,
     /// Something the hand asked for failed — a search that found
     /// nothing — and the shell may ring for it (`editor.bell`, roadmap
     /// step 29); the shell takes it each frame.
@@ -1215,6 +1229,8 @@ impl Editor {
             search_history: Vec::new(),
             search: None,
             search_hl: true,
+            search_tab: None,
+            tab_searches: HashMap::new(),
             bell: false,
             missed: Vec::new(),
             tab_buffers: None,
@@ -4041,6 +4057,36 @@ impl Editor {
                 }
             });
         }
+    }
+
+    /// Selects the tab's Find pattern, highlights and prompt history.
+    /// Stable IDs keep these attached through tab reordering; closed
+    /// tabs are forgotten. The shell's active tab applies in the dock too.
+    pub fn sync_search_tab(&mut self, tab: u64, alive: &[u64]) {
+        if self.search_tab != Some(tab) {
+            if let Some(previous) = self.search_tab {
+                if matches!(self.prompt_kind(), Some(Prompt::Search { .. })) {
+                    self.cancel_prompt();
+                }
+                self.tab_searches.insert(
+                    previous,
+                    (
+                        self.search.take(),
+                        self.search_hl,
+                        std::mem::take(&mut self.search_history),
+                    ),
+                );
+                let (search, highlight, history) =
+                    self.tab_searches
+                        .remove(&tab)
+                        .unwrap_or((None, true, Vec::new()));
+                self.search = search;
+                self.search_hl = highlight;
+                self.search_history = history;
+            }
+            self.search_tab = Some(tab);
+        }
+        self.tab_searches.retain(|id, _| alive.contains(id));
     }
 
     /// Makes `pattern` the search `n` and `N` walk and the view paints,

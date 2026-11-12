@@ -11,7 +11,6 @@
 //! domains' picker (recent first, "from :ssh") all find it next time.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use kawoosh_editor::{ArgKind, Args, Spec};
 
@@ -217,14 +216,7 @@ impl Kawoosh {
 
     /// `:domain tab`'s, at `path` on the domain (`~` its home).
     pub(crate) fn domain_tab_at(&mut self, name: &str, path: &str) {
-        if self.domain_kind(name).is_none() {
-            self.ed.message = format!("no domain named {name}");
-            return;
-        }
-        let at = crate::domains::from_home(kawoosh_systems::fs::on_domain(name, Path::new(path)));
-        self.shell_command("tab new", &[], None);
-        self.set_cwd(&at);
-        self.open(&at);
+        self.open_domain_tab(name, path);
     }
 }
 

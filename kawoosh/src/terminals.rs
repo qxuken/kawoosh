@@ -126,6 +126,7 @@ pub struct Terminals {
     /// processes not yet: started on the next frame, once the command
     /// socket is up and `$EDITOR` can reach this window.
     pub pending: Vec<(TermId, Pending)>,
+    environment_pending: Vec<EnvironmentPending>,
     /// Kept terminals whose process ended (a `:!CMD`'s, [`Spawned::keep`]),
     /// with how it did: the pane stays, its output there to read, and
     /// every key is normal mode's — `r` runs the line again, `q` closes.
@@ -161,7 +162,62 @@ pub struct Pending {
     pub shell: Option<String>,
 }
 
+struct EnvironmentPending {
+    id: TermId,
+    cwd: PathBuf,
+    shell: Option<String>,
+    cmd: Option<String>,
+    argv: Option<Vec<String>>,
+    input: Vec<u8>,
+    recording: Option<PathBuf>,
+    answer: std::sync::mpsc::Receiver<kawoosh_systems::project_env::Environment>,
+}
+
+/// Keep early keystrokes bounded while a provider is preparing a process.
+const PENDING_INPUT_LIMIT: usize = 64 * 1024;
+
 impl Terminals {
+    pub(crate) fn preparing(&self, id: TermId) -> bool {
+        self.environment_pending.iter().any(|p| p.id == id)
+    }
+
+    /// The launch directory remains available before a process exists.
+    pub(crate) fn cwd(&self, id: TermId) -> Option<PathBuf> {
+        self.environment_pending
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.cwd.clone())
+            .or_else(|| self.map.get(&id).and_then(|t| t.cwd()))
+            .or_else(|| {
+                self.pending
+                    .iter()
+                    .find(|(t, _)| *t == id)
+                    .map(|(_, p)| p.cwd.clone())
+            })
+    }
+
+    pub(crate) fn record_after_environment(&mut self, id: TermId, path: PathBuf) -> bool {
+        if let Some(p) = self.environment_pending.iter_mut().find(|p| p.id == id) {
+            p.recording = Some(path);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn pending_recording(&self, id: TermId) -> bool {
+        self.environment_pending
+            .iter()
+            .any(|p| p.id == id && p.recording.is_some())
+    }
+
+    pub(crate) fn cancel_pending_recording(&mut self, id: TermId) -> bool {
+        self.environment_pending
+            .iter_mut()
+            .find(|p| p.id == id)
+            .is_some_and(|p| p.recording.take().is_some())
+    }
+
     pub fn add(&mut self, t: Terminal) -> TermId {
         let id = self.reserve();
         self.map.insert(id, t);
@@ -177,6 +233,7 @@ impl Terminals {
     /// Terminal `id` gone: its screen, and its output — the reader, if
     /// it still reads, let go.
     pub fn forget(&mut self, id: TermId) {
+        self.environment_pending.retain(|p| p.id != id);
         self.map.remove(&id);
         self.flows.remove(&id);
         self.flowing.remove(&id);
@@ -286,11 +343,7 @@ impl Kawoosh {
     /// listing's, the directory it lists; a file's, the one it is in;
     /// else the working directory. Where `:terminal here` starts.
     pub(crate) fn here_dir(&self) -> PathBuf {
-        if let Some(d) = self
-            .term_of_focused()
-            .and_then(|t| self.terms.map.get(&t))
-            .and_then(|t| t.cwd())
-        {
+        if let Some(d) = self.term_of_focused().and_then(|t| self.terms.cwd(t)) {
             return d;
         }
         let focused = self.layout.focused();
@@ -412,13 +465,35 @@ impl Kawoosh {
     /// shell between — whatever the user's shell quotes like — given the
     /// PATH a shell made: `:lsp install`'s `kawoosh lsp install …`.
     pub fn spawn_bang_argv(&mut self, argv: &[String], cwd: &Path) -> Option<TermId> {
+        if self.io.environments.available(cwd) {
+            let id = self.prepare_terminal_environment(None, None, None, Some(argv), cwd);
+            let s = self.terms.spawned.entry(id).or_default();
+            s.keep = Some(cwd.to_path_buf());
+            s.argv = Some(argv.to_vec());
+            return Some(id);
+        }
+        self.spawn_bang_argv_ready(None, argv, cwd, &[])
+    }
+
+    fn spawn_bang_argv_ready(
+        &mut self,
+        id: Option<TermId>,
+        argv: &[String],
+        cwd: &Path,
+        project: &[(String, String)],
+    ) -> Option<TermId> {
         let mut envs = vec![("TERM_PROGRAM".to_string(), "kawoosh".to_string())];
         if let Some(path) = kawoosh_systems::shell_env::path() {
             envs.push(("PATH".into(), path.to_string_lossy().into_owned()));
         }
+        if project.iter().any(|(k, _)| k.eq_ignore_ascii_case("PATH")) {
+            envs.retain(|(k, _)| !k.eq_ignore_ascii_case("PATH"));
+        }
+        let mut resolved = project.to_vec();
+        resolved.extend(envs);
         let size = TermSize { rows: 24, cols: 80 };
-        let spawned = in_a_pty(|| Terminal::spawn_argv(argv, Some(cwd), size, &envs));
-        let t = self.adopt_terminal(None, spawned, None)?;
+        let spawned = in_a_pty(|| Terminal::spawn_argv(argv, Some(cwd), size, &resolved));
+        let t = self.adopt_terminal(id, spawned, None)?;
         let s = self.terms.spawned.entry(t).or_default();
         s.keep = Some(cwd.to_path_buf());
         s.argv = Some(argv.to_vec());
@@ -583,8 +658,7 @@ impl Kawoosh {
     /// is; else the working directory.
     pub(crate) fn terminal_cwd(&self) -> PathBuf {
         self.term_of(self.layout.focused())
-            .and_then(|t| self.terms.map.get(&t))
-            .and_then(|t| t.cwd())
+            .and_then(|t| self.terms.cwd(t))
             .unwrap_or_else(|| self.cwd.clone())
     }
 
@@ -597,6 +671,77 @@ impl Kawoosh {
         shell: Option<&str>,
         cmd: Option<&str>,
         cwd: Option<&Path>,
+    ) -> Option<TermId> {
+        let cwd = cwd
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.cwd.clone());
+        if self.io.environments.available(&cwd) {
+            return Some(self.prepare_terminal_environment(id, shell, cmd, None, &cwd));
+        }
+        self.spawn_terminal_ready(id, shell, cmd, &cwd, &[])
+    }
+
+    fn prepare_terminal_environment(
+        &mut self,
+        id: Option<TermId>,
+        shell: Option<&str>,
+        cmd: Option<&str>,
+        argv: Option<&[String]>,
+        cwd: &Path,
+    ) -> TermId {
+        let id = id.unwrap_or_else(|| self.terms.reserve());
+        // A project/tab change while the provider runs must not choose
+        // a different local shell. Remote None remains the host's shell.
+        let shell = shell.map(str::to_string).or_else(|| {
+            (kawoosh_systems::fs::domain_of(cwd).is_none()).then(|| {
+                self.ed
+                    .settings
+                    .str("terminal.shell")
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        kawoosh_systems::shell_env::default_shell()
+                            .map(|s| s.to_string_lossy().into_owned())
+                    })
+                    .unwrap_or_else(|| {
+                        if cfg!(windows) {
+                            std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into())
+                        } else {
+                            "/bin/sh".into()
+                        }
+                    })
+            })
+        });
+        let (tx, answer) = std::sync::mpsc::sync_channel(1);
+        let dir = cwd.to_path_buf();
+        let environments = self.io.environments.clone();
+        let wake = self.wake.named("project environment");
+        std::thread::spawn(move || {
+            let environment = environments.resolve(&dir);
+            let _ = tx.send(environment);
+            wake.wake();
+        });
+        self.terms.environment_pending.push(EnvironmentPending {
+            id,
+            cwd: cwd.to_path_buf(),
+            shell,
+            cmd: cmd.map(str::to_string),
+            argv: argv.map(<[String]>::to_vec),
+            input: Vec::new(),
+            recording: None,
+            answer,
+        });
+        self.terms.spawned.entry(id).or_default().cmd = cmd.map(str::to_string);
+        id
+    }
+
+    fn spawn_terminal_ready(
+        &mut self,
+        id: Option<TermId>,
+        shell: Option<&str>,
+        cmd: Option<&str>,
+        cwd: &Path,
+        project: &[(String, String)],
     ) -> Option<TermId> {
         let mut envs = vec![
             ("TERM_PROGRAM".to_string(), "kawoosh".to_string()),
@@ -638,14 +783,19 @@ impl Kawoosh {
             envs.push(("PATH".into(), path.to_string_lossy().into_owned()));
         }
         let size = TermSize { rows: 24, cols: 80 };
-        let cwd = cwd
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| self.cwd.clone());
+        let cwd = cwd.to_path_buf();
+        if project.iter().any(|(k, _)| k.eq_ignore_ascii_case("PATH")) {
+            envs.retain(|(k, _)| !k.eq_ignore_ascii_case("PATH"));
+        }
+        let mut inherited = project.to_vec();
+        inherited.extend(envs);
+        let mut envs = inherited;
         let host =
             kawoosh_systems::fs::domain_of(&cwd).map(|(n, d)| (n.to_string(), d.to_path_buf()));
         let spawned = match &host {
             Some((name, dir)) => {
-                let Some(launch) = self.remote_terminal_argv(name, dir, shell, cmd, size) else {
+                let Some(launch) = self.remote_terminal_argv(name, dir, shell, cmd, size, project)
+                else {
                     self.ed.message = if self.dropped_domain(Some(&cwd)).is_some() {
                         format!("{name}: disconnected (:domain reconnect {name})")
                     } else {
@@ -760,10 +910,12 @@ impl Kawoosh {
         shell: Option<&str>,
         cmd: Option<&str>,
         size: TermSize,
+        project: &[(String, String)],
     ) -> Option<RemoteLaunch> {
         use kawoosh_systems::io::{remote_script, shell_quote, transport_of};
         let t = transport_of(name)?;
-        let mut envs = vec![
+        let mut envs = project.to_vec();
+        envs.extend([
             ("TERM_PROGRAM".to_string(), "kawoosh".to_string()),
             (
                 "TERM_PROGRAM_VERSION".to_string(),
@@ -774,7 +926,7 @@ impl Kawoosh {
                 if self.dark { "dark" } else { "light" }.to_string(),
             ),
             ("KAWOOSH_DOMAIN".to_string(), name.to_string()),
-        ];
+        ]);
         let port = remote_port();
         // The CLI's variables, set only where it was written and can run
         // — `~/.cache` may be read only, and the ssh host's CLI is bash,
@@ -873,6 +1025,53 @@ impl Kawoosh {
     /// cwd when that is gone). One that will not start takes its pane
     /// with it.
     pub(crate) fn spawn_pending(&mut self) {
+        for p in std::mem::take(&mut self.terms.environment_pending) {
+            // The pane may have been closed, or its domain disconnected,
+            // while the provider was working. Never resurrect it.
+            if !self
+                .layout
+                .all_panes()
+                .into_iter()
+                .any(|q| self.term_of(q) == Some(p.id))
+            {
+                continue;
+            }
+            let project = match p.answer.try_recv() {
+                Ok(project) => project,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.terms.environment_pending.push(p);
+                    continue;
+                }
+                Err(_) => Vec::new(),
+            };
+            let previous = self.terms.spawned.get(&p.id).cloned();
+            let spawned = match p.argv {
+                Some(argv) => self.spawn_bang_argv_ready(Some(p.id), &argv, &p.cwd, &project),
+                None => self.spawn_terminal_ready(
+                    Some(p.id),
+                    p.shell.as_deref(),
+                    p.cmd.as_deref(),
+                    &p.cwd,
+                    &project,
+                ),
+            };
+            if spawned.is_some() {
+                if let Some(path) = p.recording {
+                    self.start_terminal_recording(p.id, &path);
+                }
+                self.term_input(p.id, &p.input);
+                if let Some(previous) = previous {
+                    self.terms.spawned.insert(p.id, previous);
+                }
+            } else if let Some(pane) = self
+                .layout
+                .all_panes()
+                .into_iter()
+                .find(|q| self.term_of(*q) == Some(p.id))
+            {
+                self.close_gone(pane);
+            }
+        }
         for (id, p) in std::mem::take(&mut self.terms.pending) {
             // A shell on a host waits, its pane kept, for the domain to
             // be connected (docs/design/domains.md Decision 8).
@@ -996,6 +1195,9 @@ impl Kawoosh {
     /// key but the escape and a bound ⌘ chord the program's. Set by hand
     /// for the program in front, else while one `terminal.raw` names is.
     pub(crate) fn term_raw(&self, id: TermId) -> bool {
+        if self.terms.preparing(id) {
+            return false;
+        }
         let Some(t) = self.terms.map.get(&id) else {
             return false;
         };
@@ -1061,9 +1263,8 @@ impl Kawoosh {
         let Some(id) = self.focused_term() else {
             return;
         };
-        let Some(t) = self.terms.map.get_mut(&id) else {
-            return;
-        };
+        let app_cursor_keys = !self.terms.preparing(id)
+            && self.terms.map.get(&id).is_some_and(|t| t.app_cursor_keys());
         let mut bytes = Vec::new();
         for tok in parse_notation(keys) {
             let k = stroke_of(&tok);
@@ -1074,7 +1275,7 @@ impl Kawoosh {
                 k.ctrl,
                 k.alt,
                 k.shift,
-                t.app_cursor_keys(),
+                app_cursor_keys,
             ) {
                 Some(b) => bytes.extend(b),
                 None => {
@@ -1083,8 +1284,40 @@ impl Kawoosh {
                 }
             }
         }
-        t.scroll_to_bottom();
-        t.input(&bytes);
+        self.term_input(id, &bytes);
+    }
+
+    /// Input for an existing process, or for its reserved terminal while
+    /// a project environment is loading. A closed pane drops its queue.
+    pub(crate) fn term_input(&mut self, id: TermId, bytes: &[u8]) {
+        if let Some(p) = self
+            .terms
+            .environment_pending
+            .iter_mut()
+            .find(|p| p.id == id)
+        {
+            if p.input.len().saturating_add(bytes.len()) <= PENDING_INPUT_LIMIT {
+                p.input.extend_from_slice(bytes);
+            } else {
+                self.ed.message = "terminal input: pending environment input limit reached".into();
+            }
+        } else if let Some(t) = self.terms.map.get_mut(&id) {
+            t.scroll_to_bottom();
+            t.input(bytes);
+        }
+    }
+
+    /// A paste before spawn uses the terminal's initial, unbracketed
+    /// protocol; a running program keeps its own current paste mode.
+    pub(crate) fn term_paste(&mut self, id: TermId, text: &str) {
+        if self.terms.preparing(id) {
+            self.term_input(id, text.replace('\n', "\r").as_bytes());
+        } else if let Some(t) = self.terms.map.get_mut(&id) {
+            t.scroll_to_bottom();
+            t.paste(text);
+        } else {
+            self.term_input(id, text.replace('\n', "\r").as_bytes());
+        }
     }
 
     /// The terminal's escape (`terminal.escape`, `<C-\>` by default)
@@ -1112,7 +1345,7 @@ impl Kawoosh {
         }
         // No process to hear them: every key is normal mode's, as after
         // the escape — `r` again, `q` closes, `<C-S-x>` copy mode.
-        if self.terms.done.contains_key(&id) {
+        if self.terms.done.contains_key(&id) && !self.terms.preparing(id) {
             let keys = self.terms.escape.take().unwrap_or_default();
             self.term_escaped(id, &stroke, keys);
             return;
@@ -1128,8 +1361,8 @@ impl Kawoosh {
         // The view's own keys, where a program on the whole screen
         // keeps them: shift with the page keys moves through history —
         // and not in raw, where they are the program's too.
-        let alt_screen =
-            self.terms.map.get(&id).is_some_and(|t| t.is_alt_screen()) || self.term_raw(id);
+        let alt_screen = !self.terms.preparing(id)
+            && (self.terms.map.get(&id).is_some_and(|t| t.is_alt_screen()) || self.term_raw(id));
         let scroll = match note.as_str() {
             "<S-PageUp>" => Some(TermScroll::Page(1)),
             "<S-PageDown>" => Some(TermScroll::Page(-1)),
@@ -1143,18 +1376,16 @@ impl Kawoosh {
         }
         // A program that pushed kitty's keyboard protocol hears the key
         // whole — an unbound ⌘ chord as super-modified (Decision 6).
-        if self
-            .terms
-            .map
-            .get(&id)
-            .is_some_and(|t| t.keyboard_flags() != 0)
+        if !self.terms.preparing(id)
+            && self
+                .terms
+                .map
+                .get(&id)
+                .is_some_and(|t| t.keyboard_flags() != 0)
         {
             self.term_kitty(id, press, false);
             return;
         }
-        let Some(t) = self.terms.map.get_mut(&id) else {
-            return;
-        };
         // A ⌘ chord bound to nothing is nothing to the shell, not its
         // letter: a pty has no use for ⌘ (`Kawoosh::pane_chord`) — but
         // for a Mac's line-editing keys, which a shell hears as
@@ -1163,8 +1394,7 @@ impl Kawoosh {
             if let Some(bytes) =
                 encode_super_key(&stroke.code, stroke.ctrl, stroke.alt, stroke.shift)
             {
-                t.scroll_to_bottom();
-                t.input(bytes);
+                self.term_input(id, bytes);
             }
             return;
         }
@@ -1179,10 +1409,10 @@ impl Kawoosh {
             stroke.ctrl,
             meta,
             stroke.shift,
-            t.app_cursor_keys(),
+            !self.terms.preparing(id)
+                && self.terms.map.get(&id).is_some_and(|t| t.app_cursor_keys()),
         ) {
-            t.scroll_to_bottom();
-            t.input(&bytes);
+            self.term_input(id, &bytes);
         }
     }
 
@@ -1192,7 +1422,7 @@ impl Kawoosh {
     /// key when it asked for every key — and nothing's otherwise. Never
     /// while the escape is open, whose keys are kawoosh's.
     pub(crate) fn term_key_aside(&mut self, id: TermId, k: &KeyPress, up: bool) {
-        if self.terms.done.contains_key(&id) {
+        if self.terms.preparing(id) || self.terms.done.contains_key(&id) {
             return;
         }
         if up {

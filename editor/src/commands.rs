@@ -5789,6 +5789,7 @@ pub fn default_keymap(km: &mut Keymap) {
         // editor pane's, below.
         ("<C-s>", "write"),
         ("<D-s>", "write"),
+        ("<D-f>", "search"),
         // The tab's jumps (docs/design/jumps.md): vim's keys; kui tells
         // `<C-i>` from `<Tab>`, which stays free.
         ("<C-o>", "jump back"),

@@ -39,7 +39,7 @@ local picker = kawoosh.picker
 ---Where the directory jumps come from (`kawoosh.dirs.backends`).
 ---@class kawoosh.dirs.Backend
 ---@field list fun(done: fun(rows: kawoosh.dirs.Row[]?, err?: string)) every directory it knows, handed to `done`
----@field add fun(path: string) a visit counted
+---@field add fun(path: string, workspace?: string) a visit counted under its origin workspace
 
 ---The directory jumps: the backends by name, `dirs.backend` choosing.
 ---@class kawoosh.dirs
@@ -48,6 +48,19 @@ local dirs = { backends = {} }
 kawoosh.dirs = dirs
 
 local KIND = "dirs.dir"
+
+local function on_host(path)
+  return path:match("^[%w_%.%-][%w_%.%-]+:[/~]") ~= nil
+end
+
+-- A host's stat is a round trip. Visits and picker loads must hand it
+-- to a job, just as directory listings already can.
+local function is_dir(path, done)
+  if on_host(path) then
+    return fs.stat(path, function(st) done(st ~= nil and st.is_dir) end)
+  end
+  return done(fs.is_dir(path))
+end
 
 -- A path quoted for the terminal's command line: single quotes, which
 -- every shell reads the same, unless the path holds one. zoxide itself
@@ -98,8 +111,8 @@ dirs.backends.memory = {
     end
     done(rows)
   end,
-  add = function(path)
-    kawoosh.remember { kind = KIND, subject = path, signals = { visits = 1 } }
+  add = function(path, workspace)
+    kawoosh.remember { kind = KIND, subject = path, workspace = workspace, signals = { visits = 1 } }
   end,
 }
 
@@ -126,13 +139,17 @@ end
 -- dirs.visit(path): a directory attended — counted by the memory,
 -- and by the backend too when that is another.
 ---@param path? string nothing when it is no directory
+---@param workspace? string the origin workspace when a listing arrived asynchronously
 ---@return nil
-function dirs.visit(path)
-
-  if not path or path == "" or not fs.is_dir(path) then return end
-  local backend = dirs.backend()
-  dirs.backends.memory.add(path)
-  if backend ~= dirs.backends.memory then backend.add(path) end
+function dirs.visit(path, workspace)
+  if not path or path == "" then return end
+  workspace = workspace or kawoosh.workspace()
+  local memory, backend = dirs.backends.memory, dirs.backend()
+  is_dir(path, function(valid)
+    if not valid then return end
+    memory.add(path, workspace)
+    if backend ~= memory then backend.add(path, workspace) end
+  end)
 end
 
 -- A `:cd` is a place gone to; a tab switch is not.
@@ -147,19 +164,26 @@ end)
 local from_terminal, from_listing = false, false
 
 -- A directory's entries as the preview's lines, directories first.
-local function preview(item)
-  local ok, entries = pcall(fs.list, item.path)
-  if not ok then return { title = item.text, lines = {}, note = "not readable" } end
-  table.sort(entries, function(a, b)
-    if a.is_dir ~= b.is_dir then return a.is_dir end
-    return a.name < b.name
-  end)
-  local lines = {}
-  for i, e in ipairs(entries) do
-    if i > 200 then break end
-    lines[#lines + 1] = e.name .. (e.is_dir and "/" or "")
+local function preview(item, _, done)
+  local function shown(entries)
+    if not entries then return { title = item.text, lines = {}, note = "not readable" } end
+    table.sort(entries, function(a, b)
+      if a.is_dir ~= b.is_dir then return a.is_dir end
+      return a.name < b.name
+    end)
+    local lines = {}
+    for i, e in ipairs(entries) do
+      if i > 200 then break end
+      lines[#lines + 1] = e.name .. (e.is_dir and "/" or "")
+    end
+    return { title = item.text, lines = lines }
   end
-  return { title = item.text, lines = lines }
+  if on_host(item.path) then
+    fs.list(item.path, function(entries) done(shown(entries)) end)
+    return { title = item.text, lines = {}, note = "loading…" }
+  end
+  local ok, entries = pcall(fs.list, item.path)
+  return shown(ok and entries or nil)
 end
 
 -- The directory listed in `dir`, the working directory left alone.
@@ -177,23 +201,34 @@ picker.source("dirs", {
       if not rows then return done(nil, err) end
       local max = 0
       for _, r in ipairs(rows) do if r.score > max then max = r.score end end
-      local items = {}
-      for _, r in ipairs(rows) do
-        -- Gone since it was counted: not offered.
-        if fs.is_dir(r.path) then
-          items[#items + 1] = {
-            text = fs.short(r.path),
-            path = r.path,
-            score = r.score,
-            -- The best-ranked 0.5, the rest in proportion (the files'
-            -- boosts' scale), so frecency orders an empty query and
-            -- breaks a match's ties.
-            boost = max > 0 and 0.5 * r.score / max or 0,
-          }
+      local items, index = {}, 0
+      local function add(r)
+        items[#items + 1] = {
+          text = fs.short(r.path), path = r.path, score = r.score,
+          boost = max > 0 and 0.5 * r.score / max or 0,
+        }
+      end
+      -- One remote stat at a time: a remembered list may have hundreds
+      -- of paths, all sharing one host's serialized file channel.
+      local function next_row()
+        while true do
+          index = index + 1
+          local r = rows[index]
+          if not r then
+            table.sort(items, function(a, b) return a.score > b.score end)
+            return done(items)
+          end
+          if on_host(r.path) then
+            return is_dir(r.path, function(valid)
+              if valid then add(r) end
+              return next_row()
+            end)
+          end
+          -- Local histories can be large: keep their checks iterative.
+          if fs.is_dir(r.path) then add(r) end
         end
       end
-      table.sort(items, function(a, b) return a.score > b.score end)
-      done(items)
+      next_row()
     end)
   end,
   preview = preview,
@@ -208,7 +243,8 @@ picker.source("dirs", {
     if from_terminal then
       -- The shell's own zoxide hook counts the `cd`; the memory has no
       -- hook, so it is told here.
-      if fs.is_dir(item.path) then dirs.backends.memory.add(item.path) end
+      local memory, workspace = dirs.backends.memory, kawoosh.workspace()
+      is_dir(item.path, function(valid) if valid then memory.add(item.path, workspace) end end)
       return kawoosh.term.send("cd " .. quoted(item.path) .. "\r", { prompt = true })
     end
     fs.chdir(item.path)

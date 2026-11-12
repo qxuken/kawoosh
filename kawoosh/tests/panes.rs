@@ -1551,6 +1551,14 @@ fn a_title_bar_under_the_pointer_has_a_close_button() {
     let mut app = Kawoosh::new("t", "alpha\nbeta");
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
+    // This exercises hover on both title bars at once. Give them half
+    // the viewport each instead of depending on Auto's font/text width.
+    app.layout.tab_mut().strip_mut().unwrap().columns[0].width = kawoosh::layout::Width::Half;
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "layout.column_width",
+        kawoosh_editor::Setting::Str("half".into()),
+    );
     ctrl_w(&mut d, &mut app, "v");
     for _ in 0..12 {
         d.advance(0.05);
@@ -1574,7 +1582,7 @@ fn a_title_bar_under_the_pointer_has_a_close_button() {
     };
     let title = |app: &Kawoosh, p: u64| {
         let r = app.layout.rects[&p];
-        Vec2::new(r.x + r.w / 2.0, r.y + 8.0)
+        Vec2::new(r.x + r.w / 2.0, r.y + 1.0 + app.chrome.pane_title_h / 2.0)
     };
     // On the focused pane's rows: no button, on either pane.
     let r2 = app.layout.rects[&2];
@@ -1592,7 +1600,8 @@ fn a_title_bar_under_the_pointer_has_a_close_button() {
     assert!(shown[0].x > r2.x + r2.w - 40.0, "{shown:?} in {r2:?}");
     // On the other's: that one's, and it stays while the pointer goes
     // to it. The click closes that pane; the keys stay on the focused.
-    hover(&mut d, &mut app, Vec2::new(r2.x / 2.0, r2.y + 8.0));
+    let at = title(&app, 1);
+    hover(&mut d, &mut app, at);
     let shown = closes(&d);
     assert_eq!(shown.len(), 1, "{shown:?}");
     assert!(shown[0].x < r2.x, "{shown:?} left of {r2:?}");

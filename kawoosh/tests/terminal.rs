@@ -9,6 +9,21 @@ use kawoosh::layout::Content;
 use kawoosh_editor::{Lookup, Mode};
 use kui_native::{InputEvent, KeyMods, Rect, Vec2};
 
+/// These fixture lines use POSIX syntax. Select a real shell for this
+/// application rather than changing the process environment for other tests.
+fn posix_shell(app: &mut Kawoosh) {
+    let shell = if cfg!(windows) {
+        kawoosh_systems::io::program_path("sh").expect("a POSIX shell for the terminal fixture")
+    } else {
+        std::path::PathBuf::from("/bin/sh")
+    };
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.shell",
+        kawoosh_editor::Setting::Str(shell.display().to_string()),
+    );
+}
+
 #[test]
 fn a_terminal_pane_draws_cells_and_takes_the_escape() {
     let mut app = Kawoosh::new("t", "editor text");
@@ -678,6 +693,7 @@ fn terminals_start_in_the_working_directory_with_the_appearance() {
     std::fs::create_dir_all(&dir).unwrap();
     let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     let mut app = Kawoosh::new("t", "");
+    posix_shell(&mut app);
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     d.keys(&mut app, ":");
@@ -887,6 +903,14 @@ fn a_session_starts_the_shells_again_where_they_were() {
     let db = dir.join("state.db");
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("t", "");
+    posix_shell(&mut app);
+    // This checks session restoration; provider timing is covered by
+    // the gated environment tests instead of the user's home config.
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "mise.enabled",
+        kawoosh_editor::Setting::Bool(false),
+    );
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
@@ -899,7 +923,8 @@ fn a_session_starts_the_shells_again_where_they_were() {
     // The process's directory until the shell says otherwise.
     let mut cwd = None;
     for _ in 0..200 {
-        cwd = app.terms.map[&shell].cwd();
+        d.frame(&mut app);
+        cwd = app.terms.map.get(&shell).and_then(|term| term.cwd());
         if cwd.as_deref() == Some(dir.join("sub").as_path()) {
             break;
         }
@@ -932,6 +957,12 @@ fn a_session_starts_the_shells_again_where_they_were() {
 
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("*scratch*", "");
+    posix_shell(&mut app);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "mise.enabled",
+        kawoosh_editor::Setting::Bool(false),
+    );
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
@@ -962,6 +993,13 @@ fn a_session_starts_the_shells_again_where_they_were() {
         .filter_map(|p| app.term_of(p))
         .collect();
     assert_eq!(terms.len(), 2);
+    for _ in 0..300 {
+        if terms.iter().all(|t| app.terms.map.contains_key(t)) {
+            break;
+        }
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     assert!(
         terms.iter().all(|t| app.terms.map.contains_key(t)),
         "started"
@@ -1369,13 +1407,12 @@ fn a_terminal_at_a_password_prompt_says_so() {
 /// answered there.
 #[test]
 fn bang_runs_a_shell_line_with_percent_in_a_terminal() {
-    // SAFETY: this command line is POSIX, set before the app starts.
-    unsafe { std::env::set_var("SHELL", "/bin/sh") };
     let dir = std::env::temp_dir().join(format!("kawoosh-bang-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("it's here.txt");
     std::fs::write(&file, "x\n").unwrap();
     let mut app = Kawoosh::from_file(&file);
+    posix_shell(&mut app);
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     d.keys(&mut app, ":!echo BANG %:t; sleep 1");
@@ -1562,10 +1599,9 @@ fn the_other_buttons_paste_and_reach_a_reporting_program() {
 /// the dock being every tab's.
 #[test]
 fn a_split_tool_is_each_tabs_and_a_docked_one_the_windows() {
-    // SAFETY: the tools' `sleep 30` is POSIX, set before the app starts.
-    unsafe { std::env::set_var("SHELL", "/bin/sh") };
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("*scratch*", "");
+    posix_shell(&mut app);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
@@ -1618,6 +1654,86 @@ fn a_split_tool_is_each_tabs_and_a_docked_one_the_windows() {
     app.shell_command("tool", &["docked".into()], None);
     d.frame(&mut app);
     assert_eq!(tools(&app, "docked").len(), 1);
+}
+
+/// A terminal's reserved identity already belongs to its tool while
+/// the environment is pending: focusing/toggling it must not launch twice.
+#[test]
+fn a_pending_tools_pane_is_reused_before_its_process_starts() {
+    let dir = std::env::temp_dir().join(format!(
+        "kawoosh-pending-tool-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let gate = dir.join("release-provider");
+    let provider = dir.join("provider.py");
+    std::fs::write(&provider,
+        "import pathlib, time\nwhile not pathlib.Path('release-provider').exists(): time.sleep(.01)\nprint('{}')\n"
+    ).unwrap();
+    let (python, args) = drive::python();
+    let command = std::iter::once(python)
+        .chain(args)
+        .chain(std::iter::once(provider.display().to_string()))
+        .collect();
+    let mut app = Kawoosh::new("*scratch*", "");
+    posix_shell(&mut app);
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&dir);
+    app.io.environments.register(
+        "aaa-delayed-tool".into(),
+        Some(kawoosh_systems::project_env::Provider {
+            command,
+            ..Default::default()
+        }),
+    );
+    app.run_lua_source(
+        "pending tools",
+        r#"
+      kawoosh.tool('pending-split', {cmd = 'sleep 30'})
+      kawoosh.tool('pending-dock', {cmd = 'sleep 30', dock = true})
+    "#,
+    );
+    app.shell_command("tool", &["pending-split".into()], None);
+    let split = app.term_of_focused().expect("reserved split terminal");
+    let split_pane = app.layout.focused();
+    assert!(!app.terms.map.contains_key(&split));
+    app.shell_command("tool", &["pending-split".into()], None);
+    assert_eq!(app.term_of_focused(), Some(split));
+    assert_eq!(app.layout.focused(), split_pane);
+    app.shell_command("tool", &["pending-dock".into()], None);
+    let dock = app.term_of_focused().expect("reserved dock terminal");
+    assert!(app.layout.dock_open);
+    app.shell_command("tool", &["pending-dock".into()], None);
+    assert!(
+        !app.layout.dock_open,
+        "the existing pending dock toggles away"
+    );
+    app.shell_command("tool", &["pending-dock".into()], None);
+    assert_eq!(app.term_of_focused(), Some(dock));
+    assert!(!app.terms.map.contains_key(&dock));
+    assert_eq!(app.terms.spawned.len(), 2, "one reserved terminal per tool");
+    std::fs::write(&gate, "go").unwrap();
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if app.terms.map.contains_key(&split) && app.terms.map.contains_key(&dock) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        app.terms.map.len(),
+        2,
+        "each reserved tool starts exactly once"
+    );
+    assert!(app.terms.map.contains_key(&split) && app.terms.map.contains_key(&dock));
+    drop(app);
+    std::fs::remove_dir_all(dir).ok();
 }
 
 /// kitty's keyboard protocol (terminal-keys.md Decisions 5 and 6): once
@@ -1829,6 +1945,52 @@ fn the_escape_looks_past_a_binding_gated_off_here() {
     assert!(app.terms.escape.is_none());
     assert!(app.layout.tab().is_scroll(), "a strip, where `zz` centres");
     assert_eq!(app.ed.message, "", "`zz` ran, quietly");
+}
+
+/// A tab hook may inspect any buffer the new pane snapshot advertises,
+/// including a buffer created since the last frame and after tab closure.
+#[test]
+fn tab_hooks_read_the_buffers_in_the_layout_they_receive() {
+    let mut app = Kawoosh::new("original", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    app.run_lua_source(
+        "tab snapshot observer",
+        r#"tab_names = {}
+           kawoosh.on_tabs(function()
+             local names = {}
+             for _, pane in ipairs(kawoosh.panes()) do
+               if pane.buffer then names[#names + 1] = kawoosh.buf.name(pane.buffer) end
+             end
+             tab_names[#tab_names + 1] = names
+           end)"#,
+    );
+    let fresh = app
+        .ed
+        .add_buffer(kawoosh_doc::Buffer::new("fresh tab buffer", "fresh"));
+    let view = app.ed.add_view(fresh);
+    app.layout.new_tab(Content::Editor(view));
+    // No frame between creating the buffer and publishing the tab.
+    app.run_lua_source("publish fresh tab", "");
+    let rt = app.scripting.rt.as_ref().unwrap();
+    assert_eq!(
+        rt.eval("tab_names[#tab_names][1] == 'fresh tab buffer'")
+            .unwrap(),
+        "true"
+    );
+    app.shell_command("tab close", &[], None);
+    app.run_lua_source("publish surviving tab", "");
+    let rt = app.scripting.rt.as_ref().unwrap();
+    assert_eq!(
+        rt.eval("tab_names[#tab_names][1] == 'original'").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        app.ed.message, "",
+        "tab hooks can read every advertised buffer"
+    );
 }
 
 /// `Z` is not a terminal's (asked 2026-10-11: "`Z` only available
@@ -2349,6 +2511,14 @@ fn a_click_on_a_terminal_the_strip_brings_into_view_selects_nothing() {
     d.keys(&mut app, ":");
     d.keys(&mut app, "layout scroll");
     d.key(&mut app, "enter", KeyMods::default());
+    // This regression needs a full column followed by a half column,
+    // regardless of the user's default Auto character width or font.
+    app.layout.tab_mut().strip_mut().unwrap().columns[0].width = kawoosh::layout::Width::Full;
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "layout.column_width",
+        kawoosh_editor::Setting::Str("half".into()),
+    );
     let t = app.add_headless_terminal();
     app.feed_terminal(t, "0123456789".repeat(12).as_bytes());
     settle(&mut d, &mut app);
@@ -2383,7 +2553,13 @@ fn a_click_on_a_terminal_the_strip_brings_into_view_selects_nothing() {
         .expect("the terminal's grid");
     let (_, ch) = app.cell_metrics();
     // On the first row's text, where it shows.
-    let at = Vec2::new(300.0, cells.y + ch / 2.0);
+    let left = cells.x.max(0.0);
+    let right = (cells.x + cells.w).min(900.0);
+    assert!(
+        right - left > 100.0,
+        "a visible part of the terminal: {cells:?}"
+    );
+    let at = Vec2::new((left + right) / 2.0, cells.y + ch / 2.0);
     d.input(&mut app, InputEvent::CursorMoved(at));
     d.frame(&mut app);
     d.input(

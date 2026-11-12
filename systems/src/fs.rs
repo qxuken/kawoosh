@@ -956,8 +956,8 @@ pub fn apply(changes: &[Change], settled: impl FnOnce(&Outcomes)) -> Vec<Result<
     apply_with(changes, settled, |_| {})
 }
 
-/// How long copies run before [`apply_with`] says how they are going,
-/// and then how often: a copy over in a moment shows no line at all.
+/// How long a copy or removal runs before its progress is said, and
+/// then how often: an operation over in a moment shows no line at all.
 pub const COPYING_AFTER: Duration = Duration::from_millis(300);
 pub const COPYING_EVERY: Duration = Duration::from_millis(150);
 
@@ -969,13 +969,38 @@ pub struct Copying {
     pub done: bool,
 }
 
+/// Selected entries processed by a write's removal phase. A recursive
+/// directory is one entry: its contents are not walked to measure a
+/// total before removal. Failed attempts are processed too; outcomes
+/// keep their errors. Elapsed time advances even while one host call
+/// or recursive directory removal is still running.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Removing {
+    pub entries: u64,
+    pub entries_done: u64,
+    pub elapsed: Duration,
+    pub done: bool,
+}
+
 /// [`apply`], telling `copying` how the copies are going while they
 /// run ([`COPYING_AFTER`], [`COPYING_EVERY`]), on the thread `apply`
 /// was called on.
 pub fn apply_with(
     changes: &[Change],
     settled: impl FnOnce(&Outcomes),
+    copying: impl FnMut(Copying),
+) -> Vec<Result<(), String>> {
+    apply_with_progress(changes, settled, copying, |_| {})
+}
+
+/// [`apply_with`], also reporting removals after the same quiet period
+/// as copies. Both callbacks run on the calling thread; a phase's
+/// `done` arrives only if that phase had a progress line to finish.
+pub fn apply_with_progress(
+    changes: &[Change],
+    settled: impl FnOnce(&Outcomes),
     mut copying: impl FnMut(Copying),
+    mut removing: impl FnMut(Removing),
 ) -> Vec<Result<(), String>> {
     let mut out: Outcomes = vec![None; changes.len()];
     let mut targets = std::collections::HashSet::new();
@@ -1130,18 +1155,59 @@ pub fn apply_with(
     settled(&out);
 
     std::thread::scope(|s| {
+        let (over, ended) = std::sync::mpsc::channel();
         let running: Vec<_> = removals
             .iter()
             .map(|a| {
                 let at = a.tmp.clone().unwrap_or_else(|| a.path.clone());
-                (a, s.spawn(move || remove(&at)))
+                let over = over.clone();
+                (
+                    a,
+                    s.spawn(move || {
+                        let r = remove(&at);
+                        let _ = over.send(());
+                        r
+                    }),
+                )
             })
             .collect();
+        drop(over);
+        let start = Instant::now();
+        let mut said: Option<Instant> = None;
+        let mut entries_done = 0;
+        let entries = running.len() as u64;
+        while entries_done < entries {
+            let next = match said {
+                Some(t) => t + COPYING_EVERY,
+                None => start + COPYING_AFTER,
+            };
+            match ended.recv_timeout(next.saturating_duration_since(Instant::now())) {
+                Ok(()) => entries_done += 1,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    removing(Removing {
+                        entries,
+                        entries_done,
+                        elapsed: start.elapsed(),
+                        done: false,
+                    });
+                    said = Some(Instant::now());
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
         for (a, h) in running {
             out[a.i] = Some(joined(h.join()).map_err(|why| match &a.tmp {
                 Some(tmp) => put_back(&a.path, tmp, why),
                 None => why,
             }));
+        }
+        if said.is_some() {
+            removing(Removing {
+                entries,
+                entries_done: entries,
+                elapsed: start.elapsed(),
+                done: true,
+            });
         }
     });
     out.into_iter()
@@ -2099,6 +2165,123 @@ mod tests {
         assert_eq!(out, vec![Ok(())]);
         assert!(said.is_empty(), "{said:?}");
         std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A remote recursive removal can spend its whole time in one host
+    /// call. Progress must arrive before that call finishes, not after
+    /// joining it. The progress callback releases the host here.
+    #[test]
+    fn a_blocked_removal_reports_progress_before_it_finishes() {
+        struct Blocked {
+            release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+            fail: bool,
+        }
+        impl Fs for Blocked {
+            fn read(&self, _: &Path) -> io::Result<Vec<u8>> {
+                Err(io::ErrorKind::Unsupported.into())
+            }
+            fn write(&self, _: &Path, _: &[u8]) -> io::Result<()> {
+                Err(io::ErrorKind::Unsupported.into())
+            }
+            fn stat(&self, _: &Path) -> io::Result<Stat> {
+                Err(io::ErrorKind::NotFound.into())
+            }
+            fn list(&self, _: &Path) -> io::Result<Vec<Entry>> {
+                Err(io::ErrorKind::Unsupported.into())
+            }
+            fn rename(&self, _: &Path, _: &Path) -> io::Result<()> {
+                Err(io::ErrorKind::Unsupported.into())
+            }
+            fn remove(&self, _: &Path) -> io::Result<()> {
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(2))
+                    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "no removal progress"))?;
+                if self.fail {
+                    Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "still held open",
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            fn create(&self, _: &Path, _: bool) -> io::Result<()> {
+                Err(io::ErrorKind::Unsupported.into())
+            }
+            fn canonicalize(&self, p: &Path) -> io::Result<PathBuf> {
+                Ok(p.to_path_buf())
+            }
+        }
+        for fail in [false, true] {
+            let (release, wait) = std::sync::mpsc::channel();
+            let name = "removal-progress";
+            kawoosh_doc::fs::register(
+                name,
+                Arc::new(Blocked {
+                    release: std::sync::Mutex::new(wait),
+                    fail,
+                }),
+            );
+            let mut progress = Vec::new();
+            let out = apply_with_progress(
+                &[Change::Delete {
+                    path: format!("{name}:/tree").into(),
+                }],
+                |out| assert_eq!(out, &[None], "settled before removals finish"),
+                |_| panic!("a removal is not copying"),
+                |p| {
+                    if progress.len() == 1 {
+                        release.send(()).unwrap();
+                    }
+                    progress.push(p);
+                },
+            );
+            kawoosh_doc::fs::unregister(name);
+            if fail {
+                assert!(
+                    out[0].as_ref().unwrap_err().contains("still held open"),
+                    "{out:?}"
+                );
+            } else {
+                assert_eq!(out, vec![Ok(())], "removal waits for its progress callback");
+            }
+            assert!(
+                progress.len() >= 3,
+                "a blocked removal must keep reporting until completion"
+            );
+            let first = progress[0];
+            assert_eq!(
+                (first.entries, first.entries_done, first.done),
+                (1, 0, false)
+            );
+            assert!(first.elapsed >= COPYING_AFTER);
+            assert!(!progress[1].done);
+            assert!(progress[1].elapsed >= first.elapsed + COPYING_EVERY);
+            let last = progress.last().unwrap();
+            assert_eq!((last.entries, last.entries_done, last.done), (1, 1, true));
+            assert!(last.elapsed >= first.elapsed);
+        }
+    }
+
+    #[test]
+    fn a_quick_recursive_removal_says_nothing_of_its_progress() {
+        let d = scratch(
+            "quick-removal",
+            &[("tree/nested/", ""), ("tree/nested/file", "A")],
+        );
+        let out = apply_with_progress(
+            &[Change::Delete {
+                path: d.join("tree"),
+            }],
+            |out| assert_eq!(out, &[None]),
+            |_| panic!("a removal is not copying"),
+            |p| panic!("a quick removal has no progress line: {p:?}"),
+        );
+        assert_eq!(out, vec![Ok(())]);
+        assert!(!d.join("tree").exists());
+        std::fs::remove_dir_all(d).unwrap();
     }
 
     /// Two names swapped: two steps each, so neither is written over;

@@ -98,10 +98,11 @@ globs whole (`*`, `**`, `?`, `[…]`, `[!…]`, nested `{a,b}`, `{1..9}`,
 | `tab_width` | `tabstop`; unsaid, a number `indent_size` |
 | `end_of_line` | `end_of_line` |
 | `trim_trailing_whitespace`, `insert_final_newline` | the same |
+| `max_line_length` | preferred text width for automatic scrolling columns |
 
 `charset` is UTF-8's or nothing: kawoosh reads and writes UTF-8, and
 another charset is named by `:editorconfig` as not applied, with
-`max_line_length` and every other tool's property. `unset` takes a key
+every other tool's property. `unset` takes a key
 back out.
 
 Its tier is the buffer's own, over the project's layer: the file is
@@ -171,7 +172,7 @@ what is not applied.
   [formatters.md](formatters.md).
 - `:setlocal`: a value for one buffer, typed. The scope has room for it
   (a source in the buffer's tier), nothing asks yet.
-- `max_line_length` as a ruler, when there is a ruler.
+- A ruler painted at `max_line_length`; scrolling columns already use its width.
 - Guessing a file's indentation from its text when nothing says
   (vim-sleuth). The profiles and `.editorconfig` cover the projects
   kawoosh is used on; a guess is a heuristic to add only if missed.

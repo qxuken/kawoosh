@@ -289,11 +289,12 @@ impl Place {
         }
     }
 }
-/// A column's width in a scrolling tab, as a fraction of the viewport
-/// (scrolling-tab.md Decision 1): niri's presets, or the fraction a
-/// drag left it at.
+/// A scrolling column follows the file's preferred text width, a fixed
+/// number of characters, or a viewport fraction left by a preset or drag.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Width {
+    Auto,
+    Characters(u32),
     Third,
     Half,
     TwoThirds,
@@ -306,12 +307,28 @@ impl Width {
 
     pub fn fraction(self) -> f32 {
         match self {
+            // Used when converting to a tree, or rendering the dock.
+            // Scrolling tabs resolve text widths with their pane metrics.
+            Width::Auto | Width::Characters(_) => 0.5,
             Width::Third => 1.0 / 3.0,
             Width::Half => 0.5,
             Width::TwoThirds => 2.0 / 3.0,
             Width::Full => 1.0,
             Width::Ratio(r) => r.clamp(0.1, 1.0),
         }
+    }
+
+    /// Text cells plus gutter/borders; fractions retain viewport semantics.
+    pub fn pixels(self, viewport: f32, preferred: u32, cell: f32, chrome: f32) -> f32 {
+        match self {
+            // Character counts are preferred text space, not permission
+            // to make a pane wider than the viewport on a small window.
+            Self::Auto => (preferred as f32 * cell + chrome).min(viewport.floor()),
+            Self::Characters(n) => (n as f32 * cell + chrome).min(viewport.floor()),
+            _ => self.fraction() * viewport,
+        }
+        .round()
+        .max(120.0)
     }
 
     /// The nearest preset.
@@ -335,6 +352,11 @@ impl Width {
     /// to the nearest first: when that alone widens it by a visible
     /// amount, that is the step; else it steps from there.
     pub fn up(self) -> Width {
+        match self {
+            Self::Auto => return Self::Characters(120),
+            Self::Characters(n) => return Self::Characters(n.saturating_add(10)),
+            _ => {}
+        }
         let snapped = self.snap();
         if snapped.fraction() > self.fraction() + Self::SEEN {
             return snapped;
@@ -345,6 +367,11 @@ impl Width {
 
     /// The next preset down (`<A-S-h>`); `Third` stays.
     pub fn down(self) -> Width {
+        match self {
+            Self::Auto => return Self::Characters(100),
+            Self::Characters(n) => return Self::Characters(n.saturating_sub(10).max(10)),
+            _ => {}
+        }
         let snapped = self.snap();
         if snapped.fraction() < self.fraction() - Self::SEEN {
             return snapped;
@@ -353,10 +380,16 @@ impl Width {
         Self::PRESETS[i.saturating_sub(1)]
     }
 
-    /// A setting's or a session's spelling: a preset's name, or a
-    /// fraction.
+    /// A setting/session spelling: auto, a character count, a preset or fraction.
     pub fn parse(s: &str) -> Option<Width> {
         match s.trim() {
+            "auto" => Some(Width::Auto),
+            n if n.ends_with("ch") => n[..n.len() - 2]
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|n| *n > 0)
+                .map(Width::Characters),
             "third" => Some(Width::Third),
             "half" => Some(Width::Half),
             "two-thirds" | "two_thirds" | "twothirds" => Some(Width::TwoThirds),
@@ -371,6 +404,8 @@ impl Width {
 
     pub fn name(self) -> String {
         match self {
+            Width::Auto => "auto".into(),
+            Width::Characters(n) => format!("{n}ch"),
             Width::Third => "third".into(),
             Width::Half => "half".into(),
             Width::TwoThirds => "two-thirds".into(),
@@ -793,6 +828,14 @@ impl Layout {
         id
     }
 
+    /// An in-process session restore replaces the layout, but callbacks and
+    /// tab-local state still refer to identities allocated by the old one.
+    pub(crate) fn continue_ids(&mut self, previous: &Layout) {
+        self.next_pane = previous.next_pane;
+        self.next_column = previous.next_column;
+        self.next_tab = previous.next_tab;
+    }
+
     pub fn tab(&self) -> &Tab {
         &self.tabs[self.tab]
     }
@@ -1166,6 +1209,11 @@ impl Layout {
         for t in &mut self.tabs {
             if matches!(&t.layout, Kind::Tree(Node::Pane(_))) {
                 t.to_scroll(&mut next);
+                if let Some(s) = t.strip_mut()
+                    && matches!(self.column_width, Width::Auto | Width::Characters(_))
+                {
+                    s.columns[0].width = self.column_width;
+                }
             }
         }
         self.next_column = next;
@@ -1761,6 +1809,20 @@ fn put_beside(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn character_columns_fit_a_narrow_viewport_without_changing_fraction_widths() {
+        use super::Width;
+        assert_eq!(Width::Auto.pixels(250.5, 110, 8.0, 40.0), 250.0);
+        assert_eq!(Width::Characters(96).pixels(250.5, 110, 8.0, 40.0), 250.0);
+        assert_eq!(Width::Auto.pixels(1600.0, 110, 8.0, 40.0), 920.0);
+        assert_eq!(Width::Characters(96).pixels(1600.0, 110, 8.0, 40.0), 808.0);
+        assert_eq!(Width::Ratio(0.37).pixels(1600.0, 110, 8.0, 40.0), 592.0);
+        assert_eq!(
+            Width::Auto.pixels(100.0, 110, 8.0, 40.0),
+            120.0,
+            "the existing minimum pane size remains"
+        );
+    }
     use super::*;
 
     fn view() -> Content {

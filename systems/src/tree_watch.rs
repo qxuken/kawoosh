@@ -126,11 +126,17 @@ pub struct TreeWatch {
 
 impl TreeWatch {
     pub fn spawn(mode: Mode) -> Self {
+        Self::spawn_with_wake(mode, None)
+    }
+
+    /// The same coalesced native watch, waking an application's loop
+    /// when a batch is ready for it to drain.
+    pub fn spawn_with_wake(mode: Mode, wake: Option<crate::WakeHandle>) -> Self {
         let (roots_tx, roots_rx) = unbounded::<Vec<PathBuf>>();
         let (batch_tx, batches) = unbounded::<Batch>();
         std::thread::Builder::new()
             .name("tree watch".into())
-            .spawn(move || run(mode, roots_rx, batch_tx))
+            .spawn(move || run(mode, roots_rx, batch_tx, wake))
             .expect("spawning the tree watch thread");
         Self {
             roots: roots_tx,
@@ -147,7 +153,12 @@ impl TreeWatch {
 
 type Raw = notify::Result<notify::Event>;
 
-fn run(mode: Mode, roots_rx: Receiver<Vec<PathBuf>>, batch_tx: Sender<Batch>) {
+fn run(
+    mode: Mode,
+    roots_rx: Receiver<Vec<PathBuf>>,
+    batch_tx: Sender<Batch>,
+    wake: Option<crate::WakeHandle>,
+) {
     let (raw_tx, raw_rx) = unbounded::<Raw>();
     let mut tree = Tree::new(mode, raw_tx);
     let mut next_check = Instant::now() + CHECK;
@@ -178,10 +189,9 @@ fn run(mode: Mode, roots_rx: Receiver<Vec<PathBuf>>, batch_tx: Sender<Batch>) {
             }
             recv(timer) -> _ => {
                 let batch = tree.flush();
-                if (!batch.changes.is_empty() || !batch.lost.is_empty())
-                    && batch_tx.send(batch).is_err()
-                {
-                    return;
+                if !batch.changes.is_empty() || !batch.lost.is_empty() {
+                    if batch_tx.send(batch).is_err() { return; }
+                    if let Some(wake) = &wake { wake.wake(); }
                 }
             }
         }
@@ -1190,11 +1200,13 @@ mod tests {
         assert!(tree.folders.contains(&sub), "{:?}", tree.folders);
         drop(tree);
 
-        // And the platform's own events.
-        let w = TreeWatch::spawn(Mode::PerFolder);
+        // And the platform's own events, through its production backend.
+        // ReFS can lose this deletion with forced per-folder watches or
+        // recursive cleanup; this folder is empty, so remove it directly.
+        let w = TreeWatch::spawn(Mode::native());
         w.watch(vec![dir.clone()]);
         wait_up(&w, &dir.join("probe.txt"));
-        remove(&sub);
+        std::fs::remove_dir(&sub).unwrap();
         let all = until_heard(&w, &sub, Duration::from_secs(5)).expect("sub's removal heard of");
         assert_eq!(of(&all, &sub), [Change::Deleted], "{all:?}");
         for _ in 0..50 {

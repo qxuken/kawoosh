@@ -1226,3 +1226,47 @@ its pane and back in it, running, after `:domain reconnect` from the
 file; `a_session_on_a_host_restores_lazily_and_a_drop_reconnects`
 unchanged (the use after a drop connects again); R1's terminal refused
 on a host still connected still toasts.
+
+### Connection tabs, 2026-11-12
+
+`:domain tab` and `:ssh` make a read-only connection screen rather
+than an ordinary `tab new`. The screen names the destination and says
+whether it is connecting, loading its directory, failed or disconnected,
+with the explicit command to cancel or retry. Authentication still uses
+the existing dock terminal or question dialog. `layout.new_tab = "same"`
+therefore cannot show the parent's document while a host connects.
+Connection screens are transient session content, as launchers are; they
+do not restore as blank tabs after the process that owned the attempt ends.
+
+Queued opens and directory changes keep the pane that requested them.
+When a connection answers, each request is applied there, and the pane
+the user has since focused stays focused. A closed destination is not
+recreated. Retrying a failed connection resumes only connection screens
+still shown in their panes.
+
+The directory listing's asynchronous callback also keeps its destination
+when requested from an editor pane. Navigation requests supersede earlier
+requests in the same pane. Requests in different panes run independently.
+The scratch
+buffer API's explicit `pane` and `focus = false` allow a listing to fill a
+background tab without moving the keyboard or making another column
+when the original pane closed.
+
+This does not make every remote path operation asynchronous: home
+canonicalisation and directory-opening metadata checks still use the
+existing filesystem API. Picker validation and previews are covered by
+their separate asynchronous paths.
+
+### Successful connections in Memory, 2026-11-12
+
+A domain reaching `Up` from `Connecting` records a `domain` moment under
+the workspace that started the attempt. Configured and ad-hoc domains are
+treated alike. Failures and duplicate up notifications are not visits.
+The store persists these moments, and recalling one opens a tab on that
+domain. The domains picker uses successful connection frecency alongside
+the current connection state.
+
+This is distinct from ad-hoc target definitions in the `domains` store
+namespace, and from `memory.hosts`, which controls remote workspace-root
+discovery. Tests cover failure exclusion, one visit per successful
+transition and persistence after reopening the database.

@@ -301,207 +301,7 @@ impl Layer {
 /// folder — the same one as a server's where the program is both
 /// (biome, ruff, taplo) — or a line.
 fn formatter_defaults(defaults: &mut Setting) {
-    let s = |v: &str| Setting::Str(v.into());
-    let list = |v: &[&str]| Setting::List(v.iter().map(|x| s(x)).collect());
-    let probes = |pairs: &[(&str, &str)]| {
-        Setting::Table(pairs.iter().map(|(k, v)| (k.to_string(), s(v))).collect())
-    };
-    let package = |manager: &str, name: &str, args: &[&str]| {
-        let mut t = Setting::table();
-        t.set(manager, s(name));
-        if !args.is_empty() {
-            t.set("args", list(args));
-        }
-        t
-    };
-    let prettier_configs = [
-        ".prettierrc",
-        ".prettierrc.json",
-        ".prettierrc.json5",
-        ".prettierrc.yaml",
-        ".prettierrc.yml",
-        ".prettierrc.toml",
-        ".prettierrc.js",
-        ".prettierrc.cjs",
-        ".prettierrc.mjs",
-        ".prettierrc.ts",
-        "prettier.config.js",
-        "prettier.config.cjs",
-        "prettier.config.mjs",
-        "prettier.config.ts",
-        "package.json:prettier",
-    ];
-    let prettier_languages = [
-        "javascript",
-        "typescript",
-        "tsx",
-        "json",
-        "jsonc",
-        "css",
-        "yaml",
-        "markdown",
-    ];
-    let js = "if (a) {\nb;\n}\n";
-    let json = "{\n\"a\": 1\n}\n";
-    let css = "a {\nb: c;\n}\n";
-    let web_probes = probes(&[
-        ("javascript", js),
-        ("typescript", js),
-        ("tsx", js),
-        ("json", json),
-        ("jsonc", json),
-        ("css", css),
-    ]);
-    let web = ["javascript", "typescript", "tsx", "json", "jsonc", "css"];
-    let defs: Vec<(&str, Vec<(&str, Setting)>)> = vec![
-        (
-            "prettier",
-            vec![
-                ("cmd", s("prettier")),
-                ("args", list(&["--stdin-filepath", "{path}"])),
-                ("languages", list(&prettier_languages)),
-                ("when", list(&prettier_configs)),
-                ("node", Setting::Bool(true)),
-                (
-                    "range",
-                    list(&[
-                        "--range-start",
-                        "{start_utf16}",
-                        "--range-end",
-                        "{end_utf16}",
-                    ]),
-                ),
-                ("probe", web_probes.clone()),
-                ("install", package("npm", "prettier", &[])),
-            ],
-        ),
-        (
-            // prettier as a daemon: node started once, each format a
-            // message to it — the project's own prettier where there is
-            // one, else its bundled. After prettier by name, so `auto`
-            // takes it where prettier is not found.
-            "prettierd",
-            vec![
-                ("cmd", s("prettierd")),
-                ("args", list(&["{path}"])),
-                ("languages", list(&prettier_languages)),
-                ("when", list(&prettier_configs)),
-                ("node", Setting::Bool(true)),
-                ("probe", web_probes.clone()),
-                ("install", package("npm", "@fsouza/prettierd", &[])),
-            ],
-        ),
-        (
-            "biome",
-            vec![
-                ("cmd", s("biome")),
-                ("args", list(&["format", "--stdin-file-path={path}"])),
-                ("languages", list(&web)),
-                ("when", list(&["biome.json", "biome.jsonc"])),
-                ("node", Setting::Bool(true)),
-                ("probe", web_probes),
-                ("install", package("npm", "@biomejs/biome", &[])),
-            ],
-        ),
-        (
-            "stylua",
-            vec![
-                ("cmd", s("stylua")),
-                ("args", list(&["--stdin-filepath", "{path}", "-"])),
-                ("languages", list(&["lua"])),
-                ("when", list(&["stylua.toml", ".stylua.toml"])),
-                (
-                    "range",
-                    list(&["--range-start", "{start}", "--range-end", "{end}"]),
-                ),
-                ("probe", probes(&[("lua", "if a then\nb()\nend\n")])),
-                ("install", package("cargo", "stylua", &["--locked"])),
-            ],
-        ),
-        (
-            "clang-format",
-            vec![
-                ("cmd", s("clang-format")),
-                ("args", list(&["--assume-filename={path}"])),
-                ("languages", list(&["c", "cpp"])),
-                ("when", list(&[".clang-format", "_clang-format"])),
-                ("range", list(&["--offset={start}", "--length={length}"])),
-                // LLVM's wheels on PyPI: the one program, no toolchain.
-                ("install", package("pip", "clang-format", &[])),
-                (
-                    "probe",
-                    probes(&[
-                        ("c", "int f() {\nint a = 1;\nreturn a;\n}\n"),
-                        ("cpp", "int f() {\nint a = 1;\nreturn a;\n}\n"),
-                    ]),
-                ),
-            ],
-        ),
-        (
-            "ruff",
-            vec![
-                ("cmd", s("ruff")),
-                ("args", list(&["format", "--stdin-filename", "{path}", "-"])),
-                ("languages", list(&["python"])),
-                (
-                    "when",
-                    list(&["ruff.toml", ".ruff.toml", "pyproject.toml:tool.ruff"]),
-                ),
-                ("probe", probes(&[("python", "if a:\n  b\n")])),
-                ("install", package("pip", "ruff", &[])),
-            ],
-        ),
-        (
-            "gofmt",
-            vec![
-                ("cmd", s("gofmt")),
-                ("args", Setting::List(Vec::new())),
-                ("languages", list(&["go"])),
-                ("when", s("always")),
-            ],
-        ),
-        (
-            "taplo",
-            vec![
-                ("cmd", s("taplo")),
-                ("args", list(&["fmt", "-"])),
-                ("languages", list(&["toml"])),
-                ("when", list(&[".taplo.toml", "taplo.toml"])),
-                // As `lsp.toml`'s, to the argument: one directory for both.
-                (
-                    "install",
-                    package("cargo", "taplo-cli", &["--locked", "--features", "lsp"]),
-                ),
-            ],
-        ),
-        (
-            "shfmt",
-            vec![
-                ("cmd", s("shfmt")),
-                ("args", list(&["--filename", "{path}"])),
-                ("languages", list(&["bash"])),
-                ("when", s("never")),
-                ("probe", probes(&[("bash", "if a; then\nb\nfi\n")])),
-                ("install", package("go", "mvdan.cc/sh/v3/cmd/shfmt", &[])),
-            ],
-        ),
-        (
-            "rustfmt",
-            vec![
-                ("cmd", s("rustfmt")),
-                ("args", list(&["--edition", "2021"])),
-                ("languages", list(&["rust"])),
-                ("when", s("never")),
-                ("probe", probes(&[("rust", "fn f() {\nlet a = 1;\n}\n")])),
-                ("install", s("rustup component add rustfmt")),
-            ],
-        ),
-    ];
-    for (name, keys) in defs {
-        for (k, v) in keys {
-            defaults.set(&format!("format.{name}.{k}"), v);
-        }
-    }
+    crate::tool_catalog::Catalog::bundled().apply_formatters(defaults);
 }
 
 /// `save.as_admin`'s default: the program that writes `{text}` over
@@ -592,7 +392,11 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "layout.column_width",
-        "a new column's width: `third`, `half`, `two-thirds`, `full`, or a fraction",
+        "a new column's text width: `auto` (formatter/EditorConfig, else 110 characters), `110ch`, or `third`, `half`, `two-thirds`, `full`, or a viewport fraction",
+    ),
+    (
+        "max_line_length",
+        "preferred text width in characters, used by automatic scrolling columns; formatter and EditorConfig values apply per file",
     ),
     ("layout.gap", "the gap between columns, in pixels"),
     (
@@ -668,6 +472,10 @@ const DOCS: &[(&str, &str)] = &[
     (
         "lsp.idle_stop_secs",
         "seconds a language server may hold no open file before it is shut down; `0` keeps it running",
+    ),
+    (
+        "lsp.typescript.native",
+        "opt in to native TypeScript 7 for TypeScript, TSX and JavaScript; Vue keeps its legacy TypeScript bridge; explicit lsp.languages takes precedence",
     ),
     (
         "secrets.forget_secs",
@@ -1126,7 +934,8 @@ impl Settings {
         // focus frame centres the column (`always`) or only brings it
         // into view (`never`).
         defaults.set("layout.default", Setting::Str("scroll".into()));
-        defaults.set("layout.column_width", Setting::Str("half".into()));
+        defaults.set("max_line_length", Setting::Int(110));
+        defaults.set("layout.column_width", Setting::Str("auto".into()));
         defaults.set("layout.gap", Setting::Int(4));
         defaults.set("layout.ribbon_ms", Setting::Int(80));
         defaults.set("layout.scroll.center", Setting::Str("never".into()));
@@ -1189,6 +998,7 @@ impl Settings {
         // Inlay hints from the language server — types, parameter names —
         // drawn in the line, faint (`<leader>oh` flips it).
         defaults.set("lsp.inlay_hints", Setting::Bool(false));
+        defaults.set("lsp.typescript.native", Setting::Bool(false));
         // A server holding no open file is shut down after this long
         // (lsp-rules.md Decision 12): long enough that closing a
         // project's last file and opening another does not pay for a
@@ -2244,12 +2054,14 @@ mod tests {
                 "lsp.enabled",
                 "lsp.idle_stop_secs",
                 "lsp.inlay_hints",
+                "lsp.typescript.native",
                 "markdown.heading",
                 "markdown.image_max_mb",
                 "markdown.navigation",
                 "markdown.render",
                 "markdown.reveal",
                 "markdown.wrap",
+                "max_line_length",
                 "memory.hosts",
                 "memory.idle_secs",
                 "memory.keep_days",

@@ -96,6 +96,7 @@ pub mod term_images;
 pub mod terminals;
 pub mod theme_check;
 pub mod themes;
+pub mod tool_catalog;
 pub mod trust;
 pub mod types;
 pub mod undo;

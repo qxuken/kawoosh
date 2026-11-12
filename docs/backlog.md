@@ -16,6 +16,15 @@ parked, it moves to parked.md with its reason.
 Each item names where its design is. "Small" marks what is under an
 afternoon.
 
+## Runtime and tooling round, 2026-11-12
+
+- **Scoop cleanup window freeze**: reported while Nushell ran cleanup of
+  roughly 30 GB of old LLVM versions. Safe ConPTY output and isolated
+  metadata-deletion probes, including a watched directory pane, did not
+  reproduce it. Obtain a trace from the actual native-window failure
+  before choosing a terminal fix.
+  ([terminal-cleanup-freeze.md](design/terminal-cleanup-freeze.md))
+
 ## Editing and keys
 
 - **`'a` and `` `a `` as an operator's motion** (`d'a`, `y`a`). The

@@ -242,3 +242,52 @@ engine, `kawoosh.copy_files` from Lua).
 `leader_yf_copies_the_file_itself_and_a_listing_s_entries` in
 `kawoosh/tests/copy_files.rs`; a plugin pane's in
 `kawoosh/lua/tests/path_copy.lua`.
+
+### 7. Removal progress is shared with disk usage
+
+*Added 2026-11-12.* `du` already deletes through `kawoosh.dir.remove`,
+the listing's same confirmed `fs.apply` plan. The engine now reports
+the removal phase as well as copying. After 300 ms, a corner line says
+how many selected entries have been processed and the elapsed time,
+updated every 150 ms while a recursive removal is still running. A
+directory is one selected entry, not an estimate of the files inside.
+Failed attempts count as processed; the final outcome still says what
+failed and restores what could not be removed as before.
+
+There is no preliminary walk to count a deletion's contents, and the
+platform's recursive removal and remote host operation stay intact.
+Quick removals have no progress line. `fs::apply_with_progress` is the
+shared reporting path; `apply_with` retains its copying-only callback
+for existing callers. The blocked-host regression test requires a
+progress callback before the host is allowed to finish its removal.
+
+### 8. Repository colours use the previous answer while refreshing
+
+*Added 2026-11-12.* A listing refill paints its cached VCS/ignored
+status immediately and asks the backend again in the background. One
+ask per directory is in flight; another refill shares it. A change
+while it is running invalidates that generation, so the old answer
+cannot replace newer colours. A failed read keeps the last answer;
+a successful clean answer clears old colours. Non-Git providers keep
+their ordinary `status(root, done, opts)` API.
+
+Open local listings share a native tree watch through the generic
+`kawoosh.fs.watch_tree` API. It uses the existing LSP workspace watch's
+burst coalescing and ignored/build-directory filtering. This catches an
+external overwrite of a clean nested file, which does not change its
+directory's timestamp. Paths/ancestor `.gitignore` files, repository
+markers, Git's actual administration directory, `info/exclude`, config
+and an explicit `core.excludesFile` stay on the ordinary file watch;
+local user Git config/default excludes paths are watched too. Remote
+listings keep the existing polling policy for named paths: deep external
+writes in a previously clean subtree are rechecked when its listing is
+reopened/refilled or manually refreshed with `<C-l>`, rather than through
+a recursive host watch. Repository/index
+events also invalidate listing status. Git status disables optional
+index writes, so asking for colours cannot cause its own refresh loop.
+
+The status cache keeps up to 64 settled directory answers and gives
+open listings their own watch sets. Closing a listing stops its native
+tree and file watches. `vcs_listing_cache.lua` holds provider replies to
+check synchronous stale painting, shared asks and rejected superseded
+answers; `dir_vcs.rs` verifies real nested writes and ignore changes.

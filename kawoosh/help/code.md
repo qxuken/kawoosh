@@ -4,6 +4,12 @@ What kawoosh knows about the code you edit: syntax highlighting,
 language servers (hover, go to definition, rename, diagnostics,
 completion), compile commands, and the syntax tree.
 
+Language-server and formatter definitions have their own release cycle.
+`:catalog info` shows the catalog in use. `:catalog update` refreshes its
+definitions; relaunch to use them. Installed tool versions stay unchanged
+until you explicitly update those tools. A bundled catalog remains available
+offline.
+
 ## Syntax highlighting
 
 Highlighting comes from tree-sitter grammars built into kawoosh:
@@ -264,6 +270,14 @@ nothing updates a server until you ask. Once a day kawoosh asks the
 registries what is newer and says so in the corner; `:lsp servers`
 shows `1.14.0 → 1.24.0`, and `:lsp update` (or `:lsp update yaml`)
 moves to the latest. `lsp.check_updates = false` stops the asking.
+
+Native TypeScript 7 is optional: set `lsp.typescript.native = true` in
+your settings and run `:lsp install typescript-native`. TypeScript, TSX
+and JavaScript then use the native server; Vue keeps its existing
+TypeScript bridge. Explicit `lsp.languages` choices take precedence.
+The flag defaults to false, and turning it off restores the existing
+TypeScript provider. See [the native TypeScript design](https://github.com/qxuken/kawoosh/blob/main/docs/design/typescript-native.md)
+for the verified package and scope.
 
 The servers a machine wants go in your settings, so they travel with
 them:
@@ -959,6 +973,16 @@ or whose exported `main` sits beside other exports, as a module (`nu -c
 'use toolkit.nu; toolkit fmt'`). The ones matching the current file's language server come
 first, so a Rust file offers `cargo check` and a TypeScript file its
 package's scripts. `compile.deduce = false` turns this off.
+
+When mise is available, the bundled plugin also discovers project tasks
+with `mise tasks ls --json`, locally or on a connected host. The picker
+keeps its previous rows while discovery runs in the background. Tools
+and language servers receive the project's `mise env --json` variables
+and PATH before they start. Discovery runs no tasks, installs nothing
+and grants no trust; mise configuration must already be trusted by mise
+(discovery uses its paranoid mode to reject changed configuration).
+`mise.enabled = false` disables both features; `mise.command` selects
+the binary on the relevant domain.
 
 `<leader>cC` (`:compile pick`) lists everything: `compile.default`,
 your named commands, the last lines run here, and every command the

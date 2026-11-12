@@ -458,6 +458,7 @@ pub const FLASH: std::time::Duration = std::time::Duration::from_millis(150);
 impl Kawoosh {
     pub fn new(title: impl Into<String>, text: &str) -> Self {
         let mut ed = Editor::new();
+        crate::tool_catalog::apply_formatters(&mut ed.settings);
         let b = ed.add_buffer(Buffer::new(title, text));
         let view = ed.add_view(b);
         let wake = WakeHandle::new();
@@ -713,6 +714,15 @@ impl Kawoosh {
     /// have switched tabs; a tab with none yet (the first, a session's
     /// from before) takes the one there is.
     pub(crate) fn sync_cwd(&mut self) {
+        self.ed.sync_search_tab(
+            self.layout.tab().id,
+            &self
+                .layout
+                .tabs
+                .iter()
+                .map(|tab| tab.id)
+                .collect::<Vec<_>>(),
+        );
         match &self.layout.tab().cwd {
             None => self.layout.tab_mut().cwd = Some(self.cwd.clone()),
             Some(c) if *c != self.cwd => {
@@ -1036,11 +1046,36 @@ impl Kawoosh {
                     title,
                     copying,
                 } => self.copying_progress(token, title, copying),
+                IoMsg::FsRemoving {
+                    token,
+                    title,
+                    removing,
+                } => self.removing_progress(token, title, removing),
                 IoMsg::Listed { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {
                         rt.publish(&self.ed, self.focused_view());
                         rt.listed(token, result);
+                        self.drain_lua();
+                    }
+                }
+                IoMsg::FsStat {
+                    token,
+                    result,
+                    local,
+                } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.publish(&self.ed, self.focused_view());
+                        rt.stated(token, result, local);
+                        self.drain_lua();
+                    }
+                }
+                IoMsg::FsRead { token, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.publish(&self.ed, self.focused_view());
+                        rt.file_read(token, result);
                         self.drain_lua();
                     }
                 }
@@ -1157,11 +1192,19 @@ impl Kawoosh {
                 IoMsg::ProcStartFailed { id, error } if self.scripting.procs.contains_key(&id) => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(p) = self.scripting.procs.remove(&id) {
-                        self.ed.message = format!("spawn: {error}");
+                        let quiet = self
+                            .scripting
+                            .rt
+                            .as_ref()
+                            .is_some_and(|rt| rt.proc_quiet(p.token));
+                        if !quiet {
+                            self.ed.message = format!("spawn: {error}");
+                        }
                         log::warn!("spawn: {error}");
                         if let Some(rt) = self.scripting.rt.clone() {
                             rt.publish(&self.ed, self.focused_view());
                             self.publish_layout();
+                            rt.proc_err(p.token, vec![error]);
                             rt.proc_exit(p.token, None, None);
                             self.drain_lua();
                         }
@@ -1802,6 +1845,29 @@ impl Kawoosh {
         }
         let focused = self.layout.focused();
         if dir == SplitDir::H && self.layout.tab().is_scroll() {
+            if let Some(i) = self.layout.tab().column_of(focused)
+                && self.layout.tab().strip().unwrap().columns[i].width == crate::layout::Width::Auto
+            {
+                let mut panes = Vec::new();
+                self.layout.tab().strip().unwrap().columns[i]
+                    .node
+                    .panes(&mut panes);
+                let preferred = panes
+                    .into_iter()
+                    .map(|pane| {
+                        self.view_of(pane).map_or(110, |v| {
+                            self.ed
+                                .setting_in(self.ed.views[v].buffer, "max_line_length")
+                                .and_then(kawoosh_editor::Setting::as_int)
+                                .filter(|n| *n > 0)
+                                .unwrap_or(110) as u32
+                        })
+                    })
+                    .max()
+                    .unwrap_or(110);
+                self.layout.tab_mut().strip_mut().unwrap().columns[i].width =
+                    crate::layout::Width::Characters(preferred);
+            }
             let steps = ((by.abs() / 0.05).round() as usize).max(1);
             let mut moved = false;
             for _ in 0..steps {
@@ -2044,6 +2110,9 @@ impl Kawoosh {
             return false;
         };
         let resolved = self.resolve(path);
+        self.publish_layout();
+        self.note_workspace();
+        rt.set_workspace(self.moments.workspace());
         rt.publish(&self.ed, self.focused_view());
         let taken = rt.open_hook(&resolved.to_string_lossy());
         if taken {
@@ -2406,6 +2475,23 @@ impl Kawoosh {
         );
     }
 
+    fn removing_progress(&mut self, token: u64, title: String, r: kawoosh_systems::fs::Removing) {
+        self.notes.progress(
+            "fs",
+            &format!("remove {token}"),
+            Some(title),
+            Some(format!(
+                "{} of {} selected entries · {:.1}s",
+                r.entries_done,
+                r.entries,
+                r.elapsed.as_secs_f64()
+            )),
+            None,
+            r.done,
+            Instant::now(),
+        );
+    }
+
     /// A search in a buffer too big to count on the frame: the count runs
     /// on a thread over a snapshot (the piece tree is persistent, so the
     /// snapshot is a handle) and lands in the message as `IoMsg::Counted`.
@@ -2488,7 +2574,12 @@ impl Kawoosh {
                 Effect::CopyFiles { paths, from } => self.copy_files(paths, &from),
                 Effect::RequestPaste => self.awaiting_paste = true,
                 Effect::Recalled => self.note_recall(),
-                Effect::PromptLine { kind, line } => self.remember_prompt_line(kind, &line),
+                Effect::PromptLine { kind, line } => {
+                    if kind == kawoosh_editor::Prompt::Command {
+                        self.compile.accepted_prompt(&line);
+                    }
+                    self.remember_prompt_line(kind, &line);
+                }
                 Effect::Open(p) => self.open(&p),
                 Effect::PanePathCopy(form) => self.pane_path_copy(&form),
                 Effect::Wrote(id) => {
@@ -3797,11 +3888,8 @@ impl Kawoosh {
             } else {
                 self.ed.text(v, &text);
             }
-        } else if let Some(t) = self
-            .term_of(self.layout.focused())
-            .and_then(|t| self.terms.map.get_mut(&t))
-        {
-            t.paste(&text);
+        } else if let Some(id) = self.term_of(self.layout.focused()) {
+            self.term_paste(id, &text);
         }
         self.follow_caret = true;
         self.drain_effects();

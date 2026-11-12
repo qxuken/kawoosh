@@ -10,6 +10,16 @@ use kawoosh::Kawoosh;
 use kawoosh::layout::{Content, Width};
 use kui_native::{KeyMods, Vec2};
 
+fn fractional_app(name: &str, text: &str) -> Kawoosh {
+    let mut app = Kawoosh::new(name, text);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::User,
+        "layout.column_width",
+        kawoosh_editor::Setting::Str("half".into()),
+    );
+    app
+}
+
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
     d.keys(app, line);
@@ -77,7 +87,7 @@ fn in_view(d: &Drive, app: &Kawoosh, pane: u64, vw: f32) -> bool {
 #[test]
 fn a_strip_scrolls_to_the_focus_and_reads_the_trees_keys_on_its_axis() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -224,7 +234,7 @@ fn a_strip_scrolls_to_the_focus_and_reads_the_trees_keys_on_its_axis() {
 #[test]
 fn the_gap_drags_a_columns_width_and_a_click_reveals_a_column() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     // The window opens as a strip (`layout.default`); a column beside
@@ -288,7 +298,7 @@ fn the_gap_drags_a_columns_width_and_a_click_reveals_a_column() {
 fn the_last_column_drags_by_its_right_edge() {
     use kui_native::InputEvent;
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     settle(&mut d, &mut app);
@@ -399,7 +409,7 @@ fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
     drop(app);
 
     let mut d = Drive::new(900.0, 500.0);
-    let mut app = Kawoosh::new("*scratch*", "");
+    let mut app = fractional_app("*scratch*", "");
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
     app.open_store(Some(&db));
@@ -436,7 +446,7 @@ fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
 #[test]
 fn each_tab_keeps_its_own_strip_and_a_moved_tab_stays_in_view() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     // Tab 1: a strip scrolled to its third column.
@@ -485,7 +495,7 @@ fn each_tab_keeps_its_own_strip_and_a_moved_tab_stays_in_view() {
 #[test]
 fn a_tab_closed_before_a_strip_leaves_its_ribbon_where_it_is() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "tabnew");
@@ -538,7 +548,7 @@ fn a_tab_closed_before_a_strip_leaves_its_ribbon_where_it_is() {
 #[test]
 fn an_alignment_has_room_past_the_ribbons_ends() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta");
+    let mut app = fractional_app("t", "alpha\nbeta");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -599,7 +609,7 @@ fn an_alignment_has_room_past_the_ribbons_ends() {
 #[test]
 fn the_keyboard_jumps_to_a_column_moves_panes_and_aligns_the_view() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -669,7 +679,7 @@ fn the_keyboard_jumps_to_a_column_moves_panes_and_aligns_the_view() {
 #[test]
 fn a_scroll_the_pointer_makes_is_followed_one_to_one() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -703,7 +713,7 @@ fn a_scroll_the_pointer_makes_is_followed_one_to_one() {
 #[test]
 fn a_column_far_off_the_ribbon_draws_no_rows_until_it_is_near() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -748,7 +758,7 @@ fn a_column_far_off_the_ribbon_draws_no_rows_until_it_is_near() {
 #[test]
 fn a_key_reaches_a_column_the_animation_has_not_finished_moving() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -784,7 +794,7 @@ fn a_key_reaches_a_column_the_animation_has_not_finished_moving() {
 #[test]
 fn the_ribbon_glides_to_a_key_and_a_width_eases_with_it() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -867,7 +877,7 @@ fn the_ribbon_glides_to_a_key_and_a_width_eases_with_it() {
 #[test]
 fn a_column_resized_at_the_edge_keeps_to_it_while_it_eases() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -932,7 +942,7 @@ fn a_column_resized_at_the_edge_keeps_to_it_while_it_eases() {
 #[test]
 fn a_width_step_mid_ease_keeps_to_the_edge() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -977,7 +987,7 @@ fn a_width_step_mid_ease_keeps_to_the_edge() {
 #[test]
 fn a_full_column_keeps_its_place_as_the_keyboard_moves_inside_it() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -1008,7 +1018,7 @@ fn a_full_column_keeps_its_place_as_the_keyboard_moves_inside_it() {
 #[test]
 fn a_pane_leaves_its_stack_for_a_column_of_its_own() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     // A column of three, the keyboard on the middle one.
@@ -1070,7 +1080,7 @@ fn a_pane_leaves_its_stack_for_a_column_of_its_own() {
 
 #[test]
 fn the_digits_reach_a_column_from_a_terminal_pane() {
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     ctrl_w(&mut d, &mut app, "v");
@@ -1108,7 +1118,7 @@ fn the_digits_reach_a_column_from_a_terminal_pane() {
 #[test]
 fn a_column_is_consumed_into_the_stack_beside_it() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     // Three columns, the keyboard back on the first.
@@ -1188,7 +1198,7 @@ fn a_column_is_consumed_into_the_stack_beside_it() {
 /// parent still declared, and the strip is the tab's).
 #[test]
 fn a_closed_column_fades_and_a_tab_switch_does_not() {
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -1219,7 +1229,7 @@ fn a_closed_column_fades_and_a_tab_switch_does_not() {
 fn a_sideways_swipe_over_a_terminal_moves_the_strip() {
     use kui_native::InputEvent;
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -1292,7 +1302,7 @@ fn strip_rect(d: &Drive) -> kui_native::Rect {
 #[test]
 fn the_strips_scrollbar_has_a_band_of_its_own_under_the_columns() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");
@@ -1348,7 +1358,7 @@ fn the_strips_scrollbar_has_a_band_of_its_own_under_the_columns() {
 #[test]
 fn a_sideways_swipe_over_text_that_fits_moves_the_strip() {
     let vw = 900.0;
-    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut app = fractional_app("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, "layout scroll");

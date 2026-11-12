@@ -347,3 +347,11 @@ Let's do something more like zed does" (a screenshot of each):
 - `picker.rows` columns learned `lead = FIELD` (a string or spans drawn
   before the field, not matched) and `color = FIELD` (the field's own
   colour), data as the rest; `picker.state()` lists the hits' `items`.
+
+**Configuration files (2026-11-12).** The same picker now has grammar outlines
+for nginx blocks/directives, INI and Git sections/keys, SSH hosts/parameters,
+and dotenv assignments when their existing grammars are installed. Fallback
+queries ship in the application for older archives. JSON/TOML/YAML/Lua config
+files and shell startup dotfiles use their existing grammar outlines, with
+more known filenames and path conventions detected. These are navigation
+symbols, following and canceling like code symbols.

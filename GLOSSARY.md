@@ -2,6 +2,17 @@
 
 The words kawoosh's notes and code use for its ideas, one meaning each.
 
+## Places
+
+**Domain**:
+A machine or environment whose files and programs Kawoosh can use. A remote
+domain has a name that identifies its paths and connection.
+
+**Tool catalog**:
+The independently released definitions of language servers and formatters:
+their commands, packages and defaults. Its release is separate from the
+versions of the tools installed on a machine.
+
 ## Completion
 
 - **Completion** — offering what the word being typed could be, from the

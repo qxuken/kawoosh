@@ -164,6 +164,7 @@ pub struct Found {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Deduced {
     pub cmd: String,
+    pub argv: Option<Vec<String>>,
     pub cwd: PathBuf,
     pub file: PathBuf,
     /// What it does, as the file says it — a script's body, a recipe's
@@ -207,6 +208,7 @@ pub enum Completion {
 impl Deduced {
     pub fn new(cmd: String, f: &Found, why: &str) -> Self {
         Deduced {
+            argv: None,
             args_at: cmd.len(),
             cmd,
             cwd: f.dir.clone(),

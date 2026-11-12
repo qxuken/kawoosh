@@ -355,7 +355,7 @@ fn list(root: &Path, defs: &[ServerDef]) -> String {
             .package
             .as_ref()
             .and_then(|p| servers::installed(root, p))
-            .filter(|_| servers::find_in(root, &d.command).is_some());
+            .filter(|_| servers::find_for_in(root, &d.command, d.package.as_ref()).is_some());
         let state = if record.is_some() {
             "kawoosh"
         } else if kawoosh_systems::io::on_path(&d.command) == Some(true) {

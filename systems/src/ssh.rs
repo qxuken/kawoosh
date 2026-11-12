@@ -959,22 +959,66 @@ impl Client {
     /// A channel opened for `what`, its ends as blocking readers and a
     /// writer, driven on the runtime until it closes.
     pub fn open(&self, what: Open<'_>) -> io::Result<Remote> {
+        self.open_for(what, None)
+    }
+
+    /// Opens a command channel with a deadline, cancelling a pending
+    /// setup and closing a partially opened channel when it expires.
+    pub fn open_timeout(
+        &self,
+        what: Open<'_>,
+        patience: std::time::Duration,
+    ) -> io::Result<Remote> {
+        self.open_for(what, Some(patience))
+    }
+
+    fn open_for(
+        &self,
+        what: Open<'_>,
+        patience: Option<std::time::Duration>,
+    ) -> io::Result<Remote> {
         let (line, pty, sub) = match what {
             Open::Exec { line, pty } => (Some(line.to_string()), pty, None),
             Open::Subsystem(s) => (None, None, Some(s.to_string())),
         };
         let handle = &self.handle;
         let channel = rt().block_on(async {
-            let ch = handle.channel_open_session().await.map_err(err)?;
-            if let Some((cols, rows)) = pty {
-                ch.request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
+            let deadline = patience.map(|p| tokio::time::Instant::now() + p);
+            let ch = match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, handle.channel_open_session())
                     .await
-                    .map_err(err)?;
-            }
-            match (&line, &sub) {
-                (Some(l), _) => ch.exec(true, l.as_bytes()).await.map_err(err)?,
-                (_, Some(s)) => ch.request_subsystem(true, s.as_str()).await.map_err(err)?,
-                _ => {}
+                    .map_err(|_| {
+                        io::Error::new(io::ErrorKind::TimedOut, "SSH channel open timed out")
+                    })?
+                    .map_err(err)?,
+                None => handle.channel_open_session().await.map_err(err)?,
+            };
+            let setup = async {
+                if let Some((cols, rows)) = pty {
+                    ch.request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
+                        .await
+                        .map_err(err)?;
+                }
+                match (&line, &sub) {
+                    (Some(l), _) => ch.exec(true, l.as_bytes()).await.map_err(err)?,
+                    (_, Some(s)) => ch.request_subsystem(true, s.as_str()).await.map_err(err)?,
+                    _ => {}
+                }
+                Ok::<_, io::Error>(())
+            };
+            let result = match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, setup)
+                    .await
+                    .map_err(|_| {
+                        io::Error::new(io::ErrorKind::TimedOut, "SSH channel setup timed out")
+                    })
+                    .and_then(|r| r),
+                None => setup.await,
+            };
+            if let Err(error) = result {
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_millis(100), ch.close()).await;
+                return Err(error);
             }
             Ok::<_, io::Error>(ch)
         })?;
@@ -1043,8 +1087,13 @@ fn drive(mut channel: Channel<Msg>, split_err: bool) -> Remote {
                         let _ = channel.window_change(c, r, 0, 0).await;
                     }
                     Some(Ctl::Kill) => {
-                        let _ = channel.signal(Sig::KILL).await;
-                        let _ = channel.close().await;
+                        // Ending a job also releases local readers if
+                        // the network cannot accept its close message.
+                        let _ = tokio::time::timeout(std::time::Duration::from_millis(250), async {
+                            let _ = channel.signal(Sig::KILL).await;
+                            let _ = channel.close().await;
+                        }).await;
+                        break;
                     }
                     None => ctl_open = false,
                 },

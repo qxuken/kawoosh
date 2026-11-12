@@ -1,5 +1,10 @@
 # Compile commands, deduced
 
+The bundled [mise plugin](mise.md) also supplies project tasks through
+the compile-kind extension point, with asynchronous discovery on local
+and connected domains. Its environment provider supplies tools and
+language servers with the project's variables and tool PATH.
+
 Status: written 2026-09-26 from the user's ask — "compile commands
 deductions from lsp's, maybe some heuristics like cargo project or
 package.json files", and then "makefiles/justfiles as well"; round two

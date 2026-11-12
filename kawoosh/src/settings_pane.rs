@@ -806,7 +806,12 @@ mod tests {
             "{paths:?}"
         );
         let lsp = rows.iter().find(|r| r.path == "lsp").unwrap();
-        assert_eq!(lsp.entries, vec!["rust".to_string()]);
+        // The user's server and the default-off native TypeScript
+        // option both contribute entries to the open server table.
+        assert_eq!(
+            lsp.entries,
+            vec!["rust".to_string(), "typescript".to_string()]
+        );
         let format = rows.iter().find(|r| r.path == "format").unwrap();
         assert!(format.entries.contains(&"prettier".to_string()));
     }

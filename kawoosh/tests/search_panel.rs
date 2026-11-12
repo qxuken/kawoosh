@@ -90,7 +90,198 @@ fn searched(d: &mut Drive, app: &mut Kawoosh) {
             return;
         }
     }
-    panic!("the search never answered");
+    panic!(
+        "the search never answered: message={}, buffers={:?}",
+        app.ed.message,
+        app.ed
+            .buffers
+            .values()
+            .map(|b| (&b.name, b.text()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn find_and_project_search_belong_to_the_tab() {
+    let (mut d, mut app, _dir) = launch("tab-local");
+    let first = app.layout.tab().id;
+    d.press(&mut app, "/alpha<CR>");
+    ex(&mut d, &mut app, "tabnew");
+    assert_ne!(app.layout.tab().id, first);
+    assert!(
+        app.ed.search.is_none(),
+        "a new tab starts with no buffer Find"
+    );
+    ex(&mut d, &mut app, "e b.txt");
+    d.press(&mut app, "/beta<CR>");
+    ex(&mut d, &mut app, "tab goto 1");
+    assert_eq!(app.ed.search.as_ref().unwrap().pattern, "alpha");
+
+    ex(&mut d, &mut app, "search project needle");
+    searched(&mut d, &mut app);
+    let first_results = app.ed.buffer_of(app.focused_view().unwrap()).text();
+    app.run_lua_source(
+        "tab-options",
+        r#"
+        kawoosh.search_ui.flip("word")
+        kawoosh.field_set("search", "include", "*.txt")
+        kawoosh.field_set("search", "replace", "replacement")
+    "#,
+    );
+    d.frame(&mut app);
+    d.press(&mut app, "<Esc><Esc>");
+    ex(&mut d, &mut app, "tab goto 2");
+    app.run_lua_source(
+        "tab-query",
+        "kawoosh.echo(kawoosh.search_ui.state().stages[1].find)",
+    );
+    assert_eq!(app.ed.message, "", "a second tab has its own project query");
+    app.run_lua_source(
+        "tab-options",
+        r#"
+        local s = kawoosh.search_ui.state().stages[1]
+        assert(not s.word and s.include == "", "fresh project options")
+        assert(kawoosh.field_text("search", "replace") == "", "fresh replacement")
+        kawoosh.echo("fresh")
+    "#,
+    );
+    assert_eq!(app.ed.message, "fresh");
+    ex(&mut d, &mut app, "search project beta");
+    for _ in 0..100 {
+        app.wait_for_jobs();
+        d.frame(&mut app);
+    }
+    let second_results = app.ed.buffer_of(app.focused_view().unwrap()).text();
+    assert!(second_results.contains("b.txt"));
+    assert!(!second_results.contains("c.txt"));
+    d.press(&mut app, "<Esc><Esc>");
+    ex(&mut d, &mut app, "tab goto 1");
+    app.run_lua_source(
+        "tab-query",
+        "kawoosh.echo(kawoosh.search_ui.state().stages[1].find)",
+    );
+    assert_eq!(app.ed.message, "needle");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        first_results
+    );
+    app.run_lua_source(
+        "tab-options",
+        r#"
+        local s = kawoosh.search_ui.state().stages[1]
+        assert(s.word and s.include == "*.txt", "restored project options")
+        assert(kawoosh.field_text("search", "replace") == "replacement", "restored replacement")
+        kawoosh.echo("restored")
+    "#,
+    );
+    assert_eq!(app.ed.message, "restored");
+
+    app.layout.move_tab_to(1);
+    d.frame(&mut app);
+    assert_eq!(app.layout.tab().id, first);
+    app.run_lua_source(
+        "tab-reorder",
+        "kawoosh.echo(kawoosh.search_ui.state().stages[1].find)",
+    );
+    assert_eq!(
+        app.ed.message, "needle",
+        "reordering preserves the tab's state"
+    );
+
+    d.press(&mut app, "<Esc><Esc>");
+    ex(&mut d, &mut app, "tab goto 1");
+    ex(&mut d, &mut app, "tabclose");
+    ex(&mut d, &mut app, "tabnew");
+    assert!(app.ed.search.is_none(), "a closed tab's Find is discarded");
+    app.run_lua_source(
+        "tab-closed",
+        "kawoosh.echo(kawoosh.search_ui.state().stages[1].find)",
+    );
+    assert_eq!(
+        app.ed.message, "",
+        "a closed tab's project search is discarded"
+    );
+}
+
+#[test]
+fn find_uses_the_active_tab_when_the_dock_has_focus() {
+    let (mut d, mut app, _dir) = launch("find-dock");
+    app.ed.set_search("alpha", true).unwrap();
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, "e b.txt");
+    app.ed.set_search("beta", false).unwrap();
+    let buffer = app.ed.views[app.focused_view().unwrap()].buffer;
+    let view = app.ed.add_view(buffer);
+    let pane = app.layout.new_pane(Content::Editor(view));
+    app.layout.set_dock(pane);
+    app.layout.dock_open = true;
+    app.layout.dock_focused = true;
+    app.layout.tab = 0;
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), pane);
+    assert_eq!(app.ed.search.as_ref().unwrap().pattern, "alpha");
+    assert!(app.ed.search.as_ref().unwrap().ignore_case);
+    app.layout.tab = 1;
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), pane);
+    assert_eq!(app.ed.search.as_ref().unwrap().pattern, "beta");
+    assert!(!app.ed.search.as_ref().unwrap().ignore_case);
+}
+
+#[test]
+fn a_late_project_answer_stays_with_its_originating_tab() {
+    let (mut d, mut app, _dir) = launch("late-tab-answer");
+    ex(&mut d, &mut app, "search project needle");
+    searched(&mut d, &mut app);
+    app.run_lua_source(
+        "defer-search",
+        r#"
+        local s = kawoosh.search_ui
+        s.kind("deferred", { run = function(prev, _, done)
+            finish_search = function() done(prev) end
+        end })
+        s.add()
+        s.stages[2].kind = "deferred"
+        s.run(2)
+    "#,
+    );
+    d.frame(&mut app);
+    d.press(&mut app, "<Esc><Esc>");
+    ex(&mut d, &mut app, "tabnew");
+    let pane = app.layout.focused();
+    app.run_lua_source(
+        "finish-search",
+        "finish_search(); kawoosh.echo(kawoosh.search_ui.state().stages[1].find)",
+    );
+    d.frame(&mut app);
+    assert_eq!(
+        app.layout.focused(),
+        pane,
+        "a background answer leaves focus alone"
+    );
+    assert_ne!(shows(&app, pane), "*search*");
+    app.run_lua_source(
+        "other-tab-query",
+        "kawoosh.echo(kawoosh.search_ui.state().stages[1].find)",
+    );
+    assert_eq!(app.ed.message, "");
+    ex(&mut d, &mut app, "tab goto 1");
+    d.frame(&mut app);
+    app.run_lua_source(
+        "finished-owner",
+        r#"
+        local s = kawoosh.search_ui.state()
+        assert(not s.running and s.stages[2].matches == 1)
+        kawoosh.echo(s.stages[1].find)
+    "#,
+    );
+    assert_eq!(app.ed.message, "needle");
+    assert!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .text()
+            .contains("c.txt")
+    );
 }
 
 #[test]

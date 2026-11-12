@@ -15,12 +15,14 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{AfterWrite, ArgKind, Args, Effect, Setting, Spec};
 use kawoosh_systems::filter::Failure;
 use kawoosh_systems::io::IoMsg;
+use kawoosh_systems::project_env::Environment;
 use kawoosh_systems::servers::Package;
 
 use crate::Kawoosh;
@@ -198,13 +200,6 @@ pub struct Picked {
 }
 
 impl Picked {
-    /// Whether its program is there to run: a Lua `run` always, a
-    /// command on the `PATH` or the project's own. Taken as there
-    /// while the shell's `PATH` is still being asked for.
-    pub fn found(&self) -> bool {
-        self.def.lua || kawoosh_systems::io::on_path(&self.program) != Some(false)
-    }
-
     /// Whether what runs is code from the repository — its own binary,
     /// or a config that is code (formatters.md Decision 5).
     pub fn is_projects_code(&self) -> bool {
@@ -300,6 +295,45 @@ struct Job {
     then: Then,
 }
 
+/// Selection inputs belong to the request's buffer/project, even if a
+/// different project's settings are loaded while its environment is pending.
+struct Selection {
+    language: String,
+    wanted: Vec<String>,
+    remote: bool,
+    dir: Option<PathBuf>,
+    path: Option<PathBuf>,
+    all: Vec<Formatter>,
+    lsp: Option<Choice>,
+    lsp_named_errors: Vec<String>,
+    lsp_auto_errors: Vec<String>,
+    indents: bool,
+    indent_unit: kawoosh_editor::IndentUnit,
+    expandtab: bool,
+    deadline: Option<std::time::Instant>,
+}
+
+struct WaitingFormat {
+    buffer: BufferId,
+    version: Version,
+    path: Option<PathBuf>,
+    selection: Selection,
+    range: Option<std::ops::Range<usize>>,
+    then: Then,
+}
+
+struct EnvironmentAnswer {
+    generation: u64,
+    at: std::time::Instant,
+    value: Option<Environment>,
+}
+
+#[derive(Default)]
+struct Environments {
+    entries: HashMap<PathBuf, EnvironmentAnswer>,
+    revision: u64,
+}
+
 /// The formatter runs in flight.
 #[derive(Default)]
 pub struct FormatState {
@@ -307,6 +341,11 @@ pub struct FormatState {
     asked: std::collections::HashSet<String>,
     next: u64,
     jobs: HashMap<u64, Job>,
+    probe_environments: HashMap<u64, (u64, u64)>,
+    waiting: Vec<WaitingFormat>,
+    environment_alarm: Option<kawoosh_systems::Alarm>,
+    environments: Arc<Mutex<Environments>>,
+    environment_seen: (u64, u64),
     batches: HashMap<u64, Batch>,
     /// Saves waiting on a server's format, which has no timeout of its
     /// own: written as they are at the deadline.
@@ -477,15 +516,95 @@ fn fill(
 }
 
 impl Kawoosh {
+    /// Availability never starts a provider on the window thread. Its
+    /// worker wakes the window once the scoped PATH can be inspected.
+    fn formatter_environment(&self, cwd: &Path) -> Option<Environment> {
+        let registry = &self.io.environments;
+        if !registry.available(cwd) {
+            return Some(Vec::new());
+        }
+        let generation = registry.generation();
+        let mut cache = self
+            .format
+            .environments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(answer) = cache.entries.get(cwd)
+            && answer.generation == generation
+            && (answer.value.is_none() || answer.at.elapsed() < Duration::from_secs(5))
+        {
+            return answer.value.clone();
+        }
+        if cache.entries.len() >= 64 && !cache.entries.contains_key(cwd) {
+            // An in-flight answer is never removed: removing it would
+            // allow a second request for that same provider/directory.
+            let old = cache
+                .entries
+                .iter()
+                .find(|(_, e)| e.value.is_some())
+                .map(|(d, _)| d.clone());
+            cache.entries.remove(&old?);
+        }
+        let started = std::time::Instant::now();
+        cache.entries.insert(
+            cwd.to_path_buf(),
+            EnvironmentAnswer {
+                generation,
+                at: started,
+                value: None,
+            },
+        );
+        drop(cache);
+        let registry = registry.clone();
+        let cache = self.format.environments.clone();
+        let cwd = cwd.to_path_buf();
+        self.io.run("formatter environment", move || {
+            let value = registry.resolve(&cwd);
+            let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+            if registry.generation() == generation
+                && let Some(answer) = cache.entries.get_mut(&cwd)
+                && answer.generation == generation
+                && answer.at == started
+            {
+                answer.value = Some(value);
+                answer.at = std::time::Instant::now();
+                cache.revision = cache.revision.wrapping_add(1);
+            }
+            // The result lives in the formatter's cache. App messages
+            // with no typed consumer still drain and wake the window.
+            IoMsg::App(Box::new(()))
+        });
+        None
+    }
+
+    fn formatter_found(&self, picked: &Picked) -> bool {
+        if picked.def.lua {
+            return true;
+        }
+        self.formatter_environment(&picked.cwd).is_none_or(|env| {
+            kawoosh_systems::filter::find_in_env(&picked.program, Some(&picked.cwd), &env)
+                != Some(None)
+        })
+    }
+
     /// What formats buffer `id`: `named`, else its `formatter` setting
     /// (formatters.md Decision 2).
     pub fn formatter_for(&self, id: BufferId, named: Option<&str>) -> Choice {
+        match self.formatter_selection(id, named) {
+            Ok(selection) => self.choose_formatter(&selection),
+            Err(choice) => choice,
+        }
+    }
+
+    fn formatter_selection(&self, id: BufferId, named: Option<&str>) -> Result<Selection, Choice> {
         let Some(b) = self.ed.buffers.get(id) else {
-            return Choice::None("no buffer".into());
+            return Err(Choice::None("no buffer".into()));
         };
         let language = b.language.to_string();
         if b.private {
-            return Choice::None("a private buffer is not sent to a formatter".into());
+            return Err(Choice::None(
+                "a private buffer is not sent to a formatter".into(),
+            ));
         }
         let wanted: Vec<String> = match named {
             Some(n) => vec![n.to_string()],
@@ -502,15 +621,14 @@ impl Kawoosh {
             .path
             .as_deref()
             .is_some_and(|p| kawoosh_systems::fs::domain_of(p).is_some());
-        let dir = b
+        let path = b
             .path
             .as_deref()
-            .map(|p| crate::editorconfig::absolute(p, &self.cwd))
+            .map(|p| crate::editorconfig::absolute(p, &self.cwd));
+        let dir = path
+            .as_deref()
             .and_then(|p| p.parent().map(Path::to_path_buf));
         let all = defs(&self.ed.settings);
-        // What could not format, and why: a list goes on to its next,
-        // and says them all when none could.
-        let mut skipped: Vec<String> = Vec::new();
         // `named`: `lsp` asked for by name, where no server at all is
         // worth saying; `auto` says only one down.
         let lsp = |skipped: &mut Vec<String>, named: bool| {
@@ -518,7 +636,7 @@ impl Kawoosh {
                 if named {
                     skipped.push(crate::lsp::DETACHED.into());
                 }
-            } else if !self.lsp_serves(&language) {
+            } else if !self.lsp_serves_buffer(id) {
                 if named {
                     skipped.push(self.lsp_absent(&language));
                 } else if let Some(why) = self.lsp_down(&language) {
@@ -532,7 +650,53 @@ impl Kawoosh {
             None
         };
         let indents = self.indent_trees.serves(id, &language);
-        for w in &wanted {
+        let mut lsp_named_errors = Vec::new();
+        let mut lsp_auto_errors = Vec::new();
+        let lsp_choice = lsp(&mut lsp_named_errors, true);
+        lsp(&mut lsp_auto_errors, false);
+        Ok(Selection {
+            language,
+            wanted,
+            remote,
+            dir,
+            path,
+            all,
+            lsp: lsp_choice,
+            lsp_named_errors,
+            lsp_auto_errors,
+            indents,
+            indent_unit: self.ed.indent_unit(id),
+            expandtab: self.ed.expandtab_in(id),
+            deadline: None,
+        })
+    }
+
+    fn choose_formatter(&self, selection: &Selection) -> Choice {
+        let Selection {
+            language,
+            wanted,
+            remote,
+            dir,
+            all,
+            indents,
+            ..
+        } = selection;
+        let remote = *remote;
+        let indents = *indents;
+        let mut skipped = Vec::new();
+        let lsp = |skipped: &mut Vec<String>, named: bool| {
+            skipped.extend(
+                if named {
+                    &selection.lsp_named_errors
+                } else {
+                    &selection.lsp_auto_errors
+                }
+                .iter()
+                .cloned(),
+            );
+            selection.lsp.clone()
+        };
+        for w in wanted {
             match w.as_str() {
                 "lsp" => {
                     if let Some(c) = lsp(&mut skipped, true) {
@@ -564,13 +728,16 @@ impl Kawoosh {
                     // first by name that is found — prettierd, which
                     // reads prettier's configs, where prettier is not.
                     let mut best: Option<(usize, Picked)> = None;
-                    for def in all.iter().filter(|d| d.enabled && d.formats(&language)) {
+                    for def in all.iter().filter(|d| d.enabled && d.formats(language)) {
                         if let Some(c) = find_config(def, dir) {
                             let depth = c.components().count();
                             let why = format!("{}: {}", def.name, self.short_name(&c));
                             let p = pick(def, dir, Some(c), why);
                             if best.as_ref().is_none_or(|(d, b)| {
-                                depth > *d || (depth == *d && !b.found() && p.found())
+                                depth > *d
+                                    || (depth == *d
+                                        && !self.formatter_found(b)
+                                        && self.formatter_found(&p))
                             }) {
                                 best = Some((depth, p));
                             }
@@ -579,7 +746,7 @@ impl Kawoosh {
                     if let Some((_, p)) = best {
                         // The project's word: not another formatter's
                         // style in its place when this one is missing.
-                        if !p.found() {
+                        if !self.formatter_found(&p) {
                             let config = p.config.as_deref().map(|c| self.short_name(c));
                             return Choice::None(format!(
                                 "{} is not found, and {} says the project formats with it{}",
@@ -592,11 +759,11 @@ impl Kawoosh {
                     }
                     if let Some(def) = all
                         .iter()
-                        .find(|d| d.enabled && d.formats(&language) && d.when == When::Always)
+                        .find(|d| d.enabled && d.formats(language) && d.when == When::Always)
                     {
                         let why = format!("{}: always for {language}", def.name);
                         let p = pick(def, dir, None, why);
-                        if p.found() {
+                        if self.formatter_found(&p) {
                             return Choice::Tool(Box::new(p));
                         }
                         skipped.push(format!("{} is not found{}", def.name, def.install_hint()));
@@ -632,7 +799,7 @@ impl Kawoosh {
                         None => format!("{name}: named"),
                     };
                     let p = pick(def, dir, config, why);
-                    if !p.found() {
+                    if !self.formatter_found(&p) {
                         skipped.push(format!("{name} is not found{}", def.install_hint()));
                         continue;
                     }
@@ -657,18 +824,91 @@ impl Kawoosh {
         range: Option<std::ops::Range<usize>>,
         then: Then,
     ) -> bool {
-        match self.formatter_for(id, named) {
+        let selection = match self.formatter_selection(id, named) {
+            Ok(selection) => selection,
+            Err(Choice::None(why)) => {
+                self.ed.message = why;
+                return false;
+            }
+            Err(_) => unreachable!("selection errors explain why"),
+        };
+        // A request revalidates even a cached negative on its worker.
+        // Local config stamps can change before a plugin watch fires;
+        // scanning provider watch trees belongs off the window thread.
+        if let Some(dir) = &selection.dir {
+            let mut cache = self
+                .format
+                .environments
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            cache.entries.remove(dir);
+            for def in &selection.all {
+                if let Some(config) = find_config(def, dir)
+                    && let Some(cwd) = config.parent()
+                {
+                    cache.entries.remove(cwd);
+                }
+            }
+        }
+        self.format_with_selection(id, selection, range, then)
+    }
+
+    fn format_with_selection(
+        &mut self,
+        id: BufferId,
+        mut selection: Selection,
+        range: Option<std::ops::Range<usize>>,
+        then: Then,
+    ) -> bool {
+        if selection
+            .deadline
+            .is_some_and(|at| std::time::Instant::now() >= at)
+        {
+            self.ed.message = "formatter environment did not answer in time".into();
+            return false;
+        }
+        let choice = self.choose_formatter(&selection);
+        if let Choice::Tool(p) = &choice
+            && !p.def.lua
+            && self.formatter_environment(&p.cwd).is_none()
+        {
+            let now = std::time::Instant::now();
+            let deadline = *selection
+                .deadline
+                .get_or_insert(now + TIMEOUT + Duration::from_secs(1));
+            let wake = self.wake.named("formatter environment deadline");
+            self.format
+                .environment_alarm
+                .get_or_insert_with(|| kawoosh_systems::Alarm::soonest(wake))
+                .set(deadline);
+            let b = &self.ed.buffers[id];
+            self.format.waiting.push(WaitingFormat {
+                buffer: id,
+                version: b.version(),
+                path: b.path.clone(),
+                selection,
+                range,
+                then,
+            });
+            self.ed.message = "resolving formatter environment…".into();
+            return true;
+        }
+        match choice {
             Choice::None(why) => {
                 self.ed.message = why;
                 false
             }
-            Choice::Indent(_) => self.format_indent(id, range, then),
+            Choice::Indent(_) => self.format_indent(id, range, then, selection.indent_unit),
             Choice::Lsp(who) => {
                 if range.is_some() {
                     self.ed.message = "the language server formats the whole buffer here; :format without a selection".into();
                     return false;
                 }
-                match self.lsp_format_buffer(id) {
+                match self.lsp_format_buffer_with(
+                    id,
+                    selection.indent_unit.width,
+                    selection.expandtab,
+                ) {
                     Ok(()) => {
                         self.ed.message = format!("formatting with {who}…");
                         if let Then::Write(w) = then {
@@ -684,12 +924,16 @@ impl Kawoosh {
                 }
             }
             Choice::Tool(p) => {
+                if matches!(then, Then::Write(_)) && !self.may_run_unasked(&p) {
+                    self.ask_allow(&p);
+                    self.ed.message = format!(
+                        "{} here is the project's own; :format allow lets it run on save",
+                        p.def.name
+                    );
+                    return false;
+                }
                 let b = &self.ed.buffers[id];
-                let Some(path) = b
-                    .path
-                    .as_deref()
-                    .map(|p| crate::editorconfig::absolute(p, &self.cwd))
-                else {
+                let Some(path) = selection.path else {
                     self.ed.message = format!("{} needs a file to format", p.def.name);
                     return false;
                 };
@@ -736,13 +980,28 @@ impl Kawoosh {
         let token = self.format.next;
         self.format.next += 1;
         let buffer = job.buffer;
+        if matches!(&job.then, Then::Probe(_)) {
+            let revision = self
+                .format
+                .environments
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .revision;
+            self.format
+                .probe_environments
+                .insert(token, (self.io.environments.generation(), revision));
+        }
         self.format.jobs.insert(token, job);
         if p.def.lua {
             self.run_lua_formatter(p, token, buffer, text, range);
             return;
         }
         let (program, cwd, timeout) = (p.program.clone(), p.cwd.clone(), p.def.timeout);
-        let run = move || kawoosh_systems::filter::run(&program, &args, Some(&cwd), &text, timeout);
+        let registry = self.io.environments.clone();
+        let run = move || {
+            let env = registry.resolve(&cwd);
+            kawoosh_systems::filter::run_in_env(&program, &args, Some(&cwd), &text, timeout, &env)
+        };
         if self.jobs_inline {
             let result = run();
             self.filtered(token, result);
@@ -851,6 +1110,17 @@ impl Kawoosh {
             return;
         };
         if let Then::Probe(key) = job.then {
+            let revision = self
+                .format
+                .environments
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .revision;
+            if self.format.probe_environments.remove(&token)
+                != Some((self.io.environments.generation(), revision))
+            {
+                return;
+            }
             let answer = match result {
                 Ok(text) => indent_of(&text),
                 Err(f) => Probe::Nothing(f.short),
@@ -896,6 +1166,7 @@ impl Kawoosh {
         id: BufferId,
         range: Option<std::ops::Range<usize>>,
         then: Then,
+        unit: kawoosh_editor::IndentUnit,
     ) -> bool {
         let b = &self.ed.buffers[id];
         let version = b.version();
@@ -903,7 +1174,6 @@ impl Kawoosh {
             Some(r) => b.line_of(r.start)..b.line_of(r.end.saturating_sub(1).max(r.start)) + 1,
             None => 0..b.line_count(),
         };
-        let unit = self.ed.indent_unit(id);
         let mut indenter = self.ed.indenter.take();
         let want = indenter
             .as_mut()
@@ -1104,6 +1374,30 @@ impl Kawoosh {
     /// Each frame: a save whose server has not answered by its deadline
     /// is written as it is.
     pub(crate) fn sync_format(&mut self) {
+        // Selection resumes from the request's snapshot, preserving its
+        // project and recipe while another buffer may now be focused.
+        let waiting = std::mem::take(&mut self.format.waiting);
+        for w in waiting {
+            let stale = self
+                .ed
+                .buffers
+                .get(w.buffer)
+                .is_none_or(|b| b.version() != w.version || b.path != w.path);
+            let write = match &w.then {
+                Then::Write(write) => Some(*write),
+                _ => None,
+            };
+            let started = if stale {
+                self.ed.message = "buffer changed while resolving formatter environment".into();
+                false
+            } else {
+                self.format_with_selection(w.buffer, w.selection, w.range, w.then)
+            };
+            if !started && let Some(write) = write {
+                let why = std::mem::take(&mut self.ed.message);
+                self.write_formatted(write, &format!("not formatted: {why}"));
+            }
+        }
         let now = std::time::Instant::now();
         let late: Vec<u64> = self
             .format
@@ -1145,6 +1439,17 @@ impl Kawoosh {
     /// into another project cost a frame 105 ms with forty files open
     /// (Decision 6's cost).
     pub(crate) fn sync_probes(&mut self) {
+        let environment_revision = self
+            .format
+            .environments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .revision;
+        let environment = (self.io.environments.generation(), environment_revision);
+        if self.format.environment_seen != environment {
+            self.format.environment_seen = environment;
+            self.reload_probes();
+        }
         // The defs and the buffers' `formatter` looked at when the
         // settings moved: the `format` table cloned each frame to be
         // compared was a frame's cost of its own.
@@ -1241,10 +1546,13 @@ impl Kawoosh {
     /// Runs the probe for `key` from buffer `id`: the snippet sent with
     /// the buffer's path, so the tool finds its config as for the file.
     fn start_probe(&mut self, id: BufferId, key: ProbeKey) {
-        self.format.probes.insert(key.clone(), Probe::Running);
         let Choice::Tool(p) = self.formatter_for(id, None) else {
             return;
         };
+        if !p.def.lua && self.formatter_environment(&p.cwd).is_none() {
+            return;
+        }
+        self.format.probes.insert(key.clone(), Probe::Running);
         let Some(snippet) = p.def.probe.get(&key.3).cloned() else {
             return;
         };

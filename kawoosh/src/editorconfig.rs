@@ -29,6 +29,7 @@ pub struct Files {
     /// Each file looked for, by path — `None` for one not there —
     /// until the watch says it moved.
     cache: HashMap<PathBuf, Option<Rc<EditorConfig>>>,
+    widths: HashMap<PathBuf, Option<i64>>,
     /// Every place a resolved buffer's files are or would be: what the
     /// config watch holds besides its own, so a file made, changed or
     /// gone resolves the buffers again.
@@ -71,7 +72,100 @@ impl Files {
     /// Forgets what was read, so the next resolve reads again.
     pub fn forget(&mut self) {
         self.cache.clear();
+        self.widths.clear();
     }
+
+    /// Read data configs only; never evaluate a project's JS/Lua config.
+    /// Results and absent candidates share the EditorConfig watch/cache.
+    fn width_for(&mut self, path: &Path, language: &str) -> Option<(String, Setting)> {
+        let names: &[&str] = match language {
+            "rust" => &["rustfmt.toml", ".rustfmt.toml"],
+            "python" => &["ruff.toml", ".ruff.toml", "pyproject.toml"],
+            "lua" => &["stylua.toml", ".stylua.toml"],
+            "c" | "cpp" => &[".clang-format", "_clang-format"],
+            "toml" => &["taplo.toml", ".taplo.toml"],
+            "javascript" | "typescript" | "tsx" | "json" | "jsonc" | "css" | "yaml"
+            | "markdown" => &[
+                ".prettierrc",
+                ".prettierrc.json",
+                ".prettierrc.json5",
+                ".prettierrc.yaml",
+                ".prettierrc.yml",
+                ".prettierrc.toml",
+                "biome.json",
+                "biome.jsonc",
+                "package.json",
+            ],
+            _ => &[],
+        };
+        for dir in path.ancestors().skip(1) {
+            for name in names {
+                let config = dir.join(name);
+                let width = *self.widths.entry(config.clone()).or_insert_with(|| {
+                    let meta = std::fs::metadata(&config).ok()?;
+                    if meta.len() > 1024 * 1024 {
+                        return None;
+                    }
+                    let text = std::fs::read_to_string(&config).ok()?;
+                    formatter_width(name, &text)
+                });
+                if let Some(width) = width {
+                    let mut settings = Setting::table();
+                    settings.set("max_line_length", Setting::Int(width));
+                    return Some((format!("formatter: {}", config.display()), settings));
+                }
+            }
+        }
+        None
+    }
+}
+
+/// The width keys in supported formatters' declarative files. A missing,
+/// disabled or computed value leaves EditorConfig (and then 110) in charge.
+fn formatter_width(name: &str, text: &str) -> Option<i64> {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+        let n = if name == "package.json" {
+            json.get("prettier")?.get("printWidth")?.as_i64()
+        } else if name.starts_with("biome.") {
+            json.get("formatter")?.get("lineWidth")?.as_i64()
+        } else {
+            json.get("printWidth")?.as_i64()
+        };
+        return n.filter(|n| *n > 0);
+    }
+    if name == "package.json" {
+        return None;
+    }
+    let key = match name {
+        "rustfmt.toml" | ".rustfmt.toml" => "max_width",
+        "ruff.toml" | ".ruff.toml" | "pyproject.toml" => "line-length",
+        "stylua.toml" | ".stylua.toml" | "taplo.toml" | ".taplo.toml" => "column_width",
+        ".clang-format" | "_clang-format" => "ColumnLimit",
+        n if n.starts_with("biome.") => "lineWidth",
+        _ => "printWidth",
+    };
+    let pattern = format!(
+        r#"^\s*["']?{}["']?\s*[:=]\s*([0-9]+)\s*[,}}]?(?:\s*(?:#|//).*)?$"#,
+        key
+    );
+    let re = regex::Regex::new(&pattern).ok()?;
+    let mut section = "";
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            section = line;
+        }
+        if name == "pyproject.toml" && section != "[tool.ruff]" {
+            continue;
+        }
+        if matches!(name, "taplo.toml" | ".taplo.toml") && section != "[formatting]" {
+            continue;
+        }
+        if let Some(c) = re.captures(line) {
+            return c[1].parse::<i64>().ok().filter(|n| *n > 0);
+        }
+    }
+    None
 }
 
 impl Kawoosh {
@@ -89,10 +183,6 @@ impl Kawoosh {
         if self.config.editorconfig.enabled != Some(enabled) {
             self.config.editorconfig.enabled = Some(enabled);
             self.ed.locals.clear();
-        }
-        if !enabled && !self.config.editorconfig.watched.is_empty() {
-            self.config.editorconfig.watched.clear();
-            self.rewatch_config();
         }
         // Off, a buffer still has its own sources — empty of the files',
         // there for its formatter's word (formatters.md Decision 6).
@@ -116,14 +206,11 @@ impl Kawoosh {
         }
         for (id, path) in stale {
             let path = absolute(&path, &self.cwd);
-            if !enabled {
-                let own = self.ed.buffers[id].path.clone().unwrap_or(path);
-                self.ed
-                    .locals
-                    .insert(id, Local::new(own, Default::default()));
-                continue;
-            }
-            let (_, found) = self.config.editorconfig.around(&path);
+            let found = if enabled {
+                self.config.editorconfig.around(&path).1
+            } else {
+                Vec::new()
+            };
             let files: Vec<(PathBuf, &EditorConfig)> = found
                 .iter()
                 .map(|(p, ec)| (p.clone(), ec.as_ref()))
@@ -131,13 +218,14 @@ impl Kawoosh {
             let resolved = editorconfig::resolve(&path, &files);
             // Keyed by the buffer's path as it has it, which is what
             // `scope_of` compares.
+            let language = &self.ed.buffers[id].language;
+            let width = self.config.editorconfig.width_for(&path, language);
             let own = self.ed.buffers[id].path.clone().unwrap_or(path);
-            self.ed.locals.insert(id, Local::new(own, resolved));
+            let mut local = Local::new(own, resolved);
+            local.set_width(width);
+            self.ed.locals.insert(id, local);
         }
-        if !enabled {
-            return;
-        }
-        let mut watched: Vec<PathBuf> = Vec::new();
+        let mut watched: Vec<PathBuf> = self.config.editorconfig.widths.keys().cloned().collect();
         let paths: Vec<PathBuf> = self
             .ed
             .locals
@@ -145,7 +233,9 @@ impl Kawoosh {
             .map(|l| absolute(&l.path, &self.cwd))
             .collect();
         for p in paths {
-            watched.extend(self.config.editorconfig.around(&p).0);
+            if enabled {
+                watched.extend(self.config.editorconfig.around(&p).0);
+            }
         }
         watched.sort();
         watched.dedup();
@@ -371,4 +461,41 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             |k, _| k.init_editorconfig(),
         ),
     ]
+}
+
+#[cfg(test)]
+mod width_tests {
+    use super::formatter_width;
+
+    #[test]
+    fn declarative_formatter_widths_are_read_without_running_project_code() {
+        for (name, text, want) in [
+            (".prettierrc", r#"{"printWidth":96}"#, Some(96)),
+            (
+                "package.json",
+                r#"{"other":{"printWidth":40},"prettier":{"printWidth":100}}"#,
+                Some(100),
+            ),
+            (
+                "biome.json",
+                r#"{"formatter":{"lineWidth":120}}"#,
+                Some(120),
+            ),
+            ("rustfmt.toml", "max_width = 90\n", Some(90)),
+            (".clang-format", "ColumnLimit: 100 # preferred\n", Some(100)),
+            (
+                "pyproject.toml",
+                "[tool.other]\nline-length=70\n[tool.ruff]\nline-length=88\n",
+                Some(88),
+            ),
+            (".stylua.toml", "column_width = 120", Some(120)),
+            (".prettierrc.yaml", "printWidth: 98", Some(98)),
+            ("taplo.toml", "[formatting]\ncolumn_width=92", Some(92)),
+            ("package.json", r#"{"printWidth":40}"#, None),
+            (".prettierrc", "printWidth: 0", None),
+            ("rustfmt.toml", "# max_width = 10", None),
+        ] {
+            assert_eq!(formatter_width(name, text), want, "{name}: {text}");
+        }
+    }
 }

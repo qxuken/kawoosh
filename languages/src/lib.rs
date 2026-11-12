@@ -925,6 +925,15 @@ impl Library {
             g = g
                 .with_outline(&text)
                 .map_err(|e| format!("{}: {e}", p.display()))?;
+        } else if let Some(text) = match self.symbol.as_str() {
+            "tree_sitter_nginx" => Some(include_str!("../queries/nginx/outline.scm")),
+            "tree_sitter_ini" => Some(include_str!("../queries/ini/outline.scm")),
+            "tree_sitter_git_config" => Some(include_str!("../queries/git_config/outline.scm")),
+            "tree_sitter_ssh_config" => Some(include_str!("../queries/ssh_config/outline.scm")),
+            "tree_sitter_dotenv" => Some(include_str!("../queries/dotenv/outline.scm")),
+            _ => None,
+        } {
+            g = g.with_outline(text)?;
         }
         if let (Some(text), Some(p)) = (indents, &self.indents) {
             g = g
@@ -1025,6 +1034,29 @@ impl Registry {
             .iter()
             .find(|d| d.filenames.iter().any(|f| f == name))
         {
+            return &d.name;
+        }
+        // Relative path and suffix conventions of existing config grammars.
+        // An arbitrary .conf file is never assumed to be nginx.
+        let normalized = format!("/{}", path.to_string_lossy().replace('\\', "/"));
+        let family = if normalized.ends_with("/.ssh/config") {
+            Some("ssh_config")
+        } else if normalized.ends_with("/.git/config") {
+            Some("git_config")
+        } else if matches!(name, ".editorconfig" | ".npmrc" | ".pypirc") {
+            Some("ini")
+        } else if name.starts_with(".env.") {
+            Some("dotenv")
+        } else if normalized.contains("/nginx/")
+            && (name.ends_with(".conf")
+                || normalized.contains("/sites-enabled/")
+                || normalized.contains("/sites-available/"))
+        {
+            Some("nginx")
+        } else {
+            None
+        };
+        if let Some(d) = family.and_then(|name| self.get(name)) {
             return &d.name;
         }
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -1634,6 +1666,7 @@ mod tests {
         assert_eq!(d("/home/u/.zshrc", ""), "bash");
         assert_eq!(d("tsconfig.json", ""), "jsonc");
         assert_eq!(d("package.json", ""), "json");
+        assert_eq!(d(".prettierrc", ""), "json");
         assert_eq!(d("a.tsx", ""), "tsx");
         assert_eq!(d("README.MD", ""), "markdown");
         assert_eq!(d("x.patch", ""), "diff");
@@ -1646,6 +1679,25 @@ mod tests {
         assert_eq!(d("run", "# not a shebang"), "text");
         // The name wins over the extension, the extension over the line.
         assert_eq!(d("x.py", "#!/bin/bash"), "python");
+    }
+
+    #[test]
+    fn config_paths_use_existing_registered_grammars() {
+        let mut r = Registry::builtin();
+        for name in ["nginx", "ini", "git_config", "ssh_config", "dotenv"] {
+            r.add(LanguageDef::named(name));
+        }
+        for (path, language) in [
+            ("/etc/nginx/conf.d/site.conf", "nginx"),
+            ("nginx/sites-enabled/example", "nginx"),
+            (r"C:\Users\me\.ssh\config", "ssh_config"),
+            (".git/config", "git_config"),
+            (".editorconfig", "ini"),
+            (".env.staging", "dotenv"),
+            ("unrelated.conf", "text"),
+        ] {
+            assert_eq!(r.detect(Path::new(path), ""), language, "{path}");
+        }
     }
 
     #[test]

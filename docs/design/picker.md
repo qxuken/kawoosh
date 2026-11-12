@@ -656,6 +656,27 @@ editor performance.
 
 ## Built
 
+2026-11-12: directory-picker validation and remote directory/file previews
+use callback filesystem jobs. `fs.stat(path, fn)` and `fs.read(path, fn)`
+join the existing asynchronous `fs.list`; local preview behavior stays
+the same. Directory candidates are checked one at a time to avoid
+hundreds of worker threads waiting on one host's file channel. Sources
+may return a loading preview and use their third `done(preview)` argument
+when IO returns. Delivery is tied to the picker instance and preview
+request, so a late answer cannot replace a different row or a reopened
+picker. The host-file cache remains scoped to one picker opening.
+`tests/dirs.rs` registers a virtual host that rejects every stat/list/read
+on the window thread, exercises both bundled preview paths, and checks
+late preview delivery.
+
+Visits validated asynchronously retain the workspace and backend from
+when they began. `kawoosh.workspace()` reads the published workspace;
+`remember { workspace = ... }` can explicitly keep that origin, while
+the default remains the current workspace. A delayed directory listing
+captures its origin before the list job as well. The blocked-stat
+regression switches workspace and backend before releasing validation
+and checks that the visit still belongs to its origin.
+
 2026-10-18: `picker.place` and the view in `kawoosh/lua/picker.lua`, the
 settings in `editor/src/settings.rs`, `fs::walk_with`,
 `fs::ignored_by_project` and `fs::WALK_MAX` in `systems/src/fs.rs`,

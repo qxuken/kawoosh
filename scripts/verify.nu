@@ -21,6 +21,9 @@ def main [
   --fix  # format the tree instead of failing on it
 ] {
   cd ($env.FILE_PWD | path dirname)
+  print "== catalogs"
+  nu scripts/verify-catalog.nu tools
+  nu scripts/verify-catalog.nu grammars
   print "== fmt"
   if $fix { cargo fmt --all } else { cargo fmt --all --check }
   print "== clippy"

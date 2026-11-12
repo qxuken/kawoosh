@@ -8,7 +8,7 @@ marks, and the symbols picker.
 
 | keys | what |
 |---|---|
-| `/` `?` | search forward, backward (`:search`, `:search back`) |
+| `/` `?` | search forward, backward (`:search`, `:search back`){{mac:; ⌘F opens forward Find}} |
 | `n` `N` | the next, previous match, wrapping round the file |
 | `*` | search for the word under the caret, as a whole word; in visual mode, for the selected text as it is |
 | `<Esc>` | in normal mode, hide the match highlight; `n` still works |
@@ -18,6 +18,11 @@ start it with `(?-i)` to match case exactly. The caret moves to the
 first match as you type; `<Esc>` twice cancels and puts it back.
 `<Up>` `<Down>` in the prompt walk earlier searches. Every match on
 screen is highlighted until you search again or press `<Esc>`.
+
+Each tab keeps its own pattern, highlight visibility and Find history.
+Switching tabs restores them, including while the dock has focus.
+The project search's query, options, replacement and results also stay
+with their tab; `<leader>ss`{{mac: or ⌘⇧F}} opens that tab's project search.
 
 `<Esc>` in normal mode clears one thing at a time: a pending operator
 first, then extra cursors, then the search highlight.

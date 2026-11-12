@@ -16,6 +16,7 @@ pub mod json;
 pub mod lsp;
 pub mod overstrike;
 pub mod picture;
+pub mod project_env;
 pub mod runner;
 pub mod search;
 pub mod servers;

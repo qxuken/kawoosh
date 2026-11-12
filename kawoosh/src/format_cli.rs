@@ -51,7 +51,9 @@ pub fn run(args: &[String]) -> i32 {
 
 /// The formatters the engine ships (`format.NAME` in its defaults).
 pub fn builtin() -> Vec<Formatter> {
-    crate::format::defs(&kawoosh_editor::Settings::new())
+    let mut settings = kawoosh_editor::Settings::new();
+    crate::tool_catalog::apply_formatters(&mut settings);
+    crate::format::defs(&settings)
 }
 
 fn go(args: &[String]) -> Result<(), String> {

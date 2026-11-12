@@ -73,12 +73,29 @@ pub enum IoMsg {
         title: String,
         copying: crate::fs::Copying,
     },
+    /// A long removal's selected entries completed and elapsed time.
+    FsRemoving {
+        token: u64,
+        title: String,
+        removing: crate::fs::Removing,
+    },
     /// A directory listed on a thread of its own for a plugin
     /// (`kawoosh.fs.list(path, fn)`): the job's token, and the entries
     /// or why not.
     Listed {
         token: u64,
         result: Result<Vec<crate::fs::Entry>, String>,
+    },
+    /// Metadata requested by `kawoosh.fs.stat(path, fn)`.
+    FsStat {
+        token: u64,
+        result: Result<crate::fs::Stat, String>,
+        local: bool,
+    },
+    /// Text requested by `kawoosh.fs.read(path, fn)`.
+    FsRead {
+        token: u64,
+        result: Result<String, String>,
     },
     /// A directory listed on a thread of its own for the `:` prompt's
     /// path completion (`cmdline.rs`): the directory, and its entries or
@@ -336,6 +353,43 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
         c.creation_flags(CREATE_NO_WINDOW);
     }
     c
+}
+
+/// A child with a resolved project environment. On Windows the program
+/// lookup itself must use that PATH, including npm's .cmd shims; setting
+/// PATH only after Command::new can select the launcher's global tool.
+pub fn command_in_env(
+    program: impl AsRef<std::ffi::OsStr>,
+    env: &[(String, String)],
+) -> std::process::Command {
+    let program = program.as_ref();
+    #[cfg(windows)]
+    let found = env
+        .iter()
+        .rev()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+        .and_then(|(_, path)| {
+            let p = std::path::Path::new(program);
+            if p.components().count() != 1 {
+                return None;
+            }
+            let names = if p.extension().is_some() {
+                vec![p.to_path_buf()]
+            } else {
+                ["exe", "com", "cmd", "bat"]
+                    .into_iter()
+                    .map(|e| p.with_extension(e))
+                    .collect()
+            };
+            path_dirs(std::ffi::OsStr::new(path))
+                .into_iter()
+                .find_map(|d| names.iter().map(|n| d.join(n)).find(|p| p.is_file()))
+        });
+    #[cfg(windows)]
+    let program = found.as_ref().map(|p| p.as_os_str()).unwrap_or(program);
+    let mut command = command(program);
+    command.envs(env.iter().cloned());
+    command
 }
 
 /// `curl -fsSL --connect-timeout 20`, as everything kawoosh fetches over
@@ -1317,6 +1371,7 @@ impl PtyShared {
 
 #[derive(Default)]
 struct ProcState {
+    remote: Option<crate::ssh::RemoteKiller>,
     child: Option<crate::spawn::Session>,
     #[cfg(windows)]
     tree: Option<Arc<crate::job::Tree>>,
@@ -1353,6 +1408,9 @@ impl ProcHandle {
         }
         if let Ok(mut state) = self.state.lock() {
             state.killed = true;
+            if let Some(remote) = &state.remote {
+                remote.kill();
+            }
 
             #[cfg(windows)]
             if let Some((tree, child)) = state.tree.clone().zip(state.child.as_mut()) {
@@ -1367,6 +1425,7 @@ impl ProcHandle {
 }
 
 pub struct Io {
+    pub environments: Arc<crate::project_env::Registry>,
     tx: Sender<IoMsg>,
     pub rx: Receiver<IoMsg>,
     wake: WakeHandle,
@@ -1375,7 +1434,12 @@ pub struct Io {
 impl Io {
     pub fn new(wake: WakeHandle) -> Self {
         let (tx, rx) = unbounded();
-        Self { tx, rx, wake }
+        Self {
+            tx,
+            rx,
+            wake,
+            environments: Arc::default(),
+        }
     }
 
     /// Pumps `reader` into the [`PtyOutput`] handed back until it
@@ -1648,6 +1712,7 @@ impl Io {
     /// are replaced, never a stop.
     pub fn run_command(&self, id: u64, spec: ProcSpec) -> std::io::Result<ProcHandle> {
         use std::io::Write;
+        let environments = self.environments.clone();
         let ProcSpec {
             cmd,
             cwd,
@@ -1691,9 +1756,16 @@ impl Io {
                     format!("exec {}", quoted.join(" "))
                 }
             };
-            let script = remote_script(dir, &env, &exec, false);
+            let dir = dir.clone();
+            let project_dir = cwd.clone();
             let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
             thread::spawn(move || {
+                let mut resolved = project_dir
+                    .as_deref()
+                    .map(|d| environments.resolve(d))
+                    .unwrap_or_default();
+                resolved.extend(env);
+                let script = remote_script(&dir, &resolved, &exec, false);
                 let mut stdin = stdin;
                 let out = run_script(&t, &script, stdin.as_deref().map(str::as_bytes));
                 if let Some(s) = stdin.as_mut() {
@@ -1743,71 +1815,102 @@ impl Io {
                     format!("exec {}", quoted.join(" "))
                 }
             };
-            let script = remote_script(dir, &env, &exec, false);
-            let mut r = t.exec(&script).expect("a client")?;
-            let input = r.stdin.take();
-            if let (Some(mut text), Some(mut pipe)) = (stdin, input) {
-                thread::spawn(move || {
-                    let _ = pipe.write_all(text.as_bytes());
-                    drop(pipe);
-                    text_buffer::wipe_string(&mut text);
-                });
-            }
-            let stdout: Box<dyn Read + Send> = Box::new(r.stdout.take().expect("a channel's"));
-            let stderr: Box<dyn Read + Send> = Box::new(r.stderr.take().expect("a channel's"));
+            let dir = dir.clone();
+            let project_dir = cwd.clone();
             let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
-            let (a, b) = pump_outputs(id, stdout, stderr, whole, split_err, &tx, &wake);
-            let mut handle = ProcHandle::detached();
-            handle.remote = Some(r.killer());
-            let done = r.done.clone();
+            let handle = ProcHandle::detached();
+            let worker = handle.clone();
             thread::spawn(move || {
+                let mut resolved = project_dir
+                    .as_deref()
+                    .map(|d| environments.resolve(d))
+                    .unwrap_or_default();
+                resolved.extend(env);
+                let script = remote_script(&dir, &resolved, &exec, false);
+                let mut r = match t.exec(&script).expect("a client") {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let _ = tx.send(IoMsg::ProcStartFailed {
+                            id,
+                            error: e.to_string(),
+                        });
+                        wake.wake();
+                        return;
+                    }
+                };
+                {
+                    let mut state = worker.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if state.killed {
+                        r.killer().kill();
+                    }
+                    state.remote = Some(r.killer());
+                }
+                if let (Some(mut text), Some(mut pipe)) = (stdin, r.stdin.take()) {
+                    thread::spawn(move || {
+                        let _ = pipe.write_all(text.as_bytes());
+                        drop(pipe);
+                        text_buffer::wipe_string(&mut text);
+                    });
+                }
+                let stdout: Box<dyn Read + Send> = Box::new(r.stdout.take().expect("a channel's"));
+                let stderr: Box<dyn Read + Send> = Box::new(r.stderr.take().expect("a channel's"));
+                let (a, b) = pump_outputs(id, stdout, stderr, whole, split_err, &tx, &wake);
                 let _ = a.join();
                 let _ = b.join();
                 let _ = tx.send(IoMsg::ProcExit {
                     id,
-                    code: done.wait(),
+                    code: r.done.wait(),
                 });
                 wake.wake();
             });
             return Ok(handle);
         }
-        let mut command = match &host {
-            Some((name, dir)) => {
-                let t = transport_of(name).ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotConnected,
-                        format!("{name}: not connected (:domain connect {name})"),
-                    )
-                })?;
-                let exec = match &cmd {
-                    ProcCmd::Shell(c) => {
-                        format!("exec \"${{SHELL:-/bin/sh}}\" -c {}", shell_quote(c))
-                    }
-                    ProcCmd::Argv(argv) => {
-                        let quoted: Vec<String> = argv.iter().map(|a| shell_quote(a)).collect();
-                        format!("exec {}", quoted.join(" "))
-                    }
-                };
-                let script = remote_script(dir, &env, &exec, false);
-                t.remote_command(&script)
-            }
-            None => match &cmd {
-                ProcCmd::Shell(c) => shell_command(&local_shell(), c),
-                ProcCmd::Argv(argv) => {
-                    let mut cm = command(&argv[0]);
-                    cm.args(&argv[1..]);
-                    cm
+        let make_command = move || -> std::io::Result<std::process::Command> {
+            let mut resolved = cwd
+                .as_deref()
+                .map(|d| environments.resolve(d))
+                .unwrap_or_default();
+            resolved.extend(env);
+            let env = resolved;
+            let mut command = match &host {
+                Some((name, dir)) => {
+                    let t = transport_of(name).ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::NotConnected,
+                            format!("{name}: not connected (:domain connect {name})"),
+                        )
+                    })?;
+                    let exec = match &cmd {
+                        ProcCmd::Shell(c) => {
+                            format!("exec \"${{SHELL:-/bin/sh}}\" -c {}", shell_quote(c))
+                        }
+                        ProcCmd::Argv(argv) => {
+                            let quoted: Vec<String> = argv.iter().map(|a| shell_quote(a)).collect();
+                            format!("exec {}", quoted.join(" "))
+                        }
+                    };
+                    let script = remote_script(dir, &env, &exec, false);
+                    t.remote_command(&script)
                 }
-            },
+                None => match &cmd {
+                    ProcCmd::Shell(c) => shell_command(&local_shell(), c),
+                    ProcCmd::Argv(argv) => {
+                        let mut cm = command_in_env(&argv[0], &env);
+                        cm.args(&argv[1..]);
+                        cm
+                    }
+                },
+            };
+            if let Some(d) = &cwd
+                && host.is_none()
+            {
+                command.current_dir(d);
+            }
+            if host.is_none() {
+                command.envs(env.iter().map(|(k, v)| (k, v)));
+            }
+            Ok(command)
         };
-        if let Some(d) = &cwd
-            && host.is_none()
-        {
-            command.current_dir(d);
-        }
-        if host.is_none() {
-            command.envs(env.iter().map(|(k, v)| (k, v)));
-        }
         let handle = ProcHandle::detached();
         let worker = handle.clone();
         let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
@@ -1818,6 +1921,17 @@ impl Io {
                 // that would ask on `/dev/tty` fails at once instead of
                 // waiting on a terminal no one is looking at. Process
                 // creation is here, not on the caller (usually the UI).
+                let mut command = match make_command() {
+                    Ok(command) => command,
+                    Err(e) => {
+                        let _ = tx.send(IoMsg::ProcStartFailed {
+                            id,
+                            error: e.to_string(),
+                        });
+                        wake.wake();
+                        return;
+                    }
+                };
                 let mut child = match crate::spawn::session(&mut command, stdin.is_some()) {
                     Ok(child) => child,
                     Err(e) => {

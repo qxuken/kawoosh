@@ -298,6 +298,19 @@ and a def with `run` can do it (Decision 1).
 
 ## Built
 
+Since 2026-11-12, formatter selection and execution (including indentation
+probes) use the application's project environment providers, such as
+[mise](mise.md). A provider's PATH is authoritative: a tool missing there
+does not fall through to another globally installed version. Project
+`node_modules/.bin` and kawoosh-managed installs keep their existing
+precedence. Availability resolves on a worker; a requested format/save
+waits for that answer before applying the existing formatter-list/LSP
+fallback rules. It keeps the request's buffer, directory and formatter
+settings while waiting, and a failed or timed-out resolution still lets
+the save finish. Availability hints are reused for up to five seconds or
+until a provider invalidates; each requested format revalidates on a worker,
+including after a previously missing formatter becomes available.
+
 Six commits, one a round, on `claude/formatters-note`. Where the build
 departed from the text above, and what it found:
 

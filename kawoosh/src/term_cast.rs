@@ -96,13 +96,24 @@ impl Kawoosh {
             return;
         };
         self.fill_or_open(self.terminal_place(), Content::Terminal(t));
+        if self.terms.record_after_environment(t, path.clone()) {
+            self.ed.message = format!(
+                "recording to {} after project environment preparation",
+                kawoosh_systems::fs::abbreviate_home(&path)
+            );
+            return;
+        }
+        self.start_terminal_recording(t, &path);
+    }
+
+    pub(crate) fn start_terminal_recording(&mut self, t: TermId, path: &Path) {
         let Some(term) = self.terms.map.get_mut(&t) else {
             return;
         };
-        self.ed.message = match term.record(&path) {
+        self.ed.message = match term.record(path) {
             Ok(()) => format!(
                 "recording to {} — `:terminal record stop` or the shell's end finishes it",
-                kawoosh_systems::fs::abbreviate_home(&path)
+                kawoosh_systems::fs::abbreviate_home(path)
             ),
             Err(e) => format!("terminal record: {}: {e}", path.display()),
         };
@@ -111,6 +122,10 @@ impl Kawoosh {
     /// The recording of terminal `t` finished, the message saying
     /// where it is; false when none was being made.
     pub(crate) fn stop_recording(&mut self, t: TermId) -> bool {
+        if self.terms.cancel_pending_recording(t) {
+            self.ed.message = "terminal recording canceled before its process started".into();
+            return true;
+        }
         let Some(done) = self.terms.map.get_mut(&t).and_then(|t| t.stop_recording()) else {
             return false;
         };
@@ -226,10 +241,12 @@ impl Kawoosh {
 
     /// Whether terminal `t` is being recorded.
     pub(crate) fn is_recording(&self, t: TermId) -> bool {
-        self.terms
-            .map
-            .get(&t)
-            .is_some_and(|t| t.recording().is_some())
+        self.terms.pending_recording(t)
+            || self
+                .terms
+                .map
+                .get(&t)
+                .is_some_and(|t| t.recording().is_some())
     }
 }
 

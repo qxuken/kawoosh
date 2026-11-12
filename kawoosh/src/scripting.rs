@@ -167,6 +167,7 @@ pub struct Scripting {
     /// watch on their union, spawned the first time one is asked for.
     pub watches: HashMap<String, Vec<std::path::PathBuf>>,
     pub watcher: Option<kawoosh_systems::watch::Watcher>,
+    pub tree_watches: HashMap<String, kawoosh_systems::tree_watch::TreeWatch>,
     /// The plugins' painted ranges per buffer, by set name, at the
     /// version they were given (`kawoosh.buf.paint`).
     pub paints: HashMap<kawoosh_doc::BufferId, HashMap<String, Painted>>,
@@ -238,6 +239,23 @@ fn copying_title(changes: &[kawoosh_systems::fs::Change]) -> String {
             kawoosh_systems::fs::basename(one).unwrap_or_else(|| one.display().to_string())
         ),
         many => format!("Copying {} entries", many.len()),
+    }
+}
+
+fn removing_title(changes: &[kawoosh_systems::fs::Change]) -> String {
+    let names: Vec<_> = changes
+        .iter()
+        .filter_map(|c| match c {
+            kawoosh_systems::fs::Change::Delete { path } => Some(path),
+            _ => None,
+        })
+        .collect();
+    match names.as_slice() {
+        [one] => format!(
+            "Removing {}",
+            kawoosh_systems::fs::basename(one).unwrap_or_else(|| one.display().to_string())
+        ),
+        many => format!("Removing {} selected entries", many.len()),
     }
 }
 
@@ -707,6 +725,9 @@ impl Kawoosh {
             self.ed.message = "lua is not available".into();
             return;
         };
+        self.publish_layout();
+        self.note_workspace();
+        rt.set_workspace(self.moments.workspace());
         rt.publish(&self.ed, self.focused_view());
         if let Err(e) = rt.load_source(name, src) {
             self.ed.message = e.lines().next().unwrap_or("lua error").to_string();
@@ -891,7 +912,28 @@ impl Kawoosh {
                 payloads,
                 restore,
                 pane,
+                focus,
+                if_buffer,
             } => {
+                if !focus
+                    && let Some(kawoosh_lua::ScratchPane::Pane(p)) = pane
+                    && self.layout.content(p).is_none()
+                {
+                    return;
+                }
+                if let Some(expected) = if_buffer {
+                    let destination = match pane {
+                        Some(kawoosh_lua::ScratchPane::Pane(p)) => self.view_of(p),
+                        _ => self.focused_view(),
+                    };
+                    if destination
+                        .and_then(|v| self.ed.views.get(v))
+                        .map(|v| v.buffer)
+                        != Some(kawoosh_lua::id_of(expected))
+                    {
+                        return;
+                    }
+                }
                 let existing = self
                     .ed
                     .buffers
@@ -997,6 +1039,36 @@ impl Kawoosh {
                         }
                     }
                     self.last_pos.remove(&id);
+                    return;
+                }
+                // A late asynchronous listing belongs to its original
+                // pane, even in another tab or while it shows a loading
+                // view. Fill it without briefly focusing it (and without
+                // changing the active tab's cwd).
+                if !focus && let Some(kawoosh_lua::ScratchPane::Pane(p)) = pane {
+                    let v = match self.view_of(p) {
+                        Some(v) => {
+                            self.show_buffer(v, id);
+                            v
+                        }
+                        None => {
+                            let v = self.ed.add_view(id);
+                            if let Some(previous) = self.layout.panes.insert(p, Content::Editor(v))
+                            {
+                                self.drop_content(previous);
+                            }
+                            v
+                        }
+                    };
+                    let ln = line
+                        .unwrap_or(1)
+                        .max(1)
+                        .min(self.ed.buffers[id].line_count())
+                        - 1;
+                    let off = self.ed.buffers[id].line_start(ln);
+                    self.ed.views[v].sels =
+                        kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(off));
+                    self.ed.views[v].goal_col = None;
                     return;
                 }
                 // A pane asked for by number: the keys go there, if it
@@ -1105,6 +1177,37 @@ impl Kawoosh {
                     });
                 }
             }
+            Msg::StatFile { token, path } => {
+                let local = kawoosh_systems::fs::domain_of(&path).is_none();
+                if self.jobs_inline {
+                    rt.stated(
+                        token,
+                        kawoosh_systems::fs::stat(&path).map_err(|e| e.to_string()),
+                        local,
+                    );
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("stat", move || IoMsg::FsStat {
+                        token,
+                        result: kawoosh_systems::fs::stat(&path).map_err(|e| e.to_string()),
+                        local,
+                    });
+                }
+            }
+            Msg::ReadFile { token, path } => {
+                if self.jobs_inline {
+                    rt.file_read(
+                        token,
+                        kawoosh_systems::fs::read(&path).map_err(|e| e.to_string()),
+                    );
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("read", move || IoMsg::FsRead {
+                        token,
+                        result: kawoosh_systems::fs::read(&path).map_err(|e| e.to_string()),
+                    });
+                }
+            }
             Msg::ReadJson { token, path } => {
                 if self.jobs_inline {
                     rt.json_read(token, kawoosh_systems::json::read_file(&path));
@@ -1163,8 +1266,9 @@ impl Kawoosh {
                 } else {
                     self.pending_jobs += 1;
                     let title = copying_title(&changes);
+                    let removal_title = removing_title(&changes);
                     self.io.stream("fs apply", move |send| {
-                        let all = kawoosh_systems::fs::apply_with(
+                        let all = kawoosh_systems::fs::apply_with_progress(
                             &changes,
                             |o| {
                                 send(IoMsg::FsApplied {
@@ -1178,6 +1282,13 @@ impl Kawoosh {
                                     token,
                                     title: title.clone(),
                                     copying,
+                                });
+                            },
+                            |removing| {
+                                send(IoMsg::FsRemoving {
+                                    token,
+                                    title: removal_title.clone(),
+                                    removing,
                                 });
                             },
                         );
@@ -1205,6 +1316,7 @@ impl Kawoosh {
                 yanks,
                 dwell_ms,
                 meta,
+                workspace,
             } => {
                 // The engine's `text` rows are its own (memory.md D9);
                 // a file's subject is resolved as `:e` would.
@@ -1218,7 +1330,7 @@ impl Kawoosh {
                     } else {
                         subject
                     };
-                    let ws = self.moments.workspace().to_string();
+                    let ws = workspace.unwrap_or_else(|| self.moments.workspace().to_string());
                     self.moments.add(
                         kawoosh_systems::store::MomentKey::new(&kind, &subject, &ws),
                         visits,
@@ -1463,6 +1575,20 @@ impl Kawoosh {
                     .get_or_insert_with(|| kawoosh_systems::watch::Watcher::spawn(wake, beat))
                     .watch(all);
             }
+            Msg::WatchTree { name, paths } => {
+                if paths.is_empty() {
+                    self.scripting.tree_watches.remove(&name);
+                } else {
+                    let wake = self.wake.named("lua tree watch");
+                    let tree = self.scripting.tree_watches.entry(name).or_insert_with(|| {
+                        kawoosh_systems::tree_watch::TreeWatch::spawn_with_wake(
+                            kawoosh_systems::tree_watch::Mode::native(),
+                            Some(wake),
+                        )
+                    });
+                    tree.watch(paths);
+                }
+            }
             // Read as the markdown buffer's images are, and said to Lua
             // when it lands (`pictures.rs`).
             Msg::LoadImage(path) => self.lua_picture(&path),
@@ -1608,6 +1734,16 @@ impl Kawoosh {
                     Some((_, d)) => *d = def,
                     None => self.scripting.compile_kinds.push((name, def)),
                 }
+            }
+            Msg::CompileChanged => self.refresh_compile_offer(),
+            Msg::ProjectEnvironment { name, def } => {
+                self.io.environments.register(name, def);
+                self.lsp.lsp.send(kawoosh_systems::lsp::Cmd::Environments(
+                    self.io.environments.clone(),
+                ));
+            }
+            Msg::ProjectEnvironmentChanged { name, dir } => {
+                self.io.environments.invalidate(&name, dir.as_deref());
             }
             Msg::Tool {
                 name,
@@ -1795,19 +1931,20 @@ impl Kawoosh {
                     self.ed.message = "not in a terminal".into();
                     return;
                 };
-                let Some(t) = self.terms.map.get_mut(&id) else {
-                    return;
-                };
-                if prompt && !t.at_empty_prompt() {
-                    self.ed.message = if t.commands().is_empty() {
+                let t = self
+                    .terms
+                    .map
+                    .get(&id)
+                    .filter(|_| !self.terms.preparing(id));
+                if prompt && t.is_none_or(|t| !t.at_empty_prompt()) {
+                    self.ed.message = if t.is_none_or(|t| t.commands().is_empty()) {
                         "the shell marks no prompts (`:terminal integration` has the lines)".into()
                     } else {
                         "the shell is not at an empty prompt".into()
                     };
                     return;
                 }
-                t.scroll_to_bottom();
-                t.input(text.as_bytes());
+                self.term_input(id, text.as_bytes());
             }
             Msg::Answer { token, text } => {
                 if let Some(reply) = self.scripting.picks.remove(&token) {
@@ -1897,6 +2034,8 @@ impl Kawoosh {
         let Some(rt) = self.scripting.rt.clone() else {
             return;
         };
+        self.note_workspace();
+        rt.set_workspace(self.moments.workspace());
         rt.publish(&self.ed, self.focused_view());
         let how = match self.scripting.cwd_how {
             "" => "cd",
@@ -1930,18 +2069,13 @@ impl Kawoosh {
     /// Once a frame: each plugin's watch set told which of its paths
     /// moved (`kawoosh.fs.watch`).
     pub(crate) fn fire_watches(&mut self) {
-        let Some(w) = &self.scripting.watcher else {
-            return;
-        };
-        let changed = w.drain();
-        if changed.is_empty() {
-            return;
-        }
-        let Some(rt) = self.scripting.rt.clone() else {
-            return;
-        };
-        rt.publish(&self.ed, self.focused_view());
-        let sets: Vec<(String, Vec<std::path::PathBuf>)> = self
+        let changed = self
+            .scripting
+            .watcher
+            .as_ref()
+            .map(|w| w.drain())
+            .unwrap_or_default();
+        let mut sets: Vec<(String, Vec<std::path::PathBuf>)> = self
             .scripting
             .watches
             .iter()
@@ -1954,6 +2088,25 @@ impl Kawoosh {
                 (!hit.is_empty()).then(|| (name.clone(), hit))
             })
             .collect();
+        for (name, tree) in &self.scripting.tree_watches {
+            let mut paths = Vec::new();
+            for batch in tree.batches.try_iter() {
+                paths.extend(batch.changes.into_iter().map(|(path, _)| path));
+                paths.extend(batch.lost);
+            }
+            paths.sort();
+            paths.dedup();
+            if !paths.is_empty() {
+                sets.push((name.clone(), paths));
+            }
+        }
+        if sets.is_empty() {
+            return;
+        }
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        rt.publish(&self.ed, self.focused_view());
         for (name, hit) in sets {
             rt.watch_hook(&name, &hit);
         }
@@ -2227,7 +2380,7 @@ impl Kawoosh {
                 (p, buffer)
             })
             .collect();
-        let tabs = self
+        let tabs: Vec<_> = self
             .layout
             .tabs
             .iter()
@@ -2239,6 +2392,7 @@ impl Kawoosh {
                     _ => &self.ed.cwd,
                 };
                 kawoosh_lua::TabSnap {
+                    id: t.id,
                     cwd: kawoosh_systems::fs::display(cwd),
                     title: f.title(),
                     kind: f.kind.into(),
@@ -2249,6 +2403,12 @@ impl Kawoosh {
                 }
             })
             .collect();
+        // set_layout invokes on_tabs immediately. Its panes can name a
+        // buffer created since the last frame, so publish those buffers
+        // before the hook; unchanged tabs need no extra publication.
+        if rt.layout_changed(&tabs, self.layout.tab) {
+            rt.publish(&self.ed, self.focused_view());
+        }
         rt.set_layout(front, tabs, self.layout.tab);
     }
 
@@ -2268,7 +2428,7 @@ impl Kawoosh {
         }
         panes.into_iter().find(|p| {
             self.term_of(*p).is_some_and(|t| {
-                self.terms.map.contains_key(&t)
+                (self.terms.map.contains_key(&t) || self.terms.preparing(t))
                     && self
                         .terms
                         .spawned
@@ -2421,13 +2581,17 @@ impl Kawoosh {
             }
             Err(e) => {
                 // A directory gone says so, not the program's "no such file".
-                self.ed.message = match &spec_cwd {
+                let message = match &spec_cwd {
                     Some(d) if kawoosh_systems::fs::domain_of(d).is_none() && !d.is_dir() => {
                         format!("spawn: no directory {}", d.display())
                     }
                     _ => format!("spawn: {e}"),
                 };
+                if !rt.proc_quiet(token) {
+                    self.ed.message = message;
+                }
                 log::warn!("spawn: {e}: {what}");
+                rt.proc_err(token, vec![e.to_string()]);
                 rt.proc_exit(token, None, None);
             }
         }

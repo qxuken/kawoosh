@@ -402,6 +402,7 @@ end
 local function run(argv, cwd, done, stdin)
   local err = {}
   kawoosh.spawn(argv, {
+    quiet = true,
     cwd = cwd,
     stdin = stdin,
     on_stderr = function(lines)
@@ -488,6 +489,71 @@ local blamed = {}
 
 -- The backends by root, as settled for any directory under it.
 local by_root = {}
+
+-- Listing status is kept while it is read again. A refill can paint its
+-- previous answer immediately; concurrent refills share one backend ask.
+-- Only the newest generation may publish, including when a watch fires
+-- during the ask. This is separate from a backend's ordinary status API.
+local listing_status = {}
+
+---@param dir string the directory whose colours are requested
+---@param done fun(files: kawoosh.vcs.File[]) receives the cached and then refreshed files
+---@return nil
+function vcs.listing_status(dir, done)
+  local c = listing_status[dir]
+  if not c then
+    local count, remove = 0, nil
+    for d, old in pairs(listing_status) do
+      count = count + 1
+      if not old.busy and (not remove or old.used < listing_status[remove].used) then remove = d end
+    end
+    if count >= 64 and remove then listing_status[remove] = nil end
+    c = { generation = 0 }
+    listing_status[dir] = c
+  end
+  c.used = os.clock()
+  c.done = done
+  if c.files then done(c.files) end
+  if c.busy then return end
+  if c.reprobe then roots[dir] = nil; c.reprobe = nil end
+  c.busy = true
+  local generation = c.generation
+  vcs.root(dir, function(r)
+    local function answer(files)
+      c.busy = false
+      if generation ~= c.generation then return vcs.listing_status(dir, c.done) end
+      -- A failed read leaves the previous answer visible.
+      if files then
+        c.files = files
+        c.done(files)
+      end
+    end
+    if not r or not r.backend.status then return answer({}) end
+    c.root = r.root
+    local ok = pcall(r.backend.status, r.root, answer, { under = dir, untracked = "normal" })
+    if not ok then answer(nil) end
+  end)
+end
+
+-- Keep the old answer, but reject an in-flight answer from before the
+-- change. `probe` is for repository/ignore markers: a repository may
+-- have appeared or disappeared since the directory was first visited.
+---@param dir string the directory whose status changed
+---@param probe? boolean reprobe repository ownership and administrative paths
+---@return nil
+function vcs.listing_changed(dir, probe)
+  local c = listing_status[dir]
+  if not c then return end
+  c.generation = c.generation + 1
+  if probe then c.reprobe = true end
+  if c.done then vcs.listing_status(dir, c.done) end
+end
+
+local function listings_moved(root)
+  for dir, c in pairs(listing_status) do
+    if c.root == root then vcs.listing_changed(dir, true) end
+  end
+end
 
 local function settle(dir, v)
   roots[dir] = v
@@ -623,6 +689,7 @@ local index_ids, index_checking = {}, {}
 ---@param root string
 ---@return nil
 function vcs.moved(root)
+  listings_moved(root)
   local r = by_root[root]
   if r and r.backend.head then
     read_head(r, function() end, true)
@@ -650,6 +717,7 @@ end
 ---@param root string
 ---@return nil
 function vcs.index_moved(root)
+  listings_moved(root)
   if kawoosh.opt("vcs.base") == "head" or not enabled() then return end
   if index_checking[root] then
     index_checking[root] = "again"
@@ -1491,6 +1559,7 @@ end
 
 -- Each root's git directory (a worktree's is elsewhere), from the probe.
 local gitdirs = {}
+local git_ignores = {}
 
 ---@type kawoosh.vcs.Backend
 local git = {}
@@ -1521,7 +1590,27 @@ function git.probe(dir, done)
     end
     if gitdir then gitdir = fs.join(dir, gitdir) end
     gitdirs[root] = gitdir
-    done(root)
+    -- core.excludesFile may name any file outside the repository. Its
+    -- contents changing matters just as much as an ancestor .gitignore.
+    run({ "git", "config", "--path", "--get", "core.excludesFile" }, root, function(out)
+      local paths = {}
+      local excluded = trim(out or "")
+      if excluded ~= "" then
+        if domain and excluded:sub(1, 1) == "/" then excluded = domain .. ":" .. excluded end
+        paths[#paths + 1] = fs.join(root, excluded)
+      end
+      if not domain then
+        local home = fs.home()
+        if home then
+          paths[#paths + 1] = fs.join(home, ".gitconfig")
+          local config = os.getenv("XDG_CONFIG_HOME") or fs.join(home, ".config")
+          paths[#paths + 1] = fs.join(config, "git", "config")
+          paths[#paths + 1] = fs.join(config, "git", "ignore")
+        end
+      end
+      git_ignores[root] = paths
+      done(root)
+    end)
   end)
 end
 
@@ -1530,7 +1619,9 @@ end
 function git.watch(root)
   local g = gitdirs[root]
   if not g then return {} end
-  return { head = { fs.join(g, "HEAD"), fs.join(fs.join(g, "logs"), "HEAD") },
+  local head = { fs.join(g, "HEAD"), fs.join(g, "logs", "HEAD"), fs.join(g, "config"), fs.join(g, "info", "exclude") }
+  for _, path in ipairs(git_ignores[root] or {}) do head[#head + 1] = path end
+  return { head = head,
            index = { fs.join(g, "index") } }
 end
 
@@ -1604,7 +1695,7 @@ end
 ---@return nil
 function git.status(root, done, opts)
   opts = opts or {}
-  local argv = { "git", "-c", "core.quotePath=false", "status", "--porcelain=v1", "--ignored=traditional",
+  local argv = { "git", "--no-optional-locks", "-c", "core.quotePath=false", "status", "--porcelain=v1", "--ignored=traditional",
                  "--untracked-files=" .. (opts.untracked or "all"), "--no-renames" }
   if opts.under then
     argv[#argv + 1] = "--"

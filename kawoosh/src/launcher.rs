@@ -243,6 +243,9 @@ impl Kawoosh {
     /// `:dir` in view `v`: its buffer's directory as a listing, the
     /// caret on the file — `dir.lua`'s bare `:dir`.
     fn list_here(&mut self, v: ViewId) {
+        // The pane was just placed. A directory request captures its
+        // origin from Lua's layout snapshot before answering later.
+        self.publish_layout();
         self.ed.execute(v, "dir");
         self.drain_effects();
         self.drain_lua();

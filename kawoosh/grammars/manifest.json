@@ -396,11 +396,12 @@
       "symbol": "tree_sitter_dotenv",
       "abi": 15,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "outline.scm"
       ],
       "archive": "dotenv.sqlar",
       "size": 72704,
-      "blake3": "419e1a106fd9654b71f8d1dcf83d85b296b84e3d2de2261d19b174ed44d84303"
+      "blake3": "aae2be04dcc40b3f6ad718125369e8134af4ba0621b94d9e42e5a454640dbb04"
     },
     "elisp": {
       "extensions": [
@@ -627,11 +628,12 @@
       "symbol": "tree_sitter_git_config",
       "abi": 14,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "outline.scm"
       ],
       "archive": "git_config.sqlar",
       "size": 77824,
-      "blake3": "f4c93ef34d265b002f54b478d31c12e2765f8b165954f70c86d44fb9628bf68e"
+      "blake3": "6e12ef39dc1a7ed5eb86f7ddfbf454adeeaf68d1706386164b1dc07b664bd781"
     },
     "git_rebase": {
       "extensions": [],
@@ -812,7 +814,11 @@
         "ini",
         "cfg"
       ],
-      "filenames": [],
+      "filenames": [
+        ".editorconfig",
+        ".npmrc",
+        ".pypirc"
+      ],
       "shebangs": [],
       "aliases": [],
       "comment": ";",
@@ -823,11 +829,12 @@
       "symbol": "tree_sitter_ini",
       "abi": 15,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "outline.scm"
       ],
       "archive": "ini.sqlar",
       "size": 66560,
-      "blake3": "7add49343365fb4645e1f910bc575db7d8455f18e92633fa9a636d913b9c8006"
+      "blake3": "6059f750308c62ce1a458b22f46e3b8760eb7e2decfb4dee7147acaf0477aa25"
     },
     "java": {
       "extensions": [
@@ -1113,11 +1120,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
-        "injections.scm"
+        "injections.scm",
+        "outline.scm"
       ],
       "archive": "nginx.sqlar",
-      "size": 166912,
-      "blake3": "ca72ec336f1e8e45ea19b0d94899a02b8f1deb4cdc0c888ad90bc08124e21277"
+      "size": 167936,
+      "blake3": "fec3f8cb7dd2c898203d70594d053e9b607ed66bae2c344d323c7f05bbeafb77"
     },
     "ninja": {
       "extensions": [
@@ -1685,11 +1693,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
-        "injections.scm"
+        "injections.scm",
+        "outline.scm"
       ],
       "archive": "ssh_config.sqlar",
-      "size": 391168,
-      "blake3": "38465e3406c3874c6e757649cea7cb17fc5a041dd49d34886df9eb9eb46863a3"
+      "size": 392192,
+      "blake3": "59c8cb977f2fbbc87978d95aeb18358389d777a210ba41bedf20715e1ebde426"
     },
     "starlark": {
       "extensions": [

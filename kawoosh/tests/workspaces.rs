@@ -27,12 +27,6 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
 }
 
 fn launch() -> (Drive, Kawoosh) {
-    // SAFETY: this binary's plugin command is POSIX `ls`, set before the
-    // app's threads start; Windows keeps its own command processor.
-    #[cfg(unix)]
-    unsafe {
-        std::env::set_var("SHELL", "/bin/sh");
-    }
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
@@ -95,9 +89,27 @@ fn the_cwd_is_the_tabs_and_the_process_stays() {
     // and a relative path are the tab's. (A file there, not `pwd`: Git's
     // bash on Windows spells the directory its own way.)
     std::fs::write(b.join("sub").join("here.txt"), "").unwrap();
+    // Ask for bare names through explicit argv: PowerShell's `ls` alias
+    // prints a formatted table whose first line can be blank.
+    let command = if cfg!(windows) {
+        vec![
+            std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into()),
+            "/d".into(),
+            "/c".into(),
+            "dir".into(),
+            "/b".into(),
+        ]
+    } else {
+        vec!["/bin/ls".into()]
+    };
+    let command = command
+        .iter()
+        .map(|s| format!("{s:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     app.run_lua_source(
         "t",
-        "kawoosh.spawn('ls', { on_lines = function(l) kawoosh.echo('ls ' .. l[1]) end })",
+        &format!("kawoosh.spawn({{ {command} }}, {{ on_lines = function(l) kawoosh.echo('ls ' .. l[1]) end }})"),
     );
     for _ in 0..300 {
         d.frame(&mut app);

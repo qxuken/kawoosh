@@ -763,6 +763,7 @@ impl Kawoosh {
     /// up, when a key that left the line alone leaves the cycling alone
     /// too; off the prompt, none.
     pub(crate) fn cmdline_refresh(&mut self) {
+        self.compile.validate_prompt(self.ed.prompt_view());
         if !self.at_command_prompt() {
             self.cmd_completion = None;
             self.cmd_dirs.clear();

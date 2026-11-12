@@ -160,7 +160,8 @@ fn a_buffer_reads_the_editorconfig_above_it() {
         app.ed.message
     );
     assert!(
-        app.ed.message.contains("not applied: max_line_length"),
+        app.ed.message.contains("max_line_length = 100")
+            && !app.ed.message.contains("not applied: max_line_length"),
         "{}",
         app.ed.message
     );
