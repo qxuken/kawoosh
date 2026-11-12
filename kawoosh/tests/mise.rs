@@ -64,6 +64,19 @@ fn until(d: &mut Drive, app: &mut Kawoosh, mut condition: impl FnMut(&Kawoosh) -
     }
 }
 
+/// These fixture processes write one short payload. Opening/truncating
+/// the file precedes that write, so existence alone is not completion.
+fn until_text(d: &mut Drive, app: &mut Kawoosh, path: &Path) -> String {
+    let mut answer = None;
+    until(d, app, |_| {
+        answer = std::fs::read_to_string(path)
+            .ok()
+            .filter(|text| !text.trim().is_empty());
+        answer.is_some()
+    });
+    answer.unwrap()
+}
+
 fn probe(app: &mut Kawoosh, binary: &Path, dir: &Path) {
     app.run_lua_source("probe", &format!(
         "probe_answer = nil; kawoosh.spawn({{ {:?}, 'probe' }}, {{ cwd = {:?}, env = {{ EXPLICIT = 'caller' }}, on_done = function(out, code) probe_answer = code == 0 and kawoosh.json.decode(out) or {{}} end }})",
@@ -282,8 +295,8 @@ fn mise_discovers_without_running_tasks_and_children_use_the_project_environment
             source.display().to_string()
         ),
     );
-    until(&mut d, &mut app, |_| log.exists());
-    assert_eq!(std::fs::read_to_string(&log).unwrap(), "second-value");
+    let actual = until_text(&mut d, &mut app, &log);
+    assert_eq!(actual, "second-value");
 
     let shell = if cfg!(windows) { "cmd.exe" } else { "/bin/sh" };
     let line = if cfg!(windows) {
@@ -301,15 +314,8 @@ fn mise_discovers_without_running_tasks_and_children_use_the_project_environment
     let other = dir.join("other");
     std::fs::create_dir_all(&other).unwrap();
     app.set_cwd(&other);
-    until(&mut d, &mut app, |_| {
-        dir.join("terminal-value.txt").exists()
-    });
-    assert_eq!(
-        std::fs::read_to_string(dir.join("terminal-value.txt"))
-            .unwrap()
-            .trim(),
-        "second-value"
-    );
+    let actual = until_text(&mut d, &mut app, &dir.join("terminal-value.txt"));
+    assert_eq!(actual.trim(), "second-value");
     assert!(
         !other.join("terminal-value.txt").exists(),
         "the pending terminal keeps its launch directory"
@@ -433,9 +439,14 @@ fn input_before_a_project_environment_arrives_reaches_its_terminal_once() {
     app.layout.close(pane);
     app.layout.focus(original);
     std::fs::write(&gate, "go").unwrap();
-    until(&mut d, &mut app, |_| output.exists());
-    let answer: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&output).unwrap()).unwrap();
+    let mut answer = None;
+    until(&mut d, &mut app, |_| {
+        answer = std::fs::read_to_string(&output)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        answer.is_some()
+    });
+    let answer = answer.unwrap();
     assert_eq!(
         answer,
         serde_json::json!(["ready", ["keyboard", "pasted", "notation", "lua"]])
@@ -679,19 +690,16 @@ fn a_failed_language_server_does_not_poison_another_project_or_a_changed_environ
     assert!(!first_log.exists());
 
     open(&mut app, &second.join("probe.rs"));
-    until(&mut d, &mut app, |_| second_log.exists());
-    assert_eq!(std::fs::read_to_string(&second_log).unwrap(), "second");
+    let actual = until_text(&mut d, &mut app, &second_log);
+    assert_eq!(actual, "second");
 
     write_env(&first, &project_path, "first-recovered", &first_log);
     std::fs::write(first.join("mise.toml"), "# changed tool environment\n").unwrap();
     let another = first.join("another.rs");
     std::fs::write(&another, "fn another() {}\n").unwrap();
     open(&mut app, &another);
-    until(&mut d, &mut app, |_| first_log.exists());
-    assert_eq!(
-        std::fs::read_to_string(&first_log).unwrap(),
-        "first-recovered"
-    );
+    let actual = until_text(&mut d, &mut app, &first_log);
+    assert_eq!(actual, "first-recovered");
     drop(app);
     std::fs::remove_dir_all(dir).ok();
 }
