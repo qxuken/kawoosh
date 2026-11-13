@@ -1136,7 +1136,8 @@ end
 local function blame_label(row)
   if row.rev:match("^0+$") or row.author == "Not Committed Yet" then return "not committed" end
   local who = row.author or "?"
-  if #who > 14 then who = who:sub(1, 13) .. "…" end
+  -- Lua's length and substring count bytes; cut only between UTF-8 characters.
+  if utf8.len(who) > 14 then who = who:sub(1, utf8.offset(who, 14) - 1) .. "…" end
   return who .. " · " .. vcs.ago(row.time)
 end
 
