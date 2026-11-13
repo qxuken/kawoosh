@@ -6,6 +6,33 @@
 
 pub use kawoosh::harness::Harness as Drive;
 
+/// POSIX fixture commands must not depend on the user's login shell.
+/// Select the shell for this application without changing process-wide env.
+pub fn posix_shell(app: &mut kawoosh::Kawoosh) {
+    let shell = if cfg!(windows) {
+        kawoosh_systems::io::program_path("sh").expect("a POSIX shell for the terminal fixture")
+    } else {
+        std::path::PathBuf::from("/bin/sh")
+    };
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.shell",
+        kawoosh_editor::Setting::Str(shell.display().to_string()),
+    );
+}
+
+/// Environment providers can reserve a pane before its process exists.
+pub fn wait_for_terminal(d: &mut Drive, app: &mut kawoosh::Kawoosh, id: u64) {
+    for _ in 0..500 {
+        d.frame(app);
+        if app.terms.map.contains_key(&id) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("terminal {id} did not start: {}", app.ed.message);
+}
+
 /// A Python that runs: `python3`, `python`, or uv's — Windows puts Store
 /// aliases named `python3` and `python` on the path that only say to
 /// install one, so each is asked its version first. Asked once a test

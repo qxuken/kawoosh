@@ -184,7 +184,7 @@ pub fn find_in_env(
             .collect()
     };
     #[cfg(not(windows))]
-    let names = vec![path.to_path_buf()];
+    let names = [path.to_path_buf()];
     Some(std::env::split_paths(search).find_map(|dir| {
         let dir = if dir.is_relative() {
             cwd.map(|cwd| cwd.join(&dir)).unwrap_or(dir)
