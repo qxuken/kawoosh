@@ -1087,7 +1087,9 @@ fn a_dropped_connection_is_said_and_reconnects() {
     });
     // A shell on the host, in its own pane; then the file in front.
     app.shell_command("term", &[], None);
-    let t = app.terms.map.keys().copied().max().expect("the terminal");
+    let t = app
+        .term_of_focused()
+        .expect("the terminal's reserved identity");
     // Through the master already: its prompt printed.
     until(&mut d, &mut app, "the host's shell's prompt", |a| {
         a.terms
@@ -1166,12 +1168,14 @@ fn a_dropped_connection_is_said_and_reconnects() {
     ex(&mut d, &mut app, "q");
     // Nothing of it held: a terminal there is refused, and says why.
     let before = app.terms.map.len();
+    let panes = app.layout.all_panes();
     app.shell_command("term", &[], None);
     assert_eq!(
         app.terms.map.len(),
         before,
         "no terminal through a dropped master"
     );
+    assert_eq!(app.layout.all_panes(), panes, "no pending terminal pane");
     assert_eq!(
         app.ed.message,
         format!("{name}: disconnected (:domain reconnect {name})")

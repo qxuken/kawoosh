@@ -547,6 +547,9 @@ fn a_workspace_closing_ends_its_dock_tasks() {
     let (mut d, mut app) = launch();
     ex(&mut d, &mut app, &format!("cd {}", a.display()));
     // Two tasks in the dock: an idle one, and one running.
+    if !cfg!(windows) {
+        drive::posix_shell(&mut app);
+    }
     let idle = app
         .terms
         .add(kawoosh_term::Terminal::headless(kawoosh_term::TermSize {

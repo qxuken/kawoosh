@@ -675,7 +675,11 @@ impl Kawoosh {
         let cwd = cwd
             .map(Path::to_path_buf)
             .unwrap_or_else(|| self.cwd.clone());
-        if self.io.environments.available(&cwd) {
+        // Refuse disconnected domains through the normal spawn path before
+        // reserving a pane or asking any environment provider to run there.
+        let connected = kawoosh_systems::fs::domain_of(&cwd)
+            .is_none_or(|(name, _)| kawoosh_systems::io::transport_of(name).is_some());
+        if connected && self.io.environments.available(&cwd) {
             return Some(self.prepare_terminal_environment(id, shell, cmd, None, &cwd));
         }
         self.spawn_terminal_ready(id, shell, cmd, &cwd, &[])

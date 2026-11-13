@@ -3,26 +3,11 @@
 
 mod drive;
 
-use drive::Drive;
+use drive::{Drive, posix_shell};
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
 use kawoosh_editor::{Lookup, Mode};
 use kui_native::{InputEvent, KeyMods, Rect, Vec2};
-
-/// These fixture lines use POSIX syntax. Select a real shell for this
-/// application rather than changing the process environment for other tests.
-fn posix_shell(app: &mut Kawoosh) {
-    let shell = if cfg!(windows) {
-        kawoosh_systems::io::program_path("sh").expect("a POSIX shell for the terminal fixture")
-    } else {
-        std::path::PathBuf::from("/bin/sh")
-    };
-    app.ed.settings.set(
-        kawoosh_editor::Layer::Session,
-        "terminal.shell",
-        kawoosh_editor::Setting::Str(shell.display().to_string()),
-    );
-}
 
 #[test]
 fn a_terminal_pane_draws_cells_and_takes_the_escape() {
@@ -1623,7 +1608,8 @@ fn a_split_tool_is_each_tabs_and_a_docked_one_the_windows() {
         t
     };
     app.shell_command("tool", &["sleeper".into()], None);
-    d.frame(&mut app);
+    let t = app.term_of_focused().expect("the first tab's tool");
+    drive::wait_for_terminal(&mut d, &mut app, t);
     let first = tools(&app, "sleeper");
     assert_eq!(first.len(), 1);
     app.shell_command("tool", &["sleeper".into()], None);
@@ -1633,7 +1619,8 @@ fn a_split_tool_is_each_tabs_and_a_docked_one_the_windows() {
     d.frame(&mut app);
     assert_eq!(app.layout.tab, 1);
     app.shell_command("tool", &["sleeper".into()], None);
-    d.frame(&mut app);
+    let t = app.term_of_focused().expect("the second tab's tool");
+    drive::wait_for_terminal(&mut d, &mut app, t);
     assert_eq!(app.layout.tab, 1, "not back to the first tab");
     let both = tools(&app, "sleeper");
     assert_eq!(both.len(), 2, "a second, this tab's");
@@ -1649,7 +1636,8 @@ fn a_split_tool_is_each_tabs_and_a_docked_one_the_windows() {
     assert_eq!(tools(&app, "sleeper").len(), 2);
     // Docked: one, from any tab.
     app.shell_command("tool", &["docked".into()], None);
-    d.frame(&mut app);
+    let t = app.term_of_focused().expect("the docked tool");
+    drive::wait_for_terminal(&mut d, &mut app, t);
     app.shell_command("tab next", &[], None);
     app.shell_command("tool", &["docked".into()], None);
     d.frame(&mut app);
@@ -1889,6 +1877,9 @@ fn terminal_raw_names_the_programs_that_make_a_pane_raw() {
         "terminal.raw",
         kawoosh_editor::Setting::List(vec![kawoosh_editor::Setting::Str(program.into())]),
     );
+    if !cfg!(windows) {
+        posix_shell(&mut app);
+    }
     let t = app.spawn_terminal(Some(line), None).expect("a process");
     let pane = app
         .layout
