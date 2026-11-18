@@ -1420,6 +1420,40 @@ fn bang_runs_a_shell_line_with_percent_in_a_terminal() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The command line owns the clipboard while open over a terminal,
+/// including a program using kitty keys and bracketed paste.
+#[test]
+fn cmd_v_pastes_into_the_command_line_over_a_terminal() {
+    for protocol in [false, true] {
+        let mut app = Kawoosh::new("t", "");
+        let mut d = Drive::new(900.0, 500.0);
+        d.frame(&mut app);
+        let t = app.add_headless_terminal();
+        if protocol {
+            app.feed_terminal(t, b"\x1b[>31u\x1b[?2004h");
+        }
+        d.frame(&mut app);
+        d.press(&mut app, "<C-\\>");
+        d.keys(&mut app, ":");
+        let prompt = app.ed.prompt_view().expect("the command line has focus");
+        d.frame(&mut app);
+        app.terms.map.get_mut(&t).unwrap().take_sent();
+        d.press(&mut app, "<D-v>");
+        d.frame(&mut app);
+        assert!(d.core.awaiting_paste());
+        assert_eq!(app.ed.prompt_view(), Some(prompt));
+        assert!(app.terms.map.get_mut(&t).unwrap().take_sent().is_empty());
+        d.input(&mut app, InputEvent::Commit("echo hi".into()));
+        d.frame(&mut app);
+        assert!(
+            app.terms.map.get_mut(&t).unwrap().take_sent().is_empty(),
+            "clipboard text must not reach the terminal (protocol={protocol})"
+        );
+        assert_eq!(app.ed.buffer_of(prompt).text(), "echo hi");
+        assert!(!d.core.awaiting_paste(), "the paste request is complete");
+    }
+}
+
 /// `⌘v` in a terminal pane pastes the clipboard, as it does in insert
 /// mode, and so does wezterm's `<C-S-v>`: both are chords the pane
 /// takes past its pty, where `⌘v` typed a bare `v`. A ⌘ chord bound to
