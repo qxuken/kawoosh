@@ -3882,6 +3882,12 @@ impl Kawoosh {
             .header_field()
             .filter(|_| self.ed.prompt_view().is_none())
             .or_else(|| self.focused_view())
+            // As for keys, a prompt over a non-editor pane owns text.
+            .or_else(|| self.ed.prompt_view())
+            .or_else(|| {
+                self.lua_name_of(self.layout.focused())
+                    .and_then(|name| self.lua_field_focused(&name))
+            })
         {
             if pasted {
                 self.ed.paste_text_marked(v, &text, secret);

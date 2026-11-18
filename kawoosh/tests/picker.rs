@@ -9,7 +9,35 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kui_native::{KeyMods, Rect, Vec2};
+use kui_native::{InputEvent, KeyMods, Rect, Vec2};
+
+#[test]
+fn cmd_v_pastes_into_the_picker_query_and_filters_rows() {
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = Kawoosh::new("*scratch*", "original");
+    let origin = app.focused_view().unwrap();
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"kawoosh.picker.open { items = { { text = "alpha" }, { text = "beta" } } }"#,
+    );
+    d.frame(&mut app);
+    assert!(keyed_on_query(&app));
+    d.press(&mut app, "<D-v>");
+    d.frame(&mut app);
+    assert!(d.core.awaiting_paste());
+    assert!(keyed_on_query(&app));
+    d.input(&mut app, InputEvent::Commit("beta".into()));
+    d.frame(&mut app);
+    let query = app.ed.find_field("lua:picker/q").unwrap();
+    assert_eq!(app.ed.buffer_of(query).text(), "beta");
+    assert_eq!(rows(&d), ["beta"]);
+    assert_eq!(app.ed.buffer_of(origin).text(), "original");
+    assert!(!d.core.awaiting_paste());
+}
 
 /// The files sources walk the working directory, which is the
 /// process's: one test at a time.
