@@ -1,99 +1,46 @@
-name: Native Windows Setup probe
+name: Windows import library probe
 on: workflow_dispatch
 permissions:
   contents: read
 jobs:
-  setup-probe:
+  probe:
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v7
-      - name: Build the native update helper and a fixture payload
+      - run: rustup update stable --no-self-update
+      - name: Link an exporting executable with the release settings
         shell: pwsh
         run: |
-          $work = Join-Path $env:RUNNER_TEMP fixture
-          New-Item -ItemType Directory "$work\src\update" -Force
+          $work = Join-Path $env:RUNNER_TEMP link-probe
+          New-Item -ItemType Directory "$work\src" -Force
           @'
           [package]
-          name = "kawoosh-update"
+          name = "kawoosh"
           version = "0.0.1"
           edition = "2024"
-          [dependencies]
-          anyhow = "1"
-          windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+          [profile.release]
+          strip = true
+          lto = "fat"
+          codegen-units = 1
           '@ | Set-Content "$work\Cargo.toml"
-          Copy-Item kawoosh/src/update/windows.rs "$work\src\update\windows.rs"
-          $core = Get-Content kawoosh/src/update.rs -Raw
-          $core = $core.Split('pub const READY:', 2)[1].Split("#[cfg(unix)]", 2)[0]
-          $core = $core -replace '(?:[ \t]*///[^\r\n]*\r?\n)+\s*$', ''
           @'
-          use std::path::{Path, PathBuf};
-          use std::time::{Duration, Instant};
-          pub mod windows;
-          mod release {
-              pub fn checked(output: std::process::Output) -> anyhow::Result<Vec<u8>> {
-                  anyhow::ensure!(output.status.success(), "{}", output.status);
-                  Ok(output.stdout)
-              }
-          }
-          '@ + "`n pub const READY:$core" | Set-Content "$work\src\update.rs"
-          $helper = Get-Content kawoosh/src/bin/update.rs -Raw
-          $helper = $helper.Substring($helper.IndexOf('use std::path::PathBuf;'))
+          fn main() {}
+          #[unsafe(no_mangle)]
+          pub extern "C" fn kw_probe() -> u32 { 1 }
+          '@ | Set-Content "$work\src\main.rs"
           @'
-          #![windows_subsystem = "windows"]
-          extern crate self as kawoosh;
-          extern crate self as kawoosh_systems;
-          pub mod update;
-          pub mod spawn {
-              use std::io;
-              use std::process::{Child, Command, Output};
-              pub fn spawn(c: &mut Command) -> io::Result<Child> { c.spawn() }
-              pub fn output(c: &mut Command) -> io::Result<Output> { c.output() }
+          fn main() {
+              let mut definition = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+              definition.push("kawoosh-exports.def");
+              std::fs::write(&definition, "EXPORTS\n    kw_probe\n").unwrap();
+              println!("cargo:rustc-link-arg-bin=kawoosh=/DEF:{}", definition.display().to_string().replace('\\', "/"));
           }
-          '@ + "`n$helper" | Set-Content "$work\src\main.rs"
-          cargo build --manifest-path "$work\Cargo.toml"
+          '@ | Set-Content "$work\build.rs"
+          rustc --version
+          cargo build --release --manifest-path "$work\Cargo.toml"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $bundle = Join-Path $work bundle
-          New-Item -ItemType Directory "$bundle"
-          Copy-Item "$work\target\debug\kawoosh-update.exe" "$bundle\kawoosh-update.exe"
-          'fn main() { println!("kawoosh 0.0.1"); }' | Set-Content "$work\dummy.rs"
-          rustc "$work\dummy.rs" -o "$bundle\kawoosh.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Copy-Item "$bundle\kawoosh.exe" "$bundle\kawoosh.com"
-          choco install nsis --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $nsis = Join-Path ${env:ProgramFiles(x86)} NSIS\makensis.exe
-          $release = Join-Path $env:RUNNER_TEMP release
-          New-Item -ItemType Directory $release
-          & $nsis '/DVERSION=0.0.1' "/DBUNDLE=$bundle" "/DOUT=$release\Kawoosh-0.0.1-windows-x64-setup.exe" packaging/windows/kawoosh.nsi
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Check first install and staging while running
-        shell: pwsh
-        run: |
-          $setup = (Get-ChildItem "$env:RUNNER_TEMP\release\*-setup.exe").FullName
-          $app = Join-Path $env:RUNNER_TEMP 'Kawoosh smoke'
-          function Install-Kawoosh {
-            $install = Start-Process $setup -ArgumentList '/S', "/D=$app" -Wait -PassThru
-            if ($install.ExitCode -ne 0) { throw "Setup exited with $($install.ExitCode)" }
+          Get-ChildItem -Recurse "$work\target\release" -File |
+            Where-Object { $_.Name -match 'kawoosh|\.lib$' } |
+            Select-Object FullName,Length | Format-List
+          if (!(Test-Path "$work\target\release\deps\kawoosh.lib")) {
+            throw "The packaging script cannot find target/release/deps/kawoosh.lib"
           }
-          Install-Kawoosh
-          if (!(Test-Path "$app\kawoosh.com")) { throw 'First install failed' }
-          # A process at the installed editor path without depending on a desktop session.
-          Copy-Item "$env:SystemRoot\System32\ping.exe" "$app\kawoosh.exe" -Force
-          $running = Start-Process "$app\kawoosh.exe" -ArgumentList '-t', '127.0.0.1' -PassThru
-          try {
-            Install-Kawoosh
-            if (!(Test-Path "$app.new\ready")) { throw 'Setup failed to stage the update' }
-            if (!(Test-Path "$app.new\kawoosh-update.exe")) { throw 'Staged updater is missing' }
-            if ($running.HasExited) { throw 'Setup closed the running process' }
-          } finally {
-            if (!$running.HasExited) { Stop-Process -Id $running.Id }
-            $running.WaitForExit()
-          }
-          $stage = Start-Process $setup -ArgumentList '/S', '/STAGE', "/D=$app" -Wait -PassThru
-          if ($stage.ExitCode -ne 0 -or !(Test-Path "$app.new\ready")) { throw 'Setup failed to stage with the editor closed' }
-          Install-Kawoosh
-          if (Test-Path "$app.new\ready") { throw 'Setup did not replace the stopped installation' }
-          $version = & "$app\kawoosh.com" --version
-          if ($LASTEXITCODE -ne 0 -or "$version" -notmatch '^kawoosh ') { throw 'Installed CLI failed' }
-
