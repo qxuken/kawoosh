@@ -40,6 +40,9 @@ libc = "0.2"
 blake3.workspace = true
 globset = "0.4"
 regex = "1"
+semver = "1"
+sha2 = "0.11"
+tempfile = "3"
 # A shell line's words for its completer (shell_complete.rs); in the
 # graph already through portable-pty.
 shell-words = "1"
@@ -50,12 +53,16 @@ shell-words = "1"
 # alacritty_terminal.
 signal-hook = "0.4"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+
 [target.'cfg(windows)'.dependencies]
 # The process's memory for the perf tab (`perf::read_mem`); the parent's
 # console for the CLI half of a GUI program (`main.rs`); `ShellExecuteW`
 # for a URL opened in the OS (`links::open_in_os`); the local time's
 # offset for a timestamp (`notify::utc_offset`).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_Time", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_Time", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # The window's icon on X11 (`main.rs`, `window_icon`): the PNG rendered
 # from `assets/icons/kawoosh-icon.svg`, decoded to the RGBA kui takes.

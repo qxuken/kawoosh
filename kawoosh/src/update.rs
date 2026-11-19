@@ -42,6 +42,17 @@ use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::notify::{Level, Note, Show};
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+mod release;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod unix;
+#[cfg(windows)]
+pub mod windows;
+
 /// Written last into the new folder, the version in it: the folder is
 /// whole.
 pub const READY: &str = "ready";
@@ -173,6 +184,8 @@ fn stamp(path: &Path) -> Option<Stamp> {
 /// The Kawoosh a relaunch would start, when it is not this one.
 #[derive(Debug, PartialEq, Eq)]
 enum Waiting {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    DownloadedRelease(String),
     /// A folder ready beside this one's, the version in it: the updater
     /// puts it in place.
     Beside(String),
@@ -192,6 +205,8 @@ pub struct UpdateWatch {
     watch: Option<Watcher>,
     /// The toast offering the relaunch, while it is up.
     toast: Option<u64>,
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    release: release::ReleaseUpdate,
 }
 
 impl UpdateWatch {
@@ -206,7 +221,14 @@ impl UpdateWatch {
         }
         // Gone for the moment a build takes to write it is not new.
         let now = stamp(self.exe.as_deref()?)?;
-        (Some(now) != self.started).then_some(Waiting::Over)
+        if Some(now) != self.started {
+            return Some(Waiting::Over);
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if let Some(staged) = &self.release.staged {
+            return Some(Waiting::DownloadedRelease(staged.version.to_string()));
+        }
+        None
     }
 }
 
@@ -229,6 +251,8 @@ impl Kawoosh {
 
     /// Once a frame: what the watch saw said.
     pub(crate) fn sync_update(&mut self) {
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        self.sync_release();
         let Some(watch) = &self.update.watch else {
             return;
         };
@@ -260,6 +284,10 @@ impl Kawoosh {
             return;
         }
         let text = match self.update.waiting() {
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            Some(Waiting::DownloadedRelease(version)) => {
+                format!("Kawoosh {version} is ready to install: relaunch to update")
+            }
             Some(Waiting::Beside(version)) => {
                 format!("Kawoosh {version} is installed: relaunch to run it")
             }
@@ -290,6 +318,10 @@ impl Kawoosh {
         let waiting = self.update.waiting();
         if ctx.query() {
             self.ed.message = match waiting {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                Some(Waiting::DownloadedRelease(version)) => {
+                    format!("Kawoosh {version} is ready: :relaunch installs it")
+                }
                 Some(Waiting::Beside(version)) => {
                     format!("Kawoosh {version} is waiting: :relaunch runs it")
                 }
@@ -303,6 +335,10 @@ impl Kawoosh {
             return;
         }
         let started = match (waiting, self.update.app()) {
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            (Some(Waiting::DownloadedRelease(_)), _) => self
+                .install_release(&exe)
+                .map_err(|error| format!("{error:#}")),
             (Some(Waiting::Beside(_)), Some(app)) => {
                 start_updater(app).map_err(|e| format!("the updater did not start: {e}"))
             }
@@ -379,7 +415,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             .query("say whether a new Kawoosh is waiting")
             .doc("quit and start Kawoosh again, the session picked up: a new one installed is the one that starts"),
         |k, ctx| k.relaunch_command(ctx),
-    )]
+    ),
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        cmd(
+            Spec::new("update").doc("download the latest Kawoosh release and prepare it for :relaunch"),
+            |k, _| k.check_release(true),
+        ),
+    ]
 }
 
 #[cfg(test)]
