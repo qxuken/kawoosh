@@ -1,0 +1,16 @@
+name: Project tools
+description: Install the pinned Kawoosh tools with mise
+runs:
+  using: composite
+  steps:
+    - id: pin
+      shell: bash
+      run: |
+        set -eu
+        version=$(sed -n 's/^min_version = "\([^"]*\)".*$/\1/p' mise.toml)
+        test -n "$version"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+    - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5
+      with:
+        version: ${{ steps.pin.outputs.version }}
+        install_args: --locked rust nu ${{ runner.os == 'Windows' && 'http:nsis' || '' }}
