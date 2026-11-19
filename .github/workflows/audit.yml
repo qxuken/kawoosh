@@ -1,100 +1,69 @@
-name: Windows release verification
+name: Native Windows Setup probe
 on: workflow_dispatch
-
-env:
-  CARGO_TERM_COLOR: always
-  NU_VERSION: '0.116.0'
 permissions:
   contents: read
 jobs:
-  probe:
+  setup-probe:
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          lfs: true
-      - name: Set up Nushell
+      - name: Build the native update helper and a fixture payload
         shell: pwsh
         run: |
-          $archive = 'nu-0.116.0-x86_64-pc-windows-msvc'
-          curl.exe -fsSL "https://github.com/nushell/nushell/releases/download/0.116.0/$archive.zip" -o "$env:RUNNER_TEMP\nu.zip"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Expand-Archive "$env:RUNNER_TEMP\nu.zip" "$env:RUNNER_TEMP\nu"
-          (Get-ChildItem "$env:RUNNER_TEMP\nu" -Recurse -Filter nu.exe | Select-Object -First 1).DirectoryName >> $env:GITHUB_PATH
-      - name: Exercise Windows packaging without recompiling
-        shell: pwsh
-        run: |
-          cargo fetch --locked --target (rustc --print host-tuple)
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:CARGO_TARGET_DIR = Join-Path $env:RUNNER_TEMP 'probe-target'
-          New-Item -ItemType Directory -Path "$env:CARGO_TARGET_DIR\release\deps" -Force
-          foreach ($bin in @('kawoosh', 'kawoosh-edit', 'kawoosh-cli', 'kawoosh-update')) {
-            Copy-Item "$env:SystemRoot\System32\where.exe" "$env:CARGO_TARGET_DIR\release\$bin.exe"
+          $work = Join-Path $env:RUNNER_TEMP fixture
+          New-Item -ItemType Directory "$work\src\update" -Force
+          @'
+          [package]
+          name = "kawoosh-update"
+          version = "0.0.1"
+          edition = "2024"
+          [dependencies]
+          anyhow = "1"
+          windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+          '@ | Set-Content "$work\Cargo.toml"
+          Copy-Item kawoosh/src/update/windows.rs "$work\src\update\windows.rs"
+          $core = Get-Content kawoosh/src/update.rs -Raw
+          $core = $core.Split('pub const READY:', 2)[1].Split("#[cfg(unix)]", 2)[0]
+          @'
+          use std::path::{Path, PathBuf};
+          use std::time::{Duration, Instant};
+          pub mod windows;
+          mod release {
+              pub fn checked(output: std::process::Output) -> anyhow::Result<Vec<u8>> {
+                  anyhow::ensure!(output.status.success(), "{}", output.status);
+                  Ok(output.stdout)
+              }
           }
-          New-Item -ItemType File "$env:CARGO_TARGET_DIR\release\deps\kawoosh.lib"
-          $script = Get-Content -LiteralPath scripts/windows-app.nu -Raw
-          $script = $script -replace '(?m)^  \^cargo build[^\r\n]+', '  print "[DEBUG-package] build fixture ready"'
-          $script = $script -replace '(?m)^  let fresh =', "  print '[DEBUG-package] cargo pkgid passed'`n  let fresh ="
-          $script = $script -replace '(?m)^  cp \(kui-header', "  print '[DEBUG-package] package files copied'`n  cp (kui-header"
-          Set-Content -LiteralPath scripts/windows-probe.nu -Value $script
-          nu scripts/windows-probe.nu --locked "$env:RUNNER_TEMP\probe-bundle"
+          '@ + "`n pub const READY:$core" | Set-Content "$work\src\update.rs"
+          $helper = Get-Content kawoosh/src/bin/update.rs -Raw
+          $helper = $helper.Substring($helper.IndexOf('use std::path::PathBuf;'))
+          @'
+          #![windows_subsystem = "windows"]
+          extern crate self as kawoosh;
+          extern crate self as kawoosh_systems;
+          pub mod update;
+          pub mod spawn {
+              use std::io;
+              use std::process::{Child, Command, Output};
+              pub fn spawn(c: &mut Command) -> io::Result<Child> { c.spawn() }
+              pub fn output(c: &mut Command) -> io::Result<Output> { c.output() }
+          }
+          '@ + "`n$helper" | Set-Content "$work\src\main.rs"
+          cargo build --manifest-path "$work\Cargo.toml"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (!(Test-Path "$env:RUNNER_TEMP\probe-bundle\Kawoosh\kawoosh.com")) { throw "missing packaged launcher" }
-
-  windows:
-    runs-on: windows-2025
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          lfs: true
-          persist-credentials: false
-
-      - name: Install Nushell and NSIS
-        shell: pwsh
-        run: |
-          $archive = "nu-${env:NU_VERSION}-x86_64-pc-windows-msvc"
-          $zip = Join-Path $env:RUNNER_TEMP "$archive.zip"
-          $tools = Join-Path $env:RUNNER_TEMP $archive
-          curl.exe -fsSL --retry 3 "https://github.com/nushell/nushell/releases/download/$env:NU_VERSION/$archive.zip" -o $zip
+          $bundle = Join-Path $work bundle
+          New-Item -ItemType Directory "$bundle"
+          Copy-Item "$work\target\debug\kawoosh-update.exe" "$bundle\kawoosh-update.exe"
+          'fn main() { println!("kawoosh 0.0.1"); }' | Set-Content "$work\dummy.rs"
+          rustc "$work\dummy.rs" -o "$bundle\kawoosh.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Expand-Archive -LiteralPath $zip -DestinationPath $tools
-          $nu = Get-ChildItem -Path $tools -Recurse -Filter nu.exe | Select-Object -First 1
-          if (!$nu) { throw "Nushell was missing from the archive" }
-          $nu.DirectoryName >> $env:GITHUB_PATH
+          Copy-Item "$bundle\kawoosh.exe" "$bundle\kawoosh.com"
           choco install nsis --yes --no-progress
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $nsis = Join-Path ${env:ProgramFiles(x86)} NSIS
-          if (!(Test-Path (Join-Path $nsis makensis.exe))) { throw "NSIS was not installed" }
-          $nsis >> $env:GITHUB_PATH
-
-      - run: rustup update stable --no-self-update
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Build the Windows installer
-        shell: pwsh
-        run: |
-          $version = nu -c 'open Cargo.toml | get workspace.package.version'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -ne "v$version") {
-            throw "Tag $env:GITHUB_REF_NAME must match Cargo.toml version v$version"
-          }
-          $bundle = Join-Path $env:RUNNER_TEMP kawoosh-app
-          cargo fetch --locked --target (rustc --print host-tuple)
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $script = Get-Content -LiteralPath scripts/windows-app.nu -Raw
-          $script = $script -replace '(?m)^  \^cargo build', "  print '[DEBUG-package] before cargo build'`n  ^cargo build"
-          $script = $script -replace '(?m)^  let version =', "  print '[DEBUG-package] cargo build returned'`n  let version ="
-          $script = $script -replace '(?m)^  let fresh =', "  print '[DEBUG-package] cargo pkgid passed'`n  let fresh ="
-          $script = $script -replace '(?m)^  cp \(kui-header', "  print '[DEBUG-package] package files copied'`n  cp (kui-header"
-          Set-Content -LiteralPath scripts/windows-probe.nu -Value $script
-          nu scripts/windows-probe.nu --locked $bundle
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nsis = Join-Path ${env:ProgramFiles(x86)} NSIS\makensis.exe
           $release = Join-Path $env:RUNNER_TEMP release
-          New-Item -ItemType Directory -Path $release
-          makensis "/DVERSION=$version" "/DBUNDLE=$bundle\Kawoosh" "/DOUT=$release\Kawoosh-$version-windows-x64-setup.exe" packaging/windows/kawoosh.nsi
+          New-Item -ItemType Directory $release
+          & $nsis '/DVERSION=0.0.1' "/DBUNDLE=$bundle" "/DOUT=$release\Kawoosh-0.0.1-windows-x64-setup.exe" packaging/windows/kawoosh.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Check first install and staging while running
@@ -126,11 +95,4 @@ jobs:
           if (Test-Path "$app.new\ready") { throw 'Setup did not replace the stopped installation' }
           $version = & "$app\kawoosh.com" --version
           if ($LASTEXITCODE -ne 0 -or "$version" -notmatch '^kawoosh ') { throw 'Installed CLI failed' }
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: kawoosh-windows-x64
-          path: ${{ runner.temp }}/release/*-setup.exe
-          if-no-files-found: error
-          compression-level: 0
 
