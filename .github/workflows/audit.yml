@@ -24,6 +24,7 @@ jobs:
           Copy-Item kawoosh/src/update/windows.rs "$work\src\update\windows.rs"
           $core = Get-Content kawoosh/src/update.rs -Raw
           $core = $core.Split('pub const READY:', 2)[1].Split("#[cfg(unix)]", 2)[0]
+          $core = $core -replace '(?:[ \t]*///[^\r\n]*\r?\n)+\s*$', ''
           @'
           use std::path::{Path, PathBuf};
           use std::time::{Duration, Instant};
