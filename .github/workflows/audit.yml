@@ -1,34 +1,83 @@
-name: Verify release tool pins
-on: workflow_dispatch
+name: Windows release verification
+
+on:
+  workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  tools:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, windows-2025, ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+  windows:
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
         with:
+          lfs: true
           persist-credentials: false
+
       - uses: ./.github/actions/setup-tools
-      - name: Check pinned Rust and Nushell
-        shell: bash
-        run: |
-          rustc --version
-          nu --version
-          test "$(rustc --version | cut -d' ' -f2)" = "$(nu -c 'open rust-toolchain.toml | get toolchain.channel')"
-          test "$(nu --version)" = "$(nu -c 'open mise.toml | get tools.nu.version')"
-      - name: Check pinned NSIS and its installer plugins
-        if: runner.os == 'Windows'
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build the Windows installer
         shell: pwsh
         run: |
-          $version = makensis /VERSION
-          if ($LASTEXITCODE -ne 0 -or "$version" -notmatch '3\.13') { throw "Unexpected NSIS version $version" }
-          $bundle = Join-Path $env:RUNNER_TEMP 'fixture bundle'
-          New-Item -ItemType Directory $bundle
-          Copy-Item "$env:SystemRoot\System32\where.exe" "$bundle\kawoosh.exe"
-          makensis '/DVERSION=0.0.1' "/DBUNDLE=$bundle" "/DOUT=$env:RUNNER_TEMP\setup.exe" packaging/windows/kawoosh.nsi
-          if ($LASTEXITCODE -ne 0 -or !(Test-Path "$env:RUNNER_TEMP\setup.exe")) { throw "NSIS fixture compilation failed" }
+          $version = nu -c 'open Cargo.toml | get workspace.package.version'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME must match Cargo.toml version v$version"
+          }
+          $bundle = Join-Path $env:RUNNER_TEMP kawoosh-app
+          cargo fetch --locked --target (rustc --print host-tuple)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          nu scripts/windows-app.nu --locked $bundle
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $release = Join-Path $env:RUNNER_TEMP release
+          New-Item -ItemType Directory -Path $release
+          makensis "/DVERSION=$version" "/DBUNDLE=$bundle\Kawoosh" "/DOUT=$release\Kawoosh-$version-windows-x64-setup.exe" packaging/windows/kawoosh.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check first install and staging while running
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem "$env:RUNNER_TEMP\release\*-setup.exe").FullName
+          $app = Join-Path $env:RUNNER_TEMP 'Kawoosh smoke'
+          function Install-Kawoosh {
+            $install = Start-Process $setup -ArgumentList '/S', "/D=$app" -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "Setup exited with $($install.ExitCode)" }
+          }
+          Install-Kawoosh
+          if (!(Test-Path "$app\kawoosh.com")) { throw 'First install failed' }
+          # A process at the installed editor path without depending on a desktop session.
+          Copy-Item "$env:SystemRoot\System32\ping.exe" "$app\kawoosh.exe" -Force
+          $running = Start-Process "$app\kawoosh.exe" -ArgumentList '-t', '127.0.0.1' -PassThru
+          try {
+            Install-Kawoosh
+            if (!(Test-Path "$app.new\ready")) { throw 'Setup failed to stage the update' }
+            if (!(Test-Path "$app.new\kawoosh-update.exe")) { throw 'Staged updater is missing' }
+            if ($running.HasExited) { throw 'Setup closed the running process' }
+          } finally {
+            if (!$running.HasExited) { Stop-Process -Id $running.Id }
+            $running.WaitForExit()
+          }
+          $stage = Start-Process $setup -ArgumentList '/S', '/STAGE', "/D=$app" -Wait -PassThru
+          if ($stage.ExitCode -ne 0 -or !(Test-Path "$app.new\ready")) { throw 'Setup failed to stage with the editor closed' }
+          Install-Kawoosh
+          if (Test-Path "$app.new\ready") { throw 'Setup did not replace the stopped installation' }
+          $version = & "$app\kawoosh.com" --version
+          if ($LASTEXITCODE -ne 0 -or "$version" -notmatch '^kawoosh ') { throw 'Installed CLI failed' }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kawoosh-windows-x64
+          path: ${{ runner.temp }}/release/*-setup.exe
+          if-no-files-found: error
+          compression-level: 0
