@@ -21,7 +21,47 @@ const PATIENCE: Duration = Duration::from_secs(15);
 
 fn main() {
     let mut args = std::env::args_os().skip(1);
-    let (Some(app), Some(pid), Some(cwd)) = (args.next(), args.next(), args.next()) else {
+    let first = args.next();
+    #[cfg(windows)]
+    if let Some(mode) = first.as_deref().and_then(std::ffi::OsStr::to_str) {
+        use kawoosh::update::windows;
+        let result = match mode {
+            "--install" | "--stage" => {
+                let (Some(app), Some(fresh), Some(version)) =
+                    (args.next(), args.next(), args.next())
+                else {
+                    std::process::exit(2);
+                };
+                Some(windows::install(
+                    &PathBuf::from(app),
+                    &PathBuf::from(fresh),
+                    &version.to_string_lossy(),
+                    mode == "--stage",
+                ))
+            }
+            "--running" => {
+                let Some(app) = args.next() else {
+                    std::process::exit(2)
+                };
+                Some(windows::is_running(&PathBuf::from(app)))
+            }
+            _ => None,
+        };
+        match result {
+            Some(Ok(false)) => std::process::exit(0),
+            Some(Ok(true)) => std::process::exit(10),
+            Some(Err(error)) => {
+                eprintln!("{error}");
+                if let Ok(exe) = std::env::current_exe() {
+                    let _ =
+                        std::fs::write(exe.with_file_name("install-error.txt"), error.to_string());
+                }
+                std::process::exit(1);
+            }
+            None => {}
+        }
+    }
+    let (Some(app), Some(pid), Some(cwd)) = (first, args.next(), args.next()) else {
         eprintln!("kawoosh-update APP PID CWD  (run by kawoosh's :relaunch)");
         std::process::exit(2);
     };

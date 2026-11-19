@@ -1,0 +1,237 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-tools
+
+      - name: Check the release version
+        id: version
+        shell: bash
+        run: |
+          version=$(nu -c 'open Cargo.toml | get workspace.package.version')
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME must match Cargo.toml version v$version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build Kawoosh.app
+        run: |
+          cargo fetch --locked --target "$(rustc --print host-tuple)"
+          nu scripts/macos-app.nu --locked "$RUNNER_TEMP/kawoosh-app"
+
+      - name: Sign and notarize the disk image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          bash scripts/package-macos-release.sh "$RUNNER_TEMP/kawoosh-app/Kawoosh.app" \
+            "$RUNNER_TEMP/release/Kawoosh-$VERSION-macos-arm64.dmg"
+
+      - name: Upload notarization diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: kawoosh-notarization
+          path: ${{ runner.temp }}/kawoosh-notarization/*.json
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kawoosh-macos-arm64
+          path: ${{ runner.temp }}/release/*.dmg
+          if-no-files-found: error
+          compression-level: 0
+
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-tools
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the Windows installer
+        shell: pwsh
+        run: |
+          $version = nu -c 'open Cargo.toml | get workspace.package.version'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME must match Cargo.toml version v$version"
+          }
+          $bundle = Join-Path $env:RUNNER_TEMP kawoosh-app
+          cargo fetch --locked --target (rustc --print host-tuple)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          nu scripts/windows-app.nu --locked $bundle
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $release = Join-Path $env:RUNNER_TEMP release
+          New-Item -ItemType Directory -Path $release
+          makensis "/DVERSION=$version" "/DBUNDLE=$bundle\Kawoosh" "/DOUT=$release\Kawoosh-$version-windows-x64-setup.exe" packaging/windows/kawoosh.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check first install and staging while running
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem "$env:RUNNER_TEMP\release\*-setup.exe").FullName
+          $app = Join-Path $env:RUNNER_TEMP 'Kawoosh smoke'
+          function Install-Kawoosh {
+            $install = Start-Process $setup -ArgumentList '/S', "/D=$app" -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "Setup exited with $($install.ExitCode)" }
+          }
+          Install-Kawoosh
+          if (!(Test-Path "$app\kawoosh.com")) { throw 'First install failed' }
+          # A process at the installed editor path without depending on a desktop session.
+          Copy-Item "$env:SystemRoot\System32\ping.exe" "$app\kawoosh.exe" -Force
+          $running = Start-Process "$app\kawoosh.exe" -ArgumentList '-t', '127.0.0.1' -PassThru
+          try {
+            Install-Kawoosh
+            if (!(Test-Path "$app.new\ready")) { throw 'Setup failed to stage the update' }
+            if (!(Test-Path "$app.new\kawoosh-update.exe")) { throw 'Staged updater is missing' }
+            if ($running.HasExited) { throw 'Setup closed the running process' }
+          } finally {
+            if (!$running.HasExited) { Stop-Process -Id $running.Id }
+            $running.WaitForExit()
+          }
+          $stage = Start-Process $setup -ArgumentList '/S', '/STAGE', "/D=$app" -Wait -PassThru
+          if ($stage.ExitCode -ne 0 -or !(Test-Path "$app.new\ready")) { throw 'Setup failed to stage with the editor closed' }
+          Install-Kawoosh
+          if (Test-Path "$app.new\ready") { throw 'Setup did not replace the stopped installation' }
+          $version = & "$app\kawoosh.com" --version
+          if ($LASTEXITCODE -ne 0 -or "$version" -notmatch '^kawoosh ') { throw 'Installed CLI failed' }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kawoosh-windows-x64
+          path: ${{ runner.temp }}/release/*-setup.exe
+          if-no-files-found: error
+          compression-level: 0
+
+  linux:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-tools
+
+      - name: Install Linux build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build and check the portable release
+        env:
+          ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          version=$(nu -c 'open Cargo.toml | get workspace.package.version')
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME must match Cargo.toml version v$version"
+            exit 1
+          fi
+          app="$RUNNER_TEMP/Kawoosh"
+          release="$RUNNER_TEMP/release"
+          cargo fetch --locked --target "$(rustc --print host-tuple)"
+          nu scripts/linux-app.nu --locked "$app"
+          echo "$version" > "$app/.kawoosh-release"
+          mkdir -p "$release" "$RUNNER_TEMP/linux-smoke"
+          # The generated desktop entry is for the build directory.
+          archive="$release/Kawoosh-$version-linux-$ARCH.tar.gz"
+          tar -C "$RUNNER_TEMP" --exclude=Kawoosh/share/applications -czf "$archive" Kawoosh
+          tar -C "$RUNNER_TEMP/linux-smoke" -xzf "$archive"
+          test "$("$RUNNER_TEMP/linux-smoke/Kawoosh/bin/kawoosh" --version)" = "kawoosh $version"
+          cargo test --locked -p kawoosh --lib update::
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kawoosh-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/release/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  draft-release:
+    if: github.event_name == 'push'
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: kawoosh-macos-arm64
+      - uses: actions/download-artifact@v8
+        with:
+          name: kawoosh-windows-x64
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: kawoosh-linux-*
+          merge-multiple: true
+      - name: Attach the installers to a draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.macos.outputs.version }}
+        run: |
+          dmg="Kawoosh-$VERSION-macos-arm64.dmg"
+          setup="Kawoosh-$VERSION-windows-x64-setup.exe"
+          files=("$dmg" "$setup" "Kawoosh-$VERSION-linux-x64.tar.gz" "Kawoosh-$VERSION-linux-arm64.tar.gz")
+          sha256sum "${files[@]}" > SHA256SUMS
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" SHA256SUMS --clobber
+          else
+            flags=()
+            if [[ "${VERSION%%+*}" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" SHA256SUMS --draft --verify-tag \
+              --title "Kawoosh $VERSION" --notes 'See the README for macOS, Windows and Linux installation instructions.' \
+              "${flags[@]}"
+          fi

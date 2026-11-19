@@ -79,6 +79,22 @@ As an app:
 
 `:relaunch` quits as `:qa` does and starts Kawoosh again on your session, on every platform: the Kawoosh installed by then, so after a build or an install it is the new one, and with none it is the same one started afresh. `:relaunch?` says which.
 
+## Releases
+
+Run `mise install --locked rust nu` to use the same Rust and Nushell versions as release CI. For Windows packaging, include `http:nsis` in that command. Plain `cargo` commands also use the pin in `rust-toolchain.toml`.
+
+Get the Apple silicon DMG, Windows x64 Setup, or Linux x64 or arm64 archive from [GitHub Releases](https://github.com/qxuken/kawoosh/releases).
+
+- **macOS**. Open the DMG and drag `Kawoosh.app` into Applications. Kawoosh verifies notarization and the Developer ID team on each update.
+- **Windows**. Run Setup to install for your account. Updates downloaded in Kawoosh use Setup to stage the new version. Running Setup yourself also works, including while Kawoosh is open.
+- **Linux**. Extract the archive into a writable parent directory and run `Kawoosh/bin/kawoosh`. Keep the dedicated `Kawoosh` directory for in-app updates. The archive is built on Ubuntu 24.04. Install `curl` for release updates. For system packages and source installs, use the package manager or build command that installed Kawoosh.
+
+Release installs check for the latest stable version at startup. Choose **Download** or run `:update` to download and verify the update, then run `:relaunch` to install it and restore your session. On macOS and Linux, relaunch from the same session that downloaded the update.
+
+Set `update.url` in your personal `settings.lua` to use an HTTPS mirror, or set it to an empty string to turn off release updates. It defaults to the GitHub latest-release API. A mirror serves GitHub-compatible release JSON with `tag_name`, `draft`, `prerelease`, and `assets`. Each asset provides `name`, `browser_download_url`, and `digest` in `sha256:<hex>` form. Choose a source you trust to distribute the binaries. [GitHub release asset format](https://docs.github.com/en/rest/releases/assets)
+
+Pushing a tag that matches the workspace version in `Cargo.toml`, such as `v0.0.1`, creates a draft GitHub release with all four packages and their SHA-256 checksums. A manual run of the `release` workflow builds the packages as Actions artifacts.
+
 ## Configuration
 
 Your configuration lives in `~/.config/kawoosh/` (or `$XDG_CONFIG_HOME/kawoosh/`):

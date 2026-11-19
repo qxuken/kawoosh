@@ -47,4 +47,10 @@ ignore = [
     "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0371",
     "RUSTSEC-2026-0372",
+
+    # chrono is unmaintained (informational). russh pulls in russh-util
+    # 0.52, which declares chrono only for wasm32. Cargo.lock records
+    # that target, while the macOS, Windows and Linux releases ship native
+    # binaries without chrono. Remove this when russh-util drops chrono.
+    "RUSTSEC-2026-0543",
 ]

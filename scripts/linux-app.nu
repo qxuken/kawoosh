@@ -44,6 +44,7 @@
 def main [
   prefix?: path  # where bin/ and share/ go (default: target/release/Kawoosh, or ~/.local with --install)
   --no-fonts     # leave the 252 MB of faces out
+  --locked       # require the existing Cargo.lock
   --install      # into ~/.local, the desktop's caches of entries and icons refreshed
 ] {
   let root = $env.FILE_PWD | path dirname
@@ -67,7 +68,8 @@ def main [
     }
   }
 
-  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit
+  let lock_args = if $locked { ['--locked'] } else { [] }
+  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit ...$lock_args
 
   let bin = $prefix | path join bin
   let share = $prefix | path join share

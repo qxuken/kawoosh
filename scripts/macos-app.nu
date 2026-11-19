@@ -33,15 +33,17 @@
 def main [
   out_dir?: path  # where Kawoosh.app goes (default: target/release)
   --no-fonts      # leave the 252 MB of faces out
+  --locked        # require the existing Cargo.lock
 ] {
   let root = $env.FILE_PWD | path dirname
   let target = $env.CARGO_TARGET_DIR? | default ($root | path join target)
   let app = $out_dir | default ($target | path join release) | path join Kawoosh.app | path expand
   let manifest = $root | path join Cargo.toml
+  let lock_args = if $locked { ['--locked'] } else { [] }
 
-  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit
+  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit ...$lock_args
   # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
-  let version = ^cargo pkgid --manifest-path $manifest -p kawoosh | str trim | str replace -r '.*[#@]' ''
+  let version = ^cargo pkgid --manifest-path $manifest -p kawoosh ...$lock_args | str trim | str replace -r '.*[#@]' ''
 
   # Made in a folder beside — the same disk, so the renames at the end
   # are renames — and under the app's own name there: `codesign` and
@@ -131,8 +133,8 @@ def main [
 ' | save -f $plist
   ^plutil -lint -s $plist
 
-  # Ad hoc: enough for this machine, which is where the app was built.
-  # Handing it to another Mac takes a Developer ID and notarization.
+  # Sign local builds ad hoc. The release job signs its staged copy with
+  # Developer ID in scripts/package-macos-release.sh.
   ^codesign --force --sign - ($contents | path join MacOS kawoosh-edit)
   ^codesign --force --sign - $fresh
 

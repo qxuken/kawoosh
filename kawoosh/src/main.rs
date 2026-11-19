@@ -414,6 +414,8 @@ fn main() -> anyhow::Result<()> {
     // is a link into the app, and Linux names the file as it is later.
     if let Ok(exe) = std::env::current_exe().and_then(|e| kawoosh_systems::fs::canonicalize(&e)) {
         app.watch_update(&exe);
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        app.check_release(false);
     }
     let launcher = kui_native::app("kawoosh")
         // The title row is kawoosh's (chrome.rs): the cwd and the

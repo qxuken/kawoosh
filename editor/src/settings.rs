@@ -681,6 +681,10 @@ const DOCS: &[(&str, &str)] = &[
         "what the first file of a language with a grammar to install does: `ask` says the command, `auto` installs it, `never` nothing; a project may only say `never`",
     ),
     (
+        "update.url",
+        "HTTPS URL of the latest release metadata. Set it in your personal settings.lua. An empty string disables release updates.",
+    ),
+    (
         "grammars.urls",
         "where grammars are fetched from, each a folder of `manifest.json` and an archive a grammar: a grammar several list is the first's, and fetched from the next that has it when that one fails; a URL said twice counts once; a project's is passed over",
     ),
@@ -1322,6 +1326,10 @@ impl Settings {
                 .map(|s| Setting::Str(s.to_string()))
                 .collect(),
             ),
+        );
+        defaults.set(
+            "update.url",
+            Setting::Str("https://api.github.com/repos/qxuken/kawoosh/releases/latest".into()),
         );
         defaults.set("theme.appearance", Setting::Str("system".into()));
         // A family of kawoosh's own (`themes.rs`), or `system` for kui's

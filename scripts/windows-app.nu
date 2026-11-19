@@ -79,6 +79,7 @@
 def main [
   out_dir?: path  # where the Kawoosh folder goes (default: target\release, or %LOCALAPPDATA%\Programs with --install)
   --no-fonts      # leave the 252 MB of faces out
+  --locked        # require the existing Cargo.lock
   --install       # into %LOCALAPPDATA%\Programs, with a Start menu shortcut, registered as an editor
 ] {
   let root = $env.FILE_PWD | path dirname
@@ -90,6 +91,7 @@ def main [
   }
   let app = $out_dir | default $default_dir | path join Kawoosh | path expand
   let manifest = $root | path join Cargo.toml
+  let lock_args = if $locked { ['--locked'] } else { [] }
   let fonts = $root | path join assets fonts
 
   # A checkout without `git lfs pull` has the faces as pointers of a
@@ -104,9 +106,24 @@ def main [
   # Before the build: a package that cannot be had stops it early.
   let host = console-host $target
 
-  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-cli --bin kawoosh-edit --bin kawoosh-update
+  let build = (do {
+    ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-cli --bin kawoosh-edit --bin kawoosh-update --message-format=json-render-diagnostics ...$lock_args
+  } | complete)
+  if ($build.stderr | is-not-empty) {
+    print -e --no-newline $build.stderr
+  }
+  if $build.exit_code != 0 {
+    exit $build.exit_code
+  }
+  let build_scripts = $build.stdout | lines | each {|line| $line | from json }
+    | where reason == 'build-script-executed'
+  let pkgid = ^cargo pkgid --manifest-path $manifest -p kawoosh ...$lock_args | str trim
   # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
-  let version = ^cargo pkgid --manifest-path $manifest -p kawoosh | str trim | str replace -r '.*[#@]' ''
+  let version = $pkgid | str replace -r '.*[#@]' ''
+  let lib = $build_scripts | where package_id == $pkgid | get 0.out_dir | path join kawoosh-editor-import.lib
+  if not ($lib | path exists) {
+    error make {msg: $"Missing import library ($lib). See the warnings from kawoosh/build.rs."}
+  }
 
   # Made beside the old folder, then swapped in by renames: the old one
   # aside, the new one into its place. A Kawoosh running from the folder
@@ -133,18 +150,17 @@ def main [
   for f in $host {
     cp $f $fresh
   }
-  # link.exe writes the import library beside the binary in `deps\`,
-  # where cargo leaves it.
-  let lib = $target | path join release deps kawoosh.lib
-  if not ($lib | path exists) {
-    error make {msg: $"no ($lib): kawoosh.exe exported nothing, so no native extension can link against it. See the build's warnings (kawoosh/build.rs)"}
-  }
-  cp $lib $fresh
+  # Find the linker output through Cargo's build-script message.
+  cp $lib ($fresh | path join kawoosh.lib)
   mkdir ($fresh | path join include)
   cp ($root | path join kawoosh include kawoosh.h) ($fresh | path join include)
   cp (kui-header $manifest) ($fresh | path join include)
   if not $no_fonts {
     cp -r $fonts $fresh
+  }
+  let uninstaller = $app | path join Uninstall.exe
+  if ($uninstaller | path exists) {
+    cp $uninstaller $fresh
   }
   let old = $parent | path join $"($aside)(random chars --length 8)"
   let moved = if ($app | path exists) { try { mv $app $old; true } catch { false } } else { true }
