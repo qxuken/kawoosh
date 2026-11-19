@@ -39,8 +39,8 @@ fn main() {
 /// Windows has no such flag: a DLL names the module each import comes
 /// from, and takes that name from an import library at link time. So
 /// the exe exports both families through a `/DEF:` (`export_def`), and
-/// link.exe writes `kawoosh.lib` to this build script's output directory
-/// for `scripts/windows-app.nu` to ship and extensions to link against.
+/// link.exe writes the import library to this build script's output
+/// directory for `scripts/windows-app.nu` to ship as `kawoosh.lib`.
 /// Only the `kawoosh` bin: an export with no definition is a
 /// link error, and the other bins link no `kawoosh-lua`.
 ///
@@ -67,7 +67,9 @@ fn export_dynamic() {
             let directives = match exports {
                 Ok((def, names)) => {
                     println!("cargo:rustc-link-arg-bin=kawoosh=/DEF:{def}");
-                    let import_lib = std::path::Path::new(&def).with_file_name("kawoosh.lib");
+                    // embed-resource writes its own kawoosh.lib into OUT_DIR.
+                    let import_lib =
+                        std::path::Path::new(&def).with_file_name("kawoosh-editor-import.lib");
                     let import_lib = import_lib.to_string_lossy().replace('\\', "/");
                     println!("cargo:rustc-link-arg-bin=kawoosh=/IMPLIB:{import_lib}");
                     let exports: Vec<String> =
