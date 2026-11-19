@@ -13,7 +13,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  NU_VERSION: '0.116.0'
 
 jobs:
   macos:
@@ -26,13 +25,7 @@ jobs:
           lfs: true
           persist-credentials: false
 
-      - name: Install Nushell
-        shell: bash
-        run: |
-          archive="nu-${NU_VERSION}-aarch64-apple-darwin"
-          curl -fsSL --retry 3 "https://github.com/nushell/nushell/releases/download/${NU_VERSION}/${archive}.tar.gz" \
-            | tar -xz -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/$archive" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-tools
 
       - name: Check the release version
         id: version
@@ -45,7 +38,6 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - run: rustup update stable --no-self-update
       - uses: Swatinem/rust-cache@v2
 
       - name: Build Kawoosh.app
@@ -90,25 +82,8 @@ jobs:
           lfs: true
           persist-credentials: false
 
-      - name: Install Nushell and NSIS
-        shell: pwsh
-        run: |
-          $archive = "nu-${env:NU_VERSION}-x86_64-pc-windows-msvc"
-          $zip = Join-Path $env:RUNNER_TEMP "$archive.zip"
-          $tools = Join-Path $env:RUNNER_TEMP $archive
-          curl.exe -fsSL --retry 3 "https://github.com/nushell/nushell/releases/download/$env:NU_VERSION/$archive.zip" -o $zip
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Expand-Archive -LiteralPath $zip -DestinationPath $tools
-          $nu = Get-ChildItem -Path $tools -Recurse -Filter nu.exe | Select-Object -First 1
-          if (!$nu) { throw "Nushell was missing from the archive" }
-          $nu.DirectoryName >> $env:GITHUB_PATH
-          choco install nsis --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $nsis = Join-Path ${env:ProgramFiles(x86)} NSIS
-          if (!(Test-Path (Join-Path $nsis makensis.exe))) { throw "NSIS was not installed" }
-          $nsis >> $env:GITHUB_PATH
+      - uses: ./.github/actions/setup-tools
 
-      - run: rustup update stable --no-self-update
       - uses: Swatinem/rust-cache@v2
 
       - name: Build the Windows installer
@@ -171,10 +146,8 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
             arch: x64
           - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
@@ -183,18 +156,13 @@ jobs:
           lfs: true
           persist-credentials: false
 
-      - name: Install Nushell and build dependencies
-        env:
-          NATIVE_TARGET: ${{ matrix.target }}
+      - uses: ./.github/actions/setup-tools
+
+      - name: Install Linux build dependencies
         shell: bash
         run: |
-          archive="nu-${NU_VERSION}-${NATIVE_TARGET}"
-          curl -fsSL --retry 3 "https://github.com/nushell/nushell/releases/download/${NU_VERSION}/${archive}.tar.gz" \
-            | tar -xz -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/$archive" >> "$GITHUB_PATH"
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
-          rustup update stable --no-self-update
 
       - uses: Swatinem/rust-cache@v2
 

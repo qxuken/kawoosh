@@ -81,6 +81,8 @@ As an app:
 
 ## Releases
 
+Run `mise install --locked rust nu` to use the same Rust and Nushell versions as release CI. For Windows packaging, include `http:nsis` in that command. Plain `cargo` commands also use the pin in `rust-toolchain.toml`.
+
 Get the Apple silicon DMG, Windows x64 Setup, or Linux x64 or arm64 archive from [GitHub Releases](https://github.com/qxuken/kawoosh/releases).
 
 - **macOS**. Open the DMG and drag `Kawoosh.app` into Applications. Kawoosh verifies notarization and the Developer ID team on each update.
