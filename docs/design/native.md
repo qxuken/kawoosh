@@ -257,7 +257,8 @@ kui-ffi's build.rs is the model), the extension with `-undefined
 dynamic_lookup` on macOS and nothing on Linux. Windows has no such
 thing: a DLL names the module each import comes from. kawoosh.exe
 exports both families through a `/DEF:` the build writes, and
-`windows-app.nu` ships the `kawoosh.lib` link.exe produces beside it;
+`windows-app.nu` ships the `kawoosh.lib` link.exe writes to the directory
+reported by Cargo's build-script message;
 an extension links against that and loads into kawoosh and no other
 host, which is the right answer for an editor's plugin. This is kui's
 shape 2, chosen over shape 1 because kawoosh links kui-ffi statically
