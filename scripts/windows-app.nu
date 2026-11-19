@@ -106,15 +106,21 @@ def main [
   # Before the build: a package that cannot be had stops it early.
   let host = console-host $target
 
-  let build_scripts = (
+  let build = (do {
     ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-cli --bin kawoosh-edit --bin kawoosh-update --message-format=json-render-diagnostics ...$lock_args
-    | lines | each {|line| $line | from json }
+  } | complete)
+  if ($build.stderr | is-not-empty) {
+    print -e --no-newline $build.stderr
+  }
+  if $build.exit_code != 0 {
+    exit $build.exit_code
+  }
+  let build_scripts = $build.stdout | lines | each {|line| $line | from json }
     | where reason == 'build-script-executed'
-  )
   let pkgid = ^cargo pkgid --manifest-path $manifest -p kawoosh ...$lock_args | str trim
   # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
   let version = $pkgid | str replace -r '.*[#@]' ''
-  let lib = $build_scripts | where package_id == $pkgid | get 0.out_dir | path join kawoosh.lib
+  let lib = $build_scripts | where package_id == $pkgid | get 0.out_dir | path join kawoosh-editor-import.lib
   if not ($lib | path exists) {
     error make {msg: $"Missing import library ($lib). See the warnings from kawoosh/build.rs."}
   }
@@ -145,7 +151,7 @@ def main [
     cp $f $fresh
   }
   # Find the linker output through Cargo's build-script message.
-  cp $lib $fresh
+  cp $lib ($fresh | path join kawoosh.lib)
   mkdir ($fresh | path join include)
   cp ($root | path join kawoosh include kawoosh.h) ($fresh | path join include)
   cp (kui-header $manifest) ($fresh | path join include)
