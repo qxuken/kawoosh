@@ -55,8 +55,18 @@ struct Asset {
 }
 
 impl Kawoosh {
-    /// Startup checks for metadata. Downloading requires an explicit command.
+    /// When enabled, startup checks for release metadata. Downloading requires an explicit command.
     pub fn check_release(&mut self, download: bool) {
+        if !download
+            && self
+                .ed
+                .settings
+                .layer_value(Layer::User, "update.check_on_startup")
+                .and_then(|setting| setting.as_bool())
+                != Some(true)
+        {
+            return;
+        }
         let url = release_url(&self.ed.settings);
         if url.is_empty() {
             if download {
@@ -248,12 +258,16 @@ fn curl(timeout: u32) -> Result<Command> {
     #[cfg(unix)]
     let mut cmd = Command::new("/usr/bin/curl");
     #[cfg(windows)]
-    let mut cmd = Command::new(
-        std::path::PathBuf::from(
-            std::env::var_os("SystemRoot").context("Windows system directory is missing")?,
-        )
-        .join("System32/curl.exe"),
-    );
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+        let system_root =
+            std::env::var_os("SystemRoot").context("Windows system directory is missing")?;
+        let mut cmd = Command::new(std::path::PathBuf::from(system_root).join("System32/curl.exe"));
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
+    };
     #[cfg(target_os = "macos")]
     cmd.env("CURL_SSL_BACKEND", "securetransport");
     cmd.args([
@@ -324,6 +338,42 @@ fn download_asset(asset: &Asset, destination: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use kawoosh_editor::Setting;
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn startup_checks_require_personal_opt_in_and_manual_updates_still_work() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["kawoosh.com", "kawoosh-update.exe"] {
+            std::fs::write(dir.path().join(name), "").unwrap();
+        }
+        let mut k = Kawoosh::new("x", "");
+        k.update.exe = Some(dir.path().join("kawoosh.exe"));
+        // The worker rejects this URL before making a request.
+        k.ed.settings.set(
+            Layer::User,
+            "update.url",
+            Setting::Str("http://example.invalid/latest".into()),
+        );
+
+        k.check_release(false);
+        assert!(k.update.release.job.is_none());
+        for layer in [Layer::Project, Layer::Session] {
+            k.ed.settings
+                .set(layer, "update.check_on_startup", Setting::Bool(true));
+            k.check_release(false);
+            assert!(k.update.release.job.is_none());
+        }
+
+        k.run_line("update");
+        let (download, _) = k.update.release.job.take().unwrap();
+        assert!(download);
+
+        k.ed.settings
+            .set(Layer::User, "update.check_on_startup", Setting::Bool(true));
+        k.check_release(false);
+        let (download, _) = k.update.release.job.take().unwrap();
+        assert!(!download);
+    }
 
     #[test]
     fn only_personal_settings_can_change_the_feed() {

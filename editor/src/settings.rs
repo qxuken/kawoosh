@@ -681,6 +681,10 @@ const DOCS: &[(&str, &str)] = &[
         "what the first file of a language with a grammar to install does: `ask` says the command, `auto` installs it, `never` nothing; a project may only say `never`",
     ),
     (
+        "update.check_on_startup",
+        "Check for a new Kawoosh release at startup. Set it in your personal settings.lua. Use :update to check and download manually.",
+    ),
+    (
         "update.url",
         "HTTPS URL of the latest release metadata. Set it in your personal settings.lua. An empty string disables release updates.",
     ),
@@ -1327,6 +1331,7 @@ impl Settings {
                 .collect(),
             ),
         );
+        defaults.set("update.check_on_startup", Setting::Bool(false));
         defaults.set(
             "update.url",
             Setting::Str("https://api.github.com/repos/qxuken/kawoosh/releases/latest".into()),
